@@ -33,82 +33,30 @@ Persist delivery state
 
 ## Prerequisites
 
-- **SiliconFlow API key**: Configured in `global.siliconflow_api_key`
-- **PushPlus token**: Configured per user in `users[].pushplus_token`
+- **SiliconFlow API key**: Optional `NOTIFY_SILICONFLOW_API_KEY` environment variable
+- **PushPlus token**: Configured per user in the tracking UI
 
-## Subscription Configuration
+## Notification Configuration
 
 ### Setup
 
-```bash
-cp data/push/subscriptions.example.json data/push/subscriptions.json
-```
+1. Configure each user's delivery method, PushPlus token, keywords, and directions in the tracking UI.
+2. Set optional runtime defaults with environment variables before running `uv run notify`.
 
-### File Structure
+Legacy `data/push/subscriptions*.json` files are ignored.
 
-```json
-{
-  "global": {
-    "siliconflow_api_key": "sk-your-siliconflow-key",
-    "pushplus_channel": "mail",
-    "pushplus_template": "markdown",
-    "pushplus_topic": "",
-    "pushplus_option": ""
-  },
-  "defaults": {
-    "max_candidates": 120,
-    "siliconflow_model": "deepseek-ai/DeepSeek-V3",
-    "temperature": 0.2
-  },
-  "users": [
-    {
-      "id": "alice",
-      "name": "Alice",
-      "enabled": true,
-      "pushplus_token": "your-pushplus-token",
-      "to": "",
-      "keywords": ["earnings management", "disclosure quality"],
-      "directions": ["accounting research", "capital markets"],
-      "template": "markdown",
-      "topic": ""
-    }
-  ]
-}
-```
+### Environment Variables
 
-### Configuration Fields
-
-**`global`**: Shared service credentials and PushPlus defaults.
-
-| Field | Description |
-|-------|-------------|
-| `siliconflow_api_key` | SiliconFlow API key for LLM access |
-| `pushplus_channel` | Delivery channel (`mail`, `wechat`, etc.) |
-| `pushplus_template` | Message format (`markdown`, `html`, `txt`) |
-| `pushplus_topic` | PushPlus topic (optional) |
-| `pushplus_option` | PushPlus option (optional) |
-
-**`defaults`**: AI selection parameters.
-
-| Field | Default | Description |
-|-------|---------|-------------|
-| `max_candidates` | 120 | Max articles sent to the LLM per run |
-| `siliconflow_model` | `deepseek-ai/DeepSeek-V3` | LLM model ID |
-| `temperature` | 0.2 | LLM sampling temperature |
-
-**`users[]`**: Per-subscriber preferences.
-
-| Field | Required | Description |
-|-------|----------|-------------|
-| `id` | Yes | Unique subscriber identifier |
-| `name` | Yes | Display name |
-| `enabled` | Yes | Whether notifications are active |
-| `pushplus_token` | Yes | PushPlus delivery token |
-| `to` | No | PushPlus recipient override |
-| `keywords` | Yes | Research keywords for article matching |
-| `directions` | Yes | Research directions (higher priority than keywords) |
-| `template` | No | Override message template |
-| `topic` | No | Override PushPlus topic |
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `NOTIFY_SILICONFLOW_API_KEY` | empty | Enables AI filtering and summaries |
+| `NOTIFY_SILICONFLOW_MODEL` | `deepseek-ai/DeepSeek-V3` | LLM model ID |
+| `NOTIFY_MAX_CANDIDATES` | `120` | Max articles sent to the LLM per run |
+| `NOTIFY_TEMPERATURE` | `0.2` | LLM sampling temperature |
+| `NOTIFY_PUSHPLUS_CHANNEL` | `mail` | Default PushPlus channel |
+| `NOTIFY_PUSHPLUS_TEMPLATE` | `markdown` | Default PushPlus template |
+| `NOTIFY_PUSHPLUS_TOPIC` | empty | Default PushPlus topic |
+| `NOTIFY_PUSHPLUS_OPTION` | empty | Default PushPlus option |
 
 ## Commands
 
@@ -140,7 +88,6 @@ uv run notify --db utd24.sqlite --dry-run
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--db` | auto-detect | Database file under `data/index/` |
-| `--subscriptions` | `data/push/subscriptions.json` | Subscription config path |
 | `--state-dir` | `data/push_state` | Directory for persisted state files |
 | `--changes-file` | - | Change manifest from index update |
 | `--siliconflow-model` | config default | Override LLM model ID |

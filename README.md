@@ -44,8 +44,7 @@ project/
 ├── config/
 │   └── auth.yaml           # Frontend authentication tokens
 └── data/
-    ├── meta/               # Journal metadata CSV files
-    └── push/               # subscriptions.json (optional, for notifications)
+    └── meta/               # Journal metadata CSV files
 ```
 
 ### 2. Prepare Data
@@ -126,14 +125,13 @@ Paper-Scanner/
 │   │   └── workers.py          # Multi-process workers
 │   ├── notify/                 # Notification system
 │   │   ├── workflow.py         # Notification pipeline
-│   │   └── models.py           # Subscription config models
+│   │   └── models.py           # Notification config models
 │   ├── browzine/               # BrowZine API client
 │   ├── weipu/                  # WeipuAPI client
 │   └── shared/                 # Shared constants & utilities
 ├── data/
 │   ├── meta/                   # Journal metadata CSV files
 │   ├── index/                  # SQLite databases (generated)
-│   ├── push/                   # Subscription configs
 │   └── push_state/             # Notification delivery state
 └── pyproject.toml
 ```
@@ -196,7 +194,6 @@ docker compose run --rm api uv run notify --dry-run
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--db` | auto-detect | Database file under `data/index/` |
-| `--subscriptions` | `data/push/subscriptions.json` | Subscription config path |
 | `--changes-file` | - | Change manifest from index update |
 | `--siliconflow-model` | config default | Override LLM model ID |
 | `--max-candidates` | config default | Max articles sent to LLM per run |
@@ -274,41 +271,22 @@ All endpoints are prefixed with `/api`. Pass `?db=<name>` to select a specific d
 
 ## Notification System
 
-Paper Scanner can automatically select and push relevant articles to users via PushPlus.
+Paper Scanner reads notification subscribers from `auth.sqlite` and user tracking settings in the app.
+Legacy `data/push/subscriptions*.json` files are ignored.
 
 ### Setup
 
-1. Copy the example subscription config:
+1. Configure per-user delivery in the tracking UI.
+
+2. Set optional runtime defaults:
 
 ```bash
-cp data/push/subscriptions.example.json data/push/subscriptions.json
-```
-
-2. Edit `data/push/subscriptions.json`:
-
-```json
-{
-  "global": {
-    "siliconflow_api_key": "sk-your-siliconflow-key",
-    "pushplus_channel": "mail",
-    "pushplus_template": "markdown"
-  },
-  "defaults": {
-    "max_candidates": 120,
-    "siliconflow_model": "deepseek-ai/DeepSeek-V3",
-    "temperature": 0.2
-  },
-  "users": [
-    {
-      "id": "alice",
-      "name": "Alice",
-      "enabled": true,
-      "pushplus_token": "your-pushplus-token",
-      "keywords": ["earnings management", "disclosure quality"],
-      "directions": ["accounting research", "capital markets"]
-    }
-  ]
-}
+export NOTIFY_SILICONFLOW_API_KEY="sk-your-siliconflow-key"
+export NOTIFY_SILICONFLOW_MODEL="deepseek-ai/DeepSeek-V3"
+export NOTIFY_MAX_CANDIDATES="120"
+export NOTIFY_TEMPERATURE="0.2"
+export NOTIFY_PUSHPLUS_CHANNEL="mail"
+export NOTIFY_PUSHPLUS_TEMPLATE="markdown"
 ```
 
 3. Run with the index update pipeline:
@@ -322,8 +300,8 @@ uv run index --update --notify
 1. The indexer detects changed articles by comparing before/after snapshots
 2. A change manifest records added and removed article IDs
 3. The notification pipeline loads candidate articles from the manifest
-4. SiliconFlow LLM scores articles against each user's keywords and research directions
-5. Selected articles are formatted and delivered via PushPlus
+4. SiliconFlow LLM optionally scores articles against each user's keywords and research directions
+5. Selected articles are delivered via PushPlus or the user's tracking folder
 6. Delivery state is persisted to prevent duplicate notifications (60-day window)
 
 ## Database Schema

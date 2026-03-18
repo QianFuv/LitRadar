@@ -46,7 +46,6 @@ project/
 ├── data/
 │   ├── index/          # SQLite databases (mounted into api container)
 │   ├── meta/           # Journal metadata CSV (baked into image, volume overrides)
-│   ├── push/           # subscriptions.json (notify config)
 │   └── push_state/     # Notification delivery state
 └── config/
     └── auth.yaml       # Frontend authentication tokens
@@ -65,15 +64,25 @@ ttl_hours: 168
 
 Mounted read-only into the app container. Changes take effect after `docker compose restart app`.
 
-### Notification (`data/push/subscriptions.json`)
+### Notification
 
-Contains SiliconFlow API key, PushPlus tokens, and subscriber preferences. See `data/push/subscriptions.example.json` for the format. Mounted via the `data/` volume — no rebuild needed.
+Notification subscribers are stored in `auth.sqlite` and managed from the tracking UI.
+Optional AI and PushPlus defaults come from environment variables on the `api` service.
+Legacy `data/push/subscriptions*.json` files are ignored.
 
 ### Environment Variables
 
 | Variable | Service | Default | Description |
 |----------|---------|---------|-------------|
 | `API_HOST` | api | `0.0.0.0` | Uvicorn bind address |
+| `NOTIFY_SILICONFLOW_API_KEY` | api | empty | Enables AI filtering for notifications |
+| `NOTIFY_SILICONFLOW_MODEL` | api | `deepseek-ai/DeepSeek-V3` | Default SiliconFlow model |
+| `NOTIFY_MAX_CANDIDATES` | api | `120` | Max candidates sent to the model |
+| `NOTIFY_TEMPERATURE` | api | `0.2` | SiliconFlow temperature |
+| `NOTIFY_PUSHPLUS_CHANNEL` | api | `mail` | Default PushPlus channel |
+| `NOTIFY_PUSHPLUS_TEMPLATE` | api | `markdown` | Default PushPlus template |
+| `NOTIFY_PUSHPLUS_TOPIC` | api | empty | Default PushPlus topic |
+| `NOTIFY_PUSHPLUS_OPTION` | api | empty | Default PushPlus option |
 | `SIMPLE_TOKENIZER_PATH` | api | Set in Dockerfile | Path to `libsimple.so` for CJK FTS |
 | `HOSTNAME` | app | `0.0.0.0` | Next.js listen address |
 | `INTERNAL_API_URL` | app (build) | `http://api:8000` | Backend URL for Next.js rewrites |
@@ -139,5 +148,5 @@ Check if the backend is running: `docker compose logs api`. Ensure `data/index/`
 ### Config changes not taking effect
 
 - `auth.yaml`: `docker compose restart app`
-- `subscriptions.json`: No restart needed (read per execution)
+- `NOTIFY_*`: `docker compose restart api`
 - `INTERNAL_API_URL`: Requires `docker compose build app` (baked in at build time)
