@@ -1,29 +1,32 @@
-import { cookies } from "next/headers";
-import { redirect } from "next/navigation";
-import { AUTH_COOKIE_NAME, verifyAuthToken } from "@/lib/auth";
+'use client';
 
-export default async function ProtectedLayout({
+import { useRouter } from 'next/navigation';
+import { useEffect } from 'react';
+import { useAuth } from '@/lib/auth-context';
+
+export default function ProtectedLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
-  const cookieStore = await cookies();
-  const token = cookieStore.get(AUTH_COOKIE_NAME)?.value;
+  const { user, loading } = useAuth();
+  const router = useRouter();
 
-  if (!token) {
-    redirect("/login");
+  useEffect(() => {
+    if (!loading && !user) {
+      router.replace('/login');
+    }
+  }, [user, loading, router]);
+
+  if (loading) {
+    return (
+      <div className="flex h-screen items-center justify-center">
+        <div className="animate-pulse text-muted-foreground">加载中...</div>
+      </div>
+    );
   }
 
-  let isValid = false;
-  try {
-    isValid = Boolean(await verifyAuthToken(token));
-  } catch {
-    isValid = false;
-  }
+  if (!user) return null;
 
-  if (!isValid) {
-    redirect("/login");
-  }
-
-  return children;
+  return <>{children}</>;
 }

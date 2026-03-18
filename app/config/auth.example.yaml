@@ -1,5 +1,0 @@
-tokens:
-  - "example-token-1"
-  - "example-token-2"
-secret: "example-secret"
-ttl_hours: 168
