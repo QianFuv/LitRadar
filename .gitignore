@@ -7,6 +7,7 @@
 /data/index
 /data/push/subscriptions.json
 /data/push_state
+/data/auth.sqlite
 /test
 /AGENTS.md
 /CLAUDE.md

@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+from collections.abc import AsyncGenerator
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 
+from scripts.api.auth_db import init_auth_db
 from scripts.shared.constants import API_PREFIX
 
 
@@ -26,6 +30,12 @@ class CacheControlMiddleware(BaseHTTPMiddleware):
         return response
 
 
+@asynccontextmanager
+async def lifespan(application: FastAPI) -> AsyncGenerator[None]:
+    init_auth_db()
+    yield
+
+
 def build_app() -> FastAPI:
     """
     Build and configure the FastAPI application.
@@ -33,7 +43,7 @@ def build_app() -> FastAPI:
     Returns:
         Configured FastAPI application.
     """
-    application = FastAPI(title="Paper Scanner API", version="1.0.0")
+    application = FastAPI(title="Paper Scanner API", version="1.0.0", lifespan=lifespan)
     application.add_middleware(
         CORSMiddleware,
         allow_origins=["*"],

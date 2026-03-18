@@ -219,3 +219,185 @@ class WeeklyManifestSummary:
     run_id: str | None
     generated_at: datetime
     article_ids: list[int]
+
+
+class RegisterRequest(BaseModel):
+    username: str
+    password: str
+    invite_code: str
+
+
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
+
+class TokenCreateRequest(BaseModel):
+    name: str = ""
+    ttl: int = 7 * 24 * 3600
+
+
+class ChangePasswordRequest(BaseModel):
+    old_password: str
+    new_password: str
+
+
+class UserResponse(BaseModel):
+    id: int
+    username: str
+    is_admin: bool = False
+
+
+class LoginResponse(BaseModel):
+    user: UserResponse
+    access_token: str
+    expires_at: float
+
+
+class TokenInfo(BaseModel):
+    id: int
+    name: str
+    expires_at: float
+    created_at: float
+
+
+class TokenCreateResponse(BaseModel):
+    id: int
+    token: str
+    name: str
+    expires_at: float
+
+
+class FolderCreate(BaseModel):
+    name: str
+    is_tracking: bool = False
+
+
+class FolderRename(BaseModel):
+    name: str
+
+
+class FolderResponse(BaseModel):
+    id: int
+    name: str
+    is_tracking: bool
+    article_count: int = 0
+    created_at: float
+
+
+class FavoriteAdd(BaseModel):
+    article_id: int
+    db_name: str = ""
+    note: str = ""
+
+
+class FavoriteResponse(BaseModel):
+    id: int
+    folder_id: int
+    article_id: int
+    db_name: str
+    note: str
+    created_at: float
+
+
+class FavoriteArticleResponse(FavoriteResponse):
+    journal_id: int | None = None
+    issue_id: int | None = None
+    title: str | None = None
+    date: str | None = None
+    authors: str | None = None
+    abstract: str | None = None
+    doi: str | None = None
+    platform_id: str | None = None
+    journal_title: str | None = None
+    open_access: int | None = None
+    in_press: int | None = None
+    volume: str | None = None
+    number: str | None = None
+    full_text_file: str | None = None
+
+
+class FavoriteCheckResponse(BaseModel):
+    folder_id: int
+    folder_name: str
+
+
+class FavoriteBatchCheckRequest(BaseModel):
+    article_ids: list[int]
+    db_name: str = ""
+
+
+class FavoriteBatchCheckResponse(BaseModel):
+    article_id: int
+    folders: list[FavoriteCheckResponse]
+
+
+class FavoriteBulkAdd(BaseModel):
+    articles: list[FavoriteAdd]
+
+
+class TrackingSetRequest(BaseModel):
+    folder_id: int
+
+
+class InviteCodeResponse(BaseModel):
+    id: int
+    code: str
+    used: bool
+    created_at: float
+
+
+class NotificationSettingsUpdate(BaseModel):
+    keywords: list[str] = []
+    directions: list[str] = []
+    delivery_method: str = "folder"
+    pushplus_token: str = ""
+    pushplus_template: str = "markdown"
+    pushplus_topic: str = ""
+    pushplus_to: str = ""
+    enabled: bool = True
+
+
+class NotificationSettingsResponse(BaseModel):
+    id: int
+    user_id: int
+    keywords: list[str]
+    directions: list[str]
+    delivery_method: str
+    pushplus_token: str
+    pushplus_template: str
+    pushplus_topic: str
+    pushplus_to: str
+    enabled: bool
+    created_at: float
+    updated_at: float
+
+
+class AdminUserInfo(BaseModel):
+    id: int
+    username: str
+    is_admin: bool
+    created_at: float
+    updated_at: float
+    folder_count: int = 0
+    favorite_count: int = 0
+    notify_enabled: bool = False
+
+
+class AdminSetAdmin(BaseModel):
+    is_admin: bool
+
+
+class AdminResetPassword(BaseModel):
+    new_password: str
+
+
+class AdminInviteCodeInfo(BaseModel):
+    id: int
+    code: str
+    created_by: int | None = None
+    created_by_name: str | None = None
+    used_by: int | None = None
+    used_by_name: str | None = None
+    used_at: float | None = None
+    created_at: float
