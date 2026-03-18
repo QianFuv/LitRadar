@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import argparse
 
-from scripts.notify.models import DEFAULT_STATE_DIR, DEFAULT_SUBSCRIPTIONS_PATH
+from scripts.notify.models import DEFAULT_STATE_DIR
 from scripts.notify.workflow import run_notification
 from scripts.shared.constants import PROJECT_ROOT
 
@@ -27,12 +27,6 @@ def build_parser() -> argparse.ArgumentParser:
         type=str,
         default=None,
         help="Database file under data/index. Defaults to the only sqlite file.",
-    )
-    parser.add_argument(
-        "--subscriptions",
-        type=str,
-        default=str(DEFAULT_SUBSCRIPTIONS_PATH.relative_to(PROJECT_ROOT)),
-        help="Path to subscriptions JSON file.",
     )
     parser.add_argument(
         "--state-dir",

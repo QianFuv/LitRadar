@@ -149,8 +149,13 @@ def load_state(path: Path, db_name: str) -> dict[str, Any]:
     if not isinstance(delivery_dedupe, dict):
         delivery_dedupe = {}
     state["delivery_dedupe"] = delivery_dedupe
-    if state.get("run") is not None and not isinstance(state.get("run"), dict):
+    run = state.get("run")
+    if run is not None and not isinstance(run, dict):
         state["run"] = None
+    elif isinstance(run, dict):
+        delivered_article_ids = run.get("delivered_article_ids")
+        if not isinstance(delivered_article_ids, list):
+            run["delivered_article_ids"] = []
     state.setdefault("updated_at", utc_now_iso())
     return state
 
@@ -182,6 +187,7 @@ def create_run_state(
         "done_issue_keys": [],
         "pending_inpress_keys": pending_inpress_keys,
         "done_inpress_keys": [],
+        "delivered_article_ids": [],
         "errors": [],
         "user_results": [],
     }

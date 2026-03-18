@@ -6,8 +6,6 @@ from dataclasses import dataclass
 
 from scripts.shared.constants import PROJECT_ROOT
 
-DEFAULT_SUBSCRIPTIONS_PATH = PROJECT_ROOT / "data" / "push" / "subscriptions.json"
-
 DEFAULT_STATE_DIR = PROJECT_ROOT / "data" / "push_state"
 
 SILICONFLOW_BASE_URL = "https://api.siliconflow.cn/v1"
@@ -64,7 +62,7 @@ class ArticleCandidate:
 @dataclass(frozen=True)
 class Subscriber:
     """
-    Subscriber configuration for AI selection and PushPlus delivery.
+    Subscriber configuration for AI selection and delivery.
 
     Args:
         subscriber_id: Stable subscriber identifier.
@@ -75,6 +73,8 @@ class Subscriber:
         directions: Direction preferences.
         topic: Optional per-user PushPlus topic override.
         template: Optional per-user PushPlus template override.
+        delivery_method: 'pushplus' or 'folder'.
+        tracking_folder_id: Folder id for folder-based delivery.
     """
 
     subscriber_id: str
@@ -85,12 +85,14 @@ class Subscriber:
     directions: list[str]
     topic: str | None
     template: str | None
+    delivery_method: str = "pushplus"
+    tracking_folder_id: int | None = None
 
 
 @dataclass(frozen=True)
 class NotificationGlobal:
     """
-    Global notification configuration loaded from subscriptions file.
+    Global notification configuration loaded from runtime environment.
 
     Args:
         siliconflow_api_key: SiliconFlow API key used for AI selection.
@@ -110,7 +112,7 @@ class NotificationGlobal:
 @dataclass(frozen=True)
 class NotificationDefaults:
     """
-    Global defaults loaded from subscription configuration.
+    Global defaults loaded from runtime environment.
 
     Args:
         max_candidates: Maximum candidates sent to model.

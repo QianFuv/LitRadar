@@ -23,7 +23,12 @@ from scripts.notify.delivery import (
     resolve_path,
 )
 from scripts.notify.message import build_markdown_content, build_message_title
-from scripts.notify.models import MAX_AI_SELECTION_ROUNDS
+from scripts.notify.models import (
+    MAX_AI_SELECTION_ROUNDS,
+    ArticleCandidate,
+    RankedSelection,
+    Subscriber,
+)
 from scripts.notify.pushplus import PushPlusClient
 from scripts.notify.selection import apply_selection_rules, select_articles_with_retries
 from scripts.notify.state import (
@@ -32,10 +37,43 @@ from scripts.notify.state import (
     save_json_atomic,
     utc_now_iso,
 )
-from scripts.notify.subscriptions import load_subscriptions
+from scripts.notify.subscriptions import (
+    load_notification_config,
+    load_subscribers_from_db,
+)
 from scripts.shared.constants import PROJECT_ROOT
 from scripts.shared.converters import to_int
 from scripts.shared.db_path import resolve_db_path
+
+
+def select_all_candidates(
+    subscriber: Subscriber,
+    candidates: list[ArticleCandidate],
+    delivery_dedupe: dict[str, str],
+) -> list[RankedSelection]:
+    """
+    Return all non-deduplicated candidates in their original order.
+
+    Args:
+        subscriber: Subscriber receiving articles.
+        candidates: Candidate articles for the current database run.
+        delivery_dedupe: Per-subscriber delivery history.
+
+    Returns:
+        Ranked selections with neutral scores.
+    """
+    accepted: list[RankedSelection] = []
+    for candidate in candidates:
+        delivery_key = f"{subscriber.subscriber_id}:{candidate.article_id}"
+        if delivery_key in delivery_dedupe:
+            continue
+        accepted.append(
+            RankedSelection(
+                article_id=candidate.article_id,
+                score=0.0,
+            )
+        )
+    return accepted
 
 
 def run_notification(args: argparse.Namespace) -> int:
@@ -52,7 +90,6 @@ def run_notification(args: argparse.Namespace) -> int:
         db_path = resolve_db_path(args.db)
     except ValueError as exc:
         raise SystemExit(str(exc)) from exc
-    subscriptions_path = resolve_path(args.subscriptions, PROJECT_ROOT)
     state_dir = resolve_path(args.state_dir, PROJECT_ROOT)
     state_file = state_dir / f"{db_path.stem}.json"
     changes_file_value = str(getattr(args, "changes_file", "") or "").strip()
@@ -147,7 +184,27 @@ def run_notification(args: argparse.Namespace) -> int:
             print("No visible article candidates found for pending issues.")
             return 0
 
-        global_config, defaults, subscribers = load_subscriptions(subscriptions_path)
+        run_state["delivered_article_ids"] = [
+            item.article_id for item in all_candidates
+        ]
+        run_state["updated_at"] = utc_now_iso()
+        state["updated_at"] = utc_now_iso()
+        save_json_atomic(state_file, state)
+
+        global_config, defaults = load_notification_config()
+        subscribers = load_subscribers_from_db()
+
+        if not subscribers:
+            run_state["status"] = "skipped"
+            run_state["updated_at"] = utc_now_iso()
+            state["status"] = "skipped"
+            state["updated_at"] = utc_now_iso()
+            save_json_atomic(state_file, state)
+            print(
+                "No valid subscribers found — skipping run"
+                " so articles remain available for the next attempt."
+            )
+            return 0
 
         model = str(args.siliconflow_model or "").strip() or defaults.siliconflow_model
         max_candidates = args.max_candidates or defaults.max_candidates
@@ -155,13 +212,18 @@ def run_notification(args: argparse.Namespace) -> int:
         candidates_for_model = all_candidates[:max_candidates]
         candidates_by_id = {item.article_id: item for item in all_candidates}
 
-        selector = SiliconFlowSelector(
-            api_key=global_config.siliconflow_api_key,
-            model=model,
-            timeout_seconds=args.timeout,
-            retries=args.retries,
-            temperature=defaults.temperature,
+        requires_ai = any(
+            subscriber.keywords or subscriber.directions for subscriber in subscribers
         )
+        selector: SiliconFlowSelector | None = None
+        if requires_ai and global_config.siliconflow_api_key:
+            selector = SiliconFlowSelector(
+                api_key=global_config.siliconflow_api_key,
+                model=model,
+                timeout_seconds=args.timeout,
+                retries=args.retries,
+                temperature=defaults.temperature,
+            )
         push_client = PushPlusClient(timeout_seconds=args.timeout, retries=args.retries)
 
         delivery_dedupe = state.get("delivery_dedupe")
@@ -174,39 +236,54 @@ def run_notification(args: argparse.Namespace) -> int:
         try:
             for subscriber in subscribers:
                 try:
-                    selection_result = select_articles_with_retries(
-                        selector,
-                        subscriber,
-                        defaults,
-                        candidates_for_model,
-                        candidates_by_id,
-                        delivery_dedupe,
-                        MAX_AI_SELECTION_ROUNDS,
-                    )
-                    accepted = apply_selection_rules(
-                        selection_result,
-                        subscriber,
-                        candidates_by_id,
-                        delivery_dedupe,
-                    )
-
-                    selected_candidates = [
-                        candidates_by_id[item.article_id]
-                        for item in accepted
-                        if item.article_id in candidates_by_id
-                    ]
-
-                    final_summary = selection_result.summary
-                    if selected_candidates:
-                        try:
-                            summarized = selector.summarize_selected_articles(
+                    final_summary = ""
+                    if subscriber.keywords or subscriber.directions:
+                        if selector is None:
+                            accepted = select_all_candidates(
                                 subscriber,
-                                selected_candidates,
+                                all_candidates,
+                                delivery_dedupe,
                             )
-                            if summarized:
-                                final_summary = summarized
-                        except Exception:
+                        else:
+                            selection_result = select_articles_with_retries(
+                                selector,
+                                subscriber,
+                                defaults,
+                                candidates_for_model,
+                                candidates_by_id,
+                                delivery_dedupe,
+                                MAX_AI_SELECTION_ROUNDS,
+                            )
+                            accepted = apply_selection_rules(
+                                selection_result,
+                                subscriber,
+                                candidates_by_id,
+                                delivery_dedupe,
+                            )
+
+                            selected_candidates = [
+                                candidates_by_id[item.article_id]
+                                for item in accepted
+                                if item.article_id in candidates_by_id
+                            ]
+
                             final_summary = selection_result.summary
+                            if selected_candidates:
+                                try:
+                                    summarized = selector.summarize_selected_articles(
+                                        subscriber,
+                                        selected_candidates,
+                                    )
+                                    if summarized:
+                                        final_summary = summarized
+                                except Exception:
+                                    final_summary = selection_result.summary
+                    else:
+                        accepted = select_all_candidates(
+                            subscriber,
+                            all_candidates,
+                            delivery_dedupe,
+                        )
 
                     if not accepted:
                         run_state["user_results"].append(
@@ -241,6 +318,31 @@ def run_notification(args: argparse.Namespace) -> int:
                             subscriber.subscriber_id,
                             f"selected={len(accepted)}",
                         )
+                    elif (
+                        subscriber.delivery_method == "folder"
+                        and subscriber.tracking_folder_id is not None
+                    ):
+                        from scripts.api.auth_db import bulk_add_favorites
+
+                        folder_articles = [
+                            {
+                                "article_id": item.article_id,
+                                "db_name": db_path.name,
+                            }
+                            for item in accepted
+                            if item.article_id in candidates_by_id
+                        ]
+                        bulk_add_favorites(
+                            int(subscriber.subscriber_id),
+                            subscriber.tracking_folder_id,
+                            folder_articles,
+                        )
+                        sent_at = utc_now_iso()
+                        for item in accepted:
+                            delivery_key = (
+                                f"{subscriber.subscriber_id}:{item.article_id}"
+                            )
+                            delivery_dedupe[delivery_key] = sent_at
                     else:
                         message_id = push_client.send(
                             token=subscriber.pushplus_token,
@@ -288,7 +390,8 @@ def run_notification(args: argparse.Namespace) -> int:
                     state["updated_at"] = utc_now_iso()
                     save_json_atomic(state_file, state)
         finally:
-            selector.close()
+            if selector is not None:
+                selector.close()
             push_client.close()
 
         if errors:
