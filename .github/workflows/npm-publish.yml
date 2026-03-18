@@ -1,0 +1,69 @@
+name: Publish MCP Package
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "mcp/**"
+
+jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      mcp: ${{ steps.filter.outputs.mcp }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            mcp:
+              - "mcp/**"
+
+  publish:
+    needs: changes
+    if: needs.changes.outputs.mcp == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          registry-url: "https://registry.npmjs.org"
+          cache: "npm"
+          cache-dependency-path: "mcp/package-lock.json"
+
+      - name: Install dependencies
+        working-directory: mcp
+        run: npm ci
+
+      - name: Build package
+        working-directory: mcp
+        run: npm run build
+
+      - name: Check published version
+        id: version
+        working-directory: mcp
+        shell: bash
+        run: |
+          LOCAL_VERSION="$(node -p "require('./package.json').version")"
+          PUBLISHED_VERSION="$(npm view @qianfuv/paper-scanner-mcp version 2>/dev/null || true)"
+          echo "local=${LOCAL_VERSION}" >> "${GITHUB_OUTPUT}"
+          echo "published=${PUBLISHED_VERSION}" >> "${GITHUB_OUTPUT}"
+
+          if [ "${LOCAL_VERSION}" != "${PUBLISHED_VERSION}" ]; then
+            echo "publish=true" >> "${GITHUB_OUTPUT}"
+          else
+            echo "publish=false" >> "${GITHUB_OUTPUT}"
+          fi
+
+      - name: Publish package
+        if: steps.version.outputs.publish == 'true'
+        working-directory: mcp
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish --access public
