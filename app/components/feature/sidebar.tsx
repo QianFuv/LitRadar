@@ -41,31 +41,33 @@ export function Sidebar({ className }: { className?: string }) {
     queryKey: ['meta', 'databases'],
     queryFn: getDatabases,
   });
+  const activeDb =
+    databases && databases.length > 0
+      ? (databases.includes(selectedDb) ? selectedDb : databases[0])
+      : selectedDb;
 
   useEffect(() => {
     if (!databases || databases.length === 0) {
       return;
     }
-    if (databases.includes(selectedDb)) {
+    if (activeDb === getCurrentDatabase()) {
       return;
     }
-    const fallback = databases[0];
-    setDatabase(fallback);
-    setSelectedDb(fallback);
-  }, [databases, selectedDb]);
+    setDatabase(activeDb);
+  }, [activeDb, databases]);
 
   const { data: areaOptions, isLoading: loadingAreas } = useQuery({
-    queryKey: ['meta', 'areas', selectedDb],
+    queryKey: ['meta', 'areas', activeDb],
     queryFn: getAreas,
   });
 
   const { data: journalOptions, isLoading: loadingJournals } = useQuery({
-    queryKey: ['meta', 'journals', selectedDb],
+    queryKey: ['meta', 'journals', activeDb],
     queryFn: getJournalOptions,
   });
 
   const { data: yearData, isLoading: loadingYears } = useQuery({
-      queryKey: ['meta', 'years', selectedDb],
+      queryKey: ['meta', 'years', activeDb],
       queryFn: getYears
   });
 
@@ -86,18 +88,22 @@ export function Sidebar({ className }: { className?: string }) {
   const minYearAvailable = yearData && yearData.length > 0 ? Math.min(...yearData.map(y => y.year)) : 1900;
   const maxYearAvailable = yearData && yearData.length > 0 ? Math.max(...yearData.map(y => y.year)) : new Date().getFullYear();
 
-  const [localYearRange, setLocalYearRange] = useState([minYearAvailable, maxYearAvailable]);
-
-  useEffect(() => {
-     if (yearData) {
-         const newMin = yearMin ?? minYearAvailable;
-         const newMax = yearMax ?? maxYearAvailable;
-         setLocalYearRange(prev => {
-             if (prev[0] === newMin && prev[1] === newMax) return prev;
-             return [newMin, newMax];
-         });
-     }
-  }, [yearMin, yearMax, minYearAvailable, maxYearAvailable, yearData]);
+  const yearRangeKey = `${minYearAvailable}-${maxYearAvailable}-${yearMin ?? 'null'}-${yearMax ?? 'null'}`;
+  const defaultYearRange: [number, number] = [
+    yearMin ?? minYearAvailable,
+    yearMax ?? maxYearAvailable,
+  ];
+  const [localYearRangeState, setLocalYearRangeState] = useState<{
+    key: string;
+    value: [number, number];
+  }>({
+    key: yearRangeKey,
+    value: defaultYearRange,
+  });
+  const localYearRange =
+    localYearRangeState.key === yearRangeKey
+      ? localYearRangeState.value
+      : defaultYearRange;
 
 
   const handleAreaChange = (value: string, checked: boolean) => {
@@ -119,7 +125,10 @@ export function Sidebar({ className }: { className?: string }) {
   };
 
   const handleYearChange = (value: number[]) => {
-      setLocalYearRange(value);
+      setLocalYearRangeState({
+        key: yearRangeKey,
+        value: [value[0], value[1]],
+      });
   };
 
   const handleYearCommit = (value: number[]) => {
@@ -162,10 +171,10 @@ export function Sidebar({ className }: { className?: string }) {
 
   const journalSummary =
     selectedJournalLabels.length === 0
-      ? 'All journals'
+      ? '全部期刊'
       : selectedJournalLabels.length === 1
         ? selectedJournalLabels[0]
-        : `${selectedJournalLabels.length} journals`;
+        : `已选 ${selectedJournalLabels.length} 本期刊`;
 
   return (
     <aside className={cn("w-[19.2rem] flex flex-col h-full border-r bg-background", className)}>
@@ -178,13 +187,13 @@ export function Sidebar({ className }: { className?: string }) {
                       variant="ghost"
                       size="icon"
                       onClick={handleClearFilters}
-                      aria-label="Clear all filters"
-                      title="Clear all filters"
+                      aria-label="清空全部筛选"
+                      title="清空全部筛选"
                       className="h-20 w-20"
                     >
                       <img
                         src="https://cdn.sa.net/2026/01/29/6uRXpHqQfC89kF7.png"
-                        alt="Home"
+                        alt="首页"
                         className="h-16 w-16 object-contain"
                       />
                     </Button>
@@ -192,15 +201,15 @@ export function Sidebar({ className }: { className?: string }) {
                 <div className="space-y-2 self-center">
                     <div className="flex items-center gap-2 text-sm font-semibold text-foreground w-full">
                         <Database className="h-4 w-4" />
-                        <span>Database</span>
+                        <span>数据库</span>
                     </div>
                     <div className="w-full">
                         {loadingDatabases ? (
                             <Skeleton className="h-9 w-full" />
                         ) : (
-                            <Select value={selectedDb} onValueChange={handleDatabaseChange}>
+                            <Select value={activeDb} onValueChange={handleDatabaseChange}>
                                 <SelectTrigger size="sm" className="w-full">
-                                    <SelectValue placeholder="Select database" />
+                                    <SelectValue placeholder="选择数据库" />
                                 </SelectTrigger>
                                 <SelectContent>
                                     {databases?.map((dbName) => (
@@ -218,20 +227,20 @@ export function Sidebar({ className }: { className?: string }) {
 
         <div className="space-y-4">
           <div className="flex items-center justify-between">
-            <h3 className="font-semibold text-sm text-foreground">Journal Metrics</h3>
+            <h3 className="font-semibold text-sm text-foreground">期刊筛选</h3>
             <Button
               variant="ghost"
               size="sm"
               onClick={handleClearFilters}
               className="h-6 px-2 text-xs"
-              title="Clear all filters"
+              title="清空全部筛选"
             >
-              Clear
+              清空
             </Button>
           </div>
 
           <div className="space-y-3">
-              <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Areas</h4>
+              <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider">领域</h4>
               {loadingAreas ? (
                   <div className="space-y-2">
                       <Skeleton className="h-4 w-full" />
@@ -255,7 +264,7 @@ export function Sidebar({ className }: { className?: string }) {
           </div>
 
           <div className="space-y-3">
-              <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Journals</h4>
+              <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider">期刊</h4>
               {loadingJournals ? (
                   <Skeleton className="h-8 w-full" />
               ) : (
@@ -282,7 +291,7 @@ export function Sidebar({ className }: { className?: string }) {
                           <Input
                               value={journalSearch}
                               onChange={(event) => setJournalSearch(event.target.value)}
-                              placeholder="Search journals"
+                              placeholder="搜索期刊"
                               className="h-8"
                           />
                           <ScrollArea className="mt-2 h-60 touch-pan-y">
@@ -310,7 +319,7 @@ export function Sidebar({ className }: { className?: string }) {
                                   })}
                                   {filteredJournalOptions.length === 0 && (
                                       <div className="text-xs text-muted-foreground">
-                                          No journals found.
+                                          未找到期刊。
                                       </div>
                                   )}
                               </div>
@@ -323,7 +332,7 @@ export function Sidebar({ className }: { className?: string }) {
         </div>
 
         <div className="space-y-4">
-          <h3 className="font-semibold text-sm text-foreground">Publication Year</h3>
+          <h3 className="font-semibold text-sm text-foreground">发表年份</h3>
           {loadingYears ? (
               <Skeleton className="h-8 w-full" />
           ) : (
@@ -346,7 +355,7 @@ export function Sidebar({ className }: { className?: string }) {
         </div>
       </div>
       
-      <div className="flex-shrink-0 p-4 border-t bg-background">
+      <div className="flex-shrink-0 p-4 border-t bg-background space-y-1">
           <Button
             variant="ghost"
             size="sm"
@@ -355,7 +364,7 @@ export function Sidebar({ className }: { className?: string }) {
           >
             <Sun className="h-4 w-4 rotate-0 scale-100 transition-all dark:-rotate-90 dark:scale-0" />
             <Moon className="absolute h-4 w-4 rotate-90 scale-0 transition-all dark:rotate-0 dark:scale-100" />
-            <span>Toggle Theme</span>
+            <span>切换主题</span>
           </Button>
       </div>
     </aside>

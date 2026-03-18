@@ -52,7 +52,7 @@ import {
 import { Skeleton } from '@/components/ui/skeleton';
 import { cn } from '@/lib/utils';
 
-const DATE_TIME_FORMATTER = new Intl.DateTimeFormat('en-US', {
+const DATE_TIME_FORMATTER = new Intl.DateTimeFormat('zh-CN', {
   year: 'numeric',
   month: '2-digit',
   day: '2-digit',
@@ -63,7 +63,7 @@ const DATE_TIME_FORMATTER = new Intl.DateTimeFormat('en-US', {
 
 function formatDate(value?: string): string {
   if (!value) {
-    return 'Unknown date';
+    return '未知日期';
   }
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) {
@@ -109,11 +109,11 @@ function getJournalLabel(journal: WeeklyJournalUpdate): string {
   if (journal.journal_title && journal.journal_title.trim()) {
     return journal.journal_title;
   }
-  return `Journal ${journal.journal_id}`;
+  return `期刊 ${journal.journal_id}`;
 }
 
 function buildArticleInfoText(article: WeeklyArticle): string {
-  return `${article.title || `Article ${article.article_id}`} · ${formatDate(article.date)}`;
+  return `${article.title || `文章 ${article.article_id}`} · ${formatDate(article.date)}`;
 }
 
 type JournalPanelProps = {
@@ -140,12 +140,12 @@ function JournalPanel({
   return (
     <Card className={cn('min-h-0 overflow-hidden', className)}>
       <CardHeader className="space-y-3 pb-3">
-        <CardTitle className="text-base">Journals</CardTitle>
+        <CardTitle className="text-base">期刊</CardTitle>
         <div className="space-y-1.5">
-          <span className="text-xs font-medium text-muted-foreground">Database</span>
+          <span className="text-xs font-medium text-muted-foreground">数据库</span>
           <Select value={effectiveSelectedDb} onValueChange={onDatabaseChange}>
             <SelectTrigger className="w-full">
-              <SelectValue placeholder="Select database" />
+              <SelectValue placeholder="选择数据库" />
             </SelectTrigger>
             <SelectContent>
               {availableDatabases.map((dbName) => (
@@ -160,7 +160,7 @@ function JournalPanel({
       <CardContent className={cn('space-y-2 overflow-y-auto', contentClassName)}>
         {journals.length === 0 && (
           <div className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">
-            No new journals found in this window.
+            当前时间窗口内没有新增期刊。
           </div>
         )}
 
@@ -353,7 +353,7 @@ export default function WeeklyUpdatesPage() {
                     variant="outline"
                     size="icon"
                     className="shrink-0 lg:hidden"
-                    aria-label="Open journal filters"
+                    aria-label="打开期刊筛选"
                   >
                     <Menu className="h-5 w-5" />
                   </Button>
@@ -363,9 +363,9 @@ export default function WeeklyUpdatesPage() {
                   showCloseButton
                 >
                   <DialogHeader className="sr-only">
-                    <DialogTitle>Journal Filters</DialogTitle>
+                    <DialogTitle>期刊筛选</DialogTitle>
                     <DialogDescription>
-                      Choose database and journal to view weekly updates.
+                      选择数据库和期刊以查看每周更新。
                     </DialogDescription>
                   </DialogHeader>
                   <JournalPanel
@@ -381,10 +381,10 @@ export default function WeeklyUpdatesPage() {
                 </DialogContent>
               </Dialog>
               <CalendarDays className="h-4 w-4" />
-              <span>Weekly New Articles</span>
+              <span>每周新文章</span>
             </div>
             <h1 className="text-xl font-semibold tracking-tight">
-              Journal Weekly Updates
+              期刊每周更新
               {weeklyData
                 ? ` (${formatDate(weeklyData.window_start)} - ${formatDate(weeklyData.window_end)})`
                 : ''}
@@ -393,7 +393,7 @@ export default function WeeklyUpdatesPage() {
           <Button asChild variant="outline" size="sm">
             <Link href="/">
               <ArrowLeft className="mr-2 h-4 w-4" />
-              Back
+              返回
             </Link>
           </Button>
         </div>
@@ -408,11 +408,11 @@ export default function WeeklyUpdatesPage() {
         {weeklyError && (
           <Card>
             <CardHeader>
-              <CardTitle>Failed to load weekly updates</CardTitle>
+              <CardTitle>加载每周更新失败</CardTitle>
               <CardDescription>
                 {weeklyErrorData instanceof Error
                   ? weeklyErrorData.message
-                  : 'Unknown error'}
+                  : '未知错误'}
               </CardDescription>
             </CardHeader>
           </Card>
@@ -424,11 +424,11 @@ export default function WeeklyUpdatesPage() {
               <div className="flex flex-wrap gap-2">
                 <Badge variant="secondary" className="gap-1">
                   <Database className="h-3.5 w-3.5" />
-                  {totalDatabases} databases
+                  {totalDatabases} 个数据库
                 </Badge>
                 <Badge variant="secondary" className="gap-1">
                   <FileText className="h-3.5 w-3.5" />
-                  {totalArticles} new articles
+                  {totalArticles} 篇新文章
                 </Badge>
               </div>
               <SearchBar className="w-full max-w-none" />
@@ -449,14 +449,14 @@ export default function WeeklyUpdatesPage() {
               <Card className="min-h-0 overflow-hidden">
                 <CardHeader className="pb-3">
                   <CardTitle className="text-base">
-                    {selectedJournal ? getJournalLabel(selectedJournal) : 'Articles'}
+                    {selectedJournal ? getJournalLabel(selectedJournal) : '文章'}
                   </CardTitle>
                   <CardDescription>
                     {selectedJournal
                       ? searchQuery
-                        ? `${visibleArticles.length} matching weekly articles`
-                        : `${selectedJournal.new_article_count} new articles this week`
-                      : 'Select a journal on the left'}
+                        ? `匹配到 ${visibleArticles.length} 篇本周文章`
+                        : `本周新增 ${selectedJournal.new_article_count} 篇文章`
+                      : '请选择左侧期刊'}
                   </CardDescription>
                 </CardHeader>
                 <CardContent
@@ -465,7 +465,7 @@ export default function WeeklyUpdatesPage() {
                 >
                   {!selectedJournal && (
                     <div className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">
-                      Choose a journal to view newly indexed papers.
+                      请选择一个期刊以查看新收录文章。
                     </div>
                   )}
 
@@ -480,15 +480,15 @@ export default function WeeklyUpdatesPage() {
                     <div className="rounded-md border border-dashed p-4 text-sm text-destructive">
                       {searchErrorData instanceof Error
                         ? searchErrorData.message
-                        : 'FTS search failed'}
+                        : '全文检索失败'}
                     </div>
                   )}
 
                   {selectedJournal && !loadingSearch && visibleArticles.length === 0 && (
                     <div className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">
                       {searchQuery
-                        ? 'No weekly articles matched your FTS query in this journal.'
-                        : 'No articles found for this journal.'}
+                        ? '该期刊中没有匹配全文检索条件的本周文章。'
+                        : '该期刊暂无文章。'}
                     </div>
                   )}
 
@@ -505,15 +505,15 @@ export default function WeeklyUpdatesPage() {
                             </p>
                             <div className="flex gap-1 shrink-0">
                               {article.open_access === 1 && (
-                                <Badge variant="secondary" className="text-xs">OA</Badge>
+                                <Badge variant="secondary" className="text-xs">开放获取</Badge>
                               )}
                               {article.in_press === 1 && (
-                                <Badge variant="outline" className="text-xs">In Press</Badge>
+                                <Badge variant="outline" className="text-xs">预发表</Badge>
                               )}
                             </div>
                           </div>
                           <p className="mt-1 text-xs text-muted-foreground">
-                            DOI: {article.doi || 'N/A'}
+                            DOI: {article.doi || '暂无'}
                           </p>
                         </button>
                       </DialogTrigger>
@@ -560,7 +560,7 @@ function ArticleDetailDialog({
         <div className="py-4 text-sm text-destructive">
           {error instanceof Error
             ? error.message
-            : 'Failed to load article detail'}
+            : '加载文章详情失败'}
         </div>
       )}
 
@@ -568,13 +568,13 @@ function ArticleDetailDialog({
         <>
           <DialogHeader>
             <DialogTitle className="text-xl leading-snug">
-              {data.title || 'Untitled'}
+              {data.title || '未命名文章'}
             </DialogTitle>
             <DialogDescription>
-              {data.journal_title || `Journal ${data.journal_id}`}
+              {data.journal_title || `期刊 ${data.journal_id}`}
               {data.date ? ` · ${data.date}` : ''}
-              {data.volume ? ` · Vol. ${data.volume}` : ''}
-              {data.number ? ` · Issue ${data.number}` : ''}
+              {data.volume ? ` · 第 ${data.volume} 卷` : ''}
+              {data.number ? ` · 第 ${data.number} 期` : ''}
             </DialogDescription>
           </DialogHeader>
 
@@ -582,7 +582,7 @@ function ArticleDetailDialog({
             {data.authors && (
               <div>
                 <h3 className="mb-2 text-sm font-semibold text-foreground/80">
-                  Authors
+                  作者
                 </h3>
                 <p className="text-sm text-muted-foreground">{data.authors}</p>
               </div>
@@ -590,16 +590,16 @@ function ArticleDetailDialog({
 
             <div>
               <h3 className="mb-2 text-sm font-semibold text-foreground/80">
-                Abstract
+                摘要
               </h3>
               <p className="text-justify text-sm leading-relaxed text-muted-foreground">
-                {data.abstract || 'No abstract available.'}
+                {data.abstract || '暂无摘要。'}
               </p>
             </div>
 
             <div>
               <h3 className="mb-2 text-sm font-semibold text-foreground/80">DOI</h3>
-              <p className="text-sm text-muted-foreground">{data.doi || 'N/A'}</p>
+              <p className="text-sm text-muted-foreground">{data.doi || '暂无'}</p>
             </div>
 
             {(data.doi || data.platform_id) && (
@@ -614,7 +614,8 @@ function ArticleDetailDialog({
                   rel="noreferrer"
                 >
                   <Button variant="outline">
-                    Read Full Text <ExternalLink className="ml-2 h-4 w-4" />
+                    <ExternalLink className="mr-2 h-4 w-4" />
+                    查看全文
                   </Button>
                 </a>
               </div>

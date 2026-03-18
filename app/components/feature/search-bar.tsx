@@ -84,7 +84,7 @@ export function SearchBar({ className }: { className?: string }) {
           <PopoverTrigger asChild>
             <Input
               type="search"
-              placeholder="Search articles..."
+              placeholder="搜索文章..."
               className="pl-9 pr-9"
               value={inputValue}
               onChange={(e) => setInputValue(e.target.value)}
@@ -106,7 +106,7 @@ export function SearchBar({ className }: { className?: string }) {
                 <div className="flex items-center justify-between px-2 py-1 mb-1">
                   <span className="text-xs font-medium text-muted-foreground flex items-center gap-1">
                     <Clock className="h-3 w-3" />
-                    Recent Searches
+                    最近搜索
                   </span>
                   <Button
                     variant="ghost"
@@ -114,7 +114,7 @@ export function SearchBar({ className }: { className?: string }) {
                     className="h-6 text-xs"
                     onClick={handleClearHistory}
                   >
-                    Clear
+                    清空
                   </Button>
                 </div>
                 <div className="space-y-1">
@@ -147,14 +147,14 @@ export function SearchBar({ className }: { className?: string }) {
         )}
       </div>
 
-      <Button onClick={() => handleSearch()}>Search</Button>
+      <Button onClick={() => handleSearch()}>搜索</Button>
       <Popover>
         <PopoverTrigger asChild>
           <Button
             variant="outline"
             size="icon"
-            aria-label="Search syntax help"
-            title="Search syntax help"
+            aria-label="搜索语法帮助"
+            title="搜索语法帮助"
           >
             <HelpCircle className="h-4 w-4" />
           </Button>
@@ -168,18 +168,18 @@ export function SearchBar({ className }: { className?: string }) {
                 <li><code>term1 AND term2</code> 同时包含两个词</li>
                 <li><code>term1 OR term2</code> 任意一个词</li>
                 <li><code>term1 NOT term2</code> 排除 term2</li>
-                <li><code>"exact phrase"</code> 精确短语</li>
+                <li><code>&quot;exact phrase&quot;</code> 精确短语</li>
                 <li><code>bio*</code> 前缀匹配</li>
               </ul>
             </div>
             <div className="space-y-2">
               <div className="text-foreground/80 font-medium">高级</div>
               <ul className="space-y-1 text-muted-foreground">
-                <li><code>NEAR("gene expression" therapy, 5)</code> 距离 5 词以内</li>
+                <li><code>NEAR(&quot;gene expression&quot; therapy, 5)</code> 距离 5 词以内</li>
                 <li><code>title:diabetes</code> 指定字段</li>
                 <li><code>{'{title abstract}:imaging'}</code> 多字段</li>
-                <li><code>authors:"Smith"</code> 作者</li>
-                <li><code>journal_title:"Nature"</code> 期刊</li>
+                <li><code>authors:&quot;Smith&quot;</code> 作者</li>
+                <li><code>journal_title:&quot;Nature&quot;</code> 期刊</li>
                 <li><code>^introduction</code> 列开头匹配</li>
               </ul>
             </div>

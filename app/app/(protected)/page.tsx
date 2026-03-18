@@ -24,7 +24,7 @@ export default function Home() {
                   variant="outline"
                   size="icon"
                   className="md:hidden shrink-0"
-                  aria-label="Open filters"
+                  aria-label="打开筛选器"
                 >
                   <Menu className="h-5 w-5" />
                 </Button>
@@ -33,7 +33,7 @@ export default function Home() {
                 className="md:hidden h-full w-[85vw] max-w-xs p-0 gap-0 rounded-none left-0 top-0 translate-x-0 translate-y-0"
                 showCloseButton
               >
-                <DialogTitle className="sr-only">Filters</DialogTitle>
+                <DialogTitle className="sr-only">筛选器</DialogTitle>
                 <Sidebar className="w-full h-full" />
               </DialogContent>
             </Dialog>
