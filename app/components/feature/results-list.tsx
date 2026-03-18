@@ -1,8 +1,15 @@
 'use client';
 
-import { useInfiniteQuery, type InfiniteData } from '@tanstack/react-query';
+import { useInfiniteQuery, useQuery, type InfiniteData } from '@tanstack/react-query';
 import { useQueryState, parseAsString, parseAsArrayOf, parseAsInteger } from 'nuqs';
-import { getArticles, getFullTextUrl, type Article, type ArticlePage } from '@/lib/api';
+import {
+  checkFavoritesBatch,
+  getArticles,
+  getCurrentDatabase,
+  getFullTextUrl,
+  type Article,
+  type ArticlePage,
+} from '@/lib/api';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -12,12 +19,16 @@ import { ExternalLink, Copy, Check } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { useInView } from 'react-intersection-observer';
+import { FavoriteButton } from '@/components/feature/favorite-button';
+import { useAuth } from '@/lib/auth-context';
 
 export function ResultsList() {
-  const { ref: prefetchRef, inView: prefetchInView } = useInView({ threshold: 0 });
-  const { ref: loadMoreRef, inView: loadMoreInView } = useInView({ threshold: 0 });
+  const { user, token } = useAuth();
   const [copyStatus, setCopyStatus] = useState<string | null>(null);
-  const [visiblePages, setVisiblePages] = useState(1);
+  const [visiblePageState, setVisiblePageState] = useState({
+    searchKey: '',
+    count: 1,
+  });
 
   const [q] = useQueryState('q', parseAsString);
   const [areas] = useQueryState('area', parseAsArrayOf(parseAsString));
@@ -30,14 +41,14 @@ export function ResultsList() {
 
   const handleCopyArticleInfo = async (article: Article) => {
       const info = [
-          `Title: ${article.title || 'N/A'}`,
-          `Authors: ${article.authors || 'N/A'}`,
-          `Journal: ${article.journal_title || 'N/A'}`,
-          `Date: ${article.date || 'N/A'}`,
-          article.volume && `Volume: ${article.volume}`,
-          article.number && `Issue: ${article.number}`,
+          `标题：${article.title || '暂无'}`,
+          `作者：${article.authors || '暂无'}`,
+          `期刊：${article.journal_title || '暂无'}`,
+          `日期：${article.date || '暂无'}`,
+          article.volume && `卷号：${article.volume}`,
+          article.number && `期号：${article.number}`,
           article.doi && `DOI: ${article.doi}`,
-          article.doi && `URL: https://doi.org/${article.doi}`
+          article.doi && `链接：https://doi.org/${article.doi}`
       ].filter(Boolean).join('\n');
 
       await navigator.clipboard.writeText(info);
@@ -88,8 +99,24 @@ export function ResultsList() {
     gcTime: 10 * 60 * 1000,
   });
 
+  const pages = data?.pages ?? [];
+  const loadedPages = pages.length;
+  const visiblePages =
+    visiblePageState.searchKey === searchKey ? visiblePageState.count : 1;
+  const visiblePageCount = Math.min(visiblePages, loadedPages);
+  const visibleArticles = pages.slice(0, visiblePageCount).flatMap((page) => page.items);
+  const visibleArticleIds = visibleArticles.map((article) => article.article_id);
+  const visibleArticleIdsKey = visibleArticleIds.join(',');
+  const currentDb = getCurrentDatabase();
+
+  const { data: favoriteChecksByArticle = {}, isPending: isFavoriteStatePending } = useQuery({
+    queryKey: ['fav-check-batch', user?.id, currentDb, visibleArticleIdsKey],
+    queryFn: () => checkFavoritesBatch(token!, visibleArticleIds, currentDb),
+    enabled: !!token && !!user && visibleArticleIds.length > 0,
+    staleTime: 5 * 60 * 1000,
+  });
+
   useEffect(() => {
-    setVisiblePages(1);
     const scrollContainer = document.getElementById('results-scroll-container');
     if (scrollContainer) {
       scrollContainer.scrollTo({ top: 0 });
@@ -98,33 +125,49 @@ export function ResultsList() {
     window.scrollTo({ top: 0 });
   }, [searchKey]);
 
-  const pages = data?.pages ?? [];
-  const loadedPages = pages.length;
-  const visiblePageCount = Math.min(visiblePages, loadedPages);
-  const visibleArticles = pages.slice(0, visiblePageCount).flatMap((page) => page.items);
-
-  useEffect(() => {
-    if (!prefetchInView || !hasNextPage || isFetchingNextPage) {
-      return;
-    }
-    if (loadedPages > visiblePages) {
-      return;
-    }
-    fetchNextPage();
-  }, [prefetchInView, hasNextPage, isFetchingNextPage, fetchNextPage, loadedPages, visiblePages]);
-
-  useEffect(() => {
-    if (!loadMoreInView) {
-      return;
-    }
-    if (visiblePages < loadedPages) {
-      setVisiblePages((current) => Math.min(current + 1, loadedPages));
-      return;
-    }
-    if (hasNextPage && !isFetchingNextPage) {
+  const handlePrefetchChange = useCallback(
+    (inView: boolean) => {
+      if (!inView || !hasNextPage || isFetchingNextPage) {
+        return;
+      }
+      if (loadedPages > visiblePages) {
+        return;
+      }
       fetchNextPage();
-    }
-  }, [loadMoreInView, visiblePages, loadedPages, hasNextPage, isFetchingNextPage, fetchNextPage]);
+    },
+    [fetchNextPage, hasNextPage, isFetchingNextPage, loadedPages, visiblePages],
+  );
+
+  const handleLoadMoreChange = useCallback(
+    (inView: boolean) => {
+      if (!inView) {
+        return;
+      }
+      if (visiblePages < loadedPages) {
+        setVisiblePageState((current) => {
+          const currentCount = current.searchKey === searchKey ? current.count : 1;
+          return {
+            searchKey,
+            count: Math.min(currentCount + 1, loadedPages),
+          };
+        });
+        return;
+      }
+      if (hasNextPage && !isFetchingNextPage) {
+        fetchNextPage();
+      }
+    },
+    [fetchNextPage, hasNextPage, isFetchingNextPage, loadedPages, searchKey, visiblePages],
+  );
+
+  const { ref: prefetchRef } = useInView({
+    threshold: 0,
+    onChange: handlePrefetchChange,
+  });
+  const { ref: loadMoreRef } = useInView({
+    threshold: 0,
+    onChange: handleLoadMoreChange,
+  });
 
   const highlightTerms = useMemo(() => {
     if (!q) return [];
@@ -205,7 +248,7 @@ export function ResultsList() {
   if (isError) {
       return (
           <div className="p-4 text-red-500 bg-red-50 dark:bg-red-900/20 rounded-md">
-              Error: {error instanceof Error ? error.message : 'Unknown error'}
+              错误：{error instanceof Error ? error.message : '未知错误'}
           </div>
       );
   }
@@ -230,7 +273,7 @@ export function ResultsList() {
   }
 
   if (visibleArticles.length === 0) {
-      return <div className="text-center p-8 text-slate-500">No articles found.</div>;
+      return <div className="text-center p-8 text-slate-500">未找到文章。</div>;
   }
 
   const total = data?.pages[0]?.page.total ?? null;
@@ -239,7 +282,7 @@ export function ResultsList() {
     <div className="space-y-4">
       {includeTotal && typeof total === 'number' && (
         <div className="text-sm text-slate-500">
-          Found {total} results
+          共找到 {total} 条结果
         </div>
       )}
       {visibleArticles.map((article, index) => (
@@ -257,8 +300,8 @@ export function ResultsList() {
                                 {highlightText(article.title)}
                             </CardTitle>
                             <div className="flex gap-2 shrink-0">
-                                {article.open_access === 1 && <Badge variant="secondary" className="text-xs">OA</Badge>}
-                                {article.in_press === 1 && <Badge variant="outline" className="text-xs">In Press</Badge>}
+                                {article.open_access === 1 && <Badge variant="secondary" className="text-xs">开放获取</Badge>}
+                                {article.in_press === 1 && <Badge variant="outline" className="text-xs">预发表</Badge>}
                             </div>
                         </div>
                         <CardDescription>
@@ -268,8 +311,8 @@ export function ResultsList() {
                                 {' '}
                                 •{' '}
                                 {[
-                                  article.volume && `Vol. ${article.volume}`,
-                                  article.number && `Issue ${article.number}`,
+                                  article.volume && `第 ${article.volume} 卷`,
+                                  article.number && `第 ${article.number} 期`,
                                 ]
                                   .filter(Boolean)
                                   .join(', ')}
@@ -306,8 +349,8 @@ export function ResultsList() {
                     <DialogDescription>
                         {article.journal_title}
                         {(article.volume || article.number) && ` • ${[
-                            article.volume && `Vol. ${article.volume}`,
-                            article.number && `Issue ${article.number}`
+                            article.volume && `第 ${article.volume} 卷`,
+                            article.number && `第 ${article.number} 期`
                         ].filter(Boolean).join(', ')}`}
                         {article.date && ` • ${article.date}`}
                     </DialogDescription>
@@ -315,7 +358,7 @@ export function ResultsList() {
                 <div className="space-y-6 py-4">
                     {article.authors && (
                         <div>
-                            <h3 className="font-semibold mb-2 text-sm text-foreground/80">Authors</h3>
+                            <h3 className="font-semibold mb-2 text-sm text-foreground/80">作者</h3>
                             <p className="text-sm text-muted-foreground">
                                 {article.authors}
                             </p>
@@ -323,9 +366,9 @@ export function ResultsList() {
                     )}
                     
                     <div>
-                        <h3 className="font-semibold mb-2 text-sm text-foreground/80">Abstract</h3>
+                        <h3 className="font-semibold mb-2 text-sm text-foreground/80">摘要</h3>
                         <p className="text-sm text-muted-foreground leading-relaxed text-justify">
-                            {article.abstract || "No abstract available."}
+                            {article.abstract || "暂无摘要。"}
                         </p>
                     </div>
 
@@ -339,12 +382,12 @@ export function ResultsList() {
                                 {copyStatus === `${article.article_id}-info` ? (
                                     <>
                                         <Check className="mr-2 h-4 w-4 text-green-600" />
-                                        Copied
+                                        已复制
                                     </>
                                 ) : (
                                     <>
                                         <Copy className="mr-2 h-4 w-4" />
-                                        Copy Info
+                                        复制信息
                                     </>
                                 )}
                             </Button>
@@ -359,9 +402,24 @@ export function ResultsList() {
                                     rel="noreferrer"
                                 >
                                     <Button variant="outline" size="sm">
-                                        Read Full Text <ExternalLink className="ml-2 h-4 w-4" />
+                                        <ExternalLink className="mr-2 h-4 w-4" />
+                                        查看全文
                                     </Button>
                                 </a>
+                            )}
+                            {user && isFavoriteStatePending ? (
+                              <Button variant="outline" size="sm" disabled>
+                                加载收藏...
+                              </Button>
+                            ) : (
+                              <FavoriteButton
+                                articleId={article.article_id}
+                                initialFolderIds={
+                                  favoriteChecksByArticle[article.article_id]?.map(
+                                    (item) => item.folder_id,
+                                  ) ?? []
+                                }
+                              />
                             )}
                         </div>
                     </div>
