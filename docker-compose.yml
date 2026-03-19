@@ -14,8 +14,6 @@ services:
     image: ghcr.io/qianfuv/paper-scanner-app:latest
     ports:
       - "3000:3000"
-    volumes:
-      - ./config:/app/config:ro
     environment:
       - HOSTNAME=0.0.0.0
     depends_on:

@@ -241,7 +241,7 @@ uv run push --db utd24.sqlite --dry-run
 
 前端在 Docker 构建阶段使用 `INTERNAL_API_URL` 将 `/api/*` 重写到后端；根 Dockerfile 默认为 `http://api:8000`。根 Compose 文件里没有显式设置这个变量，是因为 `app/Dockerfile` 已提供该默认值。
 
-当前主前端登录流程使用后端 `/api/auth/*`。仓库中的 `config/auth.yaml`、`app/lib/auth.ts`、`app/lib/auth-config.ts` 属于遗留前端令牌认证工具，默认页面流程不依赖它们；根 Compose 保留 `./config:/app/config` 挂载主要是兼容历史环境。
+当前主前端登录流程只使用后端 `/api/auth/*`。仓库已移除旧的前端令牌认证工具与 `config` 挂载；根 Compose 现在只依赖 `data` 卷。
 
 ## 详细文档
 

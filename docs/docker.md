@@ -34,7 +34,6 @@
 - Dockerfile：`app/Dockerfile`
 - 镜像名：`ghcr.io/qianfuv/paper-scanner-app:latest`
 - 端口：`3000:3000`
-- 卷挂载：`./config:/app/config:ro`
 - 环境变量：`HOSTNAME=0.0.0.0`
 - 依赖：`depends_on: [api]`
 
@@ -133,15 +132,7 @@ docker compose run --rm api uv run index --file utd24.csv
 - `data/push_state/*.changes.json`：变更清单
 - `data/folder_push_state/*.json`：追踪文件夹推送状态
 
-### `config/`
-
-`app` 服务会把宿主机 `./config` 挂载到 `/app/config`。但要注意：
-
-- 当前主前端登录流程走的是后端 `/api/auth/*`
-- `config/auth.yaml` 对默认页面流程 **不是必需项**
-- 仓库中与 `auth.yaml` 相关的 `app/lib/auth.ts`、`app/lib/auth-config.ts` 属于遗留兼容模块
-
-如果你的环境中仍使用旧的前端令牌认证方案，可以保留 `config/auth.yaml`；否则该目录可以为空。
+根 Compose 当前不再给 `app` 服务挂载额外配置目录。前端认证完全依赖后端 `/api/auth/*` 与运行时环境变量。
 
 ## 常用环境变量
 
@@ -175,7 +166,6 @@ docker compose run --rm api uv run index --file utd24.csv
 `test/docker-compose.yml` 与根 Compose 不完全相同：
 
 - 测试 Compose 会显式给前端设置 `INTERNAL_API_URL=http://api:8000`
-- 还保留了 `config/auth.yaml` 示例文件
 
 这些测试资产可作为历史兼容参考，但生产与常规本地部署应以根目录 `docker-compose.yml` 和当前代码行为为准。
 

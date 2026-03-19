@@ -44,13 +44,11 @@ pnpm dev
 | `NEXT_PUBLIC_API_URL` | 空 | 浏览器侧 API 根地址；为空时回退到当前站点源 |
 | `INTERNAL_API_URL` | `http://localhost:8000` | Docker 构建时用于 rewrite `/api/*` 的后端地址 |
 | `HOSTNAME` | 由运行环境决定 | Next.js standalone 运行时监听地址 |
-| `AUTH_CONFIG_PATH` | `config/auth.yaml` | 遗留前端认证配置路径，当前主登录流程默认不依赖 |
 
 说明：
 
 - 本地开发时通常只需要 `NEXT_PUBLIC_API_URL`
 - Docker 构建时更关键的是 `INTERNAL_API_URL`
-- `AUTH_CONFIG_PATH` 对当前 `/login` 页面的后端账号登录流程不是必需项
 
 ## 页面结构
 
@@ -81,8 +79,7 @@ app/
 │   ├── api.ts                前端 API 封装
 │   ├── auth-context.tsx      登录态上下文
 │   ├── citation.ts           引文文本生成
-│   ├── auth.ts               遗留前端令牌认证工具
-│   └── auth-config.ts        遗留前端认证配置读取
+│   └── utils.ts              前端通用辅助函数
 └── next.config.ts            `/api/*` rewrite 配置
 ```
 
@@ -107,4 +104,4 @@ app/
 - 获取当前用户：`GET /api/auth/me`
 - 访问令牌：`/api/auth/tokens`
 
-仓库里仍保留 `app/lib/auth.ts` 与 `app/lib/auth-config.ts` 这套基于 `config/auth.yaml` 的旧工具，但当前页面和路由并未接入这条认证链路。文档中凡是提到 `auth.yaml` 的旧描述，都不再代表默认运行方式。
+前端登录态由 `app/lib/auth-context.tsx` 与后端 `/api/auth/*` 共同完成，不再包含独立的前端令牌认证配置文件。
