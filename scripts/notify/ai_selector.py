@@ -1,4 +1,4 @@
-"""SiliconFlow selection client."""
+"""OpenAI-compatible selection client."""
 
 from __future__ import annotations
 
@@ -10,7 +10,6 @@ from openai import OpenAI
 from openai.types.chat import ChatCompletionMessageParam, completion_create_params
 
 from scripts.notify.models import (
-    SILICONFLOW_BASE_URL,
     ArticleCandidate,
     NotificationDefaults,
     RankedSelection,
@@ -19,16 +18,34 @@ from scripts.notify.models import (
 )
 from scripts.shared.converters import to_float, to_int, truncate_text
 
+DEFAULT_SELECTION_SYSTEM_PROMPT = (
+    "You are a precise academic recommender. "
+    "Use two-stage selection: directions-first filtering, "
+    "then keyword-based ranking in the filtered set. "
+    "Return relevant candidates ranked by score. "
+    "Order selected items from highest to lowest. "
+    "Judge by article content quality and topic relevance only. "
+    "Ignore journal quality, prestige, and ranking completely. "
+    "Do not invent article ids."
+)
 
-class SiliconFlowSelector:
+SUMMARY_PROMPT_SUFFIX = (
+    "Only summarize the supplied selected papers. "
+    "Focus on major research themes, methods, and findings."
+)
+
+
+class OpenAICompatibleSelector:
     """
-    SiliconFlow client for structured article selection.
+    OpenAI-compatible client for structured article selection.
 
     Args:
-        api_key: SiliconFlow API key.
-        model: SiliconFlow model identifier.
+        api_key: OpenAI-compatible API key.
+        model: OpenAI-compatible model identifier.
         timeout_seconds: Request timeout.
         retries: Retry attempts for transient failures.
+        base_url: Optional OpenAI-compatible API base URL.
+        system_prompt: Optional custom system prompt.
     """
 
     def __init__(
@@ -38,16 +55,20 @@ class SiliconFlowSelector:
         timeout_seconds: int,
         retries: int,
         temperature: float,
+        base_url: str | None = None,
+        system_prompt: str = "",
     ) -> None:
         """
         Initialize selector client.
 
         Args:
-            api_key: SiliconFlow API key.
-            model: SiliconFlow model identifier.
+            api_key: OpenAI-compatible API key.
+            model: OpenAI-compatible model identifier.
             timeout_seconds: Request timeout.
             retries: Retry attempts.
             temperature: Model temperature.
+            base_url: Optional OpenAI-compatible API base URL.
+            system_prompt: Optional custom system prompt.
 
         Returns:
             None.
@@ -56,12 +77,42 @@ class SiliconFlowSelector:
         self.model = model
         self.retries = max(0, retries)
         self.temperature = temperature
-        self.client = OpenAI(
-            api_key=api_key,
-            base_url=SILICONFLOW_BASE_URL,
-            timeout=timeout_seconds,
-            max_retries=self.retries,
+        self.system_prompt = system_prompt.strip()
+        client_kwargs: dict[str, Any] = {
+            "api_key": api_key,
+            "timeout": timeout_seconds,
+            "max_retries": self.retries,
+        }
+        if base_url:
+            client_kwargs["base_url"] = base_url
+        self.client = OpenAI(**client_kwargs)
+
+    def _selection_system_prompt(self) -> str:
+        """
+        Build the effective system prompt for article selection.
+
+        Returns:
+            System prompt string.
+        """
+        if not self.system_prompt:
+            return DEFAULT_SELECTION_SYSTEM_PROMPT
+        return (
+            f"{self.system_prompt}\n\nReturn JSON only and do not invent article ids."
         )
+
+    def _summary_system_prompt(self) -> str:
+        """
+        Build the effective system prompt for selected-article summaries.
+
+        Returns:
+            System prompt string.
+        """
+        if not self.system_prompt:
+            return (
+                "You are a precise academic summarizer. "
+                "Only summarize the supplied selected papers."
+            )
+        return f"{self.system_prompt}\n\n{SUMMARY_PROMPT_SUFFIX}"
 
     def close(self) -> None:
         """
@@ -200,16 +251,7 @@ class SiliconFlowSelector:
             "messages": [
                 {
                     "role": "system",
-                    "content": (
-                        "You are a precise academic recommender. "
-                        "Use two-stage selection: directions-first filtering, "
-                        "then keyword-based ranking in the filtered set. "
-                        "Return relevant candidates ranked by score. "
-                        "Order selected items from highest to lowest. "
-                        "Judge by article content quality and topic relevance only. "
-                        "Ignore journal quality, prestige, and ranking completely. "
-                        "Do not invent article ids."
-                    ),
+                    "content": self._selection_system_prompt(),
                 },
                 {
                     "role": "user",
@@ -304,10 +346,7 @@ class SiliconFlowSelector:
             "messages": [
                 {
                     "role": "system",
-                    "content": (
-                        "You are a precise academic summarizer. "
-                        "Only summarize the supplied selected papers."
-                    ),
+                    "content": self._summary_system_prompt(),
                 },
                 {
                     "role": "user",
@@ -345,59 +384,65 @@ class SiliconFlowSelector:
             "X-Title": "Paper Scanner",
         }
         response_format = body.get("response_format")
-        if not isinstance(response_format, dict):
-            raise ValueError("response_format must be a JSON object")
         raw_messages = body.get("messages")
         if not isinstance(raw_messages, list):
             raise ValueError("messages must be a list")
         messages = cast(list[ChatCompletionMessageParam], raw_messages)
-        typed_response_format = cast(
-            completion_create_params.ResponseFormat,
-            response_format,
-        )
-        for attempt in range(self.retries + 1):
-            try:
-                response = self.client.chat.completions.create(
-                    model=str(body.get("model") or self.model),
-                    messages=messages,
-                    temperature=float(body.get("temperature") or self.temperature),
-                    response_format=typed_response_format,
-                    extra_headers=extra_headers,
-                )
-                payload = response.model_dump(mode="json")
-                if not isinstance(payload, dict):
-                    raise ValueError("SiliconFlow response is not a JSON object")
-                return payload
-            except Exception as error:
-                last_error = error
-                if attempt < self.retries:
-                    time.sleep(2**attempt)
-                    continue
-                break
-        raise RuntimeError(f"SiliconFlow request failed: {last_error}")
+        request_variants: list[completion_create_params.ResponseFormat | None] = [None]
+        if isinstance(response_format, dict):
+            request_variants.insert(
+                0,
+                cast(completion_create_params.ResponseFormat, response_format),
+            )
+
+        for typed_response_format in request_variants:
+            for attempt in range(self.retries + 1):
+                try:
+                    request_kwargs: dict[str, Any] = {
+                        "model": str(body.get("model") or self.model),
+                        "messages": messages,
+                        "temperature": float(
+                            body.get("temperature") or self.temperature
+                        ),
+                        "extra_headers": extra_headers,
+                    }
+                    if typed_response_format is not None:
+                        request_kwargs["response_format"] = typed_response_format
+                    response = self.client.chat.completions.create(**request_kwargs)
+                    payload = response.model_dump(mode="json")
+                    if not isinstance(payload, dict):
+                        raise ValueError("AI response is not a JSON object")
+                    return payload
+                except Exception as error:
+                    last_error = error
+                    if attempt < self.retries:
+                        time.sleep(2**attempt)
+                        continue
+                    break
+        raise RuntimeError(f"AI request failed: {last_error}")
 
 
 def extract_response_payload(response_json: dict[str, Any]) -> dict[str, Any]:
     """
-    Extract structured payload from SiliconFlow response.
+    Extract structured payload from an OpenAI-compatible response.
 
     Args:
-        response_json: SiliconFlow response JSON.
+        response_json: OpenAI-compatible response JSON.
 
     Returns:
         Parsed payload object.
     """
     choices = response_json.get("choices")
     if not isinstance(choices, list) or not choices:
-        raise ValueError("SiliconFlow response missing choices")
+        raise ValueError("AI response missing choices")
 
     first_choice = choices[0]
     if not isinstance(first_choice, dict):
-        raise ValueError("SiliconFlow response has invalid choice item")
+        raise ValueError("AI response has invalid choice item")
 
     message = first_choice.get("message")
     if not isinstance(message, dict):
-        raise ValueError("SiliconFlow response missing message")
+        raise ValueError("AI response missing message")
 
     content = message.get("content")
     if isinstance(content, dict):
@@ -414,7 +459,7 @@ def extract_response_payload(response_json: dict[str, Any]) -> dict[str, Any]:
         content = "".join(text_parts)
 
     if not isinstance(content, str):
-        raise ValueError("SiliconFlow message content is invalid")
+        raise ValueError("AI message content is invalid")
 
     normalized = content.strip()
     if normalized.startswith("```"):
@@ -429,3 +474,6 @@ def extract_response_payload(response_json: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise ValueError("Structured response is not a JSON object")
     return payload
+
+
+SiliconFlowSelector = OpenAICompatibleSelector

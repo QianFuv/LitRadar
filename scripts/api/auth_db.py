@@ -105,6 +105,10 @@ def init_auth_db() -> None:
                 pushplus_template TEXT  NOT NULL DEFAULT 'markdown',
                 pushplus_topic  TEXT    NOT NULL DEFAULT '',
                 pushplus_to     TEXT    NOT NULL DEFAULT '',
+                ai_base_url     TEXT    NOT NULL DEFAULT '',
+                ai_api_key      TEXT    NOT NULL DEFAULT '',
+                ai_model        TEXT    NOT NULL DEFAULT '',
+                ai_system_prompt TEXT   NOT NULL DEFAULT '',
                 enabled         INTEGER NOT NULL DEFAULT 1,
                 created_at      REAL    NOT NULL,
                 updated_at      REAL    NOT NULL
@@ -125,6 +129,35 @@ def init_auth_db() -> None:
                 "UPDATE users SET is_admin = 1 WHERE id = (SELECT MIN(id) FROM users)"
             )
             conn.commit()
+
+        notification_cols = {
+            row[1]
+            for row in conn.execute(
+                "PRAGMA table_info(notification_settings)"
+            ).fetchall()
+        }
+        notification_migrations = {
+            "ai_base_url": (
+                "ALTER TABLE notification_settings "
+                "ADD COLUMN ai_base_url TEXT NOT NULL DEFAULT ''"
+            ),
+            "ai_api_key": (
+                "ALTER TABLE notification_settings "
+                "ADD COLUMN ai_api_key TEXT NOT NULL DEFAULT ''"
+            ),
+            "ai_model": (
+                "ALTER TABLE notification_settings "
+                "ADD COLUMN ai_model TEXT NOT NULL DEFAULT ''"
+            ),
+            "ai_system_prompt": (
+                "ALTER TABLE notification_settings "
+                "ADD COLUMN ai_system_prompt TEXT NOT NULL DEFAULT ''"
+            ),
+        }
+        for column_name, statement in notification_migrations.items():
+            if column_name not in notification_cols:
+                conn.execute(statement)
+        conn.commit()
     finally:
         conn.close()
 
@@ -868,6 +901,7 @@ def get_notification_settings(user_id: int) -> dict | None:
         row = conn.execute(
             "SELECT id, user_id, keywords, directions, delivery_method, "
             "pushplus_token, pushplus_template, pushplus_topic, pushplus_to, "
+            "ai_base_url, ai_api_key, ai_model, ai_system_prompt, "
             "enabled, created_at, updated_at "
             "FROM notification_settings WHERE user_id = ?",
             (user_id,),
@@ -892,6 +926,10 @@ def upsert_notification_settings(
     pushplus_template: str = "markdown",
     pushplus_topic: str = "",
     pushplus_to: str = "",
+    ai_base_url: str = "",
+    ai_api_key: str = "",
+    ai_model: str = "",
+    ai_system_prompt: str = "",
     enabled: bool = True,
 ) -> dict:
     """
@@ -906,6 +944,10 @@ def upsert_notification_settings(
         pushplus_template: PushPlus template.
         pushplus_topic: PushPlus topic.
         pushplus_to: PushPlus recipient.
+        ai_base_url: OpenAI-compatible API base URL.
+        ai_api_key: OpenAI-compatible API key.
+        ai_model: OpenAI-compatible model name.
+        ai_system_prompt: Optional custom system prompt.
         enabled: Whether notifications are enabled.
 
     Returns:
@@ -920,8 +962,9 @@ def upsert_notification_settings(
             "INSERT INTO notification_settings "
             "(user_id, keywords, directions, delivery_method, "
             "pushplus_token, pushplus_template, pushplus_topic, "
-            "pushplus_to, enabled, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+            "pushplus_to, ai_base_url, ai_api_key, ai_model, ai_system_prompt, "
+            "enabled, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
             "ON CONFLICT(user_id) DO UPDATE SET "
             "keywords = excluded.keywords, "
             "directions = excluded.directions, "
@@ -930,6 +973,10 @@ def upsert_notification_settings(
             "pushplus_template = excluded.pushplus_template, "
             "pushplus_topic = excluded.pushplus_topic, "
             "pushplus_to = excluded.pushplus_to, "
+            "ai_base_url = excluded.ai_base_url, "
+            "ai_api_key = excluded.ai_api_key, "
+            "ai_model = excluded.ai_model, "
+            "ai_system_prompt = excluded.ai_system_prompt, "
             "enabled = excluded.enabled, "
             "updated_at = excluded.updated_at",
             (
@@ -941,6 +988,10 @@ def upsert_notification_settings(
                 pushplus_template,
                 pushplus_topic,
                 pushplus_to,
+                ai_base_url,
+                ai_api_key,
+                ai_model,
+                ai_system_prompt,
                 int(enabled),
                 now,
                 now,
@@ -966,6 +1017,7 @@ def list_notification_subscribers() -> list[dict]:
             "ns.keywords, ns.directions, ns.delivery_method, "
             "ns.pushplus_token, ns.pushplus_template, "
             "ns.pushplus_topic, ns.pushplus_to, "
+            "ns.ai_base_url, ns.ai_api_key, ns.ai_model, ns.ai_system_prompt, "
             "ns.enabled, ns.created_at, ns.updated_at "
             "FROM notification_settings ns "
             "JOIN users u ON ns.user_id = u.id "

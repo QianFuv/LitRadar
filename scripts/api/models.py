@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class JournalRecord(BaseModel):
@@ -350,13 +350,17 @@ class InviteCodeResponse(BaseModel):
 
 
 class NotificationSettingsUpdate(BaseModel):
-    keywords: list[str] = []
-    directions: list[str] = []
+    keywords: list[str] = Field(default_factory=list)
+    directions: list[str] = Field(default_factory=list)
     delivery_method: str = "folder"
     pushplus_token: str = ""
     pushplus_template: str = "markdown"
     pushplus_topic: str = ""
     pushplus_to: str = ""
+    ai_base_url: str = ""
+    ai_api_key: str = ""
+    ai_model: str = ""
+    ai_system_prompt: str = ""
     enabled: bool = True
 
 
@@ -370,6 +374,10 @@ class NotificationSettingsResponse(BaseModel):
     pushplus_template: str
     pushplus_topic: str
     pushplus_to: str
+    ai_base_url: str
+    ai_api_key: str
+    ai_model: str
+    ai_system_prompt: str
     enabled: bool
     created_at: float
     updated_at: float

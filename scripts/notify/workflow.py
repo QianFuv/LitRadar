@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 import sqlite3
 
-from scripts.notify.ai_selector import SiliconFlowSelector
+from scripts.notify.ai_selector import OpenAICompatibleSelector
 from scripts.notify.candidates import (
     deduplicate_candidates,
     fetch_candidates_for_inpress_keys,
@@ -40,6 +40,7 @@ from scripts.notify.state import (
 from scripts.notify.subscriptions import (
     load_notification_config,
     load_subscribers_from_db,
+    resolve_ai_runtime_config,
 )
 from scripts.shared.constants import PROJECT_ROOT
 from scripts.shared.converters import to_int
@@ -206,24 +207,15 @@ def run_notification(args: argparse.Namespace) -> int:
             )
             return 0
 
-        model = str(args.siliconflow_model or "").strip() or defaults.siliconflow_model
+        model_override = str(args.siliconflow_model or "").strip() or None
         max_candidates = args.max_candidates or defaults.max_candidates
         max_candidates = max(1, max_candidates)
         candidates_for_model = all_candidates[:max_candidates]
         candidates_by_id = {item.article_id: item for item in all_candidates}
-
-        requires_ai = any(
-            subscriber.keywords or subscriber.directions for subscriber in subscribers
-        )
-        selector: SiliconFlowSelector | None = None
-        if requires_ai and global_config.siliconflow_api_key:
-            selector = SiliconFlowSelector(
-                api_key=global_config.siliconflow_api_key,
-                model=model,
-                timeout_seconds=args.timeout,
-                retries=args.retries,
-                temperature=defaults.temperature,
-            )
+        selector_cache: dict[
+            tuple[str, str, str, str],
+            OpenAICompatibleSelector,
+        ] = {}
         push_client = PushPlusClient(timeout_seconds=args.timeout, retries=args.retries)
 
         delivery_dedupe = state.get("delivery_dedupe")
@@ -238,13 +230,40 @@ def run_notification(args: argparse.Namespace) -> int:
                 try:
                     final_summary = ""
                     if subscriber.keywords or subscriber.directions:
-                        if selector is None:
+                        ai_config = resolve_ai_runtime_config(
+                            base_url=subscriber.ai_base_url,
+                            api_key=subscriber.ai_api_key,
+                            model=subscriber.ai_model,
+                            system_prompt=subscriber.ai_system_prompt,
+                            global_config=global_config,
+                            defaults=defaults,
+                            override_model=model_override,
+                        )
+                        if ai_config is None:
                             accepted = select_all_candidates(
                                 subscriber,
                                 all_candidates,
                                 delivery_dedupe,
                             )
                         else:
+                            selector_key = (
+                                ai_config["base_url"],
+                                ai_config["api_key"],
+                                ai_config["model"],
+                                ai_config["system_prompt"],
+                            )
+                            selector = selector_cache.get(selector_key)
+                            if selector is None:
+                                selector = OpenAICompatibleSelector(
+                                    api_key=ai_config["api_key"],
+                                    model=ai_config["model"],
+                                    timeout_seconds=args.timeout,
+                                    retries=args.retries,
+                                    temperature=defaults.temperature,
+                                    base_url=ai_config["base_url"] or None,
+                                    system_prompt=ai_config["system_prompt"],
+                                )
+                                selector_cache[selector_key] = selector
                             selection_result = select_articles_with_retries(
                                 selector,
                                 subscriber,
@@ -390,7 +409,7 @@ def run_notification(args: argparse.Namespace) -> int:
                     state["updated_at"] = utc_now_iso()
                     save_json_atomic(state_file, state)
         finally:
-            if selector is not None:
+            for selector in selector_cache.values():
                 selector.close()
             push_client.close()
 

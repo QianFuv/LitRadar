@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import os
+from typing import Any
 
 from scripts.notify.models import (
-    DEFAULT_SILICONFLOW_MODEL,
+    DEFAULT_OPENAI_BASE_URL,
+    DEFAULT_OPENAI_MODEL,
     PUSHPLUS_CHANNEL,
     NotificationDefaults,
     NotificationGlobal,
@@ -34,8 +36,16 @@ def load_notification_config() -> tuple[NotificationGlobal, NotificationDefaults
     Returns:
         Global config and defaults.
     """
-    siliconflow_api_key = _read_env("NOTIFY_SILICONFLOW_API_KEY") or _read_env(
-        "SILICONFLOW_API_KEY"
+    ai_base_url = (
+        _read_env("NOTIFY_AI_BASE_URL")
+        or _read_env("OPENAI_BASE_URL")
+        or _read_env("NOTIFY_SILICONFLOW_BASE_URL")
+        or DEFAULT_OPENAI_BASE_URL
+    )
+    ai_api_key = (
+        _read_env("NOTIFY_AI_API_KEY")
+        or _read_env("OPENAI_API_KEY")
+        or (_read_env("NOTIFY_SILICONFLOW_API_KEY") or _read_env("SILICONFLOW_API_KEY"))
     )
     pushplus_channel = _read_env("NOTIFY_PUSHPLUS_CHANNEL") or PUSHPLUS_CHANNEL
     if not pushplus_channel:
@@ -45,28 +55,73 @@ def load_notification_config() -> tuple[NotificationGlobal, NotificationDefaults
         pushplus_template = "markdown"
     pushplus_topic = _read_env("NOTIFY_PUSHPLUS_TOPIC") or None
     pushplus_option = _read_env("NOTIFY_PUSHPLUS_OPTION") or None
+    ai_system_prompt = _read_env("NOTIFY_AI_SYSTEM_PROMPT") or None
 
     global_config = NotificationGlobal(
-        siliconflow_api_key=siliconflow_api_key,
+        ai_base_url=ai_base_url,
+        ai_api_key=ai_api_key,
         pushplus_channel=pushplus_channel,
         pushplus_template=pushplus_template,
         pushplus_topic=pushplus_topic,
         pushplus_option=pushplus_option,
+        ai_system_prompt=ai_system_prompt,
     )
 
     max_candidates = to_int(_read_env("NOTIFY_MAX_CANDIDATES")) or 120
     temperature = to_float(_read_env("NOTIFY_TEMPERATURE")) or 0.2
 
-    siliconflow_model = _read_env("NOTIFY_SILICONFLOW_MODEL")
-    if not siliconflow_model:
-        siliconflow_model = DEFAULT_SILICONFLOW_MODEL
+    ai_model = (
+        _read_env("NOTIFY_AI_MODEL")
+        or _read_env("NOTIFY_SILICONFLOW_MODEL")
+        or DEFAULT_OPENAI_MODEL
+    )
 
     defaults = NotificationDefaults(
         max_candidates=max(1, max_candidates),
-        siliconflow_model=siliconflow_model,
+        ai_model=ai_model,
         temperature=max(0.0, min(1.0, temperature)),
     )
     return global_config, defaults
+
+
+def resolve_ai_runtime_config(
+    *,
+    base_url: Any,
+    api_key: Any,
+    model: Any,
+    system_prompt: Any,
+    global_config: NotificationGlobal,
+    defaults: NotificationDefaults,
+    override_model: str | None = None,
+) -> dict[str, str] | None:
+    """
+    Resolve the effective OpenAI-compatible AI runtime configuration.
+
+    Args:
+        base_url: Per-user base URL value.
+        api_key: Per-user API key value.
+        model: Per-user model value.
+        system_prompt: Per-user system prompt value.
+        global_config: Runtime default config from environment.
+        defaults: Runtime default model and tuning values.
+        override_model: Optional CLI model override.
+
+    Returns:
+        Normalized config dict, or None if API key or model is missing.
+    """
+    resolved_api_key = str(api_key or global_config.ai_api_key or "").strip()
+    resolved_model = str(override_model or model or defaults.ai_model or "").strip()
+    if not resolved_api_key or not resolved_model:
+        return None
+
+    return {
+        "base_url": str(base_url or global_config.ai_base_url or "").strip(),
+        "api_key": resolved_api_key,
+        "model": resolved_model,
+        "system_prompt": str(
+            system_prompt or global_config.ai_system_prompt or ""
+        ).strip(),
+    }
 
 
 def load_subscribers_from_db() -> list[Subscriber]:
@@ -109,6 +164,12 @@ def load_subscribers_from_db() -> list[Subscriber]:
                 template=(str(row.get("pushplus_template") or "").strip() or None),
                 delivery_method=method,
                 tracking_folder_id=(folder["id"] if folder else None),
+                ai_base_url=(str(row.get("ai_base_url") or "").strip() or None),
+                ai_api_key=(str(row.get("ai_api_key") or "").strip() or None),
+                ai_model=(str(row.get("ai_model") or "").strip() or None),
+                ai_system_prompt=(
+                    str(row.get("ai_system_prompt") or "").strip() or None
+                ),
             )
         )
     return subscribers

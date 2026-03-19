@@ -76,6 +76,10 @@ export default function TrackingPage() {
       pushplus_template: settings?.pushplus_template || 'markdown',
       pushplus_topic: settings?.pushplus_topic || '',
       pushplus_to: settings?.pushplus_to || '',
+      ai_base_url: settings?.ai_base_url || '',
+      ai_api_key: settings?.ai_api_key || '',
+      ai_model: settings?.ai_model || '',
+      ai_system_prompt: settings?.ai_system_prompt || '',
       enabled: settings?.enabled ?? true,
     }),
     [],
@@ -90,6 +94,10 @@ export default function TrackingPage() {
     pushplus_template: pushplusTemplate,
     pushplus_topic: pushplusTopic,
     pushplus_to: pushplusTo,
+    ai_base_url: aiBaseUrl,
+    ai_api_key: aiApiKey,
+    ai_model: aiModel,
+    ai_system_prompt: aiSystemPrompt,
     enabled: notifyEnabled,
   } = formSettings;
 
@@ -295,7 +303,7 @@ export default function TrackingPage() {
         <CardHeader>
           <CardTitle>AI 推荐配置</CardTitle>
           <CardDescription>
-            配置关键词和研究方向，AI 将根据你的偏好筛选和推荐文章
+            配置关键词、研究方向和 OpenAI 兼容服务，AI 将根据你的偏好筛选和推荐文章
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-5">
@@ -398,10 +406,76 @@ export default function TrackingPage() {
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="folder">收藏到追踪文件夹</SelectItem>
-                <SelectItem value="pushplus">PushPlus 推送</SelectItem>
+                <SelectItem value="folder">追踪文件夹推送</SelectItem>
+                <SelectItem value="pushplus">PushPlus 外部推送</SelectItem>
               </SelectContent>
             </Select>
+          </div>
+
+          <div className="space-y-3 rounded-md border p-3">
+            <div className="grid gap-3 md:grid-cols-2">
+              <div className="space-y-1">
+                <Label htmlFor="ai-base-url">Base URL</Label>
+                <Input
+                  id="ai-base-url"
+                  value={aiBaseUrl}
+                  onChange={(e) =>
+                    updateDraftSettings((current) => ({
+                      ...current,
+                      ai_base_url: e.target.value,
+                    }))
+                  }
+                  placeholder="https://api.openai.com/v1"
+                />
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor="ai-model">Model</Label>
+                <Input
+                  id="ai-model"
+                  value={aiModel}
+                  onChange={(e) =>
+                    updateDraftSettings((current) => ({
+                      ...current,
+                      ai_model: e.target.value,
+                    }))
+                  }
+                  placeholder="gpt-4.1-mini"
+                />
+              </div>
+            </div>
+            <div className="space-y-1">
+              <Label htmlFor="ai-api-key">API Key</Label>
+              <Input
+                id="ai-api-key"
+                type="password"
+                value={aiApiKey}
+                onChange={(e) =>
+                  updateDraftSettings((current) => ({
+                    ...current,
+                    ai_api_key: e.target.value,
+                  }))
+                }
+                placeholder="sk-..."
+              />
+            </div>
+            <div className="space-y-1">
+              <Label htmlFor="ai-system-prompt">System Prompt</Label>
+              <textarea
+                id="ai-system-prompt"
+                value={aiSystemPrompt}
+                onChange={(e) =>
+                  updateDraftSettings((current) => ({
+                    ...current,
+                    ai_system_prompt: e.target.value,
+                  }))
+                }
+                placeholder="Describe how the model should evaluate article relevance."
+                className="min-h-28 w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-xs outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
+              />
+            </div>
+            <p className="text-xs text-muted-foreground">
+              留空时会回退到服务端默认 AI 配置；填写后仅对当前账号生效。
+            </p>
           </div>
 
           {deliveryMethod === 'pushplus' && (
@@ -495,8 +569,8 @@ export default function TrackingPage() {
         </CardHeader>
         <CardContent className="text-sm text-muted-foreground space-y-2">
           <p>1. 创建或选择一个收藏夹，设为「追踪文件夹」</p>
-          <p>2. 配置关键词和研究方向，AI 将自动筛选推荐相关文献</p>
-          <p>3. 选择推送方式：收藏到文件夹或通过 PushPlus 推送</p>
+          <p>2. 配置关键词、研究方向和 OpenAI 兼容 AI 服务</p>
+          <p>3. 选择推送方式：推送到追踪文件夹或通过 PushPlus 外部推送</p>
           <p>4. 系统每周推送的新文章会根据你的偏好自动筛选和推荐</p>
           <p>5. 也可以手动触发推送同步</p>
           <p>6. 在「我的收藏」中查看追踪到的文章</p>

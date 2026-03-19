@@ -148,7 +148,7 @@ def _run_ai_selection(
         Dict with 'selected' (list of article dicts with score),
         'summary' (str), and 'total_candidates' (int).
     """
-    from scripts.notify.ai_selector import SiliconFlowSelector
+    from scripts.notify.ai_selector import OpenAICompatibleSelector
     from scripts.notify.models import (
         ArticleCandidate,
         Subscriber,
@@ -157,11 +157,22 @@ def _run_ai_selection(
         apply_selection_rules,
         select_articles_with_retries,
     )
-    from scripts.notify.subscriptions import load_notification_config
+    from scripts.notify.subscriptions import (
+        load_notification_config,
+        resolve_ai_runtime_config,
+    )
 
     global_config, defaults = load_notification_config()
-    if not global_config.siliconflow_api_key:
-        raise RuntimeError("SiliconFlow AI selection is not configured")
+    ai_config = resolve_ai_runtime_config(
+        base_url=settings.get("ai_base_url"),
+        api_key=settings.get("ai_api_key"),
+        model=settings.get("ai_model"),
+        system_prompt=settings.get("ai_system_prompt"),
+        global_config=global_config,
+        defaults=defaults,
+    )
+    if ai_config is None:
+        raise RuntimeError("AI configuration is incomplete")
 
     subscriber = Subscriber(
         subscriber_id=str(settings["user_id"]),
@@ -172,6 +183,10 @@ def _run_ai_selection(
         directions=settings.get("directions", []),
         topic=settings.get("pushplus_topic") or None,
         template=settings.get("pushplus_template") or None,
+        ai_base_url=ai_config["base_url"] or None,
+        ai_api_key=ai_config["api_key"],
+        ai_model=ai_config["model"],
+        ai_system_prompt=ai_config["system_prompt"] or None,
     )
 
     from scripts.shared.converters import to_int as _to_int
@@ -211,12 +226,14 @@ def _run_ai_selection(
     max_candidates = min(defaults.max_candidates, len(candidates))
     candidates_for_model = candidates[:max_candidates]
 
-    selector = SiliconFlowSelector(
-        api_key=global_config.siliconflow_api_key,
-        model=defaults.siliconflow_model,
+    selector = OpenAICompatibleSelector(
+        api_key=ai_config["api_key"],
+        model=ai_config["model"],
         timeout_seconds=120,
         retries=2,
         temperature=defaults.temperature,
+        base_url=ai_config["base_url"] or None,
+        system_prompt=ai_config["system_prompt"],
     )
 
     try:
@@ -321,9 +338,19 @@ async def push_weekly_to_tracking(user: CurrentUser):
 
         try:
             ai_result = _run_ai_selection(settings, candidate_articles)
+            fallback_message = ""
+        except RuntimeError as error:
+            logger.warning(
+                "AI selection is unavailable for user %s: %s",
+                user["id"],
+                error,
+            )
+            ai_result = None
+            fallback_message = f"{error}; pushed all weekly articles"
         except Exception:
             logger.exception("AI selection failed, falling back to all")
             ai_result = None
+            fallback_message = "AI selection failed; pushed all weekly articles"
 
         if ai_result is None:
             count = bulk_add_favorites(user["id"], folder["id"], weekly_articles)
@@ -331,7 +358,7 @@ async def push_weekly_to_tracking(user: CurrentUser):
                 "pushed": count,
                 "selected": len(weekly_articles),
                 "summary": "",
-                "message": "AI selection failed; pushed all weekly articles",
+                "message": fallback_message,
                 "folder_id": folder["id"],
                 "folder_name": folder["name"],
             }
@@ -430,5 +457,9 @@ async def update_settings(
         pushplus_template=body.pushplus_template.strip() or "markdown",
         pushplus_topic=body.pushplus_topic.strip(),
         pushplus_to=body.pushplus_to.strip(),
+        ai_base_url=body.ai_base_url.strip(),
+        ai_api_key=body.ai_api_key.strip(),
+        ai_model=body.ai_model.strip(),
+        ai_system_prompt=body.ai_system_prompt.strip(),
         enabled=body.enabled,
     )

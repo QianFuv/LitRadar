@@ -8,13 +8,17 @@ from scripts.shared.constants import PROJECT_ROOT
 
 DEFAULT_STATE_DIR = PROJECT_ROOT / "data" / "push_state"
 
-SILICONFLOW_BASE_URL = "https://api.siliconflow.cn/v1"
+DEFAULT_OPENAI_BASE_URL = "https://api.siliconflow.cn/v1"
+
+SILICONFLOW_BASE_URL = DEFAULT_OPENAI_BASE_URL
 
 PUSHPLUS_ENDPOINT = "https://www.pushplus.plus/send"
 
 PUSHPLUS_CHANNEL = "mail"
 
-DEFAULT_SILICONFLOW_MODEL = "deepseek-ai/DeepSeek-V3"
+DEFAULT_OPENAI_MODEL = "deepseek-ai/DeepSeek-V3"
+
+DEFAULT_SILICONFLOW_MODEL = DEFAULT_OPENAI_MODEL
 
 MAX_ARTICLES_PER_PUSH = 20
 
@@ -73,8 +77,12 @@ class Subscriber:
         directions: Direction preferences.
         topic: Optional per-user PushPlus topic override.
         template: Optional per-user PushPlus template override.
-        delivery_method: 'pushplus' or 'folder'.
+        delivery_method: 'pushplus', 'folder', or 'both'.
         tracking_folder_id: Folder id for folder-based delivery.
+        ai_base_url: Optional OpenAI-compatible API base URL override.
+        ai_api_key: Optional OpenAI-compatible API key override.
+        ai_model: Optional OpenAI-compatible model override.
+        ai_system_prompt: Optional custom system prompt override.
     """
 
     subscriber_id: str
@@ -87,6 +95,10 @@ class Subscriber:
     template: str | None
     delivery_method: str = "pushplus"
     tracking_folder_id: int | None = None
+    ai_base_url: str | None = None
+    ai_api_key: str | None = None
+    ai_model: str | None = None
+    ai_system_prompt: str | None = None
 
 
 @dataclass(frozen=True)
@@ -95,18 +107,32 @@ class NotificationGlobal:
     Global notification configuration loaded from runtime environment.
 
     Args:
-        siliconflow_api_key: SiliconFlow API key used for AI selection.
+        ai_base_url: Default OpenAI-compatible API base URL.
+        ai_api_key: Default OpenAI-compatible API key used for AI selection.
         pushplus_channel: PushPlus channel name.
         pushplus_template: Default PushPlus template.
         pushplus_topic: Optional default PushPlus topic.
         pushplus_option: Optional PushPlus option value.
+        ai_system_prompt: Optional default custom system prompt.
     """
 
-    siliconflow_api_key: str
+    ai_base_url: str
+    ai_api_key: str
     pushplus_channel: str
     pushplus_template: str
     pushplus_topic: str | None
     pushplus_option: str | None
+    ai_system_prompt: str | None = None
+
+    @property
+    def siliconflow_api_key(self) -> str:
+        """
+        Return the legacy SiliconFlow API key alias.
+
+        Returns:
+            Configured OpenAI-compatible API key.
+        """
+        return self.ai_api_key
 
 
 @dataclass(frozen=True)
@@ -116,13 +142,23 @@ class NotificationDefaults:
 
     Args:
         max_candidates: Maximum candidates sent to model.
-        siliconflow_model: SiliconFlow model identifier.
+        ai_model: Default OpenAI-compatible model identifier.
         temperature: Model temperature.
     """
 
     max_candidates: int
-    siliconflow_model: str
+    ai_model: str
     temperature: float
+
+    @property
+    def siliconflow_model(self) -> str:
+        """
+        Return the legacy SiliconFlow model alias.
+
+        Returns:
+            Configured OpenAI-compatible model name.
+        """
+        return self.ai_model
 
 
 @dataclass(frozen=True)

@@ -301,9 +301,13 @@ export interface NotificationSettings {
   pushplus_template: string;
   pushplus_topic: string;
   pushplus_to: string;
+  ai_base_url: string;
+  ai_api_key: string;
+  ai_model: string;
+  ai_system_prompt: string;
   enabled: boolean;
-  created_at: string;
-  updated_at: string;
+  created_at: number;
+  updated_at: number;
 }
 
 export interface NotificationSettingsUpdate {
@@ -314,6 +318,10 @@ export interface NotificationSettingsUpdate {
   pushplus_template: string;
   pushplus_topic: string;
   pushplus_to: string;
+  ai_base_url: string;
+  ai_api_key: string;
+  ai_model: string;
+  ai_system_prompt: string;
   enabled: boolean;
 }
 
