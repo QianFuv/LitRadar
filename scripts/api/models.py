@@ -291,6 +291,11 @@ class FavoriteAdd(BaseModel):
     note: str = ""
 
 
+class FavoriteArticleRef(BaseModel):
+    article_id: int
+    db_name: str = ""
+
+
 class FavoriteResponse(BaseModel):
     id: int
     folder_id: int
@@ -336,6 +341,19 @@ class FavoriteBatchCheckResponse(BaseModel):
 
 class FavoriteBulkAdd(BaseModel):
     articles: list[FavoriteAdd]
+
+
+class FavoriteBulkRemove(BaseModel):
+    articles: list[FavoriteArticleRef]
+
+
+class FavoriteBulkMove(BaseModel):
+    target_folder_id: int
+    articles: list[FavoriteArticleRef]
+
+
+class FavoriteBulkResult(BaseModel):
+    count: int
 
 
 class TrackingSetRequest(BaseModel):

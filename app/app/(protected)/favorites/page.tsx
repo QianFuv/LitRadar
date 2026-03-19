@@ -23,12 +23,15 @@ import {
   deleteFolder,
   renameFolder,
   getFolderArticles,
+  bulkMoveFavorites,
+  bulkRemoveFavorites,
   removeFavorite,
   setTrackingFolder,
   getFullTextUrlForDatabase,
   getExportUrl,
   type CitationFormat,
   type FavoriteArticleItem,
+  type FavoriteArticleRef,
   type FavoriteItem,
 } from '@/lib/api';
 import { FavoriteButton } from '@/components/feature/favorite-button';
@@ -50,14 +53,20 @@ import {
   DialogTrigger,
 } from '@/components/ui/dialog';
 import { Badge } from '@/components/ui/badge';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Checkbox } from '@/components/ui/checkbox';
+
+function getFavoriteSelectionKey(folderId: number, articleId: number, dbName: string): string {
+  return `${folderId}:${articleId}:${dbName}`;
+}
+
+function toFavoriteArticleRef(favorite: FavoriteArticleItem): FavoriteArticleRef {
+  return {
+    article_id: favorite.article_id,
+    db_name: favorite.db_name,
+  };
+}
 
 export default function FavoritesPage() {
   const { user, token } = useAuth();
@@ -69,6 +78,11 @@ export default function FavoritesPage() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [copyStatus, setCopyStatus] = useState<string | null>(null);
   const [exportFormat, setExportFormat] = useState<CitationFormat>('bibtex');
+  const [selectedArticleKeys, setSelectedArticleKeys] = useState<string[]>([]);
+  const [moveTargetFolderId, setMoveTargetFolderId] = useState<string>('');
+  const [batchFeedback, setBatchFeedback] = useState<{ tone: 'success' | 'error'; message: string } | null>(
+    null,
+  );
 
   const { data: folders = [], isLoading } = useQuery({
     queryKey: ['folders', user?.id],
@@ -103,6 +117,17 @@ export default function FavoritesPage() {
   });
 
   const favorites = favPages?.pages.flat() ?? [];
+  const selectedKeySet = new Set(selectedArticleKeys);
+  const selectedFavorites = favorites.filter((favorite) =>
+    selectedKeySet.has(getFavoriteSelectionKey(favorite.folder_id, favorite.article_id, favorite.db_name)),
+  );
+  const allLoadedSelected = favorites.length > 0 && selectedFavorites.length === favorites.length;
+  const moveTargetFolders = folders.filter((folder) => folder.id !== activeFolderId);
+  const effectiveMoveTargetFolderId = moveTargetFolders.some(
+    (folder) => String(folder.id) === moveTargetFolderId,
+  )
+    ? moveTargetFolderId
+    : '';
 
   const createMut = useMutation({
     mutationFn: (name: string) => createFolder(token!, name),
@@ -116,6 +141,9 @@ export default function FavoritesPage() {
   const deleteMut = useMutation({
     mutationFn: (id: number) => deleteFolder(token!, id),
     onSuccess: () => {
+      setSelectedArticleKeys([]);
+      setMoveTargetFolderId('');
+      setBatchFeedback(null);
       queryClient.invalidateQueries({ queryKey: ['folders'] });
       if (selectedFolderId === deleteMut.variables) {
         setSelectedFolderId(null);
@@ -146,6 +174,51 @@ export default function FavoritesPage() {
     },
   });
 
+  const bulkRemoveMut = useMutation({
+    mutationFn: (articles: FavoriteArticleRef[]) => bulkRemoveFavorites(token!, activeFolderId!, articles),
+    onSuccess: (count) => {
+      setSelectedArticleKeys([]);
+      setBatchFeedback({
+        tone: 'success',
+        message: `已从当前收藏夹移除 ${count} 篇文章。`,
+      });
+      queryClient.invalidateQueries({ queryKey: ['folder-articles'] });
+      queryClient.invalidateQueries({ queryKey: ['folders'] });
+    },
+    onError: (error) => {
+      setBatchFeedback({
+        tone: 'error',
+        message: error instanceof Error ? error.message : '批量移除收藏失败',
+      });
+    },
+  });
+
+  const bulkMoveMut = useMutation({
+    mutationFn: ({ targetFolderId, articles }: { targetFolderId: number; articles: FavoriteArticleRef[] }) =>
+      bulkMoveFavorites(token!, activeFolderId!, targetFolderId, articles),
+    onSuccess: (count) => {
+      const targetFolderName = moveTargetFolders.find(
+        (folder) => folder.id === Number(moveTargetFolderId),
+      )?.name;
+      setSelectedArticleKeys([]);
+      setMoveTargetFolderId('');
+      setBatchFeedback({
+        tone: 'success',
+        message: targetFolderName
+          ? `已将 ${count} 篇文章移动到“${targetFolderName}”。`
+          : `已移动 ${count} 篇文章。`,
+      });
+      queryClient.invalidateQueries({ queryKey: ['folder-articles'] });
+      queryClient.invalidateQueries({ queryKey: ['folders'] });
+    },
+    onError: (error) => {
+      setBatchFeedback({
+        tone: 'error',
+        message: error instanceof Error ? error.message : '批量移动收藏失败',
+      });
+    },
+  });
+
   const handleCopyArticleInfo = async (article: FavoriteArticleItem) => {
     const info = [
       `标题：${article.title || '暂无'}`,
@@ -168,6 +241,53 @@ export default function FavoritesPage() {
     await navigator.clipboard.writeText(article.title || '');
     setCopyStatus(`${article.article_id}-title`);
     setTimeout(() => setCopyStatus(null), 3000);
+  };
+
+  const toggleFavoriteSelection = (favorite: FavoriteArticleItem, checked: boolean) => {
+    const key = getFavoriteSelectionKey(favorite.folder_id, favorite.article_id, favorite.db_name);
+    setSelectedArticleKeys((previous) => {
+      if (checked) {
+        return previous.includes(key) ? previous : [...previous, key];
+      }
+      return previous.filter((item) => item !== key);
+    });
+    setBatchFeedback(null);
+  };
+
+  const handleSelectAllLoaded = (checked: boolean) => {
+    setSelectedArticleKeys(
+      checked
+        ? favorites.map((favorite) =>
+            getFavoriteSelectionKey(favorite.folder_id, favorite.article_id, favorite.db_name),
+          )
+        : [],
+    );
+    setBatchFeedback(null);
+  };
+
+  const handleSelectFolder = (folderId: number) => {
+    setSelectedFolderId(folderId);
+    setSelectedArticleKeys([]);
+    setMoveTargetFolderId('');
+    setBatchFeedback(null);
+  };
+
+  const handleBulkRemove = () => {
+    if (selectedFavorites.length === 0) {
+      return;
+    }
+    bulkRemoveMut.mutate(selectedFavorites.map(toFavoriteArticleRef));
+  };
+
+  const handleBulkMove = () => {
+    const targetFolderId = Number(effectiveMoveTargetFolderId);
+    if (selectedFavorites.length === 0 || !Number.isInteger(targetFolderId) || targetFolderId <= 0) {
+      return;
+    }
+    bulkMoveMut.mutate({
+      targetFolderId,
+      articles: selectedFavorites.map(toFavoriteArticleRef),
+    });
   };
 
   if (!user) {
@@ -244,7 +364,7 @@ export default function FavoritesPage() {
                         ? 'bg-accent text-accent-foreground'
                         : 'hover:bg-accent/50'
                     }`}
-                  onClick={() => setSelectedFolderId(folder.id)}
+                  onClick={() => handleSelectFolder(folder.id)}
                 >
                   {editingId === folder.id ? (
                     <form
@@ -399,77 +519,182 @@ export default function FavoritesPage() {
                 </div>
               ) : (
                 <>
+                  <div className="rounded-lg border border-dashed bg-muted/30 px-4 py-3 space-y-3">
+                    <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
+                      <div className="flex flex-wrap items-center gap-3">
+                        <div className="flex items-center gap-2">
+                          <Checkbox
+                            checked={allLoadedSelected || (selectedFavorites.length > 0 && 'indeterminate')}
+                            onCheckedChange={(checked) => handleSelectAllLoaded(checked === true)}
+                            aria-label="选择当前已加载文章"
+                          />
+                          <span className="text-sm font-medium">已选 {selectedFavorites.length} 篇</span>
+                        </div>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => handleSelectAllLoaded(true)}
+                          disabled={favorites.length === 0 || allLoadedSelected}
+                        >
+                          全选已加载
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => handleSelectAllLoaded(false)}
+                          disabled={selectedFavorites.length === 0}
+                        >
+                          清空选择
+                        </Button>
+                        {hasNextPage && (
+                          <span className="text-xs text-muted-foreground">
+                            批量操作仅作用于当前已加载的 {favorites.length} 篇文章
+                          </span>
+                        )}
+                      </div>
+                      <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                        <Select
+                          value={effectiveMoveTargetFolderId}
+                          onValueChange={setMoveTargetFolderId}
+                        >
+                          <SelectTrigger className="w-full sm:w-48">
+                            <SelectValue placeholder="选择目标收藏夹" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {moveTargetFolders.map((folder) => (
+                              <SelectItem key={folder.id} value={String(folder.id)}>
+                                {folder.name}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        <Button
+                          variant="outline"
+                          onClick={handleBulkMove}
+                          disabled={
+                            selectedFavorites.length === 0 ||
+                            !effectiveMoveTargetFolderId ||
+                            bulkMoveMut.isPending ||
+                            moveTargetFolders.length === 0
+                          }
+                        >
+                          {bulkMoveMut.isPending ? '移动中…' : '移动所选'}
+                        </Button>
+                        <Button
+                          variant="outline"
+                          className="text-destructive border-destructive/30"
+                          onClick={handleBulkRemove}
+                          disabled={selectedFavorites.length === 0 || bulkRemoveMut.isPending}
+                        >
+                          {bulkRemoveMut.isPending ? '删除中…' : '删除所选'}
+                        </Button>
+                      </div>
+                    </div>
+                    {batchFeedback && (
+                      <p
+                        className={`text-sm ${
+                          batchFeedback.tone === 'error' ? 'text-destructive' : 'text-emerald-700'
+                        }`}
+                      >
+                        {batchFeedback.message}
+                      </p>
+                    )}
+                  </div>
                   {favorites.map((fav) => {
+                    const selectionKey = getFavoriteSelectionKey(
+                      fav.folder_id,
+                      fav.article_id,
+                      fav.db_name,
+                    );
+                    const isSelected = selectedKeySet.has(selectionKey);
                     if (fav.journal_id == null) {
                       return (
-                        <Card key={fav.id}>
-                          <CardHeader className="py-3 px-4">
-                            <div className="flex items-start justify-between gap-2">
-                              <CardTitle className="text-sm">
-                                文章 #{fav.article_id}
-                              </CardTitle>
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                className="h-7 w-7 text-destructive"
-                                onClick={() => removeMut.mutate(fav)}
-                              >
-                                <Trash2 className="h-3.5 w-3.5" />
-                              </Button>
-                            </div>
-                          </CardHeader>
-                        </Card>
+                        <div key={fav.id} className="flex items-start gap-3">
+                          <div className="pt-4">
+                            <Checkbox
+                              checked={isSelected}
+                              onCheckedChange={(checked) => toggleFavoriteSelection(fav, checked === true)}
+                              aria-label={`选择文章 ${fav.article_id}`}
+                            />
+                          </div>
+                          <Card className="flex-1">
+                            <CardHeader className="py-3 px-4">
+                              <div className="flex items-start justify-between gap-2">
+                                <CardTitle className="text-sm">
+                                  文章 #{fav.article_id}
+                                </CardTitle>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-7 w-7 text-destructive"
+                                  onClick={() => removeMut.mutate(fav)}
+                                >
+                                  <Trash2 className="h-3.5 w-3.5" />
+                                </Button>
+                              </div>
+                            </CardHeader>
+                          </Card>
+                        </div>
                       );
                     }
 
                     return (
                       <Dialog key={fav.id}>
-                        <DialogTrigger asChild>
-                          <div className="block group cursor-pointer text-left">
-                            <Card className="hover:shadow-md transition-all duration-200 border-transparent hover:border-slate-200 dark:hover:border-slate-800">
-                              <CardHeader>
-                                <div className="flex justify-between items-start gap-4">
-                                  <CardTitle className="text-lg text-slate-900 dark:text-slate-100 group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors">
-                                    {fav.title}
-                                  </CardTitle>
-                                  <div className="flex gap-2 shrink-0">
-                                    {fav.open_access === 1 && (
-                                      <Badge variant="secondary" className="text-xs">
-                                        开放获取
-                                      </Badge>
-                                    )}
-                                    {fav.in_press === 1 && (
-                                      <Badge variant="outline" className="text-xs">
-                                        预发表
-                                      </Badge>
-                                    )}
-                                  </div>
-                                </div>
-                                <CardDescription>
-                                  <span>{fav.journal_title}</span>
-                                  {(fav.volume || fav.number) && (
-                                    <span>
-                                      {' '}
-                                      •{' '}
-                                      {[
-                                        fav.volume && `第 ${fav.volume} 卷`,
-                                        fav.number && `第 ${fav.number} 期`,
-                                      ]
-                                        .filter(Boolean)
-                                        .join(', ')}
-                                    </span>
-                                  )}
-                                  {fav.date && <span> • {fav.date}</span>}
-                                </CardDescription>
-                              </CardHeader>
-                              <CardContent>
-                                <p className="text-sm text-slate-600 dark:text-slate-400 line-clamp-3 leading-relaxed">
-                                  {fav.abstract}
-                                </p>
-                              </CardContent>
-                            </Card>
+                        <div className="flex items-start gap-3">
+                          <div className="pt-4">
+                            <Checkbox
+                              checked={isSelected}
+                              onCheckedChange={(checked) => toggleFavoriteSelection(fav, checked === true)}
+                              aria-label={`选择文章 ${fav.title || fav.article_id}`}
+                            />
                           </div>
-                        </DialogTrigger>
+                          <DialogTrigger asChild>
+                            <div className="block group cursor-pointer text-left flex-1">
+                              <Card className="hover:shadow-md transition-all duration-200 border-transparent hover:border-slate-200 dark:hover:border-slate-800">
+                                <CardHeader>
+                                  <div className="flex justify-between items-start gap-4">
+                                    <CardTitle className="text-lg text-slate-900 dark:text-slate-100 group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors">
+                                      {fav.title}
+                                    </CardTitle>
+                                    <div className="flex gap-2 shrink-0">
+                                      {fav.open_access === 1 && (
+                                        <Badge variant="secondary" className="text-xs">
+                                          开放获取
+                                        </Badge>
+                                      )}
+                                      {fav.in_press === 1 && (
+                                        <Badge variant="outline" className="text-xs">
+                                          预发表
+                                        </Badge>
+                                      )}
+                                    </div>
+                                  </div>
+                                  <CardDescription>
+                                    <span>{fav.journal_title}</span>
+                                    {(fav.volume || fav.number) && (
+                                      <span>
+                                        {' '}
+                                        •{' '}
+                                        {[
+                                          fav.volume && `第 ${fav.volume} 卷`,
+                                          fav.number && `第 ${fav.number} 期`,
+                                        ]
+                                          .filter(Boolean)
+                                          .join(', ')}
+                                      </span>
+                                    )}
+                                    {fav.date && <span> • {fav.date}</span>}
+                                  </CardDescription>
+                                </CardHeader>
+                                <CardContent>
+                                  <p className="text-sm text-slate-600 dark:text-slate-400 line-clamp-3 leading-relaxed">
+                                    {fav.abstract}
+                                  </p>
+                                </CardContent>
+                              </Card>
+                            </div>
+                          </DialogTrigger>
+                        </div>
                         <DialogContent className="w-[calc(100%-2rem)] max-w-[calc(100%-2rem)] md:max-w-4xl max-h-[90vh] overflow-y-auto [&>button]:hidden">
                           <DialogHeader>
                             <DialogTitle className="text-xl leading-snug">
@@ -583,7 +808,7 @@ export default function FavoritesPage() {
                     <Button
                       variant="outline"
                       className="w-full"
-                      onClick={() => fetchNextPage()}
+                      onClick={() => void fetchNextPage()}
                       disabled={isFetchingNextPage}
                     >
                       {isFetchingNextPage ? '加载中…' : '加载更多'}

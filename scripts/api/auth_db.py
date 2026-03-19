@@ -777,6 +777,31 @@ def batch_is_favorited(
         conn.close()
 
 
+def _normalize_favorite_articles(articles: list[dict]) -> list[tuple[int, str]]:
+    """
+    Normalize favorite article references for bulk operations.
+
+    Args:
+        articles: Raw article mappings.
+
+    Returns:
+        Deduplicated ``(article_id, db_name)`` tuples in input order.
+    """
+    normalized: list[tuple[int, str]] = []
+    seen: set[tuple[int, str]] = set()
+    for article in articles:
+        article_id = article.get("article_id")
+        if not isinstance(article_id, int) or article_id <= 0:
+            continue
+        db_name = str(article.get("db_name") or "")
+        key = (article_id, db_name)
+        if key in seen:
+            continue
+        seen.add(key)
+        normalized.append(key)
+    return normalized
+
+
 def bulk_add_favorites(user_id: int, folder_id: int, articles: list[dict]) -> int:
     """Bulk add favorites. Returns count of inserted rows."""
     now = time.time()
@@ -807,6 +832,134 @@ def bulk_add_favorites(user_id: int, folder_id: int, articles: list[dict]) -> in
         )
         conn.commit()
         return cur.rowcount
+    finally:
+        conn.close()
+
+
+def bulk_remove_favorites(user_id: int, folder_id: int, articles: list[dict]) -> int:
+    """
+    Bulk remove favorites from one folder.
+
+    Args:
+        user_id: User identifier.
+        folder_id: Source folder identifier.
+        articles: Raw favorite article references.
+
+    Returns:
+        Number of deleted favorite rows.
+
+    Raises:
+        ValueError: If the folder does not belong to the user.
+    """
+    normalized_articles = _normalize_favorite_articles(articles)
+    if not normalized_articles:
+        return 0
+
+    conn = _get_connection()
+    try:
+        folder = conn.execute(
+            "SELECT id FROM folders WHERE id = ? AND user_id = ?",
+            (folder_id, user_id),
+        ).fetchone()
+        if not folder:
+            raise ValueError("Folder not found")
+
+        before_changes = conn.total_changes
+        conn.executemany(
+            "DELETE FROM favorites WHERE user_id = ? AND folder_id = ? "
+            "AND article_id = ? AND db_name = ?",
+            [
+                (user_id, folder_id, article_id, db_name)
+                for article_id, db_name in normalized_articles
+            ],
+        )
+        conn.commit()
+        return conn.total_changes - before_changes
+    finally:
+        conn.close()
+
+
+def bulk_move_favorites(
+    user_id: int,
+    source_folder_id: int,
+    target_folder_id: int,
+    articles: list[dict],
+) -> int:
+    """
+    Move favorites from one folder to another.
+
+    Args:
+        user_id: User identifier.
+        source_folder_id: Folder to move favorites from.
+        target_folder_id: Folder to move favorites into.
+        articles: Raw favorite article references.
+
+    Returns:
+        Number of source rows removed during the move.
+
+    Raises:
+        ValueError: If the folders are invalid or identical.
+    """
+    if source_folder_id == target_folder_id:
+        raise ValueError("Source and target folders must be different")
+
+    normalized_articles = _normalize_favorite_articles(articles)
+    if not normalized_articles:
+        return 0
+
+    now = time.time()
+    conn = _get_connection()
+    try:
+        source_folder = conn.execute(
+            "SELECT id FROM folders WHERE id = ? AND user_id = ?",
+            (source_folder_id, user_id),
+        ).fetchone()
+        if not source_folder:
+            raise ValueError("Source folder not found")
+
+        target_folder = conn.execute(
+            "SELECT id FROM folders WHERE id = ? AND user_id = ?",
+            (target_folder_id, user_id),
+        ).fetchone()
+        if not target_folder:
+            raise ValueError("Target folder not found")
+
+        insert_rows = [
+            (
+                target_folder_id,
+                now,
+                user_id,
+                source_folder_id,
+                article_id,
+                db_name,
+            )
+            for article_id, db_name in normalized_articles
+        ]
+        delete_rows = [
+            (user_id, source_folder_id, article_id, db_name)
+            for article_id, db_name in normalized_articles
+        ]
+
+        conn.execute("BEGIN")
+        conn.executemany(
+            "INSERT OR IGNORE INTO favorites "
+            " (user_id, folder_id, article_id, db_name, note, created_at) "
+            "SELECT user_id, ?, article_id, db_name, note, ? "
+            "FROM favorites WHERE user_id = ? AND folder_id = ? "
+            "AND article_id = ? AND db_name = ?",
+            insert_rows,
+        )
+        before_delete = conn.total_changes
+        conn.executemany(
+            "DELETE FROM favorites WHERE user_id = ? AND folder_id = ? "
+            "AND article_id = ? AND db_name = ?",
+            delete_rows,
+        )
+        conn.commit()
+        return conn.total_changes - before_delete
+    except Exception:
+        conn.rollback()
+        raise
     finally:
         conn.close()
 

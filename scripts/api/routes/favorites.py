@@ -12,6 +12,8 @@ from scripts.api.auth_db import (
     add_favorite,
     batch_is_favorited,
     bulk_add_favorites,
+    bulk_move_favorites,
+    bulk_remove_favorites,
     count_favorites,
     create_folder,
     delete_folder,
@@ -32,6 +34,9 @@ from scripts.api.models import (
     FavoriteBatchCheckRequest,
     FavoriteBatchCheckResponse,
     FavoriteBulkAdd,
+    FavoriteBulkMove,
+    FavoriteBulkRemove,
+    FavoriteBulkResult,
     FavoriteCheckResponse,
     FavoriteResponse,
     FolderCreate,
@@ -403,6 +408,51 @@ async def api_bulk_add(
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return {"added": count}
+
+
+@router.post(
+    "/folders/{folder_id}/articles/bulk-remove",
+    response_model=FavoriteBulkResult,
+)
+async def api_bulk_remove(
+    folder_id: int,
+    body: FavoriteBulkRemove,
+    user: CurrentUser,
+):
+    """Bulk remove favorited articles from a folder."""
+    try:
+        count = bulk_remove_favorites(
+            user["id"],
+            folder_id,
+            [article.model_dump() for article in body.articles],
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return FavoriteBulkResult(count=count)
+
+
+@router.post(
+    "/folders/{folder_id}/articles/bulk-move",
+    response_model=FavoriteBulkResult,
+)
+async def api_bulk_move(
+    folder_id: int,
+    body: FavoriteBulkMove,
+    user: CurrentUser,
+):
+    """Bulk move favorited articles to another folder."""
+    try:
+        count = bulk_move_favorites(
+            user["id"],
+            folder_id,
+            body.target_folder_id,
+            [article.model_dump() for article in body.articles],
+        )
+    except ValueError as exc:
+        detail = str(exc)
+        status_code = 400 if "different" in detail else 404
+        raise HTTPException(status_code=status_code, detail=detail) from exc
+    return FavoriteBulkResult(count=count)
 
 
 @router.get("/check", response_model=list[FavoriteCheckResponse])

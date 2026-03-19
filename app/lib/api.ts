@@ -290,6 +290,11 @@ export interface FavoriteCheck {
   folder_name: string;
 }
 
+export interface FavoriteArticleRef {
+  article_id: number;
+  db_name: string;
+}
+
 export interface FavoriteBatchCheckItem {
   article_id: number;
   folders: FavoriteCheck[];
@@ -411,6 +416,41 @@ export async function removeFavorite(
   url.searchParams.set('db_name', dbName);
   const res = await authFetch(url.toString(), token, { method: 'DELETE' });
   if (!res.ok) throw new Error('移除收藏失败');
+}
+
+export async function bulkRemoveFavorites(
+  token: string,
+  folderId: number,
+  articles: FavoriteArticleRef[],
+): Promise<number> {
+  const res = await authFetch(`${resolveBase()}/api/favorites/folders/${folderId}/articles/bulk-remove`, token, {
+    method: 'POST',
+    body: JSON.stringify({ articles }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || '批量移除收藏失败');
+  }
+  const data: { count: number } = await res.json();
+  return data.count;
+}
+
+export async function bulkMoveFavorites(
+  token: string,
+  folderId: number,
+  targetFolderId: number,
+  articles: FavoriteArticleRef[],
+): Promise<number> {
+  const res = await authFetch(`${resolveBase()}/api/favorites/folders/${folderId}/articles/bulk-move`, token, {
+    method: 'POST',
+    body: JSON.stringify({ target_folder_id: targetFolderId, articles }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || '批量移动收藏失败');
+  }
+  const data: { count: number } = await res.json();
+  return data.count;
 }
 
 export function getExportUrl(
