@@ -110,6 +110,11 @@ def init_auth_db() -> None:
                 ai_api_key      TEXT    NOT NULL DEFAULT '',
                 ai_model        TEXT    NOT NULL DEFAULT '',
                 ai_system_prompt TEXT   NOT NULL DEFAULT '',
+                ai_backup_base_url TEXT NOT NULL DEFAULT '',
+                ai_backup_api_key TEXT NOT NULL DEFAULT '',
+                ai_backup_model TEXT NOT NULL DEFAULT '',
+                ai_backup_system_prompt TEXT NOT NULL DEFAULT '',
+                ai_retry_attempts INTEGER NOT NULL DEFAULT 3,
                 enabled         INTEGER NOT NULL DEFAULT 1,
                 created_at      REAL    NOT NULL,
                 updated_at      REAL    NOT NULL
@@ -181,6 +186,26 @@ def init_auth_db() -> None:
             "ai_system_prompt": (
                 "ALTER TABLE notification_settings "
                 "ADD COLUMN ai_system_prompt TEXT NOT NULL DEFAULT ''"
+            ),
+            "ai_backup_base_url": (
+                "ALTER TABLE notification_settings "
+                "ADD COLUMN ai_backup_base_url TEXT NOT NULL DEFAULT ''"
+            ),
+            "ai_backup_api_key": (
+                "ALTER TABLE notification_settings "
+                "ADD COLUMN ai_backup_api_key TEXT NOT NULL DEFAULT ''"
+            ),
+            "ai_backup_model": (
+                "ALTER TABLE notification_settings "
+                "ADD COLUMN ai_backup_model TEXT NOT NULL DEFAULT ''"
+            ),
+            "ai_backup_system_prompt": (
+                "ALTER TABLE notification_settings "
+                "ADD COLUMN ai_backup_system_prompt TEXT NOT NULL DEFAULT ''"
+            ),
+            "ai_retry_attempts": (
+                "ALTER TABLE notification_settings "
+                "ADD COLUMN ai_retry_attempts INTEGER NOT NULL DEFAULT 3"
             ),
             "sync_to_tracking_folder": (
                 "ALTER TABLE notification_settings "
@@ -1099,6 +1124,8 @@ def get_notification_settings(user_id: int) -> dict | None:
             "pushplus_token, pushplus_template, pushplus_topic, pushplus_to, "
             "sync_to_tracking_folder, "
             "ai_base_url, ai_api_key, ai_model, ai_system_prompt, "
+            "ai_backup_base_url, ai_backup_api_key, ai_backup_model, "
+            "ai_backup_system_prompt, ai_retry_attempts, "
             "enabled, created_at, updated_at "
             "FROM notification_settings WHERE user_id = ?",
             (user_id,),
@@ -1109,6 +1136,7 @@ def get_notification_settings(user_id: int) -> dict | None:
         result["keywords"] = json.loads(result["keywords"])
         result["directions"] = json.loads(result["directions"])
         result["sync_to_tracking_folder"] = bool(result["sync_to_tracking_folder"])
+        result["ai_retry_attempts"] = max(1, int(result["ai_retry_attempts"]))
         result["enabled"] = bool(result["enabled"])
         return result
     finally:
@@ -1129,6 +1157,11 @@ def upsert_notification_settings(
     ai_api_key: str = "",
     ai_model: str = "",
     ai_system_prompt: str = "",
+    ai_backup_base_url: str = "",
+    ai_backup_api_key: str = "",
+    ai_backup_model: str = "",
+    ai_backup_system_prompt: str = "",
+    ai_retry_attempts: int = 3,
     enabled: bool = True,
 ) -> dict:
     """
@@ -1148,6 +1181,11 @@ def upsert_notification_settings(
         ai_api_key: OpenAI-compatible API key.
         ai_model: OpenAI-compatible model name.
         ai_system_prompt: Optional custom system prompt.
+        ai_backup_base_url: Backup OpenAI-compatible API base URL.
+        ai_backup_api_key: Backup OpenAI-compatible API key.
+        ai_backup_model: Backup OpenAI-compatible model name.
+        ai_backup_system_prompt: Backup custom system prompt.
+        ai_retry_attempts: Retry attempts per AI endpoint.
         enabled: Whether notifications are enabled.
 
     Returns:
@@ -1164,8 +1202,10 @@ def upsert_notification_settings(
             "pushplus_token, pushplus_template, pushplus_topic, "
             "pushplus_to, sync_to_tracking_folder, "
             "ai_base_url, ai_api_key, ai_model, ai_system_prompt, "
+            "ai_backup_base_url, ai_backup_api_key, ai_backup_model, "
+            "ai_backup_system_prompt, ai_retry_attempts, "
             "enabled, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
             "ON CONFLICT(user_id) DO UPDATE SET "
             "keywords = excluded.keywords, "
             "directions = excluded.directions, "
@@ -1179,6 +1219,11 @@ def upsert_notification_settings(
             "ai_api_key = excluded.ai_api_key, "
             "ai_model = excluded.ai_model, "
             "ai_system_prompt = excluded.ai_system_prompt, "
+            "ai_backup_base_url = excluded.ai_backup_base_url, "
+            "ai_backup_api_key = excluded.ai_backup_api_key, "
+            "ai_backup_model = excluded.ai_backup_model, "
+            "ai_backup_system_prompt = excluded.ai_backup_system_prompt, "
+            "ai_retry_attempts = excluded.ai_retry_attempts, "
             "enabled = excluded.enabled, "
             "updated_at = excluded.updated_at",
             (
@@ -1195,6 +1240,11 @@ def upsert_notification_settings(
                 ai_api_key,
                 ai_model,
                 ai_system_prompt,
+                ai_backup_base_url,
+                ai_backup_api_key,
+                ai_backup_model,
+                ai_backup_system_prompt,
+                ai_retry_attempts,
                 int(enabled),
                 now,
                 now,
@@ -1222,6 +1272,8 @@ def list_notification_subscribers() -> list[dict]:
             "ns.pushplus_topic, ns.pushplus_to, "
             "ns.sync_to_tracking_folder, "
             "ns.ai_base_url, ns.ai_api_key, ns.ai_model, ns.ai_system_prompt, "
+            "ns.ai_backup_base_url, ns.ai_backup_api_key, ns.ai_backup_model, "
+            "ns.ai_backup_system_prompt, ns.ai_retry_attempts, "
             "ns.enabled, ns.created_at, ns.updated_at "
             "FROM notification_settings ns "
             "JOIN users u ON ns.user_id = u.id "
@@ -1233,6 +1285,7 @@ def list_notification_subscribers() -> list[dict]:
             item["keywords"] = json.loads(item["keywords"])
             item["directions"] = json.loads(item["directions"])
             item["sync_to_tracking_folder"] = bool(item["sync_to_tracking_folder"])
+            item["ai_retry_attempts"] = max(1, int(item["ai_retry_attempts"]))
             item["enabled"] = bool(item["enabled"])
             result.append(item)
         return result

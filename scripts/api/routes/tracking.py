@@ -156,26 +156,13 @@ def _run_ai_selection(
         Subscriber,
     )
     from scripts.notify.selection import (
-        apply_selection_rules,
-        select_articles_with_retries,
+        select_articles_for_subscriber,
     )
     from scripts.notify.subscriptions import (
         load_notification_config,
-        resolve_ai_runtime_config,
     )
 
     global_config, defaults = load_notification_config()
-    ai_config = resolve_ai_runtime_config(
-        base_url=settings.get("ai_base_url"),
-        api_key=settings.get("ai_api_key"),
-        model=settings.get("ai_model"),
-        system_prompt=settings.get("ai_system_prompt"),
-        global_config=global_config,
-        defaults=defaults,
-    )
-    if ai_config is None:
-        raise RuntimeError("AI configuration is incomplete")
-
     subscriber = Subscriber(
         subscriber_id=str(settings["user_id"]),
         name=settings.get("username", str(settings["user_id"])),
@@ -185,10 +172,21 @@ def _run_ai_selection(
         directions=settings.get("directions", []),
         topic=settings.get("pushplus_topic") or None,
         template=settings.get("pushplus_template") or None,
-        ai_base_url=ai_config["base_url"] or None,
-        ai_api_key=ai_config["api_key"],
-        ai_model=ai_config["model"],
-        ai_system_prompt=ai_config["system_prompt"] or None,
+        ai_base_url=(str(settings.get("ai_base_url") or "").strip() or None),
+        ai_api_key=(str(settings.get("ai_api_key") or "").strip() or None),
+        ai_model=(str(settings.get("ai_model") or "").strip() or None),
+        ai_system_prompt=(str(settings.get("ai_system_prompt") or "").strip() or None),
+        ai_backup_base_url=(
+            str(settings.get("ai_backup_base_url") or "").strip() or None
+        ),
+        ai_backup_api_key=(
+            str(settings.get("ai_backup_api_key") or "").strip() or None
+        ),
+        ai_backup_model=(str(settings.get("ai_backup_model") or "").strip() or None),
+        ai_backup_system_prompt=(
+            str(settings.get("ai_backup_system_prompt") or "").strip() or None
+        ),
+        ai_retry_attempts=max(1, int(settings.get("ai_retry_attempts") or 3)),
     )
 
     from scripts.shared.converters import to_int as _to_int
@@ -227,50 +225,21 @@ def _run_ai_selection(
     candidates_by_id = {c.article_id: c for c in candidates}
     max_candidates = min(defaults.max_candidates, len(candidates))
     candidates_for_model = candidates[:max_candidates]
-
-    selector = OpenAICompatibleSelector(
-        api_key=ai_config["api_key"],
-        model=ai_config["model"],
-        timeout_seconds=120,
-        retries=2,
-        temperature=defaults.temperature,
-        base_url=ai_config["base_url"] or None,
-        system_prompt=ai_config["system_prompt"],
-    )
-
+    selector_cache: dict[tuple[str, str, str, str, int], OpenAICompatibleSelector] = {}
     try:
-        selection_result = select_articles_with_retries(
-            selector,
-            subscriber,
-            defaults,
-            candidates_for_model,
-            candidates_by_id,
-            {},
-            5,
+        accepted, summary, skip_reason = select_articles_for_subscriber(
+            subscriber=subscriber,
+            global_config=global_config,
+            defaults=defaults,
+            candidates_for_model=candidates_for_model,
+            candidates_by_id=candidates_by_id,
+            delivery_dedupe={},
+            selector_cache=selector_cache,
+            timeout_seconds=120,
+            retry_attempts=subscriber.ai_retry_attempts,
         )
-        accepted = apply_selection_rules(
-            selection_result,
-            subscriber,
-            candidates_by_id,
-            {},
-        )
-
-        selected_candidates = [
-            candidates_by_id[item.article_id]
-            for item in accepted
-            if item.article_id in candidates_by_id
-        ]
-
-        summary = selection_result.summary
-        if selected_candidates:
-            try:
-                better = selector.summarize_selected_articles(
-                    subscriber, selected_candidates
-                )
-                if better:
-                    summary = better
-            except Exception:
-                pass
+        if skip_reason is not None:
+            raise RuntimeError(skip_reason)
 
         selected = []
         for item in accepted:
@@ -290,7 +259,8 @@ def _run_ai_selection(
             "total_candidates": len(candidates),
         }
     finally:
-        selector.close()
+        for selector in selector_cache.values():
+            selector.close()
 
 
 @router.post("/push-weekly")
@@ -298,9 +268,8 @@ async def push_weekly_to_tracking(user: CurrentUser):
     """
     Push weekly articles to the user's tracking folder.
 
-    If the user has notification settings with keywords/directions,
-    AI selection is applied to filter and rank articles first.
-    Otherwise all weekly articles are pushed directly.
+    AI selection is required for delivery. When no usable recommendation
+    configuration is available, the push is skipped.
     """
     folder = get_tracking_folder(user["id"])
     if not folder:
@@ -322,82 +291,88 @@ async def push_weekly_to_tracking(user: CurrentUser):
         }
 
     settings = get_notification_settings(user["id"])
-    has_preferences = (
-        settings
-        and settings.get("enabled", True)
-        and (settings.get("keywords") or settings.get("directions"))
-    )
-
-    if has_preferences and settings:
-        candidate_articles = _load_candidate_articles(weekly_articles)
-        if not candidate_articles:
-            return {
-                "pushed": 0,
-                "selected": 0,
-                "summary": "",
-                "message": "No article data found for weekly articles",
-            }
-
-        try:
-            ai_result = _run_ai_selection(settings, candidate_articles)
-            fallback_message = ""
-        except RuntimeError as error:
-            logger.warning(
-                "AI selection is unavailable for user %s: %s",
-                user["id"],
-                error,
-            )
-            ai_result = None
-            fallback_message = f"{error}; pushed all weekly articles"
-        except Exception:
-            logger.exception("AI selection failed, falling back to all")
-            ai_result = None
-            fallback_message = "AI selection failed; pushed all weekly articles"
-
-        if ai_result is None:
-            count = bulk_add_favorites(user["id"], folder["id"], weekly_articles)
-            return {
-                "pushed": count,
-                "selected": len(weekly_articles),
-                "summary": "",
-                "message": fallback_message,
-                "folder_id": folder["id"],
-                "folder_name": folder["name"],
-            }
-
-        if ai_result["selected"]:
-            articles_to_push = [
-                {
-                    "article_id": art["article_id"],
-                    "db_name": art["db_name"],
-                }
-                for art in ai_result["selected"]
-            ]
-            count = bulk_add_favorites(user["id"], folder["id"], articles_to_push)
-            return {
-                "pushed": count,
-                "selected": len(ai_result["selected"]),
-                "total_candidates": ai_result["total_candidates"],
-                "summary": ai_result["summary"],
-                "folder_id": folder["id"],
-                "folder_name": folder["name"],
-            }
-
+    if not settings or not settings.get("enabled", True):
         return {
             "pushed": 0,
             "selected": 0,
-            "summary": ai_result["summary"],
-            "total_candidates": ai_result["total_candidates"],
-            "message": "AI selection found no matching articles",
+            "summary": "",
+            "message": "Recommendation settings are not enabled; skipped push",
             "folder_id": folder["id"],
             "folder_name": folder["name"],
         }
 
-    count = bulk_add_favorites(user["id"], folder["id"], weekly_articles)
+    if not (settings.get("keywords") or settings.get("directions")):
+        return {
+            "pushed": 0,
+            "selected": 0,
+            "summary": "",
+            "message": "No keywords or directions configured; skipped push",
+            "folder_id": folder["id"],
+            "folder_name": folder["name"],
+        }
+
+    candidate_articles = _load_candidate_articles(weekly_articles)
+    if not candidate_articles:
+        return {
+            "pushed": 0,
+            "selected": 0,
+            "summary": "",
+            "message": "No article data found for weekly articles",
+            "folder_id": folder["id"],
+            "folder_name": folder["name"],
+        }
+
+    try:
+        ai_result = _run_ai_selection(settings, candidate_articles)
+    except RuntimeError as error:
+        logger.warning(
+            "AI selection is unavailable for user %s: %s",
+            user["id"],
+            error,
+        )
+        return {
+            "pushed": 0,
+            "selected": 0,
+            "summary": "",
+            "message": f"{error}; skipped push",
+            "folder_id": folder["id"],
+            "folder_name": folder["name"],
+        }
+    except Exception:
+        logger.exception("AI selection failed for user %s", user["id"])
+        return {
+            "pushed": 0,
+            "selected": 0,
+            "summary": "",
+            "message": "AI selection failed across configured endpoints; skipped push",
+            "folder_id": folder["id"],
+            "folder_name": folder["name"],
+        }
+
+    if ai_result["selected"]:
+        articles_to_push = [
+            {
+                "article_id": art["article_id"],
+                "db_name": art["db_name"],
+            }
+            for art in ai_result["selected"]
+        ]
+        count = bulk_add_favorites(user["id"], folder["id"], articles_to_push)
+        return {
+            "pushed": count,
+            "selected": len(ai_result["selected"]),
+            "total_candidates": ai_result["total_candidates"],
+            "summary": ai_result["summary"],
+            "folder_id": folder["id"],
+            "folder_name": folder["name"],
+        }
+
     return {
-        "pushed": count,
-        "selected": len(weekly_articles),
-        "summary": "",
+        "pushed": 0,
+        "selected": 0,
+        "summary": ai_result["summary"],
+        "total_candidates": ai_result["total_candidates"],
+        "message": "AI selection found no matching articles",
         "folder_id": folder["id"],
         "folder_name": folder["name"],
     }
@@ -476,5 +451,10 @@ async def update_settings(
         ai_api_key=body.ai_api_key.strip(),
         ai_model=body.ai_model.strip(),
         ai_system_prompt=body.ai_system_prompt.strip(),
+        ai_backup_base_url=body.ai_backup_base_url.strip(),
+        ai_backup_api_key=body.ai_backup_api_key.strip(),
+        ai_backup_model=body.ai_backup_model.strip(),
+        ai_backup_system_prompt=body.ai_backup_system_prompt.strip(),
+        ai_retry_attempts=body.ai_retry_attempts,
         enabled=body.enabled,
     )

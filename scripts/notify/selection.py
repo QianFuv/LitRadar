@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from scripts.notify.ai_selector import OpenAICompatibleSelector
 from scripts.notify.models import (
+    MAX_AI_SELECTION_ROUNDS,
     MAX_ARTICLES_PER_PUSH,
     ArticleCandidate,
     NotificationDefaults,
@@ -11,6 +12,7 @@ from scripts.notify.models import (
     SelectionResult,
     Subscriber,
 )
+from scripts.notify.subscriptions import resolve_ai_runtime_configs
 
 
 def candidate_match_score(candidate: ArticleCandidate, subscriber: Subscriber) -> int:
@@ -35,6 +37,21 @@ def candidate_match_score(candidate: ArticleCandidate, subscriber: Subscriber) -
         if normalized and normalized in source_text:
             score += 1
     return score
+
+
+def has_selection_preferences(subscriber: Subscriber) -> bool:
+    """
+    Check whether a subscriber configured any AI preference filters.
+
+    Args:
+        subscriber: Subscriber profile.
+
+    Returns:
+        True when keywords or directions contain at least one non-empty value.
+    """
+    return any(keyword.strip() for keyword in subscriber.keywords) or any(
+        direction.strip() for direction in subscriber.directions
+    )
 
 
 def select_articles_with_retries(
@@ -114,6 +131,124 @@ def select_articles_with_retries(
             reverse=True,
         ),
     )
+
+
+def select_articles_for_subscriber(
+    *,
+    subscriber: Subscriber,
+    global_config,
+    defaults: NotificationDefaults,
+    candidates_for_model: list[ArticleCandidate],
+    candidates_by_id: dict[int, ArticleCandidate],
+    delivery_dedupe: dict[str, str],
+    selector_cache: dict[tuple[str, str, str, str, int], OpenAICompatibleSelector],
+    timeout_seconds: int,
+    retry_attempts: int,
+    override_model: str | None = None,
+    max_rounds: int = MAX_AI_SELECTION_ROUNDS,
+) -> tuple[list[RankedSelection], str, str | None]:
+    """
+    Run AI-based selection for one subscriber with backup config failover.
+
+    Args:
+        subscriber: Subscriber profile.
+        global_config: Runtime default notification config.
+        defaults: Runtime default model and tuning values.
+        candidates_for_model: Candidates sent to model.
+        candidates_by_id: Candidate lookup map.
+        delivery_dedupe: Delivery dedupe map.
+        selector_cache: Shared selector cache.
+        timeout_seconds: AI request timeout in seconds.
+        retry_attempts: Retry attempts per AI endpoint.
+        override_model: Optional CLI model override.
+        max_rounds: Maximum model query rounds.
+
+    Returns:
+        Tuple of accepted selections, summary text, and optional skip reason.
+    """
+    if not has_selection_preferences(subscriber):
+        return [], "", "No keywords or directions configured"
+
+    ai_configs = resolve_ai_runtime_configs(
+        base_url=subscriber.ai_base_url,
+        api_key=subscriber.ai_api_key,
+        model=subscriber.ai_model,
+        system_prompt=subscriber.ai_system_prompt,
+        backup_base_url=subscriber.ai_backup_base_url,
+        backup_api_key=subscriber.ai_backup_api_key,
+        backup_model=subscriber.ai_backup_model,
+        backup_system_prompt=subscriber.ai_backup_system_prompt,
+        global_config=global_config,
+        defaults=defaults,
+        override_model=override_model,
+    )
+    if not ai_configs:
+        return [], "", "AI configuration is unavailable"
+
+    effective_retries = max(0, retry_attempts)
+    last_error: Exception | None = None
+
+    for ai_config in ai_configs:
+        selector_key = (
+            ai_config["base_url"],
+            ai_config["api_key"],
+            ai_config["model"],
+            ai_config["system_prompt"],
+            effective_retries,
+        )
+        selector = selector_cache.get(selector_key)
+        if selector is None:
+            selector = OpenAICompatibleSelector(
+                api_key=ai_config["api_key"],
+                model=ai_config["model"],
+                timeout_seconds=timeout_seconds,
+                retries=effective_retries,
+                temperature=defaults.temperature,
+                base_url=ai_config["base_url"] or None,
+                system_prompt=ai_config["system_prompt"],
+            )
+            selector_cache[selector_key] = selector
+
+        try:
+            selection_result = select_articles_with_retries(
+                selector,
+                subscriber,
+                defaults,
+                candidates_for_model,
+                candidates_by_id,
+                delivery_dedupe,
+                max_rounds,
+            )
+            accepted = apply_selection_rules(
+                selection_result,
+                subscriber,
+                candidates_by_id,
+                delivery_dedupe,
+            )
+
+            final_summary = selection_result.summary
+            if accepted:
+                selected_candidates = [
+                    candidates_by_id[item.article_id]
+                    for item in accepted
+                    if item.article_id in candidates_by_id
+                ]
+                if selected_candidates:
+                    try:
+                        summarized = selector.summarize_selected_articles(
+                            subscriber,
+                            selected_candidates,
+                        )
+                        if summarized:
+                            final_summary = summarized
+                    except Exception:
+                        final_summary = selection_result.summary
+
+            return accepted, final_summary, None
+        except Exception as error:
+            last_error = error
+
+    return [], "", f"AI selection failed across configured endpoints: {last_error}"
 
 
 def apply_selection_rules(

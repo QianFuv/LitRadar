@@ -80,6 +80,11 @@ class Subscriber:
         ai_api_key: Optional OpenAI-compatible API key override.
         ai_model: Optional OpenAI-compatible model override.
         ai_system_prompt: Optional custom system prompt override.
+        ai_backup_base_url: Optional backup OpenAI-compatible API base URL.
+        ai_backup_api_key: Optional backup OpenAI-compatible API key.
+        ai_backup_model: Optional backup OpenAI-compatible model identifier.
+        ai_backup_system_prompt: Optional backup custom system prompt override.
+        ai_retry_attempts: Retry attempts per AI endpoint.
     """
 
     subscriber_id: str
@@ -97,6 +102,11 @@ class Subscriber:
     ai_api_key: str | None = None
     ai_model: str | None = None
     ai_system_prompt: str | None = None
+    ai_backup_base_url: str | None = None
+    ai_backup_api_key: str | None = None
+    ai_backup_model: str | None = None
+    ai_backup_system_prompt: str | None = None
+    ai_retry_attempts: int = 3
 
 
 @dataclass(frozen=True)

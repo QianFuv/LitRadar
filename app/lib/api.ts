@@ -329,6 +329,11 @@ export interface NotificationSettings {
   ai_api_key: string;
   ai_model: string;
   ai_system_prompt: string;
+  ai_backup_base_url: string;
+  ai_backup_api_key: string;
+  ai_backup_model: string;
+  ai_backup_system_prompt: string;
+  ai_retry_attempts: number;
   enabled: boolean;
   created_at: number;
   updated_at: number;
@@ -347,6 +352,11 @@ export interface NotificationSettingsUpdate {
   ai_api_key: string;
   ai_model: string;
   ai_system_prompt: string;
+  ai_backup_base_url: string;
+  ai_backup_api_key: string;
+  ai_backup_model: string;
+  ai_backup_system_prompt: string;
+  ai_retry_attempts: number;
   enabled: boolean;
 }
 

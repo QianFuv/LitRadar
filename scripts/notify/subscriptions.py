@@ -111,6 +111,97 @@ def resolve_ai_runtime_config(
     }
 
 
+def resolve_ai_runtime_configs(
+    *,
+    base_url: Any,
+    api_key: Any,
+    model: Any,
+    system_prompt: Any,
+    backup_base_url: Any,
+    backup_api_key: Any,
+    backup_model: Any,
+    backup_system_prompt: Any,
+    global_config: NotificationGlobal,
+    defaults: NotificationDefaults,
+    override_model: str | None = None,
+) -> list[dict[str, str]]:
+    """
+    Resolve primary and backup OpenAI-compatible AI runtime configurations.
+
+    Args:
+        base_url: Primary per-user base URL value.
+        api_key: Primary per-user API key value.
+        model: Primary per-user model value.
+        system_prompt: Primary per-user system prompt value.
+        backup_base_url: Backup per-user base URL value.
+        backup_api_key: Backup per-user API key value.
+        backup_model: Backup per-user model value.
+        backup_system_prompt: Backup per-user system prompt value.
+        global_config: Runtime default config from environment.
+        defaults: Runtime default model and tuning values.
+        override_model: Optional CLI model override.
+
+    Returns:
+        Ordered list of distinct runtime config dicts.
+    """
+    configs: list[dict[str, str]] = []
+
+    primary_config = resolve_ai_runtime_config(
+        base_url=base_url,
+        api_key=api_key,
+        model=model,
+        system_prompt=system_prompt,
+        global_config=global_config,
+        defaults=defaults,
+        override_model=override_model,
+    )
+    if primary_config is not None:
+        configs.append(primary_config)
+
+    has_backup_override = any(
+        str(value or "").strip()
+        for value in (
+            backup_base_url,
+            backup_api_key,
+            backup_model,
+            backup_system_prompt,
+        )
+    )
+    if not has_backup_override:
+        return configs
+
+    backup_config = resolve_ai_runtime_config(
+        base_url=backup_base_url,
+        api_key=backup_api_key,
+        model=backup_model,
+        system_prompt=backup_system_prompt,
+        global_config=global_config,
+        defaults=defaults,
+        override_model=override_model,
+    )
+    if backup_config is None:
+        return configs
+
+    backup_key = (
+        backup_config["base_url"],
+        backup_config["api_key"],
+        backup_config["model"],
+        backup_config["system_prompt"],
+    )
+    existing_keys = {
+        (
+            config["base_url"],
+            config["api_key"],
+            config["model"],
+            config["system_prompt"],
+        )
+        for config in configs
+    }
+    if backup_key not in existing_keys:
+        configs.append(backup_config)
+    return configs
+
+
 def load_subscribers_from_db() -> list[Subscriber]:
     """
     Load notification subscribers from auth database settings only.
@@ -158,6 +249,17 @@ def load_subscribers_from_db() -> list[Subscriber]:
                 ai_system_prompt=(
                     str(row.get("ai_system_prompt") or "").strip() or None
                 ),
+                ai_backup_base_url=(
+                    str(row.get("ai_backup_base_url") or "").strip() or None
+                ),
+                ai_backup_api_key=(
+                    str(row.get("ai_backup_api_key") or "").strip() or None
+                ),
+                ai_backup_model=(str(row.get("ai_backup_model") or "").strip() or None),
+                ai_backup_system_prompt=(
+                    str(row.get("ai_backup_system_prompt") or "").strip() or None
+                ),
+                ai_retry_attempts=max(1, to_int(row.get("ai_retry_attempts")) or 3),
             )
         )
     return subscribers

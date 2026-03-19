@@ -81,6 +81,11 @@ export default function TrackingPage() {
       ai_api_key: settings?.ai_api_key || '',
       ai_model: settings?.ai_model || '',
       ai_system_prompt: settings?.ai_system_prompt || '',
+      ai_backup_base_url: settings?.ai_backup_base_url || '',
+      ai_backup_api_key: settings?.ai_backup_api_key || '',
+      ai_backup_model: settings?.ai_backup_model || '',
+      ai_backup_system_prompt: settings?.ai_backup_system_prompt || '',
+      ai_retry_attempts: settings?.ai_retry_attempts ?? 3,
       enabled: settings?.enabled ?? true,
     }),
     [],
@@ -100,6 +105,11 @@ export default function TrackingPage() {
     ai_api_key: aiApiKey,
     ai_model: aiModel,
     ai_system_prompt: aiSystemPrompt,
+    ai_backup_base_url: aiBackupBaseUrl,
+    ai_backup_api_key: aiBackupApiKey,
+    ai_backup_model: aiBackupModel,
+    ai_backup_system_prompt: aiBackupSystemPrompt,
+    ai_retry_attempts: aiRetryAttempts,
     enabled: notifyEnabled,
   } = formSettings;
 
@@ -277,7 +287,7 @@ export default function TrackingPage() {
         <CardHeader>
           <CardTitle>手动推送</CardTitle>
           <CardDescription>
-            将最近一周的推送文章手动同步到追踪文件夹
+            将最近一周的文章按当前 AI 推荐规则同步到追踪文件夹
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -305,7 +315,7 @@ export default function TrackingPage() {
         <CardHeader>
           <CardTitle>AI 推荐配置</CardTitle>
           <CardDescription>
-            配置关键词、研究方向和 OpenAI 兼容服务，AI 将根据你的偏好筛选和推荐文章
+            只有在启用推荐、填写关键词或研究方向、且至少有一套可用 AI 配置时，系统才会推送文章
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-5">
@@ -414,7 +424,17 @@ export default function TrackingPage() {
             </Select>
           </div>
 
-          <div className="space-y-3 rounded-md border p-3">
+          <div className="space-y-4 rounded-md border p-3">
+            <div className="space-y-2">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <Label className="text-base">主 AI 配置</Label>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    优先使用这套配置进行筛选；留空字段会回退到服务端默认值。
+                  </p>
+                </div>
+              </div>
+            </div>
             <div className="grid gap-3 md:grid-cols-2">
               <div className="space-y-1">
                 <Label htmlFor="ai-base-url">Base URL</Label>
@@ -475,8 +495,94 @@ export default function TrackingPage() {
                 className="min-h-28 w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-xs outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
               />
             </div>
+            <div className="grid gap-3 md:grid-cols-2">
+              <div className="space-y-1">
+                <Label htmlFor="ai-retry-attempts">失败重试次数</Label>
+                <Input
+                  id="ai-retry-attempts"
+                  type="number"
+                  min={1}
+                  max={10}
+                  value={aiRetryAttempts}
+                  onChange={(e) =>
+                    updateDraftSettings((current) => ({
+                      ...current,
+                      ai_retry_attempts: Math.max(1, Math.min(10, Number(e.target.value) || 1)),
+                    }))
+                  }
+                />
+              </div>
+            </div>
+            <div className="space-y-3 rounded-md border border-dashed p-3">
+              <div>
+                <Label className="text-base">备用 AI 配置</Label>
+                <p className="text-xs text-muted-foreground mt-1">
+                  当主配置连续失败后，系统会自动切换到这套备用配置重试。
+                </p>
+              </div>
+              <div className="grid gap-3 md:grid-cols-2">
+                <div className="space-y-1">
+                  <Label htmlFor="ai-backup-base-url">Backup Base URL</Label>
+                  <Input
+                    id="ai-backup-base-url"
+                    value={aiBackupBaseUrl}
+                    onChange={(e) =>
+                      updateDraftSettings((current) => ({
+                        ...current,
+                        ai_backup_base_url: e.target.value,
+                      }))
+                    }
+                    placeholder="https://api.openai.com/v1"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label htmlFor="ai-backup-model">Backup Model</Label>
+                  <Input
+                    id="ai-backup-model"
+                    value={aiBackupModel}
+                    onChange={(e) =>
+                      updateDraftSettings((current) => ({
+                        ...current,
+                        ai_backup_model: e.target.value,
+                      }))
+                    }
+                    placeholder="gpt-4.1-mini"
+                  />
+                </div>
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor="ai-backup-api-key">Backup API Key</Label>
+                <Input
+                  id="ai-backup-api-key"
+                  type="password"
+                  value={aiBackupApiKey}
+                  onChange={(e) =>
+                    updateDraftSettings((current) => ({
+                      ...current,
+                      ai_backup_api_key: e.target.value,
+                    }))
+                  }
+                  placeholder="sk-..."
+                />
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor="ai-backup-system-prompt">Backup System Prompt</Label>
+                <textarea
+                  id="ai-backup-system-prompt"
+                  value={aiBackupSystemPrompt}
+                  onChange={(e) =>
+                    updateDraftSettings((current) => ({
+                      ...current,
+                      ai_backup_system_prompt: e.target.value,
+                    }))
+                  }
+                  placeholder="Optional backup prompt override."
+                  className="min-h-28 w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-xs outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
+                />
+              </div>
+            </div>
             <p className="text-xs text-muted-foreground">
-              留空时会回退到服务端默认 AI 配置；填写后仅对当前账号生效。
+              未配置关键词或研究方向时不会推送；主备 AI 都不可用时同样会跳过推送。
             </p>
           </div>
 
@@ -592,11 +698,12 @@ export default function TrackingPage() {
         </CardHeader>
         <CardContent className="text-sm text-muted-foreground space-y-2">
           <p>1. 创建或选择一个收藏夹，设为「追踪文件夹」</p>
-          <p>2. 配置关键词、研究方向和 OpenAI 兼容 AI 服务</p>
+          <p>2. 配置关键词、研究方向和至少一套可用的 OpenAI 兼容 AI 服务</p>
           <p>3. 选择推送方式：推送到追踪文件夹或通过 PushPlus 外部推送</p>
-          <p>4. 系统每周推送的新文章会根据你的偏好自动筛选和推荐</p>
-          <p>5. 也可以手动触发推送同步</p>
-          <p>6. 在「我的收藏」中查看追踪到的文章</p>
+          <p>4. 系统只会推送 AI 推荐出的文章；未配置偏好或 AI 不可用时会跳过</p>
+          <p>5. 主配置失败后会自动切换到备用 AI 配置并重试</p>
+          <p>6. 也可以手动触发推送同步</p>
+          <p>7. 在「我的收藏」中查看追踪到的文章</p>
         </CardContent>
       </Card>
     </div>

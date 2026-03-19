@@ -24,14 +24,9 @@ from scripts.notify.delivery import (
     resolve_path,
 )
 from scripts.notify.message import build_markdown_content, build_message_title
-from scripts.notify.models import (
-    MAX_AI_SELECTION_ROUNDS,
-    ArticleCandidate,
-    RankedSelection,
-    Subscriber,
-)
+from scripts.notify.models import MAX_AI_SELECTION_ROUNDS
 from scripts.notify.pushplus import PushPlusClient
-from scripts.notify.selection import apply_selection_rules, select_articles_with_retries
+from scripts.notify.selection import select_articles_for_subscriber
 from scripts.notify.state import (
     create_run_state,
     load_state,
@@ -41,41 +36,10 @@ from scripts.notify.state import (
 from scripts.notify.subscriptions import (
     load_notification_config,
     load_subscribers_from_db,
-    resolve_ai_runtime_config,
 )
 from scripts.shared.constants import PROJECT_ROOT
 from scripts.shared.converters import to_int
 from scripts.shared.db_path import resolve_db_path
-
-
-def select_all_candidates(
-    subscriber: Subscriber,
-    candidates: list[ArticleCandidate],
-    delivery_dedupe: dict[str, str],
-) -> list[RankedSelection]:
-    """
-    Return all non-deduplicated candidates in their original order.
-
-    Args:
-        subscriber: Subscriber receiving articles.
-        candidates: Candidate articles for the current database run.
-        delivery_dedupe: Per-subscriber delivery history.
-
-    Returns:
-        Ranked selections with neutral scores.
-    """
-    accepted: list[RankedSelection] = []
-    for candidate in candidates:
-        delivery_key = f"{subscriber.subscriber_id}:{candidate.article_id}"
-        if delivery_key in delivery_dedupe:
-            continue
-        accepted.append(
-            RankedSelection(
-                article_id=candidate.article_id,
-                score=0.0,
-            )
-        )
-    return accepted
 
 
 def run_notification(args: argparse.Namespace) -> int:
@@ -214,7 +178,7 @@ def run_notification(args: argparse.Namespace) -> int:
         candidates_for_model = all_candidates[:max_candidates]
         candidates_by_id = {item.article_id: item for item in all_candidates}
         selector_cache: dict[
-            tuple[str, str, str, str],
+            tuple[str, str, str, str, int],
             OpenAICompatibleSelector,
         ] = {}
         push_client = PushPlusClient(timeout_seconds=args.timeout, retries=args.retries)
@@ -230,80 +194,38 @@ def run_notification(args: argparse.Namespace) -> int:
             for subscriber in pushplus_subscribers:
                 try:
                     final_summary = ""
-                    if subscriber.keywords or subscriber.directions:
-                        ai_config = resolve_ai_runtime_config(
-                            base_url=subscriber.ai_base_url,
-                            api_key=subscriber.ai_api_key,
-                            model=subscriber.ai_model,
-                            system_prompt=subscriber.ai_system_prompt,
+                    accepted, final_summary, skip_reason = (
+                        select_articles_for_subscriber(
+                            subscriber=subscriber,
                             global_config=global_config,
                             defaults=defaults,
+                            candidates_for_model=candidates_for_model,
+                            candidates_by_id=candidates_by_id,
+                            delivery_dedupe=delivery_dedupe,
+                            selector_cache=selector_cache,
+                            timeout_seconds=args.timeout,
+                            retry_attempts=max(
+                                args.retries, subscriber.ai_retry_attempts
+                            ),
                             override_model=model_override,
+                            max_rounds=MAX_AI_SELECTION_ROUNDS,
                         )
-                        if ai_config is None:
-                            accepted = select_all_candidates(
-                                subscriber,
-                                all_candidates,
-                                delivery_dedupe,
-                            )
-                        else:
-                            selector_key = (
-                                ai_config["base_url"],
-                                ai_config["api_key"],
-                                ai_config["model"],
-                                ai_config["system_prompt"],
-                            )
-                            selector = selector_cache.get(selector_key)
-                            if selector is None:
-                                selector = OpenAICompatibleSelector(
-                                    api_key=ai_config["api_key"],
-                                    model=ai_config["model"],
-                                    timeout_seconds=args.timeout,
-                                    retries=args.retries,
-                                    temperature=defaults.temperature,
-                                    base_url=ai_config["base_url"] or None,
-                                    system_prompt=ai_config["system_prompt"],
-                                )
-                                selector_cache[selector_key] = selector
-                            selection_result = select_articles_with_retries(
-                                selector,
-                                subscriber,
-                                defaults,
-                                candidates_for_model,
-                                candidates_by_id,
-                                delivery_dedupe,
-                                MAX_AI_SELECTION_ROUNDS,
-                            )
-                            accepted = apply_selection_rules(
-                                selection_result,
-                                subscriber,
-                                candidates_by_id,
-                                delivery_dedupe,
-                            )
-
-                            selected_candidates = [
-                                candidates_by_id[item.article_id]
-                                for item in accepted
-                                if item.article_id in candidates_by_id
-                            ]
-
-                            final_summary = selection_result.summary
-                            if selected_candidates:
-                                try:
-                                    summarized = selector.summarize_selected_articles(
-                                        subscriber,
-                                        selected_candidates,
-                                    )
-                                    if summarized:
-                                        final_summary = summarized
-                                except Exception:
-                                    final_summary = selection_result.summary
-                    else:
-                        accepted = select_all_candidates(
-                            subscriber,
-                            all_candidates,
-                            delivery_dedupe,
+                    )
+                    if skip_reason is not None:
+                        run_state["user_results"].append(
+                            {
+                                "subscriber_id": subscriber.subscriber_id,
+                                "selected_count": 0,
+                                "pushed_count": 0,
+                                "message_id": None,
+                                "status": "skipped",
+                                "error": skip_reason,
+                            }
                         )
+                        run_state["updated_at"] = utc_now_iso()
+                        state["updated_at"] = utc_now_iso()
+                        save_json_atomic(state_file, state)
+                        continue
 
                     if not accepted:
                         run_state["user_results"].append(
@@ -313,7 +235,7 @@ def run_notification(args: argparse.Namespace) -> int:
                                 "pushed_count": 0,
                                 "message_id": None,
                                 "status": "skipped",
-                                "error": None,
+                                "error": "AI selection found no matching articles",
                             }
                         )
                         run_state["updated_at"] = utc_now_iso()

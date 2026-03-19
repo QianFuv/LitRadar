@@ -380,6 +380,11 @@ class NotificationSettingsUpdate(BaseModel):
     ai_api_key: str = ""
     ai_model: str = ""
     ai_system_prompt: str = ""
+    ai_backup_base_url: str = ""
+    ai_backup_api_key: str = ""
+    ai_backup_model: str = ""
+    ai_backup_system_prompt: str = ""
+    ai_retry_attempts: int = Field(default=3, ge=1, le=10)
     enabled: bool = True
 
 
@@ -398,6 +403,11 @@ class NotificationSettingsResponse(BaseModel):
     ai_api_key: str
     ai_model: str
     ai_system_prompt: str
+    ai_backup_base_url: str
+    ai_backup_api_key: str
+    ai_backup_model: str
+    ai_backup_system_prompt: str
+    ai_retry_attempts: int
     enabled: bool
     created_at: float
     updated_at: float
