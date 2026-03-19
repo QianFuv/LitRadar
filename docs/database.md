@@ -1,318 +1,471 @@
-# Database Schema
+# 数据库结构说明
 
-Each CSV file under `data/meta/` produces a corresponding SQLite database at `data/index/<csv_stem>.sqlite`. This document describes the complete schema.
+Paper Scanner 当前实际使用两类数据库：
 
-## Configuration
+1. **索引数据库**
+   - 路径：`data/index/*.sqlite`
+   - 来源：每个 `data/meta/*.csv` 对应生成一个 `.sqlite`
+   - 作用：期刊、期次、文章、全文检索
 
-SQLite pragmas applied at initialization:
+2. **认证与业务数据库**
+   - 路径：`data/auth.sqlite`
+   - 作用：用户、访问令牌、收藏夹、通知设置、定时任务、公告
 
-| Pragma | Value | Purpose |
-|--------|-------|---------|
-| `journal_mode` | WAL | Write-ahead logging for concurrent reads |
-| `foreign_keys` | ON | Enforce referential integrity |
-| `synchronous` | NORMAL | Balance safety and performance |
-| `busy_timeout` | 30000 ms | Wait time for locked databases |
+## 一、索引数据库
 
-All timestamps are stored as `TEXT` in UTC ISO-8601 format. Boolean values use `INTEGER` with `0/1` convention.
+### 初始化参数
 
-## Entity Relationship
+索引数据库在 `scripts/index/db/schema.py` 中初始化，当前会设置以下 pragma：
 
-```
-journals (1) ──── (1) journal_meta
-    │
-    └──── (N) issues (1) ──── (N) articles
-                                    │
-                                    ├── (1) article_listing  (materialized)
-                                    └── (1) article_search   (FTS5)
-```
+| Pragma | 值 | 说明 |
+| --- | --- | --- |
+| `journal_mode` | `WAL` | 允许并发读写 |
+| `foreign_keys` | `ON` | 开启外键 |
+| `synchronous` | `NORMAL` | 平衡安全与性能 |
+| `busy_timeout` | `30000 ms` | 锁等待时间 |
 
-## Tables
+时间字段约定：
 
-### `journals`
+- 索引数据库中的时间大多使用 `TEXT`
+- 日期通常保存为 ISO-8601 字符串或上游原始日期文本
 
-Core journal metadata from BrowZine.
+### 表关系概览
 
-| Column | Type | Constraints | Description |
-|--------|------|-------------|-------------|
-| `journal_id` | INTEGER | PRIMARY KEY | BrowZine journal ID |
-| `library_id` | TEXT | NOT NULL | BrowZine library ID |
-| `title` | TEXT | | Journal title |
-| `issn` | TEXT | | Print ISSN |
-| `eissn` | TEXT | | Electronic ISSN |
-| `scimago_rank` | REAL | | SJR ranking |
-| `cover_url` | TEXT | | Cover image URL |
-| `available` | INTEGER | | Availability in library (0/1) |
-| `toc_data_approved_and_live` | INTEGER | | TOC data status (0/1) |
-| `has_articles` | INTEGER | | Has indexed articles (0/1) |
-
-### `journal_meta`
-
-CSV-sourced metadata for filtering. One row per journal.
-
-| Column | Type | Constraints | Description |
-|--------|------|-------------|-------------|
-| `journal_id` | INTEGER | PRIMARY KEY, FK | References `journals.journal_id` ON DELETE CASCADE |
-| `source_csv` | TEXT | NOT NULL | Source CSV filename |
-| `area` | TEXT | | Research area (e.g., Accounting, Finance) |
-| `csv_title` | TEXT | | Title as listed in CSV |
-| `csv_issn` | TEXT | | ISSN as listed in CSV |
-| `csv_library` | TEXT | | Library ID as listed in CSV |
-
-### `issues`
-
-Journal issues with publication metadata.
-
-| Column | Type | Constraints | Description |
-|--------|------|-------------|-------------|
-| `issue_id` | INTEGER | PRIMARY KEY | BrowZine issue ID |
-| `journal_id` | INTEGER | NOT NULL, FK | References `journals.journal_id` ON DELETE CASCADE |
-| `publication_year` | INTEGER | | Publication year |
-| `title` | TEXT | | Issue title (e.g., "Vol. 101 Issue 1") |
-| `volume` | TEXT | | Volume number |
-| `number` | TEXT | | Issue number |
-| `date` | TEXT | | Publication date (ISO-8601) |
-| `is_valid_issue` | INTEGER | | Valid issue flag (0/1) |
-| `suppressed` | INTEGER | | Suppressed flag (0/1) |
-| `embargoed` | INTEGER | | Embargo flag (0/1) |
-| `within_subscription` | INTEGER | | Subscription access flag (0/1) |
-
-### `articles`
-
-Full article records. In-press articles have `issue_id` set to NULL.
-
-| Column | Type | Constraints | Description |
-|--------|------|-------------|-------------|
-| `article_id` | INTEGER | PRIMARY KEY | BrowZine article ID |
-| `journal_id` | INTEGER | NOT NULL, FK | References `journals.journal_id` ON DELETE CASCADE |
-| `issue_id` | INTEGER | FK | References `issues.issue_id` ON DELETE SET NULL |
-| `sync_id` | INTEGER | | BrowZine sync identifier |
-| `title` | TEXT | | Article title |
-| `date` | TEXT | | Publication date |
-| `authors` | TEXT | | Comma-separated author names |
-| `start_page` | TEXT | | Start page |
-| `end_page` | TEXT | | End page |
-| `abstract` | TEXT | | Article abstract |
-| `doi` | TEXT | | Digital Object Identifier |
-| `pmid` | TEXT | | PubMed ID |
-| `ill_url` | TEXT | | Interlibrary loan URL |
-| `link_resolver_openurl_link` | TEXT | | OpenURL resolver link |
-| `email_article_request_link` | TEXT | | Email request link |
-| `permalink` | TEXT | | Permanent link |
-| `suppressed` | INTEGER | | Suppression flag (0/1) |
-| `in_press` | INTEGER | | In-press flag (0/1) |
-| `open_access` | INTEGER | | Open access flag (0/1) |
-| `platform_id` | TEXT | | Platform identifier |
-| `retraction_doi` | TEXT | | Retraction DOI |
-| `retraction_date` | TEXT | | Retraction date |
-| `retraction_related_urls` | TEXT | | JSON-encoded retraction URLs |
-| `unpaywall_data_suppressed` | INTEGER | | Unpaywall suppression (0/1) |
-| `expression_of_concern_doi` | TEXT | | Expression of concern DOI |
-| `within_library_holdings` | INTEGER | | Library holdings flag (0/1) |
-| `noodletools_export_link` | TEXT | | NoodleTools export link |
-| `avoid_unpaywall_publisher_links` | INTEGER | | Unpaywall publisher link flag (0/1) |
-| `browzine_web_in_context_link` | TEXT | | BrowZine web context link |
-| `content_location` | TEXT | | Content access URL |
-| `libkey_content_location` | TEXT | | LibKey content URL |
-| `full_text_file` | TEXT | | Full-text PDF URL |
-| `libkey_full_text_file` | TEXT | | LibKey full-text URL |
-| `nomad_fallback_url` | TEXT | | NOMAD fallback URL |
-
-### `article_listing`
-
-Materialized view for optimized list queries. Populated after the initial index build.
-
-| Column | Type | Constraints | Description |
-|--------|------|-------------|-------------|
-| `article_id` | INTEGER | PRIMARY KEY | Article ID |
-| `journal_id` | INTEGER | NOT NULL, FK | Journal ID |
-| `issue_id` | INTEGER | FK | Issue ID |
-| `publication_year` | INTEGER | | Publication year (from issue) |
-| `date` | TEXT | | Publication date |
-| `open_access` | INTEGER | | Open access flag |
-| `in_press` | INTEGER | | In-press flag |
-| `suppressed` | INTEGER | | Suppression flag |
-| `within_library_holdings` | INTEGER | | Library holdings flag |
-| `doi` | TEXT | | DOI |
-| `pmid` | TEXT | | PubMed ID |
-| `area` | TEXT | | Research area (from journal_meta) |
-
-### `article_search` (FTS5)
-
-Full-text search virtual table. Content is synced from the `articles` table.
-
-```sql
-CREATE VIRTUAL TABLE article_search USING fts5(
-    article_id UNINDEXED,
-    title,
-    abstract,
-    doi,
-    authors,
-    journal_title
-    [, tokenize = 'simple']
-);
+```text
+journals (1) ---- (1) journal_meta
+   |
+   +---- (N) issues (1) ---- (N) articles
+                               |
+                               +---- article_listing   物化筛选辅助表
+                               +---- article_search    FTS5 全文检索表
 ```
 
-The optional `simple` tokenizer improves CJK character matching. It is enabled when the `SIMPLE_TOKENIZER_PATH` environment variable points to the SQLite extension binary.
+### 1. `journals`
 
-### `listing_state`
+期刊主表。
 
-Tracks whether the `article_listing` table is ready for queries.
+主要字段：
 
-| Column | Type | Constraints | Description |
-|--------|------|-------------|-------------|
-| `id` | INTEGER | PRIMARY KEY CHECK (id = 1) | Singleton row |
-| `status` | TEXT | | `ready` when populated |
-| `updated_at` | TEXT | | Last update timestamp |
+- `journal_id`：主键
+- `library_id`：上游库 ID
+- `title`
+- `issn`
+- `eissn`
+- `scimago_rank`
+- `cover_url`
+- `available`
+- `toc_data_approved_and_live`
+- `has_articles`
 
-### `journal_year_state`
+主要索引：
 
-Indexing progress per journal and year. Used for resume support.
+- `idx_journals_issn`
+- `idx_journals_library_id`
+- `idx_journals_available`
+- `idx_journals_has_articles`
+- `idx_journals_scimago_rank`
 
-| Column | Type | Constraints | Description |
-|--------|------|-------------|-------------|
-| `journal_id` | INTEGER | NOT NULL | Journal ID |
-| `year` | INTEGER | NOT NULL | Publication year |
-| `status` | TEXT | NOT NULL | `done` when complete |
-| `updated_at` | TEXT | NOT NULL | Completion timestamp |
+### 2. `journal_meta`
 
-Primary key: `(journal_id, year)`
+保存 CSV 源文件元数据。
 
-### `journal_state`
+主要字段：
 
-Indexing progress per journal.
+- `journal_id`：主键，同时外键到 `journals`
+- `source_csv`
+- `area`
+- `csv_title`
+- `csv_issn`
+- `csv_library`
 
-| Column | Type | Constraints | Description |
-|--------|------|-------------|-------------|
-| `journal_id` | INTEGER | PRIMARY KEY | Journal ID |
-| `status` | TEXT | NOT NULL | `done` when complete |
-| `updated_at` | TEXT | NOT NULL | Completion timestamp |
+主要用途：
 
-## Indexes
+- 为筛选页提供 `area`
+- 为调试与回溯保留原始 CSV 信息
 
-### Journal indexes
+### 3. `issues`
 
-| Index | Columns | Purpose |
-|-------|---------|---------|
-| `idx_journals_issn` | `journals(issn)` | ISSN lookup |
-| `idx_journals_library_id` | `journals(library_id)` | Library filtering |
-| `idx_journals_available` | `journals(available)` | Availability filtering |
-| `idx_journals_has_articles` | `journals(has_articles)` | Article availability filtering |
-| `idx_journals_scimago_rank` | `journals(scimago_rank)` | Ranking sort/filter |
+期次表。
 
-### Journal meta indexes
+主要字段：
 
-| Index | Columns | Purpose |
-|-------|---------|---------|
-| `idx_journal_meta_area` | `journal_meta(area)` | Area filtering |
-| `idx_journal_meta_area_journal` | `journal_meta(area, journal_id)` | Area + journal compound queries |
+- `issue_id`：主键
+- `journal_id`
+- `publication_year`
+- `title`
+- `volume`
+- `number`
+- `date`
+- `is_valid_issue`
+- `suppressed`
+- `embargoed`
+- `within_subscription`
 
-### Issue indexes
+主要索引：
 
-| Index | Columns | Purpose |
-|-------|---------|---------|
-| `idx_issues_journal_year` | `issues(journal_id, publication_year)` | Journal + year compound queries |
-| `idx_issues_publication_year` | `issues(publication_year)` | Year filtering |
+- `idx_issues_journal_year`
+- `idx_issues_publication_year`
 
-### Article indexes
+### 4. `articles`
 
-| Index | Columns | Purpose |
-|-------|---------|---------|
-| `idx_articles_journal` | `articles(journal_id)` | Journal filtering |
-| `idx_articles_issue` | `articles(issue_id)` | Issue filtering |
-| `idx_articles_date` | `articles(date)` | Date filtering |
-| `idx_articles_date_id` | `articles(date, article_id)` | Keyset pagination |
-| `idx_articles_journal_date_id` | `articles(journal_id, date, article_id)` | Journal + pagination |
-| `idx_articles_issue_date_id` | `articles(issue_id, date, article_id)` | Issue + pagination |
-| `idx_articles_doi` | `articles(doi)` | DOI lookup |
-| `idx_articles_pmid` | `articles(pmid)` | PubMed ID lookup |
-| `idx_articles_open_access` | `articles(open_access)` | OA filtering |
-| `idx_articles_in_press` | `articles(in_press)` | In-press filtering |
-| `idx_articles_suppressed` | `articles(suppressed)` | Suppression filtering |
-| `idx_articles_within_holdings` | `articles(within_library_holdings)` | Holdings filtering |
-| `idx_articles_open_access_date_id` | `articles(open_access, date, article_id)` | OA + pagination |
-| `idx_articles_in_press_date_id` | `articles(in_press, date, article_id)` | In-press + pagination |
-| `idx_articles_suppressed_date_id` | `articles(suppressed, date, article_id)` | Suppression + pagination |
-| `idx_articles_within_holdings_date_id` | `articles(within_library_holdings, date, article_id)` | Holdings + pagination |
+文章主表，是公开检索与全文跳转的核心数据源。
 
-### Article listing indexes
+主要字段：
 
-| Index | Columns | Purpose |
-|-------|---------|---------|
-| `idx_article_listing_date_id` | `article_listing(date, article_id)` | Keyset pagination |
-| `idx_article_listing_area` | `article_listing(area)` | Area filtering |
-| `idx_article_listing_publication_year` | `article_listing(publication_year)` | Year filtering |
-| `idx_article_listing_journal` | `article_listing(journal_id)` | Journal filtering |
-| `idx_article_listing_issue` | `article_listing(issue_id)` | Issue filtering |
+- 基本信息：
+  - `article_id`
+  - `journal_id`
+  - `issue_id`
+  - `sync_id`
+  - `title`
+  - `date`
+  - `authors`
+  - `abstract`
+- 页码与标识：
+  - `start_page`
+  - `end_page`
+  - `doi`
+  - `pmid`
+- 外部链接：
+  - `ill_url`
+  - `link_resolver_openurl_link`
+  - `email_article_request_link`
+  - `permalink`
+  - `full_text_file`
+  - `libkey_full_text_file`
+  - `nomad_fallback_url`
+- 状态位：
+  - `suppressed`
+  - `in_press`
+  - `open_access`
+  - `within_library_holdings`
+  - `unpaywall_data_suppressed`
+  - `avoid_unpaywall_publisher_links`
+- 其他来源字段：
+  - `platform_id`
+  - `retraction_doi`
+  - `retraction_date`
+  - `retraction_related_urls`
+  - `expression_of_concern_doi`
+  - `noodletools_export_link`
+  - `browzine_web_in_context_link`
+  - `content_location`
+  - `libkey_content_location`
 
-## Write Semantics
+主要索引：
 
-All insert operations use `ON CONFLICT DO UPDATE` (upsert) semantics:
-- Journals: conflict on `journal_id`, update all fields
-- Journal meta: conflict on `journal_id`, update all fields
-- Issues: conflict on `issue_id`, update all fields
-- Articles: conflict on `article_id`, update all fields
+- 按时间与关联关系：
+  - `idx_articles_journal`
+  - `idx_articles_issue`
+  - `idx_articles_date`
+  - `idx_articles_date_id`
+  - `idx_articles_journal_date_id`
+  - `idx_articles_issue_date_id`
+- 按可过滤状态：
+  - `idx_articles_open_access`
+  - `idx_articles_in_press`
+  - `idx_articles_suppressed`
+  - `idx_articles_within_holdings`
+- 按常用精确查询：
+  - `idx_articles_doi`
+  - `idx_articles_pmid`
 
-Foreign key cascades:
-- Deleting a journal cascades to `journal_meta`, `issues`, and `articles`
-- Deleting an issue sets `articles.issue_id` to NULL
+### 5. `article_listing`
 
-## Optimization
+这是为检索接口准备的物化辅助表，不保存完整文章内容，只保留高频筛选字段。
 
-After data loading, the indexer runs:
+字段：
 
-```sql
-ANALYZE;
-PRAGMA optimize;
+- `article_id`
+- `journal_id`
+- `issue_id`
+- `publication_year`
+- `date`
+- `open_access`
+- `in_press`
+- `suppressed`
+- `within_library_holdings`
+- `doi`
+- `pmid`
+- `area`
+
+作用：
+
+- 减少 `/api/articles` 多表联查成本
+- 在 `listing_state` 就绪时优先服务列表检索
+
+主要索引：
+
+- `idx_article_listing_date_id`
+- `idx_article_listing_area`
+- `idx_article_listing_publication_year`
+- `idx_article_listing_journal`
+- `idx_article_listing_issue`
+
+### 6. `article_search`
+
+SQLite FTS5 虚表，用于全文检索。
+
+索引字段：
+
+- `article_id`（`UNINDEXED`）
+- `title`
+- `abstract`
+- `doi`
+- `authors`
+- `journal_title`
+
+说明：
+
+- 如果成功加载 `simple` 扩展，则会以 `tokenize = 'simple'` 创建
+- 否则使用默认 FTS5 tokenizer
+
+### 7. `listing_state`
+
+单行状态表，用于标记 `article_listing` 是否可供查询使用。
+
+字段：
+
+- `id`，固定为 `1`
+- `status`
+- `updated_at`
+
+当前代码会查询 `status = 'ready'` 来判断是否启用 `article_listing`。
+
+### 8. `journal_year_state`
+
+增量索引恢复表，记录某个期刊某一年的抓取是否完成。
+
+字段：
+
+- `journal_id`
+- `year`
+- `status`
+- `updated_at`
+
+主键：
+
+- `(journal_id, year)`
+
+### 9. `journal_state`
+
+增量索引恢复表，记录某个期刊整体是否完成。
+
+字段：
+
+- `journal_id`
+- `status`
+- `updated_at`
+
+## 二、认证与业务数据库 `data/auth.sqlite`
+
+### 初始化参数
+
+`scripts/api/auth_db.py` 初始化时会设置：
+
+| Pragma | 值 |
+| --- | --- |
+| `journal_mode` | `WAL` |
+| `foreign_keys` | `ON` |
+
+时间字段约定：
+
+- 该库的时间大多保存为 `REAL`
+- 值通常来自 `time.time()` 的 Unix 时间戳（秒）
+
+### 表关系概览
+
+```text
+users
+  ├── access_tokens
+  ├── folders
+  │    └── favorites
+  ├── invite_codes (created_by / used_by)
+  └── notification_settings
+
+scheduled_tasks
+announcements
 ```
 
-This updates query planner statistics for optimal index usage.
+### 1. `users`
 
-## Query Examples
+用户主表。
 
-Filter by research area:
+主要字段：
 
-```sql
-SELECT j.title, m.area
-FROM journals j
-JOIN journal_meta m ON j.journal_id = m.journal_id
-WHERE m.area = 'Accounting';
-```
+- `id`
+- `username`
+- `password_hash`
+- `salt`
+- `is_admin`
+- `created_at`
+- `updated_at`
 
-Open-access articles for a journal in a year:
+说明：
 
-```sql
-SELECT a.title, a.date, a.doi
-FROM articles a
-JOIN issues i ON a.issue_id = i.issue_id
-WHERE a.journal_id = 34781
-  AND i.publication_year = 2024
-  AND a.open_access = 1;
-```
+- 首个注册用户会被设为管理员
 
-In-press articles (no issue assigned):
+### 2. `access_tokens`
 
-```sql
-SELECT title, date, authors
-FROM articles
-WHERE in_press = 1 AND issue_id IS NULL;
-```
+用户访问令牌。
 
-Full-text search:
+主要字段：
 
-```sql
-SELECT a.title, a.authors, a.doi
-FROM article_search s
-JOIN articles a ON a.article_id = s.rowid
-WHERE s MATCH 'earnings OR disclosure';
-```
+- `id`
+- `user_id`
+- `name`
+- `token_hash`
+- `expires_at`
+- `created_at`
 
-Keyset pagination (articles by date descending):
+作用：
 
-```sql
-SELECT a.article_id, a.title, a.date
-FROM article_listing l
-JOIN articles a ON a.article_id = l.article_id
-WHERE (l.date, l.article_id) < ('2024-06-01', 999999)
-ORDER BY l.date DESC, l.article_id DESC
-LIMIT 50;
-```
+- 登录成功时生成名为 `login` 的令牌
+- 用户可在设置页创建更多长期令牌
+- 收藏导出接口支持直接用原始令牌作为 `access_token` 查询参数
+
+### 3. `folders`
+
+用户文件夹。
+
+主要字段：
+
+- `id`
+- `user_id`
+- `name`
+- `is_tracking`
+- `created_at`
+- `updated_at`
+
+说明：
+
+- `is_tracking = 1` 的文件夹表示用户当前追踪文件夹
+- 每个用户同名文件夹受唯一约束限制
+
+### 4. `favorites`
+
+收藏明细表。
+
+主要字段：
+
+- `id`
+- `user_id`
+- `folder_id`
+- `article_id`
+- `db_name`
+- `note`
+- `created_at`
+
+说明：
+
+- `db_name` 指向来源索引库文件名，不是外键
+- 同一用户 / 文件夹 / 文章 / 数据库组合会被去重
+
+### 5. `invite_codes`
+
+邀请码表。
+
+主要字段：
+
+- `id`
+- `code`
+- `created_by`
+- `used_by`
+- `used_at`
+- `created_at`
+
+说明：
+
+- 普通用户最多只能生成一个邀请码
+- 管理员可额外创建“无创建者”的后台邀请码
+- 已使用的邀请码不能被后台删除
+
+### 6. `notification_settings`
+
+通知与追踪配置表。
+
+主要字段：
+
+- `id`
+- `user_id`
+- `keywords`
+- `directions`
+- `delivery_method`
+- `pushplus_token`
+- `pushplus_template`
+- `pushplus_topic`
+- `pushplus_to`
+- `ai_base_url`
+- `ai_api_key`
+- `ai_model`
+- `ai_system_prompt`
+- `enabled`
+- `created_at`
+- `updated_at`
+
+说明：
+
+- 当前 API 只接受 `delivery_method = "folder"` 或 `"pushplus"`
+- 这张表是 `notify`、`push` 与 `/api/tracking/push-weekly` 的真实订阅源
+
+### 7. `scheduled_tasks`
+
+管理员后台可维护的定时任务。
+
+字段：
+
+- `id`
+- `name`
+- `command`
+- `cron`
+- `enabled`
+- `last_run_at`
+- `last_status`
+- `created_at`
+- `updated_at`
+
+说明：
+
+- 由 APScheduler 在 API 进程内调度
+- 执行方式是 shell 命令
+
+### 8. `announcements`
+
+系统公告表。
+
+字段：
+
+- `id`
+- `title`
+- `message`
+- `priority`
+- `enabled`
+- `created_at`
+- `updated_at`
+
+说明：
+
+- 后台管理使用 `list_all_announcements()`
+- 前台首页只读取启用公告，并按优先级 `high -> normal -> low` 加时间倒序排列
+
+## 三、数据库之外的状态文件
+
+虽然不属于 SQLite 表结构，但以下文件与数据库行为强相关：
+
+### 1. `data/push_state/<db>.changes.json`
+
+索引增量更新生成的变更清单，是：
+
+- 每周更新页面
+- PushPlus 通知
+- 追踪推送
+
+这三条链路的共同输入。
+
+### 2. `data/push_state/<db>.json`
+
+PushPlus 通知运行状态。
+
+### 3. `data/folder_push_state/<db>.json`
+
+追踪文件夹推送运行状态。

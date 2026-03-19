@@ -1,374 +1,255 @@
 # Paper Scanner
 
-A full-stack application for aggregating, indexing, and searching academic journal articles. Paper Scanner fetches article metadata from BrowZine API and WeipuAPI, stores it in SQLite databases with full-text search, and provides a modern web interface for browsing and discovery. It also supports AI-powered notification workflows to alert users about newly published articles matching their research interests.
+Paper Scanner 是一个面向学术期刊的全栈检索与订阅平台。它负责从 BrowZine 与 CQVIP（维普）抓取期刊和文章元数据，构建 SQLite 检索库，并提供 Web 界面、收藏夹、追踪推送、每周更新、公告与后台管理能力。
 
-## Features
+当前仓库包含四类核心运行单元：
 
-- **Multi-source indexing** - Fetches journal and article metadata from BrowZine API and WeipuAPI (Chinese journals)
-- **Full-text search** - SQLite FTS5-based search across article titles and abstracts, with CJK tokenizer support
-- **Advanced filtering** - Filter by journal, research area, publication year, date range, open access status, and more
-- **Weekly updates** - Track and browse newly added articles per journal
-- **AI-powered notifications** - Uses SiliconFlow LLM to select relevant articles and push notifications via PushPlus
-- **Incremental sync** - Change tracking with article-level diff for efficient updates
-- **Multi-process indexing** - Parallel journal processing for large-scale data collection
+- `uv run index`：抓取期刊与文章数据，写入 `data/index/*.sqlite`
+- `uv run api`：启动 FastAPI 后端
+- `uv run notify`：把新增文章筛选后通过 PushPlus 推送给订阅用户
+- `uv run push`：把新增文章筛选后写入用户的追踪文件夹
 
-## Screenshots
+## 主要功能
 
-![](https://i.see.you/2026/02/10/W8if/d9c1cb7.png)
+- 多数据源索引：同时支持 BrowZine 与维普期刊
+- SQLite 检索：文章全文检索基于 FTS5，可选加载 `simple` 中文分词扩展
+- 多维筛选：按期刊、领域、年份、开放获取、是否馆藏等条件过滤
+- 每周更新：基于变更清单聚合最近新增文章
+- 用户系统：注册、登录、邀请码、访问令牌、改密
+- 收藏与导出：文件夹管理、批量收藏、BibTeX / RIS / EndNote XML 导出
+- 文献追踪：将某个文件夹设为追踪文件夹，并按用户偏好自动写入相关文章
+- AI 选择：支持 OpenAI 兼容模型配置，不局限于单一服务商
+- 管理后台：用户、邀请码、系统统计、定时任务、系统公告
+- 首页公告：后台可配置全局公告，前台按优先级展示并支持本地关闭
 
-## Tech Stack
+## 技术栈
 
-| Layer | Technology |
-|-------|-----------|
-| Frontend | Next.js 16, React 19, TypeScript, TailwindCSS 4, Radix UI |
-| Backend API | FastAPI, Uvicorn, aiosqlite |
-| Database | SQLite (WAL mode, FTS5) |
-| Data Fetching | httpx, Playwright, selectolax |
-| AI/Notification | OpenAI SDK (SiliconFlow), PushPlus |
-| Deployment | Docker, GitHub Actions, GHCR |
-| Dev Tools | uv, Ruff, mypy |
+| 层级 | 组件 |
+| --- | --- |
+| 前端 | Next.js 16、React 19、TypeScript、Tailwind CSS 4、Radix UI、TanStack Query |
+| 后端 | FastAPI、Uvicorn、aiosqlite |
+| 索引/抓取 | httpx、selectolax、quickjs、SQLite FTS5 |
+| AI 与推送 | OpenAI Python SDK（兼容 OpenAI API 的服务）、PushPlus |
+| 调度 | APScheduler |
+| 开发工具 | uv、Ruff、mypy、pnpm |
 
-## Quick Start
+## 仓库结构
 
-### Prerequisites
-
-- Docker and Docker Compose
-
-### 1. Download and Configure
-
-Download `docker-compose.yml`, then create the directory structure:
-
-```
-project/
-├── docker-compose.yml
-├── config/
-│   └── auth.yaml           # Frontend authentication tokens
-└── data/
-    └── meta/               # Journal metadata CSV files
-```
-
-### 2. Prepare Data
-
-Place journal metadata CSV files in `data/meta/`. Each CSV must have the following columns:
-
-| Column | Description |
-|--------|-------------|
-| `title` | Journal name |
-| `issn` | Journal ISSN |
-| `id` | BrowZine journal ID |
-| `area` | Research area (e.g., Accounting, Finance) |
-| `library` | BrowZine library ID (optional, defaults to 3050) |
-
-Example (`data/meta/utd24.csv`):
-
-```csv
-title,issn,id,area,library
-The Accounting Review,0001-4826,34781,Accounting,3050
-Journal of Accounting and Economics,0165-4101,4204,Accounting,3050
-```
-
-### 3. Pull Images and Build Index
-
-```bash
-docker compose pull
-docker compose run --rm api uv run index
-```
-
-This fetches article data from BrowZine/WeipuAPI and creates SQLite databases in `data/index/`.
-
-### 4. Start the Application
-
-```bash
-docker compose up -d
-```
-
-Visit http://localhost:3000. Only port 3000 is exposed — the frontend proxies API requests to the backend internally.
-
-### Updating
-
-```bash
-# Incremental index update
-docker compose run --rm api uv run index --update
-
-# Send notifications
-docker compose run --rm api uv run notify
-```
-
-See [Docker Deployment docs](docs/docker.md) for full details on architecture, CI/CD, environment variables, and troubleshooting.
-
-## Project Structure
-
-```
-Paper-Scanner/
-├── app/                        # Next.js frontend
-│   ├── app/                    # App router pages
-│   │   ├── login/              # Login page
-│   │   └── (protected)/        # Auth-protected routes
-│   │       ├── page.tsx        # Main search page
-│   │       ├── articles/       # Article detail page
-│   │       └── weekly-updates/ # Weekly updates page
-│   ├── components/
-│   │   ├── feature/            # Business components
-│   │   └── ui/                 # Radix UI primitives
-│   └── lib/                    # Utilities
-├── scripts/                    # Python backend
-│   ├── api/                    # FastAPI REST API
-│   │   ├── routes/             # Endpoint handlers
-│   │   ├── queries/            # SQL query builders
-│   │   ├── models.py           # Pydantic response models
-│   │   ├── pagination.py       # Cursor/offset pagination
-│   │   └── dependencies.py     # DI (database connections)
-│   ├── index/                  # Data indexer
-│   │   ├── db/                 # Schema, client, operations
-│   │   ├── fetcher.py          # Journal/issue/article fetcher
-│   │   ├── changes.py          # Change detection & manifests
-│   │   └── workers.py          # Multi-process workers
-│   ├── notify/                 # Notification system
-│   │   ├── workflow.py         # Notification pipeline
-│   │   └── models.py           # Notification config models
-│   ├── browzine/               # BrowZine API client
-│   ├── weipu/                  # WeipuAPI client
-│   └── shared/                 # Shared constants & utilities
+```text
+.
+├── app/                     前端项目
+├── docs/                    详细文档
+├── scripts/                 后端、索引、推送与公共模块
 ├── data/
-│   ├── meta/                   # Journal metadata CSV files
-│   ├── index/                  # SQLite databases (generated)
-│   └── push_state/             # Notification delivery state
-└── pyproject.toml
+│   ├── meta/                期刊 CSV 元数据源
+│   ├── index/               生成后的 SQLite 检索库
+│   ├── push_state/          通知与每周更新状态、变更清单
+│   ├── folder_push_state/   追踪文件夹推送状态
+│   └── auth.sqlite          用户、收藏、通知、管理员数据
+├── libs/                    SQLite simple tokenizer 预编译扩展
+├── docker-compose.yml       根 Docker Compose 编排
+├── Dockerfile               后端镜像构建
+└── pyproject.toml           Python 项目配置
 ```
 
-## CLI Commands
+## 快速开始
 
-All CLI commands run inside the API container via `docker compose run --rm api`.
+### 方式一：Docker Compose
 
-### `index` - Build/update article index
+前提：
 
-```bash
-# Index all CSV files in data/meta/
-docker compose run --rm api uv run index
+- 已安装 Docker 与 Docker Compose
 
-# Index a specific CSV
-docker compose run --rm api uv run index --file utd24.csv
+步骤：
 
-# Incremental update with change tracking
-docker compose run --rm api uv run index --update
+1. 准备期刊 CSV
 
-# Update and send notifications
-docker compose run --rm api uv run index --update --notify
+   仓库已自带示例 CSV，可直接使用 `data/meta/*.csv`。每个 CSV 默认包含以下列：
 
-# Parallel processing
-docker compose run --rm api uv run index --workers 16 --processes 4
+   | 列名 | 说明 |
+   | --- | --- |
+   | `title` | 期刊标题 |
+   | `issn` | ISSN |
+   | `id` | 上游期刊 ID；维普期刊必须提供 |
+   | `area` | 自定义领域标签 |
+   | `library` | 数据源库 ID；BrowZine 常用 `3050`，维普固定为 `-1` |
 
-# Dry-run notifications (no actual delivery)
-docker compose run --rm api uv run index --update --notify --notify-dry-run
-```
+2. 构建并启动服务
 
-| Flag | Default | Description |
-|------|---------|-------------|
-| `--file, -f` | all CSVs | Specific CSV filename under `data/meta/` |
-| `--workers, -w` | 8 | Max concurrent HTTP requests |
-| `--processes` | 1 | Process workers for journal-level parallelism |
-| `--issue-batch` | workers*3 | Issues per async batch |
-| `--timeout` | 20 | HTTP timeout in seconds |
-| `--resume / --no-resume` | enabled | Resume from completed journals/years |
-| `--update / --no-update` | disabled | Incremental update mode with change tracking |
-| `--notify / --no-notify` | disabled | Send notifications after update (requires `--update`) |
-| `--notify-dry-run` | disabled | Preview notification selection without sending |
+   ```bash
+   docker compose build
+   docker compose up -d
+   ```
 
-### `api` - REST API server
+3. 首次建立索引
 
-Started automatically by `docker compose up`. Listens on port 8000 (internal only, proxied by frontend).
+   ```bash
+   docker compose run --rm api uv run index
+   ```
 
-### `notify` - Run notification pipeline
+4. 访问服务
 
-```bash
-# Run with default settings
-docker compose run --rm api uv run notify
+   - 前端：`http://localhost:3000`
+   - 后端 API：`http://localhost:8000/api`
 
-# Specify database and change manifest
-docker compose run --rm api uv run notify --db utd24.sqlite --changes-file data/push_state/utd24.changes.json
+5. 注册第一个用户
 
-# Dry run
-docker compose run --rm api uv run notify --dry-run
-```
+   第一个注册用户不需要邀请码，并会自动成为管理员。之后新用户默认需要邀请码。
 
-| Flag | Default | Description |
-|------|---------|-------------|
-| `--db` | auto-detect | Database file under `data/index/` |
-| `--changes-file` | - | Change manifest from index update |
-| `--siliconflow-model` | config default | Override LLM model ID |
-| `--max-candidates` | config default | Max articles sent to LLM per run |
-| `--timeout` | 60 | HTTP timeout in seconds |
-| `--retries` | 3 | Retry count for API calls |
-| `--dedupe-retention-days` | 60 | Days to keep delivery records |
-| `--dry-run` | disabled | Run selection without sending |
+### 方式二：本地开发
 
-## API Reference
-
-All endpoints are prefixed with `/api`. Pass `?db=<name>` to select a specific database.
-
-### Articles
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `GET` | `/api/articles` | List articles with filtering, search, and pagination |
-| `GET` | `/api/articles/{id}` | Get a single article by ID |
-| `GET` | `/api/articles/{id}/fulltext` | Redirect to DOI or full-text file |
-
-**Query parameters for `/api/articles`:**
-
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `db` | string | Database name |
-| `q` | string | Full-text search query |
-| `journal_id` | int | Filter by journal |
-| `issue_id` | int | Filter by issue |
-| `area` | string | Filter by research area |
-| `year` | int | Filter by publication year |
-| `date_from` | string | Start date (YYYY-MM-DD) |
-| `date_to` | string | End date (YYYY-MM-DD) |
-| `open_access` | int | Filter by open access status |
-| `in_press` | int | Filter by in-press status |
-| `limit` | int | Page size (max 200) |
-| `offset` | int | Offset for pagination |
-| `cursor` | string | Cursor for keyset pagination |
-| `sort` | string | Sort field (e.g., `-date`, `date:desc`) |
-
-### Journals
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `GET` | `/api/journals` | List journals with filtering and sorting |
-| `GET` | `/api/journals/{id}` | Get a single journal by ID |
-
-### Issues
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `GET` | `/api/issues` | List issues with filtering |
-| `GET` | `/api/issues/{id}` | Get a single issue by ID |
-
-### Metadata
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `GET` | `/api/meta/databases` | List available databases |
-| `GET` | `/api/meta/areas` | List research areas with article counts |
-| `GET` | `/api/meta/journals` | List journal options (ID + title) |
-| `GET` | `/api/meta/libraries` | List libraries with journal counts |
-| `GET` | `/api/years` | List years with issue/journal counts |
-
-### Weekly Updates
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `GET` | `/api/weekly-updates` | Get recent article updates grouped by journal |
-
-### Health
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `GET` | `/api/health` | Health check (returns `{"status": "ok"}`) |
-
-## Notification System
-
-Paper Scanner reads notification subscribers from `auth.sqlite` and user tracking settings in the app.
-Legacy `data/push/subscriptions*.json` files are ignored.
-
-### Setup
-
-1. Configure per-user delivery in the tracking UI.
-
-2. Set optional runtime defaults:
+#### 后端
 
 ```bash
-export NOTIFY_SILICONFLOW_API_KEY="sk-your-siliconflow-key"
-export NOTIFY_SILICONFLOW_MODEL="deepseek-ai/DeepSeek-V3"
-export NOTIFY_MAX_CANDIDATES="120"
-export NOTIFY_TEMPERATURE="0.2"
-export NOTIFY_PUSHPLUS_CHANNEL="mail"
-export NOTIFY_PUSHPLUS_TEMPLATE="markdown"
-```
-
-3. Run with the index update pipeline:
-
-```bash
-uv run index --update --notify
-```
-
-### How It Works
-
-1. The indexer detects changed articles by comparing before/after snapshots
-2. A change manifest records added and removed article IDs
-3. The notification pipeline loads candidate articles from the manifest
-4. SiliconFlow LLM optionally scores articles against each user's keywords and research directions
-5. Selected articles are delivered via PushPlus or the user's tracking folder
-6. Delivery state is persisted to prevent duplicate notifications (60-day window)
-
-## Database Schema
-
-Each CSV file produces a corresponding SQLite database in `data/index/`. The schema includes:
-
-| Table | Description |
-|-------|-------------|
-| `journals` | Journal metadata (ID, title, ISSN, SJR rank, etc.) |
-| `journal_meta` | CSV-sourced metadata (area, source file) |
-| `issues` | Journal issues (volume, number, date, year) |
-| `articles` | Full article records (title, authors, abstract, DOI, URLs) |
-| `article_listing` | Materialized view for optimized list queries |
-| `article_search` | FTS5 virtual table for full-text search |
-| `journal_year_state` | Indexing progress tracker per journal/year |
-| `journal_state` | Indexing progress tracker per journal |
-| `listing_state` | Whether `article_listing` is ready for queries |
-
-## Development
-
-### Local Setup
-
-Requires Python 3.12+, [uv](https://docs.astral.sh/uv/), and Node.js 20+.
-
-```bash
-# Install Python dependencies
-uv sync
-uv sync --extra dev
-
-# Install frontend dependencies
-cd app
-pnpm install
-cd ..
-
-# Start backend API (port 8000)
+uv sync --dev
+uv run index --file utd24.csv
 uv run api
-
-# Start frontend dev server (port 3000) in another terminal
-cd app
-pnpm run dev
 ```
 
-### Code Quality
+默认后端地址：`http://127.0.0.1:8000`
 
-```bash
-# Lint
-uv run ruff check
-
-# Format
-uv run ruff format
-
-# Type check
-uv run mypy
-```
-
-### Frontend Development
+#### 前端
 
 ```bash
 cd app
-pnpm run dev      # Dev server with hot reload
-pnpm run build    # Production build
-pnpm run lint     # ESLint check
+corepack enable pnpm
+pnpm install
+pnpm dev
 ```
 
-## License
+默认前端地址：`http://localhost:3000`
 
-This project is licensed under the MIT License. See `LICENSE`.
+如果前后端分离运行，前端可通过 `NEXT_PUBLIC_API_URL` 指定 API 根地址。
 
-The bundled SQLite simple tokenizer binaries are from the upstream
-`wangfenjin/simple` project. See `libs/simple/README.md` for upstream details.
+## 核心命令
+
+### 1. 索引
+
+```bash
+uv run index --file utd24.csv
+uv run index --workers 8 --processes 2
+uv run index --update --notify
+uv run index --update --notify --notify-dry-run
+```
+
+常用参数：
+
+| 参数 | 默认值 | 说明 |
+| --- | --- | --- |
+| `--file, -f` | 处理 `data/meta/` 下全部 CSV | 指定单个 CSV |
+| `--workers, -w` | `8` | 最大并发请求数 |
+| `--issue-batch` | `workers * 3` | 每批抓取 issue 数量；传 `0` 时自动计算 |
+| `--timeout` | `20` | HTTP 超时秒数 |
+| `--processes` | `1` | 期刊级多进程并行数 |
+| `--resume / --no-resume` | `--resume` | 是否跳过已完成的期刊/年份 |
+| `--update / --no-update` | `--no-update` | 是否增量更新已存在数据库 |
+| `--notify / --no-notify` | `--no-notify` | 更新后自动调用 `notify` |
+| `--notify-dry-run` | `false` | 与 `--notify` 配合，仅演练通知不真正推送 |
+
+### 2. API 服务
+
+```bash
+uv run api
+```
+
+环境变量：
+
+- `API_HOST`：监听地址，默认 `127.0.0.1`
+
+### 3. PushPlus 通知推送
+
+```bash
+uv run notify --db utd24.sqlite
+uv run notify --db utd24.sqlite --changes-file data/push_state/utd24.changes.json
+uv run notify --db utd24.sqlite --dry-run
+```
+
+该命令只处理 `delivery_method = "pushplus"` 的用户。
+
+### 4. 追踪文件夹推送
+
+```bash
+uv run push --db utd24.sqlite
+uv run push --db utd24.sqlite --changes-file data/push_state/utd24.changes.json
+uv run push --db utd24.sqlite --dry-run
+```
+
+该命令只处理 `delivery_method = "folder"` 且已配置追踪文件夹的用户。
+
+## AI 与推送配置
+
+用户级通知/追踪偏好保存在 `data/auth.sqlite` 的 `notification_settings` 表中，可通过前端“文献追踪”页面或 `/api/tracking/notification-settings` API 配置。
+
+全局运行时默认值通过环境变量提供，推荐使用新的 OpenAI 兼容命名：
+
+| 环境变量 | 默认值 | 说明 |
+| --- | --- | --- |
+| `NOTIFY_AI_BASE_URL` | `https://api.siliconflow.cn/v1` | 默认 OpenAI 兼容基地址 |
+| `NOTIFY_AI_API_KEY` | 空 | 默认 API Key |
+| `NOTIFY_AI_MODEL` | `deepseek-ai/DeepSeek-V3` | 默认模型名 |
+| `NOTIFY_AI_SYSTEM_PROMPT` | 空 | 默认系统提示词 |
+| `NOTIFY_MAX_CANDIDATES` | `120` | 单次送入模型的候选上限 |
+| `NOTIFY_TEMPERATURE` | `0.2` | 模型温度 |
+| `NOTIFY_PUSHPLUS_CHANNEL` | `mail` | PushPlus 默认渠道 |
+| `NOTIFY_PUSHPLUS_TEMPLATE` | `markdown` | PushPlus 默认模板 |
+| `NOTIFY_PUSHPLUS_TOPIC` | 空 | PushPlus 默认 topic |
+| `NOTIFY_PUSHPLUS_OPTION` | 空 | PushPlus 默认 option |
+
+兼容别名仍然可用：
+
+- `OPENAI_BASE_URL`
+- `OPENAI_API_KEY`
+- `NOTIFY_SILICONFLOW_BASE_URL`
+- `NOTIFY_SILICONFLOW_API_KEY`
+- `SILICONFLOW_API_KEY`
+- `NOTIFY_SILICONFLOW_MODEL`
+
+## 数据与状态文件
+
+### 索引数据库
+
+- 路径：`data/index/<csv_stem>.sqlite`
+- 来源：每个 `data/meta/*.csv`
+- 主要表：`journals`、`journal_meta`、`issues`、`articles`、`article_listing`、`article_search`
+
+### 用户数据库
+
+- 路径：`data/auth.sqlite`
+- 主要表：`users`、`access_tokens`、`folders`、`favorites`、`invite_codes`、`notification_settings`、`scheduled_tasks`、`announcements`
+
+### 变更与推送状态
+
+- `data/push_state/<db>.changes.json`：索引增量更新时生成的变更清单
+- `data/push_state/<db>.json`：PushPlus 通知流水状态
+- `data/folder_push_state/<db>.json`：追踪文件夹推送流水状态
+
+说明：
+
+- `/api/weekly-updates`
+- `/api/tracking/push-weekly`
+- `uv run notify --changes-file ...`
+- `uv run push --changes-file ...`
+
+这几条链路都依赖 `*.changes.json` 文件。
+
+## 部署说明
+
+根目录 `docker-compose.yml` 使用两个服务：
+
+- `api`：后端，暴露 `8000`
+- `app`：前端，暴露 `3000`
+
+前端在 Docker 构建阶段使用 `INTERNAL_API_URL` 将 `/api/*` 重写到后端；根 Dockerfile 默认为 `http://api:8000`。根 Compose 文件里没有显式设置这个变量，是因为 `app/Dockerfile` 已提供该默认值。
+
+当前主前端登录流程使用后端 `/api/auth/*`。仓库中的 `config/auth.yaml`、`app/lib/auth.ts`、`app/lib/auth-config.ts` 属于遗留前端令牌认证工具，默认页面流程不依赖它们；根 Compose 保留 `./config:/app/config` 挂载主要是兼容历史环境。
+
+## 详细文档
+
+- [API 文档](docs/api.md)
+- [数据库说明](docs/database.md)
+- [开发指南](docs/development.md)
+- [Docker 部署](docs/docker.md)
+- [通知与追踪推送](docs/notify.md)
+- [BrowZine 集成](docs/browzine_api.md)
+- [维普集成](docs/weipu_api.md)
+- [前端说明](app/README.md)

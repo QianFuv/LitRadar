@@ -1,33 +1,39 @@
-# simple tokenizer (Upstream Project Notice)
+# simple 分词器（上游项目说明）
 
-This repository vendors prebuilt SQLite FTS5 `simple` tokenizer binaries for
-Windows and Linux.
+本仓库内置了 SQLite FTS5 `simple` 分词器的预编译二进制文件，分别用于 Windows 与 Linux。
 
-## Upstream Project
+## 上游项目
 
-- Project: [simple tokenizer](https://github.com/wangfenjin/simple)
-- Author: Wang Fenjin
-- Original repository: https://github.com/wangfenjin/simple
+- 项目名称：[simple tokenizer](https://github.com/wangfenjin/simple)
+- 作者：Wang Fenjin
+- 原始仓库：https://github.com/wangfenjin/simple
 
-Original project description (from the upstream README, translated):
+上游 README 的核心说明如下：
 
-> simple is a sqlite3 FTS5 extension that supports Chinese and Pinyin
-> tokenization. It implements the WeChat mobile full-text-search approach for
-> polyphonic Chinese characters and provides efficient Chinese/Pinyin search.
-> On top of this, it also supports cppjieba-based tokenization for more
-> accurate phrase matching.
+> simple 是一个 SQLite3 FTS5 扩展，支持中文与拼音分词。
+> 它实现了适用于多音字场景的微信移动端全文检索式中文分词方案，
+> 同时也支持基于 cppjieba 的分词，以获得更好的短语匹配效果。
 
-## Bundled Artifacts in Paper Scanner
+## Paper Scanner 中打包的文件
 
 - `libs/simple-linux/libsimple-linux-ubuntu-latest/libsimple.so`
 - `libs/simple-windows/libsimple-windows-x64/simple.dll`
-- Related dictionary data under each platform directory
+- 各平台目录下附带的词典文件
 
-## License of Upstream simple
+## 在项目中的作用
 
-The upstream `simple` project uses a dual-license model: MIT or
-GPL-3.0-or-later. Paper Scanner uses the upstream artifacts under the MIT
-option.
+后端会在打开 SQLite 数据库连接时尝试加载该扩展：
 
-- Upstream license file:
+- Linux 下默认查找 `libsimple.so`
+- Windows 下默认查找 `simple.dll`
+- 也可以通过 `SIMPLE_TOKENIZER_PATH` 手动指定路径
+
+如果扩展加载成功，`article_search` FTS5 虚表会使用 `simple` tokenizer，以提升中文与拼音检索效果。
+
+## 许可证
+
+上游 `simple` 项目采用双许可证模式：`MIT` 或 `GPL-3.0-or-later`。
+Paper Scanner 当前按 `MIT` 选项使用这些上游构建产物。
+
+- 上游许可证文件：
   https://github.com/wangfenjin/simple/blob/master/LICENSE

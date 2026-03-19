@@ -1,316 +1,272 @@
-# Development Guide
+# 开发指南
 
-This document covers the architecture, data flow, and development practices for Paper Scanner.
+本文档从当前代码结构出发，说明 Paper Scanner 的主要模块、数据流、运行行为与开发注意事项。
 
-For detailed reference on specific subsystems, see:
-- [API Reference](api.md) - REST API endpoints and query parameters
-- [Database Schema](database.md) - SQLite tables, indexes, and query examples
-- [BrowZine API](browzine_api.md) - BrowZine API integration
-- [WeipuAPI](weipu_api.md) - CQVIP data extraction
-- [Notification Pipeline](notify.md) - AI-powered article notifications
-- [Docker Deployment](docker.md) - Container build, configuration, and CI/CD
+## 一、整体架构
 
-## Architecture Overview
+```text
+CSV 元数据
+  -> 索引器（scripts/index）
+  -> data/index/*.sqlite
+  -> FastAPI（scripts/api）
+  -> Next.js 前端（app）
 
-```
-┌──────────────────────────────────────────────────────────────┐
-│                  Next.js Frontend (Port 3000)                │
-│  ┌──────────────┐  ┌───────────────┐  ┌──────────────────┐  │
-│  │  Login Page  │  │  Search Page  │  │  Weekly Updates  │  │
-│  └──────┬───────┘  └───────┬───────┘  └────────┬─────────┘  │
-│         └──────────────────┼───────────────────┘             │
-│                  TanStack React Query                        │
-└────────────────────────────┼─────────────────────────────────┘
-                             │ HTTP/REST
-                             │
-┌────────────────────────────┼─────────────────────────────────┐
-│              FastAPI Backend (Port 8000)                      │
-│  ┌─────────────────────────────────────────────────────────┐ │
-│  │  Routes: articles, journals, issues, meta, weekly       │ │
-│  │  Queries: filtering, FTS5, cursor/offset pagination     │ │
-│  │  Middleware: CORS, cache control                        │ │
-│  └─────────────────────────┬───────────────────────────────┘ │
-│                     aiosqlite                                 │
-└────────────────────────────┼─────────────────────────────────┘
-                             │
-               ┌─────────────┴──────────────┐
-               │                            │
-         ┌─────▼──────┐         ┌───────────▼───────────┐
-         │  *.sqlite   │         │  Index / Notify CLI   │
-         │  databases  │         │  - Bulk indexer       │
-         └─────────────┘         │  - Incremental sync   │
-                                 │  - AI notifications   │
-                                 └───────────┬───────────┘
-                                             │
-                                 ┌───────────▼───────────┐
-                                 │    External APIs      │
-                                 │  BrowZine  │  Weipu   │
-                                 └───────────────────────┘
+增量更新
+  -> data/push_state/*.changes.json
+  -> 每周更新页面
+  -> notify（PushPlus）
+  -> push（追踪文件夹）
 ```
 
-## Backend Module Layout
+## 二、模块划分
 
+### 1. `scripts/index/`
+
+负责离线抓取和增量更新。
+
+关键职责：
+
+- 读取 `data/meta/*.csv`
+- BrowZine 与维普抓取
+- 建立或更新 `data/index/*.sqlite`
+- 维护 `article_listing` 与 `article_search`
+- 在 `--update` 模式下生成变更清单
+- 在 `--notify` 模式下联动调用 `notify`
+
+关键文件：
+
+- `scripts/index/main.py`
+- `scripts/index/fetcher.py`
+- `scripts/index/changes.py`
+- `scripts/index/db/schema.py`
+- `scripts/index/db/operations.py`
+
+### 2. `scripts/api/`
+
+负责 FastAPI 服务、认证数据库、调度器与 REST 路由。
+
+关键职责：
+
+- 对外提供检索、认证、收藏、追踪、后台管理 API
+- 初始化 `data/auth.sqlite`
+- 启动 APScheduler 背景调度器
+- 为 `/api/articles*` 与 `/api/meta*` 添加缓存头
+
+关键文件：
+
+- `scripts/api/app.py`
+- `scripts/api/main.py`
+- `scripts/api/routes/*`
+- `scripts/api/auth_db.py`
+- `scripts/api/scheduler.py`
+
+### 3. `scripts/notify/`
+
+负责 PushPlus 通知链路。
+
+关键职责：
+
+- 读取变更清单或增量快照
+- 加载数据库中的订阅用户
+- 调用 OpenAI 兼容模型做候选筛选
+- 构造 Markdown 推送正文
+- 更新 `data/push_state/*.json`
+
+### 4. `scripts/push/`
+
+负责把新增文章写入追踪文件夹。
+
+它与 `notify` 共用很多候选选择逻辑，但最终写入的是 `favorites` 表，而不是 PushPlus。
+
+### 5. `app/`
+
+负责前端页面与用户交互。
+
+当前真实页面包括：
+
+- 登录注册
+- 搜索首页
+- 每周更新
+- 收藏夹
+- 文献追踪
+- 设置页
+- 管理后台
+- 首页公告
+
+## 三、真实数据流
+
+### 1. 索引流
+
+1. 读取 `data/meta/*.csv`
+2. 根据 `library` 判断数据源：
+   - `-1` -> 维普
+   - 其他 -> BrowZine
+3. 抓取 journal / issue / article
+4. 写入 `journals`、`issues`、`articles`
+5. 刷新 `article_listing`
+6. 更新 FTS5 表 `article_search`
+7. 在增量模式下生成 `*.changes.json`
+
+### 2. 检索流
+
+1. 前端通过 `app/lib/api.ts` 发起请求
+2. API 通过 `db` 参数解析目标索引库
+3. `/api/articles` 优先使用 `article_listing`
+4. 若需要全文检索，则联动 `article_search`
+5. 返回分页结果给前端
+
+### 3. 每周更新流
+
+1. 读取 `data/push_state/*.changes.json`
+2. 聚合最近 `window_days` 内的变更
+3. 回到各索引库按 `article_id` 取回文章详情
+4. 按数据库和期刊组织成 `/api/weekly-updates` 响应
+
+### 4. 通知与追踪流
+
+1. 读取变更清单或快照差异
+2. 生成候选文章
+3. 按订阅用户加载通知配置
+4. 可选使用 OpenAI 兼容模型做筛选
+5. 进入两条终端链路之一：
+   - PushPlus 消息发送
+   - 写入追踪文件夹
+
+## 四、当前 API 路由面
+
+当前后端实际注册的路由模块包括：
+
+- `health`
+- `meta`
+- `journals`
+- `issues`
+- `articles`
+- `weekly`
+- `announcements`
+- `auth`
+- `favorites`
+- `tracking`
+- `admin`
+
+旧文档里只写到 `health/meta/journals/issues/articles/weekly` 的说法已经过时。
+
+## 五、鉴权与权限模型
+
+### 用户鉴权
+
+当前主流程使用后端账号系统：
+
+- `/api/auth/register`
+- `/api/auth/login`
+- `/api/auth/me`
+- `/api/auth/tokens`
+
+访问受保护接口时使用 Bearer 令牌。
+
+### 管理员权限
+
+首个注册用户会自动成为管理员，管理员可访问：
+
+- 用户管理
+- 邀码管理
+- 系统统计
+- 定时任务管理
+- 公告管理
+
+### 前端旧认证模块
+
+仓库中仍存在：
+
+- `app/lib/auth.ts`
+- `app/lib/auth-config.ts`
+
+这套逻辑依赖 `config/auth.yaml`，但当前页面与路由并未使用它作为默认登录方式。它属于遗留兼容模块，不应再作为主文档中的默认流程描述。
+
+## 六、调度器行为
+
+API 启动时会在 `lifespan` 中执行：
+
+1. `init_auth_db()`
+2. `start_scheduler()`
+
+调度器从 `scheduled_tasks` 表中加载启用任务，并按 cron 表达式执行 shell 命令。
+
+需要注意：
+
+- 执行方式是 `subprocess.run(..., shell=True)`
+- 调度器与 API 服务运行在同一进程空间
+- 修改任务后会调用 `reload_scheduler()` 重新装载
+
+## 七、目录与状态文件
+
+### 运行时重点目录
+
+| 路径 | 用途 |
+| --- | --- |
+| `data/meta/` | 期刊 CSV 输入 |
+| `data/index/` | 索引数据库输出 |
+| `data/auth.sqlite` | 用户与业务数据库 |
+| `data/push_state/` | 通知状态与变更清单 |
+| `data/folder_push_state/` | 追踪文件夹推送状态 |
+| `libs/simple-*` | SQLite 中文分词扩展 |
+
+## 八、本地开发建议
+
+### Python 侧
+
+```bash
+uv sync --dev
+uv run index --file utd24.csv
+uv run api
 ```
-scripts/
-├── api/                  # REST API server
-│   ├── main.py           # Entrypoint (uvicorn runner)
-│   ├── app.py            # FastAPI factory + middleware
-│   ├── dependencies.py   # Dependency injection (DB connections)
-│   ├── models.py         # Pydantic response models
-│   ├── pagination.py     # Cursor/offset pagination utilities
-│   ├── routes/           # Endpoint handlers
-│   │   ├── __init__.py   # Route registration
-│   │   ├── articles.py   # /api/articles
-│   │   ├── journals.py   # /api/journals
-│   │   ├── issues.py     # /api/issues
-│   │   ├── meta.py       # /api/meta/* and /api/years
-│   │   ├── weekly.py     # /api/weekly-updates
-│   │   └── health.py     # /api/health
-│   └── queries/          # SQL query builders per resource
-├── index/                # Data indexer
-│   ├── main.py           # CLI entrypoint
-│   ├── fetcher.py        # Journal/issue/article fetcher
-│   ├── changes.py        # Change detection and manifests
-│   ├── workers.py        # Multi-process parallel workers
-│   └── db/               # Database layer
-│       ├── schema.py     # DDL, indexes, init
-│       ├── client.py     # Async DB write client
-│       ├── operations.py # Listing builder, state ops
-│       ├── fts.py        # FTS5 index management
-│       └── retry.py      # SQLite retry/backoff logic
-├── notify/               # Notification subsystem
-│   ├── main.py           # CLI entrypoint
-│   ├── workflow.py       # End-to-end notification pipeline
-│   ├── models.py         # Config models, defaults
-│   ├── ai_selector.py    # SiliconFlow LLM article selector
-│   ├── selection.py      # Multi-round selection logic
-│   ├── delivery.py       # Manifest loading, dedup pruning
-│   └── state.py          # JSON state persistence
-├── browzine/             # BrowZine API client
-│   ├── client.py         # Async HTTP client with token caching
-│   └── validation.py     # Journal availability + library fallback
-├── weipu/                # WeipuAPI client (Chinese journals)
-│   ├── client.py         # Nuxt payload extraction via QuickJS
-│   ├── des.py            # Pure Python DES-ECB for request signing
-│   └── parsers.py        # Payload normalization helpers
-└── shared/               # Cross-module utilities
-    ├── constants.py      # Global constants
-    ├── converters.py     # Type conversion helpers
-    └── sqlite_ext.py     # SQLite extension loader
+
+### 前端
+
+```bash
+cd app
+corepack enable pnpm
+pnpm install
+pnpm dev
 ```
 
-## API Server
+## 九、修改代码后的检查
 
-The API server is built with FastAPI and uses aiosqlite for async database access.
+根据仓库约束，修改 Python 代码后应至少执行：
 
-**Application factory** (`app.py`): Creates a FastAPI instance with CORS (all origins) and cache control middleware (5-minute public cache for articles and meta endpoints).
-
-**Dependency injection** (`dependencies.py`): The `get_db()` function resolves a database name to a SQLite connection. It accepts an optional `db` query parameter; when omitted, defaults to the only available database. Connection cleanup is handled via FastAPI's dependency lifecycle.
-
-**Route registration** (`routes/__init__.py`): All routers are registered with the `/api` prefix. Routes: health, meta, journals, issues, articles, weekly.
-
-**Pagination** (`pagination.py`):
-- Offset-based: `limit` + `offset` parameters
-- Keyset cursor: Date-based with article_id tiebreaker (format: `{date}|{article_id}`)
-- Sorting: Comma-separated string with `-field` or `field:desc` syntax
-- Max page size: 200
-
-**Query strategy**: Article listing uses the `article_listing` materialized table when available (checked via `listing_state`), falling back to direct table joins otherwise.
-
-## Indexer
-
-The indexer reads journal metadata from CSV files and fetches article data from external APIs.
-
-**Pipeline**:
-1. Load CSV with journal metadata (title, ISSN, ID, area, library)
-2. Validate libraries via BrowZine API, apply fallbacks if needed
-3. Fetch issues per journal per year
-4. Fetch articles per issue
-5. Upsert all records into SQLite
-6. Build `article_listing` materialized table
-7. Build `article_search` FTS5 index
-8. Run `ANALYZE` and `PRAGMA optimize`
-
-**Resume support**: Tracks completion state per journal and per journal-year in `journal_state` and `journal_year_state` tables. On restart, completed items are skipped.
-
-**Multi-process mode**: When `--processes > 1`, journals are distributed across worker processes. A dedicated writer process serializes all database writes to avoid SQLite lock contention.
-
-**Change tracking** (`changes.py`): Takes before/after snapshots of article ID sets per issue. The diff produces a JSON change manifest that feeds into the notification pipeline.
-
-## Notification System
-
-See [Notification Pipeline](notify.md) for full details.
-
-Key components:
-- **AI selector** (`ai_selector.py`): SiliconFlow LLM client with structured JSON output and multi-round selection
-- **Selection logic** (`selection.py`): Score aggregation, dedup filtering, keyword-based supplementation
-- **State management** (`state.py`): Atomic JSON persistence with delivery dedup records
-
-## Frontend Architecture
-
-### Tech Stack
-
-- **Next.js 16** with App Router
-- **React 19** with Server Components
-- **TypeScript 5**
-- **TailwindCSS 4**
-- **Radix UI** for accessible component primitives
-- **TanStack React Query** for server state management
-- **nuqs** for URL-synced filter state
-- **next-themes** for dark/light mode
-
-### Page Structure
-
-```
-app/app/
-├── layout.tsx              # Root layout (fonts, metadata)
-├── providers.tsx           # React Query + theme providers
-├── login/
-│   ├── page.tsx            # Login page (server component)
-│   └── login-client.tsx    # Login form (client component)
-└── (protected)/
-    ├── layout.tsx          # Protected layout with auth check
-    ├── page.tsx            # Main search interface
-    ├── articles/
-    │   └── [id]/
-    │       └── page.tsx    # Article detail view
-    └── weekly-updates/
-        └── page.tsx        # Weekly article updates
+```bash
+uv run ruff check scripts
+uv run ruff format scripts
+uv run mypy scripts
 ```
 
-### Key Components
+如果修改了前端代码，建议额外执行：
 
-| Component | Path | Purpose |
-|-----------|------|---------|
-| SearchBar | `components/feature/search-bar.tsx` | Full-text search input |
-| ResultsList | `components/feature/results-list.tsx` | Paginated article results with infinite scroll |
-| Sidebar | `components/feature/sidebar.tsx` | Filter panel (journals, areas, year, flags) |
-| WeeklyUpdatesFab | `components/feature/weekly-updates-fab.tsx` | Floating button to weekly view |
-
-### Authentication
-
-Token-based authentication configured in `app/config/auth.yaml`:
-
-```yaml
-tokens:
-  - "your-token-here"
-secret: "your-jwt-secret"
-ttl_hours: 168
+```bash
+cd app
+pnpm lint
 ```
 
-### Data Fetching
+## 十、常见误区
 
-All API calls use TanStack React Query:
-- Queries are cached and deduplicated
-- Infinite scrolling uses cursor-based pagination
-- Filter state is synced to URL params via nuqs for shareable links
+### 1. 把每周更新理解为“按数据库日期扫描”
 
-## Data Flow
+不是。当前实现依赖：
 
-### Indexing
+- `data/push_state/*.changes.json`
 
-```
-CSV files (data/meta/)
-    │
-    ▼
-Validate libraries (BrowZine availability check)
-    │
-    ├── BrowZine journals → BrowZine API
-    └── Weipu journals → CQVIP website scraper
-    │
-    ▼
-Upsert into SQLite (ON CONFLICT DO UPDATE)
-    │
-    ▼
-Build article_listing + article_search
-    │
-    ▼
-ANALYZE + PRAGMA optimize
-```
+没有变更清单，就不会有每周更新、通知或追踪推送。
 
-### API Queries
+### 2. 认为前端默认依赖 `config/auth.yaml`
 
-```
-HTTP Request → FastAPI DI → resolve DB connection
-    │
-    ▼
-Build WHERE clause from query params
-    ├── FTS5 MATCH (if search query)
-    ├── Filter conditions
-    └── Keyset cursor or offset
-    │
-    ▼
-Execute query → Map to Pydantic models → JSON Response
-```
+不是。当前页面使用后端账号体系，`auth.yaml` 对默认流程不是必需项。
 
-### Notifications
+### 3. 认为通知配置只支持 SiliconFlow
 
-```
-Change manifest → Load candidates → AI selection → Dedup → PushPlus delivery → Save state
-```
+不是。当前代码的真实能力是：
 
-## Configuration
+- 支持任意 OpenAI 兼容接口
+- 仍兼容 `NOTIFY_SILICONFLOW_*` 等旧变量名
 
-### Constants (`scripts/shared/constants.py`)
+### 4. 认为管理员定时任务只记录配置不执行
 
-| Constant | Value | Description |
-|----------|-------|-------------|
-| `DEFAULT_LIBRARY_ID` | `"3050"` | Primary BrowZine library |
-| `WEIPU_LIBRARY_ID` | `"-1"` | Marker for Chinese journals |
-| `FALLBACK_LIBRARIES` | `["215", "866", ...]` | Backup libraries |
-| `BROWZINE_BASE_URL` | `https://api.thirdiron.com/v2` | BrowZine API base |
-| `DB_TIMEOUT_SECONDS` | `30` | SQLite connection timeout |
-| `DB_RETRY_ATTEMPTS` | `6` | Max DB retry attempts |
-| `MAX_LIMIT` | `200` | Maximum API page size |
-| `API_PREFIX` | `"/api"` | API route prefix |
-
-### Environment Variables
-
-| Variable | Description |
-|----------|-------------|
-| `SIMPLE_TOKENIZER_PATH` | Path to SQLite simple tokenizer extension for CJK support |
-
-## Code Style
-
-- **Language**: English for all code, comments, and documentation
-- **No inline comments**: Use docstrings for documentation
-- **Docstrings**: Standard Python format with Args/Returns sections
-- **Linting**: `uv run ruff check` (rules: E, F, UP, B, SIM, I)
-- **Formatting**: `uv run ruff format`
-- **Type checking**: `uv run mypy` (untyped imports allowed)
-
-## Adding a New Data Source
-
-1. Create a client module under `scripts/` (e.g., `scripts/newapi/client.py`)
-2. Implement an async client with methods for journals, issues, and articles
-3. Return data in the same dict format used by the BrowZine client
-4. Add a library ID constant in `scripts/shared/constants.py`
-5. Update `scripts/index/fetcher.py` to route journals with the new library ID
-6. Update `scripts/shared/converters.py` with a detection helper
-
-## Adding a New API Endpoint
-
-1. Create a query builder in `scripts/api/queries/`
-2. Create a route handler in `scripts/api/routes/`
-3. Define Pydantic response models in `scripts/api/models.py`
-4. Register the router in `scripts/api/routes/__init__.py`
-
-## Troubleshooting
-
-### SQLite lock errors during indexing
-
-The indexer uses WAL mode and retry logic with exponential backoff. If lock errors persist:
-- Reduce `--processes` to 1
-- Ensure no other process has the database open
-- Avoid network drives for database files
-
-### FTS search returns no results
-
-- Check `listing_state` table: status should be `ready`
-- For CJK text, ensure `SIMPLE_TOKENIZER_PATH` is set and the extension exists
-
-### BrowZine API fetch failures
-
-- Check connectivity to `api.thirdiron.com`
-- The indexer retries automatically and supports `--resume` (on by default)
-- Try updating the CSV's `library` column to a different fallback library
+不是。它们会在 API 进程内被 APScheduler 真实调度执行。

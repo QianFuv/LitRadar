@@ -1,315 +1,171 @@
-# WeipuAPI (CQVIP) Reference
+# 维普（CQVIP）抓取说明
 
-This document describes the WeipuAPI client used by Paper Scanner to extract Chinese journal article metadata from the CQVIP website (https://www.cqvip.com/).
+本文档说明仓库中 `scripts/weipu/client.py` 的真实实现方式，用于抓取维普期刊与文章元数据。
 
-## Overview
-
-CQVIP (China Science Periodical Database) uses Nuxt.js server-side rendering. Article data is embedded in HTML as an obfuscated JavaScript function (`window.__NUXT__`) that cannot be parsed as plain JSON. The client extracts this data using HTTP requests, HTML parsing, and JavaScript execution.
-
-## Architecture
-
-```
-HTTP Request (httpx)
-    │
-    ▼
-HTML Parsing (selectolax)
-    │
-    ▼
-Extract <script> containing window.__NUXT__
-    │
-    ▼
-Execute obfuscated JS (QuickJS)
-    │
-    ▼
-Parse JSON & extract article metadata
-```
-
-For endpoints requiring authentication, the client computes:
-- **HMAC-SHA1 signatures** for HTTP headers (timestamp + app ID)
-- **DES-ECB encryption** for request body signing (via pure Python implementation)
-
-## URL Structure
-
-| Resource | URL Pattern |
-|----------|-------------|
-| Journal search | `https://www.cqvip.com/journal/search?k={issn}` |
-| Journal details | `https://www.cqvip.com/journal/{journal_id}/{journal_id}` |
-| Issue articles | `https://www.cqvip.com/journal/{journal_id}/{issue_id}` |
-| Article detail | `https://www.cqvip.com/doc/journal/{article_id}?sign=...` |
-| API: Get years | `https://www.cqvip.com/newsite/journal/getYears` |
-| API: Get issues | `https://www.cqvip.com/newsite/journal/getNums` |
-
-## Client API
-
-### Class: `WeipuAPISelectolax`
-
-```python
-from scripts.weipu import WeipuAPISelectolax
-
-client = WeipuAPISelectolax(timeout=20.0)
-```
-
-### `search_journal_by_issn(issn)`
-
-Search for a journal by ISSN.
-
-```python
-async def search_journal_by_issn(issn: str) -> dict[str, Any] | None
-```
-
-**Returns**:
-
-```python
-{
-    "journalId": "95499X",
-    "name": "管理世界",
-    "issn": "1002-5502",
-    "cnno": "11-1235/F",
-    "publisher": "...",
-    "url": "https://www.cqvip.com/journal/95499X/95499X"
-}
-```
-
-### `search_journal_by_title(title)`
-
-Search for a journal by title keyword.
-
-```python
-async def search_journal_by_title(title: str) -> dict[str, Any] | None
-```
-
-### `get_journal_details(journal_id)`
-
-Get complete journal metadata including all years and issues.
-
-```python
-async def get_journal_details(journal_id: str) -> dict[str, Any] | None
-```
-
-The HTML page typically only embeds the most recent year's issues. The client automatically falls back to the signed `/newsite` API endpoints to retrieve all years and issue IDs.
-
-**Returns**:
-
-```python
-{
-    "journalId": "95499X",
-    "journalName": "管理世界",
-    "issn": "1002-5502",
-    "cnno": "11-1235/F",
-    "years": [
-        {
-            "year": 2025,
-            "issueCount": 12,
-            "issues": [
-                {
-                    "id": "8687909",
-                    "name": "12",
-                    "coverImage": "https://..."
-                }
-            ]
-        }
-    ],
-    "totalYears": 41,
-    "totalIssues": 492
-}
-```
-
-### `get_issue_articles(journal_id, issue_id, enrich=True)`
-
-Extract all articles from a specific issue.
-
-```python
-async def get_issue_articles(
-    journal_id: str,
-    issue_id: str,
-    enrich: bool = True
-) -> dict[str, Any] | None
-```
-
-When `enrich=True`, the client follows individual article detail links to merge `abstract`, `doi`, and `pubDate` into each article record (with a concurrency limit of 5).
-
-**Returns**:
-
-```python
-{
-    "journal": {
-        "journalId": "95499X",
-        "journalName": "管理世界",
-        "issn": "1002-5502",
-        "cnno": "11-1235/F"
-    },
-    "issueId": "8687909",
-    "totalArticles": 20,
-    "totalPages": 223,
-    "articles": [
-        {
-            "id": "7202582565",
-            "title": "美欧关税与全球新能源汽车供应链的重构",
-            "category": "重大选题征文",
-            "detailUrl": "https://www.cqvip.com/doc/journal/7202582565?sign=...",
-            "authors": [
-                {
-                    "name": "李坤望",
-                    "name_en": "Li Kunwang",
-                    "is_corresponding": false,
-                    "order": 1
-                },
-                {
-                    "name": "王方",
-                    "name_en": "Wang Fang",
-                    "is_corresponding": true,
-                    "order": 2
-                }
-            ],
-            "firstAuthor": { "name": "李坤望", "id": 3759 },
-            "keywords": ["关税", "新能源汽车", "供应链"],
-            "abstract": "文章摘要内容...",
-            "pages": { "begin": "1", "end": "20", "count": 20 },
-            "language": "zh",
-            "isPdf": true,
-            "doi": "10.19744/j...",
-            "funds": ["国家自然科学基金", "教育部人文社会科学研究项目"],
-            "organizations": ["浙江大学经济学院", "中国人民大学商学院"]
-        }
-    ]
-}
-```
-
-### `fetch_years_via_api(journal_id)`
-
-Get available publication years via the signed API endpoint.
-
-```python
-async def fetch_years_via_api(journal_id: str) -> list[int]
-```
-
-### `fetch_issues_via_api(journal_id, year)`
-
-Get issues for a specific year via the signed API endpoint.
-
-```python
-async def fetch_issues_via_api(journal_id: str, year: int) -> list[dict[str, Any]]
-```
-
-### `aclose()`
-
-Close the HTTP client and release resources.
-
-```python
-async def aclose() -> None
-```
-
-## Data Types
-
-### Article
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `id` | str | Article ID |
-| `title` | str | Article title |
-| `category` | str | Section/category name |
-| `authors` | list[Author] | Author list |
-| `firstAuthor` | dict | First author name and ID |
-| `keywords` | list[str] | Keywords |
-| `abstract` | str or None | Abstract text |
-| `pages` | PageInfo | Page range |
-| `language` | str | Language code (`zh`, `en`, `zh_en`) |
-| `isPdf` | bool | PDF availability |
-| `doi` | str or None | DOI |
-| `funds` | list[str] | Funding sources |
-| `organizations` | list[str] | Author affiliations |
-
-### Author
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `name` | str | Chinese name |
-| `name_en` | str or None | English name |
-| `is_corresponding` | bool | Corresponding author flag |
-| `order` | int | Author order (1-indexed) |
-
-### PageInfo
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `begin` | str | Start page |
-| `end` | str | End page |
-| `count` | int or None | Total pages |
-
-## Implementation Details
-
-### Nuxt Payload Extraction
-
-CQVIP embeds page data as an obfuscated JavaScript IIFE:
-
-```javascript
-window.__NUXT__=(function(a,b,c,d,...){
-  return {layout:"default",data:[...],state:{...}}
-})(null,1,"正常","龙猫",...)
-```
-
-The client:
-1. Parses HTML with selectolax to find the `<script>` tag
-2. Executes the JavaScript using QuickJS (not Node.js subprocess)
-3. Parses the resulting JSON
-
-### Signed API Requests
-
-The `/newsite` API endpoints require request signing:
-
-1. **HMAC-SHA1 header**: Computed from timestamp and `CQVIP_APP_ID`
-2. **DES-ECB body signature**: Computed using `CQVIP_SIGNATURE_SECRET` with a pure Python DES implementation (`scripts/weipu/des.py`)
-3. **Server time synchronization**: The client tracks server time offset from Nuxt payloads
-
-### Article Enrichment
-
-The issue page often lacks abstracts, DOIs, and publication dates. The client:
-1. Extracts article detail URLs from the issue HTML using regex
-2. Fetches each detail page concurrently (semaphore limit: 5)
-3. Merges `abstract`, `doi`, and `pubDate` into the article records
-
-### Retry Logic
-
-- Default retry attempts: 3
-- Base delay: 0.75 seconds with exponential backoff
-- HTTP errors and timeouts trigger retries
-
-## Performance
-
-| Metric | Value |
-|--------|-------|
-| Speed per issue | 2-4 seconds |
-| Memory usage | ~60 MB |
-| Success rate | ~90% (with rate limiting) |
-
-### Rate Limiting Recommendations
-
-- Sequential requests: 2-4 second delay
-- Concurrent requests: max 3-5 simultaneous, 1-2 second delay each
-- High concurrency increases the risk of being blocked
-
-## Common ISSN Numbers
-
-| ISSN | Journal Name | Field |
-|------|-------------|-------|
-| 1002-5502 | 管理世界 | Management |
-| 1000-6788 | 会计研究 | Accounting |
-| 1002-0241 | 经济学动态 | Economics |
-| 1000-596X | 中国工业经济 | Industrial Economics |
-
-## Troubleshooting
-
-### QuickJS execution fails
-
-Verify the `quickjs` Python package is installed. Unlike the older implementation, the current client uses QuickJS via Python bindings, not a Node.js subprocess.
-
-### No data returned
-
-Possible causes:
-- Invalid journal or issue ID
-- Rate limiting (add delays between requests)
-- Website structure changed (check if CQVIP updated their frontend)
-
-### Encoding errors
-
-Always use UTF-8 encoding. For CSV export, use `utf-8-sig` to include BOM for Excel compatibility.
+## 一、实现概览
+
+当前客户端类为：
+
+- `WeipuAPISelectolax`
+
+其技术路径是：
+
+- `httpx`：发起 HTTP 请求
+- `selectolax`：解析 HTML
+- `quickjs`：执行页面中的 Nuxt 数据脚本
+- 自带 `DES-ECB` 实现：生成签名
+
+重要更正：
+
+- 旧文档或旧注释里提到的 “Node.js” 已不准确
+- 当前代码实际使用的是 `quickjs`，不是 Node.js 运行时
+
+## 二、核心 URL
+
+| 类型 | URL |
+| --- | --- |
+| 站点首页 | `https://www.cqvip.com` |
+| 新站 API 前缀 | `https://www.cqvip.com/newsite` |
+| 期刊检索 | `https://www.cqvip.com/journal/search?...` |
+| 期刊详情 | `https://www.cqvip.com/journal/{journal_id}/{journal_id}` |
+| 期次页 | `https://www.cqvip.com/journal/{journal_id}/{issue_id}` |
+| 文献详情 | `https://www.cqvip.com/doc/journal/{article_id}` |
+
+## 三、为何不能直接把页面当 JSON 解析
+
+CQVIP 页面使用 Nuxt 服务端渲染，关键数据通常被嵌入：
+
+- `window.__NUXT__`
+
+或类似的页面脚本里，而不是直接提供干净的 JSON 接口给公开页面调用。
+
+因此客户端的流程是：
+
+1. 请求 HTML 页面
+2. 用 `selectolax` 找到承载 Nuxt 数据的脚本
+3. 用 `quickjs` 执行脚本
+4. 拿到 payload 后做字段归一化
+
+## 四、状态提取与签名
+
+客户端会从页面 payload 中提取并缓存：
+
+- `uuid`
+- `env`
+- `serverTime`
+
+这些信息会用于后续 API 请求签名与时间对齐。
+
+### 1. 时间对齐
+
+客户端会记录服务器时间与本地时间的偏移量，后续签名尽量使用与服务端一致的时间戳。
+
+### 2. Header 签名
+
+当前实现使用：
+
+- HMAC-SHA1
+- 原始数据格式：`{app_id}\n{secret}\n{timestamp_sec}`
+- 输出：Base64 字符串
+
+### 3. Body 签名
+
+对某些 CQVIP 新站接口，客户端会计算基于 `DES-ECB` 的请求体签名。
+
+对应实现：
+
+- `scripts/weipu/des.py`
+
+## 五、主要入口方法
+
+以下方法是当前索引流程真正会用到的核心入口。
+
+### 1. 期刊搜索
+
+| 方法 | 作用 |
+| --- | --- |
+| `search_journal_by_issn(issn)` | 按 ISSN 搜索期刊 |
+| `search_journal_by_title(title)` | 按标题搜索期刊 |
+
+索引器在直接获取期刊详情失败时，会先尝试按 ISSN 搜索，再按标题搜索。
+
+### 2. 期刊详情
+
+| 方法 | 作用 |
+| --- | --- |
+| `get_journal_details(journal_id)` | 获取期刊详情、年份与期次信息 |
+
+返回的数据会进一步被 `build_weipu_journal_record()` 与 `build_weipu_issue_record()` 转成统一数据库格式。
+
+### 3. 期次文章
+
+| 方法 | 作用 |
+| --- | --- |
+| `get_issue_articles(journal_id, issue_id)` | 获取某个期次下的文章列表 |
+
+索引器会把返回 payload 中的 `articles` 列表转成 `articles` 表记录。
+
+## 六、字段归一化
+
+当前维普抓取并不把上游字段原样入库，而是通过 `scripts/weipu/parsers.py` 做清洗：
+
+- 期刊基础字段
+- ISSN 规范化
+- 作者列表规范化
+- DOI 规范化
+- 页码区间拆分
+- 关键词清洗
+- 详情链接补全
+
+数据库写入侧再由 `scripts/index/transforms.py` 统一转换为：
+
+- `build_weipu_journal_record`
+- `build_weipu_issue_record`
+- `build_weipu_article_record`
+
+## 七、与主索引流程的关系
+
+当 CSV 行中的：
+
+- `library = -1`
+
+时，索引器会把该期刊视为维普期刊，并走维普抓取路径。
+
+对应主流程位于：
+
+- `scripts/index/fetcher.py`
+
+维普路径与 BrowZine 路径最终都会写入同一套 SQLite 索引表结构，因此前端与 API 层不需要感知来源差异。
+
+## 八、鲁棒性策略
+
+当前客户端内置了基础重试与退避：
+
+- 对网络失败重试
+- 对 `429 / 500 / 502 / 503 / 504` 重试
+- 使用指数退避等待
+
+这也是维普站点在高延迟或临时限流下仍能继续索引的关键保障。
+
+## 九、常见失效点
+
+如果维普抓取突然大量失败，优先排查：
+
+1. 页面结构是否变更，导致 Nuxt 脚本提取失败
+2. 签名规则是否发生变化
+3. `journalId` / `issueId` 页面路由是否调整
+4. 某些字段是否从页面 payload 中移除或改名
+
+## 十、开发建议
+
+调试维普抓取时，优先检查：
+
+- `get_journal_details()` 的原始 payload
+- `get_issue_articles()` 返回的 `articles`
+- `scripts/weipu/parsers.py` 中的字段选择逻辑
+
+如果页面脚本结构变化，通常不需要重写整个索引器，只需要修正：
+
+- HTML 脚本定位
+- QuickJS 执行输入
+- parser 归一化规则

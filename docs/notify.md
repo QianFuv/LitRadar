@@ -1,225 +1,263 @@
-# Notification Pipeline
+# 通知与追踪推送
 
-This document describes the AI-driven article notification system that selects and delivers relevant articles to subscribers.
+本文档覆盖当前仓库中与“新增文章后续分发”相关的全部链路，包括：
 
-## Overview
+- `uv run notify`：PushPlus 通知
+- `uv run push`：追踪文件夹推送
+- `/api/tracking/push-weekly`：面向单个用户的即时推送
 
-The notification pipeline:
+与旧版本相比，当前实现已经从“静态订阅文件”迁移到“数据库中的用户通知设置”，并支持 OpenAI 兼容模型配置。
 
-1. Identifies newly added or changed articles from index updates
-2. Uses SiliconFlow LLM to rank articles by relevance to each subscriber's research interests
-3. Delivers personalized digests via PushPlus
-4. Tracks delivery state to prevent duplicate notifications
+## 总体设计
 
-## Architecture
+当前系统存在两条并行分发链路：
 
-```
-Change Manifest (JSON)
-    │
-    ▼
-Load candidate articles from SQLite
-    │
-    ▼
-For each subscriber:
-    ├── Send candidates to SiliconFlow LLM
-    ├── Score by keywords + research directions
-    ├── Deduplicate against delivery history
-    ├── Format as Markdown digest
-    └── Send via PushPlus
-    │
-    ▼
-Persist delivery state
-```
+1. **PushPlus 通知链路**
+   - 入口：`uv run notify`
+   - 处理对象：`delivery_method = "pushplus"` 的用户
+   - 输出：PushPlus 消息
 
-## Prerequisites
+2. **追踪文件夹链路**
+   - 入口：`uv run push`
+   - 处理对象：`delivery_method = "folder"` 且已配置追踪文件夹的用户
+   - 输出：将文章写入用户收藏库中的追踪文件夹
 
-- **SiliconFlow API key**: Optional `NOTIFY_SILICONFLOW_API_KEY` environment variable
-- **PushPlus token**: Configured per user in the tracking UI
+此外，前端用户还可以主动调用：
 
-## Notification Configuration
+- `POST /api/tracking/push-weekly`
 
-### Setup
+这条接口会读取最近的变更清单，把适合当前用户的文章推入自己的追踪文件夹。
 
-1. Configure each user's delivery method, PushPlus token, keywords, and directions in the tracking UI.
-2. Set optional runtime defaults with environment variables before running `uv run notify`.
+## 数据来源
 
-Legacy `data/push/subscriptions*.json` files are ignored.
+通知与追踪推送都不是直接按“最近 7 天文章日期”扫描数据库，而是依赖索引增量更新时生成的变更清单：
 
-### Environment Variables
+- `data/push_state/<db>.changes.json`
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `NOTIFY_SILICONFLOW_API_KEY` | empty | Enables AI filtering and summaries |
-| `NOTIFY_SILICONFLOW_MODEL` | `deepseek-ai/DeepSeek-V3` | LLM model ID |
-| `NOTIFY_MAX_CANDIDATES` | `120` | Max articles sent to the LLM per run |
-| `NOTIFY_TEMPERATURE` | `0.2` | LLM sampling temperature |
-| `NOTIFY_PUSHPLUS_CHANNEL` | `mail` | Default PushPlus channel |
-| `NOTIFY_PUSHPLUS_TEMPLATE` | `markdown` | Default PushPlus template |
-| `NOTIFY_PUSHPLUS_TOPIC` | empty | Default PushPlus topic |
-| `NOTIFY_PUSHPLUS_OPTION` | empty | Default PushPlus option |
+该文件由 `uv run index --update` 生成，核心内容包括：
 
-## Commands
+- `changed_issue_keys`
+- `changed_inpress_journal_ids`
+- `notifiable_article_ids`
+- `backfill_article_ids`
+- `summary`
 
-### Standalone notification
+只有被归入 `notifiable_article_ids` 的新增文章才会进入“每周更新 / 通知 / 追踪推送”主链路。
 
-```bash
-uv run notify --db utd24.sqlite
-```
+## 用户配置来源
 
-### Triggered from index update
+当前有效订阅源为 `data/auth.sqlite` 中的 `notification_settings` 表。
+代码从数据库加载用户偏好，不再读取旧的订阅 JSON。
 
-```bash
-uv run index --update --notify --file utd24.csv
-```
+字段包括：
 
-When `--notify` is used with `--update`, the indexer:
-1. Computes a change manifest (`data/push_state/<db_stem>.changes.json`)
-2. Passes the manifest to the notification pipeline
-3. Only newly added articles are considered as candidates
+| 字段 | 说明 |
+| --- | --- |
+| `keywords` | 关键词偏好 |
+| `directions` | 研究方向偏好 |
+| `delivery_method` | 当前只支持 `folder` 或 `pushplus` |
+| `pushplus_token` | PushPlus 令牌 |
+| `pushplus_template` | 推送模板 |
+| `pushplus_topic` | 可选 topic |
+| `pushplus_to` | 可选收件人 |
+| `ai_base_url` | 用户级 OpenAI 兼容接口地址 |
+| `ai_api_key` | 用户级 API Key |
+| `ai_model` | 用户级模型名 |
+| `ai_system_prompt` | 用户级自定义系统提示词 |
+| `enabled` | 是否启用 |
 
-### Dry run (no delivery)
+## 运行时配置
 
-```bash
-uv run notify --db utd24.sqlite --dry-run
-```
+### 推荐的环境变量
 
-### All CLI options
+| 变量 | 默认值 | 说明 |
+| --- | --- | --- |
+| `NOTIFY_AI_BASE_URL` | `https://api.siliconflow.cn/v1` | 默认 OpenAI 兼容基地址 |
+| `NOTIFY_AI_API_KEY` | 空 | 默认 AI Key |
+| `NOTIFY_AI_MODEL` | `deepseek-ai/DeepSeek-V3` | 默认模型名 |
+| `NOTIFY_AI_SYSTEM_PROMPT` | 空 | 默认系统提示词 |
+| `NOTIFY_MAX_CANDIDATES` | `120` | 送入模型的候选上限 |
+| `NOTIFY_TEMPERATURE` | `0.2` | 模型温度 |
+| `NOTIFY_PUSHPLUS_CHANNEL` | `mail` | PushPlus 默认渠道 |
+| `NOTIFY_PUSHPLUS_TEMPLATE` | `markdown` | PushPlus 默认模板 |
+| `NOTIFY_PUSHPLUS_TOPIC` | 空 | PushPlus 默认 topic |
+| `NOTIFY_PUSHPLUS_OPTION` | 空 | PushPlus 默认 option |
 
-| Flag | Default | Description |
-|------|---------|-------------|
-| `--db` | auto-detect | Database file under `data/index/` |
-| `--state-dir` | `data/push_state` | Directory for persisted state files |
-| `--changes-file` | - | Change manifest from index update |
-| `--siliconflow-model` | config default | Override LLM model ID |
-| `--max-candidates` | config default (120) | Max articles sent to LLM |
-| `--timeout` | 60 | HTTP timeout in seconds |
-| `--retries` | 3 | Retry count for API calls |
-| `--dedupe-retention-days` | 60 | Days to keep delivery dedup records |
-| `--dry-run` | disabled | Run selection without sending messages |
+### 兼容别名
 
-## Pipeline Details
+当前代码也兼容以下旧命名：
 
-### 1. Change Detection
+- `OPENAI_BASE_URL`
+- `OPENAI_API_KEY`
+- `NOTIFY_SILICONFLOW_BASE_URL`
+- `NOTIFY_SILICONFLOW_API_KEY`
+- `SILICONFLOW_API_KEY`
+- `NOTIFY_SILICONFLOW_MODEL`
 
-When running with `--update`, the indexer takes before/after snapshots of article IDs per issue and in-press articles. The diff produces a change manifest:
+优先级概览：
 
-```json
-{
-  "db_name": "utd24",
-  "db_path": "data/index/utd24.sqlite",
-  "generated_at": "2026-02-10T08:00:00Z",
-  "pending_issue_keys": ["34781:641161731"],
-  "pending_inpress_keys": ["34781"],
-  "notifiable_article_ids": [685706566, 685706567],
-  "summary": {
-    "added_article_count": 2,
-    "removed_article_count": 0
-  }
-}
-```
+- base URL：`NOTIFY_AI_BASE_URL` -> `OPENAI_BASE_URL` -> `NOTIFY_SILICONFLOW_BASE_URL`
+- API Key：`NOTIFY_AI_API_KEY` -> `OPENAI_API_KEY` -> `NOTIFY_SILICONFLOW_API_KEY` / `SILICONFLOW_API_KEY`
+- model：`NOTIFY_AI_MODEL` -> `NOTIFY_SILICONFLOW_MODEL`
 
-### 2. Candidate Loading
+## AI 选择逻辑
 
-Articles are loaded from the database using the change manifest's `notifiable_article_ids`. Each candidate includes: title, abstract (truncated to 1200 chars), authors, date, DOI, journal title, and access flags.
+当前 AI 选择器为 `OpenAICompatibleSelector`，使用 OpenAI Python SDK 调用兼容聊天补全接口。
 
-### 3. AI Selection
+### 选择原则
 
-The `SiliconFlowSelector` sends candidates to the LLM with a structured prompt:
+模型提示词的核心要求：
 
-- **Directions** have higher priority than keywords
-- The LLM returns a JSON array of `{article_id, score}` pairs
-- Multi-round selection: if results are sparse, additional rounds are run (up to 5)
-- Scores are aggregated across rounds (highest score wins)
-- The system uses JSON schema enforcement for structured output
+- 先按研究方向做第一轮过滤
+- 再在方向命中的候选中按关键词排序
+- 只根据文章内容相关性与质量判断
+- 不得凭空编造文章 ID
 
-### 4. Selection Rules
+### 无 AI 时的回退策略
 
-After AI selection:
-1. Filter out articles already delivered within the dedup retention window
-2. Supplement with keyword-matched articles if the AI selection is below the limit
-3. Cap at 20 articles per push message
-4. Cap message content at 18,000 characters
+如果满足以下任一条件，系统会回退到“全量候选”模式：
 
-### 5. Delivery
+- 用户未配置关键词与研究方向
+- 用户配置了偏好，但 AI Key 或模型名为空
+- AI 请求异常
 
-Each subscriber receives a Markdown digest via PushPlus containing:
-- Article title
-- Journal name
-- Publication date
-- DOI link
-- Abstract preview
+回退后的行为：
 
-PushPlus payload fields: `token`, `title`, `content`, `channel`, `template`, plus optional `to`, `topic`, `option`.
+- `notify`：向 PushPlus 推送全部未去重候选
+- `push`：把全部未去重候选写入追踪文件夹
+- `/api/tracking/push-weekly`：若用户存在偏好但 AI 失败，也会退回全量推送
 
-### 6. Deduplication
+## `uv run notify`
 
-Delivery records are keyed as `{subscriber_id}:{article_id}` with ISO-8601 timestamps. Records older than `--dedupe-retention-days` (default 60) are pruned on each run.
+### 作用
 
-## State File
+从变更清单或快照差异中筛选候选文章，对 PushPlus 订阅用户逐个做去重、AI 选择和消息发送。
 
-State is persisted at `data/push_state/<db_stem>.json` with atomic writes (write to `.tmp`, then rename).
+### 处理对象
 
-```json
-{
-  "db_name": "utd24",
-  "status": "idle",
-  "last_completed_run_at": "2026-02-10T08:00:00Z",
-  "snapshot": {
-    "issue_article_counts": { "34781:641161731": 18 },
-    "inpress_article_counts": { "34781": 5 }
-  },
-  "run": {
-    "run_id": "...",
-    "status": "completed",
-    "started_at": "...",
-    "completed_at": "...",
-    "pending_issue_keys": [...],
-    "done_issue_keys": [...],
-    "pending_inpress_keys": [...],
-    "done_inpress_keys": [...],
-    "user_results": [...],
-    "errors": []
-  },
-  "delivery_dedupe": {
-    "alice:685706566": "2026-02-10T08:00:00Z"
-  },
-  "updated_at": "2026-02-10T08:00:00Z"
-}
-```
+仅处理：
 
-## Constants
+- `delivery_method = "pushplus"`
+- `pushplus_token` 非空
+- `enabled = true` 的数据库订阅用户
 
-| Constant | Value | Description |
-|----------|-------|-------------|
-| `SILICONFLOW_BASE_URL` | `https://api.siliconflow.cn/v1` | SiliconFlow API endpoint |
-| `PUSHPLUS_ENDPOINT` | `https://www.pushplus.plus/send` | PushPlus send endpoint |
-| `MAX_ARTICLES_PER_PUSH` | 20 | Max articles per message |
-| `MAX_PUSH_CONTENT_LENGTH` | 18000 | Max message content length |
-| `MAX_AI_SELECTION_ROUNDS` | 5 | Max LLM query rounds per subscriber |
+### 命令行参数
 
-## Weekly Workflow
+| 参数 | 默认值 | 说明 |
+| --- | --- | --- |
+| `--db` | 自动检测 | `data/index/` 下的数据库名 |
+| `--state-dir` | `data/push_state` | 状态文件目录 |
+| `--changes-file` | 空 | 指定增量更新变更清单 |
+| `--siliconflow-model` | 空 | 覆盖模型名；名称虽保留旧名，但实际上适用于任意 OpenAI 兼容模型 |
+| `--max-candidates` | `0` | 0 表示使用全局默认值 |
+| `--timeout` | `60` | HTTP 超时秒数 |
+| `--retries` | `3` | AI 与 PushPlus 重试次数 |
+| `--dedupe-retention-days` | `60` | 去重记录保留天数 |
+| `--dry-run` | `false` | 不真正发送消息 |
 
-1. Run the index update:
+### 运行流程
 
-   ```bash
-   uv run index --update
-   ```
+1. 解析目标数据库
+2. 读取状态文件 `data/push_state/<db>.json`
+3. 如果提供 `--changes-file`，按变更清单运行；否则按前后快照差异运行
+4. 加载 issue 与 in-press 候选
+5. 可选执行 AI 选择
+6. 构造 Markdown 内容并发送 PushPlus
+7. 更新 `delivery_dedupe` 与运行状态
 
-2. Run the notification pipeline:
+## `uv run push`
 
-   ```bash
-   uv run notify --db utd24.sqlite
-   ```
+### 作用
 
-Or combine both in a single command:
+与 `notify` 共用候选选择与 AI 筛选逻辑，但最终不发送 PushPlus，而是把文章写入用户追踪文件夹。
 
-```bash
-uv run index --update --notify --file utd24.csv
-```
+### 处理对象
 
-## Notes
+仅处理：
 
-- The pipeline is idempotent for delivered articles via the dedup mechanism
-- If no articles changed since the last run, the pipeline exits early
-- `--dry-run` executes the full selection pipeline without sending PushPlus messages
-- The SiliconFlow client uses the OpenAI Python SDK for compatibility
+- `delivery_method = "folder"`
+- 已配置 `tracking_folder_id`
+- `enabled = true`
+
+### 命令行参数
+
+与 `notify` 基本一致，只是默认状态目录变为：
+
+- `data/folder_push_state`
+
+### 运行结果
+
+- 正常模式：调用 `bulk_add_favorites(...)` 写入用户追踪文件夹
+- `--dry-run`：只输出选择结果，不写库
+
+## `/api/tracking/push-weekly`
+
+这是面向当前登录用户的单次即时操作，与 `uv run push` 不同之处在于：
+
+- 只处理当前用户
+- 读取最新的 `data/push_state/*.changes.json`
+- 最终总是写入当前用户的追踪文件夹
+
+返回结果里常见字段：
+
+- `pushed`
+- `selected`
+- `summary`
+- `total_candidates`
+- `message`
+- `folder_id`
+- `folder_name`
+
+## 状态文件
+
+### PushPlus 通知状态
+
+- 路径：`data/push_state/<db>.json`
+
+### 追踪文件夹状态
+
+- 路径：`data/folder_push_state/<db>.json`
+
+状态文件包含：
+
+- `status`
+- `updated_at`
+- `last_completed_run_at`
+- `snapshot`
+- `run`
+- `delivery_dedupe`
+
+其中 `run` 内部通常会记录：
+
+- `run_id`
+- `pending_issue_keys`
+- `pending_inpress_keys`
+- `done_issue_keys`
+- `done_inpress_keys`
+- `delivered_article_ids`
+- `user_results`
+- `errors`
+
+## 每周更新接口与通知链路的关系
+
+`GET /api/weekly-updates` 与通知链路共享同一组变更清单，但用途不同：
+
+- `weekly-updates`：面向前端展示，把新增文章按数据库和期刊聚合
+- `notify` / `push`：面向分发，把新增文章送入 PushPlus 或追踪文件夹
+
+因此如果你发现：
+
+- 前端“每周更新”为空
+- `push-weekly` 无可推送文章
+- `notify` 提示没有更新
+
+优先检查的应该是：
+
+- `data/push_state/*.changes.json` 是否存在
+- 清单中的 `notifiable_article_ids` 是否为空
+
+## 说明
+
+当前通知与追踪推送链路以数据库订阅配置和 `data/push_state/` 下的状态文件为准。
+
+这些文件仅用于历史兼容和示例说明，当前实际订阅源是 `data/auth.sqlite`。

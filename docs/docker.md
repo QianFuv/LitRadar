@@ -1,152 +1,205 @@
-# Docker Deployment
+# Docker 部署说明
 
-## Architecture
+本文档说明仓库内 Docker 镜像与 Compose 编排的实际行为，并以当前代码为准修正旧文档中的若干过时说法。
 
-```
-                    ┌─────────────────────┐
-   :3000            │   app (Next.js)     │
- ◄──────────────────│   node:20-alpine    │
-   exposed          │                     │
-                    └────────┬────────────┘
-                             │ rewrites /api/*
-                             │ (internal network)
-                    ┌────────▼────────────┐
-                    │   api (FastAPI)     │
-                    │   python:3.12       │
-                    │   slim-trixie       │
-                    └─────────────────────┘
-                        :8000 (internal only)
+## 服务拓扑
+
+根目录 `docker-compose.yml` 当前定义了两个服务：
+
+```text
+浏览器
+  ├── http://localhost:3000  -> app (Next.js)
+  └── http://localhost:8000  -> api (FastAPI)
 ```
 
-Only port 3000 is exposed. Frontend proxies API requests to the backend via Next.js rewrites over the Docker internal network.
+注意：
 
-## Quick Start
+- 根 Compose 文件里 **同时暴露了 3000 和 8000**
+- 旧文档中“只有 3000 对外暴露”的说法已不再成立
 
-### Local Build
+## 根 Compose 文件
+
+### `api` 服务
+
+- 构建上下文：仓库根目录
+- Dockerfile：根目录 `Dockerfile`
+- 镜像名：`ghcr.io/qianfuv/paper-scanner-api:latest`
+- 端口：`8000:8000`
+- 卷挂载：`./data:/app/data`
+- 环境变量：`API_HOST=0.0.0.0`
+
+### `app` 服务
+
+- 构建上下文：`./app`
+- Dockerfile：`app/Dockerfile`
+- 镜像名：`ghcr.io/qianfuv/paper-scanner-app:latest`
+- 端口：`3000:3000`
+- 卷挂载：`./config:/app/config:ro`
+- 环境变量：`HOSTNAME=0.0.0.0`
+- 依赖：`depends_on: [api]`
+
+## 镜像构建细节
+
+### 后端镜像
+
+后端镜像分两阶段构建：
+
+1. `build` 阶段
+   - 基础镜像：`python:3.12-slim-trixie`
+   - 使用 `uv sync --frozen --no-dev`
+   - 复制 `scripts/`
+
+2. 运行阶段
+   - 基础镜像：`python:3.12-slim-trixie`
+   - 复制 `.venv/`、`scripts/`
+   - 复制 `libs/simple-linux/`
+   - 复制 `data/meta/`
+   - 默认启动命令：`uv run api`
+
+运行时默认环境变量：
+
+| 变量 | 默认值 | 说明 |
+| --- | --- | --- |
+| `API_HOST` | `0.0.0.0` | Uvicorn 监听地址 |
+| `SIMPLE_TOKENIZER_PATH` | `/app/libs/simple-linux/libsimple-linux-ubuntu-latest/libsimple` | `simple` 分词扩展路径 |
+
+### 前端镜像
+
+前端镜像同样采用多阶段构建：
+
+1. `deps`
+   - 基础镜像：`node:20-alpine`
+   - 使用 `pnpm install --frozen-lockfile`
+
+2. `build`
+   - 默认构建参数：`INTERNAL_API_URL=http://api:8000`
+   - 执行 `pnpm build`
+
+3. 运行阶段
+   - 复制 `.next/standalone`
+   - 复制 `.next/static`
+   - 启动命令：`node server.js`
+
+说明：
+
+- 根 Compose 没有显式设置 `INTERNAL_API_URL`，但 `app/Dockerfile` 的构建参数默认值已经是 `http://api:8000`
+- 因此前端镜像在 Docker 网络内会把 `/api/*` 请求转发到 `api` 服务，而不是容器内的 `localhost`
+
+## 快速启动
+
+### 本地构建
 
 ```bash
 docker compose build
 docker compose up -d
 ```
 
-### Pull from GHCR
+### 直接拉取 GHCR 镜像
 
 ```bash
 docker compose pull
 docker compose up -d
 ```
 
-Visit http://localhost:3000.
+访问地址：
 
-## Directory Layout (Deployment Server)
+- 前端：`http://localhost:3000`
+- API：`http://localhost:8000/api`
 
-```
-project/
-├── docker-compose.yml
-├── data/
-│   ├── index/          # SQLite databases (mounted into api container)
-│   ├── meta/           # Journal metadata CSV (baked into image, volume overrides)
-│   └── push_state/     # Notification delivery state
-└── config/
-    └── auth.yaml       # Frontend authentication tokens
-```
+## 首次初始化建议
 
-## Configuration
-
-### Frontend Auth (`config/auth.yaml`)
-
-```yaml
-tokens:
-  - "your-access-token"
-secret: "your-signing-secret"
-ttl_hours: 168
-```
-
-Mounted read-only into the app container. Changes take effect after `docker compose restart app`.
-
-### Notification
-
-Notification subscribers are stored in `auth.sqlite` and managed from the tracking UI.
-Optional AI and PushPlus defaults come from environment variables on the `api` service.
-Legacy `data/push/subscriptions*.json` files are ignored.
-
-### Environment Variables
-
-| Variable | Service | Default | Description |
-|----------|---------|---------|-------------|
-| `API_HOST` | api | `0.0.0.0` | Uvicorn bind address |
-| `NOTIFY_SILICONFLOW_API_KEY` | api | empty | Enables AI filtering for notifications |
-| `NOTIFY_SILICONFLOW_MODEL` | api | `deepseek-ai/DeepSeek-V3` | Default SiliconFlow model |
-| `NOTIFY_MAX_CANDIDATES` | api | `120` | Max candidates sent to the model |
-| `NOTIFY_TEMPERATURE` | api | `0.2` | SiliconFlow temperature |
-| `NOTIFY_PUSHPLUS_CHANNEL` | api | `mail` | Default PushPlus channel |
-| `NOTIFY_PUSHPLUS_TEMPLATE` | api | `markdown` | Default PushPlus template |
-| `NOTIFY_PUSHPLUS_TOPIC` | api | empty | Default PushPlus topic |
-| `NOTIFY_PUSHPLUS_OPTION` | api | empty | Default PushPlus option |
-| `SIMPLE_TOKENIZER_PATH` | api | Set in Dockerfile | Path to `libsimple.so` for CJK FTS |
-| `HOSTNAME` | app | `0.0.0.0` | Next.js listen address |
-| `INTERNAL_API_URL` | app (build) | `http://api:8000` | Backend URL for Next.js rewrites |
-
-## Running CLI Commands
-
-The API image includes all backend code. Use `docker compose run` for one-off tasks:
+首次部署后通常还需要建立索引数据库：
 
 ```bash
-# Update index
-docker compose run --rm api uv run index --update
-
-# Send notifications
-docker compose run --rm api uv run notify
+docker compose run --rm api uv run index
 ```
 
-## Image Details
-
-### Backend (`Dockerfile`)
-
-- **Base**: `python:3.12-slim-trixie` (glibc 2.38+ required by `libsimple.so`)
-- **Build**: Multi-stage — uv installs dependencies, then copies venv to runtime stage
-- **Includes**: `libs/simple-linux/` (SQLite tokenizer), `data/meta/` (journal CSV)
-- **Data**: SQLite databases mounted at runtime via `./data:/app/data`
-
-### Frontend (`app/Dockerfile`)
-
-- **Base**: `node:20-alpine`
-- **Build**: Multi-stage — pnpm install, Next.js standalone build
-- **Rewrites**: `/api/*` proxied to `http://api:8000` (baked in at build time via `INTERNAL_API_URL`)
-- **Config**: `auth.yaml` mounted at runtime via `./config:/app/config`
-
-## CI/CD
-
-GitHub Actions (`.github/workflows/docker.yml`) builds and pushes both images to GHCR on every push to `main`:
-
-- `ghcr.io/qianfuv/paper-scanner-api:latest`
-- `ghcr.io/qianfuv/paper-scanner-app:latest`
-
-Each build also gets a `sha-<commit>` tag for rollback.
-
-### Deploying Updates
+如果只想处理某个 CSV：
 
 ```bash
-docker compose pull
-docker compose up -d
+docker compose run --rm api uv run index --file utd24.csv
 ```
 
-## Troubleshooting
+## 数据与挂载目录
 
-### `no such tokenizer: simple`
+### `data/`
 
-The `libsimple.so` extension failed to load. Check:
+`api` 服务会把宿主机 `./data` 挂载到容器 `/app/data`。运行中涉及的主要文件包括：
 
-1. **glibc version**: The image must use glibc 2.38+ (Debian Trixie or Ubuntu 24.04). Verify: `docker compose exec api ldd /app/libs/simple-linux/libsimple-linux-ubuntu-latest/libsimple.so`
-2. **Environment variable**: `SIMPLE_TOKENIZER_PATH` must be set. Verify: `docker compose exec api env | grep SIMPLE`
-3. **Stale image**: Run `docker compose build api` to ensure you're using the latest Dockerfile
+- `data/meta/*.csv`：输入的期刊元数据 CSV
+- `data/index/*.sqlite`：生成的检索数据库
+- `data/auth.sqlite`：用户、收藏、通知与后台管理数据库
+- `data/push_state/*.json`：通知状态
+- `data/push_state/*.changes.json`：变更清单
+- `data/folder_push_state/*.json`：追踪文件夹推送状态
 
-### Frontend returns 502 or API errors
+### `config/`
 
-Check if the backend is running: `docker compose logs api`. Ensure `data/index/` contains at least one `.sqlite` file.
+`app` 服务会把宿主机 `./config` 挂载到 `/app/config`。但要注意：
 
-### Config changes not taking effect
+- 当前主前端登录流程走的是后端 `/api/auth/*`
+- `config/auth.yaml` 对默认页面流程 **不是必需项**
+- 仓库中与 `auth.yaml` 相关的 `app/lib/auth.ts`、`app/lib/auth-config.ts` 属于遗留兼容模块
 
-- `auth.yaml`: `docker compose restart app`
-- `NOTIFY_*`: `docker compose restart api`
-- `INTERNAL_API_URL`: Requires `docker compose build app` (baked in at build time)
+如果你的环境中仍使用旧的前端令牌认证方案，可以保留 `config/auth.yaml`；否则该目录可以为空。
+
+## 常用环境变量
+
+### 后端
+
+| 变量 | 默认值 | 说明 |
+| --- | --- | --- |
+| `API_HOST` | `127.0.0.1`（本地） / `0.0.0.0`（Docker） | API 监听地址 |
+| `SIMPLE_TOKENIZER_PATH` | 自动探测或镜像内置 | 中文分词扩展路径 |
+| `NOTIFY_AI_BASE_URL` | `https://api.siliconflow.cn/v1` | 默认 OpenAI 兼容 API 地址 |
+| `NOTIFY_AI_API_KEY` | 空 | 默认 AI Key |
+| `NOTIFY_AI_MODEL` | `deepseek-ai/DeepSeek-V3` | 默认模型名 |
+| `NOTIFY_AI_SYSTEM_PROMPT` | 空 | 默认系统提示词 |
+| `NOTIFY_MAX_CANDIDATES` | `120` | AI 候选上限 |
+| `NOTIFY_TEMPERATURE` | `0.2` | AI 温度 |
+| `NOTIFY_PUSHPLUS_CHANNEL` | `mail` | PushPlus 默认渠道 |
+| `NOTIFY_PUSHPLUS_TEMPLATE` | `markdown` | PushPlus 默认模板 |
+| `NOTIFY_PUSHPLUS_TOPIC` | 空 | PushPlus 默认 topic |
+| `NOTIFY_PUSHPLUS_OPTION` | 空 | PushPlus 默认 option |
+
+### 前端
+
+| 变量 | 默认值 | 说明 |
+| --- | --- | --- |
+| `HOSTNAME` | 运行时决定 | `next start` / standalone 监听地址 |
+| `INTERNAL_API_URL` | `http://api:8000`（Docker 构建默认值） | 构建时用于 `/api/*` rewrite |
+| `NEXT_PUBLIC_API_URL` | 空 | 浏览器直接访问的 API 根地址，常用于本地开发 |
+
+## 与测试目录的区别
+
+`test/docker-compose.yml` 与根 Compose 不完全相同：
+
+- 测试 Compose 会显式给前端设置 `INTERNAL_API_URL=http://api:8000`
+- 还保留了 `config/auth.yaml` 示例文件
+
+这些测试资产可作为历史兼容参考，但生产与常规本地部署应以根目录 `docker-compose.yml` 和当前代码行为为准。
+
+## 常见问题
+
+### 1. 前端能打开，但搜索没有数据
+
+排查顺序：
+
+- 检查 `api` 服务是否已启动：`docker compose logs api`
+- 检查 `data/index/` 下是否已有 `.sqlite` 文件
+- 如无索引库，先执行：`docker compose run --rm api uv run index`
+
+### 2. 中文搜索命中差
+
+优先确认 `simple` 分词扩展是否加载成功：
+
+- Docker 镜像默认已经复制 Linux 版扩展
+- 本地运行可通过 `SIMPLE_TOKENIZER_PATH` 手动指定
+
+### 3. 通知或追踪推送没有产生结果
+
+需要同时检查：
+
+- 是否存在最新的 `data/push_state/*.changes.json`
+- 用户是否在 `notification_settings` 中启用了对应投递方式
+- PushPlus 或 OpenAI 兼容模型配置是否完整

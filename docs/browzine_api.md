@@ -1,28 +1,38 @@
-# BrowZine API Reference
+# BrowZine 集成说明
 
-This document describes the BrowZine API (Third Iron API v2) used by Paper Scanner to fetch journal and article metadata.
+本文档说明仓库中 `scripts/browzine/client.py` 的当前实现方式，以及它在索引流程中的角色。
 
-**Base URL**: `https://api.thirdiron.com/v2`
+## 一、实现概览
 
-## Authentication
+当前客户端类为：
 
-All requests require a Bearer token obtained from the token endpoint.
+- `BrowZineAPIClient`
 
-### Get API Token
+它负责：
 
-```
-POST /v2/api-tokens
-```
+- 为不同 `library_id` 获取并缓存 BrowZine API token
+- 访问期刊、期次、文章等 JSON 接口
+- 对瞬时失败做有限重试
 
-**Headers**:
+基础地址：
 
-| Header | Value |
-|--------|-------|
-| `Accept` | `application/json, text/javascript, */*; q=0.01` |
-| `Content-Type` | `application/json; charset=UTF-8` |
-| `Referer` | `https://browzine.com/` |
+- `https://api.thirdiron.com/v2`
 
-**Body**:
+默认库 ID：
+
+- `3050`
+
+在项目代码中对应常量：
+
+- `DEFAULT_LIBRARY_ID = "3050"`
+
+## 二、认证机制
+
+BrowZine 的访问令牌不是写死的，需要先请求：
+
+- `POST /v2/api-tokens`
+
+请求体核心字段：
 
 ```json
 {
@@ -33,291 +43,99 @@ POST /v2/api-tokens
 }
 ```
 
-**Response**:
+客户端会把返回 token 缓存在内存里，并结合 `expires_at` 做过期判断。
 
-```json
-{
-  "api-tokens": [
-    {
-      "id": "1ebc4969-d577-410a-9a72-7c1b56b94ecb",
-      "expires_at": "2026-02-18T05:10:30.933Z",
-      "links": {
-        "library": { "type": "libraries", "id": "3050" }
-      },
-      "type": "api-tokens"
-    }
-  ]
-}
-```
+### token 缓存特点
 
-Token expiry is approximately 30 days. The client caches tokens per library and refreshes them automatically when they expire (with a 300-second buffer).
+- 按 `library_id` 维度缓存
+- 请求前先检查本地缓存是否可用
+- 若接口返回 `401`，会强制刷新 token 后重试
+- 会预留 `TOKEN_EXPIRY_BUFFER` 避免快过期 token 被继续使用
 
-## Request Format
+## 三、主要能力
 
-All data endpoints use the following headers:
+### 1. 期刊检索
 
-| Header | Value |
-|--------|-------|
-| `Accept` | `application/vnd.api+json` |
-| `Authorization` | `Bearer {token}` |
-| `Referer` | `https://browzine.com/` |
+| 方法 | 作用 |
+| --- | --- |
+| `search_by_issn(issn, library_id)` | 按 ISSN 搜索期刊 |
+| `get_journal_info(journal_id, library_id)` | 获取单个期刊详情 |
 
-All endpoints require `client=bzweb` as a query parameter.
+索引流程通常先根据 CSV 中的 ISSN 做 BrowZine 检索，再取详情补全元数据。
 
-## Endpoints
+### 2. 期次与文章
 
-### Get Library Information
+| 方法 | 作用 |
+| --- | --- |
+| `get_issues_by_year(journal_id, year, library_id)` | 获取某期刊某年的 issue 列表 |
+| `get_articles_from_issue(issue_id, library_id)` | 获取某个 issue 的文章列表 |
+| `get_articles_in_press(journal_id, library_id)` | 获取 in-press 文章 |
 
-```
-GET /v2/libraries/{library_id}?client=bzweb
-```
+这些方法的输出会被索引器统一转换为数据库记录。
 
-Returns library metadata including name, logo, and available services.
+## 四、与 CSV 和索引器的关系
 
-### Get Journal Information
+CSV 行中只要 `library != -1`，索引器就会按 BrowZine 路径处理。
 
-```
-GET /v2/libraries/{library_id}/journals/{journal_id}?client=bzweb
-```
+典型流程：
 
-Returns journal metadata.
+1. 从 CSV 读取：
+   - `title`
+   - `issn`
+   - `library`
+2. 用 `search_by_issn()` 找期刊
+3. 用 `get_journal_info()` 补全期刊字段
+4. 拉取各年份 issue
+5. 拉取 issue 下文章与 in-press 文章
+6. 写入 SQLite
 
-**Response fields**:
+## 五、重试策略
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `id` | int | Journal ID |
-| `title` | string | Journal title |
-| `scimagoRank` | string | SJR ranking |
-| `coverURL` | string | Cover image URL |
-| `available` | bool | Whether journal is available in this library |
-| `tocDataApprovedAndLive` | bool | TOC data availability |
-| `hasArticles` | bool | Whether articles are indexed |
+当前 `_get_json()` 对以下情况有内置处理：
 
-### Search Journals by ISSN
+- 网络请求异常
+- `401`：刷新 token 后重试
+- `429 / 500 / 502 / 503 / 504`：短暂等待后重试
 
-```
-GET /v2/libraries/{library_id}/search?client=bzweb&query={issn}
-```
+这使得在 BrowZine 偶发不稳定时，索引过程不必立刻中断。
 
-**Accept header**: `application/json, text/javascript, */*; q=0.01`
+## 六、代码中的关键约束
 
-Returns matching journals. ISSN can be provided with or without hyphens.
+### 1. library_id 是一等输入
 
-**Response**:
+当前客户端不是只面向单个固定 library，而是：
 
-```json
-{
-  "data": [
-    {
-      "id": 34781,
-      "title": "The Accounting Review (00014826)",
-      "name": "The Accounting Review",
-      "scimago_rank": "4.045",
-      "has_articles": true,
-      "issn_no_hyphen": "00014826",
-      "eissn_no_hyphen": "15587967",
-      "toc_data_approved_and_live": true,
-      "type": "journals"
-    }
-  ]
-}
-```
+- 初始化时有 `default_library_id`
+- 每次请求也显式接收 `library_id`
 
-### Get Publication Years
+因此同一套代码可以服务多个 BrowZine 库。
 
-```
-GET /v2/libraries/{library_id}/journals/{journal_id}/publication-years?client=bzweb
-```
+### 2. 期刊排序与筛选发生在本地数据库
 
-Returns all available publication years for a journal.
+BrowZine 只负责上游抓取。用户在 API 和前端看到的：
 
-**Response**:
+- `scimago_rank`
+- `available`
+- `has_articles`
+- 年份过滤
 
-```json
-{
-  "publicationYears": [
-    { "id": 2026, "type": "publicationYears" },
-    { "id": 2025, "type": "publicationYears" }
-  ]
-}
-```
+都由本地 SQLite 检索层完成，而不是 BrowZine 在线查询完成。
 
-### Get Issues by Year
+## 七、常见失效点
 
-```
-GET /v2/libraries/{library_id}/journals/{journal_id}/issues?client=bzweb&publication-year={year}
-```
+若 BrowZine 集成出现异常，优先排查：
 
-Returns all issues for a journal in a specific year. Omit `publication-year` for the current year.
+1. token 接口是否返回结构变化
+2. `expires_at` 字段格式是否变化
+3. issue / article 接口路径是否调整
+4. 某些字段是否从 `attributes` 中改名
 
-**Response**:
+## 八、调试建议
 
-```json
-{
-  "issues": [
-    {
-      "id": 641161731,
-      "type": "issues",
-      "attributes": {
-        "isValidIssue": true,
-        "title": "Vol. 101 Issue 1",
-        "volume": "101",
-        "number": "1",
-        "date": "2026-01-01",
-        "journal": 34781,
-        "suppressed": false,
-        "embargoed": false,
-        "withinSubscription": true
-      }
-    }
-  ]
-}
-```
+当索引结果与预期不符时，通常按以下顺序检查最有效：
 
-### Get Current Issue
-
-```
-GET /v2/libraries/{library_id}/journals/{journal_id}/issues/current?client=bzweb
-```
-
-Returns the latest issue. Same response format as issue listing.
-
-### Get Articles from Issue
-
-```
-GET /v2/libraries/{library_id}/issues/{issue_id}/articles?client=bzweb
-```
-
-Returns all articles in an issue with full metadata.
-
-**Response**:
-
-```json
-{
-  "data": [
-    {
-      "id": 685706566,
-      "type": "articles",
-      "attributes": {
-        "syncId": 675149355,
-        "title": "Risk Choice and Voluntary Disclosure",
-        "date": "2025-12-08",
-        "authors": "An, Byeong-Je; Pae, Suil",
-        "startPage": "1",
-        "endPage": "26",
-        "abstract": "This paper presents a model...",
-        "doi": "10.2308/TAR-2021-0123",
-        "openAccess": false,
-        "inPress": false,
-        "suppressed": false
-      }
-    }
-  ]
-}
-```
-
-**Article attributes** (30 fields):
-
-| Field | Description |
-|-------|-------------|
-| `syncId` | Internal sync identifier |
-| `title` | Article title |
-| `date` | Publication date |
-| `authors` | Comma-separated author names |
-| `startPage` / `endPage` | Page range |
-| `abstract` | Article abstract (always included) |
-| `doi` | Digital Object Identifier |
-| `pmid` | PubMed ID |
-| `ILLURL` | Interlibrary loan URL |
-| `linkResolverOpenurlLink` | OpenURL link |
-| `permalink` | Permanent link |
-| `openAccess` | Open access flag |
-| `inPress` | In-press flag |
-| `suppressed` | Suppression status |
-| `fullTextFile` | Full-text PDF URL |
-| `libkeyFullTextFile` | LibKey full-text URL |
-| `contentLocation` | Content access URL |
-| `libkeyContentLocation` | LibKey content URL |
-| `retractionDoi` | Retraction DOI (if retracted) |
-| `retractionDate` | Retraction date |
-| `withinLibraryHoldings` | Library holdings flag |
-| `browzineWebInContextLink` | BrowZine web link |
-| `nomadFallbackURL` | NOMAD fallback URL |
-
-### Get Articles in Press
-
-```
-GET /v2/libraries/{library_id}/journals/{journal_id}/articles-in-press?client=bzweb
-```
-
-Returns articles published ahead of print. Supports cursor-based pagination.
-
-**Response**:
-
-```json
-{
-  "data": [...],
-  "meta": {
-    "cursor": {
-      "next": "eyJwYWdlU2l6ZSI6MjU..."
-    }
-  }
-}
-```
-
-Pass `cursor` as a query parameter to fetch the next page. The client follows cursors automatically until all pages are retrieved.
-
-## Client Implementation
-
-Paper Scanner wraps the BrowZine API in `scripts/browzine/client.py`:
-
-| Method | Description |
-|--------|-------------|
-| `get_journal_info(journal_id, library_id)` | Fetch journal metadata |
-| `search_by_issn(issn, library_id)` | Search journal by ISSN |
-| `get_current_issue(journal_id, library_id)` | Get latest issue |
-| `get_publication_years(journal_id, library_id)` | List available years |
-| `get_issues_by_year(journal_id, library_id, year)` | Fetch issues for a year |
-| `get_articles_from_issue(issue_id, library_id)` | Get articles in an issue |
-| `get_articles_in_press(journal_id, library_id)` | Fetch in-press articles (all pages) |
-
-Features:
-- Token caching per library with automatic refresh
-- Retry logic for transient errors (429, 500, 502, 503, 504)
-- Automatic token refresh on 401 responses
-- Cursor-based pagination with loop detection for in-press articles
-
-## Library Fallback Resolution
-
-When a journal isn't available in the primary library (`3050`), the system attempts fallback libraries defined in `FALLBACK_LIBRARIES`:
-
-```python
-FALLBACK_LIBRARIES = ["215", "866", "72", "853", "554", "371", "230"]
-```
-
-The validation process (`scripts/browzine/validation.py`):
-
-1. Check if the journal is available in the target library
-2. Verify that the current issue exists and contains articles with content (abstract or full-text)
-3. If validation fails, try each fallback library in order
-4. If a fallback works, update the CSV with the new library ID and journal ID
-5. Search by ISSN is used to find the journal in alternate libraries
-
-## Error Handling
-
-| Status | Meaning | Client Behavior |
-|--------|---------|-----------------|
-| 200 | Success | Process response |
-| 401 | Token expired | Refresh token and retry |
-| 404 | Not found | Return `None` |
-| 429 | Rate limited | Retry with backoff |
-| 500-504 | Server error | Retry up to 2 times |
-
-## Notes
-
-- All requests require `client=bzweb` as a query parameter
-- Responses follow the JSON:API specification
-- Token expiry is approximately 30 days
-- No official rate limit is documented; the client uses retry logic with backoff
-- Library ID `3050` corresponds to CEIBS (China Europe International Business School)
+1. `search_by_issn()` 是否命中正确期刊
+2. `get_journal_info()` 返回的 `attributes`
+3. `get_issues_by_year()` 返回的年份和 issue 数量
+4. `get_articles_from_issue()` 与 `get_articles_in_press()` 的原始 payload
+5. `scripts/index/transforms.py` 中的字段映射是否遗漏

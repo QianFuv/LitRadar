@@ -1,155 +1,110 @@
-# Paper Scanner Frontend
+# Paper Scanner 前端说明
 
-Next.js web application for searching and browsing academic journal articles indexed by the Paper Scanner backend.
+`app/` 是 Paper Scanner 的 Next.js 前端工程，负责提供登录、检索、收藏、每周更新、文献追踪、系统设置与管理后台等页面。
 
-## Tech Stack
+## 当前前端职责
 
-- **Next.js 16** - App Router with Server Components
-- **React 19** - UI library
-- **TypeScript 5** - Type safety
-- **TailwindCSS 4** - Utility-first styling
-- **Radix UI** - Accessible component primitives (dialog, select, checkbox, popover, slider, switch, scroll-area)
-- **TanStack React Query** - Server state management and caching
-- **nuqs** - URL-synced search parameter state
-- **next-themes** - Dark/light mode support
-- **lucide-react** - Icon set
-- **Geist** - Font family (sans + mono)
+- 调用后端 `/api/*` 路由获取文章、期刊、收藏与管理数据
+- 维护登录态与访问令牌
+- 提供检索筛选、收藏导出、追踪设置、公告展示与后台管理界面
+- 在 Docker 部署下通过 Next.js rewrite 将 `/api/*` 转发给 FastAPI 后端
 
-## Getting Started
+## 技术栈
 
-### Prerequisites
+- Next.js 16
+- React 19
+- TypeScript 5
+- Tailwind CSS 4
+- Radix UI
+- TanStack React Query
+- nuqs
+- next-themes
+- lucide-react
+
+## 启动方式
+
+前提：
 
 - Node.js 20+
-- Backend API server running at `http://localhost:8000` (see root README)
-
-### Install and Run
+- 推荐使用 `pnpm`
+- 后端 API 已启动，默认 `http://localhost:8000`
 
 ```bash
-npm install
-npm run dev
+corepack enable pnpm
+pnpm install
+pnpm dev
 ```
 
-Open http://localhost:3000 in your browser.
+默认访问地址：`http://localhost:3000`
 
-### Environment Variables
+## 环境变量
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `NEXT_PUBLIC_API_URL` | `http://localhost:8000` | Backend API base URL |
+| 变量 | 默认值 | 说明 |
+| --- | --- | --- |
+| `NEXT_PUBLIC_API_URL` | 空 | 浏览器侧 API 根地址；为空时回退到当前站点源 |
+| `INTERNAL_API_URL` | `http://localhost:8000` | Docker 构建时用于 rewrite `/api/*` 的后端地址 |
+| `HOSTNAME` | 由运行环境决定 | Next.js standalone 运行时监听地址 |
+| `AUTH_CONFIG_PATH` | `config/auth.yaml` | 遗留前端认证配置路径，当前主登录流程默认不依赖 |
 
-## Project Structure
+说明：
 
-```
+- 本地开发时通常只需要 `NEXT_PUBLIC_API_URL`
+- Docker 构建时更关键的是 `INTERNAL_API_URL`
+- `AUTH_CONFIG_PATH` 对当前 `/login` 页面的后端账号登录流程不是必需项
+
+## 页面结构
+
+| 路由 | 说明 |
+| --- | --- |
+| `/login` | 注册、登录、邀请码判断 |
+| `/` | 主检索页，包含筛选侧栏、搜索栏、结果列表、首页公告 |
+| `/articles/[id]` | 文章详情 |
+| `/weekly-updates` | 每周更新聚合页面 |
+| `/favorites` | 收藏夹、导出、追踪文件夹设置 |
+| `/tracking` | 追踪文件夹、通知设置、手动推送 |
+| `/settings` | 个人设置、邀请码、访问令牌、修改密码 |
+| `/admin` | 管理后台：用户、邀请码、统计、定时任务、公告 |
+
+## 目录概览
+
+```text
 app/
-├── app/                         # Next.js App Router
-│   ├── layout.tsx               # Root layout (fonts, metadata, providers)
-│   ├── globals.css              # Global styles
-│   ├── providers.tsx            # TanStack Query + theme providers
-│   ├── login/
-│   │   ├── page.tsx             # Login page
-│   │   └── login-client.tsx     # Login form component
-│   └── (protected)/             # Auth-protected route group
-│       ├── layout.tsx           # Auth check layout
-│       ├── page.tsx             # Main search page
-│       ├── articles/
-│       │   └── [id]/
-│       │       └── page.tsx     # Article detail page
-│       └── weekly-updates/
-│           └── page.tsx         # Weekly new articles page
+├── app/                      App Router 页面
+│   ├── (protected)/          需要登录的页面
+│   ├── login/                登录与注册页面
+│   └── layout.tsx            根布局
 ├── components/
-│   ├── feature/                 # Business components
-│   │   ├── search-bar.tsx       # Full-text search input
-│   │   ├── results-list.tsx     # Article results with infinite scroll
-│   │   ├── sidebar.tsx          # Filter panel (journals, areas, year)
-│   │   └── weekly-updates-fab.tsx # Floating action button
-│   └── ui/                      # Radix UI primitives
-│       ├── button.tsx
-│       ├── input.tsx
-│       ├── card.tsx
-│       ├── badge.tsx
-│       ├── dialog.tsx
-│       ├── select.tsx
-│       ├── popover.tsx
-│       ├── checkbox.tsx
-│       ├── label.tsx
-│       ├── slider.tsx
-│       ├── switch.tsx
-│       ├── skeleton.tsx
-│       └── scroll-area.tsx
+│   ├── admin/                管理后台组件
+│   ├── feature/              搜索、收藏、每周更新等业务组件
+│   └── ui/                   通用 UI 组件
 ├── lib/
-│   ├── api.ts                   # API client (fetch wrappers, types)
-│   ├── auth.ts                  # Authentication logic
-│   ├── auth-config.ts           # Auth config loader
-│   ├── citation.ts              # Citation formatting
-│   └── utils.ts                 # Utility functions (cn, etc.)
-├── config/
-│   └── auth.yaml                # Authentication tokens and settings
-├── assets/                      # Static assets
-├── next.config.ts               # Next.js configuration
-├── tailwind.config.ts           # Tailwind configuration
-└── tsconfig.json                # TypeScript configuration
+│   ├── api.ts                前端 API 封装
+│   ├── auth-context.tsx      登录态上下文
+│   ├── citation.ts           引文文本生成
+│   ├── auth.ts               遗留前端令牌认证工具
+│   └── auth-config.ts        遗留前端认证配置读取
+└── next.config.ts            `/api/*` rewrite 配置
 ```
 
-## Pages
+## 与后端的真实耦合关系
 
-### Login (`/login`)
+当前前端实际依赖的主要后端能力包括：
 
-Token-based authentication. Users enter a pre-configured token to access protected routes. Tokens and JWT settings are defined in `config/auth.yaml`.
+- 公开检索接口：`/api/articles`、`/api/journals`、`/api/issues`、`/api/meta/*`
+- 每周更新与公告：`/api/weekly-updates`、`/api/announcements`
+- 用户与认证：`/api/auth/*`
+- 收藏与追踪：`/api/favorites/*`、`/api/tracking/*`
+- 管理后台：`/api/admin/*`
 
-### Search (`/`)
+首页公告展示使用 `app/components/announcements-dialog.tsx`，后台公告管理使用 `app/components/admin/announcements-card.tsx`。
 
-Main interface with three sections:
-- **Search bar** - Full-text search across article titles, abstracts, authors
-- **Sidebar filters** - Journal, research area, publication year, open access / in-press flags
-- **Results list** - Cursor-based infinite scroll with article cards
+## 当前认证说明
 
-All filter state is synced to URL parameters via nuqs, making search results shareable as links.
+当前主流程使用后端账号体系：
 
-### Article Detail (`/articles/[id]`)
+- 登录：`POST /api/auth/login`
+- 注册：`POST /api/auth/register`
+- 获取当前用户：`GET /api/auth/me`
+- 访问令牌：`/api/auth/tokens`
 
-Full article metadata view with links to full-text (DOI, PDF) and citation information.
-
-### Weekly Updates (`/weekly-updates`)
-
-Displays recently added articles from index updates, grouped by database and journal. Configurable lookback window (1-31 days).
-
-## API Client
-
-The API client (`lib/api.ts`) provides typed fetch wrappers for all backend endpoints:
-
-| Function | Endpoint | Description |
-|----------|----------|-------------|
-| `getArticles()` | `GET /api/articles` | Paginated article search with filters |
-| `getArticleById()` | `GET /api/articles/{id}` | Single article detail |
-| `getFullTextUrl()` | `GET /api/articles/{id}/fulltext` | Full-text redirect URL |
-| `getAreas()` | `GET /api/meta/areas` | Research area list |
-| `getYears()` | `GET /api/years` | Publication year summaries |
-| `getJournalOptions()` | `GET /api/meta/journals` | Journal dropdown options |
-| `getDatabases()` | `GET /api/meta/databases` | Available databases |
-| `getWeeklyUpdates()` | `GET /api/weekly-updates` | Recent article updates |
-
-Database selection is managed via `localStorage` with `setDatabase()` / `getCurrentDatabase()`.
-
-## Authentication
-
-Configured in `config/auth.yaml`:
-
-```yaml
-tokens:
-  - "your-auth-token"
-secret: "your-jwt-secret"
-ttl_hours: 168
-```
-
-- `tokens` - List of valid authentication tokens
-- `secret` - JWT signing secret for session cookies
-- `ttl_hours` - Session validity period (default: 7 days)
-
-## Scripts
-
-```bash
-npm run dev      # Start dev server with hot reload
-npm run build    # Production build
-npm run start    # Start production server
-npm run lint     # Run ESLint
-```
+仓库里仍保留 `app/lib/auth.ts` 与 `app/lib/auth-config.ts` 这套基于 `config/auth.yaml` 的旧工具，但当前页面和路由并未接入这条认证链路。文档中凡是提到 `auth.yaml` 的旧描述，都不再代表默认运行方式。
