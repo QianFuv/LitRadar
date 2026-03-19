@@ -2,6 +2,7 @@ import { Sidebar } from "@/components/feature/sidebar";
 import { SearchBar } from "@/components/feature/search-bar";
 import { ResultsList } from "@/components/feature/results-list";
 import { WeeklyUpdatesFab } from "@/components/feature/weekly-updates-fab";
+import { AnnouncementsDialog } from "@/components/announcements-dialog";
 import {
   Dialog,
   DialogContent,
@@ -44,7 +45,8 @@ export default function Home() {
           id="results-scroll-container"
           className="flex-1 overflow-y-auto p-6 scroll-smooth"
         >
-          <div className="max-w-4xl mx-auto w-full">
+          <div className="max-w-4xl mx-auto w-full space-y-4">
+            <AnnouncementsDialog />
             <ResultsList />
           </div>
         </div>

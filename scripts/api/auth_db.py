@@ -1497,6 +1497,28 @@ def _announcement_from_row(row: sqlite3.Row) -> dict:
     return item
 
 
+def list_active_announcements() -> list[dict]:
+    """
+    List enabled announcements.
+
+    Returns:
+        Announcement payloads ordered by priority and recency.
+    """
+    conn = _get_connection()
+    try:
+        rows = conn.execute(
+            "SELECT id, title, message, priority, enabled, created_at, updated_at "
+            "FROM announcements WHERE enabled = 1 "
+            "ORDER BY CASE priority "
+            "WHEN 'high' THEN 0 "
+            "WHEN 'normal' THEN 1 "
+            "ELSE 2 END, created_at DESC"
+        ).fetchall()
+        return [_announcement_from_row(row) for row in rows]
+    finally:
+        conn.close()
+
+
 def list_all_announcements() -> list[dict]:
     """
     List all announcements for admin management.

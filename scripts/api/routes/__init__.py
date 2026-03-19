@@ -6,6 +6,7 @@ from fastapi import FastAPI
 
 from scripts.api.routes import (
     admin,
+    announcements,
     articles,
     auth,
     favorites,
@@ -35,6 +36,7 @@ def register_routes(app: FastAPI) -> None:
         issues.router,
         articles.router,
         weekly.router,
+        announcements.router,
         auth.router,
         favorites.router,
         tracking.router,

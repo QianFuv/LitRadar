@@ -214,6 +214,14 @@ export async function getWeeklyUpdates(windowDays: number = 7): Promise<WeeklyUp
   return res.json();
 }
 
+export async function getAnnouncements(): Promise<AnnouncementInfo[]> {
+  const res = await fetch(`${resolveBase()}/api/announcements`);
+  if (!res.ok) {
+    throw new Error('获取公告失败');
+  }
+  return res.json();
+}
+
 export async function getArticleById(articleId: number, dbName: string): Promise<Article> {
   const url = new URL(`/api/articles/${articleId}`, resolveBase());
   url.searchParams.set('db', dbName);
