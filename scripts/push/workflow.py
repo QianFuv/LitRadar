@@ -1,4 +1,4 @@
-"""Notification workflow orchestration."""
+"""Tracking-folder push orchestration."""
 
 from __future__ import annotations
 
@@ -22,14 +22,12 @@ from scripts.notify.delivery import (
     prune_delivery_dedupe,
     resolve_path,
 )
-from scripts.notify.message import build_markdown_content, build_message_title
 from scripts.notify.models import (
     MAX_AI_SELECTION_ROUNDS,
     ArticleCandidate,
     RankedSelection,
     Subscriber,
 )
-from scripts.notify.pushplus import PushPlusClient
 from scripts.notify.selection import apply_selection_rules, select_articles_with_retries
 from scripts.notify.state import (
     create_run_state,
@@ -43,7 +41,6 @@ from scripts.notify.subscriptions import (
     resolve_ai_runtime_config,
 )
 from scripts.shared.constants import PROJECT_ROOT
-from scripts.shared.converters import to_int
 from scripts.shared.db_path import resolve_db_path
 
 
@@ -77,9 +74,9 @@ def select_all_candidates(
     return accepted
 
 
-def run_notification(args: argparse.Namespace) -> int:
+def run_push(args: argparse.Namespace) -> int:
     """
-    Execute notification pipeline.
+    Execute tracking-folder push pipeline.
 
     Args:
         args: Parsed CLI arguments.
@@ -113,18 +110,15 @@ def run_notification(args: argparse.Namespace) -> int:
                 manifest_run_id,
             ) = load_change_manifest(changes_file, db_path.name)
         else:
-            pending_article_ids = []
             previous_issue_counts = {
                 key: int(value)
                 for key, value in state["snapshot"]["issue_article_counts"].items()
-                if to_int(value) is not None
             }
             previous_inpress_counts = {
                 key: int(value)
                 for key, value in state["snapshot"]["inpress_article_counts"].items()
-                if to_int(value) is not None
             }
-
+            pending_article_ids = []
             pending_issue_keys = compute_changed_issue_keys(
                 previous_issue_counts,
                 current_issue_counts,
@@ -139,7 +133,7 @@ def run_notification(args: argparse.Namespace) -> int:
             state["run"] = None
             state["updated_at"] = utc_now_iso()
             save_json_atomic(state_file, state)
-            print("No updated issues or in-press entries to notify.")
+            print("No updated issues or in-press entries to push.")
             return 0
 
         run_id = manifest_run_id or utc_now_iso()
@@ -194,17 +188,19 @@ def run_notification(args: argparse.Namespace) -> int:
 
         global_config, defaults = load_notification_config()
         subscribers = load_subscribers_from_db()
-        pushplus_subscribers = [
-            sub for sub in subscribers if sub.delivery_method == "pushplus"
+        folder_subscribers = [
+            sub
+            for sub in subscribers
+            if sub.delivery_method == "folder" and sub.tracking_folder_id is not None
         ]
 
-        if not pushplus_subscribers:
+        if not folder_subscribers:
             run_state["status"] = "skipped"
             run_state["updated_at"] = utc_now_iso()
             state["status"] = "skipped"
             state["updated_at"] = utc_now_iso()
             save_json_atomic(state_file, state)
-            print("No PushPlus subscribers found — skipping run.")
+            print("No tracking-folder subscribers found — skipping run.")
             return 0
 
         model_override = str(args.siliconflow_model or "").strip() or None
@@ -216,7 +212,6 @@ def run_notification(args: argparse.Namespace) -> int:
             tuple[str, str, str, str],
             OpenAICompatibleSelector,
         ] = {}
-        push_client = PushPlusClient(timeout_seconds=args.timeout, retries=args.retries)
 
         delivery_dedupe = state.get("delivery_dedupe")
         if not isinstance(delivery_dedupe, dict):
@@ -226,9 +221,8 @@ def run_notification(args: argparse.Namespace) -> int:
         errors: list[str] = []
 
         try:
-            for subscriber in pushplus_subscribers:
+            for subscriber in folder_subscribers:
                 try:
-                    final_summary = ""
                     if subscriber.keywords or subscriber.directions:
                         ai_config = resolve_ai_runtime_config(
                             base_url=subscriber.ai_base_url,
@@ -279,24 +273,6 @@ def run_notification(args: argparse.Namespace) -> int:
                                 candidates_by_id,
                                 delivery_dedupe,
                             )
-
-                            selected_candidates = [
-                                candidates_by_id[item.article_id]
-                                for item in accepted
-                                if item.article_id in candidates_by_id
-                            ]
-
-                            final_summary = selection_result.summary
-                            if selected_candidates:
-                                try:
-                                    summarized = selector.summarize_selected_articles(
-                                        subscriber,
-                                        selected_candidates,
-                                    )
-                                    if summarized:
-                                        final_summary = summarized
-                                except Exception:
-                                    final_summary = selection_result.summary
                     else:
                         accepted = select_all_candidates(
                             subscriber,
@@ -320,15 +296,8 @@ def run_notification(args: argparse.Namespace) -> int:
                         save_json_atomic(state_file, state)
                         continue
 
-                    message_title = build_message_title(db_path.name, run_id)
-                    content = build_markdown_content(
-                        db_path.name,
-                        run_id,
-                        subscriber,
-                        final_summary,
-                        accepted,
-                        candidates_by_id,
-                    )
+                    if subscriber.tracking_folder_id is None:
+                        raise RuntimeError("Tracking folder is not configured")
 
                     if args.dry_run:
                         print(
@@ -336,18 +305,21 @@ def run_notification(args: argparse.Namespace) -> int:
                             subscriber.subscriber_id,
                             f"selected={len(accepted)}",
                         )
-                        message_id = ""
                     else:
-                        message_id = push_client.send(
-                            token=subscriber.pushplus_token,
-                            title=message_title,
-                            content=content,
-                            channel=global_config.pushplus_channel,
-                            template=subscriber.template
-                            or global_config.pushplus_template,
-                            topic=subscriber.topic or global_config.pushplus_topic,
-                            option=global_config.pushplus_option,
-                            to=subscriber.to,
+                        from scripts.api.auth_db import bulk_add_favorites
+
+                        folder_articles = [
+                            {
+                                "article_id": item.article_id,
+                                "db_name": db_path.name,
+                            }
+                            for item in accepted
+                            if item.article_id in candidates_by_id
+                        ]
+                        bulk_add_favorites(
+                            int(subscriber.subscriber_id),
+                            subscriber.tracking_folder_id,
+                            folder_articles,
                         )
                         sent_at = utc_now_iso()
                         for item in accepted:
@@ -361,7 +333,7 @@ def run_notification(args: argparse.Namespace) -> int:
                             "subscriber_id": subscriber.subscriber_id,
                             "selected_count": len(accepted),
                             "pushed_count": len(accepted),
-                            "message_id": message_id or None,
+                            "message_id": None,
                             "status": "ok",
                             "error": None,
                         }
@@ -386,7 +358,6 @@ def run_notification(args: argparse.Namespace) -> int:
         finally:
             for selector in selector_cache.values():
                 selector.close()
-            push_client.close()
 
         if errors:
             run_state["status"] = "failed"
@@ -395,7 +366,7 @@ def run_notification(args: argparse.Namespace) -> int:
             state["status"] = "failed"
             state["updated_at"] = utc_now_iso()
             save_json_atomic(state_file, state)
-            print("Notification run failed.")
+            print("Tracking-folder push run failed.")
             for message in errors:
                 print(message)
             return 1
@@ -419,5 +390,5 @@ def run_notification(args: argparse.Namespace) -> int:
         }
         state["updated_at"] = utc_now_iso()
         save_json_atomic(state_file, state)
-        print("Notification run completed successfully.")
+        print("Tracking-folder push run completed successfully.")
     return 0

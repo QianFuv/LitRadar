@@ -27,6 +27,7 @@ dev = [
 index = "scripts.index:main"
 api = "scripts.api:main"
 notify = "scripts.notify:main"
+push = "scripts.push:main"
 
 [tool.setuptools.packages.find]
 include = ["scripts*"]
