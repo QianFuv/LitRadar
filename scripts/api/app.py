@@ -11,6 +11,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 
 from scripts.api.auth_db import init_auth_db
+from scripts.api.scheduler import start_scheduler, stop_scheduler
 from scripts.shared.constants import API_PREFIX
 
 
@@ -33,7 +34,11 @@ class CacheControlMiddleware(BaseHTTPMiddleware):
 @asynccontextmanager
 async def lifespan(application: FastAPI) -> AsyncGenerator[None]:
     init_auth_db()
-    yield
+    start_scheduler()
+    try:
+        yield
+    finally:
+        stop_scheduler()
 
 
 def build_app() -> FastAPI:

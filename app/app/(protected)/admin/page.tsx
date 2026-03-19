@@ -50,6 +50,7 @@ import {
   DialogTitle,
   DialogTrigger,
 } from '@/components/ui/dialog';
+import { ScheduledTasksCard } from '@/components/admin/scheduled-tasks-card';
 
 function formatDate(ts: number): string {
   return new Date(ts * 1000).toLocaleDateString('zh-CN', {
@@ -577,6 +578,7 @@ export default function AdminPage() {
           </div>
         </CardContent>
       </Card>
+      {token && <ScheduledTasksCard token={token} />}
     </div>
   );
 }

@@ -598,6 +598,7 @@ export interface AdminStats {
     unused_invite_codes: number;
     active_tokens: number;
     notification_subscribers: number;
+    scheduled_tasks: number;
   };
   index: {
     databases: IndexDbStats[];
@@ -605,6 +606,32 @@ export interface AdminStats {
     total_journals: number;
   };
   push: PushDbStats[];
+}
+
+export interface ScheduledTaskInfo {
+  id: number;
+  name: string;
+  command: string;
+  cron: string;
+  enabled: boolean;
+  last_run_at: number | null;
+  last_status: string;
+  created_at: number;
+  updated_at: number;
+}
+
+export interface ScheduledTaskCreate {
+  name: string;
+  command: string;
+  cron: string;
+  enabled: boolean;
+}
+
+export interface ScheduledTaskUpdate {
+  name?: string;
+  command?: string;
+  cron?: string;
+  enabled?: boolean;
 }
 
 export async function adminGetUsers(token: string): Promise<AdminUserInfo[]> {
@@ -677,4 +704,51 @@ export async function adminGetStats(token: string): Promise<AdminStats> {
   const res = await authFetch(`${resolveBase()}/api/admin/stats`, token);
   if (!res.ok) throw new Error('获取统计信息失败');
   return res.json();
+}
+
+export async function adminGetScheduledTasks(token: string): Promise<ScheduledTaskInfo[]> {
+  const res = await authFetch(`${resolveBase()}/api/admin/scheduled-tasks`, token);
+  if (!res.ok) throw new Error('获取定时任务失败');
+  return res.json();
+}
+
+export async function adminCreateScheduledTask(
+  token: string,
+  payload: ScheduledTaskCreate,
+): Promise<ScheduledTaskInfo> {
+  const res = await authFetch(`${resolveBase()}/api/admin/scheduled-tasks`, token, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || '创建定时任务失败');
+  }
+  return res.json();
+}
+
+export async function adminUpdateScheduledTask(
+  token: string,
+  taskId: number,
+  payload: ScheduledTaskUpdate,
+): Promise<ScheduledTaskInfo> {
+  const res = await authFetch(`${resolveBase()}/api/admin/scheduled-tasks/${taskId}`, token, {
+    method: 'PUT',
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || '更新定时任务失败');
+  }
+  return res.json();
+}
+
+export async function adminDeleteScheduledTask(token: string, taskId: number): Promise<void> {
+  const res = await authFetch(`${resolveBase()}/api/admin/scheduled-tasks/${taskId}`, token, {
+    method: 'DELETE',
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || '删除定时任务失败');
+  }
 }

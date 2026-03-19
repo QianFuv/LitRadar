@@ -1,0 +1,318 @@
+'use client';
+
+import { useMemo, useState } from 'react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { Clock3, Pencil, Plus, Trash2 } from 'lucide-react';
+
+import {
+  adminCreateScheduledTask,
+  adminDeleteScheduledTask,
+  adminGetScheduledTasks,
+  adminUpdateScheduledTask,
+  type ScheduledTaskInfo,
+} from '@/lib/api';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
+import { Input } from '@/components/ui/input';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Switch } from '@/components/ui/switch';
+
+type ScheduledTasksCardProps = {
+  token: string;
+};
+
+type TaskFormState = {
+  command: string;
+  cron: string;
+  enabled: boolean;
+  name: string;
+};
+
+type CommandPresetId =
+  | 'index-update'
+  | 'index-update-folder'
+  | 'index-update-external'
+  | 'index-update-both'
+  | 'folder-only'
+  | 'external-only'
+  | 'custom';
+
+const COMMAND_PRESETS: {
+  command: string;
+  label: string;
+  value: Exclude<CommandPresetId, 'custom'>;
+}[] = [
+  { value: 'index-update', label: '索引更新', command: 'uv run index --update' },
+  {
+    value: 'index-update-folder',
+    label: '索引更新 + 文件夹推送',
+    command: 'uv run index --update && uv run push',
+  },
+  {
+    value: 'index-update-external',
+    label: '索引更新 + 外部推送',
+    command: 'uv run index --update && uv run notify',
+  },
+  {
+    value: 'index-update-both',
+    label: '索引更新 + 双推送',
+    command: 'uv run index --update && uv run notify && uv run push',
+  },
+  { value: 'folder-only', label: '仅文件夹推送', command: 'uv run push' },
+  { value: 'external-only', label: '仅外部推送', command: 'uv run notify' },
+];
+
+const DEFAULT_FORM: TaskFormState = {
+  command: 'uv run index --update && uv run notify',
+  cron: '0 8 * * *',
+  enabled: true,
+  name: '',
+};
+
+const DEFAULT_PRESET: CommandPresetId = 'index-update-external';
+
+function getPresetForCommand(command: string): CommandPresetId {
+  return COMMAND_PRESETS.find((preset) => preset.command === command)?.value ?? 'custom';
+}
+
+function formatDateTime(value: number | null): string {
+  if (!value) {
+    return '从未执行';
+  }
+
+  return new Date(value * 1000).toLocaleString('zh-CN', {
+    hour: '2-digit',
+    minute: '2-digit',
+    month: '2-digit',
+    day: '2-digit',
+    year: 'numeric',
+  });
+}
+
+export function ScheduledTasksCard({ token }: ScheduledTasksCardProps) {
+  const queryClient = useQueryClient();
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [editingTask, setEditingTask] = useState<ScheduledTaskInfo | null>(null);
+  const [form, setForm] = useState<TaskFormState>(DEFAULT_FORM);
+  const [commandPreset, setCommandPreset] = useState<CommandPresetId>(DEFAULT_PRESET);
+
+  const { data: tasks = [], error, isLoading } = useQuery({
+    queryKey: ['admin-scheduled-tasks'],
+    queryFn: () => adminGetScheduledTasks(token),
+  });
+
+  const saveMutation = useMutation({
+    mutationFn: async () => {
+      if (editingTask) {
+        return adminUpdateScheduledTask(token, editingTask.id, form);
+      }
+      return adminCreateScheduledTask(token, form);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['admin-scheduled-tasks'] });
+      queryClient.invalidateQueries({ queryKey: ['admin-stats'] });
+      setDialogOpen(false);
+      setEditingTask(null);
+      setForm(DEFAULT_FORM);
+    },
+  });
+
+  const toggleMutation = useMutation({
+    mutationFn: ({ enabled, taskId }: { enabled: boolean; taskId: number }) =>
+      adminUpdateScheduledTask(token, taskId, { enabled }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['admin-scheduled-tasks'] });
+      queryClient.invalidateQueries({ queryKey: ['admin-stats'] });
+    },
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: (taskId: number) => adminDeleteScheduledTask(token, taskId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['admin-scheduled-tasks'] });
+      queryClient.invalidateQueries({ queryKey: ['admin-stats'] });
+    },
+  });
+
+  const mutationError = useMemo(() => {
+    if (saveMutation.error instanceof Error) {
+      return saveMutation.error.message;
+    }
+    if (toggleMutation.error instanceof Error) {
+      return toggleMutation.error.message;
+    }
+    if (deleteMutation.error instanceof Error) {
+      return deleteMutation.error.message;
+    }
+    return '';
+  }, [deleteMutation.error, saveMutation.error, toggleMutation.error]);
+
+  const openCreateDialog = () => {
+    setEditingTask(null);
+    setForm(DEFAULT_FORM);
+    setCommandPreset(DEFAULT_PRESET);
+    setDialogOpen(true);
+  };
+
+  const openEditDialog = (task: ScheduledTaskInfo) => {
+    const preset = getPresetForCommand(task.command);
+    setEditingTask(task);
+    setForm({
+      command: task.command,
+      cron: task.cron,
+      enabled: task.enabled,
+      name: task.name,
+    });
+    setCommandPreset(preset);
+    setDialogOpen(true);
+  };
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <Clock3 className="h-5 w-5" />
+          定时任务
+        </CardTitle>
+        <CardDescription>管理后台自动执行的命令任务</CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+          <DialogTrigger asChild>
+            <Button variant="outline" size="sm" onClick={openCreateDialog}>
+              <Plus className="mr-2 h-4 w-4" />
+              新建任务
+            </Button>
+          </DialogTrigger>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>{editingTask ? '编辑定时任务' : '新建定时任务'}</DialogTitle>
+              <DialogDescription>使用五段 crontab 表达式，例如 `0 8 * * *`。</DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4 py-2">
+              <Input
+                value={form.name}
+                onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))}
+                placeholder="任务名称"
+              />
+              <Input
+                value={form.cron}
+                onChange={(event) => setForm((current) => ({ ...current, cron: event.target.value }))}
+                placeholder="Cron 表达式"
+              />
+              <div className="space-y-2">
+                <Select
+                  value={commandPreset}
+                  onValueChange={(value: CommandPresetId) => {
+                    setCommandPreset(value);
+                    if (value === 'custom') {
+                      setForm((current) => ({ ...current, command: editingTask?.command ?? current.command }));
+                      return;
+                    }
+
+                    const preset = COMMAND_PRESETS.find((item) => item.value === value);
+                    if (preset) {
+                      setForm((current) => ({ ...current, command: preset.command }));
+                    }
+                  }}
+                >
+                  <SelectTrigger className="w-full">
+                    <SelectValue placeholder="选择任务预设" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {COMMAND_PRESETS.map((preset) => (
+                      <SelectItem key={preset.value} value={preset.value}>
+                        {preset.label}
+                      </SelectItem>
+                    ))}
+                    <SelectItem value="custom">自定义</SelectItem>
+                  </SelectContent>
+                </Select>
+                {commandPreset === 'custom' ? (
+                  <Input
+                    value={form.command}
+                    onChange={(event) => setForm((current) => ({ ...current, command: event.target.value }))}
+                    placeholder="执行命令"
+                  />
+                ) : (
+                  <div className="rounded-md border bg-muted/40 px-3 py-2 font-mono text-sm text-muted-foreground">
+                    {form.command}
+                  </div>
+                )}
+              </div>
+              <div className="flex items-center justify-between rounded-md border px-3 py-2">
+                <span className="text-sm">启用任务</span>
+                <Switch
+                  checked={form.enabled}
+                  onCheckedChange={(checked) => setForm((current) => ({ ...current, enabled: checked }))}
+                />
+              </div>
+              {mutationError && (
+                <p className="text-sm text-destructive">{mutationError}</p>
+              )}
+              <div className="flex justify-end gap-2">
+                <Button variant="outline" onClick={() => setDialogOpen(false)}>
+                  取消
+                </Button>
+                <Button
+                  disabled={!form.name.trim() || !form.cron.trim() || !form.command.trim() || saveMutation.isPending}
+                  onClick={() => saveMutation.mutate()}
+                >
+                  {editingTask ? '保存' : '创建'}
+                </Button>
+              </div>
+            </div>
+          </DialogContent>
+        </Dialog>
+
+        {error instanceof Error && (
+          <p className="text-sm text-destructive">{error.message}</p>
+        )}
+
+        {isLoading ? (
+          <p className="text-sm text-muted-foreground">加载中...</p>
+        ) : tasks.length === 0 ? (
+          <p className="text-sm text-muted-foreground">暂无定时任务</p>
+        ) : (
+          <div className="space-y-3">
+            {tasks.map((task) => (
+              <div key={task.id} className="rounded-lg border p-4">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div className="space-y-1">
+                    <div className="font-medium">{task.name}</div>
+                    <div className="font-mono text-xs text-muted-foreground">{task.cron}</div>
+                    <div className="text-sm text-muted-foreground">{task.command}</div>
+                    <div className="text-xs text-muted-foreground">
+                      最近执行: {formatDateTime(task.last_run_at)}
+                      {task.last_status && ` · ${task.last_status}`}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Switch
+                      checked={task.enabled}
+                      onCheckedChange={(checked) =>
+                        toggleMutation.mutate({ enabled: checked, taskId: task.id })
+                      }
+                    />
+                    <Button variant="ghost" size="icon" onClick={() => openEditDialog(task)}>
+                      <Pencil className="h-4 w-4" />
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="text-destructive hover:text-destructive"
+                      onClick={() => deleteMutation.mutate(task.id)}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}

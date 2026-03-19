@@ -12,26 +12,70 @@ from fastapi import APIRouter, Depends, HTTPException
 from scripts.api.auth_db import (
     admin_create_invite_code,
     admin_reset_password,
+    create_scheduled_task,
     delete_invite_code,
+    delete_scheduled_task,
     delete_user,
     get_auth_stats,
     list_all_invite_codes,
     list_all_users,
+    list_scheduled_tasks,
     set_user_admin,
+    update_scheduled_task,
 )
 from scripts.api.auth_deps import get_admin_user
 from scripts.api.models import (
     AdminInviteCodeInfo,
     AdminResetPassword,
     AdminSetAdmin,
+    ScheduledTaskCreate,
+    ScheduledTaskInfo,
+    ScheduledTaskUpdate,
     AdminUserInfo,
 )
+from scripts.api.scheduler import reload_scheduler, validate_cron_expression
 from scripts.shared.constants import API_PREFIX, PUSH_STATE_DIR
 from scripts.shared.db_path import list_database_files
 
 router = APIRouter(prefix=f"{API_PREFIX}/admin", tags=["admin"])
 
 AdminUser = Annotated[dict, Depends(get_admin_user)]
+
+
+def _validate_scheduled_task_payload(
+    name: str | None,
+    command: str | None,
+    cron: str | None,
+) -> tuple[str | None, str | None, str | None]:
+    """
+    Normalize scheduled task values and validate cron syntax.
+
+    Args:
+        name: Raw task name.
+        command: Raw shell command.
+        cron: Raw crontab expression.
+
+    Returns:
+        Trimmed name, command, and cron tuple.
+    """
+    clean_name = name.strip() if name is not None else None
+    clean_command = command.strip() if command is not None else None
+    clean_cron = cron.strip() if cron is not None else None
+
+    if clean_name == "":
+        raise HTTPException(status_code=400, detail="Task name must not be empty")
+    if clean_command == "":
+        raise HTTPException(status_code=400, detail="Command must not be empty")
+    if clean_cron == "":
+        raise HTTPException(status_code=400, detail="Cron must not be empty")
+
+    if clean_cron is not None:
+        try:
+            validate_cron_expression(clean_cron)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return clean_name, clean_command, clean_cron
 
 
 @router.get("/users", response_model=list[AdminUserInfo])
@@ -181,3 +225,64 @@ async def admin_stats(_admin: AdminUser):
         },
         "push": push_stats,
     }
+
+
+@router.get("/scheduled-tasks", response_model=list[ScheduledTaskInfo])
+async def admin_list_scheduled_tasks(_admin: AdminUser):
+    """List all configured scheduled tasks."""
+    return [ScheduledTaskInfo(**item) for item in list_scheduled_tasks()]
+
+
+@router.post("/scheduled-tasks", response_model=ScheduledTaskInfo)
+async def admin_create_scheduled_task(
+    body: ScheduledTaskCreate,
+    _admin: AdminUser,
+):
+    """Create a new scheduled task."""
+    name, command, cron = _validate_scheduled_task_payload(
+        body.name,
+        body.command,
+        body.cron,
+    )
+    task = create_scheduled_task(
+        name=name or "",
+        command=command or "",
+        cron=cron or "",
+        enabled=body.enabled,
+    )
+    reload_scheduler()
+    return ScheduledTaskInfo(**task)
+
+
+@router.put("/scheduled-tasks/{task_id}", response_model=ScheduledTaskInfo)
+async def admin_update_scheduled_task(
+    task_id: int,
+    body: ScheduledTaskUpdate,
+    _admin: AdminUser,
+):
+    """Update a scheduled task."""
+    name, command, cron = _validate_scheduled_task_payload(
+        body.name,
+        body.command,
+        body.cron,
+    )
+    task = update_scheduled_task(
+        task_id,
+        name=name,
+        command=command,
+        cron=cron,
+        enabled=body.enabled,
+    )
+    if task is None:
+        raise HTTPException(status_code=404, detail="Scheduled task not found")
+    reload_scheduler()
+    return ScheduledTaskInfo(**task)
+
+
+@router.delete("/scheduled-tasks/{task_id}")
+async def admin_delete_scheduled_task(task_id: int, _admin: AdminUser):
+    """Delete a scheduled task."""
+    if not delete_scheduled_task(task_id):
+        raise HTTPException(status_code=404, detail="Scheduled task not found")
+    reload_scheduler()
+    return {"ok": True}

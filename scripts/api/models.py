@@ -383,6 +383,32 @@ class NotificationSettingsResponse(BaseModel):
     updated_at: float
 
 
+class ScheduledTaskInfo(BaseModel):
+    id: int
+    name: str
+    command: str
+    cron: str
+    enabled: bool
+    last_run_at: float | None = None
+    last_status: str
+    created_at: float
+    updated_at: float
+
+
+class ScheduledTaskCreate(BaseModel):
+    name: str
+    command: str
+    cron: str
+    enabled: bool = True
+
+
+class ScheduledTaskUpdate(BaseModel):
+    name: str | None = None
+    command: str | None = None
+    cron: str | None = None
+    enabled: bool | None = None
+
+
 class AdminUserInfo(BaseModel):
     id: int
     username: str

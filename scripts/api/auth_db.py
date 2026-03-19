@@ -116,6 +116,21 @@ def init_auth_db() -> None:
 
             CREATE INDEX IF NOT EXISTS idx_notification_settings_user
                 ON notification_settings(user_id);
+
+            CREATE TABLE IF NOT EXISTS scheduled_tasks (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                name            TEXT    NOT NULL,
+                command         TEXT    NOT NULL,
+                cron            TEXT    NOT NULL,
+                enabled         INTEGER NOT NULL DEFAULT 1,
+                last_run_at     REAL,
+                last_status     TEXT    NOT NULL DEFAULT '',
+                created_at      REAL    NOT NULL,
+                updated_at      REAL    NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_scheduled_tasks_enabled
+                ON scheduled_tasks(enabled);
             """
         )
         conn.commit()
@@ -1244,6 +1259,198 @@ def get_auth_stats() -> dict:
         stats["notification_subscribers"] = conn.execute(
             "SELECT COUNT(*) FROM notification_settings WHERE enabled = 1"
         ).fetchone()[0]
+        stats["scheduled_tasks"] = conn.execute(
+            "SELECT COUNT(*) FROM scheduled_tasks"
+        ).fetchone()[0]
         return stats
+    finally:
+        conn.close()
+
+
+def _scheduled_task_from_row(row: sqlite3.Row) -> dict:
+    """
+    Convert a scheduled task row into a response dict.
+
+    Args:
+        row: SQLite row object.
+
+    Returns:
+        Scheduled task payload dict.
+    """
+    item = dict(row)
+    item["enabled"] = bool(item["enabled"])
+    return item
+
+
+def list_scheduled_tasks() -> list[dict]:
+    """
+    List all scheduled tasks.
+
+    Returns:
+        Scheduled task payloads ordered by creation time.
+    """
+    conn = _get_connection()
+    try:
+        rows = conn.execute(
+            "SELECT id, name, command, cron, enabled, "
+            "last_run_at, last_status, created_at, updated_at "
+            "FROM scheduled_tasks ORDER BY created_at DESC"
+        ).fetchall()
+        return [_scheduled_task_from_row(row) for row in rows]
+    finally:
+        conn.close()
+
+
+def get_scheduled_task(task_id: int) -> dict | None:
+    """
+    Fetch one scheduled task by id.
+
+    Args:
+        task_id: Scheduled task identifier.
+
+    Returns:
+        Scheduled task payload or None.
+    """
+    conn = _get_connection()
+    try:
+        row = conn.execute(
+            "SELECT id, name, command, cron, enabled, "
+            "last_run_at, last_status, created_at, updated_at "
+            "FROM scheduled_tasks WHERE id = ?",
+            (task_id,),
+        ).fetchone()
+        return _scheduled_task_from_row(row) if row else None
+    finally:
+        conn.close()
+
+
+def create_scheduled_task(
+    name: str,
+    command: str,
+    cron: str,
+    enabled: bool = True,
+) -> dict:
+    """
+    Create a scheduled task.
+
+    Args:
+        name: Display name.
+        command: Shell command to run.
+        cron: Five-field cron expression.
+        enabled: Whether the task is active.
+
+    Returns:
+        Created scheduled task payload.
+    """
+    now = time.time()
+    conn = _get_connection()
+    try:
+        cur = conn.execute(
+            "INSERT INTO scheduled_tasks "
+            "(name, command, cron, enabled, last_run_at, "
+            "last_status, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, NULL, '', ?, ?)",
+            (name, command, cron, int(enabled), now, now),
+        )
+        conn.commit()
+        row = conn.execute(
+            "SELECT id, name, command, cron, enabled, "
+            "last_run_at, last_status, created_at, updated_at "
+            "FROM scheduled_tasks WHERE id = ?",
+            (cur.lastrowid,),
+        ).fetchone()
+        if row is None:
+            raise RuntimeError("Scheduled task creation failed")
+        return _scheduled_task_from_row(row)
+    finally:
+        conn.close()
+
+
+def update_scheduled_task(
+    task_id: int,
+    *,
+    name: str | None = None,
+    command: str | None = None,
+    cron: str | None = None,
+    enabled: bool | None = None,
+) -> dict | None:
+    """
+    Update one scheduled task.
+
+    Args:
+        task_id: Scheduled task identifier.
+        name: Optional updated name.
+        command: Optional updated command.
+        cron: Optional updated cron expression.
+        enabled: Optional updated enabled flag.
+
+    Returns:
+        Updated scheduled task payload or None.
+    """
+    current = get_scheduled_task(task_id)
+    if current is None:
+        return None
+
+    now = time.time()
+    conn = _get_connection()
+    try:
+        conn.execute(
+            "UPDATE scheduled_tasks SET name = ?, command = ?, cron = ?, "
+            "enabled = ?, updated_at = ? WHERE id = ?",
+            (
+                name if name is not None else current["name"],
+                command if command is not None else current["command"],
+                cron if cron is not None else current["cron"],
+                int(enabled if enabled is not None else current["enabled"]),
+                now,
+                task_id,
+            ),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    return get_scheduled_task(task_id)
+
+
+def delete_scheduled_task(task_id: int) -> bool:
+    """
+    Delete one scheduled task.
+
+    Args:
+        task_id: Scheduled task identifier.
+
+    Returns:
+        True if a task row was deleted.
+    """
+    conn = _get_connection()
+    try:
+        cur = conn.execute("DELETE FROM scheduled_tasks WHERE id = ?", (task_id,))
+        conn.commit()
+        return cur.rowcount > 0
+    finally:
+        conn.close()
+
+
+def record_scheduled_task_run(task_id: int, status: str, ran_at: float) -> bool:
+    """
+    Store the result of one scheduled task run.
+
+    Args:
+        task_id: Scheduled task identifier.
+        status: Run status string.
+        ran_at: Execution timestamp.
+
+    Returns:
+        True if the task exists and was updated.
+    """
+    conn = _get_connection()
+    try:
+        cur = conn.execute(
+            "UPDATE scheduled_tasks SET last_run_at = ?, last_status = ?, "
+            "updated_at = ? WHERE id = ?",
+            (ran_at, status, time.time(), task_id),
+        )
+        conn.commit()
+        return cur.rowcount > 0
     finally:
         conn.close()
