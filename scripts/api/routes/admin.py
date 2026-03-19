@@ -1,4 +1,4 @@
-"""Admin routes – user management, invite codes, system statistics."""
+"""Admin routes for user management, announcements, and scheduled tasks."""
 
 from __future__ import annotations
 
@@ -33,13 +33,13 @@ from scripts.api.models import (
     AdminInviteCodeInfo,
     AdminResetPassword,
     AdminSetAdmin,
+    AdminUserInfo,
     AnnouncementCreate,
     AnnouncementInfo,
     AnnouncementUpdate,
     ScheduledTaskCreate,
     ScheduledTaskInfo,
     ScheduledTaskUpdate,
-    AdminUserInfo,
 )
 from scripts.api.scheduler import reload_scheduler, validate_cron_expression
 from scripts.shared.constants import API_PREFIX, PUSH_STATE_DIR
@@ -178,8 +178,7 @@ async def admin_list_invite_codes(_admin: AdminUser):
 @router.post("/invite-codes")
 async def admin_generate_invite_code(_admin: AdminUser):
     """Generate an invite code (admin-created, no user limit)."""
-    data = admin_create_invite_code()
-    return data
+    return admin_create_invite_code()
 
 
 @router.delete("/invite-codes/{code_id}")
@@ -196,7 +195,10 @@ async def admin_delete_invite_code(code_id: int, _admin: AdminUser):
 @router.get("/stats")
 async def admin_stats(_admin: AdminUser):
     """
-    Comprehensive system statistics: auth, index databases, push state.
+    Return comprehensive system statistics for the admin dashboard.
+
+    Returns:
+        Aggregated auth, index, and push-state metrics.
     """
     auth = get_auth_stats()
 
@@ -240,14 +242,14 @@ async def admin_stats(_admin: AdminUser):
         sorted(PUSH_STATE_DIR.glob("*.json")) if PUSH_STATE_DIR.exists() else []
     )
     push_stats: list[dict] = []
-    for pf in push_state_files:
+    for path in push_state_files:
         try:
-            with open(pf) as f:
-                state = json.load(f)
+            with open(path) as handle:
+                state = json.load(handle)
             run = state.get("run") or {}
             push_stats.append(
                 {
-                    "db_name": pf.stem,
+                    "db_name": path.stem,
                     "status": state.get("status", "unknown"),
                     "last_completed": state.get("last_completed_run_at"),
                     "delivered_count": len(run.get("delivered_article_ids", [])),
@@ -255,7 +257,7 @@ async def admin_stats(_admin: AdminUser):
                 }
             )
         except Exception:
-            push_stats.append({"db_name": pf.stem, "status": "error"})
+            push_stats.append({"db_name": path.stem, "status": "error"})
 
     return {
         "auth": auth,
