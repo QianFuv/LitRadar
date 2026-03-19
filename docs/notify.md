@@ -83,22 +83,7 @@
 | `NOTIFY_PUSHPLUS_TOPIC` | 空 | PushPlus 默认 topic |
 | `NOTIFY_PUSHPLUS_OPTION` | 空 | PushPlus 默认 option |
 
-### 兼容别名
-
-当前代码也兼容以下旧命名：
-
-- `OPENAI_BASE_URL`
-- `OPENAI_API_KEY`
-- `NOTIFY_SILICONFLOW_BASE_URL`
-- `NOTIFY_SILICONFLOW_API_KEY`
-- `SILICONFLOW_API_KEY`
-- `NOTIFY_SILICONFLOW_MODEL`
-
-优先级概览：
-
-- base URL：`NOTIFY_AI_BASE_URL` -> `OPENAI_BASE_URL` -> `NOTIFY_SILICONFLOW_BASE_URL`
-- API Key：`NOTIFY_AI_API_KEY` -> `OPENAI_API_KEY` -> `NOTIFY_SILICONFLOW_API_KEY` / `SILICONFLOW_API_KEY`
-- model：`NOTIFY_AI_MODEL` -> `NOTIFY_SILICONFLOW_MODEL`
+通知链路现在只识别上述 `NOTIFY_AI_*` 变量，不再解析旧的 OpenAI / SiliconFlow 别名。
 
 ## AI 选择逻辑
 
@@ -148,7 +133,7 @@
 | `--db` | 自动检测 | `data/index/` 下的数据库名 |
 | `--state-dir` | `data/push_state` | 状态文件目录 |
 | `--changes-file` | 空 | 指定增量更新变更清单 |
-| `--siliconflow-model` | 空 | 覆盖模型名；名称虽保留旧名，但实际上适用于任意 OpenAI 兼容模型 |
+| `--ai-model` | 空 | 覆盖默认 OpenAI 兼容模型名 |
 | `--max-candidates` | `0` | 0 表示使用全局默认值 |
 | `--timeout` | `60` | HTTP 超时秒数 |
 | `--retries` | `3` | AI 与 PushPlus 重试次数 |

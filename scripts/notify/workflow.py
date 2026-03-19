@@ -207,7 +207,7 @@ def run_notification(args: argparse.Namespace) -> int:
             print("No PushPlus subscribers found — skipping run.")
             return 0
 
-        model_override = str(args.siliconflow_model or "").strip() or None
+        model_override = str(args.ai_model or "").strip() or None
         max_candidates = args.max_candidates or defaults.max_candidates
         max_candidates = max(1, max_candidates)
         candidates_for_model = all_candidates[:max_candidates]

@@ -474,6 +474,3 @@ def extract_response_payload(response_json: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise ValueError("Structured response is not a JSON object")
     return payload
-
-
-SiliconFlowSelector = OpenAICompatibleSelector

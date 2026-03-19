@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from scripts.notify.ai_selector import SiliconFlowSelector
+from scripts.notify.ai_selector import OpenAICompatibleSelector
 from scripts.notify.models import (
     MAX_ARTICLES_PER_PUSH,
     ArticleCandidate,
@@ -38,7 +38,7 @@ def candidate_match_score(candidate: ArticleCandidate, subscriber: Subscriber) -
 
 
 def select_articles_with_retries(
-    selector: SiliconFlowSelector,
+    selector: OpenAICompatibleSelector,
     subscriber: Subscriber,
     defaults: NotificationDefaults,
     candidates_for_model: list[ArticleCandidate],
@@ -50,7 +50,7 @@ def select_articles_with_retries(
     Query model multiple times on remaining candidates when results are sparse.
 
     Args:
-        selector: SiliconFlow selector client.
+        selector: OpenAI-compatible selector client.
         subscriber: Subscriber profile.
         defaults: Notification defaults.
         candidates_for_model: Candidates sent to model.

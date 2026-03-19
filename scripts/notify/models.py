@@ -10,15 +10,11 @@ DEFAULT_STATE_DIR = PROJECT_ROOT / "data" / "push_state"
 
 DEFAULT_OPENAI_BASE_URL = "https://api.siliconflow.cn/v1"
 
-SILICONFLOW_BASE_URL = DEFAULT_OPENAI_BASE_URL
-
 PUSHPLUS_ENDPOINT = "https://www.pushplus.plus/send"
 
 PUSHPLUS_CHANNEL = "mail"
 
 DEFAULT_OPENAI_MODEL = "deepseek-ai/DeepSeek-V3"
-
-DEFAULT_SILICONFLOW_MODEL = DEFAULT_OPENAI_MODEL
 
 MAX_ARTICLES_PER_PUSH = 20
 
@@ -124,16 +120,6 @@ class NotificationGlobal:
     pushplus_option: str | None
     ai_system_prompt: str | None = None
 
-    @property
-    def siliconflow_api_key(self) -> str:
-        """
-        Return the legacy SiliconFlow API key alias.
-
-        Returns:
-            Configured OpenAI-compatible API key.
-        """
-        return self.ai_api_key
-
 
 @dataclass(frozen=True)
 class NotificationDefaults:
@@ -149,16 +135,6 @@ class NotificationDefaults:
     max_candidates: int
     ai_model: str
     temperature: float
-
-    @property
-    def siliconflow_model(self) -> str:
-        """
-        Return the legacy SiliconFlow model alias.
-
-        Returns:
-            Configured OpenAI-compatible model name.
-        """
-        return self.ai_model
 
 
 @dataclass(frozen=True)

@@ -195,14 +195,7 @@ uv run push --db utd24.sqlite --dry-run
 | `NOTIFY_PUSHPLUS_TOPIC` | 空 | PushPlus 默认 topic |
 | `NOTIFY_PUSHPLUS_OPTION` | 空 | PushPlus 默认 option |
 
-兼容别名仍然可用：
-
-- `OPENAI_BASE_URL`
-- `OPENAI_API_KEY`
-- `NOTIFY_SILICONFLOW_BASE_URL`
-- `NOTIFY_SILICONFLOW_API_KEY`
-- `SILICONFLOW_API_KEY`
-- `NOTIFY_SILICONFLOW_MODEL`
+通知链路现在只识别上述 `NOTIFY_AI_*` 变量，不再兼容旧的 OpenAI / SiliconFlow 别名。
 
 ## 数据与状态文件
 

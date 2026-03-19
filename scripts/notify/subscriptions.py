@@ -36,17 +36,8 @@ def load_notification_config() -> tuple[NotificationGlobal, NotificationDefaults
     Returns:
         Global config and defaults.
     """
-    ai_base_url = (
-        _read_env("NOTIFY_AI_BASE_URL")
-        or _read_env("OPENAI_BASE_URL")
-        or _read_env("NOTIFY_SILICONFLOW_BASE_URL")
-        or DEFAULT_OPENAI_BASE_URL
-    )
-    ai_api_key = (
-        _read_env("NOTIFY_AI_API_KEY")
-        or _read_env("OPENAI_API_KEY")
-        or (_read_env("NOTIFY_SILICONFLOW_API_KEY") or _read_env("SILICONFLOW_API_KEY"))
-    )
+    ai_base_url = _read_env("NOTIFY_AI_BASE_URL") or DEFAULT_OPENAI_BASE_URL
+    ai_api_key = _read_env("NOTIFY_AI_API_KEY")
     pushplus_channel = _read_env("NOTIFY_PUSHPLUS_CHANNEL") or PUSHPLUS_CHANNEL
     if not pushplus_channel:
         pushplus_channel = PUSHPLUS_CHANNEL
@@ -70,11 +61,7 @@ def load_notification_config() -> tuple[NotificationGlobal, NotificationDefaults
     max_candidates = to_int(_read_env("NOTIFY_MAX_CANDIDATES")) or 120
     temperature = to_float(_read_env("NOTIFY_TEMPERATURE")) or 0.2
 
-    ai_model = (
-        _read_env("NOTIFY_AI_MODEL")
-        or _read_env("NOTIFY_SILICONFLOW_MODEL")
-        or DEFAULT_OPENAI_MODEL
-    )
+    ai_model = _read_env("NOTIFY_AI_MODEL") or DEFAULT_OPENAI_MODEL
 
     defaults = NotificationDefaults(
         max_candidates=max(1, max_candidates),

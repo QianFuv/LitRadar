@@ -42,10 +42,10 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
-        "--siliconflow-model",
+        "--ai-model",
         type=str,
         default="",
-        help="Override SiliconFlow model id.",
+        help="Override OpenAI-compatible model id.",
     )
     parser.add_argument(
         "--max-candidates",
@@ -63,7 +63,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--retries",
         type=int,
         default=3,
-        help="Retry count for SiliconFlow calls.",
+        help="Retry count for AI calls.",
     )
     parser.add_argument(
         "--dedupe-retention-days",

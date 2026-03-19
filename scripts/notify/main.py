@@ -20,7 +20,10 @@ def build_parser() -> argparse.ArgumentParser:
         Argument parser.
     """
     parser = argparse.ArgumentParser(
-        description="Select and push updated articles with SiliconFlow and PushPlus"
+        description=(
+            "Select and push updated articles with "
+            "an OpenAI-compatible model and PushPlus"
+        )
     )
     parser.add_argument(
         "--db",
@@ -44,10 +47,10 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
-        "--siliconflow-model",
+        "--ai-model",
         type=str,
         default="",
-        help="Override SiliconFlow model id.",
+        help="Override OpenAI-compatible model id.",
     )
     parser.add_argument(
         "--max-candidates",
@@ -65,7 +68,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--retries",
         type=int,
         default=3,
-        help="Retry count for SiliconFlow and PushPlus calls.",
+        help="Retry count for AI and PushPlus calls.",
     )
     parser.add_argument(
         "--dedupe-retention-days",
