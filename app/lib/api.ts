@@ -260,8 +260,12 @@ export interface FavoriteArticleItem extends FavoriteItem {
   in_press?: number;
   volume?: string;
   number?: string;
+  issn?: string | null;
+  eissn?: string | null;
   full_text_file?: string;
 }
+
+export type CitationFormat = 'bibtex' | 'ris' | 'endnote';
 
 export interface FavoriteCheck {
   folder_id: number;
@@ -379,6 +383,17 @@ export async function removeFavorite(
   url.searchParams.set('db_name', dbName);
   const res = await authFetch(url.toString(), token, { method: 'DELETE' });
   if (!res.ok) throw new Error('移除收藏失败');
+}
+
+export function getExportUrl(
+  token: string,
+  folderId: number,
+  format: CitationFormat,
+): string {
+  const url = new URL(`/api/favorites/folders/${folderId}/export`, resolveBase());
+  url.searchParams.set('format', format);
+  url.searchParams.set('access_token', token);
+  return url.toString();
 }
 
 export async function checkFavorite(

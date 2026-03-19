@@ -7,6 +7,7 @@ import {
   ArrowLeft,
   Check,
   Copy,
+  Download,
   ExternalLink,
   FolderPlus,
   Pencil,
@@ -25,6 +26,8 @@ import {
   removeFavorite,
   setTrackingFolder,
   getFullTextUrlForDatabase,
+  getExportUrl,
+  type CitationFormat,
   type FavoriteArticleItem,
   type FavoriteItem,
 } from '@/lib/api';
@@ -47,6 +50,13 @@ import {
   DialogTrigger,
 } from '@/components/ui/dialog';
 import { Badge } from '@/components/ui/badge';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
 
 export default function FavoritesPage() {
@@ -58,6 +68,7 @@ export default function FavoritesPage() {
   const [editName, setEditName] = useState('');
   const [dialogOpen, setDialogOpen] = useState(false);
   const [copyStatus, setCopyStatus] = useState<string | null>(null);
+  const [exportFormat, setExportFormat] = useState<CitationFormat>('bibtex');
 
   const { data: folders = [], isLoading } = useQuery({
     queryKey: ['folders', user?.id],
@@ -316,233 +327,269 @@ export default function FavoritesPage() {
             <div className="flex items-center justify-center h-40 text-muted-foreground">
               选择一个收藏夹查看文章
             </div>
-          ) : isPendingFavorites ? (
-            <div className="space-y-4">
-              {Array.from({ length: 3 }).map((_, idx) => (
-                <Card key={idx}>
-                  <CardHeader>
-                    <Skeleton className="h-6 w-3/4" />
-                    <Skeleton className="h-4 w-1/4 mt-2" />
-                  </CardHeader>
-                  <CardContent>
-                    <Skeleton className="h-4 w-full" />
-                    <Skeleton className="h-4 w-full mt-2" />
-                  </CardContent>
-                </Card>
-              ))}
-            </div>
-          ) : isFavoritesError ? (
-            <div className="flex h-40 flex-col items-center justify-center gap-3 text-center">
-              <p className="text-sm text-muted-foreground">
-                {favoritesError instanceof Error
-                  ? favoritesError.message
-                  : '加载收藏文章失败'}
-              </p>
-              <Button variant="outline" size="sm" onClick={() => void refetchFavorites()}>
-                重试
-              </Button>
-            </div>
-          ) : favorites.length === 0 ? (
-            <div className="flex items-center justify-center h-40 text-muted-foreground">
-              此收藏夹为空
-            </div>
           ) : (
             <div className="space-y-4">
-              <h2 className="text-lg font-semibold">
-                {selectedFolder.name}
-                <span className="text-sm text-muted-foreground ml-2">
-                  ({selectedFolder.article_count} 篇)
-                </span>
-              </h2>
-              {favorites.map((fav) => {
-                if (fav.journal_id == null) {
-                  return (
-                    <Card key={fav.id}>
-                      <CardHeader className="py-3 px-4">
-                        <div className="flex items-start justify-between gap-2">
-                          <CardTitle className="text-sm">
-                            文章 #{fav.article_id}
-                          </CardTitle>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-7 w-7 text-destructive"
-                            onClick={() => removeMut.mutate(fav)}
-                          >
-                            <Trash2 className="h-3.5 w-3.5" />
-                          </Button>
-                        </div>
-                      </CardHeader>
-                    </Card>
-                  );
-                }
+              <div className="flex flex-col gap-3 rounded-lg border bg-card px-4 py-4 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <h2 className="text-lg font-semibold">
+                    {selectedFolder.name}
+                    <span className="text-sm text-muted-foreground ml-2">
+                      ({selectedFolder.article_count} 篇)
+                    </span>
+                  </h2>
+                  <p className="text-sm text-muted-foreground">
+                    导出当前收藏夹为 BibTeX、RIS 或 EndNote 格式
+                  </p>
+                </div>
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                  <Select
+                    value={exportFormat}
+                    onValueChange={(value) => setExportFormat(value as CitationFormat)}
+                  >
+                    <SelectTrigger className="w-full sm:w-40">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="bibtex">BibTeX</SelectItem>
+                      <SelectItem value="ris">RIS</SelectItem>
+                      <SelectItem value="endnote">EndNote XML</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <Button asChild variant="outline">
+                    <a
+                      href={getExportUrl(token!, selectedFolder.id, exportFormat)}
+                      download
+                    >
+                      <Download className="mr-2 h-4 w-4" />
+                      导出引用
+                    </a>
+                  </Button>
+                </div>
+              </div>
 
-                return (
-                  <Dialog key={fav.id}>
-                    <DialogTrigger asChild>
-                      <div className="block group cursor-pointer text-left">
-                        <Card className="hover:shadow-md transition-all duration-200 border-transparent hover:border-slate-200 dark:hover:border-slate-800">
-                          <CardHeader>
-                            <div className="flex justify-between items-start gap-4">
-                              <CardTitle className="text-lg text-slate-900 dark:text-slate-100 group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors">
-                                {fav.title}
+              {isPendingFavorites ? (
+                <div className="space-y-4">
+                  {Array.from({ length: 3 }).map((_, idx) => (
+                    <Card key={idx}>
+                      <CardHeader>
+                        <Skeleton className="h-6 w-3/4" />
+                        <Skeleton className="h-4 w-1/4 mt-2" />
+                      </CardHeader>
+                      <CardContent>
+                        <Skeleton className="h-4 w-full" />
+                        <Skeleton className="h-4 w-full mt-2" />
+                      </CardContent>
+                    </Card>
+                  ))}
+                </div>
+              ) : isFavoritesError ? (
+                <div className="flex h-40 flex-col items-center justify-center gap-3 text-center">
+                  <p className="text-sm text-muted-foreground">
+                    {favoritesError instanceof Error
+                      ? favoritesError.message
+                      : '加载收藏文章失败'}
+                  </p>
+                  <Button variant="outline" size="sm" onClick={() => void refetchFavorites()}>
+                    重试
+                  </Button>
+                </div>
+              ) : favorites.length === 0 ? (
+                <div className="flex items-center justify-center h-40 text-muted-foreground">
+                  此收藏夹为空
+                </div>
+              ) : (
+                <>
+                  {favorites.map((fav) => {
+                    if (fav.journal_id == null) {
+                      return (
+                        <Card key={fav.id}>
+                          <CardHeader className="py-3 px-4">
+                            <div className="flex items-start justify-between gap-2">
+                              <CardTitle className="text-sm">
+                                文章 #{fav.article_id}
                               </CardTitle>
-                              <div className="flex gap-2 shrink-0">
-                                {fav.open_access === 1 && (
-                                  <Badge variant="secondary" className="text-xs">
-                                    开放获取
-                                  </Badge>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-7 w-7 text-destructive"
+                                onClick={() => removeMut.mutate(fav)}
+                              >
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </Button>
+                            </div>
+                          </CardHeader>
+                        </Card>
+                      );
+                    }
+
+                    return (
+                      <Dialog key={fav.id}>
+                        <DialogTrigger asChild>
+                          <div className="block group cursor-pointer text-left">
+                            <Card className="hover:shadow-md transition-all duration-200 border-transparent hover:border-slate-200 dark:hover:border-slate-800">
+                              <CardHeader>
+                                <div className="flex justify-between items-start gap-4">
+                                  <CardTitle className="text-lg text-slate-900 dark:text-slate-100 group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors">
+                                    {fav.title}
+                                  </CardTitle>
+                                  <div className="flex gap-2 shrink-0">
+                                    {fav.open_access === 1 && (
+                                      <Badge variant="secondary" className="text-xs">
+                                        开放获取
+                                      </Badge>
+                                    )}
+                                    {fav.in_press === 1 && (
+                                      <Badge variant="outline" className="text-xs">
+                                        预发表
+                                      </Badge>
+                                    )}
+                                  </div>
+                                </div>
+                                <CardDescription>
+                                  <span>{fav.journal_title}</span>
+                                  {(fav.volume || fav.number) && (
+                                    <span>
+                                      {' '}
+                                      •{' '}
+                                      {[
+                                        fav.volume && `第 ${fav.volume} 卷`,
+                                        fav.number && `第 ${fav.number} 期`,
+                                      ]
+                                        .filter(Boolean)
+                                        .join(', ')}
+                                    </span>
+                                  )}
+                                  {fav.date && <span> • {fav.date}</span>}
+                                </CardDescription>
+                              </CardHeader>
+                              <CardContent>
+                                <p className="text-sm text-slate-600 dark:text-slate-400 line-clamp-3 leading-relaxed">
+                                  {fav.abstract}
+                                </p>
+                              </CardContent>
+                            </Card>
+                          </div>
+                        </DialogTrigger>
+                        <DialogContent className="w-[calc(100%-2rem)] max-w-[calc(100%-2rem)] md:max-w-4xl max-h-[90vh] overflow-y-auto [&>button]:hidden">
+                          <DialogHeader>
+                            <DialogTitle className="text-xl leading-snug">
+                              {fav.title}
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="h-6 w-6 p-0 ml-2 inline-flex align-middle"
+                                onClick={() => handleCopyTitle(fav)}
+                              >
+                                {copyStatus === `${fav.article_id}-title` ? (
+                                  <Check className="h-3 w-3 text-green-600" />
+                                ) : (
+                                  <Copy className="h-3 w-3" />
                                 )}
-                                {fav.in_press === 1 && (
-                                  <Badge variant="outline" className="text-xs">
-                                    预发表
-                                  </Badge>
+                              </Button>
+                            </DialogTitle>
+                            <DialogDescription>
+                              {fav.journal_title}
+                              {(fav.volume || fav.number) &&
+                                ` • ${[
+                                  fav.volume && `第 ${fav.volume} 卷`,
+                                  fav.number && `第 ${fav.number} 期`,
+                                ]
+                                  .filter(Boolean)
+                                  .join(', ')}`}
+                              {fav.date && ` • ${fav.date}`}
+                            </DialogDescription>
+                          </DialogHeader>
+                          <div className="space-y-6 py-4">
+                            {fav.authors && (
+                              <div>
+                                <h3 className="font-semibold mb-2 text-sm text-foreground/80">
+                                  作者
+                                </h3>
+                                <p className="text-sm text-muted-foreground">
+                                  {fav.authors}
+                                </p>
+                              </div>
+                            )}
+
+                            <div>
+                              <h3 className="font-semibold mb-2 text-sm text-foreground/80">
+                                摘要
+                              </h3>
+                              <p className="text-sm text-muted-foreground leading-relaxed text-justify">
+                                {fav.abstract || '暂无摘要。'}
+                              </p>
+                            </div>
+
+                            <div className="pt-4 border-t">
+                              <div className="flex flex-wrap gap-4">
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => handleCopyArticleInfo(fav)}
+                                >
+                                  {copyStatus === `${fav.article_id}-info` ? (
+                                    <>
+                                      <Check className="mr-2 h-4 w-4 text-green-600" />
+                                      已复制
+                                    </>
+                                  ) : (
+                                    <>
+                                      <Copy className="mr-2 h-4 w-4" />
+                                      复制信息
+                                    </>
+                                  )}
+                                </Button>
+                                {(fav.doi || fav.platform_id) && (
+                                  <a
+                                    href={
+                                      fav.doi
+                                        ? `https://doi.org/${fav.doi}`
+                                        : getFullTextUrlForDatabase(fav.article_id, fav.db_name)
+                                    }
+                                    target="_blank"
+                                    rel="noreferrer"
+                                  >
+                                    <Button variant="outline" size="sm">
+                                      <ExternalLink className="mr-2 h-4 w-4" />
+                                      查看全文
+                                    </Button>
+                                  </a>
                                 )}
+                                <FavoriteButton
+                                  articleId={fav.article_id}
+                                  dbName={fav.db_name}
+                                  initialFolderIds={[fav.folder_id]}
+                                />
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  className="text-destructive border-destructive/30"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    removeMut.mutate(fav);
+                                  }}
+                                >
+                                  <Trash2 className="mr-2 h-4 w-4" />
+                                  移除收藏
+                                </Button>
                               </div>
                             </div>
-                            <CardDescription>
-                              <span>{fav.journal_title}</span>
-                              {(fav.volume || fav.number) && (
-                                <span>
-                                  {' '}
-                                  •{' '}
-                                  {[
-                                    fav.volume && `第 ${fav.volume} 卷`,
-                                    fav.number && `第 ${fav.number} 期`,
-                                  ]
-                                    .filter(Boolean)
-                                    .join(', ')}
-                                </span>
-                              )}
-                              {fav.date && <span> • {fav.date}</span>}
-                            </CardDescription>
-                          </CardHeader>
-                          <CardContent>
-                            <p className="text-sm text-slate-600 dark:text-slate-400 line-clamp-3 leading-relaxed">
-                              {fav.abstract}
-                            </p>
-                          </CardContent>
-                        </Card>
-                      </div>
-                    </DialogTrigger>
-                    <DialogContent className="w-[calc(100%-2rem)] max-w-[calc(100%-2rem)] md:max-w-4xl max-h-[90vh] overflow-y-auto [&>button]:hidden">
-                      <DialogHeader>
-                        <DialogTitle className="text-xl leading-snug">
-                          {fav.title}
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            className="h-6 w-6 p-0 ml-2 inline-flex align-middle"
-                            onClick={() => handleCopyTitle(fav)}
-                          >
-                            {copyStatus === `${fav.article_id}-title` ? (
-                              <Check className="h-3 w-3 text-green-600" />
-                            ) : (
-                              <Copy className="h-3 w-3" />
-                            )}
-                          </Button>
-                        </DialogTitle>
-                        <DialogDescription>
-                          {fav.journal_title}
-                          {(fav.volume || fav.number) &&
-                            ` • ${[
-                              fav.volume && `第 ${fav.volume} 卷`,
-                              fav.number && `第 ${fav.number} 期`,
-                            ]
-                              .filter(Boolean)
-                              .join(', ')}`}
-                          {fav.date && ` • ${fav.date}`}
-                        </DialogDescription>
-                      </DialogHeader>
-                      <div className="space-y-6 py-4">
-                        {fav.authors && (
-                          <div>
-                            <h3 className="font-semibold mb-2 text-sm text-foreground/80">
-                              作者
-                            </h3>
-                            <p className="text-sm text-muted-foreground">
-                              {fav.authors}
-                            </p>
                           </div>
-                        )}
-
-                        <div>
-                          <h3 className="font-semibold mb-2 text-sm text-foreground/80">
-                            摘要
-                          </h3>
-                          <p className="text-sm text-muted-foreground leading-relaxed text-justify">
-                            {fav.abstract || '暂无摘要。'}
-                          </p>
-                        </div>
-
-                        <div className="pt-4 border-t">
-                          <div className="flex flex-wrap gap-4">
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              onClick={() => handleCopyArticleInfo(fav)}
-                            >
-                              {copyStatus === `${fav.article_id}-info` ? (
-                                <>
-                                  <Check className="mr-2 h-4 w-4 text-green-600" />
-                                  已复制
-                                </>
-                              ) : (
-                                <>
-                                  <Copy className="mr-2 h-4 w-4" />
-                                  复制信息
-                                </>
-                              )}
-                            </Button>
-                            {(fav.doi || fav.platform_id) && (
-                              <a
-                                href={
-                                  fav.doi
-                                    ? `https://doi.org/${fav.doi}`
-                                    : getFullTextUrlForDatabase(fav.article_id, fav.db_name)
-                                }
-                                target="_blank"
-                                rel="noreferrer"
-                              >
-                                <Button variant="outline" size="sm">
-                                  <ExternalLink className="mr-2 h-4 w-4" />
-                                  查看全文
-                                </Button>
-                              </a>
-                            )}
-                            <FavoriteButton
-                              articleId={fav.article_id}
-                              dbName={fav.db_name}
-                              initialFolderIds={[fav.folder_id]}
-                            />
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              className="text-destructive border-destructive/30"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                removeMut.mutate(fav);
-                              }}
-                            >
-                              <Trash2 className="mr-2 h-4 w-4" />
-                              移除收藏
-                            </Button>
-                          </div>
-                        </div>
-                      </div>
-                    </DialogContent>
-                  </Dialog>
-                );
-              })}
-              {hasNextPage && (
-                <Button
-                  variant="outline"
-                  className="w-full"
-                  onClick={() => fetchNextPage()}
-                  disabled={isFetchingNextPage}
-                >
-                  {isFetchingNextPage ? '加载中…' : '加载更多'}
-                </Button>
+                        </DialogContent>
+                      </Dialog>
+                    );
+                  })}
+                  {hasNextPage && (
+                    <Button
+                      variant="outline"
+                      className="w-full"
+                      onClick={() => fetchNextPage()}
+                      disabled={isFetchingNextPage}
+                    >
+                      {isFetchingNextPage ? '加载中…' : '加载更多'}
+                    </Button>
+                  )}
+                </>
               )}
             </div>
           )}

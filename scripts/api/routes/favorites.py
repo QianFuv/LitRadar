@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import re
 import sqlite3
-from typing import Annotated
+from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response
 
 from scripts.api.auth_db import (
     add_favorite,
@@ -21,8 +22,10 @@ from scripts.api.auth_db import (
     remove_favorite,
     rename_folder,
     set_tracking_folder,
+    verify_access_token,
 )
 from scripts.api.auth_deps import get_current_user
+from scripts.api.citations import to_bibtex, to_endnote, to_ris
 from scripts.api.models import (
     FavoriteAdd,
     FavoriteArticleResponse,
@@ -42,6 +45,55 @@ from scripts.shared.db_path import resolve_db_path
 router = APIRouter(prefix=f"{API_PREFIX}/favorites", tags=["favorites"])
 
 CurrentUser = Annotated[dict, Depends(get_current_user)]
+
+
+async def get_export_user(
+    authorization: str | None = Header(default=None),
+    access_token: str | None = Query(default=None),
+) -> dict:
+    """
+    Resolve the export user from either bearer auth or a token query string.
+
+    Args:
+        authorization: Optional Authorization header.
+        access_token: Optional raw access token query parameter.
+
+    Returns:
+        Authenticated user mapping.
+    """
+    if authorization:
+        return await get_current_user(authorization)
+
+    if access_token:
+        user = verify_access_token(access_token)
+        if user:
+            return user
+
+    raise HTTPException(status_code=401, detail="Authentication required")
+
+
+ExportUser = Annotated[dict, Depends(get_export_user)]
+
+
+def _build_export_filename(folder_name: str, format_name: str) -> str:
+    """
+    Build a safe download filename for a folder export.
+
+    Args:
+        folder_name: Folder display name.
+        format_name: Export format name.
+
+    Returns:
+        Sanitized filename.
+    """
+    safe_name = re.sub(r"[^a-zA-Z0-9._-]+", "_", folder_name).strip("._")
+    base_name = safe_name or "favorites"
+    extension = {
+        "bibtex": "bib",
+        "ris": "ris",
+        "endnote": "xml",
+    }[format_name]
+    return f"{base_name}.{extension}"
 
 
 def _load_article_details_by_db(
@@ -87,6 +139,8 @@ def _load_article_details_by_db(
                 a.in_press,
                 a.full_text_file,
                 j.title AS journal_title,
+                j.issn,
+                j.eissn,
                 i.volume,
                 i.number
             FROM articles a
@@ -145,13 +199,13 @@ async def api_list_folders(user: CurrentUser):
     rows = list_folders(user["id"])
     return [
         FolderResponse(
-            id=r["id"],
-            name=r["name"],
-            is_tracking=bool(r["is_tracking"]),
-            article_count=r["article_count"],
-            created_at=r["created_at"],
+            id=row["id"],
+            name=row["name"],
+            is_tracking=bool(row["is_tracking"]),
+            article_count=row["article_count"],
+            created_at=row["created_at"],
         )
-        for r in rows
+        for row in rows
     ]
 
 
@@ -165,17 +219,18 @@ async def api_create_folder(body: FolderCreate, user: CurrentUser):
             detail="Folder name must be 1-100 characters",
         )
     try:
-        r = create_folder(user["id"], name, body.is_tracking)
+        row = create_folder(user["id"], name, body.is_tracking)
     except sqlite3.IntegrityError:
         raise HTTPException(
-            status_code=409, detail="Folder name already exists"
+            status_code=409,
+            detail="Folder name already exists",
         ) from None
     return FolderResponse(
-        id=r["id"],
-        name=r["name"],
-        is_tracking=r["is_tracking"],
+        id=row["id"],
+        name=row["name"],
+        is_tracking=row["is_tracking"],
         article_count=0,
-        created_at=r["created_at"],
+        created_at=row["created_at"],
     )
 
 
@@ -192,7 +247,8 @@ async def api_rename_folder(folder_id: int, body: FolderRename, user: CurrentUse
         ok = rename_folder(user["id"], folder_id, name)
     except sqlite3.IntegrityError:
         raise HTTPException(
-            status_code=409, detail="Folder name already exists"
+            status_code=409,
+            detail="Folder name already exists",
         ) from None
     if not ok:
         raise HTTPException(status_code=404, detail="Folder not found")
@@ -247,6 +303,53 @@ async def api_folder_count(folder_id: int, user: CurrentUser):
     return {"count": count_favorites(user["id"], folder_id)}
 
 
+@router.get("/folders/{folder_id}/export")
+async def api_export_folder(
+    folder_id: int,
+    user: ExportUser,
+    format: Literal["bibtex", "ris", "endnote"] = Query(default="bibtex"),
+):
+    """
+    Export one folder's favorites in a citation format.
+
+    Args:
+        folder_id: Folder identifier.
+        user: Authenticated user.
+        format: Export format name.
+
+    Returns:
+        Download response with formatted citation content.
+    """
+    folder = next(
+        (item for item in list_folders(user["id"]) if int(item["id"]) == folder_id),
+        None,
+    )
+    if folder is None:
+        raise HTTPException(status_code=404, detail="Folder not found")
+
+    rows = list_favorites(user["id"], folder_id, limit=100_000, offset=0)
+    articles = _build_favorite_article_responses(rows)
+
+    if format == "bibtex":
+        content = to_bibtex(articles)
+        media_type = "application/x-bibtex"
+    elif format == "ris":
+        content = to_ris(articles)
+        media_type = "application/x-research-info-systems"
+    else:
+        content = to_endnote(articles)
+        media_type = "application/xml"
+
+    filename = _build_export_filename(str(folder["name"]), format)
+    return Response(
+        content=content,
+        media_type=media_type,
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+        },
+    )
+
+
 @router.post(
     "/folders/{folder_id}/articles",
     response_model=FavoriteResponse,
@@ -258,7 +361,7 @@ async def api_add_favorite(
 ):
     """Add an article to a folder."""
     try:
-        r = add_favorite(
+        row = add_favorite(
             user["id"],
             folder_id,
             body.article_id,
@@ -267,7 +370,7 @@ async def api_add_favorite(
         )
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
-    return FavoriteResponse(**r)
+    return FavoriteResponse(**row)
 
 
 @router.delete("/folders/{folder_id}/articles/{article_id}")
@@ -295,7 +398,7 @@ async def api_bulk_add(
         count = bulk_add_favorites(
             user["id"],
             folder_id,
-            [a.model_dump() for a in body.articles],
+            [article.model_dump() for article in body.articles],
         )
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -310,7 +413,7 @@ async def api_check_favorite(
 ):
     """Check which folders an article is favorited in."""
     rows = is_favorited(user["id"], article_id, db_name)
-    return [FavoriteCheckResponse(**r) for r in rows]
+    return [FavoriteCheckResponse(**row) for row in rows]
 
 
 @router.post("/check/batch", response_model=list[FavoriteBatchCheckResponse])

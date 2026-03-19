@@ -314,6 +314,8 @@ class FavoriteArticleResponse(FavoriteResponse):
     in_press: int | None = None
     volume: str | None = None
     number: str | None = None
+    issn: str | None = None
+    eissn: str | None = None
     full_text_file: str | None = None
 
 
