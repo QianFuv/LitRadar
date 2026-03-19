@@ -79,6 +79,16 @@ export interface WeeklyUpdatesResponse {
   databases: WeeklyDatabaseUpdate[];
 }
 
+export interface AnnouncementInfo {
+  id: number;
+  title: string;
+  message: string;
+  priority: 'high' | 'normal' | 'low';
+  enabled: boolean;
+  created_at: number;
+  updated_at: number;
+}
+
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || '';
 
 function resolveBase(): string {
@@ -599,6 +609,7 @@ export interface AdminStats {
     active_tokens: number;
     notification_subscribers: number;
     scheduled_tasks: number;
+    active_announcements: number;
   };
   index: {
     databases: IndexDbStats[];
@@ -631,6 +642,20 @@ export interface ScheduledTaskUpdate {
   name?: string;
   command?: string;
   cron?: string;
+  enabled?: boolean;
+}
+
+export interface AnnouncementCreate {
+  title: string;
+  message: string;
+  priority: 'high' | 'normal' | 'low';
+  enabled: boolean;
+}
+
+export interface AnnouncementUpdate {
+  title?: string;
+  message?: string;
+  priority?: 'high' | 'normal' | 'low';
   enabled?: boolean;
 }
 
@@ -750,5 +775,55 @@ export async function adminDeleteScheduledTask(token: string, taskId: number): P
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.detail || '删除定时任务失败');
+  }
+}
+
+export async function adminGetAnnouncements(token: string): Promise<AnnouncementInfo[]> {
+  const res = await authFetch(`${resolveBase()}/api/admin/announcements`, token);
+  if (!res.ok) throw new Error('获取公告列表失败');
+  return res.json();
+}
+
+export async function adminCreateAnnouncement(
+  token: string,
+  payload: AnnouncementCreate,
+): Promise<AnnouncementInfo> {
+  const res = await authFetch(`${resolveBase()}/api/admin/announcements`, token, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || '创建公告失败');
+  }
+  return res.json();
+}
+
+export async function adminUpdateAnnouncement(
+  token: string,
+  announcementId: number,
+  payload: AnnouncementUpdate,
+): Promise<AnnouncementInfo> {
+  const res = await authFetch(`${resolveBase()}/api/admin/announcements/${announcementId}`, token, {
+    method: 'PUT',
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || '更新公告失败');
+  }
+  return res.json();
+}
+
+export async function adminDeleteAnnouncement(
+  token: string,
+  announcementId: number,
+): Promise<void> {
+  const res = await authFetch(`${resolveBase()}/api/admin/announcements/${announcementId}`, token, {
+    method: 'DELETE',
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || '删除公告失败');
   }
 }

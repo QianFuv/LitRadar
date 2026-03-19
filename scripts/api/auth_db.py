@@ -131,6 +131,19 @@ def init_auth_db() -> None:
 
             CREATE INDEX IF NOT EXISTS idx_scheduled_tasks_enabled
                 ON scheduled_tasks(enabled);
+
+            CREATE TABLE IF NOT EXISTS announcements (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                title           TEXT    NOT NULL,
+                message         TEXT    NOT NULL,
+                priority        TEXT    NOT NULL DEFAULT 'normal',
+                enabled         INTEGER NOT NULL DEFAULT 1,
+                created_at      REAL    NOT NULL,
+                updated_at      REAL    NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_announcements_enabled
+                ON announcements(enabled);
             """
         )
         conn.commit()
@@ -172,6 +185,16 @@ def init_auth_db() -> None:
         for column_name, statement in notification_migrations.items():
             if column_name not in notification_cols:
                 conn.execute(statement)
+
+        announcement_cols = {
+            row[1]
+            for row in conn.execute("PRAGMA table_info(announcements)").fetchall()
+        }
+        if announcement_cols and "priority" not in announcement_cols:
+            conn.execute(
+                "ALTER TABLE announcements "
+                "ADD COLUMN priority TEXT NOT NULL DEFAULT 'normal'"
+            )
         conn.commit()
     finally:
         conn.close()
@@ -1262,6 +1285,9 @@ def get_auth_stats() -> dict:
         stats["scheduled_tasks"] = conn.execute(
             "SELECT COUNT(*) FROM scheduled_tasks"
         ).fetchone()[0]
+        stats["active_announcements"] = conn.execute(
+            "SELECT COUNT(*) FROM announcements WHERE enabled = 1"
+        ).fetchone()[0]
         return stats
     finally:
         conn.close()
@@ -1450,6 +1476,166 @@ def record_scheduled_task_run(task_id: int, status: str, ran_at: float) -> bool:
             "updated_at = ? WHERE id = ?",
             (ran_at, status, time.time(), task_id),
         )
+        conn.commit()
+        return cur.rowcount > 0
+    finally:
+        conn.close()
+
+
+def _announcement_from_row(row: sqlite3.Row) -> dict:
+    """
+    Convert an announcement row into a response dict.
+
+    Args:
+        row: SQLite row object.
+
+    Returns:
+        Announcement payload dict.
+    """
+    item = dict(row)
+    item["enabled"] = bool(item["enabled"])
+    return item
+
+
+def list_all_announcements() -> list[dict]:
+    """
+    List all announcements for admin management.
+
+    Returns:
+        Announcement payloads ordered by creation time.
+    """
+    conn = _get_connection()
+    try:
+        rows = conn.execute(
+            "SELECT id, title, message, priority, enabled, created_at, updated_at "
+            "FROM announcements ORDER BY created_at DESC"
+        ).fetchall()
+        return [_announcement_from_row(row) for row in rows]
+    finally:
+        conn.close()
+
+
+def get_announcement(announcement_id: int) -> dict | None:
+    """
+    Fetch one announcement by id.
+
+    Args:
+        announcement_id: Announcement identifier.
+
+    Returns:
+        Announcement payload or None.
+    """
+    conn = _get_connection()
+    try:
+        row = conn.execute(
+            "SELECT id, title, message, priority, enabled, created_at, updated_at "
+            "FROM announcements WHERE id = ?",
+            (announcement_id,),
+        ).fetchone()
+        return _announcement_from_row(row) if row else None
+    finally:
+        conn.close()
+
+
+def create_announcement(
+    title: str,
+    message: str,
+    priority: str = "normal",
+    enabled: bool = True,
+) -> dict:
+    """
+    Create an announcement.
+
+    Args:
+        title: Announcement title.
+        message: Announcement body.
+        priority: Priority label.
+        enabled: Whether the announcement is visible.
+
+    Returns:
+        Created announcement payload.
+    """
+    now = time.time()
+    conn = _get_connection()
+    try:
+        cur = conn.execute(
+            "INSERT INTO announcements "
+            "(title, message, priority, enabled, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (title, message, priority, int(enabled), now, now),
+        )
+        conn.commit()
+        row = conn.execute(
+            "SELECT id, title, message, priority, enabled, created_at, updated_at "
+            "FROM announcements WHERE id = ?",
+            (cur.lastrowid,),
+        ).fetchone()
+        if row is None:
+            raise RuntimeError("Announcement creation failed")
+        return _announcement_from_row(row)
+    finally:
+        conn.close()
+
+
+def update_announcement(
+    announcement_id: int,
+    *,
+    title: str | None = None,
+    message: str | None = None,
+    priority: str | None = None,
+    enabled: bool | None = None,
+) -> dict | None:
+    """
+    Update one announcement.
+
+    Args:
+        announcement_id: Announcement identifier.
+        title: Optional updated title.
+        message: Optional updated message.
+        priority: Optional updated priority.
+        enabled: Optional updated enabled flag.
+
+    Returns:
+        Updated announcement payload or None.
+    """
+    current = get_announcement(announcement_id)
+    if current is None:
+        return None
+
+    now = time.time()
+    conn = _get_connection()
+    try:
+        conn.execute(
+            "UPDATE announcements SET title = ?, message = ?, priority = ?, "
+            "enabled = ?, updated_at = ? WHERE id = ?",
+            (
+                title if title is not None else current["title"],
+                message if message is not None else current["message"],
+                priority if priority is not None else current["priority"],
+                int(enabled if enabled is not None else current["enabled"]),
+                now,
+                announcement_id,
+            ),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    return get_announcement(announcement_id)
+
+
+def delete_announcement(announcement_id: int) -> bool:
+    """
+    Delete one announcement.
+
+    Args:
+        announcement_id: Announcement identifier.
+
+    Returns:
+        True if an announcement row was deleted.
+    """
+    conn = _get_connection()
+    try:
+        cur = conn.execute("DELETE FROM announcements WHERE id = ?", (announcement_id,))
         conn.commit()
         return cur.rowcount > 0
     finally:

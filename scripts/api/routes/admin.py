@@ -12,15 +12,20 @@ from fastapi import APIRouter, Depends, HTTPException
 from scripts.api.auth_db import (
     admin_create_invite_code,
     admin_reset_password,
+    create_announcement,
     create_scheduled_task,
+    delete_announcement,
     delete_invite_code,
     delete_scheduled_task,
     delete_user,
+    get_announcement,
     get_auth_stats,
+    list_all_announcements,
     list_all_invite_codes,
     list_all_users,
     list_scheduled_tasks,
     set_user_admin,
+    update_announcement,
     update_scheduled_task,
 )
 from scripts.api.auth_deps import get_admin_user
@@ -28,6 +33,9 @@ from scripts.api.models import (
     AdminInviteCodeInfo,
     AdminResetPassword,
     AdminSetAdmin,
+    AnnouncementCreate,
+    AnnouncementInfo,
+    AnnouncementUpdate,
     ScheduledTaskCreate,
     ScheduledTaskInfo,
     ScheduledTaskUpdate,
@@ -40,6 +48,39 @@ from scripts.shared.db_path import list_database_files
 router = APIRouter(prefix=f"{API_PREFIX}/admin", tags=["admin"])
 
 AdminUser = Annotated[dict, Depends(get_admin_user)]
+
+
+def _validate_announcement_payload(
+    title: str | None,
+    message: str | None,
+    priority: str | None,
+) -> tuple[str | None, str | None, str | None]:
+    """
+    Normalize announcement title and message values.
+
+    Args:
+        title: Raw title value.
+        message: Raw message value.
+        priority: Raw priority value.
+
+    Returns:
+        Trimmed title, message, and priority tuple.
+    """
+    clean_title = title.strip() if title is not None else None
+    clean_message = message.strip() if message is not None else None
+    clean_priority = priority.strip().lower() if priority is not None else None
+
+    if clean_title == "":
+        raise HTTPException(status_code=400, detail="Title must not be empty")
+    if clean_message == "":
+        raise HTTPException(status_code=400, detail="Message must not be empty")
+    if clean_priority is not None and clean_priority not in {"high", "normal", "low"}:
+        raise HTTPException(
+            status_code=400,
+            detail="Priority must be high, normal, or low",
+        )
+
+    return clean_title, clean_message, clean_priority
 
 
 def _validate_scheduled_task_payload(
@@ -285,4 +326,64 @@ async def admin_delete_scheduled_task(task_id: int, _admin: AdminUser):
     if not delete_scheduled_task(task_id):
         raise HTTPException(status_code=404, detail="Scheduled task not found")
     reload_scheduler()
+    return {"ok": True}
+
+
+@router.get("/announcements", response_model=list[AnnouncementInfo])
+async def admin_list_announcements(_admin: AdminUser):
+    """List all announcements for admin management."""
+    return [AnnouncementInfo(**item) for item in list_all_announcements()]
+
+
+@router.post("/announcements", response_model=AnnouncementInfo)
+async def admin_create_announcement(
+    body: AnnouncementCreate,
+    _admin: AdminUser,
+):
+    """Create a new announcement."""
+    title, message, priority = _validate_announcement_payload(
+        body.title,
+        body.message,
+        body.priority,
+    )
+    announcement = create_announcement(
+        title=title or "",
+        message=message or "",
+        priority=priority or "normal",
+        enabled=body.enabled,
+    )
+    return AnnouncementInfo(**announcement)
+
+
+@router.put("/announcements/{announcement_id}", response_model=AnnouncementInfo)
+async def admin_update_announcement(
+    announcement_id: int,
+    body: AnnouncementUpdate,
+    _admin: AdminUser,
+):
+    """Update an announcement."""
+    title, message, priority = _validate_announcement_payload(
+        body.title,
+        body.message,
+        body.priority,
+    )
+    announcement = update_announcement(
+        announcement_id,
+        title=title,
+        message=message,
+        priority=priority,
+        enabled=body.enabled,
+    )
+    if announcement is None:
+        raise HTTPException(status_code=404, detail="Announcement not found")
+    return AnnouncementInfo(**announcement)
+
+
+@router.delete("/announcements/{announcement_id}")
+async def admin_delete_announcement(announcement_id: int, _admin: AdminUser):
+    """Delete an announcement."""
+    if get_announcement(announcement_id) is None:
+        raise HTTPException(status_code=404, detail="Announcement not found")
+    if not delete_announcement(announcement_id):
+        raise HTTPException(status_code=404, detail="Announcement not found")
     return {"ok": True}

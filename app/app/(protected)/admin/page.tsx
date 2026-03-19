@@ -50,6 +50,7 @@ import {
   DialogTitle,
   DialogTrigger,
 } from '@/components/ui/dialog';
+import { AnnouncementsCard } from '@/components/admin/announcements-card';
 import { ScheduledTasksCard } from '@/components/admin/scheduled-tasks-card';
 
 function formatDate(ts: number): string {
@@ -578,7 +579,13 @@ export default function AdminPage() {
           </div>
         </CardContent>
       </Card>
-      {token && <ScheduledTasksCard token={token} />}
+
+      {token && (
+        <>
+          <ScheduledTasksCard token={token} />
+          <AnnouncementsCard token={token} />
+        </>
+      )}
     </div>
   );
 }

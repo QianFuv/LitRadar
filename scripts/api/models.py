@@ -409,6 +409,30 @@ class ScheduledTaskUpdate(BaseModel):
     enabled: bool | None = None
 
 
+class AnnouncementInfo(BaseModel):
+    id: int
+    title: str
+    message: str
+    priority: str = "normal"
+    enabled: bool
+    created_at: float
+    updated_at: float
+
+
+class AnnouncementCreate(BaseModel):
+    title: str
+    message: str
+    priority: str = "normal"
+    enabled: bool = True
+
+
+class AnnouncementUpdate(BaseModel):
+    title: str | None = None
+    message: str | None = None
+    priority: str | None = None
+    enabled: bool | None = None
+
+
 class AdminUserInfo(BaseModel):
     id: int
     username: str
