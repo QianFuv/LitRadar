@@ -450,6 +450,18 @@ async def update_settings(
             status_code=400,
             detail="pushplus_token is required when delivery_method is 'pushplus'",
         )
+    if (
+        body.delivery_method == "pushplus"
+        and body.sync_to_tracking_folder
+        and get_tracking_folder(user["id"]) is None
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "A tracking folder is required before enabling "
+                "PushPlus sync to tracking"
+            ),
+        )
     return upsert_notification_settings(
         user_id=user["id"],
         keywords=[k.strip() for k in body.keywords if k.strip()],
@@ -459,6 +471,7 @@ async def update_settings(
         pushplus_template=body.pushplus_template.strip() or "markdown",
         pushplus_topic=body.pushplus_topic.strip(),
         pushplus_to=body.pushplus_to.strip(),
+        sync_to_tracking_folder=body.sync_to_tracking_folder,
         ai_base_url=body.ai_base_url.strip(),
         ai_api_key=body.ai_api_key.strip(),
         ai_model=body.ai_model.strip(),

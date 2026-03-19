@@ -76,6 +76,7 @@ export default function TrackingPage() {
       pushplus_template: settings?.pushplus_template || 'markdown',
       pushplus_topic: settings?.pushplus_topic || '',
       pushplus_to: settings?.pushplus_to || '',
+      sync_to_tracking_folder: settings?.sync_to_tracking_folder ?? false,
       ai_base_url: settings?.ai_base_url || '',
       ai_api_key: settings?.ai_api_key || '',
       ai_model: settings?.ai_model || '',
@@ -94,6 +95,7 @@ export default function TrackingPage() {
     pushplus_template: pushplusTemplate,
     pushplus_topic: pushplusTopic,
     pushplus_to: pushplusTo,
+    sync_to_tracking_folder: syncToTrackingFolder,
     ai_base_url: aiBaseUrl,
     ai_api_key: aiApiKey,
     ai_model: aiModel,
@@ -536,6 +538,27 @@ export default function TrackingPage() {
                     }))
                   }
                   placeholder="可选，指定接收方"
+                />
+              </div>
+              <div className="flex items-start justify-between gap-4 rounded-md border border-dashed p-3">
+                <div className="space-y-1">
+                  <Label htmlFor="pp-sync-tracking">同步写入追踪文件夹</Label>
+                  <p className="text-xs text-muted-foreground">
+                    {status?.tracking_folder
+                      ? `发送 PushPlus 时，同时写入“${status.tracking_folder.name}”`
+                      : '需要先设置追踪文件夹后才能开启'}
+                  </p>
+                </div>
+                <Switch
+                  id="pp-sync-tracking"
+                  checked={syncToTrackingFolder}
+                  disabled={!status?.tracking_folder}
+                  onCheckedChange={(checked) =>
+                    updateDraftSettings((current) => ({
+                      ...current,
+                      sync_to_tracking_folder: checked,
+                    }))
+                  }
                 />
               </div>
             </div>

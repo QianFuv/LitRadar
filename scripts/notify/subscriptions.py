@@ -151,6 +151,7 @@ def load_subscribers_from_db() -> list[Subscriber]:
                 template=(str(row.get("pushplus_template") or "").strip() or None),
                 delivery_method=method,
                 tracking_folder_id=(folder["id"] if folder else None),
+                sync_to_tracking_folder=bool(row.get("sync_to_tracking_folder")),
                 ai_base_url=(str(row.get("ai_base_url") or "").strip() or None),
                 ai_api_key=(str(row.get("ai_api_key") or "").strip() or None),
                 ai_model=(str(row.get("ai_model") or "").strip() or None),

@@ -105,6 +105,7 @@ def init_auth_db() -> None:
                 pushplus_template TEXT  NOT NULL DEFAULT 'markdown',
                 pushplus_topic  TEXT    NOT NULL DEFAULT '',
                 pushplus_to     TEXT    NOT NULL DEFAULT '',
+                sync_to_tracking_folder INTEGER NOT NULL DEFAULT 0,
                 ai_base_url     TEXT    NOT NULL DEFAULT '',
                 ai_api_key      TEXT    NOT NULL DEFAULT '',
                 ai_model        TEXT    NOT NULL DEFAULT '',
@@ -180,6 +181,10 @@ def init_auth_db() -> None:
             "ai_system_prompt": (
                 "ALTER TABLE notification_settings "
                 "ADD COLUMN ai_system_prompt TEXT NOT NULL DEFAULT ''"
+            ),
+            "sync_to_tracking_folder": (
+                "ALTER TABLE notification_settings "
+                "ADD COLUMN sync_to_tracking_folder INTEGER NOT NULL DEFAULT 0"
             ),
         }
         for column_name, statement in notification_migrations.items():
@@ -939,6 +944,7 @@ def get_notification_settings(user_id: int) -> dict | None:
         row = conn.execute(
             "SELECT id, user_id, keywords, directions, delivery_method, "
             "pushplus_token, pushplus_template, pushplus_topic, pushplus_to, "
+            "sync_to_tracking_folder, "
             "ai_base_url, ai_api_key, ai_model, ai_system_prompt, "
             "enabled, created_at, updated_at "
             "FROM notification_settings WHERE user_id = ?",
@@ -949,6 +955,7 @@ def get_notification_settings(user_id: int) -> dict | None:
         result = dict(row)
         result["keywords"] = json.loads(result["keywords"])
         result["directions"] = json.loads(result["directions"])
+        result["sync_to_tracking_folder"] = bool(result["sync_to_tracking_folder"])
         result["enabled"] = bool(result["enabled"])
         return result
     finally:
@@ -964,6 +971,7 @@ def upsert_notification_settings(
     pushplus_template: str = "markdown",
     pushplus_topic: str = "",
     pushplus_to: str = "",
+    sync_to_tracking_folder: bool = False,
     ai_base_url: str = "",
     ai_api_key: str = "",
     ai_model: str = "",
@@ -982,6 +990,7 @@ def upsert_notification_settings(
         pushplus_template: PushPlus template.
         pushplus_topic: PushPlus topic.
         pushplus_to: PushPlus recipient.
+        sync_to_tracking_folder: Whether PushPlus also writes favorites.
         ai_base_url: OpenAI-compatible API base URL.
         ai_api_key: OpenAI-compatible API key.
         ai_model: OpenAI-compatible model name.
@@ -1000,9 +1009,10 @@ def upsert_notification_settings(
             "INSERT INTO notification_settings "
             "(user_id, keywords, directions, delivery_method, "
             "pushplus_token, pushplus_template, pushplus_topic, "
-            "pushplus_to, ai_base_url, ai_api_key, ai_model, ai_system_prompt, "
+            "pushplus_to, sync_to_tracking_folder, "
+            "ai_base_url, ai_api_key, ai_model, ai_system_prompt, "
             "enabled, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
             "ON CONFLICT(user_id) DO UPDATE SET "
             "keywords = excluded.keywords, "
             "directions = excluded.directions, "
@@ -1011,6 +1021,7 @@ def upsert_notification_settings(
             "pushplus_template = excluded.pushplus_template, "
             "pushplus_topic = excluded.pushplus_topic, "
             "pushplus_to = excluded.pushplus_to, "
+            "sync_to_tracking_folder = excluded.sync_to_tracking_folder, "
             "ai_base_url = excluded.ai_base_url, "
             "ai_api_key = excluded.ai_api_key, "
             "ai_model = excluded.ai_model, "
@@ -1026,6 +1037,7 @@ def upsert_notification_settings(
                 pushplus_template,
                 pushplus_topic,
                 pushplus_to,
+                int(sync_to_tracking_folder),
                 ai_base_url,
                 ai_api_key,
                 ai_model,
@@ -1055,6 +1067,7 @@ def list_notification_subscribers() -> list[dict]:
             "ns.keywords, ns.directions, ns.delivery_method, "
             "ns.pushplus_token, ns.pushplus_template, "
             "ns.pushplus_topic, ns.pushplus_to, "
+            "ns.sync_to_tracking_folder, "
             "ns.ai_base_url, ns.ai_api_key, ns.ai_model, ns.ai_system_prompt, "
             "ns.enabled, ns.created_at, ns.updated_at "
             "FROM notification_settings ns "
@@ -1066,6 +1079,7 @@ def list_notification_subscribers() -> list[dict]:
             item = dict(row)
             item["keywords"] = json.loads(item["keywords"])
             item["directions"] = json.loads(item["directions"])
+            item["sync_to_tracking_folder"] = bool(item["sync_to_tracking_folder"])
             item["enabled"] = bool(item["enabled"])
             result.append(item)
         return result

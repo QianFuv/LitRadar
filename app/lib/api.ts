@@ -319,6 +319,7 @@ export interface NotificationSettings {
   pushplus_template: string;
   pushplus_topic: string;
   pushplus_to: string;
+  sync_to_tracking_folder: boolean;
   ai_base_url: string;
   ai_api_key: string;
   ai_model: string;
@@ -336,6 +337,7 @@ export interface NotificationSettingsUpdate {
   pushplus_template: string;
   pushplus_topic: string;
   pushplus_to: string;
+  sync_to_tracking_folder: boolean;
   ai_base_url: string;
   ai_api_key: string;
   ai_model: string;

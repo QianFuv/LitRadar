@@ -357,6 +357,7 @@ class NotificationSettingsUpdate(BaseModel):
     pushplus_template: str = "markdown"
     pushplus_topic: str = ""
     pushplus_to: str = ""
+    sync_to_tracking_folder: bool = False
     ai_base_url: str = ""
     ai_api_key: str = ""
     ai_model: str = ""
@@ -374,6 +375,7 @@ class NotificationSettingsResponse(BaseModel):
     pushplus_template: str
     pushplus_topic: str
     pushplus_to: str
+    sync_to_tracking_folder: bool
     ai_base_url: str
     ai_api_key: str
     ai_model: str

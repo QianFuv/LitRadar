@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import sqlite3
 
+from scripts.api.auth_db import bulk_add_favorites
 from scripts.notify.ai_selector import OpenAICompatibleSelector
 from scripts.notify.candidates import (
     deduplicate_candidates,
@@ -331,13 +332,34 @@ def run_notification(args: argparse.Namespace) -> int:
                     )
 
                     if args.dry_run:
+                        synced_count = (
+                            len(accepted) if subscriber.sync_to_tracking_folder else 0
+                        )
                         print(
                             "DRY RUN",
                             subscriber.subscriber_id,
                             f"selected={len(accepted)}",
+                            f"synced={synced_count}",
                         )
                         message_id = ""
                     else:
+                        synced_count = 0
+                        if subscriber.sync_to_tracking_folder:
+                            if subscriber.tracking_folder_id is None:
+                                raise RuntimeError("Tracking folder is not configured")
+                            folder_articles = [
+                                {
+                                    "article_id": item.article_id,
+                                    "db_name": db_path.name,
+                                }
+                                for item in accepted
+                                if item.article_id in candidates_by_id
+                            ]
+                            synced_count = bulk_add_favorites(
+                                int(subscriber.subscriber_id),
+                                subscriber.tracking_folder_id,
+                                folder_articles,
+                            )
                         message_id = push_client.send(
                             token=subscriber.pushplus_token,
                             title=message_title,
@@ -361,6 +383,7 @@ def run_notification(args: argparse.Namespace) -> int:
                             "subscriber_id": subscriber.subscriber_id,
                             "selected_count": len(accepted),
                             "pushed_count": len(accepted),
+                            "folder_synced_count": synced_count,
                             "message_id": message_id or None,
                             "status": "ok",
                             "error": None,
@@ -374,6 +397,7 @@ def run_notification(args: argparse.Namespace) -> int:
                             "subscriber_id": subscriber.subscriber_id,
                             "selected_count": 0,
                             "pushed_count": 0,
+                            "folder_synced_count": 0,
                             "message_id": None,
                             "status": "error",
                             "error": str(error),

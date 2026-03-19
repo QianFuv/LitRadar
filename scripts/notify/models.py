@@ -75,6 +75,7 @@ class Subscriber:
         template: Optional per-user PushPlus template override.
         delivery_method: 'pushplus', 'folder', or 'both'.
         tracking_folder_id: Folder id for folder-based delivery.
+        sync_to_tracking_folder: Whether PushPlus also writes the tracking folder.
         ai_base_url: Optional OpenAI-compatible API base URL override.
         ai_api_key: Optional OpenAI-compatible API key override.
         ai_model: Optional OpenAI-compatible model override.
@@ -91,6 +92,7 @@ class Subscriber:
     template: str | None
     delivery_method: str = "pushplus"
     tracking_folder_id: int | None = None
+    sync_to_tracking_folder: bool = False
     ai_base_url: str | None = None
     ai_api_key: str | None = None
     ai_model: str | None = None
