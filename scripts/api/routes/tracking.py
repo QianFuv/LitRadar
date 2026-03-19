@@ -22,7 +22,6 @@ from scripts.api.models import (
     NotificationSettingsUpdate,
 )
 from scripts.shared.constants import API_PREFIX, PROJECT_ROOT
-from scripts.shared.db_path import list_database_files
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +34,7 @@ ALLOWED_DELIVERY_METHODS = {"folder", "pushplus"}
 
 def _load_latest_weekly_articles() -> list[dict]:
     """
-    Load the latest weekly articles from push state manifests.
+    Load the latest weekly articles from change manifests.
 
     Returns:
         List of dicts with article_id and db_name.
@@ -45,33 +44,36 @@ def _load_latest_weekly_articles() -> list[dict]:
         return []
 
     articles: list[dict] = []
-    db_files = list_database_files()
+    seen_pairs: set[tuple[str, int]] = set()
 
-    for db_path in db_files:
-        state_file = push_state_dir / f"{db_path.stem}.json"
-        if not state_file.exists():
-            continue
-
+    for state_file in sorted(push_state_dir.glob("*.changes.json")):
         try:
-            with open(state_file) as f:
+            with open(state_file, encoding="utf-8") as f:
                 state = json.load(f)
         except (json.JSONDecodeError, OSError):
             continue
 
-        run = state.get("run")
-        if not isinstance(run, dict):
+        if not isinstance(state, dict):
             continue
 
-        delivered_articles = run.get("delivered_article_ids")
+        db_name = str(state.get("db_name") or "").strip()
+        if not db_name:
+            continue
+
+        delivered_articles = state.get("notifiable_article_ids")
         if not isinstance(delivered_articles, list):
             continue
 
         for aid in delivered_articles:
             if isinstance(aid, int):
+                pair = (db_name, aid)
+                if pair in seen_pairs:
+                    continue
+                seen_pairs.add(pair)
                 articles.append(
                     {
                         "article_id": aid,
-                        "db_name": db_path.name,
+                        "db_name": db_name,
                     }
                 )
 
