@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 
 import { getAnnouncements, type AnnouncementInfo } from '@/lib/api';
@@ -78,7 +78,7 @@ function dismissAnnouncements(announcements: AnnouncementInfo[], dismissedUntil:
 }
 
 export function AnnouncementsDialog() {
-  const [open, setOpen] = useState(false);
+  const [closedSignature, setClosedSignature] = useState<string | null>(null);
 
   const { data = [] } = useQuery({
     queryKey: ['announcements'],
@@ -86,20 +86,13 @@ export function AnnouncementsDialog() {
     refetchInterval: 60_000,
   });
 
-  const unreadAnnouncements = useMemo(
-    () => data.filter((announcement) => !isDismissed(announcement)),
-    [data],
-  );
-
-  useEffect(() => {
-    if (unreadAnnouncements.length > 0) {
-      setOpen(true);
-    }
-  }, [unreadAnnouncements.length]);
+  const unreadAnnouncements = data.filter((announcement) => !isDismissed(announcement));
+  const unreadAnnouncementSignature = unreadAnnouncements.map((announcement) => String(announcement.id)).join(',');
+  const open = unreadAnnouncements.length > 0 && closedSignature !== unreadAnnouncementSignature;
 
   const handleDismiss = (dismissedUntil: number) => {
     dismissAnnouncements(unreadAnnouncements, dismissedUntil);
-    setOpen(false);
+    setClosedSignature(unreadAnnouncementSignature);
   };
 
   if (unreadAnnouncements.length === 0) {
@@ -107,7 +100,14 @@ export function AnnouncementsDialog() {
   }
 
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
+    <Dialog
+      open={open}
+      onOpenChange={(nextOpen) => {
+        if (!nextOpen) {
+          setClosedSignature(unreadAnnouncementSignature);
+        }
+      }}
+    >
       <DialogContent className="max-w-2xl" showCloseButton={false}>
         <DialogHeader>
           <DialogTitle>系统公告</DialogTitle>

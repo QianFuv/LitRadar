@@ -28,9 +28,6 @@ import {
   adminGetInviteCodes,
   adminCreateInviteCode,
   adminDeleteInviteCode,
-  type AdminStats,
-  type AdminUserInfo,
-  type AdminInviteCode,
 } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -48,7 +45,6 @@ import {
   DialogDescription,
   DialogHeader,
   DialogTitle,
-  DialogTrigger,
 } from '@/components/ui/dialog';
 import { AnnouncementsCard } from '@/components/admin/announcements-card';
 import { ScheduledTasksCard } from '@/components/admin/scheduled-tasks-card';

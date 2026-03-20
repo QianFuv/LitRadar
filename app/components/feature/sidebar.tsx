@@ -2,6 +2,7 @@
 
 import { useQuery } from '@tanstack/react-query';
 import { useQueryState, parseAsString, parseAsArrayOf, parseAsInteger } from 'nuqs';
+import Image from 'next/image';
 import { useTheme } from 'next-themes';
 import {
   getAreas,
@@ -191,9 +192,11 @@ export function Sidebar({ className }: { className?: string }) {
                       title="清空全部筛选"
                       className="h-20 w-20"
                     >
-                      <img
+                      <Image
                         src="https://cdn.sa.net/2026/01/29/6uRXpHqQfC89kF7.png"
                         alt="首页"
+                        width={64}
+                        height={64}
                         className="h-16 w-16 object-contain"
                       />
                     </Button>
