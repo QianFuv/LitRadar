@@ -212,8 +212,8 @@ export default function TrackingPage() {
   }
 
   return (
-    <div className="max-w-3xl mx-auto p-6 space-y-6">
-      <div className="flex items-center gap-3">
+    <div className="mx-auto max-w-3xl space-y-4 p-4 sm:space-y-6 sm:p-6">
+      <div className="flex items-start gap-2 sm:gap-3">
         <Button variant="ghost" size="icon" asChild>
           <Link href="/">
             <ArrowLeft className="h-5 w-5" />
@@ -244,12 +244,12 @@ export default function TrackingPage() {
           )}
 
           {folders.length > 0 && (
-            <div className="flex items-center gap-2">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
               <Select
                 value={status?.tracking_folder?.id?.toString() || ''}
                 onValueChange={(val) => setTrackMut.mutate(Number(val))}
               >
-                <SelectTrigger className="w-60">
+                <SelectTrigger className="w-full sm:w-60">
                   <SelectValue placeholder="选择追踪文件夹" />
                 </SelectTrigger>
                 <SelectContent>
@@ -263,16 +263,17 @@ export default function TrackingPage() {
             </div>
           )}
 
-          <div className="flex items-center gap-2">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
             <Input
               value={newFolderName}
               onChange={(e) => setNewFolderName(e.target.value)}
               placeholder="新建追踪文件夹"
-              className="w-60"
+              className="w-full sm:w-60"
             />
             <Button
               variant="outline"
               size="sm"
+              className="w-full sm:w-auto"
               disabled={!newFolderName.trim() || createAndSetMut.isPending}
               onClick={() => createAndSetMut.mutate(newFolderName.trim())}
             >
@@ -291,11 +292,12 @@ export default function TrackingPage() {
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
-          <div className="flex items-center gap-4">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div className="text-sm text-muted-foreground">
               可推送文章: {status?.weekly_articles_available ?? '...'} 篇
             </div>
             <Button
+              className="w-full sm:w-auto"
               onClick={() => pushMut.mutate()}
               disabled={pushMut.isPending || !status?.tracking_folder}
             >
@@ -319,7 +321,7 @@ export default function TrackingPage() {
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-5">
-          <div className="flex items-center justify-between">
+          <div className="flex items-start justify-between gap-3">
             <Label htmlFor="notify-enabled">启用推荐</Label>
             <Switch
               id="notify-enabled"
@@ -354,7 +356,7 @@ export default function TrackingPage() {
                 </Badge>
               ))}
             </div>
-            <div className="flex gap-2">
+            <div className="flex flex-col gap-2 sm:flex-row">
               <Input
                 value={keywordInput}
                 onChange={(e) => setKeywordInput(e.target.value)}
@@ -362,7 +364,14 @@ export default function TrackingPage() {
                 placeholder="输入关键词后回车添加"
                 className="flex-1"
               />
-              <Button type="button" variant="outline" size="sm" onClick={addKeyword} disabled={!keywordInput.trim()}>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="w-full sm:w-auto"
+                onClick={addKeyword}
+                disabled={!keywordInput.trim()}
+              >
                 <Plus className="h-4 w-4" />
               </Button>
             </div>
@@ -389,7 +398,7 @@ export default function TrackingPage() {
                 </Badge>
               ))}
             </div>
-            <div className="flex gap-2">
+            <div className="flex flex-col gap-2 sm:flex-row">
               <Input
                 value={directionInput}
                 onChange={(e) => setDirectionInput(e.target.value)}
@@ -397,7 +406,14 @@ export default function TrackingPage() {
                 placeholder="输入研究方向后回车添加"
                 className="flex-1"
               />
-              <Button type="button" variant="outline" size="sm" onClick={addDirection} disabled={!directionInput.trim()}>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="w-full sm:w-auto"
+                onClick={addDirection}
+                disabled={!directionInput.trim()}
+              >
                 <Plus className="h-4 w-4" />
               </Button>
             </div>
@@ -414,7 +430,7 @@ export default function TrackingPage() {
                 }))
               }
             >
-              <SelectTrigger className="w-60">
+              <SelectTrigger className="w-full sm:w-60">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -602,7 +618,7 @@ export default function TrackingPage() {
                   placeholder="输入你的 PushPlus 令牌"
                 />
               </div>
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid gap-3 sm:grid-cols-2">
                 <div className="space-y-1">
                   <Label htmlFor="pp-template">模板</Label>
                   <Input
@@ -646,7 +662,7 @@ export default function TrackingPage() {
                   placeholder="可选，指定接收方"
                 />
               </div>
-              <div className="flex items-start justify-between gap-4 rounded-md border border-dashed p-3">
+              <div className="flex flex-col gap-3 rounded-md border border-dashed p-3 sm:flex-row sm:items-start sm:justify-between">
                 <div className="space-y-1">
                   <Label htmlFor="pp-sync-tracking">同步写入追踪文件夹</Label>
                   <p className="text-xs text-muted-foreground">
@@ -670,8 +686,9 @@ export default function TrackingPage() {
             </div>
           )}
 
-          <div className="flex items-center gap-3">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
             <Button
+              className="w-full sm:w-auto"
               onClick={() => saveSettingsMut.mutate()}
               disabled={saveSettingsMut.isPending}
             >

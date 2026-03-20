@@ -122,8 +122,8 @@ export default function SettingsPage() {
   }
 
   return (
-    <div className="max-w-3xl mx-auto p-6 space-y-6">
-      <div className="flex items-center gap-3">
+    <div className="mx-auto max-w-3xl space-y-4 p-4 sm:space-y-6 sm:p-6">
+      <div className="flex items-center gap-2 sm:gap-3">
         <Button variant="ghost" size="icon" asChild>
           <Link href="/">
             <ArrowLeft className="h-5 w-5" />
@@ -205,13 +205,14 @@ export default function SettingsPage() {
         <CardContent>
           {inviteCodeData ? (
             <div className="space-y-3">
-              <div className="flex items-center gap-2">
-                <code className="flex-1 text-sm bg-muted p-2 rounded break-all">
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                <code className="flex-1 rounded bg-muted p-2 text-xs break-all sm:text-sm">
                   {inviteCodeData.code}
                 </code>
                 <Button
                   variant="outline"
                   size="icon"
+                  className="self-start sm:self-auto"
                   onClick={() => navigator.clipboard.writeText(inviteCodeData.code)}
                 >
                   <Copy className="h-4 w-4" />
@@ -242,7 +243,7 @@ export default function SettingsPage() {
       {/* Access tokens */}
       <Card>
         <CardHeader>
-          <div className="flex items-center justify-between">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
             <div>
               <CardTitle>访问令牌</CardTitle>
               <CardDescription>
@@ -254,7 +255,7 @@ export default function SettingsPage() {
               if (!open) setNewTokenValue(null);
             }}>
               <DialogTrigger asChild>
-                <Button variant="outline" size="sm">
+                <Button variant="outline" size="sm" className="w-full sm:w-auto">
                   <Plus className="h-4 w-4 mr-1" />
                   新建
                 </Button>
@@ -267,13 +268,14 @@ export default function SettingsPage() {
                 {newTokenValue ? (
                   <div className="space-y-3">
                     <p className="text-sm text-muted-foreground">新令牌已创建：</p>
-                    <div className="flex items-center gap-2">
-                      <code className="flex-1 text-xs bg-muted p-2 rounded break-all">
+                    <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                      <code className="flex-1 rounded bg-muted p-2 text-xs break-all">
                         {newTokenValue}
                       </code>
                       <Button
                         variant="outline"
                         size="icon"
+                        className="self-start sm:self-auto"
                         onClick={() => navigator.clipboard.writeText(newTokenValue)}
                       >
                         <Copy className="h-4 w-4" />
@@ -329,11 +331,11 @@ export default function SettingsPage() {
               {tokens.map((t) => (
                 <div
                   key={t.id}
-                  className="flex items-center justify-between rounded-md border px-3 py-2"
+                  className="flex flex-col gap-3 rounded-md border px-3 py-2 sm:flex-row sm:items-center sm:justify-between"
                 >
-                  <div className="flex items-center gap-2">
+                  <div className="flex min-w-0 flex-wrap items-center gap-2">
                     <Key className="h-4 w-4 text-muted-foreground" />
-                    <span className="text-sm">{t.name || '（未命名）'}</span>
+                    <span className="break-all text-sm">{t.name || '（未命名）'}</span>
                     <Badge variant="outline" className="text-[10px]">
                       {formatExpiry(t.expires_at)} 过期
                     </Badge>
@@ -341,7 +343,7 @@ export default function SettingsPage() {
                   <Button
                     variant="ghost"
                     size="icon"
-                    className="h-7 w-7 text-destructive"
+                    className="h-7 w-7 self-end text-destructive sm:self-auto"
                     onClick={() => revokeMut.mutate(t.id)}
                   >
                     <Trash2 className="h-3.5 w-3.5" />
