@@ -180,12 +180,12 @@ export function ScheduledTasksCard({ token }: ScheduledTasksCardProps) {
       <CardContent className="space-y-4">
         <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
           <DialogTrigger asChild>
-            <Button variant="outline" size="sm" onClick={openCreateDialog}>
+            <Button variant="outline" size="sm" className="w-full sm:w-auto" onClick={openCreateDialog}>
               <Plus className="mr-2 h-4 w-4" />
               新建任务
             </Button>
           </DialogTrigger>
-          <DialogContent>
+          <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
             <DialogHeader>
               <DialogTitle>{editingTask ? '编辑定时任务' : '新建定时任务'}</DialogTitle>
               <DialogDescription>使用五段 crontab 表达式，例如 `0 8 * * *`。</DialogDescription>
@@ -236,12 +236,12 @@ export function ScheduledTasksCard({ token }: ScheduledTasksCardProps) {
                     placeholder="执行命令"
                   />
                 ) : (
-                  <div className="rounded-md border bg-muted/40 px-3 py-2 font-mono text-sm text-muted-foreground">
+                  <div className="rounded-md border bg-muted/40 px-3 py-2 font-mono text-sm text-muted-foreground break-all whitespace-pre-wrap">
                     {form.command}
                   </div>
                 )}
               </div>
-              <div className="flex items-center justify-between rounded-md border px-3 py-2">
+              <div className="flex items-start justify-between gap-3 rounded-md border px-3 py-2">
                 <span className="text-sm">启用任务</span>
                 <Switch
                   checked={form.enabled}
@@ -251,11 +251,12 @@ export function ScheduledTasksCard({ token }: ScheduledTasksCardProps) {
               {mutationError && (
                 <p className="text-sm text-destructive">{mutationError}</p>
               )}
-              <div className="flex justify-end gap-2">
-                <Button variant="outline" onClick={() => setDialogOpen(false)}>
+              <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+                <Button variant="outline" className="w-full sm:w-auto" onClick={() => setDialogOpen(false)}>
                   取消
                 </Button>
                 <Button
+                  className="w-full sm:w-auto"
                   disabled={!form.name.trim() || !form.cron.trim() || !form.command.trim() || saveMutation.isPending}
                   onClick={() => saveMutation.mutate()}
                 >
@@ -278,17 +279,17 @@ export function ScheduledTasksCard({ token }: ScheduledTasksCardProps) {
           <div className="space-y-3">
             {tasks.map((task) => (
               <div key={task.id} className="rounded-lg border p-4">
-                <div className="flex flex-wrap items-start justify-between gap-3">
-                  <div className="space-y-1">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                  <div className="min-w-0 flex-1 space-y-1">
                     <div className="font-medium">{task.name}</div>
                     <div className="font-mono text-xs text-muted-foreground">{task.cron}</div>
-                    <div className="text-sm text-muted-foreground">{task.command}</div>
+                    <div className="text-sm text-muted-foreground break-all">{task.command}</div>
                     <div className="text-xs text-muted-foreground">
                       最近执行: {formatDateTime(task.last_run_at)}
                       {task.last_status && ` · ${task.last_status}`}
                     </div>
                   </div>
-                  <div className="flex items-center gap-2">
+                  <div className="flex w-full flex-wrap items-center justify-end gap-2 sm:w-auto sm:flex-nowrap">
                     <Switch
                       checked={task.enabled}
                       onCheckedChange={(checked) =>

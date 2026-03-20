@@ -141,12 +141,12 @@ export function AnnouncementsCard({ token }: AnnouncementsCardProps) {
       <CardContent className="space-y-4">
         <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
           <DialogTrigger asChild>
-            <Button variant="outline" size="sm" onClick={openCreateDialog}>
+            <Button variant="outline" size="sm" className="w-full sm:w-auto" onClick={openCreateDialog}>
               <Plus className="mr-2 h-4 w-4" />
               新建公告
             </Button>
           </DialogTrigger>
-          <DialogContent>
+          <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
             <DialogHeader>
               <DialogTitle>{editingAnnouncement ? '编辑公告' : '新建公告'}</DialogTitle>
               <DialogDescription>公告会在首页顶部轮询显示，用户可单独关闭。</DialogDescription>
@@ -178,7 +178,7 @@ export function AnnouncementsCard({ token }: AnnouncementsCardProps) {
                 placeholder="公告内容"
                 className="min-h-28 w-full rounded-md border bg-transparent px-3 py-2 text-sm shadow-xs outline-none"
               />
-              <div className="flex items-center justify-between rounded-md border px-3 py-2">
+              <div className="flex items-start justify-between gap-3 rounded-md border px-3 py-2">
                 <span className="text-sm">启用公告</span>
                 <Switch
                   checked={form.enabled}
@@ -188,11 +188,12 @@ export function AnnouncementsCard({ token }: AnnouncementsCardProps) {
               {mutationError && (
                 <p className="text-sm text-destructive">{mutationError}</p>
               )}
-              <div className="flex justify-end gap-2">
-                <Button variant="outline" onClick={() => setDialogOpen(false)}>
+              <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+                <Button variant="outline" className="w-full sm:w-auto" onClick={() => setDialogOpen(false)}>
                   取消
                 </Button>
                 <Button
+                  className="w-full sm:w-auto"
                   disabled={!form.title.trim() || !form.message.trim() || saveMutation.isPending}
                   onClick={() => saveMutation.mutate()}
                 >
@@ -215,22 +216,22 @@ export function AnnouncementsCard({ token }: AnnouncementsCardProps) {
           <div className="space-y-3">
             {announcements.map((announcement) => (
               <div key={announcement.id} className="rounded-lg border p-4">
-                <div className="flex flex-wrap items-start justify-between gap-3">
-                  <div className="space-y-1">
-                    <div className="flex items-center gap-2">
-                      <div className="font-medium">{announcement.title}</div>
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                  <div className="min-w-0 flex-1 space-y-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <div className="font-medium break-all">{announcement.title}</div>
                       <span className="rounded-full border px-2 py-0.5 text-xs text-muted-foreground">
                         {PRIORITY_LABELS[announcement.priority]}
                       </span>
                     </div>
-                    <p className="text-sm text-muted-foreground whitespace-pre-wrap">
+                    <p className="text-sm text-muted-foreground break-words whitespace-pre-wrap">
                       {announcement.message}
                     </p>
                     <div className="text-xs text-muted-foreground">
                       更新于 {formatDateTime(announcement.updated_at)}
                     </div>
                   </div>
-                  <div className="flex items-center gap-2">
+                  <div className="flex w-full flex-wrap items-center justify-end gap-2 sm:w-auto sm:flex-nowrap">
                     <Switch
                       checked={announcement.enabled}
                       onCheckedChange={(checked) =>
