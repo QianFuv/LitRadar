@@ -5,6 +5,9 @@ from __future__ import annotations
 import json
 import logging
 import sqlite3
+import threading
+import time
+import uuid
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -22,6 +25,7 @@ from scripts.api.models import (
     NotificationSettingsUpdate,
 )
 from scripts.shared.constants import API_PREFIX, PROJECT_ROOT
+from scripts.shared.converters import to_int
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +34,9 @@ router = APIRouter(prefix=f"{API_PREFIX}/tracking", tags=["tracking"])
 CurrentUser = Annotated[dict, Depends(get_current_user)]
 
 ALLOWED_DELIVERY_METHODS = {"folder", "pushplus"}
+
+_manual_push_jobs_lock = threading.Lock()
+_manual_push_jobs: dict[int, dict[str, object | None]] = {}
 
 
 def _load_latest_weekly_articles() -> list[dict]:
@@ -371,8 +378,94 @@ def _send_pushplus_for_selected_articles(
         push_client.close()
 
 
-@router.post("/push-weekly")
-def push_weekly_to_tracking(user: CurrentUser):
+def _build_manual_push_status(
+    *,
+    job_id: str | None,
+    status: str,
+    message: str,
+    started_at: float | None = None,
+    finished_at: float | None = None,
+    pushed: int = 0,
+    selected: int = 0,
+    total_candidates: int | None = None,
+    summary: str = "",
+    folder_id: int | None = None,
+    folder_name: str | None = None,
+) -> dict[str, object | None]:
+    """
+    Build one manual weekly-push status payload.
+
+    Args:
+        job_id: Background job identifier.
+        status: Job status string.
+        message: Human-readable status message.
+        started_at: Job start timestamp.
+        finished_at: Job finish timestamp.
+        pushed: Number of pushed or synced articles.
+        selected: Number of selected articles.
+        total_candidates: Number of AI candidates.
+        summary: AI-generated summary text.
+        folder_id: Tracking folder identifier.
+        folder_name: Tracking folder name.
+
+    Returns:
+        Manual push status payload.
+    """
+    return {
+        "job_id": job_id,
+        "status": status,
+        "message": message,
+        "started_at": started_at,
+        "finished_at": finished_at,
+        "pushed": pushed,
+        "selected": selected,
+        "total_candidates": total_candidates,
+        "summary": summary,
+        "folder_id": folder_id,
+        "folder_name": folder_name,
+    }
+
+
+def _get_manual_push_status(user_id: int) -> dict[str, object | None]:
+    """
+    Read the current manual weekly-push status for one user.
+
+    Args:
+        user_id: User identifier.
+
+    Returns:
+        Status payload for the current or last job.
+    """
+    with _manual_push_jobs_lock:
+        current = _manual_push_jobs.get(user_id)
+        if current is None:
+            return _build_manual_push_status(
+                job_id=None,
+                status="idle",
+                message="No manual push task is running",
+            )
+        return dict(current)
+
+
+def _set_manual_push_status(
+    user_id: int,
+    status_payload: dict[str, object | None],
+) -> None:
+    """
+    Persist manual weekly-push status for one user.
+
+    Args:
+        user_id: User identifier.
+        status_payload: Status payload to store.
+
+    Returns:
+        None.
+    """
+    with _manual_push_jobs_lock:
+        _manual_push_jobs[user_id] = dict(status_payload)
+
+
+def _execute_weekly_push(user: dict) -> tuple[str, dict[str, object | None]]:
     """
     Push weekly articles to the user's tracking folder.
 
@@ -381,7 +474,7 @@ def push_weekly_to_tracking(user: CurrentUser):
     """
     settings = get_notification_settings(user["id"])
     if not settings or not settings.get("enabled", True):
-        return {
+        return "completed", {
             "pushed": 0,
             "selected": 0,
             "summary": "",
@@ -405,7 +498,7 @@ def push_weekly_to_tracking(user: CurrentUser):
 
     weekly_articles = _load_latest_weekly_articles()
     if not weekly_articles:
-        return {
+        return "completed", {
             "pushed": 0,
             "selected": 0,
             "summary": "",
@@ -415,7 +508,7 @@ def push_weekly_to_tracking(user: CurrentUser):
         }
 
     if not (settings.get("keywords") or settings.get("directions")):
-        return {
+        return "completed", {
             "pushed": 0,
             "selected": 0,
             "summary": "",
@@ -426,7 +519,7 @@ def push_weekly_to_tracking(user: CurrentUser):
 
     candidate_articles = _load_candidate_articles(weekly_articles)
     if not candidate_articles:
-        return {
+        return "completed", {
             "pushed": 0,
             "selected": 0,
             "summary": "",
@@ -443,7 +536,7 @@ def push_weekly_to_tracking(user: CurrentUser):
             user["id"],
             error,
         )
-        return {
+        return "completed", {
             "pushed": 0,
             "selected": 0,
             "summary": "",
@@ -453,7 +546,7 @@ def push_weekly_to_tracking(user: CurrentUser):
         }
     except Exception:
         logger.exception("AI selection failed for user %s", user["id"])
-        return {
+        return "completed", {
             "pushed": 0,
             "selected": 0,
             "summary": "",
@@ -488,7 +581,7 @@ def push_weekly_to_tracking(user: CurrentUser):
                 )
             except Exception as error:
                 logger.exception("PushPlus delivery failed for user %s", user["id"])
-                return {
+                return "failed", {
                     "pushed": synced_count,
                     "selected": len(ai_result["selected"]),
                     "total_candidates": ai_result["total_candidates"],
@@ -507,7 +600,7 @@ def push_weekly_to_tracking(user: CurrentUser):
                     f"; synced {synced_count} article"
                     f"{'' if synced_count == 1 else 's'} to the tracking folder"
                 )
-            return {
+            return "completed", {
                 "pushed": synced_count,
                 "selected": len(ai_result["selected"]),
                 "total_candidates": ai_result["total_candidates"],
@@ -517,7 +610,7 @@ def push_weekly_to_tracking(user: CurrentUser):
                 "folder_name": folder["name"] if folder else None,
             }
 
-        return {
+        return "completed", {
             "pushed": synced_count,
             "selected": len(ai_result["selected"]),
             "total_candidates": ai_result["total_candidates"],
@@ -526,7 +619,7 @@ def push_weekly_to_tracking(user: CurrentUser):
             "folder_name": folder["name"] if folder else None,
         }
 
-    return {
+    return "completed", {
         "pushed": 0,
         "selected": 0,
         "summary": ai_result["summary"],
@@ -535,6 +628,104 @@ def push_weekly_to_tracking(user: CurrentUser):
         "folder_id": folder["id"] if folder else None,
         "folder_name": folder["name"] if folder else None,
     }
+
+
+def _run_manual_push_job(user: dict, job_id: str, started_at: float) -> None:
+    """
+    Execute one manual weekly-push job in the background.
+
+    Args:
+        user: Authenticated user payload.
+        job_id: Background job identifier.
+        started_at: Job start timestamp.
+
+    Returns:
+        None.
+    """
+    try:
+        final_status, result = _execute_weekly_push(user)
+    except Exception as error:
+        logger.exception("Manual weekly push crashed for user %s", user["id"])
+        status_payload = _build_manual_push_status(
+            job_id=job_id,
+            status="failed",
+            message=f"Manual push failed: {error}",
+            started_at=started_at,
+            finished_at=time.time(),
+        )
+    else:
+        status_payload = _build_manual_push_status(
+            job_id=job_id,
+            status=final_status,
+            message=str(result.get("message") or ""),
+            started_at=started_at,
+            finished_at=time.time(),
+            pushed=to_int(result.get("pushed")) or 0,
+            selected=to_int(result.get("selected")) or 0,
+            total_candidates=to_int(result.get("total_candidates")),
+            summary=str(result.get("summary") or ""),
+            folder_id=to_int(result.get("folder_id")),
+            folder_name=(
+                str(result.get("folder_name") or "")
+                if result.get("folder_name") is not None
+                else None
+            ),
+        )
+
+    with _manual_push_jobs_lock:
+        current = _manual_push_jobs.get(int(user["id"]))
+        if current is None or current.get("job_id") != job_id:
+            return
+        _manual_push_jobs[int(user["id"])] = status_payload
+
+
+@router.post("/push-weekly")
+def push_weekly_to_tracking(user: CurrentUser):
+    """
+    Start one manual weekly-push job in the background.
+
+    Args:
+        user: Authenticated user payload.
+
+    Returns:
+        Current background job status payload.
+    """
+    existing_status = _get_manual_push_status(int(user["id"]))
+    if existing_status["status"] == "running":
+        return existing_status
+
+    started_at = time.time()
+    job_id = uuid.uuid4().hex
+    status_payload = _build_manual_push_status(
+        job_id=job_id,
+        status="running",
+        message="Manual push started and is running in the background",
+        started_at=started_at,
+    )
+    _set_manual_push_status(int(user["id"]), status_payload)
+
+    worker = threading.Thread(
+        target=_run_manual_push_job,
+        args=(dict(user), job_id, started_at),
+        daemon=True,
+        name=f"manual-push-{user['id']}",
+    )
+    worker.start()
+    return status_payload
+
+
+@router.get("/push-weekly/status")
+def get_push_weekly_status(user: CurrentUser):
+    """
+    Fetch the current manual weekly-push status for the user.
+
+    Args:
+        user: Authenticated user payload.
+
+    Returns:
+        Current background job status payload.
+    """
+    return _get_manual_push_status(int(user["id"]))
 
 
 @router.get("/status")

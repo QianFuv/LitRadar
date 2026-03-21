@@ -314,6 +314,20 @@ export interface TrackingStatus {
   notification_configured: boolean;
 }
 
+export interface ManualPushStatus {
+  job_id: string | null;
+  status: 'idle' | 'running' | 'completed' | 'failed';
+  message: string;
+  started_at: number | null;
+  finished_at: number | null;
+  pushed: number;
+  selected: number;
+  total_candidates?: number | null;
+  summary: string;
+  folder_id?: number | null;
+  folder_name?: string | null;
+}
+
 export interface NotificationSettings {
   id: number;
   user_id: number;
@@ -518,7 +532,7 @@ export async function setTrackingFolder(token: string, folderId: number): Promis
 
 export async function pushWeeklyToTracking(
   token: string,
-): Promise<{ pushed: number; message?: string }> {
+): Promise<ManualPushStatus> {
   const res = await authFetch(`${resolveBase()}/api/tracking/push-weekly`, token, {
     method: 'POST',
   });
@@ -808,6 +822,15 @@ export async function adminCreateScheduledTask(
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.detail || '创建定时任务失败');
+  }
+  return res.json();
+}
+
+export async function getPushWeeklyStatus(token: string): Promise<ManualPushStatus> {
+  const res = await authFetch(`${resolveBase()}/api/tracking/push-weekly/status`, token);
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || '获取推送状态失败');
   }
   return res.json();
 }

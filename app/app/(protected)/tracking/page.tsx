@@ -10,9 +10,11 @@ import {
   getFolders,
   createFolder,
   setTrackingFolder,
+  getPushWeeklyStatus,
   pushWeeklyToTracking,
   getNotificationSettings,
   updateNotificationSettings,
+  type ManualPushStatus,
   type NotificationSettings,
   type NotificationSettingsUpdate,
 } from '@/lib/api';
@@ -35,7 +37,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 
 export default function TrackingPage() {
   const { user, token } = useAuth();
@@ -48,6 +50,7 @@ export default function TrackingPage() {
   const [keywordInput, setKeywordInput] = useState('');
   const [directionInput, setDirectionInput] = useState('');
   const [settingsSaved, setSettingsSaved] = useState(false);
+  const [isPushPolling, setIsPushPolling] = useState(false);
 
   const { data: status } = useQuery({
     queryKey: ['tracking-status'],
@@ -149,33 +152,80 @@ export default function TrackingPage() {
   const pushMut = useMutation({
     mutationFn: () => pushWeeklyToTracking(token!),
     onSuccess: (data) => {
-      if (data.message) {
-        setPushResult(
-          data.pushed > 0
-            ? `${data.message}（已推送 ${data.pushed} 篇）`
-            : data.message,
-        );
-      } else {
-        setPushResult(`成功推送 ${data.pushed} 篇文章到追踪文件夹`);
+      if (data.status === 'running') {
+        setPushResult(data.message || '推送任务已启动，正在后台执行...');
+        setIsPushPolling(true);
+        return;
       }
-      queryClient.invalidateQueries({ queryKey: ['tracking-status'] });
-      queryClient.invalidateQueries({ queryKey: ['folders'] });
+      setPushResult(formatManualPushResult(data));
     },
     onError: (err) => {
+      setIsPushPolling(false);
       setPushResult(err instanceof Error ? err.message : '推送失败');
     },
   });
   const requiresTrackingFolder = deliveryMethod === 'folder' || syncToTrackingFolder;
-  const manualPushLabel = pushMut.isPending
+  const manualPushLabel = pushMut.isPending || isPushPolling
     ? '推送中...'
     : deliveryMethod === 'pushplus'
       ? (syncToTrackingFolder ? '推送到 PushPlus 并同步文件夹' : '推送到 PushPlus')
       : '推送到追踪文件夹';
   const manualPushDescription = deliveryMethod === 'pushplus'
     ? (syncToTrackingFolder
-        ? '将最近一周的文章按当前 AI 推荐规则发送到 PushPlus，并同步写入追踪文件夹'
-        : '将最近一周的文章按当前 AI 推荐规则发送到 PushPlus')
-    : '将最近一周的文章按当前 AI 推荐规则同步到追踪文件夹';
+        ? '将最近一周的文章按当前 AI 推荐规则发送到 PushPlus，并同步写入追踪文件夹。任务会在后台执行。'
+        : '将最近一周的文章按当前 AI 推荐规则发送到 PushPlus。任务会在后台执行。')
+    : '将最近一周的文章按当前 AI 推荐规则同步到追踪文件夹。任务会在后台执行。';
+
+  const formatManualPushResult = useCallback((data: ManualPushStatus): string => {
+    if (data.message) {
+      return data.pushed > 0 ? `${data.message}（已推送 ${data.pushed} 篇）` : data.message;
+    }
+    if (data.status === 'failed') {
+      return '推送失败';
+    }
+    return `成功推送 ${data.pushed} 篇文章`;
+  }, []);
+
+  useEffect(() => {
+    if (!token || !isPushPolling) {
+      return;
+    }
+
+    let cancelled = false;
+
+    const pollStatus = async () => {
+      try {
+        const data = await getPushWeeklyStatus(token);
+        if (cancelled) {
+          return;
+        }
+        if (data.status === 'running') {
+          setPushResult(data.message || '推送任务执行中...');
+          return;
+        }
+        setPushResult(formatManualPushResult(data));
+        setIsPushPolling(false);
+        queryClient.invalidateQueries({ queryKey: ['tracking-status'] });
+        queryClient.invalidateQueries({ queryKey: ['folders'] });
+      } catch (error) {
+        if (cancelled) {
+          return;
+        }
+        setPushResult(error instanceof Error ? error.message : '获取推送状态失败');
+        setIsPushPolling(false);
+      }
+    };
+
+    void pollStatus();
+    const intervalId = window.setInterval(() => {
+      void pollStatus();
+    }, 2000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+    };
+  }, [formatManualPushResult, isPushPolling, queryClient, token]);
 
   const saveSettingsMut = useMutation({
     mutationFn: () =>
@@ -311,7 +361,7 @@ export default function TrackingPage() {
             <Button
               className="w-full sm:w-auto"
               onClick={() => pushMut.mutate()}
-              disabled={pushMut.isPending || (requiresTrackingFolder && !status?.tracking_folder)}
+              disabled={(pushMut.isPending || isPushPolling) || (requiresTrackingFolder && !status?.tracking_folder)}
             >
               <Download className="h-4 w-4 mr-1" />
               {manualPushLabel}
