@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import time
 from typing import Any, cast
 
@@ -33,6 +34,19 @@ SUMMARY_PROMPT_SUFFIX = (
     "Only summarize the supplied selected papers. "
     "Focus on major research themes, methods, and findings."
 )
+
+SELECTION_OUTPUT_CONTRACT = (
+    'Return exactly one JSON object with keys "summary" and "selected". '
+    '"selected" must be an array of objects that each contain "article_id" '
+    'and "score". Do not wrap JSON in markdown fences.'
+)
+
+SUMMARY_OUTPUT_CONTRACT = (
+    'Return exactly one JSON object with the key "summary". '
+    "Do not wrap JSON in markdown fences."
+)
+
+logger = logging.getLogger(__name__)
 
 
 class OpenAICompatibleSelector:
@@ -94,11 +108,8 @@ class OpenAICompatibleSelector:
         Returns:
             System prompt string.
         """
-        if not self.system_prompt:
-            return DEFAULT_SELECTION_SYSTEM_PROMPT
-        return (
-            f"{self.system_prompt}\n\nReturn JSON only and do not invent article ids."
-        )
+        base_prompt = self.system_prompt or DEFAULT_SELECTION_SYSTEM_PROMPT
+        return f"{base_prompt}\n\n{SELECTION_OUTPUT_CONTRACT}"
 
     def _summary_system_prompt(self) -> str:
         """
@@ -110,9 +121,14 @@ class OpenAICompatibleSelector:
         if not self.system_prompt:
             return (
                 "You are a precise academic summarizer. "
-                "Only summarize the supplied selected papers."
+                "Only summarize the supplied selected papers. "
+                f"{SUMMARY_OUTPUT_CONTRACT}"
             )
-        return f"{self.system_prompt}\n\n{SUMMARY_PROMPT_SUFFIX}"
+        return (
+            f"{self.system_prompt}\n\n"
+            f"{SUMMARY_PROMPT_SUFFIX}\n\n"
+            f"{SUMMARY_OUTPUT_CONTRACT}"
+        )
 
     def close(self) -> None:
         """
@@ -268,8 +284,7 @@ class OpenAICompatibleSelector:
             },
         }
 
-        response_json = self._create_completion(body)
-        response_payload = extract_response_payload(response_json)
+        response_payload = self._create_completion(body, payload_kind="selection")
         selected_items = []
 
         for item in response_payload.get("selected", []):
@@ -363,20 +378,25 @@ class OpenAICompatibleSelector:
             },
         }
 
-        response_json = self._create_completion(body)
-        response_payload = extract_response_payload(response_json)
+        response_payload = self._create_completion(body, payload_kind="summary")
         summary = str(response_payload.get("summary") or "").strip()
         return summary
 
-    def _create_completion(self, body: dict[str, Any]) -> dict[str, Any]:
+    def _create_completion(
+        self,
+        body: dict[str, Any],
+        *,
+        payload_kind: str,
+    ) -> dict[str, Any]:
         """
-        Create chat completion through OpenAI SDK.
+        Create chat completion through OpenAI SDK and normalize the payload.
 
         Args:
             body: Chat completion payload.
+            payload_kind: Expected payload category.
 
         Returns:
-            JSON response payload.
+            Parsed payload dictionary.
         """
         last_error: Exception | None = None
         extra_headers = {
@@ -394,6 +414,14 @@ class OpenAICompatibleSelector:
                 0,
                 cast(completion_create_params.ResponseFormat, response_format),
             )
+            if response_format.get("type") == "json_schema":
+                request_variants.insert(
+                    1,
+                    cast(
+                        completion_create_params.ResponseFormat,
+                        {"type": "json_object"},
+                    ),
+                )
 
         for typed_response_format in request_variants:
             for attempt in range(self.retries + 1):
@@ -412,7 +440,10 @@ class OpenAICompatibleSelector:
                     payload = response.model_dump(mode="json")
                     if not isinstance(payload, dict):
                         raise ValueError("AI response is not a JSON object")
-                    return payload
+                    return extract_response_payload(
+                        payload,
+                        payload_kind=payload_kind,
+                    )
                 except Exception as error:
                     last_error = error
                     if attempt < self.retries:
@@ -422,12 +453,193 @@ class OpenAICompatibleSelector:
         raise RuntimeError(f"AI request failed: {last_error}")
 
 
-def extract_response_payload(response_json: dict[str, Any]) -> dict[str, Any]:
+def _extract_summary_value(payload: dict[str, Any]) -> str:
     """
-    Extract structured payload from an OpenAI-compatible response.
+    Resolve a summary-like string field from a payload object.
+
+    Args:
+        payload: Parsed payload object.
+
+    Returns:
+        Summary text, or an empty string.
+    """
+    for key in ("summary", "message", "text", "analysis", "reason"):
+        value = payload.get(key)
+        if isinstance(value, str):
+            return value.strip()
+    return ""
+
+
+def _coerce_selected_items(value: Any) -> list[dict[str, Any]]:
+    """
+    Normalize AI-selected item shapes into a list of payload dicts.
+
+    Args:
+        value: Raw selected-items payload.
+
+    Returns:
+        List of normalized item dictionaries.
+    """
+    if isinstance(value, dict):
+        normalized_items: list[dict[str, Any]] = []
+        for key, item_value in value.items():
+            article_id = to_int(key)
+            score = to_float(item_value)
+            if article_id is None:
+                continue
+            item: dict[str, Any] = {"article_id": article_id}
+            if score is not None:
+                item["score"] = score
+            normalized_items.append(item)
+        return normalized_items
+
+    if not isinstance(value, list):
+        return []
+
+    normalized_items = []
+    for item in value:
+        if isinstance(item, dict):
+            normalized_items.append(item)
+            continue
+
+        article_id = to_int(item)
+        if article_id is not None:
+            normalized_items.append({"article_id": article_id, "score": 0})
+            continue
+
+        if (
+            isinstance(item, list)
+            and len(item) >= 2
+            and to_int(item[0]) is not None
+            and to_float(item[1]) is not None
+        ):
+            normalized_items.append(
+                {
+                    "article_id": int(to_int(item[0]) or 0),
+                    "score": float(to_float(item[1]) or 0),
+                }
+            )
+
+    return normalized_items
+
+
+def _normalize_selection_payload(payload: Any) -> dict[str, Any]:
+    """
+    Convert a raw AI payload into the selection-object contract.
+
+    Args:
+        payload: Raw parsed payload.
+
+    Returns:
+        Normalized selection payload object.
+
+    Raises:
+        ValueError: Selection output cannot be normalized.
+    """
+    if isinstance(payload, list):
+        return {"summary": "", "selected": _coerce_selected_items(payload)}
+
+    if not isinstance(payload, dict):
+        raise ValueError("Structured response is not a JSON object")
+
+    if "selected" in payload:
+        return {
+            "summary": _extract_summary_value(payload),
+            "selected": _coerce_selected_items(payload.get("selected")),
+        }
+
+    for key in ("items", "results", "recommendations", "articles"):
+        if key in payload:
+            return {
+                "summary": _extract_summary_value(payload),
+                "selected": _coerce_selected_items(payload.get(key)),
+            }
+
+    article_id = to_int(payload.get("article_id"))
+    if article_id is not None:
+        score = to_float(payload.get("score"))
+        item: dict[str, Any] = {"article_id": article_id}
+        if score is not None:
+            item["score"] = score
+        return {"summary": _extract_summary_value(payload), "selected": [item]}
+
+    raise ValueError("Structured response is not a JSON object")
+
+
+def _normalize_summary_payload(payload: Any) -> dict[str, Any]:
+    """
+    Convert a raw AI payload into the summary-object contract.
+
+    Args:
+        payload: Raw parsed payload.
+
+    Returns:
+        Normalized summary payload object.
+
+    Raises:
+        ValueError: Summary output cannot be normalized.
+    """
+    if isinstance(payload, str):
+        summary = payload.strip()
+        if summary:
+            return {"summary": summary}
+        raise ValueError("Structured response is not a JSON object")
+
+    if isinstance(payload, list):
+        text_items = [
+            item.strip() for item in payload if isinstance(item, str) and item.strip()
+        ]
+        if text_items:
+            return {"summary": "\n".join(text_items)}
+        raise ValueError("Structured response is not a JSON object")
+
+    if not isinstance(payload, dict):
+        raise ValueError("Structured response is not a JSON object")
+
+    summary = _extract_summary_value(payload)
+    if summary:
+        return {"summary": summary}
+
+    if len(payload) == 1:
+        sole_value = next(iter(payload.values()))
+        if isinstance(sole_value, str) and sole_value.strip():
+            return {"summary": sole_value.strip()}
+
+    raise ValueError("Structured response is not a JSON object")
+
+
+def _normalize_payload(payload: Any, payload_kind: str) -> dict[str, Any]:
+    """
+    Normalize raw AI payloads by expected response category.
+
+    Args:
+        payload: Raw parsed payload.
+        payload_kind: Expected payload category.
+
+    Returns:
+        Normalized payload object.
+
+    Raises:
+        ValueError: Payload kind is unknown or payload is invalid.
+    """
+    if payload_kind == "selection":
+        return _normalize_selection_payload(payload)
+    if payload_kind == "summary":
+        return _normalize_summary_payload(payload)
+    raise ValueError(f"Unsupported payload kind: {payload_kind}")
+
+
+def extract_response_payload(
+    response_json: dict[str, Any],
+    *,
+    payload_kind: str,
+) -> dict[str, Any]:
+    """
+    Extract and normalize structured payload from an OpenAI-compatible response.
 
     Args:
         response_json: OpenAI-compatible response JSON.
+        payload_kind: Expected payload category.
 
     Returns:
         Parsed payload object.
@@ -444,9 +656,17 @@ def extract_response_payload(response_json: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(message, dict):
         raise ValueError("AI response missing message")
 
+    refusal = message.get("refusal")
+    if isinstance(refusal, str) and refusal.strip():
+        raise ValueError(f"AI model refused structured output: {refusal.strip()}")
+
+    parsed = message.get("parsed")
+    if parsed is not None:
+        return _normalize_payload(parsed, payload_kind)
+
     content = message.get("content")
     if isinstance(content, dict):
-        return content
+        return _normalize_payload(content, payload_kind)
 
     if isinstance(content, list):
         text_parts: list[str] = []
@@ -470,7 +690,14 @@ def extract_response_payload(response_json: dict[str, Any]) -> dict[str, Any]:
             lines = lines[:-1]
         normalized = "\n".join(lines).strip()
 
-    payload = json.loads(normalized)
-    if not isinstance(payload, dict):
-        raise ValueError("Structured response is not a JSON object")
-    return payload
+    try:
+        payload = json.loads(normalized)
+    except json.JSONDecodeError:
+        logger.warning(
+            "AI response was not valid JSON for %s payload; "
+            "falling back to raw text normalization",
+            payload_kind,
+        )
+        return _normalize_payload(normalized, payload_kind)
+
+    return _normalize_payload(payload, payload_kind)

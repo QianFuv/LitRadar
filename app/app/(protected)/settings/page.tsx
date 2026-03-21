@@ -337,7 +337,7 @@ export default function SettingsPage() {
                     <Key className="h-4 w-4 text-muted-foreground" />
                     <span className="break-all text-sm">{t.name || '（未命名）'}</span>
                     <Badge variant="outline" className="text-[10px]">
-                      {formatExpiry(t.expires_at)} 过期
+                      到 {formatExpiry(t.expires_at)} 过期
                     </Badge>
                   </div>
                   <Button

@@ -225,6 +225,7 @@ def init_auth_db() -> None:
                 "ALTER TABLE announcements "
                 "ADD COLUMN priority TEXT NOT NULL DEFAULT 'normal'"
             )
+        purge_expired_access_tokens(conn=conn)
         conn.commit()
     finally:
         conn.close()
@@ -240,6 +241,37 @@ def _hash_password(password: str, salt: str) -> str:
 def _hash_token(token: str) -> str:
     """Hash an access token using SHA-256."""
     return hashlib.sha256(token.encode()).hexdigest()
+
+
+def purge_expired_access_tokens(
+    *,
+    now: float | None = None,
+    conn: sqlite3.Connection | None = None,
+) -> int:
+    """
+    Delete expired access tokens from the auth database.
+
+    Args:
+        now: Optional current timestamp override.
+        conn: Optional existing SQLite connection.
+
+    Returns:
+        Number of deleted token rows.
+    """
+    current_time = time.time() if now is None else now
+    connection = conn or _get_connection()
+    owns_connection = conn is None
+    try:
+        cur = connection.execute(
+            "DELETE FROM access_tokens WHERE expires_at <= ?",
+            (current_time,),
+        )
+        if owns_connection:
+            connection.commit()
+        return cur.rowcount
+    finally:
+        if owns_connection:
+            connection.close()
 
 
 def create_user(username: str, password: str) -> dict:
@@ -430,6 +462,7 @@ def create_access_token(
     expires_at = now + ttl
     conn = _get_connection()
     try:
+        purge_expired_access_tokens(now=now, conn=conn)
         cur = conn.execute(
             "INSERT INTO access_tokens"
             " (user_id, token_hash, name, expires_at, created_at)"
@@ -461,6 +494,11 @@ def verify_access_token(raw_token: str) -> dict | None:
         if not row:
             return None
         if row["expires_at"] < time.time():
+            conn.execute(
+                "DELETE FROM access_tokens WHERE token_hash = ?",
+                (token_hash,),
+            )
+            conn.commit()
             return None
         return {
             "id": row["user_id"],
@@ -475,11 +513,14 @@ def list_access_tokens(user_id: int) -> list[dict]:
     """List non-expired tokens for a user (without the raw token)."""
     conn = _get_connection()
     try:
+        current_time = time.time()
+        purge_expired_access_tokens(now=current_time, conn=conn)
         rows = conn.execute(
             "SELECT id, name, expires_at, created_at FROM access_tokens "
             "WHERE user_id = ? AND expires_at > ? ORDER BY created_at DESC",
-            (user_id, time.time()),
+            (user_id, current_time),
         ).fetchall()
+        conn.commit()
         return [dict(r) for r in rows]
     finally:
         conn.close()
@@ -1475,6 +1516,8 @@ def get_auth_stats() -> dict:
     """
     conn = _get_connection()
     try:
+        current_time = time.time()
+        purge_expired_access_tokens(now=current_time, conn=conn)
         stats: dict = {}
         stats["total_users"] = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
         stats["admin_count"] = conn.execute(
@@ -1497,7 +1540,7 @@ def get_auth_stats() -> dict:
         )
         stats["active_tokens"] = conn.execute(
             "SELECT COUNT(*) FROM access_tokens WHERE expires_at > ?",
-            (time.time(),),
+            (current_time,),
         ).fetchone()[0]
         stats["notification_subscribers"] = conn.execute(
             "SELECT COUNT(*) FROM notification_settings WHERE enabled = 1"
@@ -1508,6 +1551,7 @@ def get_auth_stats() -> dict:
         stats["active_announcements"] = conn.execute(
             "SELECT COUNT(*) FROM announcements WHERE enabled = 1"
         ).fetchone()[0]
+        conn.commit()
         return stats
     finally:
         conn.close()

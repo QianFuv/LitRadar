@@ -61,11 +61,12 @@ export default function TrackingPage() {
     enabled: !!token,
   });
 
-  const { data: notifySettings } = useQuery({
-    queryKey: ['notification-settings'],
+  const notificationSettingsQuery = useQuery({
+    queryKey: ['notification-settings', user?.id],
     queryFn: () => getNotificationSettings(token!),
     enabled: !!token,
   });
+  const notifySettings = notificationSettingsQuery.data;
 
   const normalizeSettings = useCallback(
     (settings: NotificationSettings | null | undefined): NotificationSettingsUpdate => ({
@@ -169,9 +170,9 @@ export default function TrackingPage() {
     mutationFn: () =>
       updateNotificationSettings(token!, formSettings),
     onSuccess: (savedSettings) => {
-      queryClient.setQueryData(['notification-settings'], savedSettings);
+      queryClient.setQueryData(['notification-settings', user?.id], savedSettings);
       setDraftSettings(null);
-      queryClient.invalidateQueries({ queryKey: ['notification-settings'] });
+      queryClient.invalidateQueries({ queryKey: ['notification-settings', user?.id] });
       queryClient.invalidateQueries({ queryKey: ['tracking-status'] });
       setSettingsSaved(true);
       setTimeout(() => setSettingsSaved(false), 2000);
@@ -321,6 +322,18 @@ export default function TrackingPage() {
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-5">
+          {notificationSettingsQuery.isPending && draftSettings === null ? (
+            <div className="rounded-md border px-3 py-4 text-sm text-muted-foreground">
+              正在加载已保存的推荐配置...
+            </div>
+          ) : notificationSettingsQuery.isError && draftSettings === null ? (
+            <div className="rounded-md border border-destructive/50 px-3 py-4 text-sm text-destructive">
+              {notificationSettingsQuery.error instanceof Error
+                ? notificationSettingsQuery.error.message
+                : '加载推荐配置失败'}
+            </div>
+          ) : (
+            <>
           <div className="flex items-start justify-between gap-3">
             <Label htmlFor="notify-enabled">启用推荐</Label>
             <Switch
@@ -706,6 +719,8 @@ export default function TrackingPage() {
               </span>
             )}
           </div>
+            </>
+          )}
         </CardContent>
       </Card>
 
