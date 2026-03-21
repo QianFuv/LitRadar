@@ -29,7 +29,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--db",
         type=str,
         default=None,
-        help="Database file under data/index. Defaults to the only sqlite file.",
+        help=(
+            "Database file under data/index. "
+            "When omitted, notification processes all sqlite files."
+        ),
     )
     parser.add_argument(
         "--state-dir",

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import sqlite3
+from pathlib import Path
 
 from scripts.notify.ai_selector import OpenAICompatibleSelector
 from scripts.notify.candidates import (
@@ -26,6 +27,7 @@ from scripts.notify.models import MAX_AI_SELECTION_ROUNDS
 from scripts.notify.selection import select_articles_for_subscriber
 from scripts.notify.state import (
     create_run_state,
+    load_json,
     load_state,
     save_json_atomic,
     utc_now_iso,
@@ -35,23 +37,64 @@ from scripts.notify.subscriptions import (
     load_subscribers_from_db,
 )
 from scripts.shared.constants import PROJECT_ROOT
-from scripts.shared.db_path import is_database_selected, resolve_db_path
+from scripts.shared.db_path import (
+    is_database_selected,
+    list_database_files,
+    resolve_db_path,
+)
 
 
-def run_push(args: argparse.Namespace) -> int:
+def _resolve_target_db_paths(args: argparse.Namespace) -> list[Path]:
     """
-    Execute tracking-folder push pipeline.
+    Resolve one or more target databases for a tracking push run.
 
     Args:
         args: Parsed CLI arguments.
 
     Returns:
+        Database paths to process.
+    """
+    db_name_value = str(args.db or "").strip()
+    if db_name_value:
+        try:
+            return [resolve_db_path(db_name_value)]
+        except ValueError as exc:
+            raise SystemExit(str(exc)) from exc
+
+    changes_file_value = str(getattr(args, "changes_file", "") or "").strip()
+    if changes_file_value:
+        changes_file = resolve_path(changes_file_value, PROJECT_ROOT)
+        payload = load_json(changes_file, None)
+        if not isinstance(payload, dict):
+            raise SystemExit(f"Invalid change manifest file: {changes_file}")
+        manifest_db = str(payload.get("db_name") or "").strip()
+        if not manifest_db:
+            raise SystemExit("Change manifest missing db_name; specify --db explicitly")
+        try:
+            return [resolve_db_path(manifest_db)]
+        except ValueError as exc:
+            raise SystemExit(str(exc)) from exc
+
+    db_paths = list_database_files()
+    if not db_paths:
+        raise SystemExit("No SQLite databases found")
+    return db_paths
+
+
+def _run_push_for_db(
+    args: argparse.Namespace,
+    db_path: Path,
+) -> int:
+    """
+    Execute tracking-folder push pipeline for one database.
+
+    Args:
+        args: Parsed CLI arguments.
+        db_path: Database path to process.
+
+    Returns:
         Process exit code.
     """
-    try:
-        db_path = resolve_db_path(args.db)
-    except ValueError as exc:
-        raise SystemExit(str(exc)) from exc
     state_dir = resolve_path(args.state_dir, PROJECT_ROOT)
     state_file = state_dir / f"{db_path.stem}.json"
     changes_file_value = str(getattr(args, "changes_file", "") or "").strip()
@@ -330,3 +373,22 @@ def run_push(args: argparse.Namespace) -> int:
         save_json_atomic(state_file, state)
         print("Tracking-folder push run completed successfully.")
     return 0
+
+
+def run_push(args: argparse.Namespace) -> int:
+    """
+    Execute tracking-folder push pipeline for one or more databases.
+
+    Args:
+        args: Parsed CLI arguments.
+
+    Returns:
+        Process exit code.
+    """
+    db_paths = _resolve_target_db_paths(args)
+    exit_code = 0
+    for db_path in db_paths:
+        result = _run_push_for_db(args, db_path)
+        if result != 0:
+            exit_code = result
+    return exit_code
