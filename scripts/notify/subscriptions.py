@@ -235,7 +235,7 @@ def load_subscribers_from_db() -> list[Subscriber]:
                 subscriber_id=subscriber_id,
                 name=str(row.get("username") or subscriber_id),
                 pushplus_token=token,
-                to=str(row.get("pushplus_to") or "").strip() or None,
+                channel=str(row.get("pushplus_channel") or "").strip() or None,
                 keywords=row.get("keywords", []),
                 directions=row.get("directions", []),
                 topic=(str(row.get("pushplus_topic") or "").strip() or None),

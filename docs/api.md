@@ -367,7 +367,7 @@ Cache-Control: public, max-age=300, stale-while-revalidate=600
   "pushplus_token": "token",
   "pushplus_template": "markdown",
   "pushplus_topic": "",
-  "pushplus_to": "",
+  "pushplus_channel": "wechat",
   "ai_base_url": "https://api.siliconflow.cn/v1",
   "ai_api_key": "sk-...",
   "ai_model": "deepseek-ai/DeepSeek-V3",

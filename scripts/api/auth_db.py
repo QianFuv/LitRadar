@@ -104,7 +104,7 @@ def init_auth_db() -> None:
                 pushplus_token  TEXT    NOT NULL DEFAULT '',
                 pushplus_template TEXT  NOT NULL DEFAULT 'markdown',
                 pushplus_topic  TEXT    NOT NULL DEFAULT '',
-                pushplus_to     TEXT    NOT NULL DEFAULT '',
+                pushplus_channel TEXT   NOT NULL DEFAULT 'wechat',
                 sync_to_tracking_folder INTEGER NOT NULL DEFAULT 0,
                 ai_base_url     TEXT    NOT NULL DEFAULT '',
                 ai_api_key      TEXT    NOT NULL DEFAULT '',
@@ -1162,7 +1162,8 @@ def get_notification_settings(user_id: int) -> dict | None:
     try:
         row = conn.execute(
             "SELECT id, user_id, keywords, directions, delivery_method, "
-            "pushplus_token, pushplus_template, pushplus_topic, pushplus_to, "
+            "pushplus_token, pushplus_template, pushplus_topic, "
+            "pushplus_channel, "
             "sync_to_tracking_folder, "
             "ai_base_url, ai_api_key, ai_model, ai_system_prompt, "
             "ai_backup_base_url, ai_backup_api_key, ai_backup_model, "
@@ -1192,7 +1193,7 @@ def upsert_notification_settings(
     pushplus_token: str = "",
     pushplus_template: str = "markdown",
     pushplus_topic: str = "",
-    pushplus_to: str = "",
+    pushplus_channel: str = "wechat",
     sync_to_tracking_folder: bool = False,
     ai_base_url: str = "",
     ai_api_key: str = "",
@@ -1216,7 +1217,7 @@ def upsert_notification_settings(
         pushplus_token: PushPlus token.
         pushplus_template: PushPlus template.
         pushplus_topic: PushPlus topic.
-        pushplus_to: PushPlus recipient.
+        pushplus_channel: PushPlus channel override.
         sync_to_tracking_folder: Whether PushPlus also writes favorites.
         ai_base_url: OpenAI-compatible API base URL.
         ai_api_key: OpenAI-compatible API key.
@@ -1241,7 +1242,7 @@ def upsert_notification_settings(
             "INSERT INTO notification_settings "
             "(user_id, keywords, directions, delivery_method, "
             "pushplus_token, pushplus_template, pushplus_topic, "
-            "pushplus_to, sync_to_tracking_folder, "
+            "pushplus_channel, sync_to_tracking_folder, "
             "ai_base_url, ai_api_key, ai_model, ai_system_prompt, "
             "ai_backup_base_url, ai_backup_api_key, ai_backup_model, "
             "ai_backup_system_prompt, ai_retry_attempts, "
@@ -1254,7 +1255,7 @@ def upsert_notification_settings(
             "pushplus_token = excluded.pushplus_token, "
             "pushplus_template = excluded.pushplus_template, "
             "pushplus_topic = excluded.pushplus_topic, "
-            "pushplus_to = excluded.pushplus_to, "
+            "pushplus_channel = excluded.pushplus_channel, "
             "sync_to_tracking_folder = excluded.sync_to_tracking_folder, "
             "ai_base_url = excluded.ai_base_url, "
             "ai_api_key = excluded.ai_api_key, "
@@ -1275,7 +1276,7 @@ def upsert_notification_settings(
                 pushplus_token,
                 pushplus_template,
                 pushplus_topic,
-                pushplus_to,
+                pushplus_channel,
                 int(sync_to_tracking_folder),
                 ai_base_url,
                 ai_api_key,
@@ -1310,7 +1311,7 @@ def list_notification_subscribers() -> list[dict]:
             "SELECT ns.id, ns.user_id, u.username, "
             "ns.keywords, ns.directions, ns.delivery_method, "
             "ns.pushplus_token, ns.pushplus_template, "
-            "ns.pushplus_topic, ns.pushplus_to, "
+            "ns.pushplus_topic, ns.pushplus_channel, "
             "ns.sync_to_tracking_folder, "
             "ns.ai_base_url, ns.ai_api_key, ns.ai_model, ns.ai_system_prompt, "
             "ns.ai_backup_base_url, ns.ai_backup_api_key, ns.ai_backup_model, "

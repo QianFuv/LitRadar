@@ -394,7 +394,7 @@ announcements
 - `pushplus_token`
 - `pushplus_template`
 - `pushplus_topic`
-- `pushplus_to`
+- `pushplus_channel`
 - `ai_base_url`
 - `ai_api_key`
 - `ai_model`

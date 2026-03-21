@@ -286,12 +286,13 @@ def run_notification(args: argparse.Namespace) -> int:
                             token=subscriber.pushplus_token,
                             title=message_title,
                             content=content,
-                            channel=global_config.pushplus_channel,
+                            channel=subscriber.channel
+                            or global_config.pushplus_channel,
                             template=subscriber.template
                             or global_config.pushplus_template,
                             topic=subscriber.topic or global_config.pushplus_topic,
                             option=global_config.pushplus_option,
-                            to=subscriber.to,
+                            to=None,
                         )
                         sent_at = utc_now_iso()
                         for item in accepted:

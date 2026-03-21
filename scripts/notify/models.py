@@ -12,7 +12,7 @@ DEFAULT_OPENAI_BASE_URL = "https://api.siliconflow.cn/v1"
 
 PUSHPLUS_ENDPOINT = "https://www.pushplus.plus/send"
 
-PUSHPLUS_CHANNEL = "mail"
+PUSHPLUS_CHANNEL = "wechat"
 
 DEFAULT_OPENAI_MODEL = "deepseek-ai/DeepSeek-V3"
 
@@ -68,7 +68,7 @@ class Subscriber:
         subscriber_id: Stable subscriber identifier.
         name: Display name.
         pushplus_token: PushPlus token for this user.
-        to: Optional recipient value for channels that support it.
+        channel: Optional PushPlus channel override.
         keywords: Keyword preferences.
         directions: Direction preferences.
         topic: Optional per-user PushPlus topic override.
@@ -90,7 +90,7 @@ class Subscriber:
     subscriber_id: str
     name: str
     pushplus_token: str
-    to: str | None
+    channel: str | None
     keywords: list[str]
     directions: list[str]
     topic: str | None

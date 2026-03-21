@@ -148,7 +148,7 @@ docker compose run --rm api uv run index --file utd24.csv
 | `NOTIFY_AI_SYSTEM_PROMPT` | 空 | 默认系统提示词 |
 | `NOTIFY_MAX_CANDIDATES` | `120` | AI 候选上限 |
 | `NOTIFY_TEMPERATURE` | `0.2` | AI 温度 |
-| `NOTIFY_PUSHPLUS_CHANNEL` | `mail` | PushPlus 默认渠道 |
+| `NOTIFY_PUSHPLUS_CHANNEL` | `wechat` | PushPlus 默认渠道 |
 | `NOTIFY_PUSHPLUS_TEMPLATE` | `markdown` | PushPlus 默认模板 |
 | `NOTIFY_PUSHPLUS_TOPIC` | 空 | PushPlus 默认 topic |
 | `NOTIFY_PUSHPLUS_OPTION` | 空 | PushPlus 默认 option |

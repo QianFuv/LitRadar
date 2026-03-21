@@ -59,7 +59,7 @@
 | `pushplus_token` | PushPlus 令牌 |
 | `pushplus_template` | 推送模板 |
 | `pushplus_topic` | 可选 topic |
-| `pushplus_to` | 可选收件人 |
+| `pushplus_channel` | 可选渠道，默认 `wechat` |
 | `ai_base_url` | 用户级 OpenAI 兼容接口地址 |
 | `ai_api_key` | 用户级 API Key |
 | `ai_model` | 用户级模型名 |
@@ -78,7 +78,7 @@
 | `NOTIFY_AI_SYSTEM_PROMPT` | 空 | 默认系统提示词 |
 | `NOTIFY_MAX_CANDIDATES` | `120` | 送入模型的候选上限 |
 | `NOTIFY_TEMPERATURE` | `0.2` | 模型温度 |
-| `NOTIFY_PUSHPLUS_CHANNEL` | `mail` | PushPlus 默认渠道 |
+| `NOTIFY_PUSHPLUS_CHANNEL` | `wechat` | PushPlus 默认渠道 |
 | `NOTIFY_PUSHPLUS_TEMPLATE` | `markdown` | PushPlus 默认模板 |
 | `NOTIFY_PUSHPLUS_TOPIC` | 空 | PushPlus 默认 topic |
 | `NOTIFY_PUSHPLUS_OPTION` | 空 | PushPlus 默认 option |

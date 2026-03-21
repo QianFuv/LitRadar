@@ -76,7 +76,7 @@ export default function TrackingPage() {
       pushplus_token: settings?.pushplus_token || '',
       pushplus_template: settings?.pushplus_template || 'markdown',
       pushplus_topic: settings?.pushplus_topic || '',
-      pushplus_to: settings?.pushplus_to || '',
+      pushplus_channel: settings?.pushplus_channel || 'wechat',
       sync_to_tracking_folder: settings?.sync_to_tracking_folder ?? false,
       ai_base_url: settings?.ai_base_url || '',
       ai_api_key: settings?.ai_api_key || '',
@@ -100,7 +100,7 @@ export default function TrackingPage() {
     pushplus_token: pushplusToken,
     pushplus_template: pushplusTemplate,
     pushplus_topic: pushplusTopic,
-    pushplus_to: pushplusTo,
+    pushplus_channel: pushplusChannel,
     sync_to_tracking_folder: syncToTrackingFolder,
     ai_base_url: aiBaseUrl,
     ai_api_key: aiApiKey,
@@ -662,18 +662,21 @@ export default function TrackingPage() {
                 </div>
               </div>
               <div className="space-y-1">
-                <Label htmlFor="pp-to">接收方</Label>
+                <Label htmlFor="pp-channel">渠道</Label>
                 <Input
-                  id="pp-to"
-                  value={pushplusTo}
+                  id="pp-channel"
+                  value={pushplusChannel}
                   onChange={(e) =>
                     updateDraftSettings((current) => ({
                       ...current,
-                      pushplus_to: e.target.value,
+                      pushplus_channel: e.target.value,
                     }))
                   }
-                  placeholder="可选，指定接收方"
+                  placeholder="wechat"
                 />
+                <p className="text-xs text-muted-foreground">
+                  填写 PushPlus 渠道，例如 `wechat`。
+                </p>
               </div>
               <div className="flex flex-col gap-3 rounded-md border border-dashed p-3 sm:flex-row sm:items-start sm:justify-between">
                 <div className="space-y-1">
