@@ -15,8 +15,6 @@ RUN uv sync --frozen --no-dev
 
 FROM python:3.12-slim-trixie
 
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
-
 WORKDIR /app
 
 COPY --from=build /app/.venv .venv/
@@ -32,4 +30,4 @@ ENV SIMPLE_TOKENIZER_PATH="/app/libs/simple-linux/libsimple-linux-ubuntu-latest/
 
 EXPOSE 8000
 
-CMD ["uv", "run", "api"]
+CMD ["api"]
