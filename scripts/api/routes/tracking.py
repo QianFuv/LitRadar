@@ -263,6 +263,114 @@ def _run_ai_selection(
             selector.close()
 
 
+def _send_pushplus_for_selected_articles(
+    user: dict,
+    settings: dict,
+    selected_articles: list[dict],
+    summary: str,
+) -> int:
+    """
+    Send manually selected weekly articles through PushPlus.
+
+    Args:
+        user: Authenticated user payload.
+        settings: User notification settings.
+        selected_articles: Selected article payloads with db_name and score.
+        summary: AI-generated summary text.
+
+    Returns:
+        Number of PushPlus messages sent.
+    """
+    from scripts.notify.message import build_markdown_content, build_message_title
+    from scripts.notify.models import ArticleCandidate, RankedSelection, Subscriber
+    from scripts.notify.pushplus import PushPlusClient
+    from scripts.notify.state import utc_now_iso
+    from scripts.notify.subscriptions import load_notification_config
+    from scripts.shared.converters import to_float
+    from scripts.shared.converters import to_int as _to_int
+
+    token = str(settings.get("pushplus_token") or "").strip()
+    if not token:
+        raise RuntimeError("PushPlus token is missing")
+
+    global_config, _ = load_notification_config()
+    subscriber = Subscriber(
+        subscriber_id=str(user["id"]),
+        name=str(user.get("username") or user["id"]),
+        pushplus_token=token,
+        channel=(str(settings.get("pushplus_channel") or "").strip() or None),
+        keywords=settings.get("keywords", []),
+        directions=settings.get("directions", []),
+        topic=(str(settings.get("pushplus_topic") or "").strip() or None),
+        template=(str(settings.get("pushplus_template") or "").strip() or None),
+        delivery_method="pushplus",
+        sync_to_tracking_folder=bool(settings.get("sync_to_tracking_folder")),
+    )
+
+    articles_by_db: dict[str, list[dict]] = {}
+    for article in selected_articles:
+        db_name = str(article.get("db_name") or "").strip() or "weekly"
+        articles_by_db.setdefault(db_name, []).append(article)
+
+    run_id = utc_now_iso()
+    push_client = PushPlusClient(timeout_seconds=60, retries=1)
+    try:
+        sent_count = 0
+        single_database = len(articles_by_db) == 1
+        for db_name, db_articles in articles_by_db.items():
+            selections: list[RankedSelection] = []
+            candidates_by_id: dict[int, ArticleCandidate] = {}
+
+            for candidate_id, article in enumerate(db_articles, start=1):
+                candidates_by_id[candidate_id] = ArticleCandidate(
+                    article_id=candidate_id,
+                    journal_id=int(article["journal_id"]),
+                    issue_id=_to_int(article.get("issue_id")),
+                    title=str(article.get("title") or "Untitled"),
+                    abstract=str(article.get("abstract") or ""),
+                    date=str(article.get("date") or "") or None,
+                    journal_title=str(article.get("journal_title") or "Unknown"),
+                    doi=str(article.get("doi") or "") or None,
+                    full_text_file=(str(article.get("full_text_file") or "") or None),
+                    permalink=str(article.get("permalink") or "") or None,
+                    open_access=bool(_to_int(article.get("open_access")) or 0),
+                    in_press=bool(_to_int(article.get("in_press")) or 0),
+                    within_library_holdings=bool(
+                        _to_int(article.get("within_library_holdings")) or 0
+                    ),
+                )
+                selections.append(
+                    RankedSelection(
+                        article_id=candidate_id,
+                        score=float(to_float(article.get("score")) or 0.0),
+                    )
+                )
+
+            selections.sort(key=lambda item: item.score, reverse=True)
+            content = build_markdown_content(
+                db_name=db_name,
+                run_id=run_id,
+                subscriber=subscriber,
+                summary=summary if single_database else "",
+                selections=selections,
+                candidates_by_id=candidates_by_id,
+            )
+            push_client.send(
+                token=token,
+                title=build_message_title(db_name, run_id),
+                content=content,
+                channel=subscriber.channel or global_config.pushplus_channel,
+                template=subscriber.template or global_config.pushplus_template,
+                topic=subscriber.topic or global_config.pushplus_topic,
+                option=global_config.pushplus_option,
+                to=None,
+            )
+            sent_count += 1
+        return sent_count
+    finally:
+        push_client.close()
+
+
 @router.post("/push-weekly")
 def push_weekly_to_tracking(user: CurrentUser):
     """
@@ -271,8 +379,22 @@ def push_weekly_to_tracking(user: CurrentUser):
     AI selection is required for delivery. When no usable recommendation
     configuration is available, the push is skipped.
     """
+    settings = get_notification_settings(user["id"])
+    if not settings or not settings.get("enabled", True):
+        return {
+            "pushed": 0,
+            "selected": 0,
+            "summary": "",
+            "message": "Recommendation settings are not enabled; skipped push",
+        }
+
+    delivery_method = (
+        str(settings.get("delivery_method") or "folder").strip() or "folder"
+    )
+    sync_to_tracking_folder = bool(settings.get("sync_to_tracking_folder"))
     folder = get_tracking_folder(user["id"])
-    if not folder:
+    requires_tracking_folder = delivery_method == "folder" or sync_to_tracking_folder
+    if requires_tracking_folder and not folder:
         raise HTTPException(
             status_code=400,
             detail=(
@@ -288,17 +410,8 @@ def push_weekly_to_tracking(user: CurrentUser):
             "selected": 0,
             "summary": "",
             "message": "No new weekly articles available",
-        }
-
-    settings = get_notification_settings(user["id"])
-    if not settings or not settings.get("enabled", True):
-        return {
-            "pushed": 0,
-            "selected": 0,
-            "summary": "",
-            "message": "Recommendation settings are not enabled; skipped push",
-            "folder_id": folder["id"],
-            "folder_name": folder["name"],
+            "folder_id": folder["id"] if folder else None,
+            "folder_name": folder["name"] if folder else None,
         }
 
     if not (settings.get("keywords") or settings.get("directions")):
@@ -307,8 +420,8 @@ def push_weekly_to_tracking(user: CurrentUser):
             "selected": 0,
             "summary": "",
             "message": "No keywords or directions configured; skipped push",
-            "folder_id": folder["id"],
-            "folder_name": folder["name"],
+            "folder_id": folder["id"] if folder else None,
+            "folder_name": folder["name"] if folder else None,
         }
 
     candidate_articles = _load_candidate_articles(weekly_articles)
@@ -318,8 +431,8 @@ def push_weekly_to_tracking(user: CurrentUser):
             "selected": 0,
             "summary": "",
             "message": "No article data found for weekly articles",
-            "folder_id": folder["id"],
-            "folder_name": folder["name"],
+            "folder_id": folder["id"] if folder else None,
+            "folder_name": folder["name"] if folder else None,
         }
 
     try:
@@ -335,8 +448,8 @@ def push_weekly_to_tracking(user: CurrentUser):
             "selected": 0,
             "summary": "",
             "message": f"{error}; skipped push",
-            "folder_id": folder["id"],
-            "folder_name": folder["name"],
+            "folder_id": folder["id"] if folder else None,
+            "folder_name": folder["name"] if folder else None,
         }
     except Exception:
         logger.exception("AI selection failed for user %s", user["id"])
@@ -345,8 +458,8 @@ def push_weekly_to_tracking(user: CurrentUser):
             "selected": 0,
             "summary": "",
             "message": "AI selection failed across configured endpoints; skipped push",
-            "folder_id": folder["id"],
-            "folder_name": folder["name"],
+            "folder_id": folder["id"] if folder else None,
+            "folder_name": folder["name"] if folder else None,
         }
 
     if ai_result["selected"]:
@@ -357,14 +470,60 @@ def push_weekly_to_tracking(user: CurrentUser):
             }
             for art in ai_result["selected"]
         ]
-        count = bulk_add_favorites(user["id"], folder["id"], articles_to_push)
+        synced_count = 0
+        if folder is not None and (
+            delivery_method == "folder" or sync_to_tracking_folder
+        ):
+            synced_count = bulk_add_favorites(
+                user["id"], folder["id"], articles_to_push
+            )
+
+        if delivery_method == "pushplus":
+            try:
+                pushplus_count = _send_pushplus_for_selected_articles(
+                    user=user,
+                    settings=settings,
+                    selected_articles=ai_result["selected"],
+                    summary=ai_result["summary"],
+                )
+            except Exception as error:
+                logger.exception("PushPlus delivery failed for user %s", user["id"])
+                return {
+                    "pushed": synced_count,
+                    "selected": len(ai_result["selected"]),
+                    "total_candidates": ai_result["total_candidates"],
+                    "summary": ai_result["summary"],
+                    "message": f"PushPlus delivery failed: {error}",
+                    "folder_id": folder["id"] if folder else None,
+                    "folder_name": folder["name"] if folder else None,
+                }
+
+            success_message = (
+                f"PushPlus sent successfully ({pushplus_count} message"
+                f"{'' if pushplus_count == 1 else 's'})"
+            )
+            if synced_count > 0:
+                success_message += (
+                    f"; synced {synced_count} article"
+                    f"{'' if synced_count == 1 else 's'} to the tracking folder"
+                )
+            return {
+                "pushed": synced_count,
+                "selected": len(ai_result["selected"]),
+                "total_candidates": ai_result["total_candidates"],
+                "summary": ai_result["summary"],
+                "message": success_message,
+                "folder_id": folder["id"] if folder else None,
+                "folder_name": folder["name"] if folder else None,
+            }
+
         return {
-            "pushed": count,
+            "pushed": synced_count,
             "selected": len(ai_result["selected"]),
             "total_candidates": ai_result["total_candidates"],
             "summary": ai_result["summary"],
-            "folder_id": folder["id"],
-            "folder_name": folder["name"],
+            "folder_id": folder["id"] if folder else None,
+            "folder_name": folder["name"] if folder else None,
         }
 
     return {
@@ -373,8 +532,8 @@ def push_weekly_to_tracking(user: CurrentUser):
         "summary": ai_result["summary"],
         "total_candidates": ai_result["total_candidates"],
         "message": "AI selection found no matching articles",
-        "folder_id": folder["id"],
-        "folder_name": folder["name"],
+        "folder_id": folder["id"] if folder else None,
+        "folder_name": folder["name"] if folder else None,
     }
 
 

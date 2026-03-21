@@ -165,6 +165,17 @@ export default function TrackingPage() {
       setPushResult(err instanceof Error ? err.message : '推送失败');
     },
   });
+  const requiresTrackingFolder = deliveryMethod === 'folder' || syncToTrackingFolder;
+  const manualPushLabel = pushMut.isPending
+    ? '推送中...'
+    : deliveryMethod === 'pushplus'
+      ? (syncToTrackingFolder ? '推送到 PushPlus 并同步文件夹' : '推送到 PushPlus')
+      : '推送到追踪文件夹';
+  const manualPushDescription = deliveryMethod === 'pushplus'
+    ? (syncToTrackingFolder
+        ? '将最近一周的文章按当前 AI 推荐规则发送到 PushPlus，并同步写入追踪文件夹'
+        : '将最近一周的文章按当前 AI 推荐规则发送到 PushPlus')
+    : '将最近一周的文章按当前 AI 推荐规则同步到追踪文件夹';
 
   const saveSettingsMut = useMutation({
     mutationFn: () =>
@@ -289,7 +300,7 @@ export default function TrackingPage() {
         <CardHeader>
           <CardTitle>手动推送</CardTitle>
           <CardDescription>
-            将最近一周的文章按当前 AI 推荐规则同步到追踪文件夹
+            {manualPushDescription}
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -300,10 +311,10 @@ export default function TrackingPage() {
             <Button
               className="w-full sm:w-auto"
               onClick={() => pushMut.mutate()}
-              disabled={pushMut.isPending || !status?.tracking_folder}
+              disabled={pushMut.isPending || (requiresTrackingFolder && !status?.tracking_folder)}
             >
               <Download className="h-4 w-4 mr-1" />
-              {pushMut.isPending ? '推送中...' : '推送到追踪文件夹'}
+              {manualPushLabel}
             </Button>
           </div>
           {pushResult && (
