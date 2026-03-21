@@ -264,7 +264,7 @@ def _run_ai_selection(
 
 
 @router.post("/push-weekly")
-async def push_weekly_to_tracking(user: CurrentUser):
+def push_weekly_to_tracking(user: CurrentUser):
     """
     Push weekly articles to the user's tracking folder.
 
