@@ -8,7 +8,7 @@ import sqlite3
 import threading
 import time
 import uuid
-from typing import Annotated
+from typing import Annotated, cast
 
 from fastapi import APIRouter, Depends, HTTPException
 
@@ -111,6 +111,44 @@ def _filter_weekly_articles_by_database(
         for article in weekly_articles
         if is_database_selected(selected_databases, str(article.get("db_name") or ""))
     ]
+
+
+def _group_articles_by_database(article_items: list[dict]) -> dict[str, list[dict]]:
+    """
+    Group article payloads by database name.
+
+    Args:
+        article_items: Article payloads that include `db_name`.
+
+    Returns:
+        Mapping of database name to grouped article payloads.
+    """
+    grouped: dict[str, list[dict]] = {}
+    for item in article_items:
+        db_name = str(item.get("db_name") or "").strip()
+        if not db_name:
+            continue
+        grouped.setdefault(db_name, []).append(item)
+    return grouped
+
+
+def _combine_database_summaries(summaries_by_db: dict[str, str]) -> str:
+    """
+    Combine per-database summaries into one status text.
+
+    Args:
+        summaries_by_db: Per-database summary text.
+
+    Returns:
+        Combined summary string.
+    """
+    parts: list[str] = []
+    for db_name in sorted(summaries_by_db):
+        summary = str(summaries_by_db[db_name] or "").strip()
+        if not summary:
+            continue
+        parts.append(f"[{db_name}]\n{summary}")
+    return "\n\n".join(parts)
 
 
 def _load_candidate_articles(
@@ -300,8 +338,8 @@ def _run_ai_selection(
 def _send_pushplus_for_selected_articles(
     user: dict,
     settings: dict,
-    selected_articles: list[dict],
-    summary: str,
+    selected_articles_by_db: dict[str, list[dict]],
+    summaries_by_db: dict[str, str],
 ) -> int:
     """
     Send manually selected weekly articles through PushPlus.
@@ -309,8 +347,8 @@ def _send_pushplus_for_selected_articles(
     Args:
         user: Authenticated user payload.
         settings: User notification settings.
-        selected_articles: Selected article payloads with db_name and score.
-        summary: AI-generated summary text.
+        selected_articles_by_db: Selected article payloads grouped by database.
+        summaries_by_db: AI-generated summary text grouped by database.
 
     Returns:
         Number of PushPlus messages sent.
@@ -342,17 +380,12 @@ def _send_pushplus_for_selected_articles(
         sync_to_tracking_folder=bool(settings.get("sync_to_tracking_folder")),
     )
 
-    articles_by_db: dict[str, list[dict]] = {}
-    for article in selected_articles:
-        db_name = str(article.get("db_name") or "").strip() or "weekly"
-        articles_by_db.setdefault(db_name, []).append(article)
-
     run_id = utc_now_iso()
     push_client = PushPlusClient(timeout_seconds=60, retries=1)
     try:
         sent_count = 0
-        single_database = len(articles_by_db) == 1
-        for db_name, db_articles in articles_by_db.items():
+        for db_name in sorted(selected_articles_by_db):
+            db_articles = selected_articles_by_db[db_name]
             selections: list[RankedSelection] = []
             candidates_by_id: dict[int, ArticleCandidate] = {}
 
@@ -386,7 +419,7 @@ def _send_pushplus_for_selected_articles(
                 db_name=db_name,
                 run_id=run_id,
                 subscriber=subscriber,
-                summary=summary if single_database else "",
+                summary=str(summaries_by_db.get(db_name) or ""),
                 selections=selections,
                 candidates_by_id=candidates_by_id,
             )
@@ -563,8 +596,26 @@ def _execute_weekly_push(user: dict) -> tuple[str, dict[str, object | None]]:
             "folder_name": folder["name"] if folder else None,
         }
 
+    candidate_articles_by_db = _group_articles_by_database(candidate_articles)
+    if not candidate_articles_by_db:
+        return "completed", {
+            "pushed": 0,
+            "selected": 0,
+            "summary": "",
+            "message": "No article data found for weekly articles",
+            "folder_id": folder["id"] if folder else None,
+            "folder_name": folder["name"] if folder else None,
+        }
+
+    selection_results_by_db: dict[str, dict[str, object]] = {}
+    total_candidates = 0
     try:
-        ai_result = _run_ai_selection(settings, candidate_articles)
+        for db_name in sorted(candidate_articles_by_db):
+            db_candidate_articles = candidate_articles_by_db[db_name]
+            db_ai_result = _run_ai_selection(settings, db_candidate_articles)
+            total_candidates += int(db_ai_result["total_candidates"])
+            if db_ai_result["selected"]:
+                selection_results_by_db[db_name] = db_ai_result
     except RuntimeError as error:
         logger.warning(
             "AI selection is unavailable for user %s: %s",
@@ -590,13 +641,27 @@ def _execute_weekly_push(user: dict) -> tuple[str, dict[str, object | None]]:
             "folder_name": folder["name"] if folder else None,
         }
 
-    if ai_result["selected"]:
+    if selection_results_by_db:
+        selected_articles_by_db = {
+            db_name: cast(list[dict], result["selected"])
+            for db_name, result in selection_results_by_db.items()
+        }
+        selected_articles = [
+            article
+            for db_name in sorted(selected_articles_by_db)
+            for article in selected_articles_by_db[db_name]
+        ]
+        summaries_by_db = {
+            db_name: str(result.get("summary") or "")
+            for db_name, result in selection_results_by_db.items()
+        }
+        combined_summary = _combine_database_summaries(summaries_by_db)
         articles_to_push = [
             {
                 "article_id": art["article_id"],
                 "db_name": art["db_name"],
             }
-            for art in ai_result["selected"]
+            for art in selected_articles
         ]
         synced_count = 0
         if folder is not None and (
@@ -611,16 +676,16 @@ def _execute_weekly_push(user: dict) -> tuple[str, dict[str, object | None]]:
                 pushplus_count = _send_pushplus_for_selected_articles(
                     user=user,
                     settings=settings,
-                    selected_articles=ai_result["selected"],
-                    summary=ai_result["summary"],
+                    selected_articles_by_db=selected_articles_by_db,
+                    summaries_by_db=summaries_by_db,
                 )
             except Exception as error:
                 logger.exception("PushPlus delivery failed for user %s", user["id"])
                 return "failed", {
                     "pushed": synced_count,
-                    "selected": len(ai_result["selected"]),
-                    "total_candidates": ai_result["total_candidates"],
-                    "summary": ai_result["summary"],
+                    "selected": len(selected_articles),
+                    "total_candidates": total_candidates,
+                    "summary": combined_summary,
                     "message": f"PushPlus delivery failed: {error}",
                     "folder_id": folder["id"] if folder else None,
                     "folder_name": folder["name"] if folder else None,
@@ -630,6 +695,12 @@ def _execute_weekly_push(user: dict) -> tuple[str, dict[str, object | None]]:
                 f"PushPlus sent successfully ({pushplus_count} message"
                 f"{'' if pushplus_count == 1 else 's'})"
             )
+            success_message += (
+                f"; selected {len(selected_articles)} article"
+                f"{'' if len(selected_articles) == 1 else 's'} across "
+                f"{len(selected_articles_by_db)} database"
+                f"{'' if len(selected_articles_by_db) == 1 else 's'}"
+            )
             if synced_count > 0:
                 success_message += (
                     f"; synced {synced_count} article"
@@ -637,9 +708,9 @@ def _execute_weekly_push(user: dict) -> tuple[str, dict[str, object | None]]:
                 )
             return "completed", {
                 "pushed": synced_count,
-                "selected": len(ai_result["selected"]),
-                "total_candidates": ai_result["total_candidates"],
-                "summary": ai_result["summary"],
+                "selected": len(selected_articles),
+                "total_candidates": total_candidates,
+                "summary": combined_summary,
                 "message": success_message,
                 "folder_id": folder["id"] if folder else None,
                 "folder_name": folder["name"] if folder else None,
@@ -647,9 +718,9 @@ def _execute_weekly_push(user: dict) -> tuple[str, dict[str, object | None]]:
 
         return "completed", {
             "pushed": synced_count,
-            "selected": len(ai_result["selected"]),
-            "total_candidates": ai_result["total_candidates"],
-            "summary": ai_result["summary"],
+            "selected": len(selected_articles),
+            "total_candidates": total_candidates,
+            "summary": combined_summary,
             "folder_id": folder["id"] if folder else None,
             "folder_name": folder["name"] if folder else None,
         }
@@ -657,8 +728,8 @@ def _execute_weekly_push(user: dict) -> tuple[str, dict[str, object | None]]:
     return "completed", {
         "pushed": 0,
         "selected": 0,
-        "summary": ai_result["summary"],
-        "total_candidates": ai_result["total_candidates"],
+        "summary": "",
+        "total_candidates": total_candidates,
         "message": "AI selection found no matching articles",
         "folder_id": folder["id"] if folder else None,
         "folder_name": folder["name"] if folder else None,
