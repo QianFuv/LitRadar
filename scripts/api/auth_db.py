@@ -100,6 +100,7 @@ def init_auth_db() -> None:
                                     REFERENCES users(id) ON DELETE CASCADE,
                 keywords        TEXT    NOT NULL DEFAULT '[]',
                 directions      TEXT    NOT NULL DEFAULT '[]',
+                selected_databases TEXT NOT NULL DEFAULT '[]',
                 delivery_method TEXT    NOT NULL DEFAULT 'folder',
                 pushplus_token  TEXT    NOT NULL DEFAULT '',
                 pushplus_template TEXT  NOT NULL DEFAULT 'markdown',
@@ -171,6 +172,10 @@ def init_auth_db() -> None:
             ).fetchall()
         }
         notification_migrations = {
+            "selected_databases": (
+                "ALTER TABLE notification_settings "
+                "ADD COLUMN selected_databases TEXT NOT NULL DEFAULT '[]'"
+            ),
             "ai_base_url": (
                 "ALTER TABLE notification_settings "
                 "ADD COLUMN ai_base_url TEXT NOT NULL DEFAULT ''"
@@ -1161,7 +1166,8 @@ def get_notification_settings(user_id: int) -> dict | None:
     conn = _get_connection()
     try:
         row = conn.execute(
-            "SELECT id, user_id, keywords, directions, delivery_method, "
+            "SELECT id, user_id, keywords, directions, selected_databases, "
+            "delivery_method, "
             "pushplus_token, pushplus_template, pushplus_topic, "
             "pushplus_channel, "
             "sync_to_tracking_folder, "
@@ -1177,6 +1183,7 @@ def get_notification_settings(user_id: int) -> dict | None:
         result = dict(row)
         result["keywords"] = json.loads(result["keywords"])
         result["directions"] = json.loads(result["directions"])
+        result["selected_databases"] = json.loads(result["selected_databases"])
         result["sync_to_tracking_folder"] = bool(result["sync_to_tracking_folder"])
         result["ai_retry_attempts"] = max(1, int(result["ai_retry_attempts"]))
         result["enabled"] = bool(result["enabled"])
@@ -1189,6 +1196,7 @@ def upsert_notification_settings(
     user_id: int,
     keywords: list[str],
     directions: list[str],
+    selected_databases: list[str],
     delivery_method: str,
     pushplus_token: str = "",
     pushplus_template: str = "markdown",
@@ -1213,6 +1221,7 @@ def upsert_notification_settings(
         user_id: The user ID.
         keywords: Keyword preferences.
         directions: Research direction preferences.
+        selected_databases: Databases enabled for this user. Empty means all.
         delivery_method: 'folder' or 'pushplus'.
         pushplus_token: PushPlus token.
         pushplus_template: PushPlus template.
@@ -1236,21 +1245,23 @@ def upsert_notification_settings(
     now = time.time()
     keywords_json = json.dumps(keywords, ensure_ascii=False)
     directions_json = json.dumps(directions, ensure_ascii=False)
+    selected_databases_json = json.dumps(selected_databases, ensure_ascii=False)
     conn = _get_connection()
     try:
         conn.execute(
             "INSERT INTO notification_settings "
-            "(user_id, keywords, directions, delivery_method, "
+            "(user_id, keywords, directions, selected_databases, delivery_method, "
             "pushplus_token, pushplus_template, pushplus_topic, "
             "pushplus_channel, sync_to_tracking_folder, "
             "ai_base_url, ai_api_key, ai_model, ai_system_prompt, "
             "ai_backup_base_url, ai_backup_api_key, ai_backup_model, "
             "ai_backup_system_prompt, ai_retry_attempts, "
             "enabled, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
             "ON CONFLICT(user_id) DO UPDATE SET "
             "keywords = excluded.keywords, "
             "directions = excluded.directions, "
+            "selected_databases = excluded.selected_databases, "
             "delivery_method = excluded.delivery_method, "
             "pushplus_token = excluded.pushplus_token, "
             "pushplus_template = excluded.pushplus_template, "
@@ -1272,6 +1283,7 @@ def upsert_notification_settings(
                 user_id,
                 keywords_json,
                 directions_json,
+                selected_databases_json,
                 delivery_method,
                 pushplus_token,
                 pushplus_template,
@@ -1309,7 +1321,8 @@ def list_notification_subscribers() -> list[dict]:
     try:
         rows = conn.execute(
             "SELECT ns.id, ns.user_id, u.username, "
-            "ns.keywords, ns.directions, ns.delivery_method, "
+            "ns.keywords, ns.directions, ns.selected_databases, "
+            "ns.delivery_method, "
             "ns.pushplus_token, ns.pushplus_template, "
             "ns.pushplus_topic, ns.pushplus_channel, "
             "ns.sync_to_tracking_folder, "
@@ -1326,6 +1339,7 @@ def list_notification_subscribers() -> list[dict]:
             item = dict(row)
             item["keywords"] = json.loads(item["keywords"])
             item["directions"] = json.loads(item["directions"])
+            item["selected_databases"] = json.loads(item["selected_databases"])
             item["sync_to_tracking_folder"] = bool(item["sync_to_tracking_folder"])
             item["ai_retry_attempts"] = max(1, int(item["ai_retry_attempts"]))
             item["enabled"] = bool(item["enabled"])

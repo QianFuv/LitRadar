@@ -333,6 +333,7 @@ export interface NotificationSettings {
   user_id: number;
   keywords: string[];
   directions: string[];
+  selected_databases: string[];
   delivery_method: 'folder' | 'pushplus';
   pushplus_token: string;
   pushplus_template: string;
@@ -356,6 +357,7 @@ export interface NotificationSettings {
 export interface NotificationSettingsUpdate {
   keywords: string[];
   directions: string[];
+  selected_databases: string[];
   delivery_method: 'folder' | 'pushplus';
   pushplus_token: string;
   pushplus_template: string;

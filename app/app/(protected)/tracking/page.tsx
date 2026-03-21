@@ -6,6 +6,7 @@ import { ArrowLeft, Radar, FolderPlus, Download, Save, X, Plus } from 'lucide-re
 
 import { useAuth } from '@/lib/auth-context';
 import {
+  getDatabases,
   getTrackingStatus,
   getFolders,
   createFolder,
@@ -37,7 +38,10 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
+import { Checkbox } from '@/components/ui/checkbox';
 import { useState, useCallback, useEffect } from 'react';
+
+const EMPTY_DATABASES: string[] = [];
 
 export default function TrackingPage() {
   const { user, token } = useAuth();
@@ -58,6 +62,12 @@ export default function TrackingPage() {
     enabled: !!token,
   });
 
+  const databasesQuery = useQuery({
+    queryKey: ['databases'],
+    queryFn: () => getDatabases(),
+  });
+  const availableDatabases = databasesQuery.data ?? EMPTY_DATABASES;
+
   const { data: folders = [] } = useQuery({
     queryKey: ['folders', user?.id],
     queryFn: () => getFolders(token!),
@@ -75,6 +85,7 @@ export default function TrackingPage() {
     (settings: NotificationSettings | null | undefined): NotificationSettingsUpdate => ({
       keywords: settings?.keywords || [],
       directions: settings?.directions || [],
+      selected_databases: settings?.selected_databases || [],
       delivery_method: settings?.delivery_method || 'folder',
       pushplus_token: settings?.pushplus_token || '',
       pushplus_template: settings?.pushplus_template || 'markdown',
@@ -99,6 +110,7 @@ export default function TrackingPage() {
   const {
     keywords,
     directions,
+    selected_databases: selectedDatabases,
     delivery_method: deliveryMethod,
     pushplus_token: pushplusToken,
     pushplus_template: pushplusTemplate,
@@ -165,6 +177,19 @@ export default function TrackingPage() {
     },
   });
   const requiresTrackingFolder = deliveryMethod === 'folder' || syncToTrackingFolder;
+  const normalizedSelectedDatabases = useCallback(
+    (selection: string[]): string[] => {
+      const allowed = new Set(availableDatabases);
+      const next = availableDatabases.filter((dbName) => allowed.has(dbName) && selection.includes(dbName));
+      if (next.length === 0 || next.length === availableDatabases.length) {
+        return [];
+      }
+      return next;
+    },
+    [availableDatabases],
+  );
+  const effectiveSelectedDatabases = normalizedSelectedDatabases(selectedDatabases);
+  const allDatabasesSelected = availableDatabases.length === 0 || effectiveSelectedDatabases.length === 0;
   const manualPushLabel = pushMut.isPending || isPushPolling
     ? '推送中...'
     : deliveryMethod === 'pushplus'
@@ -172,9 +197,9 @@ export default function TrackingPage() {
       : '推送到追踪文件夹';
   const manualPushDescription = deliveryMethod === 'pushplus'
     ? (syncToTrackingFolder
-        ? '将最近一周的文章按当前 AI 推荐规则发送到 PushPlus，并同步写入追踪文件夹。任务会在后台执行。'
-        : '将最近一周的文章按当前 AI 推荐规则发送到 PushPlus。任务会在后台执行。')
-    : '将最近一周的文章按当前 AI 推荐规则同步到追踪文件夹。任务会在后台执行。';
+        ? '将选中数据库中最近一周的文章按当前 AI 推荐规则发送到 PushPlus，并同步写入追踪文件夹。任务会在后台执行。'
+        : '将选中数据库中最近一周的文章按当前 AI 推荐规则发送到 PushPlus。任务会在后台执行。')
+    : '将选中数据库中最近一周的文章按当前 AI 推荐规则同步到追踪文件夹。任务会在后台执行。';
 
   const formatManualPushResult = useCallback((data: ManualPushStatus): string => {
     if (data.message) {
@@ -229,7 +254,10 @@ export default function TrackingPage() {
 
   const saveSettingsMut = useMutation({
     mutationFn: () =>
-      updateNotificationSettings(token!, formSettings),
+      updateNotificationSettings(token!, {
+        ...formSettings,
+        selected_databases: effectiveSelectedDatabases,
+      }),
     onSuccess: (savedSettings) => {
       queryClient.setQueryData(['notification-settings', user?.id], savedSettings);
       setDraftSettings(null);
@@ -260,6 +288,27 @@ export default function TrackingPage() {
       }));
     }
     setDirectionInput('');
+  }
+
+  function selectAllDatabases() {
+    updateDraftSettings((current) => ({
+      ...current,
+      selected_databases: [],
+    }));
+  }
+
+  function setDatabaseSelected(dbName: string, checked: boolean) {
+    updateDraftSettings((current) => {
+      const currentSelection = normalizedSelectedDatabases(current.selected_databases);
+      const baseSelection = currentSelection.length === 0 ? [...availableDatabases] : [...currentSelection];
+      const nextSelection = checked
+        ? [...baseSelection, dbName]
+        : baseSelection.filter((name) => name !== dbName);
+      return {
+        ...current,
+        selected_databases: normalizedSelectedDatabases(nextSelection),
+      };
+    });
   }
 
   if (!user) {
@@ -491,6 +540,74 @@ export default function TrackingPage() {
                 <Plus className="h-4 w-4" />
               </Button>
             </div>
+          </div>
+
+          <div className="space-y-3 rounded-md border p-3">
+            <div className="space-y-1">
+              <Label className="text-base">推送数据库</Label>
+              <p className="text-xs text-muted-foreground">
+                手动推送和自动推送都会按这里的数据库范围执行；不限制时表示全部数据库。
+              </p>
+            </div>
+            {databasesQuery.isPending ? (
+              <div className="rounded-md border border-dashed px-3 py-4 text-sm text-muted-foreground">
+                正在加载数据库列表...
+              </div>
+            ) : databasesQuery.isError ? (
+              <div className="rounded-md border border-destructive/50 px-3 py-4 text-sm text-destructive">
+                {databasesQuery.error instanceof Error
+                  ? databasesQuery.error.message
+                  : '加载数据库列表失败'}
+              </div>
+            ) : availableDatabases.length === 0 ? (
+              <div className="rounded-md border border-dashed px-3 py-4 text-sm text-muted-foreground">
+                当前没有可用数据库。
+              </div>
+            ) : (
+              <div className="space-y-3">
+                <div className="flex flex-col gap-2 rounded-md border border-dashed p-3 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="space-y-1">
+                    <div className="text-sm font-medium">全部数据库</div>
+                    <p className="text-xs text-muted-foreground">
+                      选中后，新增加的数据库也会自动纳入推送范围。
+                    </p>
+                  </div>
+                  <Button
+                    type="button"
+                    variant={allDatabasesSelected ? 'default' : 'outline'}
+                    size="sm"
+                    className="w-full sm:w-auto"
+                    onClick={selectAllDatabases}
+                  >
+                    设为全部数据库
+                  </Button>
+                </div>
+                <div className="grid gap-2 sm:grid-cols-2">
+                  {availableDatabases.map((dbName) => {
+                    const checked = allDatabasesSelected || effectiveSelectedDatabases.includes(dbName);
+                    return (
+                      <label
+                        key={dbName}
+                        className="flex items-start gap-3 rounded-md border px-3 py-2 text-sm"
+                      >
+                        <Checkbox
+                          checked={checked}
+                          onCheckedChange={(nextChecked) => setDatabaseSelected(dbName, Boolean(nextChecked))}
+                        />
+                        <span className="break-all">{dbName}</span>
+                      </label>
+                    );
+                  })}
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  当前范围:
+                  {' '}
+                  {allDatabasesSelected
+                    ? `全部数据库（${availableDatabases.length} 个）`
+                    : `已选 ${effectiveSelectedDatabases.length} / ${availableDatabases.length} 个数据库`}
+                </p>
+              </div>
+            )}
           </div>
 
           <div className="space-y-2">

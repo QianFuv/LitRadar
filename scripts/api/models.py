@@ -370,6 +370,7 @@ class InviteCodeResponse(BaseModel):
 class NotificationSettingsUpdate(BaseModel):
     keywords: list[str] = Field(default_factory=list)
     directions: list[str] = Field(default_factory=list)
+    selected_databases: list[str] = Field(default_factory=list)
     delivery_method: str = "folder"
     pushplus_token: str = ""
     pushplus_template: str = "markdown"
@@ -393,6 +394,7 @@ class NotificationSettingsResponse(BaseModel):
     user_id: int
     keywords: list[str]
     directions: list[str]
+    selected_databases: list[str]
     delivery_method: str
     pushplus_token: str
     pushplus_template: str

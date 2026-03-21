@@ -71,6 +71,7 @@ class Subscriber:
         channel: Optional PushPlus channel override.
         keywords: Keyword preferences.
         directions: Direction preferences.
+        selected_databases: Enabled databases for this subscriber. Empty means all.
         topic: Optional per-user PushPlus topic override.
         template: Optional per-user PushPlus template override.
         delivery_method: 'pushplus', 'folder', or 'both'.
@@ -93,6 +94,7 @@ class Subscriber:
     channel: str | None
     keywords: list[str]
     directions: list[str]
+    selected_databases: list[str]
     topic: str | None
     template: str | None
     delivery_method: str = "pushplus"

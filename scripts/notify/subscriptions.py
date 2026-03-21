@@ -238,6 +238,7 @@ def load_subscribers_from_db() -> list[Subscriber]:
                 channel=str(row.get("pushplus_channel") or "").strip() or None,
                 keywords=row.get("keywords", []),
                 directions=row.get("directions", []),
+                selected_databases=row.get("selected_databases", []),
                 topic=(str(row.get("pushplus_topic") or "").strip() or None),
                 template=(str(row.get("pushplus_template") or "").strip() or None),
                 delivery_method=method,

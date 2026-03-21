@@ -35,7 +35,7 @@ from scripts.notify.subscriptions import (
     load_subscribers_from_db,
 )
 from scripts.shared.constants import PROJECT_ROOT
-from scripts.shared.db_path import resolve_db_path
+from scripts.shared.db_path import is_database_selected, resolve_db_path
 
 
 def run_push(args: argparse.Namespace) -> int:
@@ -155,7 +155,9 @@ def run_push(args: argparse.Namespace) -> int:
         folder_subscribers = [
             sub
             for sub in subscribers
-            if sub.delivery_method == "folder" and sub.tracking_folder_id is not None
+            if sub.delivery_method == "folder"
+            and sub.tracking_folder_id is not None
+            and is_database_selected(sub.selected_databases, db_path.name)
         ]
 
         if not folder_subscribers:

@@ -26,6 +26,11 @@ from scripts.api.models import (
 )
 from scripts.shared.constants import API_PREFIX, PROJECT_ROOT
 from scripts.shared.converters import to_int
+from scripts.shared.db_path import (
+    is_database_selected,
+    list_database_files,
+    normalize_database_names,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -85,6 +90,27 @@ def _load_latest_weekly_articles() -> list[dict]:
                 )
 
     return articles
+
+
+def _filter_weekly_articles_by_database(
+    weekly_articles: list[dict],
+    selected_databases: list[str] | tuple[str, ...] | set[str] | None,
+) -> list[dict]:
+    """
+    Filter weekly article pairs by selected databases.
+
+    Args:
+        weekly_articles: Weekly article items with `db_name`.
+        selected_databases: Selected database names. Empty means all.
+
+    Returns:
+        Filtered weekly article items.
+    """
+    return [
+        article
+        for article in weekly_articles
+        if is_database_selected(selected_databases, str(article.get("db_name") or ""))
+    ]
 
 
 def _load_candidate_articles(
@@ -177,6 +203,7 @@ def _run_ai_selection(
         channel=settings.get("pushplus_channel") or None,
         keywords=settings.get("keywords", []),
         directions=settings.get("directions", []),
+        selected_databases=settings.get("selected_databases", []),
         topic=settings.get("pushplus_topic") or None,
         template=settings.get("pushplus_template") or None,
         ai_base_url=(str(settings.get("ai_base_url") or "").strip() or None),
@@ -308,6 +335,7 @@ def _send_pushplus_for_selected_articles(
         channel=(str(settings.get("pushplus_channel") or "").strip() or None),
         keywords=settings.get("keywords", []),
         directions=settings.get("directions", []),
+        selected_databases=settings.get("selected_databases", []),
         topic=(str(settings.get("pushplus_topic") or "").strip() or None),
         template=(str(settings.get("pushplus_template") or "").strip() or None),
         delivery_method="pushplus",
@@ -484,6 +512,7 @@ def _execute_weekly_push(user: dict) -> tuple[str, dict[str, object | None]]:
     delivery_method = (
         str(settings.get("delivery_method") or "folder").strip() or "folder"
     )
+    selected_databases = normalize_database_names(settings.get("selected_databases"))
     sync_to_tracking_folder = bool(settings.get("sync_to_tracking_folder"))
     folder = get_tracking_folder(user["id"])
     requires_tracking_folder = delivery_method == "folder" or sync_to_tracking_folder
@@ -496,13 +525,19 @@ def _execute_weekly_push(user: dict) -> tuple[str, dict[str, object | None]]:
             ),
         )
 
-    weekly_articles = _load_latest_weekly_articles()
+    weekly_articles = _filter_weekly_articles_by_database(
+        _load_latest_weekly_articles(),
+        selected_databases,
+    )
     if not weekly_articles:
+        message = "No new weekly articles available"
+        if selected_databases:
+            message = "No new weekly articles available in selected databases"
         return "completed", {
             "pushed": 0,
             "selected": 0,
             "summary": "",
-            "message": "No new weekly articles available",
+            "message": message,
             "folder_id": folder["id"] if folder else None,
             "folder_name": folder["name"] if folder else None,
         }
@@ -734,12 +769,19 @@ async def tracking_status(user: CurrentUser):
     folder = get_tracking_folder(user["id"])
     folders = list_folders(user["id"])
     settings = get_notification_settings(user["id"])
+    selected_databases = normalize_database_names(
+        settings.get("selected_databases") if settings else []
+    )
+    weekly_articles = _filter_weekly_articles_by_database(
+        _load_latest_weekly_articles(),
+        selected_databases,
+    )
     return {
         "tracking_folder": (
             {"id": folder["id"], "name": folder["name"]} if folder else None
         ),
         "total_folders": len(folders),
-        "weekly_articles_available": len(_load_latest_weekly_articles()),
+        "weekly_articles_available": len(weekly_articles),
         "notification_configured": settings is not None,
     }
 
@@ -762,6 +804,18 @@ async def update_settings(
     user: CurrentUser,
 ):
     """Create or update the user's notification settings."""
+    available_databases = [path.name for path in list_database_files()]
+    selected_databases = normalize_database_names(body.selected_databases)
+    invalid_databases = [
+        db_name for db_name in selected_databases if db_name not in available_databases
+    ]
+    if invalid_databases:
+        raise HTTPException(
+            status_code=400,
+            detail=("Unknown databases: " + ", ".join(invalid_databases)),
+        )
+    if selected_databases and set(selected_databases) == set(available_databases):
+        selected_databases = []
     if body.delivery_method not in ALLOWED_DELIVERY_METHODS:
         raise HTTPException(
             status_code=400,
@@ -791,6 +845,7 @@ async def update_settings(
         user_id=user["id"],
         keywords=[k.strip() for k in body.keywords if k.strip()],
         directions=[d.strip() for d in body.directions if d.strip()],
+        selected_databases=selected_databases,
         delivery_method=body.delivery_method,
         pushplus_token=body.pushplus_token.strip(),
         pushplus_template=body.pushplus_template.strip() or "markdown",

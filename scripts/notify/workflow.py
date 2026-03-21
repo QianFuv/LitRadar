@@ -39,7 +39,7 @@ from scripts.notify.subscriptions import (
 )
 from scripts.shared.constants import PROJECT_ROOT
 from scripts.shared.converters import to_int
-from scripts.shared.db_path import resolve_db_path
+from scripts.shared.db_path import is_database_selected, resolve_db_path
 
 
 def run_notification(args: argparse.Namespace) -> int:
@@ -160,7 +160,10 @@ def run_notification(args: argparse.Namespace) -> int:
         global_config, defaults = load_notification_config()
         subscribers = load_subscribers_from_db()
         pushplus_subscribers = [
-            sub for sub in subscribers if sub.delivery_method == "pushplus"
+            sub
+            for sub in subscribers
+            if sub.delivery_method == "pushplus"
+            and is_database_selected(sub.selected_databases, db_path.name)
         ]
 
         if not pushplus_subscribers:
