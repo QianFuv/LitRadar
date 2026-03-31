@@ -208,8 +208,8 @@ export default function WeeklyUpdatesPage() {
     isError: weeklyError,
     error: weeklyErrorData,
   } = useQuery({
-    queryKey: ['weekly-updates', 7],
-    queryFn: () => getWeeklyUpdates(7, token!),
+    queryKey: ['weekly-updates'],
+    queryFn: () => getWeeklyUpdates(token!),
     enabled: !!token,
     staleTime: 5 * 60 * 1000,
   });

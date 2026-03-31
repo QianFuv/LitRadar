@@ -4,12 +4,11 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 import aiosqlite
-from fastapi import Query
 
 from scripts.api.dependencies import fetch_all
 from scripts.api.models import (
@@ -20,8 +19,6 @@ from scripts.api.models import (
     WeeklyUpdatesResponse,
 )
 from scripts.shared.constants import INDEX_DIR, PUSH_STATE_DIR
-
-MAX_WEEKLY_RANGE_DAYS = 31
 
 
 def parse_iso_datetime(value: str) -> datetime | None:
@@ -44,19 +41,6 @@ def parse_iso_datetime(value: str) -> datetime | None:
     if parsed.tzinfo is None:
         return parsed.replace(tzinfo=UTC)
     return parsed.astimezone(UTC)
-
-
-def normalize_window_days(window_days: int) -> int:
-    """
-    Normalize weekly update query window days.
-
-    Args:
-        window_days: Requested day range.
-
-    Returns:
-        Clamped day range.
-    """
-    return max(1, min(MAX_WEEKLY_RANGE_DAYS, int(window_days)))
 
 
 def parse_manifest_generated_at(payload: dict[str, Any]) -> datetime:
@@ -106,21 +90,17 @@ def extract_added_article_ids(payload: dict[str, Any]) -> list[int]:
 
 def parse_weekly_manifest(
     payload: dict[str, Any],
-    window_start: datetime,
 ) -> WeeklyManifestSummary | None:
     """
     Parse one raw manifest into a validated weekly summary object.
 
     Args:
         payload: Manifest JSON payload.
-        window_start: Inclusive lower bound timestamp.
 
     Returns:
-        Weekly summary object or None when invalid/out of range.
+        Weekly summary object or None when invalid.
     """
     generated_at = parse_manifest_generated_at(payload)
-    if generated_at < window_start:
-        return None
 
     db_name = parse_db_name_from_manifest(payload)
     if not db_name:
@@ -140,22 +120,15 @@ def parse_weekly_manifest(
     )
 
 
-def load_weekly_manifest_payloads(window_days: int) -> list[WeeklyManifestSummary]:
+def load_weekly_manifest_payloads() -> list[WeeklyManifestSummary]:
     """
-    Load recent changes manifest payloads from push_state.
-
-    Args:
-        window_days: Number of days in lookback window.
+    Load all changes manifest payloads from push_state.
 
     Returns:
         Sorted weekly manifest summaries.
     """
     if not PUSH_STATE_DIR.exists():
         return []
-
-    normalized_days = normalize_window_days(window_days)
-    now = datetime.now(UTC)
-    window_start = now - timedelta(days=normalized_days)
 
     manifest_entries: list[WeeklyManifestSummary] = []
     for path in sorted(PUSH_STATE_DIR.glob("*.changes.json")):
@@ -165,7 +138,7 @@ def load_weekly_manifest_payloads(window_days: int) -> list[WeeklyManifestSummar
             continue
         if not isinstance(payload, dict):
             continue
-        parsed = parse_weekly_manifest(payload, window_start)
+        parsed = parse_weekly_manifest(payload)
         if parsed is None:
             continue
         manifest_entries.append(parsed)
@@ -291,27 +264,20 @@ async def fetch_articles_by_ids(
     return [WeeklyArticleRecord(**row) for row in ordered_rows]
 
 
-async def get_weekly_updates(
-    window_days: int = Query(default=7, ge=1, le=MAX_WEEKLY_RANGE_DAYS),
-) -> WeeklyUpdatesResponse:
+async def get_weekly_updates() -> WeeklyUpdatesResponse:
     """
     List weekly new-article updates grouped by database and journal.
-
-    Args:
-        window_days: Lookback window in days.
 
     Returns:
         Weekly updates response grouped by database and journal.
     """
-    normalized_days = normalize_window_days(window_days)
     now = datetime.now(UTC)
-    window_start = now - timedelta(days=normalized_days)
 
-    manifests = load_weekly_manifest_payloads(normalized_days)
+    manifests = load_weekly_manifest_payloads()
     if not manifests:
         return WeeklyUpdatesResponse(
             generated_at=now.isoformat().replace("+00:00", "Z"),
-            window_start=window_start.isoformat().replace("+00:00", "Z"),
+            window_start=now.isoformat().replace("+00:00", "Z"),
             window_end=now.isoformat().replace("+00:00", "Z"),
             databases=[],
         )
@@ -385,9 +351,13 @@ async def get_weekly_updates(
         reverse=True,
     )
 
+    manifest_times = [m.generated_at for m in manifests]
+    window_end = max(manifest_times)
+    window_start = min(manifest_times)
+
     return WeeklyUpdatesResponse(
         generated_at=now.isoformat().replace("+00:00", "Z"),
         window_start=window_start.isoformat().replace("+00:00", "Z"),
-        window_end=now.isoformat().replace("+00:00", "Z"),
+        window_end=window_end.isoformat().replace("+00:00", "Z"),
         databases=db_updates,
     )

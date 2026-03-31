@@ -204,11 +204,8 @@ export async function getJournalOptions(token: string): Promise<JournalOption[]>
   return res.json();
 }
 
-export async function getWeeklyUpdates(windowDays: number = 7, token?: string): Promise<WeeklyUpdatesResponse> {
-  const params = new URLSearchParams();
-  params.set('window_days', String(windowDays));
+export async function getWeeklyUpdates(token?: string): Promise<WeeklyUpdatesResponse> {
   const url = new URL('/api/weekly-updates', resolveBase());
-  url.search = params.toString();
   const res = token ? await authFetch(url.toString(), token) : await fetch(url.toString());
   if (!res.ok) {
     throw new Error('获取每周更新失败');
