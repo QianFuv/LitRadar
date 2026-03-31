@@ -43,28 +43,28 @@ const COMMAND_PRESETS: {
   label: string;
   value: Exclude<CommandPresetId, 'custom'>;
 }[] = [
-  { value: 'index-update', label: '索引更新', command: 'uv run index --update' },
+  { value: 'index-update', label: '索引更新', command: 'index --update' },
   {
     value: 'index-update-folder',
     label: '索引更新 + 文件夹推送',
-    command: 'uv run index --update && uv run push',
+    command: 'index --update && push',
   },
   {
     value: 'index-update-external',
     label: '索引更新 + 外部推送',
-    command: 'uv run index --update && uv run notify',
+    command: 'index --update && notify',
   },
   {
     value: 'index-update-both',
     label: '索引更新 + 双推送',
-    command: 'uv run index --update && uv run notify && uv run push',
+    command: 'index --update && notify && push',
   },
-  { value: 'folder-only', label: '仅文件夹推送', command: 'uv run push' },
-  { value: 'external-only', label: '仅外部推送', command: 'uv run notify' },
+  { value: 'folder-only', label: '仅文件夹推送', command: 'push' },
+  { value: 'external-only', label: '仅外部推送', command: 'notify' },
 ];
 
 const DEFAULT_FORM: TaskFormState = {
-  command: 'uv run index --update && uv run notify',
+  command: 'index --update && notify',
   cron: '0 8 * * *',
   enabled: true,
   name: '',
