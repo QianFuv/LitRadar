@@ -12,9 +12,9 @@ jobs:
     outputs:
       mcp: ${{ steps.filter.outputs.mcp }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
-      - uses: dorny/paths-filter@v3
+      - uses: dorny/paths-filter@v4
         id: filter
         with:
           filters: |
@@ -25,14 +25,16 @@ jobs:
     needs: changes
     if: needs.changes.outputs.mcp == 'true'
     runs-on: ubuntu-latest
+    environment: npm
     permissions:
       contents: read
+      id-token: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "24"
           registry-url: "https://registry.npmjs.org"
           cache: "npm"
           cache-dependency-path: "mcp/package-lock.json"
@@ -64,6 +66,4 @@ jobs:
       - name: Publish package
         if: steps.version.outputs.publish == 'true'
         working-directory: mcp
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: npm publish --access public
+        run: npm publish --access public --provenance
