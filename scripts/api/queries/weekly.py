@@ -80,7 +80,7 @@ def parse_manifest_generated_at(payload: dict[str, Any]) -> datetime:
 
 def extract_added_article_ids(payload: dict[str, Any]) -> list[int]:
     """
-    Extract notifiable added article IDs from a changes manifest payload.
+    Extract all added article IDs (notifiable + backfill) from a changes manifest.
 
     Args:
         payload: Manifest JSON payload.
@@ -88,18 +88,19 @@ def extract_added_article_ids(payload: dict[str, Any]) -> list[int]:
     Returns:
         Unique article IDs preserving first appearance order.
     """
-    raw_ids = payload.get("notifiable_article_ids")
-    if not isinstance(raw_ids, list):
-        return []
     unique_ids: list[int] = []
     seen: set[int] = set()
-    for item in raw_ids:
-        if not isinstance(item, int):
+    for key in ("notifiable_article_ids", "backfill_article_ids"):
+        raw_ids = payload.get(key)
+        if not isinstance(raw_ids, list):
             continue
-        if item in seen:
-            continue
-        seen.add(item)
-        unique_ids.append(item)
+        for item in raw_ids:
+            if not isinstance(item, int):
+                continue
+            if item in seen:
+                continue
+            seen.add(item)
+            unique_ids.append(item)
     return unique_ids
 
 

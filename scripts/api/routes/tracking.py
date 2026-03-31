@@ -72,22 +72,22 @@ def _load_latest_weekly_articles() -> list[dict]:
         if not db_name:
             continue
 
-        delivered_articles = state.get("notifiable_article_ids")
-        if not isinstance(delivered_articles, list):
-            continue
-
-        for aid in delivered_articles:
-            if isinstance(aid, int):
-                pair = (db_name, aid)
-                if pair in seen_pairs:
-                    continue
-                seen_pairs.add(pair)
-                articles.append(
-                    {
-                        "article_id": aid,
-                        "db_name": db_name,
-                    }
-                )
+        for key in ("notifiable_article_ids", "backfill_article_ids"):
+            id_list = state.get(key)
+            if not isinstance(id_list, list):
+                continue
+            for aid in id_list:
+                if isinstance(aid, int):
+                    pair = (db_name, aid)
+                    if pair in seen_pairs:
+                        continue
+                    seen_pairs.add(pair)
+                    articles.append(
+                        {
+                            "article_id": aid,
+                            "db_name": db_name,
+                        }
+                    )
 
     return articles
 
