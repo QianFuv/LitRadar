@@ -545,7 +545,8 @@ def list_access_tokens(user_id: int) -> list[dict]:
         purge_expired_access_tokens(now=current_time, conn=conn)
         rows = conn.execute(
             "SELECT id, name, expires_at, created_at FROM access_tokens "
-            "WHERE user_id = ? AND expires_at > ? ORDER BY created_at DESC",
+            "WHERE user_id = ? AND expires_at > ? AND name != 'login' "
+            "ORDER BY created_at DESC",
             (user_id, current_time),
         ).fetchall()
         conn.commit()
