@@ -98,7 +98,7 @@ class PaperScannerClient {
     }
 
     const headers = new Headers();
-    if (options.auth && this.apiToken) {
+    if (this.apiToken) {
       headers.set("Authorization", `Bearer ${this.apiToken}`);
     }
 
