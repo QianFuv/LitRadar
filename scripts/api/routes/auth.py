@@ -18,6 +18,7 @@ from scripts.api.auth_db import (
     register_with_invite,
     revoke_access_token,
     revoke_access_token_value,
+    revoke_tokens_by_name,
     verify_user,
 )
 from scripts.api.auth_deps import get_current_user
@@ -74,6 +75,7 @@ async def login(body: LoginRequest):
     user = verify_user(body.username.strip(), body.password)
     if not user:
         raise HTTPException(status_code=401, detail="Invalid username or password")
+    revoke_tokens_by_name(user["id"], "login")
     token_data = create_access_token(user["id"], name="login")
     return LoginResponse(
         user=UserResponse(

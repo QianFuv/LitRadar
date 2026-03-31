@@ -457,6 +457,29 @@ def change_password(user_id: int, old_password: str, new_password: str) -> bool:
         conn.close()
 
 
+def revoke_tokens_by_name(user_id: int, name: str) -> int:
+    """
+    Revoke all access tokens for a user that match the given name.
+
+    Args:
+        user_id: User identifier.
+        name: Token name to match.
+
+    Returns:
+        Number of tokens revoked.
+    """
+    conn = _get_connection()
+    try:
+        cur = conn.execute(
+            "DELETE FROM access_tokens WHERE user_id = ? AND name = ?",
+            (user_id, name),
+        )
+        conn.commit()
+        return cur.rowcount
+    finally:
+        conn.close()
+
+
 def create_access_token(
     user_id: int, name: str = "", ttl: int = ACCESS_TOKEN_DEFAULT_TTL
 ) -> dict:
