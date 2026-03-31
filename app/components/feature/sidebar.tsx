@@ -12,6 +12,7 @@ import {
   getDatabases,
   setDatabase,
 } from '@/lib/api';
+import { useAuth } from '@/lib/auth-context';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Label } from '@/components/ui/label';
 import { Slider } from '@/components/ui/slider';
@@ -27,6 +28,7 @@ import { useEffect, useMemo, useState } from 'react';
 
 export function Sidebar({ className }: { className?: string }) {
   const { theme, setTheme } = useTheme();
+  const { token } = useAuth();
 
   const [selectedDb, setSelectedDb] = useState(getCurrentDatabase());
   const [, setQ] = useQueryState('q', parseAsString);
@@ -40,7 +42,8 @@ export function Sidebar({ className }: { className?: string }) {
 
   const { data: databases, isLoading: loadingDatabases } = useQuery({
     queryKey: ['meta', 'databases'],
-    queryFn: getDatabases,
+    queryFn: () => getDatabases(token!),
+    enabled: !!token,
   });
   const activeDb =
     databases && databases.length > 0
@@ -59,17 +62,20 @@ export function Sidebar({ className }: { className?: string }) {
 
   const { data: areaOptions, isLoading: loadingAreas } = useQuery({
     queryKey: ['meta', 'areas', activeDb],
-    queryFn: getAreas,
+    queryFn: () => getAreas(token!),
+    enabled: !!token,
   });
 
   const { data: journalOptions, isLoading: loadingJournals } = useQuery({
     queryKey: ['meta', 'journals', activeDb],
-    queryFn: getJournalOptions,
+    queryFn: () => getJournalOptions(token!),
+    enabled: !!token,
   });
 
   const { data: yearData, isLoading: loadingYears } = useQuery({
       queryKey: ['meta', 'years', activeDb],
-      queryFn: getYears
+      queryFn: () => getYears(token!),
+      enabled: !!token,
   });
 
   const handleDatabaseChange = (dbName: string) => {

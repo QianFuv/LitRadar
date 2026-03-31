@@ -24,6 +24,7 @@ import {
   type WeeklyDatabaseUpdate,
   type WeeklyJournalUpdate,
 } from '@/lib/api';
+import { useAuth } from '@/lib/auth-context';
 import { SearchBar } from '@/components/feature/search-bar';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -194,6 +195,7 @@ function JournalPanel({
 }
 
 export default function WeeklyUpdatesPage() {
+  const { token } = useAuth();
   const searchParams = useSearchParams();
   const requestedDb = (searchParams.get('db') || '').trim();
   const searchQuery = (searchParams.get('q') || '').trim();
@@ -207,13 +209,15 @@ export default function WeeklyUpdatesPage() {
     error: weeklyErrorData,
   } = useQuery({
     queryKey: ['weekly-updates', 7],
-    queryFn: () => getWeeklyUpdates(7),
+    queryFn: () => getWeeklyUpdates(7, token!),
+    enabled: !!token,
     staleTime: 5 * 60 * 1000,
   });
 
   const { data: databaseOptions } = useQuery({
     queryKey: ['meta', 'databases'],
-    queryFn: getDatabases,
+    queryFn: () => getDatabases(token!),
+    enabled: !!token,
     staleTime: 10 * 60 * 1000,
   });
 
@@ -288,7 +292,7 @@ export default function WeeklyUpdatesPage() {
       params.append('journal_id', String(effectiveSelectedJournalId));
       params.set('q', searchQuery);
       params.set('limit', '200');
-      const page = await getArticles(params, null, false);
+      const page = await getArticles(params, null, false, token!);
       return page.items;
     },
     enabled: Boolean(
@@ -520,6 +524,7 @@ export default function WeeklyUpdatesPage() {
                       <ArticleDetailDialog
                         articleId={article.article_id}
                         dbName={effectiveSelectedDb}
+                        token={token!}
                       />
                     </Dialog>
                   ))}
@@ -536,13 +541,15 @@ export default function WeeklyUpdatesPage() {
 function ArticleDetailDialog({
   articleId,
   dbName,
+  token,
 }: {
   articleId: number;
   dbName: string;
+  token: string;
 }) {
   const { data, isLoading, isError, error } = useQuery({
     queryKey: ['weekly-article-detail', dbName, articleId],
-    queryFn: () => getArticleById(articleId, dbName),
+    queryFn: () => getArticleById(articleId, dbName, token),
     staleTime: 10 * 60 * 1000,
   });
 

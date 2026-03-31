@@ -8,32 +8,19 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Button } from '@/components/ui/button';
 import { FavoriteButton } from '@/components/feature/favorite-button';
 import { ExternalLink, ArrowLeft } from 'lucide-react';
-
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || '';
-const DEFAULT_DB = 'utd24.sqlite';
-
-function resolveBase(): string {
-    if (API_BASE_URL) return API_BASE_URL;
-    if (typeof window !== 'undefined') return window.location.origin;
-    return 'http://localhost:8000';
-}
-
-async function getArticle(id: string) {
-    const res = await fetch(`${resolveBase()}/api/articles/${id}?db=${DEFAULT_DB}`);
-    if (!res.ok) {
-        throw new Error('加载文章失败');
-    }
-    return res.json();
-}
+import { getArticleById, getFullTextUrlForDatabase, getCurrentDatabase } from '@/lib/api';
+import { useAuth } from '@/lib/auth-context';
 
 export default function ArticlePage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
+  const { token } = useAuth();
+  const currentDb = getCurrentDatabase();
 
   const { data: article, isLoading, isError, error } = useQuery({
-    queryKey: ['article', id],
-    queryFn: () => getArticle(id),
-    enabled: !!id,
+    queryKey: ['article', id, currentDb],
+    queryFn: () => getArticleById(Number(id), currentDb, token!),
+    enabled: !!id && !!token,
   });
 
   if (isLoading) {
@@ -105,7 +92,7 @@ export default function ArticlePage() {
                           href={
                                   article.doi
                                       ? `https://doi.org/${article.doi}`
-                                      : `${resolveBase()}/api/articles/${article.article_id}/fulltext?db=${DEFAULT_DB}`
+                                      : getFullTextUrlForDatabase(article.article_id, currentDb)
                               }
                           target="_blank"
                           rel="noreferrer"
@@ -116,7 +103,7 @@ export default function ArticlePage() {
                           </Button>
                       </a>
                   )}
-                  <FavoriteButton articleId={article.article_id} dbName={DEFAULT_DB} />
+                  <FavoriteButton articleId={article.article_id} dbName={currentDb} />
               </div>
           </CardContent>
       </Card>

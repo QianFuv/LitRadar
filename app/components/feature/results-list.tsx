@@ -92,7 +92,7 @@ export function ResultsList() {
     string | null
   >({
     queryKey: ['articles', paramsString],
-    queryFn: ({ pageParam }) => getArticles(params, pageParam, includeTotal),
+    queryFn: ({ pageParam }) => getArticles(params, pageParam, includeTotal, token!),
     initialPageParam: null,
     getNextPageParam: (lastPage) => lastPage.page.next_cursor ?? undefined,
     staleTime: 5 * 60 * 1000,

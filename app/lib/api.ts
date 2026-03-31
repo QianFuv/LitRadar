@@ -147,8 +147,8 @@ function withDb(url: string, params?: URLSearchParams): string {
     return urlObj.toString();
 }
 
-export async function getDatabases(): Promise<string[]> {
-    const res = await fetch(`${resolveBase()}/api/meta/databases`);
+export async function getDatabases(token: string): Promise<string[]> {
+    const res = await authFetch(`${resolveBase()}/api/meta/databases`, token);
     if (!res.ok) {
         return [DEFAULT_DB];
     }
@@ -159,6 +159,7 @@ export async function getArticles(
   params: URLSearchParams,
   pageParam: string | number | null = null,
   includeTotal: boolean = false,
+  token?: string,
 ): Promise<ArticlePage> {
   const newParams = new URLSearchParams(params);
   const shouldIncludeTotal = includeTotal && (pageParam === null || pageParam === 0);
@@ -171,43 +172,44 @@ export async function getArticles(
   }
   newParams.set('include_total', shouldIncludeTotal ? '1' : '0');
 
-  const res = await fetch(withDb('/api/articles', newParams));
+  const url = withDb('/api/articles', newParams);
+  const res = token ? await authFetch(url, token) : await fetch(url);
   if (!res.ok) {
     throw new Error('获取文章失败');
   }
   return res.json();
 }
 
-export async function getAreas(): Promise<ValueCount[]> {
-  const res = await fetch(withDb('/api/meta/areas'));
+export async function getAreas(token: string): Promise<ValueCount[]> {
+  const res = await authFetch(withDb('/api/meta/areas'), token);
   if (!res.ok) {
     throw new Error('获取领域失败');
   }
   return res.json();
 }
 
-export async function getYears(): Promise<YearSummary[]> {
-    const res = await fetch(withDb('/api/years'));
+export async function getYears(token: string): Promise<YearSummary[]> {
+    const res = await authFetch(withDb('/api/years'), token);
     if (!res.ok) {
       throw new Error('获取年份失败');
     }
     return res.json();
   }
 
-export async function getJournalOptions(): Promise<JournalOption[]> {
-  const res = await fetch(withDb('/api/meta/journals'));
+export async function getJournalOptions(token: string): Promise<JournalOption[]> {
+  const res = await authFetch(withDb('/api/meta/journals'), token);
   if (!res.ok) {
     throw new Error('获取期刊失败');
   }
   return res.json();
 }
 
-export async function getWeeklyUpdates(windowDays: number = 7): Promise<WeeklyUpdatesResponse> {
+export async function getWeeklyUpdates(windowDays: number = 7, token?: string): Promise<WeeklyUpdatesResponse> {
   const params = new URLSearchParams();
   params.set('window_days', String(windowDays));
   const url = new URL('/api/weekly-updates', resolveBase());
   url.search = params.toString();
-  const res = await fetch(url.toString());
+  const res = token ? await authFetch(url.toString(), token) : await fetch(url.toString());
   if (!res.ok) {
     throw new Error('获取每周更新失败');
   }
@@ -222,10 +224,10 @@ export async function getAnnouncements(): Promise<AnnouncementInfo[]> {
   return res.json();
 }
 
-export async function getArticleById(articleId: number, dbName: string): Promise<Article> {
+export async function getArticleById(articleId: number, dbName: string, token?: string): Promise<Article> {
   const url = new URL(`/api/articles/${articleId}`, resolveBase());
   url.searchParams.set('db', dbName);
-  const res = await fetch(url.toString());
+  const res = token ? await authFetch(url.toString(), token) : await fetch(url.toString());
   if (!res.ok) {
     throw new Error('获取文章详情失败');
   }

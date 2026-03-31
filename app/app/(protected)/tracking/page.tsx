@@ -64,7 +64,8 @@ export default function TrackingPage() {
 
   const databasesQuery = useQuery({
     queryKey: ['databases'],
-    queryFn: () => getDatabases(),
+    queryFn: () => getDatabases(token!),
+    enabled: !!token,
   });
   const availableDatabases = databasesQuery.data ?? EMPTY_DATABASES;
 

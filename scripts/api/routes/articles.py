@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 
+from scripts.api.auth_deps import get_current_user
 from scripts.api.models import ArticlePage, ArticleRecord
 from scripts.api.queries.articles import (
     get_article,
@@ -12,7 +13,7 @@ from scripts.api.queries.articles import (
 )
 from scripts.shared.constants import API_PREFIX
 
-router = APIRouter(prefix=API_PREFIX)
+router = APIRouter(prefix=API_PREFIX, dependencies=[Depends(get_current_user)])
 
 router.add_api_route(
     "/articles",
