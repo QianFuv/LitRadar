@@ -4,33 +4,16 @@
 
 ## 快速开始
 
-### 使用 npx（无需安装）
+### 使用 claude code
 
-```json
-{
-  "command": "npx",
-  "args": ["-y", "@qianfuv/paper-scanner-mcp"],
-  "env": {
-    "PAPER_SCANNER_API_URL": "https://your-api-host",
-    "PAPER_SCANNER_API_TOKEN": "your-access-token"
-  }
-}
+```
+claude mcp add paper-scanner --scope user -e PAPER_SCANNER_API_URL=<api-url> -e PAPER_SCANNER_API_TOKEN=<api-token> -- cmd /c npx -y @qianfuv/paper-scanner-mcp
 ```
 
-### 全局安装
+### 使用 codex
 
-```bash
-npm install -g @qianfuv/paper-scanner-mcp
 ```
-
-```json
-{
-  "command": "paper-scanner-mcp",
-  "env": {
-    "PAPER_SCANNER_API_URL": "https://your-api-host",
-    "PAPER_SCANNER_API_TOKEN": "your-access-token"
-  }
-}
+codex mcp add paper-scanner --env PAPER_SCANNER_API_URL=<api-url> --env PAPER_SCANNER_API_TOKEN=<api-token> -- npx -y @qianfuv/paper-scanner-mcp
 ```
 
 ## 环境变量
