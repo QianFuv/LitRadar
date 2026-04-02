@@ -6,25 +6,20 @@ import {
   checkFavoritesBatch,
   getArticles,
   getCurrentDatabase,
-  getFullTextUrl,
-  type Article,
   type ArticlePage,
 } from '@/lib/api';
+import { ArticleDetailDialogContent } from '@/components/feature/article-detail-dialog-content';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Button } from '@/components/ui/button';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogTrigger } from '@/components/ui/dialog';
-import { ExternalLink, Copy, Check } from 'lucide-react';
+import { Dialog, DialogTrigger } from '@/components/ui/dialog';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { useInView } from 'react-intersection-observer';
-import { FavoriteButton } from '@/components/feature/favorite-button';
 import { useAuth } from '@/lib/auth-context';
 
 export function ResultsList() {
   const { user, token } = useAuth();
-  const [copyStatus, setCopyStatus] = useState<string | null>(null);
   const [visiblePageState, setVisiblePageState] = useState({
     searchKey: '',
     count: 1,
@@ -38,29 +33,6 @@ export function ResultsList() {
   const searchParams = useSearchParams();
   const searchKey = searchParams.toString();
   const includeTotal = true;
-
-  const handleCopyArticleInfo = async (article: Article) => {
-      const info = [
-          `标题：${article.title || '暂无'}`,
-          `作者：${article.authors || '暂无'}`,
-          `期刊：${article.journal_title || '暂无'}`,
-          `日期：${article.date || '暂无'}`,
-          article.volume && `卷号：${article.volume}`,
-          article.number && `期号：${article.number}`,
-          article.doi && `DOI: ${article.doi}`,
-          article.doi && `链接：https://doi.org/${article.doi}`
-      ].filter(Boolean).join('\n');
-
-      await navigator.clipboard.writeText(info);
-      setCopyStatus(`${article.article_id}-info`);
-      setTimeout(() => setCopyStatus(null), 3000);
-  };
-
-  const handleCopyTitle = async (article: Article) => {
-      await navigator.clipboard.writeText(article.title || '');
-      setCopyStatus(`${article.article_id}-title`);
-      setTimeout(() => setCopyStatus(null), 3000);
-  };
 
   const params = new URLSearchParams();
   if (q) params.set('q', q);
@@ -329,102 +301,15 @@ export function ResultsList() {
                     </Card>
                 </div>
             </DialogTrigger>
-            <DialogContent className="w-[calc(100%-2rem)] max-w-[calc(100%-2rem)] md:max-w-4xl max-h-[90vh] overflow-y-auto [&>button]:hidden">
-                <DialogHeader>
-                    <DialogTitle className="text-xl leading-snug">
-                        {article.title}
-                        <Button
-                            variant="ghost"
-                            size="sm"
-                            className="h-6 w-6 p-0 ml-2 inline-flex align-middle"
-                            onClick={() => handleCopyTitle(article)}
-                        >
-                            {copyStatus === `${article.article_id}-title` ? (
-                                <Check className="h-3 w-3 text-green-600" />
-                            ) : (
-                                <Copy className="h-3 w-3" />
-                            )}
-                        </Button>
-                    </DialogTitle>
-                    <DialogDescription>
-                        {article.journal_title}
-                        {(article.volume || article.number) && ` • ${[
-                            article.volume && `第 ${article.volume} 卷`,
-                            article.number && `第 ${article.number} 期`
-                        ].filter(Boolean).join(', ')}`}
-                        {article.date && ` • ${article.date}`}
-                    </DialogDescription>
-                </DialogHeader>
-                <div className="space-y-6 py-4">
-                    {article.authors && (
-                        <div>
-                            <h3 className="font-semibold mb-2 text-sm text-foreground/80">作者</h3>
-                            <p className="text-sm text-muted-foreground">
-                                {article.authors}
-                            </p>
-                        </div>
-                    )}
-                    
-                    <div>
-                        <h3 className="font-semibold mb-2 text-sm text-foreground/80">摘要</h3>
-                        <p className="text-sm text-muted-foreground leading-relaxed text-justify">
-                            {article.abstract || "暂无摘要。"}
-                        </p>
-                    </div>
-
-                    <div className="pt-4 border-t">
-                        <div className="flex flex-wrap gap-4">
-                            <Button
-                                variant="outline"
-                                size="sm"
-                                onClick={() => handleCopyArticleInfo(article)}
-                            >
-                                {copyStatus === `${article.article_id}-info` ? (
-                                    <>
-                                        <Check className="mr-2 h-4 w-4 text-green-600" />
-                                        已复制
-                                    </>
-                                ) : (
-                                    <>
-                                        <Copy className="mr-2 h-4 w-4" />
-                                        复制信息
-                                    </>
-                                )}
-                            </Button>
-                            {(article.doi || article.platform_id) && (
-                                <a
-                                    href={
-                                        article.doi
-                                            ? `https://doi.org/${article.doi}`
-                                            : getFullTextUrl(article.article_id)
-                                    }
-                                    target="_blank"
-                                    rel="noreferrer"
-                                >
-                                    <Button variant="outline" size="sm">
-                                        <ExternalLink className="mr-2 h-4 w-4" />
-                                        查看全文
-                                    </Button>
-                                </a>
-                            )}
-                            {user && isFavoriteStatePending ? (
-                              <Button variant="outline" size="sm" disabled>
-                                加载收藏...
-                              </Button>
-                            ) : (
-                              <FavoriteButton
-                                articleId={article.article_id}
-                                initialFolderIds={
-                                  favoriteChecksByArticle[article.article_id]?.map(
-                                    (item) => item.folder_id,
-                                  ) ?? []
-                                }
-                              />
-                            )}
-                        </div>
-                    </div>
-                </div>
-            </DialogContent>
+            <ArticleDetailDialogContent
+              article={article}
+              dbName={currentDb}
+              token={token!}
+              initialFolderIds={
+                favoriteChecksByArticle[article.article_id]?.map((item) => item.folder_id) ?? []
+              }
+              isFavoriteStatePending={Boolean(user) && isFavoriteStatePending}
+            />
           </Dialog>
         </div>
       ))}

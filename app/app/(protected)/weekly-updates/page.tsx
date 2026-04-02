@@ -8,7 +8,6 @@ import {
   ArrowLeft,
   CalendarDays,
   Database,
-  ExternalLink,
   FileText,
   Menu,
 } from 'lucide-react';
@@ -17,7 +16,6 @@ import {
   getArticleById,
   getArticles,
   getDatabases,
-  getFullTextUrlForDatabase,
   getWeeklyUpdates,
   setDatabase,
   type WeeklyArticle,
@@ -25,6 +23,7 @@ import {
   type WeeklyJournalUpdate,
 } from '@/lib/api';
 import { useAuth } from '@/lib/auth-context';
+import { ArticleDetailDialogContent } from '@/components/feature/article-detail-dialog-content';
 import { SearchBar } from '@/components/feature/search-bar';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -495,36 +494,12 @@ export default function WeeklyUpdatesPage() {
                   )}
 
                   {visibleArticles.map((article) => (
-                    <Dialog key={article.article_id}>
-                      <DialogTrigger asChild>
-                        <button
-                          type="button"
-                          className="w-full rounded-md border p-3 text-left transition-colors hover:bg-muted/40"
-                        >
-                          <div className="flex items-start justify-between gap-2">
-                            <p className="line-clamp-2 text-sm font-medium">
-                              {buildArticleInfoText(article)}
-                            </p>
-                            <div className="flex gap-1 shrink-0">
-                              {article.open_access === 1 && (
-                                <Badge variant="secondary" className="text-xs">开放获取</Badge>
-                              )}
-                              {article.in_press === 1 && (
-                                <Badge variant="outline" className="text-xs">预发表</Badge>
-                              )}
-                            </div>
-                          </div>
-                          <p className="mt-1 text-xs text-muted-foreground">
-                            DOI: {article.doi || '暂无'}
-                          </p>
-                        </button>
-                      </DialogTrigger>
-                      <ArticleDetailDialog
-                        articleId={article.article_id}
-                        dbName={effectiveSelectedDb}
-                        token={token!}
-                      />
-                    </Dialog>
+                    <WeeklyArticleDialog
+                      key={article.article_id}
+                      article={article}
+                      dbName={effectiveSelectedDb}
+                      token={token!}
+                    />
                   ))}
                 </CardContent>
               </Card>
@@ -536,101 +511,93 @@ export default function WeeklyUpdatesPage() {
   );
 }
 
-function ArticleDetailDialog({
+function WeeklyArticleDialog({
+  article,
+  dbName,
+  token,
+}: {
+  article: WeeklyArticle;
+  dbName: string;
+  token: string;
+}) {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger asChild>
+        <button
+          type="button"
+          className="w-full rounded-md border p-3 text-left transition-colors hover:bg-muted/40"
+        >
+          <div className="flex items-start justify-between gap-2">
+            <p className="line-clamp-2 text-sm font-medium">
+              {buildArticleInfoText(article)}
+            </p>
+            <div className="flex gap-1 shrink-0">
+              {article.open_access === 1 && (
+                <Badge variant="secondary" className="text-xs">开放获取</Badge>
+              )}
+              {article.in_press === 1 && (
+                <Badge variant="outline" className="text-xs">预发表</Badge>
+              )}
+            </div>
+          </div>
+          <p className="mt-1 text-xs text-muted-foreground">DOI: {article.doi || '暂无'}</p>
+        </button>
+      </DialogTrigger>
+      <WeeklyArticleDetailDialog
+        articleId={article.article_id}
+        dbName={dbName}
+        token={token}
+        enabled={open}
+      />
+    </Dialog>
+  );
+}
+
+function WeeklyArticleDetailDialog({
   articleId,
   dbName,
   token,
+  enabled,
 }: {
   articleId: number;
   dbName: string;
   token: string;
+  enabled: boolean;
 }) {
   const { data, isLoading, isError, error } = useQuery({
     queryKey: ['weekly-article-detail', dbName, articleId],
     queryFn: () => getArticleById(articleId, dbName, token),
+    enabled,
     staleTime: 10 * 60 * 1000,
   });
 
   return (
-    <DialogContent className="max-h-[90vh] w-[calc(100%-2rem)] max-w-[calc(100%-2rem)] overflow-y-auto md:max-w-4xl">
+    <>
       {isLoading && (
-        <div className="space-y-3 py-4">
-          <Skeleton className="h-6 w-3/4" />
-          <Skeleton className="h-4 w-1/2" />
-          <Skeleton className="h-32 w-full" />
-        </div>
+        <DialogContent className="w-[calc(100%-2rem)] max-w-[calc(100%-2rem)] md:max-w-4xl max-h-[90vh] overflow-y-auto [&>button]:hidden">
+          <div className="space-y-3 py-4">
+            <Skeleton className="h-6 w-3/4" />
+            <Skeleton className="h-4 w-1/2" />
+            <Skeleton className="h-32 w-full" />
+          </div>
+        </DialogContent>
       )}
 
       {isError && (
-        <div className="py-4 text-sm text-destructive">
-          {error instanceof Error
-            ? error.message
-            : '加载文章详情失败'}
-        </div>
+        <DialogContent className="w-[calc(100%-2rem)] max-w-[calc(100%-2rem)] md:max-w-4xl max-h-[90vh] overflow-y-auto [&>button]:hidden">
+          <div className="py-4 text-sm text-destructive">
+            {error instanceof Error
+              ? error.message
+              : '加载文章详情失败'}
+          </div>
+        </DialogContent>
       )}
 
       {data && (
-        <>
-          <DialogHeader>
-            <DialogTitle className="text-xl leading-snug">
-              {data.title || '未命名文章'}
-            </DialogTitle>
-            <DialogDescription>
-              {data.journal_title || `期刊 ${data.journal_id}`}
-              {data.date ? ` · ${data.date}` : ''}
-              {data.volume ? ` · 第 ${data.volume} 卷` : ''}
-              {data.number ? ` · 第 ${data.number} 期` : ''}
-            </DialogDescription>
-          </DialogHeader>
-
-          <div className="space-y-6 py-4">
-            {data.authors && (
-              <div>
-                <h3 className="mb-2 text-sm font-semibold text-foreground/80">
-                  作者
-                </h3>
-                <p className="text-sm text-muted-foreground">{data.authors}</p>
-              </div>
-            )}
-
-            <div>
-              <h3 className="mb-2 text-sm font-semibold text-foreground/80">
-                摘要
-              </h3>
-              <p className="text-justify text-sm leading-relaxed text-muted-foreground">
-                {data.abstract || '暂无摘要。'}
-              </p>
-            </div>
-
-            <div>
-              <h3 className="mb-2 text-sm font-semibold text-foreground/80">DOI</h3>
-              <p className="text-sm text-muted-foreground">{data.doi || '暂无'}</p>
-            </div>
-
-            {(data.doi || data.platform_id) && (
-              <div className="pt-2">
-                <a
-                  href={
-                    data.doi
-                      ? `https://doi.org/${data.doi}`
-                      : getFullTextUrlForDatabase(data.article_id, dbName)
-                  }
-                  target="_blank"
-                  rel="noreferrer"
-                >
-                  <Button variant="outline">
-                    <ExternalLink className="mr-2 h-4 w-4" />
-                    查看全文
-                  </Button>
-                </a>
-              </div>
-            )}
-          </div>
-        </>
+        <ArticleDetailDialogContent article={data} dbName={dbName} token={token} />
       )}
-    </DialogContent>
+    </>
   );
 }
-
-
-

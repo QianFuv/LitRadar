@@ -90,10 +90,10 @@ export default function ArticlePage() {
                   {(article.doi || article.platform_id) && (
                       <a
                           href={
-                                  article.doi
-                                      ? `https://doi.org/${article.doi}`
-                                      : getFullTextUrlForDatabase(article.article_id, currentDb)
-                              }
+                                   article.doi
+                                       ? `https://doi.org/${article.doi}`
+                                       : getFullTextUrlForDatabase(article.article_id, currentDb, token!)
+                               }
                           target="_blank"
                           rel="noreferrer"
                       >

@@ -119,17 +119,24 @@ export function getCurrentDatabase() {
     return currentDb;
 }
 
-export function getFullTextUrl(articleId: number): string {
-    return withDb(`/api/articles/${articleId}/fulltext`);
+export function getFullTextUrl(articleId: number, accessToken?: string): string {
+    return withDb(`/api/articles/${articleId}/fulltext`, undefined, accessToken);
 }
 
-export function getFullTextUrlForDatabase(articleId: number, dbName: string): string {
+export function getFullTextUrlForDatabase(
+  articleId: number,
+  dbName: string,
+  accessToken?: string,
+): string {
     const url = new URL(`/api/articles/${articleId}/fulltext`, resolveBase());
     url.searchParams.set('db', dbName);
+    if (accessToken) {
+        url.searchParams.set('access_token', accessToken);
+    }
     return url.toString();
 }
 
-function withDb(url: string, params?: URLSearchParams): string {
+function withDb(url: string, params?: URLSearchParams, accessToken?: string): string {
     const urlObj = new URL(url, resolveBase());
     const p = urlObj.searchParams;
     
@@ -143,6 +150,9 @@ function withDb(url: string, params?: URLSearchParams): string {
     // Set DB if not present
     if (!p.has('db')) {
         p.set('db', currentDb);
+    }
+    if (accessToken) {
+        p.set('access_token', accessToken);
     }
     return urlObj.toString();
 }

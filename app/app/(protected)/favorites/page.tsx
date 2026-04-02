@@ -5,10 +5,7 @@ import { useQuery, useMutation, useQueryClient, useInfiniteQuery } from '@tansta
 import Link from 'next/link';
 import {
   ArrowLeft,
-  Check,
-  Copy,
   Download,
-  ExternalLink,
   FolderPlus,
   Pencil,
   Radar,
@@ -27,14 +24,13 @@ import {
   bulkRemoveFavorites,
   removeFavorite,
   setTrackingFolder,
-  getFullTextUrlForDatabase,
   getExportUrl,
   type CitationFormat,
   type FavoriteArticleItem,
   type FavoriteArticleRef,
   type FavoriteItem,
 } from '@/lib/api';
-import { FavoriteButton } from '@/components/feature/favorite-button';
+import { ArticleDetailDialogContent } from '@/components/feature/article-detail-dialog-content';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import {
@@ -76,7 +72,6 @@ export default function FavoritesPage() {
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editName, setEditName] = useState('');
   const [dialogOpen, setDialogOpen] = useState(false);
-  const [copyStatus, setCopyStatus] = useState<string | null>(null);
   const [exportFormat, setExportFormat] = useState<CitationFormat>('bibtex');
   const [selectedArticleKeys, setSelectedArticleKeys] = useState<string[]>([]);
   const [moveTargetFolderId, setMoveTargetFolderId] = useState<string>('');
@@ -218,30 +213,6 @@ export default function FavoritesPage() {
       });
     },
   });
-
-  const handleCopyArticleInfo = async (article: FavoriteArticleItem) => {
-    const info = [
-      `标题：${article.title || '暂无'}`,
-      `作者：${article.authors || '暂无'}`,
-      `期刊：${article.journal_title || '暂无'}`,
-      `日期：${article.date || '暂无'}`,
-      article.volume && `卷号：${article.volume}`,
-      article.number && `期号：${article.number}`,
-      article.doi && `DOI: ${article.doi}`,
-      article.doi && `链接：https://doi.org/${article.doi}`,
-    ]
-      .filter(Boolean)
-      .join('\n');
-    await navigator.clipboard.writeText(info);
-    setCopyStatus(`${article.article_id}-info`);
-    setTimeout(() => setCopyStatus(null), 3000);
-  };
-
-  const handleCopyTitle = async (article: FavoriteArticleItem) => {
-    await navigator.clipboard.writeText(article.title || '');
-    setCopyStatus(`${article.article_id}-title`);
-    setTimeout(() => setCopyStatus(null), 3000);
-  };
 
   const toggleFavoriteSelection = (favorite: FavoriteArticleItem, checked: boolean) => {
     const key = getFavoriteSelectionKey(favorite.folder_id, favorite.article_id, favorite.db_name);
@@ -695,112 +666,26 @@ export default function FavoritesPage() {
                             </div>
                           </DialogTrigger>
                         </div>
-                        <DialogContent className="w-[calc(100%-2rem)] max-w-[calc(100%-2rem)] md:max-w-4xl max-h-[90vh] overflow-y-auto [&>button]:hidden">
-                          <DialogHeader>
-                            <DialogTitle className="text-xl leading-snug">
-                              {fav.title}
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                className="h-6 w-6 p-0 ml-2 inline-flex align-middle"
-                                onClick={() => handleCopyTitle(fav)}
-                              >
-                                {copyStatus === `${fav.article_id}-title` ? (
-                                  <Check className="h-3 w-3 text-green-600" />
-                                ) : (
-                                  <Copy className="h-3 w-3" />
-                                )}
-                              </Button>
-                            </DialogTitle>
-                            <DialogDescription>
-                              {fav.journal_title}
-                              {(fav.volume || fav.number) &&
-                                ` • ${[
-                                  fav.volume && `第 ${fav.volume} 卷`,
-                                  fav.number && `第 ${fav.number} 期`,
-                                ]
-                                  .filter(Boolean)
-                                  .join(', ')}`}
-                              {fav.date && ` • ${fav.date}`}
-                            </DialogDescription>
-                          </DialogHeader>
-                          <div className="space-y-6 py-4">
-                            {fav.authors && (
-                              <div>
-                                <h3 className="font-semibold mb-2 text-sm text-foreground/80">
-                                  作者
-                                </h3>
-                                <p className="text-sm text-muted-foreground">
-                                  {fav.authors}
-                                </p>
-                              </div>
-                            )}
-
-                            <div>
-                              <h3 className="font-semibold mb-2 text-sm text-foreground/80">
-                                摘要
-                              </h3>
-                              <p className="text-sm text-muted-foreground leading-relaxed text-justify">
-                                {fav.abstract || '暂无摘要。'}
-                              </p>
-                            </div>
-
-                            <div className="pt-4 border-t">
-                              <div className="flex flex-wrap gap-4">
-                                <Button
-                                  variant="outline"
-                                  size="sm"
-                                  onClick={() => handleCopyArticleInfo(fav)}
-                                >
-                                  {copyStatus === `${fav.article_id}-info` ? (
-                                    <>
-                                      <Check className="mr-2 h-4 w-4 text-green-600" />
-                                      已复制
-                                    </>
-                                  ) : (
-                                    <>
-                                      <Copy className="mr-2 h-4 w-4" />
-                                      复制信息
-                                    </>
-                                  )}
-                                </Button>
-                                {(fav.doi || fav.platform_id) && (
-                                  <a
-                                    href={
-                                      fav.doi
-                                        ? `https://doi.org/${fav.doi}`
-                                        : getFullTextUrlForDatabase(fav.article_id, fav.db_name)
-                                    }
-                                    target="_blank"
-                                    rel="noreferrer"
-                                  >
-                                    <Button variant="outline" size="sm">
-                                      <ExternalLink className="mr-2 h-4 w-4" />
-                                      查看全文
-                                    </Button>
-                                  </a>
-                                )}
-                                <FavoriteButton
-                                  articleId={fav.article_id}
-                                  dbName={fav.db_name}
-                                  initialFolderIds={[fav.folder_id]}
-                                />
-                                <Button
-                                  variant="outline"
-                                  size="sm"
-                                  className="text-destructive border-destructive/30"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    removeMut.mutate(fav);
-                                  }}
-                                >
-                                  <Trash2 className="mr-2 h-4 w-4" />
-                                  移除收藏
-                                </Button>
-                              </div>
-                            </div>
-                          </div>
-                        </DialogContent>
+                        <ArticleDetailDialogContent
+                          article={fav}
+                          dbName={fav.db_name}
+                          token={token!}
+                          initialFolderIds={[fav.folder_id]}
+                          extraActions={
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="text-destructive border-destructive/30"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                removeMut.mutate(fav);
+                              }}
+                            >
+                              <Trash2 className="mr-2 h-4 w-4" />
+                              移除收藏
+                            </Button>
+                          }
+                        />
                       </Dialog>
                     );
                   })}
