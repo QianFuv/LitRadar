@@ -30,15 +30,14 @@ import {
   type FavoriteArticleRef,
   type FavoriteItem,
 } from '@/lib/api';
-import { ArticleDetailDialogContent } from '@/components/feature/article-detail-dialog-content';
-import { ArticleListCard } from '@/components/feature/article-list-card';
+import { ArticleDialogCard } from '@/components/feature/article-dialog-card';
+import { useVisiblePageList } from '@/components/feature/use-visible-page-list';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import {
   Card,
   CardContent,
   CardHeader,
-  CardTitle,
 } from '@/components/ui/card';
 import {
   Dialog,
@@ -111,7 +110,19 @@ export default function FavoritesPage() {
     enabled: !!token && !!activeFolderId && !!selectedFolder,
   });
 
-  const favorites = favPages?.pages.flat() ?? [];
+  const favoritePages = favPages?.pages ?? [];
+  const loadedPages = favoritePages.length;
+  const listKey = String(activeFolderId ?? 'none');
+  const { visiblePages, prefetchRef, loadMoreRef } = useVisiblePageList({
+    listKey,
+    loadedPages,
+    hasNextPage,
+    isFetchingNextPage,
+    onFetchNextPage: () => void fetchNextPage(),
+  });
+  const visiblePageCount = Math.min(visiblePages, loadedPages);
+  const favorites = favoritePages.slice(0, visiblePageCount).flat();
+  const prefetchIndex = Math.max(0, favorites.length - 25);
   const selectedKeySet = new Set(selectedArticleKeys);
   const selectedFavorites = favorites.filter((favorite) =>
     selectedKeySet.has(getFavoriteSelectionKey(favorite.folder_id, favorite.article_id, favorite.db_name)),
@@ -507,7 +518,7 @@ export default function FavoritesPage() {
                           onClick={() => handleSelectAllLoaded(true)}
                           disabled={favorites.length === 0 || allLoadedSelected}
                         >
-                          全选已加载
+                          全选当前列表
                         </Button>
                         <Button
                           variant="ghost"
@@ -517,9 +528,9 @@ export default function FavoritesPage() {
                         >
                           清空选择
                         </Button>
-                        {hasNextPage && (
+                        {(hasNextPage || visiblePageCount < loadedPages) && (
                           <span className="text-xs text-muted-foreground">
-                            批量操作仅作用于当前已加载的 {favorites.length} 篇文章
+                            批量操作仅作用于当前列表中的 {favorites.length} 篇文章
                           </span>
                         )}
                       </div>
@@ -571,101 +582,53 @@ export default function FavoritesPage() {
                       </p>
                     )}
                   </div>
-                  {favorites.map((fav) => {
+                  {favorites.map((fav, index) => {
                     const selectionKey = getFavoriteSelectionKey(
                       fav.folder_id,
                       fav.article_id,
                       fav.db_name,
                     );
                     const isSelected = selectedKeySet.has(selectionKey);
-                    if (fav.journal_id == null) {
-                      return (
-                        <div key={fav.id} className="flex items-start gap-3">
-                          <div className="pt-4">
-                            <Checkbox
-                              checked={isSelected}
-                              onCheckedChange={(checked) => toggleFavoriteSelection(fav, checked === true)}
-                              aria-label={`选择文章 ${fav.article_id}`}
-                            />
-                          </div>
-                          <Card className="flex-1">
-                            <CardHeader className="py-3 px-4">
-                              <div className="flex items-start justify-between gap-2">
-                                <CardTitle className="text-sm">
-                                  文章 #{fav.article_id}
-                                </CardTitle>
-                                <Button
-                                  variant="ghost"
-                                  size="icon"
-                                  className="h-7 w-7 text-destructive"
-                                  onClick={() => removeMut.mutate(fav)}
-                                >
-                                  <Trash2 className="h-3.5 w-3.5" />
-                                </Button>
-                              </div>
-                            </CardHeader>
-                          </Card>
-                        </div>
-                      );
-                    }
 
                     return (
-                      <Dialog key={fav.id}>
-                        <div className="flex items-start gap-3">
-                          <div className="pt-4">
-                            <Checkbox
-                              checked={isSelected}
-                              onCheckedChange={(checked) => toggleFavoriteSelection(fav, checked === true)}
-                              aria-label={`选择文章 ${fav.title || fav.article_id}`}
-                            />
-                          </div>
-                          <DialogTrigger asChild>
-                            <div className="block group cursor-pointer text-left flex-1">
-                              <ArticleListCard
-                                title={fav.title}
-                                journalTitle={fav.journal_title}
-                                volume={fav.volume}
-                                number={fav.number}
-                                date={fav.date}
-                                preview={fav.abstract}
-                                openAccess={fav.open_access}
-                                inPress={fav.in_press}
-                              />
-                            </div>
-                          </DialogTrigger>
-                        </div>
-                        <ArticleDetailDialogContent
-                          article={fav}
-                          dbName={fav.db_name}
-                          token={token!}
-                          initialFolderIds={[fav.folder_id]}
-                          extraActions={
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              className="text-destructive border-destructive/30"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                removeMut.mutate(fav);
-                              }}
-                            >
-                              <Trash2 className="mr-2 h-4 w-4" />
-                              移除收藏
-                            </Button>
-                          }
-                        />
-                      </Dialog>
+                      <ArticleDialogCard
+                        key={fav.id}
+                        triggerRef={index === prefetchIndex ? prefetchRef : undefined}
+                        article={fav}
+                        dbName={fav.db_name}
+                        token={token!}
+                        initialFolderIds={[fav.folder_id]}
+                        leading={
+                          <Checkbox
+                            checked={isSelected}
+                            onCheckedChange={(checked) => toggleFavoriteSelection(fav, checked === true)}
+                            aria-label={`选择文章 ${fav.title || fav.article_id}`}
+                          />
+                        }
+                        extraActions={
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="text-destructive border-destructive/30"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              removeMut.mutate(fav);
+                            }}
+                          >
+                            <Trash2 className="mr-2 h-4 w-4" />
+                            移除收藏
+                          </Button>
+                        }
+                      />
                     );
                   })}
-                  {hasNextPage && (
-                    <Button
-                      variant="outline"
-                      className="w-full"
-                      onClick={() => void fetchNextPage()}
-                      disabled={isFetchingNextPage}
-                    >
-                      {isFetchingNextPage ? '加载中…' : '加载更多'}
-                    </Button>
+                  {(visiblePageCount < loadedPages || hasNextPage) && (
+                    <div ref={loadMoreRef} className="h-1" />
+                  )}
+                  {isFetchingNextPage && (
+                    <div className="py-4 flex justify-center">
+                      <Skeleton className="h-8 w-48" />
+                    </div>
                   )}
                 </>
               )}
