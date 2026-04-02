@@ -53,13 +53,11 @@ import {
 import { Skeleton } from '@/components/ui/skeleton';
 import { cn } from '@/lib/utils';
 
-const DATE_TIME_FORMATTER = new Intl.DateTimeFormat('zh-CN', {
+const DATE_FORMATTER = new Intl.DateTimeFormat('zh-CN', {
   year: 'numeric',
   month: '2-digit',
   day: '2-digit',
-  hour: '2-digit',
-  minute: '2-digit',
-  hour12: false,
+  timeZone: 'UTC',
 });
 
 function formatDate(value?: string): string {
@@ -70,7 +68,7 @@ function formatDate(value?: string): string {
   if (Number.isNaN(date.getTime())) {
     return value;
   }
-  return DATE_TIME_FORMATTER.format(date).split(',')[0];
+  return DATE_FORMATTER.format(date);
 }
 
 function selectDefaultDatabase(

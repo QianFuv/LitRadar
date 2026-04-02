@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -275,9 +275,10 @@ async def get_weekly_updates() -> WeeklyUpdatesResponse:
 
     manifests = load_weekly_manifest_payloads()
     if not manifests:
+        window_start = now - timedelta(days=7)
         return WeeklyUpdatesResponse(
             generated_at=now.isoformat().replace("+00:00", "Z"),
-            window_start=now.isoformat().replace("+00:00", "Z"),
+            window_start=window_start.isoformat().replace("+00:00", "Z"),
             window_end=now.isoformat().replace("+00:00", "Z"),
             databases=[],
         )
@@ -353,7 +354,7 @@ async def get_weekly_updates() -> WeeklyUpdatesResponse:
 
     manifest_times = [m.generated_at for m in manifests]
     window_end = max(manifest_times)
-    window_start = min(manifest_times)
+    window_start = window_end - timedelta(days=7)
 
     return WeeklyUpdatesResponse(
         generated_at=now.isoformat().replace("+00:00", "Z"),
