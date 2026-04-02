@@ -8,22 +8,16 @@ import {
   getCurrentDatabase,
   type ArticlePage,
 } from '@/lib/api';
-import { ArticleDetailDialogContent } from '@/components/feature/article-detail-dialog-content';
-import { ArticleListCard } from '@/components/feature/article-list-card';
+import { ArticleDialogCard } from '@/components/feature/article-dialog-card';
+import { useVisiblePageList } from '@/components/feature/use-visible-page-list';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Dialog, DialogTrigger } from '@/components/ui/dialog';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useMemo } from 'react';
 import { useSearchParams } from 'next/navigation';
-import { useInView } from 'react-intersection-observer';
 import { useAuth } from '@/lib/auth-context';
 
 export function ResultsList() {
   const { user, token } = useAuth();
-  const [visiblePageState, setVisiblePageState] = useState({
-    searchKey: '',
-    count: 1,
-  });
 
   const [q] = useQueryState('q', parseAsString);
   const [areas] = useQueryState('area', parseAsArrayOf(parseAsString));
@@ -73,8 +67,14 @@ export function ResultsList() {
 
   const pages = data?.pages ?? [];
   const loadedPages = pages.length;
-  const visiblePages =
-    visiblePageState.searchKey === searchKey ? visiblePageState.count : 1;
+  const { visiblePages, prefetchRef, loadMoreRef } = useVisiblePageList({
+    listKey: searchKey,
+    loadedPages,
+    hasNextPage,
+    isFetchingNextPage,
+    onFetchNextPage: () => void fetchNextPage(),
+    scrollContainerId: 'results-scroll-container',
+  });
   const visiblePageCount = Math.min(visiblePages, loadedPages);
   const visibleArticles = pages.slice(0, visiblePageCount).flatMap((page) => page.items);
   const visibleArticleIds = visibleArticles.map((article) => article.article_id);
@@ -86,59 +86,6 @@ export function ResultsList() {
     queryFn: () => checkFavoritesBatch(token!, visibleArticleIds, currentDb),
     enabled: !!token && !!user && visibleArticleIds.length > 0,
     staleTime: 5 * 60 * 1000,
-  });
-
-  useEffect(() => {
-    const scrollContainer = document.getElementById('results-scroll-container');
-    if (scrollContainer) {
-      scrollContainer.scrollTo({ top: 0 });
-      return;
-    }
-    window.scrollTo({ top: 0 });
-  }, [searchKey]);
-
-  const handlePrefetchChange = useCallback(
-    (inView: boolean) => {
-      if (!inView || !hasNextPage || isFetchingNextPage) {
-        return;
-      }
-      if (loadedPages > visiblePages) {
-        return;
-      }
-      fetchNextPage();
-    },
-    [fetchNextPage, hasNextPage, isFetchingNextPage, loadedPages, visiblePages],
-  );
-
-  const handleLoadMoreChange = useCallback(
-    (inView: boolean) => {
-      if (!inView) {
-        return;
-      }
-      if (visiblePages < loadedPages) {
-        setVisiblePageState((current) => {
-          const currentCount = current.searchKey === searchKey ? current.count : 1;
-          return {
-            searchKey,
-            count: Math.min(currentCount + 1, loadedPages),
-          };
-        });
-        return;
-      }
-      if (hasNextPage && !isFetchingNextPage) {
-        fetchNextPage();
-      }
-    },
-    [fetchNextPage, hasNextPage, isFetchingNextPage, loadedPages, searchKey, visiblePages],
-  );
-
-  const { ref: prefetchRef } = useInView({
-    threshold: 0,
-    onChange: handlePrefetchChange,
-  });
-  const { ref: loadMoreRef } = useInView({
-    threshold: 0,
-    onChange: handleLoadMoreChange,
   });
 
   const highlightTerms = useMemo(() => {
@@ -258,38 +205,21 @@ export function ResultsList() {
         </div>
       )}
       {visibleArticles.map((article, index) => (
-        <div key={article.article_id}>
-          {index === prefetchIndex && (
-            <div ref={prefetchRef} className="h-0" />
-          )}
-          <Dialog>
-            <DialogTrigger asChild>
-              <div className="block group cursor-pointer text-left">
-                <ArticleListCard
-                  title={highlightText(article.title)}
-                  journalTitle={article.journal_title}
-                  volume={article.volume}
-                  number={article.number}
-                  date={article.date}
-                  preview={highlightText(article.abstract)}
-                  openAccess={article.open_access}
-                  inPress={article.in_press}
-                />
-              </div>
-            </DialogTrigger>
-            <ArticleDetailDialogContent
-              article={article}
-              dbName={currentDb}
-              token={token!}
-              initialFolderIds={
-                favoriteChecksByArticle[article.article_id]?.map((item) => item.folder_id) ?? []
-              }
-              isFavoriteStatePending={Boolean(user) && isFavoriteStatePending}
-            />
-          </Dialog>
-        </div>
+        <ArticleDialogCard
+          key={article.article_id}
+          triggerRef={index === prefetchIndex ? prefetchRef : undefined}
+          article={article}
+          dbName={currentDb}
+          token={token!}
+          title={highlightText(article.title)}
+          preview={highlightText(article.abstract)}
+          initialFolderIds={
+            favoriteChecksByArticle[article.article_id]?.map((item) => item.folder_id) ?? []
+          }
+          isFavoriteStatePending={Boolean(user) && isFavoriteStatePending}
+        />
       ))}
-      
+
       <div ref={loadMoreRef} className="h-1" />
       {isFetchingNextPage && (
         <div className="py-4 flex justify-center">

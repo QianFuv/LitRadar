@@ -45,17 +45,7 @@ export interface JournalOption {
   title?: string;
 }
 
-export interface WeeklyArticle {
-  article_id: number;
-  journal_id: number;
-  issue_id?: number;
-  title?: string;
-  date?: string;
-  doi?: string;
-  journal_title?: string;
-  open_access?: number;
-  in_press?: number;
-}
+export type WeeklyArticle = Article;
 
 export interface WeeklyJournalUpdate {
   journal_id: number;

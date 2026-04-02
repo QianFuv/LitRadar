@@ -1,0 +1,88 @@
+'use client';
+
+import { type ReactNode } from 'react';
+
+import { ArticleDetailDialogContent } from '@/components/feature/article-detail-dialog-content';
+import { ArticleListCard } from '@/components/feature/article-list-card';
+import { Dialog, DialogTrigger } from '@/components/ui/dialog';
+import { cn } from '@/lib/utils';
+
+type ArticleDialogCardArticle = {
+  article_id: number;
+  journal_id?: number | null;
+  title?: string;
+  date?: string;
+  authors?: string;
+  abstract?: string;
+  doi?: string;
+  platform_id?: string;
+  journal_title?: string;
+  volume?: string | null;
+  number?: string | null;
+  open_access?: number | boolean | null;
+  in_press?: number | boolean | null;
+};
+
+type ArticleDialogCardProps = {
+  article: ArticleDialogCardArticle;
+  dbName: string;
+  token?: string;
+  title?: ReactNode;
+  preview?: ReactNode;
+  initialFolderIds?: number[];
+  isFavoriteStatePending?: boolean;
+  extraActions?: ReactNode;
+  leading?: ReactNode;
+  triggerRef?: (node?: Element | null) => void;
+  className?: string;
+};
+
+export function ArticleDialogCard({
+  article,
+  dbName,
+  token,
+  title,
+  preview,
+  initialFolderIds = [],
+  isFavoriteStatePending = false,
+  extraActions,
+  leading,
+  triggerRef,
+  className,
+}: ArticleDialogCardProps) {
+  const resolvedTitle = title ?? article.title ?? `文章 #${article.article_id}`;
+  const resolvedPreview = preview ?? article.abstract;
+
+  return (
+    <Dialog>
+      <div className={cn('flex items-start gap-3', className)}>
+        {leading && <div className="pt-4">{leading}</div>}
+        <DialogTrigger asChild>
+          <div
+            ref={triggerRef}
+            className={cn('block group cursor-pointer text-left flex-1')}
+          >
+            <ArticleListCard
+              title={resolvedTitle}
+              journalTitle={article.journal_title}
+              volume={article.volume}
+              number={article.number}
+              date={article.date}
+              preview={resolvedPreview}
+              openAccess={article.open_access}
+              inPress={article.in_press}
+            />
+          </div>
+        </DialogTrigger>
+      </div>
+      <ArticleDetailDialogContent
+        article={article}
+        dbName={dbName}
+        token={token}
+        initialFolderIds={initialFolderIds}
+        isFavoriteStatePending={isFavoriteStatePending}
+        extraActions={extraActions}
+      />
+    </Dialog>
+  );
+}

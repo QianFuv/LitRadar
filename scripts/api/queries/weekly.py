@@ -247,11 +247,17 @@ async def fetch_articles_by_ids(
             a.issue_id,
             a.title,
             a.date,
+            a.authors,
+            a.abstract,
             a.doi,
+            a.platform_id,
             a.open_access,
             a.in_press,
-            j.title AS journal_title
+            j.title AS journal_title,
+            i.volume,
+            i.number
         FROM articles a
+        LEFT JOIN issues i ON i.issue_id = a.issue_id
         JOIN journals j ON j.journal_id = a.journal_id
         WHERE a.article_id IN ({placeholders})
         """,

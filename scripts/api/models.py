@@ -169,10 +169,15 @@ class WeeklyArticleRecord(BaseModel):
     issue_id: int | None = None
     title: str | None = None
     date: str | None = None
+    authors: str | None = None
+    abstract: str | None = None
     doi: str | None = None
+    platform_id: str | None = None
     journal_title: str | None = None
     open_access: int | None = None
     in_press: int | None = None
+    volume: str | None = None
+    number: str | None = None
 
 
 class WeeklyJournalUpdate(BaseModel):

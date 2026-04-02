@@ -1,7 +1,7 @@
-﻿'use client';
+'use client';
 
 import Link from 'next/link';
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { useQuery } from '@tanstack/react-query';
 import {
@@ -13,7 +13,7 @@ import {
 } from 'lucide-react';
 
 import {
-  getArticleById,
+  checkFavoritesBatch,
   getArticles,
   getDatabases,
   getWeeklyUpdates,
@@ -23,9 +23,9 @@ import {
   type WeeklyJournalUpdate,
 } from '@/lib/api';
 import { useAuth } from '@/lib/auth-context';
-import { ArticleDetailDialogContent } from '@/components/feature/article-detail-dialog-content';
-import { ArticleListCard } from '@/components/feature/article-list-card';
+import { ArticleDialogCard } from '@/components/feature/article-dialog-card';
 import { SearchBar } from '@/components/feature/search-bar';
+import { useVisiblePageList } from '@/components/feature/use-visible-page-list';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
@@ -59,6 +59,8 @@ const DATE_FORMATTER = new Intl.DateTimeFormat('zh-CN', {
   day: '2-digit',
   timeZone: 'UTC',
 });
+const WEEKLY_VISIBLE_PAGE_SIZE = 25;
+const WEEKLY_PREFETCH_THRESHOLD = 25;
 
 function formatDate(value?: string): string {
   if (!value) {
@@ -109,6 +111,17 @@ function getJournalLabel(journal: WeeklyJournalUpdate): string {
     return journal.journal_title;
   }
   return `期刊 ${journal.journal_id}`;
+}
+
+function chunkArticles(
+  articles: WeeklyArticle[],
+  size: number,
+): WeeklyArticle[][] {
+  const pages: WeeklyArticle[][] = [];
+  for (let index = 0; index < articles.length; index += size) {
+    pages.push(articles.slice(index, index + size));
+  }
+  return pages;
 }
 
 type JournalPanelProps = {
@@ -189,7 +202,7 @@ function JournalPanel({
 }
 
 export default function WeeklyUpdatesPage() {
-  const { token } = useAuth();
+  const { user, token } = useAuth();
   const searchParams = useSearchParams();
   const requestedDb = (searchParams.get('db') || '').trim();
   const searchQuery = (searchParams.get('q') || '').trim();
@@ -295,7 +308,7 @@ export default function WeeklyUpdatesPage() {
     staleTime: 60 * 1000,
   });
 
-  const visibleArticles = useMemo(() => {
+  const filteredArticles = useMemo(() => {
     const weeklyArticles = selectedJournal?.articles ?? [];
     if (!searchQuery) {
       return weeklyArticles;
@@ -303,10 +316,12 @@ export default function WeeklyUpdatesPage() {
     if (!searchedArticles) {
       return [];
     }
+
     const weeklyById = new Map<number, WeeklyArticle>();
     for (const article of weeklyArticles) {
       weeklyById.set(article.article_id, article);
     }
+
     const matched: WeeklyArticle[] = [];
     for (const article of searchedArticles) {
       const weeklyArticle = weeklyById.get(article.article_id);
@@ -317,13 +332,34 @@ export default function WeeklyUpdatesPage() {
     return matched;
   }, [searchedArticles, searchQuery, selectedJournal]);
 
-  useEffect(() => {
-    const listContainer = document.getElementById('weekly-articles-scroll-container');
-    if (!listContainer) {
-      return;
-    }
-    listContainer.scrollTop = 0;
-  }, [effectiveSelectedDb, effectiveSelectedJournalId]);
+  const articlePages = useMemo(
+    () => chunkArticles(filteredArticles, WEEKLY_VISIBLE_PAGE_SIZE),
+    [filteredArticles],
+  );
+  const articleListKey = `${effectiveSelectedDb}:${effectiveSelectedJournalId ?? 'none'}:${searchQuery}`;
+  const { visiblePages, prefetchRef, loadMoreRef } = useVisiblePageList({
+    listKey: articleListKey,
+    loadedPages: articlePages.length,
+    scrollContainerId: 'weekly-articles-scroll-container',
+  });
+  const visiblePageCount = Math.min(visiblePages, articlePages.length);
+  const renderedArticles = useMemo(
+    () => articlePages.slice(0, visiblePageCount).flat(),
+    [articlePages, visiblePageCount],
+  );
+  const renderedArticleIds = renderedArticles.map((article) => article.article_id);
+  const renderedArticleIdsKey = renderedArticleIds.join(',');
+  const prefetchIndex = Math.max(
+    0,
+    renderedArticles.length - WEEKLY_PREFETCH_THRESHOLD,
+  );
+
+  const { data: favoriteChecksByArticle = {}, isPending: isFavoriteStatePending } = useQuery({
+    queryKey: ['fav-check-batch', user?.id, effectiveSelectedDb, renderedArticleIdsKey],
+    queryFn: () => checkFavoritesBatch(token!, renderedArticleIds, effectiveSelectedDb),
+    enabled: !!token && !!user && !!effectiveSelectedDb && renderedArticleIds.length > 0,
+    staleTime: 5 * 60 * 1000,
+  });
 
   const totalDatabases = weeklyData?.databases.length ?? 0;
   const totalArticles = useMemo(() => {
@@ -452,7 +488,7 @@ export default function WeeklyUpdatesPage() {
                   <CardDescription>
                     {selectedJournal
                       ? searchQuery
-                        ? `匹配到 ${visibleArticles.length} 篇本周文章`
+                        ? `匹配到 ${filteredArticles.length} 篇本周文章`
                         : `本周新增 ${selectedJournal.new_article_count} 篇文章`
                       : '请选择左侧期刊'}
                   </CardDescription>
@@ -482,7 +518,7 @@ export default function WeeklyUpdatesPage() {
                     </div>
                   )}
 
-                  {selectedJournal && !loadingSearch && visibleArticles.length === 0 && (
+                  {selectedJournal && !loadingSearch && filteredArticles.length === 0 && (
                     <div className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">
                       {searchQuery
                         ? '该期刊中没有匹配全文检索条件的本周文章。'
@@ -490,14 +526,23 @@ export default function WeeklyUpdatesPage() {
                     </div>
                   )}
 
-                  {visibleArticles.map((article) => (
-                    <WeeklyArticleDialog
+                  {renderedArticles.map((article, index) => (
+                    <ArticleDialogCard
                       key={article.article_id}
+                      triggerRef={index === prefetchIndex ? prefetchRef : undefined}
                       article={article}
                       dbName={effectiveSelectedDb}
                       token={token!}
+                      initialFolderIds={
+                        favoriteChecksByArticle[article.article_id]?.map((item) => item.folder_id) ?? []
+                      }
+                      isFavoriteStatePending={Boolean(user) && isFavoriteStatePending}
                     />
                   ))}
+
+                  {visiblePageCount < articlePages.length && (
+                    <div ref={loadMoreRef} className="h-1" />
+                  )}
                 </CardContent>
               </Card>
             </div>
@@ -505,87 +550,5 @@ export default function WeeklyUpdatesPage() {
         )}
       </div>
     </div>
-  );
-}
-
-function WeeklyArticleDialog({
-  article,
-  dbName,
-  token,
-}: {
-  article: WeeklyArticle;
-  dbName: string;
-  token: string;
-}) {
-  const [open, setOpen] = useState(false);
-
-  return (
-    <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger asChild>
-        <div className="block group cursor-pointer text-left">
-          <ArticleListCard
-            title={article.title || `文章 ${article.article_id}`}
-            journalTitle={article.journal_title || `期刊 ${article.journal_id}`}
-            date={article.date ? formatDate(article.date) : undefined}
-            preview={article.doi ? `DOI: ${article.doi}` : '点击查看详情'}
-            openAccess={article.open_access}
-            inPress={article.in_press}
-          />
-        </div>
-      </DialogTrigger>
-      <WeeklyArticleDetailDialog
-        articleId={article.article_id}
-        dbName={dbName}
-        token={token}
-        enabled={open}
-      />
-    </Dialog>
-  );
-}
-
-function WeeklyArticleDetailDialog({
-  articleId,
-  dbName,
-  token,
-  enabled,
-}: {
-  articleId: number;
-  dbName: string;
-  token: string;
-  enabled: boolean;
-}) {
-  const { data, isLoading, isError, error } = useQuery({
-    queryKey: ['weekly-article-detail', dbName, articleId],
-    queryFn: () => getArticleById(articleId, dbName, token),
-    enabled,
-    staleTime: 10 * 60 * 1000,
-  });
-
-  return (
-    <>
-      {isLoading && (
-        <DialogContent className="w-[calc(100%-2rem)] max-w-[calc(100%-2rem)] md:max-w-4xl max-h-[90vh] overflow-y-auto [&>button]:hidden">
-          <div className="space-y-3 py-4">
-            <Skeleton className="h-6 w-3/4" />
-            <Skeleton className="h-4 w-1/2" />
-            <Skeleton className="h-32 w-full" />
-          </div>
-        </DialogContent>
-      )}
-
-      {isError && (
-        <DialogContent className="w-[calc(100%-2rem)] max-w-[calc(100%-2rem)] md:max-w-4xl max-h-[90vh] overflow-y-auto [&>button]:hidden">
-          <div className="py-4 text-sm text-destructive">
-            {error instanceof Error
-              ? error.message
-              : '加载文章详情失败'}
-          </div>
-        </DialogContent>
-      )}
-
-      {data && (
-        <ArticleDetailDialogContent article={data} dbName={dbName} token={token} />
-      )}
-    </>
   );
 }
