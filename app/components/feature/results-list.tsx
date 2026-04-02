@@ -9,8 +9,8 @@ import {
   type ArticlePage,
 } from '@/lib/api';
 import { ArticleDetailDialogContent } from '@/components/feature/article-detail-dialog-content';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
+import { ArticleListCard } from '@/components/feature/article-list-card';
+import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Dialog, DialogTrigger } from '@/components/ui/dialog';
 import { useCallback, useEffect, useMemo, useState } from 'react';
@@ -264,42 +264,18 @@ export function ResultsList() {
           )}
           <Dialog>
             <DialogTrigger asChild>
-                <div className="block group cursor-pointer text-left">
-                    <Card className="hover:shadow-md transition-all duration-200 border-transparent hover:border-slate-200 dark:hover:border-slate-800">
-                    <CardHeader>
-                        <div className="flex justify-between items-start gap-4">
-                            <CardTitle className="text-lg text-slate-900 dark:text-slate-100 group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors">
-                                {highlightText(article.title)}
-                            </CardTitle>
-                            <div className="flex gap-2 shrink-0">
-                                {article.open_access === 1 && <Badge variant="secondary" className="text-xs">开放获取</Badge>}
-                                {article.in_press === 1 && <Badge variant="outline" className="text-xs">预发表</Badge>}
-                            </div>
-                        </div>
-                        <CardDescription>
-                            <span>{article.journal_title}</span>
-                            {(article.volume || article.number) && (
-                              <span>
-                                {' '}
-                                •{' '}
-                                {[
-                                  article.volume && `第 ${article.volume} 卷`,
-                                  article.number && `第 ${article.number} 期`,
-                                ]
-                                  .filter(Boolean)
-                                  .join(', ')}
-                              </span>
-                            )}
-                            {article.date && <span> • {article.date}</span>}
-                        </CardDescription>
-                    </CardHeader>
-                    <CardContent>
-                        <p className="text-sm text-slate-600 dark:text-slate-400 line-clamp-3 leading-relaxed">
-                            {highlightText(article.abstract)}
-                        </p>
-                    </CardContent>
-                    </Card>
-                </div>
+              <div className="block group cursor-pointer text-left">
+                <ArticleListCard
+                  title={highlightText(article.title)}
+                  journalTitle={article.journal_title}
+                  volume={article.volume}
+                  number={article.number}
+                  date={article.date}
+                  preview={highlightText(article.abstract)}
+                  openAccess={article.open_access}
+                  inPress={article.in_press}
+                />
+              </div>
             </DialogTrigger>
             <ArticleDetailDialogContent
               article={article}

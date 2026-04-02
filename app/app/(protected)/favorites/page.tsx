@@ -31,6 +31,7 @@ import {
   type FavoriteItem,
 } from '@/lib/api';
 import { ArticleDetailDialogContent } from '@/components/feature/article-detail-dialog-content';
+import { ArticleListCard } from '@/components/feature/article-list-card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import {
@@ -38,7 +39,6 @@ import {
   CardContent,
   CardHeader,
   CardTitle,
-  CardDescription,
 } from '@/components/ui/card';
 import {
   Dialog,
@@ -621,48 +621,16 @@ export default function FavoritesPage() {
                           </div>
                           <DialogTrigger asChild>
                             <div className="block group cursor-pointer text-left flex-1">
-                              <Card className="hover:shadow-md transition-all duration-200 border-transparent hover:border-slate-200 dark:hover:border-slate-800">
-                                <CardHeader>
-                                  <div className="flex justify-between items-start gap-4">
-                                    <CardTitle className="text-lg text-slate-900 dark:text-slate-100 group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors">
-                                      {fav.title}
-                                    </CardTitle>
-                                    <div className="flex gap-2 shrink-0">
-                                      {fav.open_access === 1 && (
-                                        <Badge variant="secondary" className="text-xs">
-                                          开放获取
-                                        </Badge>
-                                      )}
-                                      {fav.in_press === 1 && (
-                                        <Badge variant="outline" className="text-xs">
-                                          预发表
-                                        </Badge>
-                                      )}
-                                    </div>
-                                  </div>
-                                  <CardDescription>
-                                    <span>{fav.journal_title}</span>
-                                    {(fav.volume || fav.number) && (
-                                      <span>
-                                        {' '}
-                                        •{' '}
-                                        {[
-                                          fav.volume && `第 ${fav.volume} 卷`,
-                                          fav.number && `第 ${fav.number} 期`,
-                                        ]
-                                          .filter(Boolean)
-                                          .join(', ')}
-                                      </span>
-                                    )}
-                                    {fav.date && <span> • {fav.date}</span>}
-                                  </CardDescription>
-                                </CardHeader>
-                                <CardContent>
-                                  <p className="text-sm text-slate-600 dark:text-slate-400 line-clamp-3 leading-relaxed">
-                                    {fav.abstract}
-                                  </p>
-                                </CardContent>
-                              </Card>
+                              <ArticleListCard
+                                title={fav.title}
+                                journalTitle={fav.journal_title}
+                                volume={fav.volume}
+                                number={fav.number}
+                                date={fav.date}
+                                preview={fav.abstract}
+                                openAccess={fav.open_access}
+                                inPress={fav.in_press}
+                              />
                             </div>
                           </DialogTrigger>
                         </div>

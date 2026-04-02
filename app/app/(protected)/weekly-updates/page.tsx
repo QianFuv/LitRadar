@@ -24,6 +24,7 @@ import {
 } from '@/lib/api';
 import { useAuth } from '@/lib/auth-context';
 import { ArticleDetailDialogContent } from '@/components/feature/article-detail-dialog-content';
+import { ArticleListCard } from '@/components/feature/article-list-card';
 import { SearchBar } from '@/components/feature/search-bar';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -108,10 +109,6 @@ function getJournalLabel(journal: WeeklyJournalUpdate): string {
     return journal.journal_title;
   }
   return `期刊 ${journal.journal_id}`;
-}
-
-function buildArticleInfoText(article: WeeklyArticle): string {
-  return `${article.title || `文章 ${article.article_id}`} · ${formatDate(article.date)}`;
 }
 
 type JournalPanelProps = {
@@ -525,25 +522,16 @@ function WeeklyArticleDialog({
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
-        <button
-          type="button"
-          className="w-full rounded-md border p-3 text-left transition-colors hover:bg-muted/40"
-        >
-          <div className="flex items-start justify-between gap-2">
-            <p className="line-clamp-2 text-sm font-medium">
-              {buildArticleInfoText(article)}
-            </p>
-            <div className="flex gap-1 shrink-0">
-              {article.open_access === 1 && (
-                <Badge variant="secondary" className="text-xs">开放获取</Badge>
-              )}
-              {article.in_press === 1 && (
-                <Badge variant="outline" className="text-xs">预发表</Badge>
-              )}
-            </div>
-          </div>
-          <p className="mt-1 text-xs text-muted-foreground">DOI: {article.doi || '暂无'}</p>
-        </button>
+        <div className="block group cursor-pointer text-left">
+          <ArticleListCard
+            title={article.title || `文章 ${article.article_id}`}
+            journalTitle={article.journal_title || `期刊 ${article.journal_id}`}
+            date={article.date ? formatDate(article.date) : undefined}
+            preview={article.doi ? `DOI: ${article.doi}` : '点击查看详情'}
+            openAccess={article.open_access}
+            inPress={article.in_press}
+          />
+        </div>
       </DialogTrigger>
       <WeeklyArticleDetailDialog
         articleId={article.article_id}
