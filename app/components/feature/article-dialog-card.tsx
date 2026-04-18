@@ -8,7 +8,7 @@ import { Dialog, DialogTrigger } from '@/components/ui/dialog';
 import { cn } from '@/lib/utils';
 
 type ArticleDialogCardArticle = {
-  article_id: number;
+  article_id: string;
   journal_id?: number | null;
   title?: string;
   date?: string;

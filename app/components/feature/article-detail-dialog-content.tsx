@@ -3,7 +3,7 @@
 import { useState, type ReactNode } from 'react';
 import { Check, Copy, ExternalLink } from 'lucide-react';
 
-import { getFullTextUrlForDatabase } from '@/lib/api';
+import { getFullTextUrlForDatabase, type ArticleId } from '@/lib/api';
 import { FavoriteButton } from '@/components/feature/favorite-button';
 import { Button } from '@/components/ui/button';
 import {
@@ -14,7 +14,7 @@ import {
 } from '@/components/ui/dialog';
 
 type ArticleDetailDialogArticle = {
-  article_id: number;
+  article_id: ArticleId;
   journal_id?: number | null;
   title?: string;
   date?: string;

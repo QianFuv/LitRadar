@@ -25,6 +25,7 @@ import {
   removeFavorite,
   setTrackingFolder,
   getExportUrl,
+  type ArticleId,
   type CitationFormat,
   type FavoriteArticleItem,
   type FavoriteArticleRef,
@@ -52,7 +53,11 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Skeleton } from '@/components/ui/skeleton';
 import { Checkbox } from '@/components/ui/checkbox';
 
-function getFavoriteSelectionKey(folderId: number, articleId: number, dbName: string): string {
+function getFavoriteSelectionKey(
+  folderId: number,
+  articleId: ArticleId,
+  dbName: string,
+): string {
   return `${folderId}:${articleId}:${dbName}`;
 }
 

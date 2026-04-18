@@ -6,8 +6,10 @@ export interface PageMeta {
   has_more?: boolean | null;
 }
 
+export type ArticleId = string;
+
 export interface Article {
-  article_id: number;
+  article_id: ArticleId;
   journal_id: number;
   issue_id?: number;
   title?: string;
@@ -109,12 +111,12 @@ export function getCurrentDatabase() {
     return currentDb;
 }
 
-export function getFullTextUrl(articleId: number, accessToken?: string): string {
+export function getFullTextUrl(articleId: ArticleId, accessToken?: string): string {
     return withDb(`/api/articles/${articleId}/fulltext`, undefined, accessToken);
 }
 
 export function getFullTextUrlForDatabase(
-  articleId: number,
+  articleId: ArticleId,
   dbName: string,
   accessToken?: string,
 ): string {
@@ -221,7 +223,11 @@ export async function getAnnouncements(): Promise<AnnouncementInfo[]> {
   return res.json();
 }
 
-export async function getArticleById(articleId: number, dbName: string, token?: string): Promise<Article> {
+export async function getArticleById(
+  articleId: ArticleId,
+  dbName: string,
+  token?: string,
+): Promise<Article> {
   const url = new URL(`/api/articles/${articleId}`, resolveBase());
   url.searchParams.set('db', dbName);
   const res = token ? await authFetch(url.toString(), token) : await fetch(url.toString());
@@ -257,7 +263,7 @@ export interface Folder {
 export interface FavoriteItem {
   id: number;
   folder_id: number;
-  article_id: number;
+  article_id: ArticleId;
   db_name: string;
   note: string;
   created_at: number;
@@ -290,12 +296,12 @@ export interface FavoriteCheck {
 }
 
 export interface FavoriteArticleRef {
-  article_id: number;
+  article_id: ArticleId;
   db_name: string;
 }
 
 export interface FavoriteBatchCheckItem {
-  article_id: number;
+  article_id: ArticleId;
   folders: FavoriteCheck[];
 }
 
@@ -424,7 +430,7 @@ export async function getFolderArticles(
 }
 
 export async function addFavorite(
-  token: string, folderId: number, articleId: number, dbName: string, note = ''
+  token: string, folderId: number, articleId: ArticleId, dbName: string, note = ''
 ): Promise<FavoriteItem> {
   const res = await authFetch(`${resolveBase()}/api/favorites/folders/${folderId}/articles`, token, {
     method: 'POST',
@@ -435,7 +441,7 @@ export async function addFavorite(
 }
 
 export async function removeFavorite(
-  token: string, folderId: number, articleId: number, dbName = ''
+  token: string, folderId: number, articleId: ArticleId, dbName = ''
 ): Promise<void> {
   const url = new URL(`/api/favorites/folders/${folderId}/articles/${articleId}`, resolveBase());
   url.searchParams.set('db_name', dbName);
@@ -490,7 +496,7 @@ export function getExportUrl(
 }
 
 export async function checkFavorite(
-  token: string, articleId: number, dbName = ''
+  token: string, articleId: ArticleId, dbName = ''
 ): Promise<FavoriteCheck[]> {
   const url = new URL('/api/favorites/check', resolveBase());
   url.searchParams.set('article_id', String(articleId));
@@ -501,8 +507,8 @@ export async function checkFavorite(
 }
 
 export async function checkFavoritesBatch(
-  token: string, articleIds: number[], dbName = ''
-): Promise<Record<number, FavoriteCheck[]>> {
+  token: string, articleIds: ArticleId[], dbName = ''
+): Promise<Record<ArticleId, FavoriteCheck[]>> {
   if (articleIds.length === 0) {
     return {};
   }

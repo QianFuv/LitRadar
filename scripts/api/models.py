@@ -4,8 +4,32 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
+from typing import Annotated
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, PlainSerializer, WithJsonSchema
+
+
+def serialize_article_id(value: int) -> str:
+    """
+    Serialize article identifiers as decimal strings for JSON transports.
+
+    Args:
+        value: Internal article identifier.
+
+    Returns:
+        String representation of the identifier.
+    """
+    return str(value)
+
+
+ArticleId = Annotated[
+    int,
+    PlainSerializer(serialize_article_id, return_type=str, when_used="json"),
+    WithJsonSchema(
+        {"type": "string", "pattern": "^[1-9][0-9]*$"},
+        mode="serialization",
+    ),
+]
 
 
 class JournalRecord(BaseModel):
@@ -53,7 +77,7 @@ class ArticleRecord(BaseModel):
     Article record.
     """
 
-    article_id: int
+    article_id: ArticleId
     journal_id: int
     issue_id: int | None = None
     sync_id: int | None = None
@@ -164,7 +188,7 @@ class WeeklyArticleRecord(BaseModel):
     Weekly update article record.
     """
 
-    article_id: int
+    article_id: ArticleId
     journal_id: int
     issue_id: int | None = None
     title: str | None = None
@@ -291,20 +315,20 @@ class FolderResponse(BaseModel):
 
 
 class FavoriteAdd(BaseModel):
-    article_id: int
+    article_id: ArticleId
     db_name: str = ""
     note: str = ""
 
 
 class FavoriteArticleRef(BaseModel):
-    article_id: int
+    article_id: ArticleId
     db_name: str = ""
 
 
 class FavoriteResponse(BaseModel):
     id: int
     folder_id: int
-    article_id: int
+    article_id: ArticleId
     db_name: str
     note: str
     created_at: float
@@ -335,12 +359,12 @@ class FavoriteCheckResponse(BaseModel):
 
 
 class FavoriteBatchCheckRequest(BaseModel):
-    article_ids: list[int]
+    article_ids: list[ArticleId]
     db_name: str = ""
 
 
 class FavoriteBatchCheckResponse(BaseModel):
-    article_id: int
+    article_id: ArticleId
     folders: list[FavoriteCheckResponse]
 
 

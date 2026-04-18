@@ -317,7 +317,7 @@ export default function WeeklyUpdatesPage() {
       return [];
     }
 
-    const weeklyById = new Map<number, WeeklyArticle>();
+    const weeklyById = new Map<string, WeeklyArticle>();
     for (const article of weeklyArticles) {
       weeklyById.set(article.article_id, article);
     }

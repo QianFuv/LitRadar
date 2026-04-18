@@ -11,6 +11,7 @@ import {
   removeFavorite,
   getFolders,
   getCurrentDatabase,
+  type ArticleId,
   type FavoriteCheck,
 } from '@/lib/api';
 import { Button } from '@/components/ui/button';
@@ -26,7 +27,7 @@ export function FavoriteButton({
   dbName,
   initialFolderIds = [],
 }: {
-  articleId: number;
+  articleId: ArticleId;
   dbName?: string;
   initialFolderIds?: number[];
 }) {
