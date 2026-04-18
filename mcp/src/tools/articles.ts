@@ -2,7 +2,8 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import * as z from "zod/v4";
 import { PaperScannerClient, buildToolResponse, toArray } from "../client.js";
 
-const articleIdSchema = z.number().int().positive();
+const articleIdSchema = z.string().trim().regex(/^[1-9]\d*$/);
+const journalIdSchema = z.number().int().positive();
 const dateSchema = z.string().trim().min(1);
 const databaseSchema = z.string().trim().min(1);
 const articleListSchema = z.object({
@@ -10,7 +11,7 @@ const articleListSchema = z.object({
   date_from: dateSchema.optional(),
   date_to: dateSchema.optional(),
   db: databaseSchema.optional(),
-  journal_id: z.union([articleIdSchema, z.array(articleIdSchema).min(1)]).optional(),
+  journal_id: z.union([journalIdSchema, z.array(journalIdSchema).min(1)]).optional(),
   limit: z.number().int().min(1).max(200).optional(),
   open_access: z.boolean().optional(),
   q: z.string().trim().min(1).optional(),

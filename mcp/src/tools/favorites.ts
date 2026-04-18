@@ -2,7 +2,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import * as z from "zod/v4";
 import { PaperScannerClient, buildToolResponse } from "../client.js";
 
-const articleIdSchema = z.number().int().positive();
+const articleIdSchema = z.string().trim().regex(/^[1-9]\d*$/);
 const folderIdSchema = z.number().int().positive();
 const databaseNameSchema = z.string().trim().min(1);
 
