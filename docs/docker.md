@@ -67,7 +67,7 @@
 前端镜像同样采用多阶段构建：
 
 1. `deps`
-   - 基础镜像：`node:20-alpine`
+   - 基础镜像：`node:24-alpine`
    - 使用 `pnpm install --frozen-lockfile`
 
 2. `build`
