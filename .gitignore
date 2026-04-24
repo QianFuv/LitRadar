@@ -11,5 +11,6 @@
 /test
 /AGENTS.md
 /CLAUDE.md
+/GEMINI.md
 app/config/auth.yaml
 __pycache__
