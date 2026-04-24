@@ -51,7 +51,7 @@ export function ArticleListCard({
   return (
     <Card
       className={cn(
-        'hover:shadow-md transition-all duration-200 border-transparent hover:border-slate-200 dark:hover:border-slate-800',
+        'transition-all duration-200 hover:bg-accent dark:hover:bg-[#1a1a1a] hover:shadow-[0px_0px_0px_1px_rgba(0,0,0,0.1),0px_4px_12px_rgba(0,0,0,0.08)] dark:hover:shadow-[0px_0px_0px_1px_rgba(255,255,255,0.3),0px_4px_12px_rgba(255,255,255,0.05)]',
         className,
       )}
     >
