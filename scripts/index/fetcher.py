@@ -38,6 +38,64 @@ from scripts.shared.converters import chunked, is_weipu_library, to_int, to_int_
 from scripts.weipu import WeipuAPISelectolax
 
 
+def select_update_issue_ids(
+    issue_ids: list[int],
+    existing_issue_ids: set[int],
+    has_refreshed_latest_existing_issue: bool,
+) -> tuple[list[int], bool]:
+    """
+    Select BrowZine issues to fetch during an update run.
+
+    Args:
+        issue_ids: Issue IDs in upstream order for a publication year.
+        existing_issue_ids: Issue IDs that already have articles.
+        has_refreshed_latest_existing_issue: Whether an existing issue was refreshed.
+
+    Returns:
+        Tuple of issue IDs to fetch and updated refresh state.
+    """
+    issue_ids_to_fetch = [
+        issue_id for issue_id in issue_ids if issue_id not in existing_issue_ids
+    ]
+    if has_refreshed_latest_existing_issue:
+        return issue_ids_to_fetch, has_refreshed_latest_existing_issue
+
+    for issue_id in issue_ids:
+        if issue_id in existing_issue_ids:
+            issue_ids_to_fetch.append(issue_id)
+            return issue_ids_to_fetch, True
+    return issue_ids_to_fetch, False
+
+
+def select_update_weipu_issue_pairs(
+    issue_pairs: list[tuple[int, str]],
+    existing_issue_ids: set[int],
+    has_refreshed_latest_existing_issue: bool,
+) -> tuple[list[tuple[int, str]], bool]:
+    """
+    Select WeiPu issue pairs to fetch during an update run.
+
+    Args:
+        issue_pairs: Database and WeiPu issue ID pairs in upstream order.
+        existing_issue_ids: Issue IDs that already have articles.
+        has_refreshed_latest_existing_issue: Whether an existing issue was refreshed.
+
+    Returns:
+        Tuple of issue pairs to fetch and updated refresh state.
+    """
+    issue_pairs_to_fetch = [
+        pair for pair in issue_pairs if pair[0] not in existing_issue_ids
+    ]
+    if has_refreshed_latest_existing_issue:
+        return issue_pairs_to_fetch, has_refreshed_latest_existing_issue
+
+    for pair in issue_pairs:
+        if pair[0] in existing_issue_ids:
+            issue_pairs_to_fetch.append(pair)
+            return issue_pairs_to_fetch, True
+    return issue_pairs_to_fetch, False
+
+
 async def fetch_issue_articles(
     semaphore: asyncio.Semaphore,
     client: BrowZineAPIClient,
@@ -171,7 +229,13 @@ async def process_weipu_journal(
         completed_years = await get_completed_years(db, journal_id)
 
     if update:
-        years_to_process = years
+        years_to_process = sorted(
+            years,
+            key=lambda year: year.get("year")
+            if isinstance(year.get("year"), int)
+            else -1,
+            reverse=True,
+        )
     else:
         years_to_process = [
             year for year in years if year.get("year") not in completed_years
@@ -186,6 +250,7 @@ async def process_weipu_journal(
         )
 
     semaphore = asyncio.Semaphore(max(1, request_workers))
+    has_refreshed_latest_existing_issue = False
     for index, year_entry in enumerate(years_to_process, start=1):
         year_value = year_entry.get("year")
         if not isinstance(year_value, int):
@@ -221,9 +286,14 @@ async def process_weipu_journal(
             existing_issue_ids = await get_issue_ids_with_articles(
                 db, journal_id, year_value
             )
-            issue_pairs_to_fetch = [
-                pair for pair in issue_pairs if pair[0] not in existing_issue_ids
-            ]
+            (
+                issue_pairs_to_fetch,
+                has_refreshed_latest_existing_issue,
+            ) = select_update_weipu_issue_pairs(
+                issue_pairs,
+                existing_issue_ids,
+                has_refreshed_latest_existing_issue,
+            )
 
         if issue_pairs_to_fetch:
             for batch in chunked(issue_pairs_to_fetch, issue_batch_size):
@@ -349,7 +419,7 @@ async def process_journal(
 
     seen_issue_ids: set[int] = set()
     if update:
-        years_to_process = years
+        years_to_process = sorted(years, reverse=True)
     else:
         years_to_process = [year for year in years if year not in completed_years]
     total_years = len(years_to_process)
@@ -362,6 +432,7 @@ async def process_journal(
         )
 
     semaphore = asyncio.Semaphore(max(1, request_workers))
+    has_refreshed_latest_existing_issue = False
     for index, year in enumerate(years_to_process, start=1):
         if progress:
             progress.set_postfix_str(f"{year} ({index}/{total_years})")
@@ -391,9 +462,14 @@ async def process_journal(
         issue_ids_to_fetch = issue_ids
         if update and issue_ids:
             existing_issue_ids = await get_issue_ids_with_articles(db, journal_id, year)
-            issue_ids_to_fetch = [
-                issue_id for issue_id in issue_ids if issue_id not in existing_issue_ids
-            ]
+            (
+                issue_ids_to_fetch,
+                has_refreshed_latest_existing_issue,
+            ) = select_update_issue_ids(
+                issue_ids,
+                existing_issue_ids,
+                has_refreshed_latest_existing_issue,
+            )
 
         if issue_ids_to_fetch:
             for batch in chunked(issue_ids_to_fetch, issue_batch_size):

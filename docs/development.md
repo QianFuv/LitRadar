@@ -107,6 +107,8 @@ CSV 元数据
 6. 更新 FTS5 表 `article_search`
 7. 在增量模式下生成 `*.changes.json`
 
+增量模式会重新拉取期刊的年份与 issue 列表，抓取本地还没有文章的 issue，并额外重扫最新一个已有文章的 issue，用于补充已发布 issue 后续追加的文章。
+
 ### 2. 检索流
 
 1. 前端通过 `app/lib/api.ts` 发起请求

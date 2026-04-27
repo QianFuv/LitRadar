@@ -142,7 +142,7 @@ uv run index --update --notify --notify-dry-run
 | `--timeout` | `20` | HTTP 超时秒数 |
 | `--processes` | `1` | 期刊级多进程并行数 |
 | `--resume / --no-resume` | `--resume` | 是否跳过已完成的期刊/年份 |
-| `--update / --no-update` | `--no-update` | 是否增量更新已存在数据库 |
+| `--update / --no-update` | `--no-update` | 是否增量更新已存在数据库；会抓取新增 issue，并额外重扫最新一个已有文章的 issue |
 | `--notify / --no-notify` | `--no-notify` | 更新后自动调用 `notify` |
 | `--notify-dry-run` | `false` | 与 `--notify` 配合，仅演练通知不真正推送 |
 
