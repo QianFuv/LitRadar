@@ -53,6 +53,7 @@ def build_journal_record(
     return {
         "journal_id": journal_id,
         "library_id": library_id,
+        "platform_journal_id": str(journal_id),
         "title": pick_attr("title") or csv_row.get("title"),
         "issn": pick_attr("issn") or csv_row.get("issn"),
         "eissn": pick_attr("eissn"),
@@ -163,6 +164,7 @@ def is_numeric_page(value: str | None) -> bool:
 def build_weipu_journal_record(
     journal_id: int,
     library_id: str,
+    platform_journal_id: str | None,
     csv_row: dict[str, str],
     journal_info: dict[str, Any] | None,
     has_articles: bool,
@@ -173,6 +175,7 @@ def build_weipu_journal_record(
     Args:
         journal_id: Internal journal ID.
         library_id: Library identifier.
+        platform_journal_id: Resolved WeiPu journal identifier.
         csv_row: Source CSV row.
         journal_info: WeiPu journal payload.
         has_articles: Whether the journal has articles.
@@ -188,6 +191,7 @@ def build_weipu_journal_record(
     return {
         "journal_id": journal_id,
         "library_id": library_id,
+        "platform_journal_id": platform_journal_id,
         "title": title or csv_row.get("title"),
         "issn": issn or csv_row.get("issn"),
         "eissn": None,

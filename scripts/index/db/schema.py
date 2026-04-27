@@ -2,16 +2,19 @@
 
 from __future__ import annotations
 
+import sqlite3
+
 import aiosqlite
 
 from scripts.index.db.fts import ensure_article_search
 from scripts.index.db.retry import commit_with_retry, execute_with_retry
-from scripts.shared.constants import DB_TIMEOUT_SECONDS
+from scripts.shared.constants import DB_TIMEOUT_SECONDS, WEIPU_LIBRARY_ID
 from scripts.shared.sqlite_ext import load_simple_tokenizer
 
 JOURNAL_COLUMNS = [
     "journal_id",
     "library_id",
+    "platform_journal_id",
     "title",
     "issn",
     "eissn",
@@ -128,6 +131,41 @@ ARTICLE_LISTING_COLUMNS = [
 ARTICLE_LISTING_BATCH_SIZE = 500
 
 
+async def ensure_journal_platform_id_column(db: aiosqlite.Connection) -> None:
+    """
+    Ensure journals stores the upstream platform journal identifier.
+
+    Args:
+        db: Open aiosqlite connection.
+
+    Returns:
+        None.
+    """
+    cursor = await db.execute("PRAGMA table_info(journals);")
+    journal_column_names = {str(row[1]) for row in await cursor.fetchall()}
+    await cursor.close()
+    if "platform_journal_id" in journal_column_names:
+        return
+
+    try:
+        await execute_with_retry(
+            db,
+            "ALTER TABLE journals ADD COLUMN platform_journal_id TEXT;",
+        )
+    except sqlite3.OperationalError as exc:
+        if "duplicate column name" not in str(exc).lower():
+            raise
+    await execute_with_retry(
+        db,
+        """
+        UPDATE journals
+        SET platform_journal_id = CAST(journal_id AS TEXT)
+        WHERE platform_journal_id IS NULL AND library_id != ?
+        """,
+        (WEIPU_LIBRARY_ID,),
+    )
+
+
 async def init_db(db: aiosqlite.Connection) -> None:
     """
     Initialize database schema and indexes.
@@ -150,6 +188,7 @@ async def init_db(db: aiosqlite.Connection) -> None:
         CREATE TABLE IF NOT EXISTS journals (
             journal_id INTEGER PRIMARY KEY,
             library_id TEXT NOT NULL,
+            platform_journal_id TEXT,
             title TEXT,
             issn TEXT,
             eissn TEXT,
@@ -161,6 +200,8 @@ async def init_db(db: aiosqlite.Connection) -> None:
         );
         """,
     )
+
+    await ensure_journal_platform_id_column(db)
 
     await execute_with_retry(
         db,

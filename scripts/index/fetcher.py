@@ -142,9 +142,11 @@ async def process_weipu_journal(
         return
 
     library_id = row.get("library") or WEIPU_LIBRARY_ID
+    platform_journal_id = str(details.get("journalId") or weipu_journal_id)
     journal_record = build_weipu_journal_record(
         journal_id,
         library_id,
+        platform_journal_id,
         row,
         details,
         details.get("totalIssues", 0) > 0,

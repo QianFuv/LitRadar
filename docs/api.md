@@ -100,8 +100,9 @@ Cache-Control: public, max-age=300, stale-while-revalidate=600
 
 #### `GET /api/journals/{journal_id}`
 
-返回单个期刊详情，包含 CSV 元数据：
+返回单个期刊详情，包含平台期刊 ID 与 CSV 元数据：
 
+- `platform_journal_id`
 - `source_csv`
 - `area`
 - `csv_title`

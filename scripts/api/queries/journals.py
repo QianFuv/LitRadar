@@ -98,6 +98,7 @@ async def list_journals(
         SELECT
             j.journal_id,
             j.library_id,
+            j.platform_journal_id,
             j.title,
             j.issn,
             j.eissn,
@@ -146,6 +147,7 @@ async def get_journal(
         SELECT
             j.journal_id,
             j.library_id,
+            j.platform_journal_id,
             j.title,
             j.issn,
             j.eissn,

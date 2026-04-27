@@ -88,6 +88,8 @@ CQVIP 页面使用 Nuxt 服务端渲染，关键数据通常被嵌入：
 | `search_journal_by_title(title)` | 按标题搜索期刊 |
 
 索引器在直接获取期刊详情失败时，会先尝试按 ISSN 搜索，再按标题搜索。
+当搜索命中新的 CQVIP `journalId` 时，索引器会把该值写入 `journals.platform_journal_id`，
+而内部 `journal_id` 仍由 CSV 原始 ID 稳定派生，避免既有数据库关系需要重建。
 
 ### 2. 期刊详情
 

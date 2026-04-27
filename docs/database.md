@@ -48,6 +48,7 @@ journals (1) ---- (1) journal_meta
 
 - `journal_id`：主键
 - `library_id`：上游库 ID
+- `platform_journal_id`：上游平台期刊 ID；BrowZine 与内部主键一致，维普保存解析后的 CQVIP `journalId`
 - `title`
 - `issn`
 - `eissn`
@@ -64,6 +65,11 @@ journals (1) ---- (1) journal_meta
 - `idx_journals_available`
 - `idx_journals_has_articles`
 - `idx_journals_scimago_rank`
+
+兼容性说明：
+
+- 旧索引库打开后会自动补充 `platform_journal_id` 列；非维普旧记录会回填为内部 `journal_id` 字符串，维普旧记录会在下次索引该期刊时写入解析后的 CQVIP `journalId`
+- 该字段不参与当前筛选与排序，因此新增字段不需要重建 FTS 或重新索引文章表
 
 ### 2. `journal_meta`
 

@@ -39,6 +39,7 @@ class JournalRecord(BaseModel):
 
     journal_id: int
     library_id: str
+    platform_journal_id: str | None = None
     title: str | None = None
     issn: str | None = None
     eissn: str | None = None

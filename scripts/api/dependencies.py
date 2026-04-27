@@ -10,6 +10,7 @@ from typing import Annotated, Any
 import aiosqlite
 from fastapi import Depends, HTTPException, Query
 
+from scripts.index.db.schema import ensure_journal_platform_id_column
 from scripts.shared.db_path import resolve_db_path
 from scripts.shared.sqlite_ext import (
     article_search_uses_simple,
@@ -44,6 +45,8 @@ async def get_db(
     connection = await aiosqlite.connect(db_path)
     connection.row_factory = sqlite3.Row
     await load_simple_tokenizer(connection)
+    await ensure_journal_platform_id_column(connection)
+    await connection.commit()
     return connection
 
 
