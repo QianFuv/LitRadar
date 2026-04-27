@@ -24,7 +24,7 @@ codex mcp add paper-scanner --env PAPER_SCANNER_API_URL=<api-url> --env PAPER_SC
 | `PAPER_SCANNER_API_TOKEN` | — | **必填。** 用于 API 认证的 Bearer Token |
 | `PAPER_SCANNER_DB` | — | 默认数据库名，自动附加到支持 `db` 参数的请求 |
 
-所有 API 端点均需要认证，Token 会作为 `Bearer` 头随每个请求发送。可在 Paper Scanner 设置页面中生成。
+MCP 工具调用的后端端点需要认证，Token 会作为 `Bearer` 头随每个请求发送。可在 Paper Scanner 设置页面中生成。
 
 ## 工具列表
 

@@ -42,7 +42,7 @@ pnpm dev
 | 变量 | 默认值 | 说明 |
 | --- | --- | --- |
 | `NEXT_PUBLIC_API_URL` | 空 | 浏览器侧 API 根地址；为空时回退到当前站点源 |
-| `INTERNAL_API_URL` | `http://localhost:8000` | Docker 构建时用于 rewrite `/api/*` 的后端地址 |
+| `INTERNAL_API_URL` | Docker 构建默认 `http://api:8000`；本地回退 `http://localhost:8000` | 用于 rewrite `/api/*` 的后端地址 |
 | `HOSTNAME` | 由运行环境决定 | Next.js standalone 运行时监听地址 |
 
 说明：
@@ -86,7 +86,7 @@ app/
 
 当前前端实际依赖的主要后端能力包括：
 
-- 公开检索接口：`/api/articles`、`/api/journals`、`/api/issues`、`/api/meta/*`
+- 检索接口：`/api/articles`、`/api/journals`、`/api/issues`、`/api/meta/*`
 - 每周更新与公告：`/api/weekly-updates`、`/api/announcements`
 - 用户与认证：`/api/auth/*`
 - 收藏与追踪：`/api/favorites/*`、`/api/tracking/*`

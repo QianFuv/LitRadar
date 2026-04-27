@@ -108,7 +108,7 @@ journals (1) ---- (1) journal_meta
 
 ### 4. `articles`
 
-文章主表，是公开检索与全文跳转的核心数据源。
+文章主表，是检索与全文跳转的核心数据源。
 
 主要字段：
 
@@ -390,15 +390,22 @@ announcements
 - `user_id`
 - `keywords`
 - `directions`
+- `selected_databases`
 - `delivery_method`
 - `pushplus_token`
 - `pushplus_template`
 - `pushplus_topic`
 - `pushplus_channel`
+- `sync_to_tracking_folder`
 - `ai_base_url`
 - `ai_api_key`
 - `ai_model`
 - `ai_system_prompt`
+- `ai_backup_base_url`
+- `ai_backup_api_key`
+- `ai_backup_model`
+- `ai_backup_system_prompt`
+- `ai_retry_attempts`
 - `enabled`
 - `created_at`
 - `updated_at`

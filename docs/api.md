@@ -1,20 +1,22 @@
 # API 参考
 
-本文档以当前 FastAPI 代码为准，覆盖公开检索接口、认证接口、收藏/追踪接口以及管理员接口。
+本文档以当前 FastAPI 代码为准，覆盖检索接口、认证接口、收藏/追踪接口以及管理员接口。
 
 ## 基本约定
 
 - 基础地址：`http://localhost:8000`
 - API 前缀：`/api`
-- 文档中的“需要认证”指需要在请求头中携带：
+- 文档中的“需要认证”指需要携带访问令牌，推荐使用请求头：
 
   ```http
   Authorization: Bearer <access_token>
   ```
 
+  当前认证依赖也接受 `access_token` 查询参数，但常规 API 调用应优先使用 Bearer 头。
+
 ### 数据库选择
 
-所有依赖索引库的公开检索接口都支持可选查询参数 `db`，其值对应 `data/index/` 下的数据库文件名或文件名去掉 `.sqlite` 的形式。
+所有依赖索引库的检索接口都支持可选查询参数 `db`，其值对应 `data/index/` 下的数据库文件名或文件名去掉 `.sqlite` 的形式。
 
 规则：
 
@@ -54,7 +56,9 @@
 Cache-Control: public, max-age=300, stale-while-revalidate=600
 ```
 
-## 公开检索接口
+## 检索与展示接口
+
+除健康检查和公告列表外，本节接口都需要认证。
 
 ### 健康检查
 
@@ -66,11 +70,11 @@ Cache-Control: public, max-age=300, stale-while-revalidate=600
 
 | 方法 | 路径 | 认证 | 说明 |
 | --- | --- | --- | --- |
-| `GET` | `/api/meta/databases` | 否 | 列出 `data/index/` 下可用数据库文件 |
-| `GET` | `/api/meta/areas` | 否 | 返回领域及数量 |
-| `GET` | `/api/meta/journals` | 否 | 返回期刊选项列表 |
-| `GET` | `/api/meta/libraries` | 否 | 返回 CSV 中声明的 `library` 值统计 |
-| `GET` | `/api/years` | 否 | 返回年份、issue 数与期刊数 |
+| `GET` | `/api/meta/databases` | 是 | 列出 `data/index/` 下可用数据库文件 |
+| `GET` | `/api/meta/areas` | 是 | 返回领域及数量 |
+| `GET` | `/api/meta/journals` | 是 | 返回期刊选项列表 |
+| `GET` | `/api/meta/libraries` | 是 | 返回 CSV 中声明的 `library` 值统计 |
+| `GET` | `/api/years` | 是 | 返回年份、issue 数与期刊数 |
 
 ### 期刊接口
 
@@ -173,20 +177,16 @@ Cache-Control: public, max-age=300, stale-while-revalidate=600
 
 - DOI 链接
 - LibKey / full text file
-- BrowZine / CQVIP 对应来源页面
+- CQVIP 详情页
 
 ### 每周更新与公告
 
 | 方法 | 路径 | 认证 | 说明 |
 | --- | --- | --- | --- |
-| `GET` | `/api/weekly-updates` | 否 | 基于 `data/push_state/*.changes.json` 聚合最近新增文章 |
+| `GET` | `/api/weekly-updates` | 是 | 基于 `data/push_state/*.changes.json` 聚合最近新增文章 |
 | `GET` | `/api/announcements` | 否 | 返回当前启用的系统公告，按优先级和时间排序 |
 
-`GET /api/weekly-updates` 支持参数：
-
-| 参数 | 默认值 | 说明 |
-| --- | --- | --- |
-| `window_days` | `7` | 回看天数，范围 `1..31` |
+`GET /api/weekly-updates` 当前不接收查询参数。响应中的 `window_start` 与 `window_end` 由变更清单时间戳推导。
 
 ## 认证与用户接口
 
@@ -277,7 +277,7 @@ Cache-Control: public, max-age=300, stale-while-revalidate=600
 
 ## 收藏夹接口
 
-所有 `/api/favorites/*` 均需要认证，只有导出接口额外支持 `access_token` 查询参数。
+所有 `/api/favorites/*` 均需要认证。导出接口常用 `access_token` 查询参数生成下载链接，其他接口也遵循全局认证约定。
 
 ### 文件夹
 
@@ -313,6 +313,8 @@ Cache-Control: public, max-age=300, stale-while-revalidate=600
 | `POST` | `/api/favorites/folders/{folder_id}/articles` | 添加单篇文章 |
 | `DELETE` | `/api/favorites/folders/{folder_id}/articles/{article_id}` | 移除文章 |
 | `POST` | `/api/favorites/folders/{folder_id}/articles/bulk` | 批量添加文章 |
+| `POST` | `/api/favorites/folders/{folder_id}/articles/bulk-remove` | 批量移除文章 |
+| `POST` | `/api/favorites/folders/{folder_id}/articles/bulk-move` | 批量移动文章到另一个文件夹 |
 | `GET` | `/api/favorites/folders/{folder_id}/export` | 导出引用文件 |
 
 `GET /api/favorites/folders/{folder_id}/articles` 支持：
@@ -342,7 +344,8 @@ Cache-Control: public, max-age=300, stale-while-revalidate=600
 
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
-| `POST` | `/api/tracking/push-weekly` | 将最近每周新增文章推入当前用户追踪文件夹 |
+| `POST` | `/api/tracking/push-weekly` | 启动当前用户的手动每周推送后台任务 |
+| `GET` | `/api/tracking/push-weekly/status` | 查询当前用户手动每周推送任务状态 |
 | `GET` | `/api/tracking/status` | 返回追踪状态摘要 |
 | `GET` | `/api/tracking/notification-settings` | 获取当前用户通知设置 |
 | `PUT` | `/api/tracking/notification-settings` | 更新当前用户通知设置 |
@@ -352,8 +355,10 @@ Cache-Control: public, max-age=300, stale-while-revalidate=600
 说明：
 
 - 数据来源不是实时日期扫描，而是 `data/push_state/*.changes.json`
-- 如果用户配置了关键词或研究方向，会先做 AI 选择
-- AI 配置不可用时会回退为“全部推入”
+- 接口会立即返回后台任务状态；如果已有任务运行，则返回现有任务
+- AI 选择是推送前置条件；未配置关键词/方向、AI 配置不可用或 AI 失败时会跳过推送
+- `delivery_method = "folder"` 时写入追踪文件夹
+- `delivery_method = "pushplus"` 时发送 PushPlus；若 `sync_to_tracking_folder = true`，还会同步写入追踪文件夹
 
 ### `PUT /api/tracking/notification-settings`
 
@@ -363,15 +368,22 @@ Cache-Control: public, max-age=300, stale-while-revalidate=600
 {
   "keywords": ["earnings management"],
   "directions": ["capital markets"],
+  "selected_databases": ["utd24.sqlite"],
   "delivery_method": "pushplus",
   "pushplus_token": "token",
   "pushplus_template": "markdown",
   "pushplus_topic": "",
   "pushplus_channel": "wechat",
+  "sync_to_tracking_folder": false,
   "ai_base_url": "https://api.siliconflow.cn/v1",
   "ai_api_key": "sk-...",
   "ai_model": "deepseek-ai/DeepSeek-V3",
   "ai_system_prompt": "",
+  "ai_backup_base_url": "",
+  "ai_backup_api_key": "",
+  "ai_backup_model": "",
+  "ai_backup_system_prompt": "",
+  "ai_retry_attempts": 3,
   "enabled": true
 }
 ```
@@ -380,6 +392,8 @@ Cache-Control: public, max-age=300, stale-while-revalidate=600
 
 - `delivery_method` 当前只允许 `folder` 或 `pushplus`
 - 当 `delivery_method = "pushplus"` 时，`pushplus_token` 必填
+- `selected_databases` 为空表示全部数据库；传入值必须对应 `data/index/` 下已有 `.sqlite` 文件
+- 当 `delivery_method = "pushplus"` 且 `sync_to_tracking_folder = true` 时，必须已经设置追踪文件夹
 
 ## 管理员接口
 

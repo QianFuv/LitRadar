@@ -98,19 +98,19 @@
 - 只根据文章内容相关性与质量判断
 - 不得凭空编造文章 ID
 
-### 无 AI 时的回退策略
+### AI 不可用时的跳过策略
 
-如果满足以下任一条件，系统会回退到“全量候选”模式：
+如果满足以下任一条件，系统会跳过对应用户的本次推送：
 
 - 用户未配置关键词与研究方向
 - 用户配置了偏好，但 AI Key 或模型名为空
 - AI 请求异常
 
-回退后的行为：
+跳过后的行为：
 
-- `notify`：向 PushPlus 推送全部未去重候选
-- `push`：把全部未去重候选写入追踪文件夹
-- `/api/tracking/push-weekly`：若用户存在偏好但 AI 失败，也会退回全量推送
+- `notify`：记录该 PushPlus 订阅用户为 skipped，不发送消息
+- `push`：记录该追踪文件夹订阅用户为 skipped，不写入收藏
+- `/api/tracking/push-weekly`：返回 completed 状态与跳过原因，不执行全量推送
 
 ## `uv run notify`
 
@@ -146,7 +146,7 @@
 2. 读取状态文件 `data/push_state/<db>.json`
 3. 如果提供 `--changes-file`，按变更清单运行；否则按前后快照差异运行
 4. 加载 issue 与 in-press 候选
-5. 可选执行 AI 选择
+5. 执行 AI 选择；无可用偏好或 AI 配置时跳过对应订阅用户
 6. 构造 Markdown 内容并发送 PushPlus
 7. 更新 `delivery_dedupe` 与运行状态
 
@@ -177,19 +177,26 @@
 
 ## `/api/tracking/push-weekly`
 
-这是面向当前登录用户的单次即时操作，与 `uv run push` 不同之处在于：
+这是面向当前登录用户的手动后台任务，与 `uv run push` 不同之处在于：
 
 - 只处理当前用户
 - 读取最新的 `data/push_state/*.changes.json`
-- 最终总是写入当前用户的追踪文件夹
+- `POST /api/tracking/push-weekly` 会立即返回当前任务状态
+- 可通过 `GET /api/tracking/push-weekly/status` 轮询状态
+- `delivery_method = "folder"` 时写入追踪文件夹
+- `delivery_method = "pushplus"` 时发送 PushPlus；开启 `sync_to_tracking_folder` 后才同步写入追踪文件夹
 
 返回结果里常见字段：
 
+- `job_id`
+- `status`
 - `pushed`
 - `selected`
 - `summary`
 - `total_candidates`
 - `message`
+- `started_at`
+- `finished_at`
 - `folder_id`
 - `folder_name`
 
