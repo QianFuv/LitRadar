@@ -23,10 +23,12 @@ from scripts.api.auth_db import (
     list_all_announcements,
     list_all_invite_codes,
     list_all_users,
+    list_runtime_settings,
     list_scheduled_tasks,
     set_user_admin,
     update_announcement,
     update_scheduled_task,
+    upsert_runtime_settings,
 )
 from scripts.api.auth_deps import get_admin_user
 from scripts.api.models import (
@@ -37,6 +39,8 @@ from scripts.api.models import (
     AnnouncementCreate,
     AnnouncementInfo,
     AnnouncementUpdate,
+    RuntimeSettingInfo,
+    RuntimeSettingsUpdate,
     ScheduledTaskCreate,
     ScheduledTaskInfo,
     ScheduledTaskUpdate,
@@ -329,6 +333,26 @@ async def admin_delete_scheduled_task(task_id: int, _admin: AdminUser):
         raise HTTPException(status_code=404, detail="Scheduled task not found")
     reload_scheduler()
     return {"ok": True}
+
+
+@router.get("/runtime-settings", response_model=list[RuntimeSettingInfo])
+async def admin_list_runtime_settings(_admin: AdminUser):
+    """List managed runtime settings."""
+    return [RuntimeSettingInfo(**item) for item in list_runtime_settings()]
+
+
+@router.put("/runtime-settings", response_model=list[RuntimeSettingInfo])
+async def admin_update_runtime_settings(
+    body: RuntimeSettingsUpdate,
+    _admin: AdminUser,
+):
+    """Update managed runtime settings."""
+    try:
+        return [
+            RuntimeSettingInfo(**item) for item in upsert_runtime_settings(body.values)
+        ]
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.get("/announcements", response_model=list[AnnouncementInfo])

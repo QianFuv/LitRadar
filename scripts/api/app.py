@@ -13,6 +13,7 @@ from starlette.requests import Request
 from scripts.api.auth_db import init_auth_db
 from scripts.api.scheduler import start_scheduler, stop_scheduler
 from scripts.shared.constants import API_PREFIX
+from scripts.shared.runtime_config import apply_runtime_config
 
 
 class CacheControlMiddleware(BaseHTTPMiddleware):
@@ -33,7 +34,9 @@ class CacheControlMiddleware(BaseHTTPMiddleware):
 
 @asynccontextmanager
 async def lifespan(application: FastAPI) -> AsyncGenerator[None]:
+    apply_runtime_config()
     init_auth_db()
+    apply_runtime_config()
     start_scheduler()
     try:
         yield

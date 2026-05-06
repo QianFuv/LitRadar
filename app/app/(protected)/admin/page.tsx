@@ -47,6 +47,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { AnnouncementsCard } from '@/components/admin/announcements-card';
+import { RuntimeSettingsCard } from '@/components/admin/runtime-settings-card';
 import { ScheduledTasksCard } from '@/components/admin/scheduled-tasks-card';
 
 function formatDate(ts: number): string {
@@ -736,6 +737,7 @@ export default function AdminPage() {
 
       {token && (
         <>
+          <RuntimeSettingsCard token={token} />
           <ScheduledTasksCard token={token} />
           <AnnouncementsCard token={token} />
         </>

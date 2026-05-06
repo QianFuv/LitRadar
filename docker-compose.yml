@@ -8,6 +8,9 @@ services:
       - ./data:/app/data
     environment:
       - API_HOST=0.0.0.0
+      - OPENALEX_API_KEY=${OPENALEX_API_KEY:-}
+      - CROSSREF_MAILTO=${CROSSREF_MAILTO:-}
+      - UNPAYWALL_EMAIL=${UNPAYWALL_EMAIL:-}
 
   app:
     build: ./app

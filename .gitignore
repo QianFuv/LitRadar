@@ -1,5 +1,6 @@
 /.claude
 /.*cache
+/.env
 /.venv
 /.vscode
 /*.egg-info

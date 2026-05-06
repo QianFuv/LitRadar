@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import subprocess
 import time
 
@@ -14,6 +15,7 @@ from scripts.api.auth_db import (
     list_scheduled_tasks,
     record_scheduled_task_run,
 )
+from scripts.shared.runtime_config import apply_runtime_config
 
 logger = logging.getLogger(__name__)
 
@@ -62,12 +64,14 @@ def _execute_command(task_id: int, command: str) -> None:
     """
     ran_at = time.time()
     try:
+        apply_runtime_config()
         result = subprocess.run(
             command,
             shell=True,
             capture_output=True,
             text=True,
             check=False,
+            env=os.environ.copy(),
         )
     except Exception as exc:
         logger.exception("Scheduled task %s crashed", task_id)

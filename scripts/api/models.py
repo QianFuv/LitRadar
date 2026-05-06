@@ -514,6 +514,22 @@ class AnnouncementUpdate(BaseModel):
     enabled: bool | None = None
 
 
+class RuntimeSettingInfo(BaseModel):
+    field: str
+    key: str
+    label: str
+    description: str
+    input_type: str
+    is_secret: bool
+    value: str
+    source: str
+    updated_at: float | None = None
+
+
+class RuntimeSettingsUpdate(BaseModel):
+    values: dict[str, str] = Field(default_factory=dict)
+
+
 class AdminUserInfo(BaseModel):
     id: int
     username: str

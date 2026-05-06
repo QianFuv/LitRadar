@@ -741,6 +741,22 @@ export interface AnnouncementUpdate {
   enabled?: boolean;
 }
 
+export interface RuntimeSettingInfo {
+  field: string;
+  key: string;
+  label: string;
+  description: string;
+  input_type: 'text' | 'password' | 'email' | 'boolean';
+  is_secret: boolean;
+  value: string;
+  source: 'database' | 'environment' | 'default';
+  updated_at: number | null;
+}
+
+export interface RuntimeSettingsUpdate {
+  values: Record<string, string>;
+}
+
 export async function adminGetUsers(token: string): Promise<AdminUserInfo[]> {
   const res = await authFetch(`${resolveBase()}/api/admin/users`, token);
   if (!res.ok) throw new Error('获取用户列表失败');
@@ -867,6 +883,40 @@ export async function adminDeleteScheduledTask(token: string, taskId: number): P
     const err = await res.json().catch(() => ({}));
     throw new Error(err.detail || '删除定时任务失败');
   }
+}
+
+/**
+ * Fetch managed runtime settings.
+ *
+ * @param token - Admin access token.
+ * @returns Runtime settings.
+ */
+export async function adminGetRuntimeSettings(token: string): Promise<RuntimeSettingInfo[]> {
+  const res = await authFetch(`${resolveBase()}/api/admin/runtime-settings`, token);
+  if (!res.ok) throw new Error('获取运行配置失败');
+  return res.json();
+}
+
+/**
+ * Update managed runtime settings.
+ *
+ * @param token - Admin access token.
+ * @param payload - Runtime setting values.
+ * @returns Updated runtime settings.
+ */
+export async function adminUpdateRuntimeSettings(
+  token: string,
+  payload: RuntimeSettingsUpdate,
+): Promise<RuntimeSettingInfo[]> {
+  const res = await authFetch(`${resolveBase()}/api/admin/runtime-settings`, token, {
+    method: 'PUT',
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || '更新运行配置失败');
+  }
+  return res.json();
 }
 
 export async function adminGetAnnouncements(token: string): Promise<AnnouncementInfo[]> {

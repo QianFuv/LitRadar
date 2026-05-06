@@ -5,11 +5,17 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import os
 import secrets
 import sqlite3
 import time
 
 from scripts.shared.constants import PROJECT_ROOT
+from scripts.shared.runtime_config import (
+    RUNTIME_CONFIG_BY_FIELD,
+    RUNTIME_CONFIG_DEFINITIONS,
+    runtime_bool_to_text,
+)
 
 AUTH_DB_PATH = PROJECT_ROOT / "data" / "auth.sqlite"
 ACCESS_TOKEN_BYTES = 32
@@ -139,6 +145,12 @@ def init_auth_db() -> None:
             CREATE INDEX IF NOT EXISTS idx_scheduled_tasks_enabled
                 ON scheduled_tasks(enabled);
 
+            CREATE TABLE IF NOT EXISTS runtime_settings (
+                key             TEXT PRIMARY KEY,
+                value           TEXT NOT NULL DEFAULT '',
+                updated_at      REAL NOT NULL
+            );
+
             CREATE TABLE IF NOT EXISTS announcements (
                 id              INTEGER PRIMARY KEY AUTOINCREMENT,
                 title           TEXT    NOT NULL,
@@ -230,6 +242,7 @@ def init_auth_db() -> None:
                 "ALTER TABLE announcements "
                 "ADD COLUMN priority TEXT NOT NULL DEFAULT 'normal'"
             )
+        seed_runtime_settings_from_environment(conn)
         purge_expired_access_tokens(conn=conn)
         conn.commit()
     finally:
@@ -1594,6 +1607,146 @@ def get_auth_stats() -> dict:
         return stats
     finally:
         conn.close()
+
+
+def seed_runtime_settings_from_environment(conn: sqlite3.Connection) -> None:
+    """
+    Seed missing runtime settings from process environment variables.
+
+    Args:
+        conn: Open auth database connection.
+
+    Returns:
+        None.
+    """
+    now = time.time()
+    for definition in RUNTIME_CONFIG_DEFINITIONS:
+        raw_value = os.getenv(definition.env_name)
+        if raw_value is None or raw_value.strip() == "":
+            continue
+        value = raw_value.strip()
+        if definition.input_type == "boolean":
+            value = runtime_bool_to_text(value)
+        conn.execute(
+            "INSERT OR IGNORE INTO runtime_settings (key, value, updated_at) "
+            "VALUES (?, ?, ?)",
+            (definition.env_name, value, now),
+        )
+
+
+def _runtime_setting_from_definition(
+    definition_key: str,
+    value: str,
+    updated_at: float | None,
+    source: str,
+) -> dict:
+    """
+    Build a runtime setting response from a stored value.
+
+    Args:
+        definition_key: Runtime environment variable name.
+        value: Effective setting value.
+        updated_at: Database update timestamp.
+        source: Effective value source.
+
+    Returns:
+        Runtime setting payload.
+    """
+    definition = next(
+        item for item in RUNTIME_CONFIG_DEFINITIONS if item.env_name == definition_key
+    )
+    return {
+        "field": definition.field,
+        "key": definition.env_name,
+        "label": definition.label,
+        "description": definition.description,
+        "input_type": definition.input_type,
+        "is_secret": definition.is_secret,
+        "value": value,
+        "source": source,
+        "updated_at": updated_at,
+    }
+
+
+def list_runtime_settings() -> list[dict]:
+    """
+    List managed runtime settings with their effective values.
+
+    Returns:
+        Runtime setting payloads.
+    """
+    conn = _get_connection()
+    try:
+        rows = conn.execute(
+            "SELECT key, value, updated_at FROM runtime_settings"
+        ).fetchall()
+        rows_by_key = {str(row["key"]): row for row in rows}
+    finally:
+        conn.close()
+
+    settings: list[dict] = []
+    for definition in RUNTIME_CONFIG_DEFINITIONS:
+        row = rows_by_key.get(definition.env_name)
+        if row is not None:
+            value = str(row["value"])
+            source = "database"
+            updated_at = float(row["updated_at"])
+        elif os.getenv(definition.env_name) is not None:
+            value = str(os.getenv(definition.env_name) or "")
+            source = "environment"
+            updated_at = None
+        else:
+            value = definition.default_value
+            source = "default"
+            updated_at = None
+        settings.append(
+            _runtime_setting_from_definition(
+                definition.env_name,
+                value,
+                updated_at,
+                source,
+            )
+        )
+    return settings
+
+
+def upsert_runtime_settings(values: dict[str, str]) -> list[dict]:
+    """
+    Create or update managed runtime settings.
+
+    Args:
+        values: Setting values keyed by API field name.
+
+    Returns:
+        Updated runtime setting payloads.
+
+    Raises:
+        ValueError: If a setting field or value is invalid.
+    """
+    now = time.time()
+    rows: list[tuple[str, str, float]] = []
+    for field, raw_value in values.items():
+        definition = RUNTIME_CONFIG_BY_FIELD.get(field)
+        if definition is None:
+            raise ValueError(f"Unknown runtime setting: {field}")
+        value = str(raw_value or "").strip()
+        if definition.input_type == "boolean":
+            value = runtime_bool_to_text(value, default=True)
+        rows.append((definition.env_name, value, now))
+
+    conn = _get_connection()
+    try:
+        conn.executemany(
+            "INSERT INTO runtime_settings (key, value, updated_at) "
+            "VALUES (?, ?, ?) "
+            "ON CONFLICT(key) DO UPDATE SET "
+            "value = excluded.value, updated_at = excluded.updated_at",
+            rows,
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    return list_runtime_settings()
 
 
 def _scheduled_task_from_row(row: sqlite3.Row) -> dict:
