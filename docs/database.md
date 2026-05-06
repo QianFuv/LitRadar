@@ -47,8 +47,8 @@ journals (1) ---- (1) journal_meta
 主要字段：
 
 - `journal_id`：主键
-- `library_id`：上游库 ID
-- `platform_journal_id`：上游平台期刊 ID；BrowZine 与内部主键一致，维普保存解析后的 CQVIP `journalId`
+- `library_id`：数据源标识，当前通常为 `scholarly` 或 `cnki`
+- `platform_journal_id`：上游平台期刊 ID；英文期刊通常为 ISSN，CNKI 为 `pykm`
 - `title`
 - `issn`
 - `eissn`
@@ -66,11 +66,6 @@ journals (1) ---- (1) journal_meta
 - `idx_journals_has_articles`
 - `idx_journals_scimago_rank`
 
-兼容性说明：
-
-- 旧索引库打开后会自动补充 `platform_journal_id` 列；非维普旧记录会回填为内部 `journal_id` 字符串，维普旧记录会在下次索引该期刊时写入解析后的 CQVIP `journalId`
-- 该字段不参与当前筛选与排序，因此新增字段不需要重建 FTS 或重新索引文章表
-
 ### 2. `journal_meta`
 
 保存 CSV 源文件元数据。
@@ -82,7 +77,7 @@ journals (1) ---- (1) journal_meta
 - `area`
 - `csv_title`
 - `csv_issn`
-- `csv_library`
+- `csv_library`：当前保存 CSV 中的 `source` 值
 
 主要用途：
 
@@ -137,14 +132,13 @@ journals (1) ---- (1) journal_meta
   - `link_resolver_openurl_link`
   - `email_article_request_link`
   - `permalink`
-  - `full_text_file`
-  - `libkey_full_text_file`
+  - `full_text_file`，当前保存 OA URL 或 CNKI HTML 阅读链接
   - `nomad_fallback_url`
 - 状态位：
   - `suppressed`
   - `in_press`
   - `open_access`
-  - `within_library_holdings`
+  - `within_library_holdings`，历史字段，新抓取数据通常为空
   - `unpaywall_data_suppressed`
   - `avoid_unpaywall_publisher_links`
 - 其他来源字段：
@@ -154,9 +148,7 @@ journals (1) ---- (1) journal_meta
   - `retraction_related_urls`
   - `expression_of_concern_doi`
   - `noodletools_export_link`
-  - `browzine_web_in_context_link`
   - `content_location`
-  - `libkey_content_location`
 
 主要索引：
 
@@ -190,7 +182,7 @@ journals (1) ---- (1) journal_meta
 - `open_access`
 - `in_press`
 - `suppressed`
-- `within_library_holdings`
+- `within_library_holdings`，历史字段，新抓取数据通常为空
 - `doi`
 - `pmid`
 - `area`

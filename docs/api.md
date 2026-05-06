@@ -43,6 +43,8 @@
 - `cursor` 格式：`{date}|{article_id}`
 - `include_total=false` 时不会计算总数，响应中的 `page.total` 可能为 `null`
 
+`article_id` 与 `journal_id` 在 JSON 响应中以十进制字符串返回，避免浏览器端丢失 64-bit 整数精度。请求参数与路径参数仍使用对应的十进制 ID 文本。
+
 ### 缓存
 
 后端会对以下路径添加缓存头：
@@ -73,7 +75,7 @@ Cache-Control: public, max-age=300, stale-while-revalidate=600
 | `GET` | `/api/meta/databases` | 是 | 列出 `data/index/` 下可用数据库文件 |
 | `GET` | `/api/meta/areas` | 是 | 返回领域及数量 |
 | `GET` | `/api/meta/journals` | 是 | 返回期刊选项列表 |
-| `GET` | `/api/meta/libraries` | 是 | 返回 CSV 中声明的 `library` 值统计 |
+| `GET` | `/api/meta/sources` | 是 | 返回 CSV 中声明的 `source` 值统计 |
 | `GET` | `/api/years` | 是 | 返回年份、issue 数与期刊数 |
 
 ### 期刊接口
@@ -86,7 +88,7 @@ Cache-Control: public, max-age=300, stale-while-revalidate=600
 | --- | --- | --- |
 | `db` | string | 数据库名 |
 | `area` | string | 领域过滤 |
-| `library_id` | string | `journals.library_id` 过滤 |
+| `library_id` | string | 数据源过滤；当前值通常为 `scholarly` 或 `cnki` |
 | `available` | bool | 是否可用 |
 | `has_articles` | bool | 是否存在文章 |
 | `year` | int | 只保留该年有 issue 的期刊 |
@@ -107,7 +109,7 @@ Cache-Control: public, max-age=300, stale-while-revalidate=600
 - `area`
 - `csv_title`
 - `csv_issn`
-- `csv_library`
+- `csv_library`，当前保存 CSV 的 `source` 值
 
 ### Issue 接口
 
@@ -118,7 +120,7 @@ Cache-Control: public, max-age=300, stale-while-revalidate=600
 | 参数 | 类型 | 说明 |
 | --- | --- | --- |
 | `db` | string | 数据库名 |
-| `journal_id` | int | 期刊 ID |
+| `journal_id` | string/int | 期刊 ID |
 | `year` | int | 年份 |
 | `is_valid_issue` | bool | 是否有效期次 |
 | `suppressed` | bool | 是否抑制 |
@@ -143,14 +145,14 @@ Cache-Control: public, max-age=300, stale-while-revalidate=600
 | 参数 | 类型 | 说明 |
 | --- | --- | --- |
 | `db` | string | 数据库名 |
-| `journal_id` | int，可重复 | 多个期刊过滤 |
+| `journal_id` | string/int，可重复 | 多个期刊过滤 |
 | `issue_id` | int | issue 过滤 |
 | `year` | int | issue 年份过滤 |
 | `area` | string，可重复 | 多个领域过滤 |
 | `in_press` | bool | 是否 in-press |
 | `open_access` | bool | 是否开放获取 |
 | `suppressed` | bool | 是否抑制 |
-| `within_library_holdings` | bool | 是否馆藏内可访问 |
+| `within_library_holdings` | bool | 历史字段，当前新抓取数据通常为空 |
 | `date_from` | string | 起始日期 |
 | `date_to` | string | 截止日期 |
 | `doi` | string | DOI 精确过滤 |
@@ -176,9 +178,9 @@ Cache-Control: public, max-age=300, stale-while-revalidate=600
 
 重定向到文章全文地址，优先级由代码动态决定，可能落到：
 
+- Unpaywall / OpenAlex OA 链接
+- CNKI HTML 阅读或详情页
 - DOI 链接
-- LibKey / full text file
-- CQVIP 详情页
 
 ### 每周更新与公告
 

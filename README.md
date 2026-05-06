@@ -1,6 +1,6 @@
 # Paper Scanner
 
-Paper Scanner 是一个面向学术期刊的全栈检索与订阅平台。它负责从 BrowZine 与 CQVIP（维普）抓取期刊和文章元数据，构建 SQLite 检索库，并提供 Web 界面、收藏夹、追踪推送、每周更新、公告与后台管理能力。
+Paper Scanner 是一个面向学术期刊的全栈检索与订阅平台。它负责从 OpenAlex、Crossref、Unpaywall 与 CNKI overseas 抓取期刊和文章元数据，构建 SQLite 检索库，并提供 Web 界面、收藏夹、追踪推送、每周更新、公告与后台管理能力。
 
 当前仓库包含四类核心运行单元：
 
@@ -11,9 +11,9 @@ Paper Scanner 是一个面向学术期刊的全栈检索与订阅平台。它负
 
 ## 主要功能
 
-- 多数据源索引：同时支持 BrowZine 与维普期刊
+- 多数据源索引：英文期刊使用 Crossref + OpenAlex + Unpaywall，中文期刊使用 CNKI overseas
 - SQLite 检索：文章全文检索基于 FTS5，可选加载 `simple` 中文分词扩展
-- 多维筛选：按期刊、领域、年份、开放获取、是否馆藏等条件过滤
+- 多维筛选：按期刊、领域、年份、开放获取等条件过滤
 - 每周更新：基于变更清单聚合最近新增文章
 - 用户系统：注册、登录、邀请码、访问令牌、改密
 - 收藏与导出：文件夹管理、批量收藏、BibTeX / RIS / EndNote XML 导出
@@ -28,7 +28,7 @@ Paper Scanner 是一个面向学术期刊的全栈检索与订阅平台。它负
 | --- | --- |
 | 前端 | Next.js 16、React 19、TypeScript、Tailwind CSS 4、Radix UI、TanStack Query |
 | 后端 | FastAPI、Uvicorn、aiosqlite |
-| 索引/抓取 | httpx、selectolax、quickjs、SQLite FTS5 |
+| 索引/抓取 | httpx、SQLite FTS5 |
 | AI 与推送 | OpenAI Python SDK（兼容 OpenAI API 的服务）、PushPlus |
 | 调度 | APScheduler |
 | 开发工具 | uv、Ruff、mypy、pnpm |
@@ -68,11 +68,11 @@ Paper Scanner 是一个面向学术期刊的全栈检索与订阅平台。它负
 
    | 列名 | 说明 |
    | --- | --- |
+   | `source` | 数据源；英文期刊为 `scholarly`，中文期刊为 `cnki` |
    | `title` | 期刊标题 |
    | `issn` | ISSN |
-   | `id` | 上游期刊 ID；维普期刊必须提供 |
+   | `id` | 上游期刊 ID；`scholarly` 使用 ISSN，`cnki` 使用 CNKI `pykm` |
    | `area` | 自定义领域标签 |
-   | `library` | 数据源库 ID；BrowZine 常用 `3050`，维普固定为 `-1` |
 
 2. 构建并启动服务
 
@@ -127,7 +127,7 @@ pnpm dev
 
 ```bash
 uv run index --file utd24.csv
-uv run index --workers 8 --processes 2
+uv run index --workers 32 --processes 3
 uv run index --update --notify
 uv run index --update --notify --notify-dry-run
 ```
@@ -137,10 +137,10 @@ uv run index --update --notify --notify-dry-run
 | 参数 | 默认值 | 说明 |
 | --- | --- | --- |
 | `--file, -f` | 处理 `data/meta/` 下全部 CSV | 指定单个 CSV |
-| `--workers, -w` | `8` | 最大并发请求数 |
+| `--workers, -w` | `32` | 最大并发请求数 |
 | `--issue-batch` | `workers * 3` | 每批抓取 issue 数量；传 `0` 时自动计算 |
 | `--timeout` | `20` | HTTP 超时秒数 |
-| `--processes` | `1` | 期刊级多进程并行数 |
+| `--processes` | `3` | 期刊级多进程并行数 |
 | `--resume / --no-resume` | `--resume` | 是否跳过已完成的期刊/年份 |
 | `--update / --no-update` | `--no-update` | 是否增量更新已存在数据库；会抓取新增 issue，并额外重扫最新一个已有文章的 issue |
 | `--notify / --no-notify` | `--no-notify` | 更新后自动调用 `notify` |
@@ -243,6 +243,6 @@ uv run push --db utd24.sqlite --dry-run
 - [开发指南](docs/development.md)
 - [Docker 部署](docs/docker.md)
 - [通知与追踪推送](docs/notify.md)
-- [BrowZine 集成](docs/browzine_api.md)
-- [维普集成](docs/weipu_api.md)
+- [OpenAlex / Crossref / Unpaywall 集成](docs/scholarly_api.md)
+- [CNKI overseas 集成](docs/cnki_oversea_api.md)
 - [前端说明](app/README.md)

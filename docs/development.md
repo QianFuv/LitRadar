@@ -27,7 +27,7 @@ CSV 元数据
 关键职责：
 
 - 读取 `data/meta/*.csv`
-- BrowZine 与维普抓取
+- Crossref / OpenAlex / Unpaywall 与 CNKI overseas 抓取
 - 建立或更新 `data/index/*.sqlite`
 - 维护 `article_listing` 与 `article_search`
 - 在 `--update` 模式下生成变更清单
@@ -98,9 +98,9 @@ CSV 元数据
 ### 1. 索引流
 
 1. 读取 `data/meta/*.csv`
-2. 根据 `library` 判断数据源：
-   - `-1` -> 维普
-   - 其他 -> BrowZine
+2. 根据 `source` 判断数据源：
+   - `scholarly` -> Crossref / OpenAlex / Unpaywall
+   - `cnki` -> CNKI overseas
 3. 抓取 journal / issue / article
 4. 写入 `journals`、`issues`、`articles`
 5. 刷新 `article_listing`
@@ -211,9 +211,11 @@ API 启动时会在 `lifespan` 中执行：
 
 ```bash
 uv sync --dev
-uv run index --file utd24.csv
+uv run index --file utd24.csv --workers 32 --processes 3
 uv run api
 ```
+
+外部元数据服务配置由管理后台写入 `data/auth.sqlite` 的运行配置表。Docker 或宿主进程环境变量只作为启动输入；数据库已有值时会覆盖同名环境变量。
 
 ### 前端
 
