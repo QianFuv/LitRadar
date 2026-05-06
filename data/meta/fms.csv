@@ -1,102 +1,102 @@
-title,issn,id,area,library
-American Economic Journal: Applied Economics,1945-7782,34809,Development Economics,3050
-Journal of Development Economics,0304-3878,864,Development Economics,3050
-Journal of Public Economics,0047-2727,5802,Development Economics,3050
-RAND Journal of Economics,0741-6261,6796,Development Economics,3050
-Entrepreneurship Theory and Practice,1042-2587,11092,Management,215
-Journal of Business Venturing,0883-9026,5389,Management,215
-Strategic Entrepreneurship Journal,1932-4391,12947,Management,215
-Risk Analysis,0272-4332,11429,Management,371
-European Journal of Operational Research,0377-2217,6925,Management,371
-Frontiers of Engineering Management,2095-7513,147684,Management,371
-IISE Transactions,2472-5862,243646,Management,371
-Journal of Public Administration Research and Theory,1053-1858,10306,Management,371
-Public Administration,0033-3298,5830,Management,371
-Public Administration Review,0033-3352,6025,Management,371
-Public Management Review,1471-9037,17166,Management,371
-Journal of International Business Studies,0047-2506,10571,Other,215
-Journal of World Business,1090-9516,4971,Other,866
-American Economic Journal: Macroeconomics,1945-7707,34810,Economics,230
-Journal of International Economics,0022-1996,5567,Economics,230
-Journal of Monetary Economics,0304-3932,6659,Economics,230
-Accounting Organizations and Society,0361-3682,6870,Accounting,215
-Accounting Review,0001-4826,34781,Accounting,215
-Contemporary Accounting Research,0823-9150,2655,Accounting,215
-Journal of Accounting and Economics,0165-4101,4204,Accounting,215
-Journal of Accounting Research,0021-8456,11189,Accounting,215
-Review of Accounting Studies,1380-6653,2197,Accounting,215
-Annals of Statistics,0090-5364,35925,Economics,371
-Biometrika,0006-3444,10357,Economics,371
-Econometric Theory,0266-4666,18976,Economics,371
-Journal of Business & Economic Statistics,0735-0015,32478,Economics,215
-Journal of Econometrics,0304-4076,4813,Economics,371
-Journal of the American Statistical Association,0162-1459,40792,Economics,371
-Journal of the Royal Statistical Society Series B-Stastistical Methodology,1369-7412,6332,Economics,371
-Transportation Research Part A: Policy and Practice,0965-8564,3312,Management,371
-Transportation Research Part B: Methodological,0191-2615,3324,Management,371
-Transportation Science,0041-1655,18339,Management,371
-Academy of Management Learning & Education,1537-260X,32058,Management,371
-Journal of Finance,0022-1082,5188,Finance,371
-Journal of Financial and Quantitative Analysis,0022-1090,19432,Finance,371
-Journal of Financial Economics,0304-405X,1268,Finance,371
-Review of Finance,1572-3097,10340,Finance,371
-Review of Financial Studies,0893-9454,10483,Finance,371
-Journal of Economic History,0022-0507,18988,Economics,230
-Journal of Economic Literature,0022-0515,34806,Economics,230
-Journal of Product Innovation Management,0737-6782,6963,Management,215
-Research Policy,0048-7333,2108,Management,215
-Journal of Labor Economics,0734-306X,33286,Labor Economics,554
-American Economic Journal: Microeconomics,1945-7669,34811,Economics,215
-Games and Economic Behavior,0899-8256,746,Economics,215
-Journal of Economic Theory,0022-0531,694,Economics,866
-Theoretical Economics,1933-6837,32098,Economics,215
-Journal of Travel Research,0047-2875,1589,Tourism Management,866
-Tourism Management,0261-5177,5022,Tourism Management,866
-American Journal of Agricultural Economics,0002-9092,10305,Agricultural Economics,554
-Economic Geography,0013-0095,6713,Economics,554
-Journal of Urban Economics,0094-1190,2502,Economics,554
-Human Resource Management,0090-4848,12435,Management,230
-Human Resource Management Journal,0954-5395,6209,Management,230
-Industrial Relations,0019-8676,4977,Management,230
-Journal of the Association for Information Science and Technology,2330-1635,38053,Library Science,215
-Health Economics,1057-9230,12469,Economics,215
-Journal of Health Economics,0167-6296,1281,Economics,215
-Journal of Applied Psychology,0021-9010,21068,Other,215
-Organizational Behavior and Human Decision Processes,0749-5978,1168,Other,866
-Personnel Psychology,0031-5826,11427,Other,215
-Psychological Science,0956-7976,4999,Other,215
-Information Systems Research,1047-7047,18332,Information Systems,215
-Journal of Management Information Systems,0742-1222,39974,Information Systems,215
-MIS Quarterly,0276-7783,73097,Information Systems,215
-Academy of Management Journal,0001-4273,32052,Management,230
-Academy of Management Review,0363-7425,32054,Management,230
-Administrative Science Quarterly,0001-8392,8622,Management,230
-Journal of Management,0149-2063,7627,Management,230
-Journal of Management Studies,0022-2380,5237,Management,230
-Management Science,0025-1909,18335,Management,230
-American Economic Review,0002-8282,34808,Economics,371
-Econometrica,0012-9682,32097,Economics,371
-Economic Journal,0013-0133,11869,Economics,371
-International Economic Review,0020-6598,6495,Economics,371
-Journal of Economic Perspectives,0895-3309,34807,Economics,371
-Journal of Political Economy,0022-3808,33281,Economics,215
-Journal of the European Economic Association,1542-4766,6884,Economics,371
-Quarterly Journal of Economics,0033-5533,10508,Economics,371
-Review of Economic Studies,0034-6527,10506,Economics,371
-Review of Economics and Statistics,0034-6535,32137,Economics,371
-Journal of Consumer Research,0093-5301,33285,Marketing,866
-Journal of Marketing,0022-2429,32063,Marketing,866
-Journal of Marketing Research,0022-2437,32064,Marketing,866
-Marketing Science,0732-2399,18334,Marketing,866
-INFORMS Journal on Computing,1091-9856,18333,Management,215
-Mathematical Programming,0025-5610,2250,Management,215
-Mathematics of Operations Research,0364-765X,18336,Management,215
-Operations Research,0030-364X,18337,Management,215
-Journal of Operations Management,0272-6963,1201,Management,72
-Manufacturing & Service Operations Management,1523-4614,18342,Management,72
-Production and Operations Management,1059-1478,1886,Management,72
-Strategic Management Journal,0143-2095,12230,Management,866
-Journal of Environmental Economics and Management,0095-0696,1142,Management,371
-Journal of Organizational Behavior,0894-3796,12453,Management,72
-Organization Science,1047-7039,18338,Management,72
-Organization Studies,0170-8406,7780,Management,72
+source,title,issn,id,area
+scholarly,American Economic Journal: Applied Economics,1945-7782,1945-7782,Development Economics
+scholarly,Journal of Development Economics,0304-3878,0304-3878,Development Economics
+scholarly,Journal of Public Economics,0047-2727,0047-2727,Development Economics
+scholarly,RAND Journal of Economics,0741-6261,0741-6261,Development Economics
+scholarly,Entrepreneurship Theory and Practice,1042-2587,1042-2587,Management
+scholarly,Journal of Business Venturing,0883-9026,0883-9026,Management
+scholarly,Strategic Entrepreneurship Journal,1932-4391,1932-4391,Management
+scholarly,Risk Analysis,0272-4332,0272-4332,Management
+scholarly,European Journal of Operational Research,0377-2217,0377-2217,Management
+scholarly,Frontiers of Engineering Management,2095-7513,2095-7513,Management
+scholarly,IISE Transactions,2472-5862,2472-5862,Management
+scholarly,Journal of Public Administration Research and Theory,1053-1858,1053-1858,Management
+scholarly,Public Administration,0033-3298,0033-3298,Management
+scholarly,Public Administration Review,0033-3352,0033-3352,Management
+scholarly,Public Management Review,1471-9037,1471-9037,Management
+scholarly,Journal of International Business Studies,0047-2506,0047-2506,Other
+scholarly,Journal of World Business,1090-9516,1090-9516,Other
+scholarly,American Economic Journal: Macroeconomics,1945-7707,1945-7707,Economics
+scholarly,Journal of International Economics,0022-1996,0022-1996,Economics
+scholarly,Journal of Monetary Economics,0304-3932,0304-3932,Economics
+scholarly,Accounting Organizations and Society,0361-3682,0361-3682,Accounting
+scholarly,Accounting Review,0001-4826,0001-4826,Accounting
+scholarly,Contemporary Accounting Research,0823-9150,0823-9150,Accounting
+scholarly,Journal of Accounting and Economics,0165-4101,0165-4101,Accounting
+scholarly,Journal of Accounting Research,0021-8456,0021-8456,Accounting
+scholarly,Review of Accounting Studies,1380-6653,1380-6653,Accounting
+scholarly,Annals of Statistics,0090-5364,0090-5364,Economics
+scholarly,Biometrika,0006-3444,0006-3444,Economics
+scholarly,Econometric Theory,0266-4666,0266-4666,Economics
+scholarly,Journal of Business & Economic Statistics,0735-0015,0735-0015,Economics
+scholarly,Journal of Econometrics,0304-4076,0304-4076,Economics
+scholarly,Journal of the American Statistical Association,0162-1459,0162-1459,Economics
+scholarly,Journal of the Royal Statistical Society Series B-Stastistical Methodology,1369-7412,1369-7412,Economics
+scholarly,Transportation Research Part A: Policy and Practice,0965-8564,0965-8564,Management
+scholarly,Transportation Research Part B: Methodological,0191-2615,0191-2615,Management
+scholarly,Transportation Science,0041-1655,0041-1655,Management
+scholarly,Academy of Management Learning & Education,1537-260X,1537-260X,Management
+scholarly,Journal of Finance,0022-1082,0022-1082,Finance
+scholarly,Journal of Financial and Quantitative Analysis,0022-1090,0022-1090,Finance
+scholarly,Journal of Financial Economics,0304-405X,0304-405X,Finance
+scholarly,Review of Finance,1572-3097,1572-3097,Finance
+scholarly,Review of Financial Studies,0893-9454,0893-9454,Finance
+scholarly,Journal of Economic History,0022-0507,0022-0507,Economics
+scholarly,Journal of Economic Literature,0022-0515,0022-0515,Economics
+scholarly,Journal of Product Innovation Management,0737-6782,0737-6782,Management
+scholarly,Research Policy,0048-7333,0048-7333,Management
+scholarly,Journal of Labor Economics,0734-306X,0734-306X,Labor Economics
+scholarly,American Economic Journal: Microeconomics,1945-7669,1945-7669,Economics
+scholarly,Games and Economic Behavior,0899-8256,0899-8256,Economics
+scholarly,Journal of Economic Theory,0022-0531,0022-0531,Economics
+scholarly,Theoretical Economics,1933-6837,1933-6837,Economics
+scholarly,Journal of Travel Research,0047-2875,0047-2875,Tourism Management
+scholarly,Tourism Management,0261-5177,0261-5177,Tourism Management
+scholarly,American Journal of Agricultural Economics,0002-9092,0002-9092,Agricultural Economics
+scholarly,Economic Geography,0013-0095,0013-0095,Economics
+scholarly,Journal of Urban Economics,0094-1190,0094-1190,Economics
+scholarly,Human Resource Management,0090-4848,0090-4848,Management
+scholarly,Human Resource Management Journal,0954-5395,0954-5395,Management
+scholarly,Industrial Relations,0019-8676,0019-8676,Management
+scholarly,Journal of the Association for Information Science and Technology,2330-1635,2330-1635,Library Science
+scholarly,Health Economics,1057-9230,1057-9230,Economics
+scholarly,Journal of Health Economics,0167-6296,0167-6296,Economics
+scholarly,Journal of Applied Psychology,0021-9010,0021-9010,Other
+scholarly,Organizational Behavior and Human Decision Processes,0749-5978,0749-5978,Other
+scholarly,Personnel Psychology,0031-5826,0031-5826,Other
+scholarly,Psychological Science,0956-7976,0956-7976,Other
+scholarly,Information Systems Research,1047-7047,1047-7047,Information Systems
+scholarly,Journal of Management Information Systems,0742-1222,0742-1222,Information Systems
+scholarly,MIS Quarterly,0276-7783,0276-7783,Information Systems
+scholarly,Academy of Management Journal,0001-4273,0001-4273,Management
+scholarly,Academy of Management Review,0363-7425,0363-7425,Management
+scholarly,Administrative Science Quarterly,0001-8392,0001-8392,Management
+scholarly,Journal of Management,0149-2063,0149-2063,Management
+scholarly,Journal of Management Studies,0022-2380,0022-2380,Management
+scholarly,Management Science,0025-1909,0025-1909,Management
+scholarly,American Economic Review,0002-8282,0002-8282,Economics
+scholarly,Econometrica,0012-9682,0012-9682,Economics
+scholarly,Economic Journal,0013-0133,0013-0133,Economics
+scholarly,International Economic Review,0020-6598,0020-6598,Economics
+scholarly,Journal of Economic Perspectives,0895-3309,0895-3309,Economics
+scholarly,Journal of Political Economy,0022-3808,0022-3808,Economics
+scholarly,Journal of the European Economic Association,1542-4766,1542-4766,Economics
+scholarly,Quarterly Journal of Economics,0033-5533,0033-5533,Economics
+scholarly,Review of Economic Studies,0034-6527,0034-6527,Economics
+scholarly,Review of Economics and Statistics,0034-6535,0034-6535,Economics
+scholarly,Journal of Consumer Research,0093-5301,0093-5301,Marketing
+scholarly,Journal of Marketing,0022-2429,0022-2429,Marketing
+scholarly,Journal of Marketing Research,0022-2437,0022-2437,Marketing
+scholarly,Marketing Science,0732-2399,0732-2399,Marketing
+scholarly,INFORMS Journal on Computing,1091-9856,1091-9856,Management
+scholarly,Mathematical Programming,0025-5610,0025-5610,Management
+scholarly,Mathematics of Operations Research,0364-765X,0364-765X,Management
+scholarly,Operations Research,0030-364X,0030-364X,Management
+scholarly,Journal of Operations Management,0272-6963,0272-6963,Management
+scholarly,Manufacturing & Service Operations Management,1523-4614,1523-4614,Management
+scholarly,Production and Operations Management,1059-1478,1059-1478,Management
+scholarly,Strategic Management Journal,0143-2095,0143-2095,Management
+scholarly,Journal of Environmental Economics and Management,0095-0696,0095-0696,Management
+scholarly,Journal of Organizational Behavior,0894-3796,0894-3796,Management
+scholarly,Organization Science,1047-7039,1047-7039,Management
+scholarly,Organization Studies,0170-8406,0170-8406,Management

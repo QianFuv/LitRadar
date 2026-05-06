@@ -217,7 +217,7 @@ async def get_issue_ids_with_articles(
 
     Args:
         db: Database client.
-        journal_id: BrowZine journal ID.
+        journal_id: Internal journal ID.
         year: Publication year.
 
     Returns:
@@ -241,7 +241,7 @@ async def get_completed_years(db: DatabaseClient, journal_id: int) -> set[int]:
 
     Args:
         db: Database client.
-        journal_id: BrowZine journal ID.
+        journal_id: Internal journal ID.
 
     Returns:
         Set of completed years.
@@ -259,7 +259,7 @@ async def is_journal_complete(db: DatabaseClient, journal_id: int) -> bool:
 
     Args:
         db: Database client.
-        journal_id: BrowZine journal ID.
+        journal_id: Internal journal ID.
 
     Returns:
         True when the journal is completed.
@@ -277,7 +277,7 @@ async def mark_year_done(db: DatabaseClient, journal_id: int, year: int) -> None
 
     Args:
         db: Database client.
-        journal_id: BrowZine journal ID.
+        journal_id: Internal journal ID.
         year: Publication year.
 
     Returns:
@@ -302,7 +302,7 @@ async def mark_journal_done(db: DatabaseClient, journal_id: int) -> None:
 
     Args:
         db: Database client.
-        journal_id: BrowZine journal ID.
+        journal_id: Internal journal ID.
 
     Returns:
         None.

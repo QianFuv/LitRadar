@@ -8,7 +8,7 @@ import aiosqlite
 
 from scripts.index.db.fts import ensure_article_search
 from scripts.index.db.retry import commit_with_retry, execute_with_retry
-from scripts.shared.constants import DB_TIMEOUT_SECONDS, WEIPU_LIBRARY_ID
+from scripts.shared.constants import DB_TIMEOUT_SECONDS
 from scripts.shared.sqlite_ext import load_simple_tokenizer
 
 JOURNAL_COLUMNS = [
@@ -98,11 +98,8 @@ ARTICLE_COLUMNS = [
     "within_library_holdings",
     "noodletools_export_link",
     "avoid_unpaywall_publisher_links",
-    "browzine_web_in_context_link",
     "content_location",
-    "libkey_content_location",
     "full_text_file",
-    "libkey_full_text_file",
     "nomad_fallback_url",
 ]
 
@@ -160,9 +157,8 @@ async def ensure_journal_platform_id_column(db: aiosqlite.Connection) -> None:
         """
         UPDATE journals
         SET platform_journal_id = CAST(journal_id AS TEXT)
-        WHERE platform_journal_id IS NULL AND library_id != ?
+        WHERE platform_journal_id IS NULL
         """,
-        (WEIPU_LIBRARY_ID,),
     )
 
 
@@ -272,11 +268,8 @@ async def init_db(db: aiosqlite.Connection) -> None:
             within_library_holdings INTEGER,
             noodletools_export_link TEXT,
             avoid_unpaywall_publisher_links INTEGER,
-            browzine_web_in_context_link TEXT,
             content_location TEXT,
-            libkey_content_location TEXT,
             full_text_file TEXT,
-            libkey_full_text_file TEXT,
             nomad_fallback_url TEXT,
             FOREIGN KEY (journal_id) REFERENCES journals(journal_id)
                 ON DELETE CASCADE,

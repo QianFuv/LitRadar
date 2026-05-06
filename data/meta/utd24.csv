@@ -1,25 +1,25 @@
-title,issn,id,area,library
-The Accounting Review,0001-4826,34781,Accounting,3050
-Journal of Accounting and Economics,0165-4101,4204,Accounting,3050
-Journal of Accounting Research,0021-8456,11189,Accounting,3050
-The Journal of Finance,0022-1082,5188,Finance,3050
-Journal of Financial Economics,0304-405X,1268,Finance,3050
-Review of Financial Studies,0893-9454,10483,Finance,3050
-Information Systems Research,1047-7047,18332,Information Systems,3050
-INFORMS Journal on Computing,1091-9856,18333,Information Systems,3050
-MIS Quarterly,0276-7783,73097,Information Systems,3050
-Journal of International Business Studies,0047-2506,10571,International Business,3050
-Journal of Consumer Research,0093-5301,33285,Marketing,3050
-Journal of Marketing,0022-2429,32063,Marketing,3050
-Journal of Marketing Research,0022-2437,32064,Marketing,3050
-Marketing Science,0732-2399,18334,Marketing,3050
-Academy of Management Journal,0001-4273,32052,Management,3050
-Academy of Management Review,0363-7425,32054,Management,3050
-Administrative Science Quarterly,0001-8392,8622,Management,3050
-Management Science,0025-1909,18335,Management,3050
-Strategic Management Journal,0143-2095,12230,Management,3050
-Journal of Operations Management,0272-6963,1201,Operations,3050
-Manufacturing & Service Operations Management,1523-4614,18342,Operations,3050
-Operations Research,0030-364X,18337,Operations,3050
-Production and Operations Management,1059-1478,1886,Operations,3050
-Organization Science,1047-7039,18338,Organizational Behaviour,3050
+source,title,issn,id,area
+scholarly,The Accounting Review,0001-4826,0001-4826,Accounting
+scholarly,Journal of Accounting and Economics,0165-4101,0165-4101,Accounting
+scholarly,Journal of Accounting Research,0021-8456,0021-8456,Accounting
+scholarly,The Journal of Finance,0022-1082,0022-1082,Finance
+scholarly,Journal of Financial Economics,0304-405X,0304-405X,Finance
+scholarly,Review of Financial Studies,0893-9454,0893-9454,Finance
+scholarly,Information Systems Research,1047-7047,1047-7047,Information Systems
+scholarly,INFORMS Journal on Computing,1091-9856,1091-9856,Information Systems
+scholarly,MIS Quarterly,0276-7783,0276-7783,Information Systems
+scholarly,Journal of International Business Studies,0047-2506,0047-2506,International Business
+scholarly,Journal of Consumer Research,0093-5301,0093-5301,Marketing
+scholarly,Journal of Marketing,0022-2429,0022-2429,Marketing
+scholarly,Journal of Marketing Research,0022-2437,0022-2437,Marketing
+scholarly,Marketing Science,0732-2399,0732-2399,Marketing
+scholarly,Academy of Management Journal,0001-4273,0001-4273,Management
+scholarly,Academy of Management Review,0363-7425,0363-7425,Management
+scholarly,Administrative Science Quarterly,0001-8392,0001-8392,Management
+scholarly,Management Science,0025-1909,0025-1909,Management
+scholarly,Strategic Management Journal,0143-2095,0143-2095,Management
+scholarly,Journal of Operations Management,0272-6963,0272-6963,Operations
+scholarly,Manufacturing & Service Operations Management,1523-4614,1523-4614,Operations
+scholarly,Operations Research,0030-364X,0030-364X,Operations
+scholarly,Production and Operations Management,1059-1478,1059-1478,Operations
+scholarly,Organization Science,1047-7039,1047-7039,Organizational Behaviour

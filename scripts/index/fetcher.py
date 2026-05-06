@@ -8,7 +8,7 @@ from typing import Any
 
 from tqdm import tqdm
 
-from scripts.browzine import BrowZineAPIClient
+from scripts.cnki import CnkiClient
 from scripts.index.db.client import DatabaseClient
 from scripts.index.db.operations import (
     get_completed_years,
@@ -25,17 +25,24 @@ from scripts.index.db.operations import (
     upsert_meta,
 )
 from scripts.index.transforms import (
-    build_article_record,
-    build_issue_record,
-    build_journal_record,
+    build_cnki_article_record,
+    build_cnki_issue_record,
+    build_cnki_journal_record,
+    build_journal_id,
     build_meta_record,
-    build_weipu_article_record,
-    build_weipu_issue_record,
-    build_weipu_journal_record,
+    build_scholarly_article_record,
+    build_scholarly_issue_record,
+    build_scholarly_journal_record,
+    normalize_doi,
+    source_from_row,
 )
-from scripts.shared.constants import DEFAULT_LIBRARY_ID, WEIPU_LIBRARY_ID
-from scripts.shared.converters import chunked, is_weipu_library, to_int, to_int_stable
-from scripts.weipu import WeipuAPISelectolax
+from scripts.scholarly import ScholarlyClient
+from scripts.shared.constants import CNKI_SOURCE, SCHOLARLY_SOURCE
+from scripts.shared.converters import chunked
+
+CNKI_DETAIL_ATTEMPTS = 3
+CNKI_DETAIL_RETRY_SECONDS = 1.0
+CNKI_DETAIL_WORKER_LIMIT = 32
 
 
 def select_update_issue_ids(
@@ -44,10 +51,10 @@ def select_update_issue_ids(
     has_refreshed_latest_existing_issue: bool,
 ) -> tuple[list[int], bool]:
     """
-    Select BrowZine issues to fetch during an update run.
+    Select issues to fetch during an update run.
 
     Args:
-        issue_ids: Issue IDs in upstream order for a publication year.
+        issue_ids: Issue IDs in upstream order.
         existing_issue_ids: Issue IDs that already have articles.
         has_refreshed_latest_existing_issue: Whether an existing issue was refreshed.
 
@@ -67,87 +74,116 @@ def select_update_issue_ids(
     return issue_ids_to_fetch, False
 
 
-def select_update_weipu_issue_pairs(
-    issue_pairs: list[tuple[int, str]],
-    existing_issue_ids: set[int],
-    has_refreshed_latest_existing_issue: bool,
-) -> tuple[list[tuple[int, str]], bool]:
-    """
-    Select WeiPu issue pairs to fetch during an update run.
-
-    Args:
-        issue_pairs: Database and WeiPu issue ID pairs in upstream order.
-        existing_issue_ids: Issue IDs that already have articles.
-        has_refreshed_latest_existing_issue: Whether an existing issue was refreshed.
-
-    Returns:
-        Tuple of issue pairs to fetch and updated refresh state.
-    """
-    issue_pairs_to_fetch = [
-        pair for pair in issue_pairs if pair[0] not in existing_issue_ids
-    ]
-    if has_refreshed_latest_existing_issue:
-        return issue_pairs_to_fetch, has_refreshed_latest_existing_issue
-
-    for pair in issue_pairs:
-        if pair[0] in existing_issue_ids:
-            issue_pairs_to_fetch.append(pair)
-            return issue_pairs_to_fetch, True
-    return issue_pairs_to_fetch, False
-
-
-async def fetch_issue_articles(
-    semaphore: asyncio.Semaphore,
-    client: BrowZineAPIClient,
-    issue_id: int,
-    library_id: str,
-) -> tuple[int, list[dict[str, Any]] | None]:
-    """
-    Fetch articles for a single issue with concurrency control.
-
-    Args:
-        semaphore: Semaphore for limiting concurrent requests.
-        client: BrowZine API client.
-        issue_id: BrowZine issue ID.
-        library_id: Library ID for the request.
-
-    Returns:
-        Tuple of issue ID and article list or None.
-    """
-    async with semaphore:
-        articles = await client.get_articles_from_issue(issue_id, library_id)
-    return issue_id, articles
-
-
-async def fetch_weipu_issue_articles(
-    semaphore: asyncio.Semaphore,
-    client: WeipuAPISelectolax,
-    journal_id: str,
-    db_issue_id: int,
-    weipu_issue_id: str,
-) -> tuple[int, list[dict[str, Any]] | None]:
-    """
-    Fetch WeiPu articles for a single issue with concurrency control.
-
-    Args:
-        semaphore: Semaphore for limiting concurrent requests.
-        client: WeiPu API client.
-        journal_id: WeiPu journal ID.
-        db_issue_id: Internal issue ID for the database.
-        weipu_issue_id: WeiPu issue identifier.
-
-    Returns:
-        Tuple of database issue ID and article list or None.
-    """
-    async with semaphore:
-        payload = await client.get_issue_articles(journal_id, weipu_issue_id)
-    articles = payload.get("articles") if payload else None
-    return db_issue_id, articles
-
-
-async def process_weipu_journal(
+async def process_scholarly_journal(
     db: DatabaseClient,
-    client: WeipuAPISelectolax,
+    client: ScholarlyClient,
+    csv_path: Path,
+    row: dict[str, str],
+    request_workers: int,
+    show_year_progress: bool,
+    resume: bool,
+    update: bool,
+) -> None:
+    """
+    Export one Crossref/OpenAlex/Unpaywall journal to the database.
+
+    Args:
+        db: Database client.
+        client: Scholarly metadata client.
+        csv_path: Source CSV path.
+        row: CSV row for the journal.
+        request_workers: Maximum concurrent HTTP requests.
+        show_year_progress: Whether to display year progress with tqdm.
+        resume: Whether to resume from completed journals.
+        update: Whether to refresh existing journal data.
+
+    Returns:
+        None.
+    """
+    journal_id = build_journal_id(row)
+    if journal_id is None:
+        print(f"  - Skipping scholarly journal with missing id: {row.get('title')}")
+        return
+    if resume and not update and await is_journal_complete(db, journal_id):
+        return
+
+    issn = (row.get("issn") or row.get("id") or "").strip()
+    if not issn:
+        print(f"  - Skipping scholarly journal with missing ISSN: {row.get('title')}")
+        return
+
+    works = await client.fetch_journal_works(issn)
+    journal_record = build_scholarly_journal_record(journal_id, row, works)
+    meta_record = build_meta_record(journal_id, csv_path, row)
+    journal_title = journal_record.get("title") or row.get("title") or ""
+
+    await upsert_journal(db, journal_record)
+    await upsert_meta(db, meta_record)
+    await db.commit()
+
+    dois = [doi for doi in [normalize_doi(work.get("DOI")) for work in works] if doi]
+    openalex_by_doi = await client.fetch_openalex_by_dois(dois)
+    unpaywall_by_doi = await client.fetch_unpaywall_by_dois(
+        dois, request_workers=request_workers
+    )
+
+    issue_records_by_id: dict[int, dict[str, Any]] = {}
+    article_records: list[dict[str, Any]] = []
+    processed_years: set[int] = set()
+    for work in works:
+        issue_record = build_scholarly_issue_record(journal_id, work)
+        issue_id = None
+        if issue_record:
+            issue_id = issue_record["issue_id"]
+            issue_records_by_id[issue_id] = issue_record
+            year = issue_record.get("publication_year")
+            if isinstance(year, int):
+                processed_years.add(year)
+        doi = normalize_doi(work.get("DOI"))
+        article_record = build_scholarly_article_record(
+            work,
+            openalex_by_doi.get(doi or ""),
+            unpaywall_by_doi.get(doi or ""),
+            journal_id,
+            issue_id,
+        )
+        if article_record:
+            article_records.append(article_record)
+
+    issue_records = list(issue_records_by_id.values())
+    if issue_records:
+        await upsert_issues(db, issue_records)
+        if update:
+            await refresh_article_listing_for_issues(
+                db, [record["issue_id"] for record in issue_records]
+            )
+
+    if article_records:
+        for batch in chunked(article_records, 500):
+            await upsert_articles(db, batch)
+            await upsert_article_search(db, batch, journal_title)
+            await refresh_article_listing_for_articles(
+                db, list({record["article_id"] for record in batch})
+            )
+
+    years = sorted(processed_years, reverse=True)
+    progress = None
+    if show_year_progress:
+        progress = tqdm(total=len(years), desc=f"Journal {journal_id} years")
+    for year in years:
+        await mark_year_done(db, journal_id, year)
+        if progress:
+            progress.update(1)
+    if progress:
+        progress.close()
+
+    await mark_journal_done(db, journal_id)
+    await db.commit()
+
+
+async def process_cnki_journal(
+    db: DatabaseClient,
+    client: CnkiClient,
     csv_path: Path,
     row: dict[str, str],
     issue_batch_size: int,
@@ -157,11 +193,11 @@ async def process_weipu_journal(
     update: bool,
 ) -> None:
     """
-    Export a single WeiPu journal to the database.
+    Export one CNKI journal to the database.
 
     Args:
         db: Database client.
-        client: WeiPu API client.
+        client: CNKI client.
         csv_path: Source CSV path.
         row: CSV row for the journal.
         issue_batch_size: Number of issues per fetch batch.
@@ -173,106 +209,77 @@ async def process_weipu_journal(
     Returns:
         None.
     """
-    raw_journal_id = row.get("id")
-    if not raw_journal_id:
-        print(f"  - Skipping WeiPu journal with missing id: {row.get('title')}")
+    journal_id = build_journal_id(row)
+    if journal_id is None:
+        print(f"  - Skipping CNKI journal with missing id: {row.get('title')}")
         return
 
-    journal_id = to_int_stable(raw_journal_id, "weipu-journal")
-    if not journal_id:
-        print(f"  - Skipping WeiPu journal with invalid id: {row.get('title')}")
+    if resume and not update and await is_journal_complete(db, journal_id):
         return
 
-    weipu_journal_id = str(raw_journal_id)
-    details = await client.get_journal_details(weipu_journal_id)
+    details = await client.resolve_journal(row)
     if not details:
-        journal_match = None
-        if row.get("issn"):
-            journal_match = await client.search_journal_by_issn(row["issn"])
-        if not journal_match and row.get("title"):
-            journal_match = await client.search_journal_by_title(row["title"])
-        if journal_match and journal_match.get("journalId"):
-            weipu_journal_id = str(journal_match["journalId"])
-            details = await client.get_journal_details(weipu_journal_id)
-
-    if not details:
-        print(f"  - No WeiPu details for journal {raw_journal_id}")
+        print(f"  - No CNKI details for journal {row.get('title')}")
         return
 
-    library_id = row.get("library") or WEIPU_LIBRARY_ID
-    platform_journal_id = str(details.get("journalId") or weipu_journal_id)
-    journal_record = build_weipu_journal_record(
-        journal_id,
-        library_id,
-        platform_journal_id,
-        row,
-        details,
-        details.get("totalIssues", 0) > 0,
-    )
+    journal_record = build_cnki_journal_record(journal_id, row, details)
     meta_record = build_meta_record(journal_id, csv_path, row)
     journal_title = journal_record.get("title") or row.get("title") or ""
+    journal_code = str(details["pykm"])
 
     await upsert_journal(db, journal_record)
     await upsert_meta(db, meta_record)
     await db.commit()
 
-    years = details.get("years") or []
-    if not years:
-        print(f"  - No publication years for WeiPu journal {journal_id}")
+    if resume and not update and await is_journal_complete(db, journal_id):
         return
 
-    if resume and not update and await is_journal_complete(db, journal_id):
+    issues = await client.get_year_issues(details)
+    if not issues:
+        print(f"  - No CNKI publication years for journal {journal_code}")
         return
 
     completed_years: set[int] = set()
     if resume and not update:
         completed_years = await get_completed_years(db, journal_id)
 
+    issues_by_year: dict[int, list[dict[str, Any]]] = {}
+    for issue in issues:
+        year = issue.get("year")
+        if isinstance(year, int):
+            issues_by_year.setdefault(year, []).append(issue)
+
     if update:
-        years_to_process = sorted(
-            years,
-            key=lambda year: year.get("year")
-            if isinstance(year.get("year"), int)
-            else -1,
-            reverse=True,
-        )
+        years_to_process = sorted(issues_by_year, reverse=True)
     else:
         years_to_process = [
-            year for year in years if year.get("year") not in completed_years
+            year
+            for year in sorted(issues_by_year, reverse=True)
+            if year not in completed_years
         ]
-    total_years = len(years_to_process)
+
     progress = None
     if show_year_progress:
         progress = tqdm(
-            total=total_years,
+            total=len(years_to_process),
             desc=f"Journal {journal_id} years",
             unit="year",
         )
 
-    semaphore = asyncio.Semaphore(max(1, request_workers))
+    detail_workers = max(1, min(request_workers, CNKI_DETAIL_WORKER_LIMIT))
+    semaphore = asyncio.Semaphore(detail_workers)
     has_refreshed_latest_existing_issue = False
-    for index, year_entry in enumerate(years_to_process, start=1):
-        year_value = year_entry.get("year")
-        if not isinstance(year_value, int):
-            if progress:
-                progress.update(1)
-            continue
+    for index, year in enumerate(years_to_process, start=1):
         if progress:
-            progress.set_postfix_str(f"{year_value} ({index}/{total_years})")
-        issues = year_entry.get("issues") or []
-        if not issues:
-            if progress:
-                progress.update(1)
-            continue
+            progress.set_postfix_str(f"{year} ({index}/{len(years_to_process)})")
 
         issue_records: list[dict[str, Any]] = []
-        issue_pairs: list[tuple[int, str]] = []
-        for issue in issues:
-            record = build_weipu_issue_record(issue, journal_id, year_value)
-            issue_id_value = issue.get("id")
-            if record and issue_id_value is not None:
+        issue_pairs: list[tuple[int, dict[str, Any]]] = []
+        for issue in issues_by_year.get(year, []):
+            record = build_cnki_issue_record(journal_id, journal_code, issue)
+            if record:
                 issue_records.append(record)
-                issue_pairs.append((record["issue_id"], str(issue_id_value)))
+                issue_pairs.append((record["issue_id"], issue))
 
         if issue_records:
             await upsert_issues(db, issue_records)
@@ -283,59 +290,34 @@ async def process_weipu_journal(
 
         issue_pairs_to_fetch = issue_pairs
         if update and issue_pairs:
-            existing_issue_ids = await get_issue_ids_with_articles(
-                db, journal_id, year_value
+            existing_issue_ids = await get_issue_ids_with_articles(db, journal_id, year)
+            selected_issue_ids, has_refreshed_latest_existing_issue = (
+                select_update_issue_ids(
+                    [pair[0] for pair in issue_pairs],
+                    existing_issue_ids,
+                    has_refreshed_latest_existing_issue,
+                )
             )
-            (
-                issue_pairs_to_fetch,
-                has_refreshed_latest_existing_issue,
-            ) = select_update_weipu_issue_pairs(
-                issue_pairs,
-                existing_issue_ids,
-                has_refreshed_latest_existing_issue,
+            issue_pair_map = {pair[0]: pair for pair in issue_pairs}
+            issue_pairs_to_fetch = [
+                issue_pair_map[issue_id] for issue_id in selected_issue_ids
+            ]
+
+        for batch in chunked(issue_pairs_to_fetch, issue_batch_size):
+            batch_records = await fetch_cnki_issue_batch(
+                client, semaphore, details, journal_id, batch
             )
+            if batch_records:
+                await upsert_articles(db, batch_records)
+                await upsert_article_search(db, batch_records, journal_title)
+                await refresh_article_listing_for_articles(
+                    db, list({record["article_id"] for record in batch_records})
+                )
 
-        if issue_pairs_to_fetch:
-            for batch in chunked(issue_pairs_to_fetch, issue_batch_size):
-                tasks = [
-                    asyncio.create_task(
-                        fetch_weipu_issue_articles(
-                            semaphore,
-                            client,
-                            weipu_journal_id,
-                            db_issue_id,
-                            weipu_issue_id,
-                        )
-                    )
-                    for db_issue_id, weipu_issue_id in batch
-                ]
-                batch_records: list[dict[str, Any]] = []
-                for completed in asyncio.as_completed(tasks):
-                    try:
-                        issue_id, articles = await completed
-                    except Exception:
-                        print("  - Failed to fetch WeiPu articles for an issue batch")
-                        continue
-                    if not articles:
-                        continue
-                    for article in articles:
-                        record = build_weipu_article_record(
-                            article, journal_id, issue_id
-                        )
-                        if record:
-                            batch_records.append(record)
-                if batch_records:
-                    await upsert_articles(db, batch_records)
-                    await upsert_article_search(db, batch_records, journal_title)
-                    batch_article_ids = list(
-                        {record["article_id"] for record in batch_records}
-                    )
-                    await refresh_article_listing_for_articles(db, batch_article_ids)
-
+        await mark_year_done(db, journal_id, year)
+        await db.commit()
         if progress:
             progress.update(1)
-        await mark_year_done(db, journal_id, year_value)
-        await db.commit()
 
     if progress:
         progress.close()
@@ -344,10 +326,116 @@ async def process_weipu_journal(
     await db.commit()
 
 
+async def fetch_cnki_issue_batch(
+    client: CnkiClient,
+    semaphore: asyncio.Semaphore,
+    journal: dict[str, Any],
+    journal_id: int,
+    issue_pairs: list[tuple[int, dict[str, Any]]],
+) -> list[dict[str, Any]]:
+    """
+    Fetch CNKI article details for an issue batch.
+
+    Args:
+        client: CNKI client.
+        semaphore: Request concurrency limiter.
+        journal: CNKI journal detail payload.
+        journal_id: Internal journal ID.
+        issue_pairs: Database issue ID and upstream issue payload pairs.
+
+    Returns:
+        Article records.
+    """
+    summary_tasks = [
+        asyncio.create_task(
+            fetch_cnki_issue_summaries(client, semaphore, journal, issue_id, issue)
+        )
+        for issue_id, issue in issue_pairs
+    ]
+    summary_pairs: list[tuple[int, dict[str, Any]]] = []
+    for summary_completed in asyncio.as_completed(summary_tasks):
+        summary_pairs.extend(await summary_completed)
+
+    detail_tasks = [
+        asyncio.create_task(
+            fetch_cnki_article_detail(client, semaphore, issue_id, summary)
+        )
+        for issue_id, summary in summary_pairs
+        if summary.get("article_url")
+    ]
+    records: list[dict[str, Any]] = []
+    for detail_completed in asyncio.as_completed(detail_tasks):
+        issue_id, summary, detail = await detail_completed
+        record = build_cnki_article_record(detail, summary, journal_id, issue_id)
+        if record:
+            records.append(record)
+    return records
+
+
+async def fetch_cnki_issue_summaries(
+    client: CnkiClient,
+    semaphore: asyncio.Semaphore,
+    journal: dict[str, Any],
+    issue_id: int,
+    issue: dict[str, Any],
+) -> list[tuple[int, dict[str, Any]]]:
+    """
+    Fetch CNKI article summaries for one issue.
+
+    Args:
+        client: CNKI client.
+        semaphore: Request concurrency limiter.
+        journal: CNKI journal detail payload.
+        issue_id: Internal issue ID.
+        issue: CNKI issue payload.
+
+    Returns:
+        Issue ID and article summary pairs.
+    """
+    async with semaphore:
+        summaries = await client.get_issue_articles(journal, issue)
+    return [(issue_id, summary) for summary in summaries]
+
+
+async def fetch_cnki_article_detail(
+    client: CnkiClient,
+    semaphore: asyncio.Semaphore,
+    issue_id: int,
+    summary: dict[str, Any],
+) -> tuple[int, dict[str, Any], dict[str, Any]]:
+    """
+    Fetch one CNKI article detail payload.
+
+    Args:
+        client: CNKI client.
+        semaphore: Request concurrency limiter.
+        issue_id: Internal issue ID.
+        summary: Article summary.
+
+    Returns:
+        Tuple of issue ID, summary payload, and detail payload.
+    """
+    async with semaphore:
+        article_url = str(summary["article_url"])
+        last_error: Exception | None = None
+        for attempt in range(CNKI_DETAIL_ATTEMPTS):
+            try:
+                detail = await client.get_article_detail(article_url)
+                if detail.get("title") or detail.get("platform_id"):
+                    return issue_id, summary, detail
+            except Exception as exc:
+                last_error = exc
+            if attempt < CNKI_DETAIL_ATTEMPTS - 1:
+                await asyncio.sleep(CNKI_DETAIL_RETRY_SECONDS * (attempt + 1))
+        if last_error is not None:
+            raise RuntimeError(f"CNKI detail failed for {article_url}") from last_error
+        raise RuntimeError(f"CNKI detail missing for {article_url}")
+
+
 async def process_journal(
     db: DatabaseClient,
-    client: BrowZineAPIClient,
-    weipu_client: WeipuAPISelectolax,
+    scholarly_client: ScholarlyClient,
+    cnki_client: CnkiClient,
     csv_path: Path,
     row: dict[str, str],
     issue_batch_size: int,
@@ -361,8 +449,8 @@ async def process_journal(
 
     Args:
         db: Database client.
-        client: BrowZine API client.
-        weipu_client: WeiPu API client.
+        scholarly_client: Scholarly metadata client.
+        cnki_client: CNKI client.
         csv_path: Source CSV path.
         row: CSV row for the journal.
         issue_batch_size: Number of issues per fetch batch.
@@ -374,10 +462,11 @@ async def process_journal(
     Returns:
         None.
     """
-    if is_weipu_library(row.get("library")):
-        await process_weipu_journal(
+    source = source_from_row(row)
+    if source == CNKI_SOURCE:
+        await process_cnki_journal(
             db,
-            weipu_client,
+            cnki_client,
             csv_path,
             row,
             issue_batch_size,
@@ -387,141 +476,16 @@ async def process_journal(
             update,
         )
         return
-
-    journal_id = to_int(row.get("id"))
-    if not journal_id:
-        print(f"  - Skipping journal with missing id: {row.get('title')}")
-        return
-
-    library_id = row.get("library") or DEFAULT_LIBRARY_ID
-
-    journal_info = await client.get_journal_info(journal_id, library_id)
-
-    journal_record = build_journal_record(journal_id, library_id, row, journal_info)
-    meta_record = build_meta_record(journal_id, csv_path, row)
-    journal_title = journal_record.get("title") or row.get("title") or ""
-
-    await upsert_journal(db, journal_record)
-    await upsert_meta(db, meta_record)
-    await db.commit()
-
-    years = await client.get_publication_years(journal_id, library_id)
-    if not years:
-        print(f"  - No publication years for journal {journal_id}")
-        return
-
-    if resume and not update and await is_journal_complete(db, journal_id):
-        return
-
-    completed_years: set[int] = set()
-    if resume and not update:
-        completed_years = await get_completed_years(db, journal_id)
-
-    seen_issue_ids: set[int] = set()
-    if update:
-        years_to_process = sorted(years, reverse=True)
-    else:
-        years_to_process = [year for year in years if year not in completed_years]
-    total_years = len(years_to_process)
-    progress = None
-    if show_year_progress:
-        progress = tqdm(
-            total=total_years,
-            desc=f"Journal {journal_id} years",
-            unit="year",
+    if source == SCHOLARLY_SOURCE:
+        await process_scholarly_journal(
+            db,
+            scholarly_client,
+            csv_path,
+            row,
+            request_workers,
+            show_year_progress,
+            resume,
+            update,
         )
-
-    semaphore = asyncio.Semaphore(max(1, request_workers))
-    has_refreshed_latest_existing_issue = False
-    for index, year in enumerate(years_to_process, start=1):
-        if progress:
-            progress.set_postfix_str(f"{year} ({index}/{total_years})")
-        issues = await client.get_issues_by_year(journal_id, library_id, year)
-        if not issues:
-            if progress:
-                progress.update(1)
-            continue
-
-        issue_records: list[dict[str, Any]] = []
-        issue_ids: list[int] = []
-        for issue in issues:
-            record = build_issue_record(issue, journal_id, year)
-            if record:
-                issue_id = record["issue_id"]
-                if issue_id in seen_issue_ids:
-                    continue
-                seen_issue_ids.add(issue_id)
-                issue_records.append(record)
-                issue_ids.append(issue_id)
-
-        if issue_records:
-            await upsert_issues(db, issue_records)
-        if update and issue_ids:
-            await refresh_article_listing_for_issues(db, issue_ids)
-
-        issue_ids_to_fetch = issue_ids
-        if update and issue_ids:
-            existing_issue_ids = await get_issue_ids_with_articles(db, journal_id, year)
-            (
-                issue_ids_to_fetch,
-                has_refreshed_latest_existing_issue,
-            ) = select_update_issue_ids(
-                issue_ids,
-                existing_issue_ids,
-                has_refreshed_latest_existing_issue,
-            )
-
-        if issue_ids_to_fetch:
-            for batch in chunked(issue_ids_to_fetch, issue_batch_size):
-                tasks = [
-                    asyncio.create_task(
-                        fetch_issue_articles(semaphore, client, issue_id, library_id)
-                    )
-                    for issue_id in batch
-                ]
-                batch_records: list[dict[str, Any]] = []
-                for completed in asyncio.as_completed(tasks):
-                    try:
-                        issue_id, articles = await completed
-                    except Exception:
-                        print("  - Failed to fetch articles for an issue batch")
-                        continue
-                    if not articles:
-                        continue
-                    for article in articles:
-                        record = build_article_record(article, journal_id, issue_id)
-                        if record:
-                            batch_records.append(record)
-                if batch_records:
-                    await upsert_articles(db, batch_records)
-                    await upsert_article_search(db, batch_records, journal_title)
-                    batch_article_ids = list(
-                        {record["article_id"] for record in batch_records}
-                    )
-                    await refresh_article_listing_for_articles(db, batch_article_ids)
-
-        if progress:
-            progress.update(1)
-        await mark_year_done(db, journal_id, year)
-        await db.commit()
-
-    if progress:
-        progress.close()
-
-    in_press = await client.get_articles_in_press(journal_id, library_id)
-    if in_press:
-        in_press_records = []
-        for article in in_press:
-            record = build_article_record(article, journal_id, None)
-            if record:
-                in_press_records.append(record)
-        await upsert_articles(db, in_press_records)
-        await upsert_article_search(db, in_press_records, journal_title)
-        in_press_article_ids = list(
-            {record["article_id"] for record in in_press_records}
-        )
-        await refresh_article_listing_for_articles(db, in_press_article_ids)
-        await db.commit()
-
-    await mark_journal_done(db, journal_id)
-    await db.commit()
+        return
+    print(f"  - Skipping journal with unknown source {source}: {row.get('title')}")

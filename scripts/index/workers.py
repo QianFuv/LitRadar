@@ -8,7 +8,7 @@ from typing import Any
 
 import aiosqlite
 
-from scripts.browzine import BrowZineAPIClient
+from scripts.cnki import CnkiClient
 from scripts.index.db.client import IPCDatabaseClient
 from scripts.index.db.retry import (
     commit_with_retry,
@@ -17,8 +17,9 @@ from scripts.index.db.retry import (
 )
 from scripts.index.db.schema import init_db
 from scripts.index.fetcher import process_journal
-from scripts.shared.constants import DB_TIMEOUT_SECONDS, DEFAULT_LIBRARY_ID
-from scripts.weipu import WeipuAPISelectolax
+from scripts.scholarly import ScholarlyClient
+from scripts.shared.constants import DB_TIMEOUT_SECONDS
+from scripts.shared.runtime_config import apply_runtime_config
 
 
 async def writer_main(
@@ -140,14 +141,15 @@ def process_journal_worker_ipc(
     """
 
     async def run_worker() -> None:
-        client = BrowZineAPIClient(library_id=DEFAULT_LIBRARY_ID, timeout=timeout)
-        weipu_client = WeipuAPISelectolax(timeout=timeout)
+        apply_runtime_config()
+        scholarly_client = ScholarlyClient(timeout=timeout)
+        cnki_client = CnkiClient(timeout=timeout)
         db_client = IPCDatabaseClient(request_queue, response_queue, worker_id)
         try:
             await process_journal(
                 db_client,
-                client,
-                weipu_client,
+                scholarly_client,
+                cnki_client,
                 Path(csv_path),
                 row,
                 issue_batch_size,
@@ -157,8 +159,8 @@ def process_journal_worker_ipc(
                 update,
             )
         finally:
-            await client.aclose()
-            await weipu_client.aclose()
+            await scholarly_client.aclose()
+            await cnki_client.aclose()
 
     asyncio.run(run_worker())
     journal_id = row.get("id") or ""
@@ -200,16 +202,17 @@ def run_worker_batch(
     """
 
     async def run_batch() -> None:
-        client = BrowZineAPIClient(library_id=DEFAULT_LIBRARY_ID, timeout=timeout)
-        weipu_client = WeipuAPISelectolax(timeout=timeout)
+        apply_runtime_config()
+        scholarly_client = ScholarlyClient(timeout=timeout)
+        cnki_client = CnkiClient(timeout=timeout)
         db_client = IPCDatabaseClient(request_queue, response_queue, worker_id)
         try:
             for row in rows:
                 try:
                     await process_journal(
                         db_client,
-                        client,
-                        weipu_client,
+                        scholarly_client,
+                        cnki_client,
                         Path(csv_path),
                         row,
                         issue_batch_size,
@@ -235,7 +238,7 @@ def run_worker_batch(
                         }
                     )
         finally:
-            await client.aclose()
-            await weipu_client.aclose()
+            await scholarly_client.aclose()
+            await cnki_client.aclose()
 
     asyncio.run(run_batch())

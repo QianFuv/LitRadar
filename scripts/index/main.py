@@ -10,7 +10,7 @@ from pathlib import Path
 
 import aiosqlite
 
-from scripts.browzine import BrowZineAPIClient, resolve_working_library
+from scripts.cnki import CnkiClient
 from scripts.index.changes import (
     collect_article_snapshot,
     compute_changed_group_keys,
@@ -22,18 +22,19 @@ from scripts.index.db.operations import mark_listing_ready
 from scripts.index.db.schema import init_db, optimize_db
 from scripts.index.fetcher import process_journal
 from scripts.index.workers import run_worker_batch, writer_process
+from scripts.scholarly import ScholarlyClient
 from scripts.shared.constants import (
+    CNKI_SOURCE,
     DB_TIMEOUT_SECONDS,
-    DEFAULT_LIBRARY_ID,
     PROJECT_ROOT,
+    SCHOLARLY_SOURCE,
 )
-from scripts.shared.converters import is_weipu_library, to_int
-from scripts.weipu import WeipuAPISelectolax
+from scripts.shared.runtime_config import apply_runtime_config
 
 
 def load_csv_rows(csv_path: Path) -> list[dict[str, str]]:
     """
-    Load CSV rows and ensure the library column exists.
+    Load CSV rows and ensure the source column exists.
 
     Args:
         csv_path: Path to the CSV file.
@@ -46,79 +47,33 @@ def load_csv_rows(csv_path: Path) -> list[dict[str, str]]:
         rows = list(reader)
     if not rows:
         return []
-    if "library" not in rows[0]:
+    if "source" not in rows[0]:
         for row in rows:
-            row["library"] = DEFAULT_LIBRARY_ID
+            row["source"] = SCHOLARLY_SOURCE
     for row in rows:
-        if not row.get("library"):
-            row["library"] = DEFAULT_LIBRARY_ID
+        if not row.get("source"):
+            row["source"] = SCHOLARLY_SOURCE
+        row["source"] = row["source"].strip().lower()
     return rows
 
 
-def write_csv_rows(csv_path: Path, rows: list[dict[str, str]]) -> None:
+def validate_sources(rows: list[dict[str, str]]) -> list[dict[str, str]]:
     """
-    Write CSV rows back to the file.
+    Validate CSV source values.
 
     Args:
-        csv_path: Path to the CSV file.
-        rows: CSV rows to write.
+        rows: CSV rows.
 
     Returns:
-        None.
+        Validated CSV rows.
     """
-    if not rows:
-        return
-    with open(csv_path, "w", encoding="utf-8", newline="") as handle:
-        writer = csv.DictWriter(handle, fieldnames=list(rows[0].keys()))
-        writer.writeheader()
-        writer.writerows(rows)
-
-
-async def ensure_available_libraries(
-    client: BrowZineAPIClient, csv_path: Path, rows: list[dict[str, str]]
-) -> list[dict[str, str]]:
-    """
-    Validate libraries for CSV rows and apply fallback libraries when needed.
-
-    Args:
-        client: BrowZine API client instance.
-        csv_path: Path to the CSV file.
-        rows: CSV rows to validate.
-
-    Returns:
-        Updated CSV rows.
-    """
-    if not rows:
-        return rows
-
-    updated = False
+    allowed = {SCHOLARLY_SOURCE, CNKI_SOURCE}
     for row in rows:
-        library_id = row.get("library") or DEFAULT_LIBRARY_ID
-        row["library"] = library_id
-        if is_weipu_library(library_id):
-            continue
-        journal_id = to_int(row.get("id"))
-        if not journal_id:
-            continue
-        issn = row.get("issn") or ""
-        resolved_id, resolved_library, reason = await resolve_working_library(
-            client, journal_id, issn, library_id
-        )
-        if resolved_library != library_id or resolved_id != journal_id:
-            row["library"] = resolved_library
-            row["id"] = str(resolved_id)
-            updated = True
-            title = row.get("title", "Unknown")
-            print(
-                f"  - Switched library for {title} "
-                f"(ID: {journal_id} -> {resolved_id}, "
-                f"Lib: {library_id} -> {resolved_library}, "
-                f"Reason: {reason})"
-            )
-
-    if updated:
-        write_csv_rows(csv_path, rows)
-
+        source = (row.get("source") or SCHOLARLY_SOURCE).strip().lower()
+        if source not in allowed:
+            title = row.get("title") or row.get("id") or "Unknown"
+            raise ValueError(f"Unsupported source for {title}: {source}")
+        row["source"] = source
     return rows
 
 
@@ -154,17 +109,11 @@ async def export_csv(
         return
 
     print(f"\nProcessing {csv_path.name} -> {db_path.name}")
-    availability_client = BrowZineAPIClient(
-        library_id=DEFAULT_LIBRARY_ID, timeout=timeout
-    )
-    try:
-        rows = await ensure_available_libraries(availability_client, csv_path, rows)
-    finally:
-        await availability_client.aclose()
+    rows = validate_sources(rows)
 
     if processes <= 1:
-        client = BrowZineAPIClient(library_id=DEFAULT_LIBRARY_ID, timeout=timeout)
-        weipu_client = WeipuAPISelectolax(timeout=timeout)
+        scholarly_client = ScholarlyClient(timeout=timeout)
+        cnki_client = CnkiClient(timeout=timeout)
         async with aiosqlite.connect(db_path, timeout=DB_TIMEOUT_SECONDS) as db:
             await init_db(db)
             local_db = LocalDatabaseClient(db)
@@ -175,8 +124,8 @@ async def export_csv(
                     print(f"  [{index}/{len(rows)}] Exporting {title}")
                     await process_journal(
                         local_db,
-                        client,
-                        weipu_client,
+                        scholarly_client,
+                        cnki_client,
                         csv_path,
                         row,
                         issue_batch_size,
@@ -190,8 +139,9 @@ async def export_csv(
                 await optimize_db(db)
                 if not update:
                     await mark_listing_ready(db)
-                await client.aclose()
-                await weipu_client.aclose()
+                    await db.commit()
+                await scholarly_client.aclose()
+                await cnki_client.aclose()
         return
 
     ctx = mp.get_context()
@@ -252,6 +202,7 @@ async def export_csv(
         await optimize_db(db)
         if not update:
             await mark_listing_ready(db)
+            await db.commit()
 
 
 async def async_main(args: argparse.Namespace) -> None:
@@ -265,6 +216,7 @@ async def async_main(args: argparse.Namespace) -> None:
         None.
     """
     project_root = PROJECT_ROOT
+    apply_runtime_config()
     meta_dir = project_root / "data" / "meta"
     index_dir = project_root / "data" / "index"
     index_dir.mkdir(parents=True, exist_ok=True)
@@ -285,10 +237,10 @@ async def async_main(args: argparse.Namespace) -> None:
         print(f"No CSV files found in {meta_dir}")
         return
 
-    issue_batch_size = max(1, args.issue_batch or args.workers * 3)
+    issue_batch_size = max(1, args.issue_batch or args.workers)
 
     print("=" * 60)
-    print("BrowZine Article Indexer")
+    print("Paper Scanner Article Indexer")
     print("=" * 60)
     print(f"Found {len(csv_paths)} CSV file(s)")
     print(f"Request workers: {args.workers}")
@@ -370,7 +322,7 @@ def main() -> None:
         None.
     """
     parser = argparse.ArgumentParser(
-        description="Export BrowZine journal articles to SQLite databases"
+        description="Export journal articles to SQLite databases"
     )
     parser.add_argument(
         "--file",
@@ -382,14 +334,14 @@ def main() -> None:
         "--workers",
         "-w",
         type=int,
-        default=8,
+        default=32,
         help="Maximum concurrent HTTP requests",
     )
     parser.add_argument(
         "--issue-batch",
         type=int,
         default=0,
-        help="Issues per async batch (default: workers * 3)",
+        help="Issues per async batch (default: workers)",
     )
     parser.add_argument(
         "--timeout",
@@ -400,7 +352,7 @@ def main() -> None:
     parser.add_argument(
         "--processes",
         type=int,
-        default=1,
+        default=2,
         help="Process workers for journal-level parallelism",
     )
     parser.add_argument(

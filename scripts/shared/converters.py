@@ -7,7 +7,7 @@ import json
 from collections.abc import Iterable, Iterator
 from typing import Any
 
-from scripts.shared.constants import SQLITE_INT_MAX, SQLITE_INT_MIN, WEIPU_LIBRARY_ID
+from scripts.shared.constants import SQLITE_INT_MAX, SQLITE_INT_MIN
 
 
 def to_int(value: Any) -> int | None:
@@ -135,19 +135,6 @@ def to_string_list(value: Any) -> list[str]:
         if text:
             normalized.append(text)
     return normalized
-
-
-def is_weipu_library(value: str | None) -> bool:
-    """
-    Check whether a library identifier indicates WeiPu.
-
-    Args:
-        value: Library identifier.
-
-    Returns:
-        True when value matches WeiPu sentinel id.
-    """
-    return (value or "").strip() == WEIPU_LIBRARY_ID
 
 
 def chunked[T](items: Iterable[T], size: int) -> Iterator[list[T]]:
