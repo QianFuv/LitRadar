@@ -51,16 +51,17 @@
 2. 运行阶段
    - 基础镜像：`python:3.12-slim-trixie`
    - 复制 `.venv/`、`scripts/`
+   - 复制 `uv`、`uv.lock`、`README.md`
    - 复制 `libs/simple-linux/`
    - 复制 `data/meta/`
-   - 默认启动命令：`uv run api`
+   - 默认启动命令：`api`
 
 运行时默认环境变量：
 
 | 变量 | 默认值 | 说明 |
 | --- | --- | --- |
 | `API_HOST` | `0.0.0.0` | Uvicorn 监听地址 |
-| `SIMPLE_TOKENIZER_PATH` | `/app/libs/simple-linux/libsimple-linux-ubuntu-latest/libsimple` | `simple` 分词扩展路径 |
+| `SIMPLE_TOKENIZER_PATH` | `/app/libs/simple-linux/libsimple-linux-ubuntu-latest/libsimple.so` | `simple` 分词扩展路径 |
 
 ### 前端镜像
 
