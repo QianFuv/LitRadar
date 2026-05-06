@@ -10,7 +10,7 @@ from scripts.api.queries.meta import (
     list_areas,
     list_databases,
     list_journal_options,
-    list_libraries,
+    list_sources,
     list_years,
 )
 from scripts.shared.constants import API_PREFIX
@@ -36,8 +36,8 @@ router.add_api_route(
     response_model=list[JournalOption],
 )
 router.add_api_route(
-    "/meta/libraries",
-    list_libraries,
+    "/meta/sources",
+    list_sources,
     methods=["GET"],
     response_model=list[ValueCount],
 )

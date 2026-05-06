@@ -21,6 +21,7 @@ import {
   type WeeklyArticle,
   type WeeklyDatabaseUpdate,
   type WeeklyJournalUpdate,
+  type JournalId,
 } from '@/lib/api';
 import { useAuth } from '@/lib/auth-context';
 import { ArticleDialogCard } from '@/components/feature/article-dialog-card';
@@ -92,8 +93,8 @@ function selectDefaultDatabase(
 
 function selectDefaultJournal(
   journals: WeeklyJournalUpdate[],
-  currentJournalId: number | null,
-): number | null {
+  currentJournalId: JournalId | null,
+): JournalId | null {
   if (journals.length === 0) {
     return null;
   }
@@ -130,9 +131,9 @@ type JournalPanelProps = {
   availableDatabases: string[];
   effectiveSelectedDb: string;
   journals: WeeklyJournalUpdate[];
-  effectiveSelectedJournalId: number | null;
+  effectiveSelectedJournalId: JournalId | null;
   onDatabaseChange: (value: string) => void;
-  onSelectJournal: (journalId: number) => void;
+  onSelectJournal: (journalId: JournalId) => void;
 };
 
 function JournalPanel({
@@ -207,7 +208,7 @@ export default function WeeklyUpdatesPage() {
   const requestedDb = (searchParams.get('db') || '').trim();
   const searchQuery = (searchParams.get('q') || '').trim();
   const [selectedDb, setSelectedDb] = useState<string>('');
-  const [selectedJournalId, setSelectedJournalId] = useState<number | null>(null);
+  const [selectedJournalId, setSelectedJournalId] = useState<JournalId | null>(null);
 
   const {
     data: weeklyData,

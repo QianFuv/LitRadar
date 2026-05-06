@@ -7,10 +7,11 @@ export interface PageMeta {
 }
 
 export type ArticleId = string;
+export type JournalId = string;
 
 export interface Article {
   article_id: ArticleId;
-  journal_id: number;
+  journal_id: JournalId;
   issue_id?: number;
   title?: string;
   date?: string;
@@ -43,14 +44,14 @@ export interface YearSummary {
 }
 
 export interface JournalOption {
-  journal_id: number;
+  journal_id: JournalId;
   title?: string;
 }
 
 export type WeeklyArticle = Article;
 
 export interface WeeklyJournalUpdate {
-  journal_id: number;
+  journal_id: JournalId;
   journal_title?: string;
   new_article_count: number;
   articles: WeeklyArticle[];
@@ -270,7 +271,7 @@ export interface FavoriteItem {
 }
 
 export interface FavoriteArticleItem extends FavoriteItem {
-  journal_id?: number | null;
+  journal_id?: JournalId | null;
   issue_id?: number | null;
   title?: string;
   date?: string;

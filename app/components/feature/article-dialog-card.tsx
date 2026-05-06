@@ -5,11 +5,12 @@ import { type ReactNode } from 'react';
 import { ArticleDetailDialogContent } from '@/components/feature/article-detail-dialog-content';
 import { ArticleListCard } from '@/components/feature/article-list-card';
 import { Dialog, DialogTrigger } from '@/components/ui/dialog';
+import { type JournalId } from '@/lib/api';
 import { cn } from '@/lib/utils';
 
 type ArticleDialogCardArticle = {
   article_id: string;
-  journal_id?: number | null;
+  journal_id?: JournalId | null;
   title?: string;
   date?: string;
   authors?: string;

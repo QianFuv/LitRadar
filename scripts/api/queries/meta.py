@@ -72,17 +72,17 @@ async def list_journal_options(
     return [JournalOption(**row) for row in rows]
 
 
-async def list_libraries(
+async def list_sources(
     db: Annotated[aiosqlite.Connection, Depends(get_db_dependency)],
 ) -> list[ValueCount]:
     """
-    List distinct library IDs from journal metadata.
+    List distinct metadata source values.
 
     Args:
         db: Database connection.
 
     Returns:
-        Library values with counts.
+        Source values with counts.
     """
     rows = await fetch_all(
         db,

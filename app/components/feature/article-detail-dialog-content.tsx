@@ -3,7 +3,7 @@
 import { useState, type ReactNode } from 'react';
 import { Check, Copy, ExternalLink } from 'lucide-react';
 
-import { getFullTextUrlForDatabase, type ArticleId } from '@/lib/api';
+import { getFullTextUrlForDatabase, type ArticleId, type JournalId } from '@/lib/api';
 import { FavoriteButton } from '@/components/feature/favorite-button';
 import { Button } from '@/components/ui/button';
 import {
@@ -15,16 +15,18 @@ import {
 
 type ArticleDetailDialogArticle = {
   article_id: ArticleId;
-  journal_id?: number | null;
+  journal_id?: JournalId | null;
   title?: string;
   date?: string;
   authors?: string;
   abstract?: string;
   doi?: string;
   platform_id?: string;
+  permalink?: string | null;
   journal_title?: string;
   volume?: string | null;
   number?: string | null;
+  full_text_file?: string | null;
 };
 
 type ArticleDetailDialogContentProps = {
@@ -89,11 +91,12 @@ export function ArticleDetailDialogContent({
     setTimeout(() => setCopyStatus(null), 3000);
   };
 
-  const fullTextUrl = article.doi
-    ? `https://doi.org/${article.doi}`
-    : article.platform_id
-      ? getFullTextUrlForDatabase(article.article_id, dbName, token)
-      : null;
+  const hasFullTextTarget = Boolean(
+    article.full_text_file || article.permalink || article.doi || article.platform_id,
+  );
+  const fullTextUrl = hasFullTextTarget
+    ? getFullTextUrlForDatabase(article.article_id, dbName, token)
+    : null;
 
   return (
     <DialogContent className="w-[calc(100%-2rem)] max-w-[calc(100%-2rem)] md:max-w-4xl max-h-[90vh] overflow-y-auto [&>button]:hidden">

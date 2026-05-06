@@ -23,8 +23,7 @@ from scripts.api.pagination import (
     parse_article_cursor,
     parse_sort,
 )
-from scripts.api.weipu_resolver import resolve_weipu_detail_url
-from scripts.shared.constants import MAX_LIMIT, WEIPU_LIBRARY_ID
+from scripts.shared.constants import MAX_LIMIT
 
 
 async def is_article_listing_ready(db: aiosqlite.Connection) -> bool:
@@ -263,11 +262,8 @@ async def list_articles_from_listing(
             a.within_library_holdings,
             a.noodletools_export_link,
             a.avoid_unpaywall_publisher_links,
-            a.browzine_web_in_context_link,
             a.content_location,
-            a.libkey_content_location,
             a.full_text_file,
-            a.libkey_full_text_file,
             a.nomad_fallback_url,
             j.title AS journal_title,
             i.volume,
@@ -520,11 +516,8 @@ async def list_articles_from_articles(
             a.within_library_holdings,
             a.noodletools_export_link,
             a.avoid_unpaywall_publisher_links,
-            a.browzine_web_in_context_link,
             a.content_location,
-            a.libkey_content_location,
             a.full_text_file,
-            a.libkey_full_text_file,
             a.nomad_fallback_url,
             j.title AS journal_title,
             i.volume,
@@ -698,11 +691,8 @@ async def get_article(
             a.within_library_holdings,
             a.noodletools_export_link,
             a.avoid_unpaywall_publisher_links,
-            a.browzine_web_in_context_link,
             a.content_location,
-            a.libkey_content_location,
             a.full_text_file,
-            a.libkey_full_text_file,
             a.nomad_fallback_url,
             j.title AS journal_title,
             i.volume,
@@ -742,12 +732,11 @@ async def redirect_article_fulltext(
             a.doi,
             a.platform_id,
             a.full_text_file,
-            a.libkey_full_text_file,
+            a.permalink,
             i.publication_year,
             i.number,
             j.issn,
-            j.title AS journal_title,
-            j.library_id
+            j.title AS journal_title
         FROM articles a
         LEFT JOIN issues i ON i.issue_id = a.issue_id
         JOIN journals j ON j.journal_id = a.journal_id
@@ -757,23 +746,15 @@ async def redirect_article_fulltext(
     )
     if not row:
         raise HTTPException(status_code=404, detail="Article not found")
+    full_text_file = row.get("full_text_file")
+    if full_text_file:
+        return RedirectResponse(str(full_text_file))
+    permalink = row.get("permalink")
+    if permalink:
+        return RedirectResponse(str(permalink))
     doi = row.get("doi")
     if doi:
         doi_text = str(doi).strip()
         if doi_text:
             return RedirectResponse(f"https://doi.org/{doi_text}")
-    full_text_file = row.get("full_text_file") or row.get("libkey_full_text_file")
-    if full_text_file:
-        return RedirectResponse(str(full_text_file))
-    if row.get("library_id") == WEIPU_LIBRARY_ID:
-        detail_url = await resolve_weipu_detail_url(
-            row.get("journal_title"),
-            row.get("issn"),
-            row.get("publication_year"),
-            row.get("number"),
-            row.get("platform_id"),
-            row.get("title"),
-        )
-        if detail_url:
-            return RedirectResponse(detail_url)
     raise HTTPException(status_code=404, detail="Full text not available")

@@ -22,9 +22,31 @@ def serialize_article_id(value: int) -> str:
     return str(value)
 
 
+def serialize_journal_id(value: int) -> str:
+    """
+    Serialize journal identifiers as decimal strings for JSON transports.
+
+    Args:
+        value: Internal journal identifier.
+
+    Returns:
+        String representation of the identifier.
+    """
+    return str(value)
+
+
 ArticleId = Annotated[
     int,
     PlainSerializer(serialize_article_id, return_type=str, when_used="json"),
+    WithJsonSchema(
+        {"type": "string", "pattern": "^[1-9][0-9]*$"},
+        mode="serialization",
+    ),
+]
+
+JournalId = Annotated[
+    int,
+    PlainSerializer(serialize_journal_id, return_type=str, when_used="json"),
     WithJsonSchema(
         {"type": "string", "pattern": "^[1-9][0-9]*$"},
         mode="serialization",
@@ -37,7 +59,7 @@ class JournalRecord(BaseModel):
     Journal record with optional CSV metadata.
     """
 
-    journal_id: int
+    journal_id: JournalId
     library_id: str
     platform_journal_id: str | None = None
     title: str | None = None
@@ -61,7 +83,7 @@ class IssueRecord(BaseModel):
     """
 
     issue_id: int
-    journal_id: int
+    journal_id: JournalId
     publication_year: int | None = None
     title: str | None = None
     volume: str | None = None
@@ -79,7 +101,7 @@ class ArticleRecord(BaseModel):
     """
 
     article_id: ArticleId
-    journal_id: int
+    journal_id: JournalId
     issue_id: int | None = None
     sync_id: int | None = None
     title: str | None = None
@@ -106,11 +128,8 @@ class ArticleRecord(BaseModel):
     within_library_holdings: int | None = None
     noodletools_export_link: str | None = None
     avoid_unpaywall_publisher_links: int | None = None
-    browzine_web_in_context_link: str | None = None
     content_location: str | None = None
-    libkey_content_location: str | None = None
     full_text_file: str | None = None
-    libkey_full_text_file: str | None = None
     nomad_fallback_url: str | None = None
     journal_title: str | None = None
     volume: str | None = None
@@ -180,7 +199,7 @@ class JournalOption(BaseModel):
     Journal option for selection lists.
     """
 
-    journal_id: int
+    journal_id: JournalId
     title: str | None = None
 
 
@@ -190,7 +209,7 @@ class WeeklyArticleRecord(BaseModel):
     """
 
     article_id: ArticleId
-    journal_id: int
+    journal_id: JournalId
     issue_id: int | None = None
     title: str | None = None
     date: str | None = None
@@ -210,7 +229,7 @@ class WeeklyJournalUpdate(BaseModel):
     Weekly update summary for one journal.
     """
 
-    journal_id: int
+    journal_id: JournalId
     journal_title: str | None = None
     new_article_count: int
     articles: list[WeeklyArticleRecord]
@@ -336,7 +355,7 @@ class FavoriteResponse(BaseModel):
 
 
 class FavoriteArticleResponse(FavoriteResponse):
-    journal_id: int | None = None
+    journal_id: JournalId | None = None
     issue_id: int | None = None
     title: str | None = None
     date: str | None = None
