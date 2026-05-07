@@ -5,7 +5,29 @@ from __future__ import annotations
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 CNKI_OVERSEA_HOST = "oversea.cnki.net"
-CNKI_CHINESE_LANGUAGE = "chs"
+CNKI_CHINESE_LANGUAGE = "CHS"
+CNKI_DETAIL_PATH = "/openlink/detail"
+CNKI_OPENLINK_DETAIL_EN_PATH = "/openlink/detailen"
+CNKI_PATH_PREFIXES = ("/kcms", "/knavi", "/openlink")
+
+
+def is_cnki_oversea_url(url: str) -> bool:
+    """
+    Check whether a URL points to CNKI overseas.
+
+    Args:
+        url: URL to check.
+
+    Returns:
+        True when the URL is an overseas CNKI URL.
+    """
+    text = str(url).strip()
+    if not text:
+        return False
+    parts = urlsplit(text)
+    if parts.netloc:
+        return (parts.hostname or "").lower() == CNKI_OVERSEA_HOST
+    return parts.path.lower().startswith(CNKI_PATH_PREFIXES)
 
 
 def with_cnki_chinese_language(url: str) -> str:
@@ -22,18 +44,28 @@ def with_cnki_chinese_language(url: str) -> str:
     if not text:
         return text
     parts = urlsplit(text)
-    if parts.netloc and parts.netloc.lower() != CNKI_OVERSEA_HOST:
+    if parts.netloc and not is_cnki_oversea_url(text):
         return text
-    if not parts.netloc and not parts.path.startswith(("/kcms", "/knavi", "/openlink")):
+    normalized_path = parts.path.lower()
+    if not parts.netloc and not is_cnki_oversea_url(text):
         return text
-    query = dict(parse_qsl(parts.query, keep_blank_values=True))
+    path = (
+        CNKI_DETAIL_PATH
+        if normalized_path == CNKI_OPENLINK_DETAIL_EN_PATH
+        else parts.path
+    )
+    query = {
+        key: value
+        for key, value in parse_qsl(parts.query, keep_blank_values=True)
+        if key.lower() not in {"language", "uniplatform"}
+    }
     query["uniplatform"] = "OVERSEA"
     query["language"] = CNKI_CHINESE_LANGUAGE
     return urlunsplit(
         (
             parts.scheme,
             parts.netloc,
-            parts.path,
+            path,
             urlencode(query),
             parts.fragment,
         )

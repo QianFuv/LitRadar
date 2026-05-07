@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+from contextlib import suppress
 from typing import Annotated, Any
+from urllib.parse import urljoin, urlsplit
 
 import aiosqlite
+import httpx
 from fastapi import Depends, HTTPException, Query
 from starlette.responses import RedirectResponse
 
@@ -23,8 +26,38 @@ from paper_scanner.api.pagination import (
     parse_article_cursor,
     parse_sort,
 )
-from paper_scanner.shared.cnki_urls import with_cnki_chinese_language
+from paper_scanner.shared.cnki_urls import (
+    is_cnki_oversea_url,
+    with_cnki_chinese_language,
+)
 from paper_scanner.shared.constants import MAX_LIMIT
+
+CNKI_REDIRECT_ATTEMPTS = 3
+CNKI_REDIRECT_TIMEOUT_SECONDS = 5.0
+CNKI_REDIRECT_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/121.0.0.0 Safari/537.36"
+    ),
+    "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.1",
+    "Referer": "https://oversea.cnki.net/",
+}
+
+
+def _is_cnki_verify_url(url: str) -> bool:
+    """
+    Check whether a CNKI URL points to the verification flow.
+
+    Args:
+        url: URL to check.
+
+    Returns:
+        True when the URL points to CNKI verification.
+    """
+    if not is_cnki_oversea_url(url):
+        return False
+    return urlsplit(url).path.lower().startswith("/verify/")
 
 
 async def is_article_listing_ready(db: aiosqlite.Connection) -> bool:
@@ -710,7 +743,7 @@ async def get_article(
     return ArticleRecord(**row)
 
 
-def _fulltext_redirect_url(url: object) -> str:
+async def _fulltext_redirect_url(url: object) -> str:
     """
     Normalize a full text redirect URL.
 
@@ -720,7 +753,50 @@ def _fulltext_redirect_url(url: object) -> str:
     Returns:
         Redirect URL with source-specific normalization applied.
     """
-    return with_cnki_chinese_language(str(url or ""))
+    normalized_url = with_cnki_chinese_language(str(url or ""))
+    if not is_cnki_oversea_url(normalized_url):
+        return normalized_url
+    return await _resolve_cnki_redirect_url(normalized_url)
+
+
+async def _resolve_cnki_redirect_url(url: str) -> str:
+    """
+    Resolve and normalize CNKI redirect locations before browser navigation.
+
+    Args:
+        url: Normalized CNKI URL.
+
+    Returns:
+        CNKI URL after server-side redirect interception.
+    """
+    current_url = with_cnki_chinese_language(url)
+    timeout = httpx.Timeout(CNKI_REDIRECT_TIMEOUT_SECONDS)
+    with suppress(httpx.HTTPError):
+        async with httpx.AsyncClient(
+            follow_redirects=False,
+            timeout=timeout,
+            headers=CNKI_REDIRECT_HEADERS,
+        ) as client:
+            for _ in range(CNKI_REDIRECT_ATTEMPTS):
+                request = client.build_request("GET", current_url)
+                response = await client.send(request, stream=True)
+                try:
+                    if response.status_code not in {301, 302, 303, 307, 308}:
+                        return with_cnki_chinese_language(str(response.url))
+                    location = response.headers.get("location")
+                    if not location:
+                        return current_url
+                    next_url = with_cnki_chinese_language(
+                        urljoin(current_url, location)
+                    )
+                    if _is_cnki_verify_url(next_url):
+                        return current_url
+                    if next_url == current_url:
+                        return current_url
+                    current_url = next_url
+                finally:
+                    await response.aclose()
+    return current_url
 
 
 async def redirect_article_fulltext(
@@ -762,10 +838,10 @@ async def redirect_article_fulltext(
         raise HTTPException(status_code=404, detail="Article not found")
     full_text_file = row.get("full_text_file")
     if full_text_file:
-        return RedirectResponse(_fulltext_redirect_url(full_text_file))
+        return RedirectResponse(await _fulltext_redirect_url(full_text_file))
     permalink = row.get("permalink")
     if permalink:
-        return RedirectResponse(_fulltext_redirect_url(permalink))
+        return RedirectResponse(await _fulltext_redirect_url(permalink))
     doi = row.get("doi")
     if doi:
         doi_text = str(doi).strip()

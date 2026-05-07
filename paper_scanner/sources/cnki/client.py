@@ -292,7 +292,7 @@ class CnkiClient:
             text, "Online Release Time"
         )
         doi = _row_value(text, "DOI")
-        permalink = _openlink_url(dbcode, dbname, filename) or resolved_url
+        permalink = _article_detail_url(dbcode, dbname, filename) or resolved_url
         return {
             "article_url": resolved_url,
             "platform_id": filename,
@@ -812,11 +812,11 @@ def _link_with_text(text: str, label: str) -> str | None:
     return None
 
 
-def _openlink_url(
+def _article_detail_url(
     dbcode: str | None, dbname: str | None, filename: str | None
 ) -> str | None:
     """
-    Build a stable CNKI openlink URL.
+    Build a stable CNKI article detail URL.
 
     Args:
         dbcode: CNKI database code.
@@ -824,7 +824,7 @@ def _openlink_url(
         filename: CNKI article filename.
 
     Returns:
-        Stable openlink URL or None.
+        Stable article detail URL or None.
     """
     if not dbcode or not dbname or not filename:
         return None
@@ -837,7 +837,7 @@ def _openlink_url(
             "language": CNKI_CHINESE_LANGUAGE,
         }
     )
-    return f"{BASE_URL}/openlink/detailen?{query}"
+    return with_cnki_chinese_language(f"{BASE_URL}/openlink/detail?{query}")
 
 
 def _checked_text(response: httpx.Response, url: str) -> str:
