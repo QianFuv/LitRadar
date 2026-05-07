@@ -217,6 +217,8 @@ class WeeklyArticleRecord(BaseModel):
     abstract: str | None = None
     doi: str | None = None
     platform_id: str | None = None
+    permalink: str | None = None
+    full_text_file: str | None = None
     journal_title: str | None = None
     open_access: int | None = None
     in_press: int | None = None
@@ -363,6 +365,7 @@ class FavoriteArticleResponse(FavoriteResponse):
     abstract: str | None = None
     doi: str | None = None
     platform_id: str | None = None
+    permalink: str | None = None
     journal_title: str | None = None
     open_access: int | None = None
     in_press: int | None = None

@@ -142,6 +142,7 @@ def _load_article_details_by_db(
                 a.platform_id,
                 a.open_access,
                 a.in_press,
+                a.permalink,
                 a.full_text_file,
                 j.title AS journal_title,
                 j.issn,

@@ -19,6 +19,7 @@ export interface Article {
   abstract?: string | null;
   doi?: string | null;
   platform_id?: string | null;
+  permalink?: string | null;
   journal_title?: string | null;
   open_access?: number | null;
   in_press?: number | null;
@@ -279,6 +280,7 @@ export interface FavoriteArticleItem extends FavoriteItem {
   abstract?: string | null;
   doi?: string | null;
   platform_id?: string | null;
+  permalink?: string | null;
   journal_title?: string | null;
   open_access?: number | null;
   in_press?: number | null;

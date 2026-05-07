@@ -251,6 +251,8 @@ async def fetch_articles_by_ids(
             a.abstract,
             a.doi,
             a.platform_id,
+            a.permalink,
+            a.full_text_file,
             a.open_access,
             a.in_press,
             j.title AS journal_title,

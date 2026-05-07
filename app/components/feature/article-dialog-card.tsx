@@ -17,6 +17,8 @@ type ArticleDialogCardArticle = {
   abstract?: string | null;
   doi?: string | null;
   platform_id?: string | null;
+  permalink?: string | null;
+  full_text_file?: string | null;
   journal_title?: string | null;
   volume?: string | null;
   number?: string | null;
