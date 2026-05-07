@@ -15,7 +15,7 @@ Paper Scanner 当前实际使用两类数据库：
 
 ### 初始化参数
 
-索引数据库在 `scripts/index/db/schema.py` 中初始化，当前会设置以下 pragma：
+索引数据库在 `paper_scanner/index/db/schema.py` 中初始化，当前会设置以下 pragma：
 
 | Pragma | 值 | 说明 |
 | --- | --- | --- |
@@ -259,7 +259,7 @@ SQLite FTS5 虚表，用于全文检索。
 
 ### 初始化参数
 
-`scripts/api/auth_db.py` 初始化时会设置：
+`paper_scanner/api/auth_db.py` 初始化时会设置：
 
 | Pragma | 值 |
 | --- | --- |

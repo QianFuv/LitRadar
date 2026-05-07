@@ -8,7 +8,7 @@ COPY pyproject.toml uv.lock README.md ./
 
 RUN uv sync --frozen --no-dev --no-install-project
 
-COPY scripts/ scripts/
+COPY paper_scanner/ paper_scanner/
 
 RUN uv sync --frozen --no-dev
 
@@ -22,7 +22,7 @@ COPY --from=build /app/.venv .venv/
 COPY --from=build /app/pyproject.toml ./
 COPY --from=build /app/uv.lock ./
 COPY --from=build /app/README.md ./
-COPY --from=build /app/scripts scripts/
+COPY --from=build /app/paper_scanner paper_scanner/
 
 COPY libs/simple-linux libs/simple-linux
 COPY data/meta data/meta

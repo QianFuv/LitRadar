@@ -46,11 +46,11 @@
 1. `build` 阶段
    - 基础镜像：`python:3.12-slim-trixie`
    - 使用 `uv sync --frozen --no-dev`
-   - 复制 `scripts/`
+   - 复制 `paper_scanner/`
 
 2. 运行阶段
    - 基础镜像：`python:3.12-slim-trixie`
-   - 复制 `.venv/`、`scripts/`
+   - 复制 `.venv/`、`paper_scanner/`
    - 复制 `uv`、`uv.lock`、`README.md`
    - 复制 `libs/simple-linux/`
    - 复制 `data/meta/`

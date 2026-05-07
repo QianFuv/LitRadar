@@ -39,7 +39,7 @@ Paper Scanner 是一个面向学术期刊的全栈检索与订阅平台。它负
 .
 ├── app/                     前端项目
 ├── docs/                    详细文档
-├── scripts/                 后端、索引、推送与公共模块
+├── paper_scanner/           后端、索引、推送与公共模块
 ├── data/
 │   ├── meta/                期刊 CSV 元数据源
 │   ├── index/               生成后的 SQLite 检索库

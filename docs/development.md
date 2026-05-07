@@ -6,9 +6,9 @@
 
 ```text
 CSV 元数据
-  -> 索引器（scripts/index）
+  -> 索引器（paper_scanner/index）
   -> data/index/*.sqlite
-  -> FastAPI（scripts/api）
+  -> FastAPI（paper_scanner/api）
   -> Next.js 前端（app）
 
 增量更新
@@ -20,7 +20,7 @@ CSV 元数据
 
 ## 二、模块划分
 
-### 1. `scripts/index/`
+### 1. `paper_scanner/index/`
 
 负责离线抓取和增量更新。
 
@@ -35,13 +35,28 @@ CSV 元数据
 
 关键文件：
 
-- `scripts/index/main.py`
-- `scripts/index/fetcher.py`
-- `scripts/index/changes.py`
-- `scripts/index/db/schema.py`
-- `scripts/index/db/operations.py`
+- `paper_scanner/index/main.py`
+- `paper_scanner/index/fetcher.py`
+- `paper_scanner/index/changes.py`
+- `paper_scanner/index/db/schema.py`
+- `paper_scanner/index/db/operations.py`
 
-### 2. `scripts/api/`
+### 2. `paper_scanner/sources/`
+
+负责外部元数据源客户端。
+
+关键职责：
+
+- `cnki/`：CNKI overseas 期刊、期次与文章元数据抓取
+- `scholarly/`：Crossref / OpenAlex / Unpaywall 元数据抓取
+- 统一使用共享请求池、代理池和运行配置
+
+关键文件：
+
+- `paper_scanner/sources/cnki/client.py`
+- `paper_scanner/sources/scholarly/client.py`
+
+### 3. `paper_scanner/api/`
 
 负责 FastAPI 服务、认证数据库、调度器与 REST 路由。
 
@@ -54,13 +69,13 @@ CSV 元数据
 
 关键文件：
 
-- `scripts/api/app.py`
-- `scripts/api/main.py`
-- `scripts/api/routes/*`
-- `scripts/api/auth_db.py`
-- `scripts/api/scheduler.py`
+- `paper_scanner/api/app.py`
+- `paper_scanner/api/main.py`
+- `paper_scanner/api/routes/*`
+- `paper_scanner/api/auth_db.py`
+- `paper_scanner/api/scheduler.py`
 
-### 3. `scripts/notify/`
+### 4. `paper_scanner/notify/`
 
 负责 PushPlus 通知链路。
 
@@ -72,13 +87,13 @@ CSV 元数据
 - 构造 Markdown 推送正文
 - 更新 `data/push_state/*.json`
 
-### 4. `scripts/push/`
+### 5. `paper_scanner/push/`
 
 负责把新增文章写入追踪文件夹。
 
 它与 `notify` 共用很多候选选择逻辑，但最终写入的是 `favorites` 表，而不是 PushPlus。
 
-### 5. `app/`
+### 6. `app/`
 
 负责前端页面与用户交互。
 
@@ -231,9 +246,9 @@ pnpm dev
 根据仓库约束，修改 Python 代码后应至少执行：
 
 ```bash
-uv run ruff check scripts
-uv run ruff format scripts
-uv run mypy scripts
+uv run ruff check paper_scanner
+uv run ruff format paper_scanner
+uv run mypy paper_scanner
 ```
 
 如果修改了前端代码，建议额外执行：

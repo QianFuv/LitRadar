@@ -22,13 +22,13 @@ dev = [
 ]
 
 [project.scripts]
-index = "scripts.index:main"
-api = "scripts.api:main"
-notify = "scripts.notify:main"
-push = "scripts.push:main"
+index = "paper_scanner.index:main"
+api = "paper_scanner.api:main"
+notify = "paper_scanner.notify:main"
+push = "paper_scanner.push:main"
 
 [tool.setuptools.packages.find]
-include = ["scripts*"]
+include = ["paper_scanner*"]
 
 [build-system]
 requires = ["setuptools>=45", "wheel"]
