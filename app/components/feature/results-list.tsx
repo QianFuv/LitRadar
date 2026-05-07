@@ -125,7 +125,7 @@ export function ResultsList() {
   }, [highlightTerms]);
 
   const highlightText = useCallback(
-    (text: string | undefined) => {
+    (text: string | null | undefined) => {
       if (!text) return null;
       if (!highlightPattern) return text;
 

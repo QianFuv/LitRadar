@@ -16,14 +16,14 @@ import {
 type ArticleDetailDialogArticle = {
   article_id: ArticleId;
   journal_id?: JournalId | null;
-  title?: string;
-  date?: string;
-  authors?: string;
-  abstract?: string;
-  doi?: string;
-  platform_id?: string;
+  title?: string | null;
+  date?: string | null;
+  authors?: string | null;
+  abstract?: string | null;
+  doi?: string | null;
+  platform_id?: string | null;
   permalink?: string | null;
-  journal_title?: string;
+  journal_title?: string | null;
   volume?: string | null;
   number?: string | null;
   full_text_file?: string | null;

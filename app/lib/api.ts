@@ -12,19 +12,19 @@ export type JournalId = string;
 export interface Article {
   article_id: ArticleId;
   journal_id: JournalId;
-  issue_id?: number;
-  title?: string;
-  date?: string;
-  authors?: string;
-  abstract?: string;
-  doi?: string;
-  platform_id?: string;
-  journal_title?: string;
-  open_access?: number;
-  in_press?: number;
-  volume?: string;
-  number?: string;
-  full_text_file?: string;
+  issue_id?: number | null;
+  title?: string | null;
+  date?: string | null;
+  authors?: string | null;
+  abstract?: string | null;
+  doi?: string | null;
+  platform_id?: string | null;
+  journal_title?: string | null;
+  open_access?: number | null;
+  in_press?: number | null;
+  volume?: string | null;
+  number?: string | null;
+  full_text_file?: string | null;
 }
 
 export interface ArticlePage {
@@ -273,20 +273,20 @@ export interface FavoriteItem {
 export interface FavoriteArticleItem extends FavoriteItem {
   journal_id?: JournalId | null;
   issue_id?: number | null;
-  title?: string;
-  date?: string;
-  authors?: string;
-  abstract?: string;
-  doi?: string;
-  platform_id?: string;
-  journal_title?: string;
-  open_access?: number;
-  in_press?: number;
-  volume?: string;
-  number?: string;
+  title?: string | null;
+  date?: string | null;
+  authors?: string | null;
+  abstract?: string | null;
+  doi?: string | null;
+  platform_id?: string | null;
+  journal_title?: string | null;
+  open_access?: number | null;
+  in_press?: number | null;
+  volume?: string | null;
+  number?: string | null;
   issn?: string | null;
   eissn?: string | null;
-  full_text_file?: string;
+  full_text_file?: string | null;
 }
 
 export type CitationFormat = 'bibtex' | 'ris' | 'endnote';
