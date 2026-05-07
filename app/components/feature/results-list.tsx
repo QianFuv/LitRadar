@@ -2,12 +2,7 @@
 
 import { useInfiniteQuery, useQuery, type InfiniteData } from '@tanstack/react-query';
 import { useQueryState, parseAsString, parseAsArrayOf, parseAsInteger } from 'nuqs';
-import {
-  checkFavoritesBatch,
-  getArticles,
-  getCurrentDatabase,
-  type ArticlePage,
-} from '@/lib/api';
+import { checkFavoritesBatch, getArticles, getCurrentDatabase, type ArticlePage } from '@/lib/api';
 import { ArticleDialogCard } from '@/components/feature/article-dialog-card';
 import { useVisiblePageList } from '@/components/feature/use-visible-page-list';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
@@ -32,38 +27,31 @@ export function ResultsList() {
   if (q) params.set('q', q);
 
   if (areas && areas.length > 0) {
-      areas.forEach(a => params.append('area', a));
+    areas.forEach((a) => params.append('area', a));
   }
   if (journalIds && journalIds.length > 0) {
-      journalIds.forEach(id => params.append('journal_id', id));
+    journalIds.forEach((id) => params.append('journal_id', id));
   }
 
   if (yearMin) params.set('date_from', `${yearMin}-01-01`);
   if (yearMax) params.set('date_to', `${yearMax}-12-31`);
   const paramsString = params.toString();
 
-  const {
-    data,
-    isLoading,
-    isError,
-    error,
-    fetchNextPage,
-    hasNextPage,
-    isFetchingNextPage,
-  } = useInfiniteQuery<
-    ArticlePage,
-    Error,
-    InfiniteData<ArticlePage, string | null>,
-    string[],
-    string | null
-  >({
-    queryKey: ['articles', paramsString],
-    queryFn: ({ pageParam }) => getArticles(params, pageParam, includeTotal, token!),
-    initialPageParam: null,
-    getNextPageParam: (lastPage) => lastPage.page.next_cursor ?? undefined,
-    staleTime: 5 * 60 * 1000,
-    gcTime: 10 * 60 * 1000,
-  });
+  const { data, isLoading, isError, error, fetchNextPage, hasNextPage, isFetchingNextPage } =
+    useInfiniteQuery<
+      ArticlePage,
+      Error,
+      InfiniteData<ArticlePage, string | null>,
+      string[],
+      string | null
+    >({
+      queryKey: ['articles', paramsString],
+      queryFn: ({ pageParam }) => getArticles(params, pageParam, includeTotal, token!),
+      initialPageParam: null,
+      getNextPageParam: (lastPage) => lastPage.page.next_cursor ?? undefined,
+      staleTime: 5 * 60 * 1000,
+      gcTime: 10 * 60 * 1000,
+    });
 
   const pages = data?.pages ?? [];
   const loadedPages = pages.length;
@@ -165,34 +153,34 @@ export function ResultsList() {
   const prefetchIndex = Math.max(0, visibleArticles.length - prefetchThreshold);
 
   if (isError) {
-      return (
-          <div className="p-4 text-red-500 bg-red-50 dark:bg-red-900/20 rounded-md">
-              错误：{error instanceof Error ? error.message : '未知错误'}
-          </div>
-      );
+    return (
+      <div className="p-4 text-red-500 bg-red-50 dark:bg-red-900/20 rounded-md">
+        错误：{error instanceof Error ? error.message : '未知错误'}
+      </div>
+    );
   }
 
   if (isLoading) {
-      return (
-          <div className="space-y-4">
-              {Array.from({ length: 5 }).map((_, i) => (
-                  <Card key={i}>
-                      <CardHeader>
-                          <Skeleton className="h-6 w-3/4" />
-                          <Skeleton className="h-4 w-1/4 mt-2" />
-                      </CardHeader>
-                      <CardContent>
-                          <Skeleton className="h-4 w-full" />
-                          <Skeleton className="h-4 w-full mt-2" />
-                      </CardContent>
-                  </Card>
-              ))}
-          </div>
-      );
+    return (
+      <div className="space-y-4">
+        {Array.from({ length: 5 }).map((_, i) => (
+          <Card key={i}>
+            <CardHeader>
+              <Skeleton className="h-6 w-3/4" />
+              <Skeleton className="h-4 w-1/4 mt-2" />
+            </CardHeader>
+            <CardContent>
+              <Skeleton className="h-4 w-full" />
+              <Skeleton className="h-4 w-full mt-2" />
+            </CardContent>
+          </Card>
+        ))}
+      </div>
+    );
   }
 
   if (visibleArticles.length === 0) {
-      return <div className="text-center p-8 text-slate-500">未找到文章。</div>;
+    return <div className="text-center p-8 text-slate-500">未找到文章。</div>;
   }
 
   const total = data?.pages[0]?.page.total ?? null;
@@ -200,9 +188,7 @@ export function ResultsList() {
   return (
     <div className="space-y-4">
       {includeTotal && typeof total === 'number' && (
-        <div className="text-sm text-slate-500">
-          共找到 {total} 条结果
-        </div>
+        <div className="text-sm text-slate-500">共找到 {total} 条结果</div>
       )}
       {visibleArticles.map((article, index) => (
         <ArticleDialogCard

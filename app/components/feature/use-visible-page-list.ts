@@ -25,13 +25,10 @@ export function useVisiblePageList({
     count: 1,
   });
 
-  const visiblePages =
-    visiblePageState.listKey === listKey ? visiblePageState.count : 1;
+  const visiblePages = visiblePageState.listKey === listKey ? visiblePageState.count : 1;
 
   useEffect(() => {
-    const scrollContainer = scrollContainerId
-      ? document.getElementById(scrollContainerId)
-      : null;
+    const scrollContainer = scrollContainerId ? document.getElementById(scrollContainerId) : null;
 
     if (scrollContainer) {
       scrollContainer.scrollTo({ top: 0 });
@@ -51,13 +48,7 @@ export function useVisiblePageList({
       }
       onFetchNextPage();
     },
-    [
-      hasNextPage,
-      isFetchingNextPage,
-      loadedPages,
-      onFetchNextPage,
-      visiblePages,
-    ],
+    [hasNextPage, isFetchingNextPage, loadedPages, onFetchNextPage, visiblePages],
   );
 
   const handleLoadMoreChange = useCallback(
@@ -67,8 +58,7 @@ export function useVisiblePageList({
       }
       if (visiblePages < loadedPages) {
         setVisiblePageState((current) => {
-          const currentCount =
-            current.listKey === listKey ? current.count : 1;
+          const currentCount = current.listKey === listKey ? current.count : 1;
           return {
             listKey,
             count: Math.min(currentCount + 1, loadedPages),
@@ -80,14 +70,7 @@ export function useVisiblePageList({
         onFetchNextPage();
       }
     },
-    [
-      hasNextPage,
-      isFetchingNextPage,
-      listKey,
-      loadedPages,
-      onFetchNextPage,
-      visiblePages,
-    ],
+    [hasNextPage, isFetchingNextPage, listKey, loadedPages, onFetchNextPage, visiblePages],
   );
 
   const { ref: prefetchRef } = useInView({

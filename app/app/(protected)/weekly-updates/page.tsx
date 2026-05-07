@@ -4,13 +4,7 @@ import Link from 'next/link';
 import { useMemo, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { useQuery } from '@tanstack/react-query';
-import {
-  ArrowLeft,
-  CalendarDays,
-  Database,
-  FileText,
-  Menu,
-} from 'lucide-react';
+import { ArrowLeft, CalendarDays, Database, FileText, Menu } from 'lucide-react';
 
 import {
   checkFavoritesBatch,
@@ -29,13 +23,7 @@ import { SearchBar } from '@/components/feature/search-bar';
 import { useVisiblePageList } from '@/components/feature/use-visible-page-list';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from '@/components/ui/card';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import {
   Dialog,
   DialogContent,
@@ -114,10 +102,7 @@ function getJournalLabel(journal: WeeklyJournalUpdate): string {
   return `期刊 ${journal.journal_id}`;
 }
 
-function chunkArticles(
-  articles: WeeklyArticle[],
-  size: number,
-): WeeklyArticle[][] {
+function chunkArticles(articles: WeeklyArticle[], size: number): WeeklyArticle[][] {
   const pages: WeeklyArticle[][] = [];
   for (let index = 0; index < articles.length; index += size) {
     pages.push(articles.slice(index, index + size));
@@ -181,18 +166,12 @@ function JournalPanel({
               type="button"
               onClick={() => onSelectJournal(journal.journal_id)}
               className={`w-full rounded-md border p-3 text-left transition-colors ${
-                active
-                  ? 'border-primary bg-primary/5'
-                  : 'border-border hover:bg-muted/40'
+                active ? 'border-primary bg-primary/5' : 'border-border hover:bg-muted/40'
               }`}
             >
               <div className="flex items-center justify-between gap-2">
-                <p className="line-clamp-2 text-sm font-medium">
-                  {getJournalLabel(journal)}
-                </p>
-                <Badge variant={active ? 'default' : 'outline'}>
-                  {journal.new_article_count}
-                </Badge>
+                <p className="line-clamp-2 text-sm font-medium">{getJournalLabel(journal)}</p>
+                <Badge variant={active ? 'default' : 'outline'}>{journal.new_article_count}</Badge>
               </div>
             </button>
           );
@@ -274,9 +253,7 @@ export default function WeeklyUpdatesPage() {
     if (effectiveSelectedJournalId === null) {
       return null;
     }
-    return (
-      journals.find((item) => item.journal_id === effectiveSelectedJournalId) ?? null
-    );
+    return journals.find((item) => item.journal_id === effectiveSelectedJournalId) ?? null;
   }, [journals, effectiveSelectedJournalId]);
 
   const {
@@ -285,12 +262,7 @@ export default function WeeklyUpdatesPage() {
     isError: searchError,
     error: searchErrorData,
   } = useQuery({
-    queryKey: [
-      'weekly-search',
-      effectiveSelectedDb,
-      effectiveSelectedJournalId,
-      searchQuery,
-    ],
+    queryKey: ['weekly-search', effectiveSelectedDb, effectiveSelectedJournalId, searchQuery],
     queryFn: async () => {
       if (!searchQuery || !effectiveSelectedDb || effectiveSelectedJournalId === null) {
         return [];
@@ -303,9 +275,7 @@ export default function WeeklyUpdatesPage() {
       const page = await getArticles(params, null, false, token!);
       return page.items;
     },
-    enabled: Boolean(
-      searchQuery && effectiveSelectedDb && effectiveSelectedJournalId !== null,
-    ),
+    enabled: Boolean(searchQuery && effectiveSelectedDb && effectiveSelectedJournalId !== null),
     staleTime: 60 * 1000,
   });
 
@@ -350,10 +320,7 @@ export default function WeeklyUpdatesPage() {
   );
   const renderedArticleIds = renderedArticles.map((article) => article.article_id);
   const renderedArticleIdsKey = renderedArticleIds.join(',');
-  const prefetchIndex = Math.max(
-    0,
-    renderedArticles.length - WEEKLY_PREFETCH_THRESHOLD,
-  );
+  const prefetchIndex = Math.max(0, renderedArticles.length - WEEKLY_PREFETCH_THRESHOLD);
 
   const { data: favoriteChecksByArticle = {}, isPending: isFavoriteStatePending } = useQuery({
     queryKey: ['fav-check-batch', user?.id, effectiveSelectedDb, renderedArticleIdsKey],
@@ -399,9 +366,7 @@ export default function WeeklyUpdatesPage() {
                 >
                   <DialogHeader className="sr-only">
                     <DialogTitle>期刊筛选</DialogTitle>
-                    <DialogDescription>
-                      选择数据库和期刊以查看每周更新。
-                    </DialogDescription>
+                    <DialogDescription>选择数据库和期刊以查看每周更新。</DialogDescription>
                   </DialogHeader>
                   <JournalPanel
                     className="h-full rounded-none border-0"
@@ -445,9 +410,7 @@ export default function WeeklyUpdatesPage() {
             <CardHeader>
               <CardTitle>加载每周更新失败</CardTitle>
               <CardDescription>
-                {weeklyErrorData instanceof Error
-                  ? weeklyErrorData.message
-                  : '未知错误'}
+                {weeklyErrorData instanceof Error ? weeklyErrorData.message : '未知错误'}
               </CardDescription>
             </CardHeader>
           </Card>
@@ -513,9 +476,7 @@ export default function WeeklyUpdatesPage() {
 
                   {searchQuery && searchError && (
                     <div className="rounded-md border border-dashed p-4 text-sm text-destructive">
-                      {searchErrorData instanceof Error
-                        ? searchErrorData.message
-                        : '全文检索失败'}
+                      {searchErrorData instanceof Error ? searchErrorData.message : '全文检索失败'}
                     </div>
                   )}
 
@@ -535,7 +496,9 @@ export default function WeeklyUpdatesPage() {
                       dbName={effectiveSelectedDb}
                       token={token!}
                       initialFolderIds={
-                        favoriteChecksByArticle[article.article_id]?.map((item) => item.folder_id) ?? []
+                        favoriteChecksByArticle[article.article_id]?.map(
+                          (item) => item.folder_id,
+                        ) ?? []
                       }
                       isFavoriteStatePending={Boolean(user) && isFavoriteStatePending}
                     />

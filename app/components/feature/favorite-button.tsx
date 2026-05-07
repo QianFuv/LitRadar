@@ -15,11 +15,7 @@ import {
   type FavoriteCheck,
 } from '@/lib/api';
 import { Button } from '@/components/ui/button';
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from '@/components/ui/popover';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { cn } from '@/lib/utils';
 
 export function FavoriteButton({
@@ -36,14 +32,10 @@ export function FavoriteButton({
   const db = dbName || getCurrentDatabase();
   const [open, setOpen] = useState(false);
   const queryKey = ['fav-check', articleId, db] as const;
-  const initialFolderIdsValue = Array.from(new Set(initialFolderIds)).sort(
-    (a, b) => a - b,
-  );
+  const initialFolderIdsValue = Array.from(new Set(initialFolderIds)).sort((a, b) => a - b);
   const [optimisticFolderIds, setOptimisticFolderIds] = useState<number[] | null>(null);
   const cachedFolderIds =
-    queryClient
-      .getQueryData<FavoriteCheck[]>(queryKey)
-      ?.map((item) => item.folder_id) ?? null;
+    queryClient.getQueryData<FavoriteCheck[]>(queryKey)?.map((item) => item.folder_id) ?? null;
 
   const { data: checks } = useQuery({
     queryKey,
@@ -64,20 +56,18 @@ export function FavoriteButton({
       const folderName = folders.find((folder) => folder.id === folderId)?.name ?? '';
       setOptimisticFolderIds((current) => {
         const baseFolderIds =
-          current ?? checks?.map((item) => item.folder_id) ?? cachedFolderIds ?? initialFolderIdsValue;
-        return baseFolderIds.includes(folderId)
-          ? baseFolderIds
-          : [...baseFolderIds, folderId];
+          current ??
+          checks?.map((item) => item.folder_id) ??
+          cachedFolderIds ??
+          initialFolderIdsValue;
+        return baseFolderIds.includes(folderId) ? baseFolderIds : [...baseFolderIds, folderId];
       });
-      queryClient.setQueryData(
-        queryKey,
-        (current: FavoriteCheck[] = []) => {
-          if (current.some((item) => item.folder_id === folderId)) {
-            return current;
-          }
-          return [...current, { folder_id: folderId, folder_name: folderName }];
-        },
-      );
+      queryClient.setQueryData(queryKey, (current: FavoriteCheck[] = []) => {
+        if (current.some((item) => item.folder_id === folderId)) {
+          return current;
+        }
+        return [...current, { folder_id: folderId, folder_name: folderName }];
+      });
       queryClient.invalidateQueries({ queryKey: ['fav-check-batch', user?.id, db] });
       queryClient.invalidateQueries({ queryKey: ['folders'] });
       queryClient.invalidateQueries({ queryKey: ['folder-articles', folderId] });
@@ -89,13 +79,14 @@ export function FavoriteButton({
     onSuccess: (_, folderId) => {
       setOptimisticFolderIds((current) => {
         const baseFolderIds =
-          current ?? checks?.map((item) => item.folder_id) ?? cachedFolderIds ?? initialFolderIdsValue;
+          current ??
+          checks?.map((item) => item.folder_id) ??
+          cachedFolderIds ??
+          initialFolderIdsValue;
         return baseFolderIds.filter((id) => id !== folderId);
       });
-      queryClient.setQueryData(
-        queryKey,
-        (current: FavoriteCheck[] = []) =>
-          current.filter((item) => item.folder_id !== folderId),
+      queryClient.setQueryData(queryKey, (current: FavoriteCheck[] = []) =>
+        current.filter((item) => item.folder_id !== folderId),
       );
       queryClient.invalidateQueries({ queryKey: ['fav-check-batch', user?.id, db] });
       queryClient.invalidateQueries({ queryKey: ['folders'] });
@@ -106,10 +97,10 @@ export function FavoriteButton({
   if (!user) return null;
 
   const resolvedFolderIds =
-    checks?.map((item) => item.folder_id)
-    ?? optimisticFolderIds
-    ?? cachedFolderIds
-    ?? initialFolderIdsValue;
+    checks?.map((item) => item.folder_id) ??
+    optimisticFolderIds ??
+    cachedFolderIds ??
+    initialFolderIdsValue;
   const isFav = resolvedFolderIds.length > 0;
   const favFolderIds = new Set(resolvedFolderIds);
 
@@ -128,13 +119,9 @@ export function FavoriteButton({
       </PopoverTrigger>
       <PopoverContent className="w-56 p-2" align="start" onClick={(e) => e.stopPropagation()}>
         <div className="space-y-1">
-          <div className="px-2 py-1 text-xs text-muted-foreground font-medium">
-            选择收藏夹
-          </div>
+          <div className="px-2 py-1 text-xs text-muted-foreground font-medium">选择收藏夹</div>
           {isFoldersPending ? (
-            <div className="px-2 py-2 text-xs text-muted-foreground">
-              加载中...
-            </div>
+            <div className="px-2 py-2 text-xs text-muted-foreground">加载中...</div>
           ) : folders.length === 0 ? (
             <div className="px-2 py-2 text-xs text-muted-foreground">
               暂无收藏夹，请先在「我的收藏」中创建
@@ -160,10 +147,7 @@ export function FavoriteButton({
                   }}
                 >
                   <Star
-                    className={cn(
-                      'h-3.5 w-3.5',
-                      isInFolder && 'fill-yellow-500 text-yellow-500',
-                    )}
+                    className={cn('h-3.5 w-3.5', isInFolder && 'fill-yellow-500 text-yellow-500')}
                   />
                   <span className="truncate">{folder.name}</span>
                 </button>

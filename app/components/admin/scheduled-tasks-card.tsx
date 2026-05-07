@@ -13,9 +13,22 @@ import {
 } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
 
 type ScheduledTasksCardProps = {
@@ -97,7 +110,11 @@ export function ScheduledTasksCard({ token }: ScheduledTasksCardProps) {
   const [form, setForm] = useState<TaskFormState>(DEFAULT_FORM);
   const [commandPreset, setCommandPreset] = useState<CommandPresetId>(DEFAULT_PRESET);
 
-  const { data: tasks = [], error, isLoading } = useQuery({
+  const {
+    data: tasks = [],
+    error,
+    isLoading,
+  } = useQuery({
     queryKey: ['admin-scheduled-tasks'],
     queryFn: () => adminGetScheduledTasks(token),
   });
@@ -180,7 +197,12 @@ export function ScheduledTasksCard({ token }: ScheduledTasksCardProps) {
       <CardContent className="space-y-4">
         <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
           <DialogTrigger asChild>
-            <Button variant="outline" size="sm" className="w-full sm:w-auto" onClick={openCreateDialog}>
+            <Button
+              variant="outline"
+              size="sm"
+              className="w-full sm:w-auto"
+              onClick={openCreateDialog}
+            >
               <Plus className="mr-2 h-4 w-4" />
               新建任务
             </Button>
@@ -193,12 +215,16 @@ export function ScheduledTasksCard({ token }: ScheduledTasksCardProps) {
             <div className="space-y-4 py-2">
               <Input
                 value={form.name}
-                onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))}
+                onChange={(event) =>
+                  setForm((current) => ({ ...current, name: event.target.value }))
+                }
                 placeholder="任务名称"
               />
               <Input
                 value={form.cron}
-                onChange={(event) => setForm((current) => ({ ...current, cron: event.target.value }))}
+                onChange={(event) =>
+                  setForm((current) => ({ ...current, cron: event.target.value }))
+                }
                 placeholder="Cron 表达式"
               />
               <div className="space-y-2">
@@ -207,7 +233,10 @@ export function ScheduledTasksCard({ token }: ScheduledTasksCardProps) {
                   onValueChange={(value: CommandPresetId) => {
                     setCommandPreset(value);
                     if (value === 'custom') {
-                      setForm((current) => ({ ...current, command: editingTask?.command ?? current.command }));
+                      setForm((current) => ({
+                        ...current,
+                        command: editingTask?.command ?? current.command,
+                      }));
                       return;
                     }
 
@@ -232,7 +261,9 @@ export function ScheduledTasksCard({ token }: ScheduledTasksCardProps) {
                 {commandPreset === 'custom' ? (
                   <Input
                     value={form.command}
-                    onChange={(event) => setForm((current) => ({ ...current, command: event.target.value }))}
+                    onChange={(event) =>
+                      setForm((current) => ({ ...current, command: event.target.value }))
+                    }
                     placeholder="执行命令"
                   />
                 ) : (
@@ -245,19 +276,28 @@ export function ScheduledTasksCard({ token }: ScheduledTasksCardProps) {
                 <span className="text-sm">启用任务</span>
                 <Switch
                   checked={form.enabled}
-                  onCheckedChange={(checked) => setForm((current) => ({ ...current, enabled: checked }))}
+                  onCheckedChange={(checked) =>
+                    setForm((current) => ({ ...current, enabled: checked }))
+                  }
                 />
               </div>
-              {mutationError && (
-                <p className="text-sm text-destructive">{mutationError}</p>
-              )}
+              {mutationError && <p className="text-sm text-destructive">{mutationError}</p>}
               <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
-                <Button variant="outline" className="w-full sm:w-auto" onClick={() => setDialogOpen(false)}>
+                <Button
+                  variant="outline"
+                  className="w-full sm:w-auto"
+                  onClick={() => setDialogOpen(false)}
+                >
                   取消
                 </Button>
                 <Button
                   className="w-full sm:w-auto"
-                  disabled={!form.name.trim() || !form.cron.trim() || !form.command.trim() || saveMutation.isPending}
+                  disabled={
+                    !form.name.trim() ||
+                    !form.cron.trim() ||
+                    !form.command.trim() ||
+                    saveMutation.isPending
+                  }
                   onClick={() => saveMutation.mutate()}
                 >
                   {editingTask ? '保存' : '创建'}
@@ -267,9 +307,7 @@ export function ScheduledTasksCard({ token }: ScheduledTasksCardProps) {
           </DialogContent>
         </Dialog>
 
-        {error instanceof Error && (
-          <p className="text-sm text-destructive">{error.message}</p>
-        )}
+        {error instanceof Error && <p className="text-sm text-destructive">{error.message}</p>}
 
         {isLoading ? (
           <p className="text-sm text-muted-foreground">加载中...</p>

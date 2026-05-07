@@ -57,10 +57,7 @@ function buildArticleDescription(article: ArticleDetailDialogArticle): string {
   const parts = [
     article.journal_title || (article.journal_id ? `期刊 ${article.journal_id}` : ''),
     (article.volume || article.number) &&
-      [
-        article.volume && `第 ${article.volume} 卷`,
-        article.number && `第 ${article.number} 期`,
-      ]
+      [article.volume && `第 ${article.volume} 卷`, article.number && `第 ${article.number} 期`]
         .filter(Boolean)
         .join(', '),
     article.date,

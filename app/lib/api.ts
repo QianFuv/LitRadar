@@ -85,35 +85,35 @@ export interface AnnouncementInfo {
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || '';
 
 function resolveBase(): string {
-    if (API_BASE_URL) return API_BASE_URL;
-    if (typeof window !== 'undefined') return window.location.origin;
-    return 'http://localhost:8000';
+  if (API_BASE_URL) return API_BASE_URL;
+  if (typeof window !== 'undefined') return window.location.origin;
+  return 'http://localhost:8000';
 }
 export const DEFAULT_DB = 'utd24.sqlite';
 const DB_STORAGE_KEY = 'selected_database';
 
 function getStoredDatabase(): string {
-    if (typeof window !== 'undefined') {
-        return localStorage.getItem(DB_STORAGE_KEY) || DEFAULT_DB;
-    }
-    return DEFAULT_DB;
+  if (typeof window !== 'undefined') {
+    return localStorage.getItem(DB_STORAGE_KEY) || DEFAULT_DB;
+  }
+  return DEFAULT_DB;
 }
 
 let currentDb = getStoredDatabase();
 
 export function setDatabase(db: string) {
-    currentDb = db;
-    if (typeof window !== 'undefined') {
-        localStorage.setItem(DB_STORAGE_KEY, db);
-    }
+  currentDb = db;
+  if (typeof window !== 'undefined') {
+    localStorage.setItem(DB_STORAGE_KEY, db);
+  }
 }
 
 export function getCurrentDatabase() {
-    return currentDb;
+  return currentDb;
 }
 
 export function getFullTextUrl(articleId: ArticleId, accessToken?: string): string {
-    return withDb(`/api/articles/${articleId}/fulltext`, undefined, accessToken);
+  return withDb(`/api/articles/${articleId}/fulltext`, undefined, accessToken);
 }
 
 export function getFullTextUrlForDatabase(
@@ -121,41 +121,41 @@ export function getFullTextUrlForDatabase(
   dbName: string,
   accessToken?: string,
 ): string {
-    const url = new URL(`/api/articles/${articleId}/fulltext`, resolveBase());
-    url.searchParams.set('db', dbName);
-    if (accessToken) {
-        url.searchParams.set('access_token', accessToken);
-    }
-    return url.toString();
+  const url = new URL(`/api/articles/${articleId}/fulltext`, resolveBase());
+  url.searchParams.set('db', dbName);
+  if (accessToken) {
+    url.searchParams.set('access_token', accessToken);
+  }
+  return url.toString();
 }
 
 function withDb(url: string, params?: URLSearchParams, accessToken?: string): string {
-    const urlObj = new URL(url, resolveBase());
-    const p = urlObj.searchParams;
-    
-    // Merge provided params
-    if (params) {
-        params.forEach((value, key) => {
-            p.append(key, value);
-        });
-    }
+  const urlObj = new URL(url, resolveBase());
+  const p = urlObj.searchParams;
 
-    // Set DB if not present
-    if (!p.has('db')) {
-        p.set('db', currentDb);
-    }
-    if (accessToken) {
-        p.set('access_token', accessToken);
-    }
-    return urlObj.toString();
+  // Merge provided params
+  if (params) {
+    params.forEach((value, key) => {
+      p.append(key, value);
+    });
+  }
+
+  // Set DB if not present
+  if (!p.has('db')) {
+    p.set('db', currentDb);
+  }
+  if (accessToken) {
+    p.set('access_token', accessToken);
+  }
+  return urlObj.toString();
 }
 
 export async function getDatabases(token: string): Promise<string[]> {
-    const res = await authFetch(`${resolveBase()}/api/meta/databases`, token);
-    if (!res.ok) {
-        return [DEFAULT_DB];
-    }
-    return res.json();
+  const res = await authFetch(`${resolveBase()}/api/meta/databases`, token);
+  if (!res.ok) {
+    return [DEFAULT_DB];
+  }
+  return res.json();
 }
 
 export async function getArticles(
@@ -192,12 +192,12 @@ export async function getAreas(token: string): Promise<ValueCount[]> {
 }
 
 export async function getYears(token: string): Promise<YearSummary[]> {
-    const res = await authFetch(withDb('/api/years'), token);
-    if (!res.ok) {
-      throw new Error('获取年份失败');
-    }
-    return res.json();
+  const res = await authFetch(withDb('/api/years'), token);
+  if (!res.ok) {
+    throw new Error('获取年份失败');
   }
+  return res.json();
+}
 
 export async function getJournalOptions(token: string): Promise<JournalOption[]> {
   const res = await authFetch(withDb('/api/meta/journals'), token);
@@ -390,7 +390,11 @@ export async function getFolders(token: string): Promise<Folder[]> {
   return res.json();
 }
 
-export async function createFolder(token: string, name: string, isTracking = false): Promise<Folder> {
+export async function createFolder(
+  token: string,
+  name: string,
+  isTracking = false,
+): Promise<Folder> {
   const res = await authFetch(`${resolveBase()}/api/favorites/folders`, token, {
     method: 'POST',
     body: JSON.stringify({ name, is_tracking: isTracking }),
@@ -420,7 +424,10 @@ export async function deleteFolder(token: string, folderId: number): Promise<voi
 // ── Favorites API ────────────────────────────────────────────────
 
 export async function getFolderArticles(
-  token: string, folderId: number, limit = 100, offset = 0
+  token: string,
+  folderId: number,
+  limit = 100,
+  offset = 0,
 ): Promise<FavoriteArticleItem[]> {
   const url = new URL(`/api/favorites/folders/${folderId}/articles`, resolveBase());
   url.searchParams.set('limit', String(limit));
@@ -431,18 +438,29 @@ export async function getFolderArticles(
 }
 
 export async function addFavorite(
-  token: string, folderId: number, articleId: ArticleId, dbName: string, note = ''
+  token: string,
+  folderId: number,
+  articleId: ArticleId,
+  dbName: string,
+  note = '',
 ): Promise<FavoriteItem> {
-  const res = await authFetch(`${resolveBase()}/api/favorites/folders/${folderId}/articles`, token, {
-    method: 'POST',
-    body: JSON.stringify({ article_id: articleId, db_name: dbName, note }),
-  });
+  const res = await authFetch(
+    `${resolveBase()}/api/favorites/folders/${folderId}/articles`,
+    token,
+    {
+      method: 'POST',
+      body: JSON.stringify({ article_id: articleId, db_name: dbName, note }),
+    },
+  );
   if (!res.ok) throw new Error('添加收藏失败');
   return res.json();
 }
 
 export async function removeFavorite(
-  token: string, folderId: number, articleId: ArticleId, dbName = ''
+  token: string,
+  folderId: number,
+  articleId: ArticleId,
+  dbName = '',
 ): Promise<void> {
   const url = new URL(`/api/favorites/folders/${folderId}/articles/${articleId}`, resolveBase());
   url.searchParams.set('db_name', dbName);
@@ -455,10 +473,14 @@ export async function bulkRemoveFavorites(
   folderId: number,
   articles: FavoriteArticleRef[],
 ): Promise<number> {
-  const res = await authFetch(`${resolveBase()}/api/favorites/folders/${folderId}/articles/bulk-remove`, token, {
-    method: 'POST',
-    body: JSON.stringify({ articles }),
-  });
+  const res = await authFetch(
+    `${resolveBase()}/api/favorites/folders/${folderId}/articles/bulk-remove`,
+    token,
+    {
+      method: 'POST',
+      body: JSON.stringify({ articles }),
+    },
+  );
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.detail || '批量移除收藏失败');
@@ -473,10 +495,14 @@ export async function bulkMoveFavorites(
   targetFolderId: number,
   articles: FavoriteArticleRef[],
 ): Promise<number> {
-  const res = await authFetch(`${resolveBase()}/api/favorites/folders/${folderId}/articles/bulk-move`, token, {
-    method: 'POST',
-    body: JSON.stringify({ target_folder_id: targetFolderId, articles }),
-  });
+  const res = await authFetch(
+    `${resolveBase()}/api/favorites/folders/${folderId}/articles/bulk-move`,
+    token,
+    {
+      method: 'POST',
+      body: JSON.stringify({ target_folder_id: targetFolderId, articles }),
+    },
+  );
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.detail || '批量移动收藏失败');
@@ -485,11 +511,7 @@ export async function bulkMoveFavorites(
   return data.count;
 }
 
-export function getExportUrl(
-  token: string,
-  folderId: number,
-  format: CitationFormat,
-): string {
+export function getExportUrl(token: string, folderId: number, format: CitationFormat): string {
   const url = new URL(`/api/favorites/folders/${folderId}/export`, resolveBase());
   url.searchParams.set('format', format);
   url.searchParams.set('access_token', token);
@@ -497,7 +519,9 @@ export function getExportUrl(
 }
 
 export async function checkFavorite(
-  token: string, articleId: ArticleId, dbName = ''
+  token: string,
+  articleId: ArticleId,
+  dbName = '',
 ): Promise<FavoriteCheck[]> {
   const url = new URL('/api/favorites/check', resolveBase());
   url.searchParams.set('article_id', String(articleId));
@@ -508,7 +532,9 @@ export async function checkFavorite(
 }
 
 export async function checkFavoritesBatch(
-  token: string, articleIds: ArticleId[], dbName = ''
+  token: string,
+  articleIds: ArticleId[],
+  dbName = '',
 ): Promise<Record<ArticleId, FavoriteCheck[]>> {
   if (articleIds.length === 0) {
     return {};
@@ -538,9 +564,7 @@ export async function setTrackingFolder(token: string, folderId: number): Promis
   if (!res.ok) throw new Error('设置追踪文件夹失败');
 }
 
-export async function pushWeeklyToTracking(
-  token: string,
-): Promise<ManualPushStatus> {
+export async function pushWeeklyToTracking(token: string): Promise<ManualPushStatus> {
   const res = await authFetch(`${resolveBase()}/api/tracking/push-weekly`, token, {
     method: 'POST',
   });
@@ -582,7 +606,9 @@ export async function getAccessTokens(token: string): Promise<AccessToken[]> {
 }
 
 export async function createAccessToken(
-  token: string, name: string, ttl: number
+  token: string,
+  name: string,
+  ttl: number,
 ): Promise<{ id: number; token: string; name: string; expires_at: number }> {
   const res = await authFetch(`${resolveBase()}/api/auth/tokens`, token, {
     method: 'POST',
@@ -600,7 +626,9 @@ export async function revokeAccessToken(token: string, tokenId: number): Promise
 }
 
 export async function changePassword(
-  token: string, oldPassword: string, newPassword: string
+  token: string,
+  oldPassword: string,
+  newPassword: string,
 ): Promise<void> {
   const res = await authFetch(`${resolveBase()}/api/auth/change-password`, token, {
     method: 'POST',
@@ -764,7 +792,9 @@ export async function adminGetUsers(token: string): Promise<AdminUserInfo[]> {
 }
 
 export async function adminSetAdmin(
-  token: string, userId: number, isAdmin: boolean,
+  token: string,
+  userId: number,
+  isAdmin: boolean,
 ): Promise<void> {
   const res = await authFetch(`${resolveBase()}/api/admin/users/${userId}/admin`, token, {
     method: 'PUT',
@@ -777,7 +807,9 @@ export async function adminSetAdmin(
 }
 
 export async function adminResetPassword(
-  token: string, userId: number, newPassword: string,
+  token: string,
+  userId: number,
+  newPassword: string,
 ): Promise<void> {
   const res = await authFetch(`${resolveBase()}/api/admin/users/${userId}/reset-password`, token, {
     method: 'POST',

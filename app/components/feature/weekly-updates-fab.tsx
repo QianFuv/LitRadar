@@ -45,9 +45,7 @@ export function WeeklyUpdatesFab() {
       { icon: <Settings className="h-4 w-4" />, label: '账号设置', href: '/settings' },
     );
     if (user.is_admin) {
-      items.push(
-        { icon: <Shield className="h-4 w-4" />, label: '管理面板', href: '/admin' },
-      );
+      items.push({ icon: <Shield className="h-4 w-4" />, label: '管理面板', href: '/admin' });
     }
     items.push(
       {
@@ -76,7 +74,13 @@ export function WeeklyUpdatesFab() {
         aria-label={open ? '关闭菜单' : '打开菜单'}
         onClick={() => setOpen((v) => !v)}
       >
-        {open ? <X className="h-5 w-5" /> : (user ? <User className="h-5 w-5" /> : <Ellipsis className="h-5 w-5" />)}
+        {open ? (
+          <X className="h-5 w-5" />
+        ) : user ? (
+          <User className="h-5 w-5" />
+        ) : (
+          <Ellipsis className="h-5 w-5" />
+        )}
       </Button>
 
       {open && (

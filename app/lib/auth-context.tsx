@@ -94,38 +94,44 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       .finally(() => setLoading(false));
   }, [clearSession]);
 
-  const login = useCallback(async (username: string, password: string) => {
-    const res = await fetch(`${resolveBase()}/api/auth/login`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username, password }),
-    });
-    if (!res.ok) {
-      const payload = await res.json().catch(() => ({}));
-      throw new Error(payload.detail || '登录失败');
-    }
-    const data = await res.json();
-    const newToken = data.access_token as string;
-    const newUser: AuthUser = data.user;
-    queryClient.clear();
-    localStorage.setItem(TOKEN_KEY, newToken);
-    localStorage.setItem(USER_KEY, JSON.stringify(newUser));
-    setToken(newToken);
-    setUser(newUser);
-  }, [queryClient]);
+  const login = useCallback(
+    async (username: string, password: string) => {
+      const res = await fetch(`${resolveBase()}/api/auth/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username, password }),
+      });
+      if (!res.ok) {
+        const payload = await res.json().catch(() => ({}));
+        throw new Error(payload.detail || '登录失败');
+      }
+      const data = await res.json();
+      const newToken = data.access_token as string;
+      const newUser: AuthUser = data.user;
+      queryClient.clear();
+      localStorage.setItem(TOKEN_KEY, newToken);
+      localStorage.setItem(USER_KEY, JSON.stringify(newUser));
+      setToken(newToken);
+      setUser(newUser);
+    },
+    [queryClient],
+  );
 
-  const register = useCallback(async (username: string, password: string, inviteCode: string) => {
-    const res = await fetch(`${resolveBase()}/api/auth/register`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username, password, invite_code: inviteCode }),
-    });
-    if (!res.ok) {
-      const payload = await res.json().catch(() => ({}));
-      throw new Error(payload.detail || '注册失败');
-    }
-    await login(username, password);
-  }, [login]);
+  const register = useCallback(
+    async (username: string, password: string, inviteCode: string) => {
+      const res = await fetch(`${resolveBase()}/api/auth/register`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username, password, invite_code: inviteCode }),
+      });
+      if (!res.ok) {
+        const payload = await res.json().catch(() => ({}));
+        throw new Error(payload.detail || '注册失败');
+      }
+      await login(username, password);
+    },
+    [login],
+  );
 
   const logout = useCallback(async () => {
     const activeToken = token || getStoredToken();

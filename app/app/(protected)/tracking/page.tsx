@@ -23,13 +23,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from '@/components/ui/card';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import {
   Select,
   SelectContent,
@@ -48,9 +42,7 @@ export default function TrackingPage() {
   const queryClient = useQueryClient();
   const [newFolderName, setNewFolderName] = useState('');
   const [pushResult, setPushResult] = useState<string | null>(null);
-  const [draftSettings, setDraftSettings] = useState<NotificationSettingsUpdate | null>(
-    null,
-  );
+  const [draftSettings, setDraftSettings] = useState<NotificationSettingsUpdate | null>(null);
   const [keywordInput, setKeywordInput] = useState('');
   const [directionInput, setDirectionInput] = useState('');
   const [settingsSaved, setSettingsSaved] = useState(false);
@@ -131,11 +123,7 @@ export default function TrackingPage() {
   } = formSettings;
 
   const updateDraftSettings = useCallback(
-    (
-      updater: (
-        current: NotificationSettingsUpdate,
-      ) => NotificationSettingsUpdate,
-    ) => {
+    (updater: (current: NotificationSettingsUpdate) => NotificationSettingsUpdate) => {
       setDraftSettings((current) => updater(current || normalizeSettings(notifySettings)));
       setSettingsSaved(false);
     },
@@ -181,7 +169,9 @@ export default function TrackingPage() {
   const normalizedSelectedDatabases = useCallback(
     (selection: string[]): string[] => {
       const allowed = new Set(availableDatabases);
-      const next = availableDatabases.filter((dbName) => allowed.has(dbName) && selection.includes(dbName));
+      const next = availableDatabases.filter(
+        (dbName) => allowed.has(dbName) && selection.includes(dbName),
+      );
       if (next.length === 0 || next.length === availableDatabases.length) {
         return [];
       }
@@ -190,17 +180,22 @@ export default function TrackingPage() {
     [availableDatabases],
   );
   const effectiveSelectedDatabases = normalizedSelectedDatabases(selectedDatabases);
-  const allDatabasesSelected = availableDatabases.length === 0 || effectiveSelectedDatabases.length === 0;
-  const manualPushLabel = pushMut.isPending || isPushPolling
-    ? '推送中...'
-    : deliveryMethod === 'pushplus'
-      ? (syncToTrackingFolder ? '推送到 PushPlus 并同步文件夹' : '推送到 PushPlus')
-      : '推送到追踪文件夹';
-  const manualPushDescription = deliveryMethod === 'pushplus'
-    ? (syncToTrackingFolder
+  const allDatabasesSelected =
+    availableDatabases.length === 0 || effectiveSelectedDatabases.length === 0;
+  const manualPushLabel =
+    pushMut.isPending || isPushPolling
+      ? '推送中...'
+      : deliveryMethod === 'pushplus'
+        ? syncToTrackingFolder
+          ? '推送到 PushPlus 并同步文件夹'
+          : '推送到 PushPlus'
+        : '推送到追踪文件夹';
+  const manualPushDescription =
+    deliveryMethod === 'pushplus'
+      ? syncToTrackingFolder
         ? '将选中数据库中最近一周的文章按当前 AI 推荐规则发送到 PushPlus，并同步写入追踪文件夹。任务会在后台执行。'
-        : '将选中数据库中最近一周的文章按当前 AI 推荐规则发送到 PushPlus。任务会在后台执行。')
-    : '将选中数据库中最近一周的文章按当前 AI 推荐规则同步到追踪文件夹。任务会在后台执行。';
+        : '将选中数据库中最近一周的文章按当前 AI 推荐规则发送到 PushPlus。任务会在后台执行。'
+      : '将选中数据库中最近一周的文章按当前 AI 推荐规则同步到追踪文件夹。任务会在后台执行。';
 
   const formatManualPushResult = useCallback((data: ManualPushStatus): string => {
     if (data.message) {
@@ -301,7 +296,8 @@ export default function TrackingPage() {
   function setDatabaseSelected(dbName: string, checked: boolean) {
     updateDraftSettings((current) => {
       const currentSelection = normalizedSelectedDatabases(current.selected_databases);
-      const baseSelection = currentSelection.length === 0 ? [...availableDatabases] : [...currentSelection];
+      const baseSelection =
+        currentSelection.length === 0 ? [...availableDatabases] : [...currentSelection];
       const nextSelection = checked
         ? [...baseSelection, dbName]
         : baseSelection.filter((name) => name !== dbName);
@@ -399,9 +395,7 @@ export default function TrackingPage() {
       <Card>
         <CardHeader>
           <CardTitle>手动推送</CardTitle>
-          <CardDescription>
-            {manualPushDescription}
-          </CardDescription>
+          <CardDescription>{manualPushDescription}</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -411,17 +405,17 @@ export default function TrackingPage() {
             <Button
               className="w-full sm:w-auto"
               onClick={() => pushMut.mutate()}
-              disabled={(pushMut.isPending || isPushPolling) || (requiresTrackingFolder && !status?.tracking_folder)}
+              disabled={
+                pushMut.isPending ||
+                isPushPolling ||
+                (requiresTrackingFolder && !status?.tracking_folder)
+              }
             >
               <Download className="h-4 w-4 mr-1" />
               {manualPushLabel}
             </Button>
           </div>
-          {pushResult && (
-            <div className="rounded-md border px-3 py-2 text-sm">
-              {pushResult}
-            </div>
-          )}
+          {pushResult && <div className="rounded-md border px-3 py-2 text-sm">{pushResult}</div>}
         </CardContent>
       </Card>
 
@@ -445,462 +439,472 @@ export default function TrackingPage() {
             </div>
           ) : (
             <>
-          <div className="flex items-start justify-between gap-3">
-            <Label htmlFor="notify-enabled">启用推荐</Label>
-            <Switch
-              id="notify-enabled"
-              checked={notifyEnabled}
-              onCheckedChange={(checked) =>
-                updateDraftSettings((current) => ({
-                  ...current,
-                  enabled: checked,
-                }))
-              }
-            />
-          </div>
-
-          <div className="space-y-2">
-            <Label>关键词</Label>
-            <div className="flex flex-wrap gap-1.5 min-h-[2rem]">
-              {keywords.map((kw) => (
-                <Badge key={kw} variant="secondary" className="gap-1 pr-1">
-                  {kw}
-                  <button
-                    type="button"
-                    onClick={() =>
-                      updateDraftSettings((current) => ({
-                        ...current,
-                        keywords: current.keywords.filter((k) => k !== kw),
-                      }))
-                    }
-                    className="rounded-full hover:bg-muted p-0.5"
-                  >
-                    <X className="h-3 w-3" />
-                  </button>
-                </Badge>
-              ))}
-            </div>
-            <div className="flex flex-col gap-2 sm:flex-row">
-              <Input
-                value={keywordInput}
-                onChange={(e) => setKeywordInput(e.target.value)}
-                onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addKeyword(); } }}
-                placeholder="输入关键词后回车添加"
-                className="flex-1"
-              />
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                className="w-full sm:w-auto"
-                onClick={addKeyword}
-                disabled={!keywordInput.trim()}
-              >
-                <Plus className="h-4 w-4" />
-              </Button>
-            </div>
-          </div>
-
-          <div className="space-y-2">
-            <Label>研究方向</Label>
-            <div className="flex flex-wrap gap-1.5 min-h-[2rem]">
-              {directions.map((d) => (
-                <Badge key={d} variant="secondary" className="gap-1 pr-1">
-                  {d}
-                  <button
-                    type="button"
-                    onClick={() =>
-                      updateDraftSettings((current) => ({
-                        ...current,
-                        directions: current.directions.filter((x) => x !== d),
-                      }))
-                    }
-                    className="rounded-full hover:bg-muted p-0.5"
-                  >
-                    <X className="h-3 w-3" />
-                  </button>
-                </Badge>
-              ))}
-            </div>
-            <div className="flex flex-col gap-2 sm:flex-row">
-              <Input
-                value={directionInput}
-                onChange={(e) => setDirectionInput(e.target.value)}
-                onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addDirection(); } }}
-                placeholder="输入研究方向后回车添加"
-                className="flex-1"
-              />
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                className="w-full sm:w-auto"
-                onClick={addDirection}
-                disabled={!directionInput.trim()}
-              >
-                <Plus className="h-4 w-4" />
-              </Button>
-            </div>
-          </div>
-
-          <div className="space-y-3 rounded-md border p-3">
-            <div className="space-y-1">
-              <Label className="text-base">推送数据库</Label>
-              <p className="text-xs text-muted-foreground">
-                手动推送和自动推送都会按这里的数据库范围执行；不限制时表示全部数据库。
-              </p>
-            </div>
-            {databasesQuery.isPending ? (
-              <div className="rounded-md border border-dashed px-3 py-4 text-sm text-muted-foreground">
-                正在加载数据库列表...
-              </div>
-            ) : databasesQuery.isError ? (
-              <div className="rounded-md border border-destructive/50 px-3 py-4 text-sm text-destructive">
-                {databasesQuery.error instanceof Error
-                  ? databasesQuery.error.message
-                  : '加载数据库列表失败'}
-              </div>
-            ) : availableDatabases.length === 0 ? (
-              <div className="rounded-md border border-dashed px-3 py-4 text-sm text-muted-foreground">
-                当前没有可用数据库。
-              </div>
-            ) : (
-              <div className="space-y-3">
-                <div className="flex flex-col gap-2 rounded-md border border-dashed p-3 sm:flex-row sm:items-center sm:justify-between">
-                  <div className="space-y-1">
-                    <div className="text-sm font-medium">全部数据库</div>
-                    <p className="text-xs text-muted-foreground">
-                      选中后，新增加的数据库也会自动纳入推送范围。
-                    </p>
-                  </div>
-                  <Button
-                    type="button"
-                    variant={allDatabasesSelected ? 'default' : 'outline'}
-                    size="sm"
-                    className="w-full sm:w-auto"
-                    onClick={selectAllDatabases}
-                  >
-                    设为全部数据库
-                  </Button>
-                </div>
-                <div className="grid gap-2 sm:grid-cols-2">
-                  {availableDatabases.map((dbName) => {
-                    const checked = allDatabasesSelected || effectiveSelectedDatabases.includes(dbName);
-                    return (
-                      <label
-                        key={dbName}
-                        className="flex items-start gap-3 rounded-md border px-3 py-2 text-sm"
-                      >
-                        <Checkbox
-                          checked={checked}
-                          onCheckedChange={(nextChecked) => setDatabaseSelected(dbName, Boolean(nextChecked))}
-                        />
-                        <span className="break-all">{dbName}</span>
-                      </label>
-                    );
-                  })}
-                </div>
-                <p className="text-xs text-muted-foreground">
-                  当前范围:
-                  {' '}
-                  {allDatabasesSelected
-                    ? `全部数据库（${availableDatabases.length} 个）`
-                    : `已选 ${effectiveSelectedDatabases.length} / ${availableDatabases.length} 个数据库`}
-                </p>
-              </div>
-            )}
-          </div>
-
-          <div className="space-y-2">
-            <Label>推送方式</Label>
-            <Select
-              value={deliveryMethod}
-              onValueChange={(v) =>
-                updateDraftSettings((current) => ({
-                  ...current,
-                  delivery_method: v as 'folder' | 'pushplus',
-                }))
-              }
-            >
-              <SelectTrigger className="w-full sm:w-60">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="folder">追踪文件夹推送</SelectItem>
-                <SelectItem value="pushplus">PushPlus 外部推送</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-
-          <div className="space-y-4 rounded-md border p-3">
-            <div className="space-y-2">
-              <div className="flex items-center justify-between gap-3">
-                <div>
-                  <Label className="text-base">主 AI 配置</Label>
-                  <p className="text-xs text-muted-foreground mt-1">
-                    优先使用这套配置进行筛选；留空字段会回退到服务端默认值。
-                  </p>
-                </div>
-              </div>
-            </div>
-            <div className="grid gap-3 md:grid-cols-2">
-              <div className="space-y-1">
-                <Label htmlFor="ai-base-url">Base URL</Label>
-                <Input
-                  id="ai-base-url"
-                  value={aiBaseUrl}
-                  onChange={(e) =>
-                    updateDraftSettings((current) => ({
-                      ...current,
-                      ai_base_url: e.target.value,
-                    }))
-                  }
-                  placeholder="https://api.openai.com/v1"
-                />
-              </div>
-              <div className="space-y-1">
-                <Label htmlFor="ai-model">Model</Label>
-                <Input
-                  id="ai-model"
-                  value={aiModel}
-                  onChange={(e) =>
-                    updateDraftSettings((current) => ({
-                      ...current,
-                      ai_model: e.target.value,
-                    }))
-                  }
-                  placeholder="gpt-4.1-mini"
-                />
-              </div>
-            </div>
-            <div className="space-y-1">
-              <Label htmlFor="ai-api-key">API Key</Label>
-              <Input
-                id="ai-api-key"
-                type="password"
-                value={aiApiKey}
-                onChange={(e) =>
-                  updateDraftSettings((current) => ({
-                    ...current,
-                    ai_api_key: e.target.value,
-                  }))
-                }
-                placeholder="sk-..."
-              />
-            </div>
-            <div className="space-y-1">
-              <Label htmlFor="ai-system-prompt">System Prompt</Label>
-              <textarea
-                id="ai-system-prompt"
-                value={aiSystemPrompt}
-                onChange={(e) =>
-                  updateDraftSettings((current) => ({
-                    ...current,
-                    ai_system_prompt: e.target.value,
-                  }))
-                }
-                placeholder="Describe how the model should evaluate article relevance."
-                className="min-h-28 w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-xs outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
-              />
-            </div>
-            <div className="grid gap-3 md:grid-cols-2">
-              <div className="space-y-1">
-                <Label htmlFor="ai-retry-attempts">失败重试次数</Label>
-                <Input
-                  id="ai-retry-attempts"
-                  type="number"
-                  min={1}
-                  max={10}
-                  value={aiRetryAttempts}
-                  onChange={(e) =>
-                    updateDraftSettings((current) => ({
-                      ...current,
-                      ai_retry_attempts: Math.max(1, Math.min(10, Number(e.target.value) || 1)),
-                    }))
-                  }
-                />
-              </div>
-            </div>
-            <div className="space-y-3 rounded-md border border-dashed p-3">
-              <div>
-                <Label className="text-base">备用 AI 配置</Label>
-                <p className="text-xs text-muted-foreground mt-1">
-                  当主配置连续失败后，系统会自动切换到这套备用配置重试。
-                </p>
-              </div>
-              <div className="grid gap-3 md:grid-cols-2">
-                <div className="space-y-1">
-                  <Label htmlFor="ai-backup-base-url">Backup Base URL</Label>
-                  <Input
-                    id="ai-backup-base-url"
-                    value={aiBackupBaseUrl}
-                    onChange={(e) =>
-                      updateDraftSettings((current) => ({
-                        ...current,
-                        ai_backup_base_url: e.target.value,
-                      }))
-                    }
-                    placeholder="https://api.openai.com/v1"
-                  />
-                </div>
-                <div className="space-y-1">
-                  <Label htmlFor="ai-backup-model">Backup Model</Label>
-                  <Input
-                    id="ai-backup-model"
-                    value={aiBackupModel}
-                    onChange={(e) =>
-                      updateDraftSettings((current) => ({
-                        ...current,
-                        ai_backup_model: e.target.value,
-                      }))
-                    }
-                    placeholder="gpt-4.1-mini"
-                  />
-                </div>
-              </div>
-              <div className="space-y-1">
-                <Label htmlFor="ai-backup-api-key">Backup API Key</Label>
-                <Input
-                  id="ai-backup-api-key"
-                  type="password"
-                  value={aiBackupApiKey}
-                  onChange={(e) =>
-                    updateDraftSettings((current) => ({
-                      ...current,
-                      ai_backup_api_key: e.target.value,
-                    }))
-                  }
-                  placeholder="sk-..."
-                />
-              </div>
-              <div className="space-y-1">
-                <Label htmlFor="ai-backup-system-prompt">Backup System Prompt</Label>
-                <textarea
-                  id="ai-backup-system-prompt"
-                  value={aiBackupSystemPrompt}
-                  onChange={(e) =>
-                    updateDraftSettings((current) => ({
-                      ...current,
-                      ai_backup_system_prompt: e.target.value,
-                    }))
-                  }
-                  placeholder="Optional backup prompt override."
-                  className="min-h-28 w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-xs outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
-                />
-              </div>
-            </div>
-            <p className="text-xs text-muted-foreground">
-              未配置关键词或研究方向时不会推送；主备 AI 都不可用时同样会跳过推送。
-            </p>
-          </div>
-
-          {deliveryMethod === 'pushplus' && (
-            <div className="space-y-3 rounded-md border p-3">
-              <div className="space-y-1">
-                <Label htmlFor="pp-token">PushPlus 令牌</Label>
-                <Input
-                  id="pp-token"
-                  value={pushplusToken}
-                  onChange={(e) =>
-                    updateDraftSettings((current) => ({
-                      ...current,
-                      pushplus_token: e.target.value,
-                    }))
-                  }
-                  placeholder="输入你的 PushPlus 令牌"
-                />
-              </div>
-              <div className="grid gap-3 sm:grid-cols-2">
-                <div className="space-y-1">
-                  <Label htmlFor="pp-template">模板</Label>
-                  <Input
-                    id="pp-template"
-                    value={pushplusTemplate}
-                    onChange={(e) =>
-                      updateDraftSettings((current) => ({
-                        ...current,
-                        pushplus_template: e.target.value,
-                      }))
-                    }
-                    placeholder="markdown"
-                  />
-                </div>
-                <div className="space-y-1">
-                  <Label htmlFor="pp-topic">主题</Label>
-                  <Input
-                    id="pp-topic"
-                    value={pushplusTopic}
-                    onChange={(e) =>
-                      updateDraftSettings((current) => ({
-                        ...current,
-                        pushplus_topic: e.target.value,
-                      }))
-                    }
-                    placeholder="可选"
-                  />
-                </div>
-              </div>
-              <div className="space-y-1">
-                <Label htmlFor="pp-channel">渠道</Label>
-                <Input
-                  id="pp-channel"
-                  value={pushplusChannel}
-                  onChange={(e) =>
-                    updateDraftSettings((current) => ({
-                      ...current,
-                      pushplus_channel: e.target.value,
-                    }))
-                  }
-                  placeholder="wechat"
-                />
-                <p className="text-xs text-muted-foreground">
-                  填写 PushPlus 渠道，例如 `wechat`。
-                </p>
-              </div>
-              <div className="flex flex-col gap-3 rounded-md border border-dashed p-3 sm:flex-row sm:items-start sm:justify-between">
-                <div className="space-y-1">
-                  <Label htmlFor="pp-sync-tracking">同步写入追踪文件夹</Label>
-                  <p className="text-xs text-muted-foreground">
-                    {status?.tracking_folder
-                      ? `发送 PushPlus 时，同时写入“${status.tracking_folder.name}”`
-                      : '需要先设置追踪文件夹后才能开启'}
-                  </p>
-                </div>
+              <div className="flex items-start justify-between gap-3">
+                <Label htmlFor="notify-enabled">启用推荐</Label>
                 <Switch
-                  id="pp-sync-tracking"
-                  checked={syncToTrackingFolder}
-                  disabled={!status?.tracking_folder}
+                  id="notify-enabled"
+                  checked={notifyEnabled}
                   onCheckedChange={(checked) =>
                     updateDraftSettings((current) => ({
                       ...current,
-                      sync_to_tracking_folder: checked,
+                      enabled: checked,
                     }))
                   }
                 />
               </div>
-            </div>
-          )}
 
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-            <Button
-              className="w-full sm:w-auto"
-              onClick={() => saveSettingsMut.mutate()}
-              disabled={saveSettingsMut.isPending}
-            >
-              <Save className="h-4 w-4 mr-1" />
-              {saveSettingsMut.isPending ? '保存中...' : '保存配置'}
-            </Button>
-            {settingsSaved && (
-              <span className="text-sm text-green-600">已保存</span>
-            )}
-            {saveSettingsMut.isError && (
-              <span className="text-sm text-destructive">
-                {saveSettingsMut.error instanceof Error
-                  ? saveSettingsMut.error.message
-                  : '保存失败'}
-              </span>
-            )}
-          </div>
+              <div className="space-y-2">
+                <Label>关键词</Label>
+                <div className="flex flex-wrap gap-1.5 min-h-[2rem]">
+                  {keywords.map((kw) => (
+                    <Badge key={kw} variant="secondary" className="gap-1 pr-1">
+                      {kw}
+                      <button
+                        type="button"
+                        onClick={() =>
+                          updateDraftSettings((current) => ({
+                            ...current,
+                            keywords: current.keywords.filter((k) => k !== kw),
+                          }))
+                        }
+                        className="rounded-full hover:bg-muted p-0.5"
+                      >
+                        <X className="h-3 w-3" />
+                      </button>
+                    </Badge>
+                  ))}
+                </div>
+                <div className="flex flex-col gap-2 sm:flex-row">
+                  <Input
+                    value={keywordInput}
+                    onChange={(e) => setKeywordInput(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        addKeyword();
+                      }
+                    }}
+                    placeholder="输入关键词后回车添加"
+                    className="flex-1"
+                  />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="w-full sm:w-auto"
+                    onClick={addKeyword}
+                    disabled={!keywordInput.trim()}
+                  >
+                    <Plus className="h-4 w-4" />
+                  </Button>
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <Label>研究方向</Label>
+                <div className="flex flex-wrap gap-1.5 min-h-[2rem]">
+                  {directions.map((d) => (
+                    <Badge key={d} variant="secondary" className="gap-1 pr-1">
+                      {d}
+                      <button
+                        type="button"
+                        onClick={() =>
+                          updateDraftSettings((current) => ({
+                            ...current,
+                            directions: current.directions.filter((x) => x !== d),
+                          }))
+                        }
+                        className="rounded-full hover:bg-muted p-0.5"
+                      >
+                        <X className="h-3 w-3" />
+                      </button>
+                    </Badge>
+                  ))}
+                </div>
+                <div className="flex flex-col gap-2 sm:flex-row">
+                  <Input
+                    value={directionInput}
+                    onChange={(e) => setDirectionInput(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        addDirection();
+                      }
+                    }}
+                    placeholder="输入研究方向后回车添加"
+                    className="flex-1"
+                  />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="w-full sm:w-auto"
+                    onClick={addDirection}
+                    disabled={!directionInput.trim()}
+                  >
+                    <Plus className="h-4 w-4" />
+                  </Button>
+                </div>
+              </div>
+
+              <div className="space-y-3 rounded-md border p-3">
+                <div className="space-y-1">
+                  <Label className="text-base">推送数据库</Label>
+                  <p className="text-xs text-muted-foreground">
+                    手动推送和自动推送都会按这里的数据库范围执行；不限制时表示全部数据库。
+                  </p>
+                </div>
+                {databasesQuery.isPending ? (
+                  <div className="rounded-md border border-dashed px-3 py-4 text-sm text-muted-foreground">
+                    正在加载数据库列表...
+                  </div>
+                ) : databasesQuery.isError ? (
+                  <div className="rounded-md border border-destructive/50 px-3 py-4 text-sm text-destructive">
+                    {databasesQuery.error instanceof Error
+                      ? databasesQuery.error.message
+                      : '加载数据库列表失败'}
+                  </div>
+                ) : availableDatabases.length === 0 ? (
+                  <div className="rounded-md border border-dashed px-3 py-4 text-sm text-muted-foreground">
+                    当前没有可用数据库。
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    <div className="flex flex-col gap-2 rounded-md border border-dashed p-3 sm:flex-row sm:items-center sm:justify-between">
+                      <div className="space-y-1">
+                        <div className="text-sm font-medium">全部数据库</div>
+                        <p className="text-xs text-muted-foreground">
+                          选中后，新增加的数据库也会自动纳入推送范围。
+                        </p>
+                      </div>
+                      <Button
+                        type="button"
+                        variant={allDatabasesSelected ? 'default' : 'outline'}
+                        size="sm"
+                        className="w-full sm:w-auto"
+                        onClick={selectAllDatabases}
+                      >
+                        设为全部数据库
+                      </Button>
+                    </div>
+                    <div className="grid gap-2 sm:grid-cols-2">
+                      {availableDatabases.map((dbName) => {
+                        const checked =
+                          allDatabasesSelected || effectiveSelectedDatabases.includes(dbName);
+                        return (
+                          <label
+                            key={dbName}
+                            className="flex items-start gap-3 rounded-md border px-3 py-2 text-sm"
+                          >
+                            <Checkbox
+                              checked={checked}
+                              onCheckedChange={(nextChecked) =>
+                                setDatabaseSelected(dbName, Boolean(nextChecked))
+                              }
+                            />
+                            <span className="break-all">{dbName}</span>
+                          </label>
+                        );
+                      })}
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      当前范围:{' '}
+                      {allDatabasesSelected
+                        ? `全部数据库（${availableDatabases.length} 个）`
+                        : `已选 ${effectiveSelectedDatabases.length} / ${availableDatabases.length} 个数据库`}
+                    </p>
+                  </div>
+                )}
+              </div>
+
+              <div className="space-y-2">
+                <Label>推送方式</Label>
+                <Select
+                  value={deliveryMethod}
+                  onValueChange={(v) =>
+                    updateDraftSettings((current) => ({
+                      ...current,
+                      delivery_method: v as 'folder' | 'pushplus',
+                    }))
+                  }
+                >
+                  <SelectTrigger className="w-full sm:w-60">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="folder">追踪文件夹推送</SelectItem>
+                    <SelectItem value="pushplus">PushPlus 外部推送</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="space-y-4 rounded-md border p-3">
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <Label className="text-base">主 AI 配置</Label>
+                      <p className="text-xs text-muted-foreground mt-1">
+                        优先使用这套配置进行筛选；留空字段会回退到服务端默认值。
+                      </p>
+                    </div>
+                  </div>
+                </div>
+                <div className="grid gap-3 md:grid-cols-2">
+                  <div className="space-y-1">
+                    <Label htmlFor="ai-base-url">Base URL</Label>
+                    <Input
+                      id="ai-base-url"
+                      value={aiBaseUrl}
+                      onChange={(e) =>
+                        updateDraftSettings((current) => ({
+                          ...current,
+                          ai_base_url: e.target.value,
+                        }))
+                      }
+                      placeholder="https://api.openai.com/v1"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <Label htmlFor="ai-model">Model</Label>
+                    <Input
+                      id="ai-model"
+                      value={aiModel}
+                      onChange={(e) =>
+                        updateDraftSettings((current) => ({
+                          ...current,
+                          ai_model: e.target.value,
+                        }))
+                      }
+                      placeholder="gpt-4.1-mini"
+                    />
+                  </div>
+                </div>
+                <div className="space-y-1">
+                  <Label htmlFor="ai-api-key">API Key</Label>
+                  <Input
+                    id="ai-api-key"
+                    type="password"
+                    value={aiApiKey}
+                    onChange={(e) =>
+                      updateDraftSettings((current) => ({
+                        ...current,
+                        ai_api_key: e.target.value,
+                      }))
+                    }
+                    placeholder="sk-..."
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label htmlFor="ai-system-prompt">System Prompt</Label>
+                  <textarea
+                    id="ai-system-prompt"
+                    value={aiSystemPrompt}
+                    onChange={(e) =>
+                      updateDraftSettings((current) => ({
+                        ...current,
+                        ai_system_prompt: e.target.value,
+                      }))
+                    }
+                    placeholder="Describe how the model should evaluate article relevance."
+                    className="min-h-28 w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-xs outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
+                  />
+                </div>
+                <div className="grid gap-3 md:grid-cols-2">
+                  <div className="space-y-1">
+                    <Label htmlFor="ai-retry-attempts">失败重试次数</Label>
+                    <Input
+                      id="ai-retry-attempts"
+                      type="number"
+                      min={1}
+                      max={10}
+                      value={aiRetryAttempts}
+                      onChange={(e) =>
+                        updateDraftSettings((current) => ({
+                          ...current,
+                          ai_retry_attempts: Math.max(1, Math.min(10, Number(e.target.value) || 1)),
+                        }))
+                      }
+                    />
+                  </div>
+                </div>
+                <div className="space-y-3 rounded-md border border-dashed p-3">
+                  <div>
+                    <Label className="text-base">备用 AI 配置</Label>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      当主配置连续失败后，系统会自动切换到这套备用配置重试。
+                    </p>
+                  </div>
+                  <div className="grid gap-3 md:grid-cols-2">
+                    <div className="space-y-1">
+                      <Label htmlFor="ai-backup-base-url">Backup Base URL</Label>
+                      <Input
+                        id="ai-backup-base-url"
+                        value={aiBackupBaseUrl}
+                        onChange={(e) =>
+                          updateDraftSettings((current) => ({
+                            ...current,
+                            ai_backup_base_url: e.target.value,
+                          }))
+                        }
+                        placeholder="https://api.openai.com/v1"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <Label htmlFor="ai-backup-model">Backup Model</Label>
+                      <Input
+                        id="ai-backup-model"
+                        value={aiBackupModel}
+                        onChange={(e) =>
+                          updateDraftSettings((current) => ({
+                            ...current,
+                            ai_backup_model: e.target.value,
+                          }))
+                        }
+                        placeholder="gpt-4.1-mini"
+                      />
+                    </div>
+                  </div>
+                  <div className="space-y-1">
+                    <Label htmlFor="ai-backup-api-key">Backup API Key</Label>
+                    <Input
+                      id="ai-backup-api-key"
+                      type="password"
+                      value={aiBackupApiKey}
+                      onChange={(e) =>
+                        updateDraftSettings((current) => ({
+                          ...current,
+                          ai_backup_api_key: e.target.value,
+                        }))
+                      }
+                      placeholder="sk-..."
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <Label htmlFor="ai-backup-system-prompt">Backup System Prompt</Label>
+                    <textarea
+                      id="ai-backup-system-prompt"
+                      value={aiBackupSystemPrompt}
+                      onChange={(e) =>
+                        updateDraftSettings((current) => ({
+                          ...current,
+                          ai_backup_system_prompt: e.target.value,
+                        }))
+                      }
+                      placeholder="Optional backup prompt override."
+                      className="min-h-28 w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-xs outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
+                    />
+                  </div>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  未配置关键词或研究方向时不会推送；主备 AI 都不可用时同样会跳过推送。
+                </p>
+              </div>
+
+              {deliveryMethod === 'pushplus' && (
+                <div className="space-y-3 rounded-md border p-3">
+                  <div className="space-y-1">
+                    <Label htmlFor="pp-token">PushPlus 令牌</Label>
+                    <Input
+                      id="pp-token"
+                      value={pushplusToken}
+                      onChange={(e) =>
+                        updateDraftSettings((current) => ({
+                          ...current,
+                          pushplus_token: e.target.value,
+                        }))
+                      }
+                      placeholder="输入你的 PushPlus 令牌"
+                    />
+                  </div>
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <div className="space-y-1">
+                      <Label htmlFor="pp-template">模板</Label>
+                      <Input
+                        id="pp-template"
+                        value={pushplusTemplate}
+                        onChange={(e) =>
+                          updateDraftSettings((current) => ({
+                            ...current,
+                            pushplus_template: e.target.value,
+                          }))
+                        }
+                        placeholder="markdown"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <Label htmlFor="pp-topic">主题</Label>
+                      <Input
+                        id="pp-topic"
+                        value={pushplusTopic}
+                        onChange={(e) =>
+                          updateDraftSettings((current) => ({
+                            ...current,
+                            pushplus_topic: e.target.value,
+                          }))
+                        }
+                        placeholder="可选"
+                      />
+                    </div>
+                  </div>
+                  <div className="space-y-1">
+                    <Label htmlFor="pp-channel">渠道</Label>
+                    <Input
+                      id="pp-channel"
+                      value={pushplusChannel}
+                      onChange={(e) =>
+                        updateDraftSettings((current) => ({
+                          ...current,
+                          pushplus_channel: e.target.value,
+                        }))
+                      }
+                      placeholder="wechat"
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      填写 PushPlus 渠道，例如 `wechat`。
+                    </p>
+                  </div>
+                  <div className="flex flex-col gap-3 rounded-md border border-dashed p-3 sm:flex-row sm:items-start sm:justify-between">
+                    <div className="space-y-1">
+                      <Label htmlFor="pp-sync-tracking">同步写入追踪文件夹</Label>
+                      <p className="text-xs text-muted-foreground">
+                        {status?.tracking_folder
+                          ? `发送 PushPlus 时，同时写入“${status.tracking_folder.name}”`
+                          : '需要先设置追踪文件夹后才能开启'}
+                      </p>
+                    </div>
+                    <Switch
+                      id="pp-sync-tracking"
+                      checked={syncToTrackingFolder}
+                      disabled={!status?.tracking_folder}
+                      onCheckedChange={(checked) =>
+                        updateDraftSettings((current) => ({
+                          ...current,
+                          sync_to_tracking_folder: checked,
+                        }))
+                      }
+                    />
+                  </div>
+                </div>
+              )}
+
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+                <Button
+                  className="w-full sm:w-auto"
+                  onClick={() => saveSettingsMut.mutate()}
+                  disabled={saveSettingsMut.isPending}
+                >
+                  <Save className="h-4 w-4 mr-1" />
+                  {saveSettingsMut.isPending ? '保存中...' : '保存配置'}
+                </Button>
+                {settingsSaved && <span className="text-sm text-green-600">已保存</span>}
+                {saveSettingsMut.isError && (
+                  <span className="text-sm text-destructive">
+                    {saveSettingsMut.error instanceof Error
+                      ? saveSettingsMut.error.message
+                      : '保存失败'}
+                  </span>
+                )}
+              </div>
             </>
           )}
         </CardContent>

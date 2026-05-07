@@ -87,7 +87,9 @@ export function AnnouncementsDialog() {
   });
 
   const unreadAnnouncements = data.filter((announcement) => !isDismissed(announcement));
-  const unreadAnnouncementSignature = unreadAnnouncements.map((announcement) => String(announcement.id)).join(',');
+  const unreadAnnouncementSignature = unreadAnnouncements
+    .map((announcement) => String(announcement.id))
+    .join(',');
   const open = unreadAnnouncements.length > 0 && closedSignature !== unreadAnnouncementSignature;
 
   const handleDismiss = (dismissedUntil: number) => {
@@ -111,7 +113,9 @@ export function AnnouncementsDialog() {
       <DialogContent className="max-w-2xl" showCloseButton={false}>
         <DialogHeader>
           <DialogTitle>系统公告</DialogTitle>
-          <DialogDescription>以下公告尚未阅读，可选择本日、7 天内或永久关闭提示。</DialogDescription>
+          <DialogDescription>
+            以下公告尚未阅读，可选择本日、7 天内或永久关闭提示。
+          </DialogDescription>
         </DialogHeader>
         <div className="max-h-[60vh] space-y-3 overflow-y-auto pr-1">
           {unreadAnnouncements.map((announcement) => (
@@ -132,12 +136,13 @@ export function AnnouncementsDialog() {
           <Button variant="outline" onClick={() => handleDismiss(getEndOfTodayTimestamp())}>
             今日不再提示
           </Button>
-          <Button variant="outline" onClick={() => handleDismiss(Date.now() + 7 * 24 * 3600 * 1000)}>
+          <Button
+            variant="outline"
+            onClick={() => handleDismiss(Date.now() + 7 * 24 * 3600 * 1000)}
+          >
             7天内不再提示
           </Button>
-          <Button onClick={() => handleDismiss(0)}>
-            永久关闭
-          </Button>
+          <Button onClick={() => handleDismiss(0)}>永久关闭</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

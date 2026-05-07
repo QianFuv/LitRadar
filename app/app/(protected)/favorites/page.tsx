@@ -3,15 +3,7 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient, useInfiniteQuery } from '@tanstack/react-query';
 import Link from 'next/link';
-import {
-  ArrowLeft,
-  Download,
-  FolderPlus,
-  Pencil,
-  Radar,
-  Star,
-  Trash2,
-} from 'lucide-react';
+import { ArrowLeft, Download, FolderPlus, Pencil, Radar, Star, Trash2 } from 'lucide-react';
 
 import { useAuth } from '@/lib/auth-context';
 import {
@@ -35,11 +27,7 @@ import { ArticleDialogCard } from '@/components/feature/article-dialog-card';
 import { useVisiblePageList } from '@/components/feature/use-visible-page-list';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import {
-  Card,
-  CardContent,
-  CardHeader,
-} from '@/components/ui/card';
+import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import {
   Dialog,
   DialogContent,
@@ -49,15 +37,17 @@ import {
   DialogTrigger,
 } from '@/components/ui/dialog';
 import { Badge } from '@/components/ui/badge';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Checkbox } from '@/components/ui/checkbox';
 
-function getFavoriteSelectionKey(
-  folderId: number,
-  articleId: ArticleId,
-  dbName: string,
-): string {
+function getFavoriteSelectionKey(folderId: number, articleId: ArticleId, dbName: string): string {
   return `${folderId}:${articleId}:${dbName}`;
 }
 
@@ -79,9 +69,10 @@ export default function FavoritesPage() {
   const [exportFormat, setExportFormat] = useState<CitationFormat>('bibtex');
   const [selectedArticleKeys, setSelectedArticleKeys] = useState<string[]>([]);
   const [moveTargetFolderId, setMoveTargetFolderId] = useState<string>('');
-  const [batchFeedback, setBatchFeedback] = useState<{ tone: 'success' | 'error'; message: string } | null>(
-    null,
-  );
+  const [batchFeedback, setBatchFeedback] = useState<{
+    tone: 'success' | 'error';
+    message: string;
+  } | null>(null);
 
   const { data: folders = [], isLoading } = useQuery({
     queryKey: ['folders', user?.id],
@@ -130,7 +121,9 @@ export default function FavoritesPage() {
   const prefetchIndex = Math.max(0, favorites.length - 25);
   const selectedKeySet = new Set(selectedArticleKeys);
   const selectedFavorites = favorites.filter((favorite) =>
-    selectedKeySet.has(getFavoriteSelectionKey(favorite.folder_id, favorite.article_id, favorite.db_name)),
+    selectedKeySet.has(
+      getFavoriteSelectionKey(favorite.folder_id, favorite.article_id, favorite.db_name),
+    ),
   );
   const allLoadedSelected = favorites.length > 0 && selectedFavorites.length === favorites.length;
   const moveTargetFolders = folders.filter((folder) => folder.id !== activeFolderId);
@@ -163,8 +156,7 @@ export default function FavoritesPage() {
   });
 
   const renameMut = useMutation({
-    mutationFn: ({ id, name }: { id: number; name: string }) =>
-      renameFolder(token!, id, name),
+    mutationFn: ({ id, name }: { id: number; name: string }) => renameFolder(token!, id, name),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['folders'] });
       setEditingId(null);
@@ -186,7 +178,8 @@ export default function FavoritesPage() {
   });
 
   const bulkRemoveMut = useMutation({
-    mutationFn: (articles: FavoriteArticleRef[]) => bulkRemoveFavorites(token!, activeFolderId!, articles),
+    mutationFn: (articles: FavoriteArticleRef[]) =>
+      bulkRemoveFavorites(token!, activeFolderId!, articles),
     onSuccess: (count) => {
       setSelectedArticleKeys([]);
       setBatchFeedback({
@@ -205,8 +198,13 @@ export default function FavoritesPage() {
   });
 
   const bulkMoveMut = useMutation({
-    mutationFn: ({ targetFolderId, articles }: { targetFolderId: number; articles: FavoriteArticleRef[] }) =>
-      bulkMoveFavorites(token!, activeFolderId!, targetFolderId, articles),
+    mutationFn: ({
+      targetFolderId,
+      articles,
+    }: {
+      targetFolderId: number;
+      articles: FavoriteArticleRef[];
+    }) => bulkMoveFavorites(token!, activeFolderId!, targetFolderId, articles),
     onSuccess: (count) => {
       const targetFolderName = moveTargetFolders.find(
         (folder) => folder.id === Number(moveTargetFolderId),
@@ -268,7 +266,11 @@ export default function FavoritesPage() {
 
   const handleBulkMove = () => {
     const targetFolderId = Number(effectiveMoveTargetFolderId);
-    if (selectedFavorites.length === 0 || !Number.isInteger(targetFolderId) || targetFolderId <= 0) {
+    if (
+      selectedFavorites.length === 0 ||
+      !Number.isInteger(targetFolderId) ||
+      targetFolderId <= 0
+    ) {
       return;
     }
     bulkMoveMut.mutate({
@@ -345,12 +347,12 @@ export default function FavoritesPage() {
             <div className="space-y-1">
               {folders.map((folder) => (
                 <div
-                    key={folder.id}
-                    className={`flex items-center gap-2 rounded-md px-3 py-2 text-sm cursor-pointer transition-colors ${
-                      activeFolderId === folder.id
-                        ? 'bg-accent text-accent-foreground'
-                        : 'hover:bg-accent/50'
-                    }`}
+                  key={folder.id}
+                  className={`flex items-center gap-2 rounded-md px-3 py-2 text-sm cursor-pointer transition-colors ${
+                    activeFolderId === folder.id
+                      ? 'bg-accent text-accent-foreground'
+                      : 'hover:bg-accent/50'
+                  }`}
                   onClick={() => handleSelectFolder(folder.id)}
                 >
                   {editingId === folder.id ? (
@@ -380,9 +382,7 @@ export default function FavoritesPage() {
                           追踪
                         </Badge>
                       )}
-                      <span className="text-xs text-muted-foreground">
-                        {folder.article_count}
-                      </span>
+                      <span className="text-xs text-muted-foreground">{folder.article_count}</span>
                     </>
                   )}
                   <div className="flex gap-0.5">
@@ -463,10 +463,7 @@ export default function FavoritesPage() {
                     </SelectContent>
                   </Select>
                   <Button asChild variant="outline">
-                    <a
-                      href={getExportUrl(token!, selectedFolder.id, exportFormat)}
-                      download
-                    >
+                    <a href={getExportUrl(token!, selectedFolder.id, exportFormat)} download>
                       <Download className="mr-2 h-4 w-4" />
                       导出引用
                     </a>
@@ -492,9 +489,7 @@ export default function FavoritesPage() {
               ) : isFavoritesError ? (
                 <div className="flex h-40 flex-col items-center justify-center gap-3 text-center">
                   <p className="text-sm text-muted-foreground">
-                    {favoritesError instanceof Error
-                      ? favoritesError.message
-                      : '加载收藏文章失败'}
+                    {favoritesError instanceof Error ? favoritesError.message : '加载收藏文章失败'}
                   </p>
                   <Button variant="outline" size="sm" onClick={() => void refetchFavorites()}>
                     重试
@@ -511,11 +506,15 @@ export default function FavoritesPage() {
                       <div className="flex flex-wrap items-center gap-3">
                         <div className="flex items-center gap-2">
                           <Checkbox
-                            checked={allLoadedSelected || (selectedFavorites.length > 0 && 'indeterminate')}
+                            checked={
+                              allLoadedSelected || (selectedFavorites.length > 0 && 'indeterminate')
+                            }
                             onCheckedChange={(checked) => handleSelectAllLoaded(checked === true)}
                             aria-label="选择当前已加载文章"
                           />
-                          <span className="text-sm font-medium">已选 {selectedFavorites.length} 篇</span>
+                          <span className="text-sm font-medium">
+                            已选 {selectedFavorites.length} 篇
+                          </span>
                         </div>
                         <Button
                           variant="ghost"
@@ -606,7 +605,9 @@ export default function FavoritesPage() {
                         leading={
                           <Checkbox
                             checked={isSelected}
-                            onCheckedChange={(checked) => toggleFavoriteSelection(fav, checked === true)}
+                            onCheckedChange={(checked) =>
+                              toggleFavoriteSelection(fav, checked === true)
+                            }
                             aria-label={`选择文章 ${fav.title || fav.article_id}`}
                           />
                         }

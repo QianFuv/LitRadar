@@ -17,13 +17,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from '@/components/ui/card';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import {
   Dialog,
   DialogContent,
@@ -177,9 +171,7 @@ export default function SettingsPage() {
                 required
               />
             </div>
-            {pwdMsg && (
-              <p className="text-sm text-muted-foreground">{pwdMsg}</p>
-            )}
+            {pwdMsg && <p className="text-sm text-muted-foreground">{pwdMsg}</p>}
             <Button type="submit" disabled={changePwdMut.isPending}>
               修改密码
             </Button>
@@ -196,9 +188,7 @@ export default function SettingsPage() {
                 <Ticket className="h-5 w-5" />
                 邀请码
               </CardTitle>
-              <CardDescription>
-                每个用户可以生成一个邀请码，供他人注册使用
-              </CardDescription>
+              <CardDescription>每个用户可以生成一个邀请码，供他人注册使用</CardDescription>
             </div>
           </div>
         </CardHeader>
@@ -246,14 +236,15 @@ export default function SettingsPage() {
           <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
             <div>
               <CardTitle>访问令牌</CardTitle>
-              <CardDescription>
-                创建访问令牌，用于接口访问或第三方集成
-              </CardDescription>
+              <CardDescription>创建访问令牌，用于接口访问或第三方集成</CardDescription>
             </div>
-            <Dialog open={dialogOpen} onOpenChange={(open) => {
-              setDialogOpen(open);
-              if (!open) setNewTokenValue(null);
-            }}>
+            <Dialog
+              open={dialogOpen}
+              onOpenChange={(open) => {
+                setDialogOpen(open);
+                if (!open) setNewTokenValue(null);
+              }}
+            >
               <DialogTrigger asChild>
                 <Button variant="outline" size="sm" className="w-full sm:w-auto">
                   <Plus className="h-4 w-4 mr-1" />

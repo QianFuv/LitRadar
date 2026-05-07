@@ -4,11 +4,7 @@ import { useQueryState, parseAsString } from 'nuqs';
 import { Input } from '@/components/ui/input';
 import { Search, X, Clock, HelpCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from '@/components/ui/popover';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { useState, useEffect } from 'react';
 import { cn } from '@/lib/utils';
 
@@ -25,7 +21,7 @@ function saveSearchHistory(query: string) {
   if (typeof window === 'undefined' || !query.trim()) return;
 
   const history = getSearchHistory();
-  const filtered = history.filter(item => item !== query);
+  const filtered = history.filter((item) => item !== query);
   const newHistory = [query, ...filtered].slice(0, MAX_HISTORY_ITEMS);
 
   localStorage.setItem(SEARCH_HISTORY_KEY, JSON.stringify(newHistory));
@@ -77,7 +73,7 @@ export function SearchBar({ className }: { className?: string }) {
   };
 
   return (
-    <div className={cn("flex items-center space-x-2 w-full max-w-3xl", className)}>
+    <div className={cn('flex items-center space-x-2 w-full max-w-3xl', className)}>
       <div className="relative flex-1">
         <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-slate-500" />
         <Popover open={showHistory} onOpenChange={setShowHistory}>
@@ -150,12 +146,7 @@ export function SearchBar({ className }: { className?: string }) {
       <Button onClick={() => handleSearch()}>搜索</Button>
       <Popover>
         <PopoverTrigger asChild>
-          <Button
-            variant="outline"
-            size="icon"
-            aria-label="搜索语法帮助"
-            title="搜索语法帮助"
-          >
+          <Button variant="outline" size="icon" aria-label="搜索语法帮助" title="搜索语法帮助">
             <HelpCircle className="h-4 w-4" />
           </Button>
         </PopoverTrigger>
@@ -165,27 +156,47 @@ export function SearchBar({ className }: { className?: string }) {
             <div className="space-y-2">
               <div className="text-foreground/80 font-medium">基础</div>
               <ul className="space-y-1 text-muted-foreground">
-                <li><code>term1 AND term2</code> 同时包含两个词</li>
-                <li><code>term1 OR term2</code> 任意一个词</li>
-                <li><code>term1 NOT term2</code> 排除 term2</li>
-                <li><code>&quot;exact phrase&quot;</code> 精确短语</li>
-                <li><code>bio*</code> 前缀匹配</li>
+                <li>
+                  <code>term1 AND term2</code> 同时包含两个词
+                </li>
+                <li>
+                  <code>term1 OR term2</code> 任意一个词
+                </li>
+                <li>
+                  <code>term1 NOT term2</code> 排除 term2
+                </li>
+                <li>
+                  <code>&quot;exact phrase&quot;</code> 精确短语
+                </li>
+                <li>
+                  <code>bio*</code> 前缀匹配
+                </li>
               </ul>
             </div>
             <div className="space-y-2">
               <div className="text-foreground/80 font-medium">高级</div>
               <ul className="space-y-1 text-muted-foreground">
-                <li><code>NEAR(&quot;gene expression&quot; therapy, 5)</code> 距离 5 词以内</li>
-                <li><code>title:diabetes</code> 指定字段</li>
-                <li><code>{'{title abstract}:imaging'}</code> 多字段</li>
-                <li><code>authors:&quot;Smith&quot;</code> 作者</li>
-                <li><code>journal_title:&quot;Nature&quot;</code> 期刊</li>
-                <li><code>^introduction</code> 列开头匹配</li>
+                <li>
+                  <code>NEAR(&quot;gene expression&quot; therapy, 5)</code> 距离 5 词以内
+                </li>
+                <li>
+                  <code>title:diabetes</code> 指定字段
+                </li>
+                <li>
+                  <code>{'{title abstract}:imaging'}</code> 多字段
+                </li>
+                <li>
+                  <code>authors:&quot;Smith&quot;</code> 作者
+                </li>
+                <li>
+                  <code>journal_title:&quot;Nature&quot;</code> 期刊
+                </li>
+                <li>
+                  <code>^introduction</code> 列开头匹配
+                </li>
               </ul>
             </div>
-            <div className="text-muted-foreground">
-              运算符 AND/OR/NOT/NEAR 需要大写。
-            </div>
+            <div className="text-muted-foreground">运算符 AND/OR/NOT/NEAR 需要大写。</div>
           </div>
         </PopoverContent>
       </Popover>

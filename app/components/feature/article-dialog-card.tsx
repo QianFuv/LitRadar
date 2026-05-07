@@ -59,10 +59,7 @@ export function ArticleDialogCard({
       <div className={cn('flex items-start gap-3', className)}>
         {leading && <div className="pt-4">{leading}</div>}
         <DialogTrigger asChild>
-          <div
-            ref={triggerRef}
-            className={cn('block group cursor-pointer text-left flex-1')}
-          >
+          <div ref={triggerRef} className={cn('block group cursor-pointer text-left flex-1')}>
             <ArticleListCard
               title={resolvedTitle}
               journalTitle={article.journal_title}

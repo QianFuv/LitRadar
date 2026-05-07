@@ -1,4 +1,4 @@
-import { Article } from "./api";
+import { Article } from './api';
 
 export type CitationFormat = 'bibtex' | 'ris' | 'apa' | 'mla';
 
@@ -48,11 +48,11 @@ ER  -`.trim();
 }
 
 export function downloadCitation(content: string, filename: string) {
-    const blob = new Blob([content], { type: 'text/plain' });
-    const url = window.URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = filename;
-    a.click();
-    window.URL.revokeObjectURL(url);
+  const blob = new Blob([content], { type: 'text/plain' });
+  const url = window.URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.click();
+  window.URL.revokeObjectURL(url);
 }

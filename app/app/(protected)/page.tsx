@@ -1,16 +1,11 @@
-import { Sidebar } from "@/components/feature/sidebar";
-import { SearchBar } from "@/components/feature/search-bar";
-import { ResultsList } from "@/components/feature/results-list";
-import { WeeklyUpdatesFab } from "@/components/feature/weekly-updates-fab";
-import { AnnouncementsDialog } from "@/components/announcements-dialog";
-import {
-  Dialog,
-  DialogContent,
-  DialogTitle,
-  DialogTrigger,
-} from "@/components/ui/dialog";
-import { Button } from "@/components/ui/button";
-import { Menu } from "lucide-react";
+import { Sidebar } from '@/components/feature/sidebar';
+import { SearchBar } from '@/components/feature/search-bar';
+import { ResultsList } from '@/components/feature/results-list';
+import { WeeklyUpdatesFab } from '@/components/feature/weekly-updates-fab';
+import { AnnouncementsDialog } from '@/components/announcements-dialog';
+import { Dialog, DialogContent, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
+import { Button } from '@/components/ui/button';
+import { Menu } from 'lucide-react';
 
 export default function Home() {
   return (
@@ -41,10 +36,7 @@ export default function Home() {
             <SearchBar className="max-w-4xl mx-auto w-full" />
           </div>
         </div>
-        <div
-          id="results-scroll-container"
-          className="flex-1 overflow-y-auto p-6 scroll-smooth"
-        >
+        <div id="results-scroll-container" className="flex-1 overflow-y-auto p-6 scroll-smooth">
           <div className="max-w-4xl mx-auto w-full space-y-4">
             <AnnouncementsDialog />
             <ResultsList />

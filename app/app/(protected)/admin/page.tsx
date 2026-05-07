@@ -32,13 +32,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from '@/components/ui/card';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import {
   Dialog,
   DialogContent,
@@ -205,32 +199,20 @@ export default function AdminPage() {
                   value={authStats?.admin_count ?? 0}
                   icon={<Shield className="h-4 w-4" />}
                 />
-                <StatCard
-                  label="收藏夹"
-                  value={authStats?.total_folders ?? 0}
-                />
-                <StatCard
-                  label="收藏文章"
-                  value={authStats?.total_favorites ?? 0}
-                />
+                <StatCard label="收藏夹" value={authStats?.total_folders ?? 0} />
+                <StatCard label="收藏文章" value={authStats?.total_favorites ?? 0} />
                 <StatCard
                   label="活跃令牌"
                   value={authStats?.active_tokens ?? 0}
                   icon={<Key className="h-4 w-4" />}
                 />
-                <StatCard
-                  label="推送订阅"
-                  value={authStats?.notification_subscribers ?? 0}
-                />
+                <StatCard label="推送订阅" value={authStats?.notification_subscribers ?? 0} />
                 <StatCard
                   label="邀请码 (未使用)"
                   value={authStats?.unused_invite_codes ?? 0}
                   icon={<Ticket className="h-4 w-4" />}
                 />
-                <StatCard
-                  label="邀请码 (已使用)"
-                  value={authStats?.used_invite_codes ?? 0}
-                />
+                <StatCard label="邀请码 (已使用)" value={authStats?.used_invite_codes ?? 0} />
               </div>
 
               {/* Index stats */}
@@ -245,10 +227,7 @@ export default function AdminPage() {
                   </h3>
                   <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
                     {indexStats.databases.map((db) => (
-                      <div
-                        key={db.db_name}
-                        className="rounded-md border px-3 py-2 text-sm"
-                      >
+                      <div key={db.db_name} className="rounded-md border px-3 py-2 text-sm">
                         <div className="flex items-center gap-1.5 font-medium">
                           <Database className="h-3.5 w-3.5" />
                           {db.db_name}
@@ -268,19 +247,13 @@ export default function AdminPage() {
                   <h3 className="text-sm font-medium">推送状态</h3>
                   <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
                     {pushStats.map((ps) => (
-                      <div
-                        key={ps.db_name}
-                        className="rounded-md border px-3 py-2 text-sm"
-                      >
+                      <div key={ps.db_name} className="rounded-md border px-3 py-2 text-sm">
                         <div className="font-medium">{ps.db_name}</div>
                         <div className="text-muted-foreground">
                           状态: {ps.status}
-                          {ps.delivered_count != null &&
-                            ` · 已推送 ${ps.delivered_count} 篇`}
+                          {ps.delivered_count != null && ` · 已推送 ${ps.delivered_count} 篇`}
                           {ps.last_completed && (
-                            <span className="block">
-                              最近完成: {ps.last_completed}
-                            </span>
+                            <span className="block">最近完成: {ps.last_completed}</span>
                           )}
                         </div>
                       </div>
@@ -320,7 +293,9 @@ export default function AdminPage() {
                       <div className="text-xs text-muted-foreground">用户 #{u.id}</div>
                     </div>
                     {u.notify_enabled ? (
-                      <Badge variant="secondary" className="text-xs">已订阅</Badge>
+                      <Badge variant="secondary" className="text-xs">
+                        已订阅
+                      </Badge>
                     ) : (
                       <span className="text-xs text-muted-foreground">未订阅</span>
                     )}
@@ -342,9 +317,7 @@ export default function AdminPage() {
                     <Button
                       variant="outline"
                       size="sm"
-                      disabled={
-                        toggleAdminMut.isPending || u.id === user!.id
-                      }
+                      disabled={toggleAdminMut.isPending || u.id === user!.id}
                       onClick={() =>
                         toggleAdminMut.mutate({
                           userId: u.id,
@@ -409,33 +382,27 @@ export default function AdminPage() {
                     <td className="px-3 py-2">{u.id}</td>
                     <td className="px-3 py-2 font-medium">{u.username}</td>
                     <td className="px-3 py-2">
-                      {u.is_admin ? (
-                        <Badge>管理员</Badge>
-                      ) : (
-                        <Badge variant="secondary">用户</Badge>
-                      )}
+                      {u.is_admin ? <Badge>管理员</Badge> : <Badge variant="secondary">用户</Badge>}
                     </td>
                     <td className="px-3 py-2">{u.folder_count}</td>
                     <td className="px-3 py-2">{u.favorite_count}</td>
                     <td className="px-3 py-2">
                       {u.notify_enabled ? (
-                        <Badge variant="secondary" className="text-xs">已订阅</Badge>
+                        <Badge variant="secondary" className="text-xs">
+                          已订阅
+                        </Badge>
                       ) : (
                         <span className="text-muted-foreground">—</span>
                       )}
                     </td>
-                    <td className="px-3 py-2 text-muted-foreground">
-                      {formatDate(u.created_at)}
-                    </td>
+                    <td className="px-3 py-2 text-muted-foreground">{formatDate(u.created_at)}</td>
                     <td className="px-3 py-2">
                       <div className="flex items-center gap-1">
                         <Button
                           variant="ghost"
                           size="sm"
                           title={u.is_admin ? '取消管理员' : '设为管理员'}
-                          disabled={
-                            toggleAdminMut.isPending || u.id === user!.id
-                          }
+                          disabled={toggleAdminMut.isPending || u.id === user!.id}
                           onClick={() =>
                             toggleAdminMut.mutate({
                               userId: u.id,
@@ -489,9 +456,7 @@ export default function AdminPage() {
         <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-lg">
           <DialogHeader>
             <DialogTitle>重置密码</DialogTitle>
-            <DialogDescription>
-              为用户 #{resetPwUserId} 设置新密码
-            </DialogDescription>
+            <DialogDescription>为用户 #{resetPwUserId} 设置新密码</DialogDescription>
           </DialogHeader>
           <div className="space-y-3 py-2">
             <Input
@@ -510,9 +475,7 @@ export default function AdminPage() {
               </Button>
               <Button
                 className="w-full sm:w-auto"
-                disabled={
-                  resetPwValue.length < 6 || resetPwMut.isPending
-                }
+                disabled={resetPwValue.length < 6 || resetPwMut.isPending}
                 onClick={() => {
                   if (resetPwUserId != null) {
                     resetPwMut.mutate({
@@ -527,9 +490,7 @@ export default function AdminPage() {
             </div>
             {resetPwMut.isError && (
               <p className="text-sm text-destructive">
-                {resetPwMut.error instanceof Error
-                  ? resetPwMut.error.message
-                  : '重置失败'}
+                {resetPwMut.error instanceof Error ? resetPwMut.error.message : '重置失败'}
               </p>
             )}
           </div>
@@ -591,9 +552,7 @@ export default function AdminPage() {
           </Button>
           <div className="space-y-3 md:hidden">
             {inviteCodes.length === 0 ? (
-              <div className="rounded-lg border p-4 text-sm text-muted-foreground">
-                暂无邀请码
-              </div>
+              <div className="rounded-lg border p-4 text-sm text-muted-foreground">暂无邀请码</div>
             ) : (
               inviteCodes.map((ic) => (
                 <div key={ic.id} className="rounded-lg border p-4">
@@ -616,11 +575,7 @@ export default function AdminPage() {
                       </Button>
                     </div>
                     <div className="flex flex-wrap items-center gap-2">
-                      {ic.used_by ? (
-                        <Badge variant="secondary">已使用</Badge>
-                      ) : (
-                        <Badge>可用</Badge>
-                      )}
+                      {ic.used_by ? <Badge variant="secondary">已使用</Badge> : <Badge>可用</Badge>}
                       <span className="text-xs text-muted-foreground">
                         创建时间: {formatDate(ic.created_at)}
                       </span>
@@ -628,15 +583,11 @@ export default function AdminPage() {
                     <div className="grid grid-cols-1 gap-2 text-sm">
                       <div className="rounded-md bg-muted/40 px-3 py-2">
                         <div className="text-xs text-muted-foreground">创建者</div>
-                        <div className="mt-1 break-all">
-                          {ic.created_by_name ?? '系统'}
-                        </div>
+                        <div className="mt-1 break-all">{ic.created_by_name ?? '系统'}</div>
                       </div>
                       <div className="rounded-md bg-muted/40 px-3 py-2">
                         <div className="text-xs text-muted-foreground">使用者</div>
-                        <div className="mt-1 break-all">
-                          {ic.used_by_name ?? '—'}
-                        </div>
+                        <div className="mt-1 break-all">{ic.used_by_name ?? '—'}</div>
                       </div>
                     </div>
                     {!ic.used_by && (
@@ -685,25 +636,15 @@ export default function AdminPage() {
                       </span>
                     </td>
                     <td className="px-3 py-2">
-                      {ic.created_by_name ?? (
-                        <span className="text-muted-foreground">系统</span>
-                      )}
+                      {ic.created_by_name ?? <span className="text-muted-foreground">系统</span>}
                     </td>
                     <td className="px-3 py-2">
-                      {ic.used_by ? (
-                        <Badge variant="secondary">已使用</Badge>
-                      ) : (
-                        <Badge>可用</Badge>
-                      )}
+                      {ic.used_by ? <Badge variant="secondary">已使用</Badge> : <Badge>可用</Badge>}
                     </td>
                     <td className="px-3 py-2">
-                      {ic.used_by_name ?? (
-                        <span className="text-muted-foreground">—</span>
-                      )}
+                      {ic.used_by_name ?? <span className="text-muted-foreground">—</span>}
                     </td>
-                    <td className="px-3 py-2 text-muted-foreground">
-                      {formatDate(ic.created_at)}
-                    </td>
+                    <td className="px-3 py-2 text-muted-foreground">{formatDate(ic.created_at)}</td>
                     <td className="px-3 py-2">
                       {!ic.used_by && (
                         <Button
@@ -721,10 +662,7 @@ export default function AdminPage() {
                 ))}
                 {inviteCodes.length === 0 && (
                   <tr>
-                    <td
-                      colSpan={6}
-                      className="px-3 py-4 text-center text-muted-foreground"
-                    >
+                    <td colSpan={6} className="px-3 py-4 text-center text-muted-foreground">
                       暂无邀请码
                     </td>
                   </tr>

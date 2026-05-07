@@ -13,9 +13,22 @@ import {
 } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
 
 type AnnouncementsCardProps = {
@@ -58,7 +71,11 @@ export function AnnouncementsCard({ token }: AnnouncementsCardProps) {
   const [editingAnnouncement, setEditingAnnouncement] = useState<AnnouncementInfo | null>(null);
   const [form, setForm] = useState<AnnouncementFormState>(DEFAULT_FORM);
 
-  const { data: announcements = [], error, isLoading } = useQuery({
+  const {
+    data: announcements = [],
+    error,
+    isLoading,
+  } = useQuery({
     queryKey: ['admin-announcements'],
     queryFn: () => adminGetAnnouncements(token),
   });
@@ -141,7 +158,12 @@ export function AnnouncementsCard({ token }: AnnouncementsCardProps) {
       <CardContent className="space-y-4">
         <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
           <DialogTrigger asChild>
-            <Button variant="outline" size="sm" className="w-full sm:w-auto" onClick={openCreateDialog}>
+            <Button
+              variant="outline"
+              size="sm"
+              className="w-full sm:w-auto"
+              onClick={openCreateDialog}
+            >
               <Plus className="mr-2 h-4 w-4" />
               新建公告
             </Button>
@@ -154,7 +176,9 @@ export function AnnouncementsCard({ token }: AnnouncementsCardProps) {
             <div className="space-y-4 py-2">
               <Input
                 value={form.title}
-                onChange={(event) => setForm((current) => ({ ...current, title: event.target.value }))}
+                onChange={(event) =>
+                  setForm((current) => ({ ...current, title: event.target.value }))
+                }
                 placeholder="公告标题"
               />
               <Select
@@ -174,7 +198,9 @@ export function AnnouncementsCard({ token }: AnnouncementsCardProps) {
               </Select>
               <textarea
                 value={form.message}
-                onChange={(event) => setForm((current) => ({ ...current, message: event.target.value }))}
+                onChange={(event) =>
+                  setForm((current) => ({ ...current, message: event.target.value }))
+                }
                 placeholder="公告内容"
                 className="min-h-28 w-full rounded-md border bg-transparent px-3 py-2 text-sm shadow-xs outline-none"
               />
@@ -182,14 +208,18 @@ export function AnnouncementsCard({ token }: AnnouncementsCardProps) {
                 <span className="text-sm">启用公告</span>
                 <Switch
                   checked={form.enabled}
-                  onCheckedChange={(checked) => setForm((current) => ({ ...current, enabled: checked }))}
+                  onCheckedChange={(checked) =>
+                    setForm((current) => ({ ...current, enabled: checked }))
+                  }
                 />
               </div>
-              {mutationError && (
-                <p className="text-sm text-destructive">{mutationError}</p>
-              )}
+              {mutationError && <p className="text-sm text-destructive">{mutationError}</p>}
               <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
-                <Button variant="outline" className="w-full sm:w-auto" onClick={() => setDialogOpen(false)}>
+                <Button
+                  variant="outline"
+                  className="w-full sm:w-auto"
+                  onClick={() => setDialogOpen(false)}
+                >
                   取消
                 </Button>
                 <Button
@@ -204,9 +234,7 @@ export function AnnouncementsCard({ token }: AnnouncementsCardProps) {
           </DialogContent>
         </Dialog>
 
-        {error instanceof Error && (
-          <p className="text-sm text-destructive">{error.message}</p>
-        )}
+        {error instanceof Error && <p className="text-sm text-destructive">{error.message}</p>}
 
         {isLoading ? (
           <p className="text-sm text-muted-foreground">加载中...</p>
@@ -238,7 +266,11 @@ export function AnnouncementsCard({ token }: AnnouncementsCardProps) {
                         toggleMutation.mutate({ announcementId: announcement.id, enabled: checked })
                       }
                     />
-                    <Button variant="ghost" size="icon" onClick={() => openEditDialog(announcement)}>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => openEditDialog(announcement)}
+                    >
                       <Pencil className="h-4 w-4" />
                     </Button>
                     <Button
