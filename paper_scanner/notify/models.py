@@ -74,7 +74,7 @@ class Subscriber:
         selected_databases: Enabled databases for this subscriber. Empty means all.
         topic: Optional per-user PushPlus topic override.
         template: Optional per-user PushPlus template override.
-        delivery_method: 'pushplus', 'folder', or 'both'.
+        delivery_method: Delivery target, either 'pushplus' or 'folder'.
         tracking_folder_id: Folder id for folder-based delivery.
         sync_to_tracking_folder: Whether PushPlus also writes the tracking folder.
         ai_base_url: Optional OpenAI-compatible API base URL override.
