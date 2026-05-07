@@ -209,6 +209,8 @@ export function Sidebar({ className }: { className?: string }) {
                   alt="首页"
                   width={64}
                   height={64}
+                  loading="eager"
+                  fetchPriority="high"
                   className="h-16 w-16 object-contain"
                 />
               </Button>
