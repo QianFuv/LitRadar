@@ -2,17 +2,34 @@
 
 from __future__ import annotations
 
+import asyncio
 import html
 import json
+import os
 import re
+import unicodedata
 from typing import Any
-from urllib.parse import parse_qsl, urlencode, urljoin, urlsplit, urlunsplit
+from urllib.parse import urlencode, urljoin
 
 import httpx
+
+from scripts.shared.cnki_urls import (
+    CNKI_CHINESE_LANGUAGE,
+    with_cnki_chinese_language,
+)
+from scripts.shared.request_pools import (
+    build_async_client_pool,
+    build_proxy_pool,
+    close_async_client_pool,
+    request_pool_key,
+    select_async_client,
+)
 
 BASE_URL = "https://oversea.cnki.net"
 JOURNAL_PRODUCT_CODE = "BOJHD70J"
 DEFAULT_PCODE = "CJFD,CCJD"
+CNKI_REQUEST_ATTEMPTS = 3
+CNKI_RETRY_BASE_SECONDS = 1.0
 DEFAULT_HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -42,10 +59,12 @@ class CnkiClient:
         Args:
             timeout: HTTP request timeout in seconds.
         """
-        self._client = httpx.AsyncClient(
+        self.proxy_pool = build_proxy_pool(os.getenv("PROXY_POOL"))
+        self._clients = build_async_client_pool(
             timeout=timeout,
             follow_redirects=False,
             headers=DEFAULT_HEADERS,
+            proxy_pool=self.proxy_pool,
         )
 
     async def aclose(self) -> None:
@@ -55,7 +74,7 @@ class CnkiClient:
         Returns:
             None.
         """
-        await self._client.aclose()
+        await close_async_client_pool(self._clients)
 
     async def resolve_journal(self, row: dict[str, str]) -> dict[str, Any] | None:
         """
@@ -69,28 +88,53 @@ class CnkiClient:
         """
         issn = (row.get("issn") or "").strip()
         title = (row.get("title") or "").strip()
-        candidates: list[dict[str, Any]] = []
-        if issn:
-            candidates.extend(
-                await self.search_journals(
-                    field_name="SN",
-                    value=issn,
-                    operator="=",
-                    search_type="ISSN",
-                )
-            )
-        if title and not candidates:
-            candidates.extend(
+        if title:
+            details = await self._resolve_search_results(
                 await self.search_journals(
                     field_name="TI",
                     value=title,
                     operator="%",
                     search_type="刊名(曾用刊名)",
-                )
+                ),
+                title,
+                issn,
             )
+            if details:
+                return details
+
+        if issn:
+            return await self._resolve_search_results(
+                await self.search_journals(
+                    field_name="SN",
+                    value=issn,
+                    operator="=",
+                    search_type="ISSN",
+                ),
+                title,
+                issn,
+            )
+        return None
+
+    async def _resolve_search_results(
+        self,
+        candidates: list[dict[str, Any]],
+        title: str,
+        issn: str,
+    ) -> dict[str, Any] | None:
+        """
+        Resolve search candidates to a matching CNKI journal detail payload.
+
+        Args:
+            candidates: CNKI search result candidates.
+            title: Expected journal title.
+            issn: Expected journal ISSN.
+
+        Returns:
+            Matching CNKI journal detail payload or None.
+        """
         for candidate in candidates:
             details = await self.get_journal_detail(str(candidate["detail_url"]))
-            if details:
+            if details and _journal_detail_matches(details, title, issn):
                 return details
         return None
 
@@ -142,7 +186,7 @@ class CnkiClient:
         Returns:
             Journal detail payload or None.
         """
-        resolved_url = _with_chinese_language(detail_url)
+        resolved_url = with_cnki_chinese_language(detail_url)
         text = await self._get_text(resolved_url)
         pykm = _input_value(text, "pykm")
         if not pykm:
@@ -211,7 +255,7 @@ class CnkiClient:
             "pageIdx": 0,
             "pcode": str(journal.get("pcode") or DEFAULT_PCODE),
             "isEpublish": "",
-            "language": "CHS",
+            "language": CNKI_CHINESE_LANGUAGE,
         }
         text = await self._post_text(
             f"{BASE_URL}/knavi/journals/{pykm}/papers",
@@ -231,7 +275,7 @@ class CnkiClient:
         Returns:
             Article detail payload.
         """
-        resolved_url = _with_chinese_language(article_url)
+        resolved_url = with_cnki_chinese_language(article_url)
         text = await self._get_text(resolved_url, referer=BASE_URL)
         filename = _input_value(text, "paramfilename") or _input_value(
             text, "param-filename"
@@ -277,8 +321,7 @@ class CnkiClient:
             Response text.
         """
         headers = _request_headers(referer)
-        response = await self._client.get(url, headers=headers)
-        return _checked_text(response, url)
+        return await self._request_text_with_retries("GET", url, headers=headers)
 
     async def _post_text(
         self,
@@ -300,10 +343,53 @@ class CnkiClient:
             Response text.
         """
         headers = _request_headers(referer)
-        response = await self._client.post(
-            url, data=data, params=params, headers=headers
+        return await self._request_text_with_retries(
+            "POST",
+            url,
+            data=data,
+            params=params,
+            headers=headers,
         )
-        return _checked_text(response, url)
+
+    async def _request_text_with_retries(
+        self,
+        method: str,
+        url: str,
+        data: dict[str, Any] | None = None,
+        params: dict[str, Any] | None = None,
+        headers: dict[str, str] | None = None,
+    ) -> str:
+        """
+        Send a request with proxy failover and return response text.
+
+        Args:
+            method: HTTP method.
+            url: Request URL.
+            data: Optional form data.
+            params: Optional query parameters.
+            headers: Optional request headers.
+
+        Returns:
+            Response text.
+        """
+        request_key = request_pool_key(url, params)
+        total_attempts = max(CNKI_REQUEST_ATTEMPTS, len(self._clients))
+        for attempt in range(total_attempts):
+            client = select_async_client(self._clients, request_key, attempt)
+            try:
+                response = await client.request(
+                    method,
+                    url,
+                    data=data,
+                    params=params,
+                    headers=headers,
+                )
+                return _checked_text(response, url)
+            except (httpx.TransportError, CnkiRequestError):
+                if attempt >= total_attempts - 1:
+                    raise
+                await asyncio.sleep(_cnki_retry_delay(attempt, len(self._clients)))
+        raise RuntimeError("CNKI retry loop exited unexpectedly.")
 
 
 def _journal_search_state(field_name: str, value: str, operator: str) -> dict[str, Any]:
@@ -386,6 +472,91 @@ def _parse_journal_search_results(text: str) -> list[dict[str, Any]]:
             }
         )
     return candidates
+
+
+def _journal_detail_matches(details: dict[str, Any], title: str, issn: str) -> bool:
+    """
+    Check whether a CNKI journal detail payload matches a source CSV row.
+
+    Args:
+        details: CNKI journal detail payload.
+        title: Expected journal title.
+        issn: Expected journal ISSN.
+
+    Returns:
+        Whether the detail payload matches the source row.
+    """
+    detail_title = str(details.get("title") or "")
+    if title:
+        return _journal_titles_match(title, detail_title) or _journal_title_in_text(
+            title, str(details.get("raw_text") or "")
+        )
+    return bool(issn and _normalize_issn(issn) == _normalize_issn(details.get("issn")))
+
+
+def _journal_titles_match(expected: str, actual: str) -> bool:
+    """
+    Compare journal titles with punctuation and width normalization.
+
+    Args:
+        expected: Expected source CSV title.
+        actual: CNKI detail title.
+
+    Returns:
+        Whether the titles refer to the same journal.
+    """
+    normalized_expected = _normalize_journal_title(expected)
+    normalized_actual = _normalize_journal_title(actual)
+    if not normalized_expected or not normalized_actual:
+        return False
+    return normalized_expected == normalized_actual
+
+
+def _journal_title_in_text(expected: str, text: str) -> bool:
+    """
+    Check whether a journal title appears as a separated title token.
+
+    Args:
+        expected: Expected source CSV title.
+        text: CNKI visible detail text.
+
+    Returns:
+        Whether the title appears as its own separated token.
+    """
+    normalized_expected = _normalize_journal_title(expected)
+    if not normalized_expected:
+        return False
+    for part in re.split(r"[\s,;:，；：、|/\\()（）《》〈〉“”‘’]+", text):
+        if _normalize_journal_title(part) == normalized_expected:
+            return True
+    return False
+
+
+def _normalize_journal_title(value: str | None) -> str:
+    """
+    Normalize a journal title for CNKI matching.
+
+    Args:
+        value: Raw title.
+
+    Returns:
+        Normalized title.
+    """
+    text = unicodedata.normalize("NFKC", _clean_text(value) or "").casefold()
+    return re.sub(r"[\s\"'.,:;!?()\[\]{}<>《》〈〉“”‘’·\-–—_/\\]+", "", text)
+
+
+def _normalize_issn(value: Any) -> str:
+    """
+    Normalize an ISSN for exact comparison.
+
+    Args:
+        value: Raw ISSN value.
+
+    Returns:
+        Normalized ISSN.
+    """
+    return re.sub(r"[^0-9Xx]", "", str(value or "")).upper()
 
 
 def _parse_year_issues(text: str) -> list[dict[str, Any]]:
@@ -480,7 +651,7 @@ def _parse_article_row(
     )
     if not link_match:
         return None
-    article_url = _with_chinese_language(
+    article_url = with_cnki_chinese_language(
         urljoin(BASE_URL, html.unescape(link_match.group(1)))
     )
     platform_id = _regex_group(
@@ -635,7 +806,9 @@ def _link_with_text(text: str, label: str) -> str | None:
     for match in re.finditer(r'<a\b[^>]+href="([^"]+)"[^>]*>(.*?)</a>', text, re.S):
         if label not in _strip_tags(match.group(2)):
             continue
-        return urljoin(BASE_URL, html.unescape(match.group(1)))
+        return with_cnki_chinese_language(
+            urljoin(BASE_URL, html.unescape(match.group(1)))
+        )
     return None
 
 
@@ -661,35 +834,10 @@ def _openlink_url(
             "dbname": dbname,
             "filename": filename,
             "uniplatform": "OVERSEA",
-            "language": "CHS",
+            "language": CNKI_CHINESE_LANGUAGE,
         }
     )
     return f"{BASE_URL}/openlink/detailen?{query}"
-
-
-def _with_chinese_language(url: str) -> str:
-    """
-    Force CNKI article URLs to return Chinese metadata.
-
-    Args:
-        url: Original URL.
-
-    Returns:
-        URL with CNKI Chinese language parameters.
-    """
-    parts = urlsplit(url)
-    query = dict(parse_qsl(parts.query, keep_blank_values=True))
-    query["uniplatform"] = "OVERSEA"
-    query["language"] = "CHS"
-    return urlunsplit(
-        (
-            parts.scheme,
-            parts.netloc,
-            parts.path,
-            urlencode(query),
-            parts.fragment,
-        )
-    )
 
 
 def _checked_text(response: httpx.Response, url: str) -> str:
@@ -722,6 +870,22 @@ def _checked_text(response: httpx.Response, url: str) -> str:
     ) and not _looks_like_cnki_content(text):
         raise CnkiRequestError(f"CNKI verification required: {url}")
     return text
+
+
+def _cnki_retry_delay(attempt: int, client_count: int) -> float:
+    """
+    Calculate retry delay while prioritizing unused proxy failover.
+
+    Args:
+        attempt: Zero-based retry attempt.
+        client_count: HTTP client pool size.
+
+    Returns:
+        Delay in seconds.
+    """
+    if attempt + 1 < client_count:
+        return 0.0
+    return CNKI_RETRY_BASE_SECONDS * (attempt + 1)
 
 
 def _looks_like_cnki_content(text: str) -> bool:

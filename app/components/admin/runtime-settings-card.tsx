@@ -1,8 +1,8 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { DatabaseZap, Save } from 'lucide-react';
+import { DatabaseZap, Plus, Save, Trash2 } from 'lucide-react';
 
 import {
   adminGetRuntimeSettings,
@@ -21,6 +21,8 @@ type RuntimeSettingsCardProps = {
 };
 
 type RuntimeSettingsForm = Record<string, string>;
+
+const EMPTY_RUNTIME_SETTINGS: RuntimeSettingInfo[] = [];
 
 /**
  * Convert settings into editable form state.
@@ -49,6 +51,108 @@ function getSourceLabel(source: RuntimeSettingInfo['source']): string {
 }
 
 /**
+ * Check whether a setting should use the pool editor.
+ *
+ * @param setting - Runtime setting metadata.
+ * @returns Whether the setting stores a pool value.
+ */
+function isPoolSetting(setting: RuntimeSettingInfo): boolean {
+  return setting.field.endsWith('_pool');
+}
+
+/**
+ * Split a stored pool value into editable rows.
+ *
+ * @param value - Stored pool value.
+ * @returns Editable pool rows.
+ */
+function splitPoolValue(value: string): string[] {
+  if (!value) {
+    return [''];
+  }
+  const parts = value.includes('\n') ? value.split('\n') : value.split(/[,;]+/);
+  return parts.map((part) => part.trim());
+}
+
+/**
+ * Render the input type used for one pool row.
+ *
+ * @param inputType - Runtime setting input type.
+ * @returns Input type for an editable pool row.
+ */
+function getPoolInputType(
+  inputType: RuntimeSettingInfo['input_type'],
+): 'email' | 'password' | 'text' {
+  if (inputType === 'email' || inputType === 'password') {
+    return inputType;
+  }
+  return 'text';
+}
+
+type RuntimePoolEditorProps = {
+  id: string;
+  inputType: RuntimeSettingInfo['input_type'];
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+};
+
+/**
+ * Render a line-based editor for runtime pool values.
+ *
+ * @param props - Component props.
+ * @returns Runtime pool editor.
+ */
+function RuntimePoolEditor({ id, inputType, label, value, onChange }: RuntimePoolEditorProps) {
+  const rows = splitPoolValue(value);
+  const poolInputType = getPoolInputType(inputType);
+
+  const updateRow = (index: number, nextValue: string) => {
+    const nextRows = [...rows];
+    nextRows[index] = nextValue;
+    onChange(nextRows.join('\n'));
+  };
+
+  const addRow = () => {
+    onChange([...rows, ''].join('\n'));
+  };
+
+  const deleteRow = (index: number) => {
+    const nextRows = rows.filter((_, rowIndex) => rowIndex !== index);
+    onChange(nextRows.length > 0 ? nextRows.join('\n') : '');
+  };
+
+  return (
+    <div className="space-y-2">
+      {rows.map((row, index) => (
+        <div key={`${index}-${rows.length}`} className="flex items-center gap-2">
+          <Input
+            id={index === 0 ? id : undefined}
+            type={poolInputType}
+            value={row}
+            onChange={(event) => updateRow(index, event.target.value)}
+            aria-label={`${label} ${index + 1}`}
+          />
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-sm"
+            className="shrink-0 text-destructive hover:text-destructive"
+            onClick={() => deleteRow(index)}
+          >
+            <Trash2 className="h-4 w-4" />
+          </Button>
+        </div>
+      ))}
+      <Button type="button" variant="outline" size="sm" onClick={addRow}>
+        <Plus className="mr-2 h-4 w-4" />
+        添加
+      </Button>
+    </div>
+  );
+}
+
+/**
  * Render the admin runtime settings editor.
  *
  * @param props - Component props.
@@ -56,20 +160,26 @@ function getSourceLabel(source: RuntimeSettingInfo['source']): string {
  */
 export function RuntimeSettingsCard({ token }: RuntimeSettingsCardProps) {
   const queryClient = useQueryClient();
-  const [form, setForm] = useState<RuntimeSettingsForm>({});
+  const [formOverrides, setFormOverrides] = useState<RuntimeSettingsForm>({});
 
-  const { data: settings = [], error, isLoading } = useQuery({
+  const {
+    data: settings = EMPTY_RUNTIME_SETTINGS,
+    error,
+    isLoading,
+  } = useQuery({
     queryKey: ['admin-runtime-settings'],
     queryFn: () => adminGetRuntimeSettings(token),
   });
 
-  useEffect(() => {
-    setForm(buildForm(settings));
-  }, [settings]);
+  const baseForm = useMemo(() => buildForm(settings), [settings]);
+  const form = useMemo(() => {
+    return { ...baseForm, ...formOverrides };
+  }, [baseForm, formOverrides]);
 
   const saveMutation = useMutation({
     mutationFn: () => adminUpdateRuntimeSettings(token, { values: form }),
     onSuccess: (updatedSettings) => {
+      setFormOverrides({});
       queryClient.setQueryData(['admin-runtime-settings'], updatedSettings);
       queryClient.invalidateQueries({ queryKey: ['admin-runtime-settings'] });
     },
@@ -114,20 +224,33 @@ export function RuntimeSettingsCard({ token }: RuntimeSettingsCardProps) {
                         id={`runtime-${setting.field}`}
                         checked={value !== 'false'}
                         onCheckedChange={(checked) =>
-                          setForm((current) => ({
+                          setFormOverrides((current) => ({
                             ...current,
                             [setting.field]: checked ? 'true' : 'false',
                           }))
                         }
                       />
                     </div>
+                  ) : isPoolSetting(setting) ? (
+                    <RuntimePoolEditor
+                      id={`runtime-${setting.field}`}
+                      inputType={setting.input_type}
+                      label={setting.label}
+                      value={value}
+                      onChange={(nextValue) =>
+                        setFormOverrides((current) => ({
+                          ...current,
+                          [setting.field]: nextValue,
+                        }))
+                      }
+                    />
                   ) : (
                     <Input
                       id={`runtime-${setting.field}`}
                       type={setting.input_type}
                       value={value}
                       onChange={(event) =>
-                        setForm((current) => ({
+                        setFormOverrides((current) => ({
                           ...current,
                           [setting.field]: event.target.value,
                         }))
@@ -143,9 +266,7 @@ export function RuntimeSettingsCard({ token }: RuntimeSettingsCardProps) {
             })}
           </div>
         )}
-        {mutationError && (
-          <p className="text-sm text-destructive">{mutationError}</p>
-        )}
+        {mutationError && <p className="text-sm text-destructive">{mutationError}</p>}
         <div className="flex justify-end">
           <Button
             disabled={isLoading || saveMutation.isPending}

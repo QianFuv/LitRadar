@@ -23,6 +23,7 @@ from scripts.api.pagination import (
     parse_article_cursor,
     parse_sort,
 )
+from scripts.shared.cnki_urls import with_cnki_chinese_language
 from scripts.shared.constants import MAX_LIMIT
 
 
@@ -709,6 +710,19 @@ async def get_article(
     return ArticleRecord(**row)
 
 
+def _fulltext_redirect_url(url: object) -> str:
+    """
+    Normalize a full text redirect URL.
+
+    Args:
+        url: Raw URL value from the article row.
+
+    Returns:
+        Redirect URL with source-specific normalization applied.
+    """
+    return with_cnki_chinese_language(str(url or ""))
+
+
 async def redirect_article_fulltext(
     article_id: int,
     db: Annotated[aiosqlite.Connection, Depends(get_db_dependency)],
@@ -748,10 +762,10 @@ async def redirect_article_fulltext(
         raise HTTPException(status_code=404, detail="Article not found")
     full_text_file = row.get("full_text_file")
     if full_text_file:
-        return RedirectResponse(str(full_text_file))
+        return RedirectResponse(_fulltext_redirect_url(full_text_file))
     permalink = row.get("permalink")
     if permalink:
-        return RedirectResponse(str(permalink))
+        return RedirectResponse(_fulltext_redirect_url(permalink))
     doi = row.get("doi")
     if doi:
         doi_text = str(doi).strip()

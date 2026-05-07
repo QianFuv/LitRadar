@@ -86,6 +86,35 @@ async def upsert_articles(db: DatabaseClient, records: list[dict[str, Any]]) -> 
     await db.executemany(ARTICLE_UPSERT, rows)
 
 
+async def delete_articles(db: DatabaseClient, article_ids: list[int]) -> None:
+    """
+    Delete article rows and derived index rows.
+
+    Args:
+        db: Database client.
+        article_ids: Article IDs to delete.
+
+    Returns:
+        None.
+    """
+    if not article_ids:
+        return
+    unique_ids = list(dict.fromkeys(article_ids))
+    for batch in chunked(unique_ids, ARTICLE_LISTING_BATCH_SIZE):
+        placeholders = ", ".join(["?"] * len(batch))
+        params = tuple(batch)
+        await db.execute(
+            f"DELETE FROM article_search WHERE rowid IN ({placeholders})", params
+        )
+        await db.execute(
+            f"DELETE FROM article_listing WHERE article_id IN ({placeholders})",
+            params,
+        )
+        await db.execute(
+            f"DELETE FROM articles WHERE article_id IN ({placeholders})", params
+        )
+
+
 async def upsert_article_search(
     db: DatabaseClient,
     records: list[dict[str, Any]],

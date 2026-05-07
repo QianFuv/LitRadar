@@ -39,35 +39,42 @@ class RuntimeConfigDefinition:
 
 RUNTIME_CONFIG_DEFINITIONS = (
     RuntimeConfigDefinition(
-        field="openalex_api_key",
-        env_name="OPENALEX_API_KEY",
-        label="OpenAlex API key",
+        field="openalex_api_key_pool",
+        env_name="OPENALEX_API_KEY_POOL",
+        label="OpenAlex API key pool",
         input_type="password",
         is_secret=True,
-        description="OpenAlex authenticated request key.",
+        description="OpenAlex authenticated request key pool.",
     ),
     RuntimeConfigDefinition(
-        field="crossref_mailto",
-        env_name="CROSSREF_MAILTO",
-        label="Crossref mailto",
-        input_type="email",
-        is_secret=False,
-        description="Contact email for Crossref polite pool requests.",
+        field="proxy_pool",
+        env_name="PROXY_POOL",
+        label="Proxy pool",
+        input_type="password",
+        is_secret=True,
+        description=(
+            "Comma- or semicolon-separated proxy URLs for scholarly and CNKI requests."
+        ),
     ),
     RuntimeConfigDefinition(
-        field="unpaywall_email",
-        env_name="UNPAYWALL_EMAIL",
-        label="Unpaywall email",
-        input_type="email",
+        field="crossref_mailto_pool",
+        env_name="CROSSREF_MAILTO_POOL",
+        label="Crossref mailto pool",
+        input_type="text",
         is_secret=False,
-        description="Contact email required by Unpaywall.",
+        description="Comma- or semicolon-separated Crossref contact emails.",
+    ),
+    RuntimeConfigDefinition(
+        field="unpaywall_email_pool",
+        env_name="UNPAYWALL_EMAIL_POOL",
+        label="Unpaywall email pool",
+        input_type="text",
+        is_secret=False,
+        description="Comma- or semicolon-separated Unpaywall contact emails.",
     ),
 )
 RUNTIME_CONFIG_BY_FIELD = {
     definition.field: definition for definition in RUNTIME_CONFIG_DEFINITIONS
-}
-RUNTIME_CONFIG_BY_ENV = {
-    definition.env_name: definition for definition in RUNTIME_CONFIG_DEFINITIONS
 }
 AUTH_DB_PATH = PROJECT_ROOT / "data" / "auth.sqlite"
 
@@ -135,9 +142,8 @@ def read_database_runtime_env(db_path: Path = AUTH_DB_PATH) -> dict[str, str]:
     finally:
         if conn is not None:
             conn.close()
-    return {
-        str(key): str(value) for key, value in rows if str(key) in RUNTIME_CONFIG_BY_ENV
-    }
+    env_names = {definition.env_name for definition in RUNTIME_CONFIG_DEFINITIONS}
+    return {str(key): str(value) for key, value in rows if str(key) in env_names}
 
 
 def apply_runtime_config(db_path: Path = AUTH_DB_PATH) -> dict[str, str]:

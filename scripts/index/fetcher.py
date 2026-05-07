@@ -6,11 +6,13 @@ import asyncio
 from pathlib import Path
 from typing import Any
 
+import httpx
 from tqdm import tqdm
 
 from scripts.cnki import CnkiClient
 from scripts.index.db.client import DatabaseClient
 from scripts.index.db.operations import (
+    delete_articles,
     get_completed_years,
     get_issue_ids_with_articles,
     is_journal_complete,
@@ -43,6 +45,54 @@ from scripts.shared.converters import chunked
 CNKI_DETAIL_ATTEMPTS = 3
 CNKI_DETAIL_RETRY_SECONDS = 1.0
 CNKI_DETAIL_WORKER_LIMIT = 32
+
+
+def candidate_issns_from_row(csv_row: dict[str, str]) -> list[str]:
+    """
+    Build ordered ISSN candidates from a scholarly CSV row.
+
+    Args:
+        csv_row: Source CSV row.
+
+    Returns:
+        Unique ISSN candidates in lookup order.
+    """
+    candidates: list[str] = []
+    for value in (
+        csv_row.get("issn") or "",
+        csv_row.get("all_issns") or "",
+        csv_row.get("id") or "",
+    ):
+        for part in value.split(";"):
+            candidate = part.strip()
+            if candidate and candidate not in candidates:
+                candidates.append(candidate)
+    return candidates
+
+
+def split_article_records_by_authors(
+    records: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[int]]:
+    """
+    Split article records into writable records and no-author article IDs.
+
+    Args:
+        records: Article records to classify.
+
+    Returns:
+        Tuple of records with authors and article IDs to delete.
+    """
+    kept_records: list[dict[str, Any]] = []
+    deleted_article_ids: list[int] = []
+    for record in records:
+        authors = str(record.get("authors") or "").strip()
+        if authors:
+            kept_records.append(record)
+            continue
+        article_id = record.get("article_id")
+        if isinstance(article_id, int):
+            deleted_article_ids.append(article_id)
+    return kept_records, deleted_article_ids
 
 
 def select_update_issue_ids(
@@ -107,13 +157,34 @@ async def process_scholarly_journal(
     if resume and not update and await is_journal_complete(db, journal_id):
         return
 
-    issn = (row.get("issn") or row.get("id") or "").strip()
-    if not issn:
+    issn_candidates = candidate_issns_from_row(row)
+    if not issn_candidates:
         print(f"  - Skipping scholarly journal with missing ISSN: {row.get('title')}")
         return
 
-    works = await client.fetch_journal_works(issn)
-    journal_record = build_scholarly_journal_record(journal_id, row, works)
+    issn = issn_candidates[0]
+    works: list[dict[str, Any]] = []
+    last_error: Exception | None = None
+    for candidate in issn_candidates:
+        try:
+            works = await client.fetch_journal_works(candidate)
+            issn = candidate
+            break
+        except httpx.HTTPStatusError as exc:
+            last_error = exc
+            if exc.response.status_code != 404:
+                raise
+    else:
+        if last_error:
+            print(
+                "  - Skipping scholarly journal with unavailable ISSN: "
+                f"{row.get('title')}"
+            )
+            return
+
+    journal_row = dict(row)
+    journal_row["issn"] = issn
+    journal_record = build_scholarly_journal_record(journal_id, journal_row, works)
     meta_record = build_meta_record(journal_id, csv_path, row)
     journal_title = journal_record.get("title") or row.get("title") or ""
 
@@ -157,6 +228,12 @@ async def process_scholarly_journal(
             await refresh_article_listing_for_issues(
                 db, [record["issue_id"] for record in issue_records]
             )
+
+    article_records, deleted_article_ids = split_article_records_by_authors(
+        article_records
+    )
+    if deleted_article_ids:
+        await delete_articles(db, deleted_article_ids)
 
     if article_records:
         for batch in chunked(article_records, 500):
@@ -307,6 +384,11 @@ async def process_cnki_journal(
             batch_records = await fetch_cnki_issue_batch(
                 client, semaphore, details, journal_id, batch
             )
+            batch_records, deleted_article_ids = split_article_records_by_authors(
+                batch_records
+            )
+            if deleted_article_ids:
+                await delete_articles(db, deleted_article_ids)
             if batch_records:
                 await upsert_articles(db, batch_records)
                 await upsert_article_search(db, batch_records, journal_title)

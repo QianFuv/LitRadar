@@ -14,6 +14,15 @@ from urllib.parse import quote
 import httpx
 
 from scripts.shared.converters import chunked
+from scripts.shared.request_pools import (
+    build_async_client_pool,
+    build_proxy_pool,
+    build_value_pool,
+    close_async_client_pool,
+    request_pool_key,
+    select_async_client,
+    select_pool_value,
+)
 
 CROSSREF_BASE_URL = "https://api.crossref.org/v1"
 OPENALEX_BASE_URL = "https://api.openalex.org"
@@ -31,27 +40,23 @@ class ScholarlyClient:
 
     Args:
         timeout: HTTP request timeout in seconds.
-        mailto: Contact email for Crossref polite pool requests.
-        openalex_api_key: Optional OpenAlex API key.
-        unpaywall_email: Contact email required by Unpaywall.
     """
 
     def __init__(
         self,
         timeout: int = 20,
-        mailto: str | None = None,
-        openalex_api_key: str | None = None,
-        unpaywall_email: str | None = None,
     ) -> None:
-        self.mailto = mailto or os.getenv("CROSSREF_MAILTO") or ""
-        self.openalex_api_key = openalex_api_key or os.getenv("OPENALEX_API_KEY") or ""
-        self.unpaywall_email = (
-            unpaywall_email or os.getenv("UNPAYWALL_EMAIL") or self.mailto
+        self.mailto_pool = build_value_pool(os.getenv("CROSSREF_MAILTO_POOL"))
+        self.openalex_api_key_pool = build_value_pool(
+            os.getenv("OPENALEX_API_KEY_POOL")
         )
-        self._client = httpx.AsyncClient(
+        self.unpaywall_email_pool = build_value_pool(os.getenv("UNPAYWALL_EMAIL_POOL"))
+        self.proxy_pool = build_proxy_pool(os.getenv("PROXY_POOL"))
+        self._clients = build_async_client_pool(
             timeout=timeout,
             headers={"User-Agent": self._build_user_agent()},
             follow_redirects=True,
+            proxy_pool=self.proxy_pool,
         )
 
     async def aclose(self) -> None:
@@ -61,7 +66,7 @@ class ScholarlyClient:
         Returns:
             None.
         """
-        await self._client.aclose()
+        await close_async_client_pool(self._clients)
 
     async def fetch_journal_works(
         self,
@@ -93,14 +98,12 @@ class ScholarlyClient:
             "sort": "published",
             "order": "asc",
         }
-        if self.mailto:
-            params["mailto"] = self.mailto
-
         works: list[dict[str, Any]] = []
         while True:
             response = await self._get_with_retries(
                 f"{CROSSREF_BASE_URL}/journals/{quote(issn)}/works",
                 params=params,
+                param_pools={"mailto": self.mailto_pool},
             )
             message = response.json().get("message") or {}
             items = message.get("items") or []
@@ -139,13 +142,14 @@ class ScholarlyClient:
                     "abstract_inverted_index,topics,primary_topic,funders,awards"
                 ),
             }
-            if self.openalex_api_key:
-                params["api_key"] = self.openalex_api_key
-            if self.mailto:
-                params["mailto"] = self.mailto
             try:
                 response = await self._get_with_retries(
-                    f"{OPENALEX_BASE_URL}/works", params=params
+                    f"{OPENALEX_BASE_URL}/works",
+                    params=params,
+                    param_pools={
+                        "api_key": self.openalex_api_key_pool,
+                        "mailto": self.mailto_pool,
+                    },
                 )
             except httpx.HTTPError:
                 await asyncio.sleep(0)
@@ -172,7 +176,7 @@ class ScholarlyClient:
         Returns:
             Mapping from normalized DOI to Unpaywall payload.
         """
-        if not self.unpaywall_email:
+        if not self.unpaywall_email_pool:
             return {}
 
         normalized = [doi for doi in {_normalize_doi(doi) for doi in dois} if doi]
@@ -193,7 +197,8 @@ class ScholarlyClient:
                 try:
                     response = await self._get_with_retries(
                         f"{UNPAYWALL_BASE_URL}/{quote(doi, safe='')}",
-                        params={"email": self.unpaywall_email},
+                        params={},
+                        param_pools={"email": self.unpaywall_email_pool},
                         allowed_status_codes={404},
                     )
                 except httpx.HTTPError:
@@ -211,6 +216,7 @@ class ScholarlyClient:
         self,
         url: str,
         params: Mapping[str, str | int] | None = None,
+        param_pools: Mapping[str, list[str]] | None = None,
         allowed_status_codes: set[int] | None = None,
         max_retries: int = DEFAULT_MAX_RETRIES,
     ) -> httpx.Response:
@@ -220,6 +226,7 @@ class ScholarlyClient:
         Args:
             url: Request URL.
             params: Query parameters.
+            param_pools: Query parameter value pools for retry failover.
             allowed_status_codes: Status codes that should be returned as success.
             max_retries: Maximum retry attempts after the initial request.
 
@@ -227,13 +234,29 @@ class ScholarlyClient:
             HTTP response.
         """
         allowed = allowed_status_codes or set()
-        for attempt in range(max_retries + 1):
+        request_key = request_pool_key(url, params)
+        total_attempts = max_retries + 1
+        failover_count = _failover_count(param_pools, len(self._clients))
+        for attempt in range(total_attempts):
+            request_params = _params_for_attempt(
+                params,
+                param_pools,
+                request_key,
+                attempt,
+            )
             try:
-                response = await self._client.get(url, params=params)
+                client = select_async_client(
+                    self._clients,
+                    request_key,
+                    attempt,
+                )
+                response = await client.get(url, params=request_params)
             except httpx.TransportError:
-                if attempt >= max_retries:
+                if attempt >= total_attempts - 1:
                     raise
-                await asyncio.sleep(_retry_delay(None, attempt))
+                await asyncio.sleep(
+                    _retry_delay_for_attempt(None, attempt, failover_count)
+                )
                 continue
 
             if response.status_code in allowed:
@@ -241,9 +264,11 @@ class ScholarlyClient:
             if response.status_code not in RETRY_STATUS_CODES:
                 response.raise_for_status()
                 return response
-            if attempt >= max_retries:
+            if attempt >= total_attempts - 1:
                 response.raise_for_status()
-            await asyncio.sleep(_retry_delay(response, attempt))
+            await asyncio.sleep(
+                _retry_delay_for_attempt(response, attempt, failover_count)
+            )
 
         raise RuntimeError("Retry loop exited unexpectedly.")
 
@@ -254,8 +279,9 @@ class ScholarlyClient:
         Returns:
             User-Agent string.
         """
-        if self.mailto:
-            return f"Paper-Scanner/0.1 (mailto:{self.mailto})"
+        mailto = next(iter(self.mailto_pool), "")
+        if mailto:
+            return f"Paper-Scanner/0.1 (mailto:{mailto})"
         return DEFAULT_USER_AGENT
 
 
@@ -280,6 +306,72 @@ def _normalize_doi(value: Any) -> str | None:
             lowered = lowered[len(prefix) :]
             break
     return lowered.strip() or None
+
+
+def _params_for_attempt(
+    params: Mapping[str, str | int] | None,
+    param_pools: Mapping[str, list[str]] | None,
+    request_key: str,
+    attempt: int,
+) -> dict[str, str | int]:
+    """
+    Build request parameters with retry-specific pool values.
+
+    Args:
+        params: Base query parameters.
+        param_pools: Query parameter value pools.
+        request_key: Stable request selection key.
+        attempt: Retry attempt offset.
+
+    Returns:
+        Request parameters for the attempt.
+    """
+    request_params: dict[str, str | int] = dict(params or {})
+    for name, pool in (param_pools or {}).items():
+        value = select_pool_value(pool, request_key, attempt)
+        if value:
+            request_params[name] = value
+    return request_params
+
+
+def _failover_count(
+    param_pools: Mapping[str, list[str]] | None,
+    client_count: int,
+) -> int:
+    """
+    Calculate the number of retry slots before backoff is needed.
+
+    Args:
+        param_pools: Query parameter value pools.
+        client_count: HTTP client pool size.
+
+    Returns:
+        Largest pool size used by a request.
+    """
+    counts = [max(1, client_count)]
+    counts.extend(len(pool) for pool in (param_pools or {}).values() if pool)
+    return max(counts)
+
+
+def _retry_delay_for_attempt(
+    response: httpx.Response | None,
+    attempt: int,
+    failover_count: int,
+) -> float:
+    """
+    Calculate retry delay while prioritizing unused pool failover.
+
+    Args:
+        response: Optional HTTP response.
+        attempt: Zero-based retry attempt.
+        failover_count: Number of failover candidates.
+
+    Returns:
+        Delay in seconds.
+    """
+    if attempt + 1 < failover_count:
+        return 0.0
+    return _retry_delay(response, attempt)
 
 
 def _retry_delay(response: httpx.Response | None, attempt: int) -> float:
