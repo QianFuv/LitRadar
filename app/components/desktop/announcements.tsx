@@ -66,7 +66,7 @@ function readDismissedUntil(id: number): number | null {
  * @param announcement - Announcement record.
  * @returns Whether it is dismissed.
  */
-function isDismissed(announcement: AnnouncementInfo): boolean {
+export function isDismissed(announcement: AnnouncementInfo): boolean {
   return readDismissedUntil(announcement.id) !== null;
 }
 
@@ -87,7 +87,10 @@ function getEndOfToday(): number {
  * @param announcements - Announcements to dismiss.
  * @param dismissedUntil - Dismissal timestamp.
  */
-function dismissAnnouncements(announcements: AnnouncementInfo[], dismissedUntil: number): void {
+export function dismissAnnouncements(
+  announcements: AnnouncementInfo[],
+  dismissedUntil: number,
+): void {
   for (const announcement of announcements) {
     window.localStorage.setItem(getDismissKey(announcement.id), String(dismissedUntil));
   }
