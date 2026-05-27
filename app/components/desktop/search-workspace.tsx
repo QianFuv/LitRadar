@@ -15,22 +15,15 @@ import {
   Search as SearchIcon,
   SlidersHorizontal,
   Trash2,
-  Award,
-  FileText,
-  Flame,
-  TrendingUp,
 } from 'lucide-react';
-import Link from 'next/link';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { AnnouncementsModal } from '@/components/desktop/announcements';
 import { ArticleCard, ArticleDetailPanel } from '@/components/desktop/article-tools';
 import {
-  Badge,
   Button,
   CheckboxRow,
   EmptyState,
-  Field,
   IconButton,
   Modal,
   Notice,
@@ -47,13 +40,7 @@ import {
   getArticles,
   getDatabases,
   getJournalOptions,
-  getYears,
-  getWeeklyUpdates,
-  getAnnouncements,
   type Article,
-  type JournalOption,
-  type ValueCount,
-  type YearSummary,
 } from '@/lib/client-api';
 import { useAuthSession } from '@/lib/auth-session';
 import {
@@ -66,19 +53,10 @@ import { formatCount } from '@/lib/format';
 
 const DEFAULT_PAGE_SIZE = 20;
 const PAGE_SIZE_OPTIONS = [10, 20, 50];
-const COMMON_JOURNAL_NAMES = [
-  'Nature',
-  'Science',
-  'Cell',
-  'PNAS',
-  'IEEE TPAMI',
-  'JAMA',
-  'Lancet',
-  'ACM TOG',
-];
+
 
 type SearchScope = 'topic' | 'title' | 'author' | 'doi';
-type SortMode = 'relevance' | 'date-desc' | 'title';
+type SortMode = 'date-desc' | 'date-asc';
 type ViewMode = 'list' | 'grid';
 type AdvancedSearchLogic = 'AND' | 'OR' | 'NOT';
 type AdvancedSearchField = 'all' | 'title' | 'abstract' | 'authors' | 'doi' | 'journal_title';
@@ -92,22 +70,11 @@ interface AdvancedSearchRow {
 
 interface AdvancedSearchPayload {
   query: string;
-  database: string;
-  yearMin: number | null;
-  yearMax: number | null;
-  areas: string[];
 }
 
 interface AdvancedSearchModalProps {
-  activeDb: string;
-  areaOptions: ValueCount[];
-  databases: string[];
   open: boolean;
   query: string;
-  selectedAreas: string[];
-  yearMax: number | null;
-  yearMin: number | null;
-  years: YearSummary[];
   onApply: (payload: AdvancedSearchPayload) => void;
   onClose: () => void;
 }
@@ -182,6 +149,7 @@ function buildArticleParams(
   yearMin: number | null,
   yearMax: number | null,
   pageSize: number,
+  sort: string,
 ): URLSearchParams {
   const params = new URLSearchParams();
   if (query.trim()) {
@@ -200,6 +168,11 @@ function buildArticleParams(
     params.set('date_to', `${yearMax}-12-31`);
   }
   params.set('limit', String(pageSize));
+  if (sort === 'date-desc') {
+    params.set('sort', 'date:desc');
+  } else if (sort === 'date-asc') {
+    params.set('sort', 'date:asc');
+  }
   return params;
 }
 
@@ -274,8 +247,8 @@ function sortArticles(articles: Article[], sortMode: SortMode): Article[] {
   if (sortMode === 'date-desc') {
     return nextArticles.sort((left, right) => (right.date || '').localeCompare(left.date || ''));
   }
-  if (sortMode === 'title') {
-    return nextArticles.sort((left, right) => (left.title || '').localeCompare(right.title || ''));
+  if (sortMode === 'date-asc') {
+    return nextArticles.sort((left, right) => (left.date || '').localeCompare(right.date || ''));
   }
   return nextArticles;
 }
@@ -309,20 +282,7 @@ function getDatabaseLabel(dbName: string): string {
   return dbName.replace(/\.sqlite$/i, '').replace(/[-_]/g, ' ');
 }
 
-/**
- * Resolve preferred common-journal chips.
- *
- * @param options - Backend journal options.
- * @returns Journal options used as chips.
- */
-function getCommonJournalOptions(options: JournalOption[]): JournalOption[] {
-  const matched = COMMON_JOURNAL_NAMES.map((name) =>
-    options.find((option) =>
-      (option.title || option.journal_id).toLowerCase().includes(name.toLowerCase()),
-    ),
-  ).filter(Boolean) as JournalOption[];
-  return matched.length > 0 ? matched.slice(0, 4) : options.slice(0, 4);
-}
+
 
 /**
  * Create a blank advanced search row.
@@ -402,15 +362,7 @@ function buildAdvancedQuery(rows: AdvancedSearchRow[]): string {
     .join(' ');
 }
 
-/**
- * Parse a selected year string into a query parameter value.
- *
- * @param value - Selected input value.
- * @returns Parsed year or null.
- */
-function parseSelectedYear(value: string): number | null {
-  return parseIntegerParam(value || null);
-}
+
 
 /**
  * Render the search-history block shown in the sidebar.
@@ -451,259 +403,7 @@ function SearchHistoryPanel({
   );
 }
 
-/**
- * Render a card displaying the summary of weekly updates.
- *
- * @param props - Weekly summary props.
- * @returns Weekly updates summary panel.
- */
-function WeeklySummaryCard({ token }: { token: string }) {
-  const weeklyQuery = useQuery({
-    queryKey: ['weekly-updates'],
-    queryFn: () => getWeeklyUpdates(token),
-    enabled: Boolean(token),
-    staleTime: 5 * 60_000,
-  });
 
-  const totalWeeklyArticles = useMemo(() => {
-    if (!weeklyQuery.data?.databases) {
-      return 0;
-    }
-    return weeklyQuery.data.databases.reduce(
-      (sum, database) => sum + database.new_article_count,
-      0,
-    );
-  }, [weeklyQuery.data]);
-
-  const dateRangeLabel = useMemo(() => {
-    if (!weeklyQuery.data) {
-      return '';
-    }
-    const start = new Date(weeklyQuery.data.window_start);
-    const end = new Date(weeklyQuery.data.window_end);
-    if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) {
-      return '';
-    }
-    const formatPart = (date: Date) => `${date.getMonth() + 1}.${date.getDate()}`;
-    return `${formatPart(start)} - ${formatPart(end)}`;
-  }, [weeklyQuery.data]);
-
-  if (weeklyQuery.isPending && !weeklyQuery.data) {
-    return (
-      <Panel title="每周更新摘要" meta="加载中...">
-        <div className="weekly-summary-grid">
-          <Skeleton className="h-16" />
-          <Skeleton className="h-16" />
-          <Skeleton className="h-16" />
-          <Skeleton className="h-16" />
-        </div>
-      </Panel>
-    );
-  }
-
-  const newLitCount = totalWeeklyArticles || 1248;
-  const highCitedCount = Math.round(newLitCount * 0.07) || 87;
-  const hotTopicsCount = Math.round(newLitCount * 0.02) || 23;
-  const trackingCount = Math.round(newLitCount * 0.125) || 156;
-
-  return (
-    <Panel
-      title={`每周更新摘要${dateRangeLabel ? ` (${dateRangeLabel})` : ''}`}
-      actions={
-        <Link
-          className="text-teal hover:underline text-xs"
-          href="/weekly-updates"
-          style={{ color: 'var(--teal)', fontWeight: 600 }}
-        >
-          查看全部 &gt;
-        </Link>
-      }
-    >
-      <div className="weekly-summary-grid">
-        <div className="weekly-summary-tile">
-          <div className="weekly-summary-tile__header">
-            <FileText size={14} color="var(--green)" />
-            <span>新增文献</span>
-          </div>
-          <div className="weekly-summary-tile__value">{newLitCount.toLocaleString('zh-CN')}</div>
-          <div className="weekly-summary-tile__comparison" style={{ color: 'var(--green)' }}>
-            较上周 ↑ 12.6%
-          </div>
-        </div>
-
-        <div className="weekly-summary-tile">
-          <div className="weekly-summary-tile__header">
-            <Award size={14} color="var(--violet)" />
-            <span>高被引论文</span>
-          </div>
-          <div className="weekly-summary-tile__value">{highCitedCount.toLocaleString('zh-CN')}</div>
-          <div className="weekly-summary-tile__comparison" style={{ color: 'var(--green)' }}>
-            较上周 ↑ 8.1%
-          </div>
-        </div>
-
-        <div className="weekly-summary-tile">
-          <div className="weekly-summary-tile__header">
-            <Flame size={14} color="var(--coral)" />
-            <span>热点主题</span>
-          </div>
-          <div className="weekly-summary-tile__value">{hotTopicsCount.toLocaleString('zh-CN')}</div>
-          <div className="weekly-summary-tile__comparison" style={{ color: 'var(--green)' }}>
-            较上周 ↑ 15.3%
-          </div>
-        </div>
-
-        <div className="weekly-summary-tile">
-          <div className="weekly-summary-tile__header">
-            <TrendingUp size={14} color="var(--blue)" />
-            <span>追踪更新</span>
-          </div>
-          <div className="weekly-summary-tile__value">{trackingCount.toLocaleString('zh-CN')}</div>
-          <div className="weekly-summary-tile__comparison" style={{ color: 'var(--green)' }}>
-            较上周 ↑ 9.7%
-          </div>
-        </div>
-      </div>
-    </Panel>
-  );
-}
-
-/**
- * Render a card displaying active system announcements.
- *
- * @returns Announcements panel card.
- */
-function AnnouncementsCard() {
-  const [isModalOpen, setIsModalOpen] = useState(false);
-  const { data: announcements = [], isPending } = useQuery({
-    queryKey: ['announcements'],
-    queryFn: getAnnouncements,
-    refetchInterval: 60_000,
-  });
-
-  const activeAnnouncements = useMemo(() => {
-    return announcements.filter((a) => a.enabled);
-  }, [announcements]);
-
-  const topAnnouncements = useMemo(() => {
-    return activeAnnouncements.slice(0, 3);
-  }, [activeAnnouncements]);
-
-  if (isPending && announcements.length === 0) {
-    return (
-      <Panel title="公告" meta="加载中...">
-        <Skeleton className="h-10" />
-        <Skeleton className="h-10" />
-      </Panel>
-    );
-  }
-
-  const formatAnnouncementDate = (timestamp: number) => {
-    const date = new Date(timestamp * 1000);
-    const y = date.getFullYear();
-    const m = String(date.getMonth() + 1).padStart(2, '0');
-    const d = String(date.getDate()).padStart(2, '0');
-    return `${y}-${m}-${d}`;
-  };
-
-  const getPriorityLabel = (priority: string) => {
-    if (priority === 'high') {
-      return '重要';
-    }
-    if (priority === 'normal') {
-      return '更新';
-    }
-    return '功能';
-  };
-
-  const getPriorityTone = (priority: string): 'coral' | 'violet' | 'neutral' => {
-    if (priority === 'high') {
-      return 'coral';
-    }
-    if (priority === 'normal') {
-      return 'violet';
-    }
-    return 'neutral';
-  };
-
-  return (
-    <>
-      <Panel
-        title="公告"
-        actions={
-          <button
-            className="text-teal hover:underline text-xs"
-            style={{
-              color: 'var(--teal)',
-              fontWeight: 600,
-              background: 'none',
-              border: 'none',
-              cursor: 'pointer',
-            }}
-            type="button"
-            onClick={() => setIsModalOpen(true)}
-          >
-            查看全部 &gt;
-          </button>
-        }
-      >
-        <div className="announcement-card-list">
-          {topAnnouncements.length === 0 ? (
-            <span className="panel__meta">暂无公告</span>
-          ) : (
-            topAnnouncements.map((item) => (
-              <div key={item.id} className="announcement-card-item">
-                <div className="announcement-card-item__content">
-                  <Badge tone={getPriorityTone(item.priority)}>
-                    {getPriorityLabel(item.priority)}
-                  </Badge>
-                  <span className="announcement-card-item__title" title={item.title}>
-                    {item.title}
-                  </span>
-                </div>
-                <span className="announcement-card-item__date">
-                  {formatAnnouncementDate(item.updated_at || item.created_at)}
-                </span>
-              </div>
-            ))
-          )}
-        </div>
-      </Panel>
-
-      {isModalOpen ? (
-        <Modal open={isModalOpen} title="所有系统公告" onClose={() => setIsModalOpen(false)}>
-          <div className="list-stack" style={{ maxHeight: 400, overflowY: 'auto' }}>
-            {activeAnnouncements.map((item) => (
-              <div
-                key={item.id}
-                className="notice"
-                style={{
-                  display: 'flex',
-                  flexDirection: 'column',
-                  gap: 6,
-                  padding: '10px 0',
-                  borderBottom: '1px solid var(--line)',
-                }}
-              >
-                <div className="toolbar toolbar--wrap">
-                  <Badge tone={getPriorityTone(item.priority)}>
-                    {getPriorityLabel(item.priority)}
-                  </Badge>
-                  <time className="panel__meta">
-                    {formatAnnouncementDate(item.updated_at || item.created_at)}
-                  </time>
-                </div>
-                <strong style={{ fontSize: 14, color: 'var(--ink)' }}>{item.title}</strong>
-                <p style={{ fontSize: 12, color: 'var(--ink-soft)', margin: 0 }}>{item.message}</p>
-              </div>
-            ))}
-            {activeAnnouncements.length === 0 && <EmptyState>暂无系统公告。</EmptyState>}
-          </div>
-        </Modal>
-      ) : null}
-    </>
-  );
-}
 
 /**
  * Render the advanced search modal.
@@ -711,30 +411,14 @@ function AnnouncementsCard() {
  * @param props - Advanced modal props.
  * @returns Advanced search modal.
  */
-function AdvancedSearchModal({
-  activeDb,
-  areaOptions,
-  databases,
-  onApply,
-  onClose,
-  open,
-  query,
-  selectedAreas,
-  yearMax,
-  yearMin,
-  years,
-}: AdvancedSearchModalProps) {
+function AdvancedSearchModal({ onApply, onClose, open, query }: AdvancedSearchModalProps) {
   const [rows, setRows] = useState<AdvancedSearchRow[]>(() => createAdvancedSearchRows(query));
-  const [selectedDb, setSelectedDb] = useState(activeDb);
-  const [selectedYearMin, setSelectedYearMin] = useState(yearMin ? String(yearMin) : '');
-  const [selectedYearMax, setSelectedYearMax] = useState(yearMax ? String(yearMax) : '');
-  const [selectedAreaValues, setSelectedAreaValues] = useState<string[]>(selectedAreas);
 
   return (
     <Modal
       open={open}
       title="高级检索"
-      description="组合检索条件、数据库、年份与研究领域"
+      description="组合多个检索条件进行精确匹配"
       onClose={onClose}
       footer={
         <>
@@ -746,11 +430,7 @@ function AdvancedSearchModal({
             variant="primary"
             onClick={() => {
               onApply({
-                areas: selectedAreaValues,
-                database: selectedDb,
                 query: buildAdvancedQuery(rows),
-                yearMax: parseSelectedYear(selectedYearMax),
-                yearMin: parseSelectedYear(selectedYearMin),
               });
               onClose();
             }}
@@ -852,71 +532,6 @@ function AdvancedSearchModal({
           </Button>
         </div>
       </div>
-      <div className="advanced-search-filters">
-        <div className="advanced-search-filters__column">
-          <Field label="数据库">
-            <SelectInput value={selectedDb} onChange={(event) => setSelectedDb(event.target.value)}>
-              {databases.map((dbName) => (
-                <option key={dbName} value={dbName}>
-                  {getDatabaseLabel(dbName)}
-                </option>
-              ))}
-            </SelectInput>
-          </Field>
-          <Field label="发表年份">
-            <div className="year-range">
-              <SelectInput
-                aria-label="起始年份"
-                value={selectedYearMin}
-                onChange={(event) => setSelectedYearMin(event.target.value)}
-              >
-                <option value="">起始</option>
-                {years.map((year) => (
-                  <option key={year.year} value={year.year}>
-                    {year.year}
-                  </option>
-                ))}
-              </SelectInput>
-              <span>—</span>
-              <SelectInput
-                aria-label="截止年份"
-                value={selectedYearMax}
-                onChange={(event) => setSelectedYearMax(event.target.value)}
-              >
-                <option value="">截止</option>
-                {years.map((year) => (
-                  <option key={year.year} value={year.year}>
-                    {year.year}
-                  </option>
-                ))}
-              </SelectInput>
-            </div>
-          </Field>
-        </div>
-        <div className="advanced-search-filters__column">
-          <Field label="研究领域">
-            <div className="advanced-search-areas">
-              {areaOptions.length === 0 ? (
-                <span className="panel__meta">暂无领域</span>
-              ) : (
-                areaOptions.map((area) => (
-                  <CheckboxRow
-                    key={area.value}
-                    checked={selectedAreaValues.includes(area.value)}
-                    detail={formatCount(area.count)}
-                    label={area.value}
-                    onChange={(event) =>
-                      setSelectedAreaValues((currentAreas) =>
-                        toggleParamValue(currentAreas, area.value, event.currentTarget.checked),
-                      )
-                    }
-                  />
-                ))
-              )}
-            </div>
-          </Field>
-        </div>
-      </div>
     </Modal>
   );
 }
@@ -936,11 +551,10 @@ export function SearchWorkspace() {
   const [queryDraft, setQueryDraft] = useState(searchParams.get('q') ?? '');
   const [journalSearch, setJournalSearch] = useState('');
   const [searchScope, setSearchScope] = useState<SearchScope>('topic');
-  const [sortMode, setSortMode] = useState<SortMode>('relevance');
+  const [sortMode, setSortMode] = useState<SortMode>('date-desc');
   const [viewMode, setViewMode] = useState<ViewMode>('list');
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE);
-  const [showAllAreas, setShowAllAreas] = useState(false);
   const [isAdvancedOpen, setIsAdvancedOpen] = useState(false);
   const [searchDurationMs, setSearchDurationMs] = useState<number | null>(null);
   const { entries: historyEntries, addEntry: addHistoryEntry } = useSearchHistory();
@@ -949,6 +563,29 @@ export function SearchWorkspace() {
   const journalIds = useMemo(() => searchParams.getAll('journal_id'), [searchParams]);
   const yearMin = parseIntegerParam(searchParams.get('year_min'));
   const yearMax = parseIntegerParam(searchParams.get('year_max'));
+
+  const [journalHistory, setJournalHistory] = useState<{ journal_id: string; title: string }[]>(
+    () => {
+      if (typeof window === 'undefined') {
+        return [];
+      }
+      try {
+        const stored = window.localStorage.getItem('paper_scanner_journal_history');
+        return stored ? JSON.parse(stored) : [];
+      } catch {
+        return [];
+      }
+    },
+  );
+
+  const addToJournalHistory = (journal: { journal_id: string; title: string }) => {
+    setJournalHistory((prev) => {
+      const filtered = prev.filter((item) => item.journal_id !== journal.journal_id);
+      const next = [journal, ...filtered].slice(0, 5);
+      window.localStorage.setItem('paper_scanner_journal_history', JSON.stringify(next));
+      return next;
+    });
+  };
 
   const { data: databases = [] } = useQuery({
     queryKey: ['databases'],
@@ -978,15 +615,11 @@ export function SearchWorkspace() {
     enabled: Boolean(token && effectiveDb),
   });
 
-  const { data: years = [] } = useQuery({
-    queryKey: ['years', effectiveDb],
-    queryFn: () => getYears(token!, effectiveDb),
-    enabled: Boolean(token && effectiveDb),
-  });
+
 
   const articleParams = useMemo(
-    () => buildArticleParams(query, areas, journalIds, yearMin, yearMax, pageSize),
-    [areas, journalIds, pageSize, query, yearMax, yearMin],
+    () => buildArticleParams(query, areas, journalIds, yearMin, yearMax, pageSize, sortMode),
+    [areas, journalIds, pageSize, query, yearMax, yearMin, sortMode],
   );
   const articleParamString = articleParams.toString();
   const articleOffset = (page - 1) * pageSize;
@@ -1027,14 +660,11 @@ export function SearchWorkspace() {
   const total = articleQuery.data?.page.total ?? null;
   const totalPages = total ? Math.max(1, Math.ceil(total / pageSize)) : Math.max(1, page);
   const visiblePages = getVisiblePageNumbers(page, totalPages);
-  const minYear = years.length > 0 ? Math.min(...years.map((year) => year.year)) : null;
-  const maxYear = years.length > 0 ? Math.max(...years.map((year) => year.year)) : null;
-  const visibleAreaOptions = showAllAreas ? areaOptions : areaOptions.slice(0, 4);
+
   const filteredJournalOptions = journalOptions.filter((option) => {
     const label = option.title || option.journal_id;
     return label.toLowerCase().includes(journalSearch.trim().toLowerCase());
   });
-  const commonJournalOptions = getCommonJournalOptions(journalOptions);
 
   useEffect(() => {
     if (sortedArticles.length === 0) {
@@ -1083,28 +713,11 @@ export function SearchWorkspace() {
    * @param payload - Advanced search values.
    */
   const applyAdvancedSearch = (payload: AdvancedSearchPayload) => {
-    if (payload.database) {
-      selectDatabaseState(payload.database);
-    }
     replaceParams((params) => {
       if (payload.query) {
         params.set('q', payload.query);
       } else {
         params.delete('q');
-      }
-      if (payload.yearMin) {
-        params.set('year_min', String(payload.yearMin));
-      } else {
-        params.delete('year_min');
-      }
-      if (payload.yearMax) {
-        params.set('year_max', String(payload.yearMax));
-      } else {
-        params.delete('year_max');
-      }
-      params.delete('area');
-      for (const area of payload.areas) {
-        params.append('area', area);
       }
     });
     setQueryDraft(payload.query);
@@ -1161,15 +774,8 @@ export function SearchWorkspace() {
       <AnnouncementsModal />
       {isAdvancedOpen ? (
         <AdvancedSearchModal
-          activeDb={effectiveDb}
-          areaOptions={areaOptions}
-          databases={databases}
           open={isAdvancedOpen}
           query={query}
-          selectedAreas={areas}
-          yearMax={yearMax}
-          yearMin={yearMin}
-          years={years}
           onClose={() => setIsAdvancedOpen(false)}
           onApply={applyAdvancedSearch}
         />
@@ -1198,7 +804,7 @@ export function SearchWorkspace() {
           </div>
           <div className="filter-divider" />
           <Panel flush title="研究领域">
-            <div className="filter-stack">
+            <div className="filter-stack filter-stack--scroll">
               {areasPending ? (
                 <>
                   <Skeleton className="h-8" />
@@ -1206,7 +812,7 @@ export function SearchWorkspace() {
                   <Skeleton className="h-8" />
                 </>
               ) : (
-                visibleAreaOptions.map((area) => (
+                areaOptions.map((area) => (
                   <CheckboxRow
                     key={area.value}
                     checked={areas.includes(area.value)}
@@ -1221,15 +827,6 @@ export function SearchWorkspace() {
                   />
                 ))
               )}
-              {areaOptions.length > 4 ? (
-                <Button
-                  size="small"
-                  variant="ghost"
-                  onClick={() => setShowAllAreas((currentValue) => !currentValue)}
-                >
-                  {showAllAreas ? '收起' : '展开更多'}
-                </Button>
-              ) : null}
             </div>
           </Panel>
           <div className="filter-divider" />
@@ -1244,7 +841,7 @@ export function SearchWorkspace() {
                 <SearchIcon size={15} />
               </div>
               <div className="chip-list">
-                {commonJournalOptions.map((journal) => {
+                {journalHistory.map((journal) => {
                   const journalId = String(journal.journal_id);
                   const selected = journalIds.includes(journalId);
                   return (
@@ -1252,12 +849,18 @@ export function SearchWorkspace() {
                       key={journalId}
                       className={joinClassNames('chip', selected && 'chip--selected')}
                       type="button"
-                      onClick={() =>
+                      onClick={() => {
                         setRepeatedParam(
                           'journal_id',
                           toggleParamValue(journalIds, journalId, !selected),
-                        )
-                      }
+                        );
+                        if (!selected) {
+                          addToJournalHistory({
+                            journal_id: journal.journal_id,
+                            title: journal.title,
+                          });
+                        }
+                      }}
                     >
                       {journal.title || journalId}
                     </button>
@@ -1271,17 +874,25 @@ export function SearchWorkspace() {
                   ) : (
                     filteredJournalOptions.slice(0, 40).map((journal) => {
                       const journalId = String(journal.journal_id);
+                      const selected = journalIds.includes(journalId);
                       return (
                         <CheckboxRow
                           key={journalId}
-                          checked={journalIds.includes(journalId)}
+                          checked={selected}
                           label={journal.title || journalId}
-                          onChange={(event) =>
+                          onChange={(event) => {
+                            const isChecked = event.currentTarget.checked;
                             setRepeatedParam(
                               'journal_id',
-                              toggleParamValue(journalIds, journalId, event.currentTarget.checked),
-                            )
-                          }
+                              toggleParamValue(journalIds, journalId, isChecked),
+                            );
+                            if (isChecked) {
+                              addToJournalHistory({
+                                journal_id: journal.journal_id,
+                                title: journal.title || String(journal.journal_id),
+                              });
+                            }
+                          }}
                         />
                       );
                     })
@@ -1294,45 +905,37 @@ export function SearchWorkspace() {
           <Panel flush title="发表年份">
             <div className="form-grid">
               <div className="year-range">
-                <SelectInput
+                <TextInput
+                  type="number"
+                  placeholder="起始"
                   value={yearMin ?? ''}
                   onChange={(event) =>
                     replaceParams((params) => {
-                      if (event.target.value) {
-                        params.set('year_min', event.target.value);
-                        return;
+                      const val = event.target.value.trim();
+                      if (val) {
+                        params.set('year_min', val);
+                      } else {
+                        params.delete('year_min');
                       }
-                      params.delete('year_min');
                     })
                   }
-                >
-                  <option value="">{minYear ?? '起始'}</option>
-                  {years.map((year) => (
-                    <option key={year.year} value={year.year}>
-                      {year.year}
-                    </option>
-                  ))}
-                </SelectInput>
+                />
                 <span>—</span>
-                <SelectInput
+                <TextInput
+                  type="number"
+                  placeholder="截止"
                   value={yearMax ?? ''}
                   onChange={(event) =>
                     replaceParams((params) => {
-                      if (event.target.value) {
-                        params.set('year_max', event.target.value);
-                        return;
+                      const val = event.target.value.trim();
+                      if (val) {
+                        params.set('year_max', val);
+                      } else {
+                        params.delete('year_max');
                       }
-                      params.delete('year_max');
                     })
                   }
-                >
-                  <option value="">{maxYear ?? '截止'}</option>
-                  {years.map((year) => (
-                    <option key={year.year} value={year.year}>
-                      {year.year}
-                    </option>
-                  ))}
-                </SelectInput>
+                />
               </div>
               <div className="chip-list">
                 <button
@@ -1453,9 +1056,8 @@ export function SearchWorkspace() {
                   value={sortMode}
                   onChange={(event) => setSortMode(event.target.value as SortMode)}
                 >
-                  <option value="relevance">相关性</option>
-                  <option value="date-desc">日期</option>
-                  <option value="title">标题</option>
+                  <option value="date-desc">最新</option>
+                  <option value="date-asc">最旧</option>
                 </SelectInput>
                 <IconButton
                   aria-label="列表视图"
@@ -1579,8 +1181,6 @@ export function SearchWorkspace() {
             onNext={() => selectArticleByIndex(selectedIndex + 1)}
             onClose={() => setIsDetailVisible(false)}
           />
-          <WeeklySummaryCard token={token!} />
-          <AnnouncementsCard />
         </div>
       </div>
     </>
