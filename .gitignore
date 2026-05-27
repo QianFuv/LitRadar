@@ -9,6 +9,10 @@
 /data/push/subscriptions.json
 /data/push_state
 /data/auth.sqlite
+/docs/plan/
+/output/
+/.playwright-cli/
+/.antigravitycli/
 /test
 /AGENTS.md
 /CLAUDE.md

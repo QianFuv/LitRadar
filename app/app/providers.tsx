@@ -1,21 +1,32 @@
 'use client';
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { NuqsAdapter } from 'nuqs/adapters/next/app';
-import { ThemeProvider } from 'next-themes';
 import { useState } from 'react';
-import { AuthProvider } from '@/lib/auth-context';
+import { AuthSessionProvider } from '@/lib/auth-session';
 
+/**
+ * Provide client-side application state containers.
+ *
+ * @param props - Provider props.
+ * @returns The provider tree.
+ */
 export default function Providers({ children }: { children: React.ReactNode }) {
-  const [queryClient] = useState(() => new QueryClient());
+  const [queryClient] = useState(
+    () =>
+      new QueryClient({
+        defaultOptions: {
+          queries: {
+            refetchOnWindowFocus: false,
+            retry: 1,
+            staleTime: 45_000,
+          },
+        },
+      }),
+  );
 
   return (
-    <ThemeProvider attribute="class" defaultTheme="dark" enableSystem={false}>
-      <NuqsAdapter>
-        <QueryClientProvider client={queryClient}>
-          <AuthProvider>{children}</AuthProvider>
-        </QueryClientProvider>
-      </NuqsAdapter>
-    </ThemeProvider>
+    <QueryClientProvider client={queryClient}>
+      <AuthSessionProvider>{children}</AuthSessionProvider>
+    </QueryClientProvider>
   );
 }

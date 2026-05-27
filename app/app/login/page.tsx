@@ -1,10 +1,15 @@
 import { Suspense } from 'react';
-import LoginClient from './login-client';
+import { LoginWorkspace } from '@/components/desktop/login-workspace';
 
+/**
+ * Render the login route.
+ *
+ * @returns Login page.
+ */
 export default function LoginPage() {
   return (
     <Suspense>
-      <LoginClient />
+      <LoginWorkspace />
     </Suspense>
   );
 }
