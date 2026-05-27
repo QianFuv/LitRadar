@@ -329,7 +329,6 @@ export function TrackingWorkspace() {
   return (
     <>
       <ShellConfigurator
-        kicker="Tracking"
         title="文献追踪"
         actions={
           <>

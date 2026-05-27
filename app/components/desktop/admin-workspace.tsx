@@ -586,7 +586,7 @@ export function AdminWorkspace() {
   if (!user?.is_admin) {
     return (
       <>
-        <ShellConfigurator kicker="Admin" title="管理面板" />
+        <ShellConfigurator title="管理面板" />
         <Panel title="权限不足">
           <div className="form-grid">
             <EmptyState>当前账号没有管理员权限。</EmptyState>
@@ -602,7 +602,6 @@ export function AdminWorkspace() {
   return (
     <>
       <ShellConfigurator
-        kicker="Admin"
         title="管理面板"
         actions={
           <>

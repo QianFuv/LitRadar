@@ -116,7 +116,6 @@ export function SettingsWorkspace() {
   return (
     <>
       <ShellConfigurator
-        kicker="Account"
         title="账号设置"
         actions={
           <>

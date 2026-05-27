@@ -197,7 +197,6 @@ export function FavoritesWorkspace() {
   return (
     <>
       <ShellConfigurator
-        kicker="Library"
         title="我的收藏"
         actions={
           activeFolder ? (

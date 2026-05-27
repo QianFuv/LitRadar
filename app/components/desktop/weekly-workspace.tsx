@@ -190,7 +190,6 @@ export function WeeklyWorkspace() {
   return (
     <>
       <ShellConfigurator
-        kicker="Weekly Digest"
         title="期刊每周更新"
         actions={
           <>
