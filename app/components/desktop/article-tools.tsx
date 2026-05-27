@@ -477,6 +477,9 @@ export function ArticleCard({
   title,
 }: ArticleCardProps) {
   const [detailOpen, setDetailOpen] = useState(false);
+  const [favoriteOpen, setFavoriteOpen] = useState(false);
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
+
   const isFavorite = favoriteFolderIds.length > 0;
   const resolvedPreview = preview ?? article.abstract;
   const resolvedTitle = title ?? getArticleTitle(article);
@@ -508,7 +511,10 @@ export function ArticleCard({
             aria-label="收藏"
             title="收藏"
             disabled={favoritePending}
-            onClick={handleSelect}
+            onClick={(e) => {
+              e.stopPropagation();
+              setFavoriteOpen(true);
+            }}
           >
             <Star
               size={16}
@@ -541,6 +547,16 @@ export function ArticleCard({
         open={detailOpen}
         onClose={() => setDetailOpen(false)}
       />
+      {favoriteOpen ? (
+        <FavoritePicker
+          articleId={article.article_id}
+          dbName={dbName}
+          initialFolderIds={favoriteFolderIds}
+          onClose={() => setFavoriteOpen(false)}
+          onSaved={setToastMessage}
+        />
+      ) : null}
+      <FavoriteToast message={toastMessage} onClose={() => setToastMessage(null)} />
     </>
   );
 }
