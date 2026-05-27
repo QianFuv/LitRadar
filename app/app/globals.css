@@ -495,6 +495,10 @@
   width: 360px;
 }
 
+.desktop-shell__popover--weekly-summary {
+  width: 320px;
+}
+
 .desktop-shell__popover--account {
   top: calc(100% + 10px);
 }
@@ -1367,7 +1371,7 @@ textarea.field__control {
   display: grid;
   grid-template-columns: 88px minmax(0, 1fr) auto auto;
   gap: 0;
-  overflow: hidden;
+  overflow: visible;
   border: 1px solid var(--line);
   border-radius: var(--radius);
   background: var(--surface);
@@ -1375,6 +1379,11 @@ textarea.field__control {
   transition:
     border-color var(--transition-normal) var(--ease-standard),
     box-shadow var(--transition-normal) var(--ease-standard);
+}
+
+.search-command .select-input__button {
+  border-top-left-radius: var(--radius);
+  border-bottom-left-radius: var(--radius);
 }
 
 .search-command:focus-within {
@@ -1663,27 +1672,27 @@ textarea.field__control {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 7px;
+  gap: 10px;
   padding-top: 10px;
 }
 
 .pagination-bar .field__control {
-  width: 96px;
+  width: 116px;
 }
 
 .pagination-bar .select-input {
-  flex: 0 0 96px;
-  width: 96px;
+  flex: 0 0 116px;
+  width: 116px;
 }
 
 .pagination-bar .select-input__button.field__control {
-  width: 96px;
+  width: 116px;
 }
 
 .page-button {
   display: grid;
-  min-width: 28px;
-  height: 28px;
+  min-width: 32px;
+  height: 32px;
   place-items: center;
   border: 1px solid transparent;
   border-radius: 6px;
@@ -2161,7 +2170,7 @@ textarea.field__control {
 }
 
 .right-column {
-  grid-template-rows: minmax(0, 1fr) auto auto;
+  grid-template-rows: minmax(0, 1fr);
 }
 
 .weekly-summary-grid {
@@ -2246,4 +2255,14 @@ textarea.field__control {
   color: var(--muted);
   font-size: 11px;
   white-space: nowrap;
+}
+
+.desktop-shell__notification-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--coral);
+  margin-left: 6px;
+  vertical-align: middle;
 }
