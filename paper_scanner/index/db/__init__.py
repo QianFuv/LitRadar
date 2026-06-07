@@ -9,6 +9,8 @@ from paper_scanner.index.db.fts import ensure_article_search
 from paper_scanner.index.db.operations import (
     get_completed_years,
     get_issue_ids_with_articles,
+    get_journal_issue_ids_with_articles,
+    get_latest_issue_with_articles,
     is_journal_complete,
     mark_journal_done,
     mark_listing_ready,
@@ -48,6 +50,8 @@ __all__ = [
     "refresh_article_listing_for_articles",
     "refresh_article_listing_for_issues",
     "get_issue_ids_with_articles",
+    "get_journal_issue_ids_with_articles",
+    "get_latest_issue_with_articles",
     "get_completed_years",
     "is_journal_complete",
     "mark_year_done",

@@ -238,6 +238,67 @@ async def refresh_article_listing_for_issues(
         await db.execute(sql, tuple(batch))
 
 
+async def get_journal_issue_ids_with_articles(
+    db: DatabaseClient, journal_id: int
+) -> set[int]:
+    """
+    Fetch issue IDs that already have articles for a journal.
+
+    Args:
+        db: Database client.
+        journal_id: Internal journal ID.
+
+    Returns:
+        Set of issue IDs with existing articles.
+    """
+    rows = await db.fetchall(
+        """
+        SELECT DISTINCT a.issue_id
+        FROM articles a
+        JOIN issues i ON i.issue_id = a.issue_id
+        WHERE i.journal_id = ?
+        """,
+        (journal_id,),
+    )
+    return {row[0] for row in rows if row[0] is not None}
+
+
+async def get_latest_issue_with_articles(
+    db: DatabaseClient, journal_id: int
+) -> tuple[int, int | None, str | None] | None:
+    """
+    Fetch the newest issue that already has articles for a journal.
+
+    Args:
+        db: Database client.
+        journal_id: Internal journal ID.
+
+    Returns:
+        Issue ID, publication year, and issue date, or None when absent.
+    """
+    row = await db.fetchone(
+        """
+        SELECT i.issue_id, i.publication_year, i.date
+        FROM issues i
+        WHERE i.journal_id = ?
+            AND EXISTS (
+                SELECT 1
+                FROM articles a
+                WHERE a.issue_id = i.issue_id
+            )
+        ORDER BY
+            COALESCE(i.publication_year, 0) DESC,
+            COALESCE(i.date, '') DESC,
+            i.issue_id DESC
+        LIMIT 1
+        """,
+        (journal_id,),
+    )
+    if row is None:
+        return None
+    return row[0], row[1], row[2]
+
+
 async def get_issue_ids_with_articles(
     db: DatabaseClient, journal_id: int, year: int
 ) -> set[int]:

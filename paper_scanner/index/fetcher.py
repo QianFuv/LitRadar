@@ -14,6 +14,8 @@ from paper_scanner.index.db.operations import (
     delete_articles,
     get_completed_years,
     get_issue_ids_with_articles,
+    get_journal_issue_ids_with_articles,
+    get_latest_issue_with_articles,
     is_journal_complete,
     mark_journal_done,
     mark_year_done,
@@ -124,6 +126,62 @@ def select_update_issue_ids(
     return issue_ids_to_fetch, False
 
 
+def scholarly_update_from_pub_date(
+    latest_issue: tuple[int, int | None, str | None] | None,
+) -> str | None:
+    """
+    Build a Crossref publication-date lower bound for scholarly updates.
+
+    Args:
+        latest_issue: Latest existing issue tuple from the database.
+
+    Returns:
+        Publication date filter value or None when no prior issue exists.
+    """
+    if latest_issue is None:
+        return None
+    publication_year = latest_issue[1]
+    if isinstance(publication_year, int):
+        return f"{publication_year:04d}-01-01"
+    date = latest_issue[2]
+    if date:
+        return str(date)[:10]
+    return None
+
+
+def select_scholarly_update_works(
+    journal_id: int,
+    works: list[dict[str, Any]],
+    existing_issue_ids: set[int],
+    latest_existing_issue_id: int | None,
+) -> list[dict[str, Any]]:
+    """
+    Select Crossref works that need processing during a scholarly update.
+
+    Args:
+        journal_id: Internal journal ID.
+        works: Crossref works fetched for the update window.
+        existing_issue_ids: Issue IDs that already have articles.
+        latest_existing_issue_id: Newest issue ID that already has articles.
+
+    Returns:
+        Crossref works from the latest existing issue and newly seen issues.
+    """
+    if latest_existing_issue_id is None:
+        return works
+
+    selected: list[dict[str, Any]] = []
+    for work in works:
+        issue_record = build_scholarly_issue_record(journal_id, work)
+        if issue_record is None:
+            selected.append(work)
+            continue
+        issue_id = issue_record["issue_id"]
+        if issue_id == latest_existing_issue_id or issue_id not in existing_issue_ids:
+            selected.append(work)
+    return selected
+
+
 async def process_scholarly_journal(
     db: DatabaseClient,
     client: ScholarlyClient,
@@ -162,12 +220,25 @@ async def process_scholarly_journal(
         print(f"  - Skipping scholarly journal with missing ISSN: {row.get('title')}")
         return
 
+    latest_existing_issue = None
+    existing_issue_ids: set[int] = set()
+    from_pub_date = None
+    if update:
+        latest_existing_issue = await get_latest_issue_with_articles(db, journal_id)
+        from_pub_date = scholarly_update_from_pub_date(latest_existing_issue)
+        if latest_existing_issue is not None:
+            existing_issue_ids = await get_journal_issue_ids_with_articles(
+                db, journal_id
+            )
+
     issn = issn_candidates[0]
     works: list[dict[str, Any]] = []
     last_error: Exception | None = None
     for candidate in issn_candidates:
         try:
-            works = await client.fetch_journal_works(candidate)
+            works = await client.fetch_journal_works(
+                candidate, from_pub_date=from_pub_date
+            )
             issn = candidate
             break
         except httpx.HTTPStatusError as exc:
@@ -182,9 +253,19 @@ async def process_scholarly_journal(
             )
             return
 
+    if latest_existing_issue is not None:
+        works = select_scholarly_update_works(
+            journal_id,
+            works,
+            existing_issue_ids,
+            latest_existing_issue[0],
+        )
+
     journal_row = dict(row)
     journal_row["issn"] = issn
     journal_record = build_scholarly_journal_record(journal_id, journal_row, works)
+    if latest_existing_issue is not None:
+        journal_record["has_articles"] = 1
     meta_record = build_meta_record(journal_id, csv_path, row)
     journal_title = journal_record.get("title") or row.get("title") or ""
 
