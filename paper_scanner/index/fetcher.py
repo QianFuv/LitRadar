@@ -13,7 +13,6 @@ from paper_scanner.index.db.client import DatabaseClient
 from paper_scanner.index.db.operations import (
     delete_articles,
     get_completed_years,
-    get_issue_ids_with_articles,
     get_journal_issue_ids_with_articles,
     get_latest_issue_with_articles,
     is_journal_complete,
@@ -97,33 +96,28 @@ def split_article_records_by_authors(
     return kept_records, deleted_article_ids
 
 
-def select_update_issue_ids(
+def select_recent_update_issue_ids(
     issue_ids: list[int],
     existing_issue_ids: set[int],
-    has_refreshed_latest_existing_issue: bool,
-) -> tuple[list[int], bool]:
+) -> list[int]:
     """
-    Select issues to fetch during an update run.
+    Select issues from the newest issue through the latest indexed issue.
 
     Args:
-        issue_ids: Issue IDs in upstream order.
-        existing_issue_ids: Issue IDs that already have articles.
-        has_refreshed_latest_existing_issue: Whether an existing issue was refreshed.
+        issue_ids: Issue IDs in newest-to-oldest upstream order.
+        existing_issue_ids: Issue IDs that already have indexed articles.
 
     Returns:
-        Tuple of issue IDs to fetch and updated refresh state.
+        Issue IDs to refresh during an update run.
     """
-    issue_ids_to_fetch = [
-        issue_id for issue_id in issue_ids if issue_id not in existing_issue_ids
-    ]
-    if has_refreshed_latest_existing_issue:
-        return issue_ids_to_fetch, has_refreshed_latest_existing_issue
-
+    if not existing_issue_ids:
+        return issue_ids
+    issue_ids_to_fetch: list[int] = []
     for issue_id in issue_ids:
+        issue_ids_to_fetch.append(issue_id)
         if issue_id in existing_issue_ids:
-            issue_ids_to_fetch.append(issue_id)
-            return issue_ids_to_fetch, True
-    return issue_ids_to_fetch, False
+            break
+    return issue_ids_to_fetch
 
 
 def scholarly_update_from_pub_date(
@@ -397,22 +391,50 @@ async def process_cnki_journal(
         print(f"  - No CNKI publication years for journal {journal_code}")
         return
 
-    completed_years: set[int] = set()
-    if resume and not update:
-        completed_years = await get_completed_years(db, journal_id)
-
     issues_by_year: dict[int, list[dict[str, Any]]] = {}
     for issue in issues:
         year = issue.get("year")
         if isinstance(year, int):
             issues_by_year.setdefault(year, []).append(issue)
 
+    issue_records_by_year: dict[int, list[dict[str, Any]]] = {}
+    issue_pairs_by_year: dict[int, list[tuple[int, dict[str, Any]]]] = {}
+    for year in sorted(issues_by_year, reverse=True):
+        for issue in issues_by_year.get(year, []):
+            record = build_cnki_issue_record(journal_id, journal_code, issue)
+            if record:
+                issue_records_by_year.setdefault(year, []).append(record)
+                issue_pairs_by_year.setdefault(year, []).append(
+                    (record["issue_id"], issue)
+                )
+
+    completed_years: set[int] = set()
+    if resume and not update:
+        completed_years = await get_completed_years(db, journal_id)
+
+    selected_update_issue_ids: set[int] | None = None
     if update:
-        years_to_process = sorted(issues_by_year, reverse=True)
+        ordered_issue_ids = [
+            issue_id
+            for year in sorted(issue_pairs_by_year, reverse=True)
+            for issue_id, _issue in issue_pairs_by_year.get(year, [])
+        ]
+        existing_issue_ids = await get_journal_issue_ids_with_articles(db, journal_id)
+        selected_update_issue_ids = set(
+            select_recent_update_issue_ids(ordered_issue_ids, existing_issue_ids)
+        )
+        years_to_process = [
+            year
+            for year in sorted(issue_pairs_by_year, reverse=True)
+            if any(
+                issue_id in selected_update_issue_ids
+                for issue_id, _issue in issue_pairs_by_year.get(year, [])
+            )
+        ]
     else:
         years_to_process = [
             year
-            for year in sorted(issues_by_year, reverse=True)
+            for year in sorted(issue_pairs_by_year, reverse=True)
             if year not in completed_years
         ]
 
@@ -426,41 +448,26 @@ async def process_cnki_journal(
 
     detail_workers = max(1, min(request_workers, CNKI_DETAIL_WORKER_LIMIT))
     semaphore = asyncio.Semaphore(detail_workers)
-    has_refreshed_latest_existing_issue = False
     for index, year in enumerate(years_to_process, start=1):
         if progress:
             progress.set_postfix_str(f"{year} ({index}/{len(years_to_process)})")
 
-        issue_records: list[dict[str, Any]] = []
-        issue_pairs: list[tuple[int, dict[str, Any]]] = []
-        for issue in issues_by_year.get(year, []):
-            record = build_cnki_issue_record(journal_id, journal_code, issue)
-            if record:
-                issue_records.append(record)
-                issue_pairs.append((record["issue_id"], issue))
+        issue_records = issue_records_by_year.get(year, [])
+        issue_pairs = issue_pairs_by_year.get(year, [])
+        if selected_update_issue_ids is not None:
+            issue_records = [
+                record
+                for record in issue_records
+                if record["issue_id"] in selected_update_issue_ids
+            ]
+            issue_pairs = [
+                pair for pair in issue_pairs if pair[0] in selected_update_issue_ids
+            ]
 
         if issue_records:
             await upsert_issues(db, issue_records)
-        if update and issue_pairs:
-            await refresh_article_listing_for_issues(
-                db, [pair[0] for pair in issue_pairs]
-            )
 
         issue_pairs_to_fetch = issue_pairs
-        if update and issue_pairs:
-            existing_issue_ids = await get_issue_ids_with_articles(db, journal_id, year)
-            selected_issue_ids, has_refreshed_latest_existing_issue = (
-                select_update_issue_ids(
-                    [pair[0] for pair in issue_pairs],
-                    existing_issue_ids,
-                    has_refreshed_latest_existing_issue,
-                )
-            )
-            issue_pair_map = {pair[0]: pair for pair in issue_pairs}
-            issue_pairs_to_fetch = [
-                issue_pair_map[issue_id] for issue_id in selected_issue_ids
-            ]
-
         for batch in chunked(issue_pairs_to_fetch, issue_batch_size):
             batch_records = await fetch_cnki_issue_batch(
                 client, semaphore, details, journal_id, batch
