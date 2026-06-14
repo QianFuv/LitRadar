@@ -61,10 +61,7 @@ class ArticleSchemaCleanupTest(unittest.IsolatedAsyncioTestCase):
         """
         Ensure API article records expose only retained status fields.
         """
-        model_fields = getattr(ArticleRecord, "model_fields", None)
-        if model_fields is None:
-            model_fields = ArticleRecord.__fields__
-        field_names = set(model_fields)
+        field_names = set(ArticleRecord.model_fields)
         self.assertFalse(REMOVED_ARTICLE_FIELDS & field_names)
         self.assertTrue(field_names >= RETAINED_ARTICLE_FIELDS)
 
