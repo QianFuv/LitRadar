@@ -7,12 +7,18 @@ import html
 import json
 import os
 import re
+import time
 import unicodedata
 from typing import Any
 from urllib.parse import urlencode, urljoin
 
 import httpx
 
+from paper_scanner.index.stats import (
+    ApiStatsKey,
+    IndexStatsRecorder,
+    NoOpIndexStatsRecorder,
+)
 from paper_scanner.shared.cnki_urls import (
     CNKI_CHINESE_LANGUAGE,
     with_cnki_chinese_language,
@@ -52,12 +58,17 @@ class CnkiRequestError(RuntimeError):
 class CnkiClient:
     """Fetch journal and article metadata from CNKI overseas."""
 
-    def __init__(self, timeout: int = 20) -> None:
+    def __init__(
+        self,
+        timeout: int = 20,
+        stats_recorder: IndexStatsRecorder | NoOpIndexStatsRecorder | None = None,
+    ) -> None:
         """
         Initialize the CNKI client.
 
         Args:
             timeout: HTTP request timeout in seconds.
+            stats_recorder: Optional index statistics recorder.
         """
         self.proxy_pool = build_proxy_pool(os.getenv("PROXY_POOL"))
         self._clients = build_async_client_pool(
@@ -66,6 +77,7 @@ class CnkiClient:
             headers=DEFAULT_HEADERS,
             proxy_pool=self.proxy_pool,
         )
+        self._stats_recorder = stats_recorder or NoOpIndexStatsRecorder()
 
     async def aclose(self) -> None:
         """
@@ -173,6 +185,7 @@ class CnkiClient:
             f"{BASE_URL}/knavi/journals/searchbaseinfo",
             data=payload,
             referer=f"{BASE_URL}/knavi",
+            endpoint="journal_search",
         )
         return _parse_journal_search_results(text)
 
@@ -187,7 +200,7 @@ class CnkiClient:
             Journal detail payload or None.
         """
         resolved_url = with_cnki_chinese_language(detail_url)
-        text = await self._get_text(resolved_url)
+        text = await self._get_text(resolved_url, endpoint="journal_detail")
         pykm = _input_value(text, "pykm")
         if not pykm:
             return None
@@ -231,6 +244,7 @@ class CnkiClient:
             f"{BASE_URL}/knavi/journals/{pykm}/yearList",
             data=payload,
             referer=str(journal["detail_url"]),
+            endpoint="year_issues",
         )
         return _parse_year_issues(text)
 
@@ -262,6 +276,7 @@ class CnkiClient:
             data={},
             params=params,
             referer=str(journal["detail_url"]),
+            endpoint="issue_articles",
         )
         return _parse_issue_articles(text, issue)
 
@@ -276,7 +291,9 @@ class CnkiClient:
             Article detail payload.
         """
         resolved_url = with_cnki_chinese_language(article_url)
-        text = await self._get_text(resolved_url, referer=BASE_URL)
+        text = await self._get_text(
+            resolved_url, referer=BASE_URL, endpoint="article_detail"
+        )
         filename = _input_value(text, "paramfilename") or _input_value(
             text, "param-filename"
         )
@@ -309,19 +326,24 @@ class CnkiClient:
             "content_location": permalink,
         }
 
-    async def _get_text(self, url: str, referer: str | None = None) -> str:
+    async def _get_text(
+        self, url: str, referer: str | None = None, endpoint: str = "request"
+    ) -> str:
         """
         Send a GET request and return response text.
 
         Args:
             url: Request URL.
             referer: Optional referer header.
+            endpoint: Endpoint label for statistics.
 
         Returns:
             Response text.
         """
         headers = _request_headers(referer)
-        return await self._request_text_with_retries("GET", url, headers=headers)
+        return await self._request_text_with_retries(
+            "GET", url, headers=headers, endpoint=endpoint
+        )
 
     async def _post_text(
         self,
@@ -329,6 +351,7 @@ class CnkiClient:
         data: dict[str, Any],
         referer: str | None = None,
         params: dict[str, Any] | None = None,
+        endpoint: str = "request",
     ) -> str:
         """
         Send a POST request and return response text.
@@ -338,6 +361,7 @@ class CnkiClient:
             data: Form data.
             referer: Optional referer header.
             params: Optional query parameters.
+            endpoint: Endpoint label for statistics.
 
         Returns:
             Response text.
@@ -349,6 +373,7 @@ class CnkiClient:
             data=data,
             params=params,
             headers=headers,
+            endpoint=endpoint,
         )
 
     async def _request_text_with_retries(
@@ -358,6 +383,7 @@ class CnkiClient:
         data: dict[str, Any] | None = None,
         params: dict[str, Any] | None = None,
         headers: dict[str, str] | None = None,
+        endpoint: str = "request",
     ) -> str:
         """
         Send a request with proxy failover and return response text.
@@ -368,14 +394,23 @@ class CnkiClient:
             data: Optional form data.
             params: Optional query parameters.
             headers: Optional request headers.
+            endpoint: Endpoint label for statistics.
 
         Returns:
             Response text.
         """
         request_key = request_pool_key(url, params)
         total_attempts = max(CNKI_REQUEST_ATTEMPTS, len(self._clients))
+        api_stats_key = self._stats_recorder.record_api_call(
+            service="cnki",
+            endpoint=endpoint,
+            method=method,
+            url=url,
+        )
         for attempt in range(total_attempts):
             client = select_async_client(self._clients, request_key, attempt)
+            response: httpx.Response | None = None
+            started_at = time.monotonic()
             try:
                 response = await client.request(
                     method,
@@ -384,12 +419,60 @@ class CnkiClient:
                     params=params,
                     headers=headers,
                 )
-                return _checked_text(response, url)
-            except (httpx.TransportError, CnkiRequestError):
+                text = _checked_text(response, url)
+                self._record_api_attempt(
+                    api_stats_key,
+                    attempt,
+                    status_code=response.status_code,
+                    did_succeed=True,
+                    started_at=started_at,
+                )
+                return text
+            except (httpx.TransportError, CnkiRequestError) as exc:
+                self._record_api_attempt(
+                    api_stats_key,
+                    attempt,
+                    status_code=response.status_code if response else None,
+                    did_succeed=False,
+                    started_at=started_at,
+                    error=exc,
+                )
                 if attempt >= total_attempts - 1:
                     raise
                 await asyncio.sleep(_cnki_retry_delay(attempt, len(self._clients)))
         raise RuntimeError("CNKI retry loop exited unexpectedly.")
+
+    def _record_api_attempt(
+        self,
+        api_stats_key: ApiStatsKey,
+        attempt: int,
+        status_code: int | None,
+        did_succeed: bool,
+        started_at: float,
+        error: BaseException | str | None = None,
+    ) -> None:
+        """
+        Record one CNKI API attempt.
+
+        Args:
+            api_stats_key: API statistics key.
+            attempt: Zero-based attempt number.
+            status_code: HTTP status code when available.
+            did_succeed: Whether the attempt succeeded.
+            started_at: Monotonic start time.
+            error: Attempt error when available.
+
+        Returns:
+            None.
+        """
+        self._stats_recorder.record_api_attempt(
+            api_stats_key,
+            status_code=status_code,
+            did_succeed=did_succeed,
+            elapsed_ms=(time.monotonic() - started_at) * 1000,
+            error=error,
+            did_retry=attempt > 0,
+        )
 
 
 def _journal_search_state(field_name: str, value: str, operator: str) -> dict[str, Any]:

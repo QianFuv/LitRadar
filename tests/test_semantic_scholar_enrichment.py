@@ -16,9 +16,17 @@ import httpx
 import paper_scanner.api.auth_db as auth_db
 from paper_scanner.api.models import ArticleRecord
 from paper_scanner.index.db.schema import init_db
+from paper_scanner.index.stats import IndexStatsRecorder
 from paper_scanner.index.transforms import build_scholarly_article_record
-from paper_scanner.sources.scholarly.client import ScholarlyClient
-from paper_scanner.sources.scholarly.limits import ScholarlyRequestThrottles
+from paper_scanner.sources.cnki import CnkiClient
+from paper_scanner.sources.scholarly.client import (
+    ScholarlyClient,
+    ScholarlyConfigurationError,
+)
+from paper_scanner.sources.scholarly.limits import (
+    OPENALEX_SOURCE,
+    ScholarlyRequestThrottles,
+)
 
 SEMANTIC_SCHOLAR_KEY_ENV = "SEMANTIC_SCHOLAR_API_KEY_POOL"
 UNPAYWALL_EMAIL_ENV = "UNPAYWALL_EMAIL_POOL"
@@ -233,20 +241,153 @@ class SemanticScholarClientTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(batch_sizes, [500, 1])
 
-    async def test_fetch_semantic_scholar_by_dois_skips_without_key(self) -> None:
+    async def test_fetch_semantic_scholar_by_dois_fails_without_key(self) -> None:
         """
-        Ensure missing S2 configuration disables optional enrichment.
+        Ensure missing S2 configuration fails required enrichment.
         """
         previous_key = os.environ.get(SEMANTIC_SCHOLAR_KEY_ENV)
         os.environ.pop(SEMANTIC_SCHOLAR_KEY_ENV, None)
         client = ScholarlyClient(request_throttles=ScholarlyRequestThrottles([]))
         try:
-            result = await client.fetch_semantic_scholar_by_dois(["10.1/a"])
+            with self.assertRaisesRegex(
+                ScholarlyConfigurationError,
+                "Semantic Scholar API key is required",
+            ):
+                await client.fetch_semantic_scholar_by_dois(["10.1/a"])
         finally:
             await client.aclose()
             _restore_env(SEMANTIC_SCHOLAR_KEY_ENV, previous_key)
 
-        self.assertEqual(result, {})
+    async def test_fetch_semantic_scholar_by_dois_raises_http_error(self) -> None:
+        """
+        Ensure S2 request failures are recorded and not swallowed.
+        """
+        previous_key = os.environ.get(SEMANTIC_SCHOLAR_KEY_ENV)
+        os.environ[SEMANTIC_SCHOLAR_KEY_ENV] = "key-one"
+        stats_recorder = IndexStatsRecorder("run-1", "journals.csv")
+        stats_recorder.set_current_path("scholarly", "journal", 1, "Test Journal")
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            """
+            Return a failing fake S2 response.
+
+            Args:
+                request: Captured HTTP request.
+
+            Returns:
+                Fake HTTP response.
+            """
+            return httpx.Response(400, json={"error": "bad request"})
+
+        client = await _mock_scholarly_client(handler, stats_recorder)
+        try:
+            with self.assertRaises(httpx.HTTPStatusError):
+                await client.fetch_semantic_scholar_by_dois(["10.1/a"])
+        finally:
+            await client.aclose()
+            _restore_env(SEMANTIC_SCHOLAR_KEY_ENV, previous_key)
+
+        api_stats = next(iter(stats_recorder.stats.api_stats.values()))
+        self.assertEqual(api_stats.key.service, "semantic_scholar")
+        self.assertEqual(api_stats.key.endpoint, "paper_batch")
+        self.assertEqual(api_stats.logical_calls, 1)
+        self.assertEqual(api_stats.attempts, 1)
+        self.assertEqual(api_stats.failures, 1)
+        self.assertEqual(api_stats.status_codes[400], 1)
+
+    async def test_openalex_retry_exhaustion_records_failure(self) -> None:
+        """
+        Ensure retry-exhausted OpenAlex requests record rate-limit failures.
+        """
+        stats_recorder = IndexStatsRecorder("run-2", "journals.csv")
+        stats_recorder.set_current_path("scholarly", "journal", 1, "Test Journal")
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            """
+            Return a retryable fake OpenAlex response.
+
+            Args:
+                request: Captured HTTP request.
+
+            Returns:
+                Fake HTTP response.
+            """
+            return httpx.Response(429, json={"error": "rate limited"})
+
+        client = await _mock_scholarly_client(handler, stats_recorder)
+        try:
+            with self.assertRaises(httpx.HTTPStatusError):
+                await client._get_with_retries(
+                    "https://api.openalex.org/works?api_key=SECRET",
+                    max_retries=0,
+                    source=OPENALEX_SOURCE,
+                    endpoint="works",
+                )
+        finally:
+            await client.aclose()
+
+        api_stats = next(iter(stats_recorder.stats.api_stats.values()))
+        self.assertEqual(api_stats.key.service, "openalex")
+        self.assertEqual(api_stats.key.endpoint, "works")
+        self.assertEqual(api_stats.key.url_path, "/works")
+        self.assertEqual(api_stats.logical_calls, 1)
+        self.assertEqual(api_stats.attempts, 1)
+        self.assertEqual(api_stats.failures, 1)
+        self.assertEqual(api_stats.rate_limit_failures, 1)
+        self.assertEqual(api_stats.status_codes[429], 1)
+
+
+class CnkiClientStatsTest(unittest.IsolatedAsyncioTestCase):
+    """
+    Verify CNKI request statistics.
+    """
+
+    async def test_get_year_issues_records_endpoint_stats(self) -> None:
+        """
+        Ensure CNKI endpoint calls record success statistics.
+        """
+        stats_recorder = IndexStatsRecorder("run-3", "cnki.csv")
+        stats_recorder.set_current_path("cnki", "journal", 2, "CNKI Journal")
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            """
+            Return a fake CNKI year issue tree.
+
+            Args:
+                request: Captured HTTP request.
+
+            Returns:
+                Fake CNKI response.
+            """
+            self.assertEqual(request.method, "POST")
+            self.assertEqual(request.url.path, "/knavi/journals/TEST/yearList")
+            return httpx.Response(
+                200,
+                text='<a id="yq202401" value="202401">2024年第01期</a>',
+            )
+
+        client = await _mock_cnki_client(handler, stats_recorder)
+        try:
+            issues = await client.get_year_issues(
+                {
+                    "pykm": "TEST",
+                    "pcode": "CJFD",
+                    "time": "token",
+                    "detail_url": "https://oversea.cnki.net/knavi/detail?x=1",
+                }
+            )
+        finally:
+            await client.aclose()
+
+        api_stats = next(iter(stats_recorder.stats.api_stats.values()))
+        self.assertEqual(len(issues), 1)
+        self.assertEqual(api_stats.key.service, "cnki")
+        self.assertEqual(api_stats.key.endpoint, "year_issues")
+        self.assertEqual(api_stats.key.method, "POST")
+        self.assertEqual(api_stats.key.url_path, "/knavi/journals/TEST/yearList")
+        self.assertEqual(api_stats.logical_calls, 1)
+        self.assertEqual(api_stats.attempts, 1)
+        self.assertEqual(api_stats.successes, 1)
 
 
 class SemanticScholarTransformTest(unittest.TestCase):
@@ -304,17 +445,42 @@ class SemanticScholarTransformTest(unittest.TestCase):
 
 async def _mock_scholarly_client(
     handler: Callable[[httpx.Request], httpx.Response],
+    stats_recorder: IndexStatsRecorder | None = None,
 ) -> ScholarlyClient:
     """
     Build a scholarly client backed by an httpx mock transport.
 
     Args:
         handler: Mock transport request handler.
+        stats_recorder: Optional index statistics recorder.
 
     Returns:
         Scholarly client using the mock transport.
     """
-    client = ScholarlyClient(request_throttles=ScholarlyRequestThrottles([]))
+    client = ScholarlyClient(
+        request_throttles=ScholarlyRequestThrottles([]),
+        stats_recorder=stats_recorder,
+    )
+    await client.aclose()
+    client._clients = [httpx.AsyncClient(transport=httpx.MockTransport(handler))]
+    return client
+
+
+async def _mock_cnki_client(
+    handler: Callable[[httpx.Request], httpx.Response],
+    stats_recorder: IndexStatsRecorder,
+) -> CnkiClient:
+    """
+    Build a CNKI client backed by an httpx mock transport.
+
+    Args:
+        handler: Mock transport request handler.
+        stats_recorder: Index statistics recorder.
+
+    Returns:
+        CNKI client using the mock transport.
+    """
+    client = CnkiClient(stats_recorder=stats_recorder)
     await client.aclose()
     client._clients = [httpx.AsyncClient(transport=httpx.MockTransport(handler))]
     return client

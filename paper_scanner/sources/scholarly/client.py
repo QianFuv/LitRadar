@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import os
 import random
+import time
 from collections.abc import Mapping
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
@@ -14,6 +15,11 @@ from urllib.parse import quote
 
 import httpx
 
+from paper_scanner.index.stats import (
+    ApiStatsKey,
+    IndexStatsRecorder,
+    NoOpIndexStatsRecorder,
+)
 from paper_scanner.shared.converters import chunked
 from paper_scanner.shared.request_pools import (
     build_async_client_pool,
@@ -44,6 +50,10 @@ BASE_RETRY_SECONDS = 2.0
 MAX_RETRY_SECONDS = 60.0
 
 
+class ScholarlyConfigurationError(RuntimeError):
+    """Raised when required scholarly source configuration is missing."""
+
+
 class ScholarlyClient:
     """
     Fetch article metadata from Crossref, OpenAlex, and Semantic Scholar.
@@ -60,6 +70,7 @@ class ScholarlyClient:
         worker_id: int = 0,
         process_count: int = 1,
         request_throttles: ScholarlyRequestThrottles | None = None,
+        stats_recorder: IndexStatsRecorder | NoOpIndexStatsRecorder | None = None,
     ) -> None:
         self.mailto_pool = build_value_pool(os.getenv("CROSSREF_MAILTO_POOL"))
         self.openalex_api_key_pool = build_value_pool(
@@ -82,6 +93,7 @@ class ScholarlyClient:
                 process_count=process_count,
             )
         )
+        self._stats_recorder = stats_recorder or NoOpIndexStatsRecorder()
 
     async def aclose(self) -> None:
         """
@@ -129,6 +141,7 @@ class ScholarlyClient:
                 params=params,
                 param_pools={"mailto": self.mailto_pool},
                 source=CROSSREF_SOURCE,
+                endpoint="journal_works",
             )
             message = response.json().get("message") or {}
             items = message.get("items") or []
@@ -167,19 +180,16 @@ class ScholarlyClient:
                     "abstract_inverted_index,topics,primary_topic,funders,awards"
                 ),
             }
-            try:
-                response = await self._get_with_retries(
-                    f"{OPENALEX_BASE_URL}/works",
-                    params=params,
-                    param_pools={
-                        "api_key": self.openalex_api_key_pool,
-                        "mailto": self.mailto_pool,
-                    },
-                    source=OPENALEX_SOURCE,
-                )
-            except httpx.HTTPError:
-                await asyncio.sleep(0)
-                continue
+            response = await self._get_with_retries(
+                f"{OPENALEX_BASE_URL}/works",
+                params=params,
+                param_pools={
+                    "api_key": self.openalex_api_key_pool,
+                    "mailto": self.mailto_pool,
+                },
+                source=OPENALEX_SOURCE,
+                endpoint="works",
+            )
             for item in response.json().get("results") or []:
                 if not isinstance(item, dict):
                     continue
@@ -202,29 +212,30 @@ class ScholarlyClient:
         Returns:
             Mapping from normalized DOI to Semantic Scholar payload.
         """
-        if not self.semantic_scholar_api_key_pool:
-            return {}
-
         normalized = [doi for doi in {_normalize_doi(doi) for doi in dois} if doi]
+        if not normalized:
+            return {}
+        if not self.semantic_scholar_api_key_pool:
+            raise ScholarlyConfigurationError(
+                "Semantic Scholar API key is required for DOI enrichment."
+            )
+
         results: dict[str, dict[str, Any]] = {}
         effective_batch_size = min(
             max(1, batch_size),
             SEMANTIC_SCHOLAR_BATCH_SIZE,
         )
         for batch in chunked(normalized, effective_batch_size):
-            try:
-                response = await self._post_with_retries(
-                    f"{SEMANTIC_SCHOLAR_BASE_URL}/paper/batch",
-                    params={"fields": SEMANTIC_SCHOLAR_FIELDS},
-                    json_body={"ids": [f"DOI:{doi}" for doi in batch]},
-                    header_pools={
-                        "x-api-key": self.semantic_scholar_api_key_pool,
-                    },
-                    source=SEMANTIC_SCHOLAR_SOURCE,
-                )
-            except httpx.HTTPError:
-                await asyncio.sleep(0)
-                continue
+            response = await self._post_with_retries(
+                f"{SEMANTIC_SCHOLAR_BASE_URL}/paper/batch",
+                params={"fields": SEMANTIC_SCHOLAR_FIELDS},
+                json_body={"ids": [f"DOI:{doi}" for doi in batch]},
+                header_pools={
+                    "x-api-key": self.semantic_scholar_api_key_pool,
+                },
+                source=SEMANTIC_SCHOLAR_SOURCE,
+                endpoint="paper_batch",
+            )
             payload = response.json()
             if isinstance(payload, list):
                 for item in payload:
@@ -246,6 +257,7 @@ class ScholarlyClient:
         allowed_status_codes: set[int] | None = None,
         max_retries: int = DEFAULT_MAX_RETRIES,
         source: str | None = None,
+        endpoint: str | None = None,
     ) -> httpx.Response:
         """
         Send a POST request with retry handling for transient upstream limits.
@@ -259,6 +271,7 @@ class ScholarlyClient:
             allowed_status_codes: Status codes that should be returned as success.
             max_retries: Maximum retry attempts after the initial request.
             source: Optional source identifier for request throttling.
+            endpoint: Optional endpoint label for statistics.
 
         Returns:
             HTTP response.
@@ -273,6 +286,7 @@ class ScholarlyClient:
             allowed_status_codes=allowed_status_codes,
             max_retries=max_retries,
             source=source,
+            endpoint=endpoint,
         )
 
     async def _get_with_retries(
@@ -283,6 +297,7 @@ class ScholarlyClient:
         allowed_status_codes: set[int] | None = None,
         max_retries: int = DEFAULT_MAX_RETRIES,
         source: str | None = None,
+        endpoint: str | None = None,
     ) -> httpx.Response:
         """
         Send a GET request with retry handling for transient upstream limits.
@@ -294,6 +309,7 @@ class ScholarlyClient:
             allowed_status_codes: Status codes that should be returned as success.
             max_retries: Maximum retry attempts after the initial request.
             source: Optional source identifier for request throttling.
+            endpoint: Optional endpoint label for statistics.
 
         Returns:
             HTTP response.
@@ -306,6 +322,7 @@ class ScholarlyClient:
             allowed_status_codes=allowed_status_codes,
             max_retries=max_retries,
             source=source,
+            endpoint=endpoint,
         )
 
     async def _request_with_retries(
@@ -319,6 +336,7 @@ class ScholarlyClient:
         allowed_status_codes: set[int] | None = None,
         max_retries: int = DEFAULT_MAX_RETRIES,
         source: str | None = None,
+        endpoint: str | None = None,
     ) -> httpx.Response:
         """
         Send an HTTP request with retry handling for transient upstream limits.
@@ -333,11 +351,18 @@ class ScholarlyClient:
             allowed_status_codes: Status codes that should be returned as success.
             max_retries: Maximum retry attempts after the initial request.
             source: Optional source identifier for request throttling.
+            endpoint: Optional endpoint label for statistics.
 
         Returns:
             HTTP response.
         """
         allowed = allowed_status_codes or set()
+        api_stats_key = self._stats_recorder.record_api_call(
+            service=source or "http",
+            endpoint=endpoint or "request",
+            method=method,
+            url=url,
+        )
         request_key = request_pool_key(f"{method.upper()} {url}", params)
         total_attempts = max_retries + 1
         failover_count = _failover_count(
@@ -362,6 +387,7 @@ class ScholarlyClient:
                 request_kwargs["json"] = json_body
             if request_headers:
                 request_kwargs["headers"] = request_headers
+            started_at = time.monotonic()
             try:
                 client = select_async_client(
                     self._clients,
@@ -378,7 +404,15 @@ class ScholarlyClient:
                     source,
                     request_operation,
                 )
-            except httpx.TransportError:
+            except httpx.TransportError as exc:
+                self._record_api_attempt(
+                    api_stats_key,
+                    attempt,
+                    status_code=None,
+                    did_succeed=False,
+                    started_at=started_at,
+                    error=exc,
+                )
                 if attempt >= total_attempts - 1:
                     raise
                 await asyncio.sleep(
@@ -387,17 +421,93 @@ class ScholarlyClient:
                 continue
 
             if response.status_code in allowed:
+                self._record_api_attempt(
+                    api_stats_key,
+                    attempt,
+                    status_code=response.status_code,
+                    did_succeed=True,
+                    started_at=started_at,
+                )
                 return response
             if response.status_code not in RETRY_STATUS_CODES:
-                response.raise_for_status()
+                try:
+                    response.raise_for_status()
+                except httpx.HTTPStatusError as exc:
+                    self._record_api_attempt(
+                        api_stats_key,
+                        attempt,
+                        status_code=response.status_code,
+                        did_succeed=False,
+                        started_at=started_at,
+                        error=exc,
+                    )
+                    raise
+                self._record_api_attempt(
+                    api_stats_key,
+                    attempt,
+                    status_code=response.status_code,
+                    did_succeed=True,
+                    started_at=started_at,
+                )
                 return response
             if attempt >= total_attempts - 1:
-                response.raise_for_status()
+                try:
+                    response.raise_for_status()
+                except httpx.HTTPStatusError as exc:
+                    self._record_api_attempt(
+                        api_stats_key,
+                        attempt,
+                        status_code=response.status_code,
+                        did_succeed=False,
+                        started_at=started_at,
+                        error=exc,
+                    )
+                    raise
+            self._record_api_attempt(
+                api_stats_key,
+                attempt,
+                status_code=response.status_code,
+                did_succeed=False,
+                started_at=started_at,
+                error=f"HTTP {response.status_code}",
+            )
             await asyncio.sleep(
                 _retry_delay_for_attempt(response, attempt, failover_count)
             )
 
         raise RuntimeError("Retry loop exited unexpectedly.")
+
+    def _record_api_attempt(
+        self,
+        api_stats_key: ApiStatsKey,
+        attempt: int,
+        status_code: int | None,
+        did_succeed: bool,
+        started_at: float,
+        error: BaseException | str | None = None,
+    ) -> None:
+        """
+        Record one scholarly API attempt.
+
+        Args:
+            api_stats_key: API statistics key.
+            attempt: Zero-based attempt number.
+            status_code: HTTP status code when available.
+            did_succeed: Whether the attempt succeeded.
+            started_at: Monotonic start time.
+            error: Attempt error when available.
+
+        Returns:
+            None.
+        """
+        self._stats_recorder.record_api_attempt(
+            api_stats_key,
+            status_code=status_code,
+            did_succeed=did_succeed,
+            elapsed_ms=(time.monotonic() - started_at) * 1000,
+            error=error,
+            did_retry=attempt > 0,
+        )
 
     def _build_user_agent(self) -> str:
         """
