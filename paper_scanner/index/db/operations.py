@@ -21,7 +21,77 @@ from paper_scanner.index.db.schema import (
     META_COLUMNS,
     META_UPSERT,
 )
+from paper_scanner.index.stats import IndexRunStats
 from paper_scanner.shared.converters import chunked
+
+INDEX_RUN_UPSERT = """
+INSERT INTO index_runs (
+    run_id,
+    csv_file,
+    started_at,
+    finished_at,
+    status,
+    total_journals,
+    succeeded_journals,
+    failed_journals,
+    resumed_journals,
+    error_summary
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT(run_id) DO UPDATE SET
+    csv_file = excluded.csv_file,
+    started_at = excluded.started_at,
+    finished_at = excluded.finished_at,
+    status = excluded.status,
+    total_journals = excluded.total_journals,
+    succeeded_journals = excluded.succeeded_journals,
+    failed_journals = excluded.failed_journals,
+    resumed_journals = excluded.resumed_journals,
+    error_summary = excluded.error_summary
+"""
+
+INDEX_PATH_STATS_INSERT = """
+INSERT INTO index_path_stats (
+    run_id,
+    source,
+    path,
+    journal_id,
+    journal_title,
+    status,
+    started_at,
+    finished_at,
+    works_count,
+    issues_count,
+    article_summaries_count,
+    article_details_count,
+    articles_written_count,
+    articles_deleted_no_authors_count,
+    error_type,
+    error_message
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+"""
+
+INDEX_API_CALL_STATS_INSERT = """
+INSERT INTO index_api_call_stats (
+    run_id,
+    source,
+    service,
+    endpoint,
+    method,
+    url_path,
+    journal_id,
+    journal_title,
+    logical_calls,
+    attempts,
+    successes,
+    failures,
+    retry_count,
+    status_codes_json,
+    transport_errors,
+    rate_limit_failures,
+    total_latency_ms,
+    error_samples_json
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+"""
 
 
 async def upsert_journal(db: DatabaseClient, record: dict[str, Any]) -> None:
@@ -432,3 +502,28 @@ async def mark_listing_ready(db: aiosqlite.Connection) -> None:
         """,
         (timestamp,),
     )
+
+
+async def persist_index_run_stats(db: DatabaseClient, stats: IndexRunStats) -> None:
+    """
+    Persist a finalized index run statistics snapshot.
+
+    Args:
+        db: Database client.
+        stats: Index run statistics to persist.
+
+    Returns:
+        None.
+    """
+    await db.execute(
+        "DELETE FROM index_api_call_stats WHERE run_id = ?", (stats.run_id,)
+    )
+    await db.execute("DELETE FROM index_path_stats WHERE run_id = ?", (stats.run_id,))
+    await db.execute(INDEX_RUN_UPSERT, stats.to_run_row())
+    path_rows = stats.path_rows()
+    if path_rows:
+        await db.executemany(INDEX_PATH_STATS_INSERT, path_rows)
+    api_rows = stats.api_rows()
+    if api_rows:
+        await db.executemany(INDEX_API_CALL_STATS_INSERT, api_rows)
+    await db.commit()

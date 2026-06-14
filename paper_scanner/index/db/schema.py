@@ -316,6 +316,78 @@ async def init_db(db: aiosqlite.Connection) -> None:
         """,
     )
 
+    await execute_with_retry(
+        db,
+        """
+        CREATE TABLE IF NOT EXISTS index_runs (
+            run_id TEXT PRIMARY KEY,
+            csv_file TEXT NOT NULL,
+            started_at TEXT NOT NULL,
+            finished_at TEXT,
+            status TEXT NOT NULL,
+            total_journals INTEGER NOT NULL,
+            succeeded_journals INTEGER NOT NULL,
+            failed_journals INTEGER NOT NULL,
+            resumed_journals INTEGER NOT NULL,
+            error_summary TEXT
+        );
+        """,
+    )
+
+    await execute_with_retry(
+        db,
+        """
+        CREATE TABLE IF NOT EXISTS index_path_stats (
+            run_id TEXT NOT NULL,
+            source TEXT NOT NULL,
+            path TEXT NOT NULL,
+            journal_id INTEGER,
+            journal_title TEXT,
+            status TEXT NOT NULL,
+            started_at TEXT NOT NULL,
+            finished_at TEXT,
+            works_count INTEGER NOT NULL,
+            issues_count INTEGER NOT NULL,
+            article_summaries_count INTEGER NOT NULL,
+            article_details_count INTEGER NOT NULL,
+            articles_written_count INTEGER NOT NULL,
+            articles_deleted_no_authors_count INTEGER NOT NULL,
+            error_type TEXT,
+            error_message TEXT,
+            FOREIGN KEY (run_id) REFERENCES index_runs(run_id)
+                ON DELETE CASCADE
+        );
+        """,
+    )
+
+    await execute_with_retry(
+        db,
+        """
+        CREATE TABLE IF NOT EXISTS index_api_call_stats (
+            run_id TEXT NOT NULL,
+            source TEXT NOT NULL,
+            service TEXT NOT NULL,
+            endpoint TEXT NOT NULL,
+            method TEXT NOT NULL,
+            url_path TEXT NOT NULL,
+            journal_id INTEGER,
+            journal_title TEXT,
+            logical_calls INTEGER NOT NULL,
+            attempts INTEGER NOT NULL,
+            successes INTEGER NOT NULL,
+            failures INTEGER NOT NULL,
+            retry_count INTEGER NOT NULL,
+            status_codes_json TEXT NOT NULL,
+            transport_errors INTEGER NOT NULL,
+            rate_limit_failures INTEGER NOT NULL,
+            total_latency_ms INTEGER NOT NULL,
+            error_samples_json TEXT NOT NULL,
+            FOREIGN KEY (run_id) REFERENCES index_runs(run_id)
+                ON DELETE CASCADE
+        );
+        """,
+    )
+
     await ensure_article_search(db, use_simple)
 
     await execute_with_retry(
@@ -446,6 +518,27 @@ async def init_db(db: aiosqlite.Connection) -> None:
         db,
         "CREATE INDEX IF NOT EXISTS idx_article_listing_issue "
         "ON article_listing(issue_id);",
+    )
+
+    await execute_with_retry(
+        db,
+        "CREATE INDEX IF NOT EXISTS idx_index_path_stats_run "
+        "ON index_path_stats(run_id);",
+    )
+    await execute_with_retry(
+        db,
+        "CREATE INDEX IF NOT EXISTS idx_index_path_stats_status "
+        "ON index_path_stats(run_id, status);",
+    )
+    await execute_with_retry(
+        db,
+        "CREATE INDEX IF NOT EXISTS idx_index_api_call_stats_run "
+        "ON index_api_call_stats(run_id);",
+    )
+    await execute_with_retry(
+        db,
+        "CREATE INDEX IF NOT EXISTS idx_index_api_call_stats_service "
+        "ON index_api_call_stats(run_id, service, endpoint);",
     )
 
     await commit_with_retry(db)

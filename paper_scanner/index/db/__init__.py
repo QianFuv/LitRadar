@@ -15,6 +15,7 @@ from paper_scanner.index.db.operations import (
     mark_journal_done,
     mark_listing_ready,
     mark_year_done,
+    persist_index_run_stats,
     refresh_article_listing_for_articles,
     refresh_article_listing_for_issues,
     upsert_article_search,
@@ -57,4 +58,5 @@ __all__ = [
     "mark_year_done",
     "mark_journal_done",
     "mark_listing_ready",
+    "persist_index_run_stats",
 ]
