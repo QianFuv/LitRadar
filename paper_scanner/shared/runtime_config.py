@@ -65,12 +65,12 @@ RUNTIME_CONFIG_DEFINITIONS = (
         description="Comma- or semicolon-separated Crossref contact emails.",
     ),
     RuntimeConfigDefinition(
-        field="unpaywall_email_pool",
-        env_name="UNPAYWALL_EMAIL_POOL",
-        label="Unpaywall email pool",
-        input_type="text",
-        is_secret=False,
-        description="Comma- or semicolon-separated Unpaywall contact emails.",
+        field="semantic_scholar_api_key_pool",
+        env_name="SEMANTIC_SCHOLAR_API_KEY_POOL",
+        label="Semantic Scholar API key pool",
+        input_type="password",
+        is_secret=True,
+        description="Comma- or semicolon-separated Semantic Scholar REST API keys.",
     ),
 )
 RUNTIME_CONFIG_BY_FIELD = {

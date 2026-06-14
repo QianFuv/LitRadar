@@ -4,17 +4,89 @@ from __future__ import annotations
 
 import json
 import os
+import tempfile
 import unittest
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 
 import httpx
 
+import paper_scanner.api.auth_db as auth_db
 from paper_scanner.index.transforms import build_scholarly_article_record
 from paper_scanner.sources.scholarly.client import ScholarlyClient
 from paper_scanner.sources.scholarly.limits import ScholarlyRequestThrottles
 
 SEMANTIC_SCHOLAR_KEY_ENV = "SEMANTIC_SCHOLAR_API_KEY_POOL"
+UNPAYWALL_EMAIL_ENV = "UNPAYWALL_EMAIL_POOL"
+
+
+class SemanticScholarRuntimeConfigTest(unittest.TestCase):
+    """
+    Verify Semantic Scholar runtime setting integration.
+    """
+
+    def setUp(self) -> None:
+        """
+        Redirect auth database and clear managed environment values.
+
+        Returns:
+            None.
+        """
+        self.previous_auth_db_path = auth_db.AUTH_DB_PATH
+        self.temp_dir = tempfile.TemporaryDirectory()
+        auth_db.AUTH_DB_PATH = Path(self.temp_dir.name) / "auth.sqlite"
+        self.previous_env_values = {
+            SEMANTIC_SCHOLAR_KEY_ENV: os.environ.get(SEMANTIC_SCHOLAR_KEY_ENV),
+            UNPAYWALL_EMAIL_ENV: os.environ.get(UNPAYWALL_EMAIL_ENV),
+        }
+        os.environ.pop(SEMANTIC_SCHOLAR_KEY_ENV, None)
+        os.environ.pop(UNPAYWALL_EMAIL_ENV, None)
+
+    def tearDown(self) -> None:
+        """
+        Restore auth database path and environment values.
+
+        Returns:
+            None.
+        """
+        auth_db.AUTH_DB_PATH = self.previous_auth_db_path
+        for name, value in self.previous_env_values.items():
+            _restore_env(name, value)
+        self.temp_dir.cleanup()
+
+    def test_runtime_settings_include_s2_key_and_not_unpaywall(self) -> None:
+        """
+        Ensure runtime setting listing exposes S2 key metadata.
+        """
+        os.environ[SEMANTIC_SCHOLAR_KEY_ENV] = "s2-key"
+        auth_db.init_auth_db()
+
+        settings = {item["field"]: item for item in auth_db.list_runtime_settings()}
+
+        self.assertIn("semantic_scholar_api_key_pool", settings)
+        self.assertNotIn("unpaywall_email_pool", settings)
+        s2_setting = settings["semantic_scholar_api_key_pool"]
+        self.assertEqual(s2_setting["key"], SEMANTIC_SCHOLAR_KEY_ENV)
+        self.assertEqual(s2_setting["value"], "s2-key")
+        self.assertTrue(s2_setting["is_secret"])
+
+    def test_runtime_settings_accept_s2_and_reject_unpaywall(self) -> None:
+        """
+        Ensure setting updates use the current managed definition set.
+        """
+        auth_db.init_auth_db()
+
+        settings = {
+            item["field"]: item
+            for item in auth_db.upsert_runtime_settings(
+                {"semantic_scholar_api_key_pool": "s2-key"}
+            )
+        }
+
+        self.assertEqual(settings["semantic_scholar_api_key_pool"]["value"], "s2-key")
+        with self.assertRaisesRegex(ValueError, "Unknown runtime setting"):
+            auth_db.upsert_runtime_settings({"unpaywall_email_pool": "old-email"})
 
 
 class SemanticScholarClientTest(unittest.IsolatedAsyncioTestCase):
