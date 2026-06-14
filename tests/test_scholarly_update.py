@@ -46,7 +46,7 @@ class FakeScholarlyClient:
         self.works = works
         self.fetch_args: list[dict[str, str | None]] = []
         self.openalex_doi_batches: list[list[str]] = []
-        self.unpaywall_doi_batches: list[list[str]] = []
+        self.semantic_scholar_doi_batches: list[list[str]] = []
 
     async def fetch_journal_works(
         self,
@@ -90,20 +90,20 @@ class FakeScholarlyClient:
         self.openalex_doi_batches.append(list(dois))
         return {}
 
-    async def fetch_unpaywall_by_dois(
-        self, dois: list[str], request_workers: int = 4
+    async def fetch_semantic_scholar_by_dois(
+        self, dois: list[str], batch_size: int = 500
     ) -> dict[str, dict[str, Any]]:
         """
-        Record Unpaywall requests.
+        Record Semantic Scholar requests.
 
         Args:
             dois: DOI list.
-            request_workers: Requested concurrency.
+            batch_size: Requested batch size.
 
         Returns:
             Empty OA map.
         """
-        self.unpaywall_doi_batches.append(list(dois))
+        self.semantic_scholar_doi_batches.append(list(dois))
         return {}
 
 
@@ -268,7 +268,8 @@ class ScholarlyUpdateTest(unittest.IsolatedAsyncioTestCase):
                     client.openalex_doi_batches, [["10.1/latest", "10.1/new"]]
                 )
                 self.assertEqual(
-                    client.unpaywall_doi_batches, [["10.1/latest", "10.1/new"]]
+                    client.semantic_scholar_doi_batches,
+                    [["10.1/latest", "10.1/new"]],
                 )
                 rows = await db.fetchall("SELECT doi FROM articles ORDER BY doi")
                 self.assertEqual(

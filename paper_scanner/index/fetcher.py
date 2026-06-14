@@ -187,14 +187,14 @@ async def process_scholarly_journal(
     update: bool,
 ) -> None:
     """
-    Export one Crossref/OpenAlex/Unpaywall journal to the database.
+    Export one Crossref/OpenAlex/Semantic Scholar journal to the database.
 
     Args:
         db: Database client.
         client: Scholarly metadata client.
         csv_path: Source CSV path.
         row: CSV row for the journal.
-        request_workers: Maximum concurrent HTTP requests.
+        request_workers: Maximum concurrent HTTP requests for compatible callers.
         show_year_progress: Whether to display year progress with tqdm.
         resume: Whether to resume from completed journals.
         update: Whether to refresh existing journal data.
@@ -269,9 +269,7 @@ async def process_scholarly_journal(
 
     dois = [doi for doi in [normalize_doi(work.get("DOI")) for work in works] if doi]
     openalex_by_doi = await client.fetch_openalex_by_dois(dois)
-    unpaywall_by_doi = await client.fetch_unpaywall_by_dois(
-        dois, request_workers=request_workers
-    )
+    semantic_scholar_by_doi = await client.fetch_semantic_scholar_by_dois(dois)
 
     issue_records_by_id: dict[int, dict[str, Any]] = {}
     article_records: list[dict[str, Any]] = []
@@ -289,7 +287,7 @@ async def process_scholarly_journal(
         article_record = build_scholarly_article_record(
             work,
             openalex_by_doi.get(doi or ""),
-            unpaywall_by_doi.get(doi or ""),
+            semantic_scholar_by_doi.get(doi or ""),
             journal_id,
             issue_id,
         )

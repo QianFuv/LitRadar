@@ -222,7 +222,7 @@ def build_cnki_issue_record(
 def build_scholarly_article_record(
     work: dict[str, Any],
     openalex_work: dict[str, Any] | None,
-    unpaywall_record: dict[str, Any] | None,
+    semantic_scholar_work: dict[str, Any] | None,
     journal_id: int,
     issue_id: int | None,
 ) -> dict[str, Any] | None:
@@ -232,7 +232,7 @@ def build_scholarly_article_record(
     Args:
         work: Crossref work payload.
         openalex_work: OpenAlex work payload.
-        unpaywall_record: Unpaywall record.
+        semantic_scholar_work: Semantic Scholar work payload.
         journal_id: Internal journal ID.
         issue_id: Internal issue ID.
 
@@ -250,25 +250,25 @@ def build_scholarly_article_record(
     openalex_abstract = restore_openalex_abstract(
         (openalex_work or {}).get("abstract_inverted_index")
     )
-    unpaywall_location = (unpaywall_record or {}).get("best_oa_location") or {}
+    semantic_scholar_oa_pdf = (semantic_scholar_work or {}).get("openAccessPdf") or {}
     openalex_location = (openalex_work or {}).get("best_oa_location") or {}
+    doi_url = f"https://doi.org/{doi}" if doi else None
     full_text_url = _first_text(
         [
-            unpaywall_location.get("url_for_pdf"),
+            semantic_scholar_oa_pdf.get("url"),
             openalex_location.get("pdf_url"),
-            unpaywall_location.get("url_for_landing_page"),
             openalex_location.get("landing_page_url"),
         ]
     )
     landing_page_url = _first_text(
         [
-            unpaywall_location.get("url_for_landing_page"),
             openalex_location.get("landing_page_url"),
             work.get("URL"),
+            doi_url,
         ]
     )
     is_open_access = (
-        to_bool_int((unpaywall_record or {}).get("is_oa"))
+        to_bool_int((semantic_scholar_work or {}).get("isOpenAccess"))
         or to_bool_int(((openalex_work or {}).get("open_access") or {}).get("is_oa"))
         or 0
     )
@@ -287,7 +287,7 @@ def build_scholarly_article_record(
         abstract=strip_markup(_clean_text(work.get("abstract"))) or openalex_abstract,
         doi=doi,
         pmid=((openalex_work or {}).get("ids") or {}).get("pmid"),
-        permalink=f"https://doi.org/{doi}" if doi else landing_page_url,
+        permalink=doi_url if doi else landing_page_url,
         open_access=is_open_access,
         platform_id=platform_id,
         retraction_doi=_relation_doi(work.get("relation")),

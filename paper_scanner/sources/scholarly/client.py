@@ -1,4 +1,4 @@
-"""Client for Crossref, OpenAlex, and Unpaywall metadata sources."""
+"""Client for Crossref, OpenAlex, and Semantic Scholar metadata sources."""
 
 from __future__ import annotations
 
@@ -27,13 +27,16 @@ from paper_scanner.shared.request_pools import (
 from paper_scanner.sources.scholarly.limits import (
     CROSSREF_SOURCE,
     OPENALEX_SOURCE,
+    SEMANTIC_SCHOLAR_SOURCE,
     ScholarlyRequestThrottles,
     build_scholarly_request_throttles,
 )
 
 CROSSREF_BASE_URL = "https://api.crossref.org/v1"
 OPENALEX_BASE_URL = "https://api.openalex.org"
-UNPAYWALL_BASE_URL = "https://api.unpaywall.org/v2"
+SEMANTIC_SCHOLAR_BASE_URL = "https://api.semanticscholar.org/graph/v1"
+SEMANTIC_SCHOLAR_BATCH_SIZE = 500
+SEMANTIC_SCHOLAR_FIELDS = "externalIds,url,isOpenAccess,openAccessPdf"
 DEFAULT_USER_AGENT = "Paper-Scanner/0.1 (mailto:paper-scanner@example.invalid)"
 RETRY_STATUS_CODES = {429, 500, 502, 503, 504}
 DEFAULT_MAX_RETRIES = 6
@@ -43,7 +46,7 @@ MAX_RETRY_SECONDS = 60.0
 
 class ScholarlyClient:
     """
-    Fetch article metadata from Crossref, OpenAlex, and Unpaywall.
+    Fetch article metadata from Crossref, OpenAlex, and Semantic Scholar.
 
     Args:
         timeout: HTTP request timeout in seconds.
@@ -62,7 +65,9 @@ class ScholarlyClient:
         self.openalex_api_key_pool = build_value_pool(
             os.getenv("OPENALEX_API_KEY_POOL")
         )
-        self.unpaywall_email_pool = build_value_pool(os.getenv("UNPAYWALL_EMAIL_POOL"))
+        self.semantic_scholar_api_key_pool = build_value_pool(
+            os.getenv("SEMANTIC_SCHOLAR_API_KEY_POOL")
+        )
         self.proxy_pool = build_proxy_pool(os.getenv("PROXY_POOL"))
         self._clients = build_async_client_pool(
             timeout=timeout,
@@ -184,54 +189,91 @@ class ScholarlyClient:
             await asyncio.sleep(0)
         return results
 
-    async def fetch_unpaywall_by_dois(
-        self, dois: list[str], request_workers: int = 4
+    async def fetch_semantic_scholar_by_dois(
+        self, dois: list[str], batch_size: int = SEMANTIC_SCHOLAR_BATCH_SIZE
     ) -> dict[str, dict[str, Any]]:
         """
-        Fetch Unpaywall OA records by DOI.
+        Fetch Semantic Scholar OA records by DOI.
 
         Args:
             dois: DOI list.
-            request_workers: Maximum concurrent requests.
+            batch_size: Number of DOI IDs per request.
 
         Returns:
-            Mapping from normalized DOI to Unpaywall payload.
+            Mapping from normalized DOI to Semantic Scholar payload.
         """
-        if not self.unpaywall_email_pool:
+        if not self.semantic_scholar_api_key_pool:
             return {}
 
         normalized = [doi for doi in {_normalize_doi(doi) for doi in dois} if doi]
-        semaphore = asyncio.Semaphore(max(1, request_workers))
         results: dict[str, dict[str, Any]] = {}
-
-        async def fetch_one(doi: str) -> None:
-            """
-            Fetch one DOI record.
-
-            Args:
-                doi: Normalized DOI.
-
-            Returns:
-                None.
-            """
-            async with semaphore:
-                try:
-                    response = await self._get_with_retries(
-                        f"{UNPAYWALL_BASE_URL}/{quote(doi, safe='')}",
-                        params={},
-                        param_pools={"email": self.unpaywall_email_pool},
-                        allowed_status_codes={404},
-                    )
-                except httpx.HTTPError:
-                    return
-                if response.status_code == 404:
-                    return
-                payload = response.json()
-                if isinstance(payload, dict):
-                    results[doi] = payload
-
-        await asyncio.gather(*(fetch_one(doi) for doi in normalized))
+        effective_batch_size = min(
+            max(1, batch_size),
+            SEMANTIC_SCHOLAR_BATCH_SIZE,
+        )
+        for batch in chunked(normalized, effective_batch_size):
+            try:
+                response = await self._post_with_retries(
+                    f"{SEMANTIC_SCHOLAR_BASE_URL}/paper/batch",
+                    params={"fields": SEMANTIC_SCHOLAR_FIELDS},
+                    json_body={"ids": [f"DOI:{doi}" for doi in batch]},
+                    header_pools={
+                        "x-api-key": self.semantic_scholar_api_key_pool,
+                    },
+                    source=SEMANTIC_SCHOLAR_SOURCE,
+                )
+            except httpx.HTTPError:
+                await asyncio.sleep(0)
+                continue
+            payload = response.json()
+            if isinstance(payload, list):
+                for item in payload:
+                    if not isinstance(item, dict):
+                        continue
+                    doi = _semantic_scholar_doi(item)
+                    if doi:
+                        results[doi] = item
+            await asyncio.sleep(0)
         return results
+
+    async def _post_with_retries(
+        self,
+        url: str,
+        params: Mapping[str, str | int] | None = None,
+        json_body: dict[str, Any] | None = None,
+        param_pools: Mapping[str, list[str]] | None = None,
+        header_pools: Mapping[str, list[str]] | None = None,
+        allowed_status_codes: set[int] | None = None,
+        max_retries: int = DEFAULT_MAX_RETRIES,
+        source: str | None = None,
+    ) -> httpx.Response:
+        """
+        Send a POST request with retry handling for transient upstream limits.
+
+        Args:
+            url: Request URL.
+            params: Query parameters.
+            json_body: JSON request body.
+            param_pools: Query parameter value pools for retry failover.
+            header_pools: Header value pools for retry failover.
+            allowed_status_codes: Status codes that should be returned as success.
+            max_retries: Maximum retry attempts after the initial request.
+            source: Optional source identifier for request throttling.
+
+        Returns:
+            HTTP response.
+        """
+        return await self._request_with_retries(
+            "POST",
+            url,
+            params=params,
+            json_body=json_body,
+            param_pools=param_pools,
+            header_pools=header_pools,
+            allowed_status_codes=allowed_status_codes,
+            max_retries=max_retries,
+            source=source,
+        )
 
     async def _get_with_retries(
         self,
@@ -256,10 +298,53 @@ class ScholarlyClient:
         Returns:
             HTTP response.
         """
+        return await self._request_with_retries(
+            "GET",
+            url,
+            params=params,
+            param_pools=param_pools,
+            allowed_status_codes=allowed_status_codes,
+            max_retries=max_retries,
+            source=source,
+        )
+
+    async def _request_with_retries(
+        self,
+        method: str,
+        url: str,
+        params: Mapping[str, str | int] | None = None,
+        json_body: dict[str, Any] | None = None,
+        param_pools: Mapping[str, list[str]] | None = None,
+        header_pools: Mapping[str, list[str]] | None = None,
+        allowed_status_codes: set[int] | None = None,
+        max_retries: int = DEFAULT_MAX_RETRIES,
+        source: str | None = None,
+    ) -> httpx.Response:
+        """
+        Send an HTTP request with retry handling for transient upstream limits.
+
+        Args:
+            method: HTTP method.
+            url: Request URL.
+            params: Query parameters.
+            json_body: Optional JSON request body.
+            param_pools: Query parameter value pools for retry failover.
+            header_pools: Header value pools for retry failover.
+            allowed_status_codes: Status codes that should be returned as success.
+            max_retries: Maximum retry attempts after the initial request.
+            source: Optional source identifier for request throttling.
+
+        Returns:
+            HTTP response.
+        """
         allowed = allowed_status_codes or set()
-        request_key = request_pool_key(url, params)
+        request_key = request_pool_key(f"{method.upper()} {url}", params)
         total_attempts = max_retries + 1
-        failover_count = _failover_count(param_pools, len(self._clients))
+        failover_count = _failover_count(
+            param_pools,
+            len(self._clients),
+            header_pools=header_pools,
+        )
         for attempt in range(total_attempts):
             request_params = _params_for_attempt(
                 params,
@@ -267,13 +352,28 @@ class ScholarlyClient:
                 request_key,
                 attempt,
             )
+            request_headers = _headers_for_attempt(
+                header_pools,
+                request_key,
+                attempt,
+            )
+            request_kwargs: dict[str, Any] = {"params": request_params}
+            if json_body is not None:
+                request_kwargs["json"] = json_body
+            if request_headers:
+                request_kwargs["headers"] = request_headers
             try:
                 client = select_async_client(
                     self._clients,
                     request_key,
                     attempt,
                 )
-                request_operation = partial(client.get, url, params=request_params)
+                request_operation = partial(
+                    client.request,
+                    method,
+                    url,
+                    **request_kwargs,
+                )
                 response = await self._request_throttles.run(
                     source,
                     request_operation,
@@ -335,6 +435,22 @@ def _normalize_doi(value: Any) -> str | None:
     return lowered.strip() or None
 
 
+def _semantic_scholar_doi(item: dict[str, Any]) -> str | None:
+    """
+    Extract a normalized DOI from a Semantic Scholar paper payload.
+
+    Args:
+        item: Semantic Scholar paper payload.
+
+    Returns:
+        Normalized DOI or None.
+    """
+    external_ids = item.get("externalIds")
+    if not isinstance(external_ids, dict):
+        return None
+    return _normalize_doi(external_ids.get("DOI"))
+
+
 def _params_for_attempt(
     params: Mapping[str, str | int] | None,
     param_pools: Mapping[str, list[str]] | None,
@@ -361,9 +477,35 @@ def _params_for_attempt(
     return request_params
 
 
+def _headers_for_attempt(
+    header_pools: Mapping[str, list[str]] | None,
+    request_key: str,
+    attempt: int,
+) -> dict[str, str]:
+    """
+    Build request headers with retry-specific pool values.
+
+    Args:
+        header_pools: Header value pools.
+        request_key: Stable request selection key.
+        attempt: Retry attempt offset.
+
+    Returns:
+        Request headers for the attempt.
+    """
+    request_headers: dict[str, str] = {}
+    for name, pool in (header_pools or {}).items():
+        value = select_pool_value(pool, request_key, attempt)
+        if value:
+            request_headers[name] = value
+    return request_headers
+
+
 def _failover_count(
     param_pools: Mapping[str, list[str]] | None,
     client_count: int,
+    *,
+    header_pools: Mapping[str, list[str]] | None = None,
 ) -> int:
     """
     Calculate the number of retry slots before backoff is needed.
@@ -371,12 +513,14 @@ def _failover_count(
     Args:
         param_pools: Query parameter value pools.
         client_count: HTTP client pool size.
+        header_pools: Header value pools.
 
     Returns:
         Largest pool size used by a request.
     """
     counts = [max(1, client_count)]
     counts.extend(len(pool) for pool in (param_pools or {}).values() if pool)
+    counts.extend(len(pool) for pool in (header_pools or {}).values() if pool)
     return max(counts)
 
 
