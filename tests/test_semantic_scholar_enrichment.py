@@ -10,15 +10,63 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+import aiosqlite
 import httpx
 
 import paper_scanner.api.auth_db as auth_db
+from paper_scanner.api.models import ArticleRecord
+from paper_scanner.index.db.schema import init_db
 from paper_scanner.index.transforms import build_scholarly_article_record
 from paper_scanner.sources.scholarly.client import ScholarlyClient
 from paper_scanner.sources.scholarly.limits import ScholarlyRequestThrottles
 
 SEMANTIC_SCHOLAR_KEY_ENV = "SEMANTIC_SCHOLAR_API_KEY_POOL"
 UNPAYWALL_EMAIL_ENV = "UNPAYWALL_EMAIL_POOL"
+REMOVED_ARTICLE_FIELDS = {
+    "sync_id",
+    "ill_url",
+    "link_resolver_openurl_link",
+    "email_article_request_link",
+    "retraction_date",
+    "retraction_related_urls",
+    "unpaywall_data_suppressed",
+    "expression_of_concern_doi",
+    "noodletools_export_link",
+    "avoid_unpaywall_publisher_links",
+    "nomad_fallback_url",
+}
+RETAINED_ARTICLE_FIELDS = {"suppressed", "within_library_holdings"}
+
+
+class ArticleSchemaCleanupTest(unittest.IsolatedAsyncioTestCase):
+    """
+    Verify article compatibility fields are removed from new surfaces.
+    """
+
+    async def test_new_articles_schema_omits_removed_fields(self) -> None:
+        """
+        Ensure new article tables exclude unused compatibility columns.
+        """
+        async with aiosqlite.connect(":memory:") as db:
+            await init_db(db)
+            cursor = await db.execute("PRAGMA table_info(articles)")
+            rows = await cursor.fetchall()
+            await cursor.close()
+
+        columns = {str(row[1]) for row in rows}
+        self.assertFalse(REMOVED_ARTICLE_FIELDS & columns)
+        self.assertTrue(columns >= RETAINED_ARTICLE_FIELDS)
+
+    def test_article_record_omits_removed_fields(self) -> None:
+        """
+        Ensure API article records expose only retained status fields.
+        """
+        model_fields = getattr(ArticleRecord, "model_fields", None)
+        if model_fields is None:
+            model_fields = ArticleRecord.__fields__
+        field_names = set(model_fields)
+        self.assertFalse(REMOVED_ARTICLE_FIELDS & field_names)
+        self.assertTrue(field_names >= RETAINED_ARTICLE_FIELDS)
 
 
 class SemanticScholarRuntimeConfigTest(unittest.TestCase):

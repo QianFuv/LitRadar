@@ -103,7 +103,6 @@ class ArticleRecord(BaseModel):
     article_id: ArticleId
     journal_id: JournalId
     issue_id: int | None = None
-    sync_id: int | None = None
     title: str | None = None
     date: str | None = None
     authors: str | None = None
@@ -112,25 +111,15 @@ class ArticleRecord(BaseModel):
     abstract: str | None = None
     doi: str | None = None
     pmid: str | None = None
-    ill_url: str | None = None
-    link_resolver_openurl_link: str | None = None
-    email_article_request_link: str | None = None
     permalink: str | None = None
     suppressed: int | None = None
     in_press: int | None = None
     open_access: int | None = None
     platform_id: str | None = None
     retraction_doi: str | None = None
-    retraction_date: str | None = None
-    retraction_related_urls: str | None = None
-    unpaywall_data_suppressed: int | None = None
-    expression_of_concern_doi: str | None = None
     within_library_holdings: int | None = None
-    noodletools_export_link: str | None = None
-    avoid_unpaywall_publisher_links: int | None = None
     content_location: str | None = None
     full_text_file: str | None = None
-    nomad_fallback_url: str | None = None
     journal_title: str | None = None
     volume: str | None = None
     number: str | None = None
