@@ -16,6 +16,7 @@ from paper_scanner.index.db.retry import (
 )
 from paper_scanner.index.db.schema import init_db
 from paper_scanner.index.fetcher import process_journal
+from paper_scanner.index.stats import IndexStatsRecorder
 from paper_scanner.shared.constants import DB_TIMEOUT_SECONDS
 from paper_scanner.shared.runtime_config import apply_runtime_config
 from paper_scanner.sources.cnki import CnkiClient
@@ -180,6 +181,7 @@ def run_worker_batch(
     request_queue: Any,
     response_queue: Any,
     status_queue: Any,
+    run_id: str,
     csv_path: str,
     rows: list[dict[str, str]],
     issue_batch_size: int,
@@ -197,6 +199,7 @@ def run_worker_batch(
         request_queue: Multiprocessing request queue.
         response_queue: Multiprocessing response queue.
         status_queue: Multiprocessing status queue.
+        run_id: Index run identifier.
         csv_path: Source CSV path.
         rows: CSV rows for this worker.
         issue_batch_size: Number of issues per fetch batch.
@@ -211,15 +214,18 @@ def run_worker_batch(
 
     async def run_batch() -> None:
         apply_runtime_config()
-        scholarly_client = ScholarlyClient(
-            timeout=timeout,
-            worker_id=worker_id,
-            process_count=process_count,
-        )
-        cnki_client = CnkiClient(timeout=timeout)
         db_client = IPCDatabaseClient(request_queue, response_queue, worker_id)
-        try:
-            for row in rows:
+        csv_file = Path(csv_path).name
+        for row in rows:
+            stats_recorder = IndexStatsRecorder(run_id, csv_file)
+            scholarly_client = ScholarlyClient(
+                timeout=timeout,
+                worker_id=worker_id,
+                process_count=process_count,
+                stats_recorder=stats_recorder,
+            )
+            cnki_client = CnkiClient(timeout=timeout, stats_recorder=stats_recorder)
+            try:
                 try:
                     await process_journal(
                         db_client,
@@ -232,12 +238,14 @@ def run_worker_batch(
                         False,
                         resume,
                         update,
+                        stats_recorder,
                     )
                     status_queue.put(
                         {
                             "ok": True,
                             "journal_id": row.get("id"),
                             "title": row.get("title"),
+                            "stats": stats_recorder.to_dict(),
                         }
                     )
                 except Exception as exc:
@@ -247,10 +255,11 @@ def run_worker_batch(
                             "journal_id": row.get("id"),
                             "title": row.get("title"),
                             "error": str(exc),
+                            "stats": stats_recorder.to_dict(),
                         }
                     )
-        finally:
-            await scholarly_client.aclose()
-            await cnki_client.aclose()
+            finally:
+                await scholarly_client.aclose()
+                await cnki_client.aclose()
 
     asyncio.run(run_batch())

@@ -26,6 +26,11 @@ from paper_scanner.index.db.operations import (
     upsert_journal,
     upsert_meta,
 )
+from paper_scanner.index.stats import (
+    IndexStatsRecorder,
+    NoOpIndexStatsRecorder,
+    PathStatsKey,
+)
 from paper_scanner.index.transforms import (
     build_cnki_article_record,
     build_cnki_issue_record,
@@ -46,6 +51,38 @@ from paper_scanner.sources.scholarly import ScholarlyClient
 CNKI_DETAIL_ATTEMPTS = 3
 CNKI_DETAIL_RETRY_SECONDS = 1.0
 CNKI_DETAIL_WORKER_LIMIT = 32
+
+
+class JournalPathError(RuntimeError):
+    """Raised when a journal source path cannot be completed."""
+
+
+def stats_recorder_or_noop(
+    stats_recorder: IndexStatsRecorder | NoOpIndexStatsRecorder | None,
+) -> IndexStatsRecorder | NoOpIndexStatsRecorder:
+    """
+    Return an active stats recorder or a no-op recorder.
+
+    Args:
+        stats_recorder: Optional stats recorder.
+
+    Returns:
+        Stats recorder object.
+    """
+    return stats_recorder or NoOpIndexStatsRecorder()
+
+
+def journal_title_from_row(row: dict[str, str]) -> str:
+    """
+    Resolve a display title for a CSV journal row.
+
+    Args:
+        row: CSV row.
+
+    Returns:
+        Journal title fallback.
+    """
+    return row.get("title") or row.get("id") or "Unknown"
 
 
 def candidate_issns_from_row(csv_row: dict[str, str]) -> list[str]:
@@ -185,6 +222,7 @@ async def process_scholarly_journal(
     show_year_progress: bool,
     resume: bool,
     update: bool,
+    stats_recorder: IndexStatsRecorder | NoOpIndexStatsRecorder | None = None,
 ) -> None:
     """
     Export one Crossref/OpenAlex/Semantic Scholar journal to the database.
@@ -198,137 +236,170 @@ async def process_scholarly_journal(
         show_year_progress: Whether to display year progress with tqdm.
         resume: Whether to resume from completed journals.
         update: Whether to refresh existing journal data.
+        stats_recorder: Optional index statistics recorder.
 
     Returns:
         None.
     """
+    stats = stats_recorder_or_noop(stats_recorder)
     journal_id = build_journal_id(row)
-    if journal_id is None:
-        print(f"  - Skipping scholarly journal with missing id: {row.get('title')}")
-        return
-    if resume and not update and await is_journal_complete(db, journal_id):
-        return
-
-    issn_candidates = candidate_issns_from_row(row)
-    if not issn_candidates:
-        print(f"  - Skipping scholarly journal with missing ISSN: {row.get('title')}")
-        return
-
-    latest_existing_issue = None
-    existing_issue_ids: set[int] = set()
-    from_pub_date = None
-    if update:
-        latest_existing_issue = await get_latest_issue_with_articles(db, journal_id)
-        from_pub_date = scholarly_update_from_pub_date(latest_existing_issue)
-        if latest_existing_issue is not None:
-            existing_issue_ids = await get_journal_issue_ids_with_articles(
-                db, journal_id
+    path_key = stats.record_path_started(
+        SCHOLARLY_SOURCE,
+        "journal",
+        journal_id,
+        journal_title_from_row(row),
+    )
+    try:
+        if journal_id is None:
+            raise JournalPathError(
+                f"Scholarly journal missing id: {journal_title_from_row(row)}"
             )
 
-    issn = issn_candidates[0]
-    works: list[dict[str, Any]] = []
-    last_error: Exception | None = None
-    for candidate in issn_candidates:
-        try:
-            works = await client.fetch_journal_works(
-                candidate, from_pub_date=from_pub_date
-            )
-            issn = candidate
-            break
-        except httpx.HTTPStatusError as exc:
-            last_error = exc
-            if exc.response.status_code != 404:
-                raise
-    else:
-        if last_error:
-            print(
-                "  - Skipping scholarly journal with unavailable ISSN: "
-                f"{row.get('title')}"
-            )
+        if resume and not update and await is_journal_complete(db, journal_id):
+            stats.record_path_finished("resumed", path_key)
             return
 
-    if latest_existing_issue is not None:
-        works = select_scholarly_update_works(
-            journal_id,
-            works,
-            existing_issue_ids,
-            latest_existing_issue[0],
-        )
+        issn_candidates = candidate_issns_from_row(row)
+        if not issn_candidates:
+            raise JournalPathError(
+                f"Scholarly journal missing ISSN: {journal_title_from_row(row)}"
+            )
 
-    journal_row = dict(row)
-    journal_row["issn"] = issn
-    journal_record = build_scholarly_journal_record(journal_id, journal_row, works)
-    if latest_existing_issue is not None:
-        journal_record["has_articles"] = 1
-    meta_record = build_meta_record(journal_id, csv_path, row)
-    journal_title = journal_record.get("title") or row.get("title") or ""
-
-    await upsert_journal(db, journal_record)
-    await upsert_meta(db, meta_record)
-    await db.commit()
-
-    dois = [doi for doi in [normalize_doi(work.get("DOI")) for work in works] if doi]
-    openalex_by_doi = await client.fetch_openalex_by_dois(dois)
-    semantic_scholar_by_doi = await client.fetch_semantic_scholar_by_dois(dois)
-
-    issue_records_by_id: dict[int, dict[str, Any]] = {}
-    article_records: list[dict[str, Any]] = []
-    processed_years: set[int] = set()
-    for work in works:
-        issue_record = build_scholarly_issue_record(journal_id, work)
-        issue_id = None
-        if issue_record:
-            issue_id = issue_record["issue_id"]
-            issue_records_by_id[issue_id] = issue_record
-            year = issue_record.get("publication_year")
-            if isinstance(year, int):
-                processed_years.add(year)
-        doi = normalize_doi(work.get("DOI"))
-        article_record = build_scholarly_article_record(
-            work,
-            openalex_by_doi.get(doi or ""),
-            semantic_scholar_by_doi.get(doi or ""),
-            journal_id,
-            issue_id,
-        )
-        if article_record:
-            article_records.append(article_record)
-
-    issue_records = list(issue_records_by_id.values())
-    if issue_records:
-        await upsert_issues(db, issue_records)
+        latest_existing_issue = None
+        existing_issue_ids: set[int] = set()
+        from_pub_date = None
         if update:
-            await refresh_article_listing_for_issues(
-                db, [record["issue_id"] for record in issue_records]
+            latest_existing_issue = await get_latest_issue_with_articles(db, journal_id)
+            from_pub_date = scholarly_update_from_pub_date(latest_existing_issue)
+            if latest_existing_issue is not None:
+                existing_issue_ids = await get_journal_issue_ids_with_articles(
+                    db, journal_id
+                )
+
+        issn = issn_candidates[0]
+        works: list[dict[str, Any]] = []
+        last_error: Exception | None = None
+        for candidate in issn_candidates:
+            try:
+                works = await client.fetch_journal_works(
+                    candidate, from_pub_date=from_pub_date
+                )
+                issn = candidate
+                break
+            except httpx.HTTPStatusError as exc:
+                last_error = exc
+                if exc.response.status_code != 404:
+                    raise
+        else:
+            error = JournalPathError(
+                "Scholarly journal has no available ISSN candidate: "
+                f"{journal_title_from_row(row)}"
+            )
+            if last_error is not None:
+                raise error from last_error
+            raise error
+
+        if latest_existing_issue is not None:
+            works = select_scholarly_update_works(
+                journal_id,
+                works,
+                existing_issue_ids,
+                latest_existing_issue[0],
             )
 
-    article_records, deleted_article_ids = split_article_records_by_authors(
-        article_records
-    )
-    if deleted_article_ids:
-        await delete_articles(db, deleted_article_ids)
+        stats.record_path_counts(path_key, works_count=len(works))
 
-    if article_records:
-        for batch in chunked(article_records, 500):
-            await upsert_articles(db, batch)
-            await upsert_article_search(db, batch, journal_title)
-            await refresh_article_listing_for_articles(
-                db, list({record["article_id"] for record in batch})
+        journal_row = dict(row)
+        journal_row["issn"] = issn
+        journal_record = build_scholarly_journal_record(journal_id, journal_row, works)
+        if latest_existing_issue is not None:
+            journal_record["has_articles"] = 1
+        meta_record = build_meta_record(journal_id, csv_path, row)
+        journal_title = journal_record.get("title") or row.get("title") or ""
+
+        await upsert_journal(db, journal_record)
+        await upsert_meta(db, meta_record)
+        await db.commit()
+
+        dois = [
+            doi for doi in [normalize_doi(work.get("DOI")) for work in works] if doi
+        ]
+        openalex_by_doi = await client.fetch_openalex_by_dois(dois)
+        semantic_scholar_by_doi = await client.fetch_semantic_scholar_by_dois(dois)
+
+        issue_records_by_id: dict[int, dict[str, Any]] = {}
+        article_records: list[dict[str, Any]] = []
+        processed_years: set[int] = set()
+        for work in works:
+            issue_record = build_scholarly_issue_record(journal_id, work)
+            issue_id = None
+            if issue_record:
+                issue_id = issue_record["issue_id"]
+                issue_records_by_id[issue_id] = issue_record
+                year = issue_record.get("publication_year")
+                if isinstance(year, int):
+                    processed_years.add(year)
+            doi = normalize_doi(work.get("DOI"))
+            article_record = build_scholarly_article_record(
+                work,
+                openalex_by_doi.get(doi or ""),
+                semantic_scholar_by_doi.get(doi or ""),
+                journal_id,
+                issue_id,
             )
+            if article_record:
+                article_records.append(article_record)
 
-    years = sorted(processed_years, reverse=True)
-    progress = None
-    if show_year_progress:
-        progress = tqdm(total=len(years), desc=f"Journal {journal_id} years")
-    for year in years:
-        await mark_year_done(db, journal_id, year)
+        issue_records = list(issue_records_by_id.values())
+        if issue_records:
+            stats.record_path_counts(path_key, issues_count=len(issue_records))
+            await upsert_issues(db, issue_records)
+            if update:
+                await refresh_article_listing_for_issues(
+                    db, [record["issue_id"] for record in issue_records]
+                )
+
+        article_records, deleted_article_ids = split_article_records_by_authors(
+            article_records
+        )
+        if deleted_article_ids:
+            stats.record_path_counts(
+                path_key,
+                articles_deleted_no_authors_count=len(deleted_article_ids),
+            )
+            await delete_articles(db, deleted_article_ids)
+
+        if article_records:
+            for batch in chunked(article_records, 500):
+                await upsert_articles(db, batch)
+                await upsert_article_search(db, batch, journal_title)
+                await refresh_article_listing_for_articles(
+                    db, list({record["article_id"] for record in batch})
+                )
+                stats.record_path_counts(
+                    path_key,
+                    articles_written_count=len(batch),
+                )
+
+        years = sorted(processed_years, reverse=True)
+        progress = None
+        if show_year_progress:
+            progress = tqdm(total=len(years), desc=f"Journal {journal_id} years")
+        for year in years:
+            await mark_year_done(db, journal_id, year)
+            if progress:
+                progress.update(1)
         if progress:
-            progress.update(1)
-    if progress:
-        progress.close()
+            progress.close()
 
-    await mark_journal_done(db, journal_id)
-    await db.commit()
+        await mark_journal_done(db, journal_id)
+        await db.commit()
+        stats.record_path_finished("succeeded", path_key)
+    except Exception as exc:
+        stats.record_path_finished("failed", path_key, exc)
+        raise
+    finally:
+        stats.clear_current_path()
 
 
 async def process_cnki_journal(
@@ -341,6 +412,7 @@ async def process_cnki_journal(
     show_year_progress: bool,
     resume: bool,
     update: bool,
+    stats_recorder: IndexStatsRecorder | NoOpIndexStatsRecorder | None = None,
 ) -> None:
     """
     Export one CNKI journal to the database.
@@ -355,143 +427,180 @@ async def process_cnki_journal(
         show_year_progress: Whether to display year progress with tqdm.
         resume: Whether to resume from completed years and journals.
         update: Whether to perform incremental updates for existing years.
+        stats_recorder: Optional index statistics recorder.
 
     Returns:
         None.
     """
+    stats = stats_recorder_or_noop(stats_recorder)
     journal_id = build_journal_id(row)
-    if journal_id is None:
-        print(f"  - Skipping CNKI journal with missing id: {row.get('title')}")
-        return
-
-    if resume and not update and await is_journal_complete(db, journal_id):
-        return
-
-    details = await client.resolve_journal(row)
-    if not details:
-        print(f"  - No CNKI details for journal {row.get('title')}")
-        return
-
-    journal_record = build_cnki_journal_record(journal_id, row, details)
-    meta_record = build_meta_record(journal_id, csv_path, row)
-    journal_title = journal_record.get("title") or row.get("title") or ""
-    journal_code = str(details["pykm"])
-
-    await upsert_journal(db, journal_record)
-    await upsert_meta(db, meta_record)
-    await db.commit()
-
-    if resume and not update and await is_journal_complete(db, journal_id):
-        return
-
-    issues = await client.get_year_issues(details)
-    if not issues:
-        print(f"  - No CNKI publication years for journal {journal_code}")
-        return
-
-    issues_by_year: dict[int, list[dict[str, Any]]] = {}
-    for issue in issues:
-        year = issue.get("year")
-        if isinstance(year, int):
-            issues_by_year.setdefault(year, []).append(issue)
-
-    issue_records_by_year: dict[int, list[dict[str, Any]]] = {}
-    issue_pairs_by_year: dict[int, list[tuple[int, dict[str, Any]]]] = {}
-    for year in sorted(issues_by_year, reverse=True):
-        for issue in issues_by_year.get(year, []):
-            record = build_cnki_issue_record(journal_id, journal_code, issue)
-            if record:
-                issue_records_by_year.setdefault(year, []).append(record)
-                issue_pairs_by_year.setdefault(year, []).append(
-                    (record["issue_id"], issue)
-                )
-
-    completed_years: set[int] = set()
-    if resume and not update:
-        completed_years = await get_completed_years(db, journal_id)
-
-    selected_update_issue_ids: set[int] | None = None
-    if update:
-        ordered_issue_ids = [
-            issue_id
-            for year in sorted(issue_pairs_by_year, reverse=True)
-            for issue_id, _issue in issue_pairs_by_year.get(year, [])
-        ]
-        existing_issue_ids = await get_journal_issue_ids_with_articles(db, journal_id)
-        selected_update_issue_ids = set(
-            select_recent_update_issue_ids(ordered_issue_ids, existing_issue_ids)
-        )
-        years_to_process = [
-            year
-            for year in sorted(issue_pairs_by_year, reverse=True)
-            if any(
-                issue_id in selected_update_issue_ids
-                for issue_id, _issue in issue_pairs_by_year.get(year, [])
+    path_key = stats.record_path_started(
+        CNKI_SOURCE,
+        "journal",
+        journal_id,
+        journal_title_from_row(row),
+    )
+    try:
+        if journal_id is None:
+            raise JournalPathError(
+                f"CNKI journal missing id: {journal_title_from_row(row)}"
             )
-        ]
-    else:
-        years_to_process = [
-            year
-            for year in sorted(issue_pairs_by_year, reverse=True)
-            if year not in completed_years
-        ]
 
-    progress = None
-    if show_year_progress:
-        progress = tqdm(
-            total=len(years_to_process),
-            desc=f"Journal {journal_id} years",
-            unit="year",
-        )
+        if resume and not update and await is_journal_complete(db, journal_id):
+            stats.record_path_finished("resumed", path_key)
+            return
 
-    detail_workers = max(1, min(request_workers, CNKI_DETAIL_WORKER_LIMIT))
-    semaphore = asyncio.Semaphore(detail_workers)
-    for index, year in enumerate(years_to_process, start=1):
-        if progress:
-            progress.set_postfix_str(f"{year} ({index}/{len(years_to_process)})")
-
-        issue_records = issue_records_by_year.get(year, [])
-        issue_pairs = issue_pairs_by_year.get(year, [])
-        if selected_update_issue_ids is not None:
-            issue_records = [
-                record
-                for record in issue_records
-                if record["issue_id"] in selected_update_issue_ids
-            ]
-            issue_pairs = [
-                pair for pair in issue_pairs if pair[0] in selected_update_issue_ids
-            ]
-
-        if issue_records:
-            await upsert_issues(db, issue_records)
-
-        issue_pairs_to_fetch = issue_pairs
-        for batch in chunked(issue_pairs_to_fetch, issue_batch_size):
-            batch_records = await fetch_cnki_issue_batch(
-                client, semaphore, details, journal_id, batch
+        details = await client.resolve_journal(row)
+        if not details:
+            raise JournalPathError(
+                f"No CNKI details for journal: {journal_title_from_row(row)}"
             )
-            batch_records, deleted_article_ids = split_article_records_by_authors(
-                batch_records
-            )
-            if deleted_article_ids:
-                await delete_articles(db, deleted_article_ids)
-            if batch_records:
-                await upsert_articles(db, batch_records)
-                await upsert_article_search(db, batch_records, journal_title)
-                await refresh_article_listing_for_articles(
-                    db, list({record["article_id"] for record in batch_records})
-                )
 
-        await mark_year_done(db, journal_id, year)
+        journal_record = build_cnki_journal_record(journal_id, row, details)
+        meta_record = build_meta_record(journal_id, csv_path, row)
+        journal_title = journal_record.get("title") or row.get("title") or ""
+        journal_code = str(details["pykm"])
+
+        await upsert_journal(db, journal_record)
+        await upsert_meta(db, meta_record)
         await db.commit()
+
+        if resume and not update and await is_journal_complete(db, journal_id):
+            stats.record_path_finished("resumed", path_key)
+            return
+
+        issues = await client.get_year_issues(details)
+        if not issues:
+            raise JournalPathError(
+                f"No CNKI publication years for journal {journal_code}"
+            )
+        stats.record_path_counts(path_key, issues_count=len(issues))
+
+        issues_by_year: dict[int, list[dict[str, Any]]] = {}
+        for issue in issues:
+            year = issue.get("year")
+            if isinstance(year, int):
+                issues_by_year.setdefault(year, []).append(issue)
+
+        issue_records_by_year: dict[int, list[dict[str, Any]]] = {}
+        issue_pairs_by_year: dict[int, list[tuple[int, dict[str, Any]]]] = {}
+        for year in sorted(issues_by_year, reverse=True):
+            for issue in issues_by_year.get(year, []):
+                record = build_cnki_issue_record(journal_id, journal_code, issue)
+                if record:
+                    issue_records_by_year.setdefault(year, []).append(record)
+                    issue_pairs_by_year.setdefault(year, []).append(
+                        (record["issue_id"], issue)
+                    )
+
+        completed_years: set[int] = set()
+        if resume and not update:
+            completed_years = await get_completed_years(db, journal_id)
+
+        selected_update_issue_ids: set[int] | None = None
+        if update:
+            ordered_issue_ids = [
+                issue_id
+                for year in sorted(issue_pairs_by_year, reverse=True)
+                for issue_id, _issue in issue_pairs_by_year.get(year, [])
+            ]
+            existing_issue_ids = await get_journal_issue_ids_with_articles(
+                db, journal_id
+            )
+            selected_update_issue_ids = set(
+                select_recent_update_issue_ids(ordered_issue_ids, existing_issue_ids)
+            )
+            years_to_process = [
+                year
+                for year in sorted(issue_pairs_by_year, reverse=True)
+                if any(
+                    issue_id in selected_update_issue_ids
+                    for issue_id, _issue in issue_pairs_by_year.get(year, [])
+                )
+            ]
+        else:
+            years_to_process = [
+                year
+                for year in sorted(issue_pairs_by_year, reverse=True)
+                if year not in completed_years
+            ]
+
+        progress = None
+        if show_year_progress:
+            progress = tqdm(
+                total=len(years_to_process),
+                desc=f"Journal {journal_id} years",
+                unit="year",
+            )
+
+        detail_workers = max(1, min(request_workers, CNKI_DETAIL_WORKER_LIMIT))
+        semaphore = asyncio.Semaphore(detail_workers)
+        for index, year in enumerate(years_to_process, start=1):
+            if progress:
+                progress.set_postfix_str(f"{year} ({index}/{len(years_to_process)})")
+
+            issue_records = issue_records_by_year.get(year, [])
+            issue_pairs = issue_pairs_by_year.get(year, [])
+            if selected_update_issue_ids is not None:
+                issue_records = [
+                    record
+                    for record in issue_records
+                    if record["issue_id"] in selected_update_issue_ids
+                ]
+                issue_pairs = [
+                    pair for pair in issue_pairs if pair[0] in selected_update_issue_ids
+                ]
+
+            if issue_records:
+                await upsert_issues(db, issue_records)
+
+            issue_pairs_to_fetch = issue_pairs
+            for batch in chunked(issue_pairs_to_fetch, issue_batch_size):
+                batch_records = await fetch_cnki_issue_batch(
+                    client,
+                    semaphore,
+                    details,
+                    journal_id,
+                    batch,
+                    stats,
+                    path_key,
+                )
+                batch_records, deleted_article_ids = split_article_records_by_authors(
+                    batch_records
+                )
+                if deleted_article_ids:
+                    stats.record_path_counts(
+                        path_key,
+                        articles_deleted_no_authors_count=len(deleted_article_ids),
+                    )
+                    await delete_articles(db, deleted_article_ids)
+                if batch_records:
+                    await upsert_articles(db, batch_records)
+                    await upsert_article_search(db, batch_records, journal_title)
+                    await refresh_article_listing_for_articles(
+                        db, list({record["article_id"] for record in batch_records})
+                    )
+                    stats.record_path_counts(
+                        path_key,
+                        articles_written_count=len(batch_records),
+                    )
+
+            await mark_year_done(db, journal_id, year)
+            await db.commit()
+            if progress:
+                progress.update(1)
+
         if progress:
-            progress.update(1)
+            progress.close()
 
-    if progress:
-        progress.close()
-
-    await mark_journal_done(db, journal_id)
-    await db.commit()
+        await mark_journal_done(db, journal_id)
+        await db.commit()
+        stats.record_path_finished("succeeded", path_key)
+    except Exception as exc:
+        stats.record_path_finished("failed", path_key, exc)
+        raise
+    finally:
+        stats.clear_current_path()
 
 
 async def fetch_cnki_issue_batch(
@@ -500,6 +609,8 @@ async def fetch_cnki_issue_batch(
     journal: dict[str, Any],
     journal_id: int,
     issue_pairs: list[tuple[int, dict[str, Any]]],
+    stats_recorder: IndexStatsRecorder | NoOpIndexStatsRecorder,
+    path_key: PathStatsKey,
 ) -> list[dict[str, Any]]:
     """
     Fetch CNKI article details for an issue batch.
@@ -510,6 +621,8 @@ async def fetch_cnki_issue_batch(
         journal: CNKI journal detail payload.
         journal_id: Internal journal ID.
         issue_pairs: Database issue ID and upstream issue payload pairs.
+        stats_recorder: Index statistics recorder.
+        path_key: Path statistics key.
 
     Returns:
         Article records.
@@ -522,7 +635,12 @@ async def fetch_cnki_issue_batch(
     ]
     summary_pairs: list[tuple[int, dict[str, Any]]] = []
     for summary_completed in asyncio.as_completed(summary_tasks):
-        summary_pairs.extend(await summary_completed)
+        completed_pairs = await summary_completed
+        summary_pairs.extend(completed_pairs)
+        stats_recorder.record_path_counts(
+            path_key,
+            article_summaries_count=len(completed_pairs),
+        )
 
     detail_tasks = [
         asyncio.create_task(
@@ -534,6 +652,7 @@ async def fetch_cnki_issue_batch(
     records: list[dict[str, Any]] = []
     for detail_completed in asyncio.as_completed(detail_tasks):
         issue_id, summary, detail = await detail_completed
+        stats_recorder.record_path_counts(path_key, article_details_count=1)
         record = build_cnki_article_record(detail, summary, journal_id, issue_id)
         if record:
             records.append(record)
@@ -611,6 +730,7 @@ async def process_journal(
     show_year_progress: bool,
     resume: bool,
     update: bool,
+    stats_recorder: IndexStatsRecorder | NoOpIndexStatsRecorder | None = None,
 ) -> None:
     """
     Export a single journal to the database.
@@ -626,6 +746,7 @@ async def process_journal(
         show_year_progress: Whether to display year progress with tqdm.
         resume: Whether to resume from completed years and journals.
         update: Whether to perform incremental updates for existing years.
+        stats_recorder: Optional index statistics recorder.
 
     Returns:
         None.
@@ -642,6 +763,7 @@ async def process_journal(
             show_year_progress,
             resume,
             update,
+            stats_recorder,
         )
         return
     if source == SCHOLARLY_SOURCE:
@@ -654,6 +776,20 @@ async def process_journal(
             show_year_progress,
             resume,
             update,
+            stats_recorder,
         )
         return
-    print(f"  - Skipping journal with unknown source {source}: {row.get('title')}")
+    stats = stats_recorder_or_noop(stats_recorder)
+    journal_id = build_journal_id(row)
+    path_key = stats.record_path_started(
+        source,
+        "journal",
+        journal_id,
+        journal_title_from_row(row),
+    )
+    error = JournalPathError(
+        f"Unsupported journal source {source}: {journal_title_from_row(row)}"
+    )
+    stats.record_path_finished("failed", path_key, error)
+    stats.clear_current_path()
+    raise error

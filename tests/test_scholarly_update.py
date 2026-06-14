@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import unittest
 from pathlib import Path
 from typing import Any, cast
@@ -16,7 +17,13 @@ from paper_scanner.index.db.operations import (
     upsert_meta,
 )
 from paper_scanner.index.db.schema import init_db
-from paper_scanner.index.fetcher import process_cnki_journal, process_scholarly_journal
+from paper_scanner.index.fetcher import (
+    JournalPathError,
+    process_cnki_journal,
+    process_scholarly_journal,
+)
+from paper_scanner.index.main import validate_required_source_config
+from paper_scanner.index.stats import IndexStatsRecorder
 from paper_scanner.index.transforms import (
     build_cnki_article_record,
     build_cnki_issue_record,
@@ -29,6 +36,7 @@ from paper_scanner.index.transforms import (
 )
 
 TEST_CSV_PATH = Path("test.csv")
+SEMANTIC_SCHOLAR_KEY_ENV = "SEMANTIC_SCHOLAR_API_KEY_POOL"
 
 
 class FakeScholarlyClient:
@@ -189,6 +197,49 @@ class FakeCnkiClient:
         return build_cnki_detail(platform_id)
 
 
+class MissingCnkiClient:
+    """
+    Fake CNKI client that cannot resolve journal details.
+    """
+
+    async def resolve_journal(self, row: dict[str, str]) -> None:
+        """
+        Return no CNKI journal details.
+
+        Args:
+            row: Source CSV row.
+
+        Returns:
+            None.
+        """
+        return None
+
+
+class IndexConfigTest(unittest.TestCase):
+    """
+    Verify required index runtime configuration.
+    """
+
+    def test_scholarly_rows_require_semantic_scholar_key(self) -> None:
+        """
+        Ensure scholarly indexing fails before silent S2 downgrade.
+        """
+        previous_key = os.environ.get(SEMANTIC_SCHOLAR_KEY_ENV)
+        os.environ.pop(SEMANTIC_SCHOLAR_KEY_ENV, None)
+        try:
+            with self.assertRaisesRegex(
+                SystemExit,
+                "Semantic Scholar API key is required",
+            ):
+                validate_required_source_config([{"source": "scholarly"}])
+            validate_required_source_config([{"source": "cnki"}])
+        finally:
+            if previous_key is None:
+                os.environ.pop(SEMANTIC_SCHOLAR_KEY_ENV, None)
+            else:
+                os.environ[SEMANTIC_SCHOLAR_KEY_ENV] = previous_key
+
+
 class ScholarlyUpdateTest(unittest.IsolatedAsyncioTestCase):
     """
     Verify scholarly update scope stays limited to recent issues.
@@ -279,6 +330,43 @@ class ScholarlyUpdateTest(unittest.IsolatedAsyncioTestCase):
             finally:
                 await db.close()
 
+    async def test_missing_issn_fails_and_records_path_stats(self) -> None:
+        """
+        Ensure missing scholarly identifiers are explicit path failures.
+        """
+        row = {
+            "source": "scholarly",
+            "title": "No ISSN Journal",
+            "issn": "",
+            "id": "",
+            "area": "testing",
+        }
+        stats_recorder = IndexStatsRecorder("run-missing-issn", "test.csv")
+
+        async with aiosqlite.connect(":memory:") as raw_db:
+            await init_db(raw_db)
+            db = LocalDatabaseClient(raw_db)
+            await db.start()
+            try:
+                with self.assertRaisesRegex(JournalPathError, "missing ISSN"):
+                    await process_scholarly_journal(
+                        db,
+                        cast(Any, FakeScholarlyClient([])),
+                        TEST_CSV_PATH,
+                        row,
+                        request_workers=4,
+                        show_year_progress=False,
+                        resume=True,
+                        update=False,
+                        stats_recorder=stats_recorder,
+                    )
+            finally:
+                await db.close()
+
+        path_stats = next(iter(stats_recorder.stats.path_stats.values()))
+        self.assertEqual(path_stats.status, "failed")
+        self.assertEqual(path_stats.error_type, "JournalPathError")
+
 
 class CnkiUpdateTest(unittest.IsolatedAsyncioTestCase):
     """
@@ -359,6 +447,44 @@ class CnkiUpdateTest(unittest.IsolatedAsyncioTestCase):
                 )
             finally:
                 await db.close()
+
+    async def test_missing_cnki_details_fails_and_records_path_stats(self) -> None:
+        """
+        Ensure unresolved CNKI journals are explicit path failures.
+        """
+        row = {
+            "source": "cnki",
+            "title": "Missing CNKI Journal",
+            "issn": "1234-5678",
+            "id": "Missing CNKI Journal",
+            "area": "testing",
+        }
+        stats_recorder = IndexStatsRecorder("run-missing-cnki", "test.csv")
+
+        async with aiosqlite.connect(":memory:") as raw_db:
+            await init_db(raw_db)
+            db = LocalDatabaseClient(raw_db)
+            await db.start()
+            try:
+                with self.assertRaisesRegex(JournalPathError, "No CNKI details"):
+                    await process_cnki_journal(
+                        db,
+                        cast(Any, MissingCnkiClient()),
+                        TEST_CSV_PATH,
+                        row,
+                        issue_batch_size=10,
+                        request_workers=4,
+                        show_year_progress=False,
+                        resume=True,
+                        update=False,
+                        stats_recorder=stats_recorder,
+                    )
+            finally:
+                await db.close()
+
+        path_stats = next(iter(stats_recorder.stats.path_stats.values()))
+        self.assertEqual(path_stats.status, "failed")
+        self.assertEqual(path_stats.error_type, "JournalPathError")
 
 
 def build_work(doi: str, month: int, issue: str) -> dict[str, Any]:

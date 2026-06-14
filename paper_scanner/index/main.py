@@ -6,6 +6,8 @@ import argparse
 import asyncio
 import csv
 import multiprocessing as mp
+import os
+import uuid
 from pathlib import Path
 
 import aiosqlite
@@ -17,9 +19,13 @@ from paper_scanner.index.changes import (
     write_change_manifest,
 )
 from paper_scanner.index.db.client import LocalDatabaseClient
-from paper_scanner.index.db.operations import mark_listing_ready
+from paper_scanner.index.db.operations import (
+    mark_listing_ready,
+    persist_index_run_stats,
+)
 from paper_scanner.index.db.schema import init_db, optimize_db
 from paper_scanner.index.fetcher import process_journal
+from paper_scanner.index.stats import IndexRunStats, IndexStatsRecorder
 from paper_scanner.index.workers import run_worker_batch, writer_process
 from paper_scanner.shared.constants import (
     CNKI_SOURCE,
@@ -27,6 +33,7 @@ from paper_scanner.shared.constants import (
     PROJECT_ROOT,
     SCHOLARLY_SOURCE,
 )
+from paper_scanner.shared.request_pools import build_value_pool
 from paper_scanner.shared.runtime_config import apply_runtime_config
 from paper_scanner.sources.cnki import CnkiClient
 from paper_scanner.sources.scholarly import ScholarlyClient
@@ -77,6 +84,104 @@ def validate_sources(rows: list[dict[str, str]]) -> list[dict[str, str]]:
     return rows
 
 
+def validate_required_source_config(rows: list[dict[str, str]]) -> None:
+    """
+    Validate required runtime settings for source rows.
+
+    Args:
+        rows: Validated CSV rows.
+
+    Returns:
+        None.
+
+    Raises:
+        SystemExit: If a required source setting is missing.
+    """
+    has_scholarly_rows = any(row.get("source") == SCHOLARLY_SOURCE for row in rows)
+    semantic_scholar_keys = build_value_pool(os.getenv("SEMANTIC_SCHOLAR_API_KEY_POOL"))
+    if has_scholarly_rows and not semantic_scholar_keys:
+        raise SystemExit("Semantic Scholar API key is required for scholarly indexing.")
+
+
+def build_index_run_id(csv_path: Path) -> str:
+    """
+    Build a unique index run identifier for one CSV file.
+
+    Args:
+        csv_path: Source CSV path.
+
+    Returns:
+        Unique run identifier.
+    """
+    return f"{csv_path.stem}-{uuid.uuid4().hex}"
+
+
+def index_error_summary(errors: list[str]) -> str | None:
+    """
+    Build a compact run error summary.
+
+    Args:
+        errors: Error messages.
+
+    Returns:
+        Compact error summary or None.
+    """
+    if not errors:
+        return None
+    return "; ".join(errors[:3])
+
+
+def print_index_run_summary(stats: IndexRunStats) -> None:
+    """
+    Print a compact index statistics summary.
+
+    Args:
+        stats: Index run statistics.
+
+    Returns:
+        None.
+    """
+    print(
+        "  Index run stats:",
+        f"status={stats.status}",
+        f"journals={stats.total_journals()}",
+        f"succeeded={stats.succeeded_journals()}",
+        f"failed={stats.failed_journals()}",
+        f"resumed={stats.resumed_journals()}",
+    )
+    service_counts: dict[str, int] = {}
+    for api_stats in stats.api_stats.values():
+        service_counts[api_stats.key.service] = (
+            service_counts.get(api_stats.key.service, 0) + api_stats.logical_calls
+        )
+    if service_counts:
+        service_text = ", ".join(
+            f"{service}={count}" for service, count in sorted(service_counts.items())
+        )
+        print(f"  API calls: {service_text}")
+
+
+async def persist_final_index_stats(db_path: Path, stats: IndexRunStats) -> None:
+    """
+    Persist final index run statistics to a database.
+
+    Args:
+        db_path: SQLite database path.
+        stats: Final index run statistics.
+
+    Returns:
+        None.
+    """
+    async with aiosqlite.connect(db_path, timeout=DB_TIMEOUT_SECONDS) as db:
+        await init_db(db)
+        local_db = LocalDatabaseClient(db)
+        await local_db.start()
+        try:
+            await persist_index_run_stats(local_db, stats)
+        finally:
+            await local_db.close()
+
+
 async def export_csv(
     csv_path: Path,
     db_path: Path,
@@ -110,14 +215,18 @@ async def export_csv(
 
     print(f"\nProcessing {csv_path.name} -> {db_path.name}")
     rows = validate_sources(rows)
+    validate_required_source_config(rows)
+    stats_recorder = IndexStatsRecorder(build_index_run_id(csv_path), csv_path.name)
 
     if processes <= 1:
         scholarly_client = ScholarlyClient(
             timeout=timeout,
             worker_id=0,
             process_count=1,
+            stats_recorder=stats_recorder,
         )
-        cnki_client = CnkiClient(timeout=timeout)
+        cnki_client = CnkiClient(timeout=timeout, stats_recorder=stats_recorder)
+        run_error: Exception | None = None
         async with aiosqlite.connect(db_path, timeout=DB_TIMEOUT_SECONDS) as db:
             await init_db(db)
             local_db = LocalDatabaseClient(db)
@@ -137,15 +246,29 @@ async def export_csv(
                         True,
                         resume,
                         update,
+                        stats_recorder,
                     )
+            except Exception as exc:
+                run_error = exc
             finally:
+                if run_error is None:
+                    stats_recorder.stats.finish("succeeded")
+                else:
+                    stats_recorder.stats.finish("failed", str(run_error))
+                await persist_index_run_stats(local_db, stats_recorder.stats)
                 await local_db.close()
-                await optimize_db(db)
-                if not update:
+                if run_error is None:
+                    await optimize_db(db)
+                if run_error is None and not update:
                     await mark_listing_ready(db)
                     await db.commit()
                 await scholarly_client.aclose()
                 await cnki_client.aclose()
+        print_index_run_summary(stats_recorder.stats)
+        if run_error is not None:
+            raise RuntimeError(
+                f"Index run failed for {csv_path.name}: {run_error}"
+            ) from run_error
         return
 
     ctx = mp.get_context()
@@ -170,6 +293,7 @@ async def export_csv(
                 request_queue,
                 response_queues[worker_id],
                 status_queue,
+                stats_recorder.stats.run_id,
                 str(csv_path),
                 worker_rows,
                 issue_batch_size,
@@ -184,18 +308,23 @@ async def export_csv(
 
     completed = 0
     total = len(rows)
+    failure_messages: list[str] = []
     try:
         while completed < total:
             message = await asyncio.to_thread(status_queue.get)
             if message is None:
                 continue
             completed += 1
+            stats_payload = message.get("stats")
+            if isinstance(stats_payload, dict):
+                stats_recorder.merge(stats_payload)
             if message.get("ok"):
                 title = message.get("title") or message.get("journal_id") or "Unknown"
                 print(f"  Finished {title}")
             else:
                 title = message.get("title") or message.get("journal_id") or "Unknown"
                 error = message.get("error") or "Unknown error"
+                failure_messages.append(f"{title}: {error}")
                 print(f"  - Journal worker failed: {title} ({error})")
     finally:
         request_queue.put({"type": "stop"})
@@ -203,11 +332,29 @@ async def export_csv(
         for worker in workers:
             worker.join()
 
+    for worker in workers:
+        if worker.exitcode not in (0, None):
+            failure_messages.append(
+                f"worker {worker.pid or 'unknown'} exited with {worker.exitcode}"
+            )
+
+    error_summary = index_error_summary(failure_messages)
+    stats_recorder.stats.finish(
+        "failed" if failure_messages else "succeeded",
+        error_summary,
+    )
+    await persist_final_index_stats(db_path, stats_recorder.stats)
+    print_index_run_summary(stats_recorder.stats)
+
     async with aiosqlite.connect(db_path, timeout=DB_TIMEOUT_SECONDS) as db:
-        await optimize_db(db)
-        if not update:
+        if not failure_messages:
+            await optimize_db(db)
+        if not failure_messages and not update:
             await mark_listing_ready(db)
             await db.commit()
+
+    if failure_messages:
+        raise RuntimeError(f"Index run failed for {csv_path.name}: {error_summary}")
 
 
 async def async_main(args: argparse.Namespace) -> None:
