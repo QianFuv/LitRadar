@@ -597,16 +597,18 @@ class IndexRunStats:
         Returns:
             None.
         """
-        for key, path_stats in other.path_stats.items():
-            if key not in self.path_stats:
-                self.path_stats[key] = PathCallStats.from_dict(path_stats.to_dict())
+        for path_key, path_stats in other.path_stats.items():
+            if path_key not in self.path_stats:
+                self.path_stats[path_key] = PathCallStats.from_dict(
+                    path_stats.to_dict()
+                )
                 continue
-            self.path_stats[key].merge(path_stats)
-        for key, api_stats in other.api_stats.items():
-            if key not in self.api_stats:
-                self.api_stats[key] = ApiCallStats.from_dict(api_stats.to_dict())
+            self.path_stats[path_key].merge(path_stats)
+        for api_key, api_stats in other.api_stats.items():
+            if api_key not in self.api_stats:
+                self.api_stats[api_key] = ApiCallStats.from_dict(api_stats.to_dict())
                 continue
-            self.api_stats[key].merge(api_stats)
+            self.api_stats[api_key].merge(api_stats)
         if other.error_summary and not self.error_summary:
             self.error_summary = other.error_summary
 
