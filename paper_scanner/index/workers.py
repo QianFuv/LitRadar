@@ -119,6 +119,7 @@ def process_journal_worker_ipc(
     show_year_progress: bool,
     resume: bool,
     update: bool,
+    process_count: int = 1,
 ) -> tuple[str, str]:
     """
     Run journal processing in a worker process with IPC database access.
@@ -135,6 +136,7 @@ def process_journal_worker_ipc(
         show_year_progress: Whether to display year progress with tqdm.
         resume: Whether to resume from completed years and journals.
         update: Whether to perform incremental updates for existing years.
+        process_count: Total process count sharing upstream limits.
 
     Returns:
         Tuple of journal ID and journal title.
@@ -142,7 +144,11 @@ def process_journal_worker_ipc(
 
     async def run_worker() -> None:
         apply_runtime_config()
-        scholarly_client = ScholarlyClient(timeout=timeout)
+        scholarly_client = ScholarlyClient(
+            timeout=timeout,
+            worker_id=worker_id,
+            process_count=process_count,
+        )
         cnki_client = CnkiClient(timeout=timeout)
         db_client = IPCDatabaseClient(request_queue, response_queue, worker_id)
         try:
@@ -170,6 +176,7 @@ def process_journal_worker_ipc(
 
 def run_worker_batch(
     worker_id: int,
+    process_count: int,
     request_queue: Any,
     response_queue: Any,
     status_queue: Any,
@@ -186,6 +193,7 @@ def run_worker_batch(
 
     Args:
         worker_id: Worker identifier for response routing.
+        process_count: Total process count sharing upstream limits.
         request_queue: Multiprocessing request queue.
         response_queue: Multiprocessing response queue.
         status_queue: Multiprocessing status queue.
@@ -203,7 +211,11 @@ def run_worker_batch(
 
     async def run_batch() -> None:
         apply_runtime_config()
-        scholarly_client = ScholarlyClient(timeout=timeout)
+        scholarly_client = ScholarlyClient(
+            timeout=timeout,
+            worker_id=worker_id,
+            process_count=process_count,
+        )
         cnki_client = CnkiClient(timeout=timeout)
         db_client = IPCDatabaseClient(request_queue, response_queue, worker_id)
         try:

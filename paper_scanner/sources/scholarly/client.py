@@ -8,6 +8,7 @@ import random
 from collections.abc import Mapping
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
+from functools import partial
 from typing import Any
 from urllib.parse import quote
 
@@ -22,6 +23,12 @@ from paper_scanner.shared.request_pools import (
     request_pool_key,
     select_async_client,
     select_pool_value,
+)
+from paper_scanner.sources.scholarly.limits import (
+    CROSSREF_SOURCE,
+    OPENALEX_SOURCE,
+    ScholarlyRequestThrottles,
+    build_scholarly_request_throttles,
 )
 
 CROSSREF_BASE_URL = "https://api.crossref.org/v1"
@@ -40,11 +47,16 @@ class ScholarlyClient:
 
     Args:
         timeout: HTTP request timeout in seconds.
+        worker_id: Current worker process identifier for shared source throttles.
+        process_count: Total process count sharing upstream source limits.
     """
 
     def __init__(
         self,
         timeout: int = 20,
+        worker_id: int = 0,
+        process_count: int = 1,
+        request_throttles: ScholarlyRequestThrottles | None = None,
     ) -> None:
         self.mailto_pool = build_value_pool(os.getenv("CROSSREF_MAILTO_POOL"))
         self.openalex_api_key_pool = build_value_pool(
@@ -57,6 +69,13 @@ class ScholarlyClient:
             headers={"User-Agent": self._build_user_agent()},
             follow_redirects=True,
             proxy_pool=self.proxy_pool,
+        )
+        self._request_throttles = (
+            request_throttles
+            or build_scholarly_request_throttles(
+                worker_id=worker_id,
+                process_count=process_count,
+            )
         )
 
     async def aclose(self) -> None:
@@ -104,6 +123,7 @@ class ScholarlyClient:
                 f"{CROSSREF_BASE_URL}/journals/{quote(issn)}/works",
                 params=params,
                 param_pools={"mailto": self.mailto_pool},
+                source=CROSSREF_SOURCE,
             )
             message = response.json().get("message") or {}
             items = message.get("items") or []
@@ -150,6 +170,7 @@ class ScholarlyClient:
                         "api_key": self.openalex_api_key_pool,
                         "mailto": self.mailto_pool,
                     },
+                    source=OPENALEX_SOURCE,
                 )
             except httpx.HTTPError:
                 await asyncio.sleep(0)
@@ -219,6 +240,7 @@ class ScholarlyClient:
         param_pools: Mapping[str, list[str]] | None = None,
         allowed_status_codes: set[int] | None = None,
         max_retries: int = DEFAULT_MAX_RETRIES,
+        source: str | None = None,
     ) -> httpx.Response:
         """
         Send a GET request with retry handling for transient upstream limits.
@@ -229,6 +251,7 @@ class ScholarlyClient:
             param_pools: Query parameter value pools for retry failover.
             allowed_status_codes: Status codes that should be returned as success.
             max_retries: Maximum retry attempts after the initial request.
+            source: Optional source identifier for request throttling.
 
         Returns:
             HTTP response.
@@ -250,7 +273,11 @@ class ScholarlyClient:
                     request_key,
                     attempt,
                 )
-                response = await client.get(url, params=request_params)
+                request_operation = partial(client.get, url, params=request_params)
+                response = await self._request_throttles.run(
+                    source,
+                    request_operation,
+                )
             except httpx.TransportError:
                 if attempt >= total_attempts - 1:
                     raise

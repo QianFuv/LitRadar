@@ -112,7 +112,11 @@ async def export_csv(
     rows = validate_sources(rows)
 
     if processes <= 1:
-        scholarly_client = ScholarlyClient(timeout=timeout)
+        scholarly_client = ScholarlyClient(
+            timeout=timeout,
+            worker_id=0,
+            process_count=1,
+        )
         cnki_client = CnkiClient(timeout=timeout)
         async with aiosqlite.connect(db_path, timeout=DB_TIMEOUT_SECONDS) as db:
             await init_db(db)
@@ -162,6 +166,7 @@ async def export_csv(
             target=run_worker_batch,
             args=(
                 worker_id,
+                processes,
                 request_queue,
                 response_queues[worker_id],
                 status_queue,
