@@ -117,7 +117,6 @@ journals (1) ---- (1) journal_meta
   - `article_id`
   - `journal_id`
   - `issue_id`
-  - `sync_id`
   - `title`
   - `date`
   - `authors`
@@ -128,27 +127,17 @@ journals (1) ---- (1) journal_meta
   - `doi`
   - `pmid`
 - 外部链接：
-  - `ill_url`
-  - `link_resolver_openurl_link`
-  - `email_article_request_link`
   - `permalink`
-  - `full_text_file`，当前保存 OA URL 或 CNKI HTML 阅读链接
-  - `nomad_fallback_url`
+  - `content_location`，英文路径保存 OpenAlex、Crossref 或 DOI landing page；CNKI 路径保存详情页
+  - `full_text_file`，英文路径保存 Semantic Scholar / OpenAlex OA URL；CNKI 路径保存 HTML 阅读链接
 - 状态位：
   - `suppressed`
   - `in_press`
   - `open_access`
-  - `within_library_holdings`，历史字段，新抓取数据通常为空
-  - `unpaywall_data_suppressed`
-  - `avoid_unpaywall_publisher_links`
+  - `within_library_holdings`，保留给筛选与通知逻辑，新抓取数据通常为空
 - 其他来源字段：
   - `platform_id`
   - `retraction_doi`
-  - `retraction_date`
-  - `retraction_related_urls`
-  - `expression_of_concern_doi`
-  - `noodletools_export_link`
-  - `content_location`
 
 主要索引：
 

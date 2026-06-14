@@ -1,6 +1,6 @@
 # Paper Scanner
 
-Paper Scanner 是一个面向学术期刊的全栈检索与订阅平台。它负责从 OpenAlex、Crossref、Unpaywall 与 CNKI overseas 抓取期刊和文章元数据，构建 SQLite 检索库，并提供 Web 界面、收藏夹、追踪推送、每周更新、公告与后台管理能力。
+Paper Scanner 是一个面向学术期刊的全栈检索与订阅平台。它负责从 Crossref、OpenAlex、Semantic Scholar 与 CNKI overseas 抓取期刊和文章元数据，构建 SQLite 检索库，并提供 Web 界面、收藏夹、追踪推送、每周更新、公告与后台管理能力。
 
 当前仓库包含四类核心运行单元：
 
@@ -11,7 +11,7 @@ Paper Scanner 是一个面向学术期刊的全栈检索与订阅平台。它负
 
 ## 主要功能
 
-- 多数据源索引：英文期刊使用 Crossref + OpenAlex + Unpaywall，中文期刊使用 CNKI overseas
+- 多数据源索引：英文期刊使用 Crossref + OpenAlex + Semantic Scholar，中文期刊使用 CNKI overseas
 - SQLite 检索：文章全文检索基于 FTS5，可选加载 `simple` 中文分词扩展
 - 多维筛选：按期刊、领域、年份、开放获取等条件过滤
 - 每周更新：基于变更清单聚合最近新增文章
@@ -137,7 +137,7 @@ uv run index --update --notify --notify-dry-run
 | 参数 | 默认值 | 说明 |
 | --- | --- | --- |
 | `--file, -f` | 处理 `data/meta/` 下全部 CSV | 指定单个 CSV |
-| `--workers, -w` | `32` | 最大并发请求数 |
+| `--workers, -w` | `32` | 进程内请求 worker 数；英文 scholarly 源会额外按 source 限流 |
 | `--issue-batch` | `workers * 3` | 每批抓取 issue 数量；传 `0` 时自动计算 |
 | `--timeout` | `20` | HTTP 超时秒数 |
 | `--processes` | `3` | 期刊级多进程并行数 |
@@ -145,6 +145,8 @@ uv run index --update --notify --notify-dry-run
 | `--update / --no-update` | `--no-update` | 是否增量更新已存在数据库；会抓取新增 issue，并额外重扫最新一个已有文章的 issue |
 | `--notify / --no-notify` | `--no-notify` | 更新后自动调用 `notify` |
 | `--notify-dry-run` | `false` | 与 `--notify` 配合，仅演练通知不真正推送 |
+
+英文 scholarly 路径会对 Crossref、OpenAlex、Semantic Scholar 分别限流。Semantic Scholar 使用 `SEMANTIC_SCHOLAR_API_KEY_POOL`，按官方 introductory limit 保守处理为全局 1 RPS，并通过 `/graph/v1/paper/batch` 每次最多请求 500 个 DOI。
 
 ### 2. API 服务
 
@@ -243,6 +245,6 @@ uv run push --db utd24.sqlite --dry-run
 - [开发指南](docs/development.md)
 - [Docker 部署](docs/docker.md)
 - [通知与追踪推送](docs/notify.md)
-- [OpenAlex / Crossref / Unpaywall 集成](docs/scholarly_api.md)
+- [Crossref / OpenAlex / Semantic Scholar 集成](docs/scholarly_api.md)
 - [CNKI overseas 集成](docs/cnki_oversea_api.md)
 - [前端说明](app/README.md)

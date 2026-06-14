@@ -27,7 +27,7 @@ CSV 元数据
 关键职责：
 
 - 读取 `data/meta/*.csv`
-- Crossref / OpenAlex / Unpaywall 与 CNKI overseas 抓取
+- Crossref / OpenAlex / Semantic Scholar 与 CNKI overseas 抓取
 - 建立或更新 `data/index/*.sqlite`
 - 维护 `article_listing` 与 `article_search`
 - 在 `--update` 模式下生成变更清单
@@ -48,7 +48,7 @@ CSV 元数据
 关键职责：
 
 - `cnki/`：CNKI overseas 期刊、期次与文章元数据抓取
-- `scholarly/`：Crossref / OpenAlex / Unpaywall 元数据抓取
+- `scholarly/`：Crossref / OpenAlex / Semantic Scholar 元数据抓取
 - 统一使用共享请求池、代理池和运行配置
 
 关键文件：
@@ -114,7 +114,7 @@ CSV 元数据
 
 1. 读取 `data/meta/*.csv`
 2. 根据 `source` 判断数据源：
-   - `scholarly` -> Crossref / OpenAlex / Unpaywall
+   - `scholarly` -> Crossref / OpenAlex / Semantic Scholar
    - `cnki` -> CNKI overseas
 3. 抓取 journal / issue / article
 4. 写入 `journals`、`issues`、`articles`

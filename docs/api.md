@@ -178,7 +178,7 @@ Cache-Control: public, max-age=300, stale-while-revalidate=600
 
 重定向到文章全文地址，优先级由代码动态决定，可能落到：
 
-- Unpaywall / OpenAlex OA 链接
+- Semantic Scholar / OpenAlex OA 链接
 - CNKI HTML 阅读或详情页
 - DOI 链接
 
