@@ -46,14 +46,24 @@ class FakeScholarlyClient:
     Fake scholarly client that records update fetch inputs.
     """
 
-    def __init__(self, works: list[dict[str, Any]]) -> None:
+    def __init__(
+        self,
+        works: list[dict[str, Any]],
+        *,
+        openalex_by_doi: dict[str, dict[str, Any]] | None = None,
+        semantic_scholar_by_doi: dict[str, dict[str, Any]] | None = None,
+    ) -> None:
         """
         Initialize the fake client.
 
         Args:
             works: Crossref works returned by the fake journal request.
+            openalex_by_doi: Fake OpenAlex enrichment keyed by DOI.
+            semantic_scholar_by_doi: Fake S2 enrichment keyed by DOI.
         """
         self.works = works
+        self.openalex_by_doi = openalex_by_doi or {}
+        self.semantic_scholar_by_doi = semantic_scholar_by_doi or {}
         self.fetch_args: list[dict[str, str | None]] = []
         self.openalex_doi_batches: list[list[str]] = []
         self.semantic_scholar_doi_batches: list[list[str]] = []
@@ -98,7 +108,11 @@ class FakeScholarlyClient:
             Empty enrichment map.
         """
         self.openalex_doi_batches.append(list(dois))
-        return {}
+        return {
+            doi: self.openalex_by_doi[doi]
+            for doi in dois
+            if doi in self.openalex_by_doi
+        }
 
     async def fetch_semantic_scholar_by_dois(
         self, dois: list[str], batch_size: int = 500
@@ -114,7 +128,11 @@ class FakeScholarlyClient:
             Empty OA map.
         """
         self.semantic_scholar_doi_batches.append(list(dois))
-        return {}
+        return {
+            doi: self.semantic_scholar_by_doi[doi]
+            for doi in dois
+            if doi in self.semantic_scholar_by_doi
+        }
 
 
 class OpenAlexFallbackScholarlyClient(FakeScholarlyClient):
@@ -547,6 +565,91 @@ class ScholarlyUpdateTest(unittest.IsolatedAsyncioTestCase):
                 )
             finally:
                 await db.close()
+
+    async def test_batch_write_backfills_missing_abstracts_from_s2(self) -> None:
+        """
+        Ensure S2 abstracts are batch-backfilled after article writes.
+        """
+        row = {
+            "source": "scholarly",
+            "title": "Test Journal",
+            "issn": "1234-5678",
+            "id": "1234-5678",
+            "area": "testing",
+        }
+        missing_work = build_work("10.1/missing", 1, "1")
+        crossref_work = build_work("10.1/crossref", 1, "1")
+        crossref_work["abstract"] = "<jats:p>Crossref abstract.</jats:p>"
+        openalex_work = build_work("10.1/openalex", 1, "1")
+        client = FakeScholarlyClient(
+            [missing_work, crossref_work, openalex_work],
+            openalex_by_doi={
+                "10.1/openalex": {
+                    "abstract_inverted_index": {
+                        "OpenAlex": [0],
+                        "abstract.": [1],
+                    }
+                }
+            },
+            semantic_scholar_by_doi={
+                "10.1/missing": {
+                    "externalIds": {"DOI": "10.1/missing"},
+                    "abstract": "S2 abstract.",
+                },
+                "10.1/crossref": {
+                    "externalIds": {"DOI": "10.1/crossref"},
+                    "abstract": "S2 should not replace Crossref.",
+                },
+                "10.1/openalex": {
+                    "externalIds": {"DOI": "10.1/openalex"},
+                    "abstract": "S2 should not replace OpenAlex.",
+                },
+            },
+        )
+
+        async with aiosqlite.connect(":memory:") as raw_db:
+            await init_db(raw_db)
+            db = LocalDatabaseClient(raw_db)
+            await db.start()
+            try:
+                await process_scholarly_journal(
+                    db,
+                    cast(Any, client),
+                    TEST_CSV_PATH,
+                    row,
+                    request_workers=4,
+                    show_year_progress=False,
+                    resume=False,
+                    update=False,
+                )
+
+                article_rows = await db.fetchall(
+                    "SELECT doi, abstract FROM articles ORDER BY doi"
+                )
+                search_rows = await db.fetchall(
+                    """
+                    SELECT a.doi, s.abstract
+                    FROM article_search s
+                    JOIN articles a ON a.article_id = s.article_id
+                    ORDER BY a.doi
+                    """
+                )
+            finally:
+                await db.close()
+
+        self.assertEqual(
+            article_rows,
+            [
+                ("10.1/crossref", "Crossref abstract."),
+                ("10.1/missing", "S2 abstract."),
+                ("10.1/openalex", "OpenAlex abstract."),
+            ],
+        )
+        self.assertEqual(search_rows, article_rows)
+        self.assertEqual(
+            client.semantic_scholar_doi_batches,
+            [["10.1/missing", "10.1/crossref", "10.1/openalex"]],
+        )
 
     async def test_missing_issn_fails_and_records_path_stats(self) -> None:
         """

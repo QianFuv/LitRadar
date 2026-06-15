@@ -26,6 +26,7 @@ from paper_scanner.index.db.operations import (
     upsert_journal,
     upsert_meta,
 )
+from paper_scanner.index.s2_abstracts import backfill_s2_abstracts_for_records
 from paper_scanner.index.stats import (
     IndexStatsRecorder,
     NoOpIndexStatsRecorder,
@@ -455,6 +456,12 @@ async def process_scholarly_journal(
                 await upsert_article_search(db, batch, journal_title)
                 await refresh_article_listing_for_articles(
                     db, list({record["article_id"] for record in batch})
+                )
+                await backfill_s2_abstracts_for_records(
+                    db,
+                    client,
+                    batch,
+                    semantic_scholar_by_doi=semantic_scholar_by_doi,
                 )
                 stats.record_path_counts(
                     path_key,

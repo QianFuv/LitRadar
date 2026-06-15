@@ -172,7 +172,7 @@ class SemanticScholarClientTest(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(request.headers.get("x-api-key"), "key-one")
             self.assertEqual(
                 request.url.params.get("fields"),
-                "externalIds,url,isOpenAccess,openAccessPdf",
+                "externalIds,url,isOpenAccess,openAccessPdf,abstract",
             )
             self.assertEqual(set(body["ids"]), {"DOI:10.1/a", "DOI:10.1/b"})
             return httpx.Response(
@@ -182,6 +182,7 @@ class SemanticScholarClientTest(unittest.IsolatedAsyncioTestCase):
                         "externalIds": {"DOI": "10.1/A"},
                         "isOpenAccess": True,
                         "openAccessPdf": {"url": "https://s2.test/a.pdf"},
+                        "abstract": "S2 abstract A.",
                     },
                     None,
                     {
@@ -205,6 +206,7 @@ class SemanticScholarClientTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             result["10.1/a"]["openAccessPdf"]["url"], "https://s2.test/a.pdf"
         )
+        self.assertEqual(result["10.1/a"]["abstract"], "S2 abstract A.")
         self.assertFalse(result["10.1/b"]["isOpenAccess"])
 
     async def test_fetch_semantic_scholar_by_dois_caps_batch_size(self) -> None:

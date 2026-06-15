@@ -42,7 +42,7 @@ CROSSREF_BASE_URL = "https://api.crossref.org/v1"
 OPENALEX_BASE_URL = "https://api.openalex.org"
 SEMANTIC_SCHOLAR_BASE_URL = "https://api.semanticscholar.org/graph/v1"
 SEMANTIC_SCHOLAR_BATCH_SIZE = 500
-SEMANTIC_SCHOLAR_FIELDS = "externalIds,url,isOpenAccess,openAccessPdf"
+SEMANTIC_SCHOLAR_FIELDS = "externalIds,url,isOpenAccess,openAccessPdf,abstract"
 OPENALEX_SOURCE_FIELDS = "id,display_name,issn_l,issn,works_count"
 OPENALEX_WORK_FIELDS = (
     "id,doi,title,display_name,publication_year,publication_date,language,"
