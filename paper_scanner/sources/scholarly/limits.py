@@ -11,6 +11,8 @@ from typing import TypeVar
 CROSSREF_SOURCE = "crossref"
 OPENALEX_SOURCE = "openalex"
 SEMANTIC_SCHOLAR_SOURCE = "semantic_scholar"
+OPENALEX_MIN_INTERVAL_SECONDS = 1.0
+SEMANTIC_SCHOLAR_MIN_INTERVAL_SECONDS = 1.0
 
 RequestResult = TypeVar("RequestResult")
 SleepFunction = Callable[[float], Awaitable[None]]
@@ -217,13 +219,14 @@ def build_scholarly_request_throttles(
             SourceThrottleConfig(
                 source=OPENALEX_SOURCE,
                 max_concurrency=1,
+                min_interval_seconds=OPENALEX_MIN_INTERVAL_SECONDS,
                 worker_id=worker_id,
                 process_count=process_count,
             ),
             SourceThrottleConfig(
                 source=SEMANTIC_SCHOLAR_SOURCE,
                 max_concurrency=1,
-                min_interval_seconds=1.0,
+                min_interval_seconds=SEMANTIC_SCHOLAR_MIN_INTERVAL_SECONDS,
                 worker_id=worker_id,
                 process_count=process_count,
             ),

@@ -10,7 +10,31 @@ import aiosqlite
 from paper_scanner.index.db.client import LocalDatabaseClient
 from paper_scanner.index.db.operations import persist_index_run_stats
 from paper_scanner.index.db.schema import init_db
+from paper_scanner.index.main import index_error_summary
 from paper_scanner.index.stats import IndexStatsRecorder
+
+
+class IndexErrorSummaryTest(unittest.TestCase):
+    """Verify index error summaries are secret-free."""
+
+    def test_index_error_summary_redacts_url_secrets(self) -> None:
+        """
+        Ensure error summaries keep failure context without query secrets.
+        """
+        summary = index_error_summary(
+            [
+                (
+                    "Journal: Client error for url "
+                    "'https://api.openalex.org/works?api_key=SECRET&token=TOKEN'"
+                )
+            ]
+        )
+
+        self.assertIsNotNone(summary)
+        self.assertIn("https://api.openalex.org/works", summary or "")
+        self.assertNotIn("SECRET", summary or "")
+        self.assertNotIn("TOKEN", summary or "")
+        self.assertNotIn("api_key=", summary or "")
 
 
 class IndexStatsTest(unittest.IsolatedAsyncioTestCase):

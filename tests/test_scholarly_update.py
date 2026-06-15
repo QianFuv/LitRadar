@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, cast
 
 import aiosqlite
+import httpx
 
 from paper_scanner.index.db.client import LocalDatabaseClient
 from paper_scanner.index.db.operations import (
@@ -36,6 +37,7 @@ from paper_scanner.index.transforms import (
 )
 
 TEST_CSV_PATH = Path("test.csv")
+OPENALEX_KEY_ENV = "OPENALEX_API_KEY_POOL"
 SEMANTIC_SCHOLAR_KEY_ENV = "SEMANTIC_SCHOLAR_API_KEY_POOL"
 
 
@@ -113,6 +115,203 @@ class FakeScholarlyClient:
         """
         self.semantic_scholar_doi_batches.append(list(dois))
         return {}
+
+
+class OpenAlexFallbackScholarlyClient(FakeScholarlyClient):
+    """
+    Fake scholarly client that falls back from Crossref to OpenAlex.
+    """
+
+    def __init__(self, openalex_works: list[dict[str, Any]]) -> None:
+        """
+        Initialize the fake client.
+
+        Args:
+            openalex_works: OpenAlex works returned by fallback requests.
+        """
+        super().__init__([])
+        self.openalex_works = openalex_works
+        self.source_lookup_issns: list[str] = []
+        self.source_work_requests: list[dict[str, str | None]] = []
+
+    async def fetch_journal_works(
+        self,
+        issn: str,
+        from_pub_date: str | None = None,
+        until_pub_date: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """
+        Raise a Crossref 404 while recording the lookup.
+
+        Args:
+            issn: Journal ISSN.
+            from_pub_date: Optional lower publication date.
+            until_pub_date: Optional upper publication date.
+
+        Raises:
+            httpx.HTTPStatusError: Always raised with a 404 response.
+        """
+        self.fetch_args.append(
+            {
+                "issn": issn,
+                "from_pub_date": from_pub_date,
+                "until_pub_date": until_pub_date,
+            }
+        )
+        request = httpx.Request("GET", f"https://api.crossref.org/journals/{issn}")
+        response = httpx.Response(404, request=request)
+        raise httpx.HTTPStatusError("not found", request=request, response=response)
+
+    async def fetch_openalex_source_by_issns(self, issns: list[str]) -> dict[str, Any]:
+        """
+        Return a fixed OpenAlex source.
+
+        Args:
+            issns: ISSN candidates.
+
+        Returns:
+            Fake OpenAlex source payload.
+        """
+        self.source_lookup_issns = list(issns)
+        return {
+            "id": "https://openalex.org/S88198767",
+            "display_name": "Cognition",
+            "issn_l": "0010-0277",
+            "issn": ["0010-0277", "1873-7838"],
+            "works_count": len(self.openalex_works),
+        }
+
+    async def fetch_openalex_works_by_source(
+        self,
+        source_id: str,
+        from_pub_date: str | None = None,
+        until_pub_date: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """
+        Return fallback OpenAlex works.
+
+        Args:
+            source_id: OpenAlex source id.
+            from_pub_date: Optional lower publication date.
+            until_pub_date: Optional upper publication date.
+
+        Returns:
+            Fake OpenAlex works.
+        """
+        self.source_work_requests.append(
+            {
+                "source_id": source_id,
+                "from_pub_date": from_pub_date,
+                "until_pub_date": until_pub_date,
+            }
+        )
+        return self.openalex_works
+
+
+class OpenAlexTitleFallbackScholarlyClient(OpenAlexFallbackScholarlyClient):
+    """
+    Fake scholarly client that resolves OpenAlex source by title.
+    """
+
+    def __init__(self, openalex_works: list[dict[str, Any]]) -> None:
+        """
+        Initialize the fake client.
+
+        Args:
+            openalex_works: OpenAlex works returned by fallback requests.
+        """
+        super().__init__(openalex_works)
+        self.source_lookup_titles: list[str] = []
+
+    async def fetch_openalex_source_by_issns(
+        self, issns: list[str]
+    ) -> dict[str, Any] | None:
+        """
+        Return no ISSN source match while recording the lookup.
+
+        Args:
+            issns: ISSN candidates.
+
+        Returns:
+            None.
+        """
+        self.source_lookup_issns = list(issns)
+        return None
+
+    async def fetch_openalex_source_by_title(
+        self,
+        title: str,
+    ) -> dict[str, Any] | None:
+        """
+        Return a source with ISSNs that differ from the CSV row.
+
+        Args:
+            title: Journal title.
+
+        Returns:
+            Fake OpenAlex source payload.
+        """
+        self.source_lookup_titles.append(title)
+        return {
+            "id": "https://openalex.org/S9551102",
+            "display_name": "International journal of central banking",
+            "issn_l": "1815-4654",
+            "issn": ["1815-4654"],
+            "works_count": len(self.openalex_works),
+        }
+
+
+class FailingScholarlyClient(FakeScholarlyClient):
+    """
+    Fake scholarly client that raises a non-fallback Crossref error.
+    """
+
+    def __init__(self, status_code: int) -> None:
+        """
+        Initialize the fake client.
+
+        Args:
+            status_code: HTTP status code raised by Crossref lookup.
+        """
+        super().__init__([])
+        self.status_code = status_code
+        self.did_lookup_openalex_source = False
+
+    async def fetch_journal_works(
+        self,
+        issn: str,
+        from_pub_date: str | None = None,
+        until_pub_date: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """
+        Raise a fixed Crossref HTTP error.
+
+        Args:
+            issn: Journal ISSN.
+            from_pub_date: Optional lower publication date.
+            until_pub_date: Optional upper publication date.
+
+        Raises:
+            httpx.HTTPStatusError: Always raised with the configured status.
+        """
+        request = httpx.Request("GET", f"https://api.crossref.org/journals/{issn}")
+        response = httpx.Response(self.status_code, request=request)
+        raise httpx.HTTPStatusError("failed", request=request, response=response)
+
+    async def fetch_openalex_source_by_issns(
+        self, issns: list[str]
+    ) -> dict[str, Any] | None:
+        """
+        Record unexpected fallback source lookup.
+
+        Args:
+            issns: ISSN candidates.
+
+        Returns:
+            None.
+        """
+        self.did_lookup_openalex_source = True
+        return None
 
 
 class FakeCnkiClient:
@@ -220,11 +419,32 @@ class IndexConfigTest(unittest.TestCase):
     Verify required index runtime configuration.
     """
 
+    def test_scholarly_rows_require_openalex_key(self) -> None:
+        """
+        Ensure scholarly indexing fails before anonymous OpenAlex downgrade.
+        """
+        previous_openalex_key = os.environ.get(OPENALEX_KEY_ENV)
+        previous_semantic_scholar_key = os.environ.get(SEMANTIC_SCHOLAR_KEY_ENV)
+        os.environ.pop(OPENALEX_KEY_ENV, None)
+        os.environ[SEMANTIC_SCHOLAR_KEY_ENV] = "s2-key"
+        try:
+            with self.assertRaisesRegex(
+                SystemExit,
+                "OpenAlex API key is required",
+            ):
+                validate_required_source_config([{"source": "scholarly"}])
+            validate_required_source_config([{"source": "cnki"}])
+        finally:
+            _restore_env(OPENALEX_KEY_ENV, previous_openalex_key)
+            _restore_env(SEMANTIC_SCHOLAR_KEY_ENV, previous_semantic_scholar_key)
+
     def test_scholarly_rows_require_semantic_scholar_key(self) -> None:
         """
         Ensure scholarly indexing fails before silent S2 downgrade.
         """
-        previous_key = os.environ.get(SEMANTIC_SCHOLAR_KEY_ENV)
+        previous_openalex_key = os.environ.get(OPENALEX_KEY_ENV)
+        previous_semantic_scholar_key = os.environ.get(SEMANTIC_SCHOLAR_KEY_ENV)
+        os.environ[OPENALEX_KEY_ENV] = "openalex-key"
         os.environ.pop(SEMANTIC_SCHOLAR_KEY_ENV, None)
         try:
             with self.assertRaisesRegex(
@@ -234,10 +454,8 @@ class IndexConfigTest(unittest.TestCase):
                 validate_required_source_config([{"source": "scholarly"}])
             validate_required_source_config([{"source": "cnki"}])
         finally:
-            if previous_key is None:
-                os.environ.pop(SEMANTIC_SCHOLAR_KEY_ENV, None)
-            else:
-                os.environ[SEMANTIC_SCHOLAR_KEY_ENV] = previous_key
+            _restore_env(OPENALEX_KEY_ENV, previous_openalex_key)
+            _restore_env(SEMANTIC_SCHOLAR_KEY_ENV, previous_semantic_scholar_key)
 
 
 class ScholarlyUpdateTest(unittest.IsolatedAsyncioTestCase):
@@ -366,6 +584,280 @@ class ScholarlyUpdateTest(unittest.IsolatedAsyncioTestCase):
         path_stats = next(iter(stats_recorder.stats.path_stats.values()))
         self.assertEqual(path_stats.status, "failed")
         self.assertEqual(path_stats.error_type, "JournalPathError")
+
+    async def test_crossref_404_uses_openalex_fallback_and_updates_meta(
+        self,
+    ) -> None:
+        """
+        Ensure OpenAlex fallback writes articles and resolved journal meta.
+        """
+        row = {
+            "source": "scholarly",
+            "title": "Cognition",
+            "issn": "1873-7838",
+            "id": "1873-7838",
+            "area": "testing",
+            "all_issns": "1873-7838",
+        }
+        journal_id = build_journal_id(row)
+        assert journal_id is not None
+        stats_recorder = IndexStatsRecorder("run-openalex-fallback", "test.csv")
+        client = OpenAlexFallbackScholarlyClient(
+            [
+                {
+                    "id": "https://openalex.org/W1",
+                    "doi": "https://doi.org/10.1/fallback",
+                    "title": "Fallback Article",
+                    "publication_date": "2025-02-03",
+                    "biblio": {
+                        "volume": "12",
+                        "issue": "1",
+                        "first_page": "1",
+                        "last_page": "9",
+                    },
+                    "authorships": [{"author": {"display_name": "Fallback Author"}}],
+                    "open_access": {"is_oa": True},
+                    "best_oa_location": {
+                        "pdf_url": "https://openalex.test/fallback.pdf",
+                        "landing_page_url": "https://openalex.test/fallback",
+                    },
+                }
+            ]
+        )
+
+        async with aiosqlite.connect(":memory:") as raw_db:
+            await init_db(raw_db)
+            db = LocalDatabaseClient(raw_db)
+            await db.start()
+            try:
+                await process_scholarly_journal(
+                    db,
+                    cast(Any, client),
+                    TEST_CSV_PATH,
+                    row,
+                    request_workers=4,
+                    show_year_progress=False,
+                    resume=False,
+                    update=False,
+                    stats_recorder=stats_recorder,
+                )
+
+                journal = await db.fetchone(
+                    """
+                    SELECT platform_journal_id, title, issn, eissn
+                    FROM journals
+                    WHERE journal_id = ?
+                    """,
+                    (journal_id,),
+                )
+                self.assertEqual(
+                    tuple(journal),
+                    ("S88198767", "Cognition", "0010-0277", "1873-7838"),
+                )
+                meta = await db.fetchone(
+                    """
+                    SELECT csv_issn, resolved_source, resolved_source_id,
+                           resolved_title, resolved_issn, resolved_eissn
+                    FROM journal_meta
+                    WHERE journal_id = ?
+                    """,
+                    (journal_id,),
+                )
+                self.assertEqual(
+                    tuple(meta),
+                    (
+                        "1873-7838",
+                        "openalex",
+                        "S88198767",
+                        "Cognition",
+                        "0010-0277",
+                        "1873-7838",
+                    ),
+                )
+                article = await db.fetchone(
+                    """
+                    SELECT title, doi, authors, open_access, full_text_file,
+                           content_location
+                    FROM articles
+                    """
+                )
+                self.assertEqual(
+                    tuple(article),
+                    (
+                        "Fallback Article",
+                        "10.1/fallback",
+                        "Fallback Author",
+                        1,
+                        "https://openalex.test/fallback.pdf",
+                        "https://openalex.test/fallback",
+                    ),
+                )
+            finally:
+                await db.close()
+
+        self.assertEqual(client.source_lookup_issns, ["1873-7838"])
+        self.assertEqual(
+            client.source_work_requests,
+            [
+                {
+                    "source_id": "https://openalex.org/S88198767",
+                    "from_pub_date": None,
+                    "until_pub_date": None,
+                }
+            ],
+        )
+        self.assertEqual(client.openalex_doi_batches, [])
+        self.assertEqual(client.semantic_scholar_doi_batches, [["10.1/fallback"]])
+        path_stats = next(iter(stats_recorder.stats.path_stats.values()))
+        self.assertEqual(path_stats.status, "succeeded")
+        self.assertEqual(path_stats.works_count, 1)
+
+    async def test_crossref_404_uses_openalex_title_fallback_and_updates_meta(
+        self,
+    ) -> None:
+        """
+        Ensure title fallback handles OpenAlex sources with mismatched ISSNs.
+        """
+        row = {
+            "source": "scholarly",
+            "title": "International Journal of Central Banking",
+            "issn": "1815-7556",
+            "id": "1815-7556",
+            "area": "testing",
+            "all_issns": "1815-7556",
+        }
+        journal_id = build_journal_id(row)
+        assert journal_id is not None
+        client = OpenAlexTitleFallbackScholarlyClient(
+            [
+                {
+                    "id": "https://openalex.org/W2",
+                    "doi": "https://doi.org/10.2/title-fallback",
+                    "title": "Central Banking Article",
+                    "publication_date": "2025-03-04",
+                    "biblio": {
+                        "volume": "21",
+                        "issue": "2",
+                        "first_page": "10",
+                        "last_page": "20",
+                    },
+                    "authorships": [{"author": {"display_name": "Bank Author"}}],
+                    "open_access": {"is_oa": False},
+                    "best_oa_location": None,
+                }
+            ]
+        )
+
+        async with aiosqlite.connect(":memory:") as raw_db:
+            await init_db(raw_db)
+            db = LocalDatabaseClient(raw_db)
+            await db.start()
+            try:
+                await process_scholarly_journal(
+                    db,
+                    cast(Any, client),
+                    TEST_CSV_PATH,
+                    row,
+                    request_workers=4,
+                    show_year_progress=False,
+                    resume=False,
+                    update=False,
+                )
+
+                journal = await db.fetchone(
+                    """
+                    SELECT platform_journal_id, title, issn, eissn
+                    FROM journals
+                    WHERE journal_id = ?
+                    """,
+                    (journal_id,),
+                )
+                self.assertEqual(
+                    tuple(journal),
+                    (
+                        "S9551102",
+                        "International journal of central banking",
+                        "1815-4654",
+                        None,
+                    ),
+                )
+                meta = await db.fetchone(
+                    """
+                    SELECT csv_issn, resolved_source, resolved_source_id,
+                           resolved_title, resolved_issn, resolved_eissn
+                    FROM journal_meta
+                    WHERE journal_id = ?
+                    """,
+                    (journal_id,),
+                )
+                self.assertEqual(
+                    tuple(meta),
+                    (
+                        "1815-7556",
+                        "openalex",
+                        "S9551102",
+                        "International journal of central banking",
+                        "1815-4654",
+                        None,
+                    ),
+                )
+            finally:
+                await db.close()
+
+        self.assertEqual(client.source_lookup_issns, ["1815-7556"])
+        self.assertEqual(
+            client.source_lookup_titles,
+            ["International Journal of Central Banking"],
+        )
+        self.assertEqual(
+            client.source_work_requests,
+            [
+                {
+                    "source_id": "https://openalex.org/S9551102",
+                    "from_pub_date": None,
+                    "until_pub_date": None,
+                }
+            ],
+        )
+        self.assertEqual(client.openalex_doi_batches, [])
+        self.assertEqual(
+            client.semantic_scholar_doi_batches,
+            [["10.2/title-fallback"]],
+        )
+
+    async def test_crossref_non_404_does_not_use_openalex_fallback(self) -> None:
+        """
+        Ensure non-404 Crossref failures stay fail-loud.
+        """
+        row = {
+            "source": "scholarly",
+            "title": "Rate Limited Journal",
+            "issn": "1234-5678",
+            "id": "1234-5678",
+            "area": "testing",
+        }
+        client = FailingScholarlyClient(500)
+
+        async with aiosqlite.connect(":memory:") as raw_db:
+            await init_db(raw_db)
+            db = LocalDatabaseClient(raw_db)
+            await db.start()
+            try:
+                with self.assertRaises(httpx.HTTPStatusError):
+                    await process_scholarly_journal(
+                        db,
+                        cast(Any, client),
+                        TEST_CSV_PATH,
+                        row,
+                        request_workers=4,
+                        show_year_progress=False,
+                        resume=False,
+                        update=False,
+                    )
+            finally:
+                await db.close()
+
+        self.assertFalse(client.did_lookup_openalex_source)
 
 
 class CnkiUpdateTest(unittest.IsolatedAsyncioTestCase):
@@ -541,6 +1033,23 @@ def cnki_issue_key(issue: dict[str, Any]) -> str:
         Issue key used by test assertions.
     """
     return f"{issue['year']}:{issue['number']}"
+
+
+def _restore_env(name: str, value: str | None) -> None:
+    """
+    Restore one environment variable.
+
+    Args:
+        name: Environment variable name.
+        value: Previous value, or None when absent.
+
+    Returns:
+        None.
+    """
+    if value is None:
+        os.environ.pop(name, None)
+    else:
+        os.environ[name] = value
 
 
 def build_cnki_summary(

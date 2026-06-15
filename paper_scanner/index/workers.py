@@ -16,7 +16,7 @@ from paper_scanner.index.db.retry import (
 )
 from paper_scanner.index.db.schema import init_db
 from paper_scanner.index.fetcher import process_journal
-from paper_scanner.index.stats import IndexStatsRecorder
+from paper_scanner.index.stats import IndexStatsRecorder, sanitize_error_sample
 from paper_scanner.shared.constants import DB_TIMEOUT_SECONDS
 from paper_scanner.shared.runtime_config import apply_runtime_config
 from paper_scanner.sources.cnki import CnkiClient
@@ -249,12 +249,13 @@ def run_worker_batch(
                         }
                     )
                 except Exception as exc:
+                    error = sanitize_error_sample(exc) or type(exc).__name__
                     status_queue.put(
                         {
                             "ok": False,
                             "journal_id": row.get("id"),
                             "title": row.get("title"),
-                            "error": str(exc),
+                            "error": error,
                             "stats": stats_recorder.to_dict(),
                         }
                     )

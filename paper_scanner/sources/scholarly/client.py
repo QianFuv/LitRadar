@@ -43,6 +43,13 @@ OPENALEX_BASE_URL = "https://api.openalex.org"
 SEMANTIC_SCHOLAR_BASE_URL = "https://api.semanticscholar.org/graph/v1"
 SEMANTIC_SCHOLAR_BATCH_SIZE = 500
 SEMANTIC_SCHOLAR_FIELDS = "externalIds,url,isOpenAccess,openAccessPdf"
+OPENALEX_SOURCE_FIELDS = "id,display_name,issn_l,issn,works_count"
+OPENALEX_WORK_FIELDS = (
+    "id,doi,title,display_name,publication_year,publication_date,language,"
+    "cited_by_count,is_retracted,primary_location,locations,open_access,"
+    "best_oa_location,authorships,ids,biblio,abstract_inverted_index,topics,"
+    "primary_topic,funders,awards"
+)
 DEFAULT_USER_AGENT = "Paper-Scanner/0.1 (mailto:paper-scanner@example.invalid)"
 RETRY_STATUS_CODES = {429, 500, 502, 503, 504}
 DEFAULT_MAX_RETRIES = 6
@@ -153,6 +160,132 @@ class ScholarlyClient:
             await asyncio.sleep(0)
         return works
 
+    async def fetch_openalex_source_by_issns(
+        self, issns: list[str]
+    ) -> dict[str, Any] | None:
+        """
+        Fetch an OpenAlex source matching one of the supplied ISSNs.
+
+        Args:
+            issns: ISSN candidates in lookup order.
+
+        Returns:
+            Matching OpenAlex source payload or None.
+        """
+        for issn in issns:
+            response = await self._get_with_retries(
+                f"{OPENALEX_BASE_URL}/sources",
+                params={
+                    "filter": f"issn:{issn}",
+                    "per-page": 5,
+                    "select": OPENALEX_SOURCE_FIELDS,
+                },
+                param_pools={
+                    "api_key": self.openalex_api_key_pool,
+                    "mailto": self.mailto_pool,
+                },
+                source=OPENALEX_SOURCE,
+                endpoint="sources",
+            )
+            for item in response.json().get("results") or []:
+                if not isinstance(item, dict):
+                    continue
+                if _openalex_source_matches_issn(item, issn):
+                    return item
+            await asyncio.sleep(0)
+        return None
+
+    async def fetch_openalex_source_by_title(
+        self,
+        title: str,
+    ) -> dict[str, Any] | None:
+        """
+        Fetch an OpenAlex source matching a title exactly.
+
+        Args:
+            title: Journal title.
+
+        Returns:
+            Matching OpenAlex source payload or None.
+        """
+        normalized_title = _normalize_source_title(title)
+        if not normalized_title:
+            return None
+        response = await self._get_with_retries(
+            f"{OPENALEX_BASE_URL}/sources",
+            params={
+                "search": title,
+                "per-page": 5,
+                "select": OPENALEX_SOURCE_FIELDS,
+            },
+            param_pools={
+                "api_key": self.openalex_api_key_pool,
+                "mailto": self.mailto_pool,
+            },
+            source=OPENALEX_SOURCE,
+            endpoint="source_search",
+        )
+        for item in response.json().get("results") or []:
+            if not isinstance(item, dict):
+                continue
+            if _openalex_source_matches_title(item, normalized_title):
+                return item
+        return None
+
+    async def fetch_openalex_works_by_source(
+        self,
+        source_id: str,
+        from_pub_date: str | None = None,
+        until_pub_date: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """
+        Fetch OpenAlex article works by source identifier.
+
+        Args:
+            source_id: OpenAlex source id or URL.
+            from_pub_date: Optional minimum publication date.
+            until_pub_date: Optional maximum publication date.
+
+        Returns:
+            List of OpenAlex work payloads.
+        """
+        source_key = _openalex_short_source_id(source_id)
+        if not source_key:
+            return []
+        filters = [f"primary_location.source.id:{source_key}", "type:article"]
+        if from_pub_date:
+            filters.append(f"from_publication_date:{from_pub_date}")
+        if until_pub_date:
+            filters.append(f"to_publication_date:{until_pub_date}")
+        params: dict[str, str | int] = {
+            "filter": ",".join(filters),
+            "per-page": 200,
+            "cursor": "*",
+            "sort": "publication_date:asc",
+            "select": OPENALEX_WORK_FIELDS,
+        }
+        works: list[dict[str, Any]] = []
+        while True:
+            response = await self._get_with_retries(
+                f"{OPENALEX_BASE_URL}/works",
+                params=params,
+                param_pools={
+                    "api_key": self.openalex_api_key_pool,
+                    "mailto": self.mailto_pool,
+                },
+                source=OPENALEX_SOURCE,
+                endpoint="source_works",
+            )
+            message = response.json()
+            items = message.get("results") or []
+            works.extend(item for item in items if isinstance(item, dict))
+            next_cursor = (message.get("meta") or {}).get("next_cursor")
+            if not items or not next_cursor or len(items) < int(params["per-page"]):
+                break
+            params["cursor"] = str(next_cursor)
+            await asyncio.sleep(0)
+        return works
+
     async def fetch_openalex_by_dois(
         self, dois: list[str], batch_size: int = 100
     ) -> dict[str, dict[str, Any]]:
@@ -173,12 +306,7 @@ class ScholarlyClient:
             params: dict[str, str | int] = {
                 "filter": f"doi:{filter_value}",
                 "per-page": len(batch),
-                "select": (
-                    "id,doi,title,display_name,publication_year,publication_date,"
-                    "language,cited_by_count,is_retracted,primary_location,"
-                    "locations,open_access,best_oa_location,authorships,ids,biblio,"
-                    "abstract_inverted_index,topics,primary_topic,funders,awards"
-                ),
+                "select": OPENALEX_WORK_FIELDS,
             }
             response = await self._get_with_retries(
                 f"{OPENALEX_BASE_URL}/works",
@@ -226,16 +354,22 @@ class ScholarlyClient:
             SEMANTIC_SCHOLAR_BATCH_SIZE,
         )
         for batch in chunked(normalized, effective_batch_size):
-            response = await self._post_with_retries(
-                f"{SEMANTIC_SCHOLAR_BASE_URL}/paper/batch",
-                params={"fields": SEMANTIC_SCHOLAR_FIELDS},
-                json_body={"ids": [f"DOI:{doi}" for doi in batch]},
-                header_pools={
-                    "x-api-key": self.semantic_scholar_api_key_pool,
-                },
-                source=SEMANTIC_SCHOLAR_SOURCE,
-                endpoint="paper_batch",
-            )
+            try:
+                response = await self._post_with_retries(
+                    f"{SEMANTIC_SCHOLAR_BASE_URL}/paper/batch",
+                    params={"fields": SEMANTIC_SCHOLAR_FIELDS},
+                    json_body={"ids": [f"DOI:{doi}" for doi in batch]},
+                    header_pools={
+                        "x-api-key": self.semantic_scholar_api_key_pool,
+                    },
+                    source=SEMANTIC_SCHOLAR_SOURCE,
+                    endpoint="paper_batch",
+                )
+            except httpx.HTTPStatusError as exc:
+                if _is_semantic_scholar_no_valid_ids_response(exc.response):
+                    await asyncio.sleep(0)
+                    continue
+                raise
             payload = response.json()
             if isinstance(payload, list):
                 for item in payload:
@@ -559,6 +693,113 @@ def _semantic_scholar_doi(item: dict[str, Any]) -> str | None:
     if not isinstance(external_ids, dict):
         return None
     return _normalize_doi(external_ids.get("DOI"))
+
+
+def _is_semantic_scholar_no_valid_ids_response(response: httpx.Response) -> bool:
+    """
+    Return whether an S2 response means none of the batch IDs are known.
+
+    Args:
+        response: Semantic Scholar batch response.
+
+    Returns:
+        Whether the response is the no-valid-paper-ids sentinel.
+    """
+    if response.status_code != 400:
+        return False
+    try:
+        payload = response.json()
+    except ValueError:
+        return False
+    if not isinstance(payload, dict):
+        return False
+    return str(payload.get("error") or "").strip().lower() == (
+        "no valid paper ids given"
+    )
+
+
+def _openalex_source_matches_issn(item: dict[str, Any], issn: str) -> bool:
+    """
+    Return whether an OpenAlex source contains an ISSN.
+
+    Args:
+        item: OpenAlex source payload.
+        issn: ISSN to match.
+
+    Returns:
+        Whether the source contains the ISSN.
+    """
+    target = _normalize_issn(issn)
+    if not target:
+        return False
+    candidates = [_normalize_issn(item.get("issn_l"))]
+    raw_issns = item.get("issn")
+    if isinstance(raw_issns, list):
+        candidates.extend(_normalize_issn(value) for value in raw_issns)
+    return target in {candidate for candidate in candidates if candidate}
+
+
+def _openalex_source_matches_title(
+    item: dict[str, Any],
+    normalized_title: str,
+) -> bool:
+    """
+    Return whether an OpenAlex source title matches exactly.
+
+    Args:
+        item: OpenAlex source payload.
+        normalized_title: Normalized target title.
+
+    Returns:
+        Whether the display name exactly matches the target title.
+    """
+    return _normalize_source_title(item.get("display_name")) == normalized_title
+
+
+def _normalize_issn(value: Any) -> str:
+    """
+    Normalize an ISSN for comparison.
+
+    Args:
+        value: Raw ISSN.
+
+    Returns:
+        Normalized ISSN.
+    """
+    if value is None:
+        return ""
+    return str(value).strip().replace("-", "").upper()
+
+
+def _normalize_source_title(value: Any) -> str:
+    """
+    Normalize a source title for exact comparisons.
+
+    Args:
+        value: Raw title value.
+
+    Returns:
+        Case-folded title with collapsed whitespace.
+    """
+    return " ".join(str(value or "").split()).casefold()
+
+
+def _openalex_short_source_id(value: Any) -> str | None:
+    """
+    Extract a compact OpenAlex source identifier.
+
+    Args:
+        value: OpenAlex source URL or id.
+
+    Returns:
+        Compact source id.
+    """
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    return text.rsplit("/", maxsplit=1)[-1]
 
 
 def _params_for_attempt(

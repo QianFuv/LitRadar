@@ -37,6 +37,10 @@ from paper_scanner.index.transforms import (
     build_cnki_journal_record,
     build_journal_id,
     build_meta_record,
+    build_openalex_crossref_work,
+    build_openalex_journal_row,
+    build_openalex_resolved_meta_fields,
+    build_resolved_meta_fields,
     build_scholarly_article_record,
     build_scholarly_issue_record,
     build_scholarly_journal_record,
@@ -103,9 +107,29 @@ def candidate_issns_from_row(csv_row: dict[str, str]) -> list[str]:
     ):
         for part in value.split(";"):
             candidate = part.strip()
-            if candidate and candidate not in candidates:
+            if (
+                candidate
+                and _is_issn_candidate(candidate)
+                and candidate not in candidates
+            ):
                 candidates.append(candidate)
     return candidates
+
+
+def _is_issn_candidate(value: str) -> bool:
+    """
+    Return whether a value can be used as an ISSN lookup candidate.
+
+    Args:
+        value: Raw ISSN-like value.
+
+    Returns:
+        Whether the value has a valid ISSN shape.
+    """
+    text = value.strip().replace("-", "").upper()
+    if len(text) != 8:
+        return False
+    return text[:7].isdigit() and (text[7].isdigit() or text[7] == "X")
 
 
 def split_article_records_by_authors(
@@ -278,6 +302,8 @@ async def process_scholarly_journal(
 
         issn = issn_candidates[0]
         works: list[dict[str, Any]] = []
+        openalex_source: dict[str, Any] | None = None
+        fallback_openalex_by_doi: dict[str, dict[str, Any]] = {}
         last_error: Exception | None = None
         for candidate in issn_candidates:
             try:
@@ -291,13 +317,49 @@ async def process_scholarly_journal(
                 if exc.response.status_code != 404:
                     raise
         else:
-            error = JournalPathError(
-                "Scholarly journal has no available ISSN candidate: "
-                f"{journal_title_from_row(row)}"
+            openalex_source = await client.fetch_openalex_source_by_issns(
+                issn_candidates
             )
-            if last_error is not None:
-                raise error from last_error
-            raise error
+            if openalex_source is None:
+                openalex_source = await client.fetch_openalex_source_by_title(
+                    journal_title_from_row(row)
+                )
+            if openalex_source is None:
+                error = JournalPathError(
+                    "Scholarly journal has no available ISSN candidate: "
+                    f"{journal_title_from_row(row)}"
+                )
+                if last_error is not None:
+                    raise error from last_error
+                raise error
+            openalex_source_id = str(openalex_source.get("id") or "")
+            openalex_source_works = await client.fetch_openalex_works_by_source(
+                openalex_source_id,
+                from_pub_date=from_pub_date,
+            )
+            journal_row = build_openalex_journal_row(row, openalex_source)
+            issn = journal_row.get("issn") or issn
+            source_issns = candidate_issns_from_row(journal_row)
+            works = [
+                work
+                for openalex_work in openalex_source_works
+                if (
+                    work := build_openalex_crossref_work(
+                        openalex_work,
+                        source_issns,
+                    )
+                )
+            ]
+            fallback_openalex_by_doi = {
+                doi: openalex_work
+                for openalex_work in openalex_source_works
+                if (doi := normalize_doi(openalex_work.get("doi")))
+            }
+            if not works:
+                raise JournalPathError(
+                    "OpenAlex fallback returned no usable works: "
+                    f"{journal_title_from_row(row)}"
+                )
 
         if latest_existing_issue is not None:
             works = select_scholarly_update_works(
@@ -309,12 +371,25 @@ async def process_scholarly_journal(
 
         stats.record_path_counts(path_key, works_count=len(works))
 
-        journal_row = dict(row)
-        journal_row["issn"] = issn
+        if openalex_source is None:
+            journal_row = dict(row)
+            journal_row["issn"] = issn
         journal_record = build_scholarly_journal_record(journal_id, journal_row, works)
         if latest_existing_issue is not None:
             journal_record["has_articles"] = 1
         meta_record = build_meta_record(journal_id, csv_path, row)
+        if openalex_source is None:
+            meta_record.update(
+                build_resolved_meta_fields(
+                    "crossref",
+                    issn,
+                    journal_record.get("title"),
+                    journal_record.get("issn"),
+                    journal_record.get("eissn"),
+                )
+            )
+        else:
+            meta_record.update(build_openalex_resolved_meta_fields(openalex_source))
         journal_title = journal_record.get("title") or row.get("title") or ""
 
         await upsert_journal(db, journal_record)
@@ -324,7 +399,9 @@ async def process_scholarly_journal(
         dois = [
             doi for doi in [normalize_doi(work.get("DOI")) for work in works] if doi
         ]
-        openalex_by_doi = await client.fetch_openalex_by_dois(dois)
+        openalex_by_doi = (
+            fallback_openalex_by_doi or await client.fetch_openalex_by_dois(dois)
+        )
         semantic_scholar_by_doi = await client.fetch_semantic_scholar_by_dois(dois)
 
         issue_records_by_id: dict[int, dict[str, Any]] = {}
@@ -337,12 +414,15 @@ async def process_scholarly_journal(
                 issue_id = issue_record["issue_id"]
                 issue_records_by_id[issue_id] = issue_record
                 year = issue_record.get("publication_year")
-                if isinstance(year, int):
-                    processed_years.add(year)
+            if isinstance(year, int):
+                processed_years.add(year)
             doi = normalize_doi(work.get("DOI"))
+            embedded_openalex_work = work.get("_openalex_work")
+            if not isinstance(embedded_openalex_work, dict):
+                embedded_openalex_work = None
             article_record = build_scholarly_article_record(
                 work,
-                openalex_by_doi.get(doi or ""),
+                openalex_by_doi.get(doi or "") or embedded_openalex_work,
                 semantic_scholar_by_doi.get(doi or ""),
                 journal_id,
                 issue_id,

@@ -65,6 +65,11 @@ def build_meta_record(
         "csv_title": csv_row.get("title"),
         "csv_issn": csv_row.get("issn"),
         "csv_library": source_from_row(csv_row),
+        "resolved_source": None,
+        "resolved_source_id": None,
+        "resolved_title": None,
+        "resolved_issn": None,
+        "resolved_eissn": None,
     }
 
 
@@ -179,6 +184,128 @@ def build_scholarly_issue_record(
         "embargoed": None,
         "within_subscription": None,
     }
+
+
+def build_resolved_meta_fields(
+    source: str,
+    source_id: str | None,
+    title: str | None,
+    issn: str | None,
+    eissn: str | None,
+) -> dict[str, str | None]:
+    """
+    Build resolved journal metadata fields.
+
+    Args:
+        source: Resolved metadata source.
+        source_id: Resolved upstream source identifier.
+        title: Resolved journal title.
+        issn: Resolved print or primary ISSN.
+        eissn: Resolved electronic or secondary ISSN.
+
+    Returns:
+        Resolved metadata field mapping.
+    """
+    return {
+        "resolved_source": source,
+        "resolved_source_id": source_id,
+        "resolved_title": title,
+        "resolved_issn": issn,
+        "resolved_eissn": eissn,
+    }
+
+
+def build_openalex_journal_row(
+    csv_row: dict[str, str],
+    openalex_source: dict[str, Any],
+) -> dict[str, str]:
+    """
+    Build a scholarly journal row resolved through OpenAlex.
+
+    Args:
+        csv_row: Source CSV row.
+        openalex_source: OpenAlex source payload.
+
+    Returns:
+        Journal row with resolved OpenAlex identifiers.
+    """
+    row = dict(csv_row)
+    source_id = _openalex_short_id(openalex_source.get("id"))
+    issns = _openalex_issns(openalex_source)
+    row["id"] = source_id or row.get("id") or ""
+    row["issn"] = openalex_source.get("issn_l") or (issns[0] if issns else "")
+    row["all_issns"] = ";".join(issns)
+    row["title"] = (
+        _clean_text(openalex_source.get("display_name")) or row.get("title") or ""
+    )
+    return row
+
+
+def build_openalex_resolved_meta_fields(
+    openalex_source: dict[str, Any],
+) -> dict[str, str | None]:
+    """
+    Build resolved metadata fields from an OpenAlex source.
+
+    Args:
+        openalex_source: OpenAlex source payload.
+
+    Returns:
+        Resolved metadata field mapping.
+    """
+    issns = _openalex_issns(openalex_source)
+    primary_issn = _clean_text(openalex_source.get("issn_l")) or (
+        issns[0] if issns else None
+    )
+    eissn = next((issn for issn in issns if issn != primary_issn), None)
+    return build_resolved_meta_fields(
+        "openalex",
+        _openalex_short_id(openalex_source.get("id")),
+        _clean_text(openalex_source.get("display_name")),
+        primary_issn,
+        eissn,
+    )
+
+
+def build_openalex_crossref_work(
+    openalex_work: dict[str, Any],
+    source_issns: list[str],
+) -> dict[str, Any] | None:
+    """
+    Convert an OpenAlex work into the Crossref-like shape used by the indexer.
+
+    Args:
+        openalex_work: OpenAlex work payload.
+        source_issns: Resolved source ISSN values.
+
+    Returns:
+        Crossref-like work payload or None.
+    """
+    openalex_id = _clean_text(openalex_work.get("id"))
+    doi = normalize_doi(openalex_work.get("doi"))
+    platform_url = f"https://doi.org/{doi}" if doi else openalex_id
+    if not platform_url:
+        return None
+    biblio = openalex_work.get("biblio") or {}
+    if not isinstance(biblio, dict):
+        biblio = {}
+    page = _page_range_from_biblio(biblio)
+    published = _crossref_date_from_iso(openalex_work.get("publication_date"))
+    work: dict[str, Any] = {
+        "DOI": doi,
+        "URL": platform_url,
+        "title": [_clean_text(openalex_work.get("title"))]
+        if _clean_text(openalex_work.get("title"))
+        else [],
+        "ISSN": source_issns,
+        "published": published,
+        "issued": published,
+        "volume": _clean_text(biblio.get("volume")),
+        "issue": _clean_text(biblio.get("issue")),
+        "page": page,
+        "_openalex_work": openalex_work,
+    }
+    return work
 
 
 def build_cnki_issue_record(
@@ -593,6 +720,85 @@ def _year_from_date(value: str | None) -> int | None:
     if not value or len(value) < 4:
         return None
     return to_int(value[:4])
+
+
+def _openalex_issns(openalex_source: dict[str, Any]) -> list[str]:
+    """
+    Extract ordered ISSN values from an OpenAlex source.
+
+    Args:
+        openalex_source: OpenAlex source payload.
+
+    Returns:
+        Ordered unique ISSN values.
+    """
+    issns: list[str] = []
+    primary = _clean_text(openalex_source.get("issn_l"))
+    if primary:
+        issns.append(primary)
+    raw_issns = openalex_source.get("issn")
+    if isinstance(raw_issns, list):
+        for value in raw_issns:
+            issn = _clean_text(value)
+            if issn and issn not in issns:
+                issns.append(issn)
+    return issns
+
+
+def _openalex_short_id(value: Any) -> str | None:
+    """
+    Extract the compact OpenAlex source or work identifier.
+
+    Args:
+        value: OpenAlex URL or identifier.
+
+    Returns:
+        Compact identifier.
+    """
+    text = _clean_text(value)
+    if not text:
+        return None
+    return text.rsplit("/", maxsplit=1)[-1]
+
+
+def _crossref_date_from_iso(value: Any) -> dict[str, list[list[int]]] | None:
+    """
+    Convert an ISO date into Crossref date-parts.
+
+    Args:
+        value: ISO-like date value.
+
+    Returns:
+        Crossref date-parts payload or None.
+    """
+    text = _clean_text(value)
+    if not text:
+        return None
+    parts = text.split("-")
+    try:
+        year = int(parts[0])
+        month = int(parts[1]) if len(parts) > 1 else 1
+        day = int(parts[2]) if len(parts) > 2 else 1
+    except (TypeError, ValueError):
+        return None
+    return {"date-parts": [[year, month, day]]}
+
+
+def _page_range_from_biblio(biblio: dict[str, Any]) -> str | None:
+    """
+    Build a Crossref-like page range from OpenAlex biblio fields.
+
+    Args:
+        biblio: OpenAlex biblio payload.
+
+    Returns:
+        Page range or None.
+    """
+    first_page = _clean_text(biblio.get("first_page"))
+    last_page = _clean_text(biblio.get("last_page"))
+    if first_page and last_page and first_page != last_page:
+        return f"{first_page}-{last_page}"
+    return first_page or last_page
 
 
 def _first_text(value: Any) -> str | None:

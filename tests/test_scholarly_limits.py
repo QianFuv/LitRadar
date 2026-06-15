@@ -85,13 +85,13 @@ class ScholarlyRequestThrottlesTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(clock.sleeps, [1.0, 3.0])
         self.assertEqual(request_times, [101.0, 104.0])
 
-    async def test_openalex_has_no_default_spacing(self) -> None:
+    async def test_openalex_spacing_uses_worker_offset(self) -> None:
         """
-        Ensure OpenAlex keeps the current serial but unpaced behavior.
+        Ensure OpenAlex requests are staggered across worker processes.
         """
         clock = FakeClock()
         throttles = build_scholarly_request_throttles(
-            worker_id=0,
+            worker_id=1,
             process_count=4,
             clock=clock.now,
             sleep=clock.sleep,
@@ -111,8 +111,8 @@ class ScholarlyRequestThrottlesTest(unittest.IsolatedAsyncioTestCase):
         await throttles.run(OPENALEX_SOURCE, run_request)
         await throttles.run(OPENALEX_SOURCE, run_request)
 
-        self.assertEqual(clock.sleeps, [])
-        self.assertEqual(request_times, [100.0, 100.0])
+        self.assertEqual(clock.sleeps, [1.0, 4.0])
+        self.assertEqual(request_times, [101.0, 105.0])
 
     async def test_unknown_source_runs_without_throttle(self) -> None:
         """
@@ -152,6 +152,24 @@ class ScholarlyRequestThrottlesTest(unittest.IsolatedAsyncioTestCase):
             sleep=clock.sleep,
         )
         throttle = throttles.throttle_for_source(SEMANTIC_SCHOLAR_SOURCE)
+
+        self.assertIsNotNone(throttle)
+        assert throttle is not None
+        self.assertEqual(throttle.config.startup_delay_seconds, 2.0)
+        self.assertEqual(throttle.config.effective_min_interval_seconds, 4.0)
+
+    def test_openalex_config_scales_interval_by_processes(self) -> None:
+        """
+        Ensure the OpenAlex effective interval preserves the global request rate.
+        """
+        clock = FakeClock()
+        throttles = build_scholarly_request_throttles(
+            worker_id=2,
+            process_count=4,
+            clock=clock.now,
+            sleep=clock.sleep,
+        )
+        throttle = throttles.throttle_for_source(OPENALEX_SOURCE)
 
         self.assertIsNotNone(throttle)
         assert throttle is not None

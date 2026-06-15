@@ -25,7 +25,11 @@ from paper_scanner.index.db.operations import (
 )
 from paper_scanner.index.db.schema import init_db, optimize_db
 from paper_scanner.index.fetcher import process_journal
-from paper_scanner.index.stats import IndexRunStats, IndexStatsRecorder
+from paper_scanner.index.stats import (
+    IndexRunStats,
+    IndexStatsRecorder,
+    sanitize_error_sample,
+)
 from paper_scanner.index.workers import run_worker_batch, writer_process
 from paper_scanner.shared.constants import (
     CNKI_SOURCE,
@@ -98,7 +102,10 @@ def validate_required_source_config(rows: list[dict[str, str]]) -> None:
         SystemExit: If a required source setting is missing.
     """
     has_scholarly_rows = any(row.get("source") == SCHOLARLY_SOURCE for row in rows)
+    openalex_keys = build_value_pool(os.getenv("OPENALEX_API_KEY_POOL"))
     semantic_scholar_keys = build_value_pool(os.getenv("SEMANTIC_SCHOLAR_API_KEY_POOL"))
+    if has_scholarly_rows and not openalex_keys:
+        raise SystemExit("OpenAlex API key is required for scholarly indexing.")
     if has_scholarly_rows and not semantic_scholar_keys:
         raise SystemExit("Semantic Scholar API key is required for scholarly indexing.")
 
@@ -128,7 +135,10 @@ def index_error_summary(errors: list[str]) -> str | None:
     """
     if not errors:
         return None
-    return "; ".join(errors[:3])
+    sanitized_errors = [
+        sanitized for error in errors[:3] if (sanitized := sanitize_error_sample(error))
+    ]
+    return "; ".join(sanitized_errors) or None
 
 
 def print_index_run_summary(stats: IndexRunStats) -> None:
@@ -254,7 +264,10 @@ async def export_csv(
                 if run_error is None:
                     stats_recorder.stats.finish("succeeded")
                 else:
-                    stats_recorder.stats.finish("failed", str(run_error))
+                    stats_recorder.stats.finish(
+                        "failed",
+                        sanitize_error_sample(run_error),
+                    )
                 await persist_index_run_stats(local_db, stats_recorder.stats)
                 await local_db.close()
                 if run_error is None:
@@ -266,8 +279,9 @@ async def export_csv(
                 await cnki_client.aclose()
         print_index_run_summary(stats_recorder.stats)
         if run_error is not None:
+            error_text = sanitize_error_sample(run_error) or type(run_error).__name__
             raise RuntimeError(
-                f"Index run failed for {csv_path.name}: {run_error}"
+                f"Index run failed for {csv_path.name}: {error_text}"
             ) from run_error
         return
 
@@ -323,7 +337,10 @@ async def export_csv(
                 print(f"  Finished {title}")
             else:
                 title = message.get("title") or message.get("journal_id") or "Unknown"
-                error = message.get("error") or "Unknown error"
+                error = (
+                    sanitize_error_sample(message.get("error") or "Unknown error")
+                    or "Unknown error"
+                )
                 failure_messages.append(f"{title}: {error}")
                 print(f"  - Journal worker failed: {title} ({error})")
     finally:

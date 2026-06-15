@@ -39,6 +39,11 @@ META_COLUMNS = [
     "csv_title",
     "csv_issn",
     "csv_library",
+    "resolved_source",
+    "resolved_source_id",
+    "resolved_title",
+    "resolved_issn",
+    "resolved_eissn",
 ]
 
 META_UPSERT = f"""
@@ -151,6 +156,39 @@ async def ensure_journal_platform_id_column(db: aiosqlite.Connection) -> None:
     )
 
 
+async def ensure_journal_meta_resolution_columns(db: aiosqlite.Connection) -> None:
+    """
+    Ensure journal metadata can store resolved source details.
+
+    Args:
+        db: Open aiosqlite connection.
+
+    Returns:
+        None.
+    """
+    cursor = await db.execute("PRAGMA table_info(journal_meta)")
+    meta_column_names = {str(row[1]) for row in await cursor.fetchall()}
+    await cursor.close()
+    required_columns = {
+        "resolved_source": "TEXT",
+        "resolved_source_id": "TEXT",
+        "resolved_title": "TEXT",
+        "resolved_issn": "TEXT",
+        "resolved_eissn": "TEXT",
+    }
+    for column_name, column_type in required_columns.items():
+        if column_name in meta_column_names:
+            continue
+        try:
+            await execute_with_retry(
+                db,
+                f"ALTER TABLE journal_meta ADD COLUMN {column_name} {column_type};",
+            )
+        except sqlite3.OperationalError as exc:
+            if "duplicate column name" not in str(exc).lower():
+                raise
+
+
 async def init_db(db: aiosqlite.Connection) -> None:
     """
     Initialize database schema and indexes.
@@ -198,11 +236,18 @@ async def init_db(db: aiosqlite.Connection) -> None:
             csv_title TEXT,
             csv_issn TEXT,
             csv_library TEXT,
+            resolved_source TEXT,
+            resolved_source_id TEXT,
+            resolved_title TEXT,
+            resolved_issn TEXT,
+            resolved_eissn TEXT,
             FOREIGN KEY (journal_id) REFERENCES journals(journal_id)
                 ON DELETE CASCADE
         );
         """,
     )
+
+    await ensure_journal_meta_resolution_columns(db)
 
     await execute_with_retry(
         db,

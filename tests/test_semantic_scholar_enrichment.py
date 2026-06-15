@@ -258,6 +258,45 @@ class SemanticScholarClientTest(unittest.IsolatedAsyncioTestCase):
             await client.aclose()
             _restore_env(SEMANTIC_SCHOLAR_KEY_ENV, previous_key)
 
+    async def test_fetch_semantic_scholar_by_dois_all_unknown_returns_empty(
+        self,
+    ) -> None:
+        """
+        Ensure S2 no-valid-ID batches are treated as empty enrichment.
+        """
+        previous_key = os.environ.get(SEMANTIC_SCHOLAR_KEY_ENV)
+        os.environ[SEMANTIC_SCHOLAR_KEY_ENV] = "key-one"
+        stats_recorder = IndexStatsRecorder("run-1", "journals.csv")
+        stats_recorder.set_current_path("scholarly", "journal", 1, "Test Journal")
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            """
+            Return the S2 response used when no batch IDs are recognized.
+
+            Args:
+                request: Captured HTTP request.
+
+            Returns:
+                Fake S2 no-valid-ID response.
+            """
+            return httpx.Response(400, json={"error": "No valid paper ids given"})
+
+        client = await _mock_scholarly_client(handler, stats_recorder)
+        try:
+            result = await client.fetch_semantic_scholar_by_dois(["10.1/new"])
+        finally:
+            await client.aclose()
+            _restore_env(SEMANTIC_SCHOLAR_KEY_ENV, previous_key)
+
+        api_stats = next(iter(stats_recorder.stats.api_stats.values()))
+        self.assertEqual(result, {})
+        self.assertEqual(api_stats.key.service, "semantic_scholar")
+        self.assertEqual(api_stats.key.endpoint, "paper_batch")
+        self.assertEqual(api_stats.logical_calls, 1)
+        self.assertEqual(api_stats.attempts, 1)
+        self.assertEqual(api_stats.failures, 1)
+        self.assertEqual(api_stats.status_codes[400], 1)
+
     async def test_fetch_semantic_scholar_by_dois_raises_http_error(self) -> None:
         """
         Ensure S2 request failures are recorded and not swallowed.
