@@ -308,6 +308,50 @@ class TokenCreateResponse(BaseModel):
     expires_at: float
 
 
+class CnkiSessionStatusResponse(BaseModel):
+    """
+    Safe per-user Zhejiang Library CNKI session status.
+    """
+
+    configured: bool
+    status: str
+    has_bff_user_token: bool
+    expires_at: float | None = None
+    seconds_remaining: int | None = None
+    cookie_names: list[str] = Field(default_factory=list)
+    updated_at: float | None = None
+    last_used_at: float | None = None
+
+
+class CnkiLoginStartResponse(BaseModel):
+    """
+    Zhejiang Library QR login challenge response.
+    """
+
+    uuid: str
+    status: str
+    qr_code: str
+    session: CnkiSessionStatusResponse
+
+
+class CnkiLoginPollRequest(BaseModel):
+    """
+    Zhejiang Library QR login polling parameters.
+    """
+
+    timeout_seconds: int = Field(default=180, ge=1, le=600)
+    interval_seconds: float = Field(default=2.0, ge=0.1, le=10.0)
+
+
+class CnkiLoginPollResponse(BaseModel):
+    """
+    Zhejiang Library QR login polling response.
+    """
+
+    status: str
+    session: CnkiSessionStatusResponse
+
+
 class FolderCreate(BaseModel):
     name: str
     is_tracking: bool = False

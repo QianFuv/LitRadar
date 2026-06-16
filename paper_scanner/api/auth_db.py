@@ -16,6 +16,7 @@ from paper_scanner.shared.runtime_config import (
     RUNTIME_CONFIG_DEFINITIONS,
     runtime_bool_to_text,
 )
+from paper_scanner.sources.zjlib_cnki import ZhejiangLibraryCnkiClient
 
 AUTH_DB_PATH = PROJECT_ROOT / "data" / "auth.sqlite"
 ACCESS_TOKEN_BYTES = 32
@@ -57,6 +58,18 @@ def init_auth_db() -> None:
                 created_at  REAL   NOT NULL
             );
 
+            CREATE TABLE IF NOT EXISTS cnki_sessions (
+                user_id          INTEGER PRIMARY KEY
+                                     REFERENCES users(id) ON DELETE CASCADE,
+                session_json     TEXT    NOT NULL DEFAULT '{}',
+                qr_uuid          TEXT    NOT NULL DEFAULT '',
+                status           TEXT    NOT NULL DEFAULT 'empty',
+                token_expires_at REAL,
+                created_at       REAL    NOT NULL,
+                updated_at       REAL    NOT NULL,
+                last_used_at     REAL
+            );
+
             CREATE TABLE IF NOT EXISTS folders (
                 id          INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -89,6 +102,8 @@ def init_auth_db() -> None:
 
             CREATE INDEX IF NOT EXISTS idx_access_tokens_user
                 ON access_tokens(user_id);
+            CREATE INDEX IF NOT EXISTS idx_cnki_sessions_status
+                ON cnki_sessions(status);
             CREATE INDEX IF NOT EXISTS idx_folders_user
                 ON folders(user_id);
             CREATE INDEX IF NOT EXISTS idx_favorites_folder
@@ -603,6 +618,248 @@ def revoke_access_token_value(raw_token: str) -> bool:
         return cur.rowcount > 0
     finally:
         conn.close()
+
+
+def get_cnki_session(user_id: int) -> dict | None:
+    """
+    Return the raw CNKI session row for one user.
+
+    Args:
+        user_id: User identifier.
+
+    Returns:
+        Raw session row with decoded session data, or None.
+    """
+    conn = _get_connection()
+    try:
+        row = conn.execute(
+            "SELECT user_id, session_json, qr_uuid, status, token_expires_at, "
+            "created_at, updated_at, last_used_at "
+            "FROM cnki_sessions WHERE user_id = ?",
+            (user_id,),
+        ).fetchone()
+        if not row:
+            return None
+        result = dict(row)
+        result["session_data"] = _decode_cnki_session_json(result["session_json"])
+        return result
+    finally:
+        conn.close()
+
+
+def get_cnki_session_status(
+    user_id: int,
+    *,
+    now: float | None = None,
+) -> dict:
+    """
+    Return safe CNKI session status for one user.
+
+    Args:
+        user_id: User identifier.
+        now: Optional timestamp override.
+
+    Returns:
+        Safe session status without token or cookie values.
+    """
+    row = get_cnki_session(user_id)
+    return summarize_cnki_session(row, now=now)
+
+
+def summarize_cnki_session(
+    row: dict | None,
+    *,
+    now: float | None = None,
+) -> dict:
+    """
+    Convert a raw CNKI session row into a safe status payload.
+
+    Args:
+        row: Raw session row, or None.
+        now: Optional timestamp override.
+
+    Returns:
+        Safe session status.
+    """
+    if not row:
+        return {
+            "configured": False,
+            "status": "empty",
+            "has_bff_user_token": False,
+            "expires_at": None,
+            "seconds_remaining": None,
+            "cookie_names": [],
+            "updated_at": None,
+            "last_used_at": None,
+        }
+
+    session_data = row.get("session_data") or _decode_cnki_session_json(
+        row.get("session_json")
+    )
+    client = ZhejiangLibraryCnkiClient(state_data=session_data)
+    try:
+        info = client.client_info()
+    finally:
+        client.close()
+
+    current_time = time.time() if now is None else now
+    seconds_remaining = (
+        max(0, int(info.bff_user_token_exp - current_time))
+        if info.bff_user_token_exp
+        else None
+    )
+    status = str(row.get("status") or "empty")
+    if info.has_bff_user_token:
+        if info.bff_user_token_exp and info.bff_user_token_exp <= current_time:
+            status = "expired"
+        else:
+            status = "active"
+    elif row.get("qr_uuid"):
+        status = "waiting_scan"
+    return {
+        "configured": status != "empty",
+        "status": status,
+        "has_bff_user_token": info.has_bff_user_token,
+        "expires_at": info.bff_user_token_exp,
+        "seconds_remaining": seconds_remaining,
+        "cookie_names": info.cookie_names,
+        "updated_at": row.get("updated_at"),
+        "last_used_at": row.get("last_used_at"),
+    }
+
+
+def upsert_cnki_session(
+    user_id: int,
+    session_data: dict,
+    *,
+    status: str,
+    qr_uuid: str | None = None,
+    now: float | None = None,
+) -> dict:
+    """
+    Store or replace one user's CNKI session state.
+
+    Args:
+        user_id: User identifier.
+        session_data: JSON-serializable session data.
+        status: Session status label.
+        qr_uuid: Optional QR UUID.
+        now: Optional timestamp override.
+
+    Returns:
+        Safe session status after the upsert.
+    """
+    current_time = time.time() if now is None else now
+    client = ZhejiangLibraryCnkiClient(state_data=session_data)
+    try:
+        info = client.client_info()
+    finally:
+        client.close()
+    resolved_qr_uuid = qr_uuid or str(session_data.get("qr_uuid") or "")
+    session_json = json.dumps(session_data, ensure_ascii=False, separators=(",", ":"))
+    conn = _get_connection()
+    try:
+        existing = conn.execute(
+            "SELECT created_at FROM cnki_sessions WHERE user_id = ?",
+            (user_id,),
+        ).fetchone()
+        created_at = existing["created_at"] if existing else current_time
+        conn.execute(
+            """
+            INSERT INTO cnki_sessions (
+                user_id,
+                session_json,
+                qr_uuid,
+                status,
+                token_expires_at,
+                created_at,
+                updated_at,
+                last_used_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, NULL)
+            ON CONFLICT(user_id) DO UPDATE SET
+                session_json = excluded.session_json,
+                qr_uuid = excluded.qr_uuid,
+                status = excluded.status,
+                token_expires_at = excluded.token_expires_at,
+                updated_at = excluded.updated_at
+            """,
+            (
+                user_id,
+                session_json,
+                resolved_qr_uuid,
+                status,
+                info.bff_user_token_exp,
+                created_at,
+                current_time,
+            ),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    return get_cnki_session_status(user_id, now=current_time)
+
+
+def touch_cnki_session_used(user_id: int, *, now: float | None = None) -> bool:
+    """
+    Record that a user's CNKI session was used.
+
+    Args:
+        user_id: User identifier.
+        now: Optional timestamp override.
+
+    Returns:
+        True when a row was updated.
+    """
+    current_time = time.time() if now is None else now
+    conn = _get_connection()
+    try:
+        cur = conn.execute(
+            "UPDATE cnki_sessions SET last_used_at = ? WHERE user_id = ?",
+            (current_time, user_id),
+        )
+        conn.commit()
+        return cur.rowcount > 0
+    finally:
+        conn.close()
+
+
+def delete_cnki_session(user_id: int) -> bool:
+    """
+    Delete one user's stored CNKI session.
+
+    Args:
+        user_id: User identifier.
+
+    Returns:
+        True when a row was deleted.
+    """
+    conn = _get_connection()
+    try:
+        cur = conn.execute("DELETE FROM cnki_sessions WHERE user_id = ?", (user_id,))
+        conn.commit()
+        return cur.rowcount > 0
+    finally:
+        conn.close()
+
+
+def _decode_cnki_session_json(value: object) -> dict:
+    """
+    Decode a stored CNKI session JSON value.
+
+    Args:
+        value: Raw JSON value.
+
+    Returns:
+        Decoded session mapping, or an empty mapping when invalid.
+    """
+    if isinstance(value, dict):
+        return value
+    try:
+        decoded = json.loads(str(value or "{}"))
+    except json.JSONDecodeError:
+        return {}
+    return decoded if isinstance(decoded, dict) else {}
 
 
 def create_folder(user_id: int, name: str, is_tracking: bool = False) -> dict:
