@@ -185,8 +185,10 @@ journals (1) ---- (1) journal_meta
 
 - `idx_article_listing_date_id`
 - `idx_article_listing_area`
+- `idx_article_listing_area_date_id`
 - `idx_article_listing_publication_year`
 - `idx_article_listing_journal`
+- `idx_article_listing_journal_date_id`
 - `idx_article_listing_issue`
 
 ### 6. `article_search`

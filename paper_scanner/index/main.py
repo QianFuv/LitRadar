@@ -20,6 +20,7 @@ from paper_scanner.index.changes import (
 )
 from paper_scanner.index.db.client import LocalDatabaseClient
 from paper_scanner.index.db.operations import (
+    is_article_listing_complete,
     mark_listing_ready,
     persist_index_run_stats,
 )
@@ -272,7 +273,9 @@ async def export_csv(
                 await local_db.close()
                 if run_error is None:
                     await optimize_db(db)
-                if run_error is None and not update:
+                if run_error is None and (
+                    not update or await is_article_listing_complete(db)
+                ):
                     await mark_listing_ready(db)
                     await db.commit()
                 await scholarly_client.aclose()
@@ -366,7 +369,9 @@ async def export_csv(
     async with aiosqlite.connect(db_path, timeout=DB_TIMEOUT_SECONDS) as db:
         if not failure_messages:
             await optimize_db(db)
-        if not failure_messages and not update:
+        if not failure_messages and (
+            not update or await is_article_listing_complete(db)
+        ):
             await mark_listing_ready(db)
             await db.commit()
 

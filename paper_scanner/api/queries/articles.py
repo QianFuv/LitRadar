@@ -293,7 +293,7 @@ async def list_articles_from_listing(
         SELECT
             l.article_id,
             l.date
-        FROM article_listing l INDEXED BY idx_article_listing_date_id
+        FROM article_listing l
         {where_sql}
         {order_sql}
         {pagination_sql}

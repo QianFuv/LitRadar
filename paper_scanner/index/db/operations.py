@@ -504,6 +504,30 @@ async def mark_listing_ready(db: aiosqlite.Connection) -> None:
     )
 
 
+async def is_article_listing_complete(db: aiosqlite.Connection) -> bool:
+    """
+    Check whether every article has a materialized listing row.
+
+    Args:
+        db: Open database connection.
+
+    Returns:
+        True when article and listing row counts match.
+    """
+    cursor = await db.execute(
+        """
+        SELECT
+            (SELECT COUNT(*) FROM articles) AS article_count,
+            (SELECT COUNT(*) FROM article_listing) AS listing_count
+        """
+    )
+    row = await cursor.fetchone()
+    await cursor.close()
+    if row is None:
+        return False
+    return int(row[0]) == int(row[1])
+
+
 async def persist_index_run_stats(db: DatabaseClient, stats: IndexRunStats) -> None:
     """
     Persist a finalized index run statistics snapshot.
