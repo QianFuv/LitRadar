@@ -20,6 +20,8 @@ from paper_scanner.api.models import (
 )
 from paper_scanner.shared.constants import INDEX_DIR, PUSH_STATE_DIR
 
+SQLITE_QUERY_BATCH_SIZE = 500
+
 
 def parse_iso_datetime(value: str) -> datetime | None:
     """
@@ -237,6 +239,36 @@ async def fetch_articles_by_ids(
     """
     if not article_ids:
         return []
+
+    row_map: dict[int, dict[str, Any]] = {}
+    for index in range(0, len(article_ids), SQLITE_QUERY_BATCH_SIZE):
+        batch_ids = article_ids[index : index + SQLITE_QUERY_BATCH_SIZE]
+        for row in await fetch_article_batch_by_ids(db, batch_ids):
+            row_map[int(row["article_id"])] = row
+
+    ordered_rows = [
+        row_map[article_id] for article_id in article_ids if article_id in row_map
+    ]
+    return [WeeklyArticleRecord(**row) for row in ordered_rows]
+
+
+async def fetch_article_batch_by_ids(
+    db: aiosqlite.Connection,
+    article_ids: list[int],
+) -> list[dict[str, Any]]:
+    """
+    Fetch one SQLite-safe batch of weekly article rows.
+
+    Args:
+        db: Database connection.
+        article_ids: Article IDs for one query batch.
+
+    Returns:
+        Raw SQLite rows for the requested article IDs.
+    """
+    if not article_ids:
+        return []
+
     placeholders = ", ".join(["?"] * len(article_ids))
     rows = await fetch_all(
         db,
@@ -265,11 +297,7 @@ async def fetch_articles_by_ids(
         """,
         article_ids,
     )
-    row_map = {int(row["article_id"]): row for row in rows}
-    ordered_rows = [
-        row_map[article_id] for article_id in article_ids if article_id in row_map
-    ]
-    return [WeeklyArticleRecord(**row) for row in ordered_rows]
+    return rows
 
 
 async def get_weekly_updates() -> WeeklyUpdatesResponse:
