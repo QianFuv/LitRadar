@@ -155,21 +155,30 @@ export function Sidebar({ className }: { className?: string }) {
   };
 
   const [journalSearch, setJournalSearch] = useState('');
-  const isMobile = typeof window !== 'undefined' && window.matchMedia('(max-width: 767px)').matches;
 
   const filteredJournalOptions = useMemo(() => {
     if (!journalOptions) {
       return [];
     }
     const query = journalSearch.trim().toLowerCase();
-    if (!query) {
-      return journalOptions;
+    const matchedOptions = query
+      ? journalOptions.filter((option) => {
+          const title = option.title ?? '';
+          return title.toLowerCase().includes(query);
+        })
+      : journalOptions;
+    if (journalIds.length === 0) {
+      return matchedOptions;
     }
-    return journalOptions.filter((option) => {
-      const title = option.title ?? '';
-      return title.toLowerCase().includes(query);
-    });
-  }, [journalOptions, journalSearch]);
+    const selectedIds = new Set(journalIds);
+    const selectedOptions = matchedOptions.filter((option) =>
+      selectedIds.has(String(option.journal_id)),
+    );
+    const unselectedOptions = matchedOptions.filter(
+      (option) => !selectedIds.has(String(option.journal_id)),
+    );
+    return [...selectedOptions, ...unselectedOptions];
+  }, [journalIds, journalOptions, journalSearch]);
 
   const journalLabelMap = useMemo(() => {
     const map = new Map<string, string>();
@@ -191,7 +200,9 @@ export function Sidebar({ className }: { className?: string }) {
         : `已选 ${selectedJournalLabels.length} 本期刊`;
 
   return (
-    <aside className={cn('w-[19.2rem] flex flex-col h-full border-r bg-background', className)}>
+    <aside
+      className={cn('w-[19.2rem] min-w-0 flex flex-col h-full border-r bg-background', className)}
+    >
       <div className="flex-1 space-y-8 p-6 overflow-y-auto">
         <div className="space-y-4">
           <div className="grid grid-cols-2 items-center gap-4">
@@ -268,9 +279,10 @@ export function Sidebar({ className }: { className?: string }) {
             ) : (
               <div className="space-y-2">
                 {areaOptions?.map((opt) => (
-                  <div key={opt.value} className="flex items-center space-x-2">
+                  <div key={opt.value} className="flex min-w-0 items-start gap-2">
                     <Checkbox
                       id={`area-${opt.value}`}
+                      className="mt-0.5 shrink-0"
                       checked={areas.includes(opt.value)}
                       onCheckedChange={(checked: boolean | 'indeterminate') =>
                         handleAreaChange(opt.value, checked as boolean)
@@ -278,12 +290,12 @@ export function Sidebar({ className }: { className?: string }) {
                     />
                     <Label
                       htmlFor={`area-${opt.value}`}
-                      className="text-sm font-normal truncate flex-1 cursor-pointer"
+                      className="min-w-0 flex-1 cursor-pointer break-words text-sm leading-snug font-normal whitespace-normal"
                       title={opt.value}
                     >
                       {opt.value}
                     </Label>
-                    <span className="text-xs text-muted-foreground">{opt.count}</span>
+                    <span className="shrink-0 text-xs text-muted-foreground">{opt.count}</span>
                   </div>
                 ))}
               </div>
@@ -311,21 +323,25 @@ export function Sidebar({ className }: { className?: string }) {
                     )}
                   </Button>
                 </PopoverTrigger>
-                <PopoverContent className="w-72 p-3" usePortal={!isMobile}>
+                <PopoverContent
+                  align="start"
+                  className="w-[var(--radix-popover-trigger-width)] max-w-[calc(100vw-2rem)] p-3"
+                >
                   <Input
                     value={journalSearch}
                     onChange={(event) => setJournalSearch(event.target.value)}
                     placeholder="搜索期刊"
-                    className="h-8"
+                    className="h-8 text-sm"
                   />
                   <ScrollArea className="mt-2 h-60 touch-pan-y">
                     <div className="space-y-2">
                       {filteredJournalOptions.map((option) => {
                         const id = String(option.journal_id);
                         return (
-                          <div key={id} className="flex items-center space-x-2">
+                          <div key={id} className="flex min-w-0 items-start gap-2">
                             <Checkbox
                               id={`journal-${id}`}
+                              className="mt-0.5 shrink-0"
                               checked={journalIds.includes(id)}
                               onCheckedChange={(checked: boolean | 'indeterminate') =>
                                 handleJournalChange(id, checked as boolean)
@@ -333,7 +349,7 @@ export function Sidebar({ className }: { className?: string }) {
                             />
                             <Label
                               htmlFor={`journal-${id}`}
-                              className="text-sm font-normal truncate flex-1 cursor-pointer"
+                              className="min-w-0 flex-1 cursor-pointer break-words text-sm leading-snug font-normal whitespace-normal"
                               title={option.title ?? id}
                             >
                               {option.title ?? id}

@@ -82,6 +82,8 @@
   --sidebar-accent-foreground: #171717;
   --sidebar-border: #ebebeb;
   --sidebar-ring: hsla(212, 100%, 48%, 1);
+  --scrollbar-thumb: #c7c7c7;
+  --scrollbar-thumb-hover: #8f8f8f;
 
   --shadow-vercel-ring: rgba(0, 0, 0, 0.08) 0px 0px 0px 1px;
   --shadow-vercel-card:
@@ -121,6 +123,8 @@
   --sidebar-accent-foreground: #ededed;
   --sidebar-border: #333333;
   --sidebar-ring: hsla(212, 100%, 48%, 1);
+  --scrollbar-thumb: #4a4a4a;
+  --scrollbar-thumb-hover: #777777;
 
   --shadow-vercel-ring: rgba(255, 255, 255, 0.14) 0px 0px 0px 1px;
   --shadow-vercel-card:
@@ -131,6 +135,8 @@
 @layer base {
   * {
     @apply border-border outline-ring/50;
+    scrollbar-color: var(--scrollbar-thumb) transparent;
+    scrollbar-width: thin;
   }
   body {
     @apply bg-background text-foreground;
@@ -144,4 +150,22 @@
     font-family: 'Maple Mono Normal NL CN', var(--font-geist-mono), monospace;
     font-feature-settings: 'liga' 1;
   }
+}
+
+*::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
+  border-radius: 999px;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: var(--scrollbar-thumb-hover);
 }

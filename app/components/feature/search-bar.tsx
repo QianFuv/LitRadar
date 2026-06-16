@@ -73,8 +73,8 @@ export function SearchBar({ className }: { className?: string }) {
   };
 
   return (
-    <div className={cn('flex items-center space-x-2 w-full max-w-3xl', className)}>
-      <div className="relative flex-1">
+    <div className={cn('flex w-full min-w-0 items-center gap-2', className)}>
+      <div className="relative min-w-0 flex-1">
         <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-slate-500" />
         <Popover open={showHistory} onOpenChange={setShowHistory}>
           <PopoverTrigger asChild>
@@ -143,7 +143,9 @@ export function SearchBar({ className }: { className?: string }) {
         )}
       </div>
 
-      <Button onClick={() => handleSearch()}>搜索</Button>
+      <Button className="px-3 sm:px-4" onClick={() => handleSearch()}>
+        搜索
+      </Button>
       <Popover>
         <PopoverTrigger asChild>
           <Button variant="outline" size="icon" aria-label="搜索语法帮助" title="搜索语法帮助">

@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { useMemo, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { useQuery } from '@tanstack/react-query';
-import { ArrowLeft, CalendarDays, Database, FileText, Menu } from 'lucide-react';
+import { ArrowLeft, CalendarDays, Database, FileText, Menu, X } from 'lucide-react';
 
 import {
   checkFavoritesBatch,
@@ -26,6 +26,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import {
   Dialog,
+  DialogClose,
   DialogContent,
   DialogDescription,
   DialogHeader,
@@ -170,7 +171,9 @@ function JournalPanel({
               }`}
             >
               <div className="flex items-center justify-between gap-2">
-                <p className="line-clamp-2 text-sm font-medium">{getJournalLabel(journal)}</p>
+                <p className="line-clamp-2 min-w-0 break-words text-sm font-medium">
+                  {getJournalLabel(journal)}
+                </p>
                 <Badge variant={active ? 'default' : 'outline'}>{journal.new_article_count}</Badge>
               </div>
             </button>
@@ -361,23 +364,35 @@ export default function WeeklyUpdatesPage() {
                   </Button>
                 </DialogTrigger>
                 <DialogContent
-                  className="h-full w-[85vw] max-w-xs rounded-none left-0 top-0 translate-x-0 translate-y-0 p-0 gap-0 lg:hidden"
-                  showCloseButton
+                  className="left-0 top-0 h-full w-80 max-w-[calc(100vw-2rem)] translate-x-0 translate-y-0 gap-0 overflow-hidden rounded-none p-0 lg:hidden"
+                  showCloseButton={false}
                 >
                   <DialogHeader className="sr-only">
                     <DialogTitle>期刊筛选</DialogTitle>
                     <DialogDescription>选择数据库和期刊以查看每周更新。</DialogDescription>
                   </DialogHeader>
-                  <JournalPanel
-                    className="h-full rounded-none border-0"
-                    contentClassName="h-[calc(100%-140px)]"
-                    availableDatabases={availableDatabases}
-                    effectiveSelectedDb={effectiveSelectedDb}
-                    journals={journals}
-                    effectiveSelectedJournalId={effectiveSelectedJournalId}
-                    onDatabaseChange={handleDatabaseChange}
-                    onSelectJournal={setSelectedJournalId}
-                  />
+                  <div className="relative h-full w-full">
+                    <DialogClose asChild>
+                      <Button
+                        variant="ghost"
+                        size="icon-sm"
+                        className="absolute right-3 top-3 z-20 bg-background/95 shadow-vercel-ring"
+                        aria-label="关闭期刊筛选"
+                      >
+                        <X className="h-4 w-4" />
+                      </Button>
+                    </DialogClose>
+                    <JournalPanel
+                      className="h-full rounded-none border-0 pt-8"
+                      contentClassName="h-[calc(100%-140px)]"
+                      availableDatabases={availableDatabases}
+                      effectiveSelectedDb={effectiveSelectedDb}
+                      journals={journals}
+                      effectiveSelectedJournalId={effectiveSelectedJournalId}
+                      onDatabaseChange={handleDatabaseChange}
+                      onSelectJournal={setSelectedJournalId}
+                    />
+                  </div>
                 </DialogContent>
               </Dialog>
               <CalendarDays className="h-4 w-4" />
