@@ -27,20 +27,22 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { CalendarDays, Moon, Sun, Database } from 'lucide-react';
+import { Database, Moon, Sun } from 'lucide-react';
 import { getAreaDisplayName } from '@/lib/area-labels';
 import { cn } from '@/lib/utils';
 import { useEffect, useMemo, useState } from 'react';
 
 const MONTH_VALUES = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12] as const;
+const MONTH_OPTIONS = MONTH_VALUES.map((month) => String(month).padStart(2, '0'));
 const MONTH_KEY_PATTERN = /^\d{4}-(0[1-9]|1[0-2])$/;
 const MONTH_RANGE_SEPARATOR = '..';
 
-interface MonthPickerProps {
-  label: string;
+interface DateSegmentSelectProps {
+  ariaLabel: string;
   value: string;
-  minYear: number;
-  maxYear: number;
+  options: readonly string[];
+  triggerClassName?: string;
+  contentClassName?: string;
   onChange: (value: string) => void;
 }
 
@@ -144,29 +146,37 @@ function formatMonthLabel(value: string): string {
 }
 
 /**
- * Render a popover selector for one month bound.
+ * Build descending year option labels for the date range filter.
  *
- * @param props - Month picker configuration.
- * @returns Month picker UI.
+ * @param minYear - Earliest available year.
+ * @param maxYear - Latest available year.
+ * @returns Descending year labels.
  */
-function MonthPicker({ label, value, minYear, maxYear, onChange }: MonthPickerProps) {
-  const initialYear = monthKeyYear(value, maxYear);
+function buildYearOptions(minYear: number, maxYear: number): string[] {
+  const result: string[] = [];
+  for (let year = maxYear; year >= minYear; year -= 1) {
+    result.push(String(year));
+  }
+  return result;
+}
+
+/**
+ * Render one underlined date segment dropdown.
+ *
+ * @param props - Date segment select configuration.
+ * @returns Date segment dropdown UI.
+ */
+function DateSegmentSelect({
+  ariaLabel,
+  value,
+  options,
+  triggerClassName,
+  contentClassName,
+  onChange,
+}: DateSegmentSelectProps) {
   const [open, setOpen] = useState(false);
-  const [activeYear, setActiveYear] = useState(initialYear);
-  const years = useMemo(() => {
-    const result: number[] = [];
-    for (let year = maxYear; year >= minYear; year -= 1) {
-      result.push(year);
-    }
-    return result;
-  }, [maxYear, minYear]);
-
-  useEffect(() => {
-    setActiveYear(monthKeyYear(value, maxYear));
-  }, [maxYear, value]);
-
-  const handleMonthClick = (month: number) => {
-    onChange(buildMonthKey(activeYear, month));
+  const handleSelect = (nextValue: string) => {
+    onChange(nextValue);
     setOpen(false);
   };
 
@@ -175,55 +185,34 @@ function MonthPicker({ label, value, minYear, maxYear, onChange }: MonthPickerPr
       <PopoverTrigger asChild>
         <Button
           variant="outline"
-          className="h-auto min-h-12 w-full justify-start gap-2 px-3 py-2"
-          title={`${label}：${formatMonthLabel(value)}`}
+          size="sm"
+          aria-label={ariaLabel}
+          title={`${ariaLabel}：${value}`}
+          className={cn('h-8 px-2 text-sm', triggerClassName)}
         >
-          <CalendarDays className="h-4 w-4 text-muted-foreground" />
-          <span className="flex min-w-0 flex-col items-start">
-            <span className="text-[11px] leading-4 text-muted-foreground">{label}</span>
-            <span className="truncate text-sm">{formatMonthLabel(value)}</span>
-          </span>
+          {value}
         </Button>
       </PopoverTrigger>
-      <PopoverContent align="start" className="w-[17rem] max-w-[calc(100vw-2rem)] p-2">
-        <div className="grid grid-cols-[4.75rem_1fr] gap-2">
-          <ScrollArea className="h-56 pr-1">
-            <div className="space-y-1">
-              {years.map((year) => (
-                <Button
-                  key={year}
-                  type="button"
-                  variant={year === activeYear ? 'secondary' : 'ghost'}
-                  size="sm"
-                  className="h-8 w-full justify-center px-2"
-                  onClick={() => setActiveYear(year)}
-                >
-                  {year}
-                </Button>
-              ))}
-            </div>
-          </ScrollArea>
-          <div className="space-y-2">
-            <div className="px-1 text-sm font-medium">{activeYear}年</div>
-            <div className="grid grid-cols-3 gap-1">
-              {MONTH_VALUES.map((month) => {
-                const monthKey = buildMonthKey(activeYear, month);
-                return (
-                  <Button
-                    key={month}
-                    type="button"
-                    variant={monthKey === value ? 'default' : 'ghost'}
-                    size="sm"
-                    className="h-9 px-2"
-                    onClick={() => handleMonthClick(month)}
-                  >
-                    {String(month).padStart(2, '0')}月
-                  </Button>
-                );
-              })}
-            </div>
+      <PopoverContent
+        align="start"
+        className={cn('max-w-[calc(100vw-2rem)] p-2', contentClassName)}
+      >
+        <ScrollArea className="h-60 touch-pan-y">
+          <div className="space-y-1">
+            {options.map((option) => (
+              <Button
+                key={option}
+                type="button"
+                variant={option === value ? 'secondary' : 'ghost'}
+                size="sm"
+                className="h-8 w-full justify-center px-2"
+                onClick={() => handleSelect(option)}
+              >
+                {option}
+              </Button>
+            ))}
           </div>
-        </div>
+        </ScrollArea>
       </PopoverContent>
     </Popover>
   );
@@ -295,6 +284,15 @@ export function Sidebar({ className }: { className?: string }) {
     setMonthRange(null);
   };
 
+  const handleClearJournalFilters = () => {
+    setAreas([]);
+    setJournalIds([]);
+  };
+
+  const handleClearTimeFilters = () => {
+    setMonthRange(null);
+  };
+
   const minYearAvailable =
     yearData && yearData.length > 0 ? Math.min(...yearData.map((y) => y.year)) : 1900;
   const maxYearAvailable =
@@ -311,6 +309,11 @@ export function Sidebar({ className }: { className?: string }) {
     defaultStartMonth,
     defaultEndMonth,
   );
+  const yearOptions = buildYearOptions(minYearAvailable, maxYearAvailable);
+  const selectedStartYearValue = selectedStartMonth.slice(0, 4);
+  const selectedStartMonthValue = selectedStartMonth.slice(5, 7);
+  const selectedEndYearValue = selectedEndMonth.slice(0, 4);
+  const selectedEndMonthValue = selectedEndMonth.slice(5, 7);
 
   const handleAreaChange = (value: string, checked: boolean) => {
     setAreas((current) => {
@@ -445,9 +448,9 @@ export function Sidebar({ className }: { className?: string }) {
             <Button
               variant="ghost"
               size="sm"
-              onClick={handleClearFilters}
+              onClick={handleClearJournalFilters}
               className="h-6 px-2 text-xs"
-              title="清空全部筛选"
+              title="清空期刊筛选"
             >
               清空
             </Button>
@@ -558,41 +561,66 @@ export function Sidebar({ className }: { className?: string }) {
         </div>
 
         <div className="space-y-4">
-          <h3 className="font-semibold text-sm text-foreground">发表时间</h3>
+          <div className="flex items-center justify-between">
+            <h3 className="font-semibold text-sm text-foreground">发表时间</h3>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={handleClearTimeFilters}
+              className="h-6 px-2 text-xs"
+              title="清空时间筛选"
+            >
+              清空
+            </Button>
+          </div>
           {loadingYears ? (
             <Skeleton className="h-8 w-full" />
           ) : (
-            <div className="space-y-3">
-              <div className="grid grid-cols-2 gap-2">
-                <MonthPicker
-                  label="起始年月"
-                  value={selectedStartMonth}
-                  minYear={minYearAvailable}
-                  maxYear={maxYearAvailable}
-                  onChange={(value) => handleMonthRangeCommit(value, selectedEndMonth)}
-                />
-                <MonthPicker
-                  label="结束年月"
-                  value={selectedEndMonth}
-                  minYear={minYearAvailable}
-                  maxYear={maxYearAvailable}
-                  onChange={(value) => handleMonthRangeCommit(selectedStartMonth, value)}
-                />
-              </div>
-              <div
-                className="truncate text-xs font-medium text-muted-foreground"
-                title={`${formatMonthLabel(selectedStartMonth)} - ${formatMonthLabel(selectedEndMonth)}`}
-              >
-                {formatMonthLabel(selectedStartMonth)} - {formatMonthLabel(selectedEndMonth)}
-              </div>
-              <Button
-                variant="ghost"
-                size="xs"
-                className="h-7 px-2"
-                onClick={() => handleMonthRangeCommit(defaultStartMonth, defaultEndMonth)}
-              >
-                重置时间
-              </Button>
+            <div
+              className="grid grid-cols-[minmax(0,1fr)_minmax(0,0.78fr)_auto_minmax(0,1fr)_minmax(0,0.78fr)] items-end gap-1"
+              title={`${formatMonthLabel(selectedStartMonth)} - ${formatMonthLabel(selectedEndMonth)}`}
+            >
+              <DateSegmentSelect
+                ariaLabel="起始年份"
+                value={selectedStartYearValue}
+                options={yearOptions}
+                triggerClassName="w-full"
+                contentClassName="w-[4.75rem]"
+                onChange={(value) =>
+                  handleMonthRangeCommit(`${value}-${selectedStartMonthValue}`, selectedEndMonth)
+                }
+              />
+              <DateSegmentSelect
+                ariaLabel="起始月份"
+                value={selectedStartMonthValue}
+                options={MONTH_OPTIONS}
+                triggerClassName="w-full"
+                contentClassName="w-16"
+                onChange={(value) =>
+                  handleMonthRangeCommit(`${selectedStartYearValue}-${value}`, selectedEndMonth)
+                }
+              />
+              <span className="text-center text-sm text-muted-foreground">-</span>
+              <DateSegmentSelect
+                ariaLabel="结束年份"
+                value={selectedEndYearValue}
+                options={yearOptions}
+                triggerClassName="w-full"
+                contentClassName="w-[4.75rem]"
+                onChange={(value) =>
+                  handleMonthRangeCommit(selectedStartMonth, `${value}-${selectedEndMonthValue}`)
+                }
+              />
+              <DateSegmentSelect
+                ariaLabel="结束月份"
+                value={selectedEndMonthValue}
+                options={MONTH_OPTIONS}
+                triggerClassName="w-full"
+                contentClassName="w-16"
+                onChange={(value) =>
+                  handleMonthRangeCommit(selectedStartMonth, `${selectedEndYearValue}-${value}`)
+                }
+              />
             </div>
           )}
         </div>
