@@ -394,7 +394,7 @@ export interface AnnouncementUpdate {
   enabled?: boolean;
 }
 
-export const DEFAULT_DATABASE = 'utd24.sqlite';
+export const DEFAULT_DATABASE = 'ccf_computer_journals.sqlite';
 export const DEFAULT_DB = DEFAULT_DATABASE;
 export const SELECTED_DATABASE_KEY = 'selected_database';
 
