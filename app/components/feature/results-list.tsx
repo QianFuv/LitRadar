@@ -1,7 +1,7 @@
 'use client';
 
 import { useInfiniteQuery, useQuery, type InfiniteData } from '@tanstack/react-query';
-import { useQueryState, parseAsString, parseAsArrayOf, parseAsInteger } from 'nuqs';
+import { useQueryState, parseAsString, parseAsArrayOf } from 'nuqs';
 import { checkFavoritesBatch, getArticles, getCurrentDatabase, type ArticlePage } from '@/lib/api';
 import { ArticleDialogCard } from '@/components/feature/article-dialog-card';
 import { useVisiblePageList } from '@/components/feature/use-visible-page-list';
@@ -11,14 +11,59 @@ import { useCallback, useMemo } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { useAuth } from '@/lib/auth-context';
 
+const MONTH_KEY_PATTERN = /^\d{4}-(0[1-9]|1[0-2])$/;
+const MONTH_RANGE_SEPARATOR = '..';
+
+/**
+ * Parse the compact month range query value.
+ *
+ * @param value - Raw query value in YYYY-MM..YYYY-MM format.
+ * @returns Ordered start and end month keys, or null when invalid.
+ */
+function parseMonthRange(value: string | null): [string, string] | null {
+  const [startMonth = '', endMonth = ''] = (value ?? '').split(MONTH_RANGE_SEPARATOR);
+  if (!MONTH_KEY_PATTERN.test(startMonth) || !MONTH_KEY_PATTERN.test(endMonth)) {
+    return null;
+  }
+  return startMonth <= endMonth ? [startMonth, endMonth] : [endMonth, startMonth];
+}
+
+/**
+ * Convert a YYYY-MM query value into the first day of that month.
+ *
+ * @param value - Month query value.
+ * @returns ISO date string or null when invalid.
+ */
+function monthKeyToDateFrom(value: string | null): string | null {
+  if (!value || !MONTH_KEY_PATTERN.test(value)) {
+    return null;
+  }
+  return `${value}-01`;
+}
+
+/**
+ * Convert a YYYY-MM query value into the last day of that month.
+ *
+ * @param value - Month query value.
+ * @returns ISO date string or null when invalid.
+ */
+function monthKeyToDateTo(value: string | null): string | null {
+  if (!value || !MONTH_KEY_PATTERN.test(value)) {
+    return null;
+  }
+  const year = Number(value.slice(0, 4));
+  const month = Number(value.slice(5, 7));
+  const lastDay = new Date(year, month, 0).getDate();
+  return `${value}-${String(lastDay).padStart(2, '0')}`;
+}
+
 export function ResultsList() {
   const { user, token } = useAuth();
 
   const [q] = useQueryState('q', parseAsString);
   const [areas] = useQueryState('area', parseAsArrayOf(parseAsString));
   const [journalIds] = useQueryState('journal_id', parseAsArrayOf(parseAsString));
-  const [yearMin] = useQueryState('year_min', parseAsInteger);
-  const [yearMax] = useQueryState('year_max', parseAsInteger);
+  const [monthRange] = useQueryState('month_range', parseAsString);
   const searchParams = useSearchParams();
   const searchKey = searchParams.toString();
   const includeTotal = true;
@@ -33,8 +78,11 @@ export function ResultsList() {
     journalIds.forEach((id) => params.append('journal_id', id));
   }
 
-  if (yearMin) params.set('date_from', `${yearMin}-01-01`);
-  if (yearMax) params.set('date_to', `${yearMax}-12-31`);
+  const parsedMonthRange = parseMonthRange(monthRange);
+  const dateFrom = parsedMonthRange ? monthKeyToDateFrom(parsedMonthRange[0]) : null;
+  const dateTo = parsedMonthRange ? monthKeyToDateTo(parsedMonthRange[1]) : null;
+  if (dateFrom) params.set('date_from', dateFrom);
+  if (dateTo) params.set('date_to', dateTo);
   const paramsString = params.toString();
   const currentDb = getCurrentDatabase();
 

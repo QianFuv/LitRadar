@@ -1,7 +1,7 @@
 'use client';
 
 import { useQuery } from '@tanstack/react-query';
-import { useQueryState, parseAsString, parseAsArrayOf, parseAsInteger } from 'nuqs';
+import { useQueryState, parseAsString, parseAsArrayOf } from 'nuqs';
 import Image from 'next/image';
 import { useTheme } from 'next-themes';
 import {
@@ -15,7 +15,6 @@ import {
 import { useAuth } from '@/lib/auth-context';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Label } from '@/components/ui/label';
-import { Slider } from '@/components/ui/slider';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -28,10 +27,207 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { Moon, Sun, Database } from 'lucide-react';
+import { CalendarDays, Moon, Sun, Database } from 'lucide-react';
 import { getAreaDisplayName } from '@/lib/area-labels';
 import { cn } from '@/lib/utils';
 import { useEffect, useMemo, useState } from 'react';
+
+const MONTH_VALUES = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12] as const;
+const MONTH_KEY_PATTERN = /^\d{4}-(0[1-9]|1[0-2])$/;
+const MONTH_RANGE_SEPARATOR = '..';
+
+interface MonthPickerProps {
+  label: string;
+  value: string;
+  minYear: number;
+  maxYear: number;
+  onChange: (value: string) => void;
+}
+
+/**
+ * Build a stable YYYY-MM key for query state and date conversion.
+ *
+ * @param year - Four digit year.
+ * @param month - One-based month number.
+ * @returns Month key.
+ */
+function buildMonthKey(year: number, month: number): string {
+  return `${year}-${String(month).padStart(2, '0')}`;
+}
+
+/**
+ * Check whether a query value is a supported YYYY-MM month key.
+ *
+ * @param value - Query value to inspect.
+ * @returns True when the value can be used as a month key.
+ */
+function isMonthKey(value: string | null): value is string {
+  return typeof value === 'string' && MONTH_KEY_PATTERN.test(value);
+}
+
+/**
+ * Return the year component from a month key.
+ *
+ * @param value - Month key.
+ * @param fallback - Year to use when parsing fails.
+ * @returns Parsed year or fallback.
+ */
+function monthKeyYear(value: string, fallback: number): number {
+  const year = Number(value.slice(0, 4));
+  return Number.isFinite(year) ? year : fallback;
+}
+
+/**
+ * Normalize a month key into the available year range.
+ *
+ * @param value - Raw month key.
+ * @param minYear - Earliest available year.
+ * @param maxYear - Latest available year.
+ * @returns Clamped month key or null when invalid.
+ */
+function normalizeMonthKey(value: string | null, minYear: number, maxYear: number): string | null {
+  if (!isMonthKey(value)) {
+    return null;
+  }
+  const year = monthKeyYear(value, minYear);
+  if (year < minYear) {
+    return buildMonthKey(minYear, 1);
+  }
+  if (year > maxYear) {
+    return buildMonthKey(maxYear, 12);
+  }
+  return value;
+}
+
+/**
+ * Parse the compact month range query value.
+ *
+ * @param value - Raw query value in YYYY-MM..YYYY-MM format.
+ * @param minYear - Earliest available year.
+ * @param maxYear - Latest available year.
+ * @param defaultStartMonth - Default start month.
+ * @param defaultEndMonth - Default end month.
+ * @returns Ordered start and end month keys.
+ */
+function parseMonthRange(
+  value: string | null,
+  minYear: number,
+  maxYear: number,
+  defaultStartMonth: string,
+  defaultEndMonth: string,
+): [string, string] {
+  const [rawStartMonth = '', rawEndMonth = ''] = (value ?? '').split(MONTH_RANGE_SEPARATOR);
+  const startMonth = normalizeMonthKey(rawStartMonth, minYear, maxYear) ?? defaultStartMonth;
+  const endMonth = normalizeMonthKey(rawEndMonth, minYear, maxYear) ?? defaultEndMonth;
+  return startMonth <= endMonth ? [startMonth, endMonth] : [endMonth, startMonth];
+}
+
+/**
+ * Build the compact month range query value.
+ *
+ * @param startMonth - Start month key.
+ * @param endMonth - End month key.
+ * @returns Query value in YYYY-MM..YYYY-MM format.
+ */
+function buildMonthRange(startMonth: string, endMonth: string): string {
+  return `${startMonth}${MONTH_RANGE_SEPARATOR}${endMonth}`;
+}
+
+/**
+ * Format a month key for the Chinese filter UI.
+ *
+ * @param value - Month key.
+ * @returns Human-readable year-month label.
+ */
+function formatMonthLabel(value: string): string {
+  return `${value.slice(0, 4)}年${value.slice(5, 7)}月`;
+}
+
+/**
+ * Render a popover selector for one month bound.
+ *
+ * @param props - Month picker configuration.
+ * @returns Month picker UI.
+ */
+function MonthPicker({ label, value, minYear, maxYear, onChange }: MonthPickerProps) {
+  const initialYear = monthKeyYear(value, maxYear);
+  const [open, setOpen] = useState(false);
+  const [activeYear, setActiveYear] = useState(initialYear);
+  const years = useMemo(() => {
+    const result: number[] = [];
+    for (let year = maxYear; year >= minYear; year -= 1) {
+      result.push(year);
+    }
+    return result;
+  }, [maxYear, minYear]);
+
+  useEffect(() => {
+    setActiveYear(monthKeyYear(value, maxYear));
+  }, [maxYear, value]);
+
+  const handleMonthClick = (month: number) => {
+    onChange(buildMonthKey(activeYear, month));
+    setOpen(false);
+  };
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <Button
+          variant="outline"
+          className="h-auto min-h-12 w-full justify-start gap-2 px-3 py-2"
+          title={`${label}：${formatMonthLabel(value)}`}
+        >
+          <CalendarDays className="h-4 w-4 text-muted-foreground" />
+          <span className="flex min-w-0 flex-col items-start">
+            <span className="text-[11px] leading-4 text-muted-foreground">{label}</span>
+            <span className="truncate text-sm">{formatMonthLabel(value)}</span>
+          </span>
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent align="start" className="w-[17rem] max-w-[calc(100vw-2rem)] p-2">
+        <div className="grid grid-cols-[4.75rem_1fr] gap-2">
+          <ScrollArea className="h-56 pr-1">
+            <div className="space-y-1">
+              {years.map((year) => (
+                <Button
+                  key={year}
+                  type="button"
+                  variant={year === activeYear ? 'secondary' : 'ghost'}
+                  size="sm"
+                  className="h-8 w-full justify-center px-2"
+                  onClick={() => setActiveYear(year)}
+                >
+                  {year}
+                </Button>
+              ))}
+            </div>
+          </ScrollArea>
+          <div className="space-y-2">
+            <div className="px-1 text-sm font-medium">{activeYear}年</div>
+            <div className="grid grid-cols-3 gap-1">
+              {MONTH_VALUES.map((month) => {
+                const monthKey = buildMonthKey(activeYear, month);
+                return (
+                  <Button
+                    key={month}
+                    type="button"
+                    variant={monthKey === value ? 'default' : 'ghost'}
+                    size="sm"
+                    className="h-9 px-2"
+                    onClick={() => handleMonthClick(month)}
+                  >
+                    {String(month).padStart(2, '0')}月
+                  </Button>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      </PopoverContent>
+    </Popover>
+  );
+}
 
 export function Sidebar({ className }: { className?: string }) {
   const { theme, setTheme } = useTheme();
@@ -44,8 +240,7 @@ export function Sidebar({ className }: { className?: string }) {
     'journal_id',
     parseAsArrayOf(parseAsString).withDefault([]),
   );
-  const [yearMin, setYearMin] = useQueryState('year_min', parseAsInteger);
-  const [yearMax, setYearMax] = useQueryState('year_max', parseAsInteger);
+  const [monthRange, setMonthRange] = useQueryState('month_range', parseAsString);
 
   const { data: databases, isLoading: loadingDatabases } = useQuery({
     queryKey: ['meta', 'databases'],
@@ -97,8 +292,7 @@ export function Sidebar({ className }: { className?: string }) {
     setQ(null);
     setAreas([]);
     setJournalIds([]);
-    setYearMin(null);
-    setYearMax(null);
+    setMonthRange(null);
   };
 
   const minYearAvailable =
@@ -108,20 +302,15 @@ export function Sidebar({ className }: { className?: string }) {
       ? Math.max(...yearData.map((y) => y.year))
       : new Date().getFullYear();
 
-  const yearRangeKey = `${minYearAvailable}-${maxYearAvailable}-${yearMin ?? 'null'}-${yearMax ?? 'null'}`;
-  const defaultYearRange: [number, number] = [
-    yearMin ?? minYearAvailable,
-    yearMax ?? maxYearAvailable,
-  ];
-  const [localYearRangeState, setLocalYearRangeState] = useState<{
-    key: string;
-    value: [number, number];
-  }>({
-    key: yearRangeKey,
-    value: defaultYearRange,
-  });
-  const localYearRange =
-    localYearRangeState.key === yearRangeKey ? localYearRangeState.value : defaultYearRange;
+  const defaultStartMonth = buildMonthKey(minYearAvailable, 1);
+  const defaultEndMonth = buildMonthKey(maxYearAvailable, 12);
+  const [selectedStartMonth, selectedEndMonth] = parseMonthRange(
+    monthRange,
+    minYearAvailable,
+    maxYearAvailable,
+    defaultStartMonth,
+    defaultEndMonth,
+  );
 
   const handleAreaChange = (value: string, checked: boolean) => {
     setAreas((current) => {
@@ -141,18 +330,14 @@ export function Sidebar({ className }: { className?: string }) {
     });
   };
 
-  const handleYearChange = (value: number[]) => {
-    setLocalYearRangeState({
-      key: yearRangeKey,
-      value: [value[0], value[1]],
-    });
-  };
-
-  const handleYearCommit = (value: number[]) => {
-    const nextMin = value[0] === minYearAvailable ? null : value[0];
-    const nextMax = value[1] === maxYearAvailable ? null : value[1];
-    setYearMin(nextMin);
-    setYearMax(nextMax);
+  const handleMonthRangeCommit = (startMonth: string, endMonth: string) => {
+    const orderedStartMonth = startMonth <= endMonth ? startMonth : endMonth;
+    const orderedEndMonth = startMonth <= endMonth ? endMonth : startMonth;
+    setMonthRange(
+      orderedStartMonth === defaultStartMonth && orderedEndMonth === defaultEndMonth
+        ? null
+        : buildMonthRange(orderedStartMonth, orderedEndMonth),
+    );
   };
 
   const [journalSearch, setJournalSearch] = useState('');
@@ -373,24 +558,41 @@ export function Sidebar({ className }: { className?: string }) {
         </div>
 
         <div className="space-y-4">
-          <h3 className="font-semibold text-sm text-foreground">发表年份</h3>
+          <h3 className="font-semibold text-sm text-foreground">发表时间</h3>
           {loadingYears ? (
             <Skeleton className="h-8 w-full" />
           ) : (
-            <div className="px-1 pt-2">
-              <Slider
-                min={minYearAvailable}
-                max={maxYearAvailable}
-                step={1}
-                value={localYearRange}
-                onValueChange={handleYearChange}
-                onValueCommit={handleYearCommit}
-                className="mb-6"
-              />
-              <div className="flex justify-between text-xs text-muted-foreground font-medium">
-                <span>{localYearRange[0]}</span>
-                <span>{localYearRange[1]}</span>
+            <div className="space-y-3">
+              <div className="grid grid-cols-2 gap-2">
+                <MonthPicker
+                  label="起始年月"
+                  value={selectedStartMonth}
+                  minYear={minYearAvailable}
+                  maxYear={maxYearAvailable}
+                  onChange={(value) => handleMonthRangeCommit(value, selectedEndMonth)}
+                />
+                <MonthPicker
+                  label="结束年月"
+                  value={selectedEndMonth}
+                  minYear={minYearAvailable}
+                  maxYear={maxYearAvailable}
+                  onChange={(value) => handleMonthRangeCommit(selectedStartMonth, value)}
+                />
               </div>
+              <div
+                className="truncate text-xs font-medium text-muted-foreground"
+                title={`${formatMonthLabel(selectedStartMonth)} - ${formatMonthLabel(selectedEndMonth)}`}
+              >
+                {formatMonthLabel(selectedStartMonth)} - {formatMonthLabel(selectedEndMonth)}
+              </div>
+              <Button
+                variant="ghost"
+                size="xs"
+                className="h-7 px-2"
+                onClick={() => handleMonthRangeCommit(defaultStartMonth, defaultEndMonth)}
+              >
+                重置时间
+              </Button>
             </div>
           )}
         </div>
