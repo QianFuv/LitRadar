@@ -302,6 +302,65 @@ class ZhejiangLibraryCnkiClientTest(unittest.TestCase):
         self.assertTrue(does_article_metadata_match(expected, actual))
         self.assertFalse(does_article_metadata_match(expected, wrong_journal))
 
+    def test_metadata_match_rejects_any_required_field_mismatch(self) -> None:
+        """
+        Ensure each required metadata field can independently reject a candidate.
+
+        Returns:
+            None.
+        """
+        expected = ArticleIdentity(
+            title="目标文章",
+            authors="张三; 李四",
+            journal_title="目标期刊",
+        )
+        cases = [
+            (
+                "title",
+                ArticleIdentity(
+                    title="另一篇文章",
+                    authors=expected.authors,
+                    journal_title=expected.journal_title,
+                ),
+            ),
+            (
+                "author_order",
+                ArticleIdentity(
+                    title=expected.title,
+                    authors="李四; 张三",
+                    journal_title=expected.journal_title,
+                ),
+            ),
+            (
+                "missing_authors",
+                ArticleIdentity(
+                    title=expected.title,
+                    authors="",
+                    journal_title=expected.journal_title,
+                ),
+            ),
+            (
+                "journal",
+                ArticleIdentity(
+                    title=expected.title,
+                    authors=expected.authors,
+                    journal_title="错误期刊",
+                ),
+            ),
+            (
+                "missing_journal",
+                ArticleIdentity(
+                    title=expected.title,
+                    authors=expected.authors,
+                    journal_title="",
+                ),
+            ),
+        ]
+
+        for name, actual in cases:
+            with self.subTest(name=name):
+                self.assertFalse(does_article_metadata_match(expected, actual))
+
     def test_download_matching_pdf_skips_mismatched_candidates(self) -> None:
         """
         Ensure mismatched CNKI candidates are not downloaded.
@@ -338,6 +397,60 @@ class ZhejiangLibraryCnkiClientTest(unittest.TestCase):
             client.download_matching_pdf(expected)
 
         self.assertEqual(client.downloaded_urls, [])
+
+    def test_download_matching_pdf_downloads_later_exact_candidate(self) -> None:
+        """
+        Ensure search scanning skips wrong candidates before downloading a match.
+
+        Returns:
+            None.
+        """
+        expected = ArticleIdentity(
+            title="目标文章",
+            authors="张三; 李四",
+            journal_title="目标期刊",
+        )
+        wrong_result = SearchResult(
+            index=1,
+            title="目标文章",
+            detail_url="https://example.test/detail-1",
+            file_name="TEST1",
+            db_name="CJFD",
+            db_code="CJFQ",
+        )
+        exact_result = SearchResult(
+            index=2,
+            title="目标文章",
+            detail_url="https://example.test/detail-2",
+            file_name="TEST2",
+            db_name="CJFD",
+            db_code="CJFQ",
+        )
+        client = FakeMatchingClient(
+            [
+                CnkiArticleCandidate(
+                    result=wrong_result,
+                    identity=ArticleIdentity(
+                        title="目标文章",
+                        authors="张三; 李四",
+                        journal_title="错误期刊",
+                    ),
+                    detail_url="https://example.test/detail-1",
+                    pdf_url="https://example.test/pdf-1",
+                ),
+                CnkiArticleCandidate(
+                    result=exact_result,
+                    identity=expected,
+                    detail_url="https://example.test/detail-2",
+                    pdf_url="https://example.test/pdf-2",
+                ),
+            ]
+        )
+
+        downloaded = client.download_matching_pdf(expected)
+
+        self.assertEqual(downloaded.content, b"%PDF-1.7")
+        self.assertEqual(client.downloaded_urls, ["https://example.test/pdf-2"])
 
     def test_download_matching_pdf_downloads_exact_candidate(self) -> None:
         """
