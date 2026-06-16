@@ -4,6 +4,7 @@ const BACKEND_URL = process.env.INTERNAL_API_URL || 'http://localhost:8000';
 
 const nextConfig: NextConfig = {
   output: 'standalone',
+  allowedDevOrigins: ['127.0.0.1'],
   images: {
     remotePatterns: [
       {
