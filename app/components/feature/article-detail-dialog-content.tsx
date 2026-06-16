@@ -1,9 +1,16 @@
 'use client';
 
 import { useState, type ReactNode } from 'react';
-import { Check, Copy, ExternalLink } from 'lucide-react';
+import { useQuery } from '@tanstack/react-query';
+import Link from 'next/link';
+import { Check, Copy, ExternalLink, FileDown, Loader2, Settings } from 'lucide-react';
 
-import { getFullTextUrlForDatabase, type ArticleId, type JournalId } from '@/lib/api';
+import {
+  getArticleAccess,
+  getFullTextUrlForDatabase,
+  type ArticleId,
+  type JournalId,
+} from '@/lib/api';
 import { FavoriteButton } from '@/components/feature/favorite-button';
 import { Button } from '@/components/ui/button';
 import {
@@ -75,6 +82,18 @@ export function ArticleDetailDialogContent({
   extraActions,
 }: ArticleDetailDialogContentProps) {
   const [copyStatus, setCopyStatus] = useState<'title' | 'info' | null>(null);
+  const isAccessQueryEnabled = !!token && !!dbName && !!article.article_id;
+  const {
+    data: access,
+    isPending: isAccessPending,
+    isError: isAccessError,
+    error: accessError,
+  } = useQuery({
+    queryKey: ['article-access', dbName, article.article_id],
+    queryFn: () => getArticleAccess(article.article_id, dbName, token!),
+    enabled: isAccessQueryEnabled,
+    staleTime: 5 * 60 * 1000,
+  });
 
   const handleCopyTitle = async () => {
     await navigator.clipboard.writeText(article.title || '');
@@ -88,10 +107,9 @@ export function ArticleDetailDialogContent({
     setTimeout(() => setCopyStatus(null), 3000);
   };
 
-  const hasFullTextTarget = Boolean(
-    article.full_text_file || article.permalink || article.doi || article.platform_id,
-  );
-  const fullTextUrl = hasFullTextTarget
+  const detailAction = access?.detail;
+  const fulltextAction = access?.fulltext;
+  const fullTextUrl = fulltextAction?.available
     ? getFullTextUrlForDatabase(article.article_id, dbName, token)
     : null;
 
@@ -145,13 +163,46 @@ export function ArticleDetailDialogContent({
                 </>
               )}
             </Button>
+            {isAccessQueryEnabled && isAccessPending && (
+              <Button variant="outline" size="sm" disabled>
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                加载访问
+              </Button>
+            )}
+            {isAccessQueryEnabled && isAccessError && (
+              <Button
+                variant="outline"
+                size="sm"
+                disabled
+                title={accessError instanceof Error ? accessError.message : '访问状态不可用'}
+              >
+                <ExternalLink className="mr-2 h-4 w-4" />
+                访问状态失败
+              </Button>
+            )}
+            {detailAction?.available && detailAction.url && (
+              <a href={detailAction.url} target="_blank" rel="noreferrer">
+                <Button variant="outline" size="sm">
+                  <ExternalLink className="mr-2 h-4 w-4" />
+                  {detailAction.label}
+                </Button>
+              </a>
+            )}
             {fullTextUrl && (
               <a href={fullTextUrl} target="_blank" rel="noreferrer">
                 <Button variant="outline" size="sm">
-                  <ExternalLink className="mr-2 h-4 w-4" />
-                  查看全文
+                  <FileDown className="mr-2 h-4 w-4" />
+                  {fulltextAction?.label ?? '获取全文'}
                 </Button>
               </a>
+            )}
+            {fulltextAction?.requires_login && (
+              <Button asChild variant="outline" size="sm">
+                <Link href="/settings">
+                  <Settings className="mr-2 h-4 w-4" />
+                  去设置登录
+                </Link>
+              </Button>
             )}
             {isFavoriteStatePending ? (
               <Button variant="outline" size="sm" disabled>

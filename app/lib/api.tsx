@@ -38,6 +38,20 @@ export interface ArticlePage {
   page: PageMeta;
 }
 
+export interface ArticleAccessAction {
+  available: boolean;
+  label: string;
+  provider?: string | null;
+  url?: string | null;
+  requires_login: boolean;
+  message?: string | null;
+}
+
+export interface ArticleAccessResponse {
+  detail: ArticleAccessAction;
+  fulltext: ArticleAccessAction;
+}
+
 export interface ValueCount {
   value: string;
   count: number;
@@ -163,6 +177,29 @@ export interface AccessToken {
   name: string;
   expires_at: number;
   created_at: number;
+}
+
+export interface CnkiSessionStatus {
+  configured: boolean;
+  status: 'empty' | 'waiting_scan' | 'active' | 'expired' | string;
+  has_bff_user_token: boolean;
+  expires_at?: number | null;
+  seconds_remaining?: number | null;
+  cookie_names: string[];
+  updated_at?: number | null;
+  last_used_at?: number | null;
+}
+
+export interface CnkiLoginStartResponse {
+  uuid: string;
+  status: string;
+  qr_code: string;
+  session: CnkiSessionStatus;
+}
+
+export interface CnkiLoginPollResponse {
+  status: string;
+  session: CnkiSessionStatus;
 }
 
 export interface InviteCode {
@@ -752,6 +789,27 @@ export function getFullTextUrlForDatabase(
 }
 
 /**
+ * Fetch article detail and full-text access capabilities.
+ *
+ * @param articleId - Article id.
+ * @param dbName - Database name.
+ * @param token - Bearer access token.
+ * @returns Article access capabilities.
+ */
+export function getArticleAccess(
+  articleId: ArticleId,
+  dbName: string,
+  token: string,
+): Promise<ArticleAccessResponse> {
+  return requestJson<ArticleAccessResponse>(
+    buildDatabaseUrl(`/api/articles/${articleId}/access`, dbName),
+    token,
+    undefined,
+    '获取文章访问状态失败',
+  );
+}
+
+/**
  * Fetch one article by id from a database.
  *
  * @param articleId - Article id.
@@ -1151,6 +1209,78 @@ export function getAccessTokens(token: string): Promise<AccessToken[]> {
     token,
     undefined,
     '获取访问令牌失败',
+  );
+}
+
+/**
+ * Fetch current user's Zhejiang Library CNKI session status.
+ *
+ * @param token - Bearer access token.
+ * @returns Safe CNKI session status.
+ */
+export function getCnkiSession(token: string): Promise<CnkiSessionStatus> {
+  return requestJson<CnkiSessionStatus>(
+    buildApiUrl('/api/cnki/session'),
+    token,
+    undefined,
+    '获取知网登录状态失败',
+  );
+}
+
+/**
+ * Start Zhejiang Library CNKI QR login for the current user.
+ *
+ * @param token - Bearer access token.
+ * @returns QR login challenge.
+ */
+export function startCnkiLogin(token: string): Promise<CnkiLoginStartResponse> {
+  return requestJson<CnkiLoginStartResponse>(
+    buildApiUrl('/api/cnki/login/start'),
+    token,
+    { method: 'POST' },
+    '启动知网登录失败',
+  );
+}
+
+/**
+ * Poll Zhejiang Library CNKI QR login for the current user.
+ *
+ * @param token - Bearer access token.
+ * @param timeoutSeconds - Maximum polling duration.
+ * @param intervalSeconds - Polling interval.
+ * @returns QR login poll result.
+ */
+export function pollCnkiLogin(
+  token: string,
+  timeoutSeconds: number,
+  intervalSeconds: number,
+): Promise<CnkiLoginPollResponse> {
+  return requestJson<CnkiLoginPollResponse>(
+    buildApiUrl('/api/cnki/login/poll'),
+    token,
+    {
+      method: 'POST',
+      body: JSON.stringify({
+        timeout_seconds: timeoutSeconds,
+        interval_seconds: intervalSeconds,
+      }),
+    },
+    '确认知网登录失败',
+  );
+}
+
+/**
+ * Clear current user's Zhejiang Library CNKI session.
+ *
+ * @param token - Bearer access token.
+ * @returns Safe empty CNKI session status.
+ */
+export function clearCnkiSession(token: string): Promise<CnkiSessionStatus> {
+  return requestJson<CnkiSessionStatus>(
+    buildApiUrl('/api/cnki/session'),
+    token,
+    { method: 'DELETE' },
+    '清除知网登录失败',
   );
 }
 

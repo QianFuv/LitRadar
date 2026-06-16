@@ -1,6 +1,6 @@
 'use client';
 
-import { type ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
 
 import { ArticleDetailDialogContent } from '@/components/feature/article-detail-dialog-content';
 import { ArticleListCard } from '@/components/feature/article-list-card';
@@ -53,11 +53,12 @@ export function ArticleDialogCard({
   triggerRef,
   className,
 }: ArticleDialogCardProps) {
+  const [open, setOpen] = useState(false);
   const resolvedTitle = title ?? article.title ?? `文章 #${article.article_id}`;
   const resolvedPreview = preview ?? article.abstract;
 
   return (
-    <Dialog>
+    <Dialog open={open} onOpenChange={setOpen}>
       <div className={cn('flex items-start gap-3', className)}>
         {leading && <div className="pt-4">{leading}</div>}
         <DialogTrigger asChild>
@@ -75,14 +76,16 @@ export function ArticleDialogCard({
           </div>
         </DialogTrigger>
       </div>
-      <ArticleDetailDialogContent
-        article={article}
-        dbName={dbName}
-        token={token}
-        initialFolderIds={initialFolderIds}
-        isFavoriteStatePending={isFavoriteStatePending}
-        extraActions={extraActions}
-      />
+      {open && (
+        <ArticleDetailDialogContent
+          article={article}
+          dbName={dbName}
+          token={token}
+          initialFolderIds={initialFolderIds}
+          isFavoriteStatePending={isFavoriteStatePending}
+          extraActions={extraActions}
+        />
+      )}
     </Dialog>
   );
 }

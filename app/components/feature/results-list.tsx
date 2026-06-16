@@ -36,6 +36,7 @@ export function ResultsList() {
   if (yearMin) params.set('date_from', `${yearMin}-01-01`);
   if (yearMax) params.set('date_to', `${yearMax}-12-31`);
   const paramsString = params.toString();
+  const currentDb = getCurrentDatabase();
 
   const { data, isLoading, isError, error, fetchNextPage, hasNextPage, isFetchingNextPage } =
     useInfiniteQuery<
@@ -45,8 +46,8 @@ export function ResultsList() {
       string[],
       string | null
     >({
-      queryKey: ['articles', paramsString],
-      queryFn: ({ pageParam }) => getArticles(params, pageParam, includeTotal, token!),
+      queryKey: ['articles', currentDb, paramsString],
+      queryFn: ({ pageParam }) => getArticles(params, pageParam, includeTotal, token!, currentDb),
       initialPageParam: null,
       getNextPageParam: (lastPage) => lastPage.page.next_cursor ?? undefined,
       staleTime: 5 * 60 * 1000,
@@ -67,7 +68,6 @@ export function ResultsList() {
   const visibleArticles = pages.slice(0, visiblePageCount).flatMap((page) => page.items);
   const visibleArticleIds = visibleArticles.map((article) => article.article_id);
   const visibleArticleIdsKey = visibleArticleIds.join(',');
-  const currentDb = getCurrentDatabase();
 
   const { data: favoriteChecksByArticle = {}, isPending: isFavoriteStatePending } = useQuery({
     queryKey: ['fav-check-batch', user?.id, currentDb, visibleArticleIdsKey],

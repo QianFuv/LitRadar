@@ -3,16 +3,35 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import Link from 'next/link';
-import { ArrowLeft, Copy, Key, Plus, Ticket, Trash2 } from 'lucide-react';
+import {
+  ArrowLeft,
+  CheckCircle2,
+  Copy,
+  Key,
+  Loader2,
+  Plus,
+  QrCode,
+  RefreshCw,
+  ShieldCheck,
+  Ticket,
+  Trash2,
+  Unlink,
+} from 'lucide-react';
 
 import { useAuth } from '@/lib/auth-context';
 import {
   changePassword,
-  getAccessTokens,
+  clearCnkiSession,
   createAccessToken,
-  revokeAccessToken,
-  getInviteCode,
   generateInviteCode,
+  getAccessTokens,
+  getCnkiSession,
+  getInviteCode,
+  pollCnkiLogin,
+  revokeAccessToken,
+  startCnkiLogin,
+  type CnkiLoginStartResponse,
+  type CnkiSessionStatus,
 } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -45,6 +64,71 @@ function formatExpiry(ts: number): string {
   });
 }
 
+/**
+ * Format an optional Unix timestamp for settings metadata.
+ *
+ * @param ts - Unix timestamp in seconds.
+ * @returns Localized timestamp or empty-state text.
+ */
+function formatOptionalTime(ts?: number | null): string {
+  return ts ? formatExpiry(ts) : '暂无';
+}
+
+/**
+ * Convert a CNKI session status to compact Chinese UI text.
+ *
+ * @param session - Safe CNKI session status.
+ * @returns Status label.
+ */
+function getCnkiStatusLabel(session?: CnkiSessionStatus): string {
+  if (!session) {
+    return '检查中';
+  }
+  if (session.status === 'active') {
+    return '已登录';
+  }
+  if (session.status === 'expired') {
+    return '已过期';
+  }
+  if (session.status === 'waiting_scan') {
+    return '等待扫码';
+  }
+  return '未配置';
+}
+
+/**
+ * Select the badge variant for a CNKI session status.
+ *
+ * @param session - Safe CNKI session status.
+ * @returns Badge variant.
+ */
+function getCnkiStatusVariant(
+  session?: CnkiSessionStatus,
+): 'default' | 'secondary' | 'destructive' | 'outline' {
+  if (!session) {
+    return 'secondary';
+  }
+  if (session.status === 'active') {
+    return 'default';
+  }
+  if (session.status === 'expired') {
+    return 'destructive';
+  }
+  return 'outline';
+}
+
+/**
+ * Check whether a QR payload can be rendered directly as an image source.
+ *
+ * @param value - QR payload.
+ * @returns True when the payload is an image URL or data URI.
+ */
+function isQrImageSource(value: string): boolean {
+  return (
+    value.startsWith('data:image/') || value.startsWith('http://') || value.startsWith('https://')
+  );
+}
+
 export default function SettingsPage() {
   const { user, token, logout } = useAuth();
   const queryClient = useQueryClient();
@@ -59,10 +143,25 @@ export default function SettingsPage() {
   const [tokenTtl, setTokenTtl] = useState(TTL_OPTIONS[0].value);
   const [newTokenValue, setNewTokenValue] = useState<string | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [cnkiLogin, setCnkiLogin] = useState<CnkiLoginStartResponse | null>(null);
+  const [cnkiMessage, setCnkiMessage] = useState<string | null>(null);
+  const cnkiSessionQueryKey = ['cnki-session', user?.id] as const;
 
   const { data: tokens = [] } = useQuery({
     queryKey: ['access-tokens'],
     queryFn: () => getAccessTokens(token!),
+    enabled: !!token,
+  });
+
+  const {
+    data: cnkiSession,
+    isLoading: isCnkiSessionLoading,
+    isError: isCnkiSessionError,
+    error: cnkiSessionError,
+    refetch: refetchCnkiSession,
+  } = useQuery({
+    queryKey: cnkiSessionQueryKey,
+    queryFn: () => getCnkiSession(token!),
     enabled: !!token,
   });
 
@@ -104,6 +203,47 @@ export default function SettingsPage() {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['access-tokens'] }),
   });
 
+  const startCnkiLoginMut = useMutation({
+    mutationFn: () => startCnkiLogin(token!),
+    onSuccess: (data) => {
+      setCnkiLogin(data);
+      setCnkiMessage(null);
+      queryClient.setQueryData(cnkiSessionQueryKey, data.session);
+      queryClient.invalidateQueries({ queryKey: ['article-access'] });
+    },
+    onError: (err) => {
+      setCnkiMessage(err instanceof Error ? err.message : '启动知网登录失败');
+    },
+  });
+
+  const pollCnkiLoginMut = useMutation({
+    mutationFn: () => pollCnkiLogin(token!, 15, 1.5),
+    onSuccess: (data) => {
+      setCnkiLogin(null);
+      setCnkiMessage(data.session.status === 'active' ? '登录已完成' : data.status);
+      queryClient.setQueryData(cnkiSessionQueryKey, data.session);
+      queryClient.invalidateQueries({ queryKey: ['cnki-session'] });
+      queryClient.invalidateQueries({ queryKey: ['article-access'] });
+    },
+    onError: (err) => {
+      setCnkiMessage(err instanceof Error ? err.message : '确认知网登录失败');
+    },
+  });
+
+  const clearCnkiSessionMut = useMutation({
+    mutationFn: () => clearCnkiSession(token!),
+    onSuccess: (data) => {
+      setCnkiLogin(null);
+      setCnkiMessage('登录状态已清除');
+      queryClient.setQueryData(cnkiSessionQueryKey, data);
+      queryClient.invalidateQueries({ queryKey: ['cnki-session'] });
+      queryClient.invalidateQueries({ queryKey: ['article-access'] });
+    },
+    onError: (err) => {
+      setCnkiMessage(err instanceof Error ? err.message : '清除知网登录失败');
+    },
+  });
+
   if (!user) {
     return (
       <div className="flex flex-col items-center justify-center min-h-[60vh] gap-4">
@@ -134,6 +274,131 @@ export default function SettingsPage() {
         <CardContent>
           <div className="text-sm">
             用户名: <span className="font-medium">{user.username}</span>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+            <div>
+              <CardTitle className="flex items-center gap-2">
+                <ShieldCheck className="h-5 w-5" />
+                浙江图书馆 CNKI
+              </CardTitle>
+              <CardDescription>用于中文数据库文章全文获取</CardDescription>
+            </div>
+            <Badge variant={getCnkiStatusVariant(cnkiSession)}>
+              {isCnkiSessionLoading ? '检查中' : getCnkiStatusLabel(cnkiSession)}
+            </Badge>
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="grid gap-3 text-sm sm:grid-cols-2">
+            <div className="space-y-1">
+              <div className="text-xs text-muted-foreground">有效期</div>
+              <div>{formatOptionalTime(cnkiSession?.expires_at)}</div>
+            </div>
+            <div className="space-y-1">
+              <div className="text-xs text-muted-foreground">最近使用</div>
+              <div>{formatOptionalTime(cnkiSession?.last_used_at)}</div>
+            </div>
+            <div className="space-y-1 sm:col-span-2">
+              <div className="text-xs text-muted-foreground">Cookie</div>
+              <div className="break-all">
+                {cnkiSession?.cookie_names.length ? cnkiSession.cookie_names.join(', ') : '暂无'}
+              </div>
+            </div>
+          </div>
+
+          {isCnkiSessionError && (
+            <p className="text-sm text-destructive">
+              {cnkiSessionError instanceof Error ? cnkiSessionError.message : '获取知网状态失败'}
+            </p>
+          )}
+
+          {cnkiMessage && <p className="text-sm text-muted-foreground">{cnkiMessage}</p>}
+
+          {cnkiLogin && (
+            <div className="rounded-md border p-3">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+                {isQrImageSource(cnkiLogin.qr_code) ? (
+                  <div
+                    role="img"
+                    aria-label="浙江图书馆 CNKI 二维码"
+                    className="h-40 w-40 rounded-md border bg-white bg-contain bg-center bg-no-repeat p-2"
+                    style={{ backgroundImage: `url(${JSON.stringify(cnkiLogin.qr_code)})` }}
+                  />
+                ) : (
+                  <code className="max-h-40 flex-1 overflow-auto rounded bg-muted p-3 text-xs break-all">
+                    {cnkiLogin.qr_code}
+                  </code>
+                )}
+                <div className="min-w-0 flex-1 space-y-3">
+                  <div className="space-y-1 text-sm">
+                    <div className="font-medium">扫码登录</div>
+                    <div className="text-muted-foreground">
+                      状态：{cnkiLogin.status || '等待扫码'}
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => pollCnkiLoginMut.mutate()}
+                      disabled={pollCnkiLoginMut.isPending}
+                    >
+                      {pollCnkiLoginMut.isPending ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <CheckCircle2 className="h-4 w-4" />
+                      )}
+                      完成登录
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => navigator.clipboard.writeText(cnkiLogin.qr_code)}
+                    >
+                      <Copy className="h-4 w-4" />
+                      复制
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          <div className="flex flex-wrap gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => startCnkiLoginMut.mutate()}
+              disabled={startCnkiLoginMut.isPending}
+            >
+              {startCnkiLoginMut.isPending ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <QrCode className="h-4 w-4" />
+              )}
+              {cnkiLogin ? '重新生成' : '扫码登录'}
+            </Button>
+            <Button variant="outline" size="sm" onClick={() => void refetchCnkiSession()}>
+              <RefreshCw className="h-4 w-4" />
+              刷新
+            </Button>
+            {cnkiSession?.configured && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="text-destructive"
+                onClick={() => clearCnkiSessionMut.mutate()}
+                disabled={clearCnkiSessionMut.isPending}
+              >
+                <Unlink className="h-4 w-4" />
+                清除
+              </Button>
+            )}
           </div>
         </CardContent>
       </Card>
