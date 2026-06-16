@@ -875,10 +875,16 @@ def _extract_article_identity(text: str, fallback_title: str = "") -> ArticleIde
     author_text = (
         "; ".join(authors)
         if authors
-        else _author_text(text) or _row_value(text, "作者")
+        else _author_text(text)
+        or _cnki_label_authors(text, "作者")
+        or _row_value(text, "作者")
     )
     journal_title = (
         _meta_content(text, "citation_journal_title")
+        or _cnki_label_span_text(text, "文献出处", "jname")
+        or _cnki_label_first_anchor(text, "文献出处")
+        or _cnki_label_first_anchor(text, "刊名")
+        or _cnki_label_first_anchor(text, "来源")
         or _row_value(text, "刊名")
         or _row_value(text, "来源")
         or _regex_group(r"(?:刊名|来源)\s*[:：]\s*([^\r\n<]+)", _strip_tags(text))
@@ -955,47 +961,104 @@ def _search_form_bodies(keyword: str) -> tuple[str, str]:
     Returns:
         result.aspx body and SearchHandler.ashx body.
     """
-    encoded_keyword = quote(keyword, safe="")
     timestamp = quote(time.strftime("%a %b %d %Y %H:%M:%S GMT%z"), safe="")
-    common = {
-        "dbPrefix": "SCDB",
-        "db_opt": "中国学术文献网络出版总库",
-        "txt_1_sel": "题名",
-        "txt_1_value1": keyword,
-        "txt_1_relation": "#CNKI_AND",
-        "txt_1_special1": "=",
-        "txt_extension": "xls",
-    }
-    result_fields = {
-        **common,
-        "hidTabChange": "",
-        "hidDivIDS": "",
-        "txt_i": "1",
-        "txt_c": "7",
-        "currentid": "txt_1_value1",
-        "action": "scdbsearch",
-    }
-    handler_fields = {
-        "action": "",
-        "NaviCode": "*",
-        "PageName": "ASP.brief_result_aspx",
-        "DbPrefix": "SCDB",
-        "DbCatalog": "中国学术文献网络出版总库",
-        "ConfigFile": "SCDB.xml",
-        **common,
-        "his": "0",
-        "__": timestamp,
-    }
+    db_value = (
+        "中国学术期刊网络出版总库,中国博士学位论文全文数据库,"
+        "中国优秀硕士学位论文全文数据库,中国重要会议论文全文数据库,"
+        "中国重要报纸全文数据库,中国年鉴网络出版总库"
+    )
+    result_fields = [
+        ("dbPrefix", "SCDB"),
+        ("db_opt", "中国学术文献网络出版总库"),
+        ("db_value", db_value),
+        ("hidTabChange", ""),
+        ("hidDivIDS", ""),
+        (
+            "fieldnowordfrequency",
+            "题名,目录,关键词,作者,作者单位,导师,第一导师,导师单位,"
+            "网络出版投稿人,论文级别,学科专业名称,学位授予单位,"
+            "学位授予单位代码,分类号$=|?,学位年度,论文提交日期,"
+            "网络出版投稿时间,DOI",
+        ),
+        (
+            "SearchFieldRelationDirectory",
+            "主题/[],题名/[],关键词/[],摘要/[],作者/[SYS_Author_Relevant],"
+            "作者单位/[SYS_Organization_Relevant],导师/[SYS_Author_Relevant],"
+            "第一导师/[SYS_Author_Relevant],导师单位/[SYS_Organization_Relevant],"
+            "网络出版投稿人/[SYS_Organization_Relevant],"
+            "学位授予单位/[SYS_Organization_Relevant],中英文目录/[],"
+            "引文/[],全文/[],ffd/[],基金/[SYS_Fund_Relevant]",
+        ),
+        ("publishdate_from", ""),
+        ("publishdate_to", ""),
+        ("updatedateN_opt", ""),
+        ("updatedateN_from", ""),
+        ("updatedateN_to", ""),
+        ("magazine_value1", "输入来源名称"),
+        ("magazine_special1", "%"),
+        ("hidMagezineCode", ""),
+        ("jourType_1_special1", "="),
+        ("jourType_1_value1", ""),
+        ("base_value1", "输入基金名称"),
+        ("base_special1", "%"),
+        ("hidFundCode", ""),
+        ("au_i", "1"),
+        ("au_c", "2"),
+        ("{key}_logical", "and"),
+        ("au_1_sel", "作者,中英文作者,作者名称"),
+        ("au_1_value1", "输入作者姓名"),
+        ("au_1_special1", "="),
+        ("au_1_value2", "输入作者单位，全称、简称、曾用名均可"),
+        ("au_1_sel2", "机构,单位,作者单位,学位授予单位"),
+        ("au_1_special2", "%"),
+        ("txt_i", "1"),
+        ("txt_c", "7"),
+        ("{key}_logical", "and"),
+        ("txt_1_sel", "题名"),
+        ("txt_1_value1", keyword),
+        ("txt_1_freq1", ""),
+        ("txt_1_relation", "#CNKI_AND"),
+        ("txt_1_value2", "输入检索词"),
+        ("txt_1_freq2", ""),
+        ("txt_1_special1", "="),
+        ("txt_extension", "xls"),
+        ("txt_extension", ""),
+        ("txt_extension", ""),
+        ("txt_extension", ""),
+        ("txt_extension", ""),
+        ("txt_extension", ""),
+        ("tmpexpertvalue", ""),
+        ("expertValue", ""),
+        ("cjfdcode", ""),
+        ("currentid", "txt_1_value1"),
+        ("action", "scdbsearch"),
+    ]
+    handler_fields = [
+        ("action", ""),
+        ("NaviCode", "*"),
+        ("PageName", "ASP.brief_result_aspx"),
+        ("DbPrefix", "SCDB"),
+        ("DbCatalog", "中国学术文献网络出版总库"),
+        ("ConfigFile", "SCDB.xml"),
+        ("db_opt", "中国学术文献网络出版总库"),
+        ("db_value", db_value),
+        ("base_special1", "%"),
+        ("magazine_special1", "%"),
+        ("txt_1_sel", "题名"),
+        ("txt_1_value1", keyword),
+        ("txt_1_relation", "#CNKI_AND"),
+        ("txt_1_special1", "="),
+        ("txt_1_extension", "xls"),
+        ("au_1_sel", "作者,中英文作者,作者名称"),
+        ("au_1_sel2", "机构,单位,作者单位,学位授予单位"),
+        ("au_1_special1", "="),
+        ("au_1_special2", "%"),
+        ("his", "0"),
+        ("__", timestamp),
+    ]
     result_body = urlencode(result_fields)
     handler_body = urlencode(handler_fields)
-    return (
-        _replace_form_value(
-            result_body, "txt_1_value1", encoded_keyword, is_encoded=True
-        ),
-        _replace_form_value(
-            handler_body, "txt_1_value1", encoded_keyword, is_encoded=True
-        ),
-    )
+    return (result_body, handler_body)
 
 
 def _replace_form_value(
@@ -1104,6 +1167,99 @@ def _author_text(text: str) -> str | None:
     return "; ".join(cleaned) if cleaned else None
 
 
+def _cnki_label_authors(text: str, label: str) -> str | None:
+    """
+    Parse semicolon-delimited anchor text from a CNKI label block.
+
+    Args:
+        text: Detail page HTML.
+        label: Chinese metadata label.
+
+    Returns:
+        Semicolon-delimited anchor text or None.
+    """
+    block = _cnki_label_block(text, label)
+    if not block:
+        return None
+    names = _anchor_texts(block)
+    return "; ".join(names) if names else None
+
+
+def _cnki_label_first_anchor(text: str, label: str) -> str | None:
+    """
+    Read the first anchor text from a CNKI label block.
+
+    Args:
+        text: Detail page HTML.
+        label: Chinese metadata label.
+
+    Returns:
+        First anchor text or None.
+    """
+    block = _cnki_label_block(text, label)
+    if not block:
+        return None
+    texts = _anchor_texts(block)
+    if texts:
+        return texts[0]
+    value = _strip_tags(block)
+    value = re.sub(rf"^\s*【{re.escape(label)}】\s*", "", value)
+    return value or None
+
+
+def _cnki_label_span_text(text: str, label: str, span_id: str) -> str | None:
+    """
+    Read a specific span value from a CNKI label block.
+
+    Args:
+        text: Detail page HTML.
+        label: Chinese metadata label without brackets.
+        span_id: Expected span id.
+
+    Returns:
+        Clean span text or None.
+    """
+    block = _cnki_label_block(text, label)
+    if not block:
+        return None
+    for match in re.finditer(r"(<span\b[^>]*>)(.*?)</span>", block, re.S | re.I):
+        attrs = _attrs(match.group(1))
+        if attrs.get("id", "").casefold() == span_id.casefold():
+            value = _strip_tags(match.group(2))
+            return value or None
+    return None
+
+
+def _cnki_label_block(text: str, label: str) -> str | None:
+    """
+    Extract the body of a CNKI full-width bracket metadata label block.
+
+    Args:
+        text: Detail page HTML.
+        label: Chinese metadata label without brackets.
+
+    Returns:
+        Raw HTML block body or None.
+    """
+    pattern = rf"【\s*{re.escape(label)}\s*】(?P<body>.*?)(?:</p>|</li>|</div>)"
+    match = re.search(pattern, text, re.S | re.I)
+    return match.group("body") if match else None
+
+
+def _anchor_texts(text: str) -> list[str]:
+    """
+    Extract cleaned text from anchors in an HTML block.
+
+    Args:
+        text: Raw HTML block.
+
+    Returns:
+        Clean anchor texts in document order.
+    """
+    values = [_strip_tags(body) for _quote, _href, body in HREF_RE.findall(text)]
+    return [value for value in values if value]
+
+
 def _row_value(text: str, label: str) -> str | None:
     """
     Read a detail row value by label.
@@ -1157,7 +1313,11 @@ def _title_text(text: str) -> str | None:
     title = _first_block_text(text, r"<title>(.*?)</title>")
     if not title:
         return None
-    title = re.sub(r"\s*-\s*(?:中国知网|CNKI)\s*$", "", title).strip()
+    title = re.sub(
+        r"\s*-\s*(?:中国知网|CNKI|中国学术期刊网络出版总库)\s*$",
+        "",
+        title,
+    ).strip()
     return title or None
 
 

@@ -6,6 +6,7 @@ import base64
 import json
 import time
 import unittest
+from urllib.parse import parse_qsl
 
 import httpx
 
@@ -18,7 +19,10 @@ from paper_scanner.sources.zjlib_cnki import (
     ZjlibCnkiError,
     does_article_metadata_match,
 )
-from paper_scanner.sources.zjlib_cnki.client import _parse_search_results
+from paper_scanner.sources.zjlib_cnki.client import (
+    _parse_search_results,
+    _search_form_bodies,
+)
 
 
 def build_unsigned_jwt(exp: int) -> str:
@@ -225,6 +229,30 @@ class ZhejiangLibraryCnkiClientTest(unittest.TestCase):
         self.assertEqual(results[0].file_name, "TEST001")
         self.assertIn("/kns55/download.aspx", results[0].download_url or "")
 
+    def test_search_form_body_uses_full_title_query_template(self) -> None:
+        """
+        Ensure CNKI search bodies keep the HAR-derived title query fields.
+
+        Returns:
+            None.
+        """
+        result_body, handler_body = _search_form_bodies("目标文章")
+        result_pairs = parse_qsl(result_body, keep_blank_values=True)
+        handler_pairs = parse_qsl(handler_body, keep_blank_values=True)
+        result_fields = dict(result_pairs)
+        handler_fields = dict(handler_pairs)
+
+        self.assertGreaterEqual(len(result_pairs), 40)
+        self.assertGreaterEqual(len(handler_pairs), 20)
+        self.assertEqual(result_fields["txt_1_sel"], "题名")
+        self.assertEqual(handler_fields["txt_1_sel"], "题名")
+        self.assertEqual(result_fields["txt_1_value1"], "目标文章")
+        self.assertEqual(handler_fields["txt_1_value1"], "目标文章")
+        self.assertEqual(handler_fields["txt_1_extension"], "xls")
+        self.assertIn(("txt_extension", "xls"), result_pairs)
+        self.assertIn("SearchFieldRelationDirectory", result_fields)
+        self.assertIn("db_value", handler_fields)
+
     def test_detail_metadata_parser_extracts_identity_and_pdf_url(self) -> None:
         """
         Ensure detail inspection reads candidate identity before download.
@@ -274,6 +302,74 @@ class ZhejiangLibraryCnkiClientTest(unittest.TestCase):
 
         self.assertEqual(candidate.identity.authors, "张三; 李四")
         self.assertEqual(candidate.identity.journal_title, "测绘科学")
+        self.assertIn("dflag=pdfdown", candidate.pdf_url or "")
+
+    def test_detail_metadata_parser_extracts_cnki_label_blocks(self) -> None:
+        """
+        Ensure live KCMS label blocks provide authors and journal metadata.
+
+        Returns:
+            None.
+        """
+
+        def handle(request: httpx.Request) -> httpx.Response:
+            """
+            Return a synthetic KCMS detail page.
+
+            Args:
+                request: HTTP request.
+
+            Returns:
+                Mocked detail response.
+            """
+            text = """
+            <html>
+              <head>
+                <title>
+                  基于工商注册信息的中小微企业信用评价研究 - 中国学术期刊网络出版总库
+                </title>
+              </head>
+              <body>
+                <a href="/kcms/download.aspx?filename=TEST&dflag=pdfdown">
+                  <b>PDF下载</b>
+                </a>
+                <div class="summary pad10">
+                  <div class="author">
+                    <p>
+                      【作者】
+                      <a href="search.aspx?sfield=au&skey=%e6%9d%8e%e9%93%81">李铁</a>；
+                      <a href="search.aspx?sfield=au&skey=%e5%af%87%e7%ba%b2">寇纲</a>；
+                      <a href="search.aspx?sfield=au&skey=%e5%bd%ad%e6%80%a1">彭怡</a>；
+                    </p>
+                    <p>
+                      【文献出处】
+                      <span id="jname">管理科学学报</span>
+                      ,<a href="mailto:JCYJ@chinajournal.net.cn">编辑部邮箱</a>
+                      ,<span id="jnq">2026年01期</span>
+                    </p>
+                  </div>
+                </div>
+              </body>
+            </html>
+            """
+            return httpx.Response(200, text=text, request=request)
+
+        result = SearchResult(
+            index=1,
+            title="基于工商注册信息的中小微企业信用评价研究",
+            detail_url="https://example.test/kcms/detail/detail.aspx?FileName=TEST",
+            file_name="TEST",
+            db_name="CJFD",
+            db_code="CJFQ",
+        )
+        with ZhejiangLibraryCnkiClient(
+            client=httpx.Client(transport=httpx.MockTransport(handle))
+        ) as client:
+            candidate = client.inspect_result_metadata(result)
+
+        self.assertEqual(candidate.identity.title, result.title)
+        self.assertEqual(candidate.identity.authors, "李铁; 寇纲; 彭怡")
+        self.assertEqual(candidate.identity.journal_title, "管理科学学报")
         self.assertIn("dflag=pdfdown", candidate.pdf_url or "")
 
     def test_metadata_match_requires_title_authors_and_journal(self) -> None:
