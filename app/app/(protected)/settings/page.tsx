@@ -146,6 +146,7 @@ export default function SettingsPage() {
   const [cnkiLogin, setCnkiLogin] = useState<CnkiLoginStartResponse | null>(null);
   const [cnkiMessage, setCnkiMessage] = useState<string | null>(null);
   const cnkiSessionQueryKey = ['cnki-session', user?.id] as const;
+  const currentCnkiSessionQueryKey = ['cnki-session', 'current'] as const;
 
   const { data: tokens = [] } = useQuery({
     queryKey: ['access-tokens'],
@@ -209,6 +210,8 @@ export default function SettingsPage() {
       setCnkiLogin(data);
       setCnkiMessage(null);
       queryClient.setQueryData(cnkiSessionQueryKey, data.session);
+      queryClient.setQueryData(currentCnkiSessionQueryKey, data.session);
+      queryClient.removeQueries({ queryKey: ['article-access'] });
       queryClient.invalidateQueries({ queryKey: ['article-access'] });
     },
     onError: (err) => {
@@ -222,7 +225,9 @@ export default function SettingsPage() {
       setCnkiLogin(null);
       setCnkiMessage(data.session.status === 'active' ? '登录已完成' : data.status);
       queryClient.setQueryData(cnkiSessionQueryKey, data.session);
+      queryClient.setQueryData(currentCnkiSessionQueryKey, data.session);
       queryClient.invalidateQueries({ queryKey: ['cnki-session'] });
+      queryClient.removeQueries({ queryKey: ['article-access'] });
       queryClient.invalidateQueries({ queryKey: ['article-access'] });
     },
     onError: (err) => {
@@ -236,7 +241,9 @@ export default function SettingsPage() {
       setCnkiLogin(null);
       setCnkiMessage('登录状态已清除');
       queryClient.setQueryData(cnkiSessionQueryKey, data);
+      queryClient.setQueryData(currentCnkiSessionQueryKey, data);
       queryClient.invalidateQueries({ queryKey: ['cnki-session'] });
+      queryClient.removeQueries({ queryKey: ['article-access'] });
       queryClient.invalidateQueries({ queryKey: ['article-access'] });
     },
     onError: (err) => {

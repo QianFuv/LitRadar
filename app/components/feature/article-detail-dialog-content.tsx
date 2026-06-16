@@ -7,8 +7,11 @@ import { Check, Copy, ExternalLink, FileDown, Loader2, Settings } from 'lucide-r
 
 import {
   getArticleAccess,
+  getCnkiSession,
   getFullTextUrlForDatabase,
+  type ArticleAccessResponse,
   type ArticleId,
+  type CnkiSessionStatus,
   type JournalId,
 } from '@/lib/api';
 import { FavoriteButton } from '@/components/feature/favorite-button';
@@ -45,6 +48,17 @@ type ArticleDetailDialogContentProps = {
   extraActions?: ReactNode;
 };
 
+type ArticleAccessQuerySnapshot = {
+  state: {
+    data?: unknown;
+    error?: unknown;
+  };
+};
+
+const ARTICLE_ACCESS_STALE_TIME_MS = 5 * 60 * 1000;
+const CNKI_SESSION_STALE_TIME_MS = 60 * 1000;
+const CNKI_SESSION_EXPIRY_REFRESH_WINDOW_SECONDS = 10 * 60;
+
 function buildArticleInfoText(article: ArticleDetailDialogArticle): string {
   return [
     `标题：${article.title || '暂无'}`,
@@ -73,6 +87,85 @@ function buildArticleDescription(article: ArticleDetailDialogArticle): string {
   return parts.join(' • ');
 }
 
+/**
+ * Check whether a CNKI session is close enough to expiry to avoid cached article access.
+ *
+ * @param session - Current safe CNKI session status.
+ * @returns True when access checks should be refreshed aggressively.
+ */
+function isCnkiSessionNearExpiry(session: CnkiSessionStatus): boolean {
+  if (typeof session.seconds_remaining === 'number') {
+    return session.seconds_remaining <= CNKI_SESSION_EXPIRY_REFRESH_WINDOW_SECONDS;
+  }
+  if (typeof session.expires_at === 'number') {
+    return session.expires_at - Date.now() / 1000 <= CNKI_SESSION_EXPIRY_REFRESH_WINDOW_SECONDS;
+  }
+  return false;
+}
+
+/**
+ * Decide whether the CNKI session state requires live article access checks.
+ *
+ * @param session - Current safe CNKI session status.
+ * @returns True when article access should be refreshed on each mount.
+ */
+function shouldRefreshArticleAccessForCnkiSession(session?: CnkiSessionStatus): boolean {
+  if (!session) {
+    return true;
+  }
+  if (!session.configured || session.status !== 'active' || !session.has_bff_user_token) {
+    return true;
+  }
+  return isCnkiSessionNearExpiry(session);
+}
+
+/**
+ * Build a cache key segment that separates article access by CNKI session generation.
+ *
+ * @param session - Current safe CNKI session status.
+ * @returns Stable non-secret cache key segment.
+ */
+function buildArticleAccessSessionKey(session?: CnkiSessionStatus): string {
+  if (!session) {
+    return 'session:unknown';
+  }
+  return [
+    'session',
+    session.status,
+    session.configured ? 'configured' : 'empty',
+    session.has_bff_user_token ? 'token' : 'no-token',
+    session.updated_at ?? 'updated-unknown',
+    session.expires_at ?? 'expiry-unknown',
+  ].join(':');
+}
+
+/**
+ * Check whether an article access result indicates missing or unusable full-text access.
+ *
+ * @param access - Article access response.
+ * @returns True when future mounts should use live refresh behavior.
+ */
+function isUnavailableArticleAccess(access?: ArticleAccessResponse): boolean {
+  return access?.fulltext.requires_login === true;
+}
+
+/**
+ * Decide whether cached article access data should be treated as live-only.
+ *
+ * @param query - Current article access query snapshot.
+ * @param shouldRefreshForSession - Whether the CNKI session requires live refresh.
+ * @returns True when this access query should refresh on mount.
+ */
+function shouldUseLiveArticleAccessRefresh(
+  query: ArticleAccessQuerySnapshot,
+  shouldRefreshForSession: boolean,
+): boolean {
+  if (shouldRefreshForSession || query.state.error) {
+    return true;
+  }
+  return isUnavailableArticleAccess(query.state.data as ArticleAccessResponse | undefined);
+}
+
 export function ArticleDetailDialogContent({
   article,
   dbName,
@@ -83,16 +176,35 @@ export function ArticleDetailDialogContent({
 }: ArticleDetailDialogContentProps) {
   const [copyStatus, setCopyStatus] = useState<'title' | 'info' | null>(null);
   const isAccessQueryEnabled = !!token && !!dbName && !!article.article_id;
+  const { data: cnkiSession } = useQuery({
+    queryKey: ['cnki-session', 'current'],
+    queryFn: () => getCnkiSession(token!),
+    enabled: isAccessQueryEnabled,
+    staleTime: CNKI_SESSION_STALE_TIME_MS,
+  });
+  const shouldRefreshAccessForSession = shouldRefreshArticleAccessForCnkiSession(cnkiSession);
   const {
     data: access,
     isPending: isAccessPending,
+    isFetching: isAccessFetching,
     isError: isAccessError,
     error: accessError,
   } = useQuery({
-    queryKey: ['article-access', dbName, article.article_id],
+    queryKey: [
+      'article-access',
+      dbName,
+      article.article_id,
+      buildArticleAccessSessionKey(cnkiSession),
+      shouldRefreshAccessForSession ? 'live' : 'cached',
+    ],
     queryFn: () => getArticleAccess(article.article_id, dbName, token!),
     enabled: isAccessQueryEnabled,
-    staleTime: 5 * 60 * 1000,
+    staleTime: (query) =>
+      shouldUseLiveArticleAccessRefresh(query, shouldRefreshAccessForSession)
+        ? 0
+        : ARTICLE_ACCESS_STALE_TIME_MS,
+    refetchOnMount: (query) =>
+      shouldUseLiveArticleAccessRefresh(query, shouldRefreshAccessForSession) ? 'always' : true,
   });
 
   const handleCopyTitle = async () => {
@@ -112,6 +224,8 @@ export function ArticleDetailDialogContent({
   const fullTextUrl = fulltextAction?.available
     ? getFullTextUrlForDatabase(article.article_id, dbName, token)
     : null;
+  const isAccessLoading = isAccessQueryEnabled && (isAccessPending || isAccessFetching);
+  const canShowAccessActions = !isAccessFetching && !isAccessError;
 
   return (
     <DialogContent className="w-[calc(100%-2rem)] max-w-[calc(100%-2rem)] md:max-w-4xl max-h-[90vh] overflow-y-auto [&>button]:hidden">
@@ -163,13 +277,13 @@ export function ArticleDetailDialogContent({
                 </>
               )}
             </Button>
-            {isAccessQueryEnabled && isAccessPending && (
+            {isAccessLoading && (
               <Button variant="outline" size="sm" disabled>
                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                加载访问
+                {isAccessPending ? '加载访问' : '刷新访问'}
               </Button>
             )}
-            {isAccessQueryEnabled && isAccessError && (
+            {isAccessQueryEnabled && !isAccessFetching && isAccessError && (
               <Button
                 variant="outline"
                 size="sm"
@@ -180,7 +294,7 @@ export function ArticleDetailDialogContent({
                 访问状态失败
               </Button>
             )}
-            {detailAction?.available && detailAction.url && (
+            {canShowAccessActions && detailAction?.available && detailAction.url && (
               <a href={detailAction.url} target="_blank" rel="noreferrer">
                 <Button variant="outline" size="sm">
                   <ExternalLink className="mr-2 h-4 w-4" />
@@ -188,7 +302,7 @@ export function ArticleDetailDialogContent({
                 </Button>
               </a>
             )}
-            {fullTextUrl && (
+            {canShowAccessActions && fullTextUrl && (
               <a href={fullTextUrl} target="_blank" rel="noreferrer">
                 <Button variant="outline" size="sm">
                   <FileDown className="mr-2 h-4 w-4" />
@@ -196,7 +310,7 @@ export function ArticleDetailDialogContent({
                 </Button>
               </a>
             )}
-            {fulltextAction?.requires_login && (
+            {canShowAccessActions && fulltextAction?.requires_login && (
               <Button asChild variant="outline" size="sm">
                 <Link href="/settings">
                   <Settings className="mr-2 h-4 w-4" />
