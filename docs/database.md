@@ -129,11 +129,11 @@ journals (1) ---- (1) journal_meta
 - 外部链接：
   - `permalink`
   - `content_location`，英文路径保存 OpenAlex、Crossref 或 DOI landing page；CNKI 路径保存详情页
-  - `full_text_file`，英文路径保存 Semantic Scholar / OpenAlex OA URL；CNKI 路径保存 HTML 阅读链接
+  - `full_text_file`，英文路径保存 Semantic Scholar / OpenAlex OA URL；CNKI 路径保持为空，避免直接跳转权限控制入口
 - 状态位：
   - `suppressed`
   - `in_press`
-  - `open_access`
+  - `open_access`，CNKI 路径保持为空，不做 OA 检测
   - `within_library_holdings`，保留给筛选与通知逻辑，新抓取数据通常为空
 - 其他来源字段：
   - `platform_id`

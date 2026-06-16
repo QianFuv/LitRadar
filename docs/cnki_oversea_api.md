@@ -128,9 +128,10 @@ Query 参数：
 | `date` | `在线公开时间` 的日期部分 |
 | `start_page` / `end_page` | `页码：` |
 | `permalink` / `content_location` | `openlink/detail?dbcode=...&dbname=...&filename=...` |
-| `full_text_file` | 页面存在的 `HTML阅读` 链接 |
+| `full_text_file` | 保持为空 |
+| `open_access` | 保持为空，不使用行内 `免费` / `Free` 作为 OA 信号 |
 
-`HTML阅读`、CAJ、PDF 等链接是 CNKI 权限控制入口。索引器只保存链接，不下载或保存全文二进制。
+`HTML阅读`、CAJ、PDF 等链接是 CNKI 权限控制入口。索引器不再把这些链接写入 `full_text_file`；前端“查看全文”当前只跳转到 CNKI 详情页。
 
 ## 七、并发与风控
 
