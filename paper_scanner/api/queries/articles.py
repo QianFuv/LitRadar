@@ -2,15 +2,22 @@
 
 from __future__ import annotations
 
+import asyncio
 from contextlib import suppress
 from typing import Annotated, Any
-from urllib.parse import urljoin, urlsplit
+from urllib.parse import quote, urljoin, urlsplit
 
 import aiosqlite
 import httpx
 from fastapi import Depends, HTTPException, Query
-from starlette.responses import RedirectResponse
+from starlette.responses import RedirectResponse, Response
 
+from paper_scanner.api.auth_db import (
+    get_cnki_session,
+    get_cnki_session_status,
+    touch_cnki_session_used,
+    upsert_cnki_session,
+)
 from paper_scanner.api.dependencies import (
     fetch_all,
     fetch_one,
@@ -18,7 +25,12 @@ from paper_scanner.api.dependencies import (
     is_simple_search_enabled,
     should_use_simple_query,
 )
-from paper_scanner.api.models import ArticlePage, ArticleRecord
+from paper_scanner.api.models import (
+    ArticleAccessAction,
+    ArticleAccessResponse,
+    ArticlePage,
+    ArticleRecord,
+)
 from paper_scanner.api.pagination import (
     ARTICLE_SORT_FIELDS,
     build_article_cursor,
@@ -31,6 +43,12 @@ from paper_scanner.shared.cnki_urls import (
     with_cnki_chinese_language,
 )
 from paper_scanner.shared.constants import CNKI_SOURCE, MAX_LIMIT
+from paper_scanner.sources.zjlib_cnki import (
+    ArticleIdentity,
+    DownloadedPdf,
+    ZhejiangLibraryCnkiClient,
+    ZjlibCnkiError,
+)
 
 CNKI_REDIRECT_ATTEMPTS = 3
 CNKI_REDIRECT_TIMEOUT_SECONDS = 5.0
@@ -45,6 +63,13 @@ CNKI_REDIRECT_HEADERS = {
     "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.1",
     "Referer": "https://oversea.cnki.net/",
 }
+DETAIL_LABEL = "查看详情"
+CNKI_DETAIL_LABEL = "查看摘要/详情"
+FULLTEXT_LABEL = "获取全文"
+DETAIL_PROVIDER = "detail_url"
+DOI_PROVIDER = "doi"
+STORED_FULLTEXT_PROVIDER = "stored_url"
+ZJLIB_CNKI_PROVIDER = "zjlib_cnki"
 
 
 def _is_cnki_verify_url(url: str) -> bool:
@@ -747,6 +772,167 @@ async def get_article(
     return ArticleRecord(**row)
 
 
+async def _fetch_article_access_row(
+    article_id: int,
+    db: aiosqlite.Connection,
+) -> dict[str, Any]:
+    """
+    Fetch article fields needed by access and full-text providers.
+
+    Args:
+        article_id: Article identifier.
+        db: Database connection.
+
+    Returns:
+        Article access row.
+    """
+    row = await fetch_one(
+        db,
+        """
+        SELECT
+            a.article_id,
+            a.title,
+            a.authors,
+            a.doi,
+            a.platform_id,
+            a.full_text_file,
+            a.permalink,
+            i.publication_year,
+            i.number,
+            j.library_id,
+            j.issn,
+            j.title AS journal_title
+        FROM articles a
+        LEFT JOIN issues i ON i.issue_id = a.issue_id
+        JOIN journals j ON j.journal_id = a.journal_id
+        WHERE a.article_id = ?
+        """,
+        [article_id],
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail="Article not found")
+    return row
+
+
+async def get_article_access(
+    article_id: int,
+    db: aiosqlite.Connection,
+    user: dict,
+) -> ArticleAccessResponse:
+    """
+    Return detail and full-text access capabilities for one article.
+
+    Args:
+        article_id: Article identifier.
+        db: Database connection.
+        user: Current authenticated user.
+
+    Returns:
+        Article access capability response.
+    """
+    row = await _fetch_article_access_row(article_id, db)
+    return await _article_access_response(row, user=user)
+
+
+async def _article_access_response(
+    row: dict[str, Any],
+    *,
+    user: dict | None,
+) -> ArticleAccessResponse:
+    """
+    Build article access capabilities from one article row.
+
+    Args:
+        row: Article access row.
+        user: Current user, if available.
+
+    Returns:
+        Article access capability response.
+    """
+    detail = await _detail_access_action(row)
+    fulltext = _fulltext_access_action(row, user=user)
+    return ArticleAccessResponse(detail=detail, fulltext=fulltext)
+
+
+async def _detail_access_action(row: dict[str, Any]) -> ArticleAccessAction:
+    """
+    Build the detail or abstract action for an article.
+
+    Args:
+        row: Article access row.
+
+    Returns:
+        Detail access action.
+    """
+    permalink = row.get("permalink")
+    if permalink:
+        detail_url = (
+            with_cnki_chinese_language(str(permalink))
+            if is_cnki_oversea_url(str(permalink))
+            else str(permalink)
+        )
+        return ArticleAccessAction(
+            available=True,
+            label=CNKI_DETAIL_LABEL if _is_cnki_article_row(row) else DETAIL_LABEL,
+            provider=DETAIL_PROVIDER,
+            url=detail_url,
+        )
+    doi = str(row.get("doi") or "").strip()
+    if doi:
+        return ArticleAccessAction(
+            available=True,
+            label=DETAIL_LABEL,
+            provider=DOI_PROVIDER,
+            url=f"https://doi.org/{doi}",
+        )
+    return ArticleAccessAction(
+        available=False,
+        label=DETAIL_LABEL,
+        message="Article detail is not available",
+    )
+
+
+def _fulltext_access_action(
+    row: dict[str, Any],
+    *,
+    user: dict | None,
+) -> ArticleAccessAction:
+    """
+    Build the full-text action for an article.
+
+    Args:
+        row: Article access row.
+        user: Current user, if available.
+
+    Returns:
+        Full-text access action.
+    """
+    full_text_file = row.get("full_text_file")
+    if full_text_file and not _is_cnki_protected_fulltext_url(full_text_file):
+        return ArticleAccessAction(
+            available=True,
+            label=FULLTEXT_LABEL,
+            provider=STORED_FULLTEXT_PROVIDER,
+        )
+    if _is_cnki_article_row(row):
+        status = (
+            get_cnki_session_status(int(user["id"])) if user and "id" in user else {}
+        )
+        is_active = status.get("status") == "active"
+        return ArticleAccessAction(
+            available=is_active,
+            label=FULLTEXT_LABEL,
+            provider=ZJLIB_CNKI_PROVIDER,
+            requires_login=not is_active,
+            message=(None if is_active else "需要先在设置中完成浙江图书馆扫码登录"),
+        )
+    return ArticleAccessAction(
+        available=False,
+        label=FULLTEXT_LABEL,
+        message="Full text is not available",
+    )
+
+
 async def _fulltext_redirect_url(url: object) -> str:
     """
     Normalize a full text redirect URL.
@@ -805,44 +991,25 @@ async def _resolve_cnki_redirect_url(url: str) -> str:
 
 async def redirect_article_fulltext(
     article_id: int,
-    db: Annotated[aiosqlite.Connection, Depends(get_db_dependency)],
-) -> RedirectResponse:
+    db: aiosqlite.Connection,
+    user: dict | None = None,
+) -> Response:
     """
     Redirect to a DOI or signed full text URL for an article.
 
     Args:
         article_id: Article identifier.
         db: Database connection.
+        user: Current authenticated user.
 
     Returns:
-        RedirectResponse to the resolved full text URL.
+        RedirectResponse to a URL or PDF response from a full-text provider.
     """
-    row = await fetch_one(
-        db,
-        """
-        SELECT
-            a.article_id,
-            a.title,
-            a.doi,
-            a.platform_id,
-            a.full_text_file,
-            a.permalink,
-            i.publication_year,
-            i.number,
-            j.library_id,
-            j.issn,
-            j.title AS journal_title
-        FROM articles a
-        LEFT JOIN issues i ON i.issue_id = a.issue_id
-        JOIN journals j ON j.journal_id = a.journal_id
-        WHERE a.article_id = ?
-        """,
-        [article_id],
-    )
-    if not row:
-        raise HTTPException(status_code=404, detail="Article not found")
+    row = await _fetch_article_access_row(article_id, db)
     permalink = row.get("permalink")
     if _is_cnki_article_row(row):
+        if user and _is_cnki_session_active(int(user["id"])):
+            return await _download_cnki_fulltext_response(row, int(user["id"]))
         if permalink:
             return RedirectResponse(await _fulltext_redirect_url(permalink))
         raise HTTPException(status_code=404, detail="Full text not available")
@@ -857,3 +1024,90 @@ async def redirect_article_fulltext(
         if doi_text:
             return RedirectResponse(f"https://doi.org/{doi_text}")
     raise HTTPException(status_code=404, detail="Full text not available")
+
+
+def _is_cnki_session_active(user_id: int) -> bool:
+    """
+    Check whether a user has an active CNKI session.
+
+    Args:
+        user_id: User identifier.
+
+    Returns:
+        True when the session is active.
+    """
+    return get_cnki_session_status(user_id).get("status") == "active"
+
+
+async def _download_cnki_fulltext_response(
+    row: dict[str, Any],
+    user_id: int,
+) -> Response:
+    """
+    Download an exact-matching CNKI PDF and build an HTTP response.
+
+    Args:
+        row: Article access row.
+        user_id: Current user identifier.
+
+    Returns:
+        PDF response.
+    """
+    session_row = get_cnki_session(user_id)
+    if not session_row:
+        raise HTTPException(status_code=401, detail="CNKI login is required")
+    expected = ArticleIdentity(
+        title=str(row.get("title") or ""),
+        authors=str(row.get("authors") or ""),
+        journal_title=str(row.get("journal_title") or ""),
+    )
+    try:
+        downloaded, state_data = await asyncio.to_thread(
+            _download_cnki_fulltext_pdf,
+            expected,
+            session_row["session_data"],
+        )
+    except ZjlibCnkiError as exc:
+        message = str(exc)
+        if "No exact CNKI full-text match" in message:
+            raise HTTPException(status_code=404, detail=message) from exc
+        raise HTTPException(status_code=502, detail=message) from exc
+    upsert_cnki_session(
+        user_id,
+        state_data,
+        status="active",
+        qr_uuid=str(state_data.get("qr_uuid") or session_row.get("qr_uuid") or ""),
+    )
+    touch_cnki_session_used(user_id)
+    encoded_filename = quote(downloaded.filename)
+    return Response(
+        content=downloaded.content,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f"attachment; filename*=UTF-8''{encoded_filename}"
+        },
+    )
+
+
+def _download_cnki_fulltext_pdf(
+    expected: ArticleIdentity,
+    session_data: dict[str, Any],
+) -> tuple[DownloadedPdf, dict[str, Any]]:
+    """
+    Run the blocking Zhejiang Library CNKI full-text flow.
+
+    Args:
+        expected: Expected article metadata.
+        session_data: Persisted CNKI session data.
+
+    Returns:
+        Downloaded PDF and updated session state.
+    """
+    with ZhejiangLibraryCnkiClient(state_data=session_data) as client:
+        client.ensure_logged_in()
+        sso_url = client.build_share_sso_url()
+        client.enter_share(sso_url)
+        zyproxy_login_url = client.get_zyproxy_login_url()
+        client.enter_zyproxy(zyproxy_login_url)
+        downloaded = client.download_matching_pdf(expected)
+        return downloaded, client.to_state_data()

@@ -50,6 +50,7 @@ async def create_fulltext_db(
             journal_id INTEGER NOT NULL,
             issue_id INTEGER,
             title TEXT,
+            authors TEXT,
             doi TEXT,
             platform_id TEXT,
             full_text_file TEXT,
@@ -78,18 +79,20 @@ async def create_fulltext_db(
             journal_id,
             issue_id,
             title,
+            authors,
             doi,
             platform_id,
             full_text_file,
             permalink
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             10,
             1,
             2,
             "Test article",
+            "Author One; Author Two",
             None,
             "TEST202601001",
             full_text_file,

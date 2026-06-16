@@ -164,6 +164,28 @@ class ArticlePage(BaseModel):
     page: PageMeta
 
 
+class ArticleAccessAction(BaseModel):
+    """
+    One article access action exposed to the frontend.
+    """
+
+    available: bool
+    label: str
+    provider: str | None = None
+    url: str | None = None
+    requires_login: bool = False
+    message: str | None = None
+
+
+class ArticleAccessResponse(BaseModel):
+    """
+    Article detail and full-text access capabilities.
+    """
+
+    detail: ArticleAccessAction
+    fulltext: ArticleAccessAction
+
+
 class ValueCount(BaseModel):
     """
     Label and count tuple.
