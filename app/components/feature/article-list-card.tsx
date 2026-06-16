@@ -18,6 +18,16 @@ type ArticleListCardProps = {
   className?: string;
 };
 
+/**
+ * Check whether an API flag is explicitly enabled.
+ *
+ * @param value - API flag value.
+ * @returns True when the flag is explicitly enabled.
+ */
+function isEnabledFlag(value: number | boolean | string | null | undefined): boolean {
+  return value === true || value === 1 || value === '1';
+}
+
 function hasPreviewContent(preview: ReactNode): boolean {
   if (preview === null || preview === undefined || preview === false) {
     return false;
@@ -40,7 +50,9 @@ export function ArticleListCard({
   className,
 }: ArticleListCardProps) {
   const hasPreview = hasPreviewContent(preview);
-  const hasBadges = Boolean(openAccess) || Boolean(inPress);
+  const isOpenAccess = isEnabledFlag(openAccess);
+  const isInPress = isEnabledFlag(inPress);
+  const hasBadges = isOpenAccess || isInPress;
 
   return (
     <Card
@@ -56,12 +68,12 @@ export function ArticleListCard({
           </CardTitle>
           {hasBadges && (
             <div className="flex gap-2 shrink-0">
-              {Boolean(openAccess) && (
+              {isOpenAccess && (
                 <Badge variant="secondary" className="text-xs">
                   开放获取
                 </Badge>
               )}
-              {Boolean(inPress) && (
+              {isInPress && (
                 <Badge variant="outline" className="text-xs">
                   预发表
                 </Badge>
