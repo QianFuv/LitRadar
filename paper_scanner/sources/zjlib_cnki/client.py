@@ -473,7 +473,7 @@ class ZhejiangLibraryCnkiClient:
             follow_redirects=True,
         )
         _raise_for_status(response, "post CNKI SearchHandler")
-        params = {
+        params: dict[str, str | int] = {
             "pagename": "ASP.brief_result_aspx",
             "dbPrefix": "SCDB",
             "dbCatalog": "中国学术文献网络出版总库",
