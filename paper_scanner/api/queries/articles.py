@@ -30,7 +30,7 @@ from paper_scanner.shared.cnki_urls import (
     is_cnki_oversea_url,
     with_cnki_chinese_language,
 )
-from paper_scanner.shared.constants import MAX_LIMIT
+from paper_scanner.shared.constants import CNKI_SOURCE, MAX_LIMIT
 
 CNKI_REDIRECT_ATTEMPTS = 3
 CNKI_REDIRECT_TIMEOUT_SECONDS = 5.0
@@ -81,6 +81,20 @@ def _is_cnki_protected_fulltext_url(url: object) -> bool:
     ).lower() == CNKI_PROTECTED_FULLTEXT_HOST and parts.path.lower().startswith(
         CNKI_PROTECTED_FULLTEXT_PATH
     )
+
+
+def _is_cnki_article_row(row: dict[str, Any]) -> bool:
+    """
+    Check whether a database article row belongs to the CNKI source.
+
+    Args:
+        row: Article row data from the full-text query.
+
+    Returns:
+        True when the article belongs to CNKI.
+    """
+    library_id = str(row.get("library_id") or "").strip().lower()
+    return library_id == CNKI_SOURCE
 
 
 async def is_article_listing_ready(db: aiosqlite.Connection) -> bool:
@@ -815,6 +829,7 @@ async def redirect_article_fulltext(
             a.permalink,
             i.publication_year,
             i.number,
+            j.library_id,
             j.issn,
             j.title AS journal_title
         FROM articles a
@@ -826,10 +841,14 @@ async def redirect_article_fulltext(
     )
     if not row:
         raise HTTPException(status_code=404, detail="Article not found")
+    permalink = row.get("permalink")
+    if _is_cnki_article_row(row):
+        if permalink:
+            return RedirectResponse(await _fulltext_redirect_url(permalink))
+        raise HTTPException(status_code=404, detail="Full text not available")
     full_text_file = row.get("full_text_file")
     if full_text_file and not _is_cnki_protected_fulltext_url(full_text_file):
         return RedirectResponse(await _fulltext_redirect_url(full_text_file))
-    permalink = row.get("permalink")
     if permalink:
         return RedirectResponse(await _fulltext_redirect_url(permalink))
     doi = row.get("doi")
