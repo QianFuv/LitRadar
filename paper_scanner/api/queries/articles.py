@@ -34,6 +34,8 @@ from paper_scanner.shared.constants import MAX_LIMIT
 
 CNKI_REDIRECT_ATTEMPTS = 3
 CNKI_REDIRECT_TIMEOUT_SECONDS = 5.0
+CNKI_PROTECTED_FULLTEXT_HOST = "o.oversea.cnki.net"
+CNKI_PROTECTED_FULLTEXT_PATH = "/barnew/download/order"
 CNKI_REDIRECT_HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -58,6 +60,27 @@ def _is_cnki_verify_url(url: str) -> bool:
     if not is_cnki_oversea_url(url):
         return False
     return urlsplit(url).path.lower().startswith("/verify/")
+
+
+def _is_cnki_protected_fulltext_url(url: object) -> bool:
+    """
+    Check whether a URL points to CNKI's protected full-text order entry.
+
+    Args:
+        url: URL value to inspect.
+
+    Returns:
+        True when the URL is a protected CNKI full-text order entry.
+    """
+    text = str(url or "").strip()
+    if not text:
+        return False
+    parts = urlsplit(text)
+    return (
+        parts.hostname or ""
+    ).lower() == CNKI_PROTECTED_FULLTEXT_HOST and parts.path.lower().startswith(
+        CNKI_PROTECTED_FULLTEXT_PATH
+    )
 
 
 async def is_article_listing_ready(db: aiosqlite.Connection) -> bool:
@@ -804,7 +827,7 @@ async def redirect_article_fulltext(
     if not row:
         raise HTTPException(status_code=404, detail="Article not found")
     full_text_file = row.get("full_text_file")
-    if full_text_file:
+    if full_text_file and not _is_cnki_protected_fulltext_url(full_text_file):
         return RedirectResponse(await _fulltext_redirect_url(full_text_file))
     permalink = row.get("permalink")
     if permalink:
