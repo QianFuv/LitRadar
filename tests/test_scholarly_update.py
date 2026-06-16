@@ -963,6 +963,34 @@ class ScholarlyUpdateTest(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(client.did_lookup_openalex_source)
 
 
+class CnkiTransformTest(unittest.TestCase):
+    """
+    Verify CNKI article transforms avoid unsupported OA signals.
+    """
+
+    def test_cnki_record_omits_open_access_and_html_read_url(self) -> None:
+        """
+        Ensure CNKI records use detail pages instead of OA/full-text links.
+
+        Returns:
+            None.
+        """
+        issue = build_cnki_issue(2026, "01")
+        summary = build_cnki_summary(issue, "CNKI202601001")
+        detail = build_cnki_detail("CNKI202601001")
+        summary["is_free"] = 1
+        detail["html_read_url"] = (
+            "https://o.oversea.cnki.net/barnew/download/order?id=abc"
+        )
+
+        record = build_cnki_article_record(detail, summary, 1, 2)
+
+        assert record is not None
+        self.assertIsNone(record["open_access"])
+        self.assertIsNone(record["full_text_file"])
+        self.assertEqual(record["content_location"], detail["permalink"])
+
+
 class CnkiUpdateTest(unittest.IsolatedAsyncioTestCase):
     """
     Verify CNKI update scope stays limited to recent issues.

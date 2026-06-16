@@ -465,9 +465,9 @@ def build_cnki_article_record(
         abstract=payload.get("abstract"),
         doi=doi,
         permalink=permalink,
-        open_access=to_bool_int(summary.get("is_free")),
+        open_access=None,
         platform_id=str(platform_id) if platform_id else None,
-        full_text_file=payload.get("html_read_url"),
+        full_text_file=None,
         content_location=payload.get("content_location") or permalink,
     )
 
