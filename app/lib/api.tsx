@@ -358,6 +358,7 @@ export interface AnnouncementUpdate {
 }
 
 export const DEFAULT_DATABASE = 'utd24.sqlite';
+export const DEFAULT_DB = DEFAULT_DATABASE;
 export const SELECTED_DATABASE_KEY = 'selected_database';
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || '';
@@ -398,6 +399,24 @@ export function storeSelectedDatabase(dbName: string): void {
   if (typeof window !== 'undefined') {
     window.localStorage.setItem(SELECTED_DATABASE_KEY, dbName);
   }
+}
+
+/**
+ * Store the active database for restored pre-desktop UI modules.
+ *
+ * @param dbName - Database file name.
+ */
+export function setDatabase(dbName: string): void {
+  storeSelectedDatabase(dbName);
+}
+
+/**
+ * Read the active database for restored pre-desktop UI modules.
+ *
+ * @returns Selected database name.
+ */
+export function getCurrentDatabase(): string {
+  return readSelectedDatabase();
 }
 
 /**
@@ -590,10 +609,10 @@ export async function getDatabases(token: string): Promise<string[]> {
  * Fetch metadata areas for a database.
  *
  * @param token - Bearer access token.
- * @param dbName - Database name.
+ * @param dbName - Database name. Defaults to the selected database.
  * @returns Area counts.
  */
-export function getAreas(token: string, dbName: string): Promise<ValueCount[]> {
+export function getAreas(token: string, dbName = readSelectedDatabase()): Promise<ValueCount[]> {
   return requestJson<ValueCount[]>(
     buildDatabaseUrl('/api/meta/areas', dbName),
     token,
@@ -606,10 +625,10 @@ export function getAreas(token: string, dbName: string): Promise<ValueCount[]> {
  * Fetch indexed year summaries for a database.
  *
  * @param token - Bearer access token.
- * @param dbName - Database name.
+ * @param dbName - Database name. Defaults to the selected database.
  * @returns Year summaries.
  */
-export function getYears(token: string, dbName: string): Promise<YearSummary[]> {
+export function getYears(token: string, dbName = readSelectedDatabase()): Promise<YearSummary[]> {
   return requestJson<YearSummary[]>(
     buildDatabaseUrl('/api/years', dbName),
     token,
@@ -622,10 +641,13 @@ export function getYears(token: string, dbName: string): Promise<YearSummary[]> 
  * Fetch journal filter options for a database.
  *
  * @param token - Bearer access token.
- * @param dbName - Database name.
+ * @param dbName - Database name. Defaults to the selected database.
  * @returns Journal options.
  */
-export function getJournalOptions(token: string, dbName: string): Promise<JournalOption[]> {
+export function getJournalOptions(
+  token: string,
+  dbName = readSelectedDatabase(),
+): Promise<JournalOption[]> {
   return requestJson<JournalOption[]>(
     buildDatabaseUrl('/api/meta/journals', dbName),
     token,
@@ -637,19 +659,19 @@ export function getJournalOptions(token: string, dbName: string): Promise<Journa
 /**
  * Fetch a cursor-paginated article page.
  *
- * @param token - Bearer access token.
- * @param dbName - Database name.
  * @param params - Article query parameters.
  * @param pageParam - Cursor or offset page parameter.
  * @param includeTotal - Whether to include total on the first page.
+ * @param token - Bearer access token.
+ * @param dbName - Database name. Defaults to the selected database.
  * @returns Article page.
  */
 export function getArticles(
-  token: string,
-  dbName: string,
   params: URLSearchParams,
-  pageParam: string | number | null,
-  includeTotal: boolean,
+  pageParam: string | number | null = null,
+  includeTotal = false,
+  token?: string,
+  dbName = readSelectedDatabase(),
 ): Promise<ArticlePage> {
   const nextParams = new URLSearchParams(params);
   if (typeof pageParam === 'string' && pageParam.length > 0) {
@@ -701,17 +723,53 @@ export function getAnnouncements(): Promise<AnnouncementInfo[]> {
  * Build the full-text redirect URL for an article.
  *
  * @param articleId - Article id.
+ * @param token - Optional access token.
+ * @returns Full-text URL.
+ */
+export function getFullTextUrl(articleId: ArticleId, token?: string): string {
+  return getFullTextUrlForDatabase(articleId, readSelectedDatabase(), token);
+}
+
+/**
+ * Build the full-text redirect URL for a specific database.
+ *
+ * @param articleId - Article id.
  * @param dbName - Database name.
  * @param token - Optional access token.
  * @returns Full-text URL.
  */
-export function getFullTextUrl(articleId: ArticleId, dbName: string, token?: string): string {
+export function getFullTextUrlForDatabase(
+  articleId: ArticleId,
+  dbName: string,
+  token?: string,
+): string {
   const url = new URL(`/api/articles/${articleId}/fulltext`, resolveApiBase());
   url.searchParams.set('db', dbName);
   if (token) {
     url.searchParams.set('access_token', token);
   }
   return url.toString();
+}
+
+/**
+ * Fetch one article by id from a database.
+ *
+ * @param articleId - Article id.
+ * @param dbName - Database name.
+ * @param token - Optional bearer access token.
+ * @returns Article record.
+ */
+export function getArticleById(
+  articleId: ArticleId,
+  dbName: string,
+  token?: string,
+): Promise<Article> {
+  return requestJson<Article>(
+    buildDatabaseUrl(`/api/articles/${articleId}`, dbName),
+    token,
+    undefined,
+    '获取文章详情失败',
+  );
 }
 
 /**

@@ -71,11 +71,14 @@ app/
 │   ├── login/                登录与注册页面
 │   └── layout.tsx            根布局
 ├── components/
-│   └── desktop/              PC 端工作台、业务流程与 UI 组件
+│   ├── admin/                管理后台组件
+│   ├── feature/              搜索、收藏、每周更新等业务组件
+│   └── ui/                   通用 UI 组件
 ├── lib/
-│   ├── client-api.tsx        前端 API 封装与类型
-│   ├── auth-session.tsx      登录态上下文
-│   └── format.tsx            前端格式化辅助函数
+│   ├── api.ts                前端 API 封装
+│   ├── auth-context.tsx      登录态上下文
+│   ├── citation.ts           引文文本生成
+│   └── utils.ts              前端通用辅助函数
 └── next.config.ts            `/api/*` rewrite 配置
 ```
 
@@ -89,7 +92,7 @@ app/
 - 收藏与追踪：`/api/favorites/*`、`/api/tracking/*`
 - 管理后台：`/api/admin/*`
 
-公告展示、文献检索、收藏、追踪、设置与管理后台统一由 `app/components/desktop/*` 下的新 PC 端工作台组件实现。
+首页公告展示使用 `app/components/announcements-dialog.tsx`，后台公告管理使用 `app/components/admin/announcements-card.tsx`。
 
 ## 当前认证说明
 
@@ -100,4 +103,4 @@ app/
 - 获取当前用户：`GET /api/auth/me`
 - 访问令牌：`/api/auth/tokens`
 
-前端登录态由 `app/lib/auth-session.tsx` 与后端 `/api/auth/*` 共同完成，不再包含独立的前端令牌认证配置文件。
+前端登录态由 `app/lib/auth-context.tsx` 与后端 `/api/auth/*` 共同完成，不再包含独立的前端令牌认证配置文件。

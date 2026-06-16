@@ -1,7 +1,7 @@
 'use client';
 
 /**
- * Client-side authentication session provider.
+ * Authentication context for the restored pre-desktop frontend.
  */
 
 import { useQueryClient } from '@tanstack/react-query';
@@ -14,17 +14,11 @@ import {
   useState,
   type ReactNode,
 } from 'react';
-import {
-  getCurrentUser,
-  loginUser,
-  logoutUser,
-  registerUser,
-  type AuthUser,
-} from '@/lib/client-api';
+import { getCurrentUser, loginUser, logoutUser, registerUser, type AuthUser } from '@/lib/api';
 
 export type { AuthUser };
 
-interface AuthSessionState {
+interface AuthState {
   user: AuthUser | null;
   token: string | null;
   loading: boolean;
@@ -33,7 +27,7 @@ interface AuthSessionState {
   logout: () => Promise<void>;
 }
 
-const AuthSessionContext = createContext<AuthSessionState | null>(null);
+const AuthContext = createContext<AuthState | null>(null);
 const ACCESS_TOKEN_KEY = 'ps_access_token';
 const USER_STORAGE_KEY = 'ps_user';
 
@@ -50,7 +44,7 @@ function readStoredToken(): string | null {
 }
 
 /**
- * Read the stored user snapshot.
+ * Read the stored authenticated user snapshot.
  *
  * @returns User snapshot or null.
  */
@@ -71,7 +65,7 @@ function readStoredUser(): AuthUser | null {
 }
 
 /**
- * Persist a session in local storage.
+ * Persist the authenticated session locally.
  *
  * @param token - Access token.
  * @param user - Authenticated user.
@@ -82,7 +76,7 @@ function writeSession(token: string, user: AuthUser): void {
 }
 
 /**
- * Remove a persisted session.
+ * Remove the locally persisted session.
  */
 function clearStoredSession(): void {
   window.localStorage.removeItem(ACCESS_TOKEN_KEY);
@@ -93,9 +87,9 @@ function clearStoredSession(): void {
  * Provide authentication state and operations.
  *
  * @param props - Provider props.
- * @returns Auth session provider.
+ * @returns Authentication provider.
  */
-export function AuthSessionProvider({ children }: { children: ReactNode }) {
+export function AuthProvider({ children }: { children: ReactNode }) {
   const queryClient = useQueryClient();
   const [user, setUser] = useState<AuthUser | null>(null);
   const [token, setToken] = useState<string | null>(null);
@@ -115,6 +109,7 @@ export function AuthSessionProvider({ children }: { children: ReactNode }) {
       setLoading(false);
       return;
     }
+
     setToken(storedToken);
     setUser(storedUser);
     getCurrentUser(storedToken)
@@ -161,18 +156,31 @@ export function AuthSessionProvider({ children }: { children: ReactNode }) {
     [loading, login, logout, register, token, user],
   );
 
-  return <AuthSessionContext.Provider value={value}>{children}</AuthSessionContext.Provider>;
+  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
 
 /**
- * Read the current authentication session.
+ * Read the restored frontend authentication state.
  *
- * @returns Auth session state.
+ * @returns Authentication state.
  */
-export function useAuthSession(): AuthSessionState {
-  const context = useContext(AuthSessionContext);
+export function useAuth(): AuthState {
+  const context = useContext(AuthContext);
   if (!context) {
-    throw new Error('useAuthSession must be used inside AuthSessionProvider');
+    throw new Error('useAuth must be used inside AuthProvider');
   }
   return context;
+}
+
+/**
+ * Build bearer authorization headers.
+ *
+ * @param token - Access token.
+ * @returns Headers containing bearer auth when a token is available.
+ */
+export function authHeaders(token: string | null): Record<string, string> {
+  if (!token) {
+    return {};
+  }
+  return { Authorization: `Bearer ${token}` };
 }
