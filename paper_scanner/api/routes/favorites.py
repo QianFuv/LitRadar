@@ -67,7 +67,7 @@ async def get_export_user(
         Authenticated user mapping.
     """
     if authorization:
-        return await get_current_user(authorization)
+        return await get_current_user(authorization=authorization, access_token=None)
 
     if access_token:
         user = verify_access_token(access_token)
