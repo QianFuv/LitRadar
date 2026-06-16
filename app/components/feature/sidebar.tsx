@@ -29,6 +29,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Moon, Sun, Database } from 'lucide-react';
+import { getAreaDisplayName } from '@/lib/area-labels';
 import { cn } from '@/lib/utils';
 import { useEffect, useMemo, useState } from 'react';
 
@@ -278,26 +279,29 @@ export function Sidebar({ className }: { className?: string }) {
               </div>
             ) : (
               <div className="space-y-2">
-                {areaOptions?.map((opt) => (
-                  <div key={opt.value} className="flex min-w-0 items-start gap-2">
-                    <Checkbox
-                      id={`area-${opt.value}`}
-                      className="mt-0.5 shrink-0"
-                      checked={areas.includes(opt.value)}
-                      onCheckedChange={(checked: boolean | 'indeterminate') =>
-                        handleAreaChange(opt.value, checked as boolean)
-                      }
-                    />
-                    <Label
-                      htmlFor={`area-${opt.value}`}
-                      className="min-w-0 flex-1 cursor-pointer break-words text-sm leading-snug font-normal whitespace-normal"
-                      title={opt.value}
-                    >
-                      {opt.value}
-                    </Label>
-                    <span className="shrink-0 text-xs text-muted-foreground">{opt.count}</span>
-                  </div>
-                ))}
+                {areaOptions?.map((opt) => {
+                  const displayName = getAreaDisplayName(opt.value);
+                  return (
+                    <div key={opt.value} className="flex min-w-0 items-start gap-2">
+                      <Checkbox
+                        id={`area-${opt.value}`}
+                        className="mt-0.5 shrink-0"
+                        checked={areas.includes(opt.value)}
+                        onCheckedChange={(checked: boolean | 'indeterminate') =>
+                          handleAreaChange(opt.value, checked as boolean)
+                        }
+                      />
+                      <Label
+                        htmlFor={`area-${opt.value}`}
+                        className="min-w-0 flex-1 cursor-pointer break-words text-sm leading-snug font-normal whitespace-normal"
+                        title={opt.value}
+                      >
+                        {displayName}
+                      </Label>
+                      <span className="shrink-0 text-xs text-muted-foreground">{opt.count}</span>
+                    </div>
+                  );
+                })}
               </div>
             )}
           </div>
