@@ -265,6 +265,7 @@ SQLite FTS5 虚表，用于全文检索。
 ```text
 users
   ├── access_tokens
+  ├── cnki_sessions
   ├── folders
   │    └── favorites
   ├── invite_codes (created_by / used_by)
@@ -311,7 +312,32 @@ announcements
 - 用户可在设置页创建更多长期令牌
 - 收藏导出接口支持直接用原始令牌作为 `access_token` 查询参数
 
-### 3. `folders`
+### 3. `cnki_sessions`
+
+当前用户的浙江图书馆 CNKI 会话表。
+
+主要字段：
+
+- `user_id`：主键，同时外键到 `users`
+- `session_json`：序列化后的客户端会话状态
+- `qr_uuid`：最近一次扫码登录 UUID
+- `status`：常见值为 `empty`、`waiting_scan`、`active`、`expired`
+- `token_expires_at`
+- `created_at`
+- `updated_at`
+- `last_used_at`
+
+主要索引：
+
+- `idx_cnki_sessions_status`
+
+说明：
+
+- 每个 Paper Scanner 用户最多保存一条独立 CNKI 会话
+- API 状态响应只派生安全元数据，例如过期时间和 cookie 名称，不返回 token 或 cookie 值
+- 该表只用于中文 CNKI 全文 provider；英文数据库与 CCF 数据库不使用浙江图书馆 CNKI 会话
+
+### 4. `folders`
 
 用户文件夹。
 
@@ -329,7 +355,7 @@ announcements
 - `is_tracking = 1` 的文件夹表示用户当前追踪文件夹
 - 每个用户同名文件夹受唯一约束限制
 
-### 4. `favorites`
+### 5. `favorites`
 
 收藏明细表。
 
@@ -348,7 +374,7 @@ announcements
 - `db_name` 指向来源索引库文件名，不是外键
 - 同一用户 / 文件夹 / 文章 / 数据库组合会被去重
 
-### 5. `invite_codes`
+### 6. `invite_codes`
 
 邀请码表。
 
@@ -367,7 +393,7 @@ announcements
 - 管理员可额外创建“无创建者”的后台邀请码
 - 已使用的邀请码不能被后台删除
 
-### 6. `notification_settings`
+### 7. `notification_settings`
 
 通知与追踪配置表。
 
@@ -402,7 +428,7 @@ announcements
 - 当前 API 只接受 `delivery_method = "folder"` 或 `"pushplus"`
 - 这张表是 `notify`、`push` 与 `/api/tracking/push-weekly` 的真实订阅源
 
-### 7. `scheduled_tasks`
+### 8. `scheduled_tasks`
 
 管理员后台可维护的定时任务。
 
@@ -423,7 +449,7 @@ announcements
 - 由 APScheduler 在 API 进程内调度
 - 执行方式是 shell 命令
 
-### 8. `announcements`
+### 9. `announcements`
 
 系统公告表。
 

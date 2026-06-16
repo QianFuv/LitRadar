@@ -174,13 +174,50 @@ Cache-Control: public, max-age=300, stale-while-revalidate=600
 
 返回单篇文章详情。
 
+#### `GET /api/articles/{article_id}/access`
+
+返回单篇文章的访问能力，供前端区分“详情/摘要页”和“真正全文”。
+
+响应示例：
+
+```json
+{
+  "detail": {
+    "available": true,
+    "label": "查看摘要/详情",
+    "provider": "detail_url",
+    "url": "https://oversea.cnki.net/openlink/detail?...",
+    "requires_login": false,
+    "message": null
+  },
+  "fulltext": {
+    "available": false,
+    "label": "获取全文",
+    "provider": "zjlib_cnki",
+    "url": null,
+    "requires_login": true,
+    "message": "需要先在设置中完成浙江图书馆扫码登录"
+  }
+}
+```
+
+行为：
+
+- 非 CNKI 文章如果有安全的 `full_text_file`，`fulltext.available = true`
+- 文章有 `permalink` 或 DOI 时，`detail.available = true`
+- CNKI 文章只有当前用户的浙江图书馆 CNKI 会话为 `active` 时才暴露全文能力
+- 响应不包含浙江图书馆 token、cookie 值或其他用户凭据
+
 #### `GET /api/articles/{article_id}/fulltext`
 
-重定向到文章全文地址，优先级由代码动态决定，可能落到：
+执行全文动作。行为由 `/access` 返回的 provider 决定，兼容旧链接：
 
-- Semantic Scholar / OpenAlex OA 链接
-- CNKI 详情页
-- DOI 链接
+- 非 CNKI 且存在安全 `full_text_file` 时重定向到该 URL
+- CNKI 且当前用户有 active 浙江图书馆 CNKI 会话时，后端按题名搜索、逐条校验题名/作者/期刊完全匹配后返回 PDF
+- CNKI 未登录时仍回退到详情页，前端应优先使用 `/access` 判断是否显示“获取全文”
+- 无全文 URL 时可按旧逻辑回退到 `permalink` 或 DOI 详情页
+
+CNKI 精确匹配失败时返回受控错误，不会下载候选列表中的错误 PDF。
 
 ### 每周更新与公告
 
@@ -277,6 +314,46 @@ Cache-Control: public, max-age=300, stale-while-revalidate=600
 | `GET` | `/api/auth/invite-code` | 查看当前用户已经生成的邀请码 |
 
 每个普通用户最多生成一个邀请码。
+
+## 浙江图书馆 CNKI 会话接口
+
+所有 `/api/cnki/*` 均需要认证，且只读写当前用户自己的浙江图书馆 CNKI 会话。接口响应只返回安全状态信息，不返回 token 或 cookie 值。
+
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| `GET` | `/api/cnki/session` | 查看当前用户 CNKI 会话状态 |
+| `POST` | `/api/cnki/login/start` | 启动浙江图书馆扫码登录并返回二维码 payload |
+| `POST` | `/api/cnki/login/poll` | 轮询扫码登录结果并保存 active 会话 |
+| `DELETE` | `/api/cnki/session` | 清除当前用户 CNKI 会话 |
+
+`GET /api/cnki/session` 响应字段：
+
+- `configured`
+- `status`：常见值为 `empty`、`waiting_scan`、`active`、`expired`
+- `has_bff_user_token`
+- `expires_at`
+- `seconds_remaining`
+- `cookie_names`
+- `updated_at`
+- `last_used_at`
+
+`POST /api/cnki/login/start` 响应包含：
+
+- `uuid`
+- `status`
+- `qr_code`，可能是图片 URL、data URI 或二维码内容文本
+- `session`
+
+`POST /api/cnki/login/poll` 请求体：
+
+```json
+{
+  "timeout_seconds": 15,
+  "interval_seconds": 1.5
+}
+```
+
+成功后会把当前用户的会话状态更新为 `active`。
 
 ## 收藏夹接口
 
