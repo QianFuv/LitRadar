@@ -359,7 +359,7 @@ export default function FavoritesPage() {
 
           {isLoading ? (
             <div role="status" className="text-sm text-muted-foreground">
-              加载中...
+              加载中…
             </div>
           ) : folders.length === 0 ? (
             <div className="text-sm text-muted-foreground">暂无收藏夹，点击 + 创建</div>

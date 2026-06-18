@@ -7,8 +7,8 @@
 import { useQueryClient } from '@tanstack/react-query';
 import {
   createContext,
+  use,
   useCallback,
-  useContext,
   useEffect,
   useMemo,
   useState,
@@ -168,7 +168,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
  * @returns Authentication state.
  */
 export function useAuth(): AuthState {
-  const context = useContext(AuthContext);
+  const context = use(AuthContext);
   if (!context) {
     throw new Error('useAuth must be used inside AuthProvider');
   }

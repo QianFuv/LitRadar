@@ -167,7 +167,7 @@ export default function TrackingPage() {
     mutationFn: () => pushWeeklyToTracking(token!),
     onSuccess: (data) => {
       if (data.status === 'running') {
-        setPushResult(data.message || '推送任务已启动，正在后台执行...');
+        setPushResult(data.message || '推送任务已启动，正在后台执行…');
         setIsPushPolling(true);
         return;
       }
@@ -197,7 +197,7 @@ export default function TrackingPage() {
     availableDatabases.length === 0 || effectiveSelectedDatabases.length === 0;
   const manualPushLabel =
     pushMut.isPending || isPushPolling
-      ? '推送中...'
+      ? '推送中…'
       : deliveryMethod === 'pushplus'
         ? syncToTrackingFolder
           ? '推送到 PushPlus 并同步文件夹'
@@ -234,7 +234,7 @@ export default function TrackingPage() {
           return;
         }
         if (data.status === 'running') {
-          setPushResult(data.message || '推送任务执行中...');
+          setPushResult(data.message || '推送任务执行中…');
           return;
         }
         setPushResult(formatManualPushResult(data));
@@ -424,7 +424,7 @@ export default function TrackingPage() {
         <CardContent className="space-y-4">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div className="text-sm text-muted-foreground">
-              可推送文章: {status?.weekly_articles_available ?? '...'} 篇
+              可推送文章: {status?.weekly_articles_available ?? '…'} 篇
             </div>
             <Button
               className="w-full sm:w-auto"
@@ -463,7 +463,7 @@ export default function TrackingPage() {
               role="status"
               className="rounded-md border px-3 py-4 text-sm text-muted-foreground"
             >
-              正在加载已保存的推荐配置...
+              正在加载已保存的推荐配置…
             </div>
           ) : notificationSettingsQuery.isError && draftSettings === null ? (
             <div
@@ -608,7 +608,7 @@ export default function TrackingPage() {
                     role="status"
                     className="rounded-md border border-dashed px-3 py-4 text-sm text-muted-foreground"
                   >
-                    正在加载数据库列表...
+                    正在加载数据库列表…
                   </div>
                 ) : databasesQuery.isError ? (
                   <div
@@ -746,7 +746,7 @@ export default function TrackingPage() {
                         ai_api_key: e.target.value,
                       }))
                     }
-                    placeholder="sk-..."
+                    placeholder="sk-…"
                   />
                 </div>
                 <div className="space-y-1">
@@ -831,7 +831,7 @@ export default function TrackingPage() {
                           ai_backup_api_key: e.target.value,
                         }))
                       }
-                      placeholder="sk-..."
+                      placeholder="sk-…"
                     />
                   </div>
                   <div className="space-y-1">
@@ -949,7 +949,7 @@ export default function TrackingPage() {
                   disabled={saveSettingsMut.isPending}
                 >
                   <Save className="h-4 w-4 mr-1" />
-                  {saveSettingsMut.isPending ? '保存中...' : '保存配置'}
+                  {saveSettingsMut.isPending ? '保存中…' : '保存配置'}
                 </Button>
                 {settingsSaved && (
                   <span role="status" className="text-sm text-green-600">

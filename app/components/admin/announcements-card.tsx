@@ -261,7 +261,7 @@ export function AnnouncementsCard({ token }: AnnouncementsCardProps) {
 
         {isLoading ? (
           <p role="status" className="text-sm text-muted-foreground">
-            加载中...
+            加载中…
           </p>
         ) : announcements.length === 0 ? (
           <p className="text-sm text-muted-foreground">暂无公告</p>

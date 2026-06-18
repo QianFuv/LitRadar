@@ -126,7 +126,7 @@ export function FavoriteButton({
           <div className="px-2 py-1 text-xs text-muted-foreground font-medium">选择收藏夹</div>
           {isFoldersPending ? (
             <div role="status" className="px-2 py-2 text-xs text-muted-foreground">
-              加载中...
+              加载中…
             </div>
           ) : folders.length === 0 ? (
             <div className="px-2 py-2 text-xs text-muted-foreground">

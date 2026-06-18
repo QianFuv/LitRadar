@@ -221,7 +221,7 @@ export function RuntimeSettingsCard({ token }: RuntimeSettingsCardProps) {
       <CardContent className="space-y-4">
         {isLoading ? (
           <div role="status" className="text-sm text-muted-foreground">
-            加载中...
+            加载中…
           </div>
         ) : (
           <div className="grid gap-4">

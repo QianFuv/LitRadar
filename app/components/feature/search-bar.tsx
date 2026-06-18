@@ -108,7 +108,7 @@ export function SearchBar({ className }: { className?: string }) {
             <Input
               type="search"
               aria-label="搜索文章"
-              placeholder="搜索文章..."
+              placeholder="搜索文章…"
               className="pl-9 pr-9"
               value={inputValue}
               onChange={(e) => setInputValue(e.target.value)}

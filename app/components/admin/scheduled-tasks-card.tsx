@@ -333,7 +333,7 @@ export function ScheduledTasksCard({ token }: ScheduledTasksCardProps) {
 
         {isLoading ? (
           <p role="status" className="text-sm text-muted-foreground">
-            加载中...
+            加载中…
           </p>
         ) : tasks.length === 0 ? (
           <p className="text-sm text-muted-foreground">暂无定时任务</p>

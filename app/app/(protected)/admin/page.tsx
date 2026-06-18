@@ -44,6 +44,8 @@ import { AnnouncementsCard } from '@/components/admin/announcements-card';
 import { RuntimeSettingsCard } from '@/components/admin/runtime-settings-card';
 import { ScheduledTasksCard } from '@/components/admin/scheduled-tasks-card';
 
+const NUMBER_FORMATTER = new Intl.NumberFormat('zh-CN');
+
 function formatDate(ts: number): string {
   return new Date(ts * 1000).toLocaleDateString('zh-CN', {
     year: 'numeric',
@@ -189,7 +191,7 @@ export default function AdminPage() {
         <CardContent>
           {statsLoading ? (
             <div className="text-muted-foreground" role="status">
-              加载中...
+              加载中…
             </div>
           ) : (
             <div className="space-y-4">
@@ -226,8 +228,8 @@ export default function AdminPage() {
                   <h3 className="text-sm font-medium">
                     索引数据库
                     <span className="ml-2 text-muted-foreground font-normal">
-                      共 {indexStats.total_articles.toLocaleString()} 篇文章，
-                      {indexStats.total_journals.toLocaleString()} 本期刊
+                      共 {NUMBER_FORMATTER.format(indexStats.total_articles)} 篇文章，
+                      {NUMBER_FORMATTER.format(indexStats.total_journals)} 本期刊
                     </span>
                   </h3>
                   <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
@@ -238,7 +240,9 @@ export default function AdminPage() {
                           {db.db_name}
                         </div>
                         <div className="text-muted-foreground mt-0.5">
-                          {db.articles.toLocaleString()} 文章 · {db.journals} 期刊 · {db.issues} 期
+                          {NUMBER_FORMATTER.format(db.articles)} 文章 ·{' '}
+                          {NUMBER_FORMATTER.format(db.journals)} 期刊 ·{' '}
+                          {NUMBER_FORMATTER.format(db.issues)} 期
                         </div>
                       </div>
                     ))}
@@ -670,7 +674,7 @@ export default function AdminPage() {
                   <tr key={ic.id} className="border-b last:border-0">
                     <td className="px-3 py-2 font-mono text-xs">
                       <span className="flex items-center gap-1">
-                        {ic.code.slice(0, 8)}...
+                        {ic.code.slice(0, 8)}…
                         <button
                           type="button"
                           onClick={() => navigator.clipboard.writeText(ic.code)}
