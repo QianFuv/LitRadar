@@ -150,12 +150,15 @@ export default function AdminPage() {
 
   if (!user?.is_admin) {
     return (
-      <div className="flex flex-col items-center justify-center min-h-[60vh] gap-4">
+      <main
+        id="main-content"
+        className="flex flex-col items-center justify-center min-h-[60vh] gap-4"
+      >
         <p className="text-muted-foreground">无管理员权限</p>
         <Button variant="outline" onClick={() => router.push('/')}>
           返回首页
         </Button>
-      </div>
+      </main>
     );
   }
 
@@ -164,7 +167,7 @@ export default function AdminPage() {
   const pushStats = stats?.push;
 
   return (
-    <div className="mx-auto max-w-5xl space-y-4 p-4 sm:space-y-6 sm:p-6">
+    <main id="main-content" className="mx-auto max-w-5xl space-y-4 p-4 sm:space-y-6 sm:p-6">
       <div className="flex items-start gap-2 sm:gap-3">
         <Button variant="ghost" size="icon" asChild>
           <Link href="/">
@@ -366,14 +369,30 @@ export default function AdminPage() {
             <table className="min-w-[52rem] w-full text-sm">
               <thead>
                 <tr className="border-b bg-muted/50">
-                  <th className="px-3 py-2 text-left font-medium">编号</th>
-                  <th className="px-3 py-2 text-left font-medium">用户名</th>
-                  <th className="px-3 py-2 text-left font-medium">角色</th>
-                  <th className="px-3 py-2 text-left font-medium">收藏夹</th>
-                  <th className="px-3 py-2 text-left font-medium">收藏</th>
-                  <th className="px-3 py-2 text-left font-medium">推送</th>
-                  <th className="px-3 py-2 text-left font-medium">注册时间</th>
-                  <th className="px-3 py-2 text-left font-medium">操作</th>
+                  <th scope="col" className="px-3 py-2 text-left font-medium">
+                    编号
+                  </th>
+                  <th scope="col" className="px-3 py-2 text-left font-medium">
+                    用户名
+                  </th>
+                  <th scope="col" className="px-3 py-2 text-left font-medium">
+                    角色
+                  </th>
+                  <th scope="col" className="px-3 py-2 text-left font-medium">
+                    收藏夹
+                  </th>
+                  <th scope="col" className="px-3 py-2 text-left font-medium">
+                    收藏
+                  </th>
+                  <th scope="col" className="px-3 py-2 text-left font-medium">
+                    推送
+                  </th>
+                  <th scope="col" className="px-3 py-2 text-left font-medium">
+                    注册时间
+                  </th>
+                  <th scope="col" className="px-3 py-2 text-left font-medium">
+                    操作
+                  </th>
                 </tr>
               </thead>
               <tbody>
@@ -611,12 +630,24 @@ export default function AdminPage() {
             <table className="min-w-[48rem] w-full text-sm">
               <thead>
                 <tr className="border-b bg-muted/50">
-                  <th className="px-3 py-2 text-left font-medium">邀请码</th>
-                  <th className="px-3 py-2 text-left font-medium">创建者</th>
-                  <th className="px-3 py-2 text-left font-medium">状态</th>
-                  <th className="px-3 py-2 text-left font-medium">使用者</th>
-                  <th className="px-3 py-2 text-left font-medium">创建时间</th>
-                  <th className="px-3 py-2 text-left font-medium">操作</th>
+                  <th scope="col" className="px-3 py-2 text-left font-medium">
+                    邀请码
+                  </th>
+                  <th scope="col" className="px-3 py-2 text-left font-medium">
+                    创建者
+                  </th>
+                  <th scope="col" className="px-3 py-2 text-left font-medium">
+                    状态
+                  </th>
+                  <th scope="col" className="px-3 py-2 text-left font-medium">
+                    使用者
+                  </th>
+                  <th scope="col" className="px-3 py-2 text-left font-medium">
+                    创建时间
+                  </th>
+                  <th scope="col" className="px-3 py-2 text-left font-medium">
+                    操作
+                  </th>
                 </tr>
               </thead>
               <tbody>
@@ -680,6 +711,6 @@ export default function AdminPage() {
           <AnnouncementsCard token={token} />
         </>
       )}
-    </div>
+    </main>
   );
 }

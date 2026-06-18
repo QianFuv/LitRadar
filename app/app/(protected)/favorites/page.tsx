@@ -281,17 +281,20 @@ export default function FavoritesPage() {
 
   if (!user) {
     return (
-      <div className="flex flex-col items-center justify-center min-h-[60vh] gap-4">
+      <main
+        id="main-content"
+        className="flex flex-col items-center justify-center min-h-[60vh] gap-4"
+      >
         <p className="text-muted-foreground">请先登录</p>
         <Button asChild>
           <Link href="/login?next=/favorites">登录</Link>
         </Button>
-      </div>
+      </main>
     );
   }
 
   return (
-    <div className="max-w-5xl mx-auto p-6 space-y-6">
+    <main id="main-content" className="max-w-5xl mx-auto p-6 space-y-6">
       <div className="flex items-center gap-3">
         <Button variant="ghost" size="icon" asChild>
           <Link href="/">
@@ -644,6 +647,6 @@ export default function FavoritesPage() {
           )}
         </div>
       </div>
-    </div>
+    </main>
   );
 }

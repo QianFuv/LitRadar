@@ -310,17 +310,20 @@ export default function TrackingPage() {
 
   if (!user) {
     return (
-      <div className="flex flex-col items-center justify-center min-h-[60vh] gap-4">
+      <main
+        id="main-content"
+        className="flex flex-col items-center justify-center min-h-[60vh] gap-4"
+      >
         <p className="text-muted-foreground">请先登录</p>
         <Button asChild>
           <Link href="/login?next=/tracking">登录</Link>
         </Button>
-      </div>
+      </main>
     );
   }
 
   return (
-    <div className="mx-auto max-w-3xl space-y-4 p-4 sm:space-y-6 sm:p-6">
+    <main id="main-content" className="mx-auto max-w-3xl space-y-4 p-4 sm:space-y-6 sm:p-6">
       <div className="flex items-start gap-2 sm:gap-3">
         <Button variant="ghost" size="icon" asChild>
           <Link href="/">
@@ -924,6 +927,6 @@ export default function TrackingPage() {
           <p>7. 在「我的收藏」中查看追踪到的文章</p>
         </CardContent>
       </Card>
-    </div>
+    </main>
   );
 }

@@ -347,7 +347,7 @@ export default function WeeklyUpdatesPage() {
   };
 
   return (
-    <div className="h-screen bg-background text-foreground">
+    <main id="main-content" className="h-screen bg-background text-foreground">
       <div className="mx-auto flex h-full w-full max-w-[1400px] flex-col px-4 py-4 sm:px-6">
         <div className="mb-4 flex items-center justify-between gap-3">
           <div className="space-y-1">
@@ -528,6 +528,6 @@ export default function WeeklyUpdatesPage() {
           </>
         )}
       </div>
-    </div>
+    </main>
   );
 }

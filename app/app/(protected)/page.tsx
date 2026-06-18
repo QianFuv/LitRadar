@@ -15,7 +15,7 @@ export default function Home() {
   return (
     <div className="flex h-screen w-full bg-background text-foreground">
       <Sidebar className="hidden md:flex flex-shrink-0 h-screen" />
-      <main className="flex-1 flex flex-col h-full overflow-hidden">
+      <main id="main-content" className="flex-1 flex flex-col h-full overflow-hidden">
         <div className="sticky top-0 z-30 border-b bg-background/95 p-3 backdrop-blur sm:p-6">
           <div className="flex min-w-0 items-center gap-2 sm:gap-3">
             <Button

@@ -55,7 +55,10 @@ export default function LoginClient() {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-background px-6">
+    <main
+      id="main-content"
+      className="min-h-screen flex items-center justify-center bg-background px-6"
+    >
       <Card className="w-full max-w-md">
         <CardHeader>
           <CardTitle>{mode === 'login' ? '登录' : '注册'}</CardTitle>
@@ -144,6 +147,6 @@ export default function LoginClient() {
           </div>
         </CardContent>
       </Card>
-    </div>
+    </main>
   );
 }
