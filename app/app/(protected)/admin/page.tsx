@@ -3,7 +3,6 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
 import {
   ArrowLeft,
   Copy,
@@ -78,7 +77,6 @@ function StatCard({
 
 export default function AdminPage() {
   const { user, token } = useAuth();
-  const router = useRouter();
   const queryClient = useQueryClient();
 
   const [resetPwUserId, setResetPwUserId] = useState<number | null>(null);
@@ -157,8 +155,8 @@ export default function AdminPage() {
         className="flex flex-col items-center justify-center min-h-[60vh] gap-4"
       >
         <p className="text-muted-foreground">无管理员权限</p>
-        <Button variant="outline" onClick={() => router.push('/')}>
-          返回首页
+        <Button variant="outline" asChild>
+          <Link href="/">返回首页</Link>
         </Button>
       </main>
     );
