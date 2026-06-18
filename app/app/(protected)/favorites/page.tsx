@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useQuery, useMutation, useQueryClient, useInfiniteQuery } from '@tanstack/react-query';
 import Link from 'next/link';
 import { ArrowLeft, Download, FolderPlus, Pencil, Radar, Star, Trash2 } from 'lucide-react';
@@ -46,6 +46,7 @@ import {
 } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Checkbox } from '@/components/ui/checkbox';
+import { cn } from '@/lib/utils';
 
 function getFavoriteSelectionKey(folderId: number, articleId: ArticleId, dbName: string): string {
   return `${folderId}:${articleId}:${dbName}`;
@@ -73,6 +74,16 @@ export default function FavoritesPage() {
     tone: 'success' | 'error';
     message: string;
   } | null>(null);
+  const editInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (editingId === null || typeof window === 'undefined') {
+      return;
+    }
+    if (window.matchMedia('(pointer: fine)').matches) {
+      editInputRef.current?.focus();
+    }
+  }, [editingId]);
 
   const { data: folders = [], isLoading } = useQuery({
     queryKey: ['folders', user?.id],
@@ -261,6 +272,9 @@ export default function FavoritesPage() {
     if (selectedFavorites.length === 0) {
       return;
     }
+    if (!window.confirm(`确认从当前收藏夹移除 ${selectedFavorites.length} 篇文章？`)) {
+      return;
+    }
     bulkRemoveMut.mutate(selectedFavorites.map(toFavoriteArticleRef));
   };
 
@@ -354,12 +368,12 @@ export default function FavoritesPage() {
               {folders.map((folder) => (
                 <div
                   key={folder.id}
-                  className={`flex items-center gap-2 rounded-md px-3 py-2 text-sm cursor-pointer transition-colors ${
+                  className={cn(
+                    'flex items-center gap-2 rounded-md px-3 py-2 text-sm transition-colors',
                     activeFolderId === folder.id
                       ? 'bg-accent text-accent-foreground'
-                      : 'hover:bg-accent/50'
-                  }`}
-                  onClick={() => handleSelectFolder(folder.id)}
+                      : 'hover:bg-accent/50',
+                  )}
                 >
                   {editingId === folder.id ? (
                     <form
@@ -373,15 +387,20 @@ export default function FavoritesPage() {
                       onClick={(e) => e.stopPropagation()}
                     >
                       <Input
+                        ref={editInputRef}
                         aria-label={`重命名收藏夹 ${folder.name}`}
                         value={editName}
                         onChange={(e) => setEditName(e.target.value)}
                         className="h-6 text-sm"
-                        autoFocus
                       />
                     </form>
                   ) : (
-                    <>
+                    <button
+                      type="button"
+                      className="flex min-w-0 flex-1 items-center gap-2 text-left outline-none focus-visible:ring-ring/50 focus-visible:ring-[3px]"
+                      aria-pressed={activeFolderId === folder.id}
+                      onClick={() => handleSelectFolder(folder.id)}
+                    >
                       <Star className="h-4 w-4 shrink-0" />
                       <span className="truncate flex-1">{folder.name}</span>
                       {folder.is_tracking && (
@@ -390,7 +409,7 @@ export default function FavoritesPage() {
                         </Badge>
                       )}
                       <span className="text-xs text-muted-foreground">{folder.article_count}</span>
-                    </>
+                    </button>
                   )}
                   <div className="flex gap-0.5">
                     <Button
@@ -426,7 +445,9 @@ export default function FavoritesPage() {
                       aria-label={`删除收藏夹 ${folder.name}`}
                       onClick={(e) => {
                         e.stopPropagation();
-                        deleteMut.mutate(folder.id);
+                        if (window.confirm(`确认删除收藏夹“${folder.name}”？`)) {
+                          deleteMut.mutate(folder.id);
+                        }
                       }}
                     >
                       <Trash2 className="h-3 w-3" />
@@ -631,7 +652,9 @@ export default function FavoritesPage() {
                             className="text-destructive border-destructive/30"
                             onClick={(e) => {
                               e.stopPropagation();
-                              removeMut.mutate(fav);
+                              if (window.confirm('确认移除这篇收藏文章？')) {
+                                removeMut.mutate(fav);
+                              }
                             }}
                           >
                             <Trash2 className="mr-2 h-4 w-4" />

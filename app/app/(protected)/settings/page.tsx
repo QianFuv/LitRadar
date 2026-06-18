@@ -412,7 +412,11 @@ export default function SettingsPage() {
                 variant="ghost"
                 size="sm"
                 className="text-destructive"
-                onClick={() => clearCnkiSessionMut.mutate()}
+                onClick={() => {
+                  if (window.confirm('确认清除 CNKI 登录状态？')) {
+                    clearCnkiSessionMut.mutate();
+                  }
+                }}
                 disabled={clearCnkiSessionMut.isPending}
               >
                 <Unlink className="h-4 w-4" />
@@ -641,7 +645,11 @@ export default function SettingsPage() {
                     size="icon"
                     className="h-7 w-7 self-end text-destructive sm:self-auto"
                     aria-label={`撤销访问令牌 ${t.name || t.id}`}
-                    onClick={() => revokeMut.mutate(t.id)}
+                    onClick={() => {
+                      if (window.confirm(`确认撤销访问令牌“${t.name || t.id}”？`)) {
+                        revokeMut.mutate(t.id);
+                      }
+                    }}
                   >
                     <Trash2 className="h-3.5 w-3.5" />
                   </Button>

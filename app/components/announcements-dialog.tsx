@@ -110,14 +110,14 @@ export function AnnouncementsDialog() {
         }
       }}
     >
-      <DialogContent className="max-w-2xl" showCloseButton={false}>
+      <DialogContent className="max-w-2xl">
         <DialogHeader>
           <DialogTitle>系统公告</DialogTitle>
           <DialogDescription>
             以下公告尚未阅读，可选择本日、7 天内或永久关闭提示。
           </DialogDescription>
         </DialogHeader>
-        <div className="max-h-[60vh] space-y-3 overflow-y-auto pr-1">
+        <div className="max-h-[60vh] space-y-3 overflow-y-auto overscroll-contain pr-1">
           {unreadAnnouncements.map((announcement) => (
             <div key={announcement.id} className="rounded-lg border bg-muted/20 p-4">
               <div className="mb-2 flex items-center gap-2">

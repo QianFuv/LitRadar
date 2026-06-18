@@ -100,6 +100,7 @@ export default function TrackingPage() {
   );
 
   const formSettings = draftSettings || normalizeSettings(notifySettings);
+  const hasUnsavedSettings = draftSettings !== null;
   const {
     keywords,
     directions,
@@ -129,6 +130,18 @@ export default function TrackingPage() {
     },
     [normalizeSettings, notifySettings],
   );
+
+  useEffect(() => {
+    if (!hasUnsavedSettings) {
+      return;
+    }
+    const handleBeforeUnload = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = '';
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [hasUnsavedSettings]);
 
   const setTrackMut = useMutation({
     mutationFn: (folderId: number) => setTrackingFolder(token!, folderId),
@@ -326,7 +339,14 @@ export default function TrackingPage() {
     <main id="main-content" className="mx-auto max-w-3xl space-y-4 p-4 sm:space-y-6 sm:p-6">
       <div className="flex items-start gap-2 sm:gap-3">
         <Button variant="ghost" size="icon" aria-label="返回首页" asChild>
-          <Link href="/">
+          <Link
+            href="/"
+            onClick={(event) => {
+              if (hasUnsavedSettings && !window.confirm('当前推荐配置尚未保存，确认离开？')) {
+                event.preventDefault();
+              }
+            }}
+          >
             <ArrowLeft className="h-5 w-5" />
           </Link>
         </Button>

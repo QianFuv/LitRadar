@@ -305,7 +305,11 @@ export function AnnouncementsCard({ token }: AnnouncementsCardProps) {
                       size="icon"
                       className="text-destructive hover:text-destructive"
                       aria-label={`删除公告 ${announcement.title}`}
-                      onClick={() => deleteMutation.mutate(announcement.id)}
+                      onClick={() => {
+                        if (window.confirm(`确认删除公告“${announcement.title}”？`)) {
+                          deleteMutation.mutate(announcement.id);
+                        }
+                      }}
                     >
                       <Trash2 className="h-4 w-4" />
                     </Button>

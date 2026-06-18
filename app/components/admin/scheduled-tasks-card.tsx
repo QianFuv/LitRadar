@@ -372,7 +372,11 @@ export function ScheduledTasksCard({ token }: ScheduledTasksCardProps) {
                       size="icon"
                       className="text-destructive hover:text-destructive"
                       aria-label={`删除定时任务 ${task.name}`}
-                      onClick={() => deleteMutation.mutate(task.id)}
+                      onClick={() => {
+                        if (window.confirm(`确认删除定时任务“${task.name}”？`)) {
+                          deleteMutation.mutate(task.id);
+                        }
+                      }}
                     >
                       <Trash2 className="h-4 w-4" />
                     </Button>

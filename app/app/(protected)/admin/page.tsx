@@ -626,7 +626,11 @@ export default function AdminPage() {
                         size="sm"
                         className="w-full"
                         disabled={deleteCodeMut.isPending}
-                        onClick={() => deleteCodeMut.mutate(ic.id)}
+                        onClick={() => {
+                          if (window.confirm(`确认删除邀请码 ${ic.code}？`)) {
+                            deleteCodeMut.mutate(ic.id);
+                          }
+                        }}
                       >
                         <Trash2 className="h-4 w-4" />
                         删除邀请码
@@ -696,7 +700,11 @@ export default function AdminPage() {
                           className="text-destructive hover:text-destructive"
                           aria-label={`删除邀请码 ${ic.code}`}
                           disabled={deleteCodeMut.isPending}
-                          onClick={() => deleteCodeMut.mutate(ic.id)}
+                          onClick={() => {
+                            if (window.confirm(`确认删除邀请码 ${ic.code}？`)) {
+                              deleteCodeMut.mutate(ic.id);
+                            }
+                          }}
                         >
                           <Trash2 className="h-4 w-4" />
                         </Button>

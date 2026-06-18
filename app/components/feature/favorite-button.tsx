@@ -146,7 +146,9 @@ export function FavoriteButton({
                   )}
                   onClick={() => {
                     if (isInFolder) {
-                      removeMut.mutate(folder.id);
+                      if (window.confirm(`确认从“${folder.name}”移除收藏？`)) {
+                        removeMut.mutate(folder.id);
+                      }
                     } else {
                       addMut.mutate(folder.id);
                     }

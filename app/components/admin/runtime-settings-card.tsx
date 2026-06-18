@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { DatabaseZap, Plus, Save, Trash2 } from 'lucide-react';
 
@@ -176,6 +176,19 @@ export function RuntimeSettingsCard({ token }: RuntimeSettingsCardProps) {
   const form = useMemo(() => {
     return { ...baseForm, ...formOverrides };
   }, [baseForm, formOverrides]);
+  const hasFormOverrides = Object.keys(formOverrides).length > 0;
+
+  useEffect(() => {
+    if (!hasFormOverrides) {
+      return;
+    }
+    const handleBeforeUnload = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = '';
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [hasFormOverrides]);
 
   const saveMutation = useMutation({
     mutationFn: () => adminUpdateRuntimeSettings(token, { values: form }),
