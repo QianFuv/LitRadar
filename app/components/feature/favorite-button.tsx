@@ -68,7 +68,7 @@ export function FavoriteButton({
         }
         return [...current, { folder_id: folderId, folder_name: folderName }];
       });
-      queryClient.invalidateQueries({ queryKey: ['fav-check-batch', user?.id, db] });
+      queryClient.removeQueries({ queryKey: ['fav-check-batch', user?.id, db] });
       queryClient.invalidateQueries({ queryKey: ['folders'] });
       queryClient.invalidateQueries({ queryKey: ['folder-articles', folderId] });
     },
@@ -88,7 +88,7 @@ export function FavoriteButton({
       queryClient.setQueryData(queryKey, (current: FavoriteCheck[] = []) =>
         current.filter((item) => item.folder_id !== folderId),
       );
-      queryClient.invalidateQueries({ queryKey: ['fav-check-batch', user?.id, db] });
+      queryClient.removeQueries({ queryKey: ['fav-check-batch', user?.id, db] });
       queryClient.invalidateQueries({ queryKey: ['folders'] });
       queryClient.invalidateQueries({ queryKey: ['folder-articles', folderId] });
     },

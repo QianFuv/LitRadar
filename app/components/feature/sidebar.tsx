@@ -3,6 +3,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { useQueryState, parseAsString, parseAsArrayOf } from 'nuqs';
 import Image from 'next/image';
+import { usePathname, useRouter } from 'next/navigation';
 import { useTheme } from 'next-themes';
 import {
   getAreas,
@@ -221,6 +222,8 @@ function DateSegmentSelect({
 export function Sidebar({ className }: { className?: string }) {
   const { theme, setTheme } = useTheme();
   const { token } = useAuth();
+  const router = useRouter();
+  const pathname = usePathname();
 
   const [selectedDb, setSelectedDb] = useState(getCurrentDatabase());
   const [, setQ] = useQueryState('q', parseAsString);
@@ -274,7 +277,12 @@ export function Sidebar({ className }: { className?: string }) {
   const handleDatabaseChange = (dbName: string) => {
     setDatabase(dbName);
     setSelectedDb(dbName);
-    window.location.href = window.location.pathname;
+    setQ(null);
+    setAreas([]);
+    setJournalIds([]);
+    setMonthRange(null);
+    router.replace(pathname);
+    router.refresh();
   };
 
   const handleClearFilters = () => {
@@ -293,12 +301,20 @@ export function Sidebar({ className }: { className?: string }) {
     setMonthRange(null);
   };
 
-  const minYearAvailable =
-    yearData && yearData.length > 0 ? Math.min(...yearData.map((y) => y.year)) : 1900;
-  const maxYearAvailable =
-    yearData && yearData.length > 0
-      ? Math.max(...yearData.map((y) => y.year))
-      : new Date().getFullYear();
+  const yearBounds = useMemo(() => {
+    if (!yearData || yearData.length === 0) {
+      return { max: new Date().getFullYear(), min: 1900 };
+    }
+    let min = yearData[0].year;
+    let max = yearData[0].year;
+    for (const item of yearData) {
+      min = Math.min(min, item.year);
+      max = Math.max(max, item.year);
+    }
+    return { max, min };
+  }, [yearData]);
+  const minYearAvailable = yearBounds.min;
+  const maxYearAvailable = yearBounds.max;
 
   const defaultStartMonth = buildMonthKey(minYearAvailable, 1);
   const defaultEndMonth = buildMonthKey(maxYearAvailable, 12);

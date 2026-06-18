@@ -1,8 +1,20 @@
 'use client';
 
-import { useInfiniteQuery, useQuery, type InfiniteData } from '@tanstack/react-query';
+import {
+  useInfiniteQuery,
+  useQuery,
+  useQueryClient,
+  type InfiniteData,
+} from '@tanstack/react-query';
 import { useQueryState, parseAsString, parseAsArrayOf } from 'nuqs';
-import { checkFavoritesBatch, getArticles, getCurrentDatabase, type ArticlePage } from '@/lib/api';
+import {
+  checkFavoritesBatch,
+  getArticles,
+  getCurrentDatabase,
+  type ArticleId,
+  type ArticlePage,
+  type FavoriteCheck,
+} from '@/lib/api';
 import { ArticleDialogCard } from '@/components/feature/article-dialog-card';
 import { useVisiblePageList } from '@/components/feature/use-visible-page-list';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
@@ -59,6 +71,7 @@ function monthKeyToDateTo(value: string | null): string | null {
 
 export function ResultsList() {
   const { user, token } = useAuth();
+  const queryClient = useQueryClient();
 
   const [q] = useQueryState('q', parseAsString);
   const [areas] = useQueryState('area', parseAsArrayOf(parseAsString));
@@ -115,14 +128,38 @@ export function ResultsList() {
   const visiblePageCount = Math.min(visiblePages, loadedPages);
   const visibleArticles = pages.slice(0, visiblePageCount).flatMap((page) => page.items);
   const visibleArticleIds = visibleArticles.map((article) => article.article_id);
-  const visibleArticleIdsKey = visibleArticleIds.join(',');
+  const favoriteBatchBaseKey = useMemo(
+    () => ['fav-check-batch', user?.id, currentDb] as const,
+    [currentDb, user?.id],
+  );
+  const cachedFavoriteChecksByArticle = queryClient
+    .getQueriesData<Record<ArticleId, FavoriteCheck[]>>({
+      queryKey: favoriteBatchBaseKey,
+    })
+    .reduce<Record<ArticleId, FavoriteCheck[]>>((merged, [, checks]) => {
+      if (!checks) {
+        return merged;
+      }
+      return { ...merged, ...checks };
+    }, {});
+  const missingFavoriteArticleIds = visibleArticleIds.filter(
+    (articleId) => !(articleId in cachedFavoriteChecksByArticle),
+  );
+  const missingFavoriteArticleIdsKey = missingFavoriteArticleIds.join(',');
 
-  const { data: favoriteChecksByArticle = {}, isPending: isFavoriteStatePending } = useQuery({
-    queryKey: ['fav-check-batch', user?.id, currentDb, visibleArticleIdsKey],
-    queryFn: () => checkFavoritesBatch(token!, visibleArticleIds, currentDb),
-    enabled: !!token && !!user && visibleArticleIds.length > 0,
-    staleTime: 5 * 60 * 1000,
-  });
+  const { data: fetchedFavoriteChecksByArticle = {}, isPending: isMissingFavoriteStatePending } =
+    useQuery({
+      queryKey: [...favoriteBatchBaseKey, 'missing', missingFavoriteArticleIdsKey],
+      queryFn: () => checkFavoritesBatch(token!, missingFavoriteArticleIds, currentDb),
+      enabled: !!token && !!user && missingFavoriteArticleIds.length > 0,
+      staleTime: 5 * 60 * 1000,
+    });
+  const favoriteChecksByArticle = useMemo(
+    () => ({ ...cachedFavoriteChecksByArticle, ...fetchedFavoriteChecksByArticle }),
+    [cachedFavoriteChecksByArticle, fetchedFavoriteChecksByArticle],
+  );
+  const isFavoriteStatePending =
+    missingFavoriteArticleIds.length > 0 && isMissingFavoriteStatePending;
 
   const highlightTerms = useMemo(() => {
     if (!q) return [];
