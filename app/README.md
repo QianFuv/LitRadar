@@ -75,10 +75,10 @@ app/
 │   ├── feature/              搜索、收藏、每周更新等业务组件
 │   └── ui/                   通用 UI 组件
 ├── lib/
-│   ├── api.ts                前端 API 封装
+│   ├── api.tsx               前端 API 封装
 │   ├── auth-context.tsx      登录态上下文
-│   ├── citation.ts           引文文本生成
-│   └── utils.ts              前端通用辅助函数
+│   ├── citation.tsx          引文文本生成
+│   └── utils.tsx             前端通用辅助函数
 └── next.config.ts            `/api/*` rewrite 配置
 ```
 
@@ -103,4 +103,4 @@ app/
 - 获取当前用户：`GET /api/auth/me`
 - 访问令牌：`/api/auth/tokens`
 
-前端登录态由 `app/lib/auth-context.tsx` 与后端 `/api/auth/*` 共同完成，不再包含独立的前端令牌认证配置文件。
+前端登录态由 `app/lib/auth-context.tsx` 与后端 `/api/auth/*` 共同完成。登录令牌只在当前前端运行会话中用于 API 请求；设置页的访问令牌由 `/api/auth/tokens` 管理。
