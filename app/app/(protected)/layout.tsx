@@ -1,16 +1,31 @@
 'use client';
 
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
-import { useEffect } from 'react';
+import { Suspense, useEffect } from 'react';
 import { useAuth } from '@/lib/auth-context';
 
 /**
- * Render authenticated routes and redirect unauthenticated users to login.
+ * Render the protected layout loading state.
+ *
+ * @returns Protected route loading state.
+ */
+function ProtectedLayoutFallback() {
+  return (
+    <main id="main-content" className="flex h-screen items-center justify-center">
+      <div role="status" className="animate-pulse text-muted-foreground">
+        加载中…
+      </div>
+    </main>
+  );
+}
+
+/**
+ * Render authenticated route content and redirect unauthenticated users to login.
  *
  * @param props - Layout props.
- * @returns Protected route layout.
+ * @returns Protected route content.
  */
-export default function ProtectedLayout({ children }: { children: React.ReactNode }) {
+function ProtectedLayoutContent({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuth();
   const router = useRouter();
   const pathname = usePathname();
@@ -25,16 +40,24 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
   }, [loading, pathname, router, search, user]);
 
   if (loading) {
-    return (
-      <main id="main-content" className="flex h-screen items-center justify-center">
-        <div role="status" className="animate-pulse text-muted-foreground">
-          加载中…
-        </div>
-      </main>
-    );
+    return <ProtectedLayoutFallback />;
   }
 
   if (!user) return null;
 
   return <>{children}</>;
+}
+
+/**
+ * Render authenticated routes inside the Suspense boundary required by search params.
+ *
+ * @param props - Layout props.
+ * @returns Protected route layout.
+ */
+export default function ProtectedLayout({ children }: { children: React.ReactNode }) {
+  return (
+    <Suspense fallback={<ProtectedLayoutFallback />}>
+      <ProtectedLayoutContent>{children}</ProtectedLayoutContent>
+    </Suspense>
+  );
 }
