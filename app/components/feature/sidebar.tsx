@@ -486,7 +486,10 @@ export function Sidebar({ className }: { className?: string }) {
                 {areaOptions?.map((opt) => {
                   const displayName = getAreaDisplayName(opt.value);
                   return (
-                    <div key={opt.value} className="flex min-w-0 items-start gap-2">
+                    <div
+                      key={opt.value}
+                      className="flex min-w-0 items-start gap-2 [content-visibility:auto] [contain-intrinsic-size:0_32px]"
+                    >
                       <Checkbox
                         id={`area-${opt.value}`}
                         className="mt-0.5 shrink-0"
@@ -547,7 +550,10 @@ export function Sidebar({ className }: { className?: string }) {
                       {filteredJournalOptions.map((option) => {
                         const id = String(option.journal_id);
                         return (
-                          <div key={id} className="flex min-w-0 items-start gap-2">
+                          <div
+                            key={id}
+                            className="flex min-w-0 items-start gap-2 [content-visibility:auto] [contain-intrinsic-size:0_32px]"
+                          >
                             <Checkbox
                               id={`journal-${id}`}
                               className="mt-0.5 shrink-0"

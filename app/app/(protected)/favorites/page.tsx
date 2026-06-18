@@ -636,6 +636,7 @@ export default function FavoritesPage() {
                         dbName={fav.db_name}
                         token={token!}
                         initialFolderIds={[fav.folder_id]}
+                        className="[content-visibility:auto] [contain-intrinsic-size:0_220px]"
                         leading={
                           <Checkbox
                             checked={isSelected}
