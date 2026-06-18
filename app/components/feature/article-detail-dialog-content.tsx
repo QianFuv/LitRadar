@@ -236,6 +236,7 @@ export function ArticleDetailDialogContent({
             variant="ghost"
             size="sm"
             className="h-6 w-6 p-0 ml-2 inline-flex align-middle"
+            aria-label="复制文章标题"
             onClick={handleCopyTitle}
           >
             {copyStatus === 'title' ? (
@@ -320,7 +321,7 @@ export function ArticleDetailDialogContent({
             )}
             {isFavoriteStatePending ? (
               <Button variant="outline" size="sm" disabled>
-                加载收藏...
+                加载收藏…
               </Button>
             ) : (
               <FavoriteButton

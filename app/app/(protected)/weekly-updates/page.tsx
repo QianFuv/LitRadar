@@ -490,7 +490,10 @@ export default function WeeklyUpdatesPage() {
                   )}
 
                   {searchQuery && searchError && (
-                    <div className="rounded-md border border-dashed p-4 text-sm text-destructive">
+                    <div
+                      role="alert"
+                      className="rounded-md border border-dashed p-4 text-sm text-destructive"
+                    >
                       {searchErrorData instanceof Error ? searchErrorData.message : '全文检索失败'}
                     </div>
                   )}

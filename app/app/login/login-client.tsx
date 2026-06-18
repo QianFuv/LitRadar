@@ -67,7 +67,11 @@ export default function LoginClient() {
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <form onSubmit={handleSubmit} className="space-y-4">
+          <form
+            onSubmit={handleSubmit}
+            className="space-y-4"
+            aria-describedby={error ? 'login-error' : undefined}
+          >
             <div className="space-y-2">
               <Label htmlFor="username">用户名</Label>
               <Input
@@ -77,6 +81,8 @@ export default function LoginClient() {
                 autoComplete="username"
                 onChange={(event) => setUsername(event.target.value)}
                 placeholder="3-32位字母数字下划线"
+                aria-invalid={Boolean(error)}
+                aria-describedby={error ? 'login-error' : undefined}
                 required
               />
             </div>
@@ -89,6 +95,8 @@ export default function LoginClient() {
                 autoComplete={mode === 'register' ? 'new-password' : 'current-password'}
                 onChange={(event) => setPassword(event.target.value)}
                 placeholder="至少6位"
+                aria-invalid={Boolean(error)}
+                aria-describedby={error ? 'login-error' : undefined}
                 required
               />
             </div>
@@ -99,19 +107,26 @@ export default function LoginClient() {
                   id="invite-code"
                   type="text"
                   value={inviteCode}
+                  autoComplete="one-time-code"
                   onChange={(event) => setInviteCode(event.target.value)}
                   placeholder="输入邀请码"
+                  aria-invalid={Boolean(error)}
+                  aria-describedby={error ? 'login-error' : undefined}
                   required
                 />
               </div>
             )}
             {error && (
-              <div className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+              <div
+                id="login-error"
+                role="alert"
+                className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive"
+              >
                 {error}
               </div>
             )}
             <Button type="submit" className="w-full" disabled={isSubmitting}>
-              {isSubmitting ? '请稍候...' : mode === 'login' ? '登录' : '注册'}
+              {isSubmitting ? '请稍候…' : mode === 'login' ? '登录' : '注册'}
             </Button>
           </form>
           <div className="mt-4 text-center text-sm text-muted-foreground">

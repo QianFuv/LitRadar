@@ -268,7 +268,7 @@ export default function SettingsPage() {
   return (
     <main id="main-content" className="mx-auto max-w-3xl space-y-4 p-4 sm:space-y-6 sm:p-6">
       <div className="flex items-center gap-2 sm:gap-3">
-        <Button variant="ghost" size="icon" asChild>
+        <Button variant="ghost" size="icon" aria-label="返回首页" asChild>
           <Link href="/">
             <ArrowLeft className="h-5 w-5" />
           </Link>
@@ -322,12 +322,16 @@ export default function SettingsPage() {
           </div>
 
           {isCnkiSessionError && (
-            <p className="text-sm text-destructive">
+            <p role="alert" className="text-sm text-destructive">
               {cnkiSessionError instanceof Error ? cnkiSessionError.message : '获取知网状态失败'}
             </p>
           )}
 
-          {cnkiMessage && <p className="text-sm text-muted-foreground">{cnkiMessage}</p>}
+          {cnkiMessage && (
+            <p role="status" className="text-sm text-muted-foreground">
+              {cnkiMessage}
+            </p>
+          )}
 
           {cnkiLogin && (
             <div className="rounded-md border p-3">
@@ -368,6 +372,7 @@ export default function SettingsPage() {
                     <Button
                       variant="ghost"
                       size="sm"
+                      aria-label="复制 CNKI 登录二维码内容"
                       onClick={() => navigator.clipboard.writeText(cnkiLogin.qr_code)}
                     >
                       <Copy className="h-4 w-4" />
@@ -393,7 +398,12 @@ export default function SettingsPage() {
               )}
               {cnkiLogin ? '重新生成' : '扫码登录'}
             </Button>
-            <Button variant="outline" size="sm" onClick={() => void refetchCnkiSession()}>
+            <Button
+              variant="outline"
+              size="sm"
+              aria-label="刷新 CNKI 登录状态"
+              onClick={() => void refetchCnkiSession()}
+            >
               <RefreshCw className="h-4 w-4" />
               刷新
             </Button>
@@ -428,25 +438,38 @@ export default function SettingsPage() {
             className="space-y-4 max-w-sm"
           >
             <div className="space-y-2">
-              <Label>原密码</Label>
+              <Label htmlFor="old-password">原密码</Label>
               <Input
+                id="old-password"
                 type="password"
+                autoComplete="current-password"
                 value={oldPwd}
                 onChange={(e) => setOldPwd(e.target.value)}
+                aria-invalid={changePwdMut.isError}
                 required
               />
             </div>
             <div className="space-y-2">
-              <Label>新密码</Label>
+              <Label htmlFor="new-password">新密码</Label>
               <Input
+                id="new-password"
                 type="password"
+                autoComplete="new-password"
                 value={newPwd}
                 onChange={(e) => setNewPwd(e.target.value)}
                 placeholder="至少6位"
+                aria-invalid={changePwdMut.isError}
                 required
               />
             </div>
-            {pwdMsg && <p className="text-sm text-muted-foreground">{pwdMsg}</p>}
+            {pwdMsg && (
+              <p
+                role={changePwdMut.isError ? 'alert' : 'status'}
+                className="text-sm text-muted-foreground"
+              >
+                {pwdMsg}
+              </p>
+            )}
             <Button type="submit" disabled={changePwdMut.isPending}>
               修改密码
             </Button>
@@ -478,6 +501,7 @@ export default function SettingsPage() {
                   variant="outline"
                   size="icon"
                   className="self-start sm:self-auto"
+                  aria-label="复制邀请码"
                   onClick={() => navigator.clipboard.writeText(inviteCodeData.code)}
                 >
                   <Copy className="h-4 w-4" />
@@ -496,7 +520,7 @@ export default function SettingsPage() {
             </Button>
           )}
           {generateInviteMut.isError && (
-            <p className="text-sm text-destructive mt-2">
+            <p role="alert" className="text-sm text-destructive mt-2">
               {generateInviteMut.error instanceof Error
                 ? generateInviteMut.error.message
                 : '生成失败'}
@@ -542,6 +566,7 @@ export default function SettingsPage() {
                         variant="outline"
                         size="icon"
                         className="self-start sm:self-auto"
+                        aria-label="复制新访问令牌"
                         onClick={() => navigator.clipboard.writeText(newTokenValue)}
                       >
                         <Copy className="h-4 w-4" />
@@ -557,16 +582,21 @@ export default function SettingsPage() {
                     className="space-y-4"
                   >
                     <div className="space-y-2">
-                      <Label>名称</Label>
+                      <Label htmlFor="access-token-name">名称</Label>
                       <Input
+                        id="access-token-name"
                         value={tokenName}
                         onChange={(e) => setTokenName(e.target.value)}
                         placeholder="例如：接口集成"
                       />
                     </div>
                     <div className="space-y-2">
-                      <Label>有效期</Label>
-                      <div className="flex gap-2 flex-wrap">
+                      <div className="text-sm font-medium">有效期</div>
+                      <div
+                        className="flex gap-2 flex-wrap"
+                        role="group"
+                        aria-label="访问令牌有效期"
+                      >
                         {TTL_OPTIONS.map((opt) => (
                           <Button
                             type="button"
@@ -610,6 +640,7 @@ export default function SettingsPage() {
                     variant="ghost"
                     size="icon"
                     className="h-7 w-7 self-end text-destructive sm:self-auto"
+                    aria-label={`撤销访问令牌 ${t.name || t.id}`}
                     onClick={() => revokeMut.mutate(t.id)}
                   >
                     <Trash2 className="h-3.5 w-3.5" />

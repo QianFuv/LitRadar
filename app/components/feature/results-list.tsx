@@ -202,7 +202,7 @@ export function ResultsList() {
 
   if (isError) {
     return (
-      <div className="p-4 text-red-500 bg-red-50 dark:bg-red-900/20 rounded-md">
+      <div role="alert" className="p-4 text-red-500 bg-red-50 dark:bg-red-900/20 rounded-md">
         错误：{error instanceof Error ? error.message : '未知错误'}
       </div>
     );
@@ -210,7 +210,7 @@ export function ResultsList() {
 
   if (isLoading) {
     return (
-      <div className="space-y-4">
+      <div className="space-y-4" role="status" aria-label="正在加载搜索结果">
         {Array.from({ length: 5 }).map((_, i) => (
           <Card key={i}>
             <CardHeader>

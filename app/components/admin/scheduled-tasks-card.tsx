@@ -29,6 +29,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 
 type ScheduledTasksCardProps = {
@@ -213,21 +214,30 @@ export function ScheduledTasksCard({ token }: ScheduledTasksCardProps) {
               <DialogDescription>使用五段 crontab 表达式，例如 `0 8 * * *`。</DialogDescription>
             </DialogHeader>
             <div className="space-y-4 py-2">
-              <Input
-                value={form.name}
-                onChange={(event) =>
-                  setForm((current) => ({ ...current, name: event.target.value }))
-                }
-                placeholder="任务名称"
-              />
-              <Input
-                value={form.cron}
-                onChange={(event) =>
-                  setForm((current) => ({ ...current, cron: event.target.value }))
-                }
-                placeholder="Cron 表达式"
-              />
               <div className="space-y-2">
+                <Label htmlFor="scheduled-task-name">任务名称</Label>
+                <Input
+                  id="scheduled-task-name"
+                  value={form.name}
+                  onChange={(event) =>
+                    setForm((current) => ({ ...current, name: event.target.value }))
+                  }
+                  placeholder="任务名称"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="scheduled-task-cron">Cron 表达式</Label>
+                <Input
+                  id="scheduled-task-cron"
+                  value={form.cron}
+                  onChange={(event) =>
+                    setForm((current) => ({ ...current, cron: event.target.value }))
+                  }
+                  placeholder="Cron 表达式"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="scheduled-task-preset">任务预设</Label>
                 <Select
                   value={commandPreset}
                   onValueChange={(value: CommandPresetId) => {
@@ -246,7 +256,7 @@ export function ScheduledTasksCard({ token }: ScheduledTasksCardProps) {
                     }
                   }}
                 >
-                  <SelectTrigger className="w-full">
+                  <SelectTrigger id="scheduled-task-preset" className="w-full">
                     <SelectValue placeholder="选择任务预设" />
                   </SelectTrigger>
                   <SelectContent>
@@ -260,6 +270,7 @@ export function ScheduledTasksCard({ token }: ScheduledTasksCardProps) {
                 </Select>
                 {commandPreset === 'custom' ? (
                   <Input
+                    aria-label="自定义执行命令"
                     value={form.command}
                     onChange={(event) =>
                       setForm((current) => ({ ...current, command: event.target.value }))
@@ -273,15 +284,22 @@ export function ScheduledTasksCard({ token }: ScheduledTasksCardProps) {
                 )}
               </div>
               <div className="flex items-start justify-between gap-3 rounded-md border px-3 py-2">
-                <span className="text-sm">启用任务</span>
+                <Label htmlFor="scheduled-task-enabled" className="text-sm">
+                  启用任务
+                </Label>
                 <Switch
+                  id="scheduled-task-enabled"
                   checked={form.enabled}
                   onCheckedChange={(checked: boolean) =>
                     setForm((current) => ({ ...current, enabled: checked }))
                   }
                 />
               </div>
-              {mutationError && <p className="text-sm text-destructive">{mutationError}</p>}
+              {mutationError && (
+                <p role="alert" className="text-sm text-destructive">
+                  {mutationError}
+                </p>
+              )}
               <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
                 <Button
                   variant="outline"
@@ -307,10 +325,16 @@ export function ScheduledTasksCard({ token }: ScheduledTasksCardProps) {
           </DialogContent>
         </Dialog>
 
-        {error instanceof Error && <p className="text-sm text-destructive">{error.message}</p>}
+        {error instanceof Error && (
+          <p role="alert" className="text-sm text-destructive">
+            {error.message}
+          </p>
+        )}
 
         {isLoading ? (
-          <p className="text-sm text-muted-foreground">加载中...</p>
+          <p role="status" className="text-sm text-muted-foreground">
+            加载中...
+          </p>
         ) : tasks.length === 0 ? (
           <p className="text-sm text-muted-foreground">暂无定时任务</p>
         ) : (
@@ -330,17 +354,24 @@ export function ScheduledTasksCard({ token }: ScheduledTasksCardProps) {
                   <div className="flex w-full flex-wrap items-center justify-end gap-2 sm:w-auto sm:flex-nowrap">
                     <Switch
                       checked={task.enabled}
+                      aria-label={`${task.enabled ? '停用' : '启用'}定时任务 ${task.name}`}
                       onCheckedChange={(checked: boolean) =>
                         toggleMutation.mutate({ enabled: checked, taskId: task.id })
                       }
                     />
-                    <Button variant="ghost" size="icon" onClick={() => openEditDialog(task)}>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      aria-label={`编辑定时任务 ${task.name}`}
+                      onClick={() => openEditDialog(task)}
+                    >
                       <Pencil className="h-4 w-4" />
                     </Button>
                     <Button
                       variant="ghost"
                       size="icon"
                       className="text-destructive hover:text-destructive"
+                      aria-label={`删除定时任务 ${task.name}`}
                       onClick={() => deleteMutation.mutate(task.id)}
                     >
                       <Trash2 className="h-4 w-4" />

@@ -27,7 +27,9 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
   if (loading) {
     return (
       <main id="main-content" className="flex h-screen items-center justify-center">
-        <div className="animate-pulse text-muted-foreground">加载中...</div>
+        <div role="status" className="animate-pulse text-muted-foreground">
+          加载中...
+        </div>
       </main>
     );
   }

@@ -296,7 +296,7 @@ export default function FavoritesPage() {
   return (
     <main id="main-content" className="max-w-5xl mx-auto p-6 space-y-6">
       <div className="flex items-center gap-3">
-        <Button variant="ghost" size="icon" asChild>
+        <Button variant="ghost" size="icon" aria-label="返回首页" asChild>
           <Link href="/">
             <ArrowLeft className="h-5 w-5" />
           </Link>
@@ -313,7 +313,7 @@ export default function FavoritesPage() {
             </h2>
             <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
               <DialogTrigger asChild>
-                <Button variant="outline" size="icon" className="h-7 w-7">
+                <Button variant="outline" size="icon" className="h-7 w-7" aria-label="新建收藏夹">
                   <FolderPlus className="h-4 w-4" />
                 </Button>
               </DialogTrigger>
@@ -330,6 +330,7 @@ export default function FavoritesPage() {
                   className="space-y-4"
                 >
                   <Input
+                    aria-label="收藏夹名称"
                     value={newFolderName}
                     onChange={(e) => setNewFolderName(e.target.value)}
                     placeholder="收藏夹名称"
@@ -343,7 +344,9 @@ export default function FavoritesPage() {
           </div>
 
           {isLoading ? (
-            <div className="text-sm text-muted-foreground">加载中...</div>
+            <div role="status" className="text-sm text-muted-foreground">
+              加载中...
+            </div>
           ) : folders.length === 0 ? (
             <div className="text-sm text-muted-foreground">暂无收藏夹，点击 + 创建</div>
           ) : (
@@ -370,6 +373,7 @@ export default function FavoritesPage() {
                       onClick={(e) => e.stopPropagation()}
                     >
                       <Input
+                        aria-label={`重命名收藏夹 ${folder.name}`}
                         value={editName}
                         onChange={(e) => setEditName(e.target.value)}
                         className="h-6 text-sm"
@@ -394,6 +398,7 @@ export default function FavoritesPage() {
                       size="icon"
                       className="h-6 w-6"
                       title="设为追踪文件夹"
+                      aria-label={`设 ${folder.name} 为追踪文件夹`}
                       onClick={(e) => {
                         e.stopPropagation();
                         trackMut.mutate(folder.id);
@@ -405,6 +410,7 @@ export default function FavoritesPage() {
                       variant="ghost"
                       size="icon"
                       className="h-6 w-6"
+                      aria-label={`重命名收藏夹 ${folder.name}`}
                       onClick={(e) => {
                         e.stopPropagation();
                         setEditingId(folder.id);
@@ -417,6 +423,7 @@ export default function FavoritesPage() {
                       variant="ghost"
                       size="icon"
                       className="h-6 w-6 text-destructive"
+                      aria-label={`删除收藏夹 ${folder.name}`}
                       onClick={(e) => {
                         e.stopPropagation();
                         deleteMut.mutate(folder.id);
@@ -491,7 +498,7 @@ export default function FavoritesPage() {
                 </div>
               ) : isFavoritesError ? (
                 <div className="flex h-40 flex-col items-center justify-center gap-3 text-center">
-                  <p className="text-sm text-muted-foreground">
+                  <p role="alert" className="text-sm text-muted-foreground">
                     {favoritesError instanceof Error ? favoritesError.message : '加载收藏文章失败'}
                   </p>
                   <Button variant="outline" size="sm" onClick={() => void refetchFavorites()}>
@@ -548,7 +555,7 @@ export default function FavoritesPage() {
                           value={effectiveMoveTargetFolderId}
                           onValueChange={setMoveTargetFolderId}
                         >
-                          <SelectTrigger className="w-full sm:w-48">
+                          <SelectTrigger className="w-full sm:w-48" aria-label="选择目标收藏夹">
                             <SelectValue placeholder="选择目标收藏夹" />
                           </SelectTrigger>
                           <SelectContent>
@@ -583,6 +590,7 @@ export default function FavoritesPage() {
                     </div>
                     {batchFeedback && (
                       <p
+                        role={batchFeedback.tone === 'error' ? 'alert' : 'status'}
                         className={`text-sm ${
                           batchFeedback.tone === 'error' ? 'text-destructive' : 'text-emerald-700'
                         }`}

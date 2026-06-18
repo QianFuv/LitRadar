@@ -107,6 +107,7 @@ export function SearchBar({ className }: { className?: string }) {
           <PopoverTrigger asChild>
             <Input
               type="search"
+              aria-label="搜索文章"
               placeholder="搜索文章..."
               className="pl-9 pr-9"
               value={inputValue}
@@ -159,6 +160,7 @@ export function SearchBar({ className }: { className?: string }) {
         {inputValue && (
           <button
             type="button"
+            aria-label="清空搜索"
             onClick={() => {
               setInputValue('');
               setQ('');

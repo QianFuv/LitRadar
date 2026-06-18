@@ -520,6 +520,7 @@ export function Sidebar({ className }: { className?: string }) {
                   className="w-[var(--radix-popover-trigger-width)] max-w-[calc(100vw-2rem)] p-3"
                 >
                   <Input
+                    aria-label="搜索期刊"
                     value={journalSearch}
                     onChange={(event) => setJournalSearch(event.target.value)}
                     placeholder="搜索期刊"

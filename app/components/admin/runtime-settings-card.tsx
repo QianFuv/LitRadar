@@ -138,6 +138,7 @@ function RuntimePoolEditor({ id, inputType, label, value, onChange }: RuntimePoo
             variant="ghost"
             size="icon-sm"
             className="shrink-0 text-destructive hover:text-destructive"
+            aria-label={`删除${label}第 ${index + 1} 行`}
             onClick={() => deleteRow(index)}
           >
             <Trash2 className="h-4 w-4" />
@@ -206,7 +207,9 @@ export function RuntimeSettingsCard({ token }: RuntimeSettingsCardProps) {
       </CardHeader>
       <CardContent className="space-y-4">
         {isLoading ? (
-          <div className="text-sm text-muted-foreground">加载中...</div>
+          <div role="status" className="text-sm text-muted-foreground">
+            加载中...
+          </div>
         ) : (
           <div className="grid gap-4">
             {settings.map((setting) => {
@@ -266,7 +269,11 @@ export function RuntimeSettingsCard({ token }: RuntimeSettingsCardProps) {
             })}
           </div>
         )}
-        {mutationError && <p className="text-sm text-destructive">{mutationError}</p>}
+        {mutationError && (
+          <p role="alert" className="text-sm text-destructive">
+            {mutationError}
+          </p>
+        )}
         <div className="flex justify-end">
           <Button
             disabled={isLoading || saveMutation.isPending}

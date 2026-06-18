@@ -169,7 +169,7 @@ export default function AdminPage() {
   return (
     <main id="main-content" className="mx-auto max-w-5xl space-y-4 p-4 sm:space-y-6 sm:p-6">
       <div className="flex items-start gap-2 sm:gap-3">
-        <Button variant="ghost" size="icon" asChild>
+        <Button variant="ghost" size="icon" aria-label="返回首页" asChild>
           <Link href="/">
             <ArrowLeft className="h-5 w-5" />
           </Link>
@@ -188,7 +188,9 @@ export default function AdminPage() {
         </CardHeader>
         <CardContent>
           {statsLoading ? (
-            <div className="text-muted-foreground">加载中...</div>
+            <div className="text-muted-foreground" role="status">
+              加载中...
+            </div>
           ) : (
             <div className="space-y-4">
               <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
@@ -421,6 +423,11 @@ export default function AdminPage() {
                           variant="ghost"
                           size="sm"
                           title={u.is_admin ? '取消管理员' : '设为管理员'}
+                          aria-label={
+                            u.is_admin
+                              ? `取消 ${u.username} 的管理员`
+                              : `设为 ${u.username} 为管理员`
+                          }
                           disabled={toggleAdminMut.isPending || u.id === user!.id}
                           onClick={() =>
                             toggleAdminMut.mutate({
@@ -439,6 +446,7 @@ export default function AdminPage() {
                           variant="ghost"
                           size="sm"
                           title="重置密码"
+                          aria-label={`重置 ${u.username} 的密码`}
                           onClick={() => {
                             setResetPwUserId(u.id);
                             setResetPwValue('');
@@ -451,6 +459,7 @@ export default function AdminPage() {
                           variant="ghost"
                           size="sm"
                           title="删除用户"
+                          aria-label={`删除用户 ${u.username}`}
                           disabled={u.id === user!.id}
                           className="text-destructive hover:text-destructive"
                           onClick={() => {
@@ -480,6 +489,8 @@ export default function AdminPage() {
           <div className="space-y-3 py-2">
             <Input
               type="password"
+              aria-label="新密码"
+              autoComplete="new-password"
               value={resetPwValue}
               onChange={(e) => setResetPwValue(e.target.value)}
               placeholder="新密码 (至少6位)"
@@ -508,7 +519,7 @@ export default function AdminPage() {
               </Button>
             </div>
             {resetPwMut.isError && (
-              <p className="text-sm text-destructive">
+              <p role="alert" className="text-sm text-destructive">
                 {resetPwMut.error instanceof Error ? resetPwMut.error.message : '重置失败'}
               </p>
             )}
@@ -661,6 +672,7 @@ export default function AdminPage() {
                           onClick={() => navigator.clipboard.writeText(ic.code)}
                           className="p-0.5 rounded hover:bg-muted"
                           title="复制"
+                          aria-label="复制邀请码"
                         >
                           <Copy className="h-3 w-3" />
                         </button>
@@ -682,6 +694,7 @@ export default function AdminPage() {
                           variant="ghost"
                           size="sm"
                           className="text-destructive hover:text-destructive"
+                          aria-label={`删除邀请码 ${ic.code}`}
                           disabled={deleteCodeMut.isPending}
                           onClick={() => deleteCodeMut.mutate(ic.id)}
                         >

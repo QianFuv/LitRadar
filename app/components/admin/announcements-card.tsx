@@ -29,6 +29,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 
 type AnnouncementsCardProps = {
@@ -174,46 +175,64 @@ export function AnnouncementsCard({ token }: AnnouncementsCardProps) {
               <DialogDescription>公告会在首页顶部轮询显示，用户可单独关闭。</DialogDescription>
             </DialogHeader>
             <div className="space-y-4 py-2">
-              <Input
-                value={form.title}
-                onChange={(event) =>
-                  setForm((current) => ({ ...current, title: event.target.value }))
-                }
-                placeholder="公告标题"
-              />
-              <Select
-                value={form.priority}
-                onValueChange={(value: 'high' | 'normal' | 'low') =>
-                  setForm((current) => ({ ...current, priority: value }))
-                }
-              >
-                <SelectTrigger className="w-full">
-                  <SelectValue placeholder="选择优先级" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="high">高优先级</SelectItem>
-                  <SelectItem value="normal">普通</SelectItem>
-                  <SelectItem value="low">低优先级</SelectItem>
-                </SelectContent>
-              </Select>
-              <textarea
-                value={form.message}
-                onChange={(event) =>
-                  setForm((current) => ({ ...current, message: event.target.value }))
-                }
-                placeholder="公告内容"
-                className="min-h-28 w-full rounded-md border bg-transparent px-3 py-2 text-sm shadow-xs outline-none"
-              />
+              <div className="space-y-2">
+                <Label htmlFor="announcement-title">公告标题</Label>
+                <Input
+                  id="announcement-title"
+                  value={form.title}
+                  onChange={(event) =>
+                    setForm((current) => ({ ...current, title: event.target.value }))
+                  }
+                  placeholder="公告标题"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="announcement-priority">优先级</Label>
+                <Select
+                  value={form.priority}
+                  onValueChange={(value: 'high' | 'normal' | 'low') =>
+                    setForm((current) => ({ ...current, priority: value }))
+                  }
+                >
+                  <SelectTrigger id="announcement-priority" className="w-full">
+                    <SelectValue placeholder="选择优先级" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="high">高优先级</SelectItem>
+                    <SelectItem value="normal">普通</SelectItem>
+                    <SelectItem value="low">低优先级</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="announcement-message">公告内容</Label>
+                <textarea
+                  id="announcement-message"
+                  value={form.message}
+                  onChange={(event) =>
+                    setForm((current) => ({ ...current, message: event.target.value }))
+                  }
+                  placeholder="公告内容"
+                  className="min-h-28 w-full rounded-md border bg-transparent px-3 py-2 text-sm shadow-xs outline-none"
+                />
+              </div>
               <div className="flex items-start justify-between gap-3 rounded-md border px-3 py-2">
-                <span className="text-sm">启用公告</span>
+                <Label htmlFor="announcement-enabled" className="text-sm">
+                  启用公告
+                </Label>
                 <Switch
+                  id="announcement-enabled"
                   checked={form.enabled}
                   onCheckedChange={(checked: boolean) =>
                     setForm((current) => ({ ...current, enabled: checked }))
                   }
                 />
               </div>
-              {mutationError && <p className="text-sm text-destructive">{mutationError}</p>}
+              {mutationError && (
+                <p role="alert" className="text-sm text-destructive">
+                  {mutationError}
+                </p>
+              )}
               <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
                 <Button
                   variant="outline"
@@ -234,10 +253,16 @@ export function AnnouncementsCard({ token }: AnnouncementsCardProps) {
           </DialogContent>
         </Dialog>
 
-        {error instanceof Error && <p className="text-sm text-destructive">{error.message}</p>}
+        {error instanceof Error && (
+          <p role="alert" className="text-sm text-destructive">
+            {error.message}
+          </p>
+        )}
 
         {isLoading ? (
-          <p className="text-sm text-muted-foreground">加载中...</p>
+          <p role="status" className="text-sm text-muted-foreground">
+            加载中...
+          </p>
         ) : announcements.length === 0 ? (
           <p className="text-sm text-muted-foreground">暂无公告</p>
         ) : (
@@ -262,6 +287,7 @@ export function AnnouncementsCard({ token }: AnnouncementsCardProps) {
                   <div className="flex w-full flex-wrap items-center justify-end gap-2 sm:w-auto sm:flex-nowrap">
                     <Switch
                       checked={announcement.enabled}
+                      aria-label={`${announcement.enabled ? '停用' : '启用'}公告 ${announcement.title}`}
                       onCheckedChange={(checked: boolean) =>
                         toggleMutation.mutate({ announcementId: announcement.id, enabled: checked })
                       }
@@ -269,6 +295,7 @@ export function AnnouncementsCard({ token }: AnnouncementsCardProps) {
                     <Button
                       variant="ghost"
                       size="icon"
+                      aria-label={`编辑公告 ${announcement.title}`}
                       onClick={() => openEditDialog(announcement)}
                     >
                       <Pencil className="h-4 w-4" />
@@ -277,6 +304,7 @@ export function AnnouncementsCard({ token }: AnnouncementsCardProps) {
                       variant="ghost"
                       size="icon"
                       className="text-destructive hover:text-destructive"
+                      aria-label={`删除公告 ${announcement.title}`}
                       onClick={() => deleteMutation.mutate(announcement.id)}
                     >
                       <Trash2 className="h-4 w-4" />

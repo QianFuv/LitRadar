@@ -325,7 +325,7 @@ export default function TrackingPage() {
   return (
     <main id="main-content" className="mx-auto max-w-3xl space-y-4 p-4 sm:space-y-6 sm:p-6">
       <div className="flex items-start gap-2 sm:gap-3">
-        <Button variant="ghost" size="icon" asChild>
+        <Button variant="ghost" size="icon" aria-label="返回首页" asChild>
           <Link href="/">
             <ArrowLeft className="h-5 w-5" />
           </Link>
@@ -376,6 +376,7 @@ export default function TrackingPage() {
 
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
             <Input
+              aria-label="新建追踪文件夹名称"
               value={newFolderName}
               onChange={(e) => setNewFolderName(e.target.value)}
               placeholder="新建追踪文件夹"
@@ -418,7 +419,14 @@ export default function TrackingPage() {
               {manualPushLabel}
             </Button>
           </div>
-          {pushResult && <div className="rounded-md border px-3 py-2 text-sm">{pushResult}</div>}
+          {pushResult && (
+            <div
+              role={pushMut.isError ? 'alert' : 'status'}
+              className="rounded-md border px-3 py-2 text-sm"
+            >
+              {pushResult}
+            </div>
+          )}
         </CardContent>
       </Card>
 
@@ -431,11 +439,17 @@ export default function TrackingPage() {
         </CardHeader>
         <CardContent className="space-y-5">
           {notificationSettingsQuery.isPending && draftSettings === null ? (
-            <div className="rounded-md border px-3 py-4 text-sm text-muted-foreground">
+            <div
+              role="status"
+              className="rounded-md border px-3 py-4 text-sm text-muted-foreground"
+            >
               正在加载已保存的推荐配置...
             </div>
           ) : notificationSettingsQuery.isError && draftSettings === null ? (
-            <div className="rounded-md border border-destructive/50 px-3 py-4 text-sm text-destructive">
+            <div
+              role="alert"
+              className="rounded-md border border-destructive/50 px-3 py-4 text-sm text-destructive"
+            >
               {notificationSettingsQuery.error instanceof Error
                 ? notificationSettingsQuery.error.message
                 : '加载推荐配置失败'}
@@ -457,13 +471,14 @@ export default function TrackingPage() {
               </div>
 
               <div className="space-y-2">
-                <Label>关键词</Label>
+                <Label htmlFor="keyword-input">关键词</Label>
                 <div className="flex flex-wrap gap-1.5 min-h-[2rem]">
                   {keywords.map((kw) => (
                     <Badge key={kw} variant="secondary" className="gap-1 pr-1">
                       {kw}
                       <button
                         type="button"
+                        aria-label={`移除关键词 ${kw}`}
                         onClick={() =>
                           updateDraftSettings((current) => ({
                             ...current,
@@ -479,6 +494,7 @@ export default function TrackingPage() {
                 </div>
                 <div className="flex flex-col gap-2 sm:flex-row">
                   <Input
+                    id="keyword-input"
                     value={keywordInput}
                     onChange={(e) => setKeywordInput(e.target.value)}
                     onKeyDown={(e) => {
@@ -495,6 +511,7 @@ export default function TrackingPage() {
                     variant="outline"
                     size="sm"
                     className="w-full sm:w-auto"
+                    aria-label="添加关键词"
                     onClick={addKeyword}
                     disabled={!keywordInput.trim()}
                   >
@@ -504,13 +521,14 @@ export default function TrackingPage() {
               </div>
 
               <div className="space-y-2">
-                <Label>研究方向</Label>
+                <Label htmlFor="direction-input">研究方向</Label>
                 <div className="flex flex-wrap gap-1.5 min-h-[2rem]">
                   {directions.map((d) => (
                     <Badge key={d} variant="secondary" className="gap-1 pr-1">
                       {d}
                       <button
                         type="button"
+                        aria-label={`移除研究方向 ${d}`}
                         onClick={() =>
                           updateDraftSettings((current) => ({
                             ...current,
@@ -526,6 +544,7 @@ export default function TrackingPage() {
                 </div>
                 <div className="flex flex-col gap-2 sm:flex-row">
                   <Input
+                    id="direction-input"
                     value={directionInput}
                     onChange={(e) => setDirectionInput(e.target.value)}
                     onKeyDown={(e) => {
@@ -542,6 +561,7 @@ export default function TrackingPage() {
                     variant="outline"
                     size="sm"
                     className="w-full sm:w-auto"
+                    aria-label="添加研究方向"
                     onClick={addDirection}
                     disabled={!directionInput.trim()}
                   >
@@ -550,19 +570,31 @@ export default function TrackingPage() {
                 </div>
               </div>
 
-              <div className="space-y-3 rounded-md border p-3">
+              <div
+                className="space-y-3 rounded-md border p-3"
+                role="group"
+                aria-labelledby="push-databases-label"
+              >
                 <div className="space-y-1">
-                  <Label className="text-base">推送数据库</Label>
+                  <div id="push-databases-label" className="text-base font-medium">
+                    推送数据库
+                  </div>
                   <p className="text-xs text-muted-foreground">
                     手动推送和自动推送都会按这里的数据库范围执行；不限制时表示全部数据库。
                   </p>
                 </div>
                 {databasesQuery.isPending ? (
-                  <div className="rounded-md border border-dashed px-3 py-4 text-sm text-muted-foreground">
+                  <div
+                    role="status"
+                    className="rounded-md border border-dashed px-3 py-4 text-sm text-muted-foreground"
+                  >
                     正在加载数据库列表...
                   </div>
                 ) : databasesQuery.isError ? (
-                  <div className="rounded-md border border-destructive/50 px-3 py-4 text-sm text-destructive">
+                  <div
+                    role="alert"
+                    className="rounded-md border border-destructive/50 px-3 py-4 text-sm text-destructive"
+                  >
                     {databasesQuery.error instanceof Error
                       ? databasesQuery.error.message
                       : '加载数据库列表失败'}
@@ -621,7 +653,7 @@ export default function TrackingPage() {
               </div>
 
               <div className="space-y-2">
-                <Label>推送方式</Label>
+                <Label htmlFor="delivery-method">推送方式</Label>
                 <Select
                   value={deliveryMethod}
                   onValueChange={(v: string) =>
@@ -631,7 +663,7 @@ export default function TrackingPage() {
                     }))
                   }
                 >
-                  <SelectTrigger className="w-full sm:w-60">
+                  <SelectTrigger id="delivery-method" className="w-full sm:w-60">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -645,7 +677,7 @@ export default function TrackingPage() {
                 <div className="space-y-2">
                   <div className="flex items-center justify-between gap-3">
                     <div>
-                      <Label className="text-base">主 AI 配置</Label>
+                      <div className="text-base font-medium">主 AI 配置</div>
                       <p className="text-xs text-muted-foreground mt-1">
                         优先使用这套配置进行筛选；留空字段会回退到服务端默认值。
                       </p>
@@ -732,7 +764,7 @@ export default function TrackingPage() {
                 </div>
                 <div className="space-y-3 rounded-md border border-dashed p-3">
                   <div>
-                    <Label className="text-base">备用 AI 配置</Label>
+                    <div className="text-base font-medium">备用 AI 配置</div>
                     <p className="text-xs text-muted-foreground mt-1">
                       当主配置连续失败后，系统会自动切换到这套备用配置重试。
                     </p>
@@ -899,9 +931,13 @@ export default function TrackingPage() {
                   <Save className="h-4 w-4 mr-1" />
                   {saveSettingsMut.isPending ? '保存中...' : '保存配置'}
                 </Button>
-                {settingsSaved && <span className="text-sm text-green-600">已保存</span>}
+                {settingsSaved && (
+                  <span role="status" className="text-sm text-green-600">
+                    已保存
+                  </span>
+                )}
                 {saveSettingsMut.isError && (
-                  <span className="text-sm text-destructive">
+                  <span role="alert" className="text-sm text-destructive">
                     {saveSettingsMut.error instanceof Error
                       ? saveSettingsMut.error.message
                       : '保存失败'}
