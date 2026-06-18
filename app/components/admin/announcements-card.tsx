@@ -213,7 +213,7 @@ export function AnnouncementsCard({ token }: AnnouncementsCardProps) {
                     setForm((current) => ({ ...current, message: event.target.value }))
                   }
                   placeholder="公告内容"
-                  className="min-h-28 w-full rounded-md border bg-transparent px-3 py-2 text-sm shadow-xs outline-none"
+                  className="min-h-28 w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-xs outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
                 />
               </div>
               <div className="flex items-start justify-between gap-3 rounded-md border px-3 py-2">
