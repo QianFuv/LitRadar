@@ -1,18 +1,28 @@
 'use client';
 
-import { useRouter } from 'next/navigation';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { useEffect } from 'react';
 import { useAuth } from '@/lib/auth-context';
 
+/**
+ * Render authenticated routes and redirect unauthenticated users to login.
+ *
+ * @param props - Layout props.
+ * @returns Protected route layout.
+ */
 export default function ProtectedLayout({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuth();
   const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const search = searchParams.toString();
 
   useEffect(() => {
     if (!loading && !user) {
-      router.replace('/login');
+      const nextPath = search ? `${pathname}?${search}` : pathname;
+      router.replace(`/login?next=${encodeURIComponent(nextPath)}`);
     }
-  }, [user, loading, router]);
+  }, [loading, pathname, router, search, user]);
 
   if (loading) {
     return (

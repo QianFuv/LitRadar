@@ -14,7 +14,7 @@ import {
   useState,
   type ReactNode,
 } from 'react';
-import { getCurrentUser, loginUser, logoutUser, registerUser, type AuthUser } from '@/lib/api';
+import { loginUser, logoutUser, registerUser, type AuthUser } from '@/lib/api';
 
 export type { AuthUser };
 
@@ -28,19 +28,25 @@ interface AuthState {
 }
 
 const AuthContext = createContext<AuthState | null>(null);
-const ACCESS_TOKEN_KEY = 'ps_access_token';
+const LEGACY_ACCESS_TOKEN_KEY = 'ps_access_token';
 const USER_STORAGE_KEY = 'ps_user';
 
 /**
- * Read the stored access token.
+ * Check whether a parsed value matches the stored user shape.
  *
- * @returns Access token or null.
+ * @param value - Parsed storage value.
+ * @returns Whether the value is an auth user.
  */
-function readStoredToken(): string | null {
-  if (typeof window === 'undefined') {
-    return null;
+function isAuthUser(value: unknown): value is AuthUser {
+  if (!value || typeof value !== 'object') {
+    return false;
   }
-  return window.localStorage.getItem(ACCESS_TOKEN_KEY);
+  const user = value as Record<string, unknown>;
+  return (
+    typeof user.id === 'number' &&
+    typeof user.username === 'string' &&
+    (user.is_admin === undefined || typeof user.is_admin === 'boolean')
+  );
 }
 
 /**
@@ -57,7 +63,12 @@ function readStoredUser(): AuthUser | null {
     return null;
   }
   try {
-    return JSON.parse(rawUser) as AuthUser;
+    const parsedUser: unknown = JSON.parse(rawUser);
+    if (isAuthUser(parsedUser)) {
+      return parsedUser;
+    }
+    window.localStorage.removeItem(USER_STORAGE_KEY);
+    return null;
   } catch {
     window.localStorage.removeItem(USER_STORAGE_KEY);
     return null;
@@ -65,21 +76,26 @@ function readStoredUser(): AuthUser | null {
 }
 
 /**
- * Persist the authenticated session locally.
+ * Persist non-secret authenticated user metadata locally.
  *
- * @param token - Access token.
  * @param user - Authenticated user.
  */
-function writeSession(token: string, user: AuthUser): void {
-  window.localStorage.setItem(ACCESS_TOKEN_KEY, token);
+function writeStoredUser(user: AuthUser): void {
   window.localStorage.setItem(USER_STORAGE_KEY, JSON.stringify(user));
 }
 
 /**
- * Remove the locally persisted session.
+ * Remove access tokens written by older frontend versions.
+ */
+function clearLegacyStoredToken(): void {
+  window.localStorage.removeItem(LEGACY_ACCESS_TOKEN_KEY);
+}
+
+/**
+ * Remove locally persisted non-secret session metadata and legacy tokens.
  */
 function clearStoredSession(): void {
-  window.localStorage.removeItem(ACCESS_TOKEN_KEY);
+  clearLegacyStoredToken();
   window.localStorage.removeItem(USER_STORAGE_KEY);
 }
 
@@ -103,29 +119,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [queryClient]);
 
   useEffect(() => {
-    const storedToken = readStoredToken();
-    const storedUser = readStoredUser();
-    if (!storedToken || !storedUser) {
-      setLoading(false);
-      return;
-    }
-
-    setToken(storedToken);
-    setUser(storedUser);
-    getCurrentUser(storedToken)
-      .then((freshUser) => {
-        writeSession(storedToken, freshUser);
-        setUser(freshUser);
-      })
-      .catch(clearSession)
-      .finally(() => setLoading(false));
-  }, [clearSession]);
+    clearLegacyStoredToken();
+    readStoredUser();
+    setLoading(false);
+  }, []);
 
   const login = useCallback(
     async (username: string, password: string) => {
       const response = await loginUser(username, password);
       queryClient.clear();
-      writeSession(response.access_token, response.user);
+      writeStoredUser(response.user);
       setToken(response.access_token);
       setUser(response.user);
     },
@@ -141,7 +144,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   );
 
   const logout = useCallback(async () => {
-    const activeToken = token || readStoredToken();
+    const activeToken = token;
     try {
       if (activeToken) {
         await logoutUser(activeToken);

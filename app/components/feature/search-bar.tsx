@@ -11,25 +11,52 @@ import { cn } from '@/lib/utils';
 const SEARCH_HISTORY_KEY = 'search_history';
 const MAX_HISTORY_ITEMS = 10;
 
+/**
+ * Read validated search history from local storage.
+ *
+ * @returns Stored search history or an empty list.
+ */
 function getSearchHistory(): string[] {
   if (typeof window === 'undefined') return [];
-  const history = localStorage.getItem(SEARCH_HISTORY_KEY);
-  return history ? JSON.parse(history) : [];
+  const history = window.localStorage.getItem(SEARCH_HISTORY_KEY);
+  if (!history) {
+    return [];
+  }
+  try {
+    const parsedHistory: unknown = JSON.parse(history);
+    if (Array.isArray(parsedHistory) && parsedHistory.every((item) => typeof item === 'string')) {
+      return parsedHistory;
+    }
+  } catch {
+    window.localStorage.removeItem(SEARCH_HISTORY_KEY);
+    return [];
+  }
+  window.localStorage.removeItem(SEARCH_HISTORY_KEY);
+  return [];
 }
 
-function saveSearchHistory(query: string) {
+/**
+ * Save a search query to local history.
+ *
+ * @param query - Query text.
+ */
+function saveSearchHistory(query: string): void {
   if (typeof window === 'undefined' || !query.trim()) return;
 
   const history = getSearchHistory();
-  const filtered = history.filter((item) => item !== query);
-  const newHistory = [query, ...filtered].slice(0, MAX_HISTORY_ITEMS);
+  const trimmedQuery = query.trim();
+  const filtered = history.filter((item) => item !== trimmedQuery);
+  const newHistory = [trimmedQuery, ...filtered].slice(0, MAX_HISTORY_ITEMS);
 
-  localStorage.setItem(SEARCH_HISTORY_KEY, JSON.stringify(newHistory));
+  window.localStorage.setItem(SEARCH_HISTORY_KEY, JSON.stringify(newHistory));
 }
 
-function clearSearchHistory() {
+/**
+ * Clear stored search history.
+ */
+function clearSearchHistory(): void {
   if (typeof window === 'undefined') return;
-  localStorage.removeItem(SEARCH_HISTORY_KEY);
+  window.localStorage.removeItem(SEARCH_HISTORY_KEY);
 }
 
 export function SearchBar({ className }: { className?: string }) {
