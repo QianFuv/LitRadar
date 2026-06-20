@@ -103,4 +103,4 @@ app/
 - 获取当前用户：`GET /api/auth/me`
 - 访问令牌：`/api/auth/tokens`
 
-前端登录态由 `app/lib/auth-context.tsx` 与后端 `/api/auth/*` 共同完成。登录令牌只在当前前端运行会话中用于 API 请求；设置页的访问令牌由 `/api/auth/tokens` 管理。
+前端登录态由 `app/lib/auth-context.tsx` 与后端 `/api/auth/*` 共同完成。登录令牌保存在当前浏览器标签页会话中，刷新页面时会通过 `/api/auth/me` 校验并恢复；设置页的访问令牌由 `/api/auth/tokens` 管理。

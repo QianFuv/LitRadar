@@ -14,7 +14,7 @@ import {
   useState,
   type ReactNode,
 } from 'react';
-import { loginUser, logoutUser, registerUser, type AuthUser } from '@/lib/api';
+import { getCurrentUser, loginUser, logoutUser, registerUser, type AuthUser } from '@/lib/api';
 
 export type { AuthUser };
 
@@ -28,6 +28,7 @@ interface AuthState {
 }
 
 const AuthContext = createContext<AuthState | null>(null);
+const ACCESS_TOKEN_STORAGE_KEY = 'ps_session_access_token';
 const LEGACY_ACCESS_TOKEN_KEY = 'ps_access_token';
 const USER_STORAGE_KEY = 'ps_user';
 
@@ -85,9 +86,42 @@ function writeStoredUser(user: AuthUser): void {
 }
 
 /**
- * Remove access tokens written by older frontend versions.
+ * Read a stored access token from the current browser tab session.
+ *
+ * @returns Stored access token or null.
  */
-function clearLegacyStoredToken(): void {
+function readStoredAccessToken(): string | null {
+  if (typeof window === 'undefined') {
+    return null;
+  }
+  const sessionToken = window.sessionStorage.getItem(ACCESS_TOKEN_STORAGE_KEY);
+  if (sessionToken) {
+    return sessionToken;
+  }
+  const legacyToken = window.localStorage.getItem(LEGACY_ACCESS_TOKEN_KEY);
+  if (!legacyToken) {
+    return null;
+  }
+  window.sessionStorage.setItem(ACCESS_TOKEN_STORAGE_KEY, legacyToken);
+  window.localStorage.removeItem(LEGACY_ACCESS_TOKEN_KEY);
+  return legacyToken;
+}
+
+/**
+ * Store an access token for the current browser tab session.
+ *
+ * @param token - Access token returned by the backend.
+ */
+function writeStoredAccessToken(token: string): void {
+  window.sessionStorage.setItem(ACCESS_TOKEN_STORAGE_KEY, token);
+  window.localStorage.removeItem(LEGACY_ACCESS_TOKEN_KEY);
+}
+
+/**
+ * Remove access tokens stored by current and older frontend versions.
+ */
+function clearStoredAccessTokens(): void {
+  window.sessionStorage.removeItem(ACCESS_TOKEN_STORAGE_KEY);
   window.localStorage.removeItem(LEGACY_ACCESS_TOKEN_KEY);
 }
 
@@ -95,7 +129,7 @@ function clearLegacyStoredToken(): void {
  * Remove locally persisted non-secret session metadata and legacy tokens.
  */
 function clearStoredSession(): void {
-  clearLegacyStoredToken();
+  clearStoredAccessTokens();
   window.localStorage.removeItem(USER_STORAGE_KEY);
 }
 
@@ -119,15 +153,56 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [queryClient]);
 
   useEffect(() => {
-    clearLegacyStoredToken();
-    readStoredUser();
-    setLoading(false);
-  }, []);
+    let didCancel = false;
+
+    const restoreSession = async () => {
+      const storedToken = readStoredAccessToken();
+      const storedUser = readStoredUser();
+
+      if (!storedToken) {
+        if (storedUser) {
+          clearStoredSession();
+        }
+        if (!didCancel) {
+          setLoading(false);
+        }
+        return;
+      }
+
+      try {
+        const currentUser = await getCurrentUser(storedToken);
+        if (didCancel) {
+          return;
+        }
+        writeStoredUser(currentUser);
+        setToken(storedToken);
+        setUser(currentUser);
+      } catch {
+        clearStoredSession();
+        if (!didCancel) {
+          setToken(null);
+          setUser(null);
+          queryClient.clear();
+        }
+      } finally {
+        if (!didCancel) {
+          setLoading(false);
+        }
+      }
+    };
+
+    void restoreSession();
+
+    return () => {
+      didCancel = true;
+    };
+  }, [queryClient]);
 
   const login = useCallback(
     async (username: string, password: string) => {
       const response = await loginUser(username, password);
       queryClient.clear();
+      writeStoredAccessToken(response.access_token);
       writeStoredUser(response.user);
       setToken(response.access_token);
       setUser(response.user);
