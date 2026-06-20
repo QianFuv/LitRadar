@@ -153,21 +153,35 @@
 }
 
 .skip-link {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  border: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.skip-link:focus-visible {
   position: fixed;
   left: 1rem;
   top: 1rem;
   z-index: 100;
+  width: auto;
+  height: auto;
+  margin: 0;
+  border: 0;
+  overflow: visible;
+  clip: auto;
+  clip-path: none;
+  white-space: normal;
   border-radius: var(--radius);
   background: var(--background);
   color: var(--foreground);
   padding: 0.5rem 0.75rem;
   box-shadow: var(--shadow-vercel-card);
-  transform: translateY(-200%);
-  transition: transform 150ms ease;
-}
-
-.skip-link:focus {
-  transform: translateY(0);
 }
 
 @media (prefers-reduced-motion: reduce) {
