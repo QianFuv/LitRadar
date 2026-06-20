@@ -10,6 +10,7 @@
 /data/push_state
 /data/auth.sqlite
 /docs/plan/
+/docs/report/
 /output/
 /.playwright-cli/
 /.antigravitycli/
