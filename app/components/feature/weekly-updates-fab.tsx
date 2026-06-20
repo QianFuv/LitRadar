@@ -16,7 +16,6 @@ import {
 } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
-import { getCurrentDatabase } from '@/lib/api';
 import { useAuth } from '@/lib/auth-context';
 import { cn } from '@/lib/utils';
 
@@ -30,11 +29,6 @@ interface FabItem {
 export function WeeklyUpdatesFab() {
   const { user, logout } = useAuth();
   const [open, setOpen] = useState(false);
-
-  const weeklyHref = (() => {
-    const db = getCurrentDatabase();
-    return db ? `/weekly-updates?db=${encodeURIComponent(db)}` : '/weekly-updates';
-  })();
 
   const items: FabItem[] = [];
 
@@ -51,7 +45,7 @@ export function WeeklyUpdatesFab() {
       {
         icon: <CalendarDays className="h-4 w-4" />,
         label: '每周更新',
-        href: weeklyHref,
+        href: '/weekly-updates',
       },
       {
         icon: <LogOut className="h-4 w-4" />,

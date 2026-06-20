@@ -23,6 +23,24 @@ from paper_scanner.shared.constants import INDEX_DIR, PUSH_STATE_DIR
 SQLITE_QUERY_BATCH_SIZE = 500
 
 
+def normalize_weekly_db_name(value: str) -> str | None:
+    """
+    Normalize a weekly database filter or manifest value.
+
+    Args:
+        value: Raw database name or path.
+
+    Returns:
+        Database filename with .sqlite suffix or None.
+    """
+    candidate = Path(value).name.strip()
+    if not candidate:
+        return None
+    if candidate.endswith(".sqlite"):
+        return candidate
+    return f"{candidate}.sqlite"
+
+
 def parse_iso_datetime(value: str) -> datetime | None:
     """
     Parse an ISO datetime string into a timezone-aware UTC datetime.
@@ -66,7 +84,7 @@ def parse_manifest_generated_at(payload: dict[str, Any]) -> datetime:
 
 def extract_added_article_ids(payload: dict[str, Any]) -> list[int]:
     """
-    Extract all added article IDs (notifiable + backfill) from a changes manifest.
+    Extract notifiable article IDs from a changes manifest.
 
     Args:
         payload: Manifest JSON payload.
@@ -76,17 +94,16 @@ def extract_added_article_ids(payload: dict[str, Any]) -> list[int]:
     """
     unique_ids: list[int] = []
     seen: set[int] = set()
-    for key in ("notifiable_article_ids", "backfill_article_ids"):
-        raw_ids = payload.get(key)
-        if not isinstance(raw_ids, list):
+    raw_ids = payload.get("notifiable_article_ids")
+    if not isinstance(raw_ids, list):
+        return []
+    for item in raw_ids:
+        if not isinstance(item, int):
             continue
-        for item in raw_ids:
-            if not isinstance(item, int):
-                continue
-            if item in seen:
-                continue
-            seen.add(item)
-            unique_ids.append(item)
+        if item in seen:
+            continue
+        seen.add(item)
+        unique_ids.append(item)
     return unique_ids
 
 
@@ -167,19 +184,15 @@ def parse_db_name_from_manifest(payload: dict[str, Any]) -> str | None:
     """
     raw_name = payload.get("db_name")
     if isinstance(raw_name, str):
-        candidate = Path(raw_name).name.strip()
-        if candidate:
-            if candidate.endswith(".sqlite"):
-                return candidate
-            return f"{candidate}.sqlite"
+        normalized_name = normalize_weekly_db_name(raw_name)
+        if normalized_name:
+            return normalized_name
 
     raw_path = payload.get("db_path")
     if isinstance(raw_path, str):
-        candidate = Path(raw_path).name.strip()
-        if candidate:
-            if candidate.endswith(".sqlite"):
-                return candidate
-            return f"{candidate}.sqlite"
+        normalized_path = normalize_weekly_db_name(raw_path)
+        if normalized_path:
+            return normalized_path
     return None
 
 

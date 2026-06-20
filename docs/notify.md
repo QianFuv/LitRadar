@@ -234,7 +234,7 @@
 
 `GET /api/weekly-updates` 与通知链路共享同一组变更清单，但用途不同：
 
-- `weekly-updates`：面向前端展示，把新增文章按数据库和期刊聚合
+- `weekly-updates`：面向前端展示，把 `notifiable_article_ids` 中的新增文章按数据库和期刊聚合
 - `notify` / `push`：面向分发，把新增文章送入 PushPlus 或追踪文件夹
 
 因此如果你发现：

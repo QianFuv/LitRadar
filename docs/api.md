@@ -226,7 +226,7 @@ CNKI 精确匹配失败时返回受控错误，不会下载候选列表中的错
 | `GET` | `/api/weekly-updates` | 是 | 基于 `data/push_state/*.changes.json` 聚合最近新增文章 |
 | `GET` | `/api/announcements` | 否 | 返回当前启用的系统公告，按优先级和时间排序 |
 
-`GET /api/weekly-updates` 当前不接收查询参数。响应中的 `window_start` 与 `window_end` 由变更清单时间戳推导。
+`GET /api/weekly-updates` 不需要查询参数。接口只聚合变更清单中的 `notifiable_article_ids`，并按数据库和期刊分组；响应中的 `window_start` 与 `window_end` 由变更清单时间戳推导。
 
 ## 认证与用户接口
 

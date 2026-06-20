@@ -135,7 +135,7 @@ CSV 元数据
 ### 3. 每周更新流
 
 1. 读取 `data/push_state/*.changes.json`
-2. 聚合变更清单中的新增文章，并根据清单时间戳生成响应窗口
+2. 聚合变更清单中 `notifiable_article_ids` 的新增文章，并根据清单时间戳生成响应窗口
 3. 回到各索引库按 `article_id` 取回文章详情
 4. 按数据库和期刊组织成 `/api/weekly-updates` 响应
 
