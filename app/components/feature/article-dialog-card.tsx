@@ -62,7 +62,13 @@ export function ArticleDialogCard({
       <div className={cn('flex items-start gap-3', className)}>
         {leading && <div className="pt-4">{leading}</div>}
         <DialogTrigger asChild>
-          <div ref={triggerRef} className={cn('block group cursor-pointer text-left flex-1')}>
+          <button
+            ref={triggerRef}
+            type="button"
+            className={cn(
+              'block flex-1 cursor-pointer appearance-none border-0 bg-transparent p-0 text-left group outline-none focus-visible:ring-ring/50 focus-visible:ring-[3px]',
+            )}
+          >
             <ArticleListCard
               title={resolvedTitle}
               journalTitle={article.journal_title}
@@ -73,7 +79,7 @@ export function ArticleDialogCard({
               openAccess={article.open_access}
               inPress={article.in_press}
             />
-          </div>
+          </button>
         </DialogTrigger>
       </div>
       {open && (

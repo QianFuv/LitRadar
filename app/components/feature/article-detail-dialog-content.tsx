@@ -296,20 +296,20 @@ export function ArticleDetailDialogContent({
               </Button>
             )}
             {canShowAccessActions && detailAction?.available && detailAction.url && (
-              <a href={detailAction.url} target="_blank" rel="noreferrer">
-                <Button variant="outline" size="sm">
+              <Button asChild variant="outline" size="sm">
+                <a href={detailAction.url} target="_blank" rel="noreferrer">
                   <ExternalLink className="mr-2 h-4 w-4" />
                   {detailAction.label}
-                </Button>
-              </a>
+                </a>
+              </Button>
             )}
             {canShowAccessActions && fullTextUrl && (
-              <a href={fullTextUrl} target="_blank" rel="noreferrer">
-                <Button variant="outline" size="sm">
+              <Button asChild variant="outline" size="sm">
+                <a href={fullTextUrl} target="_blank" rel="noreferrer">
                   <FileDown className="mr-2 h-4 w-4" />
                   {fulltextAction?.label ?? '获取全文'}
-                </Button>
-              </a>
+                </a>
+              </Button>
             )}
             {canShowAccessActions && fulltextAction?.requires_login && (
               <Button asChild variant="outline" size="sm">
