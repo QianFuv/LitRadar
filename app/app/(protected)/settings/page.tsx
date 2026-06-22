@@ -148,13 +148,17 @@ export default function SettingsPage() {
   const [cnkiMessage, setCnkiMessage] = useState<string | null>(null);
   const [copyFeedback, setCopyFeedback] = useState<{
     message: string;
-    scope: 'invite' | 'token';
+    scope: 'cnkiQr' | 'invite' | 'token';
     tone: 'error' | 'success';
   } | null>(null);
   const cnkiSessionQueryKey = ['cnki-session', user?.id] as const;
   const currentCnkiSessionQueryKey = ['cnki-session', 'current'] as const;
 
-  const handleCopy = async (value: string, successMessage: string, scope: 'invite' | 'token') => {
+  const handleCopy = async (
+    value: string,
+    successMessage: string,
+    scope: 'cnkiQr' | 'invite' | 'token',
+  ) => {
     try {
       await copyTextToClipboard(value);
       setCopyFeedback({ message: successMessage, scope, tone: 'success' });
@@ -389,12 +393,26 @@ export default function SettingsPage() {
                       variant="ghost"
                       size="sm"
                       aria-label="复制 CNKI 登录二维码内容"
-                      onClick={() => navigator.clipboard.writeText(cnkiLogin.qr_code)}
+                      onClick={() =>
+                        void handleCopy(cnkiLogin.qr_code, 'CNKI 登录二维码内容已复制。', 'cnkiQr')
+                      }
                     >
                       <Copy className="h-4 w-4" />
                       复制
                     </Button>
                   </div>
+                  {copyFeedback?.scope === 'cnkiQr' && (
+                    <p
+                      role={copyFeedback.tone === 'error' ? 'alert' : 'status'}
+                      className={
+                        copyFeedback.tone === 'error'
+                          ? 'text-sm text-destructive'
+                          : 'text-sm text-muted-foreground'
+                      }
+                    >
+                      {copyFeedback.message}
+                    </p>
+                  )}
                 </div>
               </div>
             </div>
