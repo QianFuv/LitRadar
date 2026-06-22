@@ -396,9 +396,56 @@ export interface AnnouncementUpdate {
 
 export const DEFAULT_DATABASE = 'ccf_computer_journals.sqlite';
 export const DEFAULT_DB = DEFAULT_DATABASE;
-export const SELECTED_DATABASE_KEY = 'selected_database';
+export const SELECTED_DATABASE_KEY = 'ps:v1:selected_database';
+const LEGACY_SELECTED_DATABASE_KEY = 'selected_database';
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || '';
+
+/**
+ * Read a localStorage value without assuming browser storage is available.
+ *
+ * @param key - Storage key.
+ * @returns Stored value or null.
+ */
+function readLocalStorageValue(key: string): string | null {
+  if (typeof window === 'undefined') {
+    return null;
+  }
+  try {
+    return window.localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Write a localStorage value without surfacing quota or privacy-mode errors.
+ *
+ * @param key - Storage key.
+ * @param value - Value to store.
+ */
+function writeLocalStorageValue(key: string, value: string): void {
+  if (typeof window === 'undefined') {
+    return;
+  }
+  try {
+    window.localStorage.setItem(key, value);
+  } catch {}
+}
+
+/**
+ * Remove a localStorage value without assuming browser storage is available.
+ *
+ * @param key - Storage key.
+ */
+function removeLocalStorageValue(key: string): void {
+  if (typeof window === 'undefined') {
+    return;
+  }
+  try {
+    window.localStorage.removeItem(key);
+  } catch {}
+}
 
 /**
  * Resolve the backend base URL for client or server-side rendering.
@@ -424,7 +471,17 @@ export function readSelectedDatabase(): string {
   if (typeof window === 'undefined') {
     return DEFAULT_DATABASE;
   }
-  return window.localStorage.getItem(SELECTED_DATABASE_KEY) || DEFAULT_DATABASE;
+  const selectedDatabase = readLocalStorageValue(SELECTED_DATABASE_KEY);
+  if (selectedDatabase) {
+    return selectedDatabase;
+  }
+  const legacySelectedDatabase = readLocalStorageValue(LEGACY_SELECTED_DATABASE_KEY);
+  if (legacySelectedDatabase) {
+    storeSelectedDatabase(legacySelectedDatabase);
+    removeLocalStorageValue(LEGACY_SELECTED_DATABASE_KEY);
+    return legacySelectedDatabase;
+  }
+  return DEFAULT_DATABASE;
 }
 
 /**
@@ -434,7 +491,8 @@ export function readSelectedDatabase(): string {
  */
 export function storeSelectedDatabase(dbName: string): void {
   if (typeof window !== 'undefined') {
-    window.localStorage.setItem(SELECTED_DATABASE_KEY, dbName);
+    writeLocalStorageValue(SELECTED_DATABASE_KEY, dbName);
+    removeLocalStorageValue(LEGACY_SELECTED_DATABASE_KEY);
   }
 }
 

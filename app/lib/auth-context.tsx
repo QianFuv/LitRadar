@@ -28,9 +28,103 @@ interface AuthState {
 }
 
 const AuthContext = createContext<AuthState | null>(null);
-const ACCESS_TOKEN_STORAGE_KEY = 'ps_session_access_token';
+const ACCESS_TOKEN_STORAGE_KEY = 'ps:v1:session_access_token';
+const LEGACY_SESSION_ACCESS_TOKEN_KEY = 'ps_session_access_token';
 const LEGACY_ACCESS_TOKEN_KEY = 'ps_access_token';
-const USER_STORAGE_KEY = 'ps_user';
+const USER_STORAGE_KEY = 'ps:v1:user';
+const LEGACY_USER_STORAGE_KEY = 'ps_user';
+
+/**
+ * Read a localStorage value without assuming browser storage is available.
+ *
+ * @param key - Storage key.
+ * @returns Stored value or null.
+ */
+function readLocalStorageValue(key: string): string | null {
+  if (typeof window === 'undefined') {
+    return null;
+  }
+  try {
+    return window.localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Write a localStorage value without surfacing quota or privacy-mode errors.
+ *
+ * @param key - Storage key.
+ * @param value - Value to store.
+ */
+function writeLocalStorageValue(key: string, value: string): void {
+  if (typeof window === 'undefined') {
+    return;
+  }
+  try {
+    window.localStorage.setItem(key, value);
+  } catch {}
+}
+
+/**
+ * Remove a localStorage value without assuming browser storage is available.
+ *
+ * @param key - Storage key.
+ */
+function removeLocalStorageValue(key: string): void {
+  if (typeof window === 'undefined') {
+    return;
+  }
+  try {
+    window.localStorage.removeItem(key);
+  } catch {}
+}
+
+/**
+ * Read a sessionStorage value without assuming browser storage is available.
+ *
+ * @param key - Storage key.
+ * @returns Stored value or null.
+ */
+function readSessionStorageValue(key: string): string | null {
+  if (typeof window === 'undefined') {
+    return null;
+  }
+  try {
+    return window.sessionStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Write a sessionStorage value without surfacing quota or privacy-mode errors.
+ *
+ * @param key - Storage key.
+ * @param value - Value to store.
+ */
+function writeSessionStorageValue(key: string, value: string): void {
+  if (typeof window === 'undefined') {
+    return;
+  }
+  try {
+    window.sessionStorage.setItem(key, value);
+  } catch {}
+}
+
+/**
+ * Remove a sessionStorage value without assuming browser storage is available.
+ *
+ * @param key - Storage key.
+ */
+function removeSessionStorageValue(key: string): void {
+  if (typeof window === 'undefined') {
+    return;
+  }
+  try {
+    window.sessionStorage.removeItem(key);
+  } catch {}
+}
 
 /**
  * Check whether a parsed value matches the stored user shape.
@@ -59,19 +153,29 @@ function readStoredUser(): AuthUser | null {
   if (typeof window === 'undefined') {
     return null;
   }
-  const rawUser = window.localStorage.getItem(USER_STORAGE_KEY);
+  let rawUser = readLocalStorageValue(USER_STORAGE_KEY);
+  const didReadLegacyUser = rawUser === null;
+  if (rawUser === null) {
+    rawUser = readLocalStorageValue(LEGACY_USER_STORAGE_KEY);
+  }
   if (!rawUser) {
     return null;
   }
   try {
     const parsedUser: unknown = JSON.parse(rawUser);
     if (isAuthUser(parsedUser)) {
+      if (didReadLegacyUser) {
+        writeLocalStorageValue(USER_STORAGE_KEY, rawUser);
+        removeLocalStorageValue(LEGACY_USER_STORAGE_KEY);
+      }
       return parsedUser;
     }
-    window.localStorage.removeItem(USER_STORAGE_KEY);
+    removeLocalStorageValue(USER_STORAGE_KEY);
+    removeLocalStorageValue(LEGACY_USER_STORAGE_KEY);
     return null;
   } catch {
-    window.localStorage.removeItem(USER_STORAGE_KEY);
+    removeLocalStorageValue(USER_STORAGE_KEY);
+    removeLocalStorageValue(LEGACY_USER_STORAGE_KEY);
     return null;
   }
 }
@@ -82,7 +186,8 @@ function readStoredUser(): AuthUser | null {
  * @param user - Authenticated user.
  */
 function writeStoredUser(user: AuthUser): void {
-  window.localStorage.setItem(USER_STORAGE_KEY, JSON.stringify(user));
+  writeLocalStorageValue(USER_STORAGE_KEY, JSON.stringify(user));
+  removeLocalStorageValue(LEGACY_USER_STORAGE_KEY);
 }
 
 /**
@@ -94,16 +199,22 @@ function readStoredAccessToken(): string | null {
   if (typeof window === 'undefined') {
     return null;
   }
-  const sessionToken = window.sessionStorage.getItem(ACCESS_TOKEN_STORAGE_KEY);
+  const sessionToken = readSessionStorageValue(ACCESS_TOKEN_STORAGE_KEY);
   if (sessionToken) {
     return sessionToken;
   }
-  const legacyToken = window.localStorage.getItem(LEGACY_ACCESS_TOKEN_KEY);
+  const legacySessionToken = readSessionStorageValue(LEGACY_SESSION_ACCESS_TOKEN_KEY);
+  if (legacySessionToken) {
+    writeSessionStorageValue(ACCESS_TOKEN_STORAGE_KEY, legacySessionToken);
+    removeSessionStorageValue(LEGACY_SESSION_ACCESS_TOKEN_KEY);
+    return legacySessionToken;
+  }
+  const legacyToken = readLocalStorageValue(LEGACY_ACCESS_TOKEN_KEY);
   if (!legacyToken) {
     return null;
   }
-  window.sessionStorage.setItem(ACCESS_TOKEN_STORAGE_KEY, legacyToken);
-  window.localStorage.removeItem(LEGACY_ACCESS_TOKEN_KEY);
+  writeSessionStorageValue(ACCESS_TOKEN_STORAGE_KEY, legacyToken);
+  removeLocalStorageValue(LEGACY_ACCESS_TOKEN_KEY);
   return legacyToken;
 }
 
@@ -113,16 +224,18 @@ function readStoredAccessToken(): string | null {
  * @param token - Access token returned by the backend.
  */
 function writeStoredAccessToken(token: string): void {
-  window.sessionStorage.setItem(ACCESS_TOKEN_STORAGE_KEY, token);
-  window.localStorage.removeItem(LEGACY_ACCESS_TOKEN_KEY);
+  writeSessionStorageValue(ACCESS_TOKEN_STORAGE_KEY, token);
+  removeSessionStorageValue(LEGACY_SESSION_ACCESS_TOKEN_KEY);
+  removeLocalStorageValue(LEGACY_ACCESS_TOKEN_KEY);
 }
 
 /**
  * Remove access tokens stored by current and older frontend versions.
  */
 function clearStoredAccessTokens(): void {
-  window.sessionStorage.removeItem(ACCESS_TOKEN_STORAGE_KEY);
-  window.localStorage.removeItem(LEGACY_ACCESS_TOKEN_KEY);
+  removeSessionStorageValue(ACCESS_TOKEN_STORAGE_KEY);
+  removeSessionStorageValue(LEGACY_SESSION_ACCESS_TOKEN_KEY);
+  removeLocalStorageValue(LEGACY_ACCESS_TOKEN_KEY);
 }
 
 /**
@@ -130,7 +243,8 @@ function clearStoredAccessTokens(): void {
  */
 function clearStoredSession(): void {
   clearStoredAccessTokens();
-  window.localStorage.removeItem(USER_STORAGE_KEY);
+  removeLocalStorageValue(USER_STORAGE_KEY);
+  removeLocalStorageValue(LEGACY_USER_STORAGE_KEY);
 }
 
 /**

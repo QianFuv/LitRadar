@@ -8,8 +8,71 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { useState, useEffect } from 'react';
 import { cn } from '@/lib/utils';
 
-const SEARCH_HISTORY_KEY = 'search_history';
+const SEARCH_HISTORY_KEY = 'ps:v1:search_history';
+const LEGACY_SEARCH_HISTORY_KEY = 'search_history';
 const MAX_HISTORY_ITEMS = 10;
+
+/**
+ * Read a localStorage value without assuming browser storage is available.
+ *
+ * @param key - Storage key.
+ * @returns Stored value or null.
+ */
+function readLocalStorageValue(key: string): string | null {
+  if (typeof window === 'undefined') {
+    return null;
+  }
+  try {
+    return window.localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Write a localStorage value without surfacing quota or privacy-mode errors.
+ *
+ * @param key - Storage key.
+ * @param value - Value to store.
+ */
+function writeLocalStorageValue(key: string, value: string): void {
+  if (typeof window === 'undefined') {
+    return;
+  }
+  try {
+    window.localStorage.setItem(key, value);
+  } catch {}
+}
+
+/**
+ * Remove a localStorage value without assuming browser storage is available.
+ *
+ * @param key - Storage key.
+ */
+function removeLocalStorageValue(key: string): void {
+  if (typeof window === 'undefined') {
+    return;
+  }
+  try {
+    window.localStorage.removeItem(key);
+  } catch {}
+}
+
+/**
+ * Parse and validate serialized search history.
+ *
+ * @param value - Serialized history value.
+ * @returns Search history or null when invalid.
+ */
+function parseSearchHistory(value: string): string[] | null {
+  try {
+    const parsedHistory: unknown = JSON.parse(value);
+    if (Array.isArray(parsedHistory) && parsedHistory.every((item) => typeof item === 'string')) {
+      return parsedHistory;
+    }
+  } catch {}
+  return null;
+}
 
 /**
  * Read validated search history from local storage.
@@ -18,21 +81,45 @@ const MAX_HISTORY_ITEMS = 10;
  */
 function getSearchHistory(): string[] {
   if (typeof window === 'undefined') return [];
-  const history = window.localStorage.getItem(SEARCH_HISTORY_KEY);
-  if (!history) {
-    return [];
-  }
-  try {
-    const parsedHistory: unknown = JSON.parse(history);
-    if (Array.isArray(parsedHistory) && parsedHistory.every((item) => typeof item === 'string')) {
+  const history = readLocalStorageValue(SEARCH_HISTORY_KEY);
+  if (history) {
+    const parsedHistory = parseSearchHistory(history);
+    if (parsedHistory) {
       return parsedHistory;
     }
-  } catch {
-    window.localStorage.removeItem(SEARCH_HISTORY_KEY);
+    removeLocalStorageValue(SEARCH_HISTORY_KEY);
     return [];
   }
-  window.localStorage.removeItem(SEARCH_HISTORY_KEY);
+  const legacyHistory = readLocalStorageValue(LEGACY_SEARCH_HISTORY_KEY);
+  if (!legacyHistory) {
+    return [];
+  }
+  const parsedLegacyHistory = parseSearchHistory(legacyHistory);
+  if (parsedLegacyHistory) {
+    writeLocalStorageValue(SEARCH_HISTORY_KEY, JSON.stringify(parsedLegacyHistory));
+    removeLocalStorageValue(LEGACY_SEARCH_HISTORY_KEY);
+    return parsedLegacyHistory;
+  }
+  removeLocalStorageValue(LEGACY_SEARCH_HISTORY_KEY);
   return [];
+}
+
+/**
+ * Persist validated search history.
+ *
+ * @param history - Search history entries.
+ */
+function writeSearchHistory(history: string[]): void {
+  writeLocalStorageValue(SEARCH_HISTORY_KEY, JSON.stringify(history));
+  removeLocalStorageValue(LEGACY_SEARCH_HISTORY_KEY);
+}
+
+/**
+ * Remove all known search history storage keys.
+ */
+function removeSearchHistory(): void {
+  removeLocalStorageValue(SEARCH_HISTORY_KEY);
+  removeLocalStorageValue(LEGACY_SEARCH_HISTORY_KEY);
 }
 
 /**
@@ -48,7 +135,7 @@ function saveSearchHistory(query: string): void {
   const filtered = history.filter((item) => item !== trimmedQuery);
   const newHistory = [trimmedQuery, ...filtered].slice(0, MAX_HISTORY_ITEMS);
 
-  window.localStorage.setItem(SEARCH_HISTORY_KEY, JSON.stringify(newHistory));
+  writeSearchHistory(newHistory);
 }
 
 /**
@@ -56,7 +143,7 @@ function saveSearchHistory(query: string): void {
  */
 function clearSearchHistory(): void {
   if (typeof window === 'undefined') return;
-  window.localStorage.removeItem(SEARCH_HISTORY_KEY);
+  removeSearchHistory();
 }
 
 export function SearchBar({ className }: { className?: string }) {
