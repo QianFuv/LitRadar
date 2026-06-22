@@ -15,6 +15,14 @@ import {
   type ReactNode,
 } from 'react';
 import { getCurrentUser, loginUser, logoutUser, registerUser, type AuthUser } from '@/lib/api';
+import {
+  readLocalStorageValue,
+  readSessionStorageValue,
+  removeLocalStorageValue,
+  removeSessionStorageValue,
+  writeLocalStorageValue,
+  writeSessionStorageValue,
+} from '@/lib/browser-storage';
 
 export type { AuthUser };
 
@@ -33,98 +41,6 @@ const LEGACY_SESSION_ACCESS_TOKEN_KEY = 'ps_session_access_token';
 const LEGACY_ACCESS_TOKEN_KEY = 'ps_access_token';
 const USER_STORAGE_KEY = 'ps:v1:user';
 const LEGACY_USER_STORAGE_KEY = 'ps_user';
-
-/**
- * Read a localStorage value without assuming browser storage is available.
- *
- * @param key - Storage key.
- * @returns Stored value or null.
- */
-function readLocalStorageValue(key: string): string | null {
-  if (typeof window === 'undefined') {
-    return null;
-  }
-  try {
-    return window.localStorage.getItem(key);
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Write a localStorage value without surfacing quota or privacy-mode errors.
- *
- * @param key - Storage key.
- * @param value - Value to store.
- */
-function writeLocalStorageValue(key: string, value: string): void {
-  if (typeof window === 'undefined') {
-    return;
-  }
-  try {
-    window.localStorage.setItem(key, value);
-  } catch {}
-}
-
-/**
- * Remove a localStorage value without assuming browser storage is available.
- *
- * @param key - Storage key.
- */
-function removeLocalStorageValue(key: string): void {
-  if (typeof window === 'undefined') {
-    return;
-  }
-  try {
-    window.localStorage.removeItem(key);
-  } catch {}
-}
-
-/**
- * Read a sessionStorage value without assuming browser storage is available.
- *
- * @param key - Storage key.
- * @returns Stored value or null.
- */
-function readSessionStorageValue(key: string): string | null {
-  if (typeof window === 'undefined') {
-    return null;
-  }
-  try {
-    return window.sessionStorage.getItem(key);
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Write a sessionStorage value without surfacing quota or privacy-mode errors.
- *
- * @param key - Storage key.
- * @param value - Value to store.
- */
-function writeSessionStorageValue(key: string, value: string): void {
-  if (typeof window === 'undefined') {
-    return;
-  }
-  try {
-    window.sessionStorage.setItem(key, value);
-  } catch {}
-}
-
-/**
- * Remove a sessionStorage value without assuming browser storage is available.
- *
- * @param key - Storage key.
- */
-function removeSessionStorageValue(key: string): void {
-  if (typeof window === 'undefined') {
-    return;
-  }
-  try {
-    window.sessionStorage.removeItem(key);
-  } catch {}
-}
 
 /**
  * Check whether a parsed value matches the stored user shape.

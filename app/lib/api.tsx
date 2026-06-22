@@ -2,6 +2,12 @@
  * Typed browser API client for the Paper Scanner backend.
  */
 
+import {
+  readLocalStorageValue,
+  removeLocalStorageValue,
+  writeLocalStorageValue,
+} from '@/lib/browser-storage';
+
 export type ArticleId = string;
 
 export type JournalId = string;
@@ -400,52 +406,6 @@ export const SELECTED_DATABASE_KEY = 'ps:v1:selected_database';
 const LEGACY_SELECTED_DATABASE_KEY = 'selected_database';
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || '';
-
-/**
- * Read a localStorage value without assuming browser storage is available.
- *
- * @param key - Storage key.
- * @returns Stored value or null.
- */
-function readLocalStorageValue(key: string): string | null {
-  if (typeof window === 'undefined') {
-    return null;
-  }
-  try {
-    return window.localStorage.getItem(key);
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Write a localStorage value without surfacing quota or privacy-mode errors.
- *
- * @param key - Storage key.
- * @param value - Value to store.
- */
-function writeLocalStorageValue(key: string, value: string): void {
-  if (typeof window === 'undefined') {
-    return;
-  }
-  try {
-    window.localStorage.setItem(key, value);
-  } catch {}
-}
-
-/**
- * Remove a localStorage value without assuming browser storage is available.
- *
- * @param key - Storage key.
- */
-function removeLocalStorageValue(key: string): void {
-  if (typeof window === 'undefined') {
-    return;
-  }
-  try {
-    window.localStorage.removeItem(key);
-  } catch {}
-}
 
 /**
  * Resolve the backend base URL for client or server-side rendering.

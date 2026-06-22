@@ -6,57 +6,16 @@ import { Search, X, Clock, HelpCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { useState, useEffect } from 'react';
+import {
+  readLocalStorageValue,
+  removeLocalStorageValue,
+  writeLocalStorageValue,
+} from '@/lib/browser-storage';
 import { cn } from '@/lib/utils';
 
 const SEARCH_HISTORY_KEY = 'ps:v1:search_history';
 const LEGACY_SEARCH_HISTORY_KEY = 'search_history';
 const MAX_HISTORY_ITEMS = 10;
-
-/**
- * Read a localStorage value without assuming browser storage is available.
- *
- * @param key - Storage key.
- * @returns Stored value or null.
- */
-function readLocalStorageValue(key: string): string | null {
-  if (typeof window === 'undefined') {
-    return null;
-  }
-  try {
-    return window.localStorage.getItem(key);
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Write a localStorage value without surfacing quota or privacy-mode errors.
- *
- * @param key - Storage key.
- * @param value - Value to store.
- */
-function writeLocalStorageValue(key: string, value: string): void {
-  if (typeof window === 'undefined') {
-    return;
-  }
-  try {
-    window.localStorage.setItem(key, value);
-  } catch {}
-}
-
-/**
- * Remove a localStorage value without assuming browser storage is available.
- *
- * @param key - Storage key.
- */
-function removeLocalStorageValue(key: string): void {
-  if (typeof window === 'undefined') {
-    return;
-  }
-  try {
-    window.localStorage.removeItem(key);
-  } catch {}
-}
 
 /**
  * Parse and validate serialized search history.
