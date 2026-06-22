@@ -4,6 +4,11 @@ import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 
 import { getAnnouncements, type AnnouncementInfo } from '@/lib/api';
+import {
+  readLocalStorageValue,
+  removeLocalStorageValue,
+  writeLocalStorageValue,
+} from '@/lib/browser-storage';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -14,7 +19,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 
-const STORAGE_PREFIX = 'announcement_dismissed_';
+const STORAGE_PREFIX = 'ps:v1:announcement_dismissed:';
 const PRIORITY_LABELS = {
   high: '高优先级',
   low: '低优先级',
@@ -26,18 +31,15 @@ function getStorageKey(id: number): string {
 }
 
 function readDismissedUntil(id: number): number | null {
-  if (typeof window === 'undefined') {
-    return null;
-  }
-
-  const rawValue = window.localStorage.getItem(getStorageKey(id));
+  const storageKey = getStorageKey(id);
+  const rawValue = readLocalStorageValue(storageKey);
   if (rawValue === null) {
     return null;
   }
 
   const dismissedUntil = Number(rawValue);
   if (!Number.isFinite(dismissedUntil)) {
-    window.localStorage.removeItem(getStorageKey(id));
+    removeLocalStorageValue(storageKey);
     return null;
   }
 
@@ -49,7 +51,7 @@ function readDismissedUntil(id: number): number | null {
     return dismissedUntil;
   }
 
-  window.localStorage.removeItem(getStorageKey(id));
+  removeLocalStorageValue(storageKey);
   return null;
 }
 
@@ -68,12 +70,8 @@ function getEndOfTodayTimestamp(): number {
 }
 
 function dismissAnnouncements(announcements: AnnouncementInfo[], dismissedUntil: number): void {
-  if (typeof window === 'undefined') {
-    return;
-  }
-
   for (const announcement of announcements) {
-    window.localStorage.setItem(getStorageKey(announcement.id), String(dismissedUntil));
+    writeLocalStorageValue(getStorageKey(announcement.id), String(dismissedUntil));
   }
 }
 
