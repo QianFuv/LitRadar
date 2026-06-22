@@ -540,6 +540,9 @@ export function Sidebar({ className }: { className?: string }) {
                 >
                   <Input
                     aria-label="搜索期刊"
+                    name="journal_search"
+                    autoComplete="off"
+                    spellCheck={false}
                     value={journalSearch}
                     onChange={(event) => setJournalSearch(event.target.value)}
                     placeholder="搜索期刊"

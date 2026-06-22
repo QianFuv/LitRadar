@@ -346,6 +346,8 @@ export default function FavoritesPage() {
                 >
                   <Input
                     aria-label="收藏夹名称"
+                    name="favorite_folder_name"
+                    autoComplete="off"
                     value={newFolderName}
                     onChange={(e) => setNewFolderName(e.target.value)}
                     placeholder="收藏夹名称"
@@ -390,6 +392,8 @@ export default function FavoritesPage() {
                       <Input
                         ref={editInputRef}
                         aria-label={`重命名收藏夹 ${folder.name}`}
+                        name="favorite_folder_rename"
+                        autoComplete="off"
                         value={editName}
                         onChange={(e) => setEditName(e.target.value)}
                         className="h-6 text-sm"

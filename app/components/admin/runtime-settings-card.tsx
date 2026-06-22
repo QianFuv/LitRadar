@@ -61,6 +61,36 @@ function isPoolSetting(setting: RuntimeSettingInfo): boolean {
 }
 
 /**
+ * Check whether a runtime setting stores URL-like text.
+ *
+ * @param field - Runtime setting field name.
+ * @returns Whether the field should use URL input hints.
+ */
+function isUrlSetting(field: string): boolean {
+  return field.toLowerCase().includes('url');
+}
+
+/**
+ * Check whether a runtime setting should avoid browser spellcheck.
+ *
+ * @param field - Runtime setting field name.
+ * @param inputType - Runtime setting input type.
+ * @returns Whether spellcheck should be disabled.
+ */
+function shouldDisableRuntimeSpellCheck(
+  field: string,
+  inputType: RuntimeSettingInfo['input_type'],
+): boolean {
+  if (inputType === 'email' || inputType === 'password') {
+    return true;
+  }
+  const normalizedField = field.toLowerCase();
+  return ['api', 'command', 'endpoint', 'key', 'model', 'pool', 'secret', 'token', 'url'].some(
+    (marker) => normalizedField.includes(marker),
+  );
+}
+
+/**
  * Split a stored pool value into editable rows.
  *
  * @param value - Stored pool value.
@@ -90,6 +120,7 @@ function getPoolInputType(
 }
 
 type RuntimePoolEditorProps = {
+  field: string;
   id: string;
   inputType: RuntimeSettingInfo['input_type'];
   label: string;
@@ -103,9 +134,17 @@ type RuntimePoolEditorProps = {
  * @param props - Component props.
  * @returns Runtime pool editor.
  */
-function RuntimePoolEditor({ id, inputType, label, value, onChange }: RuntimePoolEditorProps) {
+function RuntimePoolEditor({
+  field,
+  id,
+  inputType,
+  label,
+  value,
+  onChange,
+}: RuntimePoolEditorProps) {
   const rows = splitPoolValue(value);
   const poolInputType = getPoolInputType(inputType);
+  const shouldDisableSpellCheck = shouldDisableRuntimeSpellCheck(field, inputType);
 
   const updateRow = (index: number, nextValue: string) => {
     const nextRows = [...rows];
@@ -128,7 +167,11 @@ function RuntimePoolEditor({ id, inputType, label, value, onChange }: RuntimePoo
         <div key={`${index}-${rows.length}`} className="flex items-center gap-2">
           <Input
             id={index === 0 ? id : undefined}
+            name={`runtime_${field}_${index + 1}`}
             type={poolInputType}
+            autoComplete="off"
+            inputMode={isUrlSetting(field) ? 'url' : undefined}
+            spellCheck={shouldDisableSpellCheck ? false : undefined}
             value={row}
             onChange={(event) => updateRow(index, event.target.value)}
             aria-label={`${label} ${index + 1}`}
@@ -238,6 +281,7 @@ export function RuntimeSettingsCard({ token }: RuntimeSettingsCardProps) {
                       <span className="text-sm text-muted-foreground">{setting.description}</span>
                       <Switch
                         id={`runtime-${setting.field}`}
+                        name={`runtime_${setting.field}`}
                         checked={value !== 'false'}
                         onCheckedChange={(checked: boolean) =>
                           setFormOverrides((current) => ({
@@ -249,6 +293,7 @@ export function RuntimeSettingsCard({ token }: RuntimeSettingsCardProps) {
                     </div>
                   ) : isPoolSetting(setting) ? (
                     <RuntimePoolEditor
+                      field={setting.field}
                       id={`runtime-${setting.field}`}
                       inputType={setting.input_type}
                       label={setting.label}
@@ -263,7 +308,15 @@ export function RuntimeSettingsCard({ token }: RuntimeSettingsCardProps) {
                   ) : (
                     <Input
                       id={`runtime-${setting.field}`}
+                      name={`runtime_${setting.field}`}
                       type={setting.input_type}
+                      autoComplete="off"
+                      inputMode={isUrlSetting(setting.field) ? 'url' : undefined}
+                      spellCheck={
+                        shouldDisableRuntimeSpellCheck(setting.field, setting.input_type)
+                          ? false
+                          : undefined
+                      }
                       value={value}
                       onChange={(event) =>
                         setFormOverrides((current) => ({

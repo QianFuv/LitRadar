@@ -377,6 +377,7 @@ export default function TrackingPage() {
           {folders.length > 0 && (
             <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
               <Select
+                name="tracking_folder_id"
                 value={status?.tracking_folder?.id?.toString() || ''}
                 onValueChange={(val: string) => setTrackMut.mutate(Number(val))}
               >
@@ -397,6 +398,8 @@ export default function TrackingPage() {
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
             <Input
               aria-label="新建追踪文件夹名称"
+              name="tracking_folder_name"
+              autoComplete="off"
               value={newFolderName}
               onChange={(e) => setNewFolderName(e.target.value)}
               placeholder="新建追踪文件夹"
@@ -480,6 +483,7 @@ export default function TrackingPage() {
                 <Label htmlFor="notify-enabled">启用推荐</Label>
                 <Switch
                   id="notify-enabled"
+                  name="notification_enabled"
                   checked={notifyEnabled}
                   onCheckedChange={(checked: boolean) =>
                     updateDraftSettings((current) => ({
@@ -515,6 +519,9 @@ export default function TrackingPage() {
                 <div className="flex flex-col gap-2 sm:flex-row">
                   <Input
                     id="keyword-input"
+                    name="notification_keyword"
+                    autoComplete="off"
+                    spellCheck={false}
                     value={keywordInput}
                     onChange={(e) => setKeywordInput(e.target.value)}
                     onKeyDown={(e) => {
@@ -565,6 +572,9 @@ export default function TrackingPage() {
                 <div className="flex flex-col gap-2 sm:flex-row">
                   <Input
                     id="direction-input"
+                    name="notification_direction"
+                    autoComplete="off"
+                    spellCheck={false}
                     value={directionInput}
                     onChange={(e) => setDirectionInput(e.target.value)}
                     onKeyDown={(e) => {
@@ -675,6 +685,7 @@ export default function TrackingPage() {
               <div className="space-y-2">
                 <Label htmlFor="delivery-method">推送方式</Label>
                 <Select
+                  name="delivery_method"
                   value={deliveryMethod}
                   onValueChange={(v: string) =>
                     updateDraftSettings((current) => ({
@@ -709,6 +720,10 @@ export default function TrackingPage() {
                     <Label htmlFor="ai-base-url">Base URL</Label>
                     <Input
                       id="ai-base-url"
+                      name="ai_base_url"
+                      type="url"
+                      autoComplete="off"
+                      spellCheck={false}
                       value={aiBaseUrl}
                       onChange={(e) =>
                         updateDraftSettings((current) => ({
@@ -723,6 +738,9 @@ export default function TrackingPage() {
                     <Label htmlFor="ai-model">Model</Label>
                     <Input
                       id="ai-model"
+                      name="ai_model"
+                      autoComplete="off"
+                      spellCheck={false}
                       value={aiModel}
                       onChange={(e) =>
                         updateDraftSettings((current) => ({
@@ -738,7 +756,10 @@ export default function TrackingPage() {
                   <Label htmlFor="ai-api-key">API Key</Label>
                   <Input
                     id="ai-api-key"
+                    name="ai_api_key"
                     type="password"
+                    autoComplete="off"
+                    spellCheck={false}
                     value={aiApiKey}
                     onChange={(e) =>
                       updateDraftSettings((current) => ({
@@ -753,6 +774,9 @@ export default function TrackingPage() {
                   <Label htmlFor="ai-system-prompt">System Prompt</Label>
                   <textarea
                     id="ai-system-prompt"
+                    name="ai_system_prompt"
+                    autoComplete="off"
+                    spellCheck={false}
                     value={aiSystemPrompt}
                     onChange={(e) =>
                       updateDraftSettings((current) => ({
@@ -769,7 +793,10 @@ export default function TrackingPage() {
                     <Label htmlFor="ai-retry-attempts">失败重试次数</Label>
                     <Input
                       id="ai-retry-attempts"
+                      name="ai_retry_attempts"
                       type="number"
+                      autoComplete="off"
+                      inputMode="numeric"
                       min={1}
                       max={10}
                       value={aiRetryAttempts}
@@ -794,6 +821,10 @@ export default function TrackingPage() {
                       <Label htmlFor="ai-backup-base-url">Backup Base URL</Label>
                       <Input
                         id="ai-backup-base-url"
+                        name="ai_backup_base_url"
+                        type="url"
+                        autoComplete="off"
+                        spellCheck={false}
                         value={aiBackupBaseUrl}
                         onChange={(e) =>
                           updateDraftSettings((current) => ({
@@ -808,6 +839,9 @@ export default function TrackingPage() {
                       <Label htmlFor="ai-backup-model">Backup Model</Label>
                       <Input
                         id="ai-backup-model"
+                        name="ai_backup_model"
+                        autoComplete="off"
+                        spellCheck={false}
                         value={aiBackupModel}
                         onChange={(e) =>
                           updateDraftSettings((current) => ({
@@ -823,7 +857,10 @@ export default function TrackingPage() {
                     <Label htmlFor="ai-backup-api-key">Backup API Key</Label>
                     <Input
                       id="ai-backup-api-key"
+                      name="ai_backup_api_key"
                       type="password"
+                      autoComplete="off"
+                      spellCheck={false}
                       value={aiBackupApiKey}
                       onChange={(e) =>
                         updateDraftSettings((current) => ({
@@ -838,6 +875,9 @@ export default function TrackingPage() {
                     <Label htmlFor="ai-backup-system-prompt">Backup System Prompt</Label>
                     <textarea
                       id="ai-backup-system-prompt"
+                      name="ai_backup_system_prompt"
+                      autoComplete="off"
+                      spellCheck={false}
                       value={aiBackupSystemPrompt}
                       onChange={(e) =>
                         updateDraftSettings((current) => ({
@@ -861,6 +901,9 @@ export default function TrackingPage() {
                     <Label htmlFor="pp-token">PushPlus 令牌</Label>
                     <Input
                       id="pp-token"
+                      name="pushplus_token"
+                      autoComplete="off"
+                      spellCheck={false}
                       value={pushplusToken}
                       onChange={(e) =>
                         updateDraftSettings((current) => ({
@@ -876,6 +919,9 @@ export default function TrackingPage() {
                       <Label htmlFor="pp-template">模板</Label>
                       <Input
                         id="pp-template"
+                        name="pushplus_template"
+                        autoComplete="off"
+                        spellCheck={false}
                         value={pushplusTemplate}
                         onChange={(e) =>
                           updateDraftSettings((current) => ({
@@ -890,6 +936,9 @@ export default function TrackingPage() {
                       <Label htmlFor="pp-topic">主题</Label>
                       <Input
                         id="pp-topic"
+                        name="pushplus_topic"
+                        autoComplete="off"
+                        spellCheck={false}
                         value={pushplusTopic}
                         onChange={(e) =>
                           updateDraftSettings((current) => ({
@@ -905,6 +954,9 @@ export default function TrackingPage() {
                     <Label htmlFor="pp-channel">渠道</Label>
                     <Input
                       id="pp-channel"
+                      name="pushplus_channel"
+                      autoComplete="off"
+                      spellCheck={false}
                       value={pushplusChannel}
                       onChange={(e) =>
                         updateDraftSettings((current) => ({
@@ -929,6 +981,7 @@ export default function TrackingPage() {
                     </div>
                     <Switch
                       id="pp-sync-tracking"
+                      name="sync_to_tracking_folder"
                       checked={syncToTrackingFolder}
                       disabled={!status?.tracking_folder}
                       onCheckedChange={(checked: boolean) =>
