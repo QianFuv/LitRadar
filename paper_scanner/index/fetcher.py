@@ -356,7 +356,7 @@ async def process_scholarly_journal(
                 for openalex_work in openalex_source_works
                 if (doi := normalize_doi(openalex_work.get("doi")))
             }
-            if not works:
+            if not works and latest_existing_issue is None:
                 raise JournalPathError(
                     "OpenAlex fallback returned no usable works: "
                     f"{journal_title_from_row(row)}"
@@ -400,10 +400,15 @@ async def process_scholarly_journal(
         dois = [
             doi for doi in [normalize_doi(work.get("DOI")) for work in works] if doi
         ]
-        openalex_by_doi = (
-            fallback_openalex_by_doi or await client.fetch_openalex_by_dois(dois)
+        if fallback_openalex_by_doi:
+            openalex_by_doi = fallback_openalex_by_doi
+        elif dois:
+            openalex_by_doi = await client.fetch_openalex_by_dois(dois)
+        else:
+            openalex_by_doi = {}
+        semantic_scholar_by_doi = (
+            await client.fetch_semantic_scholar_by_dois(dois) if dois else {}
         )
-        semantic_scholar_by_doi = await client.fetch_semantic_scholar_by_dois(dois)
 
         issue_records_by_id: dict[int, dict[str, Any]] = {}
         article_records: list[dict[str, Any]] = []

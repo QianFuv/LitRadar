@@ -180,7 +180,9 @@ class OpenAlexFallbackScholarlyClient(FakeScholarlyClient):
         response = httpx.Response(404, request=request)
         raise httpx.HTTPStatusError("not found", request=request, response=response)
 
-    async def fetch_openalex_source_by_issns(self, issns: list[str]) -> dict[str, Any]:
+    async def fetch_openalex_source_by_issns(
+        self, issns: list[str]
+    ) -> dict[str, Any] | None:
         """
         Return a fixed OpenAlex source.
 
@@ -753,6 +755,7 @@ class ScholarlyUpdateTest(unittest.IsolatedAsyncioTestCase):
                     """,
                     (journal_id,),
                 )
+                assert journal is not None
                 self.assertEqual(
                     tuple(journal),
                     ("S88198767", "Cognition", "0010-0277", "1873-7838"),
@@ -766,6 +769,7 @@ class ScholarlyUpdateTest(unittest.IsolatedAsyncioTestCase):
                     """,
                     (journal_id,),
                 )
+                assert meta is not None
                 self.assertEqual(
                     tuple(meta),
                     (
@@ -784,6 +788,7 @@ class ScholarlyUpdateTest(unittest.IsolatedAsyncioTestCase):
                     FROM articles
                     """
                 )
+                assert article is not None
                 self.assertEqual(
                     tuple(article),
                     (
@@ -814,6 +819,76 @@ class ScholarlyUpdateTest(unittest.IsolatedAsyncioTestCase):
         path_stats = next(iter(stats_recorder.stats.path_stats.values()))
         self.assertEqual(path_stats.status, "succeeded")
         self.assertEqual(path_stats.works_count, 1)
+
+    async def test_openalex_fallback_empty_update_is_noop(
+        self,
+    ) -> None:
+        """
+        Ensure empty OpenAlex fallback updates do not fail existing journals.
+        """
+        row = {
+            "source": "scholarly",
+            "title": "Cognition",
+            "issn": "1873-7838",
+            "id": "1873-7838",
+            "area": "testing",
+            "all_issns": "1873-7838",
+        }
+        journal_id = build_journal_id(row)
+        assert journal_id is not None
+        latest_work = build_work("10.1/latest", 1, "1")
+        latest_issue = build_scholarly_issue_record(journal_id, latest_work)
+        assert latest_issue is not None
+        latest_article = build_scholarly_article_record(
+            latest_work, None, None, journal_id, latest_issue["issue_id"]
+        )
+        assert latest_article is not None
+        stats_recorder = IndexStatsRecorder("run-openalex-empty-update", "test.csv")
+        client = OpenAlexFallbackScholarlyClient([])
+
+        async with aiosqlite.connect(":memory:") as raw_db:
+            await init_db(raw_db)
+            db = LocalDatabaseClient(raw_db)
+            await db.start()
+            try:
+                await upsert_journal(
+                    db,
+                    build_scholarly_journal_record(journal_id, row, [latest_work]),
+                )
+                await upsert_meta(db, build_meta_record(journal_id, TEST_CSV_PATH, row))
+                await upsert_issues(db, [latest_issue])
+                await upsert_articles(db, [latest_article])
+                await db.commit()
+
+                await process_scholarly_journal(
+                    db,
+                    cast(Any, client),
+                    TEST_CSV_PATH,
+                    row,
+                    request_workers=4,
+                    show_year_progress=False,
+                    resume=True,
+                    update=True,
+                    stats_recorder=stats_recorder,
+                )
+            finally:
+                await db.close()
+
+        self.assertEqual(
+            client.source_work_requests,
+            [
+                {
+                    "source_id": "https://openalex.org/S88198767",
+                    "from_pub_date": "2025-01-01",
+                    "until_pub_date": None,
+                }
+            ],
+        )
+        self.assertEqual(client.openalex_doi_batches, [])
+        self.assertEqual(client.semantic_scholar_doi_batches, [])
+        path_stats = next(iter(stats_recorder.stats.path_stats.values()))
+        self.assertEqual(path_stats.status, "succeeded")
+        self.assertEqual(path_stats.works_count, 0)
 
     async def test_crossref_404_uses_openalex_title_fallback_and_updates_meta(
         self,
@@ -875,6 +950,7 @@ class ScholarlyUpdateTest(unittest.IsolatedAsyncioTestCase):
                     """,
                     (journal_id,),
                 )
+                assert journal is not None
                 self.assertEqual(
                     tuple(journal),
                     (
@@ -893,6 +969,7 @@ class ScholarlyUpdateTest(unittest.IsolatedAsyncioTestCase):
                     """,
                     (journal_id,),
                 )
+                assert meta is not None
                 self.assertEqual(
                     tuple(meta),
                     (
