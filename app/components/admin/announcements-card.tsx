@@ -179,6 +179,8 @@ export function AnnouncementsCard({ token }: AnnouncementsCardProps) {
                 <Label htmlFor="announcement-title">公告标题</Label>
                 <Input
                   id="announcement-title"
+                  name="announcement_title"
+                  autoComplete="off"
                   value={form.title}
                   onChange={(event) =>
                     setForm((current) => ({ ...current, title: event.target.value }))
@@ -208,6 +210,8 @@ export function AnnouncementsCard({ token }: AnnouncementsCardProps) {
                 <Label htmlFor="announcement-message">公告内容</Label>
                 <textarea
                   id="announcement-message"
+                  name="announcement_message"
+                  autoComplete="off"
                   value={form.message}
                   onChange={(event) =>
                     setForm((current) => ({ ...current, message: event.target.value }))

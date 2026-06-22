@@ -22,6 +22,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { copyTextToClipboard } from '@/lib/clipboard';
 
 type ArticleDetailDialogArticle = {
   article_id: ArticleId;
@@ -175,6 +176,10 @@ export function ArticleDetailDialogContent({
   extraActions,
 }: ArticleDetailDialogContentProps) {
   const [copyStatus, setCopyStatus] = useState<'title' | 'info' | null>(null);
+  const [copyFeedback, setCopyFeedback] = useState<{
+    message: string;
+    tone: 'error' | 'success';
+  } | null>(null);
   const isAccessQueryEnabled = !!token && !!dbName && !!article.article_id;
   const { data: cnkiSession } = useQuery({
     queryKey: ['cnki-session', 'current'],
@@ -207,16 +212,27 @@ export function ArticleDetailDialogContent({
       shouldUseLiveArticleAccessRefresh(query, shouldRefreshAccessForSession) ? 'always' : true,
   });
 
+  const handleCopy = async (text: string, status: 'title' | 'info', successMessage: string) => {
+    try {
+      await copyTextToClipboard(text);
+      setCopyStatus(status);
+      setCopyFeedback({ message: successMessage, tone: 'success' });
+    } catch {
+      setCopyStatus(null);
+      setCopyFeedback({ message: '复制失败，请手动选择文本复制。', tone: 'error' });
+    }
+    setTimeout(() => {
+      setCopyStatus(null);
+      setCopyFeedback(null);
+    }, 3000);
+  };
+
   const handleCopyTitle = async () => {
-    await navigator.clipboard.writeText(article.title || '');
-    setCopyStatus('title');
-    setTimeout(() => setCopyStatus(null), 3000);
+    await handleCopy(article.title || '', 'title', '文章标题已复制。');
   };
 
   const handleCopyArticleInfo = async () => {
-    await navigator.clipboard.writeText(buildArticleInfoText(article));
-    setCopyStatus('info');
-    setTimeout(() => setCopyStatus(null), 3000);
+    await handleCopy(buildArticleInfoText(article), 'info', '文章信息已复制。');
   };
 
   const detailAction = access?.detail;
@@ -247,6 +263,18 @@ export function ArticleDetailDialogContent({
           </Button>
         </DialogTitle>
         <DialogDescription>{buildArticleDescription(article)}</DialogDescription>
+        {copyFeedback && (
+          <p
+            role={copyFeedback.tone === 'error' ? 'alert' : 'status'}
+            className={
+              copyFeedback.tone === 'error'
+                ? 'text-sm text-destructive'
+                : 'text-sm text-muted-foreground'
+            }
+          >
+            {copyFeedback.message}
+          </p>
+        )}
       </DialogHeader>
       <div className="space-y-6 py-4">
         {article.authors && (

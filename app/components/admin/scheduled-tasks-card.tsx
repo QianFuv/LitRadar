@@ -218,6 +218,8 @@ export function ScheduledTasksCard({ token }: ScheduledTasksCardProps) {
                 <Label htmlFor="scheduled-task-name">任务名称</Label>
                 <Input
                   id="scheduled-task-name"
+                  name="scheduled_task_name"
+                  autoComplete="off"
                   value={form.name}
                   onChange={(event) =>
                     setForm((current) => ({ ...current, name: event.target.value }))
@@ -229,6 +231,9 @@ export function ScheduledTasksCard({ token }: ScheduledTasksCardProps) {
                 <Label htmlFor="scheduled-task-cron">Cron 表达式</Label>
                 <Input
                   id="scheduled-task-cron"
+                  name="scheduled_task_cron"
+                  autoComplete="off"
+                  spellCheck={false}
                   value={form.cron}
                   onChange={(event) =>
                     setForm((current) => ({ ...current, cron: event.target.value }))
@@ -270,6 +275,9 @@ export function ScheduledTasksCard({ token }: ScheduledTasksCardProps) {
                 </Select>
                 {commandPreset === 'custom' ? (
                   <Input
+                    name="scheduled_task_command"
+                    autoComplete="off"
+                    spellCheck={false}
                     aria-label="自定义执行命令"
                     value={form.command}
                     onChange={(event) =>

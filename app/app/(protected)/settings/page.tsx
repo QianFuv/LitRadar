@@ -19,6 +19,7 @@ import {
 } from 'lucide-react';
 
 import { useAuth } from '@/lib/auth-context';
+import { copyTextToClipboard } from '@/lib/clipboard';
 import {
   changePassword,
   clearCnkiSession,
@@ -145,8 +146,23 @@ export default function SettingsPage() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [cnkiLogin, setCnkiLogin] = useState<CnkiLoginStartResponse | null>(null);
   const [cnkiMessage, setCnkiMessage] = useState<string | null>(null);
+  const [copyFeedback, setCopyFeedback] = useState<{
+    message: string;
+    scope: 'invite' | 'token';
+    tone: 'error' | 'success';
+  } | null>(null);
   const cnkiSessionQueryKey = ['cnki-session', user?.id] as const;
   const currentCnkiSessionQueryKey = ['cnki-session', 'current'] as const;
+
+  const handleCopy = async (value: string, successMessage: string, scope: 'invite' | 'token') => {
+    try {
+      await copyTextToClipboard(value);
+      setCopyFeedback({ message: successMessage, scope, tone: 'success' });
+    } catch {
+      setCopyFeedback({ message: '复制失败，请手动选择文本复制。', scope, tone: 'error' });
+    }
+    setTimeout(() => setCopyFeedback(null), 3000);
+  };
 
   const { data: tokens = [] } = useQuery({
     queryKey: ['access-tokens'],
@@ -445,6 +461,7 @@ export default function SettingsPage() {
               <Label htmlFor="old-password">原密码</Label>
               <Input
                 id="old-password"
+                name="old_password"
                 type="password"
                 autoComplete="current-password"
                 value={oldPwd}
@@ -457,6 +474,7 @@ export default function SettingsPage() {
               <Label htmlFor="new-password">新密码</Label>
               <Input
                 id="new-password"
+                name="new_password"
                 type="password"
                 autoComplete="new-password"
                 value={newPwd}
@@ -506,11 +524,23 @@ export default function SettingsPage() {
                   size="icon"
                   className="self-start sm:self-auto"
                   aria-label="复制邀请码"
-                  onClick={() => navigator.clipboard.writeText(inviteCodeData.code)}
+                  onClick={() => void handleCopy(inviteCodeData.code, '邀请码已复制。', 'invite')}
                 >
                   <Copy className="h-4 w-4" />
                 </Button>
               </div>
+              {copyFeedback?.scope === 'invite' && (
+                <p
+                  role={copyFeedback.tone === 'error' ? 'alert' : 'status'}
+                  className={
+                    copyFeedback.tone === 'error'
+                      ? 'text-sm text-destructive'
+                      : 'text-sm text-muted-foreground'
+                  }
+                >
+                  {copyFeedback.message}
+                </p>
+              )}
               <p className="text-xs text-muted-foreground">
                 {inviteCodeData.used ? '此邀请码已被使用' : '此邀请码尚未使用'}
               </p>
@@ -571,11 +601,23 @@ export default function SettingsPage() {
                         size="icon"
                         className="self-start sm:self-auto"
                         aria-label="复制新访问令牌"
-                        onClick={() => navigator.clipboard.writeText(newTokenValue)}
+                        onClick={() => void handleCopy(newTokenValue, '访问令牌已复制。', 'token')}
                       >
                         <Copy className="h-4 w-4" />
                       </Button>
                     </div>
+                    {copyFeedback?.scope === 'token' && (
+                      <p
+                        role={copyFeedback.tone === 'error' ? 'alert' : 'status'}
+                        className={
+                          copyFeedback.tone === 'error'
+                            ? 'text-sm text-destructive'
+                            : 'text-sm text-muted-foreground'
+                        }
+                      >
+                        {copyFeedback.message}
+                      </p>
+                    )}
                   </div>
                 ) : (
                   <form
@@ -589,6 +631,9 @@ export default function SettingsPage() {
                       <Label htmlFor="access-token-name">名称</Label>
                       <Input
                         id="access-token-name"
+                        name="access_token_name"
+                        autoComplete="off"
+                        spellCheck={false}
                         value={tokenName}
                         onChange={(e) => setTokenName(e.target.value)}
                         placeholder="例如：接口集成"

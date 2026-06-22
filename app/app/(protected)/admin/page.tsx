@@ -18,6 +18,7 @@ import {
 } from 'lucide-react';
 
 import { useAuth } from '@/lib/auth-context';
+import { copyTextToClipboard } from '@/lib/clipboard';
 import {
   adminGetStats,
   adminGetUsers,
@@ -84,6 +85,20 @@ export default function AdminPage() {
   const [resetDialogOpen, setResetDialogOpen] = useState(false);
   const [deleteUserId, setDeleteUserId] = useState<number | null>(null);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [copyFeedback, setCopyFeedback] = useState<{
+    message: string;
+    tone: 'error' | 'success';
+  } | null>(null);
+
+  const handleCopyInviteCode = async (code: string) => {
+    try {
+      await copyTextToClipboard(code);
+      setCopyFeedback({ message: '邀请码已复制。', tone: 'success' });
+    } catch {
+      setCopyFeedback({ message: '复制失败，请手动选择文本复制。', tone: 'error' });
+    }
+    setTimeout(() => setCopyFeedback(null), 3000);
+  };
 
   const { data: stats, isLoading: statsLoading } = useQuery({
     queryKey: ['admin-stats'],
@@ -490,6 +505,7 @@ export default function AdminPage() {
           </DialogHeader>
           <div className="space-y-3 py-2">
             <Input
+              name="admin_new_password"
               type="password"
               aria-label="新密码"
               autoComplete="new-password"
@@ -582,6 +598,18 @@ export default function AdminPage() {
             <Plus className="h-4 w-4 mr-1" />
             生成邀请码
           </Button>
+          {copyFeedback && (
+            <p
+              role={copyFeedback.tone === 'error' ? 'alert' : 'status'}
+              className={
+                copyFeedback.tone === 'error'
+                  ? 'text-sm text-destructive'
+                  : 'text-sm text-muted-foreground'
+              }
+            >
+              {copyFeedback.message}
+            </p>
+          )}
           <div className="space-y-3 md:hidden">
             {inviteCodes.length === 0 ? (
               <div className="rounded-lg border p-4 text-sm text-muted-foreground">暂无邀请码</div>
@@ -600,7 +628,7 @@ export default function AdminPage() {
                         variant="outline"
                         size="sm"
                         className="shrink-0"
-                        onClick={() => navigator.clipboard.writeText(ic.code)}
+                        onClick={() => void handleCopyInviteCode(ic.code)}
                       >
                         <Copy className="h-4 w-4" />
                         复制
@@ -675,7 +703,7 @@ export default function AdminPage() {
                         {ic.code.slice(0, 8)}…
                         <button
                           type="button"
-                          onClick={() => navigator.clipboard.writeText(ic.code)}
+                          onClick={() => void handleCopyInviteCode(ic.code)}
                           className="p-0.5 rounded hover:bg-muted"
                           title="复制"
                           aria-label="复制邀请码"

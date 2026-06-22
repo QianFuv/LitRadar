@@ -76,9 +76,11 @@ export default function LoginClient() {
               <Label htmlFor="username">用户名</Label>
               <Input
                 id="username"
+                name="username"
                 type="text"
                 value={username}
                 autoComplete="username"
+                spellCheck={false}
                 onChange={(event) => setUsername(event.target.value)}
                 placeholder="3-32位字母数字下划线"
                 aria-invalid={Boolean(error)}
@@ -90,6 +92,7 @@ export default function LoginClient() {
               <Label htmlFor="password">密码</Label>
               <Input
                 id="password"
+                name="password"
                 type="password"
                 value={password}
                 autoComplete={mode === 'register' ? 'new-password' : 'current-password'}
@@ -105,9 +108,11 @@ export default function LoginClient() {
                 <Label htmlFor="invite-code">邀请码</Label>
                 <Input
                   id="invite-code"
+                  name="invite_code"
                   type="text"
                   value={inviteCode}
                   autoComplete="one-time-code"
+                  spellCheck={false}
                   onChange={(event) => setInviteCode(event.target.value)}
                   placeholder="输入邀请码"
                   aria-invalid={Boolean(error)}
