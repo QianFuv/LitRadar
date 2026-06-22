@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useQuery, useMutation, useQueryClient, useInfiniteQuery } from '@tanstack/react-query';
 import Link from 'next/link';
 import { ArrowLeft, Download, FolderPlus, Pencil, Radar, Star, Trash2 } from 'lucide-react';
+import { parseAsInteger, useQueryState } from 'nuqs';
 
 import { useAuth } from '@/lib/auth-context';
 import {
@@ -62,7 +63,7 @@ function toFavoriteArticleRef(favorite: FavoriteArticleItem): FavoriteArticleRef
 export default function FavoritesPage() {
   const { user, token } = useAuth();
   const queryClient = useQueryClient();
-  const [selectedFolderId, setSelectedFolderId] = useState<number | null>(null);
+  const [selectedFolderId, setSelectedFolderId] = useQueryState('folder', parseAsInteger);
   const [newFolderName, setNewFolderName] = useState('');
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editName, setEditName] = useState('');
@@ -155,13 +156,13 @@ export default function FavoritesPage() {
 
   const deleteMut = useMutation({
     mutationFn: (id: number) => deleteFolder(token!, id),
-    onSuccess: () => {
+    onSuccess: (_data, deletedFolderId) => {
       setSelectedArticleKeys([]);
       setMoveTargetFolderId('');
       setBatchFeedback(null);
       queryClient.invalidateQueries({ queryKey: ['folders'] });
-      if (selectedFolderId === deleteMut.variables) {
-        setSelectedFolderId(null);
+      if (selectedFolderId === deletedFolderId) {
+        void setSelectedFolderId(null);
       }
     },
   });
@@ -262,7 +263,7 @@ export default function FavoritesPage() {
   };
 
   const handleSelectFolder = (folderId: number) => {
-    setSelectedFolderId(folderId);
+    void setSelectedFolderId(folderId);
     setSelectedArticleKeys([]);
     setMoveTargetFolderId('');
     setBatchFeedback(null);

@@ -1,10 +1,11 @@
 'use client';
 
 import Link from 'next/link';
-import { useMemo, useState } from 'react';
+import { useMemo } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ArrowLeft, CalendarDays, Database, FileText, Menu } from 'lucide-react';
+import { parseAsString, useQueryState } from 'nuqs';
 
 import {
   checkFavoritesBatch,
@@ -188,10 +189,9 @@ export default function WeeklyUpdatesPage() {
   const { user, token } = useAuth();
   const queryClient = useQueryClient();
   const searchParams = useSearchParams();
-  const requestedDb = (searchParams.get('db') || '').trim();
   const searchQuery = (searchParams.get('q') || '').trim();
-  const [selectedDb, setSelectedDb] = useState<string>('');
-  const [selectedJournalId, setSelectedJournalId] = useState<JournalId | null>(null);
+  const [selectedDb, setSelectedDb] = useQueryState('db', parseAsString.withDefault(''));
+  const [selectedJournalId, setSelectedJournalId] = useQueryState('journal', parseAsString);
 
   const {
     data: weeklyData,
@@ -235,8 +235,8 @@ export default function WeeklyUpdatesPage() {
   }, [databaseOptions, dbMap]);
 
   const effectiveSelectedDb = useMemo(
-    () => selectDefaultDatabase(availableDatabases, selectedDb, requestedDb),
-    [availableDatabases, requestedDb, selectedDb],
+    () => selectDefaultDatabase(availableDatabases, selectedDb, ''),
+    [availableDatabases, selectedDb],
   );
 
   const selectedDbData = useMemo(() => {
@@ -366,9 +366,9 @@ export default function WeeklyUpdatesPage() {
   }, [weeklyData]);
 
   const handleDatabaseChange = (value: string) => {
-    setSelectedDb(value);
+    void setSelectedDb(value);
     setDatabase(value);
-    setSelectedJournalId(null);
+    void setSelectedJournalId(null);
   };
 
   return (
@@ -402,7 +402,7 @@ export default function WeeklyUpdatesPage() {
                       journals={journals}
                       effectiveSelectedJournalId={effectiveSelectedJournalId}
                       onDatabaseChange={handleDatabaseChange}
-                      onSelectJournal={setSelectedJournalId}
+                      onSelectJournal={(journalId) => void setSelectedJournalId(journalId)}
                     />
                   </div>
                 </DialogContent>
@@ -468,7 +468,7 @@ export default function WeeklyUpdatesPage() {
                 journals={journals}
                 effectiveSelectedJournalId={effectiveSelectedJournalId}
                 onDatabaseChange={handleDatabaseChange}
-                onSelectJournal={setSelectedJournalId}
+                onSelectJournal={(journalId) => void setSelectedJournalId(journalId)}
               />
 
               <Card className="min-h-0 overflow-hidden">

@@ -184,6 +184,11 @@
   box-shadow: var(--shadow-vercel-card);
 }
 
+.content-visibility-auto {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 72px;
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
