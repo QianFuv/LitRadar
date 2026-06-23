@@ -6,7 +6,7 @@ import re
 import sqlite3
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Header, HTTPException
+from fastapi import APIRouter, Cookie, Depends, Header, HTTPException, Request, Response
 
 from paper_scanner.api.auth_db import (
     change_password,
@@ -21,7 +21,13 @@ from paper_scanner.api.auth_db import (
     revoke_tokens_by_name,
     verify_user,
 )
-from paper_scanner.api.auth_deps import get_current_user
+from paper_scanner.api.auth_deps import (
+    SESSION_COOKIE_NAME,
+    clear_session_cookie,
+    get_current_user,
+    resolve_auth_token,
+    set_session_cookie,
+)
 from paper_scanner.api.models import (
     ChangePasswordRequest,
     InviteCodeResponse,
@@ -70,20 +76,30 @@ async def register(body: RegisterRequest):
 
 
 @router.post("/login", response_model=LoginResponse)
-async def login(body: LoginRequest):
-    """Authenticate and return an access token."""
+async def login(body: LoginRequest, request: Request, response: Response):
+    """
+    Authenticate and set a browser session cookie.
+
+    Args:
+        body: Login credentials.
+        request: Incoming request used to infer cookie security.
+        response: Response receiving the session cookie.
+
+    Returns:
+        Safe login response without the raw session token.
+    """
     user = verify_user(body.username.strip(), body.password)
     if not user:
         raise HTTPException(status_code=401, detail="Invalid username or password")
     revoke_tokens_by_name(user["id"], "login")
     token_data = create_access_token(user["id"], name="login")
+    set_session_cookie(response, token_data["token"], token_data["expires_at"], request)
     return LoginResponse(
         user=UserResponse(
             id=user["id"],
             username=user["username"],
             is_admin=user.get("is_admin", False),
         ),
-        access_token=token_data["token"],
         expires_at=token_data["expires_at"],
     )
 
@@ -115,18 +131,30 @@ async def api_change_password(body: ChangePasswordRequest, user: CurrentUser):
 @router.post("/logout")
 async def logout_current_session(
     user: CurrentUser,
+    request: Request,
+    response: Response,
     authorization: str | None = Header(default=None),
+    session_cookie: str | None = Cookie(default=None, alias=SESSION_COOKIE_NAME),
 ):
-    """Revoke the currently authenticated access token."""
-    parts = (authorization or "").split(" ", maxsplit=1)
-    if len(parts) != 2 or parts[0].lower() != "bearer":
-        raise HTTPException(status_code=401, detail="Invalid authorization format")
+    """
+    Revoke the current session token and clear the browser session cookie.
 
-    raw_token = parts[1].strip()
+    Args:
+        user: Current authenticated user.
+        request: Incoming request used to infer cookie security.
+        response: Response receiving the cookie deletion header.
+        authorization: Optional Authorization header.
+        session_cookie: Optional browser session cookie value.
+
+    Returns:
+        Logout result.
+    """
+    raw_token = resolve_auth_token(authorization, session_cookie)
     if not raw_token:
         raise HTTPException(status_code=401, detail="Token required")
 
     revoke_access_token_value(raw_token)
+    clear_session_cookie(response, request)
     return {"ok": True, "user_id": user["id"]}
 
 

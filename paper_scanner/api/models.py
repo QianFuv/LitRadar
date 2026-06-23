@@ -312,7 +312,6 @@ class UserResponse(BaseModel):
 
 class LoginResponse(BaseModel):
     user: UserResponse
-    access_token: str
     expires_at: float
 
 
