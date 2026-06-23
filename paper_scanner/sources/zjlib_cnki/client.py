@@ -434,6 +434,18 @@ class ZhejiangLibraryCnkiClient:
             raise ZjlibCnkiError("zyproxy login did not set vpn358_sid.")
         return final_url
 
+    def warm_up_fulltext_session(self) -> str:
+        """
+        Prepare Share and zyproxy cookies required for CNKI full-text access.
+
+        Returns:
+            Final proxied CNKI entry URL.
+        """
+        sso_url = self.build_share_sso_url()
+        self.enter_share(sso_url)
+        zyproxy_login_url = self.get_zyproxy_login_url()
+        return self.enter_zyproxy(zyproxy_login_url)
+
     def search(self, keyword: str, *, limit: int = 10) -> list[SearchResult]:
         """
         Search CNKI through zyproxy and parse result rows.

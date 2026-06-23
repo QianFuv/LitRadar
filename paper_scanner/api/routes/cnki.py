@@ -27,6 +27,21 @@ router = APIRouter(prefix=f"{API_PREFIX}/cnki", tags=["cnki"])
 CurrentUser = Annotated[dict, Depends(get_current_user)]
 
 
+def _cnki_error_detail(code: str, phase: str, message: str) -> dict[str, str]:
+    """
+    Build a structured CNKI route error payload.
+
+    Args:
+        code: Stable error code for frontend branching.
+        phase: CNKI login phase that failed.
+        message: Human-readable upstream error message.
+
+    Returns:
+        Structured error detail payload.
+    """
+    return {"code": code, "phase": phase, "message": message}
+
+
 @router.get("/session", response_model=CnkiSessionStatusResponse)
 async def get_session(user: CurrentUser):
     """
@@ -72,7 +87,14 @@ async def start_login(user: CurrentUser):
     try:
         uuid, status, qr_code, session_data = await asyncio.to_thread(run_start)
     except ZjlibCnkiError as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=502,
+            detail=_cnki_error_detail(
+                "cnki_login_start_failed",
+                "login",
+                str(exc),
+            ),
+        ) from exc
 
     session_status = upsert_cnki_session(
         user["id"],
@@ -103,7 +125,12 @@ async def poll_login(body: CnkiLoginPollRequest, user: CurrentUser):
     row = get_cnki_session(user["id"])
     if not row or not row.get("qr_uuid"):
         raise HTTPException(
-            status_code=400, detail="CNKI QR login has not been started"
+            status_code=400,
+            detail=_cnki_error_detail(
+                "cnki_login_not_started",
+                "login",
+                "CNKI QR login has not been started",
+            ),
         )
 
     def run_poll() -> dict:
@@ -114,17 +141,44 @@ async def poll_login(body: CnkiLoginPollRequest, user: CurrentUser):
             Completed session state data.
         """
         with ZhejiangLibraryCnkiClient(state_data=row["session_data"]) as client:
-            client.poll_qr_login(
-                timeout_seconds=body.timeout_seconds,
-                interval_seconds=body.interval_seconds,
-            )
+            try:
+                client.poll_qr_login(
+                    timeout_seconds=body.timeout_seconds,
+                    interval_seconds=body.interval_seconds,
+                )
+            except ZjlibCnkiError as exc:
+                message = str(exc)
+                if "Timed out" in message:
+                    raise HTTPException(
+                        status_code=408,
+                        detail=_cnki_error_detail(
+                            "cnki_login_timeout",
+                            "login",
+                            message,
+                        ),
+                    ) from exc
+                raise HTTPException(
+                    status_code=400,
+                    detail=_cnki_error_detail(
+                        "cnki_login_failed",
+                        "login",
+                        message,
+                    ),
+                ) from exc
+            try:
+                client.warm_up_fulltext_session()
+            except ZjlibCnkiError as exc:
+                raise HTTPException(
+                    status_code=502,
+                    detail=_cnki_error_detail(
+                        "cnki_warmup_failed",
+                        "warmup",
+                        str(exc),
+                    ),
+                ) from exc
             return client.to_state_data()
 
-    try:
-        session_data = await asyncio.to_thread(run_poll)
-    except ZjlibCnkiError as exc:
-        status_code = 408 if "Timed out" in str(exc) else 400
-        raise HTTPException(status_code=status_code, detail=str(exc)) from exc
+    session_data = await asyncio.to_thread(run_poll)
 
     session_status = upsert_cnki_session(
         user["id"],

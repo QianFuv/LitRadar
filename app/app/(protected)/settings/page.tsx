@@ -21,6 +21,7 @@ import {
 import { useAuth } from '@/lib/auth-context';
 import { copyTextToClipboard } from '@/lib/clipboard';
 import {
+  ApiError,
   changePassword,
   clearCnkiSession,
   createAccessToken,
@@ -54,6 +55,13 @@ const TTL_OPTIONS = [
   { label: '90天', value: 90 * 86400 },
   { label: '1年', value: 365 * 86400 },
 ];
+
+type CnkiMessageTone = 'error' | 'success' | 'warning';
+
+type CnkiMessageState = {
+  text: string;
+  tone: CnkiMessageTone;
+};
 
 function formatExpiry(ts: number): string {
   return new Date(ts * 1000).toLocaleDateString('zh-CN', {
@@ -130,6 +138,62 @@ function isQrImageSource(value: string): boolean {
   );
 }
 
+/**
+ * Render a CNKI status message style from its tone.
+ *
+ * @param tone - Message tone.
+ * @returns CSS class name.
+ */
+function getCnkiMessageClassName(tone: CnkiMessageTone): string {
+  if (tone === 'error') {
+    return 'text-sm text-destructive';
+  }
+  if (tone === 'warning') {
+    return 'text-sm text-amber-700 dark:text-amber-400';
+  }
+  return 'text-sm text-muted-foreground';
+}
+
+/**
+ * Convert an unknown CNKI API error into a user-facing status message.
+ *
+ * @param error - Unknown mutation error.
+ * @param fallback - Fallback message.
+ * @returns CNKI message state.
+ */
+function getCnkiApiErrorMessage(error: unknown, fallback: string): CnkiMessageState {
+  if (error instanceof ApiError) {
+    if (error.code === 'cnki_login_timeout') {
+      return {
+        text: '未检测到扫码确认。请确认已在支付宝完成扫码授权，然后再次点击“完成登录”。',
+        tone: 'error',
+      };
+    }
+    if (error.code === 'cnki_login_not_started') {
+      return {
+        text: '当前没有可确认的二维码。请重新生成二维码后再完成登录。',
+        tone: 'error',
+      };
+    }
+    if (error.code === 'cnki_login_failed' || error.phase === 'login') {
+      return {
+        text: `扫码登录未完成：${error.message}`,
+        tone: 'error',
+      };
+    }
+    if (error.code === 'cnki_warmup_failed' || error.phase === 'warmup') {
+      return {
+        text: `扫码登录已通过，但全文权限预热失败：${error.message}。请稍后再次点击“完成登录”；如果仍失败，请重新扫码。`,
+        tone: 'error',
+      };
+    }
+  }
+  return {
+    text: error instanceof Error ? error.message : fallback,
+    tone: 'error',
+  };
+}
+
 export default function SettingsPage() {
   const { user, logout } = useAuth();
   const queryClient = useQueryClient();
@@ -145,7 +209,7 @@ export default function SettingsPage() {
   const [newTokenValue, setNewTokenValue] = useState<string | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [cnkiLogin, setCnkiLogin] = useState<CnkiLoginStartResponse | null>(null);
-  const [cnkiMessage, setCnkiMessage] = useState<string | null>(null);
+  const [cnkiMessage, setCnkiMessage] = useState<CnkiMessageState | null>(null);
   const [copyFeedback, setCopyFeedback] = useState<{
     message: string;
     scope: 'cnkiQr' | 'invite' | 'token';
@@ -235,15 +299,21 @@ export default function SettingsPage() {
       queryClient.invalidateQueries({ queryKey: ['article-access'] });
     },
     onError: (err) => {
-      setCnkiMessage(err instanceof Error ? err.message : '启动知网登录失败');
+      setCnkiMessage(getCnkiApiErrorMessage(err, '启动知网登录失败'));
     },
   });
 
   const pollCnkiLoginMut = useMutation({
     mutationFn: () => pollCnkiLogin(15, 1.5),
+    onMutate: () => {
+      setCnkiMessage({ text: '正在确认扫码并预热全文权限…', tone: 'warning' });
+    },
     onSuccess: (data) => {
       setCnkiLogin(null);
-      setCnkiMessage(data.session.status === 'active' ? '登录已完成' : data.status);
+      setCnkiMessage({
+        text: data.session.status === 'active' ? '登录已完成，全文权限已预热。' : data.status,
+        tone: data.session.status === 'active' ? 'success' : 'warning',
+      });
       queryClient.setQueryData(cnkiSessionQueryKey, data.session);
       queryClient.setQueryData(currentCnkiSessionQueryKey, data.session);
       queryClient.invalidateQueries({ queryKey: ['cnki-session'] });
@@ -251,7 +321,7 @@ export default function SettingsPage() {
       queryClient.invalidateQueries({ queryKey: ['article-access'] });
     },
     onError: (err) => {
-      setCnkiMessage(err instanceof Error ? err.message : '确认知网登录失败');
+      setCnkiMessage(getCnkiApiErrorMessage(err, '确认知网登录失败'));
     },
   });
 
@@ -259,7 +329,7 @@ export default function SettingsPage() {
     mutationFn: () => clearCnkiSession(),
     onSuccess: (data) => {
       setCnkiLogin(null);
-      setCnkiMessage('登录状态已清除');
+      setCnkiMessage({ text: '登录状态已清除', tone: 'success' });
       queryClient.setQueryData(cnkiSessionQueryKey, data);
       queryClient.setQueryData(currentCnkiSessionQueryKey, data);
       queryClient.invalidateQueries({ queryKey: ['cnki-session'] });
@@ -267,7 +337,7 @@ export default function SettingsPage() {
       queryClient.invalidateQueries({ queryKey: ['article-access'] });
     },
     onError: (err) => {
-      setCnkiMessage(err instanceof Error ? err.message : '清除知网登录失败');
+      setCnkiMessage(getCnkiApiErrorMessage(err, '清除知网登录失败'));
     },
   });
 
@@ -348,8 +418,11 @@ export default function SettingsPage() {
           )}
 
           {cnkiMessage && (
-            <p role="status" className="text-sm text-muted-foreground">
-              {cnkiMessage}
+            <p
+              role={cnkiMessage.tone === 'error' ? 'alert' : 'status'}
+              className={getCnkiMessageClassName(cnkiMessage.tone)}
+            >
+              {cnkiMessage.text}
             </p>
           )}
 
@@ -387,7 +460,7 @@ export default function SettingsPage() {
                       ) : (
                         <CheckCircle2 className="h-4 w-4" />
                       )}
-                      完成登录
+                      {pollCnkiLoginMut.isPending ? '确认并预热…' : '完成登录'}
                     </Button>
                     <Button
                       variant="ghost"

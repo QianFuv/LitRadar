@@ -1105,9 +1105,6 @@ def _download_cnki_fulltext_pdf(
     """
     with ZhejiangLibraryCnkiClient(state_data=session_data) as client:
         client.ensure_logged_in()
-        sso_url = client.build_share_sso_url()
-        client.enter_share(sso_url)
-        zyproxy_login_url = client.get_zyproxy_login_url()
-        client.enter_zyproxy(zyproxy_login_url)
+        client.warm_up_fulltext_session()
         downloaded = client.download_matching_pdf(expected)
         return downloaded, client.to_state_data()

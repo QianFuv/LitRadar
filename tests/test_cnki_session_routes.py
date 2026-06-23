@@ -16,7 +16,7 @@ from fastapi.testclient import TestClient
 
 import paper_scanner.api.auth_db as auth_db
 from paper_scanner.api.routes import register_routes
-from paper_scanner.sources.zjlib_cnki import QrLogin
+from paper_scanner.sources.zjlib_cnki import QrLogin, ZjlibCnkiError
 
 
 def build_unsigned_jwt(exp: int) -> str:
@@ -87,6 +87,7 @@ class FakeZhejiangLibraryCnkiClient:
         """
         self.state_data = dict(state_data or {})
         self.did_complete = False
+        self.did_warm_up = False
 
     def __enter__(self) -> FakeZhejiangLibraryCnkiClient:
         """
@@ -139,6 +140,65 @@ class FakeZhejiangLibraryCnkiClient:
         self.state_data["bff_user_token"] = self.completed_token
         return self.completed_token
 
+    def build_share_sso_url(self) -> str:
+        """
+        Return a fake Share SSO URL.
+
+        Returns:
+            Fake Share SSO URL.
+        """
+        self.state_data["share_sso_url"] = "https://share.test/sso"
+        return str(self.state_data["share_sso_url"])
+
+    def enter_share(self, sso_url: str) -> None:
+        """
+        Mark fake Share entry as completed.
+
+        Args:
+            sso_url: Fake Share SSO URL.
+
+        Returns:
+            None.
+        """
+        self.state_data["entered_share_url"] = sso_url
+
+    def get_zyproxy_login_url(self) -> str:
+        """
+        Return a fake zyproxy login URL.
+
+        Returns:
+            Fake zyproxy login URL.
+        """
+        self.state_data["zyproxy_login_url"] = "https://login.elib.test/index.php"
+        return str(self.state_data["zyproxy_login_url"])
+
+    def enter_zyproxy(self, login_url: str) -> str:
+        """
+        Mark fake zyproxy entry as completed.
+
+        Args:
+            login_url: Fake zyproxy login URL.
+
+        Returns:
+            Fake final zyproxy URL.
+        """
+        self.did_warm_up = True
+        self.state_data["entered_zyproxy_url"] = login_url
+        self.state_data["final_zyproxy_url"] = "https://cnki.elib.test/kns55/"
+        return str(self.state_data["final_zyproxy_url"])
+
+    def warm_up_fulltext_session(self) -> str:
+        """
+        Run the fake Share and zyproxy warm-up sequence.
+
+        Returns:
+            Fake final zyproxy URL.
+        """
+        sso_url = self.build_share_sso_url()
+        self.enter_share(sso_url)
+        login_url = self.get_zyproxy_login_url()
+        return self.enter_zyproxy(login_url)
+
     def to_state_data(self) -> dict[str, Any]:
         """
         Return fake session state.
@@ -150,9 +210,49 @@ class FakeZhejiangLibraryCnkiClient:
         state.setdefault("qr_uuid", "qr-user-1")
         if self.did_complete:
             state["cookies"] = [build_cookie("userToken", "SECRET_COOKIE_VALUE")]
+        if self.did_warm_up:
+            state["cookies"] = [
+                *state.get("cookies", []),
+                build_cookie("vpn358_sid", "SECRET_VPN_VALUE"),
+            ]
         else:
             state.setdefault("cookies", [])
         return state
+
+
+class FailingWarmUpCnkiClient(FakeZhejiangLibraryCnkiClient):
+    """Fake client that fails after QR polling succeeds."""
+
+    def warm_up_fulltext_session(self) -> str:
+        """
+        Raise a fake warm-up error.
+
+        Raises:
+            ZjlibCnkiError: Always raised to simulate upstream failure.
+        """
+        raise ZjlibCnkiError("Share warm-up failed")
+
+
+class TimeoutQrLoginCnkiClient(FakeZhejiangLibraryCnkiClient):
+    """Fake client that times out while waiting for QR confirmation."""
+
+    def poll_qr_login(
+        self,
+        *,
+        timeout_seconds: int = 180,
+        interval_seconds: float = 2.0,
+    ) -> str:
+        """
+        Raise a fake QR polling timeout.
+
+        Args:
+            timeout_seconds: Ignored timeout.
+            interval_seconds: Ignored interval.
+
+        Raises:
+            ZjlibCnkiError: Always raised to simulate polling timeout.
+        """
+        raise ZjlibCnkiError("Timed out waiting for QR scan after 15 seconds.")
 
 
 class CnkiSessionRoutesTest(unittest.TestCase):
@@ -267,9 +367,61 @@ class CnkiSessionRoutesTest(unittest.TestCase):
         self.assertEqual(payload["status"], "COMPLETE")
         self.assertEqual(payload["session"]["status"], "active")
         self.assertIn("userToken", payload["session"]["cookie_names"])
+        self.assertIn("vpn358_sid", payload["session"]["cookie_names"])
         self.assertNotIn("SECRET_COOKIE_VALUE", json.dumps(payload, ensure_ascii=False))
+        self.assertNotIn("SECRET_VPN_VALUE", json.dumps(payload, ensure_ascii=False))
         assert raw_session is not None
         self.assertIn("bff_user_token", raw_session["session_data"])
+        self.assertIn("final_zyproxy_url", raw_session["session_data"])
+
+    def test_poll_login_reports_qr_timeout_code(self) -> None:
+        """
+        Ensure QR polling timeout is distinguishable from warm-up failure.
+
+        Returns:
+            None.
+        """
+        with patch(
+            "paper_scanner.api.routes.cnki.ZhejiangLibraryCnkiClient",
+            TimeoutQrLoginCnkiClient,
+        ):
+            self.client.post("/api/cnki/login/start", headers=self.auth_headers())
+            response = self.client.post(
+                "/api/cnki/login/poll",
+                json={},
+                headers=self.auth_headers(),
+            )
+
+        detail = response.json()["detail"]
+
+        self.assertEqual(response.status_code, 408)
+        self.assertEqual(detail["code"], "cnki_login_timeout")
+        self.assertEqual(detail["phase"], "login")
+
+    def test_poll_login_reports_fulltext_warm_up_failure(self) -> None:
+        """
+        Ensure QR login does not silently return an unprepared active session.
+
+        Returns:
+            None.
+        """
+        with patch(
+            "paper_scanner.api.routes.cnki.ZhejiangLibraryCnkiClient",
+            FailingWarmUpCnkiClient,
+        ):
+            self.client.post("/api/cnki/login/start", headers=self.auth_headers())
+            response = self.client.post(
+                "/api/cnki/login/poll",
+                json={},
+                headers=self.auth_headers(),
+            )
+
+        detail = response.json()["detail"]
+
+        self.assertEqual(response.status_code, 502)
+        self.assertEqual(detail["code"], "cnki_warmup_failed")
+        self.assertEqual(detail["phase"], "warmup")
+        self.assertIn("Share warm-up failed", detail["message"])
 
     def test_expired_session_reports_expired(self) -> None:
         """

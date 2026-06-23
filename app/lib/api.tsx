@@ -207,6 +207,38 @@ export interface CnkiLoginPollResponse {
   session: CnkiSessionStatus;
 }
 
+export interface ApiErrorInfo {
+  code: string | null;
+  message: string;
+  phase: string | null;
+}
+
+/**
+ * Error raised for non-2xx API responses.
+ */
+export class ApiError extends Error {
+  readonly code: string | null;
+  readonly phase: string | null;
+  readonly status: number;
+
+  /**
+   * Create an API error with optional backend classification.
+   *
+   * @param message - Displayable error message.
+   * @param status - HTTP status code.
+   * @param code - Stable backend error code.
+   * @param phase - Backend workflow phase that failed.
+   */
+  constructor(message: string, status: number, code: string | null, phase: string | null) {
+    super(message);
+    this.name = 'ApiError';
+    this.status = status;
+    this.code = code;
+    this.phase = phase;
+    Object.setPrototypeOf(this, ApiError.prototype);
+  }
+}
+
 export interface InviteCode {
   id: number;
   code: string;
@@ -505,20 +537,36 @@ export function buildDatabaseUrl(path: string, dbName: string, params?: URLSearc
 }
 
 /**
- * Convert an unknown backend error payload into a display message.
+ * Check whether an unknown value is a string-keyed object.
+ *
+ * @param value - Value to inspect.
+ * @returns Whether the value is a record.
+ */
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === 'object');
+}
+
+/**
+ * Convert an unknown backend error payload into structured error info.
  *
  * @param payload - Parsed backend error payload.
  * @param fallback - Fallback message.
- * @returns Error message.
+ * @returns Structured API error info.
  */
-function extractErrorMessage(payload: unknown, fallback: string): string {
-  if (payload && typeof payload === 'object' && 'detail' in payload) {
-    const detail = (payload as { detail?: unknown }).detail;
+function extractErrorInfo(payload: unknown, fallback: string): ApiErrorInfo {
+  if (isRecord(payload) && 'detail' in payload) {
+    const detail = payload.detail;
     if (typeof detail === 'string') {
-      return detail;
+      return { code: null, message: detail, phase: null };
+    }
+    if (isRecord(detail)) {
+      const code = typeof detail.code === 'string' ? detail.code : null;
+      const message = typeof detail.message === 'string' ? detail.message : fallback;
+      const phase = typeof detail.phase === 'string' ? detail.phase : null;
+      return { code, message, phase };
     }
   }
-  return fallback;
+  return { code: null, message: fallback, phase: null };
 }
 
 /**
@@ -533,7 +581,8 @@ async function parseJson<T>(response: Response, fallback: string): Promise<T> {
     return response.json() as Promise<T>;
   }
   const payload = await response.json().catch(() => null);
-  throw new Error(extractErrorMessage(payload, fallback));
+  const errorInfo = extractErrorInfo(payload, fallback);
+  throw new ApiError(errorInfo.message, response.status, errorInfo.code, errorInfo.phase);
 }
 
 /**
