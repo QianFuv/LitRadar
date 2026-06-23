@@ -178,9 +178,9 @@ CSV 元数据
 - `/api/auth/me`
 - `/api/auth/tokens`
 
-访问受保护接口时使用 Bearer 令牌。
+浏览器登录态使用后端设置的 `HttpOnly` `ps_session` Cookie，前端不在 `localStorage` 或 `sessionStorage` 保存登录令牌。刷新页面时，`app/lib/auth-context.tsx` 通过 `/api/auth/me` 携带 Cookie 恢复当前用户。
 
-前端通过 `app/lib/auth-context.tsx` 与后端 `/api/auth/*` 维护登录态，不再包含额外的本地令牌认证配置。
+设置页创建的访问令牌只面向外部脚本/API 客户端，调用受保护接口时使用 `Authorization: Bearer <access_token>`。不要把令牌放入 URL 查询参数。
 
 ### 管理员权限
 
@@ -270,7 +270,7 @@ pnpm lint
 
 ### 2. 认为前端还保留独立的本地令牌认证配置
 
-不是。当前页面只依赖后端账号体系与 Bearer 令牌流程。
+不是。当前页面只依赖后端账号体系与 `ps_session` Cookie 登录态；Bearer 访问令牌只用于外部脚本/API 客户端。
 
 ### 3. 认为通知配置只支持 SiliconFlow
 

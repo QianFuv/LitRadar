@@ -312,7 +312,7 @@ announcements
 
 - 登录成功时生成名为 `login` 的令牌
 - 用户可在设置页创建更多长期令牌
-- 收藏导出接口支持直接用原始令牌作为 `access_token` 查询参数
+- 浏览器登录令牌通过 `HttpOnly` `ps_session` Cookie 传输；用户创建的长期令牌通过 Bearer 请求头用于外部客户端
 
 ### 3. `cnki_sessions`
 

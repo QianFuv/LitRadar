@@ -497,7 +497,7 @@ export default function FavoritesPage() {
                     </SelectContent>
                   </Select>
                   <Button asChild variant="outline">
-                    <a href={getExportUrl('', selectedFolder.id, exportFormat)} download>
+                    <a href={getExportUrl(selectedFolder.id, exportFormat)} download>
                       <Download className="mr-2 h-4 w-4" />
                       导出引用
                     </a>

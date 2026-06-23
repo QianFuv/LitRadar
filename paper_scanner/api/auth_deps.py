@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import time
+from typing import Literal
 
 from fastapi import Cookie, Header, HTTPException, Request, Response
 
@@ -11,7 +12,7 @@ from paper_scanner.api.auth_db import verify_access_token
 
 SESSION_COOKIE_NAME = "ps_session"
 SESSION_COOKIE_PATH = "/"
-SESSION_COOKIE_SAMESITE = "lax"
+SESSION_COOKIE_SAMESITE: Literal["lax", "strict", "none"] = "lax"
 AUTH_COOKIE_SECURE_ENV = "AUTH_COOKIE_SECURE"
 
 

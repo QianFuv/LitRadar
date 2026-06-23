@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import inspect
 import tempfile
 import unittest
 from pathlib import Path
+
+from fastapi import HTTPException
 
 import paper_scanner.api.auth_db as auth_db
 from paper_scanner.api.routes.favorites import get_export_user
@@ -41,14 +44,54 @@ class FavoritesExportAuthTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_export_user_accepts_bearer_header(self) -> None:
         """
-        Ensure direct dependency use does not pass FastAPI Query defaults onward.
+        Ensure export accepts explicit Bearer API-token authentication.
 
         Returns:
             None.
         """
-        user = await get_export_user(authorization=f"Bearer {self.token}")
+        user = await get_export_user(
+            authorization=f"Bearer {self.token}",
+            session_cookie=None,
+        )
 
         self.assertEqual(user["id"], self.user["id"])
+
+    async def test_export_user_accepts_session_cookie(self) -> None:
+        """
+        Ensure export accepts browser session cookie authentication.
+
+        Returns:
+            None.
+        """
+        user = await get_export_user(
+            authorization=None,
+            session_cookie=self.token,
+        )
+
+        self.assertEqual(user["id"], self.user["id"])
+
+    async def test_export_user_rejects_missing_auth(self) -> None:
+        """
+        Ensure export requires either Bearer auth or the session cookie.
+
+        Returns:
+            None.
+        """
+        with self.assertRaises(HTTPException) as context:
+            await get_export_user(authorization=None, session_cookie=None)
+
+        self.assertEqual(context.exception.status_code, 401)
+
+    def test_export_user_does_not_accept_query_access_token(self) -> None:
+        """
+        Ensure export auth cannot regress to query-string token transport.
+
+        Returns:
+            None.
+        """
+        parameters = inspect.signature(get_export_user).parameters
+
+        self.assertNotIn("access_token", parameters)
 
 
 if __name__ == "__main__":

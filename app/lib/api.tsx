@@ -768,11 +768,10 @@ export function getAnnouncements(): Promise<AnnouncementInfo[]> {
  * Build the full-text redirect URL for an article.
  *
  * @param articleId - Article id.
- * @param token - Optional access token.
  * @returns Full-text URL.
  */
-export function getFullTextUrl(articleId: ArticleId, token?: string): string {
-  return getFullTextUrlForDatabase(articleId, readSelectedDatabase(), token);
+export function getFullTextUrl(articleId: ArticleId): string {
+  return getFullTextUrlForDatabase(articleId, readSelectedDatabase());
 }
 
 /**
@@ -780,19 +779,11 @@ export function getFullTextUrl(articleId: ArticleId, token?: string): string {
  *
  * @param articleId - Article id.
  * @param dbName - Database name.
- * @param token - Optional access token.
  * @returns Full-text URL.
  */
-export function getFullTextUrlForDatabase(
-  articleId: ArticleId,
-  dbName: string,
-  token?: string,
-): string {
+export function getFullTextUrlForDatabase(articleId: ArticleId, dbName: string): string {
   const url = new URL(`/api/articles/${articleId}/fulltext`, resolveApiBase());
   url.searchParams.set('db', dbName);
-  if (token) {
-    url.searchParams.set('access_token', token);
-  }
   return url.toString();
 }
 
@@ -1014,15 +1005,13 @@ export async function bulkMoveFavorites(
 /**
  * Build a folder export URL.
  *
- * @param token - Access token.
  * @param folderId - Folder id.
  * @param format - Citation format.
  * @returns Export URL.
  */
-export function getExportUrl(token: string, folderId: number, format: CitationFormat): string {
+export function getExportUrl(folderId: number, format: CitationFormat): string {
   const url = new URL(`/api/favorites/folders/${folderId}/export`, resolveApiBase());
   url.searchParams.set('format', format);
-  url.searchParams.set('access_token', token);
   return url.toString();
 }
 

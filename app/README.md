@@ -41,14 +41,15 @@ pnpm dev
 
 | 变量                  | 默认值                                                              | 说明                                        |
 | --------------------- | ------------------------------------------------------------------- | ------------------------------------------- |
-| `NEXT_PUBLIC_API_URL` | 空                                                                  | 浏览器侧 API 根地址；为空时回退到当前站点源 |
+| `NEXT_PUBLIC_API_URL` | 空                                                                  | 浏览器侧 API 根地址；为空时走同源 `/api/*` |
 | `INTERNAL_API_URL`    | Docker 构建默认 `http://api:8000`；本地回退 `http://localhost:8000` | 用于 rewrite `/api/*` 的后端地址            |
 | `HOSTNAME`            | 由运行环境决定                                                      | Next.js standalone 运行时监听地址           |
 
 说明：
 
-- 本地开发时通常只需要 `NEXT_PUBLIC_API_URL`
+- 本地开发建议使用默认同源 `/api/*` rewrite；只有前后端分离跨源访问时才设置 `NEXT_PUBLIC_API_URL`
 - Docker 构建时更关键的是 `INTERNAL_API_URL`
+- 跨源浏览器请求需要后端显式配置允许的 CORS Origin，并且请求必须携带 Cookie credentials
 
 ## 页面结构
 
@@ -103,4 +104,4 @@ app/
 - 获取当前用户：`GET /api/auth/me`
 - 访问令牌：`/api/auth/tokens`
 
-前端登录态由 `app/lib/auth-context.tsx` 与后端 `/api/auth/*` 共同完成。登录令牌保存在当前浏览器标签页会话中，刷新页面时会通过 `/api/auth/me` 校验并恢复；设置页的访问令牌由 `/api/auth/tokens` 管理。
+前端登录态由 `app/lib/auth-context.tsx` 与后端 `/api/auth/*` 共同完成。登录成功后后端设置 `HttpOnly` 的 `ps_session` Cookie，刷新页面时前端通过 `/api/auth/me` 校验并恢复用户；设置页的访问令牌由 `/api/auth/tokens` 管理，只用于外部脚本/API 客户端的 Bearer 认证。

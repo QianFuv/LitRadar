@@ -6,7 +6,7 @@ import re
 import sqlite3
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response
+from fastapi import APIRouter, Cookie, Depends, Header, HTTPException, Query, Response
 
 from paper_scanner.api.auth_db import (
     add_favorite,
@@ -24,9 +24,8 @@ from paper_scanner.api.auth_db import (
     remove_favorite,
     rename_folder,
     set_tracking_folder,
-    verify_access_token,
 )
-from paper_scanner.api.auth_deps import get_current_user
+from paper_scanner.api.auth_deps import SESSION_COOKIE_NAME, get_current_user
 from paper_scanner.api.citations import to_bibtex, to_endnote, to_ris
 from paper_scanner.api.models import (
     FavoriteAdd,
@@ -54,27 +53,22 @@ CurrentUser = Annotated[dict, Depends(get_current_user)]
 
 async def get_export_user(
     authorization: str | None = Header(default=None),
-    access_token: str | None = Query(default=None),
+    session_cookie: str | None = Cookie(default=None, alias=SESSION_COOKIE_NAME),
 ) -> dict:
     """
-    Resolve the export user from either bearer auth or a token query string.
+    Resolve the export user from bearer auth or the browser session cookie.
 
     Args:
         authorization: Optional Authorization header.
-        access_token: Optional raw access token query parameter.
+        session_cookie: Optional raw session cookie.
 
     Returns:
         Authenticated user mapping.
     """
-    if authorization:
-        return await get_current_user(authorization=authorization, session_cookie=None)
-
-    if access_token:
-        user = verify_access_token(access_token)
-        if user:
-            return user
-
-    raise HTTPException(status_code=401, detail="Authentication required")
+    return await get_current_user(
+        authorization=authorization,
+        session_cookie=session_cookie,
+    )
 
 
 ExportUser = Annotated[dict, Depends(get_export_user)]

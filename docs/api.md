@@ -6,13 +6,16 @@
 
 - 基础地址：`http://localhost:8000`
 - API 前缀：`/api`
-- 文档中的“需要认证”指需要携带访问令牌，推荐使用请求头：
+- 文档中的“需要认证”分两类：
+
+  - 浏览器前端：登录成功后由后端设置 `HttpOnly`、`SameSite=Lax` 的 `ps_session` Cookie，之后同源 `/api/*` 请求自动携带 Cookie。
+  - 外部脚本/API 客户端：使用设置页创建的访问令牌，并通过请求头传递：
 
   ```http
   Authorization: Bearer <access_token>
   ```
 
-  当前认证依赖也接受 `access_token` 查询参数，但常规 API 调用应优先使用 Bearer 头。
+  不要把登录令牌或访问令牌放入 `access_token`、`at` 等 URL 查询参数。
 
 ### 数据库选择
 
@@ -52,11 +55,21 @@
 - `/api/articles*`
 - `/api/meta*`
 
-缓存策略为：
+无认证凭据时缓存策略为：
 
 ```http
 Cache-Control: public, max-age=300, stale-while-revalidate=600
 ```
+
+如果请求携带 `Authorization` 或 `ps_session` Cookie，响应会使用：
+
+```http
+Cache-Control: private, no-store
+```
+
+### 跨源浏览器访问
+
+默认前端通过 Next.js rewrite 使用同源 `/api/*`。如果设置 `NEXT_PUBLIC_API_URL` 让浏览器跨源直连后端，后端必须通过逗号分隔的 `API_CORS_ALLOWED_ORIGINS` 显式列出允许的 Origin；不要使用 `*` 搭配 Cookie credentials。
 
 ## 检索与展示接口
 
@@ -267,8 +280,9 @@ CNKI 精确匹配失败时返回受控错误，不会下载候选列表中的错
 响应包含：
 
 - `user`
-- `access_token`
 - `expires_at`
+
+登录响应不会返回原始登录令牌；浏览器会通过 `Set-Cookie: ps_session=...` 保存 HttpOnly 会话 Cookie。
 
 ### 当前用户与改密
 
@@ -357,7 +371,7 @@ CNKI 精确匹配失败时返回受控错误，不会下载候选列表中的错
 
 ## 收藏夹接口
 
-所有 `/api/favorites/*` 均需要认证。导出接口常用 `access_token` 查询参数生成下载链接，其他接口也遵循全局认证约定。
+所有 `/api/favorites/*` 均需要认证。浏览器下载导出文件时使用 `ps_session` Cookie；外部客户端使用 `Authorization: Bearer <access_token>`。
 
 ### 文件夹
 
@@ -407,7 +421,6 @@ CNKI 精确匹配失败时返回受控错误，不会下载候选列表中的错
 | 参数 | 默认值 | 说明 |
 | --- | --- | --- |
 | `format` | `bibtex` | 可选 `bibtex`、`ris`、`endnote` |
-| `access_token` | 空 | 可用原始访问令牌代替 Bearer 头 |
 
 导出接口会返回文件下载响应，文件名取自文件夹名并自动清洗。
 
