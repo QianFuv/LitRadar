@@ -131,7 +131,7 @@ function isQrImageSource(value: string): boolean {
 }
 
 export default function SettingsPage() {
-  const { user, token, logout } = useAuth();
+  const { user, logout } = useAuth();
   const queryClient = useQueryClient();
 
   // Password form
@@ -170,8 +170,8 @@ export default function SettingsPage() {
 
   const { data: tokens = [] } = useQuery({
     queryKey: ['access-tokens'],
-    queryFn: () => getAccessTokens(token!),
-    enabled: !!token,
+    queryFn: () => getAccessTokens(),
+    enabled: !!user,
   });
 
   const {
@@ -182,23 +182,23 @@ export default function SettingsPage() {
     refetch: refetchCnkiSession,
   } = useQuery({
     queryKey: cnkiSessionQueryKey,
-    queryFn: () => getCnkiSession(token!),
-    enabled: !!token,
+    queryFn: () => getCnkiSession(),
+    enabled: !!user,
   });
 
   const { data: inviteCodeData, refetch: refetchInviteCode } = useQuery({
     queryKey: ['invite-code'],
-    queryFn: () => getInviteCode(token!),
-    enabled: !!token,
+    queryFn: () => getInviteCode(),
+    enabled: !!user,
   });
 
   const generateInviteMut = useMutation({
-    mutationFn: () => generateInviteCode(token!),
+    mutationFn: () => generateInviteCode(),
     onSuccess: () => refetchInviteCode(),
   });
 
   const changePwdMut = useMutation({
-    mutationFn: () => changePassword(token!, oldPwd, newPwd),
+    mutationFn: () => changePassword(oldPwd, newPwd),
     onSuccess: () => {
       setPwdMsg('密码修改成功，请重新登录');
       setTimeout(() => {
@@ -211,7 +211,7 @@ export default function SettingsPage() {
   });
 
   const createTokenMut = useMutation({
-    mutationFn: () => createAccessToken(token!, tokenName.trim(), tokenTtl),
+    mutationFn: () => createAccessToken(tokenName.trim(), tokenTtl),
     onSuccess: (data) => {
       setNewTokenValue(data.token);
       queryClient.invalidateQueries({ queryKey: ['access-tokens'] });
@@ -220,12 +220,12 @@ export default function SettingsPage() {
   });
 
   const revokeMut = useMutation({
-    mutationFn: (id: number) => revokeAccessToken(token!, id),
+    mutationFn: (id: number) => revokeAccessToken(id),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['access-tokens'] }),
   });
 
   const startCnkiLoginMut = useMutation({
-    mutationFn: () => startCnkiLogin(token!),
+    mutationFn: () => startCnkiLogin(),
     onSuccess: (data) => {
       setCnkiLogin(data);
       setCnkiMessage(null);
@@ -240,7 +240,7 @@ export default function SettingsPage() {
   });
 
   const pollCnkiLoginMut = useMutation({
-    mutationFn: () => pollCnkiLogin(token!, 15, 1.5),
+    mutationFn: () => pollCnkiLogin(15, 1.5),
     onSuccess: (data) => {
       setCnkiLogin(null);
       setCnkiMessage(data.session.status === 'active' ? '登录已完成' : data.status);
@@ -256,7 +256,7 @@ export default function SettingsPage() {
   });
 
   const clearCnkiSessionMut = useMutation({
-    mutationFn: () => clearCnkiSession(token!),
+    mutationFn: () => clearCnkiSession(),
     onSuccess: (data) => {
       setCnkiLogin(null);
       setCnkiMessage('登录状态已清除');

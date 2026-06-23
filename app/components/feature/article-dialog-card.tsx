@@ -29,7 +29,6 @@ type ArticleDialogCardArticle = {
 type ArticleDialogCardProps = {
   article: ArticleDialogCardArticle;
   dbName: string;
-  token?: string;
   title?: ReactNode;
   preview?: ReactNode;
   initialFolderIds?: number[];
@@ -43,7 +42,6 @@ type ArticleDialogCardProps = {
 export function ArticleDialogCard({
   article,
   dbName,
-  token,
   title,
   preview,
   initialFolderIds = [],
@@ -86,7 +84,6 @@ export function ArticleDialogCard({
         <ArticleDetailDialogContent
           article={article}
           dbName={dbName}
-          token={token}
           initialFolderIds={initialFolderIds}
           isFavoriteStatePending={isFavoriteStatePending}
           extraActions={extraActions}

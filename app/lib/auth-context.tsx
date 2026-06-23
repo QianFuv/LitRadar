@@ -17,18 +17,15 @@ import {
 import { getCurrentUser, loginUser, logoutUser, registerUser, type AuthUser } from '@/lib/api';
 import {
   readLocalStorageValue,
-  readSessionStorageValue,
   removeLocalStorageValue,
   removeSessionStorageValue,
   writeLocalStorageValue,
-  writeSessionStorageValue,
 } from '@/lib/browser-storage';
 
 export type { AuthUser };
 
 interface AuthState {
   user: AuthUser | null;
-  token: string | null;
   loading: boolean;
   login: (username: string, password: string) => Promise<void>;
   register: (username: string, password: string, inviteCode: string) => Promise<void>;
@@ -107,45 +104,6 @@ function writeStoredUser(user: AuthUser): void {
 }
 
 /**
- * Read a stored access token from the current browser tab session.
- *
- * @returns Stored access token or null.
- */
-function readStoredAccessToken(): string | null {
-  if (typeof window === 'undefined') {
-    return null;
-  }
-  const sessionToken = readSessionStorageValue(ACCESS_TOKEN_STORAGE_KEY);
-  if (sessionToken) {
-    return sessionToken;
-  }
-  const legacySessionToken = readSessionStorageValue(LEGACY_SESSION_ACCESS_TOKEN_KEY);
-  if (legacySessionToken) {
-    writeSessionStorageValue(ACCESS_TOKEN_STORAGE_KEY, legacySessionToken);
-    removeSessionStorageValue(LEGACY_SESSION_ACCESS_TOKEN_KEY);
-    return legacySessionToken;
-  }
-  const legacyToken = readLocalStorageValue(LEGACY_ACCESS_TOKEN_KEY);
-  if (!legacyToken) {
-    return null;
-  }
-  writeSessionStorageValue(ACCESS_TOKEN_STORAGE_KEY, legacyToken);
-  removeLocalStorageValue(LEGACY_ACCESS_TOKEN_KEY);
-  return legacyToken;
-}
-
-/**
- * Store an access token for the current browser tab session.
- *
- * @param token - Access token returned by the backend.
- */
-function writeStoredAccessToken(token: string): void {
-  writeSessionStorageValue(ACCESS_TOKEN_STORAGE_KEY, token);
-  removeSessionStorageValue(LEGACY_SESSION_ACCESS_TOKEN_KEY);
-  removeLocalStorageValue(LEGACY_ACCESS_TOKEN_KEY);
-}
-
-/**
  * Remove access tokens stored by current and older frontend versions.
  */
 function clearStoredAccessTokens(): void {
@@ -172,13 +130,11 @@ function clearStoredSession(): void {
 export function AuthProvider({ children }: { children: ReactNode }) {
   const queryClient = useQueryClient();
   const [user, setUser] = useState<AuthUser | null>(null);
-  const [token, setToken] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
   const clearSession = useCallback(() => {
     clearStoredSession();
     setUser(null);
-    setToken(null);
     queryClient.clear();
   }, [queryClient]);
 
@@ -186,31 +142,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     let didCancel = false;
 
     const restoreSession = async () => {
-      const storedToken = readStoredAccessToken();
       const storedUser = readStoredUser();
-
-      if (!storedToken) {
-        if (storedUser) {
-          clearStoredSession();
-        }
-        if (!didCancel) {
-          setLoading(false);
-        }
-        return;
+      if (storedUser && !didCancel) {
+        setUser(storedUser);
       }
 
       try {
-        const currentUser = await getCurrentUser(storedToken);
+        const currentUser = await getCurrentUser();
         if (didCancel) {
           return;
         }
+        clearStoredAccessTokens();
         writeStoredUser(currentUser);
-        setToken(storedToken);
         setUser(currentUser);
       } catch {
         clearStoredSession();
         if (!didCancel) {
-          setToken(null);
           setUser(null);
           queryClient.clear();
         }
@@ -232,9 +179,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     async (username: string, password: string) => {
       const response = await loginUser(username, password);
       queryClient.clear();
-      writeStoredAccessToken(response.access_token);
+      clearStoredAccessTokens();
       writeStoredUser(response.user);
-      setToken(response.access_token);
       setUser(response.user);
     },
     [queryClient],
@@ -249,19 +195,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   );
 
   const logout = useCallback(async () => {
-    const activeToken = token;
     try {
-      if (activeToken) {
-        await logoutUser(activeToken);
-      }
+      await logoutUser();
     } finally {
       clearSession();
     }
-  }, [clearSession, token]);
+  }, [clearSession]);
 
   const value = useMemo(
-    () => ({ user, token, loading, login, register, logout }),
-    [loading, login, logout, register, token, user],
+    () => ({ user, loading, login, register, logout }),
+    [loading, login, logout, register, user],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
@@ -278,17 +221,4 @@ export function useAuth(): AuthState {
     throw new Error('useAuth must be used inside AuthProvider');
   }
   return context;
-}
-
-/**
- * Build bearer authorization headers.
- *
- * @param token - Access token.
- * @returns Headers containing bearer auth when a token is available.
- */
-export function authHeaders(token: string | null): Record<string, string> {
-  if (!token) {
-    return {};
-  }
-  return { Authorization: `Bearer ${token}` };
 }

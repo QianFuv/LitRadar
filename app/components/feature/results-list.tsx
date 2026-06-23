@@ -70,7 +70,7 @@ function monthKeyToDateTo(value: string | null): string | null {
 }
 
 export function ResultsList() {
-  const { user, token } = useAuth();
+  const { user } = useAuth();
   const queryClient = useQueryClient();
 
   const [q] = useQueryState('q', parseAsString);
@@ -108,7 +108,7 @@ export function ResultsList() {
       string | null
     >({
       queryKey: ['articles', currentDb, paramsString],
-      queryFn: ({ pageParam }) => getArticles(params, pageParam, includeTotal, token!, currentDb),
+      queryFn: ({ pageParam }) => getArticles(params, pageParam, includeTotal, currentDb),
       initialPageParam: null,
       getNextPageParam: (lastPage) => lastPage.page.next_cursor ?? undefined,
       staleTime: 5 * 60 * 1000,
@@ -150,8 +150,8 @@ export function ResultsList() {
   const { data: fetchedFavoriteChecksByArticle = {}, isPending: isMissingFavoriteStatePending } =
     useQuery({
       queryKey: [...favoriteBatchBaseKey, 'missing', missingFavoriteArticleIdsKey],
-      queryFn: () => checkFavoritesBatch(token!, missingFavoriteArticleIds, currentDb),
-      enabled: !!token && !!user && missingFavoriteArticleIds.length > 0,
+      queryFn: () => checkFavoritesBatch(missingFavoriteArticleIds, currentDb),
+      enabled: !!user && missingFavoriteArticleIds.length > 0,
       staleTime: 5 * 60 * 1000,
     });
   const favoriteChecksByArticle = useMemo(
@@ -281,7 +281,6 @@ export function ResultsList() {
           triggerRef={index === prefetchIndex ? prefetchRef : undefined}
           article={article}
           dbName={currentDb}
-          token={token!}
           title={highlightText(article.title)}
           preview={highlightText(article.abstract)}
           initialFolderIds={

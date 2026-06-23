@@ -32,10 +32,6 @@ import {
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 
-type ScheduledTasksCardProps = {
-  token: string;
-};
-
 type TaskFormState = {
   command: string;
   cron: string;
@@ -104,7 +100,7 @@ function formatDateTime(value: number | null): string {
   });
 }
 
-export function ScheduledTasksCard({ token }: ScheduledTasksCardProps) {
+export function ScheduledTasksCard() {
   const queryClient = useQueryClient();
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingTask, setEditingTask] = useState<ScheduledTaskInfo | null>(null);
@@ -117,15 +113,15 @@ export function ScheduledTasksCard({ token }: ScheduledTasksCardProps) {
     isLoading,
   } = useQuery({
     queryKey: ['admin-scheduled-tasks'],
-    queryFn: () => adminGetScheduledTasks(token),
+    queryFn: () => adminGetScheduledTasks(),
   });
 
   const saveMutation = useMutation({
     mutationFn: async () => {
       if (editingTask) {
-        return adminUpdateScheduledTask(token, editingTask.id, form);
+        return adminUpdateScheduledTask(editingTask.id, form);
       }
-      return adminCreateScheduledTask(token, form);
+      return adminCreateScheduledTask(form);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['admin-scheduled-tasks'] });
@@ -138,7 +134,7 @@ export function ScheduledTasksCard({ token }: ScheduledTasksCardProps) {
 
   const toggleMutation = useMutation({
     mutationFn: ({ enabled, taskId }: { enabled: boolean; taskId: number }) =>
-      adminUpdateScheduledTask(token, taskId, { enabled }),
+      adminUpdateScheduledTask(taskId, { enabled }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['admin-scheduled-tasks'] });
       queryClient.invalidateQueries({ queryKey: ['admin-stats'] });
@@ -146,7 +142,7 @@ export function ScheduledTasksCard({ token }: ScheduledTasksCardProps) {
   });
 
   const deleteMutation = useMutation({
-    mutationFn: (taskId: number) => adminDeleteScheduledTask(token, taskId),
+    mutationFn: (taskId: number) => adminDeleteScheduledTask(taskId),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['admin-scheduled-tasks'] });
       queryClient.invalidateQueries({ queryKey: ['admin-stats'] });

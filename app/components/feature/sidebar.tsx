@@ -221,7 +221,7 @@ function DateSegmentSelect({
 
 export function Sidebar({ className }: { className?: string }) {
   const { theme, setTheme } = useTheme();
-  const { token } = useAuth();
+  const { user } = useAuth();
   const router = useRouter();
   const pathname = usePathname();
 
@@ -236,8 +236,8 @@ export function Sidebar({ className }: { className?: string }) {
 
   const { data: databases, isLoading: loadingDatabases } = useQuery({
     queryKey: ['meta', 'databases'],
-    queryFn: () => getDatabases(token!),
-    enabled: !!token,
+    queryFn: () => getDatabases(),
+    enabled: !!user,
   });
   const activeDb =
     databases && databases.length > 0
@@ -258,20 +258,20 @@ export function Sidebar({ className }: { className?: string }) {
 
   const { data: areaOptions, isLoading: loadingAreas } = useQuery({
     queryKey: ['meta', 'areas', activeDb],
-    queryFn: () => getAreas(token!),
-    enabled: !!token,
+    queryFn: () => getAreas(activeDb),
+    enabled: !!user,
   });
 
   const { data: journalOptions, isLoading: loadingJournals } = useQuery({
     queryKey: ['meta', 'journals', activeDb],
-    queryFn: () => getJournalOptions(token!),
-    enabled: !!token,
+    queryFn: () => getJournalOptions(activeDb),
+    enabled: !!user,
   });
 
   const { data: yearData, isLoading: loadingYears } = useQuery({
     queryKey: ['meta', 'years', activeDb],
-    queryFn: () => getYears(token!),
-    enabled: !!token,
+    queryFn: () => getYears(activeDb),
+    enabled: !!user,
   });
 
   const handleDatabaseChange = (dbName: string) => {

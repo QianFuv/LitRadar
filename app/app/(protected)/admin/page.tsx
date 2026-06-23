@@ -77,7 +77,7 @@ function StatCard({
 }
 
 export default function AdminPage() {
-  const { user, token } = useAuth();
+  const { user } = useAuth();
   const queryClient = useQueryClient();
 
   const [resetPwUserId, setResetPwUserId] = useState<number | null>(null);
@@ -102,25 +102,25 @@ export default function AdminPage() {
 
   const { data: stats, isLoading: statsLoading } = useQuery({
     queryKey: ['admin-stats'],
-    queryFn: () => adminGetStats(token!),
-    enabled: !!token && !!user?.is_admin,
+    queryFn: () => adminGetStats(),
+    enabled: !!user?.is_admin,
   });
 
   const { data: users = [] } = useQuery({
     queryKey: ['admin-users'],
-    queryFn: () => adminGetUsers(token!),
-    enabled: !!token && !!user?.is_admin,
+    queryFn: () => adminGetUsers(),
+    enabled: !!user?.is_admin,
   });
 
   const { data: inviteCodes = [] } = useQuery({
     queryKey: ['admin-invite-codes'],
-    queryFn: () => adminGetInviteCodes(token!),
-    enabled: !!token && !!user?.is_admin,
+    queryFn: () => adminGetInviteCodes(),
+    enabled: !!user?.is_admin,
   });
 
   const toggleAdminMut = useMutation({
     mutationFn: ({ userId, isAdmin }: { userId: number; isAdmin: boolean }) =>
-      adminSetAdmin(token!, userId, isAdmin),
+      adminSetAdmin(userId, isAdmin),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['admin-users'] });
       queryClient.invalidateQueries({ queryKey: ['admin-stats'] });
@@ -128,8 +128,7 @@ export default function AdminPage() {
   });
 
   const resetPwMut = useMutation({
-    mutationFn: ({ userId, pw }: { userId: number; pw: string }) =>
-      adminResetPassword(token!, userId, pw),
+    mutationFn: ({ userId, pw }: { userId: number; pw: string }) => adminResetPassword(userId, pw),
     onSuccess: () => {
       setResetDialogOpen(false);
       setResetPwValue('');
@@ -138,7 +137,7 @@ export default function AdminPage() {
   });
 
   const deleteUserMut = useMutation({
-    mutationFn: (userId: number) => adminDeleteUser(token!, userId),
+    mutationFn: (userId: number) => adminDeleteUser(userId),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['admin-users'] });
       queryClient.invalidateQueries({ queryKey: ['admin-stats'] });
@@ -148,7 +147,7 @@ export default function AdminPage() {
   });
 
   const createCodeMut = useMutation({
-    mutationFn: () => adminCreateInviteCode(token!),
+    mutationFn: () => adminCreateInviteCode(),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['admin-invite-codes'] });
       queryClient.invalidateQueries({ queryKey: ['admin-stats'] });
@@ -156,7 +155,7 @@ export default function AdminPage() {
   });
 
   const deleteCodeMut = useMutation({
-    mutationFn: (codeId: number) => adminDeleteInviteCode(token!, codeId),
+    mutationFn: (codeId: number) => adminDeleteInviteCode(codeId),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['admin-invite-codes'] });
       queryClient.invalidateQueries({ queryKey: ['admin-stats'] });
@@ -755,13 +754,9 @@ export default function AdminPage() {
         </CardContent>
       </Card>
 
-      {token && (
-        <>
-          <RuntimeSettingsCard token={token} />
-          <ScheduledTasksCard token={token} />
-          <AnnouncementsCard token={token} />
-        </>
-      )}
+      <RuntimeSettingsCard />
+      <ScheduledTasksCard />
+      <AnnouncementsCard />
     </main>
   );
 }

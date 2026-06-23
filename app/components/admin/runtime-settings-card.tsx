@@ -16,10 +16,6 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 
-type RuntimeSettingsCardProps = {
-  token: string;
-};
-
 type RuntimeSettingsForm = Record<string, string>;
 
 const EMPTY_RUNTIME_SETTINGS: RuntimeSettingInfo[] = [];
@@ -202,7 +198,7 @@ function RuntimePoolEditor({
  * @param props - Component props.
  * @returns Runtime settings card.
  */
-export function RuntimeSettingsCard({ token }: RuntimeSettingsCardProps) {
+export function RuntimeSettingsCard() {
   const queryClient = useQueryClient();
   const [formOverrides, setFormOverrides] = useState<RuntimeSettingsForm>({});
 
@@ -212,7 +208,7 @@ export function RuntimeSettingsCard({ token }: RuntimeSettingsCardProps) {
     isLoading,
   } = useQuery({
     queryKey: ['admin-runtime-settings'],
-    queryFn: () => adminGetRuntimeSettings(token),
+    queryFn: () => adminGetRuntimeSettings(),
   });
 
   const baseForm = useMemo(() => buildForm(settings), [settings]);
@@ -234,7 +230,7 @@ export function RuntimeSettingsCard({ token }: RuntimeSettingsCardProps) {
   }, [hasFormOverrides]);
 
   const saveMutation = useMutation({
-    mutationFn: () => adminUpdateRuntimeSettings(token, { values: form }),
+    mutationFn: () => adminUpdateRuntimeSettings({ values: form }),
     onSuccess: (updatedSettings) => {
       setFormOverrides({});
       queryClient.setQueryData(['admin-runtime-settings'], updatedSettings);

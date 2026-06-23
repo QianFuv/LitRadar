@@ -32,10 +32,6 @@ import {
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 
-type AnnouncementsCardProps = {
-  token: string;
-};
-
 type AnnouncementFormState = {
   enabled: boolean;
   message: string;
@@ -66,7 +62,7 @@ function formatDateTime(value: number): string {
   });
 }
 
-export function AnnouncementsCard({ token }: AnnouncementsCardProps) {
+export function AnnouncementsCard() {
   const queryClient = useQueryClient();
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingAnnouncement, setEditingAnnouncement] = useState<AnnouncementInfo | null>(null);
@@ -78,15 +74,15 @@ export function AnnouncementsCard({ token }: AnnouncementsCardProps) {
     isLoading,
   } = useQuery({
     queryKey: ['admin-announcements'],
-    queryFn: () => adminGetAnnouncements(token),
+    queryFn: () => adminGetAnnouncements(),
   });
 
   const saveMutation = useMutation({
     mutationFn: async () => {
       if (editingAnnouncement) {
-        return adminUpdateAnnouncement(token, editingAnnouncement.id, form);
+        return adminUpdateAnnouncement(editingAnnouncement.id, form);
       }
-      return adminCreateAnnouncement(token, form);
+      return adminCreateAnnouncement(form);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['admin-announcements'] });
@@ -100,7 +96,7 @@ export function AnnouncementsCard({ token }: AnnouncementsCardProps) {
 
   const toggleMutation = useMutation({
     mutationFn: ({ announcementId, enabled }: { announcementId: number; enabled: boolean }) =>
-      adminUpdateAnnouncement(token, announcementId, { enabled }),
+      adminUpdateAnnouncement(announcementId, { enabled }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['admin-announcements'] });
       queryClient.invalidateQueries({ queryKey: ['announcements'] });
@@ -109,7 +105,7 @@ export function AnnouncementsCard({ token }: AnnouncementsCardProps) {
   });
 
   const deleteMutation = useMutation({
-    mutationFn: (announcementId: number) => adminDeleteAnnouncement(token, announcementId),
+    mutationFn: (announcementId: number) => adminDeleteAnnouncement(announcementId),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['admin-announcements'] });
       queryClient.invalidateQueries({ queryKey: ['announcements'] });

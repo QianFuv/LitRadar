@@ -38,7 +38,7 @@ import { useState, useCallback, useEffect } from 'react';
 const EMPTY_DATABASES: string[] = [];
 
 export default function TrackingPage() {
-  const { user, token } = useAuth();
+  const { user } = useAuth();
   const queryClient = useQueryClient();
   const [newFolderName, setNewFolderName] = useState('');
   const [pushResult, setPushResult] = useState<string | null>(null);
@@ -50,27 +50,27 @@ export default function TrackingPage() {
 
   const { data: status } = useQuery({
     queryKey: ['tracking-status'],
-    queryFn: () => getTrackingStatus(token!),
-    enabled: !!token,
+    queryFn: () => getTrackingStatus(),
+    enabled: !!user,
   });
 
   const databasesQuery = useQuery({
     queryKey: ['databases'],
-    queryFn: () => getDatabases(token!),
-    enabled: !!token,
+    queryFn: () => getDatabases(),
+    enabled: !!user,
   });
   const availableDatabases = databasesQuery.data ?? EMPTY_DATABASES;
 
   const { data: folders = [] } = useQuery({
     queryKey: ['folders', user?.id],
-    queryFn: () => getFolders(token!),
-    enabled: !!token,
+    queryFn: () => getFolders(),
+    enabled: !!user,
   });
 
   const notificationSettingsQuery = useQuery({
     queryKey: ['notification-settings', user?.id],
-    queryFn: () => getNotificationSettings(token!),
-    enabled: !!token,
+    queryFn: () => getNotificationSettings(),
+    enabled: !!user,
   });
   const notifySettings = notificationSettingsQuery.data;
 
@@ -144,7 +144,7 @@ export default function TrackingPage() {
   }, [hasUnsavedSettings]);
 
   const setTrackMut = useMutation({
-    mutationFn: (folderId: number) => setTrackingFolder(token!, folderId),
+    mutationFn: (folderId: number) => setTrackingFolder(folderId),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['tracking-status'] });
       queryClient.invalidateQueries({ queryKey: ['folders'] });
@@ -153,7 +153,7 @@ export default function TrackingPage() {
 
   const createAndSetMut = useMutation({
     mutationFn: async (name: string) => {
-      const folder = await createFolder(token!, name, true);
+      const folder = await createFolder(name, true);
       return folder;
     },
     onSuccess: () => {
@@ -164,7 +164,7 @@ export default function TrackingPage() {
   });
 
   const pushMut = useMutation({
-    mutationFn: () => pushWeeklyToTracking(token!),
+    mutationFn: () => pushWeeklyToTracking(),
     onSuccess: (data) => {
       if (data.status === 'running') {
         setPushResult(data.message || '推送任务已启动，正在后台执行…');
@@ -221,7 +221,7 @@ export default function TrackingPage() {
   }, []);
 
   useEffect(() => {
-    if (!token || !isPushPolling) {
+    if (!isPushPolling) {
       return;
     }
 
@@ -229,7 +229,7 @@ export default function TrackingPage() {
 
     const pollStatus = async () => {
       try {
-        const data = await getPushWeeklyStatus(token);
+        const data = await getPushWeeklyStatus();
         if (cancelled) {
           return;
         }
@@ -259,11 +259,11 @@ export default function TrackingPage() {
       cancelled = true;
       window.clearInterval(intervalId);
     };
-  }, [formatManualPushResult, isPushPolling, queryClient, token]);
+  }, [formatManualPushResult, isPushPolling, queryClient]);
 
   const saveSettingsMut = useMutation({
     mutationFn: () =>
-      updateNotificationSettings(token!, {
+      updateNotificationSettings({
         ...formSettings,
         selected_databases: effectiveSelectedDatabases,
       }),

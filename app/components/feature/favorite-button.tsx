@@ -27,7 +27,7 @@ export function FavoriteButton({
   dbName?: string;
   initialFolderIds?: number[];
 }) {
-  const { user, token } = useAuth();
+  const { user } = useAuth();
   const queryClient = useQueryClient();
   const db = dbName || getCurrentDatabase();
   const [open, setOpen] = useState(false);
@@ -39,19 +39,19 @@ export function FavoriteButton({
 
   const { data: checks } = useQuery({
     queryKey,
-    queryFn: () => checkFavorite(token!, articleId, db),
-    enabled: !!token && !!user && open,
+    queryFn: () => checkFavorite(articleId, db),
+    enabled: !!user && open,
     staleTime: 5 * 60 * 1000,
   });
 
   const { data: folders = [], isPending: isFoldersPending } = useQuery({
     queryKey: ['folders', user?.id],
-    queryFn: () => getFolders(token!),
-    enabled: !!token && !!user && open,
+    queryFn: () => getFolders(),
+    enabled: !!user && open,
   });
 
   const addMut = useMutation({
-    mutationFn: (folderId: number) => addFavorite(token!, folderId, articleId, db),
+    mutationFn: (folderId: number) => addFavorite(folderId, articleId, db),
     onSuccess: (_, folderId) => {
       const folderName = folders.find((folder) => folder.id === folderId)?.name ?? '';
       setOptimisticFolderIds((current) => {
@@ -75,7 +75,7 @@ export function FavoriteButton({
   });
 
   const removeMut = useMutation({
-    mutationFn: (folderId: number) => removeFavorite(token!, folderId, articleId, db),
+    mutationFn: (folderId: number) => removeFavorite(folderId, articleId, db),
     onSuccess: (_, folderId) => {
       setOptimisticFolderIds((current) => {
         const baseFolderIds =

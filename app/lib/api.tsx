@@ -115,7 +115,6 @@ export interface AuthUser {
 }
 
 export interface LoginResponse {
-  access_token: string;
   expires_at: number;
   user: AuthUser;
 }
@@ -538,10 +537,10 @@ async function parseJson<T>(response: Response, fallback: string): Promise<T> {
 }
 
 /**
- * Fetch JSON from an endpoint with an optional bearer token.
+ * Fetch JSON from an endpoint using browser cookies and optional bearer auth.
  *
  * @param url - Absolute endpoint URL.
- * @param token - Bearer access token.
+ * @param token - Optional explicit bearer access token.
  * @param init - Fetch options.
  * @param fallback - Fallback error message.
  * @returns Parsed response body.
@@ -558,17 +557,17 @@ async function requestJson<T>(
     ...(token ? { Authorization: `Bearer ${token}` } : {}),
     ...(init?.headers as Record<string, string> | undefined),
   };
-  const response = await fetch(url, { ...init, headers });
+  const response = await fetch(url, { ...init, credentials: 'include', headers });
   return parseJson<T>(response, fallback);
 }
 
 /**
  * Get the current authenticated user.
  *
- * @param token - Bearer access token.
+ * @param token - Optional explicit bearer access token.
  * @returns Current user.
  */
-export function getCurrentUser(token: string): Promise<AuthUser> {
+export function getCurrentUser(token?: string | null): Promise<AuthUser> {
   return requestJson<AuthUser>(buildApiUrl('/api/auth/me'), token, undefined, '获取用户失败');
 }
 
@@ -618,12 +617,13 @@ export async function registerUser(
 /**
  * Revoke the active login token.
  *
- * @param token - Bearer access token.
+ * @param token - Optional explicit bearer access token.
  */
-export async function logoutUser(token: string): Promise<void> {
+export async function logoutUser(token?: string | null): Promise<void> {
   await fetch(buildApiUrl('/api/auth/logout'), {
     method: 'POST',
-    headers: { Authorization: `Bearer ${token}` },
+    credentials: 'include',
+    headers: token ? { Authorization: `Bearer ${token}` } : undefined,
   }).catch(() => undefined);
 }
 
@@ -644,14 +644,13 @@ export function getInviteRequirement(): Promise<InviteRequirement> {
 /**
  * List available index databases.
  *
- * @param token - Bearer access token.
  * @returns Database names.
  */
-export async function getDatabases(token: string): Promise<string[]> {
+export async function getDatabases(): Promise<string[]> {
   try {
     return await requestJson<string[]>(
       buildApiUrl('/api/meta/databases'),
-      token,
+      null,
       undefined,
       '获取数据库失败',
     );
@@ -663,14 +662,13 @@ export async function getDatabases(token: string): Promise<string[]> {
 /**
  * Fetch metadata areas for a database.
  *
- * @param token - Bearer access token.
  * @param dbName - Database name. Defaults to the selected database.
  * @returns Area counts.
  */
-export function getAreas(token: string, dbName = readSelectedDatabase()): Promise<ValueCount[]> {
+export function getAreas(dbName = readSelectedDatabase()): Promise<ValueCount[]> {
   return requestJson<ValueCount[]>(
     buildDatabaseUrl('/api/meta/areas', dbName),
-    token,
+    null,
     undefined,
     '获取领域失败',
   );
@@ -679,14 +677,13 @@ export function getAreas(token: string, dbName = readSelectedDatabase()): Promis
 /**
  * Fetch indexed year summaries for a database.
  *
- * @param token - Bearer access token.
  * @param dbName - Database name. Defaults to the selected database.
  * @returns Year summaries.
  */
-export function getYears(token: string, dbName = readSelectedDatabase()): Promise<YearSummary[]> {
+export function getYears(dbName = readSelectedDatabase()): Promise<YearSummary[]> {
   return requestJson<YearSummary[]>(
     buildDatabaseUrl('/api/years', dbName),
-    token,
+    null,
     undefined,
     '获取年份失败',
   );
@@ -695,17 +692,13 @@ export function getYears(token: string, dbName = readSelectedDatabase()): Promis
 /**
  * Fetch journal filter options for a database.
  *
- * @param token - Bearer access token.
  * @param dbName - Database name. Defaults to the selected database.
  * @returns Journal options.
  */
-export function getJournalOptions(
-  token: string,
-  dbName = readSelectedDatabase(),
-): Promise<JournalOption[]> {
+export function getJournalOptions(dbName = readSelectedDatabase()): Promise<JournalOption[]> {
   return requestJson<JournalOption[]>(
     buildDatabaseUrl('/api/meta/journals', dbName),
-    token,
+    null,
     undefined,
     '获取期刊失败',
   );
@@ -717,7 +710,6 @@ export function getJournalOptions(
  * @param params - Article query parameters.
  * @param pageParam - Cursor or offset page parameter.
  * @param includeTotal - Whether to include total on the first page.
- * @param token - Bearer access token.
  * @param dbName - Database name. Defaults to the selected database.
  * @returns Article page.
  */
@@ -725,7 +717,6 @@ export function getArticles(
   params: URLSearchParams,
   pageParam: string | number | null = null,
   includeTotal = false,
-  token?: string,
   dbName = readSelectedDatabase(),
 ): Promise<ArticlePage> {
   const nextParams = new URLSearchParams(params);
@@ -739,7 +730,7 @@ export function getArticles(
   nextParams.set('include_total', includeTotal ? '1' : '0');
   return requestJson<ArticlePage>(
     buildDatabaseUrl('/api/articles', dbName, nextParams),
-    token,
+    null,
     undefined,
     '获取文章失败',
   );
@@ -748,13 +739,12 @@ export function getArticles(
 /**
  * Fetch weekly update data.
  *
- * @param token - Bearer access token.
  * @returns Weekly update response.
  */
-export function getWeeklyUpdates(token: string): Promise<WeeklyUpdatesResponse> {
+export function getWeeklyUpdates(): Promise<WeeklyUpdatesResponse> {
   return requestJson<WeeklyUpdatesResponse>(
     buildApiUrl('/api/weekly-updates'),
-    token,
+    null,
     undefined,
     '获取每周更新失败',
   );
@@ -811,17 +801,15 @@ export function getFullTextUrlForDatabase(
  *
  * @param articleId - Article id.
  * @param dbName - Database name.
- * @param token - Bearer access token.
  * @returns Article access capabilities.
  */
 export function getArticleAccess(
   articleId: ArticleId,
   dbName: string,
-  token: string,
 ): Promise<ArticleAccessResponse> {
   return requestJson<ArticleAccessResponse>(
     buildDatabaseUrl(`/api/articles/${articleId}/access`, dbName),
-    token,
+    null,
     undefined,
     '获取文章访问状态失败',
   );
@@ -832,17 +820,12 @@ export function getArticleAccess(
  *
  * @param articleId - Article id.
  * @param dbName - Database name.
- * @param token - Optional bearer access token.
  * @returns Article record.
  */
-export function getArticleById(
-  articleId: ArticleId,
-  dbName: string,
-  token?: string,
-): Promise<Article> {
+export function getArticleById(articleId: ArticleId, dbName: string): Promise<Article> {
   return requestJson<Article>(
     buildDatabaseUrl(`/api/articles/${articleId}`, dbName),
-    token,
+    null,
     undefined,
     '获取文章详情失败',
   );
@@ -851,13 +834,12 @@ export function getArticleById(
 /**
  * Fetch all folders for the current user.
  *
- * @param token - Bearer access token.
  * @returns Folders.
  */
-export function getFolders(token: string): Promise<Folder[]> {
+export function getFolders(): Promise<Folder[]> {
   return requestJson<Folder[]>(
     buildApiUrl('/api/favorites/folders'),
-    token,
+    null,
     undefined,
     '获取收藏夹失败',
   );
@@ -866,15 +848,14 @@ export function getFolders(token: string): Promise<Folder[]> {
 /**
  * Create a favorite folder.
  *
- * @param token - Bearer access token.
  * @param name - Folder name.
  * @param isTracking - Whether the folder is the tracking folder.
  * @returns Created folder.
  */
-export function createFolder(token: string, name: string, isTracking = false): Promise<Folder> {
+export function createFolder(name: string, isTracking = false): Promise<Folder> {
   return requestJson<Folder>(
     buildApiUrl('/api/favorites/folders'),
-    token,
+    null,
     {
       method: 'POST',
       body: JSON.stringify({ name, is_tracking: isTracking }),
@@ -886,14 +867,13 @@ export function createFolder(token: string, name: string, isTracking = false): P
 /**
  * Rename a folder.
  *
- * @param token - Bearer access token.
  * @param folderId - Folder id.
  * @param name - New name.
  */
-export async function renameFolder(token: string, folderId: number, name: string): Promise<void> {
+export async function renameFolder(folderId: number, name: string): Promise<void> {
   await requestJson<unknown>(
     buildApiUrl(`/api/favorites/folders/${folderId}`),
-    token,
+    null,
     {
       method: 'PUT',
       body: JSON.stringify({ name }),
@@ -905,13 +885,12 @@ export async function renameFolder(token: string, folderId: number, name: string
 /**
  * Delete a folder.
  *
- * @param token - Bearer access token.
  * @param folderId - Folder id.
  */
-export async function deleteFolder(token: string, folderId: number): Promise<void> {
+export async function deleteFolder(folderId: number): Promise<void> {
   await requestJson<unknown>(
     buildApiUrl(`/api/favorites/folders/${folderId}`),
-    token,
+    null,
     { method: 'DELETE' },
     '删除收藏夹失败',
   );
@@ -920,14 +899,12 @@ export async function deleteFolder(token: string, folderId: number): Promise<voi
 /**
  * Fetch articles in a folder.
  *
- * @param token - Bearer access token.
  * @param folderId - Folder id.
  * @param limit - Page size.
  * @param offset - Page offset.
  * @returns Favorite articles.
  */
 export function getFolderArticles(
-  token: string,
   folderId: number,
   limit: number,
   offset: number,
@@ -935,7 +912,7 @@ export function getFolderArticles(
   const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
   return requestJson<FavoriteArticleItem[]>(
     buildApiUrl(`/api/favorites/folders/${folderId}/articles`, params),
-    token,
+    null,
     undefined,
     '获取收藏文章失败',
   );
@@ -944,21 +921,19 @@ export function getFolderArticles(
 /**
  * Add an article to a folder.
  *
- * @param token - Bearer access token.
  * @param folderId - Folder id.
  * @param articleId - Article id.
  * @param dbName - Database name.
  * @returns Favorite item.
  */
 export function addFavorite(
-  token: string,
   folderId: number,
   articleId: ArticleId,
   dbName: string,
 ): Promise<FavoriteItem> {
   return requestJson<FavoriteItem>(
     buildApiUrl(`/api/favorites/folders/${folderId}/articles`),
-    token,
+    null,
     {
       method: 'POST',
       body: JSON.stringify({ article_id: articleId, db_name: dbName, note: '' }),
@@ -970,13 +945,11 @@ export function addFavorite(
 /**
  * Remove an article from a folder.
  *
- * @param token - Bearer access token.
  * @param folderId - Folder id.
  * @param articleId - Article id.
  * @param dbName - Database name.
  */
 export async function removeFavorite(
-  token: string,
   folderId: number,
   articleId: ArticleId,
   dbName: string,
@@ -984,7 +957,7 @@ export async function removeFavorite(
   const params = new URLSearchParams({ db_name: dbName });
   await requestJson<unknown>(
     buildApiUrl(`/api/favorites/folders/${folderId}/articles/${articleId}`, params),
-    token,
+    null,
     { method: 'DELETE' },
     '移除收藏失败',
   );
@@ -993,19 +966,17 @@ export async function removeFavorite(
 /**
  * Bulk remove favorite articles from a folder.
  *
- * @param token - Bearer access token.
  * @param folderId - Folder id.
  * @param articles - Article references.
  * @returns Removed count.
  */
 export async function bulkRemoveFavorites(
-  token: string,
   folderId: number,
   articles: FavoriteArticleRef[],
 ): Promise<number> {
   const data = await requestJson<{ count: number }>(
     buildApiUrl(`/api/favorites/folders/${folderId}/articles/bulk-remove`),
-    token,
+    null,
     {
       method: 'POST',
       body: JSON.stringify({ articles }),
@@ -1018,21 +989,19 @@ export async function bulkRemoveFavorites(
 /**
  * Bulk move favorite articles between folders.
  *
- * @param token - Bearer access token.
  * @param folderId - Source folder id.
  * @param targetFolderId - Target folder id.
  * @param articles - Article references.
  * @returns Moved count.
  */
 export async function bulkMoveFavorites(
-  token: string,
   folderId: number,
   targetFolderId: number,
   articles: FavoriteArticleRef[],
 ): Promise<number> {
   const data = await requestJson<{ count: number }>(
     buildApiUrl(`/api/favorites/folders/${folderId}/articles/bulk-move`),
-    token,
+    null,
     {
       method: 'POST',
       body: JSON.stringify({ target_folder_id: targetFolderId, articles }),
@@ -1060,13 +1029,11 @@ export function getExportUrl(token: string, folderId: number, format: CitationFo
 /**
  * Check which folders contain an article.
  *
- * @param token - Bearer access token.
  * @param articleId - Article id.
  * @param dbName - Database name.
  * @returns Favorite checks.
  */
 export async function checkFavorite(
-  token: string,
   articleId: ArticleId,
   dbName: string,
 ): Promise<FavoriteCheck[]> {
@@ -1074,7 +1041,7 @@ export async function checkFavorite(
   try {
     return await requestJson<FavoriteCheck[]>(
       buildApiUrl('/api/favorites/check', params),
-      token,
+      null,
       undefined,
       '获取收藏状态失败',
     );
@@ -1086,13 +1053,11 @@ export async function checkFavorite(
 /**
  * Check favorite state for many articles.
  *
- * @param token - Bearer access token.
  * @param articleIds - Article ids.
  * @param dbName - Database name.
  * @returns Favorite checks keyed by article id.
  */
 export async function checkFavoritesBatch(
-  token: string,
   articleIds: ArticleId[],
   dbName: string,
 ): Promise<Record<ArticleId, FavoriteCheck[]>> {
@@ -1102,7 +1067,7 @@ export async function checkFavoritesBatch(
   try {
     const data = await requestJson<FavoriteBatchCheckItem[]>(
       buildApiUrl('/api/favorites/check/batch'),
-      token,
+      null,
       {
         method: 'POST',
         body: JSON.stringify({ article_ids: articleIds, db_name: dbName }),
@@ -1118,13 +1083,12 @@ export async function checkFavoritesBatch(
 /**
  * Set the tracking folder.
  *
- * @param token - Bearer access token.
  * @param folderId - Folder id.
  */
-export async function setTrackingFolder(token: string, folderId: number): Promise<void> {
+export async function setTrackingFolder(folderId: number): Promise<void> {
   await requestJson<unknown>(
     buildApiUrl('/api/favorites/tracking'),
-    token,
+    null,
     {
       method: 'PUT',
       body: JSON.stringify({ folder_id: folderId }),
@@ -1136,13 +1100,12 @@ export async function setTrackingFolder(token: string, folderId: number): Promis
 /**
  * Fetch tracking status.
  *
- * @param token - Bearer access token.
  * @returns Tracking status.
  */
-export function getTrackingStatus(token: string): Promise<TrackingStatus> {
+export function getTrackingStatus(): Promise<TrackingStatus> {
   return requestJson<TrackingStatus>(
     buildApiUrl('/api/tracking/status'),
-    token,
+    null,
     undefined,
     '获取追踪状态失败',
   );
@@ -1151,13 +1114,12 @@ export function getTrackingStatus(token: string): Promise<TrackingStatus> {
 /**
  * Start weekly article push.
  *
- * @param token - Bearer access token.
  * @returns Push status.
  */
-export function pushWeeklyToTracking(token: string): Promise<ManualPushStatus> {
+export function pushWeeklyToTracking(): Promise<ManualPushStatus> {
   return requestJson<ManualPushStatus>(
     buildApiUrl('/api/tracking/push-weekly'),
-    token,
+    null,
     { method: 'POST' },
     '推送每周文章失败',
   );
@@ -1166,13 +1128,12 @@ export function pushWeeklyToTracking(token: string): Promise<ManualPushStatus> {
 /**
  * Fetch weekly push status.
  *
- * @param token - Bearer access token.
  * @returns Push status.
  */
-export function getPushWeeklyStatus(token: string): Promise<ManualPushStatus> {
+export function getPushWeeklyStatus(): Promise<ManualPushStatus> {
   return requestJson<ManualPushStatus>(
     buildApiUrl('/api/tracking/push-weekly/status'),
-    token,
+    null,
     undefined,
     '获取推送状态失败',
   );
@@ -1181,13 +1142,12 @@ export function getPushWeeklyStatus(token: string): Promise<ManualPushStatus> {
 /**
  * Fetch notification settings.
  *
- * @param token - Bearer access token.
  * @returns Notification settings or null.
  */
-export function getNotificationSettings(token: string): Promise<NotificationSettings | null> {
+export function getNotificationSettings(): Promise<NotificationSettings | null> {
   return requestJson<NotificationSettings | null>(
     buildApiUrl('/api/tracking/notification-settings'),
-    token,
+    null,
     undefined,
     '获取通知设置失败',
   );
@@ -1196,17 +1156,15 @@ export function getNotificationSettings(token: string): Promise<NotificationSett
 /**
  * Update notification settings.
  *
- * @param token - Bearer access token.
  * @param settings - Settings payload.
  * @returns Saved settings.
  */
 export function updateNotificationSettings(
-  token: string,
   settings: NotificationSettingsUpdate,
 ): Promise<NotificationSettings> {
   return requestJson<NotificationSettings>(
     buildApiUrl('/api/tracking/notification-settings'),
-    token,
+    null,
     {
       method: 'PUT',
       body: JSON.stringify(settings),
@@ -1218,13 +1176,12 @@ export function updateNotificationSettings(
 /**
  * Fetch current user access tokens.
  *
- * @param token - Bearer access token.
  * @returns Access tokens.
  */
-export function getAccessTokens(token: string): Promise<AccessToken[]> {
+export function getAccessTokens(): Promise<AccessToken[]> {
   return requestJson<AccessToken[]>(
     buildApiUrl('/api/auth/tokens'),
-    token,
+    null,
     undefined,
     '获取访问令牌失败',
   );
@@ -1233,13 +1190,12 @@ export function getAccessTokens(token: string): Promise<AccessToken[]> {
 /**
  * Fetch current user's Zhejiang Library CNKI session status.
  *
- * @param token - Bearer access token.
  * @returns Safe CNKI session status.
  */
-export function getCnkiSession(token: string): Promise<CnkiSessionStatus> {
+export function getCnkiSession(): Promise<CnkiSessionStatus> {
   return requestJson<CnkiSessionStatus>(
     buildApiUrl('/api/cnki/session'),
-    token,
+    null,
     undefined,
     '获取知网登录状态失败',
   );
@@ -1248,13 +1204,12 @@ export function getCnkiSession(token: string): Promise<CnkiSessionStatus> {
 /**
  * Start Zhejiang Library CNKI QR login for the current user.
  *
- * @param token - Bearer access token.
  * @returns QR login challenge.
  */
-export function startCnkiLogin(token: string): Promise<CnkiLoginStartResponse> {
+export function startCnkiLogin(): Promise<CnkiLoginStartResponse> {
   return requestJson<CnkiLoginStartResponse>(
     buildApiUrl('/api/cnki/login/start'),
-    token,
+    null,
     { method: 'POST' },
     '启动知网登录失败',
   );
@@ -1263,19 +1218,17 @@ export function startCnkiLogin(token: string): Promise<CnkiLoginStartResponse> {
 /**
  * Poll Zhejiang Library CNKI QR login for the current user.
  *
- * @param token - Bearer access token.
  * @param timeoutSeconds - Maximum polling duration.
  * @param intervalSeconds - Polling interval.
  * @returns QR login poll result.
  */
 export function pollCnkiLogin(
-  token: string,
   timeoutSeconds: number,
   intervalSeconds: number,
 ): Promise<CnkiLoginPollResponse> {
   return requestJson<CnkiLoginPollResponse>(
     buildApiUrl('/api/cnki/login/poll'),
-    token,
+    null,
     {
       method: 'POST',
       body: JSON.stringify({
@@ -1290,13 +1243,12 @@ export function pollCnkiLogin(
 /**
  * Clear current user's Zhejiang Library CNKI session.
  *
- * @param token - Bearer access token.
  * @returns Safe empty CNKI session status.
  */
-export function clearCnkiSession(token: string): Promise<CnkiSessionStatus> {
+export function clearCnkiSession(): Promise<CnkiSessionStatus> {
   return requestJson<CnkiSessionStatus>(
     buildApiUrl('/api/cnki/session'),
-    token,
+    null,
     { method: 'DELETE' },
     '清除知网登录失败',
   );
@@ -1305,19 +1257,17 @@ export function clearCnkiSession(token: string): Promise<CnkiSessionStatus> {
 /**
  * Create an access token.
  *
- * @param token - Bearer access token.
  * @param name - Token name.
  * @param ttl - Time to live in seconds.
  * @returns Created token response.
  */
 export function createAccessToken(
-  token: string,
   name: string,
   ttl: number,
 ): Promise<{ id: number; token: string; name: string; expires_at: number }> {
   return requestJson<{ id: number; token: string; name: string; expires_at: number }>(
     buildApiUrl('/api/auth/tokens'),
-    token,
+    null,
     {
       method: 'POST',
       body: JSON.stringify({ name, ttl }),
@@ -1329,13 +1279,12 @@ export function createAccessToken(
 /**
  * Revoke an access token.
  *
- * @param token - Bearer access token.
  * @param tokenId - Access token id.
  */
-export async function revokeAccessToken(token: string, tokenId: number): Promise<void> {
+export async function revokeAccessToken(tokenId: number): Promise<void> {
   await requestJson<unknown>(
     buildApiUrl(`/api/auth/tokens/${tokenId}`),
-    token,
+    null,
     { method: 'DELETE' },
     '撤销访问令牌失败',
   );
@@ -1344,18 +1293,13 @@ export async function revokeAccessToken(token: string, tokenId: number): Promise
 /**
  * Change the active user's password.
  *
- * @param token - Bearer access token.
  * @param oldPassword - Current password.
  * @param newPassword - New password.
  */
-export async function changePassword(
-  token: string,
-  oldPassword: string,
-  newPassword: string,
-): Promise<void> {
+export async function changePassword(oldPassword: string, newPassword: string): Promise<void> {
   await requestJson<unknown>(
     buildApiUrl('/api/auth/change-password'),
-    token,
+    null,
     {
       method: 'POST',
       body: JSON.stringify({ old_password: oldPassword, new_password: newPassword }),
@@ -1367,13 +1311,12 @@ export async function changePassword(
 /**
  * Fetch the current user's invite code.
  *
- * @param token - Bearer access token.
  * @returns Invite code or null.
  */
-export function getInviteCode(token: string): Promise<InviteCode | null> {
+export function getInviteCode(): Promise<InviteCode | null> {
   return requestJson<InviteCode | null>(
     buildApiUrl('/api/auth/invite-code'),
-    token,
+    null,
     undefined,
     '获取邀请码失败',
   );
@@ -1382,13 +1325,12 @@ export function getInviteCode(token: string): Promise<InviteCode | null> {
 /**
  * Generate the current user's invite code.
  *
- * @param token - Bearer access token.
  * @returns Generated invite code.
  */
-export function generateInviteCode(token: string): Promise<InviteCode> {
+export function generateInviteCode(): Promise<InviteCode> {
   return requestJson<InviteCode>(
     buildApiUrl('/api/auth/invite-code'),
-    token,
+    null,
     { method: 'POST' },
     '生成邀请码失败',
   );
@@ -1397,13 +1339,12 @@ export function generateInviteCode(token: string): Promise<InviteCode> {
 /**
  * Fetch admin stats.
  *
- * @param token - Bearer access token.
  * @returns Admin stats.
  */
-export function adminGetStats(token: string): Promise<AdminStats> {
+export function adminGetStats(): Promise<AdminStats> {
   return requestJson<AdminStats>(
     buildApiUrl('/api/admin/stats'),
-    token,
+    null,
     undefined,
     '获取统计信息失败',
   );
@@ -1412,13 +1353,12 @@ export function adminGetStats(token: string): Promise<AdminStats> {
 /**
  * Fetch admin user list.
  *
- * @param token - Bearer access token.
  * @returns Users.
  */
-export function adminGetUsers(token: string): Promise<AdminUserInfo[]> {
+export function adminGetUsers(): Promise<AdminUserInfo[]> {
   return requestJson<AdminUserInfo[]>(
     buildApiUrl('/api/admin/users'),
-    token,
+    null,
     undefined,
     '获取用户列表失败',
   );
@@ -1427,18 +1367,13 @@ export function adminGetUsers(token: string): Promise<AdminUserInfo[]> {
 /**
  * Grant or revoke admin access.
  *
- * @param token - Bearer access token.
  * @param userId - User id.
  * @param isAdmin - Whether the user should be admin.
  */
-export async function adminSetAdmin(
-  token: string,
-  userId: number,
-  isAdmin: boolean,
-): Promise<void> {
+export async function adminSetAdmin(userId: number, isAdmin: boolean): Promise<void> {
   await requestJson<unknown>(
     buildApiUrl(`/api/admin/users/${userId}/admin`),
-    token,
+    null,
     {
       method: 'PUT',
       body: JSON.stringify({ is_admin: isAdmin }),
@@ -1450,18 +1385,13 @@ export async function adminSetAdmin(
 /**
  * Reset a user's password.
  *
- * @param token - Bearer access token.
  * @param userId - User id.
  * @param newPassword - New password.
  */
-export async function adminResetPassword(
-  token: string,
-  userId: number,
-  newPassword: string,
-): Promise<void> {
+export async function adminResetPassword(userId: number, newPassword: string): Promise<void> {
   await requestJson<unknown>(
     buildApiUrl(`/api/admin/users/${userId}/reset-password`),
-    token,
+    null,
     {
       method: 'POST',
       body: JSON.stringify({ new_password: newPassword }),
@@ -1473,13 +1403,12 @@ export async function adminResetPassword(
 /**
  * Delete a user.
  *
- * @param token - Bearer access token.
  * @param userId - User id.
  */
-export async function adminDeleteUser(token: string, userId: number): Promise<void> {
+export async function adminDeleteUser(userId: number): Promise<void> {
   await requestJson<unknown>(
     buildApiUrl(`/api/admin/users/${userId}`),
-    token,
+    null,
     { method: 'DELETE' },
     '删除用户失败',
   );
@@ -1488,13 +1417,12 @@ export async function adminDeleteUser(token: string, userId: number): Promise<vo
 /**
  * Fetch admin invite codes.
  *
- * @param token - Bearer access token.
  * @returns Invite codes.
  */
-export function adminGetInviteCodes(token: string): Promise<AdminInviteCode[]> {
+export function adminGetInviteCodes(): Promise<AdminInviteCode[]> {
   return requestJson<AdminInviteCode[]>(
     buildApiUrl('/api/admin/invite-codes'),
-    token,
+    null,
     undefined,
     '获取邀请码列表失败',
   );
@@ -1503,13 +1431,12 @@ export function adminGetInviteCodes(token: string): Promise<AdminInviteCode[]> {
 /**
  * Create an admin invite code.
  *
- * @param token - Bearer access token.
  * @returns Created invite code summary.
  */
-export function adminCreateInviteCode(token: string): Promise<{ id: number; code: string }> {
+export function adminCreateInviteCode(): Promise<{ id: number; code: string }> {
   return requestJson<{ id: number; code: string }>(
     buildApiUrl('/api/admin/invite-codes'),
-    token,
+    null,
     { method: 'POST' },
     '创建邀请码失败',
   );
@@ -1518,13 +1445,12 @@ export function adminCreateInviteCode(token: string): Promise<{ id: number; code
 /**
  * Delete an unused admin invite code.
  *
- * @param token - Bearer access token.
  * @param codeId - Invite code id.
  */
-export async function adminDeleteInviteCode(token: string, codeId: number): Promise<void> {
+export async function adminDeleteInviteCode(codeId: number): Promise<void> {
   await requestJson<unknown>(
     buildApiUrl(`/api/admin/invite-codes/${codeId}`),
-    token,
+    null,
     { method: 'DELETE' },
     '删除邀请码失败',
   );
@@ -1533,13 +1459,12 @@ export async function adminDeleteInviteCode(token: string, codeId: number): Prom
 /**
  * Fetch runtime settings.
  *
- * @param token - Bearer access token.
  * @returns Runtime settings.
  */
-export function adminGetRuntimeSettings(token: string): Promise<RuntimeSettingInfo[]> {
+export function adminGetRuntimeSettings(): Promise<RuntimeSettingInfo[]> {
   return requestJson<RuntimeSettingInfo[]>(
     buildApiUrl('/api/admin/runtime-settings'),
-    token,
+    null,
     undefined,
     '获取运行配置失败',
   );
@@ -1548,17 +1473,15 @@ export function adminGetRuntimeSettings(token: string): Promise<RuntimeSettingIn
 /**
  * Update runtime settings.
  *
- * @param token - Bearer access token.
  * @param payload - Runtime settings payload.
  * @returns Updated runtime settings.
  */
 export function adminUpdateRuntimeSettings(
-  token: string,
   payload: RuntimeSettingsUpdate,
 ): Promise<RuntimeSettingInfo[]> {
   return requestJson<RuntimeSettingInfo[]>(
     buildApiUrl('/api/admin/runtime-settings'),
-    token,
+    null,
     {
       method: 'PUT',
       body: JSON.stringify(payload),
@@ -1570,13 +1493,12 @@ export function adminUpdateRuntimeSettings(
 /**
  * Fetch scheduled tasks.
  *
- * @param token - Bearer access token.
  * @returns Scheduled tasks.
  */
-export function adminGetScheduledTasks(token: string): Promise<ScheduledTaskInfo[]> {
+export function adminGetScheduledTasks(): Promise<ScheduledTaskInfo[]> {
   return requestJson<ScheduledTaskInfo[]>(
     buildApiUrl('/api/admin/scheduled-tasks'),
-    token,
+    null,
     undefined,
     '获取定时任务失败',
   );
@@ -1585,17 +1507,13 @@ export function adminGetScheduledTasks(token: string): Promise<ScheduledTaskInfo
 /**
  * Create a scheduled task.
  *
- * @param token - Bearer access token.
  * @param payload - Scheduled task payload.
  * @returns Created scheduled task.
  */
-export function adminCreateScheduledTask(
-  token: string,
-  payload: ScheduledTaskCreate,
-): Promise<ScheduledTaskInfo> {
+export function adminCreateScheduledTask(payload: ScheduledTaskCreate): Promise<ScheduledTaskInfo> {
   return requestJson<ScheduledTaskInfo>(
     buildApiUrl('/api/admin/scheduled-tasks'),
-    token,
+    null,
     {
       method: 'POST',
       body: JSON.stringify(payload),
@@ -1607,19 +1525,17 @@ export function adminCreateScheduledTask(
 /**
  * Update a scheduled task.
  *
- * @param token - Bearer access token.
  * @param taskId - Task id.
  * @param payload - Scheduled task patch.
  * @returns Updated scheduled task.
  */
 export function adminUpdateScheduledTask(
-  token: string,
   taskId: number,
   payload: ScheduledTaskUpdate,
 ): Promise<ScheduledTaskInfo> {
   return requestJson<ScheduledTaskInfo>(
     buildApiUrl(`/api/admin/scheduled-tasks/${taskId}`),
-    token,
+    null,
     {
       method: 'PUT',
       body: JSON.stringify(payload),
@@ -1631,13 +1547,12 @@ export function adminUpdateScheduledTask(
 /**
  * Delete a scheduled task.
  *
- * @param token - Bearer access token.
  * @param taskId - Task id.
  */
-export async function adminDeleteScheduledTask(token: string, taskId: number): Promise<void> {
+export async function adminDeleteScheduledTask(taskId: number): Promise<void> {
   await requestJson<unknown>(
     buildApiUrl(`/api/admin/scheduled-tasks/${taskId}`),
-    token,
+    null,
     { method: 'DELETE' },
     '删除定时任务失败',
   );
@@ -1646,13 +1561,12 @@ export async function adminDeleteScheduledTask(token: string, taskId: number): P
 /**
  * Fetch admin announcement list.
  *
- * @param token - Bearer access token.
  * @returns Announcements.
  */
-export function adminGetAnnouncements(token: string): Promise<AnnouncementInfo[]> {
+export function adminGetAnnouncements(): Promise<AnnouncementInfo[]> {
   return requestJson<AnnouncementInfo[]>(
     buildApiUrl('/api/admin/announcements'),
-    token,
+    null,
     undefined,
     '获取公告列表失败',
   );
@@ -1661,17 +1575,13 @@ export function adminGetAnnouncements(token: string): Promise<AnnouncementInfo[]
 /**
  * Create an announcement.
  *
- * @param token - Bearer access token.
  * @param payload - Announcement payload.
  * @returns Created announcement.
  */
-export function adminCreateAnnouncement(
-  token: string,
-  payload: AnnouncementCreate,
-): Promise<AnnouncementInfo> {
+export function adminCreateAnnouncement(payload: AnnouncementCreate): Promise<AnnouncementInfo> {
   return requestJson<AnnouncementInfo>(
     buildApiUrl('/api/admin/announcements'),
-    token,
+    null,
     {
       method: 'POST',
       body: JSON.stringify(payload),
@@ -1683,19 +1593,17 @@ export function adminCreateAnnouncement(
 /**
  * Update an announcement.
  *
- * @param token - Bearer access token.
  * @param announcementId - Announcement id.
  * @param payload - Announcement patch.
  * @returns Updated announcement.
  */
 export function adminUpdateAnnouncement(
-  token: string,
   announcementId: number,
   payload: AnnouncementUpdate,
 ): Promise<AnnouncementInfo> {
   return requestJson<AnnouncementInfo>(
     buildApiUrl(`/api/admin/announcements/${announcementId}`),
-    token,
+    null,
     {
       method: 'PUT',
       body: JSON.stringify(payload),
@@ -1707,16 +1615,12 @@ export function adminUpdateAnnouncement(
 /**
  * Delete an announcement.
  *
- * @param token - Bearer access token.
  * @param announcementId - Announcement id.
  */
-export async function adminDeleteAnnouncement(
-  token: string,
-  announcementId: number,
-): Promise<void> {
+export async function adminDeleteAnnouncement(announcementId: number): Promise<void> {
   await requestJson<unknown>(
     buildApiUrl(`/api/admin/announcements/${announcementId}`),
-    token,
+    null,
     { method: 'DELETE' },
     '删除公告失败',
   );

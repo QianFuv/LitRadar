@@ -61,7 +61,7 @@ function toFavoriteArticleRef(favorite: FavoriteArticleItem): FavoriteArticleRef
 }
 
 export default function FavoritesPage() {
-  const { user, token } = useAuth();
+  const { user } = useAuth();
   const queryClient = useQueryClient();
   const [selectedFolderId, setSelectedFolderId] = useQueryState('folder', parseAsInteger);
   const [newFolderName, setNewFolderName] = useState('');
@@ -88,8 +88,8 @@ export default function FavoritesPage() {
 
   const { data: folders = [], isLoading } = useQuery({
     queryKey: ['folders', user?.id],
-    queryFn: () => getFolders(token!),
-    enabled: !!token,
+    queryFn: () => getFolders(),
+    enabled: !!user,
   });
   const activeFolderId =
     selectedFolderId !== null && folders.some((folder) => folder.id === selectedFolderId)
@@ -110,12 +110,11 @@ export default function FavoritesPage() {
     refetch: refetchFavorites,
   } = useInfiniteQuery({
     queryKey: ['folder-articles', activeFolderId],
-    queryFn: ({ pageParam = 0 }) =>
-      getFolderArticles(token!, activeFolderId!, PAGE_SIZE, pageParam),
+    queryFn: ({ pageParam = 0 }) => getFolderArticles(activeFolderId!, PAGE_SIZE, pageParam),
     getNextPageParam: (lastPage, allPages) =>
       lastPage.length === PAGE_SIZE ? allPages.flat().length : undefined,
     initialPageParam: 0,
-    enabled: !!token && !!activeFolderId && !!selectedFolder,
+    enabled: !!user && !!activeFolderId && !!selectedFolder,
   });
 
   const favoritePages = favPages?.pages ?? [];
@@ -146,7 +145,7 @@ export default function FavoritesPage() {
     : '';
 
   const createMut = useMutation({
-    mutationFn: (name: string) => createFolder(token!, name),
+    mutationFn: (name: string) => createFolder(name),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['folders'] });
       setNewFolderName('');
@@ -155,7 +154,7 @@ export default function FavoritesPage() {
   });
 
   const deleteMut = useMutation({
-    mutationFn: (id: number) => deleteFolder(token!, id),
+    mutationFn: (id: number) => deleteFolder(id),
     onSuccess: (_data, deletedFolderId) => {
       setSelectedArticleKeys([]);
       setMoveTargetFolderId('');
@@ -168,7 +167,7 @@ export default function FavoritesPage() {
   });
 
   const renameMut = useMutation({
-    mutationFn: ({ id, name }: { id: number; name: string }) => renameFolder(token!, id, name),
+    mutationFn: ({ id, name }: { id: number; name: string }) => renameFolder(id, name),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['folders'] });
       setEditingId(null);
@@ -176,13 +175,13 @@ export default function FavoritesPage() {
   });
 
   const trackMut = useMutation({
-    mutationFn: (folderId: number) => setTrackingFolder(token!, folderId),
+    mutationFn: (folderId: number) => setTrackingFolder(folderId),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['folders'] }),
   });
 
   const removeMut = useMutation({
     mutationFn: (item: FavoriteItem) =>
-      removeFavorite(token!, item.folder_id, item.article_id, item.db_name),
+      removeFavorite(item.folder_id, item.article_id, item.db_name),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['folder-articles'] });
       queryClient.invalidateQueries({ queryKey: ['folders'] });
@@ -190,8 +189,7 @@ export default function FavoritesPage() {
   });
 
   const bulkRemoveMut = useMutation({
-    mutationFn: (articles: FavoriteArticleRef[]) =>
-      bulkRemoveFavorites(token!, activeFolderId!, articles),
+    mutationFn: (articles: FavoriteArticleRef[]) => bulkRemoveFavorites(activeFolderId!, articles),
     onSuccess: (count) => {
       setSelectedArticleKeys([]);
       setBatchFeedback({
@@ -216,7 +214,7 @@ export default function FavoritesPage() {
     }: {
       targetFolderId: number;
       articles: FavoriteArticleRef[];
-    }) => bulkMoveFavorites(token!, activeFolderId!, targetFolderId, articles),
+    }) => bulkMoveFavorites(activeFolderId!, targetFolderId, articles),
     onSuccess: (count) => {
       const targetFolderName = moveTargetFolders.find(
         (folder) => folder.id === Number(moveTargetFolderId),
@@ -499,7 +497,7 @@ export default function FavoritesPage() {
                     </SelectContent>
                   </Select>
                   <Button asChild variant="outline">
-                    <a href={getExportUrl(token!, selectedFolder.id, exportFormat)} download>
+                    <a href={getExportUrl('', selectedFolder.id, exportFormat)} download>
                       <Download className="mr-2 h-4 w-4" />
                       导出引用
                     </a>
@@ -639,7 +637,6 @@ export default function FavoritesPage() {
                         triggerRef={index === prefetchIndex ? prefetchRef : undefined}
                         article={fav}
                         dbName={fav.db_name}
-                        token={token!}
                         initialFolderIds={[fav.folder_id]}
                         className="[content-visibility:auto] [contain-intrinsic-size:0_220px]"
                         leading={

@@ -186,7 +186,7 @@ function JournalPanel({
 }
 
 export default function WeeklyUpdatesPage() {
-  const { user, token } = useAuth();
+  const { user } = useAuth();
   const queryClient = useQueryClient();
   const searchParams = useSearchParams();
   const searchQuery = (searchParams.get('q') || '').trim();
@@ -200,15 +200,15 @@ export default function WeeklyUpdatesPage() {
     error: weeklyErrorData,
   } = useQuery({
     queryKey: ['weekly-updates'],
-    queryFn: () => getWeeklyUpdates(token!),
-    enabled: !!token,
+    queryFn: () => getWeeklyUpdates(),
+    enabled: !!user,
     staleTime: 5 * 60 * 1000,
   });
 
   const { data: databaseOptions } = useQuery({
     queryKey: ['meta', 'databases'],
-    queryFn: () => getDatabases(token!),
-    enabled: !!token,
+    queryFn: () => getDatabases(),
+    enabled: !!user,
     staleTime: 10 * 60 * 1000,
   });
 
@@ -276,7 +276,7 @@ export default function WeeklyUpdatesPage() {
       params.append('journal_id', String(effectiveSelectedJournalId));
       params.set('q', searchQuery);
       params.set('limit', '200');
-      const page = await getArticles(params, null, false, token!);
+      const page = await getArticles(params, null, false, effectiveSelectedDb);
       return page.items;
     },
     enabled: Boolean(searchQuery && effectiveSelectedDb && effectiveSelectedJournalId !== null),
@@ -346,8 +346,8 @@ export default function WeeklyUpdatesPage() {
   const { data: fetchedFavoriteChecksByArticle = {}, isPending: isMissingFavoriteStatePending } =
     useQuery({
       queryKey: [...favoriteBatchBaseKey, 'missing', missingFavoriteArticleIdsKey],
-      queryFn: () => checkFavoritesBatch(token!, missingFavoriteArticleIds, effectiveSelectedDb),
-      enabled: !!token && !!user && !!effectiveSelectedDb && missingFavoriteArticleIds.length > 0,
+      queryFn: () => checkFavoritesBatch(missingFavoriteArticleIds, effectiveSelectedDb),
+      enabled: !!user && !!effectiveSelectedDb && missingFavoriteArticleIds.length > 0,
       staleTime: 5 * 60 * 1000,
     });
   const favoriteChecksByArticle = useMemo(
@@ -524,7 +524,6 @@ export default function WeeklyUpdatesPage() {
                       triggerRef={index === prefetchIndex ? prefetchRef : undefined}
                       article={article}
                       dbName={effectiveSelectedDb}
-                      token={token!}
                       initialFolderIds={
                         favoriteChecksByArticle[article.article_id]?.map(
                           (item) => item.folder_id,

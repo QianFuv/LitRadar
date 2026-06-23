@@ -43,7 +43,6 @@ type ArticleDetailDialogArticle = {
 type ArticleDetailDialogContentProps = {
   article: ArticleDetailDialogArticle;
   dbName: string;
-  token?: string;
   initialFolderIds?: number[];
   isFavoriteStatePending?: boolean;
   extraActions?: ReactNode;
@@ -170,7 +169,6 @@ function shouldUseLiveArticleAccessRefresh(
 export function ArticleDetailDialogContent({
   article,
   dbName,
-  token,
   initialFolderIds = [],
   isFavoriteStatePending = false,
   extraActions,
@@ -180,10 +178,10 @@ export function ArticleDetailDialogContent({
     message: string;
     tone: 'error' | 'success';
   } | null>(null);
-  const isAccessQueryEnabled = !!token && !!dbName && !!article.article_id;
+  const isAccessQueryEnabled = !!dbName && !!article.article_id;
   const { data: cnkiSession } = useQuery({
     queryKey: ['cnki-session', 'current'],
-    queryFn: () => getCnkiSession(token!),
+    queryFn: () => getCnkiSession(),
     enabled: isAccessQueryEnabled,
     staleTime: CNKI_SESSION_STALE_TIME_MS,
   });
@@ -202,7 +200,7 @@ export function ArticleDetailDialogContent({
       buildArticleAccessSessionKey(cnkiSession),
       shouldRefreshAccessForSession ? 'live' : 'cached',
     ],
-    queryFn: () => getArticleAccess(article.article_id, dbName, token!),
+    queryFn: () => getArticleAccess(article.article_id, dbName),
     enabled: isAccessQueryEnabled,
     staleTime: (query) =>
       shouldUseLiveArticleAccessRefresh(query, shouldRefreshAccessForSession)
@@ -238,7 +236,7 @@ export function ArticleDetailDialogContent({
   const detailAction = access?.detail;
   const fulltextAction = access?.fulltext;
   const fullTextUrl = fulltextAction?.available
-    ? getFullTextUrlForDatabase(article.article_id, dbName, token)
+    ? getFullTextUrlForDatabase(article.article_id, dbName)
     : null;
   const isAccessLoading = isAccessQueryEnabled && (isAccessPending || isAccessFetching);
   const canShowAccessActions = !isAccessFetching && !isAccessError;
