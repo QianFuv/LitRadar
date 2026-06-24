@@ -31,6 +31,7 @@ WFWFID = "2120"
 BFF_ORG_ID = "1916318653650423810"
 DEFAULT_TIMEOUT = 30.0
 TOKEN_EXPIRY_SKEW_SECONDS = 300
+FULLTEXT_WARM_UP_TTL_SECONDS = 60 * 60
 DEFAULT_HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -123,6 +124,8 @@ class ZhejiangLibraryCnkiClient:
         self.bff_user_token: str | None = None
         self.qr_uuid: str | None = None
         self.last_brief_url: str | None = None
+        self.fulltext_warmed_at: int | None = None
+        self.final_zyproxy_url: str | None = None
         self._owns_client = client is None
         self.client = client or httpx.Client(
             timeout=timeout,
@@ -172,6 +175,8 @@ class ZhejiangLibraryCnkiClient:
         """
         self.bff_user_token = str(state.get("bff_user_token") or "") or None
         self.qr_uuid = str(state.get("qr_uuid") or "") or None
+        self.fulltext_warmed_at = _int_or_none(state.get("fulltext_warmed_at"))
+        self.final_zyproxy_url = str(state.get("final_zyproxy_url") or "") or None
         self.client.cookies.clear()
         for cookie_data in state.get("cookies") or []:
             if isinstance(cookie_data, Mapping):
@@ -188,6 +193,8 @@ class ZhejiangLibraryCnkiClient:
             "bff_user_token": self.bff_user_token,
             "qr_uuid": self.qr_uuid,
             "cookies": [_cookie_to_json(cookie) for cookie in self.client.cookies.jar],
+            "fulltext_warmed_at": self.fulltext_warmed_at,
+            "final_zyproxy_url": self.final_zyproxy_url,
             "saved_at": int(time.time()),
         }
 
@@ -441,11 +448,41 @@ class ZhejiangLibraryCnkiClient:
         Returns:
             Final proxied CNKI entry URL.
         """
+        if self.has_fresh_fulltext_session():
+            return self.final_zyproxy_url or f"{ZYPROXY_BASE_URL}/kns55/"
         self.reset_web_login_cookies()
         sso_url = self.build_share_sso_url()
         self.enter_share(sso_url)
         zyproxy_login_url = self.get_zyproxy_login_url()
-        return self.enter_zyproxy(zyproxy_login_url)
+        final_url = self.enter_zyproxy(zyproxy_login_url)
+        self.fulltext_warmed_at = int(time.time())
+        self.final_zyproxy_url = final_url
+        return final_url
+
+    def has_fresh_fulltext_session(self, *, now: float | None = None) -> bool:
+        """
+        Check whether existing Share and zyproxy cookies are fresh enough to reuse.
+
+        Args:
+            now: Optional timestamp override.
+
+        Returns:
+            True when the cached full-text session is still within the reuse window.
+        """
+        if self.fulltext_warmed_at is None:
+            return False
+        current_time = time.time() if now is None else now
+        elapsed_seconds = current_time - self.fulltext_warmed_at
+        if elapsed_seconds < 0 or elapsed_seconds >= FULLTEXT_WARM_UP_TTL_SECONDS:
+            return False
+        exp = _jwt_exp(self.bff_user_token)
+        if exp is not None and exp <= current_time + TOKEN_EXPIRY_SKEW_SECONDS:
+            return False
+        return _has_unexpired_cookie(
+            self.client.cookies.jar,
+            "vpn358_sid",
+            now=current_time,
+        )
 
     def reset_web_login_cookies(self) -> None:
         """
@@ -1440,6 +1477,28 @@ def _has_cookie(jar: Any, name: str) -> bool:
     return any(getattr(cookie, "name", "") == name for cookie in jar)
 
 
+def _has_unexpired_cookie(jar: Any, name: str, *, now: float | None = None) -> bool:
+    """
+    Check whether a cookie jar contains an unexpired cookie name.
+
+    Args:
+        jar: Cookie jar-like object.
+        name: Cookie name.
+        now: Optional timestamp override.
+
+    Returns:
+        True when the cookie exists and has not expired.
+    """
+    current_time = time.time() if now is None else now
+    for cookie in jar:
+        if getattr(cookie, "name", "") != name:
+            continue
+        expires = _int_or_none(getattr(cookie, "expires", None))
+        if expires is None or expires > current_time:
+            return True
+    return False
+
+
 def _cookie_to_json(cookie: Cookie) -> dict[str, Any]:
     """
     Convert a cookie to JSON-serializable data.
@@ -1493,6 +1552,28 @@ def _cookie_from_json(data: Mapping[str, Any]) -> Cookie:
         rest=dict(data.get("rest") or {}),
         rfc2109=False,
     )
+
+
+def _int_or_none(value: object) -> int | None:
+    """
+    Convert a JSON-like value to int when possible.
+
+    Args:
+        value: Raw JSON-like value.
+
+    Returns:
+        Integer value, or None when the value is empty or invalid.
+    """
+    if value is None or value == "":
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float | str | bytes | bytearray):
+        try:
+            return int(value)
+        except ValueError:
+            return None
+    return None
 
 
 def _jwt_exp(token: str | None) -> int | None:

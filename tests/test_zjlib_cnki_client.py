@@ -20,6 +20,7 @@ from paper_scanner.sources.zjlib_cnki import (
     does_article_metadata_match,
 )
 from paper_scanner.sources.zjlib_cnki.client import (
+    FULLTEXT_WARM_UP_TTL_SECONDS,
     _parse_search_results,
     _search_form_bodies,
 )
@@ -52,7 +53,13 @@ def build_unsigned_jwt(exp: int) -> str:
     return f"{encode({'alg': 'none'})}.{encode({'exp': exp})}."
 
 
-def build_stored_cookie(name: str, value: str, domain: str) -> dict[str, object]:
+def build_stored_cookie(
+    name: str,
+    value: str,
+    domain: str,
+    *,
+    expires: int | None = None,
+) -> dict[str, object]:
     """
     Build JSON cookie data for client state tests.
 
@@ -60,6 +67,7 @@ def build_stored_cookie(name: str, value: str, domain: str) -> dict[str, object]
         name: Cookie name.
         value: Cookie value.
         domain: Cookie domain.
+        expires: Optional cookie expiry timestamp.
 
     Returns:
         JSON-serializable cookie data.
@@ -70,7 +78,7 @@ def build_stored_cookie(name: str, value: str, domain: str) -> dict[str, object]
         "domain": domain,
         "path": "/",
         "secure": True,
-        "expires": None,
+        "expires": expires,
         "discard": False,
         "rest": {},
     }
@@ -277,6 +285,54 @@ class ZhejiangLibraryCnkiClientTest(unittest.TestCase):
         self.assertIn("SearchFieldRelationDirectory", result_fields)
         self.assertIn("db_value", handler_fields)
 
+    def test_warm_up_fulltext_session_reuses_fresh_cached_state(self) -> None:
+        """
+        Ensure recent full-text warm-up state avoids another SSO round trip.
+
+        Returns:
+            None.
+        """
+        now = int(time.time())
+        token = build_unsigned_jwt(now + 7200)
+        final_url = "https://http-10--18--17--173.elib.zyproxy.zjlib.cn/kns55/"
+        requests: list[str] = []
+
+        def handle(request: httpx.Request) -> httpx.Response:
+            """
+            Record unexpected HTTP requests.
+
+            Args:
+                request: HTTP request.
+
+            Returns:
+                Error response for unexpected requests.
+            """
+            requests.append(str(request.url))
+            return httpx.Response(500, request=request)
+
+        state_data = {
+            "bff_user_token": token,
+            "cookies": [
+                build_stored_cookie("userToken", token, "www.zjlib.cn"),
+                build_stored_cookie(
+                    "vpn358_sid",
+                    "FRESH",
+                    ".elib.zyproxy.zjlib.cn",
+                    expires=now + FULLTEXT_WARM_UP_TTL_SECONDS,
+                ),
+            ],
+            "fulltext_warmed_at": now - 60,
+            "final_zyproxy_url": final_url,
+        }
+        with ZhejiangLibraryCnkiClient(
+            state_data=state_data,
+            client=httpx.Client(transport=httpx.MockTransport(handle)),
+        ) as client:
+            resolved_url = client.warm_up_fulltext_session()
+
+        self.assertEqual(resolved_url, final_url)
+        self.assertEqual(requests, [])
+
     def test_warm_up_fulltext_session_rebuilds_state_without_stale_cookies(
         self,
     ) -> None:
@@ -286,7 +342,8 @@ class ZhejiangLibraryCnkiClientTest(unittest.TestCase):
         Returns:
             None.
         """
-        token = build_unsigned_jwt(int(time.time()) + 3600)
+        now = int(time.time())
+        token = build_unsigned_jwt(now + 7200)
         cookie_headers: dict[str, str] = {}
 
         def handle(request: httpx.Request) -> httpx.Response:
@@ -361,6 +418,10 @@ class ZhejiangLibraryCnkiClientTest(unittest.TestCase):
                 build_stored_cookie("website_id", "STALE", "share.zjlib.cn"),
                 build_stored_cookie("vpn358_sid", "STALE", ".elib.zyproxy.zjlib.cn"),
             ],
+            "fulltext_warmed_at": now - FULLTEXT_WARM_UP_TTL_SECONDS - 1,
+            "final_zyproxy_url": (
+                "https://http-10--18--17--173.elib.zyproxy.zjlib.cn/kns55/"
+            ),
         }
         with ZhejiangLibraryCnkiClient(
             state_data=state_data,
@@ -381,6 +442,9 @@ class ZhejiangLibraryCnkiClientTest(unittest.TestCase):
             cookie_headers["share.zjlib.cn/sso/login/custom/protocolAuth"],
         )
         self.assertIn("vpn358_sid", client.client_info().cookie_names)
+        state = client.to_state_data()
+        self.assertGreaterEqual(state["fulltext_warmed_at"], now)
+        self.assertIn("login.elib.zyproxy.zjlib.cn", state["final_zyproxy_url"])
 
     def test_detail_metadata_parser_extracts_identity_and_pdf_url(self) -> None:
         """
