@@ -6,7 +6,7 @@
 
 - 调用后端 `/api/*` 路由获取文章、期刊、收藏与管理数据
 - 维护登录态与访问令牌
-- 提供检索筛选、收藏导出、追踪设置、公告展示与后台管理界面
+- 提供检索筛选、收藏导出、追踪设置、CNKI 会话设置、公告展示与后台管理界面
 - 在 Docker 部署下通过 Next.js rewrite 将 `/api/*` 转发给 FastAPI 后端
 
 ## 技术栈
@@ -60,8 +60,8 @@ pnpm dev
 | `/weekly-updates` | 每周更新聚合页面                                   |
 | `/favorites`      | 收藏夹、导出、追踪文件夹设置                       |
 | `/tracking`       | 追踪文件夹、通知设置、手动推送                     |
-| `/settings`       | 个人设置、邀请码、访问令牌、修改密码               |
-| `/admin`          | 管理后台：用户、邀请码、统计、定时任务、公告       |
+| `/settings`       | 个人设置、邀请码、访问令牌、修改密码、浙江图书馆 CNKI 会话 |
+| `/admin`          | 管理后台：用户、邀请码、统计、运行配置、定时任务、公告 |
 
 ## 目录概览
 
@@ -90,10 +90,11 @@ app/
 - 检索接口：`/api/articles`、`/api/journals`、`/api/issues`、`/api/meta/*`
 - 每周更新与公告：`/api/weekly-updates`、`/api/announcements`
 - 用户与认证：`/api/auth/*`
+- 浙江图书馆 CNKI 会话：`/api/cnki/*`
 - 收藏与追踪：`/api/favorites/*`、`/api/tracking/*`
-- 管理后台：`/api/admin/*`
+- 管理后台：`/api/admin/*`，包括用户、邀请码、统计、运行配置、定时任务与公告
 
-首页公告展示使用 `app/components/announcements-dialog.tsx`，后台公告管理使用 `app/components/admin/announcements-card.tsx`。
+首页公告展示使用 `app/components/announcements-dialog.tsx`，后台公告管理使用 `app/components/admin/announcements-card.tsx`。外部元数据运行配置由 `app/components/admin/runtime-settings-card.tsx` 调用 `/api/admin/runtime-settings` 管理。
 
 ## 当前认证说明
 

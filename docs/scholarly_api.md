@@ -121,7 +121,7 @@ Body: {"ids": ["DOI:10.0000/example", "..."]}
 
 关键约束：
 
-- `SEMANTIC_SCHOLAR_API_KEY_POOL` 为空时跳过 Semantic Scholar enrichment。
+- 当前索引器在 CSV 中存在 `scholarly` 行时要求 `SEMANTIC_SCHOLAR_API_KEY_POOL` 非空；缺失时会在索引开始前失败。
 - 单次 batch 最多 500 个 paper IDs。
 - 当前按官方 introductory limit 保守处理为全局 1 RPS。
 - 多进程索引时，Semantic Scholar 请求使用 source-aware throttle 做进程间错峰，避免每个进程各自打满 1 RPS。
@@ -177,7 +177,8 @@ Body: {"ids": ["DOI:10.0000/example", "..."]}
 | --- | --- |
 | 出版方 Crossref 元数据缺失 | 允许 OpenAlex 补字段，但不要让 OpenAlex 覆盖更可靠的 Crossref 卷期页码 |
 | OpenAlex DOI enrichment 缺失 | 保留 Crossref 文章记录，只缺少增强字段 |
-| Semantic Scholar 无 key 或无 DOI 结果 | 跳过 S2 enrichment，使用 OpenAlex/Crossref fallback |
+| Semantic Scholar 无 key | 当前会阻止 `scholarly` 索引启动；先配置 `SEMANTIC_SCHOLAR_API_KEY_POOL` |
+| Semantic Scholar 无 DOI 结果 | 保留 OpenAlex/Crossref fallback |
 | Semantic Scholar 429 或 5xx | 使用 source throttle 和 retry/backoff；不要通过并发硬冲 |
 | OA 链接失效 | 允许后续增量任务刷新；展示层应能处理失效链接 |
 | 无 DOI 文章 | 不能使用 DOI batch enrichment，只保留 Crossref URL fallback |

@@ -65,6 +65,7 @@ CSV 元数据
 - 对外提供检索、认证、收藏、追踪、后台管理 API
 - 初始化 `data/auth.sqlite`
 - 启动 APScheduler 背景调度器
+- 管理外部元数据服务运行配置
 - 为 `/api/articles*` 与 `/api/meta*` 添加缓存头
 
 关键文件：
@@ -161,6 +162,7 @@ CSV 元数据
 - `weekly`
 - `announcements`
 - `auth`
+- `cnki`
 - `favorites`
 - `tracking`
 - `admin`
@@ -189,6 +191,7 @@ CSV 元数据
 - 用户管理
 - 邀码管理
 - 系统统计
+- 外部元数据运行配置
 - 定时任务管理
 - 公告管理
 
@@ -226,11 +229,11 @@ API 启动时会在 `lifespan` 中执行：
 
 ```bash
 uv sync --dev
-uv run index --file utd24.csv --workers 32 --processes 3
+uv run index --file utd24.csv --workers 32 --processes 2
 uv run api
 ```
 
-外部元数据服务配置由管理后台写入 `data/auth.sqlite` 的运行配置表。Docker 或宿主进程环境变量只作为启动输入；数据库已有值时会覆盖同名环境变量。
+外部元数据服务配置由管理后台 `/api/admin/runtime-settings` 写入 `data/auth.sqlite` 的 `runtime_settings` 表。当前受管理配置包括 `OPENALEX_API_KEY_POOL`、`SEMANTIC_SCHOLAR_API_KEY_POOL`、`CROSSREF_MAILTO_POOL` 和 `PROXY_POOL`。Docker 或宿主进程环境变量只作为启动输入；数据库已有值时会覆盖同名环境变量。
 
 ### 前端
 

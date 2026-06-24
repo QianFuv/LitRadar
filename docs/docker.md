@@ -26,7 +26,12 @@
 - 镜像名：`ghcr.io/qianfuv/paper-scanner-api:latest`
 - 端口：`8000:8000`
 - 卷挂载：`./data:/app/data`
-- 环境变量：`API_HOST=0.0.0.0`
+- 环境变量：
+  - `API_HOST=0.0.0.0`
+  - `OPENALEX_API_KEY_POOL=${OPENALEX_API_KEY_POOL:-}`
+  - `PROXY_POOL=${PROXY_POOL:-}`
+  - `CROSSREF_MAILTO_POOL=${CROSSREF_MAILTO_POOL:-}`
+  - `UNPAYWALL_EMAIL_POOL=${UNPAYWALL_EMAIL_POOL:-}`，这是旧变量透传，当前代码不再作为运行配置读取
 
 ### `app` 服务
 
@@ -139,10 +144,23 @@ docker compose run --rm api uv run index --file utd24.csv
 
 ### 后端
 
+后端配置分两类：
+
+- 进程环境变量：由 Docker Compose、宿主 shell 或容器运行参数提供
+- 管理员运行时配置：通过 `/api/admin/runtime-settings` 写入 `data/auth.sqlite` 的 `runtime_settings` 表
+
+API、索引命令和调度任务会调用 `apply_runtime_config()`。如果 `runtime_settings` 中已有同名配置，会覆盖进程环境变量；如果数据库没有值，则使用进程环境变量。
+
 | 变量 | 默认值 | 说明 |
 | --- | --- | --- |
 | `API_HOST` | `127.0.0.1`（本地） / `0.0.0.0`（Docker） | API 监听地址 |
+| `API_CORS_ALLOWED_ORIGINS` | 空 | 跨源浏览器请求允许的 Origin 列表，逗号分隔 |
+| `AUTH_COOKIE_SECURE` | 按请求 scheme 推断 | 显式控制 `ps_session` Cookie 的 `Secure` 标记 |
 | `SIMPLE_TOKENIZER_PATH` | 自动探测或镜像内置 | 中文分词扩展路径 |
+| `OPENALEX_API_KEY_POOL` | 空 | OpenAlex API key 池；scholarly 索引需要 |
+| `SEMANTIC_SCHOLAR_API_KEY_POOL` | 空 | Semantic Scholar API key 池；scholarly 索引需要 |
+| `CROSSREF_MAILTO_POOL` | 空 | Crossref 联系邮箱池，建议生产环境配置 |
+| `PROXY_POOL` | 空 | scholarly 与 CNKI 请求代理池 |
 | `NOTIFY_AI_BASE_URL` | `https://api.siliconflow.cn/v1` | 默认 OpenAI 兼容 API 地址 |
 | `NOTIFY_AI_API_KEY` | 空 | 默认 AI Key |
 | `NOTIFY_AI_MODEL` | `deepseek-ai/DeepSeek-V3` | 默认模型名 |
@@ -153,6 +171,8 @@ docker compose run --rm api uv run index --file utd24.csv
 | `NOTIFY_PUSHPLUS_TEMPLATE` | `markdown` | PushPlus 默认模板 |
 | `NOTIFY_PUSHPLUS_TOPIC` | 空 | PushPlus 默认 topic |
 | `NOTIFY_PUSHPLUS_OPTION` | 空 | PushPlus 默认 option |
+
+根 Compose 当前没有显式传入 `SEMANTIC_SCHOLAR_API_KEY_POOL`。如果要在新容器中首次运行含 `scholarly` 源的索引，需要在命令环境中提供它，或先通过管理员后台写入 `runtime_settings`。`UNPAYWALL_EMAIL_POOL` 虽然仍在 Compose 中透传，但当前代码已不再把它作为运行配置项。
 
 ### 前端
 

@@ -504,11 +504,13 @@ CNKI 精确匹配失败时返回受控错误，不会下载候选列表中的错
 | `POST` | `/api/admin/invite-codes` | 生成管理员邀请码 |
 | `DELETE` | `/api/admin/invite-codes/{code_id}` | 删除未使用邀请码 |
 
-### 统计、定时任务与公告
+### 统计、运行时配置、定时任务与公告
 
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
 | `GET` | `/api/admin/stats` | 返回系统综合统计 |
+| `GET` | `/api/admin/runtime-settings` | 列出外部元数据服务运行配置及来源 |
+| `PUT` | `/api/admin/runtime-settings` | 更新外部元数据服务运行配置 |
 | `GET` | `/api/admin/scheduled-tasks` | 列出定时任务 |
 | `POST` | `/api/admin/scheduled-tasks` | 创建定时任务 |
 | `PUT` | `/api/admin/scheduled-tasks/{task_id}` | 更新定时任务 |
@@ -517,6 +519,46 @@ CNKI 精确匹配失败时返回受控错误，不会下载候选列表中的错
 | `POST` | `/api/admin/announcements` | 创建公告 |
 | `PUT` | `/api/admin/announcements/{announcement_id}` | 更新公告 |
 | `DELETE` | `/api/admin/announcements/{announcement_id}` | 删除公告 |
+
+### 运行时配置请求体
+
+当前运行时配置用于 Crossref / OpenAlex / Semantic Scholar / CNKI 抓取链路。配置保存在 `data/auth.sqlite` 的 `runtime_settings` 表中，API、索引器和调度任务启动时会把数据库值应用到进程环境变量；数据库已有值会覆盖同名宿主环境变量。
+
+`GET /api/admin/runtime-settings` 返回每个配置项的：
+
+- `field`：API 请求体字段名
+- `key`：实际环境变量名
+- `label`
+- `description`
+- `input_type`
+- `is_secret`
+- `value`
+- `source`：`database`、`environment` 或 `default`
+- `updated_at`
+
+`PUT /api/admin/runtime-settings` 请求体：
+
+```json
+{
+  "values": {
+    "openalex_api_key_pool": "key1,key2",
+    "semantic_scholar_api_key_pool": "s2-key",
+    "crossref_mailto_pool": "admin@example.com",
+    "proxy_pool": "socks5://127.0.0.1:1080"
+  }
+}
+```
+
+当前允许的字段：
+
+| 字段 | 环境变量 | 说明 |
+| --- | --- | --- |
+| `openalex_api_key_pool` | `OPENALEX_API_KEY_POOL` | OpenAlex API key 池 |
+| `semantic_scholar_api_key_pool` | `SEMANTIC_SCHOLAR_API_KEY_POOL` | Semantic Scholar API key 池 |
+| `crossref_mailto_pool` | `CROSSREF_MAILTO_POOL` | Crossref 联系邮箱池 |
+| `proxy_pool` | `PROXY_POOL` | scholarly 与 CNKI 请求代理池 |
+
+未知字段会返回 `400`。清空某个值会把该配置保存为空字符串；下次应用运行配置时会移除同名进程环境变量，列表接口仍会把该项显示为 `database` 来源。
 
 ### 定时任务请求体
 

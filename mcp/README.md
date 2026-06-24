@@ -22,7 +22,7 @@ codex mcp add paper-scanner --env PAPER_SCANNER_API_URL=<api-url> --env PAPER_SC
 | --- | --- | --- |
 | `PAPER_SCANNER_API_URL` | `http://localhost:8000` | Paper Scanner 后端地址 |
 | `PAPER_SCANNER_API_TOKEN` | — | **必填。** 用于 API 认证的 Bearer Token |
-| `PAPER_SCANNER_DB` | — | 默认数据库名，自动附加到支持 `db` 参数的请求 |
+| `PAPER_SCANNER_DB` | — | 默认数据库名，自动附加到支持 `db` 参数的请求；单个工具显式传入 `db` 时会覆盖该默认值 |
 
 MCP 工具调用的后端端点需要认证，Token 会作为 `Bearer` 头随每个请求发送。可在 Paper Scanner 设置页面中生成。
 
@@ -54,6 +54,8 @@ MCP 工具调用的后端端点需要认证，Token 会作为 `Bearer` 头随每
 | 工具名 | 说明 |
 | --- | --- |
 | `get_weekly_updates` | 获取全库每周新增文章摘要 |
+
+每周更新来自后端 `data/push_state/*.changes.json` 变更清单，响应窗口由清单时间戳推导，不是按当前日期实时扫描索引库。
 
 ### 收藏
 

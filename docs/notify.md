@@ -26,7 +26,7 @@
 
 - `POST /api/tracking/push-weekly`
 
-这条接口会读取最近的变更清单，把适合当前用户的文章推入自己的追踪文件夹。
+这条接口会读取最近的变更清单，按当前用户的通知设置做 AI 筛选；最终可以写入追踪文件夹、发送 PushPlus，或在 PushPlus 发送后同步写入追踪文件夹。
 
 ## 数据来源
 
@@ -55,15 +55,22 @@
 | --- | --- |
 | `keywords` | 关键词偏好 |
 | `directions` | 研究方向偏好 |
+| `selected_databases` | 数据库过滤；空列表表示全部数据库 |
 | `delivery_method` | 当前只支持 `folder` 或 `pushplus` |
 | `pushplus_token` | PushPlus 令牌 |
 | `pushplus_template` | 推送模板 |
 | `pushplus_topic` | 可选 topic |
 | `pushplus_channel` | 可选渠道，默认 `wechat` |
+| `sync_to_tracking_folder` | PushPlus 推送后是否同步写入当前追踪文件夹 |
 | `ai_base_url` | 用户级 OpenAI 兼容接口地址 |
 | `ai_api_key` | 用户级 API Key |
 | `ai_model` | 用户级模型名 |
 | `ai_system_prompt` | 用户级自定义系统提示词 |
+| `ai_backup_base_url` | 用户级备用 OpenAI 兼容接口地址 |
+| `ai_backup_api_key` | 用户级备用 API Key |
+| `ai_backup_model` | 用户级备用模型名 |
+| `ai_backup_system_prompt` | 用户级备用系统提示词 |
+| `ai_retry_attempts` | 每个 AI endpoint 的重试次数 |
 | `enabled` | 是否启用 |
 
 ## 运行时配置
@@ -84,6 +91,8 @@
 | `NOTIFY_PUSHPLUS_OPTION` | 空 | PushPlus 默认 option |
 
 通知链路现在只识别上述 `NOTIFY_AI_*` 变量，不再解析旧的 OpenAI / SiliconFlow 别名。
+
+用户级 AI 配置优先于全局环境变量。用户配置了备用 AI endpoint 时，主 endpoint 失败后会尝试备用 endpoint；如果主备配置都不可用，当前订阅用户会被跳过。
 
 ## AI 选择逻辑
 
@@ -161,7 +170,7 @@
 仅处理：
 
 - `delivery_method = "folder"`
-- 已配置 `tracking_folder_id`
+- 当前用户已设置追踪文件夹
 - `enabled = true`
 
 ### 命令行参数

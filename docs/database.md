@@ -5,11 +5,11 @@ Paper Scanner 当前实际使用两类数据库：
 1. **索引数据库**
    - 路径：`data/index/*.sqlite`
    - 来源：每个 `data/meta/*.csv` 对应生成一个 `.sqlite`
-   - 作用：期刊、期次、文章、全文检索
+   - 作用：期刊、期次、文章、全文检索、索引运行统计
 
 2. **认证与业务数据库**
    - 路径：`data/auth.sqlite`
-   - 作用：用户、访问令牌、收藏夹、通知设置、定时任务、公告
+   - 作用：用户、访问令牌、CNKI 会话、收藏夹、通知设置、运行时配置、定时任务、公告
 
 ## 一、索引数据库
 
@@ -38,6 +38,10 @@ journals (1) ---- (1) journal_meta
                                |
                                +---- article_listing   物化筛选辅助表
                                +---- article_search    FTS5 全文检索表
+
+index_runs (1) ---- (N) index_path_stats
+          |
+          +---- (N) index_api_call_stats
 ```
 
 ### 1. `journals`
@@ -246,6 +250,81 @@ SQLite FTS5 虚表，用于全文检索。
 - `status`
 - `updated_at`
 
+### 10. `index_runs`
+
+索引运行汇总表，记录每次 CSV 索引任务的整体结果。
+
+主要字段：
+
+- `run_id`：主键，格式为 `<csv_stem>-<uuid>`
+- `csv_file`
+- `started_at`
+- `finished_at`
+- `status`
+- `total_journals`
+- `succeeded_journals`
+- `failed_journals`
+- `resumed_journals`
+- `error_summary`
+
+### 11. `index_path_stats`
+
+索引路径统计表，记录单本期刊在某条抓取路径上的执行统计。
+
+主要字段：
+
+- `run_id`：外键到 `index_runs`
+- `source`
+- `path`
+- `journal_id`
+- `journal_title`
+- `status`
+- `started_at`
+- `finished_at`
+- `works_count`
+- `issues_count`
+- `article_summaries_count`
+- `article_details_count`
+- `articles_written_count`
+- `articles_deleted_no_authors_count`
+- `error_type`
+- `error_message`
+
+主要索引：
+
+- `idx_index_path_stats_run`
+- `idx_index_path_stats_status`
+
+### 12. `index_api_call_stats`
+
+索引 API 调用统计表，记录每次运行中外部服务调用的逻辑次数、重试、错误和耗时。
+
+主要字段：
+
+- `run_id`：外键到 `index_runs`
+- `source`
+- `service`
+- `endpoint`
+- `method`
+- `url_path`
+- `journal_id`
+- `journal_title`
+- `logical_calls`
+- `attempts`
+- `successes`
+- `failures`
+- `retry_count`
+- `status_codes_json`
+- `transport_errors`
+- `rate_limit_failures`
+- `total_latency_ms`
+- `error_samples_json`
+
+主要索引：
+
+- `idx_index_api_call_stats_run`
+- `idx_index_api_call_stats_service`
+
 ## 二、认证与业务数据库 `data/auth.sqlite`
 
 ### 初始化参数
@@ -274,6 +353,7 @@ users
   └── notification_settings
 
 scheduled_tasks
+runtime_settings
 announcements
 ```
 
@@ -451,7 +531,23 @@ announcements
 - 由 APScheduler 在 API 进程内调度
 - 执行方式是 shell 命令
 
-### 9. `announcements`
+### 9. `runtime_settings`
+
+管理员后台维护的外部元数据运行配置表。
+
+字段：
+
+- `key`：主键，实际环境变量名
+- `value`
+- `updated_at`
+
+说明：
+
+- 当前受管理的 `key` 包括 `OPENALEX_API_KEY_POOL`、`PROXY_POOL`、`CROSSREF_MAILTO_POOL`、`SEMANTIC_SCHOLAR_API_KEY_POOL`
+- `paper_scanner.shared.runtime_config.apply_runtime_config()` 会读取该表并写入当前进程的 `os.environ`
+- API 启动、索引命令和调度任务会应用这些配置；数据库已有值会覆盖同名进程环境变量
+
+### 10. `announcements`
 
 系统公告表。
 

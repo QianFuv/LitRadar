@@ -19,7 +19,7 @@ Paper Scanner 是一个面向学术期刊的全栈检索与订阅平台。它负
 - 收藏与导出：文件夹管理、批量收藏、BibTeX / RIS / EndNote XML 导出
 - 文献追踪：将某个文件夹设为追踪文件夹，并按用户偏好自动写入相关文章
 - AI 选择：支持 OpenAI 兼容模型配置，不局限于单一服务商
-- 管理后台：用户、邀请码、系统统计、定时任务、系统公告
+- 管理后台：用户、邀请码、系统统计、外部元数据运行配置、定时任务、系统公告
 - 首页公告：后台可配置全局公告，前台按优先级展示并支持本地关闭
 
 ## 技术栈
@@ -127,7 +127,7 @@ pnpm dev
 
 ```bash
 uv run index --file utd24.csv
-uv run index --workers 32 --processes 3
+uv run index --workers 32 --processes 2
 uv run index --update --notify
 uv run index --update --notify --notify-dry-run
 ```
@@ -138,15 +138,15 @@ uv run index --update --notify --notify-dry-run
 | --- | --- | --- |
 | `--file, -f` | 处理 `data/meta/` 下全部 CSV | 指定单个 CSV |
 | `--workers, -w` | `32` | 进程内请求 worker 数；英文 scholarly 源会额外按 source 限流 |
-| `--issue-batch` | `workers * 3` | 每批抓取 issue 数量；传 `0` 时自动计算 |
+| `--issue-batch` | `workers` | 每批抓取 issue 数量；传 `0` 时自动使用 `workers` |
 | `--timeout` | `20` | HTTP 超时秒数 |
-| `--processes` | `3` | 期刊级多进程并行数 |
+| `--processes` | `2` | 期刊级多进程并行数 |
 | `--resume / --no-resume` | `--resume` | 是否跳过已完成的期刊/年份 |
 | `--update / --no-update` | `--no-update` | 是否增量更新已存在数据库；会抓取新增 issue，并额外重扫最新一个已有文章的 issue |
 | `--notify / --no-notify` | `--no-notify` | 更新后自动调用 `notify` |
 | `--notify-dry-run` | `false` | 与 `--notify` 配合，仅演练通知不真正推送 |
 
-英文 scholarly 路径会对 Crossref、OpenAlex、Semantic Scholar 分别限流。Semantic Scholar 使用 `SEMANTIC_SCHOLAR_API_KEY_POOL`，按官方 introductory limit 保守处理为全局 1 RPS，并通过 `/graph/v1/paper/batch` 每次最多请求 500 个 DOI。
+英文 scholarly 路径会对 Crossref、OpenAlex、Semantic Scholar 分别限流。`OPENALEX_API_KEY_POOL` 与 `SEMANTIC_SCHOLAR_API_KEY_POOL` 是 scholarly 索引的必需配置；`CROSSREF_MAILTO_POOL` 建议生产环境配置为可联系邮箱；`PROXY_POOL` 可为 scholarly 与 CNKI 请求提供代理池。Semantic Scholar 按官方 introductory limit 保守处理为全局 1 RPS，并通过 `/graph/v1/paper/batch` 每次最多请求 500 个 DOI。
 
 ### 2. API 服务
 
@@ -157,6 +157,19 @@ uv run api
 环境变量：
 
 - `API_HOST`：监听地址，默认 `127.0.0.1`
+- `API_CORS_ALLOWED_ORIGINS`：逗号分隔的跨源浏览器 Origin 白名单，默认空
+- `AUTH_COOKIE_SECURE`：显式控制 `ps_session` Cookie 的 `Secure` 标记；未设置时按请求 scheme 推断
+
+外部元数据服务运行配置可通过管理员后台写入 `data/auth.sqlite` 的 `runtime_settings` 表。当前受管理的配置项为：
+
+| 配置项 | 说明 |
+| --- | --- |
+| `OPENALEX_API_KEY_POOL` | OpenAlex API key 池；scholarly 索引需要 |
+| `SEMANTIC_SCHOLAR_API_KEY_POOL` | Semantic Scholar API key 池；scholarly 索引需要 |
+| `CROSSREF_MAILTO_POOL` | Crossref 联系邮箱池，建议生产环境配置 |
+| `PROXY_POOL` | scholarly 与 CNKI 请求代理池 |
+
+API、索引器和调度任务启动时会读取 `runtime_settings` 并覆盖同名进程环境变量；如果数据库没有对应值，则使用宿主或容器环境变量。
 
 ### 3. PushPlus 通知推送
 
@@ -205,12 +218,12 @@ uv run push --db utd24.sqlite --dry-run
 
 - 路径：`data/index/<csv_stem>.sqlite`
 - 来源：每个 `data/meta/*.csv`
-- 主要表：`journals`、`journal_meta`、`issues`、`articles`、`article_listing`、`article_search`
+- 主要表：`journals`、`journal_meta`、`issues`、`articles`、`article_listing`、`article_search`、`listing_state`、`journal_year_state`、`journal_state`、`index_runs`、`index_path_stats`、`index_api_call_stats`
 
 ### 用户数据库
 
 - 路径：`data/auth.sqlite`
-- 主要表：`users`、`access_tokens`、`folders`、`favorites`、`invite_codes`、`notification_settings`、`scheduled_tasks`、`announcements`
+- 主要表：`users`、`access_tokens`、`cnki_sessions`、`folders`、`favorites`、`invite_codes`、`notification_settings`、`scheduled_tasks`、`runtime_settings`、`announcements`
 
 ### 变更与推送状态
 
@@ -248,3 +261,4 @@ uv run push --db utd24.sqlite --dry-run
 - [Crossref / OpenAlex / Semantic Scholar 集成](docs/scholarly_api.md)
 - [CNKI overseas 集成](docs/cnki_oversea_api.md)
 - [前端说明](app/README.md)
+- [MCP Server](mcp/README.md)
