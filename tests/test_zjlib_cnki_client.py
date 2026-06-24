@@ -52,6 +52,30 @@ def build_unsigned_jwt(exp: int) -> str:
     return f"{encode({'alg': 'none'})}.{encode({'exp': exp})}."
 
 
+def build_stored_cookie(name: str, value: str, domain: str) -> dict[str, object]:
+    """
+    Build JSON cookie data for client state tests.
+
+    Args:
+        name: Cookie name.
+        value: Cookie value.
+        domain: Cookie domain.
+
+    Returns:
+        JSON-serializable cookie data.
+    """
+    return {
+        "name": name,
+        "value": value,
+        "domain": domain,
+        "path": "/",
+        "secure": True,
+        "expires": None,
+        "discard": False,
+        "rest": {},
+    }
+
+
 class FakeMatchingClient(ZhejiangLibraryCnkiClient):
     """Fake client that records whether PDF download was attempted."""
 
@@ -252,6 +276,111 @@ class ZhejiangLibraryCnkiClientTest(unittest.TestCase):
         self.assertIn(("txt_extension", "xls"), result_pairs)
         self.assertIn("SearchFieldRelationDirectory", result_fields)
         self.assertIn("db_value", handler_fields)
+
+    def test_warm_up_fulltext_session_rebuilds_state_without_stale_cookies(
+        self,
+    ) -> None:
+        """
+        Ensure stale Share and zyproxy cookies are dropped before SSO warm-up.
+
+        Returns:
+            None.
+        """
+        token = build_unsigned_jwt(int(time.time()) + 3600)
+        cookie_headers: dict[str, str] = {}
+
+        def handle(request: httpx.Request) -> httpx.Response:
+            """
+            Return mocked Zhejiang Library, Share, and zyproxy responses.
+
+            Args:
+                request: HTTP request.
+
+            Returns:
+                Mocked HTTP response.
+            """
+            host = request.url.host
+            path = request.url.path
+            cookie_headers[f"{host}{path}"] = request.headers.get("cookie", "")
+            if host == "www.zjlib.cn" and path.endswith("/ssoLoginUrl"):
+                return httpx.Response(
+                    200,
+                    json={
+                        "data": "https://share.zjlib.cn/sso/login/custom/protocolAuth"
+                    },
+                    request=request,
+                )
+            if host == "share.zjlib.cn" and path.endswith(
+                "/sso/login/custom/protocolAuth"
+            ):
+                if "STALE" in request.headers.get("cookie", ""):
+                    return httpx.Response(
+                        200,
+                        text=(
+                            "<script>window.location.href="
+                            "'https://share.zjlib.cn/login'</script>"
+                        ),
+                        request=request,
+                    )
+                return httpx.Response(200, text="<html>ok</html>", request=request)
+            if host == "share.zjlib.cn" and path == "/entry/area/35594/2120":
+                return httpx.Response(200, text="<html>entry</html>", request=request)
+            if host == "share.zjlib.cn" and path == "/engine2/header/user-info":
+                return httpx.Response(
+                    200,
+                    json={"code": 1, "data": {"uid": "user-1"}, "status": 200},
+                    request=request,
+                )
+            if host == "share.zjlib.cn" and path == "/sso/api/auth/library/vpn358":
+                return httpx.Response(
+                    200,
+                    text=(
+                        "<script>window.location.href="
+                        "'https://login.elib.zyproxy.zjlib.cn/index.php?r=1'</script>"
+                    ),
+                    request=request,
+                )
+            if host == "login.elib.zyproxy.zjlib.cn" and path == "/index.php":
+                return httpx.Response(
+                    200,
+                    text="<html>zyproxy</html>",
+                    headers={
+                        "set-cookie": (
+                            "vpn358_sid=NEW; Domain=.elib.zyproxy.zjlib.cn; Path=/"
+                        )
+                    },
+                    request=request,
+                )
+            return httpx.Response(404, request=request)
+
+        state_data = {
+            "bff_user_token": token,
+            "cookies": [
+                build_stored_cookie("userToken", token, "www.zjlib.cn"),
+                build_stored_cookie("JSESSIONID", "STALE", ".zjlib.cn"),
+                build_stored_cookie("website_id", "STALE", "share.zjlib.cn"),
+                build_stored_cookie("vpn358_sid", "STALE", ".elib.zyproxy.zjlib.cn"),
+            ],
+        }
+        with ZhejiangLibraryCnkiClient(
+            state_data=state_data,
+            client=httpx.Client(transport=httpx.MockTransport(handle)),
+        ) as client:
+            final_url = client.warm_up_fulltext_session()
+
+        self.assertIn("login.elib.zyproxy.zjlib.cn", final_url)
+        self.assertNotIn(
+            "STALE",
+            cookie_headers[
+                "www.zjlib.cn/bff-api/portal-admin-service/open-api/"
+                "build-and-share/ssoLoginUrl"
+            ],
+        )
+        self.assertNotIn(
+            "STALE",
+            cookie_headers["share.zjlib.cn/sso/login/custom/protocolAuth"],
+        )
+        self.assertIn("vpn358_sid", client.client_info().cookie_names)
 
     def test_detail_metadata_parser_extracts_identity_and_pdf_url(self) -> None:
         """

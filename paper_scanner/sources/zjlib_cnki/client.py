@@ -441,10 +441,22 @@ class ZhejiangLibraryCnkiClient:
         Returns:
             Final proxied CNKI entry URL.
         """
+        self.reset_web_login_cookies()
         sso_url = self.build_share_sso_url()
         self.enter_share(sso_url)
         zyproxy_login_url = self.get_zyproxy_login_url()
         return self.enter_zyproxy(zyproxy_login_url)
+
+    def reset_web_login_cookies(self) -> None:
+        """
+        Reset stale browser-domain cookies before rebuilding Share SSO state.
+
+        Returns:
+            None.
+        """
+        token = self.ensure_logged_in()
+        self.client.cookies.clear()
+        self.client.cookies.set("userToken", token, domain="www.zjlib.cn", path="/")
 
     def search(self, keyword: str, *, limit: int = 10) -> list[SearchResult]:
         """
