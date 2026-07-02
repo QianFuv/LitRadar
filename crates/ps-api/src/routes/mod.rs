@@ -5,6 +5,7 @@ pub mod announcements;
 pub mod auth;
 pub mod favorites;
 pub mod health;
+pub mod index;
 pub mod tracking;
 
 use axum::Router;
@@ -22,6 +23,38 @@ pub fn public_routes() -> Router<ApiState> {
         .route(
             "/announcements",
             axum::routing::get(announcements::get_announcements),
+        )
+        .route("/meta/databases", axum::routing::get(index::list_databases))
+        .route("/meta/areas", axum::routing::get(index::list_areas))
+        .route(
+            "/meta/journals",
+            axum::routing::get(index::list_journal_options),
+        )
+        .route("/meta/sources", axum::routing::get(index::list_sources))
+        .route("/years", axum::routing::get(index::list_years))
+        .route("/journals", axum::routing::get(index::list_journals))
+        .route(
+            "/journals/{journal_id}",
+            axum::routing::get(index::get_journal),
+        )
+        .route("/issues", axum::routing::get(index::list_issues))
+        .route("/issues/{issue_id}", axum::routing::get(index::get_issue))
+        .route(
+            "/weekly-updates",
+            axum::routing::get(index::get_weekly_updates),
+        )
+        .route("/articles", axum::routing::get(index::list_articles))
+        .route(
+            "/articles/{article_id}",
+            axum::routing::get(index::get_article),
+        )
+        .route(
+            "/articles/{article_id}/access",
+            axum::routing::get(index::get_article_access),
+        )
+        .route(
+            "/articles/{article_id}/fulltext",
+            axum::routing::get(index::redirect_article_fulltext),
         )
         .route("/auth/register", axum::routing::post(auth::register))
         .route("/auth/login", axum::routing::post(auth::login))

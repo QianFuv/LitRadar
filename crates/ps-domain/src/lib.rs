@@ -5,6 +5,7 @@ pub mod auth;
 pub mod business;
 pub mod health;
 pub mod ids;
+pub mod index;
 pub mod response;
 
 pub use announcements::AnnouncementInfo;
@@ -26,4 +27,9 @@ pub use business::{
 };
 pub use health::HealthResponse;
 pub use ids::{stable_sqlite_id, ArticleId, JournalId, UserId};
+pub use index::{
+    ArticleAccessAction, ArticleAccessResponse, ArticlePage, ArticleRecord, IssuePage, IssueRecord,
+    JournalOption, JournalPage, JournalRecord, PageMeta, ValueCount, WeeklyArticleRecord,
+    WeeklyDatabaseUpdate, WeeklyJournalUpdate, WeeklyUpdatesResponse, YearSummary,
+};
 pub use response::ErrorEnvelope;
