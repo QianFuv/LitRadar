@@ -86,29 +86,26 @@ def available_port() -> int:
 
 def rust_api_command() -> list[str]:
     """
-    Return the fastest available Rust API launch command.
+    Return the Rust API launch command for the current source tree.
 
     Returns:
         Command that starts the Rust API server.
     """
-    executable = (
-        PROJECT_ROOT
-        / "target"
-        / "debug"
-        / ("ps-api.exe" if os.name == "nt" else "ps-api")
-    )
-    if executable.exists():
-        return [str(executable)]
     return ["cargo", "run", "--quiet", "-p", "ps-api"]
 
 
-def start_rust_api(project_root: Path, port: int) -> subprocess.Popen[str]:
+def start_rust_api(
+    project_root: Path,
+    port: int,
+    extra_env: dict[str, str] | None = None,
+) -> subprocess.Popen[str]:
     """
     Start the Rust API server for a shadow contract test.
 
     Args:
         project_root: Temporary project root containing fixture data.
         port: TCP port for the Rust API server.
+        extra_env: Optional additional environment variables.
 
     Returns:
         Running Rust API process.
@@ -118,6 +115,7 @@ def start_rust_api(project_root: Path, port: int) -> subprocess.Popen[str]:
     env["API_HOST"] = "127.0.0.1"
     env["API_PORT"] = str(port)
     env["API_CORS_ALLOWED_ORIGINS"] = ""
+    env.update(extra_env or {})
     creation_flags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
     process = subprocess.Popen(
         rust_api_command(),

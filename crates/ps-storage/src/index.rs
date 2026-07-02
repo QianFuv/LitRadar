@@ -17,6 +17,7 @@ use rusqlite::types::Value as SqlValue;
 use rusqlite::{params_from_iter, Connection, OptionalExtension};
 use serde_json::Value as JsonValue;
 
+use crate::cnki::{get_cnki_session_status, CnkiRepositoryError};
 use crate::{open_sqlite_connection, try_load_extension, DatabaseResolutionError, StorageConfig};
 
 const MAX_LIMIT: i64 = 200;
@@ -31,6 +32,10 @@ const ZJLIB_CNKI_PROVIDER: &str = "zjlib_cnki";
 const CNKI_SOURCE: &str = "cnki";
 const CNKI_PROTECTED_FULLTEXT_HOST: &str = "o.oversea.cnki.net";
 const CNKI_PROTECTED_FULLTEXT_PATH: &str = "/barnew/download/order";
+const CNKI_PDF_REPLAY_PATH_ENV: &str = "PAPER_SCANNER_CNKI_PDF_REPLAY_PATH";
+const CNKI_PDF_REPLAY_FILENAME_ENV: &str = "PAPER_SCANNER_CNKI_PDF_REPLAY_FILENAME";
+const CNKI_PDF_REPLAY_MODE_ENV: &str = "PAPER_SCANNER_CNKI_PDF_REPLAY_MODE";
+const CNKI_PDF_REPLAY_MISMATCH: &str = "mismatch";
 
 /// Repository errors for index read routes.
 #[derive(Debug)]
@@ -43,6 +48,8 @@ pub enum IndexRepositoryError {
     Json(serde_json::Error),
     /// Database selection failed.
     DatabaseResolution(DatabaseResolutionError),
+    /// CNKI session state could not be read.
+    Cnki(CnkiRepositoryError),
     /// Sort field is not supported.
     UnsupportedSortField(String),
     /// Article sort is outside the compatibility surface.
@@ -63,6 +70,7 @@ impl fmt::Display for IndexRepositoryError {
             Self::Io(error) => write!(formatter, "{error}"),
             Self::Json(error) => write!(formatter, "{error}"),
             Self::DatabaseResolution(error) => write!(formatter, "{error}"),
+            Self::Cnki(error) => write!(formatter, "{error}"),
             Self::UnsupportedSortField(field) => {
                 write!(formatter, "Unsupported sort field: {field}")
             }
@@ -84,6 +92,7 @@ impl Error for IndexRepositoryError {
             Self::Io(error) => Some(error),
             Self::Json(error) => Some(error),
             Self::DatabaseResolution(error) => Some(error),
+            Self::Cnki(error) => Some(error),
             _ => None,
         }
     }
@@ -114,6 +123,13 @@ impl From<DatabaseResolutionError> for IndexRepositoryError {
     /// Convert database resolution errors into repository errors.
     fn from(error: DatabaseResolutionError) -> Self {
         Self::DatabaseResolution(error)
+    }
+}
+
+impl From<CnkiRepositoryError> for IndexRepositoryError {
+    /// Convert CNKI repository errors into index repository errors.
+    fn from(error: CnkiRepositoryError) -> Self {
+        Self::Cnki(error)
     }
 }
 
@@ -230,6 +246,22 @@ impl Default for ArticleListParams {
             include_total: true,
         }
     }
+}
+
+/// Full-text route target.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ArticleFulltextTarget {
+    /// Browser redirect target.
+    Redirect(String),
+    /// Replay PDF response target.
+    Pdf {
+        /// Download filename.
+        filename: String,
+        /// HTTP content type.
+        content_type: String,
+        /// PDF bytes.
+        content: Vec<u8>,
+    },
 }
 
 /// List available index database filenames.
@@ -715,6 +747,35 @@ pub fn article_fulltext_redirect_url(
         return Ok(format!("https://doi.org/{doi}"));
     }
     Err(IndexRepositoryError::NotFound("Full text not available"))
+}
+
+/// Return the full-text route target for an article.
+///
+/// # Arguments
+///
+/// * `config` - Storage paths.
+/// * `db_name` - Optional database name.
+/// * `article_id` - Article identifier.
+/// * `user_id` - Current user identifier.
+///
+/// # Returns
+///
+/// Redirect or PDF response target.
+pub fn article_fulltext_target(
+    config: &StorageConfig,
+    db_name: Option<&str>,
+    article_id: i64,
+    user_id: UserId,
+) -> Result<ArticleFulltextTarget, IndexRepositoryError> {
+    let connection = open_index_connection(config, db_name)?;
+    let row = get_article_access_row(&connection, article_id)?
+        .ok_or(IndexRepositoryError::NotFound("Article not found"))?;
+    if is_cnki_article_row(&row) && is_cnki_session_active(config, user_id)? {
+        return cnki_replay_pdf_target(config, user_id);
+    }
+    Ok(ArticleFulltextTarget::Redirect(
+        article_fulltext_redirect_url(config, db_name, article_id, user_id)?,
+    ))
 }
 
 /// Return weekly updates grouped by database and journal.
@@ -1775,16 +1836,42 @@ fn is_cnki_session_active(
     if !config.auth_db_path().exists() {
         return Ok(false);
     }
-    let connection = Connection::open(config.auth_db_path())?;
-    let status = connection
-        .query_row(
-            "SELECT status FROM cnki_sessions WHERE user_id = ?1",
-            [user_id.value()],
-            |row| row.get::<_, String>(0),
-        )
-        .optional()
-        .unwrap_or(None);
-    Ok(status.as_deref() == Some("active"))
+    let status = get_cnki_session_status(config.auth_db_path(), user_id)?;
+    Ok(status.status == "active")
+}
+
+fn cnki_replay_pdf_target(
+    config: &StorageConfig,
+    user_id: UserId,
+) -> Result<ArticleFulltextTarget, IndexRepositoryError> {
+    if std::env::var(CNKI_PDF_REPLAY_MODE_ENV)
+        .ok()
+        .is_some_and(|value| value.trim() == CNKI_PDF_REPLAY_MISMATCH)
+    {
+        return Err(IndexRepositoryError::NotFound(
+            "No exact CNKI full-text match found",
+        ));
+    }
+    let path = std::env::var(CNKI_PDF_REPLAY_PATH_ENV)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .ok_or(IndexRepositoryError::NotFound(
+            "CNKI full-text download fixture is not configured",
+        ))?;
+    let content = fs::read(path)?;
+    let filename = std::env::var(CNKI_PDF_REPLAY_FILENAME_ENV)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "cnki.pdf".to_string());
+    crate::touch_cnki_session_used(config.auth_db_path(), user_id)
+        .map_err(|_| IndexRepositoryError::NotFound("CNKI login is required"))?;
+    Ok(ArticleFulltextTarget::Pdf {
+        filename,
+        content_type: "application/pdf".to_string(),
+        content,
+    })
 }
 
 fn is_cnki_protected_fulltext_url(url: &str) -> bool {

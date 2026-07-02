@@ -8,7 +8,14 @@ use ps_domain::ErrorEnvelope;
 /// API handler error mapped into FastAPI-compatible envelopes where possible.
 #[derive(Debug)]
 pub(crate) enum ApiError {
-    Http { status: StatusCode, detail: String },
+    Http {
+        status: StatusCode,
+        detail: String,
+    },
+    JsonDetail {
+        status: StatusCode,
+        detail: serde_json::Value,
+    },
 }
 
 impl IntoResponse for ApiError {
@@ -16,6 +23,9 @@ impl IntoResponse for ApiError {
         match self {
             Self::Http { status, detail } => {
                 (status, Json(ErrorEnvelope::new(detail))).into_response()
+            }
+            Self::JsonDetail { status, detail } => {
+                (status, Json(serde_json::json!({ "detail": detail }))).into_response()
             }
         }
     }
@@ -68,5 +78,10 @@ impl ApiError {
             status: StatusCode::INTERNAL_SERVER_ERROR,
             detail: "Internal Server Error".to_string(),
         }
+    }
+
+    /// Build an error with a structured JSON detail payload.
+    pub(crate) fn json_detail(status: StatusCode, detail: serde_json::Value) -> Self {
+        Self::JsonDetail { status, detail }
     }
 }

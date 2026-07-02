@@ -125,6 +125,10 @@ mod tests {
     use super::{build_router, ApiConfig};
 
     #[tokio::test]
+    #[cfg_attr(
+        miri,
+        ignore = "Miri does not support Tokio's Windows IOCP runtime initialization"
+    )]
     async fn health_route_matches_python_payload() {
         let temp_dir = tempdir().expect("temp dir should be created");
         let app = build_router(ApiConfig {
@@ -154,6 +158,10 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(
+        miri,
+        ignore = "Miri does not support Tokio's Windows IOCP runtime initialization"
+    )]
     async fn announcements_route_reads_existing_auth_database() {
         let temp_dir = tempdir().expect("temp dir should be created");
         let auth_db_path = temp_dir.path().join("data").join("auth.sqlite");

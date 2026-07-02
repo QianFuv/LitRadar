@@ -3,6 +3,7 @@
 pub mod admin;
 pub mod announcements;
 pub mod auth;
+pub mod cnki;
 pub mod favorites;
 pub mod health;
 pub mod index;
@@ -80,6 +81,12 @@ pub fn public_routes() -> Router<ApiState> {
             "/auth/invite-required",
             axum::routing::get(auth::check_invite_required),
         )
+        .route(
+            "/cnki/session",
+            axum::routing::get(cnki::get_session).delete(cnki::clear_session),
+        )
+        .route("/cnki/login/start", axum::routing::post(cnki::start_login))
+        .route("/cnki/login/poll", axum::routing::post(cnki::poll_login))
         .route(
             "/favorites/folders",
             axum::routing::get(favorites::list_folders).post(favorites::create_folder),

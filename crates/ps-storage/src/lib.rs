@@ -3,6 +3,7 @@
 pub mod announcements;
 pub mod auth;
 pub mod business;
+pub mod cnki;
 pub mod config;
 pub mod index;
 pub mod sqlite;
@@ -28,11 +29,16 @@ pub use business::{
     update_announcement, update_scheduled_task, upsert_notification_settings,
     upsert_runtime_settings, BusinessRepositoryError,
 };
+pub use cnki::{
+    delete_cnki_session, get_cnki_session_status, touch_cnki_session_used, upsert_cnki_session,
+    CnkiRepositoryError,
+};
 pub use config::{DatabaseResolutionError, StorageConfig};
 pub use index::{
-    article_fulltext_redirect_url, get_article, get_article_access, get_issue, get_journal,
-    get_weekly_updates, list_areas, list_articles, list_index_database_names, list_issues,
-    list_journal_options, list_journals, list_sources, list_years, ArticleListParams,
-    IndexRepositoryError, IssueListParams, JournalListParams,
+    article_fulltext_redirect_url, article_fulltext_target, get_article, get_article_access,
+    get_issue, get_journal, get_weekly_updates, list_areas, list_articles,
+    list_index_database_names, list_issues, list_journal_options, list_journals, list_sources,
+    list_years, ArticleFulltextTarget, ArticleListParams, IndexRepositoryError, IssueListParams,
+    JournalListParams,
 };
 pub use sqlite::{open_sqlite_connection, try_load_extension};

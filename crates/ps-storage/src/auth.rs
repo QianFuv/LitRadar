@@ -155,6 +155,18 @@ pub fn initialize_auth_database(auth_db_path: impl AsRef<Path>) -> Result<(), Au
             created_at  REAL    NOT NULL
         );
 
+        CREATE TABLE IF NOT EXISTS cnki_sessions (
+            user_id          INTEGER PRIMARY KEY
+                             REFERENCES users(id) ON DELETE CASCADE,
+            session_json     TEXT    NOT NULL DEFAULT '{}',
+            qr_uuid          TEXT    NOT NULL DEFAULT '',
+            status           TEXT    NOT NULL DEFAULT 'empty',
+            token_expires_at REAL,
+            created_at       REAL    NOT NULL,
+            updated_at       REAL    NOT NULL,
+            last_used_at     REAL
+        );
+
         CREATE TABLE IF NOT EXISTS folders (
             id          INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -764,7 +776,9 @@ pub fn get_user_invite_code(
         .map_err(AuthRepositoryError::from)
 }
 
-fn open_auth_connection(path: impl AsRef<Path>) -> Result<Connection, AuthRepositoryError> {
+pub(crate) fn open_auth_connection(
+    path: impl AsRef<Path>,
+) -> Result<Connection, AuthRepositoryError> {
     let path = path.as_ref();
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;

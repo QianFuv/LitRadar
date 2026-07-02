@@ -1,7 +1,7 @@
 //! Index database read route handlers.
 
 use axum::extract::{Path, Query, RawQuery, State};
-use axum::http::header::LOCATION;
+use axum::http::header::{CONTENT_DISPOSITION, CONTENT_TYPE, LOCATION};
 use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::Json;
@@ -412,15 +412,38 @@ pub(crate) async fn redirect_article_fulltext(
     Query(query): Query<DbQuery>,
 ) -> Result<Response, ApiError> {
     let (user, _) = require_current_user(&state, &headers)?;
-    let url = ps_storage::article_fulltext_redirect_url(
+    let target = ps_storage::article_fulltext_target(
         state.storage_config(),
         db_name(&query.db),
         article_id,
         user.id,
     )
     .map_err(map_index_error)?;
-    let location = HeaderValue::from_str(&url).map_err(|_| ApiError::internal_server_error())?;
-    Ok((StatusCode::TEMPORARY_REDIRECT, [(LOCATION, location)]).into_response())
+    match target {
+        ps_storage::ArticleFulltextTarget::Redirect(url) => {
+            let location =
+                HeaderValue::from_str(&url).map_err(|_| ApiError::internal_server_error())?;
+            Ok((StatusCode::TEMPORARY_REDIRECT, [(LOCATION, location)]).into_response())
+        }
+        ps_storage::ArticleFulltextTarget::Pdf {
+            filename,
+            content_type,
+            content,
+        } => {
+            let mut response = content.into_response();
+            response
+                .headers_mut()
+                .insert(CONTENT_TYPE, header_value(&content_type)?);
+            response.headers_mut().insert(
+                CONTENT_DISPOSITION,
+                header_value(&format!(
+                    "attachment; filename*=UTF-8''{}",
+                    percent_encode_filename(&filename)
+                ))?,
+            );
+            Ok(response)
+        }
+    }
 }
 
 fn parse_article_query(
@@ -497,6 +520,24 @@ fn hex_value(value: u8) -> Result<u8, ApiError> {
         b'A'..=b'F' => Ok(value - b'A' + 10),
         _ => Err(ApiError::bad_request("Invalid query encoding")),
     }
+}
+
+fn header_value(value: &str) -> Result<HeaderValue, ApiError> {
+    HeaderValue::from_str(value).map_err(|_| ApiError::internal_server_error())
+}
+
+fn percent_encode_filename(value: &str) -> String {
+    value
+        .as_bytes()
+        .iter()
+        .map(|byte| {
+            if byte.is_ascii_alphanumeric() || matches!(*byte, b'-' | b'_' | b'.' | b'~') {
+                (*byte as char).to_string()
+            } else {
+                format!("%{byte:02X}")
+            }
+        })
+        .collect()
 }
 
 fn query_values(pairs: &[(String, String)], key: &str) -> Vec<String> {
@@ -581,6 +622,7 @@ fn map_index_error(error: IndexRepositoryError) -> ApiError {
         IndexRepositoryError::DatabaseResolution(DatabaseResolutionError::Io(_))
         | IndexRepositoryError::Sqlite(_)
         | IndexRepositoryError::Io(_)
-        | IndexRepositoryError::Json(_) => ApiError::internal_server_error(),
+        | IndexRepositoryError::Json(_)
+        | IndexRepositoryError::Cnki(_) => ApiError::internal_server_error(),
     }
 }

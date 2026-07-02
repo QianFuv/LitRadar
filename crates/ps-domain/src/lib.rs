@@ -3,6 +3,7 @@
 pub mod announcements;
 pub mod auth;
 pub mod business;
+pub mod cnki;
 pub mod health;
 pub mod ids;
 pub mod index;
@@ -24,6 +25,10 @@ pub use business::{
     NotificationSettingsResponse, NotificationSettingsUpdate, PushStats, RuntimeSettingInfo,
     RuntimeSettingsUpdate, ScheduledTaskCreate, ScheduledTaskInfo, ScheduledTaskUpdate,
     TrackingFolderSummary, TrackingSetRequest, TrackingStatusResponse,
+};
+pub use cnki::{
+    CnkiErrorDetail, CnkiLoginPollRequest, CnkiLoginPollResponse, CnkiLoginStartResponse,
+    CnkiSessionStatusResponse,
 };
 pub use health::HealthResponse;
 pub use ids::{stable_sqlite_id, ArticleId, JournalId, UserId};
