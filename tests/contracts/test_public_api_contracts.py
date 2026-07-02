@@ -250,7 +250,6 @@ class PublicApiContractTest(unittest.TestCase):
                 rust_announcement_status, rust_announcement_payload = get_json(
                     f"http://127.0.0.1:{port}/api/announcements"
                 )
-                protected_status = get_status(f"http://127.0.0.1:{port}/api/auth/me")
 
                 self.assertEqual(rust_health_status, python_health.status_code)
                 self.assertEqual(rust_health_payload, python_health.json())
@@ -266,7 +265,6 @@ class PublicApiContractTest(unittest.TestCase):
                 self.assertTrue(
                     all(item["enabled"] is True for item in rust_announcement_payload)
                 )
-                self.assertEqual(protected_status, 404)
             finally:
                 stop_process(process)
                 client.close()

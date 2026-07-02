@@ -1,0 +1,136 @@
+//! Authentication request and response models.
+
+use serde::{Deserialize, Serialize};
+
+use crate::UserId;
+
+/// User profile returned by auth endpoints.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UserResponse {
+    /// User identifier.
+    pub id: UserId,
+    /// Login username.
+    pub username: String,
+    /// Whether the user has admin privileges.
+    pub is_admin: bool,
+}
+
+/// Account registration request.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RegisterRequest {
+    /// Requested username.
+    pub username: String,
+    /// Requested password.
+    pub password: String,
+    /// Invite code text required after the first user.
+    pub invite_code: String,
+}
+
+/// Login request.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LoginRequest {
+    /// Username.
+    pub username: String,
+    /// Password.
+    pub password: String,
+}
+
+/// Login response that intentionally omits the raw session token.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct LoginResponse {
+    /// Authenticated user.
+    pub user: UserResponse,
+    /// Session expiration timestamp.
+    pub expires_at: f64,
+}
+
+/// Access token creation request.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TokenCreateRequest {
+    /// Token display name.
+    #[serde(default)]
+    pub name: String,
+    /// Requested token TTL in seconds.
+    #[serde(default = "default_token_ttl")]
+    pub ttl: i64,
+}
+
+/// Access token creation response.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TokenCreateResponse {
+    /// Token row identifier.
+    pub id: i64,
+    /// Raw token value returned only at creation time.
+    pub token: String,
+    /// Token display name.
+    pub name: String,
+    /// Token expiration timestamp.
+    pub expires_at: f64,
+}
+
+/// Access token metadata response.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TokenInfo {
+    /// Token row identifier.
+    pub id: i64,
+    /// Token display name.
+    pub name: String,
+    /// Token expiration timestamp.
+    pub expires_at: f64,
+    /// Token creation timestamp.
+    pub created_at: f64,
+}
+
+/// Password change request.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ChangePasswordRequest {
+    /// Current password.
+    pub old_password: String,
+    /// Replacement password.
+    pub new_password: String,
+}
+
+/// Invite code response.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct InviteCodeResponse {
+    /// Invite code row identifier.
+    pub id: i64,
+    /// Raw invite code.
+    pub code: String,
+    /// Whether the invite code has been consumed.
+    pub used: bool,
+    /// Invite code creation timestamp.
+    pub created_at: f64,
+}
+
+/// Boolean ok response.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OkResponse {
+    /// Whether the operation succeeded.
+    pub ok: bool,
+}
+
+/// Logout response.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LogoutResponse {
+    /// Whether the operation succeeded.
+    pub ok: bool,
+    /// Authenticated user identifier.
+    pub user_id: UserId,
+}
+
+/// Invite requirement response.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct InviteRequiredResponse {
+    /// Whether registration requires an invite code.
+    pub required: bool,
+}
+
+/// Return the Python default access token TTL.
+///
+/// # Returns
+///
+/// Default token TTL in seconds.
+pub fn default_token_ttl() -> i64 {
+    7 * 24 * 3600
+}

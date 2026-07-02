@@ -6,6 +6,7 @@ rust-version.workspace = true
 
 [dependencies]
 axum.workspace = true
+ps-auth = { path = "../ps-auth" }
 ps-domain = { path = "../ps-domain" }
 ps-storage = { path = "../ps-storage" }
 serde_json.workspace = true

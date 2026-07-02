@@ -1,0 +1,402 @@
+//! Authentication route handlers.
+
+use axum::extract::{Path, State};
+use axum::http::header::{AUTHORIZATION, COOKIE, SET_COOKIE};
+use axum::http::{HeaderMap, HeaderValue};
+use axum::response::{IntoResponse, Response};
+use axum::Json;
+use ps_auth::{AuthService, AuthServiceError, SESSION_COOKIE_NAME};
+use ps_domain::{
+    ChangePasswordRequest, InviteCodeResponse, InviteRequiredResponse, LoginRequest, LoginResponse,
+    LogoutResponse, OkResponse, RegisterRequest, TokenCreateRequest, TokenCreateResponse,
+    TokenInfo, UserResponse,
+};
+use ps_storage::AuthRepositoryError;
+
+use crate::response::ApiError;
+use crate::state::ApiState;
+
+const MIN_PASSWORD_LENGTH: usize = 6;
+const MIN_TOKEN_TTL_SECONDS: i64 = 3600;
+const MAX_TOKEN_TTL_SECONDS: i64 = 365 * 24 * 3600;
+
+/// Register a new user account.
+///
+/// # Arguments
+///
+/// * `state` - Shared API state.
+/// * `body` - Registration request.
+///
+/// # Returns
+///
+/// Created user response.
+pub(super) async fn register(
+    State(state): State<ApiState>,
+    Json(body): Json<RegisterRequest>,
+) -> Result<Json<UserResponse>, ApiError> {
+    let username = body.username.trim();
+    if !is_valid_username(username) {
+        return Err(ApiError::bad_request(
+            "Username must be 3-32 alphanumeric or underscore characters",
+        ));
+    }
+    if body.password.len() < MIN_PASSWORD_LENGTH {
+        return Err(ApiError::bad_request(
+            "Password must be at least 6 characters",
+        ));
+    }
+    let invite_code = (!body.invite_code.is_empty()).then_some(body.invite_code.as_str());
+    let user = auth_service(&state)
+        .register(username, &body.password, invite_code)
+        .map_err(map_auth_error)?;
+    Ok(Json(user))
+}
+
+/// Authenticate a user and set a session cookie.
+///
+/// # Arguments
+///
+/// * `state` - Shared API state.
+/// * `body` - Login request.
+///
+/// # Returns
+///
+/// Login response without the raw token.
+pub(super) async fn login(
+    State(state): State<ApiState>,
+    Json(body): Json<LoginRequest>,
+) -> Result<Response, ApiError> {
+    let session = auth_service(&state)
+        .login(body.username.trim(), &body.password)
+        .map_err(map_auth_error)?;
+    let payload = LoginResponse {
+        user: session.user,
+        expires_at: session.expires_at,
+    };
+    let mut response = Json(payload).into_response();
+    response.headers_mut().append(
+        SET_COOKIE,
+        HeaderValue::from_str(&session_cookie_header(&session.token, session.expires_at))
+            .map_err(|_| ApiError::internal_server_error())?,
+    );
+    Ok(response)
+}
+
+/// Return the current authenticated user.
+///
+/// # Arguments
+///
+/// * `state` - Shared API state.
+/// * `headers` - Request headers.
+///
+/// # Returns
+///
+/// Current user response.
+pub(super) async fn get_me(
+    State(state): State<ApiState>,
+    headers: HeaderMap,
+) -> Result<Json<UserResponse>, ApiError> {
+    let (user, _) = require_current_user(&state, &headers)?;
+    Ok(Json(user))
+}
+
+/// Change the current user's password.
+///
+/// # Arguments
+///
+/// * `state` - Shared API state.
+/// * `headers` - Request headers.
+/// * `body` - Password change request.
+///
+/// # Returns
+///
+/// OK response.
+pub(super) async fn change_password(
+    State(state): State<ApiState>,
+    headers: HeaderMap,
+    Json(body): Json<ChangePasswordRequest>,
+) -> Result<Json<OkResponse>, ApiError> {
+    if body.new_password.len() < MIN_PASSWORD_LENGTH {
+        return Err(ApiError::bad_request(
+            "New password must be at least 6 characters",
+        ));
+    }
+    let (user, _) = require_current_user(&state, &headers)?;
+    let did_change = auth_service(&state)
+        .change_password(user.id, &body.old_password, &body.new_password)
+        .map_err(map_auth_error)?;
+    if !did_change {
+        return Err(ApiError::bad_request("Old password is incorrect"));
+    }
+    Ok(Json(OkResponse { ok: true }))
+}
+
+/// Logout the current session token and clear the browser cookie.
+///
+/// # Arguments
+///
+/// * `state` - Shared API state.
+/// * `headers` - Request headers.
+///
+/// # Returns
+///
+/// Logout response.
+pub(super) async fn logout(
+    State(state): State<ApiState>,
+    headers: HeaderMap,
+) -> Result<Response, ApiError> {
+    let (user, token) = require_current_user(&state, &headers)?;
+    auth_service(&state)
+        .revoke_access_token_value(&token)
+        .map_err(map_auth_error)?;
+    let mut response = Json(LogoutResponse {
+        ok: true,
+        user_id: user.id,
+    })
+    .into_response();
+    response.headers_mut().append(
+        SET_COOKIE,
+        HeaderValue::from_str(&clear_session_cookie_header())
+            .map_err(|_| ApiError::internal_server_error())?,
+    );
+    Ok(response)
+}
+
+/// Create an access token for the current user.
+///
+/// # Arguments
+///
+/// * `state` - Shared API state.
+/// * `headers` - Request headers.
+/// * `body` - Token creation request.
+///
+/// # Returns
+///
+/// Created token response.
+pub(super) async fn create_token(
+    State(state): State<ApiState>,
+    headers: HeaderMap,
+    Json(body): Json<TokenCreateRequest>,
+) -> Result<Json<TokenCreateResponse>, ApiError> {
+    let (user, _) = require_current_user(&state, &headers)?;
+    let ttl = body.ttl.clamp(MIN_TOKEN_TTL_SECONDS, MAX_TOKEN_TTL_SECONDS);
+    let token = auth_service(&state)
+        .create_access_token(user.id, body.name.trim(), ttl)
+        .map_err(map_auth_error)?;
+    Ok(Json(token))
+}
+
+/// List active access tokens for the current user.
+///
+/// # Arguments
+///
+/// * `state` - Shared API state.
+/// * `headers` - Request headers.
+///
+/// # Returns
+///
+/// Active token metadata.
+pub(super) async fn get_tokens(
+    State(state): State<ApiState>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<TokenInfo>>, ApiError> {
+    let (user, _) = require_current_user(&state, &headers)?;
+    let tokens = auth_service(&state)
+        .list_access_tokens(user.id)
+        .map_err(map_auth_error)?;
+    Ok(Json(tokens))
+}
+
+/// Delete an access token by row id.
+///
+/// # Arguments
+///
+/// * `state` - Shared API state.
+/// * `headers` - Request headers.
+/// * `token_id` - Token row identifier.
+///
+/// # Returns
+///
+/// OK response.
+pub(super) async fn delete_token(
+    State(state): State<ApiState>,
+    headers: HeaderMap,
+    Path(token_id): Path<i64>,
+) -> Result<Json<OkResponse>, ApiError> {
+    let (user, _) = require_current_user(&state, &headers)?;
+    let did_delete = auth_service(&state)
+        .revoke_access_token(user.id, token_id)
+        .map_err(map_auth_error)?;
+    if !did_delete {
+        return Err(ApiError::not_found("Token not found"));
+    }
+    Ok(Json(OkResponse { ok: true }))
+}
+
+/// Generate a one-time invite code.
+///
+/// # Arguments
+///
+/// * `state` - Shared API state.
+/// * `headers` - Request headers.
+///
+/// # Returns
+///
+/// Invite code response.
+pub(super) async fn generate_invite_code(
+    State(state): State<ApiState>,
+    headers: HeaderMap,
+) -> Result<Json<InviteCodeResponse>, ApiError> {
+    let (user, _) = require_current_user(&state, &headers)?;
+    let invite = auth_service(&state)
+        .create_invite_code(user.id)
+        .map_err(map_auth_error)?;
+    Ok(Json(invite))
+}
+
+/// Get the invite code generated by the current user.
+///
+/// # Arguments
+///
+/// * `state` - Shared API state.
+/// * `headers` - Request headers.
+///
+/// # Returns
+///
+/// Invite code response or null.
+pub(super) async fn get_invite_code(
+    State(state): State<ApiState>,
+    headers: HeaderMap,
+) -> Result<Json<Option<InviteCodeResponse>>, ApiError> {
+    let (user, _) = require_current_user(&state, &headers)?;
+    let invite = auth_service(&state)
+        .get_user_invite_code(user.id)
+        .map_err(map_auth_error)?;
+    Ok(Json(invite))
+}
+
+/// Return whether registration requires an invite code.
+///
+/// # Arguments
+///
+/// * `state` - Shared API state.
+///
+/// # Returns
+///
+/// Invite requirement response.
+pub(super) async fn check_invite_required(
+    State(state): State<ApiState>,
+) -> Result<Json<InviteRequiredResponse>, ApiError> {
+    let required = auth_service(&state)
+        .is_invite_required()
+        .map_err(map_auth_error)?;
+    Ok(Json(InviteRequiredResponse { required }))
+}
+
+fn auth_service(state: &ApiState) -> AuthService {
+    AuthService::new(state.storage_config().auth_db_path())
+}
+
+fn require_current_user(
+    state: &ApiState,
+    headers: &HeaderMap,
+) -> Result<(UserResponse, String), ApiError> {
+    let token = resolve_auth_token(headers)?
+        .filter(|token| !token.is_empty())
+        .ok_or_else(|| ApiError::unauthorized("Authentication required"))?;
+    let user = auth_service(state)
+        .verify_access_token(&token)
+        .map_err(map_auth_error)?
+        .ok_or_else(|| ApiError::unauthorized("Invalid or expired token"))?;
+    Ok((user, token))
+}
+
+fn resolve_auth_token(headers: &HeaderMap) -> Result<Option<String>, ApiError> {
+    if let Some(authorization) = headers.get(AUTHORIZATION) {
+        let value = authorization
+            .to_str()
+            .map_err(|_| ApiError::unauthorized("Invalid authorization format"))?;
+        let mut parts = value.splitn(2, ' ');
+        let scheme = parts.next().unwrap_or_default();
+        let token = parts.next();
+        if token.is_none() || !scheme.eq_ignore_ascii_case("bearer") {
+            return Err(ApiError::unauthorized("Invalid authorization format"));
+        }
+        let token = token.unwrap_or_default().trim();
+        if !token.is_empty() {
+            return Ok(Some(token.to_string()));
+        }
+    }
+    Ok(session_cookie(headers))
+}
+
+fn session_cookie(headers: &HeaderMap) -> Option<String> {
+    headers
+        .get(COOKIE)?
+        .to_str()
+        .ok()?
+        .split(';')
+        .map(str::trim)
+        .filter_map(|cookie| cookie.split_once('='))
+        .find_map(|(name, value)| (name == SESSION_COOKIE_NAME).then_some(value.trim().to_string()))
+}
+
+fn session_cookie_header(token: &str, expires_at: f64) -> String {
+    let max_age = (expires_at - current_unix_time()).max(0.0).floor() as i64;
+    let mut value =
+        format!("{SESSION_COOKIE_NAME}={token}; Max-Age={max_age}; Path=/; SameSite=lax; HttpOnly");
+    if should_use_secure_session_cookie() {
+        value.push_str("; Secure");
+    }
+    value
+}
+
+fn clear_session_cookie_header() -> String {
+    let mut value = format!("{SESSION_COOKIE_NAME}=; Max-Age=0; Path=/; SameSite=lax; HttpOnly");
+    if should_use_secure_session_cookie() {
+        value.push_str("; Secure");
+    }
+    value
+}
+
+fn should_use_secure_session_cookie() -> bool {
+    std::env::var(ps_auth::AUTH_COOKIE_SECURE_ENV)
+        .map(|value| {
+            matches!(
+                value.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on"
+            )
+        })
+        .unwrap_or(false)
+}
+
+fn current_unix_time() -> f64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("system time should be after Unix epoch")
+        .as_secs_f64()
+}
+
+fn is_valid_username(username: &str) -> bool {
+    (3..=32).contains(&username.len())
+        && username
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+}
+
+fn map_auth_error(error: AuthServiceError) -> ApiError {
+    match error {
+        AuthServiceError::InvalidCredentials => {
+            ApiError::unauthorized("Invalid username or password")
+        }
+        AuthServiceError::Repository(AuthRepositoryError::InviteCodeRequired)
+        | AuthServiceError::Repository(AuthRepositoryError::InvalidOrUsedInviteCode)
+        | AuthServiceError::Repository(AuthRepositoryError::UserHasAlreadyGeneratedInviteCode) => {
+            ApiError::bad_request(error.to_string())
+        }
+        AuthServiceError::Repository(AuthRepositoryError::UsernameAlreadyExists) => {
+            ApiError::conflict("Username already exists")
+        }
+        AuthServiceError::Repository(_) => ApiError::internal_server_error(),
+    }
+}

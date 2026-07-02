@@ -12,6 +12,7 @@ use axum::middleware::{from_fn, Next};
 use axum::response::Response;
 use axum::Router;
 use config::ApiConfig;
+use ps_auth::SESSION_COOKIE_NAME;
 use ps_storage::StorageConfig;
 use state::ApiState;
 use tower_http::cors::{AllowHeaders, AllowMethods, AllowOrigin, CorsLayer};
@@ -24,8 +25,6 @@ pub const AUTHENTICATED_CACHE_CONTROL: &str = "private, no-store";
 
 /// Cache-Control header for unauthenticated index reads.
 pub const PUBLIC_INDEX_CACHE_CONTROL: &str = "public, max-age=300, stale-while-revalidate=600";
-
-const SESSION_COOKIE_NAME: &str = "ps_session";
 
 /// Build the Rust API router for the current migration phase.
 ///

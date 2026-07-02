@@ -1,6 +1,7 @@
 //! Authentication compatibility helpers.
 
 pub mod password;
+pub mod service;
 pub mod session;
 pub mod token;
 
@@ -10,6 +11,7 @@ use ps_domain::UserId;
 use serde::{Deserialize, Serialize};
 
 pub use password::{hash_password, verify_password, PBKDF2_ITERATIONS};
+pub use service::{AuthService, AuthServiceError, LoginSession, ACCESS_TOKEN_DEFAULT_TTL};
 pub use session::{SessionCookiePolicy, AUTH_COOKIE_SECURE_ENV, SESSION_COOKIE_NAME};
 pub use token::hash_token;
 
