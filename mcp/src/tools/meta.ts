@@ -17,7 +17,9 @@ function registerMetaTools(
       inputSchema: z.object({}),
     },
     async () => {
-      const result = await client.get("/meta/databases");
+      const result = await client.get("/meta/databases", {
+        auth: true,
+      });
       return buildToolResponse(result);
     },
   );
@@ -30,6 +32,7 @@ function registerMetaTools(
     },
     async ({ db }) => {
       const result = await client.get("/meta/areas", {
+        auth: true,
         db,
       });
 
@@ -45,6 +48,7 @@ function registerMetaTools(
     },
     async ({ db }) => {
       const result = await client.get("/years", {
+        auth: true,
         db,
       });
 

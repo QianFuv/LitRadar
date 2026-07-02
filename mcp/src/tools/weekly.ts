@@ -10,15 +10,11 @@ function registerWeeklyTools(
     "get_weekly_updates",
     {
       description: "Get weekly update summaries across all Paper Scanner databases.",
-      inputSchema: z.object({
-        window_days: z.number().int().min(1).max(31).optional(),
-      }),
+      inputSchema: z.strictObject({}),
     },
-    async ({ window_days }) => {
+    async () => {
       const result = await client.get("/weekly-updates", {
-        query: {
-          window_days,
-        },
+        auth: true,
       });
 
       return buildToolResponse(result);

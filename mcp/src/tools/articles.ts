@@ -30,6 +30,7 @@ function registerArticleTools(
     },
     async (params) => {
       const result = await client.get("/articles", {
+        auth: true,
         db: params.db,
         query: {
           area: toArray(params.area),
@@ -58,6 +59,7 @@ function registerArticleTools(
     },
     async ({ article_id, db }) => {
       const result = await client.get(`/articles/${article_id}`, {
+        auth: true,
         db,
       });
 

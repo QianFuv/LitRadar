@@ -20,6 +20,7 @@ function registerJournalTools(
     },
     async ({ db, limit, offset }) => {
       const result = await client.get("/journals", {
+        auth: true,
         db,
         query: {
           limit,
