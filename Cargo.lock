@@ -504,6 +504,7 @@ dependencies = [
 name = "ps-cli"
 version = "0.1.0"
 dependencies = [
+ "ps-index",
  "ps-worker",
  "serde_json",
 ]
@@ -518,10 +519,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "ps-index"
+version = "0.1.0"
+dependencies = [
+ "ps-domain",
+ "ps-sources",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
 name = "ps-recommend"
 version = "0.1.0"
 dependencies = [
  "ps-domain",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "ps-sources"
+version = "0.1.0"
+dependencies = [
  "serde",
  "serde_json",
 ]

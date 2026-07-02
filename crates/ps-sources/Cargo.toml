@@ -1,10 +1,9 @@
 [package]
-name = "ps-cli"
+name = "ps-sources"
 version = "0.1.0"
 edition.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-ps-index = { path = "../ps-index" }
-ps-worker = { path = "../ps-worker" }
+serde.workspace = true
 serde_json.workspace = true

@@ -3,7 +3,9 @@
 use std::env;
 use std::error::Error;
 use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
 
+use ps_index::{run_scholarly_fixture_index, ScholarlyIndexConfig};
 use ps_worker::delivery::{
     run_recommendation_delivery, DeliveryMode, DeliveryWorkflow, RecommendationRunConfig,
 };
@@ -24,6 +26,16 @@ fn run() -> Result<(), Box<dyn Error>> {
     let db_name = extract_string_option(&mut args, "--db")?;
     let state_dir = extract_path_option(&mut args, "--state-dir")?;
     let changes_file = extract_path_option(&mut args, "--changes-file")?;
+    let csv_path = extract_path_option(&mut args, "--csv")?;
+    let fixture_path = extract_path_option(&mut args, "--fixture")?;
+    let output_db_path = extract_path_option(&mut args, "--output-db")?;
+    let manifest_path = extract_path_option(&mut args, "--manifest")?;
+    let run_id = extract_string_option(&mut args, "--run-id")?;
+    let timestamp = extract_string_option(&mut args, "--timestamp")?;
+    let has_semantic_scholar_key = extract_flag(&mut args, "--semantic-scholar-key")
+        || env::var("SEMANTIC_SCHOLAR_API_KEY_POOL")
+            .map(|value| !value.trim().is_empty())
+            .unwrap_or(false);
     let ai_model = extract_string_option(&mut args, "--ai-model")?;
     let max_candidates = extract_usize_option(&mut args, "--max-candidates")?;
     let dedupe_retention_days =
@@ -36,6 +48,24 @@ fn run() -> Result<(), Box<dyn Error>> {
         }
         [group, command] if group == "scheduler" && command == "shadow" => {
             print_scheduler_load(&auth_db_path)
+        }
+        [group, command] if group == "index" && command == "fixture" => {
+            let csv_path = csv_path.ok_or("--csv is required for index fixture")?;
+            let fixture_path = fixture_path.ok_or("--fixture is required for index fixture")?;
+            let output_db_path =
+                output_db_path.ok_or("--output-db is required for index fixture")?;
+            let default_timestamp = default_timestamp();
+            let outcome = run_scholarly_fixture_index(&ScholarlyIndexConfig {
+                csv_path,
+                fixture_path,
+                output_db_path,
+                manifest_path,
+                run_id: run_id.unwrap_or_else(|| format!("run-{default_timestamp}")),
+                timestamp: timestamp.unwrap_or(default_timestamp),
+                has_semantic_scholar_key,
+            })?;
+            println!("{}", serde_json::to_string(&outcome)?);
+            Ok(())
         }
         [group, command, task_id] if group == "scheduler" && command == "run-once" => {
             let task_id = task_id.parse::<i64>()?;
@@ -146,15 +176,32 @@ fn extract_i64_option(args: &mut Vec<String>, name: &str) -> Result<Option<i64>,
         .transpose()
 }
 
+fn extract_flag(args: &mut Vec<String>, name: &str) -> bool {
+    if let Some(index) = args.iter().position(|argument| argument == name) {
+        args.remove(index);
+        true
+    } else {
+        false
+    }
+}
+
 fn project_root() -> PathBuf {
     env::var("PAPER_SCANNER_PROJECT_ROOT")
         .map(PathBuf::from)
         .unwrap_or_else(|_| env::current_dir().expect("current directory should be available"))
 }
 
+fn default_timestamp() -> String {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_secs().to_string())
+        .unwrap_or_else(|_| "0".to_string())
+}
+
 fn usage() -> String {
     let payload = json!({
         "usage": [
+            "ps-cli index fixture --csv PATH --fixture PATH --output-db PATH [--manifest PATH] [--semantic-scholar-key]",
             "ps-cli scheduler dry-run [--auth-db PATH]",
             "ps-cli scheduler shadow [--auth-db PATH]",
             "ps-cli scheduler run-once TASK_ID [--auth-db PATH]",
