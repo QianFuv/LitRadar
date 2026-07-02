@@ -4,6 +4,7 @@ members = [
     "crates/ps-auth",
     "crates/ps-cli",
     "crates/ps-domain",
+    "crates/ps-recommend",
     "crates/ps-storage",
     "crates/ps-worker",
 ]

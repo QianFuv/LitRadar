@@ -1,6 +1,6 @@
 //! Typed repositories for index database read routes.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::error::Error;
 use std::fmt;
 use std::fs;
@@ -8,9 +8,9 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use ps_domain::{
-    ArticleAccessAction, ArticleAccessResponse, ArticleId, ArticlePage, ArticleRecord, IssuePage,
-    IssueRecord, JournalId, JournalOption, JournalPage, JournalRecord, PageMeta, UserId,
-    ValueCount, WeeklyArticleRecord, WeeklyDatabaseUpdate, WeeklyJournalUpdate,
+    ArticleAccessAction, ArticleAccessResponse, ArticleCandidateInfo, ArticleId, ArticlePage,
+    ArticleRecord, IssuePage, IssueRecord, JournalId, JournalOption, JournalPage, JournalRecord,
+    PageMeta, UserId, ValueCount, WeeklyArticleRecord, WeeklyDatabaseUpdate, WeeklyJournalUpdate,
     WeeklyUpdatesResponse, YearSummary,
 };
 use rusqlite::types::Value as SqlValue;
@@ -246,6 +246,112 @@ impl Default for ArticleListParams {
             include_total: true,
         }
     }
+}
+
+/// Collect article counts grouped by journal and issue.
+///
+/// # Arguments
+///
+/// * `index_db_path` - Path to the selected index database.
+///
+/// # Returns
+///
+/// Snapshot map keyed by `journal_id:issue_id`.
+pub fn collect_issue_article_counts(
+    index_db_path: impl AsRef<Path>,
+) -> Result<BTreeMap<String, i64>, IndexRepositoryError> {
+    let connection = Connection::open(index_db_path)?;
+    let mut statement = connection.prepare(
+        "SELECT journal_id, issue_id, COUNT(*) FROM articles \
+         WHERE issue_id IS NOT NULL GROUP BY journal_id, issue_id",
+    )?;
+    let rows = statement.query_map([], |row| {
+        let journal_id = row.get::<_, i64>(0)?;
+        let issue_id = row.get::<_, i64>(1)?;
+        let count = row.get::<_, i64>(2)?;
+        Ok((build_issue_key(journal_id, issue_id), count))
+    })?;
+    collect_rows(rows).map(|items| items.into_iter().collect())
+}
+
+/// Collect in-press article counts grouped by journal.
+///
+/// # Arguments
+///
+/// * `index_db_path` - Path to the selected index database.
+///
+/// # Returns
+///
+/// Snapshot map keyed by journal id.
+pub fn collect_inpress_article_counts(
+    index_db_path: impl AsRef<Path>,
+) -> Result<BTreeMap<String, i64>, IndexRepositoryError> {
+    let connection = Connection::open(index_db_path)?;
+    let mut statement = connection.prepare(
+        "SELECT journal_id, COUNT(*) FROM articles \
+         WHERE issue_id IS NULL AND COALESCE(in_press, 0) = 1 GROUP BY journal_id",
+    )?;
+    let rows = statement.query_map([], |row| {
+        let journal_id = row.get::<_, i64>(0)?;
+        let count = row.get::<_, i64>(1)?;
+        Ok((journal_id.to_string(), count))
+    })?;
+    collect_rows(rows).map(|items| items.into_iter().collect())
+}
+
+/// Fetch visible article candidates for issue keys.
+///
+/// # Arguments
+///
+/// * `index_db_path` - Path to the selected index database.
+/// * `issue_keys` - Pending issue keys.
+///
+/// # Returns
+///
+/// Candidate articles ordered like the Python notification query.
+pub fn fetch_candidates_for_issue_keys(
+    index_db_path: impl AsRef<Path>,
+    issue_keys: &[String],
+) -> Result<Vec<ArticleCandidateInfo>, IndexRepositoryError> {
+    if issue_keys.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut issue_ids = issue_keys
+        .iter()
+        .map(|key| parse_issue_key(key).map(|(_, issue_id)| issue_id))
+        .collect::<Result<Vec<_>, _>>()?;
+    issue_ids.sort_unstable();
+    issue_ids.dedup();
+    fetch_candidates_for_issue_ids(index_db_path, &issue_ids)
+}
+
+/// Fetch visible in-press candidates for journal keys.
+///
+/// # Arguments
+///
+/// * `index_db_path` - Path to the selected index database.
+/// * `inpress_keys` - Pending in-press journal keys.
+///
+/// # Returns
+///
+/// Candidate articles ordered like the Python notification query.
+pub fn fetch_candidates_for_inpress_keys(
+    index_db_path: impl AsRef<Path>,
+    inpress_keys: &[String],
+) -> Result<Vec<ArticleCandidateInfo>, IndexRepositoryError> {
+    if inpress_keys.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut journal_ids = inpress_keys
+        .iter()
+        .map(|key| {
+            key.parse::<i64>()
+                .map_err(|_| IndexRepositoryError::InvalidCursor)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    journal_ids.sort_unstable();
+    journal_ids.dedup();
+    fetch_candidates_for_inpress_journal_ids(index_db_path, &journal_ids)
 }
 
 /// Full-text route target.
@@ -1890,8 +1996,100 @@ fn with_cnki_chinese_language(url: &str) -> String {
     }
 }
 
+fn fetch_candidates_for_issue_ids(
+    index_db_path: impl AsRef<Path>,
+    issue_ids: &[i64],
+) -> Result<Vec<ArticleCandidateInfo>, IndexRepositoryError> {
+    if issue_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let placeholders = repeat_placeholders(issue_ids.len());
+    let sql = format!(
+        "SELECT a.article_id, a.journal_id, a.issue_id, a.title, a.abstract, a.date, \
+         a.open_access, a.in_press, a.within_library_holdings, a.doi, a.full_text_file, \
+         a.permalink, j.title AS journal_title \
+         FROM articles a JOIN journals j ON j.journal_id = a.journal_id \
+         WHERE a.issue_id IN ({placeholders}) AND COALESCE(a.suppressed, 0) = 0 \
+         ORDER BY a.date DESC, a.article_id DESC"
+    );
+    let connection = Connection::open(index_db_path)?;
+    let mut statement = connection.prepare(&sql)?;
+    let rows = statement.query_map(params_from_iter(issue_ids.iter()), candidate_from_row)?;
+    collect_rows(rows)
+}
+
+fn fetch_candidates_for_inpress_journal_ids(
+    index_db_path: impl AsRef<Path>,
+    journal_ids: &[i64],
+) -> Result<Vec<ArticleCandidateInfo>, IndexRepositoryError> {
+    if journal_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let placeholders = repeat_placeholders(journal_ids.len());
+    let sql = format!(
+        "SELECT a.article_id, a.journal_id, a.issue_id, a.title, a.abstract, a.date, \
+         a.open_access, a.in_press, a.within_library_holdings, a.doi, a.full_text_file, \
+         a.permalink, j.title AS journal_title \
+         FROM articles a JOIN journals j ON j.journal_id = a.journal_id \
+         WHERE a.issue_id IS NULL AND COALESCE(a.in_press, 0) = 1 \
+           AND a.journal_id IN ({placeholders}) AND COALESCE(a.suppressed, 0) = 0 \
+         ORDER BY a.date DESC, a.article_id DESC"
+    );
+    let connection = Connection::open(index_db_path)?;
+    let mut statement = connection.prepare(&sql)?;
+    let rows = statement.query_map(params_from_iter(journal_ids.iter()), candidate_from_row)?;
+    collect_rows(rows)
+}
+
+fn candidate_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ArticleCandidateInfo> {
+    Ok(ArticleCandidateInfo {
+        article_id: row.get(0)?,
+        journal_id: row.get(1)?,
+        issue_id: row.get(2)?,
+        title: nonempty_owned(row.get::<_, Option<String>>(3)?)
+            .unwrap_or_else(|| "Untitled article".to_string()),
+        abstract_text: nonempty_owned(row.get::<_, Option<String>>(4)?).unwrap_or_default(),
+        date: nonempty_owned(row.get(5)?),
+        open_access: row.get::<_, Option<i64>>(6)?.unwrap_or(0) != 0,
+        in_press: row.get::<_, Option<i64>>(7)?.unwrap_or(0) != 0,
+        within_library_holdings: row.get::<_, Option<i64>>(8)?.unwrap_or(0) != 0,
+        doi: nonempty_owned(row.get(9)?),
+        full_text_file: nonempty_owned(row.get(10)?),
+        permalink: nonempty_owned(row.get(11)?),
+        journal_title: nonempty_owned(row.get::<_, Option<String>>(12)?)
+            .unwrap_or_else(|| "Unknown journal".to_string()),
+    })
+}
+
+fn repeat_placeholders(count: usize) -> String {
+    (0..count).map(|_| "?").collect::<Vec<_>>().join(", ")
+}
+
+fn build_issue_key(journal_id: i64, issue_id: i64) -> String {
+    format!("{journal_id}:{issue_id}")
+}
+
+fn parse_issue_key(key: &str) -> Result<(i64, i64), IndexRepositoryError> {
+    let (journal_id, issue_id) = key
+        .split_once(':')
+        .ok_or(IndexRepositoryError::InvalidCursor)?;
+    let journal_id = journal_id
+        .parse::<i64>()
+        .map_err(|_| IndexRepositoryError::InvalidCursor)?;
+    let issue_id = issue_id
+        .parse::<i64>()
+        .map_err(|_| IndexRepositoryError::InvalidCursor)?;
+    Ok((journal_id, issue_id))
+}
+
 fn nonempty(value: Option<&str>) -> Option<&str> {
     value.map(str::trim).filter(|value| !value.is_empty())
+}
+
+fn nonempty_owned(value: Option<String>) -> Option<String> {
+    value
+        .map(|item| item.trim().to_string())
+        .filter(|item| !item.is_empty())
 }
 
 fn normalize_db_name(value: &str) -> Option<String> {

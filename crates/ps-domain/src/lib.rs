@@ -7,6 +7,7 @@ pub mod cnki;
 pub mod health;
 pub mod ids;
 pub mod index;
+pub mod recommend;
 pub mod response;
 
 pub use announcements::AnnouncementInfo;
@@ -36,5 +37,8 @@ pub use index::{
     ArticleAccessAction, ArticleAccessResponse, ArticlePage, ArticleRecord, IssuePage, IssueRecord,
     JournalOption, JournalPage, JournalRecord, PageMeta, ValueCount, WeeklyArticleRecord,
     WeeklyDatabaseUpdate, WeeklyJournalUpdate, WeeklyUpdatesResponse, YearSummary,
+};
+pub use recommend::{
+    ArticleCandidateInfo, NotificationSubscriberInfo, RankedSelectionInfo, SelectionResultInfo,
 };
 pub use response::ErrorEnvelope;

@@ -12,8 +12,8 @@ use ps_domain::{
     AdminInviteCodeInfo, AdminStatsResponse, AdminUserInfo, AnnouncementInfo, AuthStats,
     FavoriteAdd, FavoriteArticleRef, FavoriteArticleResponse, FavoriteBatchCheckResponse,
     FavoriteCheckResponse, FavoriteResponse, FolderResponse, IndexDatabaseStats, IndexStats,
-    NotificationSettingsResponse, NotificationSettingsUpdate, PushStats, RuntimeSettingInfo,
-    ScheduledTaskInfo, UserId,
+    NotificationSettingsResponse, NotificationSettingsUpdate, NotificationSubscriberInfo,
+    PushStats, RuntimeSettingInfo, ScheduledTaskInfo, UserId,
 };
 use rusqlite::{params, Connection, ErrorCode, OptionalExtension};
 use serde_json::Value;
@@ -841,6 +841,34 @@ pub fn get_notification_settings(
         .optional()
         .map_err(BusinessRepositoryError::from)?
         .transpose()
+}
+
+/// List all enabled notification subscribers with tracking folder metadata.
+///
+/// # Arguments
+///
+/// * `auth_db_path` - Path to `auth.sqlite`.
+///
+/// # Returns
+///
+/// Enabled subscriber settings ordered by user id.
+pub fn list_notification_subscribers(
+    auth_db_path: impl AsRef<Path>,
+) -> Result<Vec<NotificationSubscriberInfo>, BusinessRepositoryError> {
+    let connection = open_business_connection(auth_db_path)?;
+    let mut statement = connection.prepare(
+        "SELECT ns.user_id, u.username, ns.keywords, ns.directions, ns.selected_databases, \
+         ns.delivery_method, ns.pushplus_token, ns.pushplus_template, ns.pushplus_topic, \
+         ns.pushplus_channel, ns.sync_to_tracking_folder, ns.ai_base_url, ns.ai_api_key, \
+         ns.ai_model, ns.ai_system_prompt, ns.ai_backup_base_url, ns.ai_backup_api_key, \
+         ns.ai_backup_model, ns.ai_backup_system_prompt, ns.ai_retry_attempts, \
+         (SELECT id FROM folders f WHERE f.user_id = ns.user_id AND f.is_tracking = 1 LIMIT 1) \
+             AS tracking_folder_id \
+         FROM notification_settings ns JOIN users u ON u.id = ns.user_id \
+         WHERE ns.enabled = 1 ORDER BY ns.user_id",
+    )?;
+    let rows = statement.query_map([], notification_subscriber_from_row)?;
+    collect_rows(rows)
 }
 
 /// Create or update notification settings.
@@ -1863,6 +1891,36 @@ fn notification_settings_from_row(
     })())
 }
 
+fn notification_subscriber_from_row(
+    row: &rusqlite::Row<'_>,
+) -> rusqlite::Result<NotificationSubscriberInfo> {
+    let user_id = row.get::<_, i64>(0)?;
+    Ok(NotificationSubscriberInfo {
+        subscriber_id: user_id.to_string(),
+        user_id,
+        name: row.get(1)?,
+        keywords: parse_string_list(row.get::<_, String>(2)?),
+        directions: parse_string_list(row.get::<_, String>(3)?),
+        selected_databases: parse_string_list(row.get::<_, String>(4)?),
+        delivery_method: row.get(5)?,
+        pushplus_token: row.get(6)?,
+        template: optional_trimmed(row.get::<_, String>(7)?),
+        topic: optional_trimmed(row.get::<_, String>(8)?),
+        channel: optional_trimmed(row.get::<_, String>(9)?),
+        sync_to_tracking_folder: row.get::<_, i64>(10)? != 0,
+        ai_base_url: optional_trimmed(row.get::<_, String>(11)?),
+        ai_api_key: optional_trimmed(row.get::<_, String>(12)?),
+        ai_model: optional_trimmed(row.get::<_, String>(13)?),
+        ai_system_prompt: optional_trimmed(row.get::<_, String>(14)?),
+        ai_backup_base_url: optional_trimmed(row.get::<_, String>(15)?),
+        ai_backup_api_key: optional_trimmed(row.get::<_, String>(16)?),
+        ai_backup_model: optional_trimmed(row.get::<_, String>(17)?),
+        ai_backup_system_prompt: optional_trimmed(row.get::<_, String>(18)?),
+        ai_retry_attempts: row.get::<_, i64>(19)?.max(1),
+        tracking_folder_id: row.get(20)?,
+    })
+}
+
 fn folder_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<FolderResponse> {
     Ok(FolderResponse {
         id: row.get(0)?,
@@ -1992,6 +2050,11 @@ fn runtime_bool_to_text(value: &str, default: bool) -> Result<String, BusinessRe
 
 fn parse_string_list(value: String) -> Vec<String> {
     serde_json::from_str::<Vec<String>>(&value).unwrap_or_default()
+}
+
+fn optional_trimmed(value: String) -> Option<String> {
+    let trimmed = value.trim();
+    (!trimmed.is_empty()).then(|| trimmed.to_string())
 }
 
 fn normalize_article_ids(article_ids: &[i64]) -> Vec<i64> {

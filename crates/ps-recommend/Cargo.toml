@@ -1,15 +1,10 @@
 [package]
-name = "ps-worker"
+name = "ps-recommend"
 version = "0.1.0"
 edition.workspace = true
 rust-version.workspace = true
 
 [dependencies]
 ps-domain = { path = "../ps-domain" }
-ps-recommend = { path = "../ps-recommend" }
-ps-storage = { path = "../ps-storage" }
 serde.workspace = true
 serde_json.workspace = true
-
-[dev-dependencies]
-tempfile.workspace = true

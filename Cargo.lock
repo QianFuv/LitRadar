@@ -518,6 +518,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "ps-recommend"
+version = "0.1.0"
+dependencies = [
+ "ps-domain",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "ps-storage"
 version = "0.1.0"
 dependencies = [
@@ -532,8 +541,10 @@ name = "ps-worker"
 version = "0.1.0"
 dependencies = [
  "ps-domain",
+ "ps-recommend",
  "ps-storage",
  "serde",
+ "serde_json",
  "tempfile",
 ]
 
