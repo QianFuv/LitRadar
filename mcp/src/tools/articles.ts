@@ -3,7 +3,7 @@ import * as z from "zod/v4";
 import { PaperScannerClient, buildToolResponse, toArray } from "../client.js";
 
 const articleIdSchema = z.string().trim().regex(/^[1-9]\d*$/);
-const journalIdSchema = z.number().int().positive();
+const journalIdSchema = z.string().trim().regex(/^[1-9]\d*$/);
 const dateSchema = z.string().trim().min(1);
 const databaseSchema = z.string().trim().min(1);
 const articleListSchema = z.object({
