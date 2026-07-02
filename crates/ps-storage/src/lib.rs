@@ -22,12 +22,12 @@ pub use business::{
     bulk_move_favorites, bulk_remove_favorites, count_favorites, count_weekly_articles,
     create_announcement, create_folder, create_scheduled_task, delete_announcement, delete_folder,
     delete_invite_code, delete_scheduled_task, delete_user, get_admin_stats, get_announcement,
-    get_notification_settings, get_tracking_folder, is_favorited, list_all_announcements,
-    list_all_invite_codes, list_all_users, list_available_database_names, list_favorite_articles,
-    list_favorites, list_folders, list_runtime_settings, list_scheduled_tasks,
-    normalize_database_names, remove_favorite, rename_folder, set_tracking_folder, set_user_admin,
-    update_announcement, update_scheduled_task, upsert_notification_settings,
-    upsert_runtime_settings, BusinessRepositoryError,
+    get_notification_settings, get_scheduled_task, get_tracking_folder, is_favorited,
+    list_all_announcements, list_all_invite_codes, list_all_users, list_available_database_names,
+    list_favorite_articles, list_favorites, list_folders, list_runtime_settings,
+    list_scheduled_tasks, normalize_database_names, record_scheduled_task_run, remove_favorite,
+    rename_folder, set_tracking_folder, set_user_admin, update_announcement, update_scheduled_task,
+    upsert_notification_settings, upsert_runtime_settings, BusinessRepositoryError,
 };
 pub use cnki::{
     delete_cnki_session, get_cnki_session_status, touch_cnki_session_used, upsert_cnki_session,

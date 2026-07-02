@@ -1,0 +1,9 @@
+[package]
+name = "ps-cli"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+ps-worker = { path = "../ps-worker" }
+serde_json.workspace = true

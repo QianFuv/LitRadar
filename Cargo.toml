@@ -1,5 +1,12 @@
 [workspace]
-members = ["crates/ps-api", "crates/ps-auth", "crates/ps-domain", "crates/ps-storage"]
+members = [
+    "crates/ps-api",
+    "crates/ps-auth",
+    "crates/ps-cli",
+    "crates/ps-domain",
+    "crates/ps-storage",
+    "crates/ps-worker",
+]
 resolver = "2"
 
 [workspace.package]

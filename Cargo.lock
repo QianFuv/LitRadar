@@ -501,6 +501,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "ps-cli"
+version = "0.1.0"
+dependencies = [
+ "ps-worker",
+ "serde_json",
+]
+
+[[package]]
 name = "ps-domain"
 version = "0.1.0"
 dependencies = [
@@ -516,6 +524,16 @@ dependencies = [
  "ps-domain",
  "rusqlite",
  "serde_json",
+ "tempfile",
+]
+
+[[package]]
+name = "ps-worker"
+version = "0.1.0"
+dependencies = [
+ "ps-domain",
+ "ps-storage",
+ "serde",
  "tempfile",
 ]
 

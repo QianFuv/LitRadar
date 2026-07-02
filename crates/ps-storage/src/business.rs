@@ -1192,6 +1192,24 @@ pub fn list_scheduled_tasks(
     collect_rows(rows)
 }
 
+/// Get one scheduled task.
+///
+/// # Arguments
+///
+/// * `auth_db_path` - Path to `auth.sqlite`.
+/// * `task_id` - Scheduled task row identifier.
+///
+/// # Returns
+///
+/// Scheduled task payload when it exists.
+pub fn get_scheduled_task(
+    auth_db_path: impl AsRef<Path>,
+    task_id: i64,
+) -> Result<Option<ScheduledTaskInfo>, BusinessRepositoryError> {
+    let connection = open_business_connection(auth_db_path)?;
+    get_scheduled_task_from_connection(&connection, task_id)
+}
+
 /// Create a scheduled task.
 ///
 /// # Arguments
@@ -1281,6 +1299,33 @@ pub fn delete_scheduled_task(
 ) -> Result<bool, BusinessRepositoryError> {
     let connection = open_business_connection(auth_db_path)?;
     let count = connection.execute("DELETE FROM scheduled_tasks WHERE id = ?1", [task_id])?;
+    Ok(count > 0)
+}
+
+/// Record one scheduled task run result.
+///
+/// # Arguments
+///
+/// * `auth_db_path` - Path to `auth.sqlite`.
+/// * `task_id` - Scheduled task row identifier.
+/// * `status` - Python-compatible status string.
+/// * `ran_at` - Unix timestamp when the command started.
+///
+/// # Returns
+///
+/// True when a task row was updated.
+pub fn record_scheduled_task_run(
+    auth_db_path: impl AsRef<Path>,
+    task_id: i64,
+    status: &str,
+    ran_at: f64,
+) -> Result<bool, BusinessRepositoryError> {
+    let connection = open_business_connection(auth_db_path)?;
+    let count = connection.execute(
+        "UPDATE scheduled_tasks SET last_run_at = ?1, last_status = ?2, \
+         updated_at = ?3 WHERE id = ?4",
+        rusqlite::params![ran_at, status, now_seconds(), task_id],
+    )?;
     Ok(count > 0)
 }
 
