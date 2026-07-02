@@ -1,0 +1,14 @@
+[package]
+name = "ps-auth"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+hex.workspace = true
+pbkdf2.workspace = true
+ps-domain = { path = "../ps-domain" }
+ps-storage = { path = "../ps-storage" }
+serde.workspace = true
+sha2.workspace = true
+subtle.workspace = true
