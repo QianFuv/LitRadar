@@ -35,18 +35,21 @@ MCP 工具调用的后端端点需要认证，Token 会作为 `Bearer` 头随每
 | `list_databases` | 列出可用的 SQLite 数据库 |
 | `list_areas` | 列出指定数据库的研究领域 |
 | `list_years` | 列出指定数据库的发表年份统计 |
+| `list_journal_options` | 列出指定数据库的期刊筛选选项 |
+| `list_sources` | 列出指定数据库的元数据来源 |
 
 ### 期刊
 
 | 工具名 | 说明 |
 | --- | --- |
-| `list_journals` | 列出指定数据库中的期刊 |
+| `list_journals` | 列出指定数据库中的期刊，支持领域、来源、可用性、年份、Scimago 与排序过滤 |
+| `get_journal` | 按 ID 获取单个期刊 |
 
 ### 文章
 
 | 工具名 | 说明 |
 | --- | --- |
-| `search_articles` | 搜索文章，支持领域、日期、期刊、关键词、开放获取等过滤 |
+| `search_articles` | 搜索文章，支持领域、日期、期刊、issue、关键词、开放获取、DOI、PMID、排序与分页等过滤 |
 | `get_article` | 按 ID 获取单篇文章 |
 
 ### 每周更新
@@ -72,7 +75,10 @@ MCP 工具调用的后端端点需要认证，Token 会作为 `Bearer` 头随每
 | `list_databases` | `GET /api/meta/databases` |
 | `list_areas` | `GET /api/meta/areas` |
 | `list_years` | `GET /api/years` |
+| `list_journal_options` | `GET /api/meta/journals` |
+| `list_sources` | `GET /api/meta/sources` |
 | `list_journals` | `GET /api/journals` |
+| `get_journal` | `GET /api/journals/{journal_id}` |
 | `search_articles` | `GET /api/articles` |
 | `get_article` | `GET /api/articles/{article_id}` |
 | `get_weekly_updates` | `GET /api/weekly-updates` |

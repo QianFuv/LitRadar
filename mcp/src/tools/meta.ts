@@ -55,6 +55,38 @@ function registerMetaTools(
       return buildToolResponse(result);
     },
   );
+
+  server.registerTool(
+    "list_journal_options",
+    {
+      description: "List journal filter options for the selected Paper Scanner database.",
+      inputSchema: databaseInputSchema,
+    },
+    async ({ db }) => {
+      const result = await client.get("/meta/journals", {
+        auth: true,
+        db,
+      });
+
+      return buildToolResponse(result);
+    },
+  );
+
+  server.registerTool(
+    "list_sources",
+    {
+      description: "List metadata source values for the selected Paper Scanner database.",
+      inputSchema: databaseInputSchema,
+    },
+    async ({ db }) => {
+      const result = await client.get("/meta/sources", {
+        auth: true,
+        db,
+      });
+
+      return buildToolResponse(result);
+    },
+  );
 }
 
 export { registerMetaTools };
