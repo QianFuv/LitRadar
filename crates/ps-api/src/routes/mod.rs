@@ -1,8 +1,11 @@
 //! Public route registration for the Rust API.
 
+pub mod admin;
 pub mod announcements;
 pub mod auth;
+pub mod favorites;
 pub mod health;
+pub mod tracking;
 
 use axum::Router;
 
@@ -43,5 +46,101 @@ pub fn public_routes() -> Router<ApiState> {
         .route(
             "/auth/invite-required",
             axum::routing::get(auth::check_invite_required),
+        )
+        .route(
+            "/favorites/folders",
+            axum::routing::get(favorites::list_folders).post(favorites::create_folder),
+        )
+        .route(
+            "/favorites/folders/{folder_id}",
+            axum::routing::put(favorites::rename_folder).delete(favorites::delete_folder),
+        )
+        .route(
+            "/favorites/tracking",
+            axum::routing::get(favorites::get_tracking).put(favorites::set_tracking),
+        )
+        .route(
+            "/favorites/folders/{folder_id}/articles",
+            axum::routing::get(favorites::list_folder_articles).post(favorites::add_favorite),
+        )
+        .route(
+            "/favorites/folders/{folder_id}/count",
+            axum::routing::get(favorites::folder_count),
+        )
+        .route(
+            "/favorites/folders/{folder_id}/export",
+            axum::routing::get(favorites::export_folder),
+        )
+        .route(
+            "/favorites/folders/{folder_id}/articles/{article_id}",
+            axum::routing::delete(favorites::remove_favorite),
+        )
+        .route(
+            "/favorites/folders/{folder_id}/articles/bulk",
+            axum::routing::post(favorites::bulk_add),
+        )
+        .route(
+            "/favorites/folders/{folder_id}/articles/bulk-remove",
+            axum::routing::post(favorites::bulk_remove),
+        )
+        .route(
+            "/favorites/folders/{folder_id}/articles/bulk-move",
+            axum::routing::post(favorites::bulk_move),
+        )
+        .route(
+            "/favorites/check",
+            axum::routing::get(favorites::check_favorite),
+        )
+        .route(
+            "/favorites/check/batch",
+            axum::routing::post(favorites::check_favorites_batch),
+        )
+        .route("/tracking/status", axum::routing::get(tracking::status))
+        .route(
+            "/tracking/notification-settings",
+            axum::routing::get(tracking::get_notification_settings)
+                .put(tracking::update_notification_settings),
+        )
+        .route("/admin/users", axum::routing::get(admin::list_users))
+        .route(
+            "/admin/users/{user_id}/admin",
+            axum::routing::put(admin::set_admin),
+        )
+        .route(
+            "/admin/users/{user_id}/reset-password",
+            axum::routing::post(admin::reset_password),
+        )
+        .route(
+            "/admin/users/{user_id}",
+            axum::routing::delete(admin::delete_user),
+        )
+        .route(
+            "/admin/invite-codes",
+            axum::routing::get(admin::list_invite_codes).post(admin::create_invite_code),
+        )
+        .route(
+            "/admin/invite-codes/{code_id}",
+            axum::routing::delete(admin::delete_invite_code),
+        )
+        .route("/admin/stats", axum::routing::get(admin::stats))
+        .route(
+            "/admin/scheduled-tasks",
+            axum::routing::get(admin::list_scheduled_tasks).post(admin::create_scheduled_task),
+        )
+        .route(
+            "/admin/scheduled-tasks/{task_id}",
+            axum::routing::put(admin::update_scheduled_task).delete(admin::delete_scheduled_task),
+        )
+        .route(
+            "/admin/runtime-settings",
+            axum::routing::get(admin::list_runtime_settings).put(admin::update_runtime_settings),
+        )
+        .route(
+            "/admin/announcements",
+            axum::routing::get(admin::list_announcements).post(admin::create_announcement),
+        )
+        .route(
+            "/admin/announcements/{announcement_id}",
+            axum::routing::put(admin::update_announcement).delete(admin::delete_announcement),
         )
 }

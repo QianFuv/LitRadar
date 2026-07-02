@@ -332,6 +332,36 @@ impl AuthService {
         Ok(true)
     }
 
+    /// Reset a user's password without requiring the old password.
+    ///
+    /// # Arguments
+    ///
+    /// * `user_id` - User identifier.
+    /// * `new_password` - Replacement password.
+    ///
+    /// # Returns
+    ///
+    /// True when the user exists and the reset was applied.
+    pub fn reset_password(
+        &self,
+        user_id: UserId,
+        new_password: &str,
+    ) -> Result<bool, AuthServiceError> {
+        if find_user_credentials_by_id(&self.auth_db_path, user_id)?.is_none() {
+            return Ok(false);
+        }
+        let salt = random_hex(&self.auth_db_path, PASSWORD_SALT_BYTES)?;
+        let password_hash = hash_password(new_password, &salt);
+        update_user_password_and_delete_tokens(
+            &self.auth_db_path,
+            user_id,
+            &password_hash,
+            &salt,
+            now_seconds(),
+        )?;
+        Ok(true)
+    }
+
     /// Create a one-time invite code for a user.
     ///
     /// # Arguments

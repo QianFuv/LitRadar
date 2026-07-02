@@ -9,6 +9,7 @@ axum.workspace = true
 ps-auth = { path = "../ps-auth" }
 ps-domain = { path = "../ps-domain" }
 ps-storage = { path = "../ps-storage" }
+serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
 tower-http.workspace = true

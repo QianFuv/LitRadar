@@ -1,5 +1,6 @@
 //! Authentication repository operations for the existing auth database.
 
+use std::env;
 use std::error::Error;
 use std::fmt;
 use std::fs;
@@ -164,6 +165,17 @@ pub fn initialize_auth_database(auth_db_path: impl AsRef<Path>) -> Result<(), Au
             UNIQUE(user_id, name)
         );
 
+        CREATE TABLE IF NOT EXISTS favorites (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            folder_id   INTEGER NOT NULL REFERENCES folders(id) ON DELETE CASCADE,
+            article_id  INTEGER NOT NULL,
+            db_name     TEXT    NOT NULL DEFAULT '',
+            note        TEXT    NOT NULL DEFAULT '',
+            created_at  REAL    NOT NULL,
+            UNIQUE(user_id, folder_id, article_id, db_name)
+        );
+
         CREATE TABLE IF NOT EXISTS invite_codes (
             id          INTEGER PRIMARY KEY AUTOINCREMENT,
             code        TEXT    NOT NULL UNIQUE,
@@ -173,16 +185,158 @@ pub fn initialize_auth_database(auth_db_path: impl AsRef<Path>) -> Result<(), Au
             created_at  REAL   NOT NULL
         );
 
+        CREATE TABLE IF NOT EXISTS notification_settings (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id         INTEGER NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
+            keywords        TEXT    NOT NULL DEFAULT '[]',
+            directions      TEXT    NOT NULL DEFAULT '[]',
+            selected_databases TEXT NOT NULL DEFAULT '[]',
+            delivery_method TEXT    NOT NULL DEFAULT 'folder',
+            pushplus_token  TEXT    NOT NULL DEFAULT '',
+            pushplus_template TEXT  NOT NULL DEFAULT 'markdown',
+            pushplus_topic  TEXT    NOT NULL DEFAULT '',
+            pushplus_channel TEXT   NOT NULL DEFAULT 'wechat',
+            sync_to_tracking_folder INTEGER NOT NULL DEFAULT 0,
+            ai_base_url     TEXT    NOT NULL DEFAULT '',
+            ai_api_key      TEXT    NOT NULL DEFAULT '',
+            ai_model        TEXT    NOT NULL DEFAULT '',
+            ai_system_prompt TEXT   NOT NULL DEFAULT '',
+            ai_backup_base_url TEXT NOT NULL DEFAULT '',
+            ai_backup_api_key TEXT NOT NULL DEFAULT '',
+            ai_backup_model TEXT NOT NULL DEFAULT '',
+            ai_backup_system_prompt TEXT NOT NULL DEFAULT '',
+            ai_retry_attempts INTEGER NOT NULL DEFAULT 3,
+            enabled         INTEGER NOT NULL DEFAULT 1,
+            created_at      REAL    NOT NULL,
+            updated_at      REAL    NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS scheduled_tasks (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            name            TEXT    NOT NULL,
+            command         TEXT    NOT NULL,
+            cron            TEXT    NOT NULL,
+            enabled         INTEGER NOT NULL DEFAULT 1,
+            last_run_at     REAL,
+            last_status     TEXT    NOT NULL DEFAULT '',
+            created_at      REAL    NOT NULL,
+            updated_at      REAL    NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS runtime_settings (
+            key             TEXT PRIMARY KEY,
+            value           TEXT NOT NULL DEFAULT '',
+            updated_at      REAL NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS announcements (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            title           TEXT    NOT NULL,
+            message         TEXT    NOT NULL,
+            priority        TEXT    NOT NULL DEFAULT 'normal',
+            enabled         INTEGER NOT NULL DEFAULT 1,
+            created_at      REAL    NOT NULL,
+            updated_at      REAL    NOT NULL
+        );
+
         CREATE INDEX IF NOT EXISTS idx_access_tokens_user
             ON access_tokens(user_id);
         CREATE INDEX IF NOT EXISTS idx_folders_user
             ON folders(user_id);
+        CREATE INDEX IF NOT EXISTS idx_favorites_folder
+            ON favorites(folder_id);
+        CREATE INDEX IF NOT EXISTS idx_favorites_user
+            ON favorites(user_id);
         CREATE INDEX IF NOT EXISTS idx_invite_codes_code
             ON invite_codes(code);
         CREATE INDEX IF NOT EXISTS idx_invite_codes_created_by
             ON invite_codes(created_by);
+        CREATE INDEX IF NOT EXISTS idx_notification_settings_user
+            ON notification_settings(user_id);
+        CREATE INDEX IF NOT EXISTS idx_scheduled_tasks_enabled
+            ON scheduled_tasks(enabled);
+        CREATE INDEX IF NOT EXISTS idx_announcements_enabled
+            ON announcements(enabled);
         ",
     )?;
+    let user_columns = table_columns(&connection, "users")?;
+    if !user_columns.iter().any(|column| column == "is_admin") {
+        connection.execute(
+            "ALTER TABLE users ADD COLUMN is_admin INTEGER NOT NULL DEFAULT 0",
+            [],
+        )?;
+        connection.execute(
+            "UPDATE users SET is_admin = 1 WHERE id = (SELECT MIN(id) FROM users)",
+            [],
+        )?;
+    }
+    let notification_columns = table_columns(&connection, "notification_settings")?;
+    let notification_migrations = [
+        (
+            "selected_databases",
+            "ALTER TABLE notification_settings ADD COLUMN selected_databases TEXT NOT NULL DEFAULT '[]'",
+        ),
+        (
+            "ai_base_url",
+            "ALTER TABLE notification_settings ADD COLUMN ai_base_url TEXT NOT NULL DEFAULT ''",
+        ),
+        (
+            "ai_api_key",
+            "ALTER TABLE notification_settings ADD COLUMN ai_api_key TEXT NOT NULL DEFAULT ''",
+        ),
+        (
+            "ai_model",
+            "ALTER TABLE notification_settings ADD COLUMN ai_model TEXT NOT NULL DEFAULT ''",
+        ),
+        (
+            "ai_system_prompt",
+            "ALTER TABLE notification_settings ADD COLUMN ai_system_prompt TEXT NOT NULL DEFAULT ''",
+        ),
+        (
+            "ai_backup_base_url",
+            "ALTER TABLE notification_settings ADD COLUMN ai_backup_base_url TEXT NOT NULL DEFAULT ''",
+        ),
+        (
+            "ai_backup_api_key",
+            "ALTER TABLE notification_settings ADD COLUMN ai_backup_api_key TEXT NOT NULL DEFAULT ''",
+        ),
+        (
+            "ai_backup_model",
+            "ALTER TABLE notification_settings ADD COLUMN ai_backup_model TEXT NOT NULL DEFAULT ''",
+        ),
+        (
+            "ai_backup_system_prompt",
+            "ALTER TABLE notification_settings ADD COLUMN ai_backup_system_prompt TEXT NOT NULL DEFAULT ''",
+        ),
+        (
+            "ai_retry_attempts",
+            "ALTER TABLE notification_settings ADD COLUMN ai_retry_attempts INTEGER NOT NULL DEFAULT 3",
+        ),
+        (
+            "sync_to_tracking_folder",
+            "ALTER TABLE notification_settings ADD COLUMN sync_to_tracking_folder INTEGER NOT NULL DEFAULT 0",
+        ),
+    ];
+    for (column, statement) in notification_migrations {
+        if !notification_columns
+            .iter()
+            .any(|existing| existing == column)
+        {
+            connection.execute(statement, [])?;
+        }
+    }
+    let announcement_columns = table_columns(&connection, "announcements")?;
+    if !announcement_columns.is_empty()
+        && !announcement_columns
+            .iter()
+            .any(|column| column == "priority")
+    {
+        connection.execute(
+            "ALTER TABLE announcements ADD COLUMN priority TEXT NOT NULL DEFAULT 'normal'",
+            [],
+        )?;
+    }
+    seed_runtime_settings_from_environment(&connection)?;
     Ok(())
 }
 
@@ -743,4 +897,45 @@ fn is_constraint_error(error: &rusqlite::Error) -> bool {
         rusqlite::Error::SqliteFailure(failure, _)
             if failure.code == ErrorCode::ConstraintViolation
     )
+}
+
+fn table_columns(
+    connection: &Connection,
+    table_name: &str,
+) -> Result<Vec<String>, AuthRepositoryError> {
+    let mut statement = connection.prepare(&format!("PRAGMA table_info({table_name})"))?;
+    let rows = statement.query_map([], |row| row.get::<_, String>(1))?;
+    collect_rows(rows)
+}
+
+fn seed_runtime_settings_from_environment(
+    connection: &Connection,
+) -> Result<(), AuthRepositoryError> {
+    let now = current_unix_time();
+    for env_name in [
+        "OPENALEX_API_KEY_POOL",
+        "PROXY_POOL",
+        "CROSSREF_MAILTO_POOL",
+        "SEMANTIC_SCHOLAR_API_KEY_POOL",
+    ] {
+        let Ok(raw_value) = env::var(env_name) else {
+            continue;
+        };
+        let value = raw_value.trim();
+        if value.is_empty() {
+            continue;
+        }
+        connection.execute(
+            "INSERT OR IGNORE INTO runtime_settings (key, value, updated_at) VALUES (?1, ?2, ?3)",
+            params![env_name, value, now],
+        )?;
+    }
+    Ok(())
+}
+
+fn current_unix_time() -> f64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("system time should be after Unix epoch")
+        .as_secs_f64()
 }

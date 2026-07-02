@@ -293,11 +293,11 @@ pub(super) async fn check_invite_required(
     Ok(Json(InviteRequiredResponse { required }))
 }
 
-fn auth_service(state: &ApiState) -> AuthService {
+pub(crate) fn auth_service(state: &ApiState) -> AuthService {
     AuthService::new(state.storage_config().auth_db_path())
 }
 
-fn require_current_user(
+pub(crate) fn require_current_user(
     state: &ApiState,
     headers: &HeaderMap,
 ) -> Result<(UserResponse, String), ApiError> {
@@ -308,6 +308,27 @@ fn require_current_user(
         .verify_access_token(&token)
         .map_err(map_auth_error)?
         .ok_or_else(|| ApiError::unauthorized("Invalid or expired token"))?;
+    Ok((user, token))
+}
+
+/// Resolve and require an authenticated admin user.
+///
+/// # Arguments
+///
+/// * `state` - Shared API state.
+/// * `headers` - Request headers.
+///
+/// # Returns
+///
+/// Current admin user and raw token.
+pub(crate) fn require_admin_user(
+    state: &ApiState,
+    headers: &HeaderMap,
+) -> Result<(UserResponse, String), ApiError> {
+    let (user, token) = require_current_user(state, headers)?;
+    if !user.is_admin {
+        return Err(ApiError::forbidden("Admin access required"));
+    }
     Ok((user, token))
 }
 
@@ -384,7 +405,7 @@ fn is_valid_username(username: &str) -> bool {
             .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
 }
 
-fn map_auth_error(error: AuthServiceError) -> ApiError {
+pub(crate) fn map_auth_error(error: AuthServiceError) -> ApiError {
     match error {
         AuthServiceError::InvalidCredentials => {
             ApiError::unauthorized("Invalid username or password")

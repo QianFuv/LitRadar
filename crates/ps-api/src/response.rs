@@ -54,6 +54,14 @@ impl ApiError {
         }
     }
 
+    /// Build a forbidden error.
+    pub(crate) fn forbidden(detail: impl Into<String>) -> Self {
+        Self::Http {
+            status: StatusCode::FORBIDDEN,
+            detail: detail.into(),
+        }
+    }
+
     /// Build an internal server error.
     pub(crate) fn internal_server_error() -> Self {
         Self::Http {
