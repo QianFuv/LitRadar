@@ -1,108 +1,81 @@
 # Docker 部署说明
 
-本文档说明仓库内 Docker 镜像与 Compose 编排的实际行为，并以当前代码为准修正旧文档中的若干过时说法。
+本文档说明当前 Docker 镜像与根目录 `docker-compose.yml` 的实际行为。后端镜像只包含 Rust 运行时入口；Python 模块保留给契约测试和 fixture 比对，不再作为容器内运行命令。
 
 ## 服务拓扑
-
-根目录 `docker-compose.yml` 当前定义了两个服务：
 
 ```text
 浏览器
   ├── http://localhost:3000  -> app (Next.js)
-  └── http://localhost:8000  -> api (FastAPI)
+  └── http://localhost:8000  -> api (ps-api)
+
+worker sidecar
+  └── ps-cli worker shadow
 ```
 
-注意：
+根 Compose 暴露 `3000` 和 `8000`，并把宿主机 `./data` 挂载到 Rust 后端容器的 `/app/data`。
 
-- 根 Compose 文件里 **同时暴露了 3000 和 8000**
-- 旧文档中“只有 3000 对外暴露”的说法已不再成立
+## Compose 服务
 
-## 根 Compose 文件
-
-### `api` 服务
+### `api`
 
 - 构建上下文：仓库根目录
 - Dockerfile：根目录 `Dockerfile`
 - 镜像名：`ghcr.io/qianfuv/paper-scanner-api:latest`
+- 启动命令：`ps-api`
 - 端口：`8000:8000`
 - 卷挂载：`./data:/app/data`
-- 环境变量：
+- 关键环境变量：
   - `API_HOST=0.0.0.0`
+  - `API_PORT=8000`
+  - `PAPER_SCANNER_PROJECT_ROOT=/app`
   - `OPENALEX_API_KEY_POOL=${OPENALEX_API_KEY_POOL:-}`
+  - `SEMANTIC_SCHOLAR_API_KEY_POOL=${SEMANTIC_SCHOLAR_API_KEY_POOL:-}`
   - `PROXY_POOL=${PROXY_POOL:-}`
   - `CROSSREF_MAILTO_POOL=${CROSSREF_MAILTO_POOL:-}`
-  - `UNPAYWALL_EMAIL_POOL=${UNPAYWALL_EMAIL_POOL:-}`，这是旧变量透传，当前代码不再作为运行配置读取
 
-### `app` 服务
+### `worker`
+
+- 复用后端镜像
+- 启动命令：`ps-cli worker shadow --interval-seconds 300`
+- 卷挂载：`./data:/app/data`
+- 环境变量与 `api` 服务保持一致
+- 依赖：`api`
+
+`worker shadow` 会周期性加载并校验 `scheduled_tasks`，保持 sidecar 进程运行。需要实际执行或 dry-run 单个后台任务时，使用 `ps-cli scheduler run-once TASK_ID` 或 `ps-cli scheduler dry-run-once TASK_ID`。
+
+### `app`
 
 - 构建上下文：`./app`
 - Dockerfile：`app/Dockerfile`
 - 镜像名：`ghcr.io/qianfuv/paper-scanner-app:latest`
 - 端口：`3000:3000`
 - 环境变量：`HOSTNAME=0.0.0.0`
-- 依赖：`depends_on: [api]`
+- 依赖：`api`
 
-## 镜像构建细节
+`app/Dockerfile` 的构建参数 `INTERNAL_API_URL` 默认是 `http://api:8000`，因此前端镜像会把 `/api/*` rewrite 到 Docker 网络内的 Rust API 服务。
 
-### 后端镜像
+## 后端镜像
 
 后端镜像分两阶段构建：
 
-1. `build` 阶段
-   - 基础镜像：`python:3.12-slim-trixie`
-   - 使用 `uv sync --frozen --no-dev`
-   - 复制 `paper_scanner/`
+1. `rust:1.85-bookworm` 构建阶段执行 `cargo build --release -p ps-api -p ps-cli`
+2. `debian:bookworm-slim` 运行阶段只复制 `ps-api`、`ps-cli`、`libs/simple-linux/` 和 `data/meta/`
 
-2. 运行阶段
-   - 基础镜像：`python:3.12-slim-trixie`
-   - 复制 `.venv/`、`paper_scanner/`
-   - 复制 `uv`、`uv.lock`、`README.md`
-   - 复制 `libs/simple-linux/`
-   - 复制 `data/meta/`
-   - 默认启动命令：`api`
-
-运行时默认环境变量：
+运行阶段默认设置：
 
 | 变量 | 默认值 | 说明 |
 | --- | --- | --- |
-| `API_HOST` | `0.0.0.0` | Uvicorn 监听地址 |
-| `SIMPLE_TOKENIZER_PATH` | `/app/libs/simple-linux/libsimple-linux-ubuntu-latest/libsimple.so` | `simple` 分词扩展路径 |
+| `API_HOST` | `0.0.0.0` | API 监听地址 |
+| `PAPER_SCANNER_PROJECT_ROOT` | `/app` | 数据目录解析根路径 |
+| `SIMPLE_TOKENIZER_PATH` | `/app/libs/simple-linux/libsimple-linux-ubuntu-latest/libsimple.so` | SQLite `simple` 分词扩展 |
 
-### 前端镜像
-
-前端镜像同样采用多阶段构建：
-
-1. `deps`
-   - 基础镜像：`node:24-alpine`
-   - 使用 `pnpm install --frozen-lockfile`
-
-2. `build`
-   - 默认构建参数：`INTERNAL_API_URL=http://api:8000`
-   - 执行 `pnpm build`
-
-3. 运行阶段
-   - 复制 `.next/standalone`
-   - 复制 `.next/static`
-   - 启动命令：`node server.js`
-
-说明：
-
-- 根 Compose 没有显式设置 `INTERNAL_API_URL`，但 `app/Dockerfile` 的构建参数默认值已经是 `http://api:8000`
-- 因此前端镜像在 Docker 网络内会把 `/api/*` 请求转发到 `api` 服务，而不是容器内的 `localhost`
+镜像不复制 `.venv`、`paper_scanner/` 或 `uv`，因此不能在容器中运行 Python 后端命令。
 
 ## 快速启动
 
-### 本地构建
-
 ```bash
 docker compose build
-docker compose up -d
-```
-
-### 直接拉取 GHCR 镜像
-
-```bash
-docker compose pull
 docker compose up -d
 ```
 
@@ -111,106 +84,67 @@ docker compose up -d
 - 前端：`http://localhost:3000`
 - API：`http://localhost:8000/api`
 
-## 首次初始化建议
-
-首次部署后通常还需要建立索引数据库：
+健康检查：
 
 ```bash
-docker compose run --rm api uv run index
+curl http://localhost:8000/api/health
+curl http://localhost:3000/api/health
 ```
 
-如果只想处理某个 CSV：
+## 数据与初始化
+
+`api` 和 `worker` 都读取挂载的宿主机 `./data`：
+
+- `data/meta/*.csv`：期刊元数据 CSV
+- `data/index/*.sqlite`：检索数据库
+- `data/auth.sqlite`：用户、收藏、通知、管理员数据
+- `data/push_state/*.json`：通知、追踪和每周更新状态
+- `data/push_state/*.changes.json`：增量变更清单
+
+首次部署前应确认 `data/index/` 下已有需要服务的 `.sqlite` 索引库。需要生成离线 parity 索引时，在宿主机运行 Rust CLI：
 
 ```bash
-docker compose run --rm api uv run index --file utd24.csv
+cargo run -p ps-cli -- index fixture --csv tests/fixtures/contracts/scholarly/journals.csv --fixture tests/fixtures/contracts/scholarly/openalex_fallback_fixture.json --output-db data/index/scholarly-fixture.sqlite
+cargo run -p ps-cli -- index fixture --source cnki --csv tests/fixtures/contracts/cnki/journals.csv --fixture tests/fixtures/contracts/cnki/fixture.json --output-db data/index/cnki-fixture.sqlite
 ```
 
-## 数据与挂载目录
-
-### `data/`
-
-`api` 服务会把宿主机 `./data` 挂载到容器 `/app/data`。运行中涉及的主要文件包括：
-
-- `data/meta/*.csv`：输入的期刊元数据 CSV
-- `data/index/*.sqlite`：生成的检索数据库
-- `data/auth.sqlite`：用户、收藏、通知与后台管理数据库
-- `data/push_state/*.json`：通知状态
-- `data/push_state/*.changes.json`：变更清单
-- `data/folder_push_state/*.json`：追踪文件夹推送状态
-
-根 Compose 当前不再给 `app` 服务挂载额外配置目录。前端认证完全依赖后端 `/api/auth/*` 与运行时环境变量。
+生产索引库可直接放入 `data/index/`。中文全文凭证和 scholarly API key 等运行时配置优先从 `data/auth.sqlite` 的 `runtime_settings` 读取；没有数据库配置时才使用容器环境变量。
 
 ## 常用环境变量
 
-### 后端
-
-后端配置分两类：
-
-- 进程环境变量：由 Docker Compose、宿主 shell 或容器运行参数提供
-- 管理员运行时配置：通过 `/api/admin/runtime-settings` 写入 `data/auth.sqlite` 的 `runtime_settings` 表
-
-API、索引命令和调度任务会调用 `apply_runtime_config()`。如果 `runtime_settings` 中已有同名配置，会覆盖进程环境变量；如果数据库没有值，则使用进程环境变量。
-
 | 变量 | 默认值 | 说明 |
 | --- | --- | --- |
-| `API_HOST` | `127.0.0.1`（本地） / `0.0.0.0`（Docker） | API 监听地址 |
-| `API_CORS_ALLOWED_ORIGINS` | 空 | 跨源浏览器请求允许的 Origin 列表，逗号分隔 |
+| `API_HOST` | `0.0.0.0` | API 监听地址 |
+| `API_PORT` | `8000` | API 监听端口 |
+| `API_CORS_ALLOWED_ORIGINS` | 空 | 跨源浏览器请求允许的 Origin 列表 |
 | `AUTH_COOKIE_SECURE` | 按请求 scheme 推断 | 显式控制 `ps_session` Cookie 的 `Secure` 标记 |
-| `SIMPLE_TOKENIZER_PATH` | 自动探测或镜像内置 | 中文分词扩展路径 |
-| `OPENALEX_API_KEY_POOL` | 空 | OpenAlex API key 池；scholarly 索引需要 |
-| `SEMANTIC_SCHOLAR_API_KEY_POOL` | 空 | Semantic Scholar API key 池；scholarly 索引需要 |
-| `CROSSREF_MAILTO_POOL` | 空 | Crossref 联系邮箱池，建议生产环境配置 |
+| `OPENALEX_API_KEY_POOL` | 空 | OpenAlex API key 池 |
+| `SEMANTIC_SCHOLAR_API_KEY_POOL` | 空 | Semantic Scholar API key 池 |
+| `CROSSREF_MAILTO_POOL` | 空 | Crossref 联系邮箱池 |
 | `PROXY_POOL` | 空 | scholarly 与 CNKI 请求代理池 |
 | `NOTIFY_AI_BASE_URL` | `https://api.siliconflow.cn/v1` | 默认 OpenAI 兼容 API 地址 |
-| `NOTIFY_AI_API_KEY` | 空 | 默认 AI Key |
+| `NOTIFY_AI_API_KEY` | 空 | 默认 AI key |
 | `NOTIFY_AI_MODEL` | `deepseek-ai/DeepSeek-V3` | 默认模型名 |
-| `NOTIFY_AI_SYSTEM_PROMPT` | 空 | 默认系统提示词 |
-| `NOTIFY_MAX_CANDIDATES` | `120` | AI 候选上限 |
-| `NOTIFY_TEMPERATURE` | `0.2` | AI 温度 |
-| `NOTIFY_PUSHPLUS_CHANNEL` | `wechat` | PushPlus 默认渠道 |
-| `NOTIFY_PUSHPLUS_TEMPLATE` | `markdown` | PushPlus 默认模板 |
-| `NOTIFY_PUSHPLUS_TOPIC` | 空 | PushPlus 默认 topic |
-| `NOTIFY_PUSHPLUS_OPTION` | 空 | PushPlus 默认 option |
 
-根 Compose 当前没有显式传入 `SEMANTIC_SCHOLAR_API_KEY_POOL`。如果要在新容器中首次运行含 `scholarly` 源的索引，需要在命令环境中提供它，或先通过管理员后台写入 `runtime_settings`。`UNPAYWALL_EMAIL_POOL` 虽然仍在 Compose 中透传，但当前代码已不再把它作为运行配置项。
-
-### 前端
-
-| 变量 | 默认值 | 说明 |
-| --- | --- | --- |
-| `HOSTNAME` | 运行时决定 | `next start` / standalone 监听地址 |
-| `INTERNAL_API_URL` | `http://api:8000`（Docker 构建默认值） | 构建时用于 `/api/*` rewrite |
-| `NEXT_PUBLIC_API_URL` | 空 | 浏览器直接访问的 API 根地址，常用于本地开发 |
-
-## 与测试目录的区别
-
-`test/docker-compose.yml` 与根 Compose 不完全相同：
-
-- 测试 Compose 会显式给前端设置 `INTERNAL_API_URL=http://api:8000`
-
-这些测试资产可作为历史兼容参考，但生产与常规本地部署应以根目录 `docker-compose.yml` 和当前代码行为为准。
+管理员后台写入 `runtime_settings` 后，Rust API、Rust worker 和 Rust CLI 会优先使用数据库中的值。
 
 ## 常见问题
 
-### 1. 前端能打开，但搜索没有数据
+### 前端能打开，但搜索没有数据
 
-排查顺序：
+1. 检查 `api` 服务：`docker compose logs api`
+2. 检查宿主机 `data/index/` 下是否存在 `.sqlite` 文件
+3. 如需测试索引库，先在宿主机运行 `ps-cli index fixture` 生成离线 fixture 数据库
 
-- 检查 `api` 服务是否已启动：`docker compose logs api`
-- 检查 `data/index/` 下是否已有 `.sqlite` 文件
-- 如无索引库，先执行：`docker compose run --rm api uv run index`
+### 中文搜索命中差
 
-### 2. 中文搜索命中差
+确认 `SIMPLE_TOKENIZER_PATH` 指向的 Linux 版 `simple` 分词扩展存在。Docker 镜像默认复制 `libs/simple-linux/`。
 
-优先确认 `simple` 分词扩展是否加载成功：
+### 通知或追踪推送没有结果
 
-- Docker 镜像默认已经复制 Linux 版扩展
-- 本地运行可通过 `SIMPLE_TOKENIZER_PATH` 手动指定
-
-### 3. 通知或追踪推送没有产生结果
-
-需要同时检查：
+检查：
 
 - 是否存在最新的 `data/push_state/*.changes.json`
 - 用户是否在 `notification_settings` 中启用了对应投递方式
 - PushPlus 或 OpenAI 兼容模型配置是否完整
+- `data/auth.sqlite` 的 `runtime_settings` 是否覆盖了预期环境变量

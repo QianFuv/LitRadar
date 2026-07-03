@@ -1,5 +1,5 @@
-"""Index package exports."""
+"""Python index compatibility package."""
 
-from paper_scanner.index.main import main
+from __future__ import annotations
 
-__all__ = ["main"]
+__all__: list[str] = []

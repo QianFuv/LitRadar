@@ -1,7 +1,5 @@
-"""Tracking-folder push package exports."""
+"""Python tracking-folder compatibility package."""
 
 from __future__ import annotations
 
-from paper_scanner.push.main import main
-
-__all__ = ["main"]
+__all__: list[str] = []

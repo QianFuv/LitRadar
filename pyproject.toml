@@ -21,12 +21,6 @@ dev = [
     "ruff>=0.14.6",
 ]
 
-[project.scripts]
-index = "paper_scanner.index:main"
-api = "paper_scanner.api:main"
-notify = "paper_scanner.notify:main"
-push = "paper_scanner.push:main"
-
 [tool.setuptools.packages.find]
 include = ["paper_scanner*"]
 

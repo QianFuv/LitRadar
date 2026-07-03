@@ -11,13 +11,13 @@ Paper Scanner 当前实际使用两类数据库：
    - 路径：`data/auth.sqlite`
    - 作用：用户、访问令牌、CNKI 会话、收藏夹、通知设置、运行时配置、定时任务、公告
 
-T12 只把默认 Docker 后端切换到 Rust 服务，不迁移数据库、不改表结构、不改状态文件格式。Rust 服务、Rust CLI 和 T13 前保留的 Python 回滚命令读取同一套 `data/`。
+后端部署与正常运行入口已经切换到 Rust 服务，不迁移数据库、不改表结构、不改状态文件格式。Rust API、Rust CLI 和保留的 Python 兼容测试模块读取同一套 `data/`。
 
 ## 一、索引数据库
 
 ### 初始化参数
 
-索引数据库由 Rust 索引 schema 代码初始化；T13 前保留的 Python live 索引路径继续使用兼容 schema。两条路径当前会设置以下 pragma：
+索引数据库由 Rust 索引 schema 代码初始化；保留的 Python 兼容测试路径继续验证同一套 schema。两条路径当前会设置以下 pragma：
 
 | Pragma | 值 | 说明 |
 | --- | --- | --- |
@@ -331,7 +331,7 @@ SQLite FTS5 虚表，用于全文检索。
 
 ### 初始化参数
 
-认证与业务数据库由 Rust storage/auth 代码初始化；T13 前保留的 Python 回滚路径继续使用兼容初始化逻辑。当前会设置：
+认证与业务数据库由 Rust storage/auth 代码初始化；保留的 Python 兼容测试路径继续使用兼容初始化逻辑。当前会设置：
 
 | Pragma | 值 |
 | --- | --- |
@@ -530,7 +530,7 @@ announcements
 
 说明：
 
-- T12 Docker 默认由 `ps-cli worker shadow` 持续加载和校验任务配置，不自动执行 shell 命令
+- Docker 默认由 `ps-cli worker shadow` 持续加载和校验任务配置，不自动执行 shell 命令
 - 立即执行和 dry-run 由 `ps-cli scheduler run-once TASK_ID` 与 `ps-cli scheduler dry-run-once TASK_ID` 触发
 - 执行模式仍按 shell 命令处理，并会把 `runtime_settings` 中的数据库来源配置应用到命令环境
 
@@ -547,7 +547,7 @@ announcements
 说明：
 
 - 当前受管理的 `key` 包括 `OPENALEX_API_KEY_POOL`、`PROXY_POOL`、`CROSSREF_MAILTO_POOL`、`SEMANTIC_SCHOLAR_API_KEY_POOL`
-- Rust API、Rust worker/CLI 和 T13 前保留的 Python 回滚命令都会读取该表并应用运行时配置
+- Rust API、Rust worker/CLI 和 Python 兼容测试路径都会读取该表并应用运行时配置
 - API 启动、索引命令和调度任务会应用这些配置；数据库已有值会覆盖同名进程环境变量
 
 ### 10. `announcements`
@@ -585,8 +585,4 @@ announcements
 
 ### 2. `data/push_state/<db>.json`
 
-PushPlus 通知运行状态。
-
-### 3. `data/folder_push_state/<db>.json`
-
-追踪文件夹推送运行状态。
+PushPlus 通知和追踪文件夹推送运行状态。历史 Python 运行路径可能留下 `data/folder_push_state/<db>.json`，但当前 Rust CLI 默认使用 `data/push_state/`。

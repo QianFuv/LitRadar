@@ -1,7 +1,5 @@
-"""API package exports."""
+"""Python API compatibility package."""
 
 from __future__ import annotations
 
-from paper_scanner.api.main import app, main
-
-__all__ = ["app", "main"]
+__all__: list[str] = []
