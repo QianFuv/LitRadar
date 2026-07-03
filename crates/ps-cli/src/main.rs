@@ -3,7 +3,8 @@
 use std::env;
 use std::error::Error;
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::thread;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use ps_index::{
     run_cnki_fixture_index, run_scholarly_fixture_index, CnkiIndexConfig, ScholarlyIndexConfig,
@@ -38,6 +39,8 @@ fn run() -> Result<(), Box<dyn Error>> {
     let resume_index = extract_flag(&mut args, "--resume");
     let update_index = extract_flag(&mut args, "--update");
     let issue_batch_size = extract_usize_option(&mut args, "--issue-batch-size")?.unwrap_or(10);
+    let worker_interval_seconds =
+        extract_u64_option(&mut args, "--interval-seconds")?.unwrap_or(300);
     let has_semantic_scholar_key = extract_flag(&mut args, "--semantic-scholar-key")
         || env::var("SEMANTIC_SCHOLAR_API_KEY_POOL")
             .map(|value| !value.trim().is_empty())
@@ -54,6 +57,9 @@ fn run() -> Result<(), Box<dyn Error>> {
         }
         [group, command] if group == "scheduler" && command == "shadow" => {
             print_scheduler_load(&auth_db_path)
+        }
+        [group, command] if group == "worker" && command == "shadow" => {
+            run_worker_shadow(&auth_db_path, worker_interval_seconds)
         }
         [group, command] if group == "index" && command == "fixture" => {
             let csv_path = csv_path.ok_or("--csv is required for index fixture")?;
@@ -149,6 +155,22 @@ fn print_scheduler_load(auth_db_path: &Path) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+fn run_worker_shadow(auth_db_path: &Path, interval_seconds: u64) -> Result<(), Box<dyn Error>> {
+    let interval_seconds = interval_seconds.max(1);
+    loop {
+        let result = load_scheduler_jobs(auth_db_path)?;
+        let payload = json!({
+            "interval_seconds": interval_seconds,
+            "jobs": result.jobs.len(),
+            "mode": "shadow",
+            "skipped": result.skipped.len(),
+            "status": "running"
+        });
+        println!("{}", serde_json::to_string(&payload)?);
+        thread::sleep(Duration::from_secs(interval_seconds));
+    }
+}
+
 fn extract_auth_db_path(args: &mut Vec<String>) -> Result<PathBuf, Box<dyn Error>> {
     if let Some(index) = args.iter().position(|argument| argument == "--auth-db") {
         if index + 1 >= args.len() {
@@ -195,6 +217,12 @@ fn extract_usize_option(
         .transpose()
 }
 
+fn extract_u64_option(args: &mut Vec<String>, name: &str) -> Result<Option<u64>, Box<dyn Error>> {
+    extract_string_option(args, name)?
+        .map(|value| value.parse::<u64>().map_err(Into::into))
+        .transpose()
+}
+
 fn extract_i64_option(args: &mut Vec<String>, name: &str) -> Result<Option<i64>, Box<dyn Error>> {
     extract_string_option(args, name)?
         .map(|value| value.parse::<i64>().map_err(Into::into))
@@ -232,6 +260,7 @@ fn usage() -> String {
             "ps-cli scheduler shadow [--auth-db PATH]",
             "ps-cli scheduler run-once TASK_ID [--auth-db PATH]",
             "ps-cli scheduler dry-run-once TASK_ID [--auth-db PATH]",
+            "ps-cli worker shadow [--auth-db PATH] [--interval-seconds N]",
             "ps-cli notify dry-run --auth-db PATH --index-db PATH --db NAME [--state-dir PATH]",
             "ps-cli notify shadow --auth-db PATH --index-db PATH --db NAME [--state-dir PATH]",
             "ps-cli push dry-run --auth-db PATH --index-db PATH --db NAME [--state-dir PATH]",

@@ -1,6 +1,6 @@
 # API 参考
 
-本文档以当前 FastAPI 代码为准，覆盖检索接口、认证接口、收藏/追踪接口以及管理员接口。
+本文档以当前 Rust API 兼容实现为准，覆盖检索接口、认证接口、收藏/追踪接口以及管理员接口。T12 只切换后端部署实现，不变更公开路径、请求体、响应体、认证 Cookie/Bearer 行为或 SQLite 数据契约；Python FastAPI 后端在 T13 完成前仍保留为回滚参考实现。
 
 ## 基本约定
 
@@ -567,7 +567,7 @@ CNKI 精确匹配失败时返回受控错误，不会下载候选列表中的错
 ```json
 {
   "name": "nightly notify",
-  "command": "uv run notify --db utd24.sqlite",
+  "command": "ps-cli notify shadow --auth-db /app/data/auth.sqlite --index-db /app/data/index/utd24.sqlite --db utd24.sqlite",
   "cron": "0 8 * * *",
   "enabled": true
 }
@@ -578,8 +578,9 @@ CNKI 精确匹配失败时返回受控错误，不会下载候选列表中的错
 补充说明：
 
 - `cron` 使用标准五段 crontab
-- 任务由后端内置 APScheduler 执行
-- 执行方式是 `subprocess.run(..., shell=True)`
+- T12 Docker 默认运行 `ps-cli worker shadow`，用于持续加载并校验定时任务配置；不会自动执行 shell 命令
+- 立即执行和 dry-run 可通过 `ps-cli scheduler run-once TASK_ID` 与 `ps-cli scheduler dry-run-once TASK_ID` 从运维终端触发
+- 执行模式仍按 shell 命令处理，并在执行前应用 `runtime_settings` 数据库配置
 - 没有单独的“立即执行”管理 API
 
 ### 公告请求体

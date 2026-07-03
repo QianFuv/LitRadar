@@ -2,12 +2,14 @@
 
 Paper Scanner 是一个面向学术期刊的全栈检索与订阅平台。它负责从 Crossref、OpenAlex、Semantic Scholar 与 CNKI overseas 抓取期刊和文章元数据，构建 SQLite 检索库，并提供 Web 界面、收藏夹、追踪推送、每周更新、公告与后台管理能力。
 
-当前仓库包含四类核心运行单元：
+当前 Docker 后端默认运行 Rust 服务。T13 完成前，Python 后端命令仍保留为回滚和 live 索引维护路径：
 
-- `uv run index`：抓取期刊与文章数据，写入 `data/index/*.sqlite`
-- `uv run api`：启动 FastAPI 后端
-- `uv run notify`：把新增文章筛选后通过 PushPlus 推送给订阅用户
-- `uv run push`：把新增文章筛选后写入用户的追踪文件夹
+- `ps-api`：启动兼容现有 `/api/*` 契约的 Rust API 后端
+- `ps-cli worker shadow`：启动 Rust worker sidecar，周期性加载定时任务并保持服务运行
+- `ps-cli notify dry-run|shadow`：演练或 shadow 比对 PushPlus 通知链路
+- `ps-cli push dry-run|shadow`：演练或 shadow 比对追踪文件夹写入链路
+- `ps-cli index fixture`：运行 Rust 索引 fixture/parity 命令
+- `uv run index`、`uv run api`、`uv run notify`、`uv run push`：T13 前的 Python 回滚命令
 
 ## 主要功能
 
@@ -27,19 +29,20 @@ Paper Scanner 是一个面向学术期刊的全栈检索与订阅平台。它负
 | 层级 | 组件 |
 | --- | --- |
 | 前端 | Next.js 16、React 19、TypeScript、Tailwind CSS 4、Radix UI、TanStack Query |
-| 后端 | FastAPI、Uvicorn、aiosqlite |
-| 索引/抓取 | httpx、SQLite FTS5 |
-| AI 与推送 | OpenAI Python SDK（兼容 OpenAI API 的服务）、PushPlus |
-| 调度 | APScheduler |
-| 开发工具 | uv、Ruff、mypy、pnpm |
+| 后端 | Rust、Axum、Tokio、rusqlite |
+| 索引/抓取 | Rust workspace crates、SQLite FTS5；Python live 索引命令在 T13 前保留为回滚路径 |
+| AI 与推送 | OpenAI 兼容服务、PushPlus |
+| 调度 | Rust worker/CLI；Python APScheduler 在 T13 前保留为回滚路径 |
+| 开发工具 | Cargo、uv、Ruff、mypy、pnpm |
 
 ## 仓库结构
 
 ```text
 .
 ├── app/                     前端项目
+├── crates/                  Rust 后端 workspace
 ├── docs/                    详细文档
-├── paper_scanner/           后端、索引、推送与公共模块
+├── paper_scanner/           Python 回滚后端、索引、推送与公共模块
 ├── data/
 │   ├── meta/                期刊 CSV 元数据源
 │   ├── index/               生成后的 SQLite 检索库
@@ -74,17 +77,20 @@ Paper Scanner 是一个面向学术期刊的全栈检索与订阅平台。它负
    | `id` | 上游期刊 ID；`scholarly` 使用 ISSN，`cnki` 使用 CNKI `pykm` |
    | `area` | 自定义领域标签 |
 
-2. 构建并启动服务
+2. 构建并启动 Rust API、Rust worker 与前端服务
 
    ```bash
    docker compose build
    docker compose up -d
    ```
 
-3. 首次建立索引
+3. 准备索引数据库
+
+   如果 `data/index/*.sqlite` 已存在，可直接使用现有索引库。T13 完成前，live 索引维护仍使用宿主机 Python 回滚命令；Rust Docker 镜像不再包含 `uv` 或 Python 后端运行环境。
 
    ```bash
-   docker compose run --rm api uv run index
+   uv sync --dev
+   uv run index --file utd24.csv
    ```
 
 4. 访问服务
@@ -101,12 +107,24 @@ Paper Scanner 是一个面向学术期刊的全栈检索与订阅平台。它负
 #### 后端
 
 ```bash
+cargo run -p ps-api
+```
+
+默认后端地址：`http://127.0.0.1:8000`
+
+另开一个终端可启动 Rust worker shadow 进程：
+
+```bash
+cargo run -p ps-cli -- worker shadow --interval-seconds 300
+```
+
+T13 完成前，如果需要回滚到 Python 后端或执行 live 索引：
+
+```bash
 uv sync --dev
 uv run index --file utd24.csv
 uv run api
 ```
-
-默认后端地址：`http://127.0.0.1:8000`
 
 #### 前端
 
@@ -126,37 +144,45 @@ pnpm dev
 ### 1. 索引
 
 ```bash
+cargo run -p ps-cli -- index fixture --csv tests/fixtures/contracts/scholarly/journals.csv --fixture tests/fixtures/contracts/scholarly/openalex_fallback_fixture.json --output-db data/index/scholarly-fixture.sqlite
+cargo run -p ps-cli -- index fixture --source cnki --csv tests/fixtures/contracts/cnki/journals.csv --fixture tests/fixtures/contracts/cnki/fixture.json --output-db data/index/cnki-fixture.sqlite
+```
+
+Rust fixture/parity 索引参数：
+
+| 参数 | 默认值 | 说明 |
+| --- | --- | --- |
+| `--csv` | 必填 | CSV 元数据源路径 |
+| `--fixture` | 必填 | recorded fixture 目录或文件 |
+| `--output-db` | 必填 | 输出 SQLite 索引库 |
+| `--source` | `scholarly` | 可选 `scholarly` 或 `cnki` |
+| `--manifest` | 空 | 输出变更清单 |
+| `--resume` | `false` | CNKI fixture 索引恢复模式 |
+| `--update` | `false` | CNKI fixture 增量模式 |
+| `--issue-batch-size` | `10` | CNKI fixture issue 批大小 |
+
+英文 scholarly 路径会对 Crossref、OpenAlex、Semantic Scholar 分别限流。`OPENALEX_API_KEY_POOL` 与 `SEMANTIC_SCHOLAR_API_KEY_POOL` 是 scholarly 索引的必需配置；`CROSSREF_MAILTO_POOL` 建议生产环境配置为可联系邮箱；`PROXY_POOL` 可为 scholarly 与 CNKI 请求提供代理池。Semantic Scholar 按官方 introductory limit 保守处理为全局 1 RPS，并通过 `/graph/v1/paper/batch` 每次最多请求 500 个 DOI。
+
+T13 完成前，live 索引和回滚仍可使用 Python 命令：
+
+```bash
 uv run index --file utd24.csv
 uv run index --workers 32 --processes 2
 uv run index --update --notify
 uv run index --update --notify --notify-dry-run
 ```
 
-常用参数：
-
-| 参数 | 默认值 | 说明 |
-| --- | --- | --- |
-| `--file, -f` | 处理 `data/meta/` 下全部 CSV | 指定单个 CSV |
-| `--workers, -w` | `32` | 进程内请求 worker 数；英文 scholarly 源会额外按 source 限流 |
-| `--issue-batch` | `workers` | 每批抓取 issue 数量；传 `0` 时自动使用 `workers` |
-| `--timeout` | `20` | HTTP 超时秒数 |
-| `--processes` | `2` | 期刊级多进程并行数 |
-| `--resume / --no-resume` | `--resume` | 是否跳过已完成的期刊/年份 |
-| `--update / --no-update` | `--no-update` | 是否增量更新已存在数据库；会抓取新增 issue，并额外重扫最新一个已有文章的 issue |
-| `--notify / --no-notify` | `--no-notify` | 更新后自动调用 `notify` |
-| `--notify-dry-run` | `false` | 与 `--notify` 配合，仅演练通知不真正推送 |
-
-英文 scholarly 路径会对 Crossref、OpenAlex、Semantic Scholar 分别限流。`OPENALEX_API_KEY_POOL` 与 `SEMANTIC_SCHOLAR_API_KEY_POOL` 是 scholarly 索引的必需配置；`CROSSREF_MAILTO_POOL` 建议生产环境配置为可联系邮箱；`PROXY_POOL` 可为 scholarly 与 CNKI 请求提供代理池。Semantic Scholar 按官方 introductory limit 保守处理为全局 1 RPS，并通过 `/graph/v1/paper/batch` 每次最多请求 500 个 DOI。
-
 ### 2. API 服务
 
 ```bash
-uv run api
+cargo run -p ps-api
 ```
 
 环境变量：
 
 - `API_HOST`：监听地址，默认 `127.0.0.1`
+- `API_PORT`：监听端口，默认 `8000`
+- `PAPER_SCANNER_PROJECT_ROOT`：项目根目录，默认当前目录；Docker 中为 `/app`
 - `API_CORS_ALLOWED_ORIGINS`：逗号分隔的跨源浏览器 Origin 白名单，默认空
 - `AUTH_COOKIE_SECURE`：显式控制 `ps_session` Cookie 的 `Secure` 标记；未设置时按请求 scheme 推断
 
@@ -169,9 +195,18 @@ uv run api
 | `CROSSREF_MAILTO_POOL` | Crossref 联系邮箱池，建议生产环境配置 |
 | `PROXY_POOL` | scholarly 与 CNKI 请求代理池 |
 
-API、索引器和调度任务启动时会读取 `runtime_settings` 并覆盖同名进程环境变量；如果数据库没有对应值，则使用宿主或容器环境变量。
+API、索引器和调度任务启动时会读取 `runtime_settings` 并覆盖同名进程环境变量；如果数据库没有对应值，则使用宿主或容器环境变量。T12 Docker Compose 同时传入宿主环境变量和挂载 `./data:/app/data`，因此可以复用现有 `data/auth.sqlite` 中的运行时配置。
 
 ### 3. PushPlus 通知推送
+
+```bash
+cargo run -p ps-cli -- notify dry-run --auth-db data/auth.sqlite --index-db data/index/utd24.sqlite --db utd24.sqlite
+cargo run -p ps-cli -- notify shadow --auth-db data/auth.sqlite --index-db data/index/utd24.sqlite --db utd24.sqlite --changes-file data/push_state/utd24.changes.json
+```
+
+该命令只处理 `delivery_method = "pushplus"` 的用户。
+
+T13 完成前，如需回滚到 Python live 发送路径：
 
 ```bash
 uv run notify --db utd24.sqlite
@@ -179,17 +214,22 @@ uv run notify --db utd24.sqlite --changes-file data/push_state/utd24.changes.jso
 uv run notify --db utd24.sqlite --dry-run
 ```
 
-该命令只处理 `delivery_method = "pushplus"` 的用户。
-
 ### 4. 追踪文件夹推送
+
+```bash
+cargo run -p ps-cli -- push dry-run --auth-db data/auth.sqlite --index-db data/index/utd24.sqlite --db utd24.sqlite
+cargo run -p ps-cli -- push shadow --auth-db data/auth.sqlite --index-db data/index/utd24.sqlite --db utd24.sqlite --changes-file data/push_state/utd24.changes.json
+```
+
+该命令只处理 `delivery_method = "folder"` 且已配置追踪文件夹的用户。
+
+T13 完成前，如需回滚到 Python live 写入路径：
 
 ```bash
 uv run push --db utd24.sqlite
 uv run push --db utd24.sqlite --changes-file data/push_state/utd24.changes.json
 uv run push --db utd24.sqlite --dry-run
 ```
-
-该命令只处理 `delivery_method = "folder"` 且已配置追踪文件夹的用户。
 
 ## AI 与推送配置
 
@@ -235,21 +275,30 @@ uv run push --db utd24.sqlite --dry-run
 
 - `/api/weekly-updates`
 - `/api/tracking/push-weekly`
-- `uv run notify --changes-file ...`
-- `uv run push --changes-file ...`
+- `ps-cli notify shadow --changes-file ...`
+- `ps-cli push shadow --changes-file ...`
 
 这几条链路都依赖 `*.changes.json` 文件。
 
 ## 部署说明
 
-根目录 `docker-compose.yml` 使用两个服务：
+根目录 `docker-compose.yml` 使用三个服务：
 
-- `api`：后端，暴露 `8000`
+- `api`：Rust API 后端，暴露 `8000`
+- `worker`：Rust worker shadow 进程，复用后端镜像并挂载同一个 `data` 目录
 - `app`：前端，暴露 `3000`
 
 前端在 Docker 构建阶段使用 `INTERNAL_API_URL` 将 `/api/*` 重写到后端；`app/Dockerfile` 默认为 `http://api:8000`。根 Compose 文件里没有显式设置这个变量，是因为 `app/Dockerfile` 已提供该默认值。
 
-当前主前端登录流程只使用后端 `/api/auth/*`。仓库已移除旧的前端令牌认证工具与 `config` 挂载；根 Compose 现在只依赖 `data` 卷。
+当前主前端登录流程只使用后端 `/api/auth/*`。仓库已移除旧的前端令牌认证工具与 `config` 挂载；根 Compose 现在只依赖 `data` 卷。T12 不修改 SQLite schema 或状态文件格式，因此 Rust 服务和 Python 回滚命令读取同一套 `data/index/*.sqlite`、`data/auth.sqlite` 与推送状态文件。
+
+T13 完成前，如需回滚到 Python 后端：
+
+1. 停止 Docker Rust 后端服务：`docker compose stop api worker`
+2. 在宿主机启动 Python API：`uv run api`
+3. 如需继续使用前端容器，使用 `INTERNAL_API_URL=http://host.docker.internal:8000` 重新构建前端镜像；或者停止 `app` 容器后在本地运行前端开发服务。
+
+回滚不需要数据库迁移；不要删除 `data/`。
 
 ## 详细文档
 
