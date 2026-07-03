@@ -319,9 +319,27 @@ impl IndexRunStats {
         journal_id: Option<i64>,
         journal_title: &str,
     ) {
+        self.record_source_attempts_for_source("scholarly", attempts, journal_id, journal_title);
+    }
+
+    /// Record captured source attempts for an explicit index source.
+    ///
+    /// # Arguments
+    ///
+    /// * `source` - Index source identifier.
+    /// * `attempts` - Source attempts.
+    /// * `journal_id` - Current journal id.
+    /// * `journal_title` - Current journal title.
+    pub fn record_source_attempts_for_source(
+        &mut self,
+        source: &str,
+        attempts: &[SourceAttempt],
+        journal_id: Option<i64>,
+        journal_title: &str,
+    ) {
         for attempt in attempts {
             let key = ApiStatsKey {
-                source: "scholarly".to_string(),
+                source: source.to_string(),
                 service: attempt.service.clone(),
                 endpoint: attempt.endpoint.clone(),
                 method: attempt.method.clone(),

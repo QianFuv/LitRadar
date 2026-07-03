@@ -1,5 +1,7 @@
 //! SQLite schema and writer helpers for Rust scholarly indexing.
 
+use std::collections::BTreeSet;
+
 use rusqlite::{params, params_from_iter, Connection};
 
 use crate::stats::IndexRunStats;
@@ -536,6 +538,85 @@ pub fn refresh_article_listing_for_articles(
     );
     connection.execute(&sql, params_from_iter(article_ids.iter()))?;
     Ok(())
+}
+
+/// Fetch issue ids that already have articles for a journal.
+///
+/// # Arguments
+///
+/// * `connection` - Open SQLite connection.
+/// * `journal_id` - Journal id.
+///
+/// # Returns
+///
+/// Issue ids with existing articles.
+pub fn get_journal_issue_ids_with_articles(
+    connection: &Connection,
+    journal_id: i64,
+) -> rusqlite::Result<BTreeSet<i64>> {
+    let mut statement = connection.prepare(
+        "
+        SELECT DISTINCT a.issue_id
+        FROM articles a
+        JOIN issues i ON i.issue_id = a.issue_id
+        WHERE i.journal_id = ?1
+        ",
+    )?;
+    let rows = statement.query_map([journal_id], |row| row.get::<_, Option<i64>>(0))?;
+    let mut issue_ids = BTreeSet::new();
+    for row in rows {
+        if let Some(issue_id) = row? {
+            issue_ids.insert(issue_id);
+        }
+    }
+    Ok(issue_ids)
+}
+
+/// Fetch completed journal years.
+///
+/// # Arguments
+///
+/// * `connection` - Open SQLite connection.
+/// * `journal_id` - Journal id.
+///
+/// # Returns
+///
+/// Completed years for the journal.
+pub fn get_completed_years(
+    connection: &Connection,
+    journal_id: i64,
+) -> rusqlite::Result<BTreeSet<i64>> {
+    let mut statement = connection
+        .prepare("SELECT year FROM journal_year_state WHERE journal_id = ?1 AND status = 'done'")?;
+    let rows = statement.query_map([journal_id], |row| row.get::<_, i64>(0))?;
+    let mut years = BTreeSet::new();
+    for row in rows {
+        years.insert(row?);
+    }
+    Ok(years)
+}
+
+/// Check whether a journal is marked complete.
+///
+/// # Arguments
+///
+/// * `connection` - Open SQLite connection.
+/// * `journal_id` - Journal id.
+///
+/// # Returns
+///
+/// Whether the journal is complete.
+pub fn is_journal_complete(connection: &Connection, journal_id: i64) -> rusqlite::Result<bool> {
+    let status = connection.query_row(
+        "SELECT status FROM journal_state WHERE journal_id = ?1",
+        [journal_id],
+        |row| row.get::<_, String>(0),
+    );
+    match status {
+        Ok(value) => Ok(value == "done"),
+        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(false),
+        Err(error) => Err(error),
+    }
 }
 
 /// Mark one journal year as indexed.

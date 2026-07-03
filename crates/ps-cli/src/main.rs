@@ -5,7 +5,9 @@ use std::error::Error;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use ps_index::{run_scholarly_fixture_index, ScholarlyIndexConfig};
+use ps_index::{
+    run_cnki_fixture_index, run_scholarly_fixture_index, CnkiIndexConfig, ScholarlyIndexConfig,
+};
 use ps_worker::delivery::{
     run_recommendation_delivery, DeliveryMode, DeliveryWorkflow, RecommendationRunConfig,
 };
@@ -30,8 +32,12 @@ fn run() -> Result<(), Box<dyn Error>> {
     let fixture_path = extract_path_option(&mut args, "--fixture")?;
     let output_db_path = extract_path_option(&mut args, "--output-db")?;
     let manifest_path = extract_path_option(&mut args, "--manifest")?;
+    let index_source = extract_string_option(&mut args, "--source")?;
     let run_id = extract_string_option(&mut args, "--run-id")?;
     let timestamp = extract_string_option(&mut args, "--timestamp")?;
+    let resume_index = extract_flag(&mut args, "--resume");
+    let update_index = extract_flag(&mut args, "--update");
+    let issue_batch_size = extract_usize_option(&mut args, "--issue-batch-size")?.unwrap_or(10);
     let has_semantic_scholar_key = extract_flag(&mut args, "--semantic-scholar-key")
         || env::var("SEMANTIC_SCHOLAR_API_KEY_POOL")
             .map(|value| !value.trim().is_empty())
@@ -55,16 +61,35 @@ fn run() -> Result<(), Box<dyn Error>> {
             let output_db_path =
                 output_db_path.ok_or("--output-db is required for index fixture")?;
             let default_timestamp = default_timestamp();
-            let outcome = run_scholarly_fixture_index(&ScholarlyIndexConfig {
-                csv_path,
-                fixture_path,
-                output_db_path,
-                manifest_path,
-                run_id: run_id.unwrap_or_else(|| format!("run-{default_timestamp}")),
-                timestamp: timestamp.unwrap_or(default_timestamp),
-                has_semantic_scholar_key,
-            })?;
-            println!("{}", serde_json::to_string(&outcome)?);
+            let run_id = run_id.unwrap_or_else(|| format!("run-{default_timestamp}"));
+            let timestamp = timestamp.unwrap_or(default_timestamp);
+            let source = index_source.as_deref().unwrap_or("scholarly");
+            let payload = match source {
+                "scholarly" => {
+                    serde_json::to_value(run_scholarly_fixture_index(&ScholarlyIndexConfig {
+                        csv_path,
+                        fixture_path,
+                        output_db_path,
+                        manifest_path,
+                        run_id,
+                        timestamp,
+                        has_semantic_scholar_key,
+                    })?)?
+                }
+                "cnki" => serde_json::to_value(run_cnki_fixture_index(&CnkiIndexConfig {
+                    csv_path,
+                    fixture_path,
+                    output_db_path,
+                    manifest_path,
+                    run_id,
+                    timestamp,
+                    resume: resume_index,
+                    update: update_index,
+                    issue_batch_size,
+                })?)?,
+                other => return Err(format!("unsupported index fixture source: {other}").into()),
+            };
+            println!("{}", serde_json::to_string(&payload)?);
             Ok(())
         }
         [group, command, task_id] if group == "scheduler" && command == "run-once" => {
@@ -202,6 +227,7 @@ fn usage() -> String {
     let payload = json!({
         "usage": [
             "ps-cli index fixture --csv PATH --fixture PATH --output-db PATH [--manifest PATH] [--semantic-scholar-key]",
+            "ps-cli index fixture --source cnki --csv PATH --fixture PATH --output-db PATH [--manifest PATH] [--resume] [--update] [--issue-batch-size N]",
             "ps-cli scheduler dry-run [--auth-db PATH]",
             "ps-cli scheduler shadow [--auth-db PATH]",
             "ps-cli scheduler run-once TASK_ID [--auth-db PATH]",

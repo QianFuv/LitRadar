@@ -289,6 +289,45 @@ pub fn build_scholarly_journal_record(
     }
 }
 
+/// Build a CNKI journal table record.
+///
+/// # Arguments
+///
+/// * `journal_id` - Internal journal id.
+/// * `csv_row` - Source CSV row.
+/// * `details` - Optional CNKI journal detail payload.
+///
+/// # Returns
+///
+/// Journal table record.
+pub fn build_cnki_journal_record(
+    journal_id: i64,
+    csv_row: &CsvRow,
+    details: Option<&Value>,
+) -> JournalRecord {
+    JournalRecord {
+        journal_id,
+        library_id: source_from_row(csv_row),
+        platform_journal_id: details
+            .and_then(|value| clean_text(value.get("pykm")))
+            .or_else(|| optional_row_value(csv_row, "id")),
+        title: details
+            .and_then(|value| clean_text(value.get("title")))
+            .or_else(|| optional_row_value(csv_row, "title")),
+        issn: details
+            .and_then(|value| clean_text(value.get("issn")))
+            .or_else(|| optional_row_value(csv_row, "issn")),
+        eissn: None,
+        scimago_rank: details
+            .and_then(|value| clean_text(value.get("impact_factor")))
+            .and_then(|value| value.parse::<f64>().ok()),
+        cover_url: details.and_then(|value| clean_text(value.get("cover_url"))),
+        available: Some(i64::from(details.is_some())),
+        toc_data_approved_and_live: None,
+        has_articles: Some(i64::from(details.is_some())),
+    }
+}
+
 /// Build a scholarly issue record from Crossref-like metadata.
 ///
 /// # Arguments
@@ -323,6 +362,40 @@ pub fn build_scholarly_issue_record(journal_id: i64, work: &Value) -> Option<Iss
         volume,
         number: (number != "in-press").then_some(number),
         date: Some(date),
+        is_valid_issue: Some(1),
+        suppressed: None,
+        embargoed: None,
+        within_subscription: None,
+    })
+}
+
+/// Build a CNKI issue table record.
+///
+/// # Arguments
+///
+/// * `journal_id` - Internal journal id.
+/// * `journal_code` - CNKI journal code.
+/// * `issue` - CNKI issue payload.
+///
+/// # Returns
+///
+/// Issue table record.
+pub fn build_cnki_issue_record(
+    journal_id: i64,
+    journal_code: &str,
+    issue: &Value,
+) -> Option<IssueRecord> {
+    let year = issue.get("year")?.as_i64()?;
+    let number = clean_text(issue.get("number"))?;
+    let issue_id = stable_sqlite_id(format!("{journal_code}:{year}:{number}"), "cnki:issue");
+    Some(IssueRecord {
+        issue_id,
+        journal_id,
+        publication_year: Some(year),
+        title: clean_text(issue.get("title")).or_else(|| Some(format!("{year}年第{number}期"))),
+        volume: None,
+        number: Some(number),
+        date: Some(format!("{year:04}-01-01")),
         is_valid_issue: Some(1),
         suppressed: None,
         embargoed: None,
@@ -555,6 +628,73 @@ pub fn build_scholarly_article_record(
         within_library_holdings: None,
         content_location: landing_page_url,
         full_text_file: full_text_url,
+    })
+}
+
+/// Build a CNKI article table record.
+///
+/// # Arguments
+///
+/// * `detail` - Optional CNKI article detail payload.
+/// * `summary` - CNKI article summary payload.
+/// * `journal_id` - Internal journal id.
+/// * `issue_id` - Internal issue id.
+///
+/// # Returns
+///
+/// Article table record.
+pub fn build_cnki_article_record(
+    detail: Option<&Value>,
+    summary: &Value,
+    journal_id: i64,
+    issue_id: Option<i64>,
+) -> Option<ArticleRecord> {
+    let platform_id = detail
+        .and_then(|value| clean_text(value.get("platform_id")))
+        .or_else(|| clean_text(summary.get("platform_id")));
+    let article_key = platform_id
+        .clone()
+        .or_else(|| clean_text(summary.get("article_url")))?;
+    let article_id = stable_sqlite_id(article_key, "cnki:article");
+    let page = detail
+        .and_then(|value| clean_text(value.get("pages")))
+        .or_else(|| clean_text(summary.get("pages")));
+    let (start_page, end_page) = split_page_range(page.as_deref());
+    let doi = detail.and_then(|value| normalize_doi(value.get("doi")));
+    let permalink = detail
+        .and_then(|value| clean_text(value.get("permalink")))
+        .or_else(|| clean_text(summary.get("article_url")));
+    let content_location = detail
+        .and_then(|value| clean_text(value.get("content_location")))
+        .or_else(|| permalink.clone());
+
+    Some(ArticleRecord {
+        article_id,
+        journal_id,
+        issue_id,
+        title: detail
+            .and_then(|value| clean_text(value.get("title")))
+            .or_else(|| clean_text(summary.get("title"))),
+        date: detail
+            .and_then(|value| clean_text(value.get("online_release_date")))
+            .or_else(|| clean_text(summary.get("date"))),
+        authors: detail
+            .and_then(|value| clean_text(value.get("authors")))
+            .or_else(|| clean_text(summary.get("authors"))),
+        start_page,
+        end_page,
+        abstract_text: detail.and_then(|value| clean_text(value.get("abstract"))),
+        doi,
+        pmid: None,
+        permalink,
+        suppressed: None,
+        in_press: None,
+        open_access: None,
+        platform_id,
+        retraction_doi: None,
+        within_library_holdings: None,
+        content_location,
+        full_text_file: None,
     })
 }
 
@@ -912,7 +1052,9 @@ mod tests {
     use serde_json::json;
 
     use super::{
+        build_cnki_article_record, build_cnki_issue_record, build_cnki_journal_record,
         build_scholarly_article_record, build_scholarly_issue_record, crossref_publication_date,
+        CsvRow,
     };
 
     #[test]
@@ -973,6 +1115,68 @@ mod tests {
         assert_eq!(
             crossref_publication_date(&work).as_deref(),
             Some("2025-06-01")
+        );
+    }
+
+    #[test]
+    fn cnki_records_match_python_compatibility_rules() {
+        let row = CsvRow::from([
+            ("source".to_string(), "cnki".to_string()),
+            ("title".to_string(), "CNKI Test Journal".to_string()),
+            ("issn".to_string(), "1234-5678".to_string()),
+            ("id".to_string(), "CNKI Test Journal".to_string()),
+        ]);
+        let details = json!({
+            "pykm": "TEST",
+            "title": "CNKI Test Journal",
+            "issn": "1234-5678",
+            "impact_factor": "1.5",
+            "cover_url": "https://oversea.cnki.net/cover.jpg"
+        });
+        let issue = json!({
+            "year": 2026,
+            "number": "01",
+            "title": "2026 No.01",
+            "year_issue": "202601"
+        });
+        let summary = json!({
+            "article_url": "https://oversea.cnki.net/kcms2/article/abstract?filename=CNKI202601001",
+            "platform_id": "CNKI202601001",
+            "title": "CNKI Article",
+            "authors": "Test Author",
+            "pages": "1-2",
+            "is_free": 1,
+            "date": "2026-01-01"
+        });
+        let detail = json!({
+            "platform_id": "CNKI202601001",
+            "title": "CNKI Article",
+            "authors": "Test Author",
+            "abstract": "Test abstract.",
+            "doi": "https://doi.org/10.1/CNKI",
+            "online_release_date": "2026-01-02",
+            "pages": "1-2",
+            "html_read_url": "https://oversea.cnki.net/barnew/download/order?id=abc",
+            "permalink": "https://oversea.cnki.net/openlink/detail?filename=CNKI202601001",
+            "content_location": "https://oversea.cnki.net/openlink/detail?filename=CNKI202601001"
+        });
+
+        let journal = build_cnki_journal_record(1, &row, Some(&details));
+        let issue = build_cnki_issue_record(1, "TEST", &issue).expect("issue should build");
+        let article = build_cnki_article_record(Some(&detail), &summary, 1, Some(issue.issue_id))
+            .expect("article should build");
+
+        assert_eq!(journal.library_id, "cnki");
+        assert_eq!(journal.platform_journal_id.as_deref(), Some("TEST"));
+        assert_eq!(journal.scimago_rank, Some(1.5));
+        assert_eq!(issue.publication_year, Some(2026));
+        assert_eq!(issue.number.as_deref(), Some("01"));
+        assert_eq!(article.doi.as_deref(), Some("10.1/cnki"));
+        assert_eq!(article.open_access, None);
+        assert_eq!(article.full_text_file, None);
+        assert_eq!(
+            article.content_location.as_deref(),
+            Some("https://oversea.cnki.net/openlink/detail?filename=CNKI202601001")
         );
     }
 }

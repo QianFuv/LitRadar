@@ -1,0 +1,11 @@
+{
+  "journal_detail_html": "<html><head><title>CNKI Test Journal - 中国知网</title></head><body><input id=\"pykm\" value=\"TEST\" /><input id=\"pCode\" value=\"CJFD\" /><input id=\"time\" value=\"token\" /><input id=\"shareChName\" value=\"CNKI Test Journal\" /><p>ISSN: 1234-5678</p></body></html>",
+  "year_issues_html": "<div id=\"YearIssueTree\"><a id=\"yq202601\" value=\"202601\">2026 No.01</a></div>",
+  "issue_articles_html": {
+    "202601": "<dt class=\"tit\">Articles</dt><dd class=\"row\"><a href=\"/kcms2/article/abstract?v=1&filename=CNKI202601001\">CNKI article CNKI202601001</a><b name=\"encrypt\" id=\"CNKI202601001\"></b><span class=\"author\" title=\"Test Author\"></span><span class=\"company\" title=\"1-2\"></span></dd>"
+  },
+  "article_detail_html": {
+    "CNKI202601001": "<html>captcha 安全验证</html>"
+  },
+  "fail_endpoint": "article_detail"
+}
