@@ -1278,6 +1278,7 @@ mod tests {
         ArticleCandidateInfo, NotificationSubscriberInfo, RankedSelectionInfo, SelectionResultInfo,
     };
     use serde_json::json;
+    use tempfile::{Builder, TempDir};
 
     use super::{
         apply_selection_rules, build_default_state, build_markdown_content, candidate_match_score,
@@ -1535,7 +1536,7 @@ mod tests {
     #[test]
     fn state_load_save_and_normalization_cover_defaults_mismatch_and_corrupt_json() {
         let root = temp_root("ps-recommend-state");
-        let state_path = root.join("nested").join("state.json");
+        let state_path = root.path().join("nested").join("state.json");
         let now = "2026-07-05T00:00:00Z";
 
         let default_state =
@@ -1584,13 +1585,12 @@ mod tests {
         let corrupt =
             load_state(&state_path, "fixture.sqlite", now).expect_err("corrupt state should fail");
         assert!(matches!(corrupt, RecommendationError::Json(_)));
-        fs::remove_dir_all(root).expect("temp root should be removed");
     }
 
     #[test]
     fn change_manifest_loader_sorts_dedupes_and_fails_loud() {
         let root = temp_root("ps-recommend-manifest");
-        let manifest_path = root.join("changes.json");
+        let manifest_path = root.path().join("changes.json");
         fs::write(
             &manifest_path,
             serde_json::to_string(&json!({
@@ -1633,7 +1633,6 @@ mod tests {
         let invalid = load_change_manifest(&manifest_path, "fixture.sqlite")
             .expect_err("non-object manifest should fail");
         assert!(invalid.to_string().contains("Invalid change manifest"));
-        fs::remove_dir_all(root).expect("temp root should be removed");
     }
 
     #[test]
@@ -1690,17 +1689,11 @@ mod tests {
         );
     }
 
-    fn temp_root(prefix: &str) -> std::path::PathBuf {
-        let root = std::env::temp_dir().join(format!(
-            "{}-{}",
-            prefix,
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .expect("system time should be after epoch")
-                .as_nanos()
-        ));
-        fs::create_dir_all(&root).expect("temp root should be created");
-        root
+    fn temp_root(prefix: &str) -> TempDir {
+        Builder::new()
+            .prefix(prefix)
+            .tempdir()
+            .expect("temp root should be created")
     }
 
     fn subscriber() -> NotificationSubscriberInfo {

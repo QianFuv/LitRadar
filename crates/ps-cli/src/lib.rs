@@ -643,6 +643,8 @@ fn legacy_delivery_usage(workflow: DeliveryWorkflow) -> String {
 mod tests {
     use std::fs;
 
+    use tempfile::{Builder, TempDir};
+
     use super::{
         default_delivery_state_dir, extract_auth_db_path, extract_bool_pair, extract_string_option,
         extract_usize_option, grouped_usage, legacy_delivery_usage, legacy_index_usage,
@@ -684,43 +686,30 @@ mod tests {
 
     #[test]
     fn delivery_targets_resolve_manifest_database() {
-        let root = std::env::temp_dir().join(format!(
-            "ps-cli-targets-{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .expect("system time should be after epoch")
-                .as_nanos()
-        ));
-        let index_dir = root.join("data").join("index");
+        let root = temp_root("ps-cli-targets");
+        let index_dir = root.path().join("data").join("index");
         fs::create_dir_all(&index_dir).expect("index dir should be created");
         fs::write(index_dir.join("alpha.sqlite"), "").expect("db file should be created");
-        let manifest = root.join("manifest.json");
+        let manifest = root.path().join("manifest.json");
         fs::write(&manifest, r#"{"db_name":"alpha"}"#).expect("manifest should be created");
 
-        let targets = resolve_delivery_targets(&root, None, None, Some(&manifest))
+        let targets = resolve_delivery_targets(root.path(), None, None, Some(&manifest))
             .expect("manifest target should resolve");
 
         assert_eq!(targets.len(), 1);
         assert_eq!(targets[0].db_name, "alpha.sqlite");
-        fs::remove_dir_all(root).expect("temp root should be removed");
     }
 
     #[test]
     fn delivery_targets_scan_all_databases_in_name_order() {
-        let root = std::env::temp_dir().join(format!(
-            "ps-cli-all-dbs-{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .expect("system time should be after epoch")
-                .as_nanos()
-        ));
-        let index_dir = root.join("data").join("index");
+        let root = temp_root("ps-cli-all-dbs");
+        let index_dir = root.path().join("data").join("index");
         fs::create_dir_all(&index_dir).expect("index dir should be created");
         fs::write(index_dir.join("zeta.sqlite"), "").expect("db file should be created");
         fs::write(index_dir.join("alpha.sqlite"), "").expect("db file should be created");
 
-        let targets =
-            resolve_delivery_targets(&root, None, None, None).expect("targets should resolve");
+        let targets = resolve_delivery_targets(root.path(), None, None, None)
+            .expect("targets should resolve");
 
         assert_eq!(
             targets
@@ -729,7 +718,6 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec!["alpha.sqlite", "zeta.sqlite"]
         );
-        fs::remove_dir_all(root).expect("temp root should be removed");
     }
 
     #[test]
@@ -816,52 +804,50 @@ mod tests {
     #[test]
     fn manifest_target_requires_database_name() {
         let root = temp_root("ps-cli-missing-manifest-db");
-        let manifest = root.join("manifest.json");
+        let manifest = root.path().join("manifest.json");
         fs::write(&manifest, r#"{"generated_at":"2026-07-05T00:00:00Z"}"#)
             .expect("manifest should be created");
 
-        let error = resolve_delivery_targets(&root, None, None, Some(&manifest))
+        let error = resolve_delivery_targets(root.path(), None, None, Some(&manifest))
             .expect_err("manifest without db_name should fail");
 
         assert_eq!(
             error.to_string(),
             "Change manifest missing db_name; specify --db explicitly"
         );
-        fs::remove_dir_all(root).expect("temp root should be removed");
     }
 
     #[test]
     fn delivery_target_resolution_reports_missing_databases() {
         let root = temp_root("ps-cli-missing-db-targets");
-        let manifest = root.join("manifest.json");
+        let manifest = root.path().join("manifest.json");
         fs::write(&manifest, r#"{"db_name":"missing.sqlite"}"#)
             .expect("manifest should be created");
 
-        let by_name = resolve_delivery_targets(&root, None, Some("missing".to_string()), None)
-            .expect_err("missing db name target should fail");
-        let by_manifest = resolve_delivery_targets(&root, None, None, Some(&manifest))
+        let by_name =
+            resolve_delivery_targets(root.path(), None, Some("missing".to_string()), None)
+                .expect_err("missing db name target should fail");
+        let by_manifest = resolve_delivery_targets(root.path(), None, None, Some(&manifest))
             .expect_err("missing manifest db target should fail");
 
         assert_eq!(by_name.to_string(), "Database not found");
         assert_eq!(by_manifest.to_string(), "Database not found");
-        fs::remove_dir_all(root).expect("temp root should be removed");
     }
 
     #[test]
     fn project_path_resolution_keeps_absolute_paths_and_joins_relative_paths() {
         let root = temp_root("ps-cli-project-path");
-        let absolute_path = root.join("absolute.sqlite");
+        let absolute_path = root.path().join("absolute.sqlite");
         let relative_path = std::path::PathBuf::from("data/index/alpha.sqlite");
 
         assert_eq!(
-            resolve_project_path(&root, absolute_path.clone()),
+            resolve_project_path(root.path(), absolute_path.clone()),
             absolute_path
         );
         assert_eq!(
-            resolve_project_path(&root, relative_path.clone()),
-            root.join(relative_path)
+            resolve_project_path(root.path(), relative_path.clone()),
+            root.path().join(relative_path)
         );
-        fs::remove_dir_all(root).expect("temp root should be removed");
     }
 
     #[test]
@@ -888,7 +874,7 @@ mod tests {
     #[test]
     fn scheduler_dispatch_requires_valid_task_id() {
         let root = temp_root("ps-cli-scheduler-dispatch");
-        let auth_db_path = root.join("auth.sqlite");
+        let auth_db_path = root.path().join("auth.sqlite");
         ps_storage::initialize_auth_database(&auth_db_path)
             .expect("auth database should initialize");
 
@@ -902,13 +888,12 @@ mod tests {
         .expect_err("invalid scheduler task id should fail before execution");
 
         assert!(error.to_string().contains("invalid digit"));
-        fs::remove_dir_all(root).expect("temp root should be removed");
     }
 
     #[test]
     fn delivery_dispatch_requires_index_database_and_db_name() {
         let root = temp_root("ps-cli-delivery-dispatch");
-        let auth_db_path = root.join("auth.sqlite");
+        let auth_db_path = root.path().join("auth.sqlite");
         ps_storage::initialize_auth_database(&auth_db_path)
             .expect("auth database should initialize");
 
@@ -928,20 +913,22 @@ mod tests {
             "--auth-db".to_string(),
             auth_db_path.to_string_lossy().into_owned(),
             "--index-db".to_string(),
-            root.join("fixture.sqlite").to_string_lossy().into_owned(),
+            root.path()
+                .join("fixture.sqlite")
+                .to_string_lossy()
+                .into_owned(),
             "push".to_string(),
             "shadow".to_string(),
         ])
         .expect_err("push shadow should require a database name");
 
         assert!(missing_db.to_string().contains("--db is required"));
-        fs::remove_dir_all(root).expect("temp root should be removed");
     }
 
     #[test]
     fn grouped_dispatch_reports_unknown_worker_command() {
         let root = temp_root("ps-cli-worker-dispatch");
-        let auth_db_path = root.join("auth.sqlite");
+        let auth_db_path = root.path().join("auth.sqlite");
         ps_storage::initialize_auth_database(&auth_db_path)
             .expect("auth database should initialize");
 
@@ -954,19 +941,12 @@ mod tests {
         .expect_err("unknown worker command should return usage");
 
         assert!(error.to_string().contains("ps-cli worker shadow"));
-        fs::remove_dir_all(root).expect("temp root should be removed");
     }
 
-    fn temp_root(prefix: &str) -> std::path::PathBuf {
-        let root = std::env::temp_dir().join(format!(
-            "{}-{}",
-            prefix,
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .expect("system time should be after epoch")
-                .as_nanos()
-        ));
-        fs::create_dir_all(&root).expect("temp root should be created");
-        root
+    fn temp_root(prefix: &str) -> TempDir {
+        Builder::new()
+            .prefix(prefix)
+            .tempdir()
+            .expect("temp root should be created")
     }
 }

@@ -174,6 +174,8 @@ async fn shutdown_signal() {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::{AtomicBool, Ordering};
+
     use axum::body::{to_bytes, Body};
     use axum::http::header::{AUTHORIZATION, COOKIE, SET_COOKIE};
     use axum::http::{Method, Request, StatusCode};
@@ -182,6 +184,8 @@ mod tests {
     use tower::ServiceExt;
 
     use crate::test_support::{json_request, JsonTestResponse, TestBackend};
+
+    static TEST_ENV_LOCK: AtomicBool = AtomicBool::new(false);
 
     #[tokio::test]
     #[cfg_attr(
@@ -1762,7 +1766,7 @@ mod tests {
     async fn cnki_routes_cover_replay_session_status_and_clear_without_secret_leaks() {
         const REPLAY_MODE: &str = "PAPER_SCANNER_CNKI_REPLAY_MODE";
 
-        std::env::remove_var(REPLAY_MODE);
+        let _replay_mode_guard = EnvVarGuard::cleared(REPLAY_MODE);
         let backend = TestBackend::new();
         let user = backend.authenticated_user("cnki_user", false);
         let app = backend.router();
@@ -1891,7 +1895,6 @@ mod tests {
             None,
         )
         .await;
-        std::env::remove_var(REPLAY_MODE);
 
         assert_eq!(empty_session.status, StatusCode::OK);
         assert_eq!(empty_session.payload["status"], "empty");
@@ -1947,5 +1950,54 @@ mod tests {
             .to_str()
             .expect("set-cookie should be visible ASCII")
             .to_string()
+    }
+
+    struct EnvVarGuard {
+        name: &'static str,
+        original: Option<String>,
+        _lock: EnvLockGuard,
+    }
+
+    impl EnvVarGuard {
+        fn cleared(name: &'static str) -> Self {
+            let lock = EnvLockGuard::acquire();
+            let original = std::env::var(name).ok();
+            std::env::remove_var(name);
+            Self {
+                name,
+                original,
+                _lock: lock,
+            }
+        }
+    }
+
+    impl Drop for EnvVarGuard {
+        fn drop(&mut self) {
+            if let Some(value) = &self.original {
+                std::env::set_var(self.name, value);
+            } else {
+                std::env::remove_var(self.name);
+            }
+        }
+    }
+
+    struct EnvLockGuard;
+
+    impl EnvLockGuard {
+        fn acquire() -> Self {
+            while TEST_ENV_LOCK
+                .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
+                .is_err()
+            {
+                std::thread::yield_now();
+            }
+            Self
+        }
+    }
+
+    impl Drop for EnvLockGuard {
+        fn drop(&mut self) {
+            TEST_ENV_LOCK.store(false, Ordering::Release);
+        }
     }
 }

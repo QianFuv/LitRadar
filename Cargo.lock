@@ -920,6 +920,7 @@ dependencies = [
  "ps-storage",
  "ps-worker",
  "serde_json",
+ "tempfile",
 ]
 
 [[package]]
@@ -951,6 +952,7 @@ dependencies = [
  "ps-domain",
  "serde",
  "serde_json",
+ "tempfile",
 ]
 
 [[package]]
