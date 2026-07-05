@@ -1024,6 +1024,518 @@ mod tests {
         assert_eq!(self_delete.status, StatusCode::BAD_REQUEST);
     }
 
+    #[tokio::test]
+    #[cfg_attr(
+        miri,
+        ignore = "Miri does not support Tokio's Windows IOCP runtime initialization"
+    )]
+    async fn favorites_routes_cover_folder_article_batch_export_and_tracking_flows() {
+        let backend = TestBackend::new();
+        let user = backend.authenticated_user("reader", false);
+        let index_database = backend.create_index_database("fixture.sqlite");
+        let app = backend.router();
+        let auth = user.authorization_header();
+
+        let initial_folders = json_request(
+            &app,
+            Method::GET,
+            "/api/favorites/folders",
+            Some(&auth),
+            None,
+            None,
+        )
+        .await;
+        let default_folder_id = initial_folders.payload[0]["id"]
+            .as_i64()
+            .expect("default folder id should be numeric");
+        let created_folder = json_request(
+            &app,
+            Method::POST,
+            "/api/favorites/folders",
+            Some(&auth),
+            None,
+            Some(serde_json::json!({
+                "name": "Research",
+                "is_tracking": false
+            })),
+        )
+        .await;
+        let folder_id = created_folder.payload["id"]
+            .as_i64()
+            .expect("folder id should be numeric");
+        let duplicate_folder = json_request(
+            &app,
+            Method::POST,
+            "/api/favorites/folders",
+            Some(&auth),
+            None,
+            Some(serde_json::json!({
+                "name": "Research",
+                "is_tracking": false
+            })),
+        )
+        .await;
+        let renamed_folder = json_request(
+            &app,
+            Method::PUT,
+            &format!("/api/favorites/folders/{folder_id}"),
+            Some(&auth),
+            None,
+            Some(serde_json::json!({ "name": "Research 2024" })),
+        )
+        .await;
+        let tracking_folder = json_request(
+            &app,
+            Method::POST,
+            "/api/favorites/folders",
+            Some(&auth),
+            None,
+            Some(serde_json::json!({
+                "name": "Tracking",
+                "is_tracking": true
+            })),
+        )
+        .await;
+        let tracking_folder_id = tracking_folder.payload["id"]
+            .as_i64()
+            .expect("tracking folder id should be numeric");
+        let selected_tracking = json_request(
+            &app,
+            Method::PUT,
+            "/api/favorites/tracking",
+            Some(&auth),
+            None,
+            Some(serde_json::json!({ "folder_id": tracking_folder_id })),
+        )
+        .await;
+        let missing_tracking = json_request(
+            &app,
+            Method::PUT,
+            "/api/favorites/tracking",
+            Some(&auth),
+            None,
+            Some(serde_json::json!({ "folder_id": 999999 })),
+        )
+        .await;
+        let current_tracking = json_request(
+            &app,
+            Method::GET,
+            "/api/favorites/tracking",
+            Some(&auth),
+            None,
+            None,
+        )
+        .await;
+        let favorite = json_request(
+            &app,
+            Method::POST,
+            &format!("/api/favorites/folders/{folder_id}/articles"),
+            Some(&auth),
+            None,
+            Some(serde_json::json!({
+                "article_id": index_database.article_id,
+                "db_name": index_database.db_name,
+                "note": "Read later"
+            })),
+        )
+        .await;
+        let articles = json_request(
+            &app,
+            Method::GET,
+            &format!("/api/favorites/folders/{folder_id}/articles?limit=10&offset=0"),
+            Some(&auth),
+            None,
+            None,
+        )
+        .await;
+        let invalid_articles = json_request(
+            &app,
+            Method::GET,
+            &format!("/api/favorites/folders/{folder_id}/articles?limit=0"),
+            Some(&auth),
+            None,
+            None,
+        )
+        .await;
+        let count = json_request(
+            &app,
+            Method::GET,
+            &format!("/api/favorites/folders/{folder_id}/count"),
+            Some(&auth),
+            None,
+            None,
+        )
+        .await;
+        let export_response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!(
+                        "/api/favorites/folders/{folder_id}/export?format=ris"
+                    ))
+                    .header(AUTHORIZATION, &auth)
+                    .body(Body::empty())
+                    .expect("request should build"),
+            )
+            .await
+            .expect("response should be returned");
+        let export_status = export_response.status();
+        let export_headers = export_response.headers().clone();
+        let export_body = to_bytes(export_response.into_body(), usize::MAX)
+            .await
+            .expect("body should read");
+        let export_text = String::from_utf8(export_body.to_vec()).expect("export should be UTF-8");
+        let check = json_request(
+            &app,
+            Method::GET,
+            &format!(
+                "/api/favorites/check?article_id={}&db_name={}",
+                index_database.article_id, index_database.db_name
+            ),
+            Some(&auth),
+            None,
+            None,
+        )
+        .await;
+        let batch_check = json_request(
+            &app,
+            Method::POST,
+            "/api/favorites/check/batch",
+            Some(&auth),
+            None,
+            Some(serde_json::json!({
+                "article_ids": [
+                    index_database.article_id,
+                    index_database.article_id,
+                    0
+                ],
+                "db_name": index_database.db_name
+            })),
+        )
+        .await;
+        let bulk_add = json_request(
+            &app,
+            Method::POST,
+            &format!("/api/favorites/folders/{default_folder_id}/articles/bulk"),
+            Some(&auth),
+            None,
+            Some(serde_json::json!({
+                "articles": [
+                    {
+                        "article_id": index_database.article_id,
+                        "db_name": index_database.db_name,
+                        "note": "Tracking copy"
+                    }
+                ]
+            })),
+        )
+        .await;
+        let bulk_move = json_request(
+            &app,
+            Method::POST,
+            &format!("/api/favorites/folders/{default_folder_id}/articles/bulk-move"),
+            Some(&auth),
+            None,
+            Some(serde_json::json!({
+                "target_folder_id": tracking_folder_id,
+                "articles": [
+                    {
+                        "article_id": index_database.article_id,
+                        "db_name": index_database.db_name
+                    }
+                ]
+            })),
+        )
+        .await;
+        let bulk_move_same = json_request(
+            &app,
+            Method::POST,
+            &format!("/api/favorites/folders/{tracking_folder_id}/articles/bulk-move"),
+            Some(&auth),
+            None,
+            Some(serde_json::json!({
+                "target_folder_id": tracking_folder_id,
+                "articles": [
+                    {
+                        "article_id": index_database.article_id,
+                        "db_name": index_database.db_name
+                    }
+                ]
+            })),
+        )
+        .await;
+        let bulk_remove = json_request(
+            &app,
+            Method::POST,
+            &format!("/api/favorites/folders/{tracking_folder_id}/articles/bulk-remove"),
+            Some(&auth),
+            None,
+            Some(serde_json::json!({
+                "articles": [
+                    {
+                        "article_id": index_database.article_id,
+                        "db_name": index_database.db_name
+                    }
+                ]
+            })),
+        )
+        .await;
+        let removed = json_request(
+            &app,
+            Method::DELETE,
+            &format!(
+                "/api/favorites/folders/{folder_id}/articles/{}?db_name={}",
+                index_database.article_id, index_database.db_name
+            ),
+            Some(&auth),
+            None,
+            None,
+        )
+        .await;
+        let missing_favorite = json_request(
+            &app,
+            Method::DELETE,
+            &format!(
+                "/api/favorites/folders/{folder_id}/articles/{}?db_name={}",
+                index_database.article_id, index_database.db_name
+            ),
+            Some(&auth),
+            None,
+            None,
+        )
+        .await;
+        let deleted_folder = json_request(
+            &app,
+            Method::DELETE,
+            &format!("/api/favorites/folders/{folder_id}"),
+            Some(&auth),
+            None,
+            None,
+        )
+        .await;
+
+        assert_eq!(initial_folders.status, StatusCode::OK);
+        assert!(initial_folders.payload[0]["is_tracking"]
+            .as_bool()
+            .expect("tracking flag should be boolean"));
+        assert_eq!(created_folder.status, StatusCode::OK);
+        assert_eq!(created_folder.payload["name"], "Research");
+        assert_eq!(duplicate_folder.status, StatusCode::CONFLICT);
+        assert_eq!(renamed_folder.status, StatusCode::OK);
+        assert_eq!(tracking_folder.status, StatusCode::OK);
+        assert_eq!(selected_tracking.status, StatusCode::OK);
+        assert_eq!(missing_tracking.status, StatusCode::NOT_FOUND);
+        assert_eq!(current_tracking.payload["folder_id"], tracking_folder_id);
+        assert_eq!(favorite.status, StatusCode::OK);
+        assert_eq!(favorite.payload["note"], "Read later");
+        assert_eq!(articles.status, StatusCode::OK);
+        assert_eq!(articles.payload[0]["title"], "Fixture Article");
+        assert_eq!(articles.payload[0]["journal_title"], "Fixture Journal");
+        assert_eq!(invalid_articles.status, StatusCode::BAD_REQUEST);
+        assert_eq!(count.payload["count"], 1);
+        assert_eq!(export_status, StatusCode::OK);
+        assert_eq!(
+            export_headers
+                .get("content-type")
+                .expect("content type should exist"),
+            "application/x-research-info-systems"
+        );
+        assert!(export_headers
+            .get("content-disposition")
+            .expect("content disposition should exist")
+            .to_str()
+            .expect("header should be visible ASCII")
+            .contains("Research_2024.ris"));
+        assert!(export_text.contains("Fixture Article"));
+        assert_eq!(check.status, StatusCode::OK);
+        assert_eq!(check.payload[0]["folder_id"], folder_id);
+        assert_eq!(batch_check.status, StatusCode::OK);
+        assert_eq!(
+            batch_check
+                .payload
+                .as_array()
+                .expect("batch should be array")
+                .len(),
+            1
+        );
+        assert_eq!(batch_check.payload[0]["folders"][0]["folder_id"], folder_id);
+        assert_eq!(bulk_add.status, StatusCode::OK);
+        assert_eq!(bulk_add.payload["added"], 1);
+        assert_eq!(bulk_move.status, StatusCode::OK);
+        assert_eq!(bulk_move.payload["count"], 1);
+        assert_eq!(bulk_move_same.status, StatusCode::BAD_REQUEST);
+        assert_eq!(bulk_remove.status, StatusCode::OK);
+        assert_eq!(bulk_remove.payload["count"], 1);
+        assert_eq!(removed.status, StatusCode::OK);
+        assert_eq!(missing_favorite.status, StatusCode::NOT_FOUND);
+        assert_eq!(deleted_folder.status, StatusCode::OK);
+    }
+
+    #[tokio::test]
+    #[cfg_attr(
+        miri,
+        ignore = "Miri does not support Tokio's Windows IOCP runtime initialization"
+    )]
+    async fn tracking_routes_cover_status_and_notification_settings_validation() {
+        let backend = TestBackend::new();
+        let user = backend.authenticated_user("tracker", false);
+        let index_database = backend.create_index_database("fixture.sqlite");
+        let push_state_dir = backend.project_root().join("data").join("push_state");
+        std::fs::create_dir_all(&push_state_dir).expect("push state dir should be created");
+        std::fs::write(
+            push_state_dir.join("fixture.changes.json"),
+            serde_json::json!({
+                "db_name": index_database.db_name,
+                "notifiable_article_ids": [index_database.article_id],
+                "backfill_article_ids": [9002]
+            })
+            .to_string(),
+        )
+        .expect("push state fixture should be written");
+        let app = backend.router();
+        let auth = user.authorization_header();
+
+        let initial_status = json_request(
+            &app,
+            Method::GET,
+            "/api/tracking/status",
+            Some(&auth),
+            None,
+            None,
+        )
+        .await;
+        let empty_settings = json_request(
+            &app,
+            Method::GET,
+            "/api/tracking/notification-settings",
+            Some(&auth),
+            None,
+            None,
+        )
+        .await;
+        let invalid_delivery = json_request(
+            &app,
+            Method::PUT,
+            "/api/tracking/notification-settings",
+            Some(&auth),
+            None,
+            Some(serde_json::json!({
+                "delivery_method": "email"
+            })),
+        )
+        .await;
+        let missing_pushplus_token = json_request(
+            &app,
+            Method::PUT,
+            "/api/tracking/notification-settings",
+            Some(&auth),
+            None,
+            Some(serde_json::json!({
+                "delivery_method": "pushplus",
+                "pushplus_token": ""
+            })),
+        )
+        .await;
+        let unknown_database = json_request(
+            &app,
+            Method::PUT,
+            "/api/tracking/notification-settings",
+            Some(&auth),
+            None,
+            Some(serde_json::json!({
+                "selected_databases": ["missing.sqlite"],
+                "delivery_method": "folder"
+            })),
+        )
+        .await;
+        let folder_settings = json_request(
+            &app,
+            Method::PUT,
+            "/api/tracking/notification-settings",
+            Some(&auth),
+            None,
+            Some(serde_json::json!({
+                "keywords": [" ai ", "", "medicine"],
+                "directions": [" screening "],
+                "selected_databases": [index_database.db_name],
+                "delivery_method": "folder",
+                "enabled": true
+            })),
+        )
+        .await;
+        let stored_settings = json_request(
+            &app,
+            Method::GET,
+            "/api/tracking/notification-settings",
+            Some(&auth),
+            None,
+            None,
+        )
+        .await;
+        let configured_status = json_request(
+            &app,
+            Method::GET,
+            "/api/tracking/status",
+            Some(&auth),
+            None,
+            None,
+        )
+        .await;
+        let pushplus_settings = json_request(
+            &app,
+            Method::PUT,
+            "/api/tracking/notification-settings",
+            Some(&auth),
+            None,
+            Some(serde_json::json!({
+                "keywords": ["ai"],
+                "directions": ["screening"],
+                "delivery_method": "pushplus",
+                "pushplus_token": "token-1",
+                "pushplus_template": "",
+                "pushplus_channel": "wechat",
+                "sync_to_tracking_folder": true,
+                "enabled": true
+            })),
+        )
+        .await;
+        let subscribers = ps_storage::list_notification_subscribers(backend.auth_db_path())
+            .expect("subscribers should load");
+
+        assert_eq!(initial_status.status, StatusCode::OK);
+        assert_eq!(initial_status.payload["total_folders"], 1);
+        assert_eq!(initial_status.payload["weekly_articles_available"], 2);
+        assert_eq!(initial_status.payload["notification_configured"], false);
+        assert_eq!(empty_settings.status, StatusCode::OK);
+        assert!(empty_settings.payload.is_null());
+        assert_eq!(invalid_delivery.status, StatusCode::BAD_REQUEST);
+        assert_eq!(missing_pushplus_token.status, StatusCode::BAD_REQUEST);
+        assert_eq!(unknown_database.status, StatusCode::BAD_REQUEST);
+        assert_eq!(folder_settings.status, StatusCode::OK);
+        assert_eq!(
+            folder_settings.payload["keywords"],
+            serde_json::json!(["ai", "medicine"])
+        );
+        assert_eq!(
+            folder_settings.payload["directions"],
+            serde_json::json!(["screening"])
+        );
+        assert_eq!(
+            folder_settings.payload["selected_databases"],
+            serde_json::json!([])
+        );
+        assert_eq!(stored_settings.status, StatusCode::OK);
+        assert_eq!(stored_settings.payload["delivery_method"], "folder");
+        assert_eq!(configured_status.status, StatusCode::OK);
+        assert_eq!(configured_status.payload["notification_configured"], true);
+        assert_eq!(pushplus_settings.status, StatusCode::OK);
+        assert_eq!(pushplus_settings.payload["delivery_method"], "pushplus");
+        assert_eq!(pushplus_settings.payload["pushplus_template"], "markdown");
+        assert_eq!(subscribers.len(), 1);
+        assert_eq!(subscribers[0].user_id, user.user_id().value());
+        assert_eq!(subscribers[0].tracking_folder_id, Some(1));
+    }
+
     fn set_cookie_header(response: &JsonTestResponse) -> String {
         response
             .headers
