@@ -397,9 +397,9 @@ fn execute_shell_command(auth_db_path: &Path, command: &str) -> String {
                 continue;
             }
             if setting.value.trim().is_empty() {
-                shell.env_remove(setting.key);
+                shell.env_remove(setting.field);
             } else {
-                shell.env(setting.key, setting.value);
+                shell.env(setting.field, setting.value);
             }
         }
     }
@@ -877,9 +877,9 @@ mod tests {
 
     fn runtime_env_command() -> &'static str {
         if cfg!(windows) {
-            "if \"%CROSSREF_MAILTO_POOL%\"==\"scheduler@example.test\" (exit /B 0) else (exit /B 9)"
+            "if \"%crossref_mailto_pool%\"==\"scheduler@example.test\" (exit /B 0) else (exit /B 9)"
         } else {
-            "if [ \"$CROSSREF_MAILTO_POOL\" = \"scheduler@example.test\" ]; then exit 0; else exit 9; fi"
+            "if [ \"$crossref_mailto_pool\" = \"scheduler@example.test\" ]; then exit 0; else exit 9; fi"
         }
     }
 

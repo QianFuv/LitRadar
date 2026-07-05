@@ -411,8 +411,6 @@ pub struct ScheduledTaskUpdate {
 pub struct RuntimeSettingInfo {
     /// API field name.
     pub field: String,
-    /// Environment variable key.
-    pub key: String,
     /// Human-readable label.
     pub label: String,
     /// Human-readable description.

@@ -1,7 +1,6 @@
 //! Typed repositories for migrated auth database business routes.
 
 use std::collections::{HashMap, HashSet};
-use std::env;
 use std::error::Error;
 use std::fmt;
 use std::fs;
@@ -25,7 +24,6 @@ const ADMIN_INVITE_CODE_BYTES: i64 = 8;
 #[derive(Debug, Clone, Copy)]
 struct RuntimeConfigDefinition {
     field: &'static str,
-    env_name: &'static str,
     label: &'static str,
     input_type: &'static str,
     is_secret: bool,
@@ -33,10 +31,9 @@ struct RuntimeConfigDefinition {
     default_value: &'static str,
 }
 
-const RUNTIME_CONFIG_DEFINITIONS: [RuntimeConfigDefinition; 4] = [
+const RUNTIME_CONFIG_DEFINITIONS: [RuntimeConfigDefinition; 7] = [
     RuntimeConfigDefinition {
         field: "openalex_api_key_pool",
-        env_name: "OPENALEX_API_KEY_POOL",
         label: "OpenAlex API key pool",
         input_type: "password",
         is_secret: true,
@@ -44,31 +41,53 @@ const RUNTIME_CONFIG_DEFINITIONS: [RuntimeConfigDefinition; 4] = [
         default_value: "",
     },
     RuntimeConfigDefinition {
-        field: "proxy_pool",
-        env_name: "PROXY_POOL",
-        label: "Proxy pool",
-        input_type: "password",
-        is_secret: true,
-        description: "Comma- or semicolon-separated proxy URLs for scholarly and CNKI requests.",
-        default_value: "",
-    },
-    RuntimeConfigDefinition {
-        field: "crossref_mailto_pool",
-        env_name: "CROSSREF_MAILTO_POOL",
-        label: "Crossref mailto pool",
-        input_type: "text",
-        is_secret: false,
-        description: "Comma- or semicolon-separated Crossref contact emails.",
-        default_value: "",
-    },
-    RuntimeConfigDefinition {
         field: "semantic_scholar_api_key_pool",
-        env_name: "SEMANTIC_SCHOLAR_API_KEY_POOL",
         label: "Semantic Scholar API key pool",
         input_type: "password",
         is_secret: true,
         description: "Comma- or semicolon-separated Semantic Scholar REST API keys.",
         default_value: "",
+    },
+    RuntimeConfigDefinition {
+        field: "crossref_mailto_pool",
+        label: "Crossref mailto pool",
+        input_type: "email",
+        is_secret: false,
+        description: "Comma- or semicolon-separated Crossref contact emails.",
+        default_value: "",
+    },
+    RuntimeConfigDefinition {
+        field: "cors_allowed_origins",
+        label: "CORS allowed origins",
+        input_type: "text",
+        is_secret: false,
+        description: "Comma-separated browser origins allowed to send credentialed API requests.",
+        default_value: "",
+    },
+    RuntimeConfigDefinition {
+        field: "mcp_allowed_hosts",
+        label: "MCP allowed hosts",
+        input_type: "text",
+        is_secret: false,
+        description: "Comma-separated hosts accepted by the Streamable HTTP MCP endpoint.",
+        default_value: "localhost,127.0.0.1,::1",
+    },
+    RuntimeConfigDefinition {
+        field: "mcp_allowed_origins",
+        label: "MCP allowed origins",
+        input_type: "text",
+        is_secret: false,
+        description:
+            "Comma-separated browser origins accepted by the Streamable HTTP MCP endpoint.",
+        default_value: "",
+    },
+    RuntimeConfigDefinition {
+        field: "secure_cookies",
+        label: "Secure session cookies",
+        input_type: "boolean",
+        is_secret: false,
+        description: "Whether session cookies include the Secure attribute.",
+        default_value: "false",
     },
 ];
 
@@ -1159,9 +1178,7 @@ pub fn list_runtime_settings(
         .collect();
     Ok(RUNTIME_CONFIG_DEFINITIONS
         .iter()
-        .map(|definition| {
-            runtime_setting_from_definition(definition, rows.get(definition.env_name))
-        })
+        .map(|definition| runtime_setting_from_definition(definition, rows.get(definition.field)))
         .collect())
 }
 
@@ -1191,9 +1208,10 @@ pub fn upsert_runtime_settings(
                 .ok_or_else(|| BusinessRepositoryError::UnknownRuntimeSetting(field.clone()))?;
             let mut value = raw_value.trim().to_string();
             if definition.input_type == "boolean" {
-                value = runtime_bool_to_text(&value, true)?;
+                let default = definition.default_value.trim().eq_ignore_ascii_case("true");
+                value = runtime_bool_to_text(&value, default)?;
             }
-            statement.execute(params![definition.env_name, value, now])?;
+            statement.execute(params![definition.field, value, now])?;
         }
     }
     list_runtime_settings(auth_db_path)
@@ -2004,8 +2022,6 @@ fn runtime_setting_from_definition(
 ) -> RuntimeSettingInfo {
     let (value, source, updated_at) = if let Some((value, updated_at)) = row {
         (value.clone(), "database".to_string(), Some(*updated_at))
-    } else if let Ok(value) = env::var(definition.env_name) {
-        (value, "environment".to_string(), None)
     } else {
         (
             definition.default_value.to_string(),
@@ -2015,7 +2031,6 @@ fn runtime_setting_from_definition(
     };
     RuntimeSettingInfo {
         field: definition.field.to_string(),
-        key: definition.env_name.to_string(),
         label: definition.label.to_string(),
         description: definition.description.to_string(),
         input_type: definition.input_type.to_string(),
@@ -2160,5 +2175,87 @@ impl AuthRepositorySqliteError for crate::AuthRepositoryError {
             Self::Sqlite(error) => error,
             error => rusqlite::Error::ToSqlConversionFailure(Box::new(error)),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+
+    use rusqlite::Connection;
+    use tempfile::tempdir;
+
+    use super::{
+        initialize_auth_database, list_runtime_settings, upsert_runtime_settings,
+        BusinessRepositoryError,
+    };
+
+    #[test]
+    fn runtime_settings_ignore_stale_env_keys_and_proxy_pool() {
+        let temp_dir = tempdir().expect("temp dir should be created");
+        let auth_db_path = temp_dir.path().join("auth.sqlite");
+        initialize_auth_database(&auth_db_path).expect("auth database should initialize");
+        let connection = Connection::open(&auth_db_path).expect("auth database should open");
+        connection
+            .execute(
+                "INSERT INTO runtime_settings (key, value, updated_at) VALUES (?1, ?2, ?3)",
+                ("OPENALEX_API_KEY_POOL", "env-key", 1.0_f64),
+            )
+            .expect("stale env-key row should insert");
+        connection
+            .execute(
+                "INSERT INTO runtime_settings (key, value, updated_at) VALUES (?1, ?2, ?3)",
+                ("PROXY_POOL", "proxy", 1.0_f64),
+            )
+            .expect("stale proxy row should insert");
+
+        let settings = list_runtime_settings(&auth_db_path).expect("runtime settings should load");
+        let fields = settings
+            .iter()
+            .map(|setting| setting.field.as_str())
+            .collect::<Vec<_>>();
+
+        assert_eq!(settings.len(), 7);
+        assert!(fields.contains(&"openalex_api_key_pool"));
+        assert!(fields.contains(&"secure_cookies"));
+        assert!(!fields.contains(&"proxy_pool"));
+        assert!(settings
+            .iter()
+            .all(|setting| setting.source == "database" || setting.source == "default"));
+        let openalex = settings
+            .iter()
+            .find(|setting| setting.field == "openalex_api_key_pool")
+            .expect("OpenAlex setting should exist");
+        assert_eq!(openalex.value, "");
+        assert_eq!(openalex.source, "default");
+    }
+
+    #[test]
+    fn runtime_settings_reject_proxy_pool_and_normalize_boolean() {
+        let temp_dir = tempdir().expect("temp dir should be created");
+        let auth_db_path = temp_dir.path().join("auth.sqlite");
+        initialize_auth_database(&auth_db_path).expect("auth database should initialize");
+        let mut values = HashMap::new();
+        values.insert("secure_cookies".to_string(), "yes".to_string());
+
+        let settings = upsert_runtime_settings(&auth_db_path, &values)
+            .expect("runtime settings should update");
+        let secure_cookies = settings
+            .iter()
+            .find(|setting| setting.field == "secure_cookies")
+            .expect("secure cookie setting should exist");
+
+        assert_eq!(secure_cookies.value, "true");
+        assert_eq!(secure_cookies.source, "database");
+
+        values.clear();
+        values.insert("proxy_pool".to_string(), "proxy".to_string());
+        let error = upsert_runtime_settings(&auth_db_path, &values)
+            .expect_err("proxy pool should be rejected");
+
+        assert!(matches!(
+            error,
+            BusinessRepositoryError::UnknownRuntimeSetting(field) if field == "proxy_pool"
+        ));
     }
 }

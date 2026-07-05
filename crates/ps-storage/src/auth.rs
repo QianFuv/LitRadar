@@ -1,6 +1,5 @@
 //! Authentication repository operations for the existing auth database.
 
-use std::env;
 use std::error::Error;
 use std::fmt;
 use std::fs;
@@ -348,7 +347,6 @@ pub fn initialize_auth_database(auth_db_path: impl AsRef<Path>) -> Result<(), Au
             [],
         )?;
     }
-    seed_runtime_settings_from_environment(&connection)?;
     Ok(())
 }
 
@@ -920,36 +918,4 @@ fn table_columns(
     let mut statement = connection.prepare(&format!("PRAGMA table_info({table_name})"))?;
     let rows = statement.query_map([], |row| row.get::<_, String>(1))?;
     collect_rows(rows)
-}
-
-fn seed_runtime_settings_from_environment(
-    connection: &Connection,
-) -> Result<(), AuthRepositoryError> {
-    let now = current_unix_time();
-    for env_name in [
-        "OPENALEX_API_KEY_POOL",
-        "PROXY_POOL",
-        "CROSSREF_MAILTO_POOL",
-        "SEMANTIC_SCHOLAR_API_KEY_POOL",
-    ] {
-        let Ok(raw_value) = env::var(env_name) else {
-            continue;
-        };
-        let value = raw_value.trim();
-        if value.is_empty() {
-            continue;
-        }
-        connection.execute(
-            "INSERT OR IGNORE INTO runtime_settings (key, value, updated_at) VALUES (?1, ?2, ?3)",
-            params![env_name, value, now],
-        )?;
-    }
-    Ok(())
-}
-
-fn current_unix_time() -> f64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .expect("system time should be after Unix epoch")
-        .as_secs_f64()
 }

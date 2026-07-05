@@ -810,6 +810,19 @@ mod tests {
             })),
         )
         .await;
+        let runtime_proxy_error = json_request(
+            &app,
+            Method::PUT,
+            "/api/admin/runtime-settings",
+            Some(&admin_auth),
+            None,
+            Some(serde_json::json!({
+                "values": {
+                    "proxy_pool": "http://127.0.0.1:8080"
+                }
+            })),
+        )
+        .await;
         let task = json_request(
             &app,
             Method::POST,
@@ -988,12 +1001,28 @@ mod tests {
         assert_eq!(deleted_invite.status, StatusCode::OK);
         assert_eq!(missing_invite.status, StatusCode::NOT_FOUND);
         assert_eq!(runtime_settings.status, StatusCode::OK);
-        assert!(runtime_settings
+        let runtime_setting_items = runtime_settings
             .payload
             .as_array()
-            .expect("runtime settings should be array")
+            .expect("runtime settings should be array");
+        assert!(runtime_setting_items
             .iter()
             .any(|setting| setting["field"] == "openalex_api_key_pool"));
+        assert!(runtime_setting_items
+            .iter()
+            .any(|setting| setting["field"] == "secure_cookies"));
+        assert!(!runtime_setting_items
+            .iter()
+            .any(|setting| setting["field"] == "proxy_pool"));
+        assert!(runtime_setting_items
+            .iter()
+            .all(|setting| setting.get("key").is_none()));
+        assert!(runtime_setting_items.iter().all(|setting| {
+            matches!(
+                setting["source"].as_str(),
+                Some("database") | Some("default")
+            )
+        }));
         assert_eq!(runtime_update.status, StatusCode::OK);
         assert!(runtime_update
             .payload
@@ -1006,6 +1035,7 @@ mod tests {
                     && setting["source"] == "database"
             }));
         assert_eq!(runtime_error.status, StatusCode::BAD_REQUEST);
+        assert_eq!(runtime_proxy_error.status, StatusCode::BAD_REQUEST);
         assert_eq!(task.status, StatusCode::OK);
         assert_eq!(task.payload["name"], "Nightly index");
         assert_eq!(task_list.status, StatusCode::OK);

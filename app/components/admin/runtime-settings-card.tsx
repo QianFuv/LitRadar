@@ -40,9 +40,6 @@ function getSourceLabel(source: RuntimeSettingInfo['source']): string {
   if (source === 'database') {
     return '数据库';
   }
-  if (source === 'environment') {
-    return '环境变量';
-  }
   return '默认值';
 }
 
@@ -255,7 +252,7 @@ export function RuntimeSettingsCard() {
           <DatabaseZap className="h-5 w-5" />
           运行配置
         </CardTitle>
-        <CardDescription>管理索引服务使用的外部 API 配置</CardDescription>
+        <CardDescription>管理后端共享运行配置</CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
         {isLoading ? (

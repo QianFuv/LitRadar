@@ -377,13 +377,12 @@ export interface AdminStats {
 
 export interface RuntimeSettingInfo {
   field: string;
-  key: string;
   label: string;
   description: string;
   input_type: 'text' | 'password' | 'email' | 'boolean';
   is_secret: boolean;
   value: string;
-  source: 'database' | 'environment' | 'default';
+  source: 'database' | 'default';
   updated_at: number | null;
 }
 

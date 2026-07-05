@@ -457,9 +457,9 @@ fn apply_runtime_settings(auth_db_path: &Path) {
             continue;
         }
         if setting.value.trim().is_empty() {
-            env::remove_var(setting.key);
+            env::remove_var(setting.field);
         } else {
-            env::set_var(setting.key, setting.value);
+            env::set_var(setting.field, setting.value);
         }
     }
 }
