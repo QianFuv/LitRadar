@@ -1,11 +1,12 @@
 //! Live CSV index orchestration for the legacy `index` command.
 
+use std::env;
 use std::error::Error;
 use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::process::{Child, Command, Stdio};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use ps_sources::{
     CnkiClient, CnkiSourceError, CnkiTransport, LiveCnkiConfig, LiveCnkiTransport,
@@ -13,7 +14,7 @@ use ps_sources::{
     SourceAttempt, SourceError,
 };
 use rusqlite::Connection;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::cnki::{process_cnki_row, CnkiIndexConfig, CnkiIndexError};
 use crate::manifest::{
@@ -24,13 +25,15 @@ use crate::schema::{
     persist_index_run_stats,
 };
 use crate::scholarly::{process_scholarly_row, ScholarlyIndexError};
-use crate::stats::{IndexRunStats, PathCountIncrements};
+use crate::stats::{ApiCallStats, IndexRunStats, PathCountIncrements, PathStats};
 use crate::transforms::{
     build_journal_id, journal_title_from_row, source_from_row, ArticleRecord, CsvRow,
 };
 
 const SCHOLARLY_SOURCE: &str = "scholarly";
 const CNKI_SOURCE: &str = "cnki";
+const LIVE_INDEX_WORKER_REQUEST_ENV: &str = "PAPER_SCANNER_LIVE_INDEX_WORKER_REQUEST";
+const SQLITE_BUSY_TIMEOUT_SECONDS: u64 = 30;
 
 /// Live index run configuration.
 #[derive(Debug, Clone)]
@@ -116,6 +119,90 @@ struct LiveJournalContext<'a> {
     cnki_config: &'a CnkiIndexConfig,
 }
 
+struct LiveJournalRowsContext<'a> {
+    rows: &'a [CsvRow],
+    csv_path: &'a Path,
+    db_path: &'a Path,
+    csv_file: &'a str,
+    run_id: &'a str,
+    timestamp: &'a str,
+    config: &'a LiveIndexConfig,
+}
+
+#[derive(Debug)]
+struct LiveJournalRowsOutcome {
+    stats: IndexRunStats,
+    written_article_ids: Vec<i64>,
+    source_attempt_count: usize,
+}
+
+#[derive(Debug)]
+struct LiveJournalRowsFailure {
+    partial: LiveJournalRowsOutcome,
+    error: LiveIndexError,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+struct LiveIndexWorkerRequest {
+    project_root: PathBuf,
+    csv_path: PathBuf,
+    db_path: PathBuf,
+    csv_file: String,
+    run_id: String,
+    timestamp: String,
+    worker_id: usize,
+    process_count: usize,
+    worker_count: usize,
+    issue_batch_size: usize,
+    timeout_seconds: u64,
+    resume: bool,
+    update: bool,
+    rows: Vec<CsvRow>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+struct LiveIndexWorkerResponse {
+    worker_id: usize,
+    status: String,
+    stats: LiveIndexWorkerStats,
+    written_article_ids: Vec<i64>,
+    source_attempt_count: usize,
+    error: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+struct LiveIndexWorkerStats {
+    run_id: String,
+    csv_file: String,
+    started_at: String,
+    finished_at: Option<String>,
+    status: String,
+    total_journals: i64,
+    succeeded_journals: i64,
+    failed_journals: i64,
+    resumed_journals: i64,
+    error_summary: Option<String>,
+    path_stats: Vec<PathStats>,
+    api_stats: Vec<ApiCallStats>,
+}
+
+trait LiveWorkerLauncher {
+    fn run_workers(
+        &self,
+        requests: Vec<LiveIndexWorkerRequest>,
+    ) -> Result<Vec<LiveIndexWorkerResponse>, LiveIndexError>;
+}
+
+struct ProcessLiveWorkerLauncher {
+    command_path: PathBuf,
+}
+
+struct SpawnedLiveWorker {
+    worker_id: usize,
+    request_path: PathBuf,
+    child: Child,
+}
+
 /// Live index workflow errors.
 #[derive(Debug)]
 pub enum LiveIndexError {
@@ -123,6 +210,8 @@ pub enum LiveIndexError {
     Io(std::io::Error),
     /// SQLite operation failed.
     Sqlite(rusqlite::Error),
+    /// JSON encoding or decoding failed.
+    Json(serde_json::Error),
     /// Scholarly source operation failed.
     Source(SourceError),
     /// CNKI source operation failed.
@@ -137,6 +226,8 @@ pub enum LiveIndexError {
     MissingConfig(String),
     /// Runtime configuration is invalid.
     InvalidConfig(String),
+    /// Internal journal worker failed.
+    Worker(String),
     /// Notify handoff failed.
     Notify(String),
 }
@@ -147,6 +238,7 @@ impl fmt::Display for LiveIndexError {
         match self {
             Self::Io(error) => write!(formatter, "{error}"),
             Self::Sqlite(error) => write!(formatter, "{error}"),
+            Self::Json(error) => write!(formatter, "{error}"),
             Self::Source(error) => write!(formatter, "{error}"),
             Self::CnkiSource(error) => write!(formatter, "{error}"),
             Self::Scholarly(error) => write!(formatter, "{error}"),
@@ -154,6 +246,7 @@ impl fmt::Display for LiveIndexError {
             Self::UnsupportedSource(message) => formatter.write_str(message),
             Self::MissingConfig(message) => formatter.write_str(message),
             Self::InvalidConfig(message) => formatter.write_str(message),
+            Self::Worker(message) => formatter.write_str(message),
             Self::Notify(message) => formatter.write_str(message),
         }
     }
@@ -165,6 +258,7 @@ impl Error for LiveIndexError {
         match self {
             Self::Io(error) => Some(error),
             Self::Sqlite(error) => Some(error),
+            Self::Json(error) => Some(error),
             Self::Source(error) => Some(error),
             Self::CnkiSource(error) => Some(error),
             Self::Scholarly(error) => Some(error),
@@ -172,6 +266,7 @@ impl Error for LiveIndexError {
             Self::UnsupportedSource(_)
             | Self::MissingConfig(_)
             | Self::InvalidConfig(_)
+            | Self::Worker(_)
             | Self::Notify(_) => None,
         }
     }
@@ -188,6 +283,13 @@ impl From<rusqlite::Error> for LiveIndexError {
     /// Convert SQLite errors into live index errors.
     fn from(error: rusqlite::Error) -> Self {
         Self::Sqlite(error)
+    }
+}
+
+impl From<serde_json::Error> for LiveIndexError {
+    /// Convert JSON errors into live index errors.
+    fn from(error: serde_json::Error) -> Self {
+        Self::Json(error)
     }
 }
 
@@ -216,6 +318,111 @@ impl From<CnkiIndexError> for LiveIndexError {
     /// Convert CNKI row errors into live index errors.
     fn from(error: CnkiIndexError) -> Self {
         Self::Cnki(error)
+    }
+}
+
+impl From<IndexRunStats> for LiveIndexWorkerStats {
+    fn from(stats: IndexRunStats) -> Self {
+        Self {
+            run_id: stats.run_id,
+            csv_file: stats.csv_file,
+            started_at: stats.started_at,
+            finished_at: stats.finished_at,
+            status: stats.status,
+            total_journals: stats.total_journals,
+            succeeded_journals: stats.succeeded_journals,
+            failed_journals: stats.failed_journals,
+            resumed_journals: stats.resumed_journals,
+            error_summary: stats.error_summary,
+            path_stats: stats.path_stats.into_values().collect(),
+            api_stats: stats.api_stats.into_values().collect(),
+        }
+    }
+}
+
+impl LiveIndexWorkerStats {
+    fn into_index_run_stats(self) -> IndexRunStats {
+        let mut stats = IndexRunStats::new(self.run_id, self.csv_file, self.started_at);
+        stats.finished_at = self.finished_at;
+        stats.status = self.status;
+        stats.total_journals = self.total_journals;
+        stats.succeeded_journals = self.succeeded_journals;
+        stats.failed_journals = self.failed_journals;
+        stats.resumed_journals = self.resumed_journals;
+        stats.error_summary = self.error_summary;
+        for path_stats in self.path_stats {
+            stats.path_stats.insert(path_stats.key.clone(), path_stats);
+        }
+        for api_stats in self.api_stats {
+            stats.api_stats.insert(api_stats.key.clone(), api_stats);
+        }
+        stats
+    }
+}
+
+impl ProcessLiveWorkerLauncher {
+    fn new(command_path: PathBuf) -> Self {
+        Self { command_path }
+    }
+}
+
+impl LiveWorkerLauncher for ProcessLiveWorkerLauncher {
+    fn run_workers(
+        &self,
+        requests: Vec<LiveIndexWorkerRequest>,
+    ) -> Result<Vec<LiveIndexWorkerResponse>, LiveIndexError> {
+        let mut spawned_workers = Vec::new();
+        for request in &requests {
+            let request_path = write_live_worker_request_file(request)?;
+            let child = Command::new(&self.command_path)
+                .env(LIVE_INDEX_WORKER_REQUEST_ENV, &request_path)
+                .env("PAPER_SCANNER_PROJECT_ROOT", &request.project_root)
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()
+                .map_err(|error| {
+                    LiveIndexError::Worker(format!(
+                        "failed to spawn live index worker {}: {error}",
+                        request.worker_id
+                    ))
+                })?;
+            spawned_workers.push(SpawnedLiveWorker {
+                worker_id: request.worker_id,
+                request_path,
+                child,
+            });
+        }
+
+        let mut responses = Vec::new();
+        for spawned_worker in spawned_workers {
+            let output = spawned_worker.child.wait_with_output().map_err(|error| {
+                LiveIndexError::Worker(format!(
+                    "failed to wait for live index worker {}: {error}",
+                    spawned_worker.worker_id
+                ))
+            })?;
+            let _ = fs::remove_file(&spawned_worker.request_path);
+            if !output.status.success() {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                return Err(LiveIndexError::Worker(format!(
+                    "live index worker {} exited with {}: {}",
+                    spawned_worker.worker_id,
+                    output.status,
+                    stderr.trim()
+                )));
+            }
+            let mut response: LiveIndexWorkerResponse = serde_json::from_slice(&output.stdout)?;
+            if response.worker_id != spawned_worker.worker_id {
+                return Err(LiveIndexError::Worker(format!(
+                    "live index worker {} returned response for worker {}",
+                    spawned_worker.worker_id, response.worker_id
+                )));
+            }
+            response.written_article_ids.sort_unstable();
+            responses.push(response);
+        }
+        responses.sort_by_key(|response| response.worker_id);
+        Ok(responses)
     }
 }
 
@@ -266,6 +473,102 @@ pub fn run_live_index(config: &LiveIndexConfig) -> Result<LiveIndexOutcome, Live
     })
 }
 
+/// Run an internal live index worker when the worker environment is present.
+///
+/// # Returns
+///
+/// Serialized worker response when this process was launched as a worker.
+pub fn run_live_index_worker_from_environment() -> Result<Option<String>, LiveIndexError> {
+    let Ok(request_path) = env::var(LIVE_INDEX_WORKER_REQUEST_ENV) else {
+        return Ok(None);
+    };
+    let response = run_live_index_worker_from_file(Path::new(&request_path))?;
+    Ok(Some(serde_json::to_string(&response)?))
+}
+
+fn run_live_index_worker_from_file(
+    request_path: &Path,
+) -> Result<LiveIndexWorkerResponse, LiveIndexError> {
+    let request: LiveIndexWorkerRequest = serde_json::from_str(&fs::read_to_string(request_path)?)?;
+    run_live_index_worker(request)
+}
+
+fn run_live_index_worker(
+    request: LiveIndexWorkerRequest,
+) -> Result<LiveIndexWorkerResponse, LiveIndexError> {
+    let connection = open_live_index_connection(&request.db_path)?;
+    let config = LiveIndexConfig {
+        project_root: request.project_root.clone(),
+        file: None,
+        worker_count: request.worker_count,
+        process_count: 1,
+        issue_batch_size: request.issue_batch_size,
+        timeout_seconds: request.timeout_seconds,
+        resume: request.resume,
+        update: request.update,
+        notify: false,
+        notify_dry_run: true,
+    };
+    let context = LiveJournalRowsContext {
+        rows: &request.rows,
+        csv_path: &request.csv_path,
+        db_path: &request.db_path,
+        csv_file: &request.csv_file,
+        run_id: &request.run_id,
+        timestamp: &request.timestamp,
+        config: &config,
+    };
+
+    let response = match run_live_journal_rows_locally(&connection, &context) {
+        Ok(outcome) => LiveIndexWorkerResponse {
+            worker_id: request.worker_id,
+            status: "succeeded".to_string(),
+            stats: outcome.stats.into(),
+            written_article_ids: outcome.written_article_ids,
+            source_attempt_count: outcome.source_attempt_count,
+            error: None,
+        },
+        Err(failure) => {
+            let failure = *failure;
+            LiveIndexWorkerResponse {
+                worker_id: request.worker_id,
+                status: "failed".to_string(),
+                stats: failure.partial.stats.into(),
+                written_article_ids: failure.partial.written_article_ids,
+                source_attempt_count: failure.partial.source_attempt_count,
+                error: Some(failure.error.to_string()),
+            }
+        }
+    };
+    Ok(response)
+}
+
+fn open_live_index_connection(db_path: &Path) -> Result<Connection, LiveIndexError> {
+    let connection = Connection::open(db_path)?;
+    connection.busy_timeout(Duration::from_secs(SQLITE_BUSY_TIMEOUT_SECONDS))?;
+    init_index_db(&connection)?;
+    Ok(connection)
+}
+
+fn write_live_worker_request_file(
+    request: &LiveIndexWorkerRequest,
+) -> Result<PathBuf, LiveIndexError> {
+    let request_path = live_worker_request_path(request.worker_id);
+    fs::write(&request_path, serde_json::to_vec(request)?)?;
+    Ok(request_path)
+}
+
+fn live_worker_request_path(worker_id: usize) -> PathBuf {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or(0);
+    env::temp_dir().join(format!(
+        "paper-scanner-live-worker-{}-{nanos}-{worker_id}.json",
+        std::process::id()
+    ))
+}
+
 fn validate_live_concurrency_config(config: &LiveIndexConfig) -> Result<(), LiveIndexError> {
     if config.worker_count == 0 {
         return Err(LiveIndexError::InvalidConfig(
@@ -305,6 +608,272 @@ fn journal_failure(
         attempts,
         error: error.into(),
     })
+}
+
+fn run_live_journal_rows_locally(
+    connection: &Connection,
+    context: &LiveJournalRowsContext<'_>,
+) -> Result<LiveJournalRowsOutcome, Box<LiveJournalRowsFailure>> {
+    let mut stats = IndexRunStats::new(
+        context.run_id.to_string(),
+        context.csv_file.to_string(),
+        context.timestamp.to_string(),
+    );
+    if context.rows.is_empty() {
+        stats.finish("succeeded", context.timestamp.to_string(), None);
+        return Ok(LiveJournalRowsOutcome {
+            stats,
+            written_article_ids: Vec::new(),
+            source_attempt_count: 0,
+        });
+    }
+
+    let scholarly_config = LiveScholarlyConfig::from_environment(context.config.timeout_seconds);
+    let mut scholarly_client = match LiveScholarlyTransport::new(scholarly_config.clone()) {
+        Ok(transport) => {
+            ScholarlyClient::new(transport, scholarly_config.has_semantic_scholar_key())
+        }
+        Err(error) => return Err(finish_live_rows_failure(stats, Vec::new(), 0, error.into())),
+    };
+    let mut cnki_client = match LiveCnkiTransport::new(LiveCnkiConfig {
+        timeout_seconds: context.config.timeout_seconds,
+    }) {
+        Ok(transport) => CnkiClient::new(transport),
+        Err(error) => return Err(finish_live_rows_failure(stats, Vec::new(), 0, error.into())),
+    };
+    let cnki_config = CnkiIndexConfig {
+        csv_path: context.csv_path.to_path_buf(),
+        fixture_path: PathBuf::new(),
+        output_db_path: context.db_path.to_path_buf(),
+        manifest_path: None,
+        run_id: context.run_id.to_string(),
+        timestamp: context.timestamp.to_string(),
+        resume: context.config.resume,
+        update: context.config.update,
+        issue_batch_size: context.config.issue_batch_size.max(1),
+    };
+    let mut all_written_articles = Vec::new();
+
+    for row in context.rows {
+        let source = source_from_row(row);
+        let journal_id = match build_journal_id(row) {
+            Some(journal_id) => journal_id,
+            None => {
+                let error = LiveIndexError::UnsupportedSource(format!(
+                    "Journal row missing id: {}",
+                    journal_title_from_row(row)
+                ));
+                return Err(finish_live_rows_failure(
+                    stats,
+                    all_written_articles,
+                    scholarly_client.attempts().len() + cnki_client.attempts().len(),
+                    error,
+                ));
+            }
+        };
+        let journal_title = journal_title_from_row(row);
+        let path_key = stats.start_path(
+            &source,
+            "journal",
+            Some(journal_id),
+            journal_title.clone(),
+            context.timestamp.to_string(),
+        );
+        match process_live_journal_row(
+            &mut scholarly_client,
+            &mut cnki_client,
+            LiveJournalContext {
+                connection,
+                row,
+                csv_file: context.csv_file,
+                journal_id,
+                timestamp: context.timestamp,
+                cnki_config: &cnki_config,
+            },
+        ) {
+            Ok(outcome) => {
+                record_live_journal_attempts(
+                    &mut stats,
+                    &outcome.source,
+                    &outcome.attempts,
+                    journal_id,
+                    &journal_title,
+                );
+                stats.record_path_counts(&path_key, outcome.counts);
+                stats.finish_path(
+                    &path_key,
+                    &outcome.status,
+                    context.timestamp.to_string(),
+                    None,
+                );
+                all_written_articles.extend(outcome.written_articles);
+            }
+            Err(failure) => {
+                let LiveJournalFailure {
+                    source,
+                    attempts,
+                    error,
+                } = *failure;
+                record_live_journal_attempts(
+                    &mut stats,
+                    &source,
+                    &attempts,
+                    journal_id,
+                    &journal_title,
+                );
+                stats.finish_path(
+                    &path_key,
+                    "failed",
+                    context.timestamp.to_string(),
+                    Some(&error.to_string()),
+                );
+                return Err(finish_live_rows_failure(
+                    stats,
+                    all_written_articles,
+                    scholarly_client.attempts().len() + cnki_client.attempts().len(),
+                    error,
+                ));
+            }
+        }
+    }
+
+    stats.finish("succeeded", context.timestamp.to_string(), None);
+    Ok(live_rows_outcome(
+        stats,
+        all_written_articles,
+        scholarly_client.attempts().len() + cnki_client.attempts().len(),
+    ))
+}
+
+fn finish_live_rows_failure(
+    mut stats: IndexRunStats,
+    written_articles: Vec<ArticleRecord>,
+    source_attempt_count: usize,
+    error: LiveIndexError,
+) -> Box<LiveJournalRowsFailure> {
+    let finished_at = stats.started_at.clone();
+    stats.finish("failed", finished_at, Some(error.to_string()));
+    Box::new(LiveJournalRowsFailure {
+        partial: live_rows_outcome(stats, written_articles, source_attempt_count),
+        error,
+    })
+}
+
+fn live_rows_outcome(
+    stats: IndexRunStats,
+    mut written_articles: Vec<ArticleRecord>,
+    source_attempt_count: usize,
+) -> LiveJournalRowsOutcome {
+    written_articles.sort_by_key(|article| article.article_id);
+    LiveJournalRowsOutcome {
+        stats,
+        written_article_ids: written_articles
+            .into_iter()
+            .map(|article| article.article_id)
+            .collect(),
+        source_attempt_count,
+    }
+}
+
+fn run_live_journal_rows_in_worker_processes(
+    context: &LiveJournalRowsContext<'_>,
+    launcher: &dyn LiveWorkerLauncher,
+) -> Result<LiveJournalRowsOutcome, Box<LiveJournalRowsFailure>> {
+    let requests = build_live_worker_requests(context);
+    let responses = match launcher.run_workers(requests) {
+        Ok(responses) => responses,
+        Err(error) => {
+            let stats = IndexRunStats::new(
+                context.run_id.to_string(),
+                context.csv_file.to_string(),
+                context.timestamp.to_string(),
+            );
+            return Err(finish_live_rows_failure(stats, Vec::new(), 0, error));
+        }
+    };
+
+    let mut stats = IndexRunStats::new(
+        context.run_id.to_string(),
+        context.csv_file.to_string(),
+        context.timestamp.to_string(),
+    );
+    let mut written_article_ids = Vec::new();
+    let mut source_attempt_count = 0;
+    let mut errors = Vec::new();
+    for response in responses {
+        stats.merge_worker_stats(response.stats.into_index_run_stats());
+        written_article_ids.extend(response.written_article_ids);
+        source_attempt_count += response.source_attempt_count;
+        if response.status != "succeeded" {
+            errors.push(
+                response
+                    .error
+                    .unwrap_or_else(|| format!("worker {} failed", response.worker_id)),
+            );
+        }
+    }
+    written_article_ids.sort_unstable();
+    written_article_ids.dedup();
+    if errors.is_empty() {
+        stats.finish("succeeded", context.timestamp.to_string(), None);
+        Ok(LiveJournalRowsOutcome {
+            stats,
+            written_article_ids,
+            source_attempt_count,
+        })
+    } else {
+        let error = LiveIndexError::Worker(errors.join("; "));
+        stats.finish(
+            "failed",
+            context.timestamp.to_string(),
+            Some(error.to_string()),
+        );
+        Err(Box::new(LiveJournalRowsFailure {
+            partial: LiveJournalRowsOutcome {
+                stats,
+                written_article_ids,
+                source_attempt_count,
+            },
+            error,
+        }))
+    }
+}
+
+fn build_live_worker_requests(context: &LiveJournalRowsContext<'_>) -> Vec<LiveIndexWorkerRequest> {
+    partition_live_worker_rows(context.rows, context.config.process_count)
+        .into_iter()
+        .enumerate()
+        .filter_map(|(worker_id, rows)| {
+            if rows.is_empty() {
+                return None;
+            }
+            Some(LiveIndexWorkerRequest {
+                project_root: context.config.project_root.clone(),
+                csv_path: context.csv_path.to_path_buf(),
+                db_path: context.db_path.to_path_buf(),
+                csv_file: context.csv_file.to_string(),
+                run_id: context.run_id.to_string(),
+                timestamp: context.timestamp.to_string(),
+                worker_id,
+                process_count: context.config.process_count,
+                worker_count: context.config.worker_count,
+                issue_batch_size: context.config.issue_batch_size,
+                timeout_seconds: context.config.timeout_seconds,
+                resume: context.config.resume,
+                update: context.config.update,
+                rows,
+            })
+        })
+        .collect()
+}
+
+fn partition_live_worker_rows(rows: &[CsvRow], process_count: usize) -> Vec<Vec<CsvRow>> {
+    let worker_count = process_count.min(rows.len()).max(1);
+    let mut partitions = vec![Vec::new(); worker_count];
+    for (row_index, row) in rows.iter().enumerate() {
+        partitions[row_index % worker_count].push(row.clone());
+    }
+    partitions
 }
 
 fn process_live_journal_row<S, C>(
@@ -448,104 +1017,39 @@ fn run_live_csv_index(
     if let Some(parent) = db_path.parent() {
         fs::create_dir_all(parent)?;
     }
-    let connection = Connection::open(db_path)?;
-    init_index_db(&connection)?;
+    let connection = open_live_index_connection(db_path)?;
     let before_snapshot = if config.update {
         Some(collect_article_snapshot(&connection)?)
     } else {
         None
     };
-
-    let mut scholarly_client = ScholarlyClient::new(
-        LiveScholarlyTransport::new(scholarly_config.clone())?,
-        scholarly_config.has_semantic_scholar_key(),
-    );
-    let mut cnki_client = CnkiClient::new(LiveCnkiTransport::new(LiveCnkiConfig {
-        timeout_seconds: config.timeout_seconds,
-    })?);
-    let cnki_config = CnkiIndexConfig {
-        csv_path: csv_path.to_path_buf(),
-        fixture_path: PathBuf::new(),
-        output_db_path: db_path.to_path_buf(),
-        manifest_path: None,
-        run_id: run_id.clone(),
-        timestamp: timestamp.clone(),
-        resume: config.resume,
-        update: config.update,
-        issue_batch_size: config.issue_batch_size.max(1),
+    let journal_context = LiveJournalRowsContext {
+        rows: &rows,
+        csv_path,
+        db_path,
+        csv_file: &csv_file,
+        run_id: &run_id,
+        timestamp: &timestamp,
+        config,
     };
-    let mut stats = IndexRunStats::new(run_id.clone(), csv_file.clone(), timestamp.clone());
-    let mut all_written_articles = Vec::new();
-
-    for row in &rows {
-        let source = source_from_row(row);
-        let journal_id = build_journal_id(row).ok_or_else(|| {
-            LiveIndexError::UnsupportedSource(format!(
-                "Journal row missing id: {}",
-                journal_title_from_row(row)
-            ))
+    let journal_rows_outcome = if config.process_count > 1 && rows.len() > 1 {
+        let command_path = env::current_exe().map_err(|error| {
+            LiveIndexError::Worker(format!("failed to resolve current executable: {error}"))
         })?;
-        let journal_title = journal_title_from_row(row);
-        let path_key = stats.start_path(
-            &source,
-            "journal",
-            Some(journal_id),
-            journal_title.clone(),
-            timestamp.clone(),
-        );
-        match process_live_journal_row(
-            &mut scholarly_client,
-            &mut cnki_client,
-            LiveJournalContext {
-                connection: &connection,
-                row,
-                csv_file: &csv_file,
-                journal_id,
-                timestamp: &timestamp,
-                cnki_config: &cnki_config,
-            },
-        ) {
-            Ok(outcome) => {
-                record_live_journal_attempts(
-                    &mut stats,
-                    &outcome.source,
-                    &outcome.attempts,
-                    journal_id,
-                    &journal_title,
-                );
-                stats.record_path_counts(&path_key, outcome.counts);
-                stats.finish_path(&path_key, &outcome.status, timestamp.clone(), None);
-                all_written_articles.extend(outcome.written_articles);
-            }
-            Err(failure) => {
-                let LiveJournalFailure {
-                    source,
-                    attempts,
-                    error,
-                } = *failure;
-                record_live_journal_attempts(
-                    &mut stats,
-                    &source,
-                    &attempts,
-                    journal_id,
-                    &journal_title,
-                );
-                stats.finish_path(
-                    &path_key,
-                    "failed",
-                    timestamp.clone(),
-                    Some(&error.to_string()),
-                );
-                stats.finish("failed", timestamp.clone(), Some(error.to_string()));
-                persist_index_run_stats(&connection, &stats)?;
-                return Err(error);
-            }
+        let launcher = ProcessLiveWorkerLauncher::new(command_path);
+        run_live_journal_rows_in_worker_processes(&journal_context, &launcher)
+    } else {
+        run_live_journal_rows_locally(&connection, &journal_context)
+    };
+    let journal_rows_outcome = match journal_rows_outcome {
+        Ok(outcome) => outcome,
+        Err(failure) => {
+            let failure = *failure;
+            persist_index_run_stats(&connection, &failure.partial.stats)?;
+            return Err(failure.error);
         }
-    }
-
-    stats.finish("succeeded", timestamp.clone(), None);
-    persist_index_run_stats(&connection, &stats)?;
-    all_written_articles.sort_by_key(|article| article.article_id);
+    };
+    persist_index_run_stats(&connection, &journal_rows_outcome.stats)?;
     let mut manifest_path = None;
     if let Some(before_snapshot) = before_snapshot {
         let after_snapshot = collect_article_snapshot(&connection)?;
@@ -589,11 +1093,8 @@ fn run_live_csv_index(
         run_id,
         status: "succeeded".to_string(),
         journal_count: rows.len(),
-        written_article_ids: all_written_articles
-            .iter()
-            .map(|article| article.article_id)
-            .collect(),
-        source_attempt_count: scholarly_client.attempts().len() + cnki_client.attempts().len(),
+        written_article_ids: journal_rows_outcome.written_article_ids,
+        source_attempt_count: journal_rows_outcome.source_attempt_count,
         manifest_path: manifest_path.map(|path| path.display().to_string()),
         notify_exit_code,
     })
@@ -748,6 +1249,7 @@ fn default_timestamp() -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::cell::RefCell;
     use std::fs;
     use std::path::{Path, PathBuf};
 
@@ -755,10 +1257,14 @@ mod tests {
     use tempfile::tempdir;
 
     use super::{
-        csv_paths, parse_csv_line, read_csv_rows, run_live_index, run_notify_command_for_manifest,
+        csv_paths, parse_csv_line, read_csv_rows, run_live_index,
+        run_live_journal_rows_in_worker_processes, run_notify_command_for_manifest,
         validate_required_source_config, validate_sources, LiveIndexConfig, LiveIndexError,
+        LiveIndexWorkerRequest, LiveIndexWorkerResponse, LiveIndexWorkerStats,
+        LiveJournalRowsContext, LiveWorkerLauncher,
     };
-    use crate::transforms::CsvRow;
+    use crate::stats::IndexRunStats;
+    use crate::transforms::{build_journal_id, journal_title_from_row, source_from_row, CsvRow};
 
     #[test]
     fn csv_parser_handles_quotes() {
@@ -901,6 +1407,74 @@ mod tests {
     }
 
     #[test]
+    fn parallel_worker_requests_partition_rows_and_merge_parent_summary() {
+        let root = tempdir().expect("temp root should be created");
+        let rows = vec![
+            worker_row("a", "Journal A"),
+            worker_row("b", "Journal B"),
+            worker_row("c", "Journal C"),
+        ];
+        let mut config = live_config(root.path());
+        config.process_count = 2;
+        let csv_path = root.path().join("data").join("meta").join("journals.csv");
+        let db_path = root
+            .path()
+            .join("data")
+            .join("index")
+            .join("journals.sqlite");
+        let context = worker_rows_context(&csv_path, &db_path, &config, &rows);
+        let launcher = RecordingWorkerLauncher::default();
+
+        let outcome = run_live_journal_rows_in_worker_processes(&context, &launcher)
+            .expect("parallel worker rows should merge");
+
+        assert_eq!(outcome.stats.status, "succeeded");
+        assert_eq!(outcome.stats.total_journals, 3);
+        assert_eq!(outcome.stats.succeeded_journals, 3);
+        assert_eq!(outcome.source_attempt_count, 3);
+        assert_eq!(outcome.written_article_ids, vec![1, 2, 1001]);
+
+        let requests = launcher.requests.borrow();
+        assert_eq!(requests.len(), 2);
+        assert_eq!(
+            row_titles(&requests[0].rows),
+            vec!["Journal A", "Journal C"]
+        );
+        assert_eq!(row_titles(&requests[1].rows), vec!["Journal B"]);
+    }
+
+    #[test]
+    fn parallel_worker_failure_marks_parent_run_failed() {
+        let root = tempdir().expect("temp root should be created");
+        let rows = vec![worker_row("a", "Journal A"), worker_row("b", "Journal B")];
+        let mut config = live_config(root.path());
+        config.process_count = 2;
+        let csv_path = root.path().join("data").join("meta").join("journals.csv");
+        let db_path = root
+            .path()
+            .join("data")
+            .join("index")
+            .join("journals.sqlite");
+        let context = worker_rows_context(&csv_path, &db_path, &config, &rows);
+        let launcher = RecordingWorkerLauncher {
+            failed_worker_id: Some(1),
+            ..RecordingWorkerLauncher::default()
+        };
+
+        let failure = run_live_journal_rows_in_worker_processes(&context, &launcher)
+            .expect_err("failed worker should fail parent run");
+        let failure = *failure;
+
+        assert!(matches!(
+            failure.error,
+            LiveIndexError::Worker(message) if message.contains("worker 1 failed")
+        ));
+        assert_eq!(failure.partial.stats.status, "failed");
+        assert_eq!(failure.partial.stats.total_journals, 2);
+        assert_eq!(failure.partial.stats.failed_journals, 1);
+    }
+
+    #[test]
     fn csv_reader_defaults_source_and_validates_required_scholarly_config() {
         let root = tempdir().expect("temp root should be created");
         let csv_path = root.path().join("journals.csv");
@@ -1009,6 +1583,100 @@ mod tests {
                     .expect("csv path should have a UTF-8 filename")
                     .to_string()
             })
+            .collect()
+    }
+
+    #[derive(Default)]
+    struct RecordingWorkerLauncher {
+        requests: RefCell<Vec<LiveIndexWorkerRequest>>,
+        failed_worker_id: Option<usize>,
+    }
+
+    impl LiveWorkerLauncher for RecordingWorkerLauncher {
+        fn run_workers(
+            &self,
+            requests: Vec<LiveIndexWorkerRequest>,
+        ) -> Result<Vec<LiveIndexWorkerResponse>, LiveIndexError> {
+            self.requests.replace(requests.clone());
+            Ok(requests
+                .iter()
+                .map(|request| {
+                    if self.failed_worker_id == Some(request.worker_id) {
+                        worker_response(request, "failed", Some("worker 1 failed".to_string()))
+                    } else {
+                        worker_response(request, "succeeded", None)
+                    }
+                })
+                .collect())
+        }
+    }
+
+    fn worker_response(
+        request: &LiveIndexWorkerRequest,
+        status: &str,
+        error: Option<String>,
+    ) -> LiveIndexWorkerResponse {
+        let mut stats = IndexRunStats::new(
+            request.run_id.clone(),
+            request.csv_file.clone(),
+            request.timestamp.clone(),
+        );
+        let mut article_ids = Vec::new();
+        for (row_index, row) in request.rows.iter().enumerate() {
+            let path_key = stats.start_path(
+                &source_from_row(row),
+                "journal",
+                build_journal_id(row),
+                journal_title_from_row(row),
+                request.timestamp.clone(),
+            );
+            stats.finish_path(
+                &path_key,
+                status,
+                request.timestamp.clone(),
+                error.as_deref(),
+            );
+            article_ids.push((request.worker_id as i64 * 1000) + row_index as i64 + 1);
+        }
+        stats.finish(status, request.timestamp.clone(), error.clone());
+        LiveIndexWorkerResponse {
+            worker_id: request.worker_id,
+            status: status.to_string(),
+            stats: LiveIndexWorkerStats::from(stats),
+            written_article_ids: article_ids,
+            source_attempt_count: request.rows.len(),
+            error,
+        }
+    }
+
+    fn worker_rows_context<'a>(
+        csv_path: &'a Path,
+        db_path: &'a Path,
+        config: &'a LiveIndexConfig,
+        rows: &'a [CsvRow],
+    ) -> LiveJournalRowsContext<'a> {
+        LiveJournalRowsContext {
+            rows,
+            csv_path,
+            db_path,
+            csv_file: "journals.csv",
+            run_id: "run-test",
+            timestamp: "2026-07-05T00:00:00Z",
+            config,
+        }
+    }
+
+    fn worker_row(id: &str, title: &str) -> CsvRow {
+        CsvRow::from([
+            ("source".to_string(), "scholarly".to_string()),
+            ("id".to_string(), id.to_string()),
+            ("title".to_string(), title.to_string()),
+        ])
+    }
+
+    fn row_titles(rows: &[CsvRow]) -> Vec<&str> {
+        rows.iter()
+            .map(|row| row.get("title").map(String::as_str).unwrap_or(""))
             .collect()
     }
 

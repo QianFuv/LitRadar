@@ -8,8 +8,8 @@ use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use ps_index::{
-    run_cnki_fixture_index, run_live_index, run_scholarly_fixture_index, CnkiIndexConfig,
-    LiveIndexConfig, ScholarlyIndexConfig,
+    run_cnki_fixture_index, run_live_index, run_live_index_worker_from_environment,
+    run_scholarly_fixture_index, CnkiIndexConfig, LiveIndexConfig, ScholarlyIndexConfig,
 };
 use ps_worker::delivery::{
     run_recommendation_delivery, DeliveryMode, DeliveryWorkflow, RecommendationRunConfig,
@@ -27,6 +27,9 @@ use serde_json::json;
 ///
 /// Result indicating whether the command completed successfully.
 pub fn run_ps_cli(args: Vec<String>) -> Result<(), Box<dyn Error>> {
+    if run_internal_live_index_worker_if_requested()? {
+        return Ok(());
+    }
     run_grouped_command(args)
 }
 
@@ -40,6 +43,9 @@ pub fn run_ps_cli(args: Vec<String>) -> Result<(), Box<dyn Error>> {
 ///
 /// Result indicating whether the command completed successfully.
 pub fn run_legacy_index(args: Vec<String>) -> Result<(), Box<dyn Error>> {
+    if run_internal_live_index_worker_if_requested()? {
+        return Ok(());
+    }
     let mut args = args;
     if has_help(&args) {
         println!("{}", legacy_index_usage());
@@ -65,6 +71,14 @@ pub fn run_legacy_index(args: Vec<String>) -> Result<(), Box<dyn Error>> {
     })?;
     println!("{}", serde_json::to_string(&outcome)?);
     Ok(())
+}
+
+fn run_internal_live_index_worker_if_requested() -> Result<bool, Box<dyn Error>> {
+    let Some(response) = run_live_index_worker_from_environment()? else {
+        return Ok(false);
+    };
+    println!("{response}");
+    Ok(true)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -705,6 +719,7 @@ mod tests {
         let usage = grouped_usage();
 
         assert!(!usage.contains("index fixture"));
+        assert!(!usage.contains("PAPER_SCANNER_LIVE_INDEX_WORKER_REQUEST"));
         assert!(usage.contains("index [--file FILE]"));
         assert!(usage.contains("notify [--db NAME]"));
         assert!(usage.contains("push [--db NAME]"));
@@ -719,6 +734,7 @@ mod tests {
         assert!(usage.contains("--processes N"));
         assert!(usage.contains("--notify-dry-run"));
         assert!(!usage.contains("--fixture"));
+        assert!(!usage.contains("PAPER_SCANNER_LIVE_INDEX_WORKER_REQUEST"));
     }
 
     #[test]

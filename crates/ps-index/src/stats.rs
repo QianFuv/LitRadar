@@ -3,10 +3,10 @@
 use std::collections::BTreeMap;
 
 use ps_sources::SourceAttempt;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 /// API statistics aggregation key.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Deserialize, Serialize)]
 pub struct ApiStatsKey {
     /// Index source identifier.
     pub source: String,
@@ -25,7 +25,7 @@ pub struct ApiStatsKey {
 }
 
 /// Aggregated source API attempt statistics.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub struct ApiCallStats {
     /// Aggregation key.
     pub key: ApiStatsKey,
@@ -136,7 +136,7 @@ impl ApiCallStats {
 }
 
 /// Path statistics aggregation key.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Deserialize, Serialize)]
 pub struct PathStatsKey {
     /// Index source identifier.
     pub source: String,
@@ -149,7 +149,7 @@ pub struct PathStatsKey {
 }
 
 /// Aggregated path statistics.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub struct PathStats {
     /// Aggregation key.
     pub key: PathStatsKey,
@@ -178,7 +178,7 @@ pub struct PathStats {
 }
 
 /// Complete index run statistics.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub struct IndexRunStats {
     /// Run identifier.
     pub run_id: String,
