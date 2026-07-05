@@ -1150,6 +1150,7 @@ dependencies = [
  "ps-domain",
  "ps-recommend",
  "ps-storage",
+ "reqwest",
  "serde",
  "serde_json",
  "tempfile",
