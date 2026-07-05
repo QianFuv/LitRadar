@@ -9,6 +9,7 @@ default-run = "ps-api"
 axum.workspace = true
 ps-auth = { path = "../ps-auth" }
 ps-domain = { path = "../ps-domain" }
+ps-sources = { path = "../ps-sources" }
 ps-storage = { path = "../ps-storage" }
 rmcp = { version = "2.1.0", features = ["transport-streamable-http-server"] }
 serde.workspace = true

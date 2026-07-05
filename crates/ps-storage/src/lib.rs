@@ -31,8 +31,8 @@ pub use business::{
     upsert_runtime_settings, BusinessRepositoryError,
 };
 pub use cnki::{
-    delete_cnki_session, get_cnki_session_status, touch_cnki_session_used, upsert_cnki_session,
-    CnkiRepositoryError,
+    delete_cnki_session, get_cnki_session_data, get_cnki_session_status, touch_cnki_session_used,
+    upsert_cnki_session, CnkiRepositoryError, CnkiSessionData,
 };
 pub use config::{DatabaseResolutionError, StorageConfig};
 pub use index::{

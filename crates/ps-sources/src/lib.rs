@@ -2,6 +2,7 @@
 
 pub mod cnki;
 pub mod scholarly;
+pub mod zjlib_cnki;
 
 pub use cnki::{
     CnkiClient, CnkiFixtureData, CnkiSourceError, CnkiTransport, FixtureCnkiTransport,
@@ -11,4 +12,9 @@ pub use scholarly::{
     normalize_doi, FixtureScholarlyTransport, LiveScholarlyConfig, LiveScholarlyTransport,
     ScholarlyClient, ScholarlyFixtureData, ScholarlyRequest, ScholarlyRequestKind,
     ScholarlyTransport, SourceAttempt, SourceError, SEMANTIC_SCHOLAR_BATCH_SIZE,
+};
+pub use zjlib_cnki::{
+    FixtureZjlibCnkiMode, FixtureZjlibCnkiTransport, LiveZjlibCnkiConfig, LiveZjlibCnkiTransport,
+    ZhejiangLibraryCnkiClient, ZjlibCnkiCookie, ZjlibCnkiError, ZjlibCnkiQrLogin,
+    ZjlibCnkiTransport,
 };

@@ -11,6 +11,17 @@ use serde_json::Value as JsonValue;
 
 use crate::auth::{open_auth_connection, AuthRepositoryError};
 
+/// Persisted CNKI session state for one user.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CnkiSessionData {
+    /// Raw session JSON payload.
+    pub session_data: JsonValue,
+    /// Stored QR UUID.
+    pub qr_uuid: String,
+    /// Stored status label.
+    pub status: String,
+}
+
 /// Repository errors for CNKI session operations.
 #[derive(Debug)]
 pub enum CnkiRepositoryError {
@@ -81,6 +92,31 @@ pub fn get_cnki_session_status(
 ) -> Result<CnkiSessionStatusResponse, CnkiRepositoryError> {
     let row = get_cnki_session_row(auth_db_path, user_id)?;
     Ok(summarize_cnki_session(row.as_ref(), current_unix_time()))
+}
+
+/// Return persisted CNKI session data for one user.
+///
+/// # Arguments
+///
+/// * `auth_db_path` - Auth database path.
+/// * `user_id` - User identifier.
+///
+/// # Returns
+///
+/// Raw session data, QR UUID, and status when present.
+pub fn get_cnki_session_data(
+    auth_db_path: impl AsRef<Path>,
+    user_id: UserId,
+) -> Result<Option<CnkiSessionData>, CnkiRepositoryError> {
+    let row = get_cnki_session_row(auth_db_path, user_id)?;
+    row.map(|row| {
+        Ok(CnkiSessionData {
+            session_data: serde_json::from_str(&row.session_json)?,
+            qr_uuid: row.qr_uuid,
+            status: row.status,
+        })
+    })
+    .transpose()
 }
 
 /// Store a CNKI session row and return its safe status.
@@ -337,4 +373,63 @@ struct CnkiSessionRow {
     status: String,
     updated_at: Option<f64>,
     last_used_at: Option<f64>,
+}
+
+#[cfg(test)]
+mod tests {
+    use ps_domain::UserId;
+    use rusqlite::Connection;
+    use serde_json::json;
+    use tempfile::tempdir;
+
+    use super::{get_cnki_session_data, get_cnki_session_status, upsert_cnki_session};
+    use crate::auth::initialize_auth_database;
+
+    #[test]
+    fn cnki_session_data_preserves_raw_state_but_status_hides_secrets() {
+        let temp_dir = tempdir().expect("temp dir should be created");
+        let auth_db_path = temp_dir.path().join("auth.sqlite");
+        initialize_auth_database(&auth_db_path).expect("auth database should initialize");
+        let user_id = UserId(7);
+        let connection = Connection::open(&auth_db_path).expect("auth database should open");
+        connection
+            .execute(
+                "INSERT INTO users (id, username, password_hash, salt, is_admin, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, 0, 0, 0)",
+                (user_id.value(), "cnki-user", "hash", "salt"),
+            )
+            .expect("user fixture should insert");
+        let session_data = json!({
+            "bff_user_token": "header.payload.signature",
+            "qr_uuid": "qr-fixture",
+            "cookies": [
+                {"name": "userToken", "value": "SECRET_TOKEN_COOKIE"},
+                {"name": "vpn358_sid", "value": "SECRET_VPN_COOKIE"}
+            ],
+        });
+
+        upsert_cnki_session(
+            &auth_db_path,
+            user_id,
+            &session_data,
+            "active",
+            Some("qr-fixture"),
+        )
+        .expect("session should upsert");
+        let raw_session = get_cnki_session_data(&auth_db_path, user_id)
+            .expect("session data should load")
+            .expect("session data should exist");
+        let safe_status =
+            get_cnki_session_status(&auth_db_path, user_id).expect("session status should load");
+        let safe_json = serde_json::to_string(&safe_status).expect("status should serialize");
+
+        assert_eq!(raw_session.qr_uuid, "qr-fixture");
+        assert_eq!(
+            raw_session.session_data["cookies"][0]["value"],
+            "SECRET_TOKEN_COOKIE"
+        );
+        assert_eq!(safe_status.cookie_names, ["userToken", "vpn358_sid"]);
+        assert!(!safe_json.contains("SECRET_TOKEN_COOKIE"));
+        assert!(!safe_json.contains("SECRET_VPN_COOKIE"));
+    }
 }

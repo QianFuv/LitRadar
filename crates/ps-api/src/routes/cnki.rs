@@ -6,13 +6,19 @@ use axum::Json;
 use ps_domain::{
     CnkiLoginPollRequest, CnkiLoginPollResponse, CnkiLoginStartResponse, CnkiSessionStatusResponse,
 };
+use ps_sources::{
+    FixtureZjlibCnkiMode, FixtureZjlibCnkiTransport, LiveZjlibCnkiConfig, LiveZjlibCnkiTransport,
+    ZhejiangLibraryCnkiClient, ZjlibCnkiError,
+};
 use serde_json::json;
+use serde_json::Value as JsonValue;
 
 use crate::response::ApiError;
 use crate::routes::auth::require_current_user;
 use crate::state::ApiState;
 
 const REPLAY_MODE_ENV: &str = "PAPER_SCANNER_CNKI_REPLAY_MODE";
+const LIVE_FIXTURE_MODE_ENV: &str = "PAPER_SCANNER_ZJLIB_CNKI_FIXTURE_MODE";
 const REPLAY_START_SUCCESS: &str = "start_success";
 const REPLAY_POLL_SUCCESS: &str = "poll_success";
 const REPLAY_TIMEOUT: &str = "timeout";
@@ -50,7 +56,7 @@ pub(crate) async fn get_session(
     Ok(Json(status))
 }
 
-/// Start a replayed QR login session.
+/// Start a QR login session.
 ///
 /// # Arguments
 ///
@@ -95,16 +101,46 @@ pub(crate) async fn start_login(
                 session,
             }))
         }
-        Some(REPLAY_START_FAILURE) | Some(_) | None => Err(cnki_json_error(
+        Some(REPLAY_START_FAILURE) | Some(_) => Err(cnki_json_error(
             StatusCode::BAD_GATEWAY,
             "cnki_login_start_failed",
             "login",
             "CNKI login start replay is not configured",
         )),
+        None => {
+            let auth_db_path = state.storage_config().auth_db_path().to_path_buf();
+            let user_id = user.id;
+            let fixture_mode = zjlib_fixture_mode();
+            let login_result = tokio::task::spawn_blocking(move || start_zjlib_login(fixture_mode))
+                .await
+                .map_err(|_| ApiError::internal_server_error())?;
+            let (qr_login, session_data) = login_result.map_err(|error| {
+                cnki_json_error(
+                    StatusCode::BAD_GATEWAY,
+                    "cnki_login_start_failed",
+                    "login",
+                    &error.to_string(),
+                )
+            })?;
+            let session = ps_storage::upsert_cnki_session(
+                auth_db_path,
+                user_id,
+                &session_data,
+                "waiting_scan",
+                Some(&qr_login.uuid),
+            )
+            .map_err(map_cnki_error)?;
+            Ok(Json(CnkiLoginStartResponse {
+                uuid: qr_login.uuid,
+                status: qr_login.status,
+                qr_code: qr_login.qr_code,
+                session,
+            }))
+        }
     }
 }
 
-/// Poll an offline-replay QR login session.
+/// Poll a QR login session.
 ///
 /// # Arguments
 ///
@@ -175,8 +211,7 @@ pub(crate) async fn poll_login(
         Some(REPLAY_TIMEOUT)
         | Some(REPLAY_START_SUCCESS)
         | Some(REPLAY_START_FAILURE)
-        | Some(_)
-        | None => Err(cnki_json_error(
+        | Some(_) => Err(cnki_json_error(
             StatusCode::REQUEST_TIMEOUT,
             "cnki_login_timeout",
             "login",
@@ -185,6 +220,91 @@ pub(crate) async fn poll_login(
                 body.timeout_seconds
             ),
         )),
+        None => {
+            let row =
+                ps_storage::get_cnki_session_data(state.storage_config().auth_db_path(), user.id)
+                    .map_err(map_cnki_error)?
+                    .ok_or_else(|| {
+                        cnki_json_error(
+                            StatusCode::BAD_REQUEST,
+                            "cnki_login_not_started",
+                            "login",
+                            "CNKI QR login has not been started",
+                        )
+                    })?;
+            if row.qr_uuid.trim().is_empty() {
+                return Err(cnki_json_error(
+                    StatusCode::BAD_REQUEST,
+                    "cnki_login_not_started",
+                    "login",
+                    "CNKI QR login has not been started",
+                ));
+            }
+            let auth_db_path = state.storage_config().auth_db_path().to_path_buf();
+            let user_id = user.id;
+            let qr_uuid = row.qr_uuid.clone();
+            let mut session_data = row.session_data;
+            if let Some(object) = session_data.as_object_mut() {
+                object
+                    .entry("qr_uuid".to_string())
+                    .or_insert_with(|| JsonValue::String(qr_uuid.clone()));
+            }
+            let fixture_mode = zjlib_fixture_mode();
+            let timeout_seconds = body.timeout_seconds;
+            let interval_seconds = body.interval_seconds;
+            let poll_result = tokio::task::spawn_blocking(move || {
+                poll_zjlib_login(
+                    fixture_mode,
+                    &session_data,
+                    timeout_seconds,
+                    interval_seconds,
+                )
+            })
+            .await
+            .map_err(|_| ApiError::internal_server_error())?;
+            let session_data = match poll_result {
+                Ok(session_data) => session_data,
+                Err(ZjlibPollError::Login(error)) if error.is_timeout() => {
+                    return Err(cnki_json_error(
+                        StatusCode::REQUEST_TIMEOUT,
+                        "cnki_login_timeout",
+                        "login",
+                        &error.to_string(),
+                    ));
+                }
+                Err(ZjlibPollError::Login(error)) => {
+                    return Err(cnki_json_error(
+                        StatusCode::BAD_REQUEST,
+                        "cnki_login_failed",
+                        "login",
+                        &error.to_string(),
+                    ));
+                }
+                Err(ZjlibPollError::Warmup(error)) => {
+                    return Err(cnki_json_error(
+                        StatusCode::BAD_GATEWAY,
+                        "cnki_warmup_failed",
+                        "warmup",
+                        &error.to_string(),
+                    ));
+                }
+            };
+            let session = ps_storage::upsert_cnki_session(
+                auth_db_path,
+                user_id,
+                &session_data,
+                "active",
+                session_data
+                    .get("qr_uuid")
+                    .and_then(JsonValue::as_str)
+                    .or(Some(qr_uuid.as_str())),
+            )
+            .map_err(map_cnki_error)?;
+            Ok(Json(CnkiLoginPollResponse {
+                status: "COMPLETE".to_string(),
+                session,
+            }))
+        }
     }
 }
 
@@ -252,6 +372,64 @@ fn replay_mode() -> Option<String> {
         .ok()
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
+}
+
+fn zjlib_fixture_mode() -> Option<FixtureZjlibCnkiMode> {
+    std::env::var(LIVE_FIXTURE_MODE_ENV)
+        .ok()
+        .and_then(|value| FixtureZjlibCnkiMode::parse(&value))
+}
+
+fn start_zjlib_login(
+    fixture_mode: Option<FixtureZjlibCnkiMode>,
+) -> Result<(ps_sources::ZjlibCnkiQrLogin, JsonValue), ZjlibCnkiError> {
+    if let Some(mode) = fixture_mode {
+        let mut client = ZhejiangLibraryCnkiClient::new(FixtureZjlibCnkiTransport::new(mode));
+        let qr_login = client.start_qr_login()?;
+        let session_data = client.to_state_data();
+        return Ok((qr_login, session_data));
+    }
+    let transport = LiveZjlibCnkiTransport::new(LiveZjlibCnkiConfig::default())?;
+    let mut client = ZhejiangLibraryCnkiClient::new(transport);
+    let qr_login = client.start_qr_login()?;
+    let session_data = client.to_state_data();
+    Ok((qr_login, session_data))
+}
+
+fn poll_zjlib_login(
+    fixture_mode: Option<FixtureZjlibCnkiMode>,
+    session_data: &JsonValue,
+    timeout_seconds: i64,
+    interval_seconds: f64,
+) -> Result<JsonValue, ZjlibPollError> {
+    if let Some(mode) = fixture_mode {
+        let mut client = ZhejiangLibraryCnkiClient::from_state_data(
+            FixtureZjlibCnkiTransport::new(mode),
+            session_data,
+        );
+        client
+            .poll_qr_login(timeout_seconds, interval_seconds)
+            .map_err(ZjlibPollError::Login)?;
+        client
+            .warm_up_fulltext_session()
+            .map_err(ZjlibPollError::Warmup)?;
+        return Ok(client.to_state_data());
+    }
+    let transport = LiveZjlibCnkiTransport::new(LiveZjlibCnkiConfig::default())
+        .map_err(ZjlibPollError::Login)?;
+    let mut client = ZhejiangLibraryCnkiClient::from_state_data(transport, session_data);
+    client
+        .poll_qr_login(timeout_seconds, interval_seconds)
+        .map_err(ZjlibPollError::Login)?;
+    client
+        .warm_up_fulltext_session()
+        .map_err(ZjlibPollError::Warmup)?;
+    Ok(client.to_state_data())
+}
+
+enum ZjlibPollError {
+    Login(ZjlibCnkiError),
+    Warmup(ZjlibCnkiError),
 }
 
 fn build_unsigned_jwt(expires_at: i64) -> String {

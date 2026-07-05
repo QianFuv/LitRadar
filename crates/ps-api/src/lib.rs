@@ -1767,8 +1767,9 @@ mod tests {
     )]
     async fn cnki_routes_cover_replay_session_status_and_clear_without_secret_leaks() {
         const REPLAY_MODE: &str = "PAPER_SCANNER_CNKI_REPLAY_MODE";
+        const LIVE_FIXTURE_MODE: &str = "PAPER_SCANNER_ZJLIB_CNKI_FIXTURE_MODE";
 
-        let _replay_mode_guard = EnvVarGuard::cleared(REPLAY_MODE);
+        let _env_guard = EnvVarGuard::configured(&[(REPLAY_MODE, None), (LIVE_FIXTURE_MODE, None)]);
         let backend = TestBackend::new();
         let user = backend.authenticated_user("cnki_user", false);
         let app = backend.router();
@@ -1807,16 +1808,6 @@ mod tests {
             })),
         )
         .await;
-        let start_without_replay = json_request(
-            &app,
-            Method::POST,
-            "/api/cnki/login/start",
-            Some(&auth),
-            None,
-            None,
-        )
-        .await;
-
         std::env::set_var(REPLAY_MODE, "start_success");
         let waiting_start = json_request(
             &app,
@@ -1907,11 +1898,6 @@ mod tests {
             "cnki_login_not_started"
         );
         assert_eq!(invalid_poll.status, StatusCode::BAD_REQUEST);
-        assert_eq!(start_without_replay.status, StatusCode::BAD_GATEWAY);
-        assert_eq!(
-            start_without_replay.payload["detail"]["code"],
-            "cnki_login_start_failed"
-        );
         assert_eq!(waiting_start.status, StatusCode::OK);
         assert_eq!(waiting_start.payload["status"], "WAITING_SCAN");
         assert_eq!(waiting_start.payload["session"]["status"], "waiting_scan");
@@ -1944,6 +1930,164 @@ mod tests {
         assert_eq!(cleared.payload["configured"], false);
     }
 
+    #[tokio::test]
+    #[cfg_attr(
+        miri,
+        ignore = "Miri does not support Tokio's Windows IOCP runtime initialization"
+    )]
+    async fn cnki_routes_use_live_fixture_without_replay_mode() {
+        const REPLAY_MODE: &str = "PAPER_SCANNER_CNKI_REPLAY_MODE";
+        const LIVE_FIXTURE_MODE: &str = "PAPER_SCANNER_ZJLIB_CNKI_FIXTURE_MODE";
+
+        let _env_guard =
+            EnvVarGuard::configured(&[(REPLAY_MODE, None), (LIVE_FIXTURE_MODE, Some("success"))]);
+        let backend = TestBackend::new();
+        let user = backend.authenticated_user("cnki_live_user", false);
+        let app = backend.router();
+        let auth = user.authorization_header();
+
+        let start = json_request(
+            &app,
+            Method::POST,
+            "/api/cnki/login/start",
+            Some(&auth),
+            None,
+            None,
+        )
+        .await;
+        let poll = json_request(
+            &app,
+            Method::POST,
+            "/api/cnki/login/poll",
+            Some(&auth),
+            None,
+            Some(serde_json::json!({
+                "timeout_seconds": 1,
+                "interval_seconds": 0.1
+            })),
+        )
+        .await;
+        let session_data =
+            ps_storage::get_cnki_session_data(backend.auth_db_path(), user.user_id())
+                .expect("CNKI session data should load")
+                .expect("CNKI session data should exist");
+
+        assert_eq!(start.status, StatusCode::OK);
+        assert_eq!(start.payload["uuid"], "qr-rust-live-fixture");
+        assert_eq!(start.payload["session"]["status"], "waiting_scan");
+        assert_eq!(poll.status, StatusCode::OK);
+        assert_eq!(poll.payload["status"], "COMPLETE");
+        assert_eq!(poll.payload["session"]["status"], "active");
+        assert_eq!(
+            poll.payload["session"]["cookie_names"],
+            serde_json::json!(["userToken", "vpn358_sid"])
+        );
+        let token = session_data.session_data["bff_user_token"]
+            .as_str()
+            .expect("token should be persisted");
+        assert!(poll.payload.to_string().contains("cookie_names"));
+        assert!(!poll.payload.to_string().contains(token));
+        assert!(!poll.payload.to_string().contains("SECRET_VPN_VALUE"));
+    }
+
+    #[tokio::test]
+    #[cfg_attr(
+        miri,
+        ignore = "Miri does not support Tokio's Windows IOCP runtime initialization"
+    )]
+    async fn cnki_routes_map_live_fixture_failures_to_stable_error_codes() {
+        const REPLAY_MODE: &str = "PAPER_SCANNER_CNKI_REPLAY_MODE";
+        const LIVE_FIXTURE_MODE: &str = "PAPER_SCANNER_ZJLIB_CNKI_FIXTURE_MODE";
+
+        let _env_guard = EnvVarGuard::configured(&[
+            (REPLAY_MODE, None),
+            (LIVE_FIXTURE_MODE, Some("start_failure")),
+        ]);
+        let backend = TestBackend::new();
+        let user = backend.authenticated_user("cnki_failure_user", false);
+        let app = backend.router();
+        let auth = user.authorization_header();
+
+        let start_failure = json_request(
+            &app,
+            Method::POST,
+            "/api/cnki/login/start",
+            Some(&auth),
+            None,
+            None,
+        )
+        .await;
+
+        std::env::set_var(LIVE_FIXTURE_MODE, "success");
+        let started = json_request(
+            &app,
+            Method::POST,
+            "/api/cnki/login/start",
+            Some(&auth),
+            None,
+            None,
+        )
+        .await;
+
+        std::env::set_var(LIVE_FIXTURE_MODE, "poll_timeout");
+        let timeout = json_request(
+            &app,
+            Method::POST,
+            "/api/cnki/login/poll",
+            Some(&auth),
+            None,
+            Some(serde_json::json!({
+                "timeout_seconds": 1,
+                "interval_seconds": 0.1
+            })),
+        )
+        .await;
+
+        std::env::set_var(LIVE_FIXTURE_MODE, "poll_failure");
+        let poll_failure = json_request(
+            &app,
+            Method::POST,
+            "/api/cnki/login/poll",
+            Some(&auth),
+            None,
+            Some(serde_json::json!({
+                "timeout_seconds": 1,
+                "interval_seconds": 0.1
+            })),
+        )
+        .await;
+
+        std::env::set_var(LIVE_FIXTURE_MODE, "warmup_failure");
+        let warmup_failure = json_request(
+            &app,
+            Method::POST,
+            "/api/cnki/login/poll",
+            Some(&auth),
+            None,
+            Some(serde_json::json!({
+                "timeout_seconds": 1,
+                "interval_seconds": 0.1
+            })),
+        )
+        .await;
+
+        assert_eq!(start_failure.status, StatusCode::BAD_GATEWAY);
+        assert_eq!(
+            start_failure.payload["detail"]["code"],
+            "cnki_login_start_failed"
+        );
+        assert_eq!(started.status, StatusCode::OK);
+        assert_eq!(timeout.status, StatusCode::REQUEST_TIMEOUT);
+        assert_eq!(timeout.payload["detail"]["code"], "cnki_login_timeout");
+        assert_eq!(poll_failure.status, StatusCode::BAD_REQUEST);
+        assert_eq!(poll_failure.payload["detail"]["code"], "cnki_login_failed");
+        assert_eq!(warmup_failure.status, StatusCode::BAD_GATEWAY);
+        assert_eq!(
+            warmup_failure.payload["detail"]["code"],
+            "cnki_warmup_failed"
+        );
+    }
+
     fn set_cookie_header(response: &JsonTestResponse) -> String {
         response
             .headers
@@ -1955,19 +2099,27 @@ mod tests {
     }
 
     struct EnvVarGuard {
-        name: &'static str,
-        original: Option<String>,
+        originals: Vec<(&'static str, Option<String>)>,
         _lock: EnvLockGuard,
     }
 
     impl EnvVarGuard {
-        fn cleared(name: &'static str) -> Self {
+        fn configured(values: &[(&'static str, Option<&'static str>)]) -> Self {
             let lock = EnvLockGuard::acquire();
-            let original = std::env::var(name).ok();
-            std::env::remove_var(name);
+            let originals = values
+                .iter()
+                .map(|(name, value)| {
+                    let original = std::env::var(name).ok();
+                    if let Some(value) = value {
+                        std::env::set_var(name, value);
+                    } else {
+                        std::env::remove_var(name);
+                    }
+                    (*name, original)
+                })
+                .collect();
             Self {
-                name,
-                original,
+                originals,
                 _lock: lock,
             }
         }
@@ -1975,10 +2127,12 @@ mod tests {
 
     impl Drop for EnvVarGuard {
         fn drop(&mut self) {
-            if let Some(value) = &self.original {
-                std::env::set_var(self.name, value);
-            } else {
-                std::env::remove_var(self.name);
+            for (name, original) in self.originals.iter().rev() {
+                if let Some(value) = original {
+                    std::env::set_var(name, value);
+                } else {
+                    std::env::remove_var(name);
+                }
             }
         }
     }
