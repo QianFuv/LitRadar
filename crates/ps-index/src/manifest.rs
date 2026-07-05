@@ -446,11 +446,14 @@ mod tests {
     use std::fs;
     use std::path::Path;
 
+    use rusqlite::Connection;
+
+    use crate::schema::init_index_db;
     use crate::transforms::ArticleRecord;
 
     use super::{
-        build_change_manifest, build_change_manifest_from_snapshots, write_change_manifest,
-        ArticleSnapshot,
+        build_change_manifest, build_change_manifest_from_snapshots, collect_article_snapshot,
+        write_change_manifest, ArticleSnapshot,
     };
 
     #[test]
@@ -489,6 +492,46 @@ mod tests {
         assert_eq!(manifest.changed_issue_keys, vec!["1:2"]);
         assert_eq!(manifest.notifiable_article_ids, vec![10]);
         assert_eq!(manifest.summary.added_article_count, 1);
+    }
+
+    #[test]
+    fn collect_article_snapshot_groups_issue_and_inpress_rows() {
+        let connection = Connection::open_in_memory().expect("in-memory db should open");
+        init_index_db(&connection).expect("schema should initialize");
+        connection
+            .execute_batch(
+                "
+                INSERT INTO journals (journal_id, library_id, title)
+                VALUES (1, 'scholarly', 'Alpha'), (2, 'cnki', 'Beta');
+
+                INSERT INTO issues (issue_id, journal_id, publication_year)
+                VALUES (10, 1, 2026), (20, 2, 2026);
+
+                INSERT INTO articles
+                    (article_id, journal_id, issue_id, title, in_press)
+                VALUES
+                    (1001, 1, 10, 'A', 0),
+                    (1002, 1, 10, 'B', 0),
+                    (2001, 2, 20, 'C', 0),
+                    (3001, 1, NULL, 'In Press', 1),
+                    (3002, 2, NULL, 'Not In Press', 0);
+                ",
+            )
+            .expect("fixture rows should insert");
+
+        let snapshot = collect_article_snapshot(&connection).expect("snapshot should collect");
+
+        assert_eq!(
+            snapshot.issue_articles,
+            BTreeMap::from([
+                ("1:10".to_string(), BTreeSet::from([1001, 1002])),
+                ("2:20".to_string(), BTreeSet::from([2001])),
+            ])
+        );
+        assert_eq!(
+            snapshot.inpress_articles,
+            BTreeMap::from([(1, BTreeSet::from([3001]))])
+        );
     }
 
     #[test]

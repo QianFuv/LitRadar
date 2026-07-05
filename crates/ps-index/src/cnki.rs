@@ -567,12 +567,17 @@ fn non_empty(value: &str) -> Option<String> {
 mod tests {
     use std::collections::BTreeSet;
     use std::fs;
+    use std::path::PathBuf;
 
+    use ps_sources::{CnkiClient, CnkiFixtureData, FixtureCnkiTransport};
     use rusqlite::Connection;
     use tempfile::tempdir;
 
-    use crate::cnki::{run_cnki_fixture_index, select_recent_update_issue_ids, CnkiIndexConfig};
-    use crate::schema::init_index_db;
+    use crate::cnki::{
+        process_cnki_row, run_cnki_fixture_index, select_recent_update_issue_ids, CnkiIndexConfig,
+    };
+    use crate::schema::{init_index_db, mark_journal_done};
+    use crate::transforms::CsvRow;
 
     #[test]
     fn selects_update_issues_through_first_existing_issue() {
@@ -586,6 +591,47 @@ mod tests {
             select_recent_update_issue_ids(&[30, 20, 10], &BTreeSet::new()),
             vec![30, 20, 10]
         );
+    }
+
+    #[test]
+    fn resume_skips_completed_journal_before_source_calls() {
+        let connection = Connection::open_in_memory().expect("in-memory db should open");
+        init_index_db(&connection).expect("schema should initialize");
+        let journal_id = 42;
+        mark_journal_done(&connection, journal_id, "2026-07-05T00:00:00Z")
+            .expect("journal state should be marked complete");
+        let row = CsvRow::from([
+            ("source".to_string(), "cnki".to_string()),
+            ("title".to_string(), "Completed CNKI".to_string()),
+            ("issn".to_string(), "1234-5678".to_string()),
+            ("id".to_string(), "Completed CNKI".to_string()),
+        ]);
+        let mut client = CnkiClient::new(FixtureCnkiTransport::new(CnkiFixtureData::default()));
+        let config = CnkiIndexConfig {
+            csv_path: PathBuf::new(),
+            fixture_path: PathBuf::new(),
+            output_db_path: PathBuf::new(),
+            manifest_path: None,
+            run_id: "run-cnki-resume".to_string(),
+            timestamp: "2026-07-05T00:00:00Z".to_string(),
+            resume: true,
+            update: false,
+            issue_batch_size: 10,
+        };
+
+        let outcome = process_cnki_row(
+            &connection,
+            &mut client,
+            &row,
+            "journals.csv",
+            journal_id,
+            &config,
+        )
+        .expect("completed journal should resume");
+
+        assert_eq!(outcome.status, "resumed");
+        assert!(outcome.written_articles.is_empty());
+        assert_eq!(client.attempts().len(), 0);
     }
 
     #[test]

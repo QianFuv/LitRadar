@@ -579,8 +579,17 @@ fn run_notify_for_manifest(
     db_name: &str,
     manifest_path: &Path,
 ) -> Result<i32, LiveIndexError> {
+    run_notify_command_for_manifest(Path::new("notify"), config, db_name, manifest_path)
+}
+
+fn run_notify_command_for_manifest(
+    command_path: &Path,
+    config: &LiveIndexConfig,
+    db_name: &str,
+    manifest_path: &Path,
+) -> Result<i32, LiveIndexError> {
     let state_dir = config.project_root.join("data").join("push_state");
-    let mut command = Command::new("notify");
+    let mut command = Command::new(command_path);
     command
         .arg("--db")
         .arg(db_name)
@@ -608,13 +617,14 @@ fn default_timestamp() -> String {
 #[cfg(test)]
 mod tests {
     use std::fs;
+    use std::path::{Path, PathBuf};
 
     use ps_sources::LiveScholarlyConfig;
     use tempfile::tempdir;
 
     use super::{
-        parse_csv_line, read_csv_rows, run_live_index, validate_required_source_config,
-        validate_sources, LiveIndexConfig,
+        csv_paths, parse_csv_line, read_csv_rows, run_live_index, run_notify_command_for_manifest,
+        validate_required_source_config, validate_sources, LiveIndexConfig, LiveIndexError,
     };
     use crate::transforms::CsvRow;
 
@@ -638,6 +648,26 @@ mod tests {
         ]);
 
         assert!(validate_sources(&[row]).is_err());
+    }
+
+    #[test]
+    fn csv_path_discovery_sorts_csvs_and_respects_explicit_file() {
+        let root = tempdir().expect("temp root should be created");
+        fs::write(root.path().join("b.csv"), "source,title\n").expect("b csv should be written");
+        fs::write(root.path().join("notes.txt"), "ignored").expect("text file should be written");
+        fs::write(root.path().join("a.csv"), "source,title\n").expect("a csv should be written");
+
+        assert_eq!(
+            csv_file_names(&csv_paths(root.path(), None).expect("csvs should be listed")),
+            vec!["a.csv", "b.csv"]
+        );
+        assert_eq!(
+            csv_file_names(&csv_paths(root.path(), Some("b.csv")).expect("csv should be selected")),
+            vec!["b.csv"]
+        );
+        assert!(csv_paths(root.path(), Some("missing.csv"))
+            .expect("missing explicit csv should not fail")
+            .is_empty());
     }
 
     #[test]
@@ -684,6 +714,29 @@ mod tests {
     }
 
     #[test]
+    fn live_index_rejects_unsupported_source_before_live_transports() {
+        let root = tempdir().expect("temp root should be created");
+        let meta_dir = root.path().join("data").join("meta");
+        fs::create_dir_all(&meta_dir).expect("meta dir should be created");
+        fs::write(
+            meta_dir.join("selected.csv"),
+            "source,title,issn\nunknown,Bad Source,1234-5678\n",
+        )
+        .expect("csv should be written");
+
+        let error = run_live_index(&LiveIndexConfig {
+            file: Some("selected.csv".to_string()),
+            ..live_config(root.path())
+        })
+        .expect_err("unsupported source should fail before transports");
+
+        assert!(matches!(
+            error,
+            LiveIndexError::UnsupportedSource(message) if message.contains("Bad Source")
+        ));
+    }
+
+    #[test]
     fn csv_reader_defaults_source_and_validates_required_scholarly_config() {
         let root = tempdir().expect("temp root should be created");
         let csv_path = root.path().join("journals.csv");
@@ -703,9 +756,128 @@ mod tests {
 
         assert_eq!(rows[0].get("source").map(String::as_str), Some("scholarly"));
         assert!(missing_config.to_string().contains("OpenAlex API key"));
+
+        let semantic_missing = validate_required_source_config(
+            &rows,
+            &LiveScholarlyConfig {
+                timeout_seconds: 1,
+                openalex_api_keys: vec!["openalex".to_string()],
+                semantic_scholar_api_keys: Vec::new(),
+                crossref_mailtos: Vec::new(),
+            },
+        )
+        .expect_err("scholarly rows should require Semantic Scholar configuration");
+        assert!(semantic_missing
+            .to_string()
+            .contains("Semantic Scholar API key"));
+
+        let cnki_only = CsvRow::from([
+            ("source".to_string(), "cnki".to_string()),
+            ("title".to_string(), "CNKI".to_string()),
+        ]);
+        validate_required_source_config(
+            &[cnki_only],
+            &LiveScholarlyConfig {
+                timeout_seconds: 1,
+                openalex_api_keys: Vec::new(),
+                semantic_scholar_api_keys: Vec::new(),
+                crossref_mailtos: Vec::new(),
+            },
+        )
+        .expect("CNKI-only rows should not require scholarly configuration");
     }
 
-    fn live_config(root: &std::path::Path) -> LiveIndexConfig {
+    #[test]
+    fn notify_command_helper_reports_exit_code_and_arguments() {
+        let root = tempdir().expect("temp root should be created");
+        let manifest_path = root
+            .path()
+            .join("data")
+            .join("push_state")
+            .join("fixture.changes.json");
+        fs::create_dir_all(manifest_path.parent().expect("manifest should have parent"))
+            .expect("manifest dir should be created");
+        fs::write(&manifest_path, "{}").expect("manifest should be written");
+        let command_path = write_notify_command(root.path());
+
+        let exit_code = run_notify_command_for_manifest(
+            &command_path,
+            &live_config(root.path()),
+            "fixture.sqlite",
+            &manifest_path,
+        )
+        .expect("notify command should run");
+
+        let args =
+            fs::read_to_string(root.path().join("args.txt")).expect("args should be captured");
+        assert_eq!(exit_code, 7);
+        assert!(args.contains("--db"));
+        assert!(args.contains("fixture.sqlite"));
+        assert!(args.contains("--changes-file"));
+        assert!(args.contains("fixture.changes.json"));
+        assert!(args.contains("--state-dir"));
+        assert!(args.contains("push_state"));
+        assert!(args.contains("--dry-run"));
+    }
+
+    #[test]
+    fn notify_command_helper_maps_spawn_failures() {
+        let root = tempdir().expect("temp root should be created");
+        let manifest_path = root.path().join("missing.changes.json");
+
+        let error = run_notify_command_for_manifest(
+            &root.path().join("missing-notify"),
+            &live_config(root.path()),
+            "fixture.sqlite",
+            &manifest_path,
+        )
+        .expect_err("missing notify command should fail");
+
+        assert!(matches!(error, LiveIndexError::Notify(message) if !message.is_empty()));
+    }
+
+    fn csv_file_names(paths: &[PathBuf]) -> Vec<String> {
+        paths
+            .iter()
+            .map(|path| {
+                path.file_name()
+                    .and_then(|value| value.to_str())
+                    .expect("csv path should have a UTF-8 filename")
+                    .to_string()
+            })
+            .collect()
+    }
+
+    #[cfg(windows)]
+    fn write_notify_command(root: &Path) -> PathBuf {
+        let path = root.join("notify.cmd");
+        fs::write(
+            &path,
+            "@echo off\r\necho %* > \"%~dp0args.txt\"\r\nexit /b 7\r\n",
+        )
+        .expect("notify command should be written");
+        path
+    }
+
+    #[cfg(not(windows))]
+    fn write_notify_command(root: &Path) -> PathBuf {
+        use std::os::unix::fs::PermissionsExt;
+
+        let path = root.join("notify");
+        fs::write(
+            &path,
+            "#!/bin/sh\nprintf '%s\\n' \"$*\" > \"$(dirname \"$0\")/args.txt\"\nexit 7\n",
+        )
+        .expect("notify command should be written");
+        let mut permissions = fs::metadata(&path)
+            .expect("notify command metadata should be readable")
+            .permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&path, permissions).expect("notify command should be executable");
+        path
+    }
+
+    fn live_config(root: &Path) -> LiveIndexConfig {
         LiveIndexConfig {
             project_root: root.to_path_buf(),
             file: None,
