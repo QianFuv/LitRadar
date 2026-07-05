@@ -6,6 +6,8 @@ mod openapi;
 mod response;
 pub mod routes;
 pub mod state;
+#[cfg(test)]
+pub(crate) mod test_support;
 
 use std::error::Error;
 
@@ -173,13 +175,13 @@ async fn shutdown_signal() {
 #[cfg(test)]
 mod tests {
     use axum::body::{to_bytes, Body};
+    use axum::http::header::{AUTHORIZATION, COOKIE};
     use axum::http::{Request, StatusCode};
     use rusqlite::Connection;
     use serde_json::Value;
-    use tempfile::tempdir;
     use tower::ServiceExt;
 
-    use super::{build_router, ApiConfig};
+    use crate::test_support::TestBackend;
 
     #[tokio::test]
     #[cfg_attr(
@@ -187,13 +189,8 @@ mod tests {
         ignore = "Miri does not support Tokio's Windows IOCP runtime initialization"
     )]
     async fn health_route_matches_python_payload() {
-        let temp_dir = tempdir().expect("temp dir should be created");
-        let app = build_router(ApiConfig {
-            project_root: temp_dir.path().to_path_buf(),
-            host: "127.0.0.1".to_string(),
-            port: 0,
-            cors_allowed_origins: Vec::new(),
-        });
+        let backend = TestBackend::new();
+        let app = backend.router();
 
         let response = app
             .oneshot(
@@ -220,13 +217,8 @@ mod tests {
         ignore = "Miri does not support Tokio's Windows IOCP runtime initialization"
     )]
     async fn openapi_json_route_serves_generated_document() {
-        let temp_dir = tempdir().expect("temp dir should be created");
-        let app = build_router(ApiConfig {
-            project_root: temp_dir.path().to_path_buf(),
-            host: "127.0.0.1".to_string(),
-            port: 0,
-            cors_allowed_origins: Vec::new(),
-        });
+        let backend = TestBackend::new();
+        let app = backend.router();
 
         let response = app
             .oneshot(
@@ -255,13 +247,8 @@ mod tests {
         ignore = "Miri does not support Tokio's Windows IOCP runtime initialization"
     )]
     async fn docs_route_serves_swagger_ui_html() {
-        let temp_dir = tempdir().expect("temp dir should be created");
-        let app = build_router(ApiConfig {
-            project_root: temp_dir.path().to_path_buf(),
-            host: "127.0.0.1".to_string(),
-            port: 0,
-            cors_allowed_origins: Vec::new(),
-        });
+        let backend = TestBackend::new();
+        let app = backend.router();
 
         let response = app
             .oneshot(
@@ -288,23 +275,11 @@ mod tests {
         ignore = "Miri does not support Tokio's Windows IOCP runtime initialization"
     )]
     async fn announcements_route_reads_existing_auth_database() {
-        let temp_dir = tempdir().expect("temp dir should be created");
-        let auth_db_path = temp_dir.path().join("data").join("auth.sqlite");
-        std::fs::create_dir_all(auth_db_path.parent().expect("data dir should exist"))
-            .expect("data dir should be created");
-        let connection = Connection::open(&auth_db_path).expect("auth db should open");
+        let backend = TestBackend::new();
+        let connection = Connection::open(backend.auth_db_path()).expect("auth db should open");
         connection
             .execute_batch(
                 "
-                CREATE TABLE announcements (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    title TEXT NOT NULL,
-                    message TEXT NOT NULL,
-                    priority TEXT NOT NULL DEFAULT 'normal',
-                    enabled INTEGER NOT NULL DEFAULT 1,
-                    created_at REAL NOT NULL,
-                    updated_at REAL NOT NULL
-                );
                 INSERT INTO announcements
                     (title, message, priority, enabled, created_at, updated_at)
                 VALUES
@@ -313,12 +288,7 @@ mod tests {
             )
             .expect("announcement fixture should be created");
         drop(connection);
-        let app = build_router(ApiConfig {
-            project_root: temp_dir.path().to_path_buf(),
-            host: "127.0.0.1".to_string(),
-            port: 0,
-            cors_allowed_origins: Vec::new(),
-        });
+        let app = backend.router();
 
         let response = app
             .oneshot(
@@ -347,6 +317,92 @@ mod tests {
                     "updated_at": 21.0
                 }
             ])
+        );
+    }
+
+    #[tokio::test]
+    #[cfg_attr(
+        miri,
+        ignore = "Miri does not support Tokio's Windows IOCP runtime initialization"
+    )]
+    async fn backend_fixtures_create_authenticated_router_and_index_database() {
+        let backend = TestBackend::new();
+        let user = backend.authenticated_user("fixture_admin", true);
+        let index_database = backend.create_index_database("fixture.sqlite");
+        let app = backend.router();
+
+        let bearer_response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/auth/me")
+                    .header(AUTHORIZATION, user.authorization_header())
+                    .body(Body::empty())
+                    .expect("request should build"),
+            )
+            .await
+            .expect("response should be returned");
+        let bearer_body = to_bytes(bearer_response.into_body(), usize::MAX)
+            .await
+            .expect("body should read");
+        let bearer_payload: Value =
+            serde_json::from_slice(&bearer_body).expect("body should be JSON");
+
+        let cookie_response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/auth/me")
+                    .header(COOKIE, user.cookie_header())
+                    .body(Body::empty())
+                    .expect("request should build"),
+            )
+            .await
+            .expect("response should be returned");
+        let cookie_status = cookie_response.status();
+
+        let database_names = ps_storage::list_index_database_names(backend.storage_config())
+            .expect("database names should load");
+        let journal = ps_storage::get_journal(
+            backend.storage_config(),
+            Some(&index_database.db_name),
+            index_database.journal_id,
+        )
+        .expect("journal should load");
+        let issue = ps_storage::get_issue(
+            backend.storage_config(),
+            Some(&index_database.db_name),
+            index_database.issue_id,
+        )
+        .expect("issue should load");
+        let article = ps_storage::get_article(
+            backend.storage_config(),
+            Some(&index_database.db_name),
+            index_database.article_id,
+        )
+        .expect("article should load");
+        let articles = ps_storage::list_articles(
+            backend.storage_config(),
+            Some(&index_database.db_name),
+            &ps_storage::ArticleListParams {
+                q: Some("Fixture".to_string()),
+                ..Default::default()
+            },
+        )
+        .expect("articles should load from listing and search fixtures");
+
+        assert_eq!(bearer_payload["id"], user.user_id().value());
+        assert_eq!(bearer_payload["username"], "fixture_admin");
+        assert_eq!(bearer_payload["is_admin"], true);
+        assert_eq!(cookie_status, StatusCode::OK);
+        assert_eq!(database_names, [index_database.db_name.clone()]);
+        assert!(index_database.path.exists());
+        assert_eq!(journal.journal_id.value(), index_database.journal_id);
+        assert_eq!(issue.issue_id, index_database.issue_id);
+        assert_eq!(article.article_id.value(), index_database.article_id);
+        assert_eq!(articles.items.len(), 1);
+        assert_eq!(
+            articles.items[0].article_id.value(),
+            index_database.article_id
         );
     }
 }
