@@ -1,0 +1,46 @@
+name: Rust CI
+
+on:
+  push:
+    paths:
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "crates/**"
+      - "libs/**"
+      - "data/meta/**"
+      - ".github/workflows/rust.yaml"
+  pull_request:
+    paths:
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "crates/**"
+      - "libs/**"
+      - "data/meta/**"
+      - ".github/workflows/rust.yaml"
+
+concurrency:
+  group: rust-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  rust:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust toolchain
+        run: |
+          rustup toolchain install 1.86 --profile minimal --component rustfmt
+          rustup default 1.86
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Test workspace
+        run: cargo test --workspace --locked
+
+      - name: Build workspace
+        run: cargo build --workspace --all-targets --locked
