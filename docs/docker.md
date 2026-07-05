@@ -59,7 +59,7 @@ worker sidecar
 
 后端镜像分两阶段构建：
 
-1. `rust:1.85-bookworm` 构建阶段执行 release 构建
+1. `rust:1.86-bookworm` 构建阶段执行 release 构建
 2. `debian:bookworm-slim` 运行阶段复制 `api`、`index`、`notify`、`push`、`ps-api`、`ps-cli`、`libs/simple-linux/` 和 `data/meta/`
 
 运行阶段默认设置：
