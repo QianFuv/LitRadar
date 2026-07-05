@@ -2,6 +2,7 @@
 
 use std::env;
 use std::error::Error;
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -108,6 +109,15 @@ fn run_grouped_command(mut args: Vec<String>) -> Result<(), Box<dyn Error>> {
     {
         args.remove(0);
         return run_legacy_index(args);
+    }
+    if matches!(args.first().map(String::as_str), Some("notify" | "push")) {
+        let workflow = if args.first().map(String::as_str) == Some("notify") {
+            DeliveryWorkflow::Notify
+        } else {
+            DeliveryWorkflow::Push
+        };
+        args.remove(0);
+        return run_legacy_delivery(workflow, args);
     }
     if has_help(&args) {
         println!("{}", grouped_usage());
@@ -250,22 +260,74 @@ fn run_legacy_delivery(
         DeliveryWorkflow::Notify => "notify",
         DeliveryWorkflow::Push => "push",
     };
-    let mut mode = None;
+    let mut mode = DeliveryMode::Execute;
     if matches!(args.first().map(String::as_str), Some("dry-run" | "shadow")) {
-        mode = Some(args.remove(0));
+        mode = if args.remove(0) == "shadow" {
+            DeliveryMode::Shadow
+        } else {
+            DeliveryMode::DryRun
+        };
     }
     if remove_flag(&mut args, "--dry-run") {
-        mode = Some("dry-run".to_string());
+        mode = DeliveryMode::DryRun;
     }
-    let Some(mode) = mode else {
-        return Err(format!(
-            "legacy {command_name} execution will be restored by the delivery behavior task"
-        )
-        .into());
-    };
-    let mut grouped_args = vec![command_name.to_string(), mode];
-    grouped_args.extend(args);
-    run_grouped_command(grouped_args)
+    if remove_flag(&mut args, "--no-dry-run") {
+        mode = DeliveryMode::Execute;
+    }
+    let auth_db_path = extract_auth_db_path(&mut args)?;
+    let index_db_path = extract_path_option(&mut args, "--index-db")?;
+    let db_name = extract_string_option(&mut args, "--db")?;
+    let state_dir = extract_path_option(&mut args, "--state-dir")?;
+    let changes_file = extract_path_option(&mut args, "--changes-file")?;
+    let ai_model = extract_string_option(&mut args, "--ai-model")?;
+    let max_candidates = extract_usize_option(&mut args, "--max-candidates")?;
+    let _timeout_seconds = extract_u64_option(&mut args, "--timeout")?.unwrap_or(60);
+    let _retries = extract_usize_option(&mut args, "--retries")?.unwrap_or(3);
+    let dedupe_retention_days =
+        extract_i64_option(&mut args, "--dedupe-retention-days")?.unwrap_or(60);
+    if !args.is_empty() {
+        return Err(format!("unexpected {command_name} arguments: {}", args.join(" ")).into());
+    }
+
+    let project_root = project_root();
+    apply_runtime_settings(&auth_db_path);
+    let changes_file = changes_file
+        .filter(|path| !path.as_os_str().is_empty())
+        .map(|path| resolve_project_path(&project_root, path));
+    let state_dir = state_dir
+        .filter(|path| !path.as_os_str().is_empty())
+        .map(|path| resolve_project_path(&project_root, path))
+        .unwrap_or_else(|| default_delivery_state_dir(&project_root, workflow));
+    let targets = resolve_delivery_targets(
+        &project_root,
+        index_db_path,
+        db_name,
+        changes_file.as_deref(),
+    )?;
+    let mut outcomes = Vec::new();
+    for target in targets {
+        let outcome = run_recommendation_delivery(&RecommendationRunConfig {
+            auth_db_path: auth_db_path.clone(),
+            index_db_path: target.index_db_path,
+            db_name: target.db_name,
+            state_dir: state_dir.clone(),
+            changes_file: changes_file.clone(),
+            ai_model: ai_model.clone(),
+            max_candidates,
+            dedupe_retention_days,
+            mode,
+            workflow,
+        })?;
+        outcomes.push(outcome);
+    }
+    let payload = json!({
+        "workflow": workflow,
+        "mode": mode,
+        "status": if outcomes.iter().all(|outcome| outcome.status == "idle") { "idle" } else { "completed" },
+        "databases": outcomes,
+    });
+    println!("{}", serde_json::to_string(&payload)?);
+    Ok(())
 }
 
 fn print_scheduler_load(auth_db_path: &Path) -> Result<(), Box<dyn Error>> {
@@ -420,6 +482,122 @@ fn apply_runtime_settings(auth_db_path: &Path) {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct DeliveryTarget {
+    index_db_path: PathBuf,
+    db_name: String,
+}
+
+fn resolve_delivery_targets(
+    project_root: &Path,
+    index_db_path: Option<PathBuf>,
+    db_name: Option<String>,
+    changes_file: Option<&Path>,
+) -> Result<Vec<DeliveryTarget>, Box<dyn Error>> {
+    if let Some(index_db_path) = index_db_path {
+        let index_db_path = resolve_project_path(project_root, index_db_path);
+        let db_name = db_name
+            .map(|value| normalize_db_name(&value))
+            .unwrap_or_else(|| {
+                index_db_path
+                    .file_name()
+                    .and_then(|value| value.to_str())
+                    .map(str::to_string)
+                    .unwrap_or_else(|| "index.sqlite".to_string())
+            });
+        return Ok(vec![DeliveryTarget {
+            index_db_path,
+            db_name,
+        }]);
+    }
+    if let Some(db_name) = db_name {
+        let db_name = normalize_db_name(&db_name);
+        let index_db_path = project_root.join("data").join("index").join(&db_name);
+        if !index_db_path.exists() {
+            return Err("Database not found".into());
+        }
+        return Ok(vec![DeliveryTarget {
+            index_db_path,
+            db_name,
+        }]);
+    }
+    if let Some(changes_file) = changes_file {
+        let db_name = db_name_from_manifest(changes_file)?;
+        let index_db_path = project_root.join("data").join("index").join(&db_name);
+        if !index_db_path.exists() {
+            return Err("Database not found".into());
+        }
+        return Ok(vec![DeliveryTarget {
+            index_db_path,
+            db_name,
+        }]);
+    }
+    let index_dir = project_root.join("data").join("index");
+    fs::create_dir_all(&index_dir)?;
+    let mut targets = Vec::new();
+    for entry in fs::read_dir(&index_dir)? {
+        let path = entry?.path();
+        if path.extension().and_then(|value| value.to_str()) != Some("sqlite") {
+            continue;
+        }
+        let Some(db_name) = path
+            .file_name()
+            .and_then(|value| value.to_str())
+            .map(str::to_string)
+        else {
+            continue;
+        };
+        targets.push(DeliveryTarget {
+            index_db_path: path,
+            db_name,
+        });
+    }
+    targets.sort_by(|left, right| left.db_name.cmp(&right.db_name));
+    if targets.is_empty() {
+        return Err("No SQLite databases found".into());
+    }
+    Ok(targets)
+}
+
+fn db_name_from_manifest(path: &Path) -> Result<String, Box<dyn Error>> {
+    let payload: serde_json::Value = serde_json::from_str(&fs::read_to_string(path)?)?;
+    let db_name = payload
+        .get("db_name")
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or("Change manifest missing db_name; specify --db explicitly")?;
+    Ok(normalize_db_name(db_name))
+}
+
+fn normalize_db_name(value: &str) -> String {
+    let mut db_name = Path::new(value)
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or(value)
+        .trim()
+        .to_string();
+    if !db_name.ends_with(".sqlite") {
+        db_name.push_str(".sqlite");
+    }
+    db_name
+}
+
+fn resolve_project_path(project_root: &Path, path: PathBuf) -> PathBuf {
+    if path.is_absolute() {
+        path
+    } else {
+        project_root.join(path)
+    }
+}
+
+fn default_delivery_state_dir(project_root: &Path, workflow: DeliveryWorkflow) -> PathBuf {
+    match workflow {
+        DeliveryWorkflow::Notify => project_root.join("data").join("push_state"),
+        DeliveryWorkflow::Push => project_root.join("data").join("folder_push_state"),
+    }
+}
+
 fn default_timestamp() -> String {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -436,8 +614,8 @@ fn grouped_usage() -> String {
             "ps-cli scheduler dry-run-once TASK_ID [--auth-db PATH]",
             "ps-cli worker shadow [--auth-db PATH] [--interval-seconds N]",
             "index [--file FILE] [--workers N] [--issue-batch N] [--timeout N] [--resume|--no-resume] [--update|--no-update] [--notify] [--notify-dry-run]",
-            "notify [--db NAME] [--state-dir PATH] [--changes-file PATH] [--ai-model MODEL] [--max-candidates N] [--dedupe-retention-days N] [--dry-run|--no-dry-run]",
-            "push [--db NAME] [--state-dir PATH] [--changes-file PATH] [--ai-model MODEL] [--max-candidates N] [--dedupe-retention-days N] [--dry-run|--no-dry-run]"
+            "notify [--db NAME] [--state-dir PATH] [--changes-file PATH] [--ai-model MODEL] [--max-candidates N] [--timeout N] [--retries N] [--dedupe-retention-days N] [--dry-run|--no-dry-run]",
+            "push [--db NAME] [--state-dir PATH] [--changes-file PATH] [--ai-model MODEL] [--max-candidates N] [--timeout N] [--retries N] [--dedupe-retention-days N] [--dry-run|--no-dry-run]"
         ]
     });
     payload.to_string()
@@ -456,14 +634,19 @@ fn legacy_delivery_usage(workflow: DeliveryWorkflow) -> String {
         DeliveryWorkflow::Push => "push",
     };
     let payload = json!({
-        "usage": format!("{command_name} [--db NAME] [--state-dir PATH] [--changes-file PATH] [--ai-model MODEL] [--max-candidates N] [--dedupe-retention-days N] [--dry-run|--no-dry-run]")
+        "usage": format!("{command_name} [--db NAME] [--state-dir PATH] [--changes-file PATH] [--ai-model MODEL] [--max-candidates N] [--timeout N] [--retries N] [--dedupe-retention-days N] [--dry-run|--no-dry-run]")
     });
     payload.to_string()
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{grouped_usage, legacy_delivery_usage, legacy_index_usage};
+    use std::fs;
+
+    use super::{
+        default_delivery_state_dir, grouped_usage, legacy_delivery_usage, legacy_index_usage,
+        normalize_db_name, resolve_delivery_targets,
+    };
     use ps_worker::delivery::DeliveryWorkflow;
 
     #[test]
@@ -495,5 +678,70 @@ mod tests {
         assert!(push_usage.contains("push [--db NAME]"));
         assert!(notify_usage.contains("--dry-run|--no-dry-run"));
         assert!(push_usage.contains("--changes-file PATH"));
+    }
+
+    #[test]
+    fn delivery_targets_resolve_manifest_database() {
+        let root = std::env::temp_dir().join(format!(
+            "ps-cli-targets-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("system time should be after epoch")
+                .as_nanos()
+        ));
+        let index_dir = root.join("data").join("index");
+        fs::create_dir_all(&index_dir).expect("index dir should be created");
+        fs::write(index_dir.join("alpha.sqlite"), "").expect("db file should be created");
+        let manifest = root.join("manifest.json");
+        fs::write(&manifest, r#"{"db_name":"alpha"}"#).expect("manifest should be created");
+
+        let targets = resolve_delivery_targets(&root, None, None, Some(&manifest))
+            .expect("manifest target should resolve");
+
+        assert_eq!(targets.len(), 1);
+        assert_eq!(targets[0].db_name, "alpha.sqlite");
+        fs::remove_dir_all(root).expect("temp root should be removed");
+    }
+
+    #[test]
+    fn delivery_targets_scan_all_databases_in_name_order() {
+        let root = std::env::temp_dir().join(format!(
+            "ps-cli-all-dbs-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("system time should be after epoch")
+                .as_nanos()
+        ));
+        let index_dir = root.join("data").join("index");
+        fs::create_dir_all(&index_dir).expect("index dir should be created");
+        fs::write(index_dir.join("zeta.sqlite"), "").expect("db file should be created");
+        fs::write(index_dir.join("alpha.sqlite"), "").expect("db file should be created");
+
+        let targets =
+            resolve_delivery_targets(&root, None, None, None).expect("targets should resolve");
+
+        assert_eq!(
+            targets
+                .iter()
+                .map(|target| target.db_name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["alpha.sqlite", "zeta.sqlite"]
+        );
+        fs::remove_dir_all(root).expect("temp root should be removed");
+    }
+
+    #[test]
+    fn delivery_defaults_match_legacy_commands() {
+        let root = std::path::Path::new("/tmp/project");
+
+        assert_eq!(normalize_db_name("utd24"), "utd24.sqlite");
+        assert_eq!(
+            default_delivery_state_dir(root, DeliveryWorkflow::Notify),
+            root.join("data").join("push_state")
+        );
+        assert_eq!(
+            default_delivery_state_dir(root, DeliveryWorkflow::Push),
+            root.join("data").join("folder_push_state")
+        );
     }
 }
