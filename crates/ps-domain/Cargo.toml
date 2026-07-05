@@ -7,6 +7,7 @@ rust-version.workspace = true
 [dependencies]
 serde.workspace = true
 sha2.workspace = true
+utoipa.workspace = true
 
 [dev-dependencies]
 serde_json.workspace = true

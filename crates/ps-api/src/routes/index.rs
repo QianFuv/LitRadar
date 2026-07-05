@@ -10,20 +10,23 @@ use ps_storage::{
     JournalListParams,
 };
 use serde::Deserialize;
+use utoipa::IntoParams;
 
 use crate::response::ApiError;
 use crate::routes::auth::require_current_user;
 use crate::state::ApiState;
 
 /// Query parameters that only select an index database.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
 pub(crate) struct DbQuery {
     /// Database name or filename under `data/index`.
     db: Option<String>,
 }
 
 /// Journal list query parameters.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
 pub(crate) struct JournalQuery {
     /// Database name or filename under `data/index`.
     db: Option<String>,
@@ -50,7 +53,8 @@ pub(crate) struct JournalQuery {
 }
 
 /// Issue list query parameters.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
 pub(crate) struct IssueQuery {
     /// Database name or filename under `data/index`.
     db: Option<String>,
@@ -84,6 +88,13 @@ pub(crate) struct IssueQuery {
 /// # Returns
 ///
 /// JSON list of database filenames.
+#[utoipa::path(
+    get,
+    path = "/api/meta/databases",
+    tag = "index",
+    responses((status = 200, description = "Index database filenames.", body = Vec<String>)),
+    security(("bearer_auth" = []), ("session_cookie" = []))
+)]
 pub(crate) async fn list_databases(
     State(state): State<ApiState>,
     headers: HeaderMap,
@@ -105,6 +116,14 @@ pub(crate) async fn list_databases(
 /// # Returns
 ///
 /// Journal area counts.
+#[utoipa::path(
+    get,
+    path = "/api/meta/areas",
+    tag = "index",
+    params(DbQuery),
+    responses((status = 200, description = "Journal area counts.", body = Vec<ps_domain::ValueCount>)),
+    security(("bearer_auth" = []), ("session_cookie" = []))
+)]
 pub(crate) async fn list_areas(
     State(state): State<ApiState>,
     headers: HeaderMap,
@@ -127,6 +146,14 @@ pub(crate) async fn list_areas(
 /// # Returns
 ///
 /// Journal option records.
+#[utoipa::path(
+    get,
+    path = "/api/meta/journals",
+    tag = "index",
+    params(DbQuery),
+    responses((status = 200, description = "Journal selector options.", body = Vec<ps_domain::JournalOption>)),
+    security(("bearer_auth" = []), ("session_cookie" = []))
+)]
 pub(crate) async fn list_journal_options(
     State(state): State<ApiState>,
     headers: HeaderMap,
@@ -149,6 +176,14 @@ pub(crate) async fn list_journal_options(
 /// # Returns
 ///
 /// Source counts.
+#[utoipa::path(
+    get,
+    path = "/api/meta/sources",
+    tag = "index",
+    params(DbQuery),
+    responses((status = 200, description = "Metadata source counts.", body = Vec<ps_domain::ValueCount>)),
+    security(("bearer_auth" = []), ("session_cookie" = []))
+)]
 pub(crate) async fn list_sources(
     State(state): State<ApiState>,
     headers: HeaderMap,
@@ -171,6 +206,14 @@ pub(crate) async fn list_sources(
 /// # Returns
 ///
 /// Year summary records.
+#[utoipa::path(
+    get,
+    path = "/api/years",
+    tag = "index",
+    params(DbQuery),
+    responses((status = 200, description = "Publication year summaries.", body = Vec<ps_domain::YearSummary>)),
+    security(("bearer_auth" = []), ("session_cookie" = []))
+)]
 pub(crate) async fn list_years(
     State(state): State<ApiState>,
     headers: HeaderMap,
@@ -193,6 +236,14 @@ pub(crate) async fn list_years(
 /// # Returns
 ///
 /// Paginated journals.
+#[utoipa::path(
+    get,
+    path = "/api/journals",
+    tag = "index",
+    params(JournalQuery),
+    responses((status = 200, description = "Paginated journals.", body = ps_domain::JournalPage)),
+    security(("bearer_auth" = []), ("session_cookie" = []))
+)]
 pub(crate) async fn list_journals(
     State(state): State<ApiState>,
     headers: HeaderMap,
@@ -228,6 +279,17 @@ pub(crate) async fn list_journals(
 /// # Returns
 ///
 /// Journal record.
+#[utoipa::path(
+    get,
+    path = "/api/journals/{journal_id}",
+    tag = "index",
+    params(
+        ("journal_id" = i64, Path, description = "Journal identifier."),
+        DbQuery
+    ),
+    responses((status = 200, description = "Journal record.", body = ps_domain::JournalRecord)),
+    security(("bearer_auth" = []), ("session_cookie" = []))
+)]
 pub(crate) async fn get_journal(
     State(state): State<ApiState>,
     headers: HeaderMap,
@@ -251,6 +313,14 @@ pub(crate) async fn get_journal(
 /// # Returns
 ///
 /// Paginated issues.
+#[utoipa::path(
+    get,
+    path = "/api/issues",
+    tag = "index",
+    params(IssueQuery),
+    responses((status = 200, description = "Paginated issues.", body = ps_domain::IssuePage)),
+    security(("bearer_auth" = []), ("session_cookie" = []))
+)]
 pub(crate) async fn list_issues(
     State(state): State<ApiState>,
     headers: HeaderMap,
@@ -285,6 +355,17 @@ pub(crate) async fn list_issues(
 /// # Returns
 ///
 /// Issue record.
+#[utoipa::path(
+    get,
+    path = "/api/issues/{issue_id}",
+    tag = "index",
+    params(
+        ("issue_id" = i64, Path, description = "Issue identifier."),
+        DbQuery
+    ),
+    responses((status = 200, description = "Issue record.", body = ps_domain::IssueRecord)),
+    security(("bearer_auth" = []), ("session_cookie" = []))
+)]
 pub(crate) async fn get_issue(
     State(state): State<ApiState>,
     headers: HeaderMap,
@@ -307,6 +388,13 @@ pub(crate) async fn get_issue(
 /// # Returns
 ///
 /// Weekly update response.
+#[utoipa::path(
+    get,
+    path = "/api/weekly-updates",
+    tag = "index",
+    responses((status = 200, description = "Weekly article updates.", body = ps_domain::WeeklyUpdatesResponse)),
+    security(("bearer_auth" = []), ("session_cookie" = []))
+)]
 pub(crate) async fn get_weekly_updates(
     State(state): State<ApiState>,
     headers: HeaderMap,
@@ -328,6 +416,34 @@ pub(crate) async fn get_weekly_updates(
 /// # Returns
 ///
 /// Paginated articles.
+#[utoipa::path(
+    get,
+    path = "/api/articles",
+    tag = "index",
+    params(
+        ("db" = Option<String>, Query, description = "Database name or filename under data/index."),
+        ("journal_id" = Vec<i64>, Query, description = "Repeated journal identifier filters."),
+        ("area" = Vec<String>, Query, description = "Repeated area filters."),
+        ("issue_id" = Option<i64>, Query, description = "Issue identifier filter."),
+        ("year" = Option<i64>, Query, description = "Publication year filter."),
+        ("in_press" = Option<bool>, Query, description = "In-press filter."),
+        ("open_access" = Option<bool>, Query, description = "Open-access filter."),
+        ("suppressed" = Option<bool>, Query, description = "Suppressed filter."),
+        ("within_library_holdings" = Option<bool>, Query, description = "Library holdings filter."),
+        ("date_from" = Option<String>, Query, description = "Start date filter."),
+        ("date_to" = Option<String>, Query, description = "End date filter."),
+        ("doi" = Option<String>, Query, description = "DOI filter."),
+        ("pmid" = Option<String>, Query, description = "PubMed identifier filter."),
+        ("q" = Option<String>, Query, description = "Full-text query."),
+        ("sort" = Option<String>, Query, description = "Sort expression."),
+        ("limit" = Option<i64>, Query, description = "Page size."),
+        ("offset" = Option<i64>, Query, description = "Offset row count."),
+        ("cursor" = Option<String>, Query, description = "Keyset cursor."),
+        ("include_total" = Option<bool>, Query, description = "Whether to include total row count.")
+    ),
+    responses((status = 200, description = "Paginated articles.", body = ps_domain::ArticlePage)),
+    security(("bearer_auth" = []), ("session_cookie" = []))
+)]
 pub(crate) async fn list_articles(
     State(state): State<ApiState>,
     headers: HeaderMap,
@@ -352,6 +468,17 @@ pub(crate) async fn list_articles(
 /// # Returns
 ///
 /// Article record.
+#[utoipa::path(
+    get,
+    path = "/api/articles/{article_id}",
+    tag = "index",
+    params(
+        ("article_id" = i64, Path, description = "Article identifier."),
+        DbQuery
+    ),
+    responses((status = 200, description = "Article record.", body = ps_domain::ArticleRecord)),
+    security(("bearer_auth" = []), ("session_cookie" = []))
+)]
 pub(crate) async fn get_article(
     State(state): State<ApiState>,
     headers: HeaderMap,
@@ -376,6 +503,17 @@ pub(crate) async fn get_article(
 /// # Returns
 ///
 /// Article access response.
+#[utoipa::path(
+    get,
+    path = "/api/articles/{article_id}/access",
+    tag = "index",
+    params(
+        ("article_id" = i64, Path, description = "Article identifier."),
+        DbQuery
+    ),
+    responses((status = 200, description = "Article access actions.", body = ps_domain::ArticleAccessResponse)),
+    security(("bearer_auth" = []), ("session_cookie" = []))
+)]
 pub(crate) async fn get_article_access(
     State(state): State<ApiState>,
     headers: HeaderMap,
@@ -405,6 +543,20 @@ pub(crate) async fn get_article_access(
 /// # Returns
 ///
 /// Temporary redirect response.
+#[utoipa::path(
+    get,
+    path = "/api/articles/{article_id}/fulltext",
+    tag = "index",
+    params(
+        ("article_id" = i64, Path, description = "Article identifier."),
+        DbQuery
+    ),
+    responses(
+        (status = 200, description = "Full-text file download."),
+        (status = 307, description = "Temporary redirect to a full-text target.")
+    ),
+    security(("bearer_auth" = []), ("session_cookie" = []))
+)]
 pub(crate) async fn redirect_article_fulltext(
     State(state): State<ApiState>,
     headers: HeaderMap,

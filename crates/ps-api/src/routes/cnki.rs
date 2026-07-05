@@ -32,6 +32,13 @@ const DEFAULT_QR_CODE: &str = "https://qr.test/qr-rust-offline.png";
 /// # Returns
 ///
 /// Safe CNKI session status.
+#[utoipa::path(
+    get,
+    path = "/api/cnki/session",
+    tag = "cnki",
+    responses((status = 200, description = "Current CNKI session status.", body = CnkiSessionStatusResponse)),
+    security(("bearer_auth" = []), ("session_cookie" = []))
+)]
 pub(crate) async fn get_session(
     State(state): State<ApiState>,
     headers: HeaderMap,
@@ -53,6 +60,13 @@ pub(crate) async fn get_session(
 /// # Returns
 ///
 /// QR login challenge and safe session status.
+#[utoipa::path(
+    post,
+    path = "/api/cnki/login/start",
+    tag = "cnki",
+    responses((status = 200, description = "CNKI QR login challenge.", body = CnkiLoginStartResponse)),
+    security(("bearer_auth" = []), ("session_cookie" = []))
+)]
 pub(crate) async fn start_login(
     State(state): State<ApiState>,
     headers: HeaderMap,
@@ -101,6 +115,14 @@ pub(crate) async fn start_login(
 /// # Returns
 ///
 /// Polling result and safe session status.
+#[utoipa::path(
+    post,
+    path = "/api/cnki/login/poll",
+    tag = "cnki",
+    request_body = CnkiLoginPollRequest,
+    responses((status = 200, description = "CNKI QR login polling result.", body = CnkiLoginPollResponse)),
+    security(("bearer_auth" = []), ("session_cookie" = []))
+)]
 pub(crate) async fn poll_login(
     State(state): State<ApiState>,
     headers: HeaderMap,
@@ -176,6 +198,13 @@ pub(crate) async fn poll_login(
 /// # Returns
 ///
 /// Empty safe CNKI session status.
+#[utoipa::path(
+    delete,
+    path = "/api/cnki/session",
+    tag = "cnki",
+    responses((status = 200, description = "Cleared CNKI session status.", body = CnkiSessionStatusResponse)),
+    security(("bearer_auth" = []), ("session_cookie" = []))
+)]
 pub(crate) async fn clear_session(
     State(state): State<ApiState>,
     headers: HeaderMap,

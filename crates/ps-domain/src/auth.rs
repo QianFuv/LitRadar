@@ -1,11 +1,12 @@
 //! Authentication request and response models.
 
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
 use crate::UserId;
 
 /// User profile returned by auth endpoints.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct UserResponse {
     /// User identifier.
     pub id: UserId,
@@ -16,7 +17,7 @@ pub struct UserResponse {
 }
 
 /// Account registration request.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct RegisterRequest {
     /// Requested username.
     pub username: String,
@@ -27,7 +28,7 @@ pub struct RegisterRequest {
 }
 
 /// Login request.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct LoginRequest {
     /// Username.
     pub username: String,
@@ -36,7 +37,7 @@ pub struct LoginRequest {
 }
 
 /// Login response that intentionally omits the raw session token.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct LoginResponse {
     /// Authenticated user.
     pub user: UserResponse,
@@ -45,7 +46,7 @@ pub struct LoginResponse {
 }
 
 /// Access token creation request.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct TokenCreateRequest {
     /// Token display name.
     #[serde(default)]
@@ -56,7 +57,7 @@ pub struct TokenCreateRequest {
 }
 
 /// Access token creation response.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct TokenCreateResponse {
     /// Token row identifier.
     pub id: i64,
@@ -69,7 +70,7 @@ pub struct TokenCreateResponse {
 }
 
 /// Access token metadata response.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct TokenInfo {
     /// Token row identifier.
     pub id: i64,
@@ -82,7 +83,7 @@ pub struct TokenInfo {
 }
 
 /// Password change request.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct ChangePasswordRequest {
     /// Current password.
     pub old_password: String,
@@ -91,7 +92,7 @@ pub struct ChangePasswordRequest {
 }
 
 /// Invite code response.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct InviteCodeResponse {
     /// Invite code row identifier.
     pub id: i64,
@@ -104,14 +105,14 @@ pub struct InviteCodeResponse {
 }
 
 /// Boolean ok response.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct OkResponse {
     /// Whether the operation succeeded.
     pub ok: bool,
 }
 
 /// Logout response.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct LogoutResponse {
     /// Whether the operation succeeded.
     pub ok: bool,
@@ -120,7 +121,7 @@ pub struct LogoutResponse {
 }
 
 /// Invite requirement response.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct InviteRequiredResponse {
     /// Whether registration requires an invite code.
     pub required: bool,

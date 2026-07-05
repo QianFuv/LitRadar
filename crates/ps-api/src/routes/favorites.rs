@@ -13,13 +13,15 @@ use ps_domain::{
 };
 use ps_storage::BusinessRepositoryError;
 use serde::Deserialize;
+use utoipa::IntoParams;
 
 use crate::response::ApiError;
 use crate::routes::auth::require_current_user;
 use crate::state::ApiState;
 
 /// Query parameters for listing favorite articles.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
 pub(crate) struct FolderArticlesQuery {
     /// Maximum row count.
     limit: Option<i64>,
@@ -28,14 +30,16 @@ pub(crate) struct FolderArticlesQuery {
 }
 
 /// Query parameters for removing or checking favorites.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
 pub(crate) struct FavoriteDbQuery {
     /// Source database name.
     db_name: Option<String>,
 }
 
 /// Query parameters for checking one favorite.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
 pub(crate) struct FavoriteCheckQuery {
     /// Article identifier.
     article_id: i64,
@@ -44,13 +48,21 @@ pub(crate) struct FavoriteCheckQuery {
 }
 
 /// Query parameters for exporting favorites.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
 pub(crate) struct ExportQuery {
     /// Export format.
     format: Option<String>,
 }
 
 /// List all folders for the authenticated user.
+#[utoipa::path(
+    get,
+    path = "/api/favorites/folders",
+    tag = "favorites",
+    responses((status = 200, description = "Favorite folders.", body = Vec<FolderResponse>)),
+    security(("bearer_auth" = []), ("session_cookie" = []))
+)]
 pub(crate) async fn list_folders(
     State(state): State<ApiState>,
     headers: HeaderMap,
@@ -62,6 +74,14 @@ pub(crate) async fn list_folders(
 }
 
 /// Create a new folder.
+#[utoipa::path(
+    post,
+    path = "/api/favorites/folders",
+    tag = "favorites",
+    request_body = FolderCreate,
+    responses((status = 200, description = "Created favorite folder.", body = FolderResponse)),
+    security(("bearer_auth" = []), ("session_cookie" = []))
+)]
 pub(crate) async fn create_folder(
     State(state): State<ApiState>,
     headers: HeaderMap,
@@ -81,6 +101,15 @@ pub(crate) async fn create_folder(
 }
 
 /// Rename an existing folder.
+#[utoipa::path(
+    put,
+    path = "/api/favorites/folders/{folder_id}",
+    tag = "favorites",
+    params(("folder_id" = i64, Path, description = "Folder row identifier.")),
+    request_body = FolderRename,
+    responses((status = 200, description = "Folder renamed.", body = OkResponse)),
+    security(("bearer_auth" = []), ("session_cookie" = []))
+)]
 pub(crate) async fn rename_folder(
     State(state): State<ApiState>,
     headers: HeaderMap,
@@ -104,6 +133,14 @@ pub(crate) async fn rename_folder(
 }
 
 /// Delete an existing folder.
+#[utoipa::path(
+    delete,
+    path = "/api/favorites/folders/{folder_id}",
+    tag = "favorites",
+    params(("folder_id" = i64, Path, description = "Folder row identifier.")),
+    responses((status = 200, description = "Folder deleted.", body = OkResponse)),
+    security(("bearer_auth" = []), ("session_cookie" = []))
+)]
 pub(crate) async fn delete_folder(
     State(state): State<ApiState>,
     headers: HeaderMap,
@@ -120,6 +157,13 @@ pub(crate) async fn delete_folder(
 }
 
 /// Get the current tracking folder for the user.
+#[utoipa::path(
+    get,
+    path = "/api/favorites/tracking",
+    tag = "favorites",
+    responses((status = 200, description = "Current favorite tracking folder.", body = FavoriteTrackingResponse)),
+    security(("bearer_auth" = []), ("session_cookie" = []))
+)]
 pub(crate) async fn get_tracking(
     State(state): State<ApiState>,
     headers: HeaderMap,
@@ -134,6 +178,14 @@ pub(crate) async fn get_tracking(
 }
 
 /// Set a folder as the current tracking folder.
+#[utoipa::path(
+    put,
+    path = "/api/favorites/tracking",
+    tag = "favorites",
+    request_body = TrackingSetRequest,
+    responses((status = 200, description = "Tracking folder updated.", body = OkResponse)),
+    security(("bearer_auth" = []), ("session_cookie" = []))
+)]
 pub(crate) async fn set_tracking(
     State(state): State<ApiState>,
     headers: HeaderMap,
@@ -153,6 +205,17 @@ pub(crate) async fn set_tracking(
 }
 
 /// List favorited articles in a folder.
+#[utoipa::path(
+    get,
+    path = "/api/favorites/folders/{folder_id}/articles",
+    tag = "favorites",
+    params(
+        ("folder_id" = i64, Path, description = "Folder row identifier."),
+        FolderArticlesQuery
+    ),
+    responses((status = 200, description = "Favorite articles.", body = Vec<FavoriteArticleResponse>)),
+    security(("bearer_auth" = []), ("session_cookie" = []))
+)]
 pub(crate) async fn list_folder_articles(
     State(state): State<ApiState>,
     headers: HeaderMap,
@@ -182,6 +245,14 @@ pub(crate) async fn list_folder_articles(
 }
 
 /// Get the favorite count for a folder.
+#[utoipa::path(
+    get,
+    path = "/api/favorites/folders/{folder_id}/count",
+    tag = "favorites",
+    params(("folder_id" = i64, Path, description = "Folder row identifier.")),
+    responses((status = 200, description = "Favorite count.", body = serde_json::Value)),
+    security(("bearer_auth" = []), ("session_cookie" = []))
+)]
 pub(crate) async fn folder_count(
     State(state): State<ApiState>,
     headers: HeaderMap,
@@ -198,6 +269,17 @@ pub(crate) async fn folder_count(
 }
 
 /// Export one folder's favorites in a citation format.
+#[utoipa::path(
+    get,
+    path = "/api/favorites/folders/{folder_id}/export",
+    tag = "favorites",
+    params(
+        ("folder_id" = i64, Path, description = "Folder row identifier."),
+        ExportQuery
+    ),
+    responses((status = 200, description = "Citation export download.")),
+    security(("bearer_auth" = []), ("session_cookie" = []))
+)]
 pub(crate) async fn export_folder(
     State(state): State<ApiState>,
     headers: HeaderMap,
@@ -243,6 +325,15 @@ pub(crate) async fn export_folder(
 }
 
 /// Add one favorite to a folder.
+#[utoipa::path(
+    post,
+    path = "/api/favorites/folders/{folder_id}/articles",
+    tag = "favorites",
+    params(("folder_id" = i64, Path, description = "Folder row identifier.")),
+    request_body = FavoriteAdd,
+    responses((status = 200, description = "Created favorite row.", body = FavoriteResponse)),
+    security(("bearer_auth" = []), ("session_cookie" = []))
+)]
 pub(crate) async fn add_favorite(
     State(state): State<ApiState>,
     headers: HeaderMap,
@@ -261,6 +352,18 @@ pub(crate) async fn add_favorite(
 }
 
 /// Remove one favorite from a folder.
+#[utoipa::path(
+    delete,
+    path = "/api/favorites/folders/{folder_id}/articles/{article_id}",
+    tag = "favorites",
+    params(
+        ("folder_id" = i64, Path, description = "Folder row identifier."),
+        ("article_id" = i64, Path, description = "Article identifier."),
+        FavoriteDbQuery
+    ),
+    responses((status = 200, description = "Favorite removed.", body = OkResponse)),
+    security(("bearer_auth" = []), ("session_cookie" = []))
+)]
 pub(crate) async fn remove_favorite(
     State(state): State<ApiState>,
     headers: HeaderMap,
@@ -283,6 +386,15 @@ pub(crate) async fn remove_favorite(
 }
 
 /// Bulk add favorites to a folder.
+#[utoipa::path(
+    post,
+    path = "/api/favorites/folders/{folder_id}/articles/bulk",
+    tag = "favorites",
+    params(("folder_id" = i64, Path, description = "Folder row identifier.")),
+    request_body = FavoriteBulkAdd,
+    responses((status = 200, description = "Bulk favorite add result.", body = FavoriteBulkAddResult)),
+    security(("bearer_auth" = []), ("session_cookie" = []))
+)]
 pub(crate) async fn bulk_add(
     State(state): State<ApiState>,
     headers: HeaderMap,
@@ -301,6 +413,15 @@ pub(crate) async fn bulk_add(
 }
 
 /// Bulk remove favorites from a folder.
+#[utoipa::path(
+    post,
+    path = "/api/favorites/folders/{folder_id}/articles/bulk-remove",
+    tag = "favorites",
+    params(("folder_id" = i64, Path, description = "Folder row identifier.")),
+    request_body = FavoriteBulkRemove,
+    responses((status = 200, description = "Bulk favorite remove result.", body = FavoriteBulkResult)),
+    security(("bearer_auth" = []), ("session_cookie" = []))
+)]
 pub(crate) async fn bulk_remove(
     State(state): State<ApiState>,
     headers: HeaderMap,
@@ -319,6 +440,15 @@ pub(crate) async fn bulk_remove(
 }
 
 /// Bulk move favorites between folders.
+#[utoipa::path(
+    post,
+    path = "/api/favorites/folders/{folder_id}/articles/bulk-move",
+    tag = "favorites",
+    params(("folder_id" = i64, Path, description = "Folder row identifier.")),
+    request_body = FavoriteBulkMove,
+    responses((status = 200, description = "Bulk favorite move result.", body = FavoriteBulkResult)),
+    security(("bearer_auth" = []), ("session_cookie" = []))
+)]
 pub(crate) async fn bulk_move(
     State(state): State<ApiState>,
     headers: HeaderMap,
@@ -338,6 +468,14 @@ pub(crate) async fn bulk_move(
 }
 
 /// Check which folders contain an article.
+#[utoipa::path(
+    get,
+    path = "/api/favorites/check",
+    tag = "favorites",
+    params(FavoriteCheckQuery),
+    responses((status = 200, description = "Favorite folder memberships.", body = Vec<FavoriteCheckResponse>)),
+    security(("bearer_auth" = []), ("session_cookie" = []))
+)]
 pub(crate) async fn check_favorite(
     State(state): State<ApiState>,
     headers: HeaderMap,
@@ -355,6 +493,14 @@ pub(crate) async fn check_favorite(
 }
 
 /// Batch check which folders contain articles.
+#[utoipa::path(
+    post,
+    path = "/api/favorites/check/batch",
+    tag = "favorites",
+    request_body = FavoriteBatchCheckRequest,
+    responses((status = 200, description = "Batch favorite folder memberships.", body = Vec<ps_domain::FavoriteBatchCheckResponse>)),
+    security(("bearer_auth" = []), ("session_cookie" = []))
+)]
 pub(crate) async fn check_favorites_batch(
     State(state): State<ApiState>,
     headers: HeaderMap,

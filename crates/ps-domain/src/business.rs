@@ -3,11 +3,12 @@
 use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
 use crate::{ArticleId, JournalId, UserId};
 
 /// Create-folder request payload.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct FolderCreate {
     /// Folder display name.
     pub name: String,
@@ -17,14 +18,14 @@ pub struct FolderCreate {
 }
 
 /// Rename-folder request payload.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct FolderRename {
     /// Replacement folder display name.
     pub name: String,
 }
 
 /// Folder response payload.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct FolderResponse {
     /// Folder row identifier.
     pub id: i64,
@@ -39,7 +40,7 @@ pub struct FolderResponse {
 }
 
 /// Favorite creation request payload.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct FavoriteAdd {
     /// Article identifier.
     pub article_id: ArticleId,
@@ -52,7 +53,7 @@ pub struct FavoriteAdd {
 }
 
 /// Favorite article reference used by bulk operations.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct FavoriteArticleRef {
     /// Article identifier.
     pub article_id: ArticleId,
@@ -62,7 +63,7 @@ pub struct FavoriteArticleRef {
 }
 
 /// Favorite row response payload.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct FavoriteResponse {
     /// Favorite row identifier.
     pub id: i64,
@@ -79,7 +80,7 @@ pub struct FavoriteResponse {
 }
 
 /// Favorite row enriched with optional article metadata.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct FavoriteArticleResponse {
     /// Favorite row identifier.
     pub id: i64,
@@ -162,7 +163,7 @@ impl From<FavoriteResponse> for FavoriteArticleResponse {
 }
 
 /// Favorite membership row returned by check endpoints.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct FavoriteCheckResponse {
     /// Folder row identifier.
     pub folder_id: i64,
@@ -171,7 +172,7 @@ pub struct FavoriteCheckResponse {
 }
 
 /// Batch favorite check request.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct FavoriteBatchCheckRequest {
     /// Article identifiers to check.
     pub article_ids: Vec<ArticleId>,
@@ -181,7 +182,7 @@ pub struct FavoriteBatchCheckRequest {
 }
 
 /// Batch favorite check response item.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct FavoriteBatchCheckResponse {
     /// Article identifier that was checked.
     pub article_id: ArticleId,
@@ -190,21 +191,21 @@ pub struct FavoriteBatchCheckResponse {
 }
 
 /// Bulk favorite add request.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct FavoriteBulkAdd {
     /// Favorite articles to add.
     pub articles: Vec<FavoriteAdd>,
 }
 
 /// Bulk favorite remove request.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct FavoriteBulkRemove {
     /// Favorite articles to remove.
     pub articles: Vec<FavoriteArticleRef>,
 }
 
 /// Bulk favorite move request.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct FavoriteBulkMove {
     /// Target folder row identifier.
     pub target_folder_id: i64,
@@ -213,28 +214,28 @@ pub struct FavoriteBulkMove {
 }
 
 /// Bulk operation count response.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct FavoriteBulkResult {
     /// Number of affected favorite rows.
     pub count: i64,
 }
 
 /// Bulk add response preserving the existing `added` key.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct FavoriteBulkAddResult {
     /// Number of inserted favorite rows.
     pub added: i64,
 }
 
 /// Set-tracking-folder request payload.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct TrackingSetRequest {
     /// Folder row identifier to mark as tracking.
     pub folder_id: i64,
 }
 
 /// Current favorite tracking folder payload.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct FavoriteTrackingResponse {
     /// Tracking folder identifier, or null when none is configured.
     pub folder_id: Option<i64>,
@@ -243,7 +244,7 @@ pub struct FavoriteTrackingResponse {
 }
 
 /// Notification settings update payload.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct NotificationSettingsUpdate {
     /// Keyword preferences.
     #[serde(default)]
@@ -305,7 +306,7 @@ pub struct NotificationSettingsUpdate {
 }
 
 /// Notification settings response payload.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct NotificationSettingsResponse {
     /// Settings row identifier.
     pub id: i64,
@@ -356,7 +357,7 @@ pub struct NotificationSettingsResponse {
 }
 
 /// Scheduled task response payload.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct ScheduledTaskInfo {
     /// Scheduled task row identifier.
     pub id: i64,
@@ -379,7 +380,7 @@ pub struct ScheduledTaskInfo {
 }
 
 /// Scheduled task creation payload.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct ScheduledTaskCreate {
     /// Display name.
     pub name: String,
@@ -393,7 +394,7 @@ pub struct ScheduledTaskCreate {
 }
 
 /// Scheduled task update payload.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct ScheduledTaskUpdate {
     /// Optional replacement display name.
     pub name: Option<String>,
@@ -406,7 +407,7 @@ pub struct ScheduledTaskUpdate {
 }
 
 /// Runtime setting response payload.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct RuntimeSettingInfo {
     /// API field name.
     pub field: String,
@@ -429,7 +430,7 @@ pub struct RuntimeSettingInfo {
 }
 
 /// Runtime settings update payload.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct RuntimeSettingsUpdate {
     /// Values keyed by API field name.
     #[serde(default)]
@@ -437,7 +438,7 @@ pub struct RuntimeSettingsUpdate {
 }
 
 /// Admin user response payload.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct AdminUserInfo {
     /// User row identifier.
     pub id: UserId,
@@ -458,21 +459,21 @@ pub struct AdminUserInfo {
 }
 
 /// Admin grant/revoke request payload.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct AdminSetAdmin {
     /// Replacement admin flag.
     pub is_admin: bool,
 }
 
 /// Admin password reset request payload.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct AdminResetPassword {
     /// Replacement password.
     pub new_password: String,
 }
 
 /// Admin invite code response payload.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct AdminInviteCodeInfo {
     /// Invite code row identifier.
     pub id: i64,
@@ -493,7 +494,7 @@ pub struct AdminInviteCodeInfo {
 }
 
 /// Announcement creation payload.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct AnnouncementCreate {
     /// Announcement title.
     pub title: String,
@@ -508,7 +509,7 @@ pub struct AnnouncementCreate {
 }
 
 /// Announcement update payload.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct AnnouncementUpdate {
     /// Optional replacement title.
     pub title: Option<String>,
@@ -521,7 +522,7 @@ pub struct AnnouncementUpdate {
 }
 
 /// Tracking folder summary for `/api/tracking/status`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct TrackingFolderSummary {
     /// Folder row identifier.
     pub id: i64,
@@ -530,7 +531,7 @@ pub struct TrackingFolderSummary {
 }
 
 /// Tracking status response payload.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct TrackingStatusResponse {
     /// Current tracking folder summary.
     pub tracking_folder: Option<TrackingFolderSummary>,
@@ -543,7 +544,7 @@ pub struct TrackingStatusResponse {
 }
 
 /// Auth database statistics payload.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct AuthStats {
     /// Total registered users.
     pub total_users: i64,
@@ -570,7 +571,7 @@ pub struct AuthStats {
 }
 
 /// Per-index database statistics payload.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct IndexDatabaseStats {
     /// Database file name.
     pub db_name: String,
@@ -586,7 +587,7 @@ pub struct IndexDatabaseStats {
 }
 
 /// Aggregate index statistics payload.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct IndexStats {
     /// Per-database statistics.
     pub databases: Vec<IndexDatabaseStats>,
@@ -597,7 +598,7 @@ pub struct IndexStats {
 }
 
 /// Push-state statistics payload.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct PushStats {
     /// State file stem.
     pub db_name: String,
@@ -614,7 +615,7 @@ pub struct PushStats {
 }
 
 /// Admin stats response payload.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct AdminStatsResponse {
     /// Auth database statistics.
     pub auth: AuthStats,

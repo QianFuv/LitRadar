@@ -5,20 +5,26 @@ use std::fmt;
 use serde::de::{self, Visitor};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use sha2::{Digest, Sha256};
+use utoipa::ToSchema;
 
 /// Maximum positive SQLite integer used by Python-compatible stable hashes.
 pub const SQLITE_INT_MAX: u64 = i64::MAX as u64;
 
 /// Article identifier stored internally as a SQLite integer.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, ToSchema)]
+#[schema(value_type = String)]
 pub struct ArticleId(pub i64);
 
 /// Journal identifier stored internally as a SQLite integer.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, ToSchema)]
+#[schema(value_type = String)]
 pub struct JournalId(pub i64);
 
 /// Auth user identifier stored as an ordinary SQLite integer.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, ToSchema,
+)]
+#[schema(value_type = i64)]
 pub struct UserId(pub i64);
 
 impl ArticleId {

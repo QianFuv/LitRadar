@@ -1,11 +1,12 @@
 //! Index database API models.
 
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
 use crate::{ArticleId, JournalId};
 
 /// Journal record with optional CSV metadata.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct JournalRecord {
     /// Journal identifier.
     pub journal_id: JournalId,
@@ -42,7 +43,7 @@ pub struct JournalRecord {
 }
 
 /// Issue record.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct IssueRecord {
     /// Issue identifier.
     pub issue_id: i64,
@@ -69,7 +70,7 @@ pub struct IssueRecord {
 }
 
 /// Article record.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct ArticleRecord {
     /// Article identifier.
     pub article_id: ArticleId,
@@ -121,7 +122,7 @@ pub struct ArticleRecord {
 }
 
 /// Pagination metadata.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct PageMeta {
     /// Total rows when requested.
     pub total: Option<i64>,
@@ -136,7 +137,7 @@ pub struct PageMeta {
 }
 
 /// Paginated journals response.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct JournalPage {
     /// Journal records.
     pub items: Vec<JournalRecord>,
@@ -145,7 +146,7 @@ pub struct JournalPage {
 }
 
 /// Paginated issues response.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct IssuePage {
     /// Issue records.
     pub items: Vec<IssueRecord>,
@@ -154,7 +155,7 @@ pub struct IssuePage {
 }
 
 /// Paginated articles response.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct ArticlePage {
     /// Article records.
     pub items: Vec<ArticleRecord>,
@@ -163,7 +164,7 @@ pub struct ArticlePage {
 }
 
 /// Article access action.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct ArticleAccessAction {
     /// Whether the action is available.
     pub available: bool,
@@ -180,7 +181,7 @@ pub struct ArticleAccessAction {
 }
 
 /// Article access response.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct ArticleAccessResponse {
     /// Detail action.
     pub detail: ArticleAccessAction,
@@ -189,7 +190,7 @@ pub struct ArticleAccessResponse {
 }
 
 /// Label/count tuple.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct ValueCount {
     /// Label value.
     pub value: String,
@@ -198,7 +199,7 @@ pub struct ValueCount {
 }
 
 /// Publication year summary.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct YearSummary {
     /// Publication year.
     pub year: i64,
@@ -209,7 +210,7 @@ pub struct YearSummary {
 }
 
 /// Journal option for selection lists.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct JournalOption {
     /// Journal identifier.
     pub journal_id: JournalId,
@@ -218,7 +219,7 @@ pub struct JournalOption {
 }
 
 /// Weekly article record.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct WeeklyArticleRecord {
     /// Article identifier.
     pub article_id: ArticleId,
@@ -256,7 +257,7 @@ pub struct WeeklyArticleRecord {
 }
 
 /// Weekly update summary for one journal.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct WeeklyJournalUpdate {
     /// Journal identifier.
     pub journal_id: JournalId,
@@ -269,7 +270,7 @@ pub struct WeeklyJournalUpdate {
 }
 
 /// Weekly update summary for one database.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct WeeklyDatabaseUpdate {
     /// Database filename.
     pub db_name: String,
@@ -284,7 +285,7 @@ pub struct WeeklyDatabaseUpdate {
 }
 
 /// Weekly updates response.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct WeeklyUpdatesResponse {
     /// Response generated timestamp.
     pub generated_at: String,

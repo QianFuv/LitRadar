@@ -1,9 +1,10 @@
 //! Shared response helpers for API-compatible error payloads.
 
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
 /// FastAPI-compatible error envelope.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct ErrorEnvelope {
     /// Error detail payload.
     pub detail: String,

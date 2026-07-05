@@ -8,6 +8,12 @@ use ps_domain::HealthResponse;
 /// # Returns
 ///
 /// JSON health response.
-pub(super) async fn health() -> Json<HealthResponse> {
+#[utoipa::path(
+    get,
+    path = "/api/health",
+    tag = "health",
+    responses((status = 200, description = "Service is healthy.", body = HealthResponse))
+)]
+pub(crate) async fn health() -> Json<HealthResponse> {
     Json(HealthResponse::ok())
 }

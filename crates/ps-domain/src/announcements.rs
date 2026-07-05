@@ -1,9 +1,10 @@
 //! Announcement response models shared by public API handlers.
 
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
 /// Public announcement payload returned by the API.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct AnnouncementInfo {
     /// Announcement identifier.
     pub id: i64,

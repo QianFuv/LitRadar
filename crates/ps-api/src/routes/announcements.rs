@@ -17,7 +17,13 @@ use crate::state::ApiState;
 /// # Returns
 ///
 /// JSON announcement list ordered like the Python API.
-pub(super) async fn get_announcements(
+#[utoipa::path(
+    get,
+    path = "/api/announcements",
+    tag = "announcements",
+    responses((status = 200, description = "Enabled announcements.", body = Vec<AnnouncementInfo>))
+)]
+pub(crate) async fn get_announcements(
     State(state): State<ApiState>,
 ) -> Result<Json<Vec<AnnouncementInfo>>, ApiError> {
     let announcements = list_active_announcements(state.storage_config().auth_db_path())

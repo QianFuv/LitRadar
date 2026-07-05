@@ -1,9 +1,10 @@
 //! Zhejiang Library CNKI session API models.
 
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
 /// Safe per-user Zhejiang Library CNKI session status.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct CnkiSessionStatusResponse {
     /// Whether a session-like row is configured.
     pub configured: bool,
@@ -24,7 +25,7 @@ pub struct CnkiSessionStatusResponse {
 }
 
 /// Zhejiang Library QR login challenge response.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct CnkiLoginStartResponse {
     /// QR UUID.
     pub uuid: String,
@@ -37,7 +38,7 @@ pub struct CnkiLoginStartResponse {
 }
 
 /// Zhejiang Library QR login polling parameters.
-#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize, ToSchema)]
 pub struct CnkiLoginPollRequest {
     /// Poll timeout in seconds.
     #[serde(default = "default_timeout_seconds")]
@@ -62,7 +63,7 @@ impl Default for CnkiLoginPollRequest {
 }
 
 /// Zhejiang Library QR login polling response.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct CnkiLoginPollResponse {
     /// Poll status.
     pub status: String,
@@ -71,7 +72,7 @@ pub struct CnkiLoginPollResponse {
 }
 
 /// Structured CNKI route error detail.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct CnkiErrorDetail {
     /// Stable error code.
     pub code: String,

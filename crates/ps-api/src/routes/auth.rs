@@ -30,7 +30,14 @@ const MAX_TOKEN_TTL_SECONDS: i64 = 365 * 24 * 3600;
 /// # Returns
 ///
 /// Created user response.
-pub(super) async fn register(
+#[utoipa::path(
+    post,
+    path = "/api/auth/register",
+    tag = "auth",
+    request_body = RegisterRequest,
+    responses((status = 200, description = "Registered user.", body = UserResponse))
+)]
+pub(crate) async fn register(
     State(state): State<ApiState>,
     Json(body): Json<RegisterRequest>,
 ) -> Result<Json<UserResponse>, ApiError> {
@@ -62,7 +69,14 @@ pub(super) async fn register(
 /// # Returns
 ///
 /// Login response without the raw token.
-pub(super) async fn login(
+#[utoipa::path(
+    post,
+    path = "/api/auth/login",
+    tag = "auth",
+    request_body = LoginRequest,
+    responses((status = 200, description = "Login response.", body = LoginResponse))
+)]
+pub(crate) async fn login(
     State(state): State<ApiState>,
     Json(body): Json<LoginRequest>,
 ) -> Result<Response, ApiError> {
@@ -92,7 +106,14 @@ pub(super) async fn login(
 /// # Returns
 ///
 /// Current user response.
-pub(super) async fn get_me(
+#[utoipa::path(
+    get,
+    path = "/api/auth/me",
+    tag = "auth",
+    responses((status = 200, description = "Current user.", body = UserResponse)),
+    security(("bearer_auth" = []), ("session_cookie" = []))
+)]
+pub(crate) async fn get_me(
     State(state): State<ApiState>,
     headers: HeaderMap,
 ) -> Result<Json<UserResponse>, ApiError> {
@@ -111,7 +132,15 @@ pub(super) async fn get_me(
 /// # Returns
 ///
 /// OK response.
-pub(super) async fn change_password(
+#[utoipa::path(
+    post,
+    path = "/api/auth/change-password",
+    tag = "auth",
+    request_body = ChangePasswordRequest,
+    responses((status = 200, description = "Password changed.", body = OkResponse)),
+    security(("bearer_auth" = []), ("session_cookie" = []))
+)]
+pub(crate) async fn change_password(
     State(state): State<ApiState>,
     headers: HeaderMap,
     Json(body): Json<ChangePasswordRequest>,
@@ -141,7 +170,14 @@ pub(super) async fn change_password(
 /// # Returns
 ///
 /// Logout response.
-pub(super) async fn logout(
+#[utoipa::path(
+    post,
+    path = "/api/auth/logout",
+    tag = "auth",
+    responses((status = 200, description = "Logged out.", body = LogoutResponse)),
+    security(("bearer_auth" = []), ("session_cookie" = []))
+)]
+pub(crate) async fn logout(
     State(state): State<ApiState>,
     headers: HeaderMap,
 ) -> Result<Response, ApiError> {
@@ -173,7 +209,15 @@ pub(super) async fn logout(
 /// # Returns
 ///
 /// Created token response.
-pub(super) async fn create_token(
+#[utoipa::path(
+    post,
+    path = "/api/auth/tokens",
+    tag = "auth",
+    request_body = TokenCreateRequest,
+    responses((status = 200, description = "Created access token.", body = TokenCreateResponse)),
+    security(("bearer_auth" = []), ("session_cookie" = []))
+)]
+pub(crate) async fn create_token(
     State(state): State<ApiState>,
     headers: HeaderMap,
     Json(body): Json<TokenCreateRequest>,
@@ -196,7 +240,14 @@ pub(super) async fn create_token(
 /// # Returns
 ///
 /// Active token metadata.
-pub(super) async fn get_tokens(
+#[utoipa::path(
+    get,
+    path = "/api/auth/tokens",
+    tag = "auth",
+    responses((status = 200, description = "Active access tokens.", body = Vec<TokenInfo>)),
+    security(("bearer_auth" = []), ("session_cookie" = []))
+)]
+pub(crate) async fn get_tokens(
     State(state): State<ApiState>,
     headers: HeaderMap,
 ) -> Result<Json<Vec<TokenInfo>>, ApiError> {
@@ -218,7 +269,15 @@ pub(super) async fn get_tokens(
 /// # Returns
 ///
 /// OK response.
-pub(super) async fn delete_token(
+#[utoipa::path(
+    delete,
+    path = "/api/auth/tokens/{token_id}",
+    tag = "auth",
+    params(("token_id" = i64, Path, description = "Token row identifier.")),
+    responses((status = 200, description = "Token deleted.", body = OkResponse)),
+    security(("bearer_auth" = []), ("session_cookie" = []))
+)]
+pub(crate) async fn delete_token(
     State(state): State<ApiState>,
     headers: HeaderMap,
     Path(token_id): Path<i64>,
@@ -243,7 +302,14 @@ pub(super) async fn delete_token(
 /// # Returns
 ///
 /// Invite code response.
-pub(super) async fn generate_invite_code(
+#[utoipa::path(
+    post,
+    path = "/api/auth/invite-code",
+    tag = "auth",
+    responses((status = 200, description = "Generated invite code.", body = InviteCodeResponse)),
+    security(("bearer_auth" = []), ("session_cookie" = []))
+)]
+pub(crate) async fn generate_invite_code(
     State(state): State<ApiState>,
     headers: HeaderMap,
 ) -> Result<Json<InviteCodeResponse>, ApiError> {
@@ -264,7 +330,14 @@ pub(super) async fn generate_invite_code(
 /// # Returns
 ///
 /// Invite code response or null.
-pub(super) async fn get_invite_code(
+#[utoipa::path(
+    get,
+    path = "/api/auth/invite-code",
+    tag = "auth",
+    responses((status = 200, description = "Current user's invite code.", body = Option<InviteCodeResponse>)),
+    security(("bearer_auth" = []), ("session_cookie" = []))
+)]
+pub(crate) async fn get_invite_code(
     State(state): State<ApiState>,
     headers: HeaderMap,
 ) -> Result<Json<Option<InviteCodeResponse>>, ApiError> {
@@ -284,7 +357,13 @@ pub(super) async fn get_invite_code(
 /// # Returns
 ///
 /// Invite requirement response.
-pub(super) async fn check_invite_required(
+#[utoipa::path(
+    get,
+    path = "/api/auth/invite-required",
+    tag = "auth",
+    responses((status = 200, description = "Invite requirement.", body = InviteRequiredResponse))
+)]
+pub(crate) async fn check_invite_required(
     State(state): State<ApiState>,
 ) -> Result<Json<InviteRequiredResponse>, ApiError> {
     let required = auth_service(&state)

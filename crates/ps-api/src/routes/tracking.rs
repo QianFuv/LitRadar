@@ -15,6 +15,13 @@ use crate::state::ApiState;
 const ALLOWED_DELIVERY_METHODS: [&str; 2] = ["folder", "pushplus"];
 
 /// Get tracking status for the authenticated user.
+#[utoipa::path(
+    get,
+    path = "/api/tracking/status",
+    tag = "tracking",
+    responses((status = 200, description = "Tracking status.", body = TrackingStatusResponse)),
+    security(("bearer_auth" = []), ("session_cookie" = []))
+)]
 pub(crate) async fn status(
     State(state): State<ApiState>,
     headers: HeaderMap,
@@ -46,6 +53,13 @@ pub(crate) async fn status(
 }
 
 /// Get the user's notification settings.
+#[utoipa::path(
+    get,
+    path = "/api/tracking/notification-settings",
+    tag = "tracking",
+    responses((status = 200, description = "Notification settings.", body = Option<NotificationSettingsResponse>)),
+    security(("bearer_auth" = []), ("session_cookie" = []))
+)]
 pub(crate) async fn get_notification_settings(
     State(state): State<ApiState>,
     headers: HeaderMap,
@@ -58,6 +72,14 @@ pub(crate) async fn get_notification_settings(
 }
 
 /// Create or update the user's notification settings.
+#[utoipa::path(
+    put,
+    path = "/api/tracking/notification-settings",
+    tag = "tracking",
+    request_body = NotificationSettingsUpdate,
+    responses((status = 200, description = "Updated notification settings.", body = NotificationSettingsResponse)),
+    security(("bearer_auth" = []), ("session_cookie" = []))
+)]
 pub(crate) async fn update_notification_settings(
     State(state): State<ApiState>,
     headers: HeaderMap,

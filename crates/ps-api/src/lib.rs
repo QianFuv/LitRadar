@@ -2,6 +2,7 @@
 
 pub mod config;
 mod observability;
+mod openapi;
 mod response;
 pub mod routes;
 pub mod state;
@@ -78,6 +79,7 @@ pub fn build_router(config: ApiConfig) -> Router {
     let state = ApiState::new(storage_config);
 
     Router::new()
+        .merge(openapi::docs_router())
         .nest(API_PREFIX, routes::public_routes())
         .layer(from_fn(cache_control_middleware))
         .layer(cors_layer(&config))
@@ -210,6 +212,74 @@ mod tests {
 
         assert_eq!(status, StatusCode::OK);
         assert_eq!(payload, serde_json::json!({"status": "ok"}));
+    }
+
+    #[tokio::test]
+    #[cfg_attr(
+        miri,
+        ignore = "Miri does not support Tokio's Windows IOCP runtime initialization"
+    )]
+    async fn openapi_json_route_serves_generated_document() {
+        let temp_dir = tempdir().expect("temp dir should be created");
+        let app = build_router(ApiConfig {
+            project_root: temp_dir.path().to_path_buf(),
+            host: "127.0.0.1".to_string(),
+            port: 0,
+            cors_allowed_origins: Vec::new(),
+        });
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/openapi.json")
+                    .body(Body::empty())
+                    .expect("request should build"),
+            )
+            .await
+            .expect("response should be returned");
+        let status = response.status();
+        let body = to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("body should read");
+        let payload: Value = serde_json::from_slice(&body).expect("body should be JSON");
+
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(payload["openapi"], "3.1.0");
+        assert!(payload["paths"]["/api/health"].is_object());
+        assert!(payload["paths"]["/api/admin/scheduled-tasks"].is_object());
+    }
+
+    #[tokio::test]
+    #[cfg_attr(
+        miri,
+        ignore = "Miri does not support Tokio's Windows IOCP runtime initialization"
+    )]
+    async fn docs_route_serves_swagger_ui_html() {
+        let temp_dir = tempdir().expect("temp dir should be created");
+        let app = build_router(ApiConfig {
+            project_root: temp_dir.path().to_path_buf(),
+            host: "127.0.0.1".to_string(),
+            port: 0,
+            cors_allowed_origins: Vec::new(),
+        });
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/docs/")
+                    .body(Body::empty())
+                    .expect("request should build"),
+            )
+            .await
+            .expect("response should be returned");
+        let status = response.status();
+        let body = to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("body should read");
+        let html = String::from_utf8(body.to_vec()).expect("body should be UTF-8");
+
+        assert_eq!(status, StatusCode::OK);
+        assert!(html.contains("Swagger UI"));
     }
 
     #[tokio::test]

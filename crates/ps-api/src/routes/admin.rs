@@ -20,6 +20,13 @@ type AnnouncementPayload<'a> = (Option<&'a str>, Option<&'a str>, Option<String>
 type ScheduledTaskPayload<'a> = (Option<&'a str>, Option<&'a str>, Option<&'a str>);
 
 /// List all users with admin dashboard counts.
+#[utoipa::path(
+    get,
+    path = "/api/admin/users",
+    tag = "admin",
+    responses((status = 200, description = "Admin user list.", body = Vec<AdminUserInfo>)),
+    security(("bearer_auth" = []), ("session_cookie" = []))
+)]
 pub(crate) async fn list_users(
     State(state): State<ApiState>,
     headers: HeaderMap,
@@ -31,6 +38,15 @@ pub(crate) async fn list_users(
 }
 
 /// Grant or revoke admin status.
+#[utoipa::path(
+    put,
+    path = "/api/admin/users/{user_id}/admin",
+    tag = "admin",
+    params(("user_id" = i64, Path, description = "User row identifier.")),
+    request_body = AdminSetAdmin,
+    responses((status = 200, description = "Admin status updated.", body = OkResponse)),
+    security(("bearer_auth" = []), ("session_cookie" = []))
+)]
 pub(crate) async fn set_admin(
     State(state): State<ApiState>,
     headers: HeaderMap,
@@ -55,6 +71,15 @@ pub(crate) async fn set_admin(
 }
 
 /// Reset a user's password.
+#[utoipa::path(
+    post,
+    path = "/api/admin/users/{user_id}/reset-password",
+    tag = "admin",
+    params(("user_id" = i64, Path, description = "User row identifier.")),
+    request_body = AdminResetPassword,
+    responses((status = 200, description = "Password reset.", body = OkResponse)),
+    security(("bearer_auth" = []), ("session_cookie" = []))
+)]
 pub(crate) async fn reset_password(
     State(state): State<ApiState>,
     headers: HeaderMap,
@@ -77,6 +102,14 @@ pub(crate) async fn reset_password(
 }
 
 /// Delete a user and associated data.
+#[utoipa::path(
+    delete,
+    path = "/api/admin/users/{user_id}",
+    tag = "admin",
+    params(("user_id" = i64, Path, description = "User row identifier.")),
+    responses((status = 200, description = "User deleted.", body = OkResponse)),
+    security(("bearer_auth" = []), ("session_cookie" = []))
+)]
 pub(crate) async fn delete_user(
     State(state): State<ApiState>,
     headers: HeaderMap,
@@ -96,6 +129,13 @@ pub(crate) async fn delete_user(
 }
 
 /// List invite codes.
+#[utoipa::path(
+    get,
+    path = "/api/admin/invite-codes",
+    tag = "admin",
+    responses((status = 200, description = "Invite codes.", body = Vec<AdminInviteCodeInfo>)),
+    security(("bearer_auth" = []), ("session_cookie" = []))
+)]
 pub(crate) async fn list_invite_codes(
     State(state): State<ApiState>,
     headers: HeaderMap,
@@ -107,6 +147,13 @@ pub(crate) async fn list_invite_codes(
 }
 
 /// Create an admin-generated invite code.
+#[utoipa::path(
+    post,
+    path = "/api/admin/invite-codes",
+    tag = "admin",
+    responses((status = 200, description = "Created invite code.", body = serde_json::Value)),
+    security(("bearer_auth" = []), ("session_cookie" = []))
+)]
 pub(crate) async fn create_invite_code(
     State(state): State<ApiState>,
     headers: HeaderMap,
@@ -122,6 +169,14 @@ pub(crate) async fn create_invite_code(
 }
 
 /// Delete an unused invite code.
+#[utoipa::path(
+    delete,
+    path = "/api/admin/invite-codes/{code_id}",
+    tag = "admin",
+    params(("code_id" = i64, Path, description = "Invite code row identifier.")),
+    responses((status = 200, description = "Invite code deleted.", body = OkResponse)),
+    security(("bearer_auth" = []), ("session_cookie" = []))
+)]
 pub(crate) async fn delete_invite_code(
     State(state): State<ApiState>,
     headers: HeaderMap,
@@ -137,6 +192,13 @@ pub(crate) async fn delete_invite_code(
 }
 
 /// Return dashboard statistics.
+#[utoipa::path(
+    get,
+    path = "/api/admin/stats",
+    tag = "admin",
+    responses((status = 200, description = "Admin dashboard statistics.", body = AdminStatsResponse)),
+    security(("bearer_auth" = []), ("session_cookie" = []))
+)]
 pub(crate) async fn stats(
     State(state): State<ApiState>,
     headers: HeaderMap,
@@ -147,6 +209,13 @@ pub(crate) async fn stats(
 }
 
 /// List scheduled tasks.
+#[utoipa::path(
+    get,
+    path = "/api/admin/scheduled-tasks",
+    tag = "admin",
+    responses((status = 200, description = "Scheduled tasks.", body = Vec<ScheduledTaskInfo>)),
+    security(("bearer_auth" = []), ("session_cookie" = []))
+)]
 pub(crate) async fn list_scheduled_tasks(
     State(state): State<ApiState>,
     headers: HeaderMap,
@@ -158,6 +227,14 @@ pub(crate) async fn list_scheduled_tasks(
 }
 
 /// Create a scheduled task.
+#[utoipa::path(
+    post,
+    path = "/api/admin/scheduled-tasks",
+    tag = "admin",
+    request_body = ScheduledTaskCreate,
+    responses((status = 200, description = "Created scheduled task.", body = ScheduledTaskInfo)),
+    security(("bearer_auth" = []), ("session_cookie" = []))
+)]
 pub(crate) async fn create_scheduled_task(
     State(state): State<ApiState>,
     headers: HeaderMap,
@@ -178,6 +255,15 @@ pub(crate) async fn create_scheduled_task(
 }
 
 /// Update a scheduled task.
+#[utoipa::path(
+    put,
+    path = "/api/admin/scheduled-tasks/{task_id}",
+    tag = "admin",
+    params(("task_id" = i64, Path, description = "Scheduled task row identifier.")),
+    request_body = ScheduledTaskUpdate,
+    responses((status = 200, description = "Updated scheduled task.", body = ScheduledTaskInfo)),
+    security(("bearer_auth" = []), ("session_cookie" = []))
+)]
 pub(crate) async fn update_scheduled_task(
     State(state): State<ApiState>,
     headers: HeaderMap,
@@ -206,6 +292,14 @@ pub(crate) async fn update_scheduled_task(
 }
 
 /// Delete a scheduled task.
+#[utoipa::path(
+    delete,
+    path = "/api/admin/scheduled-tasks/{task_id}",
+    tag = "admin",
+    params(("task_id" = i64, Path, description = "Scheduled task row identifier.")),
+    responses((status = 200, description = "Scheduled task deleted.", body = OkResponse)),
+    security(("bearer_auth" = []), ("session_cookie" = []))
+)]
 pub(crate) async fn delete_scheduled_task(
     State(state): State<ApiState>,
     headers: HeaderMap,
@@ -222,6 +316,13 @@ pub(crate) async fn delete_scheduled_task(
 }
 
 /// List managed runtime settings.
+#[utoipa::path(
+    get,
+    path = "/api/admin/runtime-settings",
+    tag = "admin",
+    responses((status = 200, description = "Runtime settings.", body = Vec<RuntimeSettingInfo>)),
+    security(("bearer_auth" = []), ("session_cookie" = []))
+)]
 pub(crate) async fn list_runtime_settings(
     State(state): State<ApiState>,
     headers: HeaderMap,
@@ -233,6 +334,14 @@ pub(crate) async fn list_runtime_settings(
 }
 
 /// Update managed runtime settings.
+#[utoipa::path(
+    put,
+    path = "/api/admin/runtime-settings",
+    tag = "admin",
+    request_body = RuntimeSettingsUpdate,
+    responses((status = 200, description = "Updated runtime settings.", body = Vec<RuntimeSettingInfo>)),
+    security(("bearer_auth" = []), ("session_cookie" = []))
+)]
 pub(crate) async fn update_runtime_settings(
     State(state): State<ApiState>,
     headers: HeaderMap,
@@ -246,6 +355,13 @@ pub(crate) async fn update_runtime_settings(
 }
 
 /// List all announcements for admin management.
+#[utoipa::path(
+    get,
+    path = "/api/admin/announcements",
+    tag = "admin",
+    responses((status = 200, description = "All announcements.", body = Vec<AnnouncementInfo>)),
+    security(("bearer_auth" = []), ("session_cookie" = []))
+)]
 pub(crate) async fn list_announcements(
     State(state): State<ApiState>,
     headers: HeaderMap,
@@ -257,6 +373,14 @@ pub(crate) async fn list_announcements(
 }
 
 /// Create an announcement.
+#[utoipa::path(
+    post,
+    path = "/api/admin/announcements",
+    tag = "admin",
+    request_body = AnnouncementCreate,
+    responses((status = 200, description = "Created announcement.", body = AnnouncementInfo)),
+    security(("bearer_auth" = []), ("session_cookie" = []))
+)]
 pub(crate) async fn create_announcement(
     State(state): State<ApiState>,
     headers: HeaderMap,
@@ -280,6 +404,15 @@ pub(crate) async fn create_announcement(
 }
 
 /// Update an announcement.
+#[utoipa::path(
+    put,
+    path = "/api/admin/announcements/{announcement_id}",
+    tag = "admin",
+    params(("announcement_id" = i64, Path, description = "Announcement row identifier.")),
+    request_body = AnnouncementUpdate,
+    responses((status = 200, description = "Updated announcement.", body = AnnouncementInfo)),
+    security(("bearer_auth" = []), ("session_cookie" = []))
+)]
 pub(crate) async fn update_announcement(
     State(state): State<ApiState>,
     headers: HeaderMap,
@@ -308,6 +441,14 @@ pub(crate) async fn update_announcement(
 }
 
 /// Delete an announcement.
+#[utoipa::path(
+    delete,
+    path = "/api/admin/announcements/{announcement_id}",
+    tag = "admin",
+    params(("announcement_id" = i64, Path, description = "Announcement row identifier.")),
+    responses((status = 200, description = "Announcement deleted.", body = OkResponse)),
+    security(("bearer_auth" = []), ("session_cookie" = []))
+)]
 pub(crate) async fn delete_announcement(
     State(state): State<ApiState>,
     headers: HeaderMap,
