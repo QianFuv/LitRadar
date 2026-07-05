@@ -1,1 +1,0 @@
-"""Backend migration contract tests."""

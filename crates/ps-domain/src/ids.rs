@@ -169,33 +169,10 @@ mod tests {
 
     use super::{stable_sqlite_id, ArticleId, JournalId};
 
-    #[derive(Debug, Deserialize)]
-    struct GoldenFixture {
-        helpers: GoldenHelpers,
-    }
-
-    #[derive(Debug, Deserialize)]
-    struct GoldenHelpers {
-        stable_ids: GoldenStableIds,
-    }
-
-    #[derive(Debug, Deserialize)]
-    struct GoldenStableIds {
-        article_doi: i64,
-        journal_title: i64,
-    }
-
     #[derive(Debug, PartialEq, Serialize, Deserialize)]
     struct ArticlePreview {
         article_id: ArticleId,
         journal_id: JournalId,
-    }
-
-    fn golden_fixture() -> GoldenFixture {
-        serde_json::from_str(include_str!(
-            "../../../tests/fixtures/contracts/backend_golden.json"
-        ))
-        .expect("golden fixture should parse")
     }
 
     #[test]
@@ -234,15 +211,13 @@ mod tests {
 
     #[test]
     fn stable_ids_match_python_golden_values() {
-        let fixture = golden_fixture();
-
         assert_eq!(
             stable_sqlite_id("10.1000/golden", "article"),
-            fixture.helpers.stable_ids.article_doi
+            1_916_262_609_001_879_182
         );
         assert_eq!(
             stable_sqlite_id("Golden Systems Journal", "journal"),
-            fixture.helpers.stable_ids.journal_title
+            1_786_608_276_134_106_497
         );
     }
 }

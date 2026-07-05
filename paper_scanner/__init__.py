@@ -1,1 +1,0 @@
-"""Paper Scanner backend package."""
