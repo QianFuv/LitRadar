@@ -1,4 +1,4 @@
-//! Shared Rust backend command dispatch.
+//! Shared Rust backend command entrypoints.
 
 use std::collections::BTreeSet;
 use std::env;
@@ -6,12 +6,9 @@ use std::error::Error;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::thread;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 
-use ps_index::{
-    run_cnki_fixture_index, run_live_index, run_live_index_worker_from_environment,
-    run_scholarly_fixture_index, CnkiIndexConfig, LiveIndexConfig, ScholarlyIndexConfig,
-};
+use ps_index::{run_live_index, run_live_index_worker_from_environment, LiveIndexConfig};
 use ps_worker::delivery::{
     run_recommendation_delivery, DeliveryMode, DeliveryWorkflow, RecommendationRunConfig,
 };
@@ -20,7 +17,7 @@ use ps_worker::scheduler::{
 };
 use serde_json::json;
 
-/// Run the grouped `ps-cli` command dispatcher.
+/// Run the standalone `index` command.
 ///
 /// # Arguments
 ///
@@ -29,32 +26,16 @@ use serde_json::json;
 /// # Returns
 ///
 /// Result indicating whether the command completed successfully.
-pub fn run_ps_cli(args: Vec<String>) -> Result<(), Box<dyn Error>> {
-    if run_internal_live_index_worker_if_requested()? {
-        return Ok(());
-    }
-    run_grouped_command(args)
-}
-
-/// Run the legacy `index` command dispatcher.
-///
-/// # Arguments
-///
-/// * `args` - Command arguments without the executable name.
-///
-/// # Returns
-///
-/// Result indicating whether the command completed successfully.
-pub fn run_legacy_index(args: Vec<String>) -> Result<(), Box<dyn Error>> {
+pub fn run_index_command(args: Vec<String>) -> Result<(), Box<dyn Error>> {
     if run_internal_live_index_worker_if_requested()? {
         return Ok(());
     }
     let mut args = args;
     if has_help(&args) {
-        println!("{}", legacy_index_usage());
+        println!("{}", index_usage());
         return Ok(());
     }
-    let options = parse_legacy_index_options(&mut args)?;
+    let options = parse_index_options(&mut args)?;
     if !args.is_empty() {
         return Err(format!("unexpected index arguments: {}", args.join(" ")).into());
     }
@@ -85,7 +66,7 @@ fn run_internal_live_index_worker_if_requested() -> Result<bool, Box<dyn Error>>
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct LegacyIndexOptions {
+struct IndexOptions {
     file: Option<String>,
     worker_count: usize,
     process_count: usize,
@@ -97,9 +78,7 @@ struct LegacyIndexOptions {
     notify_dry_run: bool,
 }
 
-fn parse_legacy_index_options(
-    args: &mut Vec<String>,
-) -> Result<LegacyIndexOptions, Box<dyn Error>> {
+fn parse_index_options(args: &mut Vec<String>) -> Result<IndexOptions, Box<dyn Error>> {
     let file = extract_string_option_any(args, &["--file", "-f"])?;
     let worker_count = positive_usize(
         "--workers",
@@ -121,7 +100,7 @@ fn parse_legacy_index_options(
     if notify && !update {
         return Err("--notify requires --update".into());
     }
-    Ok(LegacyIndexOptions {
+    Ok(IndexOptions {
         file,
         worker_count,
         process_count,
@@ -134,7 +113,7 @@ fn parse_legacy_index_options(
     })
 }
 
-/// Run the legacy `notify` command dispatcher.
+/// Run the standalone `notify` command.
 ///
 /// # Arguments
 ///
@@ -143,11 +122,11 @@ fn parse_legacy_index_options(
 /// # Returns
 ///
 /// Result indicating whether the command completed successfully.
-pub fn run_legacy_notify(args: Vec<String>) -> Result<(), Box<dyn Error>> {
-    run_legacy_delivery(DeliveryWorkflow::Notify, args)
+pub fn run_notify_command(args: Vec<String>) -> Result<(), Box<dyn Error>> {
+    run_delivery_command(DeliveryWorkflow::Notify, args)
 }
 
-/// Run the legacy `push` command dispatcher.
+/// Run the standalone `push` command.
 ///
 /// # Arguments
 ///
@@ -156,170 +135,74 @@ pub fn run_legacy_notify(args: Vec<String>) -> Result<(), Box<dyn Error>> {
 /// # Returns
 ///
 /// Result indicating whether the command completed successfully.
-pub fn run_legacy_push(args: Vec<String>) -> Result<(), Box<dyn Error>> {
-    run_legacy_delivery(DeliveryWorkflow::Push, args)
+pub fn run_push_command(args: Vec<String>) -> Result<(), Box<dyn Error>> {
+    run_delivery_command(DeliveryWorkflow::Push, args)
 }
 
-fn run_grouped_command(mut args: Vec<String>) -> Result<(), Box<dyn Error>> {
-    if matches!(args.first().map(String::as_str), Some("index"))
-        && !matches!(args.get(1).map(String::as_str), Some("fixture"))
-    {
-        args.remove(0);
-        return run_legacy_index(args);
-    }
-    if matches!(args.first().map(String::as_str), Some("notify" | "push")) {
-        let workflow = if args.first().map(String::as_str) == Some("notify") {
-            DeliveryWorkflow::Notify
-        } else {
-            DeliveryWorkflow::Push
-        };
-        args.remove(0);
-        return run_legacy_delivery(workflow, args);
-    }
+/// Run the standalone `scheduler` command.
+///
+/// # Arguments
+///
+/// * `args` - Command arguments without the executable name.
+///
+/// # Returns
+///
+/// Result indicating whether the command completed successfully.
+pub fn run_scheduler_command(mut args: Vec<String>) -> Result<(), Box<dyn Error>> {
     if has_help(&args) {
-        println!("{}", grouped_usage());
+        println!("{}", scheduler_usage());
         return Ok(());
     }
-    let auth_db_path = extract_auth_db_path(&mut args)?;
-    let index_db_path = extract_path_option(&mut args, "--index-db")?;
-    let db_name = extract_string_option(&mut args, "--db")?;
-    let state_dir = extract_path_option(&mut args, "--state-dir")?;
-    let changes_file = extract_path_option(&mut args, "--changes-file")?;
-    let csv_path = extract_path_option(&mut args, "--csv")?;
-    let fixture_path = extract_path_option(&mut args, "--fixture")?;
-    let output_db_path = extract_path_option(&mut args, "--output-db")?;
-    let manifest_path = extract_path_option(&mut args, "--manifest")?;
-    let index_source = extract_string_option(&mut args, "--source")?;
-    let run_id = extract_string_option(&mut args, "--run-id")?;
-    let timestamp = extract_string_option(&mut args, "--timestamp")?;
-    let resume_index = extract_flag(&mut args, "--resume");
-    let update_index = extract_flag(&mut args, "--update");
-    let issue_batch_size = extract_usize_option(&mut args, "--issue-batch-size")?.unwrap_or(10);
-    let worker_interval_seconds =
-        extract_u64_option(&mut args, "--interval-seconds")?.unwrap_or(300);
-    let worker_max_iterations = extract_usize_option(&mut args, "--max-iterations")?;
-    let has_semantic_scholar_key = extract_flag(&mut args, "--semantic-scholar-key")
-        || env::var("SEMANTIC_SCHOLAR_API_KEY_POOL")
-            .map(|value| !value.trim().is_empty())
-            .unwrap_or(false);
-    let ai_model = extract_string_option(&mut args, "--ai-model")?;
-    let max_candidates = extract_usize_option(&mut args, "--max-candidates")?;
-    let dedupe_retention_days =
-        extract_i64_option(&mut args, "--dedupe-retention-days")?.unwrap_or(30);
+    let project_root = extract_project_root(&mut args)?;
+    let auth_db_path = extract_auth_db_path_with_project_root(&mut args, &project_root)?;
     match args.as_slice() {
-        [command] if command == "scheduler-dry-run" => print_scheduler_load(&auth_db_path),
-        [command] if command == "scheduler-shadow" => print_scheduler_load(&auth_db_path),
-        [group, command] if group == "scheduler" && command == "dry-run" => {
-            print_scheduler_load(&auth_db_path)
-        }
-        [group, command] if group == "scheduler" && command == "shadow" => {
-            print_scheduler_load(&auth_db_path)
-        }
-        [group, command] if group == "worker" && command == "shadow" => {
-            run_worker_shadow(&auth_db_path, worker_interval_seconds)
-        }
-        [group, command] if group == "worker" && command == "execute" => run_worker_execute(
-            &auth_db_path,
-            worker_interval_seconds,
-            worker_max_iterations,
-        ),
-        [group, command] if group == "index" && command == "fixture" => {
-            let csv_path = csv_path.ok_or("--csv is required for index fixture")?;
-            let fixture_path = fixture_path.ok_or("--fixture is required for index fixture")?;
-            let output_db_path =
-                output_db_path.ok_or("--output-db is required for index fixture")?;
-            let default_timestamp = default_timestamp();
-            let run_id = run_id.unwrap_or_else(|| format!("run-{default_timestamp}"));
-            let timestamp = timestamp.unwrap_or(default_timestamp);
-            let source = index_source.as_deref().unwrap_or("scholarly");
-            let payload = match source {
-                "scholarly" => {
-                    serde_json::to_value(run_scholarly_fixture_index(&ScholarlyIndexConfig {
-                        csv_path,
-                        fixture_path,
-                        output_db_path,
-                        manifest_path,
-                        run_id,
-                        timestamp,
-                        has_semantic_scholar_key,
-                    })?)?
-                }
-                "cnki" => serde_json::to_value(run_cnki_fixture_index(&CnkiIndexConfig {
-                    csv_path,
-                    fixture_path,
-                    output_db_path,
-                    manifest_path,
-                    run_id,
-                    timestamp,
-                    resume: resume_index,
-                    update: update_index,
-                    issue_batch_size,
-                    worker_count: issue_batch_size,
-                })?)?,
-                other => return Err(format!("unsupported index fixture source: {other}").into()),
-            };
-            println!("{}", serde_json::to_string(&payload)?);
-            Ok(())
-        }
-        [group, command, task_id] if group == "scheduler" && command == "run-once" => {
+        [command] if command == "validate" => print_scheduler_load(&auth_db_path),
+        [command, task_id] if command == "run-once" => {
             let task_id = task_id.parse::<i64>()?;
             let outcome = run_task_now(&auth_db_path, task_id, SchedulerMode::Execute)?;
             println!("{}", serde_json::to_string(&outcome)?);
             Ok(())
         }
-        [group, command, task_id] if group == "scheduler" && command == "dry-run-once" => {
+        [command, task_id] if command == "dry-run-once" => {
             let task_id = task_id.parse::<i64>()?;
             let outcome = run_task_now(&auth_db_path, task_id, SchedulerMode::DryRun)?;
             println!("{}", serde_json::to_string(&outcome)?);
             Ok(())
         }
-        [group, command]
-            if (group == "notify" || group == "push")
-                && (command == "dry-run" || command == "shadow") =>
-        {
-            let workflow = if group == "notify" {
-                DeliveryWorkflow::Notify
-            } else {
-                DeliveryWorkflow::Push
-            };
-            let mode = if command == "shadow" {
-                DeliveryMode::Shadow
-            } else {
-                DeliveryMode::DryRun
-            };
-            let index_db_path =
-                index_db_path.ok_or("--index-db is required for notification and push delivery")?;
-            let db_name = db_name.ok_or("--db is required for notification and push delivery")?;
-            let project_root = project_root();
-            let state_dir =
-                state_dir.unwrap_or_else(|| project_root.join("data").join("push_state"));
-            let outcome = run_recommendation_delivery(&RecommendationRunConfig {
-                auth_db_path,
-                index_db_path,
-                db_name,
-                state_dir,
-                changes_file,
-                ai_model,
-                max_candidates,
-                timeout_seconds: 60,
-                retry_attempts: 3,
-                dedupe_retention_days,
-                mode,
-                workflow,
-            })?;
-            println!("{}", serde_json::to_string(&outcome)?);
-            Ok(())
-        }
-        _ => Err(grouped_usage().into()),
+        _ => Err(scheduler_usage().into()),
     }
 }
 
-fn run_legacy_delivery(
+/// Run the standalone `worker` command.
+///
+/// # Arguments
+///
+/// * `args` - Command arguments without the executable name.
+///
+/// # Returns
+///
+/// Result indicating whether the command completed successfully.
+pub fn run_worker_command(mut args: Vec<String>) -> Result<(), Box<dyn Error>> {
+    if has_help(&args) {
+        println!("{}", worker_usage());
+        return Ok(());
+    }
+    let project_root = extract_project_root(&mut args)?;
+    let auth_db_path = extract_auth_db_path_with_project_root(&mut args, &project_root)?;
+    let interval_seconds = extract_u64_option(&mut args, "--interval-seconds")?.unwrap_or(300);
+    let max_iterations = extract_usize_option(&mut args, "--max-iterations")?;
+    if !args.is_empty() {
+        return Err(worker_usage().into());
+    }
+    run_worker_execute(&auth_db_path, interval_seconds, max_iterations)
+}
+
+fn run_delivery_command(
     workflow: DeliveryWorkflow,
     mut args: Vec<String>,
 ) -> Result<(), Box<dyn Error>> {
     if has_help(&args) {
-        println!("{}", legacy_delivery_usage(workflow));
+        println!("{}", delivery_usage(workflow));
         return Ok(());
     }
     let command_name = match workflow {
@@ -327,13 +210,6 @@ fn run_legacy_delivery(
         DeliveryWorkflow::Push => "push",
     };
     let mut mode = DeliveryMode::Execute;
-    if matches!(args.first().map(String::as_str), Some("dry-run" | "shadow")) {
-        mode = if args.remove(0) == "shadow" {
-            DeliveryMode::Shadow
-        } else {
-            DeliveryMode::DryRun
-        };
-    }
     if remove_flag(&mut args, "--dry-run") {
         mode = DeliveryMode::DryRun;
     }
@@ -404,22 +280,6 @@ fn print_scheduler_load(auth_db_path: &Path) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-fn run_worker_shadow(auth_db_path: &Path, interval_seconds: u64) -> Result<(), Box<dyn Error>> {
-    let interval_seconds = interval_seconds.max(1);
-    loop {
-        let result = load_scheduler_jobs(auth_db_path)?;
-        let payload = json!({
-            "interval_seconds": interval_seconds,
-            "jobs": result.jobs.len(),
-            "mode": "shadow",
-            "skipped": result.skipped.len(),
-            "status": "running"
-        });
-        println!("{}", serde_json::to_string(&payload)?);
-        thread::sleep(Duration::from_secs(interval_seconds));
-    }
-}
-
 fn run_worker_execute(
     auth_db_path: &Path,
     interval_seconds: u64,
@@ -464,6 +324,26 @@ fn extract_auth_db_path(args: &mut Vec<String>) -> Result<PathBuf, Box<dyn Error
         .map(PathBuf::from)
         .unwrap_or_else(|_| env::current_dir().expect("current directory should be available"));
     Ok(project_root.join("data").join("auth.sqlite"))
+}
+
+fn extract_auth_db_path_with_project_root(
+    args: &mut Vec<String>,
+    project_root: &Path,
+) -> Result<PathBuf, Box<dyn Error>> {
+    if let Some(index) = args.iter().position(|argument| argument == "--auth-db") {
+        if index + 1 >= args.len() {
+            return Err("--auth-db requires a path".into());
+        }
+        let path = PathBuf::from(args.remove(index + 1));
+        args.remove(index);
+        return Ok(path);
+    }
+    Ok(project_root.join("data").join("auth.sqlite"))
+}
+
+fn extract_project_root(args: &mut Vec<String>) -> Result<PathBuf, Box<dyn Error>> {
+    Ok(extract_path_option(args, "--project-root")?
+        .unwrap_or_else(|| env::current_dir().expect("current directory should be available")))
 }
 
 fn extract_path_option(
@@ -535,10 +415,6 @@ fn extract_i64_option(args: &mut Vec<String>, name: &str) -> Result<Option<i64>,
     extract_string_option(args, name)?
         .map(|value| value.parse::<i64>().map_err(Into::into))
         .transpose()
-}
-
-fn extract_flag(args: &mut Vec<String>, name: &str) -> bool {
-    remove_flag(args, name)
 }
 
 fn extract_bool_pair(args: &mut Vec<String>, yes_name: &str, no_name: &str, default: bool) -> bool {
@@ -704,38 +580,32 @@ fn default_delivery_state_dir(project_root: &Path, workflow: DeliveryWorkflow) -
     }
 }
 
-fn default_timestamp() -> String {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_secs().to_string())
-        .unwrap_or_else(|_| "0".to_string())
-}
-
-fn grouped_usage() -> String {
-    let payload = json!({
-        "usage": [
-            "ps-cli scheduler dry-run [--auth-db PATH]",
-            "ps-cli scheduler shadow [--auth-db PATH]",
-            "ps-cli scheduler run-once TASK_ID [--auth-db PATH]",
-            "ps-cli scheduler dry-run-once TASK_ID [--auth-db PATH]",
-            "ps-cli worker shadow [--auth-db PATH] [--interval-seconds N]",
-            "ps-cli worker execute [--auth-db PATH] [--interval-seconds N] [--max-iterations N]",
-            "index [--file FILE] [--workers N] [--processes N] [--issue-batch N] [--timeout N] [--resume|--no-resume] [--update|--no-update] [--notify] [--notify-dry-run]",
-            "notify [--db NAME] [--state-dir PATH] [--changes-file PATH] [--ai-model MODEL] [--max-candidates N] [--timeout N] [--retries N] [--dedupe-retention-days N] [--dry-run|--no-dry-run]",
-            "push [--db NAME] [--state-dir PATH] [--changes-file PATH] [--ai-model MODEL] [--max-candidates N] [--timeout N] [--retries N] [--dedupe-retention-days N] [--dry-run|--no-dry-run]"
-        ]
-    });
-    payload.to_string()
-}
-
-fn legacy_index_usage() -> String {
+fn index_usage() -> String {
     let payload = json!({
         "usage": "index [--file FILE] [--workers N] [--processes N] [--issue-batch N] [--timeout N] [--resume|--no-resume] [--update|--no-update] [--notify] [--notify-dry-run]"
     });
     payload.to_string()
 }
 
-fn legacy_delivery_usage(workflow: DeliveryWorkflow) -> String {
+fn scheduler_usage() -> String {
+    let payload = json!({
+        "usage": [
+            "scheduler validate [--project-root PATH] [--auth-db PATH]",
+            "scheduler run-once TASK_ID [--project-root PATH] [--auth-db PATH]",
+            "scheduler dry-run-once TASK_ID [--project-root PATH] [--auth-db PATH]"
+        ]
+    });
+    payload.to_string()
+}
+
+fn worker_usage() -> String {
+    let payload = json!({
+        "usage": "worker [--project-root PATH] [--auth-db PATH] [--interval-seconds N] [--max-iterations N]"
+    });
+    payload.to_string()
+}
+
+fn delivery_usage(workflow: DeliveryWorkflow) -> String {
     let command_name = match workflow {
         DeliveryWorkflow::Notify => "notify",
         DeliveryWorkflow::Push => "push",
@@ -753,39 +623,43 @@ mod tests {
     use tempfile::{Builder, TempDir};
 
     use super::{
-        default_delivery_state_dir, extract_auth_db_path, extract_bool_pair, extract_string_option,
-        extract_usize_option, grouped_usage, legacy_delivery_usage, legacy_index_usage,
-        normalize_db_name, parse_legacy_index_options, resolve_delivery_targets,
-        resolve_project_path, run_legacy_index, run_legacy_notify, run_ps_cli,
+        default_delivery_state_dir, delivery_usage, extract_auth_db_path, extract_bool_pair,
+        extract_string_option, extract_usize_option, index_usage, normalize_db_name,
+        parse_index_options, resolve_delivery_targets, resolve_project_path, run_index_command,
+        run_notify_command, run_push_command, run_scheduler_command, run_worker_command,
+        scheduler_usage, worker_usage,
     };
     use ps_worker::delivery::DeliveryWorkflow;
 
     #[test]
-    fn grouped_usage_hides_fixture_migration_command() {
-        let usage = grouped_usage();
+    fn standalone_usage_lists_only_supported_commands() {
+        let index = index_usage();
+        let notify = delivery_usage(DeliveryWorkflow::Notify);
+        let push = delivery_usage(DeliveryWorkflow::Push);
+        let scheduler = scheduler_usage();
+        let worker = worker_usage();
 
-        assert!(!usage.contains("index fixture"));
-        assert!(!usage.contains("PAPER_SCANNER_LIVE_INDEX_WORKER_REQUEST"));
-        assert!(usage.contains("index [--file FILE]"));
-        assert!(usage.contains("notify [--db NAME]"));
-        assert!(usage.contains("push [--db NAME]"));
-        assert!(usage.contains("ps-cli worker execute"));
+        assert!(index.contains("--file FILE"));
+        assert!(index.contains("--workers N"));
+        assert!(index.contains("--processes N"));
+        assert!(index.contains("--notify-dry-run"));
+        assert!(notify.contains("notify [--db NAME]"));
+        assert!(push.contains("push [--db NAME]"));
+        assert!(scheduler.contains("scheduler validate"));
+        assert!(scheduler.contains("scheduler run-once TASK_ID"));
+        assert!(scheduler.contains("scheduler dry-run-once TASK_ID"));
+        assert!(worker.contains("worker [--project-root PATH]"));
+        for usage in [index, notify, push, scheduler, worker] {
+            assert!(!usage.contains("ps-cli"));
+            assert!(!usage.contains("shadow"));
+            assert!(!usage.contains("index fixture"));
+            assert!(!usage.contains("worker execute"));
+            assert!(!usage.contains("PAPER_SCANNER_LIVE_INDEX_WORKER_REQUEST"));
+        }
     }
 
     #[test]
-    fn legacy_index_usage_exposes_old_flags() {
-        let usage = legacy_index_usage();
-
-        assert!(usage.contains("--file FILE"));
-        assert!(usage.contains("--workers N"));
-        assert!(usage.contains("--processes N"));
-        assert!(usage.contains("--notify-dry-run"));
-        assert!(!usage.contains("--fixture"));
-        assert!(!usage.contains("PAPER_SCANNER_LIVE_INDEX_WORKER_REQUEST"));
-    }
-
-    #[test]
-    fn legacy_index_options_preserve_concurrency_flags() {
+    fn index_options_preserve_concurrency_flags() {
         let mut args = vec![
             "--file".to_string(),
             "selected.csv".to_string(),
@@ -803,7 +677,7 @@ mod tests {
             "--notify-dry-run".to_string(),
         ];
 
-        let options = parse_legacy_index_options(&mut args).expect("index options should parse");
+        let options = parse_index_options(&mut args).expect("index options should parse");
 
         assert!(args.is_empty());
         assert_eq!(options.file.as_deref(), Some("selected.csv"));
@@ -818,10 +692,10 @@ mod tests {
     }
 
     #[test]
-    fn legacy_index_options_default_issue_batch_to_workers() {
+    fn index_options_default_issue_batch_to_workers() {
         let mut args = vec!["--workers".to_string(), "5".to_string()];
 
-        let options = parse_legacy_index_options(&mut args).expect("index options should parse");
+        let options = parse_index_options(&mut args).expect("index options should parse");
 
         assert_eq!(options.worker_count, 5);
         assert_eq!(options.process_count, 2);
@@ -829,24 +703,23 @@ mod tests {
     }
 
     #[test]
-    fn legacy_index_options_reject_zero_parallelism_values() {
+    fn index_options_reject_zero_parallelism_values() {
         for arguments in [
             vec!["--workers".to_string(), "0".to_string()],
             vec!["--processes".to_string(), "0".to_string()],
             vec!["--issue-batch".to_string(), "0".to_string()],
         ] {
             let mut arguments = arguments;
-            let error =
-                parse_legacy_index_options(&mut arguments).expect_err("zero value should fail");
+            let error = parse_index_options(&mut arguments).expect_err("zero value should fail");
 
             assert!(error.to_string().contains("must be at least 1"));
         }
     }
 
     #[test]
-    fn legacy_delivery_usage_exposes_old_flags() {
-        let notify_usage = legacy_delivery_usage(DeliveryWorkflow::Notify);
-        let push_usage = legacy_delivery_usage(DeliveryWorkflow::Push);
+    fn delivery_usage_exposes_supported_flags() {
+        let notify_usage = delivery_usage(DeliveryWorkflow::Notify);
+        let push_usage = delivery_usage(DeliveryWorkflow::Push);
 
         assert!(notify_usage.contains("notify [--db NAME]"));
         assert!(push_usage.contains("push [--db NAME]"));
@@ -891,7 +764,7 @@ mod tests {
     }
 
     #[test]
-    fn delivery_defaults_match_legacy_commands() {
+    fn delivery_defaults_match_standalone_commands() {
         let root = std::path::Path::new("/tmp/project");
 
         assert_eq!(normalize_db_name("utd24"), "utd24.sqlite");
@@ -1021,19 +894,19 @@ mod tests {
     }
 
     #[test]
-    fn legacy_index_notify_requires_update_before_live_execution() {
-        let error = run_legacy_index(vec!["--notify".to_string()])
+    fn index_notify_requires_update_before_live_execution() {
+        let error = run_index_command(vec!["--notify".to_string()])
             .expect_err("notify handoff should require update mode");
 
         assert_eq!(error.to_string(), "--notify requires --update");
     }
 
     #[test]
-    fn help_and_legacy_delivery_errors_return_before_execution() {
-        run_ps_cli(vec!["--help".to_string()]).expect("grouped help should succeed");
+    fn help_and_delivery_errors_return_before_execution() {
+        run_scheduler_command(vec!["--help".to_string()]).expect("scheduler help should succeed");
 
-        let error = run_legacy_notify(vec!["--unexpected".to_string()])
-            .expect_err("unexpected legacy delivery args should fail");
+        let error = run_notify_command(vec!["--unexpected".to_string()])
+            .expect_err("unexpected delivery args should fail");
 
         assert_eq!(
             error.to_string(),
@@ -1042,16 +915,15 @@ mod tests {
     }
 
     #[test]
-    fn scheduler_dispatch_requires_valid_task_id() {
+    fn scheduler_command_requires_valid_task_id() {
         let root = temp_root("ps-cli-scheduler-dispatch");
         let auth_db_path = root.path().join("auth.sqlite");
         ps_storage::initialize_auth_database(&auth_db_path)
             .expect("auth database should initialize");
 
-        let error = run_ps_cli(vec![
+        let error = run_scheduler_command(vec![
             "--auth-db".to_string(),
             auth_db_path.to_string_lossy().into_owned(),
-            "scheduler".to_string(),
             "run-once".to_string(),
             "not-a-number".to_string(),
         ])
@@ -1061,76 +933,64 @@ mod tests {
     }
 
     #[test]
-    fn scheduler_worker_execute_dispatch_supports_finite_test_iterations() {
+    fn worker_command_supports_finite_test_iterations() {
         let root = temp_root("ps-cli-worker-execute");
         let auth_db_path = root.path().join("auth.sqlite");
         ps_storage::initialize_auth_database(&auth_db_path)
             .expect("auth database should initialize");
 
-        run_ps_cli(vec![
+        run_worker_command(vec![
             "--auth-db".to_string(),
             auth_db_path.to_string_lossy().into_owned(),
             "--interval-seconds".to_string(),
             "1".to_string(),
             "--max-iterations".to_string(),
             "1".to_string(),
-            "worker".to_string(),
-            "execute".to_string(),
         ])
-        .expect("finite worker execute should return");
+        .expect("finite worker run should return");
     }
 
     #[test]
-    fn delivery_dispatch_requires_index_database_and_db_name() {
-        let root = temp_root("ps-cli-delivery-dispatch");
+    fn scheduler_validate_loads_jobs() {
+        let root = temp_root("ps-cli-scheduler-validate");
         let auth_db_path = root.path().join("auth.sqlite");
         ps_storage::initialize_auth_database(&auth_db_path)
             .expect("auth database should initialize");
 
-        let missing_index = run_ps_cli(vec![
+        run_scheduler_command(vec![
             "--auth-db".to_string(),
             auth_db_path.to_string_lossy().into_owned(),
-            "notify".to_string(),
-            "dry-run".to_string(),
-            "--db".to_string(),
-            "fixture".to_string(),
+            "validate".to_string(),
         ])
-        .expect_err("notify dry-run should require an index database");
-
-        assert!(missing_index.to_string().contains("--index-db is required"));
-
-        let missing_db = run_ps_cli(vec![
-            "--auth-db".to_string(),
-            auth_db_path.to_string_lossy().into_owned(),
-            "--index-db".to_string(),
-            root.path()
-                .join("fixture.sqlite")
-                .to_string_lossy()
-                .into_owned(),
-            "push".to_string(),
-            "shadow".to_string(),
-        ])
-        .expect_err("push shadow should require a database name");
-
-        assert!(missing_db.to_string().contains("--db is required"));
+        .expect("scheduler validate should load jobs");
     }
 
     #[test]
-    fn grouped_dispatch_reports_unknown_worker_command() {
-        let root = temp_root("ps-cli-worker-dispatch");
-        let auth_db_path = root.path().join("auth.sqlite");
-        ps_storage::initialize_auth_database(&auth_db_path)
-            .expect("auth database should initialize");
+    fn removed_public_command_paths_are_rejected() {
+        let index_fixture =
+            run_index_command(vec!["fixture".to_string()]).expect_err("fixture command is removed");
+        let notify_positional_dry_run = run_notify_command(vec!["dry-run".to_string()])
+            .expect_err("positional notify dry-run is removed");
+        let push_shadow =
+            run_push_command(vec!["shadow".to_string()]).expect_err("push shadow is removed");
+        let scheduler_dry_run = run_scheduler_command(vec!["dry-run".to_string()])
+            .expect_err("scheduler dry-run alias is removed");
+        let worker_execute =
+            run_worker_command(vec!["execute".to_string()]).expect_err("worker execute is removed");
 
-        let error = run_ps_cli(vec![
-            "--auth-db".to_string(),
-            auth_db_path.to_string_lossy().into_owned(),
-            "worker".to_string(),
-            "dry-run".to_string(),
-        ])
-        .expect_err("unknown worker command should return usage");
-
-        assert!(error.to_string().contains("ps-cli worker shadow"));
+        assert!(index_fixture
+            .to_string()
+            .contains("unexpected index arguments: fixture"));
+        assert!(notify_positional_dry_run
+            .to_string()
+            .contains("unexpected notify arguments: dry-run"));
+        assert!(push_shadow
+            .to_string()
+            .contains("unexpected push arguments: shadow"));
+        assert!(scheduler_dry_run.to_string().contains("scheduler validate"));
+        assert!(worker_execute
+            .to_string()
+            .contains("worker [--project-root"));
     }
 
     fn temp_root(prefix: &str) -> TempDir {

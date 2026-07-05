@@ -52,8 +52,6 @@ impl From<ps_storage::BusinessRepositoryError> for SchedulerError {
 pub enum SchedulerMode {
     /// Load scheduled jobs without executing commands.
     DryRun,
-    /// Shadow load scheduled jobs without executing commands.
-    Shadow,
     /// Execute commands and write back status.
     Execute,
 }

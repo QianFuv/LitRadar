@@ -119,8 +119,6 @@ pub enum DeliveryWorkflow {
 pub enum DeliveryMode {
     /// Plan delivery without side effects.
     DryRun,
-    /// Shadow delivery without side effects.
-    Shadow,
     /// Execute side effects.
     Execute,
 }
@@ -261,7 +259,7 @@ pub struct ManualWeeklyPushOutcome {
 ///
 /// # Returns
 ///
-/// Dry-run, shadow, or execution outcome.
+/// Dry-run or execution outcome.
 pub fn run_recommendation_delivery(
     config: &RecommendationRunConfig,
 ) -> Result<RecommendationRunOutcome, DeliveryError> {
@@ -286,7 +284,7 @@ pub fn run_recommendation_delivery(
 ///
 /// # Returns
 ///
-/// Dry-run, shadow, or execution outcome.
+/// Dry-run or execution outcome.
 pub fn run_recommendation_delivery_for_user(
     config: &RecommendationRunConfig,
     user_id: UserId,
@@ -1561,20 +1559,20 @@ mod tests {
     }
 
     #[test]
-    fn shadow_notify_plans_pushplus_without_sending() {
+    fn dry_run_notify_plans_pushplus_without_sending() {
         let fixture = DeliveryFixture::new(notification_settings("pushplus", true, vec![]));
 
         let (outcome, _pushplus_sender) = run_fixture_delivery(
             &fixture.config(
                 DeliveryWorkflow::Notify,
-                DeliveryMode::Shadow,
+                DeliveryMode::DryRun,
                 None,
                 Some(1),
             ),
             vec![selection_outcome(&[102], "AI summary")],
             Vec::new(),
         )
-        .expect("notify shadow run should build a PushPlus plan");
+        .expect("notify dry-run should build a PushPlus plan");
 
         assert_eq!(outcome.status, "completed");
         assert_eq!(outcome.subscribers.len(), 1);
