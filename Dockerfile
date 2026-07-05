@@ -5,7 +5,7 @@ WORKDIR /app
 COPY Cargo.toml Cargo.lock ./
 COPY crates crates
 
-RUN cargo build --release --bin api --bin ps-api --bin ps-cli --bin index --bin notify --bin push
+RUN cargo build --release --bin api --bin ps-api --bin index --bin notify --bin push --bin scheduler --bin worker
 
 
 FROM debian:bookworm-slim
@@ -17,15 +17,12 @@ COPY --from=build /app/target/release/index /usr/local/bin/index
 COPY --from=build /app/target/release/notify /usr/local/bin/notify
 COPY --from=build /app/target/release/push /usr/local/bin/push
 COPY --from=build /app/target/release/ps-api /usr/local/bin/ps-api
-COPY --from=build /app/target/release/ps-cli /usr/local/bin/ps-cli
+COPY --from=build /app/target/release/scheduler /usr/local/bin/scheduler
+COPY --from=build /app/target/release/worker /usr/local/bin/worker
 
 COPY libs/simple-linux libs/simple-linux
 COPY data/meta data/meta
 
-ENV API_HOST="0.0.0.0"
-ENV PAPER_SCANNER_PROJECT_ROOT="/app"
-ENV SIMPLE_TOKENIZER_PATH="/app/libs/simple-linux/libsimple-linux-ubuntu-latest/libsimple.so"
-
 EXPOSE 8000
 
-CMD ["api"]
+CMD ["api", "--host", "0.0.0.0", "--port", "8000", "--project-root", "/app"]

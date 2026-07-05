@@ -221,7 +221,7 @@ SQLite FTS5 虚表，用于全文检索。
 
 说明：
 
-- Rust 索引初始化会优先加载 `SIMPLE_TOKENIZER_PATH` 或项目内 `libs/simple-*` 下的 `simple` 扩展；如果加载成功，则以 `tokenize = 'simple'` 创建
+- Rust 索引初始化会从项目内 `libs/simple-*` 下发现 `simple` 扩展；如果加载成功，则以 `tokenize = 'simple'` 创建
 - 如果扩展不存在或加载失败，建库不会中断，会使用默认 FTS5 tokenizer
 - 查询层对 `q` 使用 SQLite FTS5 `MATCH ?`；中文、英文分词由 `article_search` 建表时的 tokenizer 决定，不做拼音查询展开
 - 对已经存在的 `article_search`，`CREATE VIRTUAL TABLE IF NOT EXISTS` 不会重建 FTS 表；从默认 tokenizer 迁移到 `simple` tokenizer 需要单独重建全文索引
@@ -547,10 +547,9 @@ announcements
 
 说明：
 
-- Docker 默认由 `ps-cli worker execute --interval-seconds 300` 持续加载并按 cron 自动执行启用任务
-- `ps-cli worker shadow` 只加载和校验任务配置，不自动执行 shell 命令
-- 立即执行和 dry-run 由 `ps-cli scheduler run-once TASK_ID` 与 `ps-cli scheduler dry-run-once TASK_ID` 触发
-- 执行模式仍按 shell 命令处理，并会把 `runtime_settings` 中的数据库来源配置应用到命令环境
+- Docker 默认由 `worker --project-root /app --interval-seconds 300` 持续加载并按 cron 自动执行启用任务
+- 立即执行和 dry-run 由 `scheduler run-once TASK_ID` 与 `scheduler dry-run-once TASK_ID` 触发
+- 执行模式仍按 shell 命令处理，不会把 `runtime_settings` 注入命令环境
 
 ### 9. `runtime_settings`
 
@@ -558,15 +557,15 @@ announcements
 
 字段：
 
-- `key`：主键，实际环境变量名
+- `key`：主键，使用 API 字段名
 - `value`
 - `updated_at`
 
 说明：
 
-- 当前受管理的 `key` 包括 `OPENALEX_API_KEY_POOL`、`PROXY_POOL`、`CROSSREF_MAILTO_POOL`、`SEMANTIC_SCHOLAR_API_KEY_POOL`
-- Rust API、Rust worker/CLI 和 Python 兼容测试路径都会读取该表并应用运行时配置
-- API 启动、索引命令和调度任务会应用这些配置；数据库已有值会覆盖同名进程环境变量
+- 当前受管理的 `key` 包括 `openalex_api_key_pool`、`semantic_scholar_api_key_pool`、`crossref_mailto_pool`、`cors_allowed_origins`、`mcp_allowed_hosts`、`mcp_allowed_origins` 和 `secure_cookies`
+- Rust API、索引命令和调度任务会读取该表并应用运行时配置
+- 数据库中没有值时使用代码默认值；运行时配置不从进程环境变量回退
 
 ### 10. `announcements`
 

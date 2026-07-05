@@ -49,7 +49,7 @@
 | `cursor` | `*`，后续使用 `message.next-cursor` | 游标分页 |
 | `sort` | `published` | 按发布日期排序 |
 | `order` | `asc` | 从旧到新处理 |
-| `mailto` | 来自 `CROSSREF_MAILTO_POOL` | 生产请求应带可联系邮箱 |
+| `mailto` | 来自管理员运行时配置 `crossref_mailto_pool` | 生产请求应带可联系邮箱 |
 
 当前落库使用字段：
 
@@ -83,8 +83,8 @@
 | `filter` | `doi:https://doi.org/{doi1}|https://doi.org/{doi2}` | 当前每批最多 100 个 DOI |
 | `per-page` | 当前 batch 大小 | 与 DOI filter 数量保持一致 |
 | `select` | 只请求当前落库需要的字段 | 降低响应体积 |
-| `api_key` | 来自 `OPENALEX_API_KEY_POOL` | 配置后随请求发送 |
-| `mailto` | 来自 `CROSSREF_MAILTO_POOL` | 复用联系人邮箱池 |
+| `api_key` | 来自管理员运行时配置 `openalex_api_key_pool` | 配置后随请求发送 |
+| `mailto` | 来自管理员运行时配置 `crossref_mailto_pool` | 复用联系人邮箱池 |
 
 当前落库使用字段：
 
@@ -115,13 +115,13 @@
 
 ```text
 POST /graph/v1/paper/batch?fields=externalIds,url,isOpenAccess,openAccessPdf
-Header: x-api-key: <SEMANTIC_SCHOLAR_API_KEY_POOL selected key>
+Header: x-api-key: <selected Semantic Scholar key>
 Body: {"ids": ["DOI:10.0000/example", "..."]}
 ```
 
 关键约束：
 
-- 当前索引器在 CSV 中存在 `scholarly` 行时要求 `SEMANTIC_SCHOLAR_API_KEY_POOL` 非空；缺失时会在索引开始前失败。
+- 当前索引器在 CSV 中存在 `scholarly` 行时要求管理员运行时配置 `semantic_scholar_api_key_pool` 非空；缺失时会在索引开始前失败。
 - 单次 batch 最多 500 个 paper IDs。
 - 当前按官方 introductory limit 保守处理为全局 1 RPS。
 - 多进程索引时，Semantic Scholar `paper_batch` 请求使用进程感知 throttle 做错峰，避免每个进程各自打满 1 RPS。
@@ -177,7 +177,7 @@ Body: {"ids": ["DOI:10.0000/example", "..."]}
 | --- | --- |
 | 出版方 Crossref 元数据缺失 | 允许 OpenAlex 补字段，但不要让 OpenAlex 覆盖更可靠的 Crossref 卷期页码 |
 | OpenAlex DOI enrichment 缺失 | 保留 Crossref 文章记录，只缺少增强字段 |
-| Semantic Scholar 无 key | 当前会阻止 `scholarly` 索引启动；先配置 `SEMANTIC_SCHOLAR_API_KEY_POOL` |
+| Semantic Scholar 无 key | 当前会阻止 `scholarly` 索引启动；先配置 `semantic_scholar_api_key_pool` |
 | Semantic Scholar 无 DOI 结果 | 保留 OpenAlex/Crossref fallback |
 | Semantic Scholar 429 或 5xx | 使用进程感知 throttle 和 retry/backoff；不要通过并发硬冲 |
 | OA 链接失效 | 允许后续增量任务刷新；展示层应能处理失效链接 |

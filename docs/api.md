@@ -72,7 +72,7 @@ Cache-Control: private, no-store
 
 ### 跨源浏览器访问
 
-默认前端通过 Next.js rewrite 使用同源 `/api/*`。如果设置 `NEXT_PUBLIC_API_URL` 让浏览器跨源直连后端，后端必须通过逗号分隔的 `API_CORS_ALLOWED_ORIGINS` 显式列出允许的 Origin；不要使用 `*` 搭配 Cookie credentials。
+默认前端通过 Next.js rewrite 使用同源 `/api/*`。如果设置 `NEXT_PUBLIC_API_URL` 让浏览器跨源直连后端，管理员必须在运行时配置 `cors_allowed_origins` 中列出允许的 Origin；不要使用 `*` 搭配 Cookie credentials。
 
 ### Streamable HTTP MCP
 
@@ -93,8 +93,8 @@ Rust API 进程直接提供 `POST/GET/DELETE /mcp`，用于 MCP Streamable HTTP 
 
 安全配置：
 
-- `MCP_ALLOWED_HOSTS` 默认只允许 `localhost`、`127.0.0.1` 和 `::1`。通过公网域名、局域网 IP 或反向代理访问 `/mcp` 时，必须显式加入对应 `Host` 或 `host:port`。
-- `MCP_ALLOWED_ORIGINS` 默认空，表示不校验浏览器 `Origin`。只有浏览器跨源直连 MCP 时才需要配置允许的 Origin。
+- `mcp_allowed_hosts` 默认只允许 `localhost`、`127.0.0.1` 和 `::1`。通过公网域名、局域网 IP 或反向代理访问 `/mcp` 时，必须显式加入对应 `Host` 或 `host:port`。
+- `mcp_allowed_origins` 默认空，表示不校验浏览器 `Origin`。只有浏览器跨源直连 MCP 时才需要配置允许的 Origin。
 
 ## 检索与展示接口
 
@@ -547,18 +547,17 @@ CNKI 精确匹配失败时返回受控错误，不会下载候选列表中的错
 
 ### 运行时配置请求体
 
-当前运行时配置用于 Crossref / OpenAlex / Semantic Scholar / CNKI 抓取链路。配置保存在 `data/auth.sqlite` 的 `runtime_settings` 表中，API、索引器和调度任务启动时会把数据库值应用到进程环境变量；数据库已有值会覆盖同名宿主环境变量。
+当前运行时配置用于 Crossref / OpenAlex / Semantic Scholar 抓取链路，以及 API CORS、MCP 与 Cookie 安全策略。配置保存在 `data/auth.sqlite` 的 `runtime_settings` 表中，API、索引器和调度任务启动时直接读取数据库值。
 
 `GET /api/admin/runtime-settings` 返回每个配置项的：
 
 - `field`：API 请求体字段名
-- `key`：实际环境变量名
 - `label`
 - `description`
 - `input_type`
 - `is_secret`
 - `value`
-- `source`：`database`、`environment` 或 `default`
+- `source`：`database` 或 `default`
 - `updated_at`
 
 `PUT /api/admin/runtime-settings` 请求体：
@@ -569,21 +568,27 @@ CNKI 精确匹配失败时返回受控错误，不会下载候选列表中的错
     "openalex_api_key_pool": "key1,key2",
     "semantic_scholar_api_key_pool": "s2-key",
     "crossref_mailto_pool": "admin@example.com",
-    "proxy_pool": "socks5://127.0.0.1:1080"
+    "cors_allowed_origins": "https://app.example",
+    "mcp_allowed_hosts": "paper.example,paper.example:443",
+    "mcp_allowed_origins": "https://app.example",
+    "secure_cookies": "true"
   }
 }
 ```
 
 当前允许的字段：
 
-| 字段 | 环境变量 | 说明 |
-| --- | --- | --- |
-| `openalex_api_key_pool` | `OPENALEX_API_KEY_POOL` | OpenAlex API key 池 |
-| `semantic_scholar_api_key_pool` | `SEMANTIC_SCHOLAR_API_KEY_POOL` | Semantic Scholar API key 池 |
-| `crossref_mailto_pool` | `CROSSREF_MAILTO_POOL` | Crossref 联系邮箱池 |
-| `proxy_pool` | `PROXY_POOL` | scholarly 与 CNKI 请求代理池 |
+| 字段 | 说明 |
+| --- | --- |
+| `openalex_api_key_pool` | OpenAlex API key 池 |
+| `semantic_scholar_api_key_pool` | Semantic Scholar API key 池 |
+| `crossref_mailto_pool` | Crossref 联系邮箱池 |
+| `cors_allowed_origins` | 允许跨源浏览器访问的 Origin 列表 |
+| `mcp_allowed_hosts` | HTTP MCP `Host` 白名单 |
+| `mcp_allowed_origins` | HTTP MCP 浏览器 `Origin` 白名单 |
+| `secure_cookies` | `ps_session` Cookie 是否带 `Secure` 标记 |
 
-未知字段会返回 `400`。清空某个值会把该配置保存为空字符串；下次应用运行配置时会移除同名进程环境变量，列表接口仍会把该项显示为 `database` 来源。
+未知字段会返回 `400`。清空某个值会把该配置保存为空字符串，列表接口仍会把该项显示为 `database` 来源。
 
 ### 定时任务请求体
 
@@ -603,10 +608,9 @@ CNKI 精确匹配失败时返回受控错误，不会下载候选列表中的错
 补充说明：
 
 - `cron` 使用标准五段 crontab
-- Docker 默认运行 `ps-cli worker execute --interval-seconds 300`，由 Rust worker sidecar 按 cron 自动执行启用任务
-- `ps-cli worker shadow` 仍可用于持续加载并校验任务配置，但不会执行 shell 命令
-- 立即执行和 dry-run 可通过 `ps-cli scheduler run-once TASK_ID` 与 `ps-cli scheduler dry-run-once TASK_ID` 从运维终端触发
-- 执行模式仍按 shell 命令处理，并在执行前应用 `runtime_settings` 数据库配置
+- Docker 默认运行 `worker --project-root /app --interval-seconds 300`，由 Rust worker sidecar 按 cron 自动执行启用任务
+- 立即执行和 dry-run 可通过 `scheduler run-once TASK_ID` 与 `scheduler dry-run-once TASK_ID` 从运维终端触发
+- 执行模式仍按 shell 命令处理，不会把运行时配置注入子进程环境
 - 没有单独的“立即执行”管理 API
 
 ### 公告请求体

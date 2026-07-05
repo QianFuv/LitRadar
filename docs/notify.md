@@ -74,22 +74,9 @@
 
 ## 运行时配置
 
-全局默认值来自环境变量，也可通过管理员后台写入运行时配置。
+通知链路使用用户级配置，不读取进程环境变量作为默认凭据。用户可通过前端“文献追踪”页面或 `/api/tracking/notification-settings` API 配置 OpenAI 兼容 endpoint、模型、API key、系统提示词、备用 endpoint、PushPlus token、模板、topic 和 channel。
 
-| 变量 | 默认值 | 说明 |
-| --- | --- | --- |
-| `NOTIFY_AI_BASE_URL` | `https://api.siliconflow.cn/v1` | 默认 OpenAI 兼容基地址 |
-| `NOTIFY_AI_API_KEY` | 空 | 默认 AI key |
-| `NOTIFY_AI_MODEL` | `deepseek-ai/DeepSeek-V3` | 默认模型名 |
-| `NOTIFY_AI_SYSTEM_PROMPT` | 空 | 默认系统提示词 |
-| `NOTIFY_MAX_CANDIDATES` | `120` | 送入模型的候选上限 |
-| `NOTIFY_TEMPERATURE` | `0.2` | 模型温度 |
-| `NOTIFY_PUSHPLUS_CHANNEL` | `wechat` | PushPlus 默认渠道 |
-| `NOTIFY_PUSHPLUS_TEMPLATE` | `markdown` | PushPlus 默认模板 |
-| `NOTIFY_PUSHPLUS_TOPIC` | 空 | PushPlus 默认 topic |
-| `NOTIFY_PUSHPLUS_OPTION` | 空 | PushPlus 默认 option |
-
-用户级 AI 配置优先于全局默认值。用户配置备用 endpoint 时，主 endpoint 在重试后仍不可用会尝试备用配置；主备都不可用时跳过该用户。
+用户配置备用 endpoint 时，主 endpoint 在重试后仍不可用会尝试备用配置；主备都不可用时跳过该用户。未配置可用 AI key/model 的用户也会被跳过。
 
 ## AI 选择逻辑
 

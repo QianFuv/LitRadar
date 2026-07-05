@@ -17,14 +17,14 @@ data/push_state/*.changes.json
   -> /api/tracking/push-weekly
 ```
 
-Docker 运行时由 `api` 提供 API，由 `ps-cli worker execute` 作为 sidecar 按 cron 执行启用的定时任务。`ps-cli worker shadow` 仍用于只加载和校验配置；用户侧保留 `api`、`index`、`notify` 和 `push` 四个旧命令名。
+Docker 运行时由 `api` 提供 API，由 `worker` 作为 sidecar 按 cron 执行启用的定时任务。用户侧命令为 `api`、`index`、`notify`、`push`、`scheduler` 和 `worker`。
 
 ## Rust 模块划分
 
 | Crate | 职责 |
 | --- | --- |
 | `ps-api` | Axum API 服务，保持现有 `/api/*` 契约 |
-| `ps-cli` | scheduler、worker、测试辅助和共享 CLI 调度入口 |
+| CLI support crate | 独立命令的共享解析和调度库 |
 | `ps-auth` | 认证、密码、令牌和 Cookie 兼容逻辑 |
 | `ps-storage` | SQLite auth/index 存储访问 |
 | `ps-index` | 索引 schema、写库、live 索引和变更清单 |
@@ -87,18 +87,17 @@ RUST_LOG=ps_api=debug,tower_http=debug cargo run --bin api
 ### Rust worker
 
 ```bash
-cargo run -p ps-cli -- worker execute --interval-seconds 300
-cargo run -p ps-cli -- worker shadow --interval-seconds 300
+cargo run --bin worker -- --interval-seconds 300
 ```
 
-`worker execute` 会持续加载 `scheduled_tasks` 并按五段 cron 执行启用任务；`worker shadow` 只校验配置，不执行命令。
+`worker` 会持续加载 `scheduled_tasks` 并按五段 cron 执行启用任务。
 
 ### Scheduler
 
 ```bash
-cargo run -p ps-cli -- scheduler dry-run
-cargo run -p ps-cli -- scheduler run-once 1
-cargo run -p ps-cli -- scheduler dry-run-once 1
+cargo run --bin scheduler -- validate
+cargo run --bin scheduler -- run-once 1
+cargo run --bin scheduler -- dry-run-once 1
 ```
 
 ### 索引
@@ -136,12 +135,15 @@ pnpm dev
 
 外部元数据服务配置由管理员后台 `/api/admin/runtime-settings` 写入 `data/auth.sqlite` 的 `runtime_settings` 表。当前受管理配置包括：
 
-- `OPENALEX_API_KEY_POOL`
-- `SEMANTIC_SCHOLAR_API_KEY_POOL`
-- `CROSSREF_MAILTO_POOL`
-- `PROXY_POOL`
+- `openalex_api_key_pool`
+- `semantic_scholar_api_key_pool`
+- `crossref_mailto_pool`
+- `cors_allowed_origins`
+- `mcp_allowed_hosts`
+- `mcp_allowed_origins`
+- `secure_cookies`
 
-Rust API、worker 和 CLI 启动时会应用这些配置；数据库已有值会覆盖同名进程环境变量。中文全文凭证保存在用户级 CNKI session 表中，测试时可继续复用 `data/auth.sqlite` 中的有效凭证；凭证失效时应使用离线 fixture 测试。
+Rust API、worker 和 CLI 启动时会读取这些数据库配置，不读取进程环境变量作为运行配置。中文全文凭证保存在用户级 CNKI session 表中，测试时可继续复用 `data/auth.sqlite` 中的有效凭证；凭证失效时应使用离线 fixture 测试。
 
 ## 修改代码后的检查
 
@@ -182,8 +184,8 @@ docker compose build
 
 ### 管理员定时任务不是 API 进程内 APScheduler
 
-Rust worker sidecar 的 `worker execute` 模式会按 cron 自动执行启用任务；单次执行由 `ps-cli scheduler run-once TASK_ID` 触发，dry-run 由 `ps-cli scheduler dry-run-once TASK_ID` 触发。
+Rust worker sidecar 会按 cron 自动执行启用任务；单次执行由 `scheduler run-once TASK_ID` 触发，dry-run 由 `scheduler dry-run-once TASK_ID` 触发。
 
 ### 通知配置不绑定单一 AI 服务商
 
-通知链路使用 OpenAI 兼容接口。全局默认值来自 `NOTIFY_AI_*` 环境变量，用户级配置优先。
+通知链路使用 OpenAI 兼容接口。AI 与 PushPlus 凭据来自用户级通知设置；未配置可用 AI key/model 的用户会被跳过。

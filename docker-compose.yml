@@ -6,31 +6,14 @@ services:
       - "8000:8000"
     volumes:
       - ./data:/app/data
-    environment:
-      - API_HOST=0.0.0.0
-      - API_PORT=8000
-      - PAPER_SCANNER_PROJECT_ROOT=/app
-      - OPENALEX_API_KEY_POOL=${OPENALEX_API_KEY_POOL:-}
-      - SEMANTIC_SCHOLAR_API_KEY_POOL=${SEMANTIC_SCHOLAR_API_KEY_POOL:-}
-      - PROXY_POOL=${PROXY_POOL:-}
-      - CROSSREF_MAILTO_POOL=${CROSSREF_MAILTO_POOL:-}
-      - UNPAYWALL_EMAIL_POOL=${UNPAYWALL_EMAIL_POOL:-}
+    command: ["api", "--host", "0.0.0.0", "--port", "8000", "--project-root", "/app"]
 
   worker:
     build: .
     image: ghcr.io/qianfuv/paper-scanner-api:latest
-    command: ["ps-cli", "worker", "execute", "--interval-seconds", "300"]
+    command: ["worker", "--project-root", "/app", "--interval-seconds", "300"]
     volumes:
       - ./data:/app/data
-    environment:
-      - API_HOST=0.0.0.0
-      - API_PORT=8000
-      - PAPER_SCANNER_PROJECT_ROOT=/app
-      - OPENALEX_API_KEY_POOL=${OPENALEX_API_KEY_POOL:-}
-      - SEMANTIC_SCHOLAR_API_KEY_POOL=${SEMANTIC_SCHOLAR_API_KEY_POOL:-}
-      - PROXY_POOL=${PROXY_POOL:-}
-      - CROSSREF_MAILTO_POOL=${CROSSREF_MAILTO_POOL:-}
-      - UNPAYWALL_EMAIL_POOL=${UNPAYWALL_EMAIL_POOL:-}
     depends_on:
       - api
 

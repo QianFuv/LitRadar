@@ -8,7 +8,8 @@ Paper Scanner 是一个面向学术期刊的全栈检索与订阅平台。它负
 - `index`：读取 `data/meta/*.csv`，抓取上游元数据并写入 `data/index/*.sqlite`
 - `notify`：执行或演练 PushPlus 通知链路
 - `push`：执行或演练追踪文件夹写入链路
-- `ps-cli worker shadow`：启动 Rust worker sidecar，周期性加载定时任务并保持服务运行
+- `scheduler`：校验或手动触发管理员定时任务
+- `worker`：启动 Rust worker sidecar，周期性加载并执行启用的定时任务
 
 ## 主要功能
 
@@ -121,10 +122,10 @@ cargo run --bin api
 RUST_LOG=error cargo run --bin api
 ```
 
-另开一个终端可启动 Rust worker shadow 进程：
+另开一个终端可启动 Rust worker 进程：
 
 ```bash
-cargo run -p ps-cli -- worker shadow --interval-seconds 300
+cargo run --bin worker -- --interval-seconds 300
 ```
 
 回归测试和覆盖率检查使用 Rust workspace 命令，见下方开发文档。常用覆盖率摘要：
@@ -171,12 +172,12 @@ cargo run --bin index -- --file cnki_journals.csv --resume --issue-batch 10
 
 CNKI 路径在每个期刊 worker 内顺序拉取 issue 列表，把当前 issue batch 内的文章详情按 `--workers` 并发抓取。英文 scholarly 路径不使用 `--workers` 扩大请求并发；Semantic Scholar batch 请求会按 `--processes` 做进程感知错峰限速。
 
-`SEMANTIC_SCHOLAR_API_KEY_POOL`、`PROXY_POOL`、`OPENALEX_API_KEY_POOL` 和 `CROSSREF_MAILTO_POOL` 可通过环境变量或管理员运行时配置表提供，供 Rust 服务和调度命令读取。
+OpenAlex、Semantic Scholar 和 Crossref 的共享运行配置由管理员后台的运行时配置表维护。索引命令启动时从 `data/auth.sqlite` 读取这些配置，不读取进程环境变量。
 
 ### 2. API 服务
 
 ```bash
-cargo run --bin api
+cargo run --bin api -- --host 127.0.0.1 --port 8000 --project-root .
 ```
 
 API 启动后会提供：
@@ -188,26 +189,25 @@ API 启动后会提供：
 
 终端默认显示请求日志；设置 `RUST_LOG=error` 可只显示 error 级日志。
 
-环境变量：
+启动参数：
 
-- `API_HOST`：监听地址，默认 `127.0.0.1`
-- `API_PORT`：监听端口，默认 `8000`
-- `PAPER_SCANNER_PROJECT_ROOT`：项目根目录，默认当前目录；Docker 中为 `/app`
-- `API_CORS_ALLOWED_ORIGINS`：逗号分隔的跨源浏览器 Origin 白名单，默认空
-- `MCP_ALLOWED_HOSTS`：逗号分隔的 MCP `Host` 白名单，默认 `localhost,127.0.0.1,::1`
-- `MCP_ALLOWED_ORIGINS`：逗号分隔的 MCP 浏览器 `Origin` 白名单，默认空；仅在需要浏览器直连 MCP 时配置
-- `AUTH_COOKIE_SECURE`：显式控制 `ps_session` Cookie 的 `Secure` 标记；未设置时按请求 scheme 推断
+- `--host`：监听地址，默认 `127.0.0.1`
+- `--port`：监听端口，默认 `8000`
+- `--project-root`：项目根目录，默认当前目录；Docker 中为 `/app`
 
-外部元数据服务运行配置可通过管理员后台写入 `data/auth.sqlite` 的 `runtime_settings` 表。当前受管理的配置项为：
+共享运行配置通过管理员后台写入 `data/auth.sqlite` 的 `runtime_settings` 表。当前受管理的配置项为：
 
 | 配置项 | 说明 |
 | --- | --- |
-| `OPENALEX_API_KEY_POOL` | OpenAlex API key 池；scholarly 索引需要 |
-| `SEMANTIC_SCHOLAR_API_KEY_POOL` | Semantic Scholar API key 池；scholarly 索引需要 |
-| `CROSSREF_MAILTO_POOL` | Crossref 联系邮箱池，建议生产环境配置 |
-| `PROXY_POOL` | scholarly 与 CNKI 请求代理池 |
+| `openalex_api_key_pool` | OpenAlex API key 池；scholarly 索引需要 |
+| `semantic_scholar_api_key_pool` | Semantic Scholar API key 池；scholarly 索引需要 |
+| `crossref_mailto_pool` | Crossref 联系邮箱池，建议生产环境配置 |
+| `cors_allowed_origins` | 允许跨源浏览器访问的 Origin 列表 |
+| `mcp_allowed_hosts` | HTTP MCP `Host` 白名单 |
+| `mcp_allowed_origins` | HTTP MCP 浏览器 `Origin` 白名单 |
+| `secure_cookies` | `ps_session` Cookie 是否带 `Secure` 标记 |
 
-API、索引器和调度任务启动时会读取 `runtime_settings` 并覆盖同名进程环境变量；如果数据库没有对应值，则使用宿主或容器环境变量。Docker Compose 同时传入宿主环境变量和挂载 `./data:/app/data`，因此可以复用现有 `data/auth.sqlite` 中的运行时配置。
+API、索引器和调度任务启动时会读取 `runtime_settings`。Docker Compose 只挂载 `./data:/app/data`，因此可以复用现有 `data/auth.sqlite` 中的运行时配置。
 
 ### 3. PushPlus 通知推送
 
@@ -231,22 +231,7 @@ cargo run --bin push -- --db utd24.sqlite --changes-file data/push_state/utd24.c
 
 用户级通知/追踪偏好保存在 `data/auth.sqlite` 的 `notification_settings` 表中，可通过前端“文献追踪”页面或 `/api/tracking/notification-settings` API 配置。
 
-全局运行时默认值通过环境变量提供，推荐使用新的 OpenAI 兼容命名：
-
-| 环境变量 | 默认值 | 说明 |
-| --- | --- | --- |
-| `NOTIFY_AI_BASE_URL` | `https://api.siliconflow.cn/v1` | 默认 OpenAI 兼容基地址 |
-| `NOTIFY_AI_API_KEY` | 空 | 默认 API Key |
-| `NOTIFY_AI_MODEL` | `deepseek-ai/DeepSeek-V3` | 默认模型名 |
-| `NOTIFY_AI_SYSTEM_PROMPT` | 空 | 默认系统提示词 |
-| `NOTIFY_MAX_CANDIDATES` | `120` | 单次送入模型的候选上限 |
-| `NOTIFY_TEMPERATURE` | `0.2` | 模型温度 |
-| `NOTIFY_PUSHPLUS_CHANNEL` | `wechat` | PushPlus 默认渠道 |
-| `NOTIFY_PUSHPLUS_TEMPLATE` | `markdown` | PushPlus 默认模板 |
-| `NOTIFY_PUSHPLUS_TOPIC` | 空 | PushPlus 默认 topic |
-| `NOTIFY_PUSHPLUS_OPTION` | 空 | PushPlus 默认 option |
-
-通知链路现在只识别上述 `NOTIFY_AI_*` 变量，不再兼容旧的 OpenAI / SiliconFlow 别名。
+AI、PushPlus 与投递方式是用户级设置。用户可在“文献追踪”页面或 `/api/tracking/notification-settings` API 中配置主备 OpenAI 兼容 endpoint、模型、API key、系统提示词、PushPlus token、模板、topic、channel 与候选上限。未配置用户级 AI key/model 时，该用户会被跳过；通知链路不读取进程环境变量作为默认凭据。
 
 ## 数据与状态文件
 
@@ -280,7 +265,7 @@ cargo run --bin push -- --db utd24.sqlite --changes-file data/push_state/utd24.c
 根目录 `docker-compose.yml` 使用三个服务：
 
 - `api`：Rust API 后端，暴露 `8000`
-- `worker`：Rust worker shadow 进程，复用后端镜像并挂载同一个 `data` 目录
+- `worker`：Rust worker 进程，复用后端镜像并挂载同一个 `data` 目录
 - `app`：前端，暴露 `3000`
 
 前端在 Docker 构建阶段使用 `INTERNAL_API_URL` 将 `/api/*` 重写到后端；`app/Dockerfile` 默认为 `http://api:8000`。根 Compose 文件里没有显式设置这个变量，是因为 `app/Dockerfile` 已提供该默认值。
