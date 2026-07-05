@@ -644,9 +644,10 @@ mod tests {
     use std::fs;
 
     use super::{
-        default_delivery_state_dir, extract_bool_pair, extract_string_option, extract_usize_option,
-        grouped_usage, legacy_delivery_usage, legacy_index_usage, normalize_db_name,
-        resolve_delivery_targets, resolve_project_path, run_legacy_index, run_ps_cli,
+        default_delivery_state_dir, extract_auth_db_path, extract_bool_pair, extract_string_option,
+        extract_usize_option, grouped_usage, legacy_delivery_usage, legacy_index_usage,
+        normalize_db_name, resolve_delivery_targets, resolve_project_path, run_legacy_index,
+        run_legacy_notify, run_ps_cli,
     };
     use ps_worker::delivery::DeliveryWorkflow;
 
@@ -736,6 +737,7 @@ mod tests {
         let root = std::path::Path::new("/tmp/project");
 
         assert_eq!(normalize_db_name("utd24"), "utd24.sqlite");
+        assert_eq!(normalize_db_name("data/index/utd24.sqlite"), "utd24.sqlite");
         assert_eq!(
             default_delivery_state_dir(root, DeliveryWorkflow::Notify),
             root.join("data").join("push_state")
@@ -793,6 +795,25 @@ mod tests {
     }
 
     #[test]
+    fn auth_db_extractor_prefers_explicit_path_and_reports_missing_values() {
+        let mut args = vec![
+            "--auth-db".to_string(),
+            "data/auth.sqlite".to_string(),
+            "tail".to_string(),
+        ];
+
+        let path = extract_auth_db_path(&mut args).expect("auth db path should parse");
+
+        assert_eq!(path, std::path::PathBuf::from("data/auth.sqlite"));
+        assert_eq!(args, ["tail"]);
+
+        let mut missing = vec!["--auth-db".to_string()];
+        let error =
+            extract_auth_db_path(&mut missing).expect_err("missing auth db value should fail");
+        assert_eq!(error.to_string(), "--auth-db requires a path");
+    }
+
+    #[test]
     fn manifest_target_requires_database_name() {
         let root = temp_root("ps-cli-missing-manifest-db");
         let manifest = root.join("manifest.json");
@@ -806,6 +827,23 @@ mod tests {
             error.to_string(),
             "Change manifest missing db_name; specify --db explicitly"
         );
+        fs::remove_dir_all(root).expect("temp root should be removed");
+    }
+
+    #[test]
+    fn delivery_target_resolution_reports_missing_databases() {
+        let root = temp_root("ps-cli-missing-db-targets");
+        let manifest = root.join("manifest.json");
+        fs::write(&manifest, r#"{"db_name":"missing.sqlite"}"#)
+            .expect("manifest should be created");
+
+        let by_name = resolve_delivery_targets(&root, None, Some("missing".to_string()), None)
+            .expect_err("missing db name target should fail");
+        let by_manifest = resolve_delivery_targets(&root, None, None, Some(&manifest))
+            .expect_err("missing manifest db target should fail");
+
+        assert_eq!(by_name.to_string(), "Database not found");
+        assert_eq!(by_manifest.to_string(), "Database not found");
         fs::remove_dir_all(root).expect("temp root should be removed");
     }
 
@@ -832,6 +870,19 @@ mod tests {
             .expect_err("notify handoff should require update mode");
 
         assert_eq!(error.to_string(), "--notify requires --update");
+    }
+
+    #[test]
+    fn help_and_legacy_delivery_errors_return_before_execution() {
+        run_ps_cli(vec!["--help".to_string()]).expect("grouped help should succeed");
+
+        let error = run_legacy_notify(vec!["--unexpected".to_string()])
+            .expect_err("unexpected legacy delivery args should fail");
+
+        assert_eq!(
+            error.to_string(),
+            "unexpected notify arguments: --unexpected"
+        );
     }
 
     #[test]

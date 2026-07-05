@@ -1271,6 +1271,8 @@ fn civil_from_days(days: i64) -> (i64, i64, i64) {
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
+    use std::fs;
+    use std::time::{Duration, UNIX_EPOCH};
 
     use ps_domain::{
         ArticleCandidateInfo, NotificationSubscriberInfo, RankedSelectionInfo, SelectionResultInfo,
@@ -1278,10 +1280,13 @@ mod tests {
     use serde_json::json;
 
     use super::{
-        apply_selection_rules, build_markdown_content, candidate_match_score,
+        apply_selection_rules, build_default_state, build_markdown_content, candidate_match_score,
+        compute_changed_inpress_keys, compute_changed_issue_keys, create_run_state,
         deduplicate_candidates, extract_response_payload, has_selection_preferences,
-        is_database_selected, resolve_ai_runtime_configs, AiPayloadKind, NotificationDefaults,
-        NotificationGlobalConfig, MAX_ARTICLES_PER_PUSH, MAX_PUSH_CONTENT_LENGTH,
+        is_database_selected, load_change_manifest, load_state, prune_delivery_dedupe,
+        resolve_ai_runtime_configs, save_state_atomic, utc_now_iso, AiPayloadKind,
+        NotificationDefaults, NotificationGlobalConfig, RecommendationError, MAX_ARTICLES_PER_PUSH,
+        MAX_PUSH_CONTENT_LENGTH,
     };
 
     #[test]
@@ -1300,6 +1305,19 @@ mod tests {
         assert_eq!(normalized["summary"], "ok");
         assert_eq!(normalized["selected"][0]["article_id"], 42);
         assert_eq!(normalized["selected"][0]["score"], 88.0);
+
+        let parsed_payload = json!({
+            "choices": [{
+                "message": {
+                    "parsed": {"article_id": "7", "score": "0.75", "reason": "single"}
+                }
+            }]
+        });
+        let parsed = extract_response_payload(&parsed_payload, AiPayloadKind::Selection)
+            .expect("parsed selection payload should normalize");
+        assert_eq!(parsed["summary"], "single");
+        assert_eq!(parsed["selected"][0]["article_id"], 7);
+        assert_eq!(parsed["selected"][0]["score"], 0.75);
     }
 
     #[test]
@@ -1400,6 +1418,15 @@ mod tests {
             .expect("summary payload should normalize");
 
         assert_eq!(summary["summary"], "summary line");
+
+        let text_summary_payload = json!({
+            "choices": [{
+                "message": {"content": "plain summary"}
+            }]
+        });
+        let text_summary = extract_response_payload(&text_summary_payload, AiPayloadKind::Summary)
+            .expect("plain summary text should normalize");
+        assert_eq!(text_summary["summary"], "plain summary");
 
         let refusal_payload = json!({
             "choices": [{
@@ -1506,6 +1533,147 @@ mod tests {
     }
 
     #[test]
+    fn state_load_save_and_normalization_cover_defaults_mismatch_and_corrupt_json() {
+        let root = temp_root("ps-recommend-state");
+        let state_path = root.join("nested").join("state.json");
+        let now = "2026-07-05T00:00:00Z";
+
+        let default_state =
+            load_state(&state_path, "fixture.sqlite", now).expect("missing state should default");
+        assert_eq!(default_state.db_name, "fixture.sqlite");
+        assert_eq!(default_state.status, "idle");
+        assert_eq!(default_state.updated_at, now);
+
+        let mut state = build_default_state("fixture.sqlite", "");
+        state.status = String::new();
+        state.updated_at = String::new();
+        state.run = Some(create_run_state(
+            "run-1",
+            vec!["1:10".to_string()],
+            vec![],
+            "",
+        ));
+        state
+            .run
+            .as_mut()
+            .expect("run state should exist")
+            .delivered_article_ids = vec![1, 0, -1, 2];
+        save_state_atomic(&state_path, &state).expect("state should save atomically");
+
+        let loaded = load_state(&state_path, "fixture.sqlite", now)
+            .expect("saved state should load and normalize");
+        assert_eq!(loaded.status, "idle");
+        assert_eq!(loaded.updated_at, now);
+        assert_eq!(
+            loaded
+                .run
+                .expect("run state should load")
+                .delivered_article_ids,
+            vec![1, 2]
+        );
+        assert!(!state_path.with_file_name("state.json.tmp").exists());
+
+        let mismatch = load_state(&state_path, "other.sqlite", now)
+            .expect_err("state db mismatch should fail");
+        assert!(matches!(
+            mismatch,
+            RecommendationError::StateDatabaseMismatch
+        ));
+
+        fs::write(&state_path, "{").expect("corrupt state should be written");
+        let corrupt =
+            load_state(&state_path, "fixture.sqlite", now).expect_err("corrupt state should fail");
+        assert!(matches!(corrupt, RecommendationError::Json(_)));
+        fs::remove_dir_all(root).expect("temp root should be removed");
+    }
+
+    #[test]
+    fn change_manifest_loader_sorts_dedupes_and_fails_loud() {
+        let root = temp_root("ps-recommend-manifest");
+        let manifest_path = root.join("changes.json");
+        fs::write(
+            &manifest_path,
+            serde_json::to_string(&json!({
+                "db_name": "fixture.sqlite",
+                "changed_issue_keys": ["2:20", "bad", "1:10", "1:10"],
+                "changed_inpress_journal_ids": [3, "2", "bad", 2],
+                "notifiable_article_ids": [10, "11", 10, null],
+                "run_id": " run-1 "
+            }))
+            .expect("manifest payload should serialize"),
+        )
+        .expect("manifest should write");
+
+        let manifest =
+            load_change_manifest(&manifest_path, "fixture.sqlite").expect("manifest should load");
+
+        assert_eq!(manifest.pending_issue_keys, vec!["1:10", "2:20"]);
+        assert_eq!(manifest.pending_inpress_keys, vec!["2", "3"]);
+        assert_eq!(manifest.pending_article_ids, vec![10, 11]);
+        assert_eq!(manifest.run_id.as_deref(), Some("run-1"));
+
+        fs::write(
+            &manifest_path,
+            r#"{"db_name":"other","notifiable_article_ids":[]}"#,
+        )
+        .expect("mismatch manifest should write");
+        let mismatch = load_change_manifest(&manifest_path, "fixture.sqlite")
+            .expect_err("manifest db mismatch should fail");
+        assert!(matches!(mismatch, RecommendationError::InvalidManifest(_)));
+
+        fs::write(&manifest_path, r#"{"db_name":"fixture.sqlite"}"#)
+            .expect("missing article manifest should write");
+        let missing_articles = load_change_manifest(&manifest_path, "fixture.sqlite")
+            .expect_err("missing notifiable ids should fail");
+        assert!(missing_articles
+            .to_string()
+            .contains("missing notifiable_article_ids"));
+
+        fs::write(&manifest_path, "[]").expect("non-object manifest should write");
+        let invalid = load_change_manifest(&manifest_path, "fixture.sqlite")
+            .expect_err("non-object manifest should fail");
+        assert!(invalid.to_string().contains("Invalid change manifest"));
+        fs::remove_dir_all(root).expect("temp root should be removed");
+    }
+
+    #[test]
+    fn change_detection_and_dedupe_pruning_cover_date_edges() {
+        let previous_issue_counts =
+            BTreeMap::from([("2:20".to_string(), 1), ("3:30".to_string(), 3)]);
+        let current_issue_counts = BTreeMap::from([
+            ("1:10".to_string(), 1),
+            ("2:20".to_string(), 2),
+            ("3:30".to_string(), 3),
+        ]);
+        let previous_inpress_counts = BTreeMap::from([("2".to_string(), 1)]);
+        let current_inpress_counts = BTreeMap::from([("1".to_string(), 1), ("2".to_string(), 2)]);
+
+        assert_eq!(
+            compute_changed_issue_keys(&previous_issue_counts, &current_issue_counts),
+            vec!["1:10", "2:20"]
+        );
+        assert_eq!(
+            compute_changed_inpress_keys(&previous_inpress_counts, &current_inpress_counts),
+            vec!["1", "2"]
+        );
+
+        let now = UNIX_EPOCH + Duration::from_secs(10 * 86_400);
+        let dedupe = BTreeMap::from([
+            ("fresh".to_string(), "1970-01-10T00:00:00Z".to_string()),
+            ("old".to_string(), "1970-01-01T00:00:00Z".to_string()),
+            ("bad".to_string(), "not-a-date".to_string()),
+        ]);
+        let pruned = prune_delivery_dedupe(&dedupe, 2, now);
+
+        assert_eq!(
+            pruned.keys().cloned().collect::<Vec<_>>(),
+            vec!["fresh".to_string()]
+        );
+        assert!(prune_delivery_dedupe(&dedupe, 0, now).is_empty());
+        assert!(utc_now_iso().ends_with('Z'));
+    }
+
+    #[test]
     fn deduplicates_candidates_preserving_first_seen_order() {
         let deduplicated = deduplicate_candidates(vec![
             candidate(2, "Second first"),
@@ -1520,6 +1688,19 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec!["Second first", "First"]
         );
+    }
+
+    fn temp_root(prefix: &str) -> std::path::PathBuf {
+        let root = std::env::temp_dir().join(format!(
+            "{}-{}",
+            prefix,
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("system time should be after epoch")
+                .as_nanos()
+        ));
+        fs::create_dir_all(&root).expect("temp root should be created");
+        root
     }
 
     fn subscriber() -> NotificationSubscriberInfo {
