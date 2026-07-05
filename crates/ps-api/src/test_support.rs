@@ -3,12 +3,17 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use axum::body::{to_bytes, Body};
+use axum::http::header::{AUTHORIZATION, CONTENT_TYPE, COOKIE};
+use axum::http::{HeaderMap, Method, Request, StatusCode};
 use axum::Router;
 use ps_auth::{AuthService, ACCESS_TOKEN_DEFAULT_TTL, SESSION_COOKIE_NAME};
 use ps_domain::{UserId, UserResponse};
 use ps_storage::{admin_create_invite_code, count_users, initialize_auth_database, StorageConfig};
 use rusqlite::Connection;
+use serde_json::Value;
 use tempfile::{tempdir, TempDir};
+use tower::ServiceExt;
 
 use crate::{build_router, ApiConfig};
 
@@ -186,6 +191,73 @@ pub(crate) struct FixtureIndexDatabase {
     pub(crate) issue_id: i64,
     /// Fixture article id.
     pub(crate) article_id: i64,
+}
+
+/// JSON response returned by API test requests.
+pub(crate) struct JsonTestResponse {
+    /// HTTP response status.
+    pub(crate) status: StatusCode,
+    /// HTTP response headers.
+    pub(crate) headers: HeaderMap,
+    /// Parsed JSON response body.
+    pub(crate) payload: Value,
+}
+
+/// Send a JSON API request through an Axum router.
+///
+/// # Arguments
+///
+/// * `app` - Router under test.
+/// * `method` - HTTP method.
+/// * `uri` - Request URI.
+/// * `authorization` - Optional `Authorization` header value.
+/// * `cookie` - Optional `Cookie` header value.
+/// * `payload` - Optional JSON request body.
+///
+/// # Returns
+///
+/// Parsed JSON response metadata and body.
+pub(crate) async fn json_request(
+    app: &Router,
+    method: Method,
+    uri: &str,
+    authorization: Option<&str>,
+    cookie: Option<&str>,
+    payload: Option<Value>,
+) -> JsonTestResponse {
+    let mut builder = Request::builder().method(method).uri(uri);
+    if let Some(value) = authorization {
+        builder = builder.header(AUTHORIZATION, value);
+    }
+    if let Some(value) = cookie {
+        builder = builder.header(COOKIE, value);
+    }
+    let body = if let Some(value) = payload {
+        builder = builder.header(CONTENT_TYPE, "application/json");
+        Body::from(value.to_string())
+    } else {
+        Body::empty()
+    };
+    let response = app
+        .clone()
+        .oneshot(builder.body(body).expect("request should build"))
+        .await
+        .expect("response should be returned");
+    let status = response.status();
+    let headers = response.headers().clone();
+    let body = to_bytes(response.into_body(), usize::MAX)
+        .await
+        .expect("body should read");
+    let payload = if body.is_empty() {
+        Value::Null
+    } else {
+        serde_json::from_slice(&body).expect("body should be JSON")
+    };
+    JsonTestResponse {
+        status,
+        headers,
+        payload,
+    }
 }
 
 fn create_fixture_index_database(path: &Path) {
