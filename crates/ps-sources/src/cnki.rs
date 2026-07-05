@@ -1352,11 +1352,13 @@ fn fixture_url(endpoint: &str, key: Option<&str>) -> String {
 mod tests {
     use std::collections::BTreeMap;
 
-    use serde_json::json;
+    use serde_json::{json, Value};
 
     use super::{
-        checked_text, parse_article_detail, parse_issue_articles, parse_journal_detail,
-        parse_year_issues, CnkiClient, CnkiFixtureData, CnkiSourceError, FixtureCnkiTransport,
+        absolute_url, checked_text, decode_html, journal_detail_matches, parse_article_detail,
+        parse_issue_articles, parse_journal_detail, parse_journal_search_results,
+        parse_year_issues, with_cnki_chinese_language, CnkiClient, CnkiFixtureData,
+        CnkiSourceError, FixtureCnkiTransport,
     };
 
     #[test]
@@ -1418,6 +1420,100 @@ mod tests {
         assert_eq!(articles[0]["is_free"], 1);
         assert_eq!(detail["platform_id"], "CNKI202601001");
         assert_eq!(detail["authors"], "Test Author");
+    }
+
+    #[test]
+    fn cnki_url_and_text_helpers_cover_language_normalization_and_decoding() {
+        assert_eq!(
+            with_cnki_chinese_language("https://example.test/article?language=en"),
+            "https://example.test/article?language=en"
+        );
+        assert_eq!(
+            with_cnki_chinese_language("/kcms2/article/abstract?v=1&language=en&uniplatform=OLD"),
+            "https://oversea.cnki.net/kcms2/article/abstract?v=1&uniplatform=OVERSEA&language=CHS"
+        );
+        assert_eq!(
+            with_cnki_chinese_language("https://oversea.cnki.net/knavi/detail?pykm=TEST"),
+            "https://oversea.cnki.net/knavi/detail?pykm=TEST&uniplatform=OVERSEA&language=CHS"
+        );
+        assert_eq!(
+            absolute_url("kcms/detail"),
+            "https://oversea.cnki.net/kcms/detail"
+        );
+        assert_eq!(decode_html("&lt;A&amp;B&gt;&quot;&#39;"), "<A&B>\"'");
+    }
+
+    #[test]
+    fn cnki_search_and_journal_matching_cover_dedup_and_issn_fallbacks() {
+        let search_results = parse_journal_search_results(
+            r#"
+            <a href="/knavi/detail?pykm=TEST">CNKI &amp; Test Journal</a>
+            <a href="/knavi/detail?pykm=TEST">Duplicate</a>
+            <a href="/other">Ignored</a>
+            "#,
+        )
+        .expect("search results should parse");
+        let detail = parse_journal_detail(
+            r#"
+            <html><head><title>CNKI Test Journal - 中国知网</title></head>
+            <body>
+              <input id="pykm" value="TEST" />
+              <input id="shareChName" value="CNKI Test Journal" />
+              <p>ISSN: 1234-567X</p>
+            </body></html>
+            "#,
+        )
+        .expect("journal detail should parse");
+
+        assert_eq!(search_results.len(), 1);
+        assert_eq!(
+            search_results[0]["detail_url"],
+            "https://oversea.cnki.net/knavi/detail?pykm=TEST"
+        );
+        assert_eq!(search_results[0]["title"], "CNKI & Test Journal");
+        assert!(journal_detail_matches(&detail, "CNKI Test Journal", ""));
+        assert!(journal_detail_matches(&detail, "", "1234-567x"));
+        assert!(!journal_detail_matches(&detail, "Other Journal", ""));
+    }
+
+    #[test]
+    fn cnki_year_issue_and_detail_parsers_cover_fallback_variants() {
+        let issues = parse_year_issues(
+            r#"
+            <div id="YearIssueTree">
+              <a id="bad" value="ignored">Bad</a>
+              <a id="yq202600" value="2026&amp;00">Supplement</a>
+              <a id="yq202612" value="202612">2026 No.12</a>
+            </div>
+            "#,
+        )
+        .expect("year issues should parse");
+        let detail = parse_article_detail(
+            r#"
+            <html><head><title>Fallback Detail Title</title></head>
+            <body>
+              <h3 class="author" id="authorpart">
+                <span>Alice &amp; Bob</span><span>Carol</span>
+              </h3>
+              <span class="rowtit">在线公开时间：</span><p>2026-02-03 12:00</p>
+              <span class="rowtit">页码：</span><p>5-6</p>
+            </body></html>
+            "#,
+            "/kcms2/article/abstract?v=1&filename=FALLBACK&language=en",
+        )
+        .expect("fallback detail should parse");
+
+        assert_eq!(issues.len(), 2);
+        assert_eq!(issues[0]["number"], "0");
+        assert_eq!(issues[0]["year_issue"], "2026&00");
+        assert_eq!(issues[1]["number"], "12");
+        assert_eq!(detail["platform_id"], Value::Null);
+        assert_eq!(detail["authors"], "Alice & Bob; Carol");
+        assert_eq!(detail["online_release_date"], "2026-02-03");
+        assert_eq!(
+            detail["permalink"],
+            "https://oversea.cnki.net/kcms2/article/abstract?v=1&filename=FALLBACK&uniplatform=OVERSEA&language=CHS"
+        );
     }
 
     #[test]

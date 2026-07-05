@@ -1336,7 +1336,8 @@ mod tests {
     use serde_json::json;
 
     use super::{
-        normalize_doi, value_pool_from_text, FixtureScholarlyTransport, ScholarlyClient,
+        normalize_doi, normalize_issn, normalize_source_title, openalex_short_source_id,
+        redact_url, value_pool_from_text, FixtureScholarlyTransport, ScholarlyClient,
         ScholarlyFixtureData, SourceError,
     };
 
@@ -1432,6 +1433,41 @@ mod tests {
             source.and_then(|value| value["id"].as_str().map(str::to_string)),
             Some("https://openalex.org/S1".into())
         );
+    }
+
+    #[test]
+    fn openalex_matching_helpers_reject_mismatches_and_empty_titles() {
+        let transport = FixtureScholarlyTransport::new(ScholarlyFixtureData {
+            openalex_source_by_issns: Some(json!({
+                "id": "https://openalex.org/S1",
+                "display_name": "Wrong Journal",
+                "issn_l": "0000-0000",
+                "issn": ["1111-1111"]
+            })),
+            openalex_source_by_title: Some(json!({
+                "id": "https://openalex.org/S2",
+                "display_name": "Another Journal"
+            })),
+            ..ScholarlyFixtureData::default()
+        });
+        let mut client = ScholarlyClient::new(transport, true);
+
+        assert!(client
+            .fetch_openalex_source_by_issns(&["1234-567X".to_string()])
+            .expect("mismatched ISSN source lookup should resolve")
+            .is_none());
+        assert!(client
+            .fetch_openalex_source_by_title("Journal of Testing")
+            .expect("mismatched title source lookup should resolve")
+            .is_none());
+
+        let transport = FixtureScholarlyTransport::new(ScholarlyFixtureData::default());
+        let mut empty_title_client = ScholarlyClient::new(transport, true);
+        assert!(empty_title_client
+            .fetch_openalex_source_by_title("   ")
+            .expect("empty title lookup should resolve")
+            .is_none());
+        assert!(empty_title_client.attempts().is_empty());
     }
 
     #[test]
@@ -1545,6 +1581,39 @@ mod tests {
 
         assert!(matches!(error, SourceError::Configuration(_)));
         assert!(client.attempts().is_empty());
+    }
+
+    #[test]
+    fn crossref_success_and_url_helpers_cover_edge_inputs() {
+        let transport = FixtureScholarlyTransport::new(ScholarlyFixtureData {
+            crossref_works: vec![json!({"DOI": "10.1/success"})],
+            ..ScholarlyFixtureData::default()
+        });
+        let mut client = ScholarlyClient::new(transport, true);
+
+        let works = client
+            .fetch_journal_works("1234-5678", None)
+            .expect("Crossref fixture success should resolve");
+
+        assert_eq!(works[0]["DOI"], "10.1/success");
+        assert_eq!(client.attempts()[0].status_code, Some(200));
+        assert!(client.attempts()[0].did_succeed);
+        assert_eq!(normalize_issn("1234-567X"), Some("1234567X".to_string()));
+        assert_eq!(normalize_issn("bad"), None);
+        assert_eq!(
+            normalize_source_title(" Journal   OF Testing "),
+            "journal of testing"
+        );
+        assert_eq!(
+            openalex_short_source_id("https://openalex.org/S123/"),
+            Some("S123".to_string())
+        );
+        assert_eq!(openalex_short_source_id("   "), None);
+        assert_eq!(
+            redact_url("https://api.test/path?api_key=abc&x-api-key=def&mail=me"),
+            "https://api.test/path?api_key=SECRET&x-api-key=SECRET&mail=me"
+        );
+        assert_eq!(redact_url("https://api.test/path"), "https://api.test/path");
     }
 
     #[test]
