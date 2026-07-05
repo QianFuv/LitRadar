@@ -2262,3 +2262,733 @@ struct WeeklyBucket {
     article_ids: Vec<i64>,
     seen: HashSet<i64>,
 }
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+
+    use ps_domain::UserId;
+    use rusqlite::Connection;
+    use serde_json::json;
+    use tempfile::{tempdir, TempDir};
+
+    use super::*;
+
+    struct IndexFixture {
+        _project_root: TempDir,
+        config: StorageConfig,
+        db_name: String,
+    }
+
+    impl IndexFixture {
+        fn new(is_listing_ready: bool) -> Self {
+            let project_root = tempdir().expect("project root should be created");
+            let config = StorageConfig::from_project_root(project_root.path());
+            fs::create_dir_all(config.index_dir()).expect("index dir should be created");
+            crate::initialize_auth_database(config.auth_db_path())
+                .expect("auth database should initialize");
+            create_fixture_user(&config);
+            let db_name = "fixture.sqlite".to_string();
+            let connection = Connection::open(config.index_dir().join(&db_name))
+                .expect("fixture database should be created");
+            create_fixture_schema(&connection, is_listing_ready);
+            Self {
+                _project_root: project_root,
+                config,
+                db_name,
+            }
+        }
+    }
+
+    #[test]
+    fn journal_metadata_filters_cover_available_query_options() {
+        let fixture = IndexFixture::new(true);
+
+        assert_eq!(
+            list_index_database_names(&fixture.config).expect("databases should list"),
+            ["fixture.sqlite"]
+        );
+        assert_eq!(
+            value_counts(list_areas(&fixture.config, Some(&fixture.db_name)).expect("areas")),
+            [("Engineering".to_string(), 1), ("Medicine".to_string(), 2)]
+        );
+        assert_eq!(
+            value_counts(list_sources(&fixture.config, Some(&fixture.db_name)).expect("sources")),
+            [("scholarly".to_string(), 2), ("cnki".to_string(), 1)]
+        );
+
+        let years = list_years(&fixture.config, Some(&fixture.db_name)).expect("years");
+        assert_eq!(years[0].year, 2026);
+        assert_eq!(years[0].issue_count, 2);
+        assert_eq!(years[0].journal_count, 2);
+        assert_eq!(years[1].year, 2025);
+
+        let options =
+            list_journal_options(&fixture.config, Some(&fixture.db_name)).expect("options");
+        assert_eq!(
+            options
+                .iter()
+                .map(|option| option.title.as_deref())
+                .collect::<Vec<_>>(),
+            vec![
+                Some("Alpha Journal"),
+                Some("Beta CNKI"),
+                Some("Gamma Hidden")
+            ]
+        );
+
+        let page = list_journals(
+            &fixture.config,
+            Some(&fixture.db_name),
+            &JournalListParams {
+                area: Some("Medicine".to_string()),
+                library_id: Some("scholarly".to_string()),
+                available: Some(true),
+                has_articles: Some(true),
+                year: Some(2026),
+                scimago_min: Some(5.0),
+                scimago_max: Some(11.0),
+                sort: Some("title:asc".to_string()),
+                limit: 10,
+                offset: 0,
+            },
+        )
+        .expect("journal filters should apply");
+        assert_eq!(page.page.total, Some(1));
+        assert_eq!(page.items[0].journal_id.value(), 1);
+        assert_eq!(page.items[0].platform_journal_id, None);
+
+        let unavailable = list_journals(
+            &fixture.config,
+            Some(&fixture.db_name),
+            &JournalListParams {
+                area: Some("Medicine".to_string()),
+                available: Some(false),
+                sort: Some("title:asc".to_string()),
+                limit: 10,
+                offset: 0,
+                ..JournalListParams::default()
+            },
+        )
+        .expect("availability filter should apply");
+        assert_eq!(unavailable.items[0].journal_id.value(), 3);
+
+        let issue_page = list_issues(
+            &fixture.config,
+            Some(&fixture.db_name),
+            &IssueListParams {
+                journal_id: Some(1),
+                year: Some(2026),
+                is_valid_issue: Some(true),
+                suppressed: Some(false),
+                embargoed: Some(false),
+                within_subscription: Some(true),
+                sort: Some("date:desc".to_string()),
+                limit: 10,
+                offset: 0,
+            },
+        )
+        .expect("issue filters should apply");
+        assert_eq!(issue_page.page.total, Some(1));
+        assert_eq!(issue_page.items[0].issue_id, 10);
+
+        let sort_error = list_journals(
+            &fixture.config,
+            Some(&fixture.db_name),
+            &JournalListParams {
+                sort: Some("unknown:asc".to_string()),
+                limit: 10,
+                offset: 0,
+                ..JournalListParams::default()
+            },
+        )
+        .expect_err("unsupported journal sort should fail");
+        assert!(matches!(
+            sort_error,
+            IndexRepositoryError::UnsupportedSortField(field) if field == "unknown"
+        ));
+
+        let limit_error = list_journals(
+            &fixture.config,
+            Some(&fixture.db_name),
+            &JournalListParams {
+                limit: 0,
+                offset: 0,
+                ..JournalListParams::default()
+            },
+        )
+        .expect_err("invalid limit should fail");
+        assert!(matches!(
+            limit_error,
+            IndexRepositoryError::InvalidPagination("limit must be between 1 and 200")
+        ));
+    }
+
+    #[test]
+    fn article_listing_filters_cover_fts5_and_supported_expressions() {
+        let fixture = IndexFixture::new(true);
+        let cases = vec![
+            (
+                "journal ids",
+                ArticleListParams {
+                    journal_id: vec![1],
+                    ..article_filter_params()
+                },
+                vec![1004, 1001, 1002, 1005, 1008],
+            ),
+            (
+                "issue id",
+                ArticleListParams {
+                    issue_id: Some(10),
+                    ..article_filter_params()
+                },
+                vec![1001, 1002, 1005, 1008],
+            ),
+            (
+                "publication year",
+                ArticleListParams {
+                    year: Some(2026),
+                    ..article_filter_params()
+                },
+                vec![1003, 1001, 1002, 1005, 1008],
+            ),
+            (
+                "area",
+                ArticleListParams {
+                    area: vec!["Engineering".to_string()],
+                    ..article_filter_params()
+                },
+                vec![1003],
+            ),
+            (
+                "in press",
+                ArticleListParams {
+                    in_press: Some(true),
+                    ..article_filter_params()
+                },
+                vec![1004],
+            ),
+            (
+                "open access",
+                ArticleListParams {
+                    open_access: Some(true),
+                    ..article_filter_params()
+                },
+                vec![1001],
+            ),
+            (
+                "library holdings",
+                ArticleListParams {
+                    within_library_holdings: Some(false),
+                    ..article_filter_params()
+                },
+                vec![1003, 1005, 1008],
+            ),
+            (
+                "date range",
+                ArticleListParams {
+                    date_from: Some("2026-01-03".to_string()),
+                    date_to: Some("2026-01-05".to_string()),
+                    ..article_filter_params()
+                },
+                vec![1001, 1002, 1005],
+            ),
+            (
+                "doi",
+                ArticleListParams {
+                    doi: Some("10.1000/doi-only".to_string()),
+                    ..article_filter_params()
+                },
+                vec![1005],
+            ),
+            (
+                "pmid",
+                ArticleListParams {
+                    pmid: Some("PMID-1002".to_string()),
+                    ..article_filter_params()
+                },
+                vec![1002],
+            ),
+            (
+                "fts5 title and abstract",
+                ArticleListParams {
+                    q: Some("genome".to_string()),
+                    ..article_filter_params()
+                },
+                vec![1004, 1001],
+            ),
+            (
+                "fts5 indexed-only token",
+                ArticleListParams {
+                    q: Some("indexedonly".to_string()),
+                    ..article_filter_params()
+                },
+                vec![1002],
+            ),
+            (
+                "combined fts5 and structured filters",
+                ArticleListParams {
+                    area: vec!["Medicine".to_string()],
+                    open_access: Some(true),
+                    within_library_holdings: Some(true),
+                    q: Some("genome".to_string()),
+                    ..article_filter_params()
+                },
+                vec![1001],
+            ),
+            (
+                "suppressed",
+                ArticleListParams {
+                    suppressed: Some(true),
+                    q: Some("genome".to_string()),
+                    ..article_filter_params()
+                },
+                vec![1006],
+            ),
+        ];
+
+        for (name, params, expected_ids) in cases {
+            let page = list_articles(&fixture.config, Some(&fixture.db_name), &params)
+                .unwrap_or_else(|error| panic!("{name} should query successfully: {error}"));
+            assert_eq!(article_ids(&page), expected_ids, "{name}");
+            assert_eq!(page.page.total, Some(expected_ids.len() as i64), "{name}");
+        }
+    }
+
+    #[test]
+    fn article_listing_cursor_and_sort_expression_errors_are_checked() {
+        let fixture = IndexFixture::new(true);
+        let first_page_params = ArticleListParams {
+            limit: 2,
+            ..article_filter_params()
+        };
+
+        let first_page = list_articles(&fixture.config, Some(&fixture.db_name), &first_page_params)
+            .expect("first page should query");
+
+        assert_eq!(article_ids(&first_page), [1003, 1004]);
+        assert_eq!(first_page.page.total, Some(6));
+        assert_eq!(first_page.page.has_more, Some(true));
+        assert_eq!(
+            first_page.page.next_cursor.as_deref(),
+            Some("2026-01-06|1004")
+        );
+
+        let second_page_params = ArticleListParams {
+            cursor: first_page.page.next_cursor,
+            limit: 2,
+            ..article_filter_params()
+        };
+        let second_page =
+            list_articles(&fixture.config, Some(&fixture.db_name), &second_page_params)
+                .expect("second page should query");
+        assert_eq!(article_ids(&second_page), [1001, 1002]);
+
+        let invalid_cursor = list_articles(
+            &fixture.config,
+            Some(&fixture.db_name),
+            &ArticleListParams {
+                cursor: Some("not-a-cursor".to_string()),
+                ..article_filter_params()
+            },
+        )
+        .expect_err("invalid cursor should fail");
+        assert!(matches!(
+            invalid_cursor,
+            IndexRepositoryError::InvalidCursor
+        ));
+
+        let unsupported_field = list_articles(
+            &fixture.config,
+            Some(&fixture.db_name),
+            &ArticleListParams {
+                sort: Some("title:asc".to_string()),
+                ..article_filter_params()
+            },
+        )
+        .expect_err("unsupported article sort field should fail");
+        assert!(matches!(
+            unsupported_field,
+            IndexRepositoryError::UnsupportedSortField(field) if field == "title"
+        ));
+
+        let empty_sort = list_articles(
+            &fixture.config,
+            Some(&fixture.db_name),
+            &ArticleListParams {
+                sort: Some(String::new()),
+                ..article_filter_params()
+            },
+        )
+        .expect_err("empty article sort should fail");
+        assert!(matches!(
+            empty_sort,
+            IndexRepositoryError::UnsupportedArticleSort
+        ));
+    }
+
+    #[test]
+    fn article_fallback_query_uses_fts5_with_joined_filters_when_listing_is_not_ready() {
+        let fixture = IndexFixture::new(false);
+        let indexed_only = list_articles(
+            &fixture.config,
+            Some(&fixture.db_name),
+            &ArticleListParams {
+                area: vec!["Medicine".to_string()],
+                q: Some("indexedonly".to_string()),
+                ..article_filter_params()
+            },
+        )
+        .expect("fallback search should use FTS5");
+        assert_eq!(article_ids(&indexed_only), [1002]);
+        assert_eq!(indexed_only.page.total, Some(1));
+
+        let joined = list_articles(
+            &fixture.config,
+            Some(&fixture.db_name),
+            &ArticleListParams {
+                area: vec!["Medicine".to_string()],
+                year: Some(2026),
+                q: Some("genome".to_string()),
+                ..article_filter_params()
+            },
+        )
+        .expect("fallback search should join FTS5, issues, and metadata");
+        assert_eq!(article_ids(&joined), [1001]);
+    }
+
+    #[test]
+    fn article_access_and_fulltext_urls_cover_redirect_construction() {
+        let fixture = IndexFixture::new(true);
+        let user_id = UserId(1);
+
+        let stored_access =
+            get_article_access(&fixture.config, Some(&fixture.db_name), 1001, user_id)
+                .expect("stored full text access should resolve");
+        assert!(stored_access.fulltext.available);
+        assert_eq!(
+            stored_access.fulltext.provider.as_deref(),
+            Some("stored_url")
+        );
+
+        assert_eq!(
+            article_fulltext_redirect_url(&fixture.config, Some(&fixture.db_name), 1001, user_id)
+                .expect("stored full text should redirect"),
+            "https://files.example/fulltext.pdf"
+        );
+        assert_eq!(
+            article_fulltext_redirect_url(&fixture.config, Some(&fixture.db_name), 1003, user_id)
+                .expect("CNKI permalink should redirect without an active session"),
+            "https://oversea.cnki.net/kcms/detail/abc?foo=bar&language=chs"
+        );
+        assert_eq!(
+            article_fulltext_redirect_url(&fixture.config, Some(&fixture.db_name), 1005, user_id)
+                .expect("DOI fallback should redirect"),
+            "https://doi.org/10.1000/doi-only"
+        );
+
+        let missing_url =
+            article_fulltext_redirect_url(&fixture.config, Some(&fixture.db_name), 1008, user_id)
+                .expect_err("missing full text should fail");
+        assert!(matches!(
+            missing_url,
+            IndexRepositoryError::NotFound("Full text not available")
+        ));
+
+        let cnki_access =
+            get_article_access(&fixture.config, Some(&fixture.db_name), 1003, user_id)
+                .expect("CNKI access should resolve");
+        assert_eq!(cnki_access.detail.provider.as_deref(), Some("detail_url"));
+        assert_eq!(
+            cnki_access.detail.url.as_deref(),
+            Some("https://oversea.cnki.net/kcms/detail/abc?foo=bar&language=chs")
+        );
+        assert!(!cnki_access.fulltext.available);
+        assert!(cnki_access.fulltext.requires_login);
+        assert_eq!(cnki_access.fulltext.provider.as_deref(), Some("zjlib_cnki"));
+
+        match article_fulltext_target(&fixture.config, Some(&fixture.db_name), 1001, user_id)
+            .expect("stored full text target should resolve")
+        {
+            ArticleFulltextTarget::Redirect(url) => {
+                assert_eq!(url, "https://files.example/fulltext.pdf");
+            }
+            ArticleFulltextTarget::Pdf { .. } => panic!("stored full text should redirect"),
+        }
+
+        crate::upsert_cnki_session(
+            fixture.config.auth_db_path(),
+            user_id,
+            &json!({"bff_user_token":"x.eyJleHAiOjQxMDI0NDQ4MDB9.y"}),
+            "active",
+            None,
+        )
+        .expect("CNKI session should be stored");
+        let active_cnki =
+            get_article_access(&fixture.config, Some(&fixture.db_name), 1003, user_id)
+                .expect("active CNKI access should resolve");
+        assert!(active_cnki.fulltext.available);
+        assert!(!active_cnki.fulltext.requires_login);
+
+        let active_redirect =
+            article_fulltext_redirect_url(&fixture.config, Some(&fixture.db_name), 1003, user_id)
+                .expect_err("active CNKI should not redirect to protected order URL");
+        assert!(matches!(
+            active_redirect,
+            IndexRepositoryError::NotFound("CNKI full-text download is not migrated yet")
+        ));
+    }
+
+    #[test]
+    fn cnki_language_url_helpers_cover_query_variants() {
+        assert_eq!(
+            with_cnki_chinese_language("https://example.test/article"),
+            "https://example.test/article"
+        );
+        assert_eq!(
+            with_cnki_chinese_language("https://oversea.cnki.net/kcms/detail/abc"),
+            "https://oversea.cnki.net/kcms/detail/abc?language=chs"
+        );
+        assert_eq!(
+            with_cnki_chinese_language("https://oversea.cnki.net/kcms/detail/abc?foo=bar"),
+            "https://oversea.cnki.net/kcms/detail/abc?foo=bar&language=chs"
+        );
+        assert_eq!(
+            with_cnki_chinese_language("https://oversea.cnki.net/kcms/detail/abc?language=chs"),
+            "https://oversea.cnki.net/kcms/detail/abc?language=chs"
+        );
+        assert!(is_cnki_protected_fulltext_url(
+            "https://O.OVERSEA.CNKI.NET/barnew/download/order?id=abc"
+        ));
+    }
+
+    fn article_filter_params() -> ArticleListParams {
+        ArticleListParams {
+            suppressed: Some(false),
+            sort: Some("date:desc".to_string()),
+            limit: 20,
+            ..ArticleListParams::default()
+        }
+    }
+
+    fn article_ids(page: &ArticlePage) -> Vec<i64> {
+        page.items
+            .iter()
+            .map(|article| article.article_id.value())
+            .collect()
+    }
+
+    fn value_counts(values: Vec<ValueCount>) -> Vec<(String, i64)> {
+        values
+            .into_iter()
+            .map(|value| (value.value, value.count))
+            .collect()
+    }
+
+    fn create_fixture_user(config: &StorageConfig) {
+        let connection =
+            Connection::open(config.auth_db_path()).expect("auth database should open");
+        connection
+            .execute_batch(
+                "
+                INSERT INTO users
+                    (id, username, password_hash, salt, is_admin, created_at, updated_at)
+                VALUES
+                    (1, 'fixture', 'hash', 'salt', 1, 0.0, 0.0);
+                ",
+            )
+            .expect("fixture user should be inserted");
+    }
+
+    fn create_fixture_schema(connection: &Connection, is_listing_ready: bool) {
+        let listing_status = if is_listing_ready { "ready" } else { "stale" };
+        connection
+            .execute_batch(&format!(
+                r#"
+                CREATE TABLE journals (
+                    journal_id INTEGER PRIMARY KEY,
+                    library_id TEXT NOT NULL,
+                    title TEXT,
+                    issn TEXT,
+                    eissn TEXT,
+                    scimago_rank REAL,
+                    cover_url TEXT,
+                    available INTEGER,
+                    toc_data_approved_and_live INTEGER,
+                    has_articles INTEGER
+                );
+
+                CREATE TABLE journal_meta (
+                    journal_id INTEGER PRIMARY KEY,
+                    source_csv TEXT,
+                    area TEXT,
+                    csv_title TEXT,
+                    csv_issn TEXT,
+                    csv_library TEXT
+                );
+
+                CREATE TABLE issues (
+                    issue_id INTEGER PRIMARY KEY,
+                    journal_id INTEGER NOT NULL,
+                    publication_year INTEGER,
+                    title TEXT,
+                    volume TEXT,
+                    number TEXT,
+                    date TEXT,
+                    is_valid_issue INTEGER,
+                    suppressed INTEGER,
+                    embargoed INTEGER,
+                    within_subscription INTEGER
+                );
+
+                CREATE TABLE articles (
+                    article_id INTEGER PRIMARY KEY,
+                    journal_id INTEGER NOT NULL,
+                    issue_id INTEGER,
+                    title TEXT,
+                    date TEXT,
+                    authors TEXT,
+                    start_page TEXT,
+                    end_page TEXT,
+                    abstract TEXT,
+                    doi TEXT,
+                    pmid TEXT,
+                    permalink TEXT,
+                    suppressed INTEGER,
+                    in_press INTEGER,
+                    open_access INTEGER,
+                    platform_id TEXT,
+                    retraction_doi TEXT,
+                    within_library_holdings INTEGER,
+                    content_location TEXT,
+                    full_text_file TEXT
+                );
+
+                CREATE TABLE article_listing (
+                    article_id INTEGER PRIMARY KEY,
+                    journal_id INTEGER,
+                    issue_id INTEGER,
+                    title TEXT,
+                    date TEXT,
+                    authors TEXT,
+                    abstract TEXT,
+                    doi TEXT,
+                    pmid TEXT,
+                    permalink TEXT,
+                    suppressed INTEGER,
+                    in_press INTEGER,
+                    open_access INTEGER,
+                    platform_id TEXT,
+                    retraction_doi TEXT,
+                    within_library_holdings INTEGER,
+                    content_location TEXT,
+                    full_text_file TEXT,
+                    journal_title TEXT,
+                    volume TEXT,
+                    number TEXT,
+                    area TEXT,
+                    publication_year INTEGER
+                );
+
+                CREATE TABLE listing_state (
+                    id INTEGER PRIMARY KEY,
+                    status TEXT NOT NULL
+                );
+
+                CREATE VIRTUAL TABLE article_search
+                USING fts5(article_id UNINDEXED, title, abstract, doi);
+
+                INSERT INTO journals
+                    (journal_id, library_id, title, issn, eissn, scimago_rank, cover_url,
+                     available, toc_data_approved_and_live, has_articles)
+                VALUES
+                    (1, 'scholarly', 'Alpha Journal', '1111-1111', '2222-2222', 10.5,
+                     'https://covers.example/alpha.png', 1, 1, 1),
+                    (2, 'cnki', 'Beta CNKI', '3333-3333', NULL, 3.0, NULL, 1, 1, 1),
+                    (3, 'scholarly', 'Gamma Hidden', NULL, NULL, NULL, NULL, 0, 0, 0);
+
+                INSERT INTO journal_meta
+                    (journal_id, source_csv, area, csv_title, csv_issn, csv_library)
+                VALUES
+                    (1, 'english.csv', 'Medicine', 'Alpha CSV', '1111-1111', 'scholarly'),
+                    (2, 'cnki.csv', 'Engineering', 'Beta CSV', '3333-3333', 'cnki'),
+                    (3, 'english.csv', 'Medicine', 'Gamma CSV', '', 'scholarly');
+
+                INSERT INTO issues
+                    (issue_id, journal_id, publication_year, title, volume, number, date,
+                     is_valid_issue, suppressed, embargoed, within_subscription)
+                VALUES
+                    (10, 1, 2026, 'January Issue', '12', '1', '2026-01-05', 1, 0, 0, 1),
+                    (11, 1, 2025, 'Suppressed Issue', '11', '4', '2025-12-20', 1, 1, 0, 1),
+                    (20, 2, 2026, 'CNKI Issue', '1', '2', '2026-02-01', 1, 0, 0, 0);
+
+                INSERT INTO articles
+                    (article_id, journal_id, issue_id, title, date, authors, start_page,
+                     end_page, abstract, doi, pmid, permalink, suppressed, in_press,
+                     open_access, platform_id, retraction_doi, within_library_holdings,
+                     content_location, full_text_file)
+                VALUES
+                    (1001, 1, 10, 'Genome Methods', '2026-01-05', 'Alice; Bob', '1', '10',
+                     'Genome sequencing precision study', '10.1000/genome', 'PMID-1001',
+                     'https://example.test/articles/1001', 0, 0, 1, 'A-1001', NULL, 1,
+                     'remote', 'https://files.example/fulltext.pdf'),
+                    (1002, 1, 10, 'Clinical Data Mining', '2026-01-04', 'Carol', '11', '20',
+                     'Clinical data search study', '10.1000/clinical', 'PMID-1002',
+                     'https://example.test/articles/1002', 0, 0, 0, 'A-1002', NULL, 1,
+                     'remote', NULL),
+                    (1003, 2, 20, 'CNKI Protected Knowledge', '2026-02-01', 'Dan', NULL, NULL,
+                     'CNKI protected article', NULL, NULL,
+                     'https://oversea.cnki.net/kcms/detail/abc?foo=bar', 0, 0, 0, 'C-1003',
+                     NULL, 0, 'remote',
+                     'https://o.oversea.cnki.net/barnew/download/order?id=abc'),
+                    (1004, 1, NULL, 'Accepted Genome Preview', '2026-01-06', 'Eve', NULL, NULL,
+                     'Genome in press preview', '10.1000/preview', NULL,
+                     'https://example.test/articles/1004', 0, 1, 0, 'A-1004', NULL, 1,
+                     'remote', NULL),
+                    (1005, 1, 10, 'DOI Only Article', '2026-01-03', 'Frank', '21', '22',
+                     'DOI fallback study', '10.1000/doi-only', 'PMID-1005', NULL, 0, 0, 0,
+                     'A-1005', NULL, 0, 'remote', NULL),
+                    (1006, 1, 11, 'Suppressed Genome', '2025-12-20', 'Grace', '23', '24',
+                     'Genome suppressed study', '10.1000/suppressed', NULL,
+                     'https://example.test/articles/1006', 1, 0, 1, 'A-1006', NULL, 1,
+                     'remote', NULL),
+                    (1008, 1, 10, 'No Link Article', '2026-01-02', 'Heidi', '25', '26',
+                     'Article without any outbound link', NULL, NULL, NULL, 0, 0, 0,
+                     'A-1008', NULL, 0, 'remote', NULL);
+
+                INSERT INTO article_listing
+                    (article_id, journal_id, issue_id, title, date, authors, abstract, doi,
+                     pmid, permalink, suppressed, in_press, open_access, platform_id,
+                     retraction_doi, within_library_holdings, content_location, full_text_file,
+                     journal_title, volume, number, area, publication_year)
+                SELECT
+                    a.article_id, a.journal_id, a.issue_id, a.title, a.date, a.authors,
+                    a.abstract, a.doi, a.pmid, a.permalink, a.suppressed, a.in_press,
+                    a.open_access, a.platform_id, a.retraction_doi, a.within_library_holdings,
+                    a.content_location, a.full_text_file, j.title, i.volume, i.number,
+                    m.area, i.publication_year
+                FROM articles a
+                JOIN journals j ON j.journal_id = a.journal_id
+                JOIN journal_meta m ON m.journal_id = a.journal_id
+                LEFT JOIN issues i ON i.issue_id = a.issue_id;
+
+                INSERT INTO listing_state (id, status) VALUES (1, '{listing_status}');
+
+                INSERT INTO article_search(rowid, article_id, title, abstract, doi)
+                VALUES
+                    (1001, 1001, 'Genome Methods', 'Genome sequencing precision study',
+                     '10.1000/genome'),
+                    (1002, 1002, 'Clinical Data Mining', 'indexedonly token stored in FTS',
+                     '10.1000/clinical'),
+                    (1003, 1003, 'CNKI Protected Knowledge', 'CNKI protected article', ''),
+                    (1004, 1004, 'Accepted Genome Preview', 'Genome in press preview',
+                     '10.1000/preview'),
+                    (1005, 1005, 'DOI Only Article', 'DOI fallback study', '10.1000/doi-only'),
+                    (1006, 1006, 'Suppressed Genome', 'Genome suppressed study',
+                     '10.1000/suppressed'),
+                    (1008, 1008, 'No Link Article', 'Article without any outbound link', '');
+                "#
+            ))
+            .expect("fixture schema and data should be created");
+    }
+}

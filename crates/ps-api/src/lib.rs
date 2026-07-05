@@ -394,7 +394,8 @@ mod tests {
         assert_eq!(bearer_payload["username"], "fixture_admin");
         assert_eq!(bearer_payload["is_admin"], true);
         assert_eq!(cookie_status, StatusCode::OK);
-        assert_eq!(database_names, [index_database.db_name.clone()]);
+        assert_eq!(database_names.len(), 1);
+        assert_eq!(database_names[0], index_database.db_name);
         assert!(index_database.path.exists());
         assert_eq!(journal.journal_id.value(), index_database.journal_id);
         assert_eq!(issue.issue_id, index_database.issue_id);

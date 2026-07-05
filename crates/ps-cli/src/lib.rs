@@ -644,8 +644,9 @@ mod tests {
     use std::fs;
 
     use super::{
-        default_delivery_state_dir, grouped_usage, legacy_delivery_usage, legacy_index_usage,
-        normalize_db_name, resolve_delivery_targets, run_ps_cli,
+        default_delivery_state_dir, extract_bool_pair, extract_string_option, extract_usize_option,
+        grouped_usage, legacy_delivery_usage, legacy_index_usage, normalize_db_name,
+        resolve_delivery_targets, resolve_project_path, run_legacy_index, run_ps_cli,
     };
     use ps_worker::delivery::DeliveryWorkflow;
 
@@ -743,6 +744,94 @@ mod tests {
             default_delivery_state_dir(root, DeliveryWorkflow::Push),
             root.join("data").join("folder_push_state")
         );
+    }
+
+    #[test]
+    fn option_extractors_remove_values_and_report_parse_errors() {
+        let mut args = vec![
+            "--limit".to_string(),
+            "25".to_string(),
+            "--name".to_string(),
+            "daily".to_string(),
+            "tail".to_string(),
+        ];
+
+        let limit = extract_usize_option(&mut args, "--limit")
+            .expect("limit should parse")
+            .expect("limit should be present");
+        let name = extract_string_option(&mut args, "--name")
+            .expect("name should parse")
+            .expect("name should be present");
+
+        assert_eq!(limit, 25);
+        assert_eq!(name, "daily");
+        assert_eq!(args, ["tail"]);
+
+        let mut missing_value = vec!["--limit".to_string()];
+        let missing_error = extract_usize_option(&mut missing_value, "--limit")
+            .expect_err("missing option value should fail");
+        assert_eq!(missing_error.to_string(), "--limit requires a value");
+
+        let mut invalid_value = vec!["--limit".to_string(), "NaN".to_string()];
+        let invalid_error = extract_usize_option(&mut invalid_value, "--limit")
+            .expect_err("invalid usize should fail");
+        assert!(invalid_error.to_string().contains("invalid digit"));
+    }
+
+    #[test]
+    fn bool_pair_uses_no_flag_as_final_override() {
+        let mut args = vec![
+            "--dry-run".to_string(),
+            "--no-dry-run".to_string(),
+            "tail".to_string(),
+        ];
+
+        let value = extract_bool_pair(&mut args, "--dry-run", "--no-dry-run", false);
+
+        assert!(!value);
+        assert_eq!(args, ["tail"]);
+    }
+
+    #[test]
+    fn manifest_target_requires_database_name() {
+        let root = temp_root("ps-cli-missing-manifest-db");
+        let manifest = root.join("manifest.json");
+        fs::write(&manifest, r#"{"generated_at":"2026-07-05T00:00:00Z"}"#)
+            .expect("manifest should be created");
+
+        let error = resolve_delivery_targets(&root, None, None, Some(&manifest))
+            .expect_err("manifest without db_name should fail");
+
+        assert_eq!(
+            error.to_string(),
+            "Change manifest missing db_name; specify --db explicitly"
+        );
+        fs::remove_dir_all(root).expect("temp root should be removed");
+    }
+
+    #[test]
+    fn project_path_resolution_keeps_absolute_paths_and_joins_relative_paths() {
+        let root = temp_root("ps-cli-project-path");
+        let absolute_path = root.join("absolute.sqlite");
+        let relative_path = std::path::PathBuf::from("data/index/alpha.sqlite");
+
+        assert_eq!(
+            resolve_project_path(&root, absolute_path.clone()),
+            absolute_path
+        );
+        assert_eq!(
+            resolve_project_path(&root, relative_path.clone()),
+            root.join(relative_path)
+        );
+        fs::remove_dir_all(root).expect("temp root should be removed");
+    }
+
+    #[test]
+    fn legacy_index_notify_requires_update_before_live_execution() {
+        let error = run_legacy_index(vec!["--notify".to_string()])
+            .expect_err("notify handoff should require update mode");
+
+        assert_eq!(error.to_string(), "--notify requires --update");
     }
 
     #[test]

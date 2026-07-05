@@ -125,7 +125,11 @@ RUST_LOG=error cargo run --bin api
 cargo run -p ps-cli -- worker shadow --interval-seconds 300
 ```
 
-回归测试使用 Rust workspace 检查，见下方开发文档。
+回归测试和覆盖率检查使用 Rust workspace 命令，见下方开发文档。常用覆盖率摘要：
+
+```bash
+cargo llvm-cov --workspace --summary-only
+```
 
 #### 前端
 

@@ -135,3 +135,17 @@ pub struct InviteRequiredResponse {
 pub fn default_token_ttl() -> i64 {
     7 * 24 * 3600
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{default_token_ttl, TokenCreateRequest};
+
+    #[test]
+    fn token_create_request_keeps_python_default_ttl() {
+        let request: TokenCreateRequest =
+            serde_json::from_str(r#"{"name":"weekly"}"#).expect("request should deserialize");
+
+        assert_eq!(request.name, "weekly");
+        assert_eq!(request.ttl, default_token_ttl());
+    }
+}

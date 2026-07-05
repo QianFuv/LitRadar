@@ -89,3 +89,24 @@ fn default_timeout_seconds() -> i64 {
 fn default_interval_seconds() -> f64 {
     2.0
 }
+
+#[cfg(test)]
+mod tests {
+    use super::CnkiLoginPollRequest;
+
+    #[test]
+    fn login_poll_request_uses_python_compatible_defaults() {
+        let request = CnkiLoginPollRequest::default();
+
+        assert_eq!(request.timeout_seconds, 180);
+        assert_eq!(request.interval_seconds, 2.0);
+    }
+
+    #[test]
+    fn login_poll_request_deserializes_default_fields() {
+        let request: CnkiLoginPollRequest =
+            serde_json::from_str("{}").expect("request should deserialize");
+
+        assert_eq!(request, CnkiLoginPollRequest::default());
+    }
+}

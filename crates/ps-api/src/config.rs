@@ -121,7 +121,14 @@ fn parse_cors_allowed_origins(value: &str) -> Result<Vec<String>, ApiConfigError
 
 #[cfg(test)]
 mod tests {
-    use super::parse_cors_allowed_origins;
+    use std::env;
+    use std::path::PathBuf;
+    use std::sync::{Mutex, MutexGuard, OnceLock};
+
+    use super::{
+        parse_cors_allowed_origins, ApiConfig, ApiConfigError, API_CORS_ALLOWED_ORIGINS_ENV,
+        API_HOST_ENV, API_PORT_ENV, PROJECT_ROOT_ENV,
+    };
 
     #[test]
     fn parses_python_style_cors_origin_list() {
@@ -129,5 +136,102 @@ mod tests {
             .expect("origins should parse");
 
         assert_eq!(origins, ["https://a.example", "https://b.example"]);
+    }
+
+    #[test]
+    fn from_env_uses_defaults_and_builds_bind_address() {
+        let _guard = env_guard();
+        clear_config_env();
+        let project_root = set_project_root_env();
+
+        let config = ApiConfig::from_env().expect("default config should load");
+
+        assert_eq!(config.project_root, project_root);
+        assert_eq!(config.host, "127.0.0.1");
+        assert_eq!(config.port, 8000);
+        assert_eq!(config.bind_address(), "127.0.0.1:8000");
+        assert!(config.cors_allowed_origins.is_empty());
+    }
+
+    #[test]
+    fn from_env_reads_python_compatible_overrides() {
+        let _guard = env_guard();
+        clear_config_env();
+        let project_root = set_project_root_env();
+        env::set_var(API_HOST_ENV, "0.0.0.0");
+        env::set_var(API_PORT_ENV, "9001");
+        env::set_var(
+            API_CORS_ALLOWED_ORIGINS_ENV,
+            "https://paper.example, https://admin.example",
+        );
+
+        let config = ApiConfig::from_env().expect("overridden config should load");
+
+        assert_eq!(config.project_root, project_root);
+        assert_eq!(config.host, "0.0.0.0");
+        assert_eq!(config.port, 9001);
+        assert_eq!(config.bind_address(), "0.0.0.0:9001");
+        assert_eq!(
+            config.cors_allowed_origins,
+            ["https://paper.example", "https://admin.example"]
+        );
+        clear_config_env();
+    }
+
+    #[test]
+    fn from_env_rejects_invalid_port() {
+        let _guard = env_guard();
+        clear_config_env();
+        set_project_root_env();
+        env::set_var(API_PORT_ENV, "not-a-port");
+
+        let error = ApiConfig::from_env().expect_err("invalid port should fail");
+
+        assert!(matches!(&error, ApiConfigError::InvalidPort(value) if value == "not-a-port"));
+        assert_eq!(error.to_string(), "Invalid API port: not-a-port");
+        clear_config_env();
+    }
+
+    #[test]
+    fn from_env_rejects_invalid_cors_origin_header_value() {
+        let _guard = env_guard();
+        clear_config_env();
+        set_project_root_env();
+        env::set_var(
+            API_CORS_ALLOWED_ORIGINS_ENV,
+            "https://ok.example,bad\norigin",
+        );
+
+        let error = ApiConfig::from_env().expect_err("invalid CORS origin should fail");
+
+        assert!(
+            matches!(&error, ApiConfigError::InvalidCorsOrigin(value) if value == "bad\norigin")
+        );
+        assert_eq!(error.to_string(), "Invalid CORS origin: bad\norigin");
+        clear_config_env();
+    }
+
+    fn env_guard() -> MutexGuard<'static, ()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+            .lock()
+            .expect("env lock should be acquired")
+    }
+
+    fn set_project_root_env() -> PathBuf {
+        let project_root = PathBuf::from("paper-scanner-config-root");
+        env::set_var(PROJECT_ROOT_ENV, &project_root);
+        project_root
+    }
+
+    fn clear_config_env() {
+        for name in [
+            PROJECT_ROOT_ENV,
+            API_HOST_ENV,
+            API_PORT_ENV,
+            API_CORS_ALLOWED_ORIGINS_ENV,
+        ] {
+            env::remove_var(name);
+        }
     }
 }

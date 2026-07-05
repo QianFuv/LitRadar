@@ -150,6 +150,14 @@ cargo clippy --all-targets --all-features -- -D warnings
 cargo test
 ```
 
+Rust 后端覆盖率摘要：
+
+```bash
+cargo llvm-cov --workspace --summary-only
+```
+
+覆盖率测试应优先补确定性业务行为。不要通过排除生产模块来凑数；薄二进制入口、进程全局 tracing 初始化、OS signal、真实网络适配器和无限循环 worker 这类剩余缺口应在任务记录中说明。
+
 前端改动：
 
 ```bash
