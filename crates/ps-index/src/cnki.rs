@@ -6,7 +6,9 @@ use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use ps_sources::{CnkiClient, CnkiFixtureData, CnkiSourceError, FixtureCnkiTransport};
+use ps_sources::{
+    CnkiClient, CnkiFixtureData, CnkiSourceError, CnkiTransport, FixtureCnkiTransport,
+};
 use rusqlite::Connection;
 use serde::Serialize;
 use serde_json::Value;
@@ -274,23 +276,27 @@ pub fn run_cnki_fixture_index(
 }
 
 #[derive(Debug)]
-struct ProcessOutcome {
-    status: String,
-    written_articles: Vec<ArticleRecord>,
-    issues_count: i64,
-    article_summaries_count: i64,
-    article_details_count: i64,
-    deleted_article_count: i64,
+pub(crate) struct ProcessOutcome {
+    pub(crate) status: String,
+    pub(crate) written_articles: Vec<ArticleRecord>,
+    pub(crate) issues_count: i64,
+    pub(crate) article_summaries_count: i64,
+    pub(crate) article_details_count: i64,
+    pub(crate) deleted_article_count: i64,
 }
 
-fn process_cnki_row(
+/// Process one CNKI CSV row into an index database.
+pub(crate) fn process_cnki_row<T>(
     connection: &Connection,
-    client: &mut CnkiClient<FixtureCnkiTransport>,
+    client: &mut CnkiClient<T>,
     row: &CsvRow,
     csv_file: &str,
     journal_id: i64,
     config: &CnkiIndexConfig,
-) -> Result<ProcessOutcome, CnkiIndexError> {
+) -> Result<ProcessOutcome, CnkiIndexError>
+where
+    T: CnkiTransport,
+{
     if config.resume && !config.update && is_journal_complete(connection, journal_id)? {
         return Ok(ProcessOutcome::resumed());
     }

@@ -1,19 +1,33 @@
 //! Scholarly source clients backed by deterministic fixture transports.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::env;
 use std::error::Error;
 use std::fmt;
+use std::thread;
+use std::time::Duration;
 
+use reqwest::blocking::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 /// Maximum DOI IDs accepted by one Semantic Scholar batch request.
 pub const SEMANTIC_SCHOLAR_BATCH_SIZE: usize = 500;
 
+const CROSSREF_BASE_URL: &str = "https://api.crossref.org/v1";
 const CROSSREF_SOURCE: &str = "crossref";
+const OPENALEX_BASE_URL: &str = "https://api.openalex.org";
 const OPENALEX_SOURCE: &str = "openalex";
+const SEMANTIC_SCHOLAR_BASE_URL: &str = "https://api.semanticscholar.org/graph/v1";
 const SEMANTIC_SCHOLAR_SOURCE: &str = "semantic_scholar";
 const SEMANTIC_SCHOLAR_FIELDS: &str = "externalIds,url,isOpenAccess,openAccessPdf,abstract";
+const OPENALEX_SOURCE_FIELDS: &str = "id,display_name,issn_l,issn,works_count";
+const OPENALEX_WORK_FIELDS: &str = "id,doi,title,display_name,publication_year,publication_date,language,cited_by_count,is_retracted,primary_location,locations,open_access,best_oa_location,authorships,ids,biblio,abstract_inverted_index,topics,primary_topic,funders,awards";
+const DEFAULT_USER_AGENT: &str = "Paper-Scanner/0.1 (mailto:paper-scanner@example.invalid)";
+const CROSSREF_ROWS: usize = 1000;
+const OPENALEX_SOURCE_WORK_ROWS: usize = 200;
+const DEFAULT_MAX_RETRIES: usize = 2;
+const RETRY_STATUS_CODES: [u16; 5] = [429, 500, 502, 503, 504];
 
 /// One source transport attempt captured for index statistics.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -140,6 +154,15 @@ pub enum SourceError {
     InvalidFixture(String),
     /// Required client configuration is missing.
     Configuration(String),
+    /// HTTP request failed before a usable source response was available.
+    Request {
+        /// Upstream service identifier.
+        service: String,
+        /// Logical endpoint identifier.
+        endpoint: String,
+        /// Request or transport failure message.
+        message: String,
+    },
 }
 
 impl fmt::Display for SourceError {
@@ -157,6 +180,11 @@ impl fmt::Display for SourceError {
             ),
             Self::InvalidFixture(message) => formatter.write_str(message),
             Self::Configuration(message) => formatter.write_str(message),
+            Self::Request {
+                service,
+                endpoint,
+                message,
+            } => write!(formatter, "{service} {endpoint} request failed: {message}"),
         }
     }
 }
@@ -303,6 +331,442 @@ impl FixtureScholarlyTransport {
     }
 }
 
+/// Live Scholarly source transport configuration.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LiveScholarlyConfig {
+    /// HTTP request timeout in seconds.
+    pub timeout_seconds: u64,
+    /// OpenAlex API key candidates.
+    pub openalex_api_keys: Vec<String>,
+    /// Semantic Scholar API key candidates.
+    pub semantic_scholar_api_keys: Vec<String>,
+    /// Crossref mailto candidates.
+    pub crossref_mailtos: Vec<String>,
+}
+
+impl LiveScholarlyConfig {
+    /// Build live Scholarly configuration from process environment variables.
+    ///
+    /// # Arguments
+    ///
+    /// * `timeout_seconds` - HTTP request timeout in seconds.
+    ///
+    /// # Returns
+    ///
+    /// Live Scholarly configuration.
+    pub fn from_environment(timeout_seconds: u64) -> Self {
+        Self {
+            timeout_seconds,
+            openalex_api_keys: value_pool_from_env("OPENALEX_API_KEY_POOL"),
+            semantic_scholar_api_keys: value_pool_from_env("SEMANTIC_SCHOLAR_API_KEY_POOL"),
+            crossref_mailtos: value_pool_from_env("CROSSREF_MAILTO_POOL"),
+        }
+    }
+
+    /// Return whether Semantic Scholar enrichment can be authenticated.
+    ///
+    /// # Returns
+    ///
+    /// True when at least one Semantic Scholar key is configured.
+    pub fn has_semantic_scholar_key(&self) -> bool {
+        !self.semantic_scholar_api_keys.is_empty()
+    }
+}
+
+/// Blocking HTTP transport for live Scholarly sources.
+#[derive(Debug, Clone)]
+pub struct LiveScholarlyTransport {
+    client: Client,
+    config: LiveScholarlyConfig,
+    attempts: Vec<SourceAttempt>,
+}
+
+struct JsonRequest<'a> {
+    service: &'a str,
+    endpoint: &'a str,
+    method: &'a str,
+    url: &'a str,
+    query: &'a [(String, String)],
+    body: Option<&'a Value>,
+    header: Option<(&'a str, String)>,
+}
+
+struct LiveAttempt<'a> {
+    service: &'a str,
+    endpoint: &'a str,
+    method: &'a str,
+    url: &'a str,
+    status_code: Option<u16>,
+    did_succeed: bool,
+    did_retry: bool,
+    error: Option<String>,
+}
+
+impl LiveScholarlyTransport {
+    /// Build a live Scholarly transport.
+    ///
+    /// # Arguments
+    ///
+    /// * `config` - Live source configuration.
+    ///
+    /// # Returns
+    ///
+    /// Live transport or a request configuration error.
+    pub fn new(config: LiveScholarlyConfig) -> Result<Self, SourceError> {
+        let client = Client::builder()
+            .timeout(Duration::from_secs(config.timeout_seconds.max(1)))
+            .user_agent(DEFAULT_USER_AGENT)
+            .build()
+            .map_err(|error| SourceError::Request {
+                service: "http".to_string(),
+                endpoint: "client".to_string(),
+                message: error.to_string(),
+            })?;
+        Ok(Self {
+            client,
+            config,
+            attempts: Vec::new(),
+        })
+    }
+
+    fn crossref_journal_works(
+        &mut self,
+        issn: &str,
+        from_pub_date: Option<&str>,
+    ) -> Result<Value, SourceError> {
+        let mut cursor = "*".to_string();
+        let mut works = Vec::new();
+        loop {
+            let mut filters = vec!["type:journal-article".to_string()];
+            if let Some(value) = from_pub_date.filter(|value| !value.trim().is_empty()) {
+                filters.push(format!("from-pub-date:{value}"));
+            }
+            let mut query = vec![
+                ("rows".to_string(), CROSSREF_ROWS.to_string()),
+                ("cursor".to_string(), cursor.clone()),
+                ("filter".to_string(), filters.join(",")),
+                ("sort".to_string(), "published".to_string()),
+                ("order".to_string(), "asc".to_string()),
+            ];
+            if let Some(mailto) = self.config.crossref_mailtos.first() {
+                query.push(("mailto".to_string(), mailto.clone()));
+            }
+            let payload = self.get_json(
+                CROSSREF_SOURCE,
+                "journal_works",
+                &format!("{CROSSREF_BASE_URL}/journals/{issn}/works"),
+                &query,
+            )?;
+            let message = payload.get("message").cloned().unwrap_or_else(|| json!({}));
+            let items = message
+                .get("items")
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default();
+            let next_cursor = message
+                .get("next-cursor")
+                .and_then(Value::as_str)
+                .map(str::to_string);
+            let item_count = items.len();
+            works.extend(items);
+            let Some(next_cursor) = next_cursor else {
+                break;
+            };
+            if item_count < CROSSREF_ROWS {
+                break;
+            }
+            cursor = next_cursor;
+        }
+        Ok(json!({ "message": { "items": works } }))
+    }
+
+    fn openalex_source_by_issn(&mut self, issn: &str) -> Result<Value, SourceError> {
+        let mut query = vec![
+            ("filter".to_string(), format!("issn:{issn}")),
+            ("per-page".to_string(), "5".to_string()),
+            ("select".to_string(), OPENALEX_SOURCE_FIELDS.to_string()),
+        ];
+        self.append_openalex_config(&mut query);
+        self.get_json(
+            OPENALEX_SOURCE,
+            "sources",
+            &format!("{OPENALEX_BASE_URL}/sources"),
+            &query,
+        )
+    }
+
+    fn openalex_source_by_title(&mut self, title: &str) -> Result<Value, SourceError> {
+        let mut query = vec![
+            ("search".to_string(), title.to_string()),
+            ("per-page".to_string(), "5".to_string()),
+            ("select".to_string(), OPENALEX_SOURCE_FIELDS.to_string()),
+        ];
+        self.append_openalex_config(&mut query);
+        self.get_json(
+            OPENALEX_SOURCE,
+            "source_search",
+            &format!("{OPENALEX_BASE_URL}/sources"),
+            &query,
+        )
+    }
+
+    fn openalex_works_by_source(
+        &mut self,
+        source_id: &str,
+        from_pub_date: Option<&str>,
+    ) -> Result<Value, SourceError> {
+        let Some(source_key) = openalex_short_source_id(source_id) else {
+            return Ok(json!({ "results": [] }));
+        };
+        let mut cursor = "*".to_string();
+        let mut works = Vec::new();
+        loop {
+            let mut filters = vec![
+                format!("primary_location.source.id:{source_key}"),
+                "type:article".to_string(),
+            ];
+            if let Some(value) = from_pub_date.filter(|value| !value.trim().is_empty()) {
+                filters.push(format!("from_publication_date:{value}"));
+            }
+            let mut query = vec![
+                ("filter".to_string(), filters.join(",")),
+                (
+                    "per-page".to_string(),
+                    OPENALEX_SOURCE_WORK_ROWS.to_string(),
+                ),
+                ("cursor".to_string(), cursor.clone()),
+                ("sort".to_string(), "publication_date:asc".to_string()),
+                ("select".to_string(), OPENALEX_WORK_FIELDS.to_string()),
+            ];
+            self.append_openalex_config(&mut query);
+            let payload = self.get_json(
+                OPENALEX_SOURCE,
+                "source_works",
+                &format!("{OPENALEX_BASE_URL}/works"),
+                &query,
+            )?;
+            let items = payload
+                .get("results")
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default();
+            let next_cursor = payload
+                .get("meta")
+                .and_then(|meta| meta.get("next_cursor"))
+                .and_then(Value::as_str)
+                .map(str::to_string);
+            let item_count = items.len();
+            works.extend(items);
+            let Some(next_cursor) = next_cursor else {
+                break;
+            };
+            if item_count < OPENALEX_SOURCE_WORK_ROWS {
+                break;
+            }
+            cursor = next_cursor;
+        }
+        Ok(json!({ "results": works }))
+    }
+
+    fn openalex_works_by_doi(&mut self, dois: &[String]) -> Result<Value, SourceError> {
+        let filter_value = dois
+            .iter()
+            .map(|doi| format!("https://doi.org/{doi}"))
+            .collect::<Vec<_>>()
+            .join("|");
+        let mut query = vec![
+            ("filter".to_string(), format!("doi:{filter_value}")),
+            ("per-page".to_string(), dois.len().max(1).to_string()),
+            ("select".to_string(), OPENALEX_WORK_FIELDS.to_string()),
+        ];
+        self.append_openalex_config(&mut query);
+        self.get_json(
+            OPENALEX_SOURCE,
+            "works",
+            &format!("{OPENALEX_BASE_URL}/works"),
+            &query,
+        )
+    }
+
+    fn semantic_scholar_batch(&mut self, dois: &[String]) -> Result<Value, SourceError> {
+        let Some(api_key) = self.config.semantic_scholar_api_keys.first().cloned() else {
+            return Err(SourceError::Configuration(
+                "Semantic Scholar API key is required for DOI enrichment.".to_string(),
+            ));
+        };
+        let query = vec![("fields".to_string(), SEMANTIC_SCHOLAR_FIELDS.to_string())];
+        let body = json!({
+            "ids": dois.iter().map(|doi| format!("DOI:{doi}")).collect::<Vec<_>>()
+        });
+        self.post_json(
+            SEMANTIC_SCHOLAR_SOURCE,
+            "paper_batch",
+            &format!("{SEMANTIC_SCHOLAR_BASE_URL}/paper/batch"),
+            &query,
+            &body,
+            Some(("x-api-key", api_key)),
+        )
+    }
+
+    fn append_openalex_config(&self, query: &mut Vec<(String, String)>) {
+        if let Some(api_key) = self.config.openalex_api_keys.first() {
+            query.push(("api_key".to_string(), api_key.clone()));
+        }
+        if let Some(mailto) = self.config.crossref_mailtos.first() {
+            query.push(("mailto".to_string(), mailto.clone()));
+        }
+    }
+
+    fn get_json(
+        &mut self,
+        service: &str,
+        endpoint: &str,
+        url: &str,
+        query: &[(String, String)],
+    ) -> Result<Value, SourceError> {
+        self.request_json(JsonRequest {
+            service,
+            endpoint,
+            method: "GET",
+            url,
+            query,
+            body: None,
+            header: None,
+        })
+    }
+
+    fn post_json(
+        &mut self,
+        service: &str,
+        endpoint: &str,
+        url: &str,
+        query: &[(String, String)],
+        body: &Value,
+        header: Option<(&str, String)>,
+    ) -> Result<Value, SourceError> {
+        self.request_json(JsonRequest {
+            service,
+            endpoint,
+            method: "POST",
+            url,
+            query,
+            body: Some(body),
+            header,
+        })
+    }
+
+    fn request_json(&mut self, live_request: JsonRequest<'_>) -> Result<Value, SourceError> {
+        for attempt in 0..=DEFAULT_MAX_RETRIES {
+            let mut builder = match live_request.method {
+                "POST" => self.client.post(live_request.url),
+                _ => self.client.get(live_request.url),
+            }
+            .query(live_request.query);
+            if let Some(body) = live_request.body {
+                builder = builder.json(body);
+            }
+            if let Some((name, value)) = &live_request.header {
+                builder = builder.header(*name, value);
+            }
+            let request = builder.build().map_err(|error| SourceError::Request {
+                service: live_request.service.to_string(),
+                endpoint: live_request.endpoint.to_string(),
+                message: error.to_string(),
+            })?;
+            let request_url = redact_url(request.url().as_ref());
+            match self.client.execute(request) {
+                Ok(response) => {
+                    let status_code = response.status().as_u16();
+                    let text = response.text().map_err(|error| SourceError::Request {
+                        service: live_request.service.to_string(),
+                        endpoint: live_request.endpoint.to_string(),
+                        message: error.to_string(),
+                    })?;
+                    let payload = serde_json::from_str::<Value>(&text)
+                        .unwrap_or_else(|_| json!({ "error": text }));
+                    if !(200..300).contains(&status_code) {
+                        self.record_attempt(LiveAttempt {
+                            service: live_request.service,
+                            endpoint: live_request.endpoint,
+                            method: live_request.method,
+                            url: &request_url,
+                            status_code: Some(status_code),
+                            did_succeed: false,
+                            did_retry: attempt > 0,
+                            error: payload
+                                .get("error")
+                                .and_then(Value::as_str)
+                                .map(str::to_string),
+                        });
+                        if RETRY_STATUS_CODES.contains(&status_code)
+                            && attempt < DEFAULT_MAX_RETRIES
+                        {
+                            thread::sleep(Duration::from_secs((attempt + 1) as u64));
+                            continue;
+                        }
+                        return Err(SourceError::HttpStatus {
+                            service: live_request.service.to_string(),
+                            endpoint: live_request.endpoint.to_string(),
+                            status_code,
+                            body: payload,
+                        });
+                    }
+                    self.record_attempt(LiveAttempt {
+                        service: live_request.service,
+                        endpoint: live_request.endpoint,
+                        method: live_request.method,
+                        url: &request_url,
+                        status_code: Some(status_code),
+                        did_succeed: true,
+                        did_retry: attempt > 0,
+                        error: None,
+                    });
+                    return Ok(payload);
+                }
+                Err(error) => {
+                    self.record_attempt(LiveAttempt {
+                        service: live_request.service,
+                        endpoint: live_request.endpoint,
+                        method: live_request.method,
+                        url: &redact_url(live_request.url),
+                        status_code: None,
+                        did_succeed: false,
+                        did_retry: attempt > 0,
+                        error: Some(error.to_string()),
+                    });
+                    if attempt < DEFAULT_MAX_RETRIES {
+                        thread::sleep(Duration::from_secs((attempt + 1) as u64));
+                        continue;
+                    }
+                    return Err(SourceError::Request {
+                        service: live_request.service.to_string(),
+                        endpoint: live_request.endpoint.to_string(),
+                        message: error.to_string(),
+                    });
+                }
+            }
+        }
+        Err(SourceError::Request {
+            service: live_request.service.to_string(),
+            endpoint: live_request.endpoint.to_string(),
+            message: "request retry loop exhausted".to_string(),
+        })
+    }
+
+    fn record_attempt(&mut self, attempt: LiveAttempt<'_>) {
+        self.attempts.push(SourceAttempt {
+            service: attempt.service.to_string(),
+            endpoint: attempt.endpoint.to_string(),
+            method: attempt.method.to_string(),
+            url: attempt.url.to_string(),
+            status_code: attempt.status_code,
+            did_succeed: attempt.did_succeed,
+            did_retry: attempt.did_retry,
+            error: attempt.error,
+        });
+    }
+}
+
 impl ScholarlyTransport for FixtureScholarlyTransport {
     /// Execute one scholarly fixture request.
     fn request(&mut self, request: ScholarlyRequest) -> Result<Value, SourceError> {
@@ -383,6 +847,37 @@ impl ScholarlyTransport for FixtureScholarlyTransport {
     }
 
     /// Return captured source attempts.
+    fn attempts(&self) -> &[SourceAttempt] {
+        &self.attempts
+    }
+}
+
+impl ScholarlyTransport for LiveScholarlyTransport {
+    /// Execute one live Scholarly source request.
+    fn request(&mut self, request: ScholarlyRequest) -> Result<Value, SourceError> {
+        match request.kind {
+            ScholarlyRequestKind::CrossrefJournalWorks {
+                issn,
+                from_pub_date,
+            } => self.crossref_journal_works(&issn, from_pub_date.as_deref()),
+            ScholarlyRequestKind::OpenAlexSourceByIssn { issn } => {
+                self.openalex_source_by_issn(&issn)
+            }
+            ScholarlyRequestKind::OpenAlexSourceByTitle { title } => {
+                self.openalex_source_by_title(&title)
+            }
+            ScholarlyRequestKind::OpenAlexWorksBySource {
+                source_id,
+                from_pub_date,
+            } => self.openalex_works_by_source(&source_id, from_pub_date.as_deref()),
+            ScholarlyRequestKind::OpenAlexWorksByDoi { dois } => self.openalex_works_by_doi(&dois),
+            ScholarlyRequestKind::SemanticScholarBatch { dois } => {
+                self.semantic_scholar_batch(&dois)
+            }
+        }
+    }
+
+    /// Return captured live source attempts.
     fn attempts(&self) -> &[SourceAttempt] {
         &self.attempts
     }
@@ -785,11 +1280,71 @@ fn non_empty(value: &str) -> Option<String> {
     (!stripped.is_empty()).then(|| stripped.to_string())
 }
 
+fn value_pool_from_env(name: &str) -> Vec<String> {
+    env::var(name)
+        .ok()
+        .map(|value| value_pool_from_text(&value))
+        .unwrap_or_default()
+}
+
+fn value_pool_from_text(value: &str) -> Vec<String> {
+    let mut pool = Vec::new();
+    for part in value.split([',', ';', '\n']) {
+        let item = part.trim();
+        if !item.is_empty() && !pool.iter().any(|value| value == item) {
+            pool.push(item.to_string());
+        }
+    }
+    pool
+}
+
+fn openalex_short_source_id(source_id: &str) -> Option<String> {
+    let value = source_id.trim().trim_end_matches('/');
+    if value.is_empty() {
+        return None;
+    }
+    value
+        .rsplit('/')
+        .next()
+        .filter(|item| !item.is_empty())
+        .map(str::to_string)
+}
+
+fn redact_url(url: &str) -> String {
+    let Some((base, query)) = url.split_once('?') else {
+        return url.to_string();
+    };
+    let redacted = query
+        .split('&')
+        .map(|part| {
+            let key = part.split('=').next().unwrap_or_default();
+            if key == "api_key" || key == "x-api-key" {
+                format!("{key}=SECRET")
+            } else {
+                part.to_string()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("&");
+    format!("{base}?{redacted}")
+}
+
 #[cfg(test)]
 mod tests {
     use serde_json::json;
 
-    use super::{FixtureScholarlyTransport, ScholarlyClient, ScholarlyFixtureData, SourceError};
+    use super::{
+        value_pool_from_text, FixtureScholarlyTransport, ScholarlyClient, ScholarlyFixtureData,
+        SourceError,
+    };
+
+    #[test]
+    fn value_pool_splits_runtime_config() {
+        assert_eq!(
+            value_pool_from_text(" one, two;one\nthree "),
+            vec!["one".to_string(), "two".to_string(), "three".to_string()]
+        );
+    }
 
     #[test]
     fn semantic_scholar_batches_are_capped_at_five_hundred_ids() {

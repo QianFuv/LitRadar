@@ -7,7 +7,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use ps_sources::{
-    normalize_doi, FixtureScholarlyTransport, ScholarlyClient, ScholarlyFixtureData, SourceError,
+    normalize_doi, FixtureScholarlyTransport, ScholarlyClient, ScholarlyFixtureData,
+    ScholarlyTransport, SourceError,
 };
 use rusqlite::Connection;
 use serde::Serialize;
@@ -270,22 +271,26 @@ pub fn run_scholarly_fixture_index(
 }
 
 #[derive(Debug)]
-struct ProcessOutcome {
-    written_articles: Vec<ArticleRecord>,
-    works_count: i64,
-    issues_count: i64,
-    deleted_article_count: i64,
-    years: BTreeSet<i64>,
+pub(crate) struct ProcessOutcome {
+    pub(crate) written_articles: Vec<ArticleRecord>,
+    pub(crate) works_count: i64,
+    pub(crate) issues_count: i64,
+    pub(crate) deleted_article_count: i64,
+    pub(crate) years: BTreeSet<i64>,
 }
 
-fn process_scholarly_row(
+/// Process one Scholarly CSV row into an index database.
+pub(crate) fn process_scholarly_row<T>(
     connection: &Connection,
-    client: &mut ScholarlyClient<FixtureScholarlyTransport>,
+    client: &mut ScholarlyClient<T>,
     row: &CsvRow,
     csv_file: &str,
     journal_id: i64,
     timestamp: &str,
-) -> Result<ProcessOutcome, ScholarlyIndexError> {
+) -> Result<ProcessOutcome, ScholarlyIndexError>
+where
+    T: ScholarlyTransport,
+{
     let issn_candidates = candidate_issns_from_row(row);
     if issn_candidates.is_empty() {
         return Err(ScholarlyIndexError::InvalidJournal(format!(

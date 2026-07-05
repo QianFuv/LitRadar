@@ -7,5 +7,6 @@ default-run = "ps-cli"
 
 [dependencies]
 ps-index = { path = "../ps-index" }
+ps-storage = { path = "../ps-storage" }
 ps-worker = { path = "../ps-worker" }
 serde_json.workspace = true

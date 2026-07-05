@@ -3,7 +3,11 @@
 use std::collections::BTreeMap;
 use std::error::Error;
 use std::fmt;
+use std::thread;
+use std::time::Duration;
 
+use reqwest::blocking::Client;
+use reqwest::redirect::Policy;
 use serde::Deserialize;
 use serde_json::{json, Value};
 
@@ -12,6 +16,10 @@ use crate::scholarly::{SourceAttempt, SourceError};
 const BASE_URL: &str = "https://oversea.cnki.net";
 const DEFAULT_PCODE: &str = "CJFD,CCJD";
 const CNKI_CHINESE_LANGUAGE: &str = "CHS";
+const JOURNAL_PRODUCT_CODE: &str = "BOJHD70J";
+const CNKI_REQUEST_ATTEMPTS: usize = 3;
+const DEFAULT_USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
+const DEFAULT_ACCEPT_LANGUAGE: &str = "zh-CN,zh;q=0.9,en;q=0.5";
 
 /// Fixture payload used by CNKI source replay.
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -86,6 +94,87 @@ pub trait CnkiTransport {
     ///
     /// Response body text.
     fn text(&mut self, endpoint: &str, key: Option<&str>) -> Result<String, CnkiSourceError>;
+
+    /// Resolve one CSV journal row to CNKI journal details.
+    ///
+    /// # Arguments
+    ///
+    /// * `row` - Source CSV row.
+    ///
+    /// # Returns
+    ///
+    /// Parsed CNKI journal details.
+    fn resolve_journal(
+        &mut self,
+        row: &BTreeMap<String, String>,
+    ) -> Result<Option<Value>, CnkiSourceError> {
+        let text = self.text("journal_detail", None)?;
+        let details = parse_journal_detail(&text)?;
+        let title = row.get("title").map(String::as_str).unwrap_or_default();
+        let issn = row.get("issn").map(String::as_str).unwrap_or_default();
+        if journal_detail_matches(&details, title, issn) {
+            Ok(Some(details))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Fetch publication issues for one journal.
+    ///
+    /// # Arguments
+    ///
+    /// * `journal` - CNKI journal details.
+    ///
+    /// # Returns
+    ///
+    /// Parsed issue payloads.
+    fn year_issues(&mut self, journal: &Value) -> Result<Vec<Value>, CnkiSourceError> {
+        let _ = journal;
+        let text = self.text("year_issues", None)?;
+        parse_year_issues(&text)
+    }
+
+    /// Fetch article summaries for one issue.
+    ///
+    /// # Arguments
+    ///
+    /// * `journal` - CNKI journal details.
+    /// * `issue` - CNKI issue payload.
+    ///
+    /// # Returns
+    ///
+    /// Article summary payloads.
+    fn issue_articles(
+        &mut self,
+        journal: &Value,
+        issue: &Value,
+    ) -> Result<Vec<Value>, CnkiSourceError> {
+        let _ = journal;
+        let year_issue = json_text(issue.get("year_issue"))
+            .ok_or_else(|| CnkiSourceError::Parse("CNKI issue missing year_issue".to_string()))?;
+        let text = self.text("issue_articles", Some(&year_issue))?;
+        parse_issue_articles(&text, issue)
+    }
+
+    /// Fetch one article detail payload.
+    ///
+    /// # Arguments
+    ///
+    /// * `article_url` - Article URL from issue summary.
+    /// * `platform_id` - Optional platform id from issue summary.
+    ///
+    /// # Returns
+    ///
+    /// Article detail payload.
+    fn article_detail(
+        &mut self,
+        article_url: &str,
+        platform_id: Option<&str>,
+    ) -> Result<Value, CnkiSourceError> {
+        let key = platform_id.unwrap_or(article_url);
+        let text = self.text("article_detail", Some(key))?;
+        parse_article_detail(&text, article_url)
+    }
 
     /// Return captured source attempts.
     ///
@@ -182,6 +271,355 @@ impl CnkiTransport for FixtureCnkiTransport {
     }
 }
 
+/// Live CNKI source transport configuration.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LiveCnkiConfig {
+    /// HTTP request timeout in seconds.
+    pub timeout_seconds: u64,
+}
+
+/// Blocking HTTP transport for live CNKI sources.
+#[derive(Debug, Clone)]
+pub struct LiveCnkiTransport {
+    client: Client,
+    attempts: Vec<SourceAttempt>,
+}
+
+struct LiveCnkiAttempt<'a> {
+    endpoint: &'a str,
+    method: &'a str,
+    url: &'a str,
+    status_code: Option<u16>,
+    did_succeed: bool,
+    did_retry: bool,
+    error: Option<String>,
+}
+
+impl LiveCnkiTransport {
+    /// Build a live CNKI transport.
+    ///
+    /// # Arguments
+    ///
+    /// * `config` - Live source configuration.
+    ///
+    /// # Returns
+    ///
+    /// Live CNKI transport.
+    pub fn new(config: LiveCnkiConfig) -> Result<Self, CnkiSourceError> {
+        let client = Client::builder()
+            .timeout(Duration::from_secs(config.timeout_seconds.max(1)))
+            .redirect(Policy::none())
+            .build()
+            .map_err(|error| CnkiSourceError::Request(error.to_string()))?;
+        Ok(Self {
+            client,
+            attempts: Vec::new(),
+        })
+    }
+
+    fn search_journals(
+        &mut self,
+        field_name: &str,
+        value: &str,
+        operator: &str,
+        search_type: &str,
+    ) -> Result<Vec<Value>, CnkiSourceError> {
+        let search_state = cnki_journal_search_state(field_name, value, operator);
+        let data = vec![
+            ("searchStateJson".to_string(), search_state.to_string()),
+            ("displaymode".to_string(), "1".to_string()),
+            ("pageindex".to_string(), "1".to_string()),
+            ("pagecount".to_string(), "21".to_string()),
+            ("index".to_string(), String::new()),
+            ("searchType".to_string(), search_type.to_string()),
+            ("parentcode".to_string(), String::new()),
+            ("clickName".to_string(), String::new()),
+            ("switchdata".to_string(), "search".to_string()),
+        ];
+        let text = self.post_text(
+            &format!("{BASE_URL}/knavi/journals/searchbaseinfo"),
+            &data,
+            &[],
+            Some(&format!("{BASE_URL}/knavi")),
+            "journal_search",
+        )?;
+        parse_journal_search_results(&text)
+    }
+
+    fn get_journal_detail(&mut self, detail_url: &str) -> Result<Option<Value>, CnkiSourceError> {
+        let text = self.get_text(
+            &with_cnki_chinese_language(detail_url),
+            None,
+            "journal_detail",
+        )?;
+        if input_value(&text, "pykm").is_none() {
+            return Ok(None);
+        }
+        parse_journal_detail(&text).map(Some)
+    }
+
+    fn get_text(
+        &mut self,
+        url: &str,
+        referer: Option<&str>,
+        endpoint: &str,
+    ) -> Result<String, CnkiSourceError> {
+        self.request_text("GET", url, &[], &[], referer, endpoint)
+    }
+
+    fn post_text(
+        &mut self,
+        url: &str,
+        data: &[(String, String)],
+        query: &[(String, String)],
+        referer: Option<&str>,
+        endpoint: &str,
+    ) -> Result<String, CnkiSourceError> {
+        self.request_text("POST", url, data, query, referer, endpoint)
+    }
+
+    fn request_text(
+        &mut self,
+        method: &str,
+        url: &str,
+        data: &[(String, String)],
+        query: &[(String, String)],
+        referer: Option<&str>,
+        endpoint: &str,
+    ) -> Result<String, CnkiSourceError> {
+        for attempt in 0..CNKI_REQUEST_ATTEMPTS {
+            let mut builder = match method {
+                "POST" => self.client.post(url).form(data),
+                _ => self.client.get(url),
+            }
+            .query(query)
+            .header("User-Agent", DEFAULT_USER_AGENT)
+            .header("Accept-Language", DEFAULT_ACCEPT_LANGUAGE);
+            if let Some(referer) = referer {
+                builder = builder.header("Referer", referer);
+            }
+            let request = builder
+                .build()
+                .map_err(|error| CnkiSourceError::Request(error.to_string()))?;
+            let request_url = request.url().to_string();
+            match self.client.execute(request) {
+                Ok(response) => {
+                    let status_code = response.status().as_u16();
+                    let text = response
+                        .text()
+                        .map_err(|error| CnkiSourceError::Request(error.to_string()))?;
+                    if !(200..300).contains(&status_code) {
+                        let message = format!("CNKI request failed with HTTP {status_code}");
+                        self.record_attempt(LiveCnkiAttempt {
+                            endpoint,
+                            method,
+                            url: &request_url,
+                            status_code: Some(status_code),
+                            did_succeed: false,
+                            did_retry: attempt > 0,
+                            error: Some(message.clone()),
+                        });
+                        if attempt + 1 < CNKI_REQUEST_ATTEMPTS {
+                            thread::sleep(Duration::from_secs((attempt + 1) as u64));
+                            continue;
+                        }
+                        return Err(CnkiSourceError::Request(format!(
+                            "{message}: {request_url}"
+                        )));
+                    }
+                    match checked_text(&text, &request_url) {
+                        Ok(()) => {
+                            self.record_attempt(LiveCnkiAttempt {
+                                endpoint,
+                                method,
+                                url: &request_url,
+                                status_code: Some(status_code),
+                                did_succeed: true,
+                                did_retry: attempt > 0,
+                                error: None,
+                            });
+                            return Ok(text);
+                        }
+                        Err(error) => {
+                            self.record_attempt(LiveCnkiAttempt {
+                                endpoint,
+                                method,
+                                url: &request_url,
+                                status_code: Some(status_code),
+                                did_succeed: false,
+                                did_retry: attempt > 0,
+                                error: Some(error.to_string()),
+                            });
+                            if attempt + 1 < CNKI_REQUEST_ATTEMPTS {
+                                thread::sleep(Duration::from_secs((attempt + 1) as u64));
+                                continue;
+                            }
+                            return Err(error);
+                        }
+                    }
+                }
+                Err(error) => {
+                    self.record_attempt(LiveCnkiAttempt {
+                        endpoint,
+                        method,
+                        url,
+                        status_code: None,
+                        did_succeed: false,
+                        did_retry: attempt > 0,
+                        error: Some(error.to_string()),
+                    });
+                    if attempt + 1 < CNKI_REQUEST_ATTEMPTS {
+                        thread::sleep(Duration::from_secs((attempt + 1) as u64));
+                        continue;
+                    }
+                    return Err(CnkiSourceError::Request(error.to_string()));
+                }
+            }
+        }
+        Err(CnkiSourceError::Request(
+            "CNKI request retry loop exhausted".to_string(),
+        ))
+    }
+
+    fn record_attempt(&mut self, attempt: LiveCnkiAttempt<'_>) {
+        self.attempts.push(SourceAttempt {
+            service: "cnki".to_string(),
+            endpoint: attempt.endpoint.to_string(),
+            method: attempt.method.to_string(),
+            url: attempt.url.to_string(),
+            status_code: attempt.status_code,
+            did_succeed: attempt.did_succeed,
+            did_retry: attempt.did_retry,
+            error: attempt.error,
+        });
+    }
+}
+
+impl CnkiTransport for LiveCnkiTransport {
+    /// Fetch one CNKI response body by endpoint.
+    fn text(&mut self, endpoint: &str, _key: Option<&str>) -> Result<String, CnkiSourceError> {
+        Err(CnkiSourceError::Request(format!(
+            "live CNKI endpoint {endpoint} requires typed context"
+        )))
+    }
+
+    /// Resolve one CSV journal row through CNKI search and detail pages.
+    fn resolve_journal(
+        &mut self,
+        row: &BTreeMap<String, String>,
+    ) -> Result<Option<Value>, CnkiSourceError> {
+        let title = row
+            .get("title")
+            .map(String::as_str)
+            .unwrap_or_default()
+            .trim();
+        let issn = row
+            .get("issn")
+            .map(String::as_str)
+            .unwrap_or_default()
+            .trim();
+        if !title.is_empty() {
+            for candidate in self.search_journals("TI", title, "%", "刊名(曾用刊名)")? {
+                let Some(detail_url) = json_text(candidate.get("detail_url")) else {
+                    continue;
+                };
+                let Some(details) = self.get_journal_detail(&detail_url)? else {
+                    continue;
+                };
+                if journal_detail_matches(&details, title, issn) {
+                    return Ok(Some(details));
+                }
+            }
+        }
+        if !issn.is_empty() {
+            for candidate in self.search_journals("SN", issn, "=", "ISSN")? {
+                let Some(detail_url) = json_text(candidate.get("detail_url")) else {
+                    continue;
+                };
+                let Some(details) = self.get_journal_detail(&detail_url)? else {
+                    continue;
+                };
+                if journal_detail_matches(&details, title, issn) {
+                    return Ok(Some(details));
+                }
+            }
+        }
+        Ok(None)
+    }
+
+    /// Fetch publication issues for one CNKI journal.
+    fn year_issues(&mut self, journal: &Value) -> Result<Vec<Value>, CnkiSourceError> {
+        let pykm = json_text(journal.get("pykm"))
+            .ok_or_else(|| CnkiSourceError::Parse("CNKI journal missing pykm".to_string()))?;
+        let data = vec![
+            ("pIdx".to_string(), "0".to_string()),
+            (
+                "time".to_string(),
+                json_text(journal.get("time")).unwrap_or_default(),
+            ),
+            ("isEpublish".to_string(), String::new()),
+            (
+                "pcode".to_string(),
+                json_text(journal.get("pcode")).unwrap_or_else(|| DEFAULT_PCODE.to_string()),
+            ),
+        ];
+        let text = self.post_text(
+            &format!("{BASE_URL}/knavi/journals/{pykm}/yearList"),
+            &data,
+            &[],
+            json_text(journal.get("detail_url")).as_deref(),
+            "year_issues",
+        )?;
+        parse_year_issues(&text)
+    }
+
+    /// Fetch article summaries for one issue.
+    fn issue_articles(
+        &mut self,
+        journal: &Value,
+        issue: &Value,
+    ) -> Result<Vec<Value>, CnkiSourceError> {
+        let pykm = json_text(journal.get("pykm"))
+            .ok_or_else(|| CnkiSourceError::Parse("CNKI journal missing pykm".to_string()))?;
+        let year_issue = json_text(issue.get("year_issue"))
+            .ok_or_else(|| CnkiSourceError::Parse("CNKI issue missing year_issue".to_string()))?;
+        let query = vec![
+            ("yearIssue".to_string(), year_issue),
+            ("pageIdx".to_string(), "0".to_string()),
+            (
+                "pcode".to_string(),
+                json_text(journal.get("pcode")).unwrap_or_else(|| DEFAULT_PCODE.to_string()),
+            ),
+            ("isEpublish".to_string(), String::new()),
+            ("language".to_string(), CNKI_CHINESE_LANGUAGE.to_string()),
+        ];
+        let text = self.post_text(
+            &format!("{BASE_URL}/knavi/journals/{pykm}/papers"),
+            &[],
+            &query,
+            json_text(journal.get("detail_url")).as_deref(),
+            "issue_articles",
+        )?;
+        parse_issue_articles(&text, issue)
+    }
+
+    /// Fetch one article detail payload.
+    fn article_detail(
+        &mut self,
+        article_url: &str,
+        _platform_id: Option<&str>,
+    ) -> Result<Value, CnkiSourceError> {
+        let resolved_url = with_cnki_chinese_language(article_url);
+        let text = self.get_text(&resolved_url, Some(BASE_URL), "article_detail")?;
+        parse_article_detail(&text, &resolved_url)
+    }
+
+    /// Return captured source attempts.
+    fn attempts(&self) -> &[SourceAttempt] {
+        &self.attempts
+    }
+}
+
 /// CNKI metadata client using a transport implementation.
 #[derive(Debug, Clone)]
 pub struct CnkiClient<T> {
@@ -218,15 +656,7 @@ where
         &mut self,
         row: &BTreeMap<String, String>,
     ) -> Result<Option<Value>, CnkiSourceError> {
-        let text = self.transport.text("journal_detail", None)?;
-        let details = parse_journal_detail(&text)?;
-        let title = row.get("title").map(String::as_str).unwrap_or_default();
-        let issn = row.get("issn").map(String::as_str).unwrap_or_default();
-        if journal_detail_matches(&details, title, issn) {
-            Ok(Some(details))
-        } else {
-            Ok(None)
-        }
+        self.transport.resolve_journal(row)
     }
 
     /// Fetch publication issues for one journal.
@@ -239,9 +669,7 @@ where
     ///
     /// Parsed issue payloads.
     pub fn year_issues(&mut self, journal: &Value) -> Result<Vec<Value>, CnkiSourceError> {
-        let _ = journal;
-        let text = self.transport.text("year_issues", None)?;
-        parse_year_issues(&text)
+        self.transport.year_issues(journal)
     }
 
     /// Fetch article summaries for one issue.
@@ -259,11 +687,7 @@ where
         journal: &Value,
         issue: &Value,
     ) -> Result<Vec<Value>, CnkiSourceError> {
-        let _ = journal;
-        let year_issue = json_text(issue.get("year_issue"))
-            .ok_or_else(|| CnkiSourceError::Parse("CNKI issue missing year_issue".to_string()))?;
-        let text = self.transport.text("issue_articles", Some(&year_issue))?;
-        parse_issue_articles(&text, issue)
+        self.transport.issue_articles(journal, issue)
     }
 
     /// Fetch one article detail payload.
@@ -281,9 +705,7 @@ where
         article_url: &str,
         platform_id: Option<&str>,
     ) -> Result<Value, CnkiSourceError> {
-        let key = platform_id.unwrap_or(article_url);
-        let text = self.transport.text("article_detail", Some(key))?;
-        parse_article_detail(&text, article_url)
+        self.transport.article_detail(article_url, platform_id)
     }
 
     /// Return captured source attempts.
@@ -454,6 +876,72 @@ pub fn checked_text(text: &str, url: &str) -> Result<(), CnkiSourceError> {
         )));
     }
     Ok(())
+}
+
+fn cnki_journal_search_state(field_name: &str, value: &str, operator: &str) -> Value {
+    json!({
+        "StateID": "",
+        "Platfrom": "",
+        "QueryTime": "",
+        "Account": "knavi",
+        "ClientToken": "",
+        "Language": "",
+        "CNode": {
+            "PCode": JOURNAL_PRODUCT_CODE,
+            "SMode": "",
+            "OperateT": 0
+        },
+        "QNode": {
+            "SelectT": "",
+            "Select_Fields": "",
+            "S_DBCodes": "",
+            "Subscribed": "",
+            "QGroup": [{
+                "Key": "subject",
+                "Logic": 1,
+                "Items": [{
+                    "Key": "txt_1",
+                    "Title": "",
+                    "Logic": 1,
+                    "Name": field_name,
+                    "Operate": operator,
+                    "Value": value,
+                    "ExtendType": 0,
+                    "ExtendValue": "",
+                    "Value2": ""
+                }],
+                "ChildItems": []
+            }],
+            "OrderBy": "OTA|DESC",
+            "GroupBy": "",
+            "Additon": ""
+        }
+    })
+}
+
+fn parse_journal_search_results(text: &str) -> Result<Vec<Value>, CnkiSourceError> {
+    checked_text(text, "journal_search")?;
+    let mut candidates = Vec::new();
+    let mut seen = Vec::<String>::new();
+    for tag in tags(text, "a") {
+        let attrs = attrs(&tag);
+        let Some(href) = attrs.get("href") else {
+            continue;
+        };
+        if !href.contains("/knavi/detail?") {
+            continue;
+        }
+        let detail_url = absolute_url(href);
+        if seen.iter().any(|value| value == &detail_url) {
+            continue;
+        }
+        seen.push(detail_url.clone());
+        candidates.push(json!({
+            "detail_url": detail_url,
+            "title": strip_tags(&tag),
+        }));
+    }
+    Ok(candidates)
 }
 
 fn parse_article_row(row_html: &str, issue: &Value, section: &str) -> Option<Value> {

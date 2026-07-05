@@ -3,9 +3,12 @@
 pub mod cnki;
 pub mod scholarly;
 
-pub use cnki::{CnkiClient, CnkiFixtureData, CnkiSourceError, FixtureCnkiTransport};
+pub use cnki::{
+    CnkiClient, CnkiFixtureData, CnkiSourceError, CnkiTransport, FixtureCnkiTransport,
+    LiveCnkiConfig, LiveCnkiTransport,
+};
 pub use scholarly::{
-    normalize_doi, FixtureScholarlyTransport, ScholarlyClient, ScholarlyFixtureData,
-    ScholarlyRequest, ScholarlyRequestKind, SourceAttempt, SourceError,
-    SEMANTIC_SCHOLAR_BATCH_SIZE,
+    normalize_doi, FixtureScholarlyTransport, LiveScholarlyConfig, LiveScholarlyTransport,
+    ScholarlyClient, ScholarlyFixtureData, ScholarlyRequest, ScholarlyRequestKind,
+    ScholarlyTransport, SourceAttempt, SourceError, SEMANTIC_SCHOLAR_BATCH_SIZE,
 };

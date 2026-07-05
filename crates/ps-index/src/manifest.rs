@@ -1,9 +1,10 @@
 //! Change manifest generation for indexed scholarly articles.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::Path;
 
+use rusqlite::Connection;
 use serde::Serialize;
 
 use crate::transforms::ArticleRecord;
@@ -104,6 +105,215 @@ pub struct InpressChangeDetail {
     pub notifiable_added_article_ids: Vec<i64>,
     /// Backfill added article ids.
     pub backfill_added_article_ids: Vec<i64>,
+}
+
+/// Article ids grouped by issue and in-press journal.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ArticleSnapshot {
+    /// Article ids keyed by `journal_id:issue_id`.
+    pub issue_articles: BTreeMap<String, BTreeSet<i64>>,
+    /// In-press article ids keyed by journal id.
+    pub inpress_articles: BTreeMap<i64, BTreeSet<i64>>,
+}
+
+/// Collect a database article snapshot for change detection.
+///
+/// # Arguments
+///
+/// * `connection` - Open SQLite connection.
+///
+/// # Returns
+///
+/// Article snapshot grouped for change manifests.
+pub fn collect_article_snapshot(connection: &Connection) -> rusqlite::Result<ArticleSnapshot> {
+    let mut snapshot = ArticleSnapshot::default();
+    let mut issue_statement = connection.prepare(
+        "
+        SELECT journal_id, issue_id, article_id
+        FROM articles
+        WHERE issue_id IS NOT NULL
+        ",
+    )?;
+    let issue_rows = issue_statement.query_map([], |row| {
+        Ok((
+            row.get::<_, i64>(0)?,
+            row.get::<_, i64>(1)?,
+            row.get::<_, i64>(2)?,
+        ))
+    })?;
+    for row in issue_rows {
+        let (journal_id, issue_id, article_id) = row?;
+        snapshot
+            .issue_articles
+            .entry(format!("{journal_id}:{issue_id}"))
+            .or_default()
+            .insert(article_id);
+    }
+
+    let mut inpress_statement = connection.prepare(
+        "
+        SELECT journal_id, article_id
+        FROM articles
+        WHERE issue_id IS NULL AND COALESCE(in_press, 0) = 1
+        ",
+    )?;
+    let inpress_rows = inpress_statement
+        .query_map([], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)))?;
+    for row in inpress_rows {
+        let (journal_id, article_id) = row?;
+        snapshot
+            .inpress_articles
+            .entry(journal_id)
+            .or_default()
+            .insert(article_id);
+    }
+    Ok(snapshot)
+}
+
+/// Build a change manifest from before/after article snapshots.
+///
+/// # Arguments
+///
+/// * `db_name` - Index database filename.
+/// * `db_path` - Index database path.
+/// * `run_id` - Run identifier.
+/// * `generated_at` - Generation timestamp.
+/// * `before` - Snapshot before indexing.
+/// * `after` - Snapshot after indexing.
+///
+/// # Returns
+///
+/// Change manifest payload.
+pub fn build_change_manifest_from_snapshots(
+    db_name: &str,
+    db_path: &Path,
+    run_id: &str,
+    generated_at: &str,
+    before: &ArticleSnapshot,
+    after: &ArticleSnapshot,
+) -> ChangeManifest {
+    let mut issue_keys = before
+        .issue_articles
+        .keys()
+        .chain(after.issue_articles.keys())
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    let mut issue_details = Vec::new();
+    let mut changed_issue_keys = Vec::new();
+    let mut added_article_ids = BTreeSet::new();
+    let mut removed_article_ids = BTreeSet::new();
+    for issue_key in std::mem::take(&mut issue_keys) {
+        let before_ids = before
+            .issue_articles
+            .get(&issue_key)
+            .cloned()
+            .unwrap_or_default();
+        let after_ids = after
+            .issue_articles
+            .get(&issue_key)
+            .cloned()
+            .unwrap_or_default();
+        if before_ids == after_ids {
+            continue;
+        }
+        let added = after_ids
+            .difference(&before_ids)
+            .copied()
+            .collect::<Vec<_>>();
+        let removed = before_ids
+            .difference(&after_ids)
+            .copied()
+            .collect::<Vec<_>>();
+        added_article_ids.extend(added.iter().copied());
+        removed_article_ids.extend(removed.iter().copied());
+        changed_issue_keys.push(issue_key.clone());
+        issue_details.push(IssueChangeDetail {
+            issue_key,
+            before_count: before_ids.len(),
+            after_count: after_ids.len(),
+            added_article_ids: added.clone(),
+            removed_article_ids: removed,
+            notifiable_added_article_ids: added,
+            backfill_added_article_ids: Vec::new(),
+        });
+    }
+
+    let mut inpress_keys = before
+        .inpress_articles
+        .keys()
+        .chain(after.inpress_articles.keys())
+        .copied()
+        .collect::<BTreeSet<_>>();
+    let mut inpress_details = Vec::new();
+    let mut changed_inpress_journal_ids = Vec::new();
+    for journal_id in std::mem::take(&mut inpress_keys) {
+        let before_ids = before
+            .inpress_articles
+            .get(&journal_id)
+            .cloned()
+            .unwrap_or_default();
+        let after_ids = after
+            .inpress_articles
+            .get(&journal_id)
+            .cloned()
+            .unwrap_or_default();
+        if before_ids == after_ids {
+            continue;
+        }
+        let added = after_ids
+            .difference(&before_ids)
+            .copied()
+            .collect::<Vec<_>>();
+        let removed = before_ids
+            .difference(&after_ids)
+            .copied()
+            .collect::<Vec<_>>();
+        added_article_ids.extend(added.iter().copied());
+        removed_article_ids.extend(removed.iter().copied());
+        changed_inpress_journal_ids.push(journal_id);
+        inpress_details.push(InpressChangeDetail {
+            journal_id,
+            before_count: before_ids.len(),
+            after_count: after_ids.len(),
+            added_article_ids: added.clone(),
+            removed_article_ids: removed,
+            notifiable_added_article_ids: added,
+            backfill_added_article_ids: Vec::new(),
+        });
+    }
+
+    let added_article_ids = added_article_ids.into_iter().collect::<Vec<_>>();
+    let removed_article_ids = removed_article_ids.into_iter().collect::<Vec<_>>();
+    let summary = ChangeSummary {
+        changed_issue_count: changed_issue_keys.len(),
+        changed_inpress_count: changed_inpress_journal_ids.len(),
+        added_article_count: added_article_ids.len(),
+        removed_article_count: removed_article_ids.len(),
+        added_article_ids: added_article_ids.clone(),
+        removed_article_ids: removed_article_ids.clone(),
+        issues: issue_details,
+        inpress: inpress_details,
+        raw_changed_issue_count: changed_issue_keys.len(),
+        raw_changed_inpress_count: changed_inpress_journal_ids.len(),
+        backfill_article_ids: Vec::new(),
+        backfill_article_count: 0,
+        backfill_issue_keys: Vec::new(),
+        backfill_inpress_journal_ids: Vec::new(),
+    };
+
+    ChangeManifest {
+        run_id: run_id.to_string(),
+        generated_at: generated_at.to_string(),
+        db_name: db_name.to_string(),
+        db_path: db_path.display().to_string(),
+        changed_issue_keys,
+        changed_inpress_journal_ids,
+        notifiable_article_ids: added_article_ids,
+        backfill_issue_keys: Vec::new(),
+        backfill_inpress_journal_ids: Vec::new(),
+        backfill_article_ids: Vec::new(),
+        summary,
+    }
 }
 
 /// Build a change manifest for a fresh fixture index run.

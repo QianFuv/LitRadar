@@ -7,7 +7,8 @@ use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use ps_index::{
-    run_cnki_fixture_index, run_scholarly_fixture_index, CnkiIndexConfig, ScholarlyIndexConfig,
+    run_cnki_fixture_index, run_live_index, run_scholarly_fixture_index, CnkiIndexConfig,
+    LiveIndexConfig, ScholarlyIndexConfig,
 };
 use ps_worker::delivery::{
     run_recommendation_delivery, DeliveryMode, DeliveryWorkflow, RecommendationRunConfig,
@@ -38,11 +39,41 @@ pub fn run_ps_cli(args: Vec<String>) -> Result<(), Box<dyn Error>> {
 ///
 /// Result indicating whether the command completed successfully.
 pub fn run_legacy_index(args: Vec<String>) -> Result<(), Box<dyn Error>> {
+    let mut args = args;
     if has_help(&args) {
         println!("{}", legacy_index_usage());
         return Ok(());
     }
-    Err("legacy index execution will be restored by the live Rust index task".into())
+    let file = extract_string_option_any(&mut args, &["--file", "-f"])?;
+    let workers = extract_usize_option_any(&mut args, &["--workers", "-w"])?.unwrap_or(32);
+    let issue_batch = extract_usize_option(&mut args, "--issue-batch")?;
+    let timeout_seconds = extract_u64_option(&mut args, "--timeout")?.unwrap_or(20);
+    let _processes = extract_usize_option(&mut args, "--processes")?.unwrap_or(2);
+    let resume = extract_bool_pair(&mut args, "--resume", "--no-resume", true);
+    let update = extract_bool_pair(&mut args, "--update", "--no-update", false);
+    let notify = extract_bool_pair(&mut args, "--notify", "--no-notify", false);
+    let notify_dry_run =
+        extract_bool_pair(&mut args, "--notify-dry-run", "--no-notify-dry-run", false);
+    if notify && !update {
+        return Err("--notify requires --update".into());
+    }
+    if !args.is_empty() {
+        return Err(format!("unexpected index arguments: {}", args.join(" ")).into());
+    }
+    let project_root = project_root();
+    apply_runtime_settings(&project_root.join("data").join("auth.sqlite"));
+    let outcome = run_live_index(&LiveIndexConfig {
+        project_root,
+        file,
+        issue_batch_size: issue_batch.unwrap_or(workers).max(1),
+        timeout_seconds,
+        resume,
+        update,
+        notify,
+        notify_dry_run,
+    })?;
+    println!("{}", serde_json::to_string(&outcome)?);
+    Ok(())
 }
 
 /// Run the legacy `notify` command dispatcher.
@@ -72,6 +103,12 @@ pub fn run_legacy_push(args: Vec<String>) -> Result<(), Box<dyn Error>> {
 }
 
 fn run_grouped_command(mut args: Vec<String>) -> Result<(), Box<dyn Error>> {
+    if matches!(args.first().map(String::as_str), Some("index"))
+        && !matches!(args.get(1).map(String::as_str), Some("fixture"))
+    {
+        args.remove(0);
+        return run_legacy_index(args);
+    }
     if has_help(&args) {
         println!("{}", grouped_usage());
         return Ok(());
@@ -290,11 +327,32 @@ fn extract_string_option(
     Ok(None)
 }
 
+fn extract_string_option_any(
+    args: &mut Vec<String>,
+    names: &[&str],
+) -> Result<Option<String>, Box<dyn Error>> {
+    for name in names {
+        if let Some(value) = extract_string_option(args, name)? {
+            return Ok(Some(value));
+        }
+    }
+    Ok(None)
+}
+
 fn extract_usize_option(
     args: &mut Vec<String>,
     name: &str,
 ) -> Result<Option<usize>, Box<dyn Error>> {
     extract_string_option(args, name)?
+        .map(|value| value.parse::<usize>().map_err(Into::into))
+        .transpose()
+}
+
+fn extract_usize_option_any(
+    args: &mut Vec<String>,
+    names: &[&str],
+) -> Result<Option<usize>, Box<dyn Error>> {
+    extract_string_option_any(args, names)?
         .map(|value| value.parse::<usize>().map_err(Into::into))
         .transpose()
 }
@@ -315,6 +373,17 @@ fn extract_flag(args: &mut Vec<String>, name: &str) -> bool {
     remove_flag(args, name)
 }
 
+fn extract_bool_pair(args: &mut Vec<String>, yes_name: &str, no_name: &str, default: bool) -> bool {
+    let mut value = default;
+    if remove_flag(args, yes_name) {
+        value = true;
+    }
+    if remove_flag(args, no_name) {
+        value = false;
+    }
+    value
+}
+
 fn remove_flag(args: &mut Vec<String>, name: &str) -> bool {
     if let Some(index) = args.iter().position(|argument| argument == name) {
         args.remove(index);
@@ -333,6 +402,22 @@ fn project_root() -> PathBuf {
     env::var("PAPER_SCANNER_PROJECT_ROOT")
         .map(PathBuf::from)
         .unwrap_or_else(|_| env::current_dir().expect("current directory should be available"))
+}
+
+fn apply_runtime_settings(auth_db_path: &Path) {
+    let Ok(settings) = ps_storage::list_runtime_settings(auth_db_path) else {
+        return;
+    };
+    for setting in settings {
+        if setting.source != "database" {
+            continue;
+        }
+        if setting.value.trim().is_empty() {
+            env::remove_var(setting.key);
+        } else {
+            env::set_var(setting.key, setting.value);
+        }
+    }
 }
 
 fn default_timestamp() -> String {
