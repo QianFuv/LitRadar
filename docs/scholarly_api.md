@@ -124,7 +124,7 @@ Body: {"ids": ["DOI:10.0000/example", "..."]}
 - 当前索引器在 CSV 中存在 `scholarly` 行时要求 `SEMANTIC_SCHOLAR_API_KEY_POOL` 非空；缺失时会在索引开始前失败。
 - 单次 batch 最多 500 个 paper IDs。
 - 当前按官方 introductory limit 保守处理为全局 1 RPS。
-- 多进程索引时，Semantic Scholar 请求使用 source-aware throttle 做进程间错峰，避免每个进程各自打满 1 RPS。
+- 多进程索引时，Semantic Scholar `paper_batch` 请求使用进程感知 throttle 做错峰，避免每个进程各自打满 1 RPS。
 - `url` 是 Semantic Scholar 页面地址，不写入 `content_location`。
 
 当前落库使用字段：
@@ -137,15 +137,15 @@ Body: {"ids": ["DOI:10.0000/example", "..."]}
 
 ## 六、并发与限速
 
-`--processes` 控制期刊级并行；`--workers` 仍用于 CNKI 详情抓取等高并发路径。英文 scholarly 路径现在在 `ScholarlyClient` 内使用 source-aware throttle：
+`--processes` 控制单个 CSV 内的期刊 worker 进程数；多个 CSV 仍逐个处理。`--workers` 仍用于 CNKI 详情抓取等高并发路径，英文 scholarly 路径不会用它扩大请求并发。英文路径在每个 worker 内保持单请求节奏，并只对 Semantic Scholar `paper_batch` 做进程感知 throttle：
 
 | Source | 进程内并发 | 请求间隔 | 说明 |
 | --- | --- | --- | --- |
 | Crossref | 1 | 0 秒 | 保持原有串行分页语义 |
 | OpenAlex | 1 | 0 秒 | DOI batch 串行处理 |
-| Semantic Scholar | 1 | 1 秒全局错峰 | 按 process count 放大单进程间隔，整体接近 1 RPS |
+| Semantic Scholar | 1 | 进程感知全局错峰 | 默认 base interval 为 1 秒；worker 启动偏移为 `worker_id * base_interval`，后续间隔为 `process_count * base_interval` |
 
-提高吞吐时优先使用 batch，而不是增加 Semantic Scholar 并发。
+在默认配置下，多进程 Semantic Scholar batch 会近似共享 1 RPS。提高吞吐时优先使用 batch，而不是增加 Semantic Scholar 并发。
 
 ## 七、当前同步流程
 
@@ -179,6 +179,6 @@ Body: {"ids": ["DOI:10.0000/example", "..."]}
 | OpenAlex DOI enrichment 缺失 | 保留 Crossref 文章记录，只缺少增强字段 |
 | Semantic Scholar 无 key | 当前会阻止 `scholarly` 索引启动；先配置 `SEMANTIC_SCHOLAR_API_KEY_POOL` |
 | Semantic Scholar 无 DOI 结果 | 保留 OpenAlex/Crossref fallback |
-| Semantic Scholar 429 或 5xx | 使用 source throttle 和 retry/backoff；不要通过并发硬冲 |
+| Semantic Scholar 429 或 5xx | 使用进程感知 throttle 和 retry/backoff；不要通过并发硬冲 |
 | OA 链接失效 | 允许后续增量任务刷新；展示层应能处理失效链接 |
 | 无 DOI 文章 | 不能使用 DOI batch enrichment，只保留 Crossref URL fallback |

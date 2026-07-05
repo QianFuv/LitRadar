@@ -105,7 +105,7 @@ cargo run --bin index -- --file english_journals.csv --update
 cargo run --bin index -- --file cnki_journals.csv --resume --issue-batch 10
 ```
 
-省略 `--file` 时会处理 `data/meta/` 下所有 CSV。`--update` 会生成 `data/push_state/*.changes.json`，`--notify --notify-dry-run` 可在更新后串联通知 dry-run。
+省略 `--file` 时会处理 `data/meta/` 下所有 CSV。`--processes` 控制单个 CSV 内的期刊 worker 进程数，`--workers` 控制每个 worker 内的 CNKI 文章详情请求并发数，`--issue-batch` 控制 CNKI 每轮合并的 issue 数。`--update` 会生成 `data/push_state/*.changes.json`，`--notify --notify-dry-run` 可在更新后串联通知 dry-run。
 
 ### 通知与追踪
 

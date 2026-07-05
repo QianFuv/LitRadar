@@ -160,13 +160,16 @@ cargo run --bin index -- --file cnki_journals.csv --resume --issue-batch 10
 | 参数 | 默认值 | 说明 |
 | --- | --- | --- |
 | `--file`, `-f` | 空 | 只处理 `data/meta/` 下指定 CSV；省略时处理全部 CSV |
-| `--workers`, `-w` | `32` | 兼容旧命令的并发参数；当前 Rust live runner 串行执行 |
-| `--issue-batch` | 同 `--workers` | CNKI issue 批大小 |
+| `--workers`, `-w` | `32` | 每个期刊 worker 内的 CNKI 文章详情请求并发数；省略 `--issue-batch` 时也作为 issue 批大小 |
+| `--processes` | `2` | 单个 CSV 内的期刊 worker 进程数；多个 CSV 仍逐个处理 |
+| `--issue-batch` | 同 `--workers` | CNKI 每轮合并的 issue 数，用于文章详情调度和写入 |
 | `--timeout` | `20` | 上游请求超时秒数 |
 | `--resume` / `--no-resume` | `--resume` | 跳过已完成期刊或年份 |
 | `--update` / `--no-update` | `--no-update` | 增量更新并生成 `data/push_state/*.changes.json` |
 | `--notify` | `false` | 更新后调用 `notify` |
 | `--notify-dry-run` | `false` | `--notify` handoff 使用 dry-run |
+
+CNKI 路径在每个期刊 worker 内顺序拉取 issue 列表，把当前 issue batch 内的文章详情按 `--workers` 并发抓取。英文 scholarly 路径不使用 `--workers` 扩大请求并发；Semantic Scholar batch 请求会按 `--processes` 做进程感知错峰限速。
 
 `SEMANTIC_SCHOLAR_API_KEY_POOL`、`PROXY_POOL`、`OPENALEX_API_KEY_POOL` 和 `CROSSREF_MAILTO_POOL` 可通过环境变量或管理员运行时配置表提供，供 Rust 服务和调度命令读取。
 

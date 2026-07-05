@@ -178,6 +178,10 @@ CNKI 索引与全文获取是两条独立链路：
 | `--issue-batch` | 默认等于 `workers` |
 | CNKI 文章详情并发上限 | `32` |
 
-实现会把 403、429、3xx 跳转、`captcha`、`访问异常`、`安全验证` 视为风控或不可用响应并立即失败，避免静默写入空字段。全量重建是当前最有效的持续压力测试。
+实现会把 403、429、3xx 跳转、`captcha`、`访问异常`、`安全验证` 视为风控或不可用响应并立即失败，避免静默写入空字段。单个 worker 失败会让父进程汇总为失败结果，而不是静默跳过。全量重建是当前最有效的持续压力测试。
 
-`workers` 控制每个进程内同时进行的 HTTP 请求数。`processes` 控制同时处理多少本期刊，因此全局并发上限大致是 `workers * processes`。`issue-batch` 控制每轮合并多少个 issue 的文章列表和详情请求；CNKI 路线会把同一 batch 内多个 issue 的文章详情一起调度，用于填满 `workers`。
+`--processes` 控制单个 CSV 内的期刊 worker 进程数；CSV 文件之间仍逐个处理。`--processes 1` 使用进程内执行路径，`--processes N` 会把同一 CSV 的期刊行按 worker 分片后并行运行。
+
+`--workers` 控制每个期刊 worker 内同时进行的 CNKI 文章详情 HTTP 请求数。issue 列表和文章摘要仍按 worker 内顺序拉取；只有当前 issue batch 内的文章详情请求会并发调度。因此 CNKI 文章详情的瞬时上限约为 `--workers * active_journal_workers`，并受当前 CSV 行数和当前 batch 文章数限制。
+
+`--issue-batch` 控制每轮合并多少个 issue 后再抓文章详情并写库；省略时使用 `--workers`。较大的 batch 更容易填满详情请求并发，但也会让单轮失败重试范围变大。
