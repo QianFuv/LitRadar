@@ -16,9 +16,9 @@ use serde_json::Value;
 
 use crate::manifest::{build_change_manifest, write_change_manifest};
 use crate::schema::{
-    delete_articles, init_index_db, mark_journal_done, mark_year_done, persist_index_run_stats,
-    refresh_article_listing_for_articles, upsert_article_search, upsert_articles, upsert_issues,
-    upsert_journal, upsert_meta,
+    delete_articles, init_index_db, mark_article_listing_ready, mark_journal_done, mark_year_done,
+    persist_index_run_stats, refresh_article_listing_for_articles, upsert_article_search,
+    upsert_articles, upsert_issues, upsert_journal, upsert_meta,
 };
 use crate::stats::{IndexRunStats, PathCountIncrements};
 use crate::transforms::{
@@ -256,6 +256,7 @@ pub fn run_scholarly_fixture_index(
     } else {
         None
     };
+    mark_article_listing_ready(&connection, &config.timestamp)?;
 
     Ok(ScholarlyIndexOutcome {
         status: "succeeded".to_string(),
@@ -527,6 +528,7 @@ fn parse_csv_line(line: &str) -> Vec<String> {
 mod tests {
     use std::fs;
 
+    use rusqlite::Connection;
     use tempfile::tempdir;
 
     use super::{run_scholarly_fixture_index, ScholarlyIndexConfig};
@@ -593,5 +595,15 @@ mod tests {
         assert!(db_path.exists());
         assert!(manifest_path.exists());
         assert_eq!(outcome.source_attempt_count, 4);
+        let connection = Connection::open(db_path).expect("db should open");
+        let (status, updated_at): (String, String) = connection
+            .query_row(
+                "SELECT status, updated_at FROM listing_state WHERE id = 1",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .expect("listing ready state should exist");
+        assert_eq!(status, "ready");
+        assert_eq!(updated_at, "2026-07-03T00:00:00Z");
     }
 }

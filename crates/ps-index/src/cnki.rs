@@ -16,9 +16,9 @@ use serde_json::Value;
 use crate::manifest::{build_change_manifest, write_change_manifest};
 use crate::schema::{
     delete_articles, get_completed_years, get_journal_issue_ids_with_articles, init_index_db,
-    is_journal_complete, mark_journal_done, mark_year_done, persist_index_run_stats,
-    refresh_article_listing_for_articles, upsert_article_search, upsert_articles, upsert_issues,
-    upsert_journal, upsert_meta,
+    is_journal_complete, mark_article_listing_ready, mark_journal_done, mark_year_done,
+    persist_index_run_stats, refresh_article_listing_for_articles, upsert_article_search,
+    upsert_articles, upsert_issues, upsert_journal, upsert_meta,
 };
 use crate::stats::{IndexRunStats, PathCountIncrements};
 use crate::transforms::{
@@ -261,6 +261,7 @@ pub fn run_cnki_fixture_index(
     } else {
         None
     };
+    mark_article_listing_ready(&connection, &config.timestamp)?;
 
     Ok(CnkiIndexOutcome {
         status: "succeeded".to_string(),
@@ -665,6 +666,13 @@ mod tests {
         assert!(manifest_path.exists());
         let connection = Connection::open(db_path).expect("db should open");
         init_index_db(&connection).expect("schema should initialize");
+        let (listing_status, listing_updated_at): (String, String) = connection
+            .query_row(
+                "SELECT status, updated_at FROM listing_state WHERE id = 1",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .expect("listing ready state should exist");
         let open_access: Option<i64> = connection
             .query_row("SELECT open_access FROM articles LIMIT 1", [], |row| {
                 row.get(0)
@@ -677,6 +685,8 @@ mod tests {
             .expect("article should exist");
 
         assert_eq!(outcome.source_attempt_count, 4);
+        assert_eq!(listing_status, "ready");
+        assert_eq!(listing_updated_at, "2026-07-03T00:00:00Z");
         assert_eq!(open_access, None);
         assert_eq!(full_text_file, None);
     }

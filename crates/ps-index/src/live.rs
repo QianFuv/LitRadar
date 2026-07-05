@@ -18,7 +18,10 @@ use crate::cnki::{process_cnki_row, CnkiIndexConfig, CnkiIndexError};
 use crate::manifest::{
     build_change_manifest_from_snapshots, collect_article_snapshot, write_change_manifest,
 };
-use crate::schema::{init_index_db, mark_journal_done, mark_year_done, persist_index_run_stats};
+use crate::schema::{
+    init_index_db, mark_article_listing_ready, mark_journal_done, mark_year_done,
+    persist_index_run_stats,
+};
 use crate::scholarly::{process_scholarly_row, ScholarlyIndexError};
 use crate::stats::{IndexRunStats, PathCountIncrements};
 use crate::transforms::{build_journal_id, journal_title_from_row, source_from_row, CsvRow};
@@ -450,6 +453,7 @@ fn run_live_csv_index(
     } else {
         None
     };
+    mark_article_listing_ready(&connection, &timestamp)?;
 
     Ok(LiveCsvIndexOutcome {
         csv_path: csv_path.display().to_string(),
