@@ -15,6 +15,7 @@
 /.playwright-cli/
 /.antigravitycli/
 /test
+/target/
 /AGENTS.md
 /CLAUDE.md
 /GEMINI.md
