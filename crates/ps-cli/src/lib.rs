@@ -45,19 +45,7 @@ pub fn run_legacy_index(args: Vec<String>) -> Result<(), Box<dyn Error>> {
         println!("{}", legacy_index_usage());
         return Ok(());
     }
-    let file = extract_string_option_any(&mut args, &["--file", "-f"])?;
-    let workers = extract_usize_option_any(&mut args, &["--workers", "-w"])?.unwrap_or(32);
-    let issue_batch = extract_usize_option(&mut args, "--issue-batch")?;
-    let timeout_seconds = extract_u64_option(&mut args, "--timeout")?.unwrap_or(20);
-    let _processes = extract_usize_option(&mut args, "--processes")?.unwrap_or(2);
-    let resume = extract_bool_pair(&mut args, "--resume", "--no-resume", true);
-    let update = extract_bool_pair(&mut args, "--update", "--no-update", false);
-    let notify = extract_bool_pair(&mut args, "--notify", "--no-notify", false);
-    let notify_dry_run =
-        extract_bool_pair(&mut args, "--notify-dry-run", "--no-notify-dry-run", false);
-    if notify && !update {
-        return Err("--notify requires --update".into());
-    }
+    let options = parse_legacy_index_options(&mut args)?;
     if !args.is_empty() {
         return Err(format!("unexpected index arguments: {}", args.join(" ")).into());
     }
@@ -65,16 +53,68 @@ pub fn run_legacy_index(args: Vec<String>) -> Result<(), Box<dyn Error>> {
     apply_runtime_settings(&project_root.join("data").join("auth.sqlite"));
     let outcome = run_live_index(&LiveIndexConfig {
         project_root,
+        file: options.file,
+        worker_count: options.worker_count,
+        process_count: options.process_count,
+        issue_batch_size: options.issue_batch_size,
+        timeout_seconds: options.timeout_seconds,
+        resume: options.resume,
+        update: options.update,
+        notify: options.notify,
+        notify_dry_run: options.notify_dry_run,
+    })?;
+    println!("{}", serde_json::to_string(&outcome)?);
+    Ok(())
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct LegacyIndexOptions {
+    file: Option<String>,
+    worker_count: usize,
+    process_count: usize,
+    issue_batch_size: usize,
+    timeout_seconds: u64,
+    resume: bool,
+    update: bool,
+    notify: bool,
+    notify_dry_run: bool,
+}
+
+fn parse_legacy_index_options(
+    args: &mut Vec<String>,
+) -> Result<LegacyIndexOptions, Box<dyn Error>> {
+    let file = extract_string_option_any(args, &["--file", "-f"])?;
+    let worker_count = positive_usize(
+        "--workers",
+        extract_usize_option_any(args, &["--workers", "-w"])?,
+    )?
+    .unwrap_or(32);
+    let issue_batch_size = positive_usize(
+        "--issue-batch",
+        extract_usize_option(args, "--issue-batch")?,
+    )?
+    .unwrap_or(worker_count);
+    let timeout_seconds = extract_u64_option(args, "--timeout")?.unwrap_or(20);
+    let process_count =
+        positive_usize("--processes", extract_usize_option(args, "--processes")?)?.unwrap_or(2);
+    let resume = extract_bool_pair(args, "--resume", "--no-resume", true);
+    let update = extract_bool_pair(args, "--update", "--no-update", false);
+    let notify = extract_bool_pair(args, "--notify", "--no-notify", false);
+    let notify_dry_run = extract_bool_pair(args, "--notify-dry-run", "--no-notify-dry-run", false);
+    if notify && !update {
+        return Err("--notify requires --update".into());
+    }
+    Ok(LegacyIndexOptions {
         file,
-        issue_batch_size: issue_batch.unwrap_or(workers).max(1),
+        worker_count,
+        process_count,
+        issue_batch_size,
         timeout_seconds,
         resume,
         update,
         notify,
         notify_dry_run,
-    })?;
-    println!("{}", serde_json::to_string(&outcome)?);
-    Ok(())
+    })
 }
 
 /// Run the legacy `notify` command dispatcher.
@@ -419,6 +459,13 @@ fn extract_usize_option_any(
         .transpose()
 }
 
+fn positive_usize(name: &str, value: Option<usize>) -> Result<Option<usize>, Box<dyn Error>> {
+    match value {
+        Some(0) => Err(format!("{name} must be at least 1").into()),
+        other => Ok(other),
+    }
+}
+
 fn extract_u64_option(args: &mut Vec<String>, name: &str) -> Result<Option<u64>, Box<dyn Error>> {
     extract_string_option(args, name)?
         .map(|value| value.parse::<u64>().map_err(Into::into))
@@ -613,7 +660,7 @@ fn grouped_usage() -> String {
             "ps-cli scheduler run-once TASK_ID [--auth-db PATH]",
             "ps-cli scheduler dry-run-once TASK_ID [--auth-db PATH]",
             "ps-cli worker shadow [--auth-db PATH] [--interval-seconds N]",
-            "index [--file FILE] [--workers N] [--issue-batch N] [--timeout N] [--resume|--no-resume] [--update|--no-update] [--notify] [--notify-dry-run]",
+            "index [--file FILE] [--workers N] [--processes N] [--issue-batch N] [--timeout N] [--resume|--no-resume] [--update|--no-update] [--notify] [--notify-dry-run]",
             "notify [--db NAME] [--state-dir PATH] [--changes-file PATH] [--ai-model MODEL] [--max-candidates N] [--timeout N] [--retries N] [--dedupe-retention-days N] [--dry-run|--no-dry-run]",
             "push [--db NAME] [--state-dir PATH] [--changes-file PATH] [--ai-model MODEL] [--max-candidates N] [--timeout N] [--retries N] [--dedupe-retention-days N] [--dry-run|--no-dry-run]"
         ]
@@ -623,7 +670,7 @@ fn grouped_usage() -> String {
 
 fn legacy_index_usage() -> String {
     let payload = json!({
-        "usage": "index [--file FILE] [--workers N] [--issue-batch N] [--timeout N] [--resume|--no-resume] [--update|--no-update] [--notify] [--notify-dry-run]"
+        "usage": "index [--file FILE] [--workers N] [--processes N] [--issue-batch N] [--timeout N] [--resume|--no-resume] [--update|--no-update] [--notify] [--notify-dry-run]"
     });
     payload.to_string()
 }
@@ -648,8 +695,8 @@ mod tests {
     use super::{
         default_delivery_state_dir, extract_auth_db_path, extract_bool_pair, extract_string_option,
         extract_usize_option, grouped_usage, legacy_delivery_usage, legacy_index_usage,
-        normalize_db_name, resolve_delivery_targets, resolve_project_path, run_legacy_index,
-        run_legacy_notify, run_ps_cli,
+        normalize_db_name, parse_legacy_index_options, resolve_delivery_targets,
+        resolve_project_path, run_legacy_index, run_legacy_notify, run_ps_cli,
     };
     use ps_worker::delivery::DeliveryWorkflow;
 
@@ -669,8 +716,68 @@ mod tests {
 
         assert!(usage.contains("--file FILE"));
         assert!(usage.contains("--workers N"));
+        assert!(usage.contains("--processes N"));
         assert!(usage.contains("--notify-dry-run"));
         assert!(!usage.contains("--fixture"));
+    }
+
+    #[test]
+    fn legacy_index_options_preserve_concurrency_flags() {
+        let mut args = vec![
+            "--file".to_string(),
+            "selected.csv".to_string(),
+            "--workers".to_string(),
+            "4".to_string(),
+            "--processes".to_string(),
+            "3".to_string(),
+            "--issue-batch".to_string(),
+            "2".to_string(),
+            "--timeout".to_string(),
+            "7".to_string(),
+            "--no-resume".to_string(),
+            "--update".to_string(),
+            "--notify".to_string(),
+            "--notify-dry-run".to_string(),
+        ];
+
+        let options = parse_legacy_index_options(&mut args).expect("index options should parse");
+
+        assert!(args.is_empty());
+        assert_eq!(options.file.as_deref(), Some("selected.csv"));
+        assert_eq!(options.worker_count, 4);
+        assert_eq!(options.process_count, 3);
+        assert_eq!(options.issue_batch_size, 2);
+        assert_eq!(options.timeout_seconds, 7);
+        assert!(!options.resume);
+        assert!(options.update);
+        assert!(options.notify);
+        assert!(options.notify_dry_run);
+    }
+
+    #[test]
+    fn legacy_index_options_default_issue_batch_to_workers() {
+        let mut args = vec!["--workers".to_string(), "5".to_string()];
+
+        let options = parse_legacy_index_options(&mut args).expect("index options should parse");
+
+        assert_eq!(options.worker_count, 5);
+        assert_eq!(options.process_count, 2);
+        assert_eq!(options.issue_batch_size, 5);
+    }
+
+    #[test]
+    fn legacy_index_options_reject_zero_parallelism_values() {
+        for arguments in [
+            vec!["--workers".to_string(), "0".to_string()],
+            vec!["--processes".to_string(), "0".to_string()],
+            vec!["--issue-batch".to_string(), "0".to_string()],
+        ] {
+            let mut arguments = arguments;
+            let error =
+                parse_legacy_index_options(&mut arguments).expect_err("zero value should fail");
+
+            assert!(error.to_string().contains("must be at least 1"));
+        }
     }
 
     #[test]

@@ -36,6 +36,10 @@ pub struct LiveIndexConfig {
     pub project_root: PathBuf,
     /// Optional CSV filename under `data/meta`.
     pub file: Option<String>,
+    /// Number of CNKI article-detail request workers per journal worker.
+    pub worker_count: usize,
+    /// Number of journal worker processes.
+    pub process_count: usize,
     /// Number of issues processed together for CNKI.
     pub issue_batch_size: usize,
     /// HTTP request timeout in seconds.
@@ -103,6 +107,8 @@ pub enum LiveIndexError {
     UnsupportedSource(String),
     /// Required runtime configuration is missing.
     MissingConfig(String),
+    /// Runtime configuration is invalid.
+    InvalidConfig(String),
     /// Notify handoff failed.
     Notify(String),
 }
@@ -119,6 +125,7 @@ impl fmt::Display for LiveIndexError {
             Self::Cnki(error) => write!(formatter, "{error}"),
             Self::UnsupportedSource(message) => formatter.write_str(message),
             Self::MissingConfig(message) => formatter.write_str(message),
+            Self::InvalidConfig(message) => formatter.write_str(message),
             Self::Notify(message) => formatter.write_str(message),
         }
     }
@@ -134,7 +141,10 @@ impl Error for LiveIndexError {
             Self::CnkiSource(error) => Some(error),
             Self::Scholarly(error) => Some(error),
             Self::Cnki(error) => Some(error),
-            Self::UnsupportedSource(_) | Self::MissingConfig(_) | Self::Notify(_) => None,
+            Self::UnsupportedSource(_)
+            | Self::MissingConfig(_)
+            | Self::InvalidConfig(_)
+            | Self::Notify(_) => None,
         }
     }
 }
@@ -191,6 +201,8 @@ impl From<CnkiIndexError> for LiveIndexError {
 ///
 /// Live index outcome.
 pub fn run_live_index(config: &LiveIndexConfig) -> Result<LiveIndexOutcome, LiveIndexError> {
+    validate_live_concurrency_config(config)?;
+
     let meta_dir = config.project_root.join("data").join("meta");
     let index_dir = config.project_root.join("data").join("index");
     if !meta_dir.exists() {
@@ -224,6 +236,25 @@ pub fn run_live_index(config: &LiveIndexConfig) -> Result<LiveIndexOutcome, Live
         message: None,
         csvs: outcomes,
     })
+}
+
+fn validate_live_concurrency_config(config: &LiveIndexConfig) -> Result<(), LiveIndexError> {
+    if config.worker_count == 0 {
+        return Err(LiveIndexError::InvalidConfig(
+            "worker_count must be at least 1".to_string(),
+        ));
+    }
+    if config.process_count == 0 {
+        return Err(LiveIndexError::InvalidConfig(
+            "process_count must be at least 1".to_string(),
+        ));
+    }
+    if config.issue_batch_size == 0 {
+        return Err(LiveIndexError::InvalidConfig(
+            "issue_batch_size must be at least 1".to_string(),
+        ));
+    }
+    Ok(())
 }
 
 fn run_live_csv_index(
@@ -701,6 +732,38 @@ mod tests {
     }
 
     #[test]
+    fn live_index_rejects_zero_concurrency_config() {
+        let root = tempdir().expect("temp root should be created");
+
+        let mut zero_workers = live_config(root.path());
+        zero_workers.worker_count = 0;
+        let worker_error =
+            run_live_index(&zero_workers).expect_err("zero workers should fail fast");
+        assert!(matches!(
+            worker_error,
+            LiveIndexError::InvalidConfig(message) if message.contains("worker_count")
+        ));
+
+        let mut zero_processes = live_config(root.path());
+        zero_processes.process_count = 0;
+        let process_error =
+            run_live_index(&zero_processes).expect_err("zero processes should fail fast");
+        assert!(matches!(
+            process_error,
+            LiveIndexError::InvalidConfig(message) if message.contains("process_count")
+        ));
+
+        let mut zero_issue_batch = live_config(root.path());
+        zero_issue_batch.issue_batch_size = 0;
+        let issue_batch_error =
+            run_live_index(&zero_issue_batch).expect_err("zero issue batch should fail fast");
+        assert!(matches!(
+            issue_batch_error,
+            LiveIndexError::InvalidConfig(message) if message.contains("issue_batch_size")
+        ));
+    }
+
+    #[test]
     fn live_index_reports_empty_csv_without_network_transports() {
         let root = tempdir().expect("temp root should be created");
         let meta_dir = root.path().join("data").join("meta");
@@ -885,6 +948,8 @@ mod tests {
         LiveIndexConfig {
             project_root: root.to_path_buf(),
             file: None,
+            worker_count: 32,
+            process_count: 2,
             issue_batch_size: 10,
             timeout_seconds: 1,
             resume: false,
