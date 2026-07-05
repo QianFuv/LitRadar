@@ -8,6 +8,7 @@ Rust API 会在启动时提供编译期生成的 OpenAPI 文档。交互式 Swag
 
 - 基础地址：`http://localhost:8000`
 - API 前缀：`/api`
+- MCP 端点：`/mcp`，这是 Streamable HTTP MCP 协议端点，不属于 REST API 前缀，也不出现在 OpenAPI schema 中
 - 文档中的“需要认证”分两类：
 
   - 浏览器前端：登录成功后由后端设置 `HttpOnly`、`SameSite=Lax` 的 `ps_session` Cookie，之后同源 `/api/*` 请求自动携带 Cookie。
@@ -72,6 +73,28 @@ Cache-Control: private, no-store
 ### 跨源浏览器访问
 
 默认前端通过 Next.js rewrite 使用同源 `/api/*`。如果设置 `NEXT_PUBLIC_API_URL` 让浏览器跨源直连后端，后端必须通过逗号分隔的 `API_CORS_ALLOWED_ORIGINS` 显式列出允许的 Origin；不要使用 `*` 搭配 Cookie credentials。
+
+### Streamable HTTP MCP
+
+Rust API 进程直接提供 `POST/GET/DELETE /mcp`，用于 MCP Streamable HTTP 传输。该端点复用现有认证：
+
+- `Authorization: Bearer <access_token>`
+- 或同源浏览器请求中的 `ps_session` Cookie
+
+`/mcp` 当前暴露的工具与 stdio MCP 兼容包一致：
+
+- 元数据：`list_databases`、`list_areas`、`list_years`、`list_journal_options`、`list_sources`
+- 期刊：`list_journals`、`get_journal`
+- 文章：`search_articles`、`get_article`
+- 每周更新：`get_weekly_updates`
+- 收藏：`list_folders`、`add_favorite`、`remove_favorite`
+
+所有工具返回 text content，内容为 JSON 字符串。只读工具直接复用索引库读取逻辑；收藏工具使用当前认证用户的 user id，不能访问其他用户的文件夹。
+
+安全配置：
+
+- `MCP_ALLOWED_HOSTS` 默认只允许 `localhost`、`127.0.0.1` 和 `::1`。通过公网域名、局域网 IP 或反向代理访问 `/mcp` 时，必须显式加入对应 `Host` 或 `host:port`。
+- `MCP_ALLOWED_ORIGINS` 默认空，表示不校验浏览器 `Origin`。只有浏览器跨源直连 MCP 时才需要配置允许的 Origin。
 
 ## 检索与展示接口
 

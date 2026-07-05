@@ -83,6 +83,7 @@ docker compose up -d
 
 - 前端：`http://localhost:3000`
 - API：`http://localhost:8000/api`
+- HTTP MCP：`http://localhost:8000/mcp`
 - API 文档：`http://localhost:8000/docs/`
 - OpenAPI JSON：`http://localhost:8000/openapi.json`
 
@@ -119,6 +120,8 @@ docker compose run --rm api index --file cnki_journals.csv --resume --issue-batc
 | `API_HOST` | `0.0.0.0` | API 监听地址 |
 | `API_PORT` | `8000` | API 监听端口 |
 | `API_CORS_ALLOWED_ORIGINS` | 空 | 跨源浏览器请求允许的 Origin 列表 |
+| `MCP_ALLOWED_HOSTS` | `localhost,127.0.0.1,::1` | HTTP MCP `Host` 白名单；非 loopback 域名或反向代理访问 `/mcp` 时必须配置 |
+| `MCP_ALLOWED_ORIGINS` | 空 | HTTP MCP 浏览器 `Origin` 白名单；仅浏览器跨源直连 MCP 时需要 |
 | `AUTH_COOKIE_SECURE` | 按请求 scheme 推断 | 显式控制 `ps_session` Cookie 的 `Secure` 标记 |
 | `OPENALEX_API_KEY_POOL` | 空 | OpenAlex API key 池 |
 | `SEMANTIC_SCHOLAR_API_KEY_POOL` | 空 | Semantic Scholar API key 池 |
@@ -129,6 +132,22 @@ docker compose run --rm api index --file cnki_journals.csv --resume --issue-batc
 | `NOTIFY_AI_MODEL` | `deepseek-ai/DeepSeek-V3` | 默认模型名 |
 
 管理员后台写入 `runtime_settings` 后，Rust API、Rust worker 和 Rust CLI 会优先使用数据库中的值。
+
+## HTTP MCP 部署
+
+Rust API 容器内置 Streamable HTTP MCP 端点 `/mcp`，不需要启动单独的 Node HTTP MCP 服务。该端点复用现有 API 认证：
+
+- 服务器端 MCP 客户端使用 `Authorization: Bearer <access_token>`
+- 同源浏览器调用可使用 `ps_session` Cookie
+
+本地通过 `http://localhost:8000/mcp` 访问时默认可用。通过公网域名、局域网 IP 或反向代理访问时，应在 `api` 服务环境变量中加入实际请求 Host，例如：
+
+```yaml
+environment:
+  MCP_ALLOWED_HOSTS: paper.example,paper.example:443
+```
+
+如果 MCP 客户端运行在浏览器中且跨源直连后端，再设置 `MCP_ALLOWED_ORIGINS`，例如 `https://app.example`。普通命令行或桌面 MCP 客户端通常只需要 Bearer Token 和 `MCP_ALLOWED_HOSTS`。
 
 ## 常见问题
 

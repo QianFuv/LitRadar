@@ -19,6 +19,7 @@ Paper Scanner 是一个面向学术期刊的全栈检索与订阅平台。它负
 - 用户系统：注册、登录、邀请码、访问令牌、改密
 - 收藏与导出：文件夹管理、批量收藏、BibTeX / RIS / EndNote XML 导出
 - 文献追踪：将某个文件夹设为追踪文件夹，并按用户偏好自动写入相关文章
+- MCP：Rust API 直接提供 Streamable HTTP MCP 端点，Node MCP 包保留为 stdio-only 客户端兼容路径
 - AI 选择：支持 OpenAI 兼容模型配置，不局限于单一服务商
 - 管理后台：用户、邀请码、系统统计、外部元数据运行配置、定时任务、系统公告
 - 首页公告：后台可配置全局公告，前台按优先级展示并支持本地关闭
@@ -95,6 +96,7 @@ Paper Scanner 是一个面向学术期刊的全栈检索与订阅平台。它负
 
    - 前端：`http://localhost:3000`
    - 后端 API：`http://localhost:8000/api`
+   - HTTP MCP：`http://localhost:8000/mcp`
    - API 文档：`http://localhost:8000/docs/`
 
 5. 注册第一个用户
@@ -177,6 +179,7 @@ cargo run --bin api
 API 启动后会提供：
 
 - `/api/*`：业务接口
+- `/mcp`：Streamable HTTP MCP 协议端点，复用 API Bearer Token 或 `ps_session` Cookie 认证
 - `/docs/`：Swagger UI 交互式文档
 - `/openapi.json`：由 Rust 注解和 DTO schema 编译期生成的 OpenAPI JSON
 
@@ -188,6 +191,8 @@ API 启动后会提供：
 - `API_PORT`：监听端口，默认 `8000`
 - `PAPER_SCANNER_PROJECT_ROOT`：项目根目录，默认当前目录；Docker 中为 `/app`
 - `API_CORS_ALLOWED_ORIGINS`：逗号分隔的跨源浏览器 Origin 白名单，默认空
+- `MCP_ALLOWED_HOSTS`：逗号分隔的 MCP `Host` 白名单，默认 `localhost,127.0.0.1,::1`
+- `MCP_ALLOWED_ORIGINS`：逗号分隔的 MCP 浏览器 `Origin` 白名单，默认空；仅在需要浏览器直连 MCP 时配置
 - `AUTH_COOKIE_SECURE`：显式控制 `ps_session` Cookie 的 `Secure` 标记；未设置时按请求 scheme 推断
 
 外部元数据服务运行配置可通过管理员后台写入 `data/auth.sqlite` 的 `runtime_settings` 表。当前受管理的配置项为：
