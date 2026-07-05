@@ -15,6 +15,7 @@ pub use scholarly::{
 };
 pub use zjlib_cnki::{
     FixtureZjlibCnkiMode, FixtureZjlibCnkiTransport, LiveZjlibCnkiConfig, LiveZjlibCnkiTransport,
-    ZhejiangLibraryCnkiClient, ZjlibCnkiCookie, ZjlibCnkiError, ZjlibCnkiQrLogin,
-    ZjlibCnkiTransport,
+    ZhejiangLibraryCnkiClient, ZjlibCnkiArticleCandidate, ZjlibCnkiArticleIdentity,
+    ZjlibCnkiCookie, ZjlibCnkiDownloadedPdf, ZjlibCnkiError, ZjlibCnkiQrLogin,
+    ZjlibCnkiSearchResult, ZjlibCnkiTransport,
 };

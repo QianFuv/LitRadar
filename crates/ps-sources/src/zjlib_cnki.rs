@@ -10,7 +10,8 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use reqwest::blocking::{Client, Response};
 use reqwest::cookie::{CookieStore, Jar};
 use reqwest::header::{
-    HeaderMap, HeaderValue, ACCEPT, ACCEPT_LANGUAGE, LOCATION, ORIGIN, REFERER, USER_AGENT,
+    HeaderMap, HeaderValue, ACCEPT, ACCEPT_LANGUAGE, CONTENT_TYPE, LOCATION, ORIGIN, REFERER,
+    USER_AGENT,
 };
 use reqwest::redirect::Policy;
 use reqwest::Url;
@@ -73,6 +74,64 @@ pub struct ZjlibCnkiQrLogin {
     pub status: String,
     /// QR code URL or payload.
     pub qr_code: String,
+}
+
+/// Article metadata required for exact CNKI full-text matching.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ZjlibCnkiArticleIdentity {
+    /// Article title.
+    pub title: String,
+    /// Semicolon-delimited article authors.
+    pub authors: String,
+    /// Journal title.
+    pub journal_title: String,
+}
+
+/// One CNKI search result row.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ZjlibCnkiSearchResult {
+    /// Result index in page order.
+    pub index: usize,
+    /// Result title.
+    pub title: String,
+    /// Detail page URL.
+    pub detail_url: String,
+    /// CNKI file name when present.
+    pub file_name: Option<String>,
+    /// CNKI database name when present.
+    pub db_name: Option<String>,
+    /// CNKI database code when present.
+    pub db_code: Option<String>,
+    /// Row-level download URL when present.
+    pub download_url: Option<String>,
+}
+
+/// CNKI candidate metadata parsed before PDF download.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ZjlibCnkiArticleCandidate {
+    /// Search result that produced this candidate.
+    pub result: ZjlibCnkiSearchResult,
+    /// Parsed article identity.
+    pub identity: ZjlibCnkiArticleIdentity,
+    /// Final detail page URL.
+    pub detail_url: String,
+    /// PDF download URL when present.
+    pub pdf_url: Option<String>,
+}
+
+/// Downloaded CNKI PDF bytes and response metadata.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ZjlibCnkiDownloadedPdf {
+    /// Download filename.
+    pub filename: String,
+    /// Final upstream URL.
+    pub final_url: String,
+    /// Upstream content type.
+    pub content_type: String,
+    /// PDF byte count.
+    pub byte_count: usize,
+    /// PDF content bytes.
+    pub content: Vec<u8>,
 }
 
 /// JSON-serializable cookie state persisted with a CNKI session.
@@ -239,6 +298,54 @@ pub trait ZjlibCnkiTransport {
     ///
     /// True when the named cookie is usable.
     fn has_unexpired_cookie(&self, name: &str, now: i64) -> bool;
+
+    /// Search CNKI through the current full-text session.
+    ///
+    /// # Arguments
+    ///
+    /// * `keyword` - Search keyword.
+    /// * `limit` - Maximum result count.
+    ///
+    /// # Returns
+    ///
+    /// CNKI search results.
+    fn search(
+        &mut self,
+        keyword: &str,
+        limit: usize,
+    ) -> Result<Vec<ZjlibCnkiSearchResult>, ZjlibCnkiError>;
+
+    /// Inspect a search result detail page.
+    ///
+    /// # Arguments
+    ///
+    /// * `result` - Search result to inspect.
+    ///
+    /// # Returns
+    ///
+    /// Parsed candidate metadata.
+    fn inspect_result_metadata(
+        &mut self,
+        result: &ZjlibCnkiSearchResult,
+    ) -> Result<ZjlibCnkiArticleCandidate, ZjlibCnkiError>;
+
+    /// Download one PDF URL.
+    ///
+    /// # Arguments
+    ///
+    /// * `pdf_url` - PDF URL.
+    /// * `title` - Optional filename title.
+    /// * `referer` - Optional referer URL.
+    ///
+    /// # Returns
+    ///
+    /// Downloaded PDF bytes and metadata.
+    fn download_pdf(
+        &mut self,
+        pdf_url: &str,
+        title: Option<&str>,
+        referer: Option<&str>,
+    ) -> Result<ZjlibCnkiDownloadedPdf, ZjlibCnkiError>;
 }
 
 /// Zhejiang Library CNKI client using a transport implementation.
@@ -420,6 +527,49 @@ where
             .has_unexpired_cookie("vpn358_sid", current_time)
     }
 
+    /// Search by title and download only an exact-matching article PDF.
+    ///
+    /// # Arguments
+    ///
+    /// * `expected` - Expected article metadata.
+    /// * `result_limit` - Maximum search results to inspect.
+    ///
+    /// # Returns
+    ///
+    /// Downloaded matching PDF.
+    pub fn download_matching_pdf(
+        &mut self,
+        expected: &ZjlibCnkiArticleIdentity,
+        result_limit: usize,
+    ) -> Result<ZjlibCnkiDownloadedPdf, ZjlibCnkiError> {
+        let results = self.transport.search(&expected.title, result_limit)?;
+        let mut errors = Vec::new();
+        for result in results {
+            let candidate = self.transport.inspect_result_metadata(&result)?;
+            if !does_article_metadata_match(expected, &candidate.identity) {
+                errors.push(format!("{}: metadata mismatch", result.index));
+                continue;
+            }
+            let Some(pdf_url) = candidate.pdf_url.as_deref() else {
+                errors.push(format!("{}: PDF link missing", result.index));
+                continue;
+            };
+            return self.transport.download_pdf(
+                pdf_url,
+                Some(&candidate.identity.title),
+                Some(&candidate.detail_url),
+            );
+        }
+        let detail = if errors.is_empty() {
+            "no search results".to_string()
+        } else {
+            errors.join(" | ")
+        };
+        Err(ZjlibCnkiError::Request(format!(
+            "No exact CNKI full-text match found: {detail}"
+        )))
+    }
+
     fn ensure_logged_in(&mut self) -> Result<String, ZjlibCnkiError> {
         if let Some(token) = self.bff_user_token.clone() {
             if jwt_expiration(&token).is_some_and(|expires_at| {
@@ -461,6 +611,7 @@ pub struct LiveZjlibCnkiTransport {
     redirect_client: Client,
     no_redirect_client: Client,
     cookie_jar: Arc<Jar>,
+    last_brief_url: Option<String>,
 }
 
 impl LiveZjlibCnkiTransport {
@@ -492,6 +643,7 @@ impl LiveZjlibCnkiTransport {
             redirect_client,
             no_redirect_client,
             cookie_jar,
+            last_brief_url: None,
         })
     }
 
@@ -610,6 +762,26 @@ impl LiveZjlibCnkiTransport {
             ));
         }
         Ok(final_url)
+    }
+
+    fn post_form_text(
+        &mut self,
+        url: &str,
+        form: &[(String, String)],
+        headers: HeaderMap,
+        action: &str,
+    ) -> Result<String, ZjlibCnkiError> {
+        let response = self
+            .redirect_client
+            .post(url)
+            .headers(headers)
+            .form(form)
+            .send()
+            .map_err(|error| ZjlibCnkiError::Request(error.to_string()))?;
+        let response = raise_for_status(response, action)?;
+        response
+            .text()
+            .map_err(|error| ZjlibCnkiError::Request(error.to_string()))
     }
 }
 
@@ -773,6 +945,146 @@ impl ZjlibCnkiTransport for LiveZjlibCnkiTransport {
     fn has_unexpired_cookie(&self, name: &str, _now: i64) -> bool {
         self.cookies().iter().any(|cookie| cookie.name == name)
     }
+
+    /// Search live CNKI through zyproxy.
+    fn search(
+        &mut self,
+        keyword: &str,
+        limit: usize,
+    ) -> Result<Vec<ZjlibCnkiSearchResult>, ZjlibCnkiError> {
+        let result_url = format!("{ZYPROXY_BASE_URL}/kns55/brief/result.aspx");
+        let handler_url = format!("{ZYPROXY_BASE_URL}/kns55/request/SearchHandler.ashx");
+        let brief_url = format!("{ZYPROXY_BASE_URL}/kns55/brief/brief.aspx");
+        let post_headers = cnki_form_headers(&format!("{ZYPROXY_BASE_URL}/kns55/"));
+        let result_fields = search_result_form_fields(keyword);
+        self.post_form_text(
+            &result_url,
+            &result_fields,
+            post_headers.clone(),
+            "post CNKI result.aspx",
+        )?;
+        let mut handler_headers = post_headers;
+        handler_headers.insert(
+            REFERER,
+            HeaderValue::from_str(&result_url)
+                .map_err(|error| ZjlibCnkiError::Request(error.to_string()))?,
+        );
+        handler_headers.insert(
+            "X-Requested-With",
+            HeaderValue::from_static("XMLHttpRequest"),
+        );
+        let handler_fields = search_handler_form_fields(keyword);
+        self.post_form_text(
+            &handler_url,
+            &handler_fields,
+            handler_headers,
+            "post CNKI SearchHandler",
+        )?;
+        let brief_query = vec![
+            ("pagename", "ASP.brief_result_aspx".to_string()),
+            ("dbPrefix", "SCDB".to_string()),
+            ("dbCatalog", "中国学术文献网络出版总库".to_string()),
+            ("ConfigFile", "SCDB.xml".to_string()),
+            ("research", "off".to_string()),
+            ("t", current_millis().to_string()),
+        ];
+        let response = self
+            .redirect_client
+            .get(&brief_url)
+            .query(&brief_query)
+            .headers(html_headers(Some(&result_url)))
+            .send()
+            .map_err(|error| ZjlibCnkiError::Request(error.to_string()))?;
+        let response = raise_for_status(response, "get CNKI brief results")?;
+        let final_url = response.url().to_string();
+        let text = response
+            .text()
+            .map_err(|error| ZjlibCnkiError::Request(error.to_string()))?;
+        self.last_brief_url = Some(final_url.clone());
+        Ok(parse_search_results(&text, &final_url)
+            .into_iter()
+            .take(limit)
+            .collect())
+    }
+
+    /// Inspect a live CNKI result detail page.
+    fn inspect_result_metadata(
+        &mut self,
+        result: &ZjlibCnkiSearchResult,
+    ) -> Result<ZjlibCnkiArticleCandidate, ZjlibCnkiError> {
+        let referer = self
+            .last_brief_url
+            .clone()
+            .unwrap_or_else(|| format!("{ZYPROXY_BASE_URL}/kns55/"));
+        let response = self
+            .redirect_client
+            .get(&result.detail_url)
+            .headers(html_headers(Some(&referer)))
+            .send()
+            .map_err(|error| ZjlibCnkiError::Request(error.to_string()))?;
+        let response = raise_for_status(response, "open CNKI detail")?;
+        let detail_url = response.url().to_string();
+        let text = response
+            .text()
+            .map_err(|error| ZjlibCnkiError::Request(error.to_string()))?;
+        let identity = extract_article_identity(&text, &result.title);
+        let pdf_url = extract_pdf_download_url(&text, &detail_url);
+        Ok(ZjlibCnkiArticleCandidate {
+            result: result.clone(),
+            identity,
+            detail_url,
+            pdf_url,
+        })
+    }
+
+    /// Download a live CNKI PDF.
+    fn download_pdf(
+        &mut self,
+        pdf_url: &str,
+        title: Option<&str>,
+        referer: Option<&str>,
+    ) -> Result<ZjlibCnkiDownloadedPdf, ZjlibCnkiError> {
+        let response = self
+            .redirect_client
+            .get(pdf_url)
+            .headers(html_headers(Some(
+                referer.unwrap_or(&format!("{ZYPROXY_BASE_URL}/kns55/")),
+            )))
+            .send()
+            .map_err(|error| ZjlibCnkiError::Request(error.to_string()))?;
+        let response = raise_for_status(response, "download PDF")?;
+        let final_url = response.url().to_string();
+        let content_type = response
+            .headers()
+            .get(CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or("application/pdf")
+            .to_string();
+        let content = response
+            .bytes()
+            .map_err(|error| ZjlibCnkiError::Request(error.to_string()))?
+            .to_vec();
+        if !content_type.to_ascii_lowercase().contains("pdf") && !content.starts_with(b"%PDF") {
+            return Err(ZjlibCnkiError::Request(format!(
+                "Download endpoint did not return PDF (content-type={content_type:?}, url={}).",
+                redact_url(&final_url)
+            )));
+        }
+        let resolved_title = title
+            .filter(|value| !value.trim().is_empty())
+            .map(str::to_string)
+            .or_else(|| title_from_pdf_url(&final_url))
+            .unwrap_or_else(|| "cnki".to_string());
+        let filename_stem = safe_filename(&resolved_title);
+        let filename = format!("{filename_stem}.pdf");
+        Ok(ZjlibCnkiDownloadedPdf {
+            filename,
+            final_url,
+            content_type,
+            byte_count: content.len(),
+            content,
+        })
+    }
 }
 
 /// Deterministic fixture behavior for Zhejiang Library CNKI tests.
@@ -788,6 +1100,10 @@ pub enum FixtureZjlibCnkiMode {
     PollFailure,
     /// Full-text warm-up fails after login completion.
     WarmupFailure,
+    /// Full-text search returns only mismatching metadata.
+    FulltextMismatch,
+    /// Full-text PDF download fails after metadata matches.
+    FulltextFailure,
 }
 
 impl FixtureZjlibCnkiMode {
@@ -807,6 +1123,8 @@ impl FixtureZjlibCnkiMode {
             "timeout" | "poll_timeout" => Some(Self::PollTimeout),
             "poll_failure" => Some(Self::PollFailure),
             "warmup_failure" => Some(Self::WarmupFailure),
+            "fulltext_mismatch" => Some(Self::FulltextMismatch),
+            "fulltext_failure" => Some(Self::FulltextFailure),
             _ => None,
         }
     }
@@ -912,6 +1230,77 @@ impl ZjlibCnkiTransport for FixtureZjlibCnkiTransport {
             .iter()
             .any(|cookie| cookie.name == name && cookie.is_unexpired(now))
     }
+
+    /// Search fixture CNKI results.
+    fn search(
+        &mut self,
+        keyword: &str,
+        limit: usize,
+    ) -> Result<Vec<ZjlibCnkiSearchResult>, ZjlibCnkiError> {
+        if limit == 0 {
+            return Ok(Vec::new());
+        }
+        Ok(vec![ZjlibCnkiSearchResult {
+            index: 1,
+            title: keyword.to_string(),
+            detail_url: "https://fixture.cnki.test/detail".to_string(),
+            file_name: Some("fixture".to_string()),
+            db_name: Some("CJFDLAST2026".to_string()),
+            db_code: Some("CJFD".to_string()),
+            download_url: Some("https://fixture.cnki.test/download.aspx?dflag=pdfdown".to_string()),
+        }])
+    }
+
+    /// Inspect fixture result metadata.
+    fn inspect_result_metadata(
+        &mut self,
+        result: &ZjlibCnkiSearchResult,
+    ) -> Result<ZjlibCnkiArticleCandidate, ZjlibCnkiError> {
+        let identity = if self.mode == FixtureZjlibCnkiMode::FulltextMismatch {
+            ZjlibCnkiArticleIdentity {
+                title: "Mismatched CNKI Article".to_string(),
+                authors: "Different Author".to_string(),
+                journal_title: "Different Journal".to_string(),
+            }
+        } else {
+            ZjlibCnkiArticleIdentity {
+                title: result.title.clone(),
+                authors: "Ada Lovelace; Grace Hopper".to_string(),
+                journal_title: "Fixture CNKI Journal".to_string(),
+            }
+        };
+        Ok(ZjlibCnkiArticleCandidate {
+            result: result.clone(),
+            identity,
+            detail_url: result.detail_url.clone(),
+            pdf_url: result.download_url.clone(),
+        })
+    }
+
+    /// Download a fixture PDF.
+    fn download_pdf(
+        &mut self,
+        pdf_url: &str,
+        title: Option<&str>,
+        _referer: Option<&str>,
+    ) -> Result<ZjlibCnkiDownloadedPdf, ZjlibCnkiError> {
+        if self.mode == FixtureZjlibCnkiMode::FulltextFailure {
+            return Err(ZjlibCnkiError::Request(
+                "fixture PDF download failed".to_string(),
+            ));
+        }
+        let content = b"%PDF-1.4\n% fixture cnki pdf\n".to_vec();
+        Ok(ZjlibCnkiDownloadedPdf {
+            filename: format!(
+                "{}.pdf",
+                safe_filename(title.unwrap_or("Fixture CNKI Article"))
+            ),
+            final_url: pdf_url.to_string(),
+            content_type: "application/pdf".to_string(),
+            byte_count: content.len(),
+            content,
+        })
+    }
 }
 
 fn www_headers(token: Option<&str>) -> HeaderMap {
@@ -965,6 +1354,71 @@ fn ajax_headers(referer: Option<&str>) -> HeaderMap {
         headers.insert(REFERER, referer);
     }
     headers
+}
+
+fn cnki_form_headers(referer: &str) -> HeaderMap {
+    let mut headers = html_headers(Some(referer));
+    headers.insert(
+        CONTENT_TYPE,
+        HeaderValue::from_static("application/x-www-form-urlencoded"),
+    );
+    headers.insert(ORIGIN, HeaderValue::from_static(ZYPROXY_BASE_URL));
+    headers
+}
+
+fn search_result_form_fields(keyword: &str) -> Vec<(String, String)> {
+    let db_value = "中国学术期刊网络出版总库,中国博士学位论文全文数据库,中国优秀硕士学位论文全文数据库,中国重要会议论文全文数据库,中国重要报纸全文数据库,中国年鉴网络出版总库";
+    vec![
+        ("dbPrefix", "SCDB"),
+        ("db_opt", "中国学术文献网络出版总库"),
+        ("db_value", db_value),
+        ("hidTabChange", ""),
+        ("hidDivIDS", ""),
+        ("txt_i", "1"),
+        ("txt_c", "7"),
+        ("{key}_logical", "and"),
+        ("txt_1_sel", "题名"),
+        ("txt_1_value1", keyword),
+        ("txt_1_freq1", ""),
+        ("txt_1_relation", "#CNKI_AND"),
+        ("txt_1_value2", "输入检索词"),
+        ("txt_1_freq2", ""),
+        ("txt_1_special1", "="),
+        ("txt_extension", "xls"),
+        ("tmpexpertvalue", ""),
+        ("expertValue", ""),
+        ("cjfdcode", ""),
+        ("currentid", "txt_1_value1"),
+        ("action", "scdbsearch"),
+    ]
+    .into_iter()
+    .map(|(name, value)| (name.to_string(), value.to_string()))
+    .collect()
+}
+
+fn search_handler_form_fields(keyword: &str) -> Vec<(String, String)> {
+    let db_value = "中国学术期刊网络出版总库,中国博士学位论文全文数据库,中国优秀硕士学位论文全文数据库,中国重要会议论文全文数据库,中国重要报纸全文数据库,中国年鉴网络出版总库";
+    let mut fields = vec![
+        ("action", ""),
+        ("NaviCode", "*"),
+        ("PageName", "ASP.brief_result_aspx"),
+        ("DbPrefix", "SCDB"),
+        ("DbCatalog", "中国学术文献网络出版总库"),
+        ("ConfigFile", "SCDB.xml"),
+        ("db_opt", "中国学术文献网络出版总库"),
+        ("db_value", db_value),
+        ("txt_1_sel", "题名"),
+        ("txt_1_value1", keyword),
+        ("txt_1_relation", "#CNKI_AND"),
+        ("txt_1_special1", "="),
+        ("txt_1_extension", "xls"),
+        ("his", "0"),
+    ]
+    .into_iter()
+    .map(|(name, value)| (name.to_string(), value.to_string()))
+    .collect::<Vec<_>>();
+    fields.push(("__".to_string(), current_millis().to_string()));
+    fields
 }
 
 fn json_payload(response: Response, action: &str) -> Result<Value, ZjlibCnkiError> {
@@ -1099,6 +1553,151 @@ fn join_url(base_url: &str, reference: &str) -> Result<String, ZjlibCnkiError> {
     Ok(joined.to_string())
 }
 
+fn parse_search_results(text: &str, base_url: &str) -> Vec<ZjlibCnkiSearchResult> {
+    let lowered = text.to_ascii_lowercase();
+    let mut seen = Vec::new();
+    let mut results = Vec::new();
+    for anchor in anchor_links(text) {
+        if !anchor
+            .href
+            .to_ascii_lowercase()
+            .contains("/kns55/detail/detail.aspx")
+        {
+            continue;
+        }
+        let Ok(detail_url) = join_url(base_url, &decode_html(&anchor.href)) else {
+            continue;
+        };
+        if seen.iter().any(|value| value == &detail_url) {
+            continue;
+        }
+        seen.push(detail_url.clone());
+        let row_start = lowered[..anchor.start].rfind("<tr").unwrap_or(anchor.start);
+        let row_end = lowered[anchor.end..]
+            .find("</tr>")
+            .map(|index| anchor.end + index + "</tr>".len())
+            .unwrap_or(anchor.end);
+        let row = &text[row_start..row_end];
+        let query = query_dict(&detail_url);
+        let title = extract_anchor_title(&anchor.body)
+            .or_else(|| query.get("FileName").cloned())
+            .unwrap_or_else(|| format!("result-{}", results.len() + 1));
+        results.push(ZjlibCnkiSearchResult {
+            index: results.len() + 1,
+            title,
+            detail_url,
+            file_name: query.get("FileName").cloned(),
+            db_name: query.get("DbName").cloned(),
+            db_code: query.get("DbCode").cloned(),
+            download_url: extract_result_download_url(row, base_url),
+        });
+    }
+    results
+}
+
+fn extract_result_download_url(row: &str, base_url: &str) -> Option<String> {
+    anchor_links(row).into_iter().find_map(|anchor| {
+        anchor
+            .href
+            .to_ascii_lowercase()
+            .contains("download.aspx")
+            .then(|| join_url(base_url, &decode_html(&anchor.href)).ok())
+            .flatten()
+    })
+}
+
+fn extract_pdf_download_url(text: &str, base_url: &str) -> Option<String> {
+    anchor_links(text).into_iter().find_map(|anchor| {
+        let href = decode_html(&anchor.href);
+        let href_lower = href.to_ascii_lowercase();
+        if !href_lower.contains("download.aspx") {
+            return None;
+        }
+        let visible = strip_tags(&anchor.body);
+        (href_lower.contains("dflag=pdfdown") || visible.to_ascii_uppercase().contains("PDF"))
+            .then(|| join_url(base_url, &href).ok())
+            .flatten()
+    })
+}
+
+fn extract_article_identity(text: &str, fallback_title: &str) -> ZjlibCnkiArticleIdentity {
+    let title = meta_content(text, "citation_title")
+        .or_else(|| first_tag_text(text, "h1"))
+        .or_else(|| first_tag_text(text, "h2"))
+        .or_else(|| title_text(text))
+        .unwrap_or_else(|| fallback_title.to_string());
+    let authors = meta_content_list(text, "citation_author");
+    let author_text = if authors.is_empty() {
+        author_block_text(text)
+            .or_else(|| cnki_label_authors(text, "作者"))
+            .or_else(|| row_value(text, "作者"))
+            .unwrap_or_default()
+    } else {
+        authors.join("; ")
+    };
+    let journal_title = meta_content(text, "citation_journal_title")
+        .or_else(|| cnki_label_span_text(text, "文献出处", "jname"))
+        .or_else(|| cnki_label_first_anchor(text, "文献出处"))
+        .or_else(|| cnki_label_first_anchor(text, "刊名"))
+        .or_else(|| cnki_label_first_anchor(text, "来源"))
+        .or_else(|| row_value(text, "刊名"))
+        .or_else(|| row_value(text, "来源"))
+        .unwrap_or_default();
+    ZjlibCnkiArticleIdentity {
+        title,
+        authors: author_text,
+        journal_title,
+    }
+}
+
+fn does_article_metadata_match(
+    expected: &ZjlibCnkiArticleIdentity,
+    actual: &ZjlibCnkiArticleIdentity,
+) -> bool {
+    titles_match(&expected.title, &actual.title)
+        && authors_match(&expected.authors, &actual.authors)
+        && titles_match(&expected.journal_title, &actual.journal_title)
+}
+
+fn titles_match(expected: &str, actual: &str) -> bool {
+    let expected = normalize_exact_text(expected);
+    let actual = normalize_exact_text(actual);
+    !expected.is_empty() && expected == actual
+}
+
+fn authors_match(expected: &str, actual: &str) -> bool {
+    let expected = split_author_names(expected);
+    let actual = split_author_names(actual);
+    !expected.is_empty() && expected == actual
+}
+
+fn split_author_names(value: &str) -> Vec<String> {
+    let normalized = decode_html(value);
+    let names = normalized
+        .split([';', '；', ',', '，', '、'])
+        .map(normalize_exact_text)
+        .filter(|value| !value.is_empty())
+        .collect::<Vec<_>>();
+    if names.is_empty() {
+        let name = normalize_exact_text(&normalized);
+        if name.is_empty() {
+            Vec::new()
+        } else {
+            vec![name]
+        }
+    } else {
+        names
+    }
+}
+
+fn normalize_exact_text(value: &str) -> String {
+    decode_html(value)
+        .to_lowercase()
+        .chars()
+        .filter(|character| character.is_alphanumeric())
+        .collect()
+}
+
 fn redact_url(url: &str) -> String {
     let Ok(parsed) = Url::parse(url) else {
         return url.to_string();
@@ -1152,6 +1751,302 @@ fn cookie_header_pairs(header: &str) -> Vec<(String, String)> {
             Some((name.to_string(), value.trim().to_string()))
         })
         .collect()
+}
+
+#[derive(Debug)]
+struct AnchorLink {
+    href: String,
+    body: String,
+    start: usize,
+    end: usize,
+}
+
+fn anchor_links(text: &str) -> Vec<AnchorLink> {
+    let lowered = text.to_ascii_lowercase();
+    let mut cursor = 0;
+    let mut links = Vec::new();
+    while let Some(start) = lowered[cursor..].find("<a").map(|index| cursor + index) {
+        let Some(tag_end) = lowered[start..].find('>').map(|index| start + index + 1) else {
+            break;
+        };
+        let tag = &text[start..tag_end];
+        let Some(href) = attr_value(tag, "href") else {
+            cursor = tag_end;
+            continue;
+        };
+        let Some(close) = lowered[tag_end..].find("</a>").map(|index| tag_end + index) else {
+            cursor = tag_end;
+            continue;
+        };
+        links.push(AnchorLink {
+            href,
+            body: text[tag_end..close].to_string(),
+            start,
+            end: close + "</a>".len(),
+        });
+        cursor = close + "</a>".len();
+    }
+    links
+}
+
+fn attr_value(tag: &str, name: &str) -> Option<String> {
+    let lowered = tag.to_ascii_lowercase();
+    let marker = format!("{name}=");
+    let start = lowered.find(&marker)? + marker.len();
+    let rest = tag[start..].trim_start();
+    let first = rest.chars().next()?;
+    if first == '"' || first == '\'' {
+        return rest[first.len_utf8()..]
+            .split(first)
+            .next()
+            .map(decode_html)
+            .filter(|value| !value.trim().is_empty());
+    }
+    rest.split_whitespace()
+        .next()
+        .map(decode_html)
+        .filter(|value| !value.trim().is_empty())
+}
+
+fn extract_anchor_title(body: &str) -> Option<String> {
+    if let Some(marker_start) = body.find("ReplaceJiankuohao('") {
+        let start = marker_start + "ReplaceJiankuohao('".len();
+        if let Some(end) = body[start..].find("')") {
+            return clean_text(&body[start..start + end]);
+        }
+    }
+    clean_text(&strip_tags(body))
+}
+
+fn query_dict(url: &str) -> BTreeMap<String, String> {
+    Url::parse(url)
+        .ok()
+        .map(|url| {
+            url.query_pairs()
+                .map(|(key, value)| (key.to_string(), value.to_string()))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn meta_content(text: &str, name: &str) -> Option<String> {
+    meta_content_list(text, name).into_iter().next()
+}
+
+fn meta_content_list(text: &str, name: &str) -> Vec<String> {
+    let lowered = text.to_ascii_lowercase();
+    let mut cursor = 0;
+    let mut values = Vec::new();
+    while let Some(start) = lowered[cursor..].find("<meta").map(|index| cursor + index) {
+        let Some(end) = lowered[start..].find('>').map(|index| start + index + 1) else {
+            break;
+        };
+        let tag = &text[start..end];
+        if attr_value(tag, "name").is_some_and(|value| value.eq_ignore_ascii_case(name)) {
+            if let Some(content) = attr_value(tag, "content").and_then(|value| clean_text(&value)) {
+                values.push(content);
+            }
+        }
+        cursor = end;
+    }
+    values
+}
+
+fn first_tag_text(text: &str, tag_name: &str) -> Option<String> {
+    let lowered = text.to_ascii_lowercase();
+    let marker = format!("<{tag_name}");
+    let start = lowered.find(&marker)?;
+    let open_end = lowered[start..].find('>').map(|index| start + index + 1)?;
+    let close_marker = format!("</{tag_name}>");
+    let close = lowered[open_end..]
+        .find(&close_marker)
+        .map(|index| open_end + index)?;
+    clean_text(&strip_tags(&text[open_end..close]))
+}
+
+fn title_text(text: &str) -> Option<String> {
+    let title = first_tag_text(text, "title")?;
+    let mut output = title.as_str();
+    for suffix in [" - 中国知网", " - CNKI", " - 中国学术期刊网络出版总库"] {
+        if let Some(stripped) = output.strip_suffix(suffix) {
+            output = stripped.trim();
+        }
+    }
+    clean_text(output)
+}
+
+fn author_block_text(text: &str) -> Option<String> {
+    let lowered = text.to_ascii_lowercase();
+    let id_start = lowered.find("id=\"authorpart\"")?;
+    let block_start = lowered[..id_start].rfind("<h3").unwrap_or(id_start);
+    let block_end = lowered[id_start..]
+        .find("</h3>")
+        .map(|index| id_start + index + "</h3>".len())?;
+    let block = &text[block_start..block_end];
+    let names = span_texts(block);
+    if names.is_empty() {
+        clean_text(&strip_tags(block))
+    } else {
+        Some(names.join("; "))
+    }
+}
+
+fn span_texts(text: &str) -> Vec<String> {
+    let lowered = text.to_ascii_lowercase();
+    let mut cursor = 0;
+    let mut output = Vec::new();
+    while let Some(start) = lowered[cursor..].find("<span").map(|index| cursor + index) {
+        let Some(open_end) = lowered[start..].find('>').map(|index| start + index + 1) else {
+            break;
+        };
+        let Some(close) = lowered[open_end..]
+            .find("</span>")
+            .map(|index| open_end + index)
+        else {
+            break;
+        };
+        if let Some(text) = clean_text(&strip_tags(&text[open_end..close])) {
+            output.push(text);
+        }
+        cursor = close + "</span>".len();
+    }
+    output
+}
+
+fn cnki_label_authors(text: &str, label: &str) -> Option<String> {
+    let block = cnki_label_block(text, label)?;
+    let names = anchor_links(&block)
+        .into_iter()
+        .filter_map(|anchor| clean_text(&strip_tags(&anchor.body)))
+        .collect::<Vec<_>>();
+    (!names.is_empty()).then(|| names.join("; "))
+}
+
+fn cnki_label_first_anchor(text: &str, label: &str) -> Option<String> {
+    let block = cnki_label_block(text, label)?;
+    anchor_links(&block)
+        .into_iter()
+        .find_map(|anchor| clean_text(&strip_tags(&anchor.body)))
+        .or_else(|| clean_text(&strip_tags(&block)))
+}
+
+fn cnki_label_span_text(text: &str, label: &str, span_id: &str) -> Option<String> {
+    let block = cnki_label_block(text, label)?;
+    let lowered = block.to_ascii_lowercase();
+    let marker = format!("id=\"{}\"", span_id.to_ascii_lowercase());
+    let id_start = lowered.find(&marker)?;
+    let span_start = lowered[..id_start].rfind("<span").unwrap_or(id_start);
+    let open_end = lowered[span_start..]
+        .find('>')
+        .map(|index| span_start + index + 1)?;
+    let close = lowered[open_end..]
+        .find("</span>")
+        .map(|index| open_end + index)?;
+    clean_text(&strip_tags(&block[open_end..close]))
+}
+
+fn cnki_label_block(text: &str, label: &str) -> Option<String> {
+    let marker = format!("【{label}】");
+    let start = text.find(&marker)? + marker.len();
+    let rest = &text[start..];
+    let end = ["</p>", "</li>", "</div>"]
+        .into_iter()
+        .filter_map(|marker| rest.find(marker))
+        .min()
+        .unwrap_or(rest.len());
+    Some(rest[..end].to_string())
+}
+
+fn row_value(text: &str, label: &str) -> Option<String> {
+    let plain = strip_tags(text);
+    let marker = format!("{label}:");
+    let alt_marker = format!("{label}：");
+    let index = plain.find(&marker).or_else(|| plain.find(&alt_marker))?;
+    let start = index
+        + if plain[index..].starts_with(&marker) {
+            marker.len()
+        } else {
+            alt_marker.len()
+        };
+    clean_text(
+        plain[start..]
+            .split(['\n', '\r'])
+            .next()
+            .unwrap_or_default(),
+    )
+}
+
+fn strip_tags(value: &str) -> String {
+    let mut output = String::with_capacity(value.len());
+    let mut inside_tag = false;
+    for character in value.chars() {
+        match character {
+            '<' => {
+                inside_tag = true;
+                output.push(' ');
+            }
+            '>' => inside_tag = false,
+            _ if !inside_tag => output.push(character),
+            _ => {}
+        }
+    }
+    decode_html(&output)
+}
+
+fn clean_text(value: &str) -> Option<String> {
+    let text = decode_html(value)
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    (!text.trim().is_empty()).then(|| text.trim().to_string())
+}
+
+fn decode_html(value: &str) -> String {
+    value
+        .replace("&amp;", "&")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .replace("&#39;", "'")
+}
+
+fn safe_filename(value: &str) -> String {
+    let text = strip_tags(value);
+    let mut output = String::new();
+    let mut last_was_space = false;
+    for character in text.chars() {
+        let replacement = if "\\/:*?\"<>|".contains(character) {
+            '_'
+        } else {
+            character
+        };
+        if replacement.is_whitespace() {
+            if !last_was_space {
+                output.push(' ');
+            }
+            last_was_space = true;
+        } else {
+            output.push(replacement);
+            last_was_space = false;
+        }
+        if output.chars().count() >= 120 {
+            break;
+        }
+    }
+    let trimmed = output.trim_matches([' ', '.']);
+    if trimmed.is_empty() {
+        "cnki".to_string()
+    } else {
+        trimmed.to_string()
+    }
+}
+
+fn title_from_pdf_url(url: &str) -> Option<String> {
+    let query = query_dict(url);
+    query
+        .get("filetitle")
+        .or_else(|| query.get("filename"))
+        .and_then(|value| clean_text(value))
 }
 
 fn cookie_url(cookie: &ZjlibCnkiCookie) -> Option<Url> {
@@ -1270,7 +2165,8 @@ fn decode_base64_url(value: &str) -> Option<Vec<u8>> {
 mod tests {
     use super::{
         extract_share_cookie_sync, extract_window_location, FixtureZjlibCnkiMode,
-        FixtureZjlibCnkiTransport, ZhejiangLibraryCnkiClient, ZjlibCnkiError,
+        FixtureZjlibCnkiTransport, ZhejiangLibraryCnkiClient, ZjlibCnkiArticleIdentity,
+        ZjlibCnkiError,
     };
 
     #[test]
@@ -1358,6 +2254,42 @@ mod tests {
     }
 
     #[test]
+    fn fixture_client_downloads_exact_matching_fulltext_pdf() {
+        let mut client = warmed_fixture_client(FixtureZjlibCnkiMode::Success);
+        let expected = fixture_identity();
+
+        let downloaded = client
+            .download_matching_pdf(&expected, 10)
+            .expect("matching fixture PDF should download");
+
+        assert_eq!(downloaded.filename, "Fixture CNKI Article.pdf");
+        assert_eq!(downloaded.content_type, "application/pdf");
+        assert!(downloaded.content.starts_with(b"%PDF"));
+        assert_eq!(downloaded.byte_count, downloaded.content.len());
+    }
+
+    #[test]
+    fn fixture_client_reports_fulltext_mismatch_and_download_failure() {
+        let expected = fixture_identity();
+        let mut mismatch_client = warmed_fixture_client(FixtureZjlibCnkiMode::FulltextMismatch);
+        let mismatch_error = mismatch_client
+            .download_matching_pdf(&expected, 10)
+            .expect_err("mismatching fixture should fail");
+
+        let mut failure_client = warmed_fixture_client(FixtureZjlibCnkiMode::FulltextFailure);
+        let failure_error = failure_client
+            .download_matching_pdf(&expected, 10)
+            .expect_err("download failure fixture should fail");
+
+        assert!(mismatch_error
+            .to_string()
+            .contains("No exact CNKI full-text match found"));
+        assert!(failure_error
+            .to_string()
+            .contains("fixture PDF download failed"));
+    }
+
+    #[test]
     fn helper_parsers_cover_share_sync_and_window_redirects() {
         let sync = extract_share_cookie_sync(
             r#"
@@ -1383,5 +2315,27 @@ mod tests {
             location,
             "https://login.elib.zyproxy.zjlib.cn/login?sid=abc"
         );
+    }
+
+    fn warmed_fixture_client(
+        mode: FixtureZjlibCnkiMode,
+    ) -> ZhejiangLibraryCnkiClient<FixtureZjlibCnkiTransport> {
+        let mut client = ZhejiangLibraryCnkiClient::new(FixtureZjlibCnkiTransport::new(mode));
+        client.start_qr_login().expect("fixture start should work");
+        client
+            .poll_qr_login(1, 0.1)
+            .expect("fixture poll should complete");
+        client
+            .warm_up_fulltext_session()
+            .expect("fixture warm-up should complete");
+        client
+    }
+
+    fn fixture_identity() -> ZjlibCnkiArticleIdentity {
+        ZjlibCnkiArticleIdentity {
+            title: "Fixture CNKI Article".to_string(),
+            authors: "Ada Lovelace; Grace Hopper".to_string(),
+            journal_title: "Fixture CNKI Journal".to_string(),
+        }
     }
 }

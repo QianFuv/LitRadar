@@ -176,16 +176,19 @@ async fn shutdown_signal() {
 
 #[cfg(test)]
 mod tests {
+    use std::path::Path;
     use std::sync::atomic::{AtomicBool, Ordering};
 
     use axum::body::{to_bytes, Body};
-    use axum::http::header::{AUTHORIZATION, COOKIE, SET_COOKIE};
+    use axum::http::header::{
+        AUTHORIZATION, CONTENT_DISPOSITION, CONTENT_TYPE, COOKIE, SET_COOKIE,
+    };
     use axum::http::{Method, Request, StatusCode};
     use rusqlite::Connection;
     use serde_json::Value;
     use tower::ServiceExt;
 
-    use crate::test_support::{json_request, JsonTestResponse, TestBackend};
+    use crate::test_support::{json_request, FixtureIndexDatabase, JsonTestResponse, TestBackend};
 
     static TEST_ENV_LOCK: AtomicBool = AtomicBool::new(false);
 
@@ -1765,6 +1768,114 @@ mod tests {
         miri,
         ignore = "Miri does not support Tokio's Windows IOCP runtime initialization"
     )]
+    async fn article_fulltext_downloads_cnki_pdf_with_live_fixture_session() {
+        const LIVE_FIXTURE_MODE: &str = "PAPER_SCANNER_ZJLIB_CNKI_FIXTURE_MODE";
+        const CNKI_PDF_REPLAY_MODE: &str = "PAPER_SCANNER_CNKI_PDF_REPLAY_MODE";
+        const CNKI_PDF_REPLAY_PATH: &str = "PAPER_SCANNER_CNKI_PDF_REPLAY_PATH";
+        const CNKI_PDF_REPLAY_FILENAME: &str = "PAPER_SCANNER_CNKI_PDF_REPLAY_FILENAME";
+
+        let _env_guard = EnvVarGuard::configured(&[
+            (LIVE_FIXTURE_MODE, Some("success")),
+            (CNKI_PDF_REPLAY_MODE, None),
+            (CNKI_PDF_REPLAY_PATH, None),
+            (CNKI_PDF_REPLAY_FILENAME, None),
+        ]);
+        let backend = TestBackend::new();
+        let user = backend.authenticated_user("cnki_fulltext_user", false);
+        let index_database = backend.create_index_database("fixture.sqlite");
+        let cnki_article_id = insert_cnki_fulltext_article(&index_database);
+        ps_storage::upsert_cnki_session(
+            backend.auth_db_path(),
+            user.user_id(),
+            &serde_json::json!({
+                "bff_user_token": "x.eyJleHAiOjQxMDI0NDQ4MDB9.y",
+                "qr_uuid": "qr-fulltext-fixture",
+                "cookies": [
+                    {"name": "userToken", "value": "SECRET_TOKEN_COOKIE"}
+                ]
+            }),
+            "active",
+            Some("qr-fulltext-fixture"),
+        )
+        .expect("CNKI session should upsert");
+        let app = backend.router();
+        let auth = user.authorization_header();
+
+        let access = json_request(
+            &app,
+            Method::GET,
+            &format!("/api/articles/{cnki_article_id}/access?db=fixture"),
+            Some(&auth),
+            None,
+            None,
+        )
+        .await;
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!(
+                        "/api/articles/{cnki_article_id}/fulltext?db=fixture"
+                    ))
+                    .header(AUTHORIZATION, &auth)
+                    .body(Body::empty())
+                    .expect("request should build"),
+            )
+            .await
+            .expect("response should be returned");
+        let status = response.status();
+        let headers = response.headers().clone();
+        let body = to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("body should read");
+        let session_status =
+            ps_storage::get_cnki_session_status(backend.auth_db_path(), user.user_id())
+                .expect("CNKI session status should load");
+
+        assert_eq!(access.status, StatusCode::OK);
+        assert_eq!(access.payload["fulltext"]["available"], true);
+        assert_eq!(access.payload["fulltext"]["provider"], "zjlib_cnki");
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(
+            headers
+                .get(CONTENT_TYPE)
+                .expect("content-type should exist")
+                .to_str()
+                .expect("content-type should be ASCII"),
+            "application/pdf"
+        );
+        assert!(headers
+            .get(CONTENT_DISPOSITION)
+            .expect("content disposition should exist")
+            .to_str()
+            .expect("content disposition should be ASCII")
+            .contains("Fixture%20CNKI%20Article.pdf"));
+        assert!(body.starts_with(b"%PDF"));
+        assert!(session_status.last_used_at.is_some());
+
+        std::env::set_var(LIVE_FIXTURE_MODE, "fulltext_mismatch");
+        let mismatch = json_request(
+            &app,
+            Method::GET,
+            &format!("/api/articles/{cnki_article_id}/fulltext?db=fixture"),
+            Some(&auth),
+            None,
+            None,
+        )
+        .await;
+
+        assert_eq!(mismatch.status, StatusCode::NOT_FOUND);
+        assert!(mismatch.payload["detail"]
+            .as_str()
+            .expect("detail should be a string")
+            .contains("No exact CNKI full-text match found"));
+    }
+
+    #[tokio::test]
+    #[cfg_attr(
+        miri,
+        ignore = "Miri does not support Tokio's Windows IOCP runtime initialization"
+    )]
     async fn cnki_routes_cover_replay_session_status_and_clear_without_secret_leaks() {
         const REPLAY_MODE: &str = "PAPER_SCANNER_CNKI_REPLAY_MODE";
         const LIVE_FIXTURE_MODE: &str = "PAPER_SCANNER_ZJLIB_CNKI_FIXTURE_MODE";
@@ -2096,6 +2207,58 @@ mod tests {
             .to_str()
             .expect("set-cookie should be visible ASCII")
             .to_string()
+    }
+
+    fn insert_cnki_fulltext_article(index_database: &FixtureIndexDatabase) -> i64 {
+        let article_id = 9100;
+        insert_cnki_fulltext_article_at(&index_database.path, article_id);
+        article_id
+    }
+
+    fn insert_cnki_fulltext_article_at(path: &Path, article_id: i64) {
+        let connection = Connection::open(path).expect("fixture index database should open");
+        connection
+            .execute_batch(
+                "
+                INSERT INTO journals (
+                    journal_id, library_id, platform_journal_id, title, issn, eissn,
+                    scimago_rank, cover_url, available, toc_data_approved_and_live,
+                    has_articles
+                ) VALUES (
+                    303, 'cnki', 'CNKI-303', 'Fixture CNKI Journal', '2233-4455',
+                    NULL, 2.5, NULL, 1, 1, 1
+                );
+
+                INSERT INTO issues (
+                    issue_id, journal_id, publication_year, title, volume, number, date,
+                    is_valid_issue, suppressed, embargoed, within_subscription
+                ) VALUES (
+                    202402, 303, 2024, 'CNKI Fixture Issue', '2', '1', '2024-02-01',
+                    1, 0, 0, 0
+                );
+                ",
+            )
+            .expect("CNKI journal and issue should insert");
+        connection
+            .execute(
+                "
+                INSERT INTO articles (
+                    article_id, journal_id, issue_id, title, date, authors, start_page,
+                    end_page, abstract, doi, pmid, permalink, suppressed, in_press,
+                    open_access, platform_id, retraction_doi, within_library_holdings,
+                    content_location, full_text_file
+                ) VALUES (
+                    ?1, 303, 202402, 'Fixture CNKI Article', '2024-02-02',
+                    'Ada Lovelace; Grace Hopper', '1', '8',
+                    'CNKI fulltext fixture abstract.', NULL, NULL,
+                    'https://oversea.cnki.net/kcms/detail/fulltext-fixture',
+                    0, 0, 0, 'CNKI-FULLTEXT', NULL, 0, 'remote',
+                    'https://o.oversea.cnki.net/barnew/download/order?id=fixture'
+                )
+                ",
+                [article_id],
+            )
+            .expect("CNKI article should insert");
     }
 
     struct EnvVarGuard {

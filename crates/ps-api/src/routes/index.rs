@@ -5,16 +5,23 @@ use axum::http::header::{CONTENT_DISPOSITION, CONTENT_TYPE, LOCATION};
 use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::Json;
+use ps_sources::{
+    FixtureZjlibCnkiMode, FixtureZjlibCnkiTransport, LiveZjlibCnkiConfig, LiveZjlibCnkiTransport,
+    ZhejiangLibraryCnkiClient, ZjlibCnkiArticleIdentity, ZjlibCnkiDownloadedPdf, ZjlibCnkiError,
+};
 use ps_storage::{
     ArticleListParams, DatabaseResolutionError, IndexRepositoryError, IssueListParams,
     JournalListParams,
 };
 use serde::Deserialize;
+use serde_json::Value as JsonValue;
 use utoipa::IntoParams;
 
 use crate::response::ApiError;
 use crate::routes::auth::require_current_user;
 use crate::state::ApiState;
+
+const LIVE_FIXTURE_MODE_ENV: &str = "PAPER_SCANNER_ZJLIB_CNKI_FIXTURE_MODE";
 
 /// Query parameters that only select an index database.
 #[derive(Debug, Deserialize, IntoParams)]
@@ -595,7 +602,93 @@ pub(crate) async fn redirect_article_fulltext(
             );
             Ok(response)
         }
+        ps_storage::ArticleFulltextTarget::Cnki(target) => {
+            let auth_db_path = state.storage_config().auth_db_path().to_path_buf();
+            let user_id = user.id;
+            let qr_uuid = target.qr_uuid.clone();
+            let expected = ZjlibCnkiArticleIdentity {
+                title: target.title,
+                authors: target.authors,
+                journal_title: target.journal_title,
+            };
+            let session_data = target.session_data;
+            let fixture_mode = zjlib_fixture_mode();
+            let download_result = tokio::task::spawn_blocking(move || {
+                download_zjlib_cnki_fulltext(fixture_mode, expected, session_data)
+            })
+            .await
+            .map_err(|_| ApiError::internal_server_error())?;
+            let (downloaded, session_data) = download_result.map_err(map_zjlib_fulltext_error)?;
+            ps_storage::upsert_cnki_session(
+                &auth_db_path,
+                user_id,
+                &session_data,
+                "active",
+                session_data
+                    .get("qr_uuid")
+                    .and_then(JsonValue::as_str)
+                    .or(Some(qr_uuid.as_str())),
+            )
+            .map_err(|_| ApiError::internal_server_error())?;
+            ps_storage::touch_cnki_session_used(&auth_db_path, user_id)
+                .map_err(|_| ApiError::internal_server_error())?;
+            Ok(pdf_response(downloaded)?)
+        }
     }
+}
+
+fn zjlib_fixture_mode() -> Option<FixtureZjlibCnkiMode> {
+    std::env::var(LIVE_FIXTURE_MODE_ENV)
+        .ok()
+        .and_then(|value| FixtureZjlibCnkiMode::parse(&value))
+}
+
+fn download_zjlib_cnki_fulltext(
+    fixture_mode: Option<FixtureZjlibCnkiMode>,
+    expected: ZjlibCnkiArticleIdentity,
+    session_data: JsonValue,
+) -> Result<(ZjlibCnkiDownloadedPdf, JsonValue), ZjlibCnkiError> {
+    if let Some(mode) = fixture_mode {
+        let mut client = ZhejiangLibraryCnkiClient::from_state_data(
+            FixtureZjlibCnkiTransport::new(mode),
+            &session_data,
+        );
+        client.warm_up_fulltext_session()?;
+        let downloaded = client.download_matching_pdf(&expected, 10)?;
+        return Ok((downloaded, client.to_state_data()));
+    }
+    let transport = LiveZjlibCnkiTransport::new(LiveZjlibCnkiConfig::default())?;
+    let mut client = ZhejiangLibraryCnkiClient::from_state_data(transport, &session_data);
+    client.warm_up_fulltext_session()?;
+    let downloaded = client.download_matching_pdf(&expected, 10)?;
+    Ok((downloaded, client.to_state_data()))
+}
+
+fn map_zjlib_fulltext_error(error: ZjlibCnkiError) -> ApiError {
+    let message = error.to_string();
+    if message.contains("No exact CNKI full-text match") {
+        ApiError::not_found(message)
+    } else {
+        ApiError::Http {
+            status: StatusCode::BAD_GATEWAY,
+            detail: message,
+        }
+    }
+}
+
+fn pdf_response(downloaded: ZjlibCnkiDownloadedPdf) -> Result<Response, ApiError> {
+    let mut response = downloaded.content.into_response();
+    response
+        .headers_mut()
+        .insert(CONTENT_TYPE, header_value(&downloaded.content_type)?);
+    response.headers_mut().insert(
+        CONTENT_DISPOSITION,
+        header_value(&format!(
+            "attachment; filename*=UTF-8''{}",
+            percent_encode_filename(&downloaded.filename)
+        ))?,
+    );
+    Ok(response)
 }
 
 fn parse_article_query(

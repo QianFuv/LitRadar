@@ -41,6 +41,7 @@ pub use index::{
     fetch_candidates_for_issue_keys, get_article, get_article_access, get_issue, get_journal,
     get_weekly_updates, list_areas, list_articles, list_index_database_names, list_issues,
     list_journal_options, list_journals, list_sources, list_years, ArticleFulltextTarget,
-    ArticleListParams, IndexRepositoryError, IssueListParams, JournalListParams,
+    ArticleListParams, CnkiFulltextTarget, IndexRepositoryError, IssueListParams,
+    JournalListParams,
 };
 pub use sqlite::{open_sqlite_connection, try_load_extension};

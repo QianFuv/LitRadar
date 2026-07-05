@@ -17,7 +17,7 @@ use rusqlite::types::Value as SqlValue;
 use rusqlite::{params_from_iter, Connection, OptionalExtension};
 use serde_json::Value as JsonValue;
 
-use crate::cnki::{get_cnki_session_status, CnkiRepositoryError};
+use crate::cnki::{get_cnki_session_data, get_cnki_session_status, CnkiRepositoryError};
 use crate::{open_sqlite_connection, try_load_extension, DatabaseResolutionError, StorageConfig};
 
 const MAX_LIMIT: i64 = 200;
@@ -355,7 +355,7 @@ pub fn fetch_candidates_for_inpress_keys(
 }
 
 /// Full-text route target.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum ArticleFulltextTarget {
     /// Browser redirect target.
     Redirect(String),
@@ -368,6 +368,23 @@ pub enum ArticleFulltextTarget {
         /// PDF bytes.
         content: Vec<u8>,
     },
+    /// Live Zhejiang Library CNKI download target.
+    Cnki(CnkiFulltextTarget),
+}
+
+/// Live CNKI full-text download target.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CnkiFulltextTarget {
+    /// Expected article title.
+    pub title: String,
+    /// Expected article authors.
+    pub authors: String,
+    /// Expected journal title.
+    pub journal_title: String,
+    /// Persisted CNKI session JSON.
+    pub session_data: JsonValue,
+    /// Stored QR UUID.
+    pub qr_uuid: String,
 }
 
 /// List available index database filenames.
@@ -873,7 +890,18 @@ pub fn article_fulltext_target(
     let row = get_article_access_row(&connection, article_id)?
         .ok_or(IndexRepositoryError::NotFound("Article not found"))?;
     if is_cnki_article_row(&row) && is_cnki_session_active(config, user_id)? {
-        return cnki_replay_pdf_target(config, user_id);
+        if is_cnki_pdf_replay_configured() {
+            return cnki_replay_pdf_target(config, user_id);
+        }
+        let session = get_cnki_session_data(config.auth_db_path(), user_id)?
+            .ok_or(IndexRepositoryError::NotFound("CNKI login is required"))?;
+        return Ok(ArticleFulltextTarget::Cnki(CnkiFulltextTarget {
+            title: row.title.unwrap_or_default(),
+            authors: row.authors.unwrap_or_default(),
+            journal_title: row.journal_title.unwrap_or_default(),
+            session_data: session.session_data,
+            qr_uuid: session.qr_uuid,
+        }));
     }
     Ok(ArticleFulltextTarget::Redirect(
         article_fulltext_redirect_url(config, db_name, article_id, user_id)?,
@@ -1248,7 +1276,8 @@ fn get_article_access_row(
 ) -> Result<Option<ArticleAccessRow>, IndexRepositoryError> {
     connection
         .query_row(
-            "SELECT a.doi, a.full_text_file, a.permalink, j.library_id \
+            "SELECT a.doi, a.full_text_file, a.permalink, j.library_id, \
+                    a.title, a.authors, j.title AS journal_title \
              FROM articles a \
              JOIN journals j ON j.journal_id = a.journal_id WHERE a.article_id = ?",
             [article_id],
@@ -1258,6 +1287,9 @@ fn get_article_access_row(
                     full_text_file: row.get(1)?,
                     permalink: row.get(2)?,
                     library_id: row.get(3)?,
+                    title: row.get(4)?,
+                    authors: row.get(5)?,
+                    journal_title: row.get(6)?,
                 })
             },
         )
@@ -1933,6 +1965,15 @@ fn cnki_replay_pdf_target(
     })
 }
 
+fn is_cnki_pdf_replay_configured() -> bool {
+    std::env::var(CNKI_PDF_REPLAY_MODE_ENV)
+        .ok()
+        .is_some_and(|value| !value.trim().is_empty())
+        || std::env::var(CNKI_PDF_REPLAY_PATH_ENV)
+            .ok()
+            .is_some_and(|value| !value.trim().is_empty())
+}
+
 fn is_cnki_protected_fulltext_url(url: &str) -> bool {
     let lower = url.to_ascii_lowercase();
     lower.contains(CNKI_PROTECTED_FULLTEXT_HOST) && lower.contains(CNKI_PROTECTED_FULLTEXT_PATH)
@@ -2198,6 +2239,9 @@ struct ArticleAccessRow {
     full_text_file: Option<String>,
     permalink: Option<String>,
     library_id: String,
+    title: Option<String>,
+    authors: Option<String>,
+    journal_title: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -2667,6 +2711,7 @@ mod tests {
                 assert_eq!(url, "https://files.example/fulltext.pdf");
             }
             ArticleFulltextTarget::Pdf { .. } => panic!("stored full text should redirect"),
+            ArticleFulltextTarget::Cnki(_) => panic!("stored full text should not use CNKI"),
         }
 
         crate::upsert_cnki_session(
@@ -2683,13 +2728,22 @@ mod tests {
         assert!(active_cnki.fulltext.available);
         assert!(!active_cnki.fulltext.requires_login);
 
-        let active_redirect =
-            article_fulltext_redirect_url(&fixture.config, Some(&fixture.db_name), 1003, user_id)
-                .expect_err("active CNKI should not redirect to protected order URL");
-        assert!(matches!(
-            active_redirect,
-            IndexRepositoryError::NotFound("CNKI full-text download is not migrated yet")
-        ));
+        match article_fulltext_target(&fixture.config, Some(&fixture.db_name), 1003, user_id)
+            .expect("active CNKI full text target should resolve")
+        {
+            ArticleFulltextTarget::Cnki(target) => {
+                assert_eq!(target.title, "CNKI Protected Knowledge");
+                assert_eq!(target.authors, "Dan");
+                assert_eq!(target.journal_title, "Beta CNKI");
+                assert_eq!(
+                    target.session_data["bff_user_token"],
+                    "x.eyJleHAiOjQxMDI0NDQ4MDB9.y"
+                );
+            }
+            ArticleFulltextTarget::Redirect(_) | ArticleFulltextTarget::Pdf { .. } => {
+                panic!("active CNKI full text should use live CNKI target")
+            }
+        }
     }
 
     #[test]
