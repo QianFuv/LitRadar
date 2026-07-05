@@ -1,11 +1,14 @@
 //! SQLite schema and writer helpers for Rust scholarly indexing.
 
 use std::collections::BTreeSet;
+use std::path::{Path, PathBuf};
 
-use rusqlite::{params, params_from_iter, Connection};
+use rusqlite::{params, params_from_iter, Connection, LoadExtensionGuard};
 
 use crate::stats::IndexRunStats;
 use crate::transforms::{ArticleRecord, IssueRecord, JournalRecord, MetaRecord};
+
+const SIMPLE_TOKENIZER_ENV: &str = "SIMPLE_TOKENIZER_PATH";
 
 /// Initialize the index database schema used by Python-compatible readers.
 ///
@@ -17,6 +20,14 @@ use crate::transforms::{ArticleRecord, IssueRecord, JournalRecord, MetaRecord};
 ///
 /// SQLite result.
 pub fn init_index_db(connection: &Connection) -> rusqlite::Result<()> {
+    let simple_tokenizer_path = resolve_simple_tokenizer_path(connection)?;
+    init_index_db_with_simple_tokenizer_path(connection, simple_tokenizer_path.as_deref())
+}
+
+fn init_index_db_with_simple_tokenizer_path(
+    connection: &Connection,
+    simple_tokenizer_path: Option<&Path>,
+) -> rusqlite::Result<()> {
     connection.execute_batch(
         "
         PRAGMA foreign_keys = ON;
@@ -115,6 +126,12 @@ pub fn init_index_db(connection: &Connection) -> rusqlite::Result<()> {
                 ON DELETE SET NULL
         );
 
+        CREATE TABLE IF NOT EXISTS listing_state (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            status TEXT NOT NULL,
+            updated_at TEXT
+        );
+
         CREATE TABLE IF NOT EXISTS journal_year_state (
             journal_id INTEGER NOT NULL,
             year INTEGER NOT NULL,
@@ -185,7 +202,24 @@ pub fn init_index_db(connection: &Connection) -> rusqlite::Result<()> {
             FOREIGN KEY (run_id) REFERENCES index_runs(run_id)
                 ON DELETE CASCADE
         );
+        ",
+    )?;
+    let is_simple_tokenizer_loaded = try_load_simple_tokenizer(connection, simple_tokenizer_path)?;
+    create_article_search(connection, is_simple_tokenizer_loaded)?;
+    create_runtime_indexes(connection)
+}
 
+fn create_article_search(
+    connection: &Connection,
+    is_simple_tokenizer_loaded: bool,
+) -> rusqlite::Result<()> {
+    let tokenizer_sql = if is_simple_tokenizer_loaded {
+        ", tokenize = 'simple'"
+    } else {
+        ""
+    };
+    let sql = format!(
+        "
         CREATE VIRTUAL TABLE IF NOT EXISTS article_search
         USING fts5(
             article_id UNINDEXED,
@@ -194,17 +228,170 @@ pub fn init_index_db(connection: &Connection) -> rusqlite::Result<()> {
             doi,
             authors,
             journal_title
+            {tokenizer_sql}
         );
+        "
+    );
+    connection.execute_batch(&sql)
+}
+
+fn create_runtime_indexes(connection: &Connection) -> rusqlite::Result<()> {
+    connection.execute_batch(
+        "
+        CREATE INDEX IF NOT EXISTS idx_journals_issn ON journals(issn);
+        CREATE INDEX IF NOT EXISTS idx_journals_library_id ON journals(library_id);
+        CREATE INDEX IF NOT EXISTS idx_journals_available ON journals(available);
+        CREATE INDEX IF NOT EXISTS idx_journals_has_articles ON journals(has_articles);
+        CREATE INDEX IF NOT EXISTS idx_journals_scimago_rank ON journals(scimago_rank);
+
+        CREATE INDEX IF NOT EXISTS idx_journal_meta_area ON journal_meta(area);
+        CREATE INDEX IF NOT EXISTS idx_journal_meta_area_journal
+            ON journal_meta(area, journal_id);
+
+        CREATE INDEX IF NOT EXISTS idx_issues_journal_year
+            ON issues(journal_id, publication_year);
+        CREATE INDEX IF NOT EXISTS idx_issues_publication_year
+            ON issues(publication_year);
 
         CREATE INDEX IF NOT EXISTS idx_articles_journal ON articles(journal_id);
         CREATE INDEX IF NOT EXISTS idx_articles_issue ON articles(issue_id);
+        CREATE INDEX IF NOT EXISTS idx_articles_date ON articles(date);
+        CREATE INDEX IF NOT EXISTS idx_articles_date_id ON articles(date, article_id);
+        CREATE INDEX IF NOT EXISTS idx_articles_journal_date_id
+            ON articles(journal_id, date, article_id);
+        CREATE INDEX IF NOT EXISTS idx_articles_issue_date_id
+            ON articles(issue_id, date, article_id);
+        CREATE INDEX IF NOT EXISTS idx_articles_open_access ON articles(open_access);
+        CREATE INDEX IF NOT EXISTS idx_articles_open_access_date_id
+            ON articles(open_access, date, article_id);
+        CREATE INDEX IF NOT EXISTS idx_articles_in_press ON articles(in_press);
+        CREATE INDEX IF NOT EXISTS idx_articles_in_press_date_id
+            ON articles(in_press, date, article_id);
+        CREATE INDEX IF NOT EXISTS idx_articles_suppressed ON articles(suppressed);
+        CREATE INDEX IF NOT EXISTS idx_articles_suppressed_date_id
+            ON articles(suppressed, date, article_id);
+        CREATE INDEX IF NOT EXISTS idx_articles_within_holdings
+            ON articles(within_library_holdings);
+        CREATE INDEX IF NOT EXISTS idx_articles_within_holdings_date_id
+            ON articles(within_library_holdings, date, article_id);
         CREATE INDEX IF NOT EXISTS idx_articles_doi ON articles(doi);
+        CREATE INDEX IF NOT EXISTS idx_articles_pmid ON articles(pmid);
+
         CREATE INDEX IF NOT EXISTS idx_article_listing_date_id
             ON article_listing(date, article_id);
+        CREATE INDEX IF NOT EXISTS idx_article_listing_area ON article_listing(area);
+        CREATE INDEX IF NOT EXISTS idx_article_listing_area_date_id
+            ON article_listing(area, date, article_id);
+        CREATE INDEX IF NOT EXISTS idx_article_listing_publication_year
+            ON article_listing(publication_year);
+        CREATE INDEX IF NOT EXISTS idx_article_listing_journal
+            ON article_listing(journal_id);
+        CREATE INDEX IF NOT EXISTS idx_article_listing_journal_date_id
+            ON article_listing(journal_id, date, article_id);
+        CREATE INDEX IF NOT EXISTS idx_article_listing_issue ON article_listing(issue_id);
+
         CREATE INDEX IF NOT EXISTS idx_index_api_call_stats_run
             ON index_api_call_stats(run_id);
         ",
     )
+}
+
+fn try_load_simple_tokenizer(
+    connection: &Connection,
+    simple_tokenizer_path: Option<&Path>,
+) -> rusqlite::Result<bool> {
+    let Some(path) = simple_tokenizer_path else {
+        return Ok(false);
+    };
+    if !path.exists() {
+        return Ok(false);
+    }
+
+    let guard = unsafe { LoadExtensionGuard::new(connection)? };
+    let result = unsafe { connection.load_extension(path, None::<&str>) };
+    drop(guard);
+    match result {
+        Ok(()) => Ok(true),
+        Err(_) => Ok(false),
+    }
+}
+
+fn resolve_simple_tokenizer_path(connection: &Connection) -> rusqlite::Result<Option<PathBuf>> {
+    if let Ok(value) = std::env::var(SIMPLE_TOKENIZER_ENV) {
+        let trimmed = value.trim();
+        if !trimmed.is_empty() {
+            return Ok(Some(PathBuf::from(trimmed)));
+        }
+    }
+
+    for root in simple_tokenizer_root_candidates(connection)? {
+        if let Some(path) = simple_tokenizer_path_from_root(&root) {
+            return Ok(Some(path));
+        }
+    }
+    Ok(None)
+}
+
+fn simple_tokenizer_root_candidates(connection: &Connection) -> rusqlite::Result<Vec<PathBuf>> {
+    let mut roots = Vec::new();
+    if let Some(database_path) = main_database_path(connection)? {
+        push_path_ancestors(&mut roots, &database_path);
+    }
+    if let Ok(current_dir) = std::env::current_dir() {
+        push_path_ancestors(&mut roots, &current_dir);
+    }
+    Ok(roots)
+}
+
+fn main_database_path(connection: &Connection) -> rusqlite::Result<Option<PathBuf>> {
+    let mut statement = connection.prepare("PRAGMA database_list")?;
+    let rows = statement.query_map([], |row| {
+        Ok((row.get::<_, String>(1)?, row.get::<_, String>(2)?))
+    })?;
+    for row in rows {
+        let (name, path) = row?;
+        if name == "main" && !path.trim().is_empty() {
+            return Ok(Some(PathBuf::from(path)));
+        }
+    }
+    Ok(None)
+}
+
+fn push_path_ancestors(roots: &mut Vec<PathBuf>, path: &Path) {
+    let start = if path.is_file() {
+        path.parent().unwrap_or(path)
+    } else {
+        path
+    };
+    for ancestor in start.ancestors() {
+        let candidate = ancestor.to_path_buf();
+        if !roots.contains(&candidate) {
+            roots.push(candidate);
+        }
+    }
+}
+
+fn simple_tokenizer_path_from_root(root: &Path) -> Option<PathBuf> {
+    let libs_dir = root.join("libs");
+    if cfg!(windows) {
+        Some(
+            libs_dir
+                .join("simple-windows")
+                .join("libsimple-windows-x64")
+                .join("simple.dll"),
+        )
+        .filter(|path| path.exists())
+    } else if cfg!(target_os = "linux") {
+        Some(
+            libs_dir
+                .join("simple-linux")
+                .join("libsimple-linux-ubuntu-latest")
+                .join("libsimple.so"),
+        )
+        .filter(|path| path.exists())
+    } else {
+        None
+    }
 }
 
 /// Insert or update a journal record.
@@ -679,6 +866,33 @@ pub fn mark_journal_done(
     Ok(())
 }
 
+/// Mark article listing rows as ready for reader queries.
+///
+/// # Arguments
+///
+/// * `connection` - Open SQLite connection.
+/// * `updated_at` - Updated timestamp.
+///
+/// # Returns
+///
+/// SQLite result.
+pub fn mark_article_listing_ready(
+    connection: &Connection,
+    updated_at: &str,
+) -> rusqlite::Result<()> {
+    connection.execute(
+        "
+        INSERT INTO listing_state (id, status, updated_at)
+        VALUES (1, 'ready', ?1)
+        ON CONFLICT(id) DO UPDATE SET
+            status = excluded.status,
+            updated_at = excluded.updated_at
+        ",
+        [updated_at],
+    )?;
+    Ok(())
+}
+
 /// Persist index run statistics.
 ///
 /// # Arguments
@@ -810,6 +1024,9 @@ fn python_status_codes_json(status_codes: &std::collections::BTreeMap<u16, i64>)
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeSet;
+    use std::path::{Path, PathBuf};
+
     use ps_sources::SourceAttempt;
     use rusqlite::Connection;
 
@@ -817,9 +1034,130 @@ mod tests {
     use crate::transforms::{ArticleRecord, JournalRecord, MetaRecord};
 
     use super::{
-        init_index_db, persist_index_run_stats, refresh_article_listing_for_articles,
-        upsert_article_search, upsert_articles, upsert_journal, upsert_meta,
+        init_index_db, init_index_db_with_simple_tokenizer_path, mark_article_listing_ready,
+        persist_index_run_stats, refresh_article_listing_for_articles,
+        simple_tokenizer_path_from_root, upsert_article_search, upsert_articles, upsert_journal,
+        upsert_meta,
     };
+
+    const RUNTIME_INDEXES: &[&str] = &[
+        "idx_article_listing_area",
+        "idx_article_listing_area_date_id",
+        "idx_article_listing_date_id",
+        "idx_article_listing_issue",
+        "idx_article_listing_journal",
+        "idx_article_listing_journal_date_id",
+        "idx_article_listing_publication_year",
+        "idx_articles_date",
+        "idx_articles_date_id",
+        "idx_articles_doi",
+        "idx_articles_in_press",
+        "idx_articles_in_press_date_id",
+        "idx_articles_issue",
+        "idx_articles_issue_date_id",
+        "idx_articles_journal",
+        "idx_articles_journal_date_id",
+        "idx_articles_open_access",
+        "idx_articles_open_access_date_id",
+        "idx_articles_pmid",
+        "idx_articles_suppressed",
+        "idx_articles_suppressed_date_id",
+        "idx_articles_within_holdings",
+        "idx_articles_within_holdings_date_id",
+        "idx_issues_journal_year",
+        "idx_issues_publication_year",
+        "idx_journal_meta_area",
+        "idx_journal_meta_area_journal",
+        "idx_journals_available",
+        "idx_journals_has_articles",
+        "idx_journals_issn",
+        "idx_journals_library_id",
+        "idx_journals_scimago_rank",
+    ];
+
+    #[test]
+    fn initializes_runtime_schema_metadata_with_default_fts() {
+        let connection = Connection::open_in_memory().expect("in-memory db should open");
+        init_index_db_with_simple_tokenizer_path(&connection, None)
+            .expect("schema should initialize without tokenizer extension");
+
+        let listing_state_sql = object_sql(&connection, "listing_state");
+        assert!(listing_state_sql.contains("CHECK (id = 1)"));
+        assert!(listing_state_sql.contains("status TEXT NOT NULL"));
+        assert!(listing_state_sql.contains("updated_at TEXT"));
+        assert_eq!(
+            table_columns(&connection, "article_search"),
+            [
+                "article_id",
+                "title",
+                "abstract",
+                "doi",
+                "authors",
+                "journal_title"
+            ]
+        );
+        let article_search_sql = object_sql(&connection, "article_search").to_ascii_lowercase();
+        assert!(article_search_sql.contains("using fts5"));
+        assert!(!article_search_sql.contains("tokenize = 'simple'"));
+
+        let indexes = index_names(&connection);
+        for index_name in RUNTIME_INDEXES {
+            assert!(indexes.contains(*index_name), "missing index {index_name}");
+        }
+        assert!(indexes.contains("idx_index_api_call_stats_run"));
+    }
+
+    #[test]
+    fn initializes_fts_with_simple_tokenizer_when_extension_loads() {
+        let Some(simple_tokenizer_path) = workspace_simple_tokenizer_path() else {
+            return;
+        };
+        let connection = Connection::open_in_memory().expect("in-memory db should open");
+        init_index_db_with_simple_tokenizer_path(&connection, Some(&simple_tokenizer_path))
+            .expect("schema should initialize with tokenizer extension");
+
+        let article_search_sql = object_sql(&connection, "article_search").to_ascii_lowercase();
+        assert!(article_search_sql.contains("tokenize = 'simple'"));
+    }
+
+    #[test]
+    fn missing_simple_tokenizer_path_falls_back_to_default_fts() {
+        let connection = Connection::open_in_memory().expect("in-memory db should open");
+        init_index_db_with_simple_tokenizer_path(
+            &connection,
+            Some(Path::new("missing-simple-tokenizer-extension")),
+        )
+        .expect("missing tokenizer extension should not fail schema initialization");
+
+        let article_search_sql = object_sql(&connection, "article_search").to_ascii_lowercase();
+        assert!(!article_search_sql.contains("tokenize = 'simple'"));
+    }
+
+    #[test]
+    fn mark_article_listing_ready_upserts_single_ready_row() {
+        let connection = Connection::open_in_memory().expect("in-memory db should open");
+        init_index_db_with_simple_tokenizer_path(&connection, None)
+            .expect("schema should initialize");
+        mark_article_listing_ready(&connection, "2026-07-05T12:00:00Z")
+            .expect("listing should be marked ready");
+        mark_article_listing_ready(&connection, "2026-07-05T12:01:00Z")
+            .expect("listing ready row should update");
+
+        let row_count: i64 = connection
+            .query_row("SELECT COUNT(*) FROM listing_state", [], |row| row.get(0))
+            .expect("listing state count should query");
+        let (status, updated_at): (String, String) = connection
+            .query_row(
+                "SELECT status, updated_at FROM listing_state WHERE id = 1",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .expect("listing ready row should query");
+
+        assert_eq!(row_count, 1);
+        assert_eq!(status, "ready");
+        assert_eq!(updated_at, "2026-07-05T12:01:00Z");
+    }
 
     #[test]
     fn initializes_schema_and_writes_listing_rows() {
@@ -956,5 +1294,43 @@ mod tests {
         assert_eq!(run_count, 1);
         assert_eq!(path_status, "succeeded");
         assert_eq!(attempts, 1);
+    }
+
+    fn object_sql(connection: &Connection, name: &str) -> String {
+        connection
+            .query_row(
+                "SELECT sql FROM sqlite_master WHERE name = ?1",
+                [name],
+                |row| row.get(0),
+            )
+            .expect("sqlite object should exist")
+    }
+
+    fn table_columns(connection: &Connection, table_name: &str) -> Vec<String> {
+        let mut statement = connection
+            .prepare(&format!("PRAGMA table_info({table_name})"))
+            .expect("table info should prepare");
+        let rows = statement
+            .query_map([], |row| row.get::<_, String>(1))
+            .expect("columns should query");
+        rows.collect::<Result<Vec<_>, _>>()
+            .expect("columns should collect")
+    }
+
+    fn index_names(connection: &Connection) -> BTreeSet<String> {
+        let mut statement = connection
+            .prepare("SELECT name FROM sqlite_master WHERE type = 'index'")
+            .expect("index query should prepare");
+        let rows = statement
+            .query_map([], |row| row.get::<_, String>(0))
+            .expect("indexes should query");
+        rows.collect::<Result<BTreeSet<_>, _>>()
+            .expect("indexes should collect")
+    }
+
+    fn workspace_simple_tokenizer_path() -> Option<PathBuf> {
+        let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let project_root = manifest_dir.ancestors().nth(2)?;
+        simple_tokenizer_path_from_root(project_root)
     }
 }
