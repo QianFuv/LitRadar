@@ -2762,6 +2762,263 @@ mod tests {
         ));
     }
 
+    #[test]
+    fn weekly_updates_cover_manifest_merging_grouping_and_missing_databases() {
+        let fixture = IndexFixture::new(true);
+
+        write_weekly_manifest(
+            &fixture.config,
+            "older.changes.json",
+            json!({
+                "db_name": fixture.db_name,
+                "generated_at": "2026-07-05T10:00:00Z",
+                "run_id": "run-a",
+                "notifiable_article_ids": [1001, 1003, 1001, 9999]
+            }),
+        );
+        write_weekly_manifest(
+            &fixture.config,
+            "newer.changes.json",
+            json!({
+                "db_path": format!("data/index/{}", fixture.db_name),
+                "generated_at": "2026-07-06T10:00:00Z",
+                "run_id": "run-b",
+                "notifiable_article_ids": [1002, 1001]
+            }),
+        );
+        write_weekly_manifest(
+            &fixture.config,
+            "missing.changes.json",
+            json!({
+                "db_name": "missing.sqlite",
+                "generated_at": "2026-07-04T10:00:00Z",
+                "run_id": "run-missing",
+                "notifiable_article_ids": [1001]
+            }),
+        );
+        write_weekly_manifest(
+            &fixture.config,
+            "empty.changes.json",
+            json!({
+                "db_name": fixture.db_name,
+                "generated_at": "2026-07-07T10:00:00Z",
+                "notifiable_article_ids": []
+            }),
+        );
+
+        let updates = get_weekly_updates(&fixture.config).expect("weekly updates should resolve");
+
+        assert!(normalize_iso_datetime(&updates.generated_at).is_some());
+        assert_eq!(updates.window_start, "2026-06-29T10:00:00Z");
+        assert_eq!(updates.window_end, "2026-07-06T10:00:00Z");
+        assert_eq!(updates.databases.len(), 1);
+
+        let database = &updates.databases[0];
+        assert_eq!(database.db_name, "fixture.sqlite");
+        assert_eq!(database.run_id.as_deref(), Some("run-b"));
+        assert_eq!(database.generated_at, "2026-07-06T10:00:00Z");
+        assert_eq!(database.new_article_count, 3);
+        assert_eq!(database.journals.len(), 2);
+
+        assert_eq!(database.journals[0].journal_id.value(), 1);
+        assert_eq!(
+            database.journals[0].journal_title.as_deref(),
+            Some("Alpha Journal")
+        );
+        assert_eq!(database.journals[0].new_article_count, 2);
+        assert_eq!(
+            weekly_article_ids(&database.journals[0].articles),
+            vec![1002, 1001]
+        );
+
+        assert_eq!(database.journals[1].journal_id.value(), 2);
+        assert_eq!(
+            database.journals[1].journal_title.as_deref(),
+            Some("Beta CNKI")
+        );
+        assert_eq!(database.journals[1].new_article_count, 1);
+        assert_eq!(
+            weekly_article_ids(&database.journals[1].articles),
+            vec![1003]
+        );
+    }
+
+    #[test]
+    fn weekly_updates_without_manifests_return_empty_window_with_iso_bounds() {
+        let fixture = IndexFixture::new(true);
+
+        let updates = get_weekly_updates(&fixture.config).expect("weekly updates should resolve");
+
+        assert!(updates.databases.is_empty());
+        assert!(normalize_iso_datetime(&updates.generated_at).is_some());
+        assert_eq!(updates.window_end, updates.generated_at);
+        assert_eq!(
+            updates.window_start,
+            iso_minus_days(&updates.window_end, 7).expect("window end should be parseable")
+        );
+    }
+
+    #[test]
+    fn weekly_manifest_parsing_covers_normalization_empty_and_malformed_payloads() {
+        let manifest = parse_weekly_manifest(&json!({
+            "db_path": "data/index/fixture",
+            "generated_at": "2026-07-05T10:00:00.250+00:00",
+            "run_id": "run-1",
+            "notifiable_article_ids": [1001, 1001, "bad", 1002]
+        }))
+        .expect("valid manifest should parse");
+
+        assert_eq!(manifest.db_name, "fixture.sqlite");
+        assert_eq!(manifest.generated_at, "2026-07-05T10:00:00Z");
+        assert_eq!(manifest.run_id.as_deref(), Some("run-1"));
+        assert_eq!(manifest.article_ids, vec![1001, 1002]);
+
+        assert!(parse_weekly_manifest(&json!({
+            "db_name": "fixture.sqlite",
+            "notifiable_article_ids": []
+        }))
+        .is_none());
+        assert!(parse_weekly_manifest(&json!({
+            "notifiable_article_ids": [1001]
+        }))
+        .is_none());
+        assert!(parse_weekly_manifest(&json!({
+            "db_name": "fixture.sqlite",
+            "notifiable_article_ids": ["bad"]
+        }))
+        .is_none());
+    }
+
+    #[test]
+    fn weekly_manifest_loading_fails_loud_on_invalid_json_files() {
+        let fixture = IndexFixture::new(true);
+        let push_state_dir = fixture
+            .config
+            .project_root()
+            .join("data")
+            .join("push_state");
+        fs::create_dir_all(&push_state_dir).expect("push state dir should be created");
+        fs::write(push_state_dir.join("broken.changes.json"), "{")
+            .expect("broken manifest should be written");
+
+        let error = load_weekly_manifests(&fixture.config).expect_err("invalid JSON should fail");
+
+        assert!(matches!(error, IndexRepositoryError::Json(_)));
+    }
+
+    #[test]
+    fn index_counts_and_candidate_helpers_cover_visible_rows_and_errors() {
+        let fixture = IndexFixture::new(true);
+        let db_path = fixture_db_path(&fixture);
+
+        let issue_counts =
+            collect_issue_article_counts(&db_path).expect("issue counts should be collected");
+        assert_eq!(issue_counts.len(), 3);
+        assert_eq!(issue_counts.get("1:10"), Some(&4));
+        assert_eq!(issue_counts.get("1:11"), Some(&1));
+        assert_eq!(issue_counts.get("2:20"), Some(&1));
+
+        let inpress_counts =
+            collect_inpress_article_counts(&db_path).expect("in-press counts should be collected");
+        assert_eq!(inpress_counts.len(), 1);
+        assert_eq!(inpress_counts.get("1"), Some(&1));
+
+        let issue_candidates = fetch_candidates_for_issue_keys(
+            &db_path,
+            &[
+                build_issue_key(1, 10),
+                build_issue_key(2, 20),
+                build_issue_key(1, 10),
+            ],
+        )
+        .expect("issue candidates should be fetched");
+        assert_eq!(
+            candidate_ids(&issue_candidates),
+            vec![1003, 1001, 1002, 1005, 1008]
+        );
+        assert_eq!(issue_candidates[0].journal_title, "Beta CNKI");
+        assert_eq!(issue_candidates[1].doi.as_deref(), Some("10.1000/genome"));
+        assert!(issue_candidates[1].open_access);
+        assert!(issue_candidates[1].within_library_holdings);
+
+        let suppressed_issue_candidates =
+            fetch_candidates_for_issue_keys(&db_path, &[build_issue_key(1, 11)])
+                .expect("suppressed issue query should resolve");
+        assert!(suppressed_issue_candidates.is_empty());
+
+        let inpress_candidates =
+            fetch_candidates_for_inpress_keys(&db_path, &["1".to_string(), "1".to_string()])
+                .expect("in-press candidates should be fetched");
+        assert_eq!(candidate_ids(&inpress_candidates), vec![1004]);
+        assert!(inpress_candidates[0].in_press);
+        assert_eq!(inpress_candidates[0].issue_id, None);
+
+        assert!(fetch_candidates_for_issue_keys(&db_path, &[])
+            .expect("empty issue keys should resolve")
+            .is_empty());
+        assert!(fetch_candidates_for_inpress_keys(&db_path, &[])
+            .expect("empty in-press keys should resolve")
+            .is_empty());
+
+        let invalid_issue_key = fetch_candidates_for_issue_keys(&db_path, &["bad".to_string()])
+            .expect_err("invalid issue key should fail");
+        assert!(matches!(
+            invalid_issue_key,
+            IndexRepositoryError::InvalidCursor
+        ));
+
+        let invalid_inpress_key = fetch_candidates_for_inpress_keys(&db_path, &["bad".to_string()])
+            .expect_err("invalid in-press key should fail");
+        assert!(matches!(
+            invalid_inpress_key,
+            IndexRepositoryError::InvalidCursor
+        ));
+    }
+
+    #[test]
+    fn index_helpers_cover_tokenizer_keys_dates_and_db_names() {
+        assert!(should_use_simple_query(Some("genome"), true));
+        assert!(!should_use_simple_query(Some("基因"), true));
+        assert!(!should_use_simple_query(Some("   "), true));
+        assert!(!should_use_simple_query(Some("genome"), false));
+        assert!(contains_cjk("precision 基因"));
+        assert!(!contains_cjk("precision"));
+
+        assert_eq!(build_issue_key(1, 10), "1:10");
+        assert_eq!(
+            parse_issue_key("1:10").expect("valid issue key should parse"),
+            (1, 10)
+        );
+        for key in ["1", "one:10", "1:two", "1:10:20"] {
+            let error = parse_issue_key(key).expect_err("invalid key should fail");
+            assert!(matches!(error, IndexRepositoryError::InvalidCursor));
+        }
+
+        assert_eq!(
+            normalize_db_name("data/index/fixture"),
+            Some("fixture.sqlite".to_string())
+        );
+        assert_eq!(
+            normalize_db_name("fixture.sqlite"),
+            Some("fixture.sqlite".to_string())
+        );
+        assert_eq!(normalize_db_name("   "), None);
+
+        assert_eq!(
+            normalize_iso_datetime("2026-07-05T10:11:12.900Z"),
+            Some("2026-07-05T10:11:12Z".to_string())
+        );
+        assert_eq!(
+            normalize_iso_datetime("2026-07-05T10:11:12+00:00"),
+            Some("2026-07-05T10:11:12Z".to_string())
+        );
+        assert_eq!(normalize_iso_datetime("2026-99-05T10:11:12Z"), None);
+        assert_eq!(
+            iso_minus_days("2026-07-06T10:00:00Z", 7),
+            Some("2026-06-29T10:00:00Z".to_string())
+        );
+    }
+
     fn article_filter_params() -> ArticleListParams {
         ArticleListParams {
             suppressed: Some(false),
@@ -2783,6 +3040,34 @@ mod tests {
             .into_iter()
             .map(|value| (value.value, value.count))
             .collect()
+    }
+
+    fn candidate_ids(candidates: &[ArticleCandidateInfo]) -> Vec<i64> {
+        candidates
+            .iter()
+            .map(|candidate| candidate.article_id)
+            .collect()
+    }
+
+    fn weekly_article_ids(articles: &[WeeklyArticleRecord]) -> Vec<i64> {
+        articles
+            .iter()
+            .map(|article| article.article_id.value())
+            .collect()
+    }
+
+    fn fixture_db_path(fixture: &IndexFixture) -> PathBuf {
+        fixture.config.index_dir().join(&fixture.db_name)
+    }
+
+    fn write_weekly_manifest(config: &StorageConfig, filename: &str, payload: JsonValue) {
+        let push_state_dir = config.project_root().join("data").join("push_state");
+        fs::create_dir_all(&push_state_dir).expect("push state dir should be created");
+        fs::write(
+            push_state_dir.join(filename),
+            serde_json::to_string(&payload).expect("manifest should serialize"),
+        )
+        .expect("manifest should be written");
     }
 
     fn create_fixture_user(config: &StorageConfig) {
