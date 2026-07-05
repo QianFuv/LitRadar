@@ -182,7 +182,7 @@ Cache-Control: private, no-store
 补充说明：
 
 - 当 `article_listing` 已准备好时，查询优先走物化辅助表
-- 当 `article_search` 使用了 `simple` 分词器且查询词不含 CJK 字符时，会自动改用 `simple_query(...)`
+- 查询参数 `q` 会作为 SQLite FTS5 `MATCH` 表达式传入；中文分词由 `article_search` 的 tokenizer 处理，不做拼音查询展开
 - 默认排序：`date:desc`
 
 #### `GET /api/articles/{article_id}`

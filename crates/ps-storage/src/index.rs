@@ -753,14 +753,10 @@ pub fn list_articles(
 ) -> Result<ArticlePage, IndexRepositoryError> {
     validate_limit_offset(params.limit, params.offset)?;
     let connection = open_index_connection(config, db_name)?;
-    let use_simple_query = should_use_simple_query(
-        params.q.as_deref(),
-        article_search_uses_simple(&connection)?,
-    );
     if is_article_listing_ready(&connection) {
-        list_articles_from_listing(&connection, params, use_simple_query)
+        list_articles_from_listing(&connection, params)
     } else {
-        list_articles_from_articles(&connection, params, use_simple_query)
+        list_articles_from_articles(&connection, params)
     }
 }
 
@@ -965,7 +961,6 @@ pub fn get_weekly_updates(
 fn list_articles_from_listing(
     connection: &Connection,
     params: &ArticleListParams,
-    use_simple_query: bool,
 ) -> Result<ArticlePage, IndexRepositoryError> {
     let mut clauses = Vec::new();
     let mut values = Vec::new();
@@ -1006,13 +1001,7 @@ fn list_articles_from_listing(
         "l.publication_year = ?",
         params.year,
     );
-    push_fts_filter(
-        &mut clauses,
-        &mut values,
-        "l.article_id",
-        &params.q,
-        use_simple_query,
-    );
+    push_fts_filter(&mut clauses, &mut values, "l.article_id", &params.q);
     let direction = article_sort_direction(params.sort.as_deref().unwrap_or("date:desc"))?;
     push_cursor_filter(
         &mut clauses,
@@ -1048,7 +1037,6 @@ fn list_articles_from_listing(
 fn list_articles_from_articles(
     connection: &Connection,
     params: &ArticleListParams,
-    use_simple_query: bool,
 ) -> Result<ArticlePage, IndexRepositoryError> {
     let mut clauses = Vec::new();
     let mut values = Vec::new();
@@ -1090,12 +1078,7 @@ fn list_articles_from_articles(
         params.year,
     );
     if let Some(query) = nonempty(params.q.as_deref()) {
-        let matcher = if use_simple_query {
-            "simple_query(?)"
-        } else {
-            "?"
-        };
-        clauses.push(format!("article_search MATCH {matcher}"));
+        clauses.push("article_search MATCH ?".to_string());
         values.push(SqlValue::Text(query.to_string()));
     }
     let mut joins = Vec::new();
@@ -1773,16 +1756,10 @@ fn push_fts_filter(
     values: &mut Vec<SqlValue>,
     column: &str,
     q: &Option<String>,
-    use_simple_query: bool,
 ) {
     if let Some(query) = nonempty(q.as_deref()) {
-        let matcher = if use_simple_query {
-            "simple_query(?)"
-        } else {
-            "?"
-        };
         clauses.push(format!(
-            "{column} IN (SELECT rowid FROM article_search WHERE article_search MATCH {matcher})"
+            "{column} IN (SELECT rowid FROM article_search WHERE article_search MATCH ?)"
         ));
         values.push(SqlValue::Text(query.to_string()));
     }
@@ -1905,30 +1882,6 @@ fn resolve_simple_tokenizer_path(config: &StorageConfig) -> Option<PathBuf> {
     } else {
         None
     }
-}
-
-fn article_search_uses_simple(connection: &Connection) -> Result<bool, IndexRepositoryError> {
-    let sql = connection
-        .query_row(
-            "SELECT sql FROM sqlite_master WHERE name = 'article_search'",
-            [],
-            |row| row.get::<_, Option<String>>(0),
-        )
-        .optional()?
-        .flatten()
-        .unwrap_or_default()
-        .to_ascii_lowercase();
-    Ok(sql.contains("tokenize") && sql.contains("simple"))
-}
-
-fn should_use_simple_query(q: Option<&str>, simple_enabled: bool) -> bool {
-    simple_enabled && nonempty(q).is_some_and(|query| !contains_cjk(query))
-}
-
-fn contains_cjk(value: &str) -> bool {
-    value
-        .chars()
-        .any(|character| ('\u{4e00}'..='\u{9fff}').contains(&character))
 }
 
 fn is_cnki_article_row(row: &ArticleAccessRow) -> bool {
@@ -2976,14 +2929,7 @@ mod tests {
     }
 
     #[test]
-    fn index_helpers_cover_tokenizer_keys_dates_and_db_names() {
-        assert!(should_use_simple_query(Some("genome"), true));
-        assert!(!should_use_simple_query(Some("基因"), true));
-        assert!(!should_use_simple_query(Some("   "), true));
-        assert!(!should_use_simple_query(Some("genome"), false));
-        assert!(contains_cjk("precision 基因"));
-        assert!(!contains_cjk("precision"));
-
+    fn index_helpers_cover_keys_dates_and_db_names() {
         assert_eq!(build_issue_key(1, 10), "1:10");
         assert_eq!(
             parse_issue_key("1:10").expect("valid issue key should parse"),

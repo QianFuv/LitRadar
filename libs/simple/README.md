@@ -28,7 +28,7 @@
 - Windows 下默认查找 `simple.dll`
 - 也可以通过 `SIMPLE_TOKENIZER_PATH` 手动指定路径
 
-如果扩展加载成功，`article_search` FTS5 虚表会使用 `simple` tokenizer，以提升中文与拼音检索效果。
+如果扩展加载成功，`article_search` FTS5 虚表会使用 `simple` tokenizer，以提升中文分词效果。Paper Scanner 当前不启用拼音查询展开。
 
 ## 许可证
 
