@@ -8,6 +8,9 @@ use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
 use crate::ai::{live_ai_client, AiClientError, AiCompletionClient, ReqwestAiTransport};
+use crate::pushplus::{
+    live_pushplus_client, PushPlusClient, PushPlusError, PushPlusMessage, ReqwestPushPlusTransport,
+};
 use ps_domain::{
     ArticleCandidateInfo, FavoriteAdd, NotificationSubscriberInfo, RankedSelectionInfo,
     SelectionResultInfo, UserId,
@@ -38,8 +41,8 @@ pub enum DeliveryError {
     Recommendation(ps_recommend::RecommendationError),
     /// AI selection client failed unexpectedly.
     Ai(String),
-    /// PushPlus execution is intentionally unavailable during dry-run parity.
-    PushPlusExecutionUnavailable,
+    /// PushPlus delivery failed.
+    PushPlus(String),
 }
 
 impl fmt::Display for DeliveryError {
@@ -50,9 +53,7 @@ impl fmt::Display for DeliveryError {
             Self::Business(error) => write!(formatter, "{error}"),
             Self::Recommendation(error) => write!(formatter, "{error}"),
             Self::Ai(message) => formatter.write_str(message),
-            Self::PushPlusExecutionUnavailable => {
-                formatter.write_str("PushPlus execution is unavailable in Rust dry-run parity mode")
-            }
+            Self::PushPlus(message) => formatter.write_str(message),
         }
     }
 }
@@ -65,7 +66,7 @@ impl Error for DeliveryError {
             Self::Business(error) => Some(error),
             Self::Recommendation(error) => Some(error),
             Self::Ai(_) => None,
-            Self::PushPlusExecutionUnavailable => None,
+            Self::PushPlus(_) => None,
         }
     }
 }
@@ -88,6 +89,13 @@ impl From<ps_recommend::RecommendationError> for DeliveryError {
     /// Convert recommendation errors into delivery errors.
     fn from(error: ps_recommend::RecommendationError) -> Self {
         Self::Recommendation(error)
+    }
+}
+
+impl From<PushPlusError> for DeliveryError {
+    /// Convert PushPlus client errors into delivery errors.
+    fn from(error: PushPlusError) -> Self {
+        Self::PushPlus(error.to_string())
     }
 }
 
@@ -168,6 +176,8 @@ pub struct SubscriberDeliveryPlan {
     pub message_title: Option<String>,
     /// Planned PushPlus content.
     pub message_content: Option<String>,
+    /// PushPlus message id returned by execute mode.
+    pub message_id: Option<String>,
     /// Planned tracking favorite writes.
     pub favorite_writes: Vec<FavoriteWritePlan>,
     /// Folder sync count.
@@ -211,12 +221,17 @@ pub fn run_recommendation_delivery(
         DEFAULT_DELIVERY_TIMEOUT_SECONDS,
         DEFAULT_DELIVERY_RETRY_ATTEMPTS,
     );
-    run_recommendation_delivery_with_ai(config, &mut ai_selector)
+    let mut pushplus_sender = LiveDeliveryPushPlusSender::new(
+        DEFAULT_DELIVERY_TIMEOUT_SECONDS,
+        DEFAULT_DELIVERY_RETRY_ATTEMPTS,
+    )?;
+    run_recommendation_delivery_with_services(config, &mut ai_selector, &mut pushplus_sender)
 }
 
-fn run_recommendation_delivery_with_ai(
+fn run_recommendation_delivery_with_services(
     config: &RecommendationRunConfig,
     ai_selector: &mut impl DeliveryAiSelector,
+    pushplus_sender: &mut impl DeliveryPushPlusSender,
 ) -> Result<RecommendationRunOutcome, DeliveryError> {
     let now = utc_now_iso();
     let state_path = state_path(&config.state_dir, &config.db_name);
@@ -359,6 +374,7 @@ fn run_recommendation_delivery_with_ai(
             &candidates_by_id,
             &mut delivery_dedupe,
             ai_selector,
+            pushplus_sender,
         ) {
             Ok(plan) => {
                 run_state
@@ -706,6 +722,28 @@ fn selected_candidates(
         .collect()
 }
 
+trait DeliveryPushPlusSender {
+    fn send(&mut self, message: &PushPlusMessage) -> Result<String, DeliveryError>;
+}
+
+struct LiveDeliveryPushPlusSender {
+    client: PushPlusClient<ReqwestPushPlusTransport>,
+}
+
+impl LiveDeliveryPushPlusSender {
+    fn new(timeout_seconds: u64, retry_attempts: usize) -> Result<Self, DeliveryError> {
+        Ok(Self {
+            client: live_pushplus_client(timeout_seconds, retry_attempts)?,
+        })
+    }
+}
+
+impl DeliveryPushPlusSender for LiveDeliveryPushPlusSender {
+    fn send(&mut self, message: &PushPlusMessage) -> Result<String, DeliveryError> {
+        self.client.send(message).map_err(DeliveryError::from)
+    }
+}
+
 fn filtered_subscribers(
     auth_db_path: &Path,
     db_name: &str,
@@ -736,6 +774,7 @@ fn build_subscriber_plan(
     candidates_by_id: &BTreeMap<i64, ArticleCandidateInfo>,
     delivery_dedupe: &mut BTreeMap<String, String>,
     ai_selector: &mut impl DeliveryAiSelector,
+    pushplus_sender: &mut impl DeliveryPushPlusSender,
 ) -> Result<SubscriberDeliveryPlan, DeliveryError> {
     let selection = ai_selector.select_for_subscriber(
         subscriber,
@@ -755,24 +794,12 @@ fn build_subscriber_plan(
             "AI selection found no matching articles",
         ));
     }
-    if config.workflow == DeliveryWorkflow::Notify && config.mode == DeliveryMode::Execute {
-        return Err(DeliveryError::PushPlusExecutionUnavailable);
-    }
     let selected_article_ids = selection
         .accepted
         .iter()
         .map(|selection| selection.article_id)
         .collect::<Vec<_>>();
     let favorite_writes = favorite_writes(config, subscriber, &selected_article_ids);
-    if config.mode == DeliveryMode::Execute {
-        execute_favorite_writes(config, &favorite_writes)?;
-        for article_id in &selected_article_ids {
-            delivery_dedupe.insert(
-                format!("{}:{article_id}", subscriber.subscriber_id),
-                utc_now_iso(),
-            );
-        }
-    }
     let (message_title, message_content, would_send_pushplus) =
         if config.workflow == DeliveryWorkflow::Notify {
             (
@@ -790,6 +817,30 @@ fn build_subscriber_plan(
         } else {
             (None, None, false)
         };
+    let mut message_id = None;
+    if config.mode == DeliveryMode::Execute {
+        execute_favorite_writes(config, &favorite_writes)?;
+        if config.workflow == DeliveryWorkflow::Notify {
+            let title = message_title
+                .as_deref()
+                .ok_or_else(|| DeliveryError::PushPlus("PushPlus title is unavailable".into()))?;
+            let content = message_content
+                .as_deref()
+                .ok_or_else(|| DeliveryError::PushPlus("PushPlus content is unavailable".into()))?;
+            message_id = Some(pushplus_sender.send(&pushplus_message(
+                subscriber,
+                global_config,
+                title,
+                content,
+            ))?);
+        }
+        for article_id in &selected_article_ids {
+            delivery_dedupe.insert(
+                format!("{}:{article_id}", subscriber.subscriber_id),
+                utc_now_iso(),
+            );
+        }
+    }
     Ok(SubscriberDeliveryPlan {
         subscriber_id: subscriber.subscriber_id.clone(),
         delivery_method: subscriber.delivery_method.clone(),
@@ -798,6 +849,7 @@ fn build_subscriber_plan(
         selected_article_ids,
         message_title,
         message_content,
+        message_id,
         folder_synced_count: favorite_writes.len(),
         favorite_writes,
         would_send_pushplus,
@@ -813,6 +865,7 @@ fn skipped_plan(subscriber: &NotificationSubscriberInfo, reason: &str) -> Subscr
         selected_article_ids: Vec::new(),
         message_title: None,
         message_content: None,
+        message_id: None,
         favorite_writes: Vec::new(),
         folder_synced_count: 0,
         would_send_pushplus: false,
@@ -843,6 +896,39 @@ fn favorite_writes(
             db_name: config.db_name.clone(),
         })
         .collect()
+}
+
+fn pushplus_message(
+    subscriber: &NotificationSubscriberInfo,
+    global_config: &NotificationGlobalConfig,
+    title: &str,
+    content: &str,
+) -> PushPlusMessage {
+    PushPlusMessage {
+        token: subscriber.pushplus_token.clone(),
+        title: title.to_string(),
+        content: content.to_string(),
+        channel: subscriber
+            .channel
+            .as_deref()
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or(global_config.pushplus_channel.as_str())
+            .to_string(),
+        template: subscriber
+            .template
+            .as_deref()
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or(global_config.pushplus_template.as_str())
+            .to_string(),
+        topic: subscriber
+            .topic
+            .as_deref()
+            .filter(|value| !value.trim().is_empty())
+            .map(str::to_string)
+            .or_else(|| global_config.pushplus_topic.clone()),
+        option: global_config.pushplus_option.clone(),
+        to: None,
+    }
 }
 
 fn execute_favorite_writes(
@@ -884,7 +970,7 @@ fn user_result_from_plan(
         } else {
             None
         },
-        message_id: None,
+        message_id: plan.message_id.clone(),
         status: plan.status.clone(),
         error: plan.error.clone(),
     }
@@ -1020,9 +1106,10 @@ mod tests {
     fn dry_run_push_plans_folder_writes_without_side_effects() {
         let fixture = DeliveryFixture::new(notification_settings("folder", true, vec![]));
 
-        let outcome = run_fixture_delivery(
+        let (outcome, _pushplus_sender) = run_fixture_delivery(
             &fixture.config(DeliveryWorkflow::Push, DeliveryMode::DryRun, None, None),
             vec![selection_outcome(&[101, 102], "")],
+            Vec::new(),
         )
         .expect("push dry-run should build a plan");
 
@@ -1046,7 +1133,7 @@ mod tests {
     fn shadow_notify_plans_pushplus_without_sending() {
         let fixture = DeliveryFixture::new(notification_settings("pushplus", true, vec![]));
 
-        let outcome = run_fixture_delivery(
+        let (outcome, _pushplus_sender) = run_fixture_delivery(
             &fixture.config(
                 DeliveryWorkflow::Notify,
                 DeliveryMode::Shadow,
@@ -1054,6 +1141,7 @@ mod tests {
                 Some(1),
             ),
             vec![selection_outcome(&[102], "AI summary")],
+            Vec::new(),
         )
         .expect("notify shadow run should build a PushPlus plan");
 
@@ -1083,35 +1171,60 @@ mod tests {
     }
 
     #[test]
-    fn execute_notify_fails_before_pushplus_side_effects() {
+    fn execute_notify_sends_pushplus_and_records_message_id() {
         let fixture = DeliveryFixture::new(notification_settings("pushplus", true, vec![]));
 
-        let outcome = run_fixture_delivery(
+        let (outcome, pushplus_sender) = run_fixture_delivery(
             &fixture.config(DeliveryWorkflow::Notify, DeliveryMode::Execute, None, None),
             vec![selection_outcome(&[101, 102], "")],
+            vec![Ok("msg-1".to_string())],
         )
-        .expect("notify execute should record PushPlus as a failed subscriber result");
+        .expect("notify execute should send PushPlus");
 
-        assert_eq!(outcome.status, "failed");
-        assert!(outcome.subscribers.is_empty());
-        assert_eq!(favorite_count(&fixture.auth_db_path), 0);
+        assert_eq!(outcome.status, "completed");
+        assert_eq!(outcome.subscribers[0].message_id.as_deref(), Some("msg-1"));
+        assert_eq!(pushplus_sender.messages.len(), 1);
+        assert_eq!(pushplus_sender.messages[0].token, "token");
+        assert_eq!(favorite_count(&fixture.auth_db_path), 2);
         let state = ps_recommend::load_state(&outcome.state_path, &fixture.db_name, "ignored")
             .expect("state should be written");
+        let run = state.run.expect("run state should be recorded");
+        assert_eq!(run.user_results[0].message_id.as_deref(), Some("msg-1"));
+        assert_eq!(state.delivery_dedupe.len(), 2);
+    }
+
+    #[test]
+    fn execute_notify_pushplus_failure_does_not_update_dedupe() {
+        let fixture = DeliveryFixture::new(notification_settings("pushplus", true, vec![]));
+
+        let (outcome, _pushplus_sender) = run_fixture_delivery(
+            &fixture.config(DeliveryWorkflow::Notify, DeliveryMode::Execute, None, None),
+            vec![selection_outcome(&[101, 102], "")],
+            vec![Err(DeliveryError::PushPlus("send failed".to_string()))],
+        )
+        .expect("notify execute should record PushPlus failure");
+
+        assert_eq!(outcome.status, "failed");
+        assert_eq!(favorite_count(&fixture.auth_db_path), 2);
+        let state = ps_recommend::load_state(&outcome.state_path, &fixture.db_name, "ignored")
+            .expect("state should be written");
+        assert!(state.delivery_dedupe.is_empty());
         assert!(state
             .run
             .expect("run state should be recorded")
             .errors
             .iter()
-            .any(|error| error.contains("PushPlus execution is unavailable")));
+            .any(|error| error.contains("send failed")));
     }
 
     #[test]
     fn execute_push_writes_folder_state_and_dedupe() {
         let fixture = DeliveryFixture::new(notification_settings("folder", true, vec![]));
 
-        let outcome = run_fixture_delivery(
+        let (outcome, _pushplus_sender) = run_fixture_delivery(
             &fixture.config(DeliveryWorkflow::Push, DeliveryMode::Execute, None, None),
             vec![selection_outcome(&[101, 102], "")],
+            Vec::new(),
         )
         .expect("push execute should write favorites");
 
@@ -1134,7 +1247,7 @@ mod tests {
         )
         .expect("manifest should be written");
 
-        let outcome = run_fixture_delivery(
+        let (outcome, _pushplus_sender) = run_fixture_delivery(
             &fixture.config(
                 DeliveryWorkflow::Push,
                 DeliveryMode::DryRun,
@@ -1142,6 +1255,7 @@ mod tests {
                 None,
             ),
             vec![selection_outcome(&[102], "")],
+            Vec::new(),
         )
         .expect("manifest run should filter candidates");
 
@@ -1161,6 +1275,7 @@ mod tests {
                 None,
             ),
             Vec::new(),
+            Vec::new(),
         )
         .expect_err("wrong database manifest should be rejected");
 
@@ -1171,8 +1286,9 @@ mod tests {
     fn disabled_or_unselected_subscribers_are_skipped() {
         let disabled_fixture = DeliveryFixture::new(notification_settings("folder", false, vec![]));
 
-        let disabled_outcome = run_fixture_delivery(
+        let (disabled_outcome, _pushplus_sender) = run_fixture_delivery(
             &disabled_fixture.config(DeliveryWorkflow::Push, DeliveryMode::DryRun, None, None),
+            Vec::new(),
             Vec::new(),
         )
         .expect("disabled subscriber run should complete");
@@ -1186,8 +1302,9 @@ mod tests {
             vec!["other.sqlite".to_string()],
         ));
 
-        let unselected_outcome = run_fixture_delivery(
+        let (unselected_outcome, _pushplus_sender) = run_fixture_delivery(
             &unselected_fixture.config(DeliveryWorkflow::Push, DeliveryMode::DryRun, None, None),
+            Vec::new(),
             Vec::new(),
         )
         .expect("unselected database run should complete");
@@ -1312,6 +1429,30 @@ mod tests {
         }
     }
 
+    #[derive(Debug)]
+    struct FixturePushPlusSender {
+        responses: Vec<Result<String, DeliveryError>>,
+        messages: Vec<PushPlusMessage>,
+    }
+
+    impl FixturePushPlusSender {
+        fn new(responses: Vec<Result<String, DeliveryError>>) -> Self {
+            Self {
+                responses: responses.into_iter().rev().collect(),
+                messages: Vec::new(),
+            }
+        }
+    }
+
+    impl DeliveryPushPlusSender for FixturePushPlusSender {
+        fn send(&mut self, message: &PushPlusMessage) -> Result<String, DeliveryError> {
+            self.messages.push(message.clone());
+            self.responses
+                .pop()
+                .unwrap_or_else(|| Err(DeliveryError::PushPlus("missing PushPlus fixture".into())))
+        }
+    }
+
     struct ScriptedAiFactory {
         clients: Vec<ScriptedAiClient>,
         builds: std::rc::Rc<std::cell::RefCell<Vec<(String, usize)>>>,
@@ -1393,9 +1534,16 @@ mod tests {
     fn run_fixture_delivery(
         config: &RecommendationRunConfig,
         outcomes: Vec<AiSelectionOutcome>,
-    ) -> Result<RecommendationRunOutcome, DeliveryError> {
+        pushplus_responses: Vec<Result<String, DeliveryError>>,
+    ) -> Result<(RecommendationRunOutcome, FixturePushPlusSender), DeliveryError> {
         let mut ai_selector = FixtureDeliveryAiSelector::new(outcomes);
-        run_recommendation_delivery_with_ai(config, &mut ai_selector)
+        let mut pushplus_sender = FixturePushPlusSender::new(pushplus_responses);
+        let outcome = run_recommendation_delivery_with_services(
+            config,
+            &mut ai_selector,
+            &mut pushplus_sender,
+        )?;
+        Ok((outcome, pushplus_sender))
     }
 
     fn selection_outcome(article_ids: &[i64], summary: &str) -> AiSelectionOutcome {
