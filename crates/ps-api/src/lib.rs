@@ -1536,6 +1536,408 @@ mod tests {
         assert_eq!(subscribers[0].tracking_folder_id, Some(1));
     }
 
+    #[tokio::test]
+    #[cfg_attr(
+        miri,
+        ignore = "Miri does not support Tokio's Windows IOCP runtime initialization"
+    )]
+    async fn index_routes_cover_fixture_database_queries_and_resolution_errors() {
+        let backend = TestBackend::new();
+        let user = backend.authenticated_user("index_reader", false);
+        let app = backend.router();
+        let auth = user.authorization_header();
+
+        let no_database =
+            json_request(&app, Method::GET, "/api/years", Some(&auth), None, None).await;
+        let index_database = backend.create_index_database("fixture.sqlite");
+        let databases = json_request(
+            &app,
+            Method::GET,
+            "/api/meta/databases",
+            Some(&auth),
+            None,
+            None,
+        )
+        .await;
+        let years = json_request(&app, Method::GET, "/api/years", Some(&auth), None, None).await;
+        let areas = json_request(
+            &app,
+            Method::GET,
+            "/api/meta/areas?db=fixture",
+            Some(&auth),
+            None,
+            None,
+        )
+        .await;
+        let journal_options = json_request(
+            &app,
+            Method::GET,
+            "/api/meta/journals?db=fixture.sqlite",
+            Some(&auth),
+            None,
+            None,
+        )
+        .await;
+        let sources = json_request(
+            &app,
+            Method::GET,
+            "/api/meta/sources?db=fixture",
+            Some(&auth),
+            None,
+            None,
+        )
+        .await;
+        let journals = json_request(
+            &app,
+            Method::GET,
+            "/api/journals?db=fixture&area=Medicine&limit=1&offset=0",
+            Some(&auth),
+            None,
+            None,
+        )
+        .await;
+        let journal = json_request(
+            &app,
+            Method::GET,
+            &format!("/api/journals/{}?db=fixture", index_database.journal_id),
+            Some(&auth),
+            None,
+            None,
+        )
+        .await;
+        let issues = json_request(
+            &app,
+            Method::GET,
+            &format!(
+                "/api/issues?db=fixture&journal_id={}&year=2024&limit=1",
+                index_database.journal_id
+            ),
+            Some(&auth),
+            None,
+            None,
+        )
+        .await;
+        let issue = json_request(
+            &app,
+            Method::GET,
+            &format!("/api/issues/{}?db=fixture", index_database.issue_id),
+            Some(&auth),
+            None,
+            None,
+        )
+        .await;
+        let articles = json_request(
+            &app,
+            Method::GET,
+            &format!(
+                "/api/articles?db=fixture&journal_id={}&journal_id=999&area=Medicine&q=Fixture&limit=1&include_total=true",
+                index_database.journal_id
+            ),
+            Some(&auth),
+            None,
+            None,
+        )
+        .await;
+        let invalid_articles = json_request(
+            &app,
+            Method::GET,
+            "/api/articles?db=fixture&limit=0",
+            Some(&auth),
+            None,
+            None,
+        )
+        .await;
+        let article = json_request(
+            &app,
+            Method::GET,
+            &format!("/api/articles/{}?db=fixture", index_database.article_id),
+            Some(&auth),
+            None,
+            None,
+        )
+        .await;
+        let missing_article = json_request(
+            &app,
+            Method::GET,
+            "/api/articles/404?db=fixture",
+            Some(&auth),
+            None,
+            None,
+        )
+        .await;
+        let access = json_request(
+            &app,
+            Method::GET,
+            &format!(
+                "/api/articles/{}/access?db=fixture",
+                index_database.article_id
+            ),
+            Some(&auth),
+            None,
+            None,
+        )
+        .await;
+        let fulltext_response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!(
+                        "/api/articles/{}/fulltext?db=fixture",
+                        index_database.article_id
+                    ))
+                    .header(AUTHORIZATION, &auth)
+                    .body(Body::empty())
+                    .expect("request should build"),
+            )
+            .await
+            .expect("response should be returned");
+        let fulltext_status = fulltext_response.status();
+        let fulltext_location = fulltext_response
+            .headers()
+            .get("location")
+            .expect("location should exist")
+            .to_str()
+            .expect("location should be visible ASCII")
+            .to_string();
+        backend.create_index_database("second.sqlite");
+        let ambiguous =
+            json_request(&app, Method::GET, "/api/years", Some(&auth), None, None).await;
+        let missing_database = json_request(
+            &app,
+            Method::GET,
+            "/api/years?db=missing",
+            Some(&auth),
+            None,
+            None,
+        )
+        .await;
+
+        assert_eq!(no_database.status, StatusCode::NOT_FOUND);
+        assert_eq!(databases.status, StatusCode::OK);
+        assert_eq!(databases.payload, serde_json::json!(["fixture.sqlite"]));
+        assert_eq!(years.status, StatusCode::OK);
+        assert_eq!(years.payload[0]["year"], 2024);
+        assert_eq!(areas.payload[0]["value"], "Medicine");
+        assert_eq!(journal_options.payload[0]["title"], "Fixture Journal");
+        assert_eq!(sources.payload[0]["value"], "Library A");
+        assert_eq!(journals.status, StatusCode::OK);
+        assert_eq!(journals.payload["items"][0]["title"], "Fixture Journal");
+        assert_eq!(journal.status, StatusCode::OK);
+        assert_eq!(
+            journal.payload["journal_id"],
+            index_database.journal_id.to_string()
+        );
+        assert_eq!(issues.status, StatusCode::OK);
+        assert_eq!(
+            issues.payload["items"][0]["issue_id"],
+            index_database.issue_id
+        );
+        assert_eq!(issue.status, StatusCode::OK);
+        assert_eq!(issue.payload["title"], "Volume 1 Issue 1");
+        assert_eq!(articles.status, StatusCode::OK);
+        assert_eq!(articles.payload["page"]["total"], 1);
+        assert_eq!(
+            articles.payload["items"][0]["article_id"],
+            index_database.article_id.to_string()
+        );
+        assert_eq!(invalid_articles.status, StatusCode::BAD_REQUEST);
+        assert_eq!(article.status, StatusCode::OK);
+        assert_eq!(article.payload["doi"], "10.1234/fixture");
+        assert_eq!(missing_article.status, StatusCode::NOT_FOUND);
+        assert_eq!(access.status, StatusCode::OK);
+        assert_eq!(access.payload["detail"]["available"], true);
+        assert_eq!(access.payload["fulltext"]["provider"], "stored_url");
+        assert_eq!(fulltext_status, StatusCode::TEMPORARY_REDIRECT);
+        assert_eq!(fulltext_location, "https://example.test/fulltext.pdf");
+        assert_eq!(ambiguous.status, StatusCode::BAD_REQUEST);
+        assert_eq!(missing_database.status, StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    #[cfg_attr(
+        miri,
+        ignore = "Miri does not support Tokio's Windows IOCP runtime initialization"
+    )]
+    async fn cnki_routes_cover_replay_session_status_and_clear_without_secret_leaks() {
+        const REPLAY_MODE: &str = "PAPER_SCANNER_CNKI_REPLAY_MODE";
+
+        std::env::remove_var(REPLAY_MODE);
+        let backend = TestBackend::new();
+        let user = backend.authenticated_user("cnki_user", false);
+        let app = backend.router();
+        let auth = user.authorization_header();
+
+        let empty_session = json_request(
+            &app,
+            Method::GET,
+            "/api/cnki/session",
+            Some(&auth),
+            None,
+            None,
+        )
+        .await;
+        let poll_before_start = json_request(
+            &app,
+            Method::POST,
+            "/api/cnki/login/poll",
+            Some(&auth),
+            None,
+            Some(serde_json::json!({
+                "timeout_seconds": 1,
+                "interval_seconds": 0.1
+            })),
+        )
+        .await;
+        let invalid_poll = json_request(
+            &app,
+            Method::POST,
+            "/api/cnki/login/poll",
+            Some(&auth),
+            None,
+            Some(serde_json::json!({
+                "timeout_seconds": 0,
+                "interval_seconds": 0.1
+            })),
+        )
+        .await;
+        let start_without_replay = json_request(
+            &app,
+            Method::POST,
+            "/api/cnki/login/start",
+            Some(&auth),
+            None,
+            None,
+        )
+        .await;
+
+        std::env::set_var(REPLAY_MODE, "start_success");
+        let waiting_start = json_request(
+            &app,
+            Method::POST,
+            "/api/cnki/login/start",
+            Some(&auth),
+            None,
+            None,
+        )
+        .await;
+        let timeout_poll = json_request(
+            &app,
+            Method::POST,
+            "/api/cnki/login/poll",
+            Some(&auth),
+            None,
+            Some(serde_json::json!({
+                "timeout_seconds": 1,
+                "interval_seconds": 0.1
+            })),
+        )
+        .await;
+
+        std::env::set_var(REPLAY_MODE, "warmup_failure");
+        let warmup_poll = json_request(
+            &app,
+            Method::POST,
+            "/api/cnki/login/poll",
+            Some(&auth),
+            None,
+            Some(serde_json::json!({
+                "timeout_seconds": 1,
+                "interval_seconds": 0.1
+            })),
+        )
+        .await;
+
+        std::env::set_var(REPLAY_MODE, "poll_success");
+        let success_start = json_request(
+            &app,
+            Method::POST,
+            "/api/cnki/login/start",
+            Some(&auth),
+            None,
+            None,
+        )
+        .await;
+        let success_poll = json_request(
+            &app,
+            Method::POST,
+            "/api/cnki/login/poll",
+            Some(&auth),
+            None,
+            Some(serde_json::json!({
+                "timeout_seconds": 1,
+                "interval_seconds": 0.1
+            })),
+        )
+        .await;
+        let active_session = json_request(
+            &app,
+            Method::GET,
+            "/api/cnki/session",
+            Some(&auth),
+            None,
+            None,
+        )
+        .await;
+        let storage_session =
+            ps_storage::get_cnki_session_status(backend.auth_db_path(), user.user_id())
+                .expect("CNKI session status should load");
+        let cleared = json_request(
+            &app,
+            Method::DELETE,
+            "/api/cnki/session",
+            Some(&auth),
+            None,
+            None,
+        )
+        .await;
+        std::env::remove_var(REPLAY_MODE);
+
+        assert_eq!(empty_session.status, StatusCode::OK);
+        assert_eq!(empty_session.payload["status"], "empty");
+        assert_eq!(empty_session.payload["configured"], false);
+        assert_eq!(poll_before_start.status, StatusCode::BAD_REQUEST);
+        assert_eq!(
+            poll_before_start.payload["detail"]["code"],
+            "cnki_login_not_started"
+        );
+        assert_eq!(invalid_poll.status, StatusCode::BAD_REQUEST);
+        assert_eq!(start_without_replay.status, StatusCode::BAD_GATEWAY);
+        assert_eq!(
+            start_without_replay.payload["detail"]["code"],
+            "cnki_login_start_failed"
+        );
+        assert_eq!(waiting_start.status, StatusCode::OK);
+        assert_eq!(waiting_start.payload["status"], "WAITING_SCAN");
+        assert_eq!(waiting_start.payload["session"]["status"], "waiting_scan");
+        assert_eq!(timeout_poll.status, StatusCode::REQUEST_TIMEOUT);
+        assert_eq!(timeout_poll.payload["detail"]["code"], "cnki_login_timeout");
+        assert_eq!(warmup_poll.status, StatusCode::BAD_GATEWAY);
+        assert_eq!(warmup_poll.payload["detail"]["code"], "cnki_warmup_failed");
+        assert_eq!(success_start.status, StatusCode::OK);
+        assert_eq!(success_poll.status, StatusCode::OK);
+        assert_eq!(success_poll.payload["status"], "COMPLETE");
+        assert_eq!(success_poll.payload["session"]["status"], "active");
+        assert_eq!(
+            success_poll.payload["session"]["cookie_names"],
+            serde_json::json!(["userToken", "vpn358_sid"])
+        );
+        assert!(!success_poll
+            .payload
+            .to_string()
+            .contains("SECRET_COOKIE_VALUE"));
+        assert!(!success_poll
+            .payload
+            .to_string()
+            .contains("SECRET_VPN_VALUE"));
+        assert_eq!(active_session.status, StatusCode::OK);
+        assert_eq!(active_session.payload["has_bff_user_token"], true);
+        assert_eq!(storage_session.status, "active");
+        assert_eq!(storage_session.cookie_names, ["userToken", "vpn358_sid"]);
+        assert_eq!(cleared.status, StatusCode::OK);
+        assert_eq!(cleared.payload["status"], "empty");
+        assert_eq!(cleared.payload["configured"], false);
+    }
+
     fn set_cookie_header(response: &JsonTestResponse) -> String {
         response
             .headers
