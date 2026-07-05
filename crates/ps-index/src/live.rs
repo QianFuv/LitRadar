@@ -8,8 +8,9 @@ use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use ps_sources::{
-    CnkiClient, CnkiSourceError, LiveCnkiConfig, LiveCnkiTransport, LiveScholarlyConfig,
-    LiveScholarlyTransport, ScholarlyClient, SourceError,
+    CnkiClient, CnkiSourceError, CnkiTransport, LiveCnkiConfig, LiveCnkiTransport,
+    LiveScholarlyConfig, LiveScholarlyTransport, ScholarlyClient, ScholarlyTransport,
+    SourceAttempt, SourceError,
 };
 use rusqlite::Connection;
 use serde::Serialize;
@@ -24,7 +25,9 @@ use crate::schema::{
 };
 use crate::scholarly::{process_scholarly_row, ScholarlyIndexError};
 use crate::stats::{IndexRunStats, PathCountIncrements};
-use crate::transforms::{build_journal_id, journal_title_from_row, source_from_row, CsvRow};
+use crate::transforms::{
+    build_journal_id, journal_title_from_row, source_from_row, ArticleRecord, CsvRow,
+};
 
 const SCHOLARLY_SOURCE: &str = "scholarly";
 const CNKI_SOURCE: &str = "cnki";
@@ -86,6 +89,31 @@ pub struct LiveCsvIndexOutcome {
     pub manifest_path: Option<String>,
     /// Optional notify process exit code.
     pub notify_exit_code: Option<i32>,
+}
+
+#[derive(Debug)]
+struct LiveJournalOutcome {
+    source: String,
+    status: String,
+    counts: PathCountIncrements,
+    attempts: Vec<SourceAttempt>,
+    written_articles: Vec<ArticleRecord>,
+}
+
+#[derive(Debug)]
+struct LiveJournalFailure {
+    source: String,
+    attempts: Vec<SourceAttempt>,
+    error: LiveIndexError,
+}
+
+struct LiveJournalContext<'a> {
+    connection: &'a Connection,
+    row: &'a CsvRow,
+    csv_file: &'a str,
+    journal_id: i64,
+    timestamp: &'a str,
+    cnki_config: &'a CnkiIndexConfig,
 }
 
 /// Live index workflow errors.
@@ -257,6 +285,125 @@ fn validate_live_concurrency_config(config: &LiveIndexConfig) -> Result<(), Live
     Ok(())
 }
 
+fn record_live_journal_attempts(
+    stats: &mut IndexRunStats,
+    source: &str,
+    attempts: &[SourceAttempt],
+    journal_id: i64,
+    journal_title: &str,
+) {
+    stats.record_source_attempts_for_source(source, attempts, Some(journal_id), journal_title);
+}
+
+fn journal_failure(
+    source: impl Into<String>,
+    attempts: Vec<SourceAttempt>,
+    error: impl Into<LiveIndexError>,
+) -> Box<LiveJournalFailure> {
+    Box::new(LiveJournalFailure {
+        source: source.into(),
+        attempts,
+        error: error.into(),
+    })
+}
+
+fn process_live_journal_row<S, C>(
+    scholarly_client: &mut ScholarlyClient<S>,
+    cnki_client: &mut CnkiClient<C>,
+    context: LiveJournalContext<'_>,
+) -> Result<LiveJournalOutcome, Box<LiveJournalFailure>>
+where
+    S: ScholarlyTransport,
+    C: CnkiTransport,
+{
+    let LiveJournalContext {
+        connection,
+        row,
+        csv_file,
+        journal_id,
+        timestamp,
+        cnki_config,
+    } = context;
+
+    match source_from_row(row).as_str() {
+        SCHOLARLY_SOURCE => {
+            let attempt_start = scholarly_client.attempts().len();
+            let result = process_scholarly_row(
+                connection,
+                scholarly_client,
+                row,
+                csv_file,
+                journal_id,
+                timestamp,
+            );
+            let attempts = scholarly_client.attempts()[attempt_start..].to_vec();
+            match result {
+                Ok(outcome) => {
+                    for year in outcome.years {
+                        mark_year_done(connection, journal_id, year, timestamp).map_err(
+                            |error| journal_failure(SCHOLARLY_SOURCE, attempts.clone(), error),
+                        )?;
+                    }
+                    mark_journal_done(connection, journal_id, timestamp).map_err(|error| {
+                        journal_failure(SCHOLARLY_SOURCE, attempts.clone(), error)
+                    })?;
+                    Ok(LiveJournalOutcome {
+                        source: SCHOLARLY_SOURCE.to_string(),
+                        status: "succeeded".to_string(),
+                        counts: PathCountIncrements {
+                            works_count: outcome.works_count,
+                            issues_count: outcome.issues_count,
+                            articles_written_count: outcome.written_articles.len() as i64,
+                            articles_deleted_no_authors_count: outcome.deleted_article_count,
+                            ..PathCountIncrements::default()
+                        },
+                        attempts,
+                        written_articles: outcome.written_articles,
+                    })
+                }
+                Err(error) => Err(journal_failure(SCHOLARLY_SOURCE, attempts, error)),
+            }
+        }
+        CNKI_SOURCE => {
+            let attempt_start = cnki_client.attempts().len();
+            let result = process_cnki_row(
+                connection,
+                cnki_client,
+                row,
+                csv_file,
+                journal_id,
+                cnki_config,
+            );
+            let attempts = cnki_client.attempts()[attempt_start..].to_vec();
+            match result {
+                Ok(outcome) => Ok(LiveJournalOutcome {
+                    source: CNKI_SOURCE.to_string(),
+                    status: outcome.status,
+                    counts: PathCountIncrements {
+                        issues_count: outcome.issues_count,
+                        article_summaries_count: outcome.article_summaries_count,
+                        article_details_count: outcome.article_details_count,
+                        articles_written_count: outcome.written_articles.len() as i64,
+                        articles_deleted_no_authors_count: outcome.deleted_article_count,
+                        ..PathCountIncrements::default()
+                    },
+                    attempts,
+                    written_articles: outcome.written_articles,
+                }),
+                Err(error) => Err(journal_failure(CNKI_SOURCE, attempts, error)),
+            }
+        }
+        other => Err(journal_failure(
+            other,
+            Vec::new(),
+            LiveIndexError::UnsupportedSource(format!(
+                "Unsupported source for {}: {other}",
+                journal_title_from_row(row)
+            )),
+        )),
+    }
+}
+
 fn run_live_csv_index(
     config: &LiveIndexConfig,
     csv_path: &Path,
@@ -346,102 +493,52 @@ fn run_live_csv_index(
             journal_title.clone(),
             timestamp.clone(),
         );
-        match source.as_str() {
-            SCHOLARLY_SOURCE => {
-                let attempt_start = scholarly_client.attempts().len();
-                let result = process_scholarly_row(
-                    &connection,
-                    &mut scholarly_client,
-                    row,
-                    &csv_file,
+        match process_live_journal_row(
+            &mut scholarly_client,
+            &mut cnki_client,
+            LiveJournalContext {
+                connection: &connection,
+                row,
+                csv_file: &csv_file,
+                journal_id,
+                timestamp: &timestamp,
+                cnki_config: &cnki_config,
+            },
+        ) {
+            Ok(outcome) => {
+                record_live_journal_attempts(
+                    &mut stats,
+                    &outcome.source,
+                    &outcome.attempts,
                     journal_id,
-                    &timestamp,
-                );
-                let attempts = scholarly_client.attempts()[attempt_start..].to_vec();
-                stats.record_source_attempts(&attempts, Some(journal_id), &journal_title);
-                match result {
-                    Ok(outcome) => {
-                        stats.record_path_counts(
-                            &path_key,
-                            PathCountIncrements {
-                                works_count: outcome.works_count,
-                                issues_count: outcome.issues_count,
-                                articles_written_count: outcome.written_articles.len() as i64,
-                                articles_deleted_no_authors_count: outcome.deleted_article_count,
-                                ..PathCountIncrements::default()
-                            },
-                        );
-                        for year in outcome.years {
-                            mark_year_done(&connection, journal_id, year, &timestamp)?;
-                        }
-                        mark_journal_done(&connection, journal_id, &timestamp)?;
-                        stats.finish_path(&path_key, "succeeded", timestamp.clone(), None);
-                        all_written_articles.extend(outcome.written_articles);
-                    }
-                    Err(error) => {
-                        stats.finish_path(
-                            &path_key,
-                            "failed",
-                            timestamp.clone(),
-                            Some(&error.to_string()),
-                        );
-                        stats.finish("failed", timestamp.clone(), Some(error.to_string()));
-                        persist_index_run_stats(&connection, &stats)?;
-                        return Err(error.into());
-                    }
-                }
-            }
-            CNKI_SOURCE => {
-                let attempt_start = cnki_client.attempts().len();
-                let result = process_cnki_row(
-                    &connection,
-                    &mut cnki_client,
-                    row,
-                    &csv_file,
-                    journal_id,
-                    &cnki_config,
-                );
-                let attempts = cnki_client.attempts()[attempt_start..].to_vec();
-                stats.record_source_attempts_for_source(
-                    CNKI_SOURCE,
-                    &attempts,
-                    Some(journal_id),
                     &journal_title,
                 );
-                match result {
-                    Ok(outcome) => {
-                        stats.record_path_counts(
-                            &path_key,
-                            PathCountIncrements {
-                                issues_count: outcome.issues_count,
-                                article_summaries_count: outcome.article_summaries_count,
-                                article_details_count: outcome.article_details_count,
-                                articles_written_count: outcome.written_articles.len() as i64,
-                                articles_deleted_no_authors_count: outcome.deleted_article_count,
-                                ..PathCountIncrements::default()
-                            },
-                        );
-                        stats.finish_path(&path_key, &outcome.status, timestamp.clone(), None);
-                        all_written_articles.extend(outcome.written_articles);
-                    }
-                    Err(error) => {
-                        stats.finish_path(
-                            &path_key,
-                            "failed",
-                            timestamp.clone(),
-                            Some(&error.to_string()),
-                        );
-                        stats.finish("failed", timestamp.clone(), Some(error.to_string()));
-                        persist_index_run_stats(&connection, &stats)?;
-                        return Err(error.into());
-                    }
-                }
+                stats.record_path_counts(&path_key, outcome.counts);
+                stats.finish_path(&path_key, &outcome.status, timestamp.clone(), None);
+                all_written_articles.extend(outcome.written_articles);
             }
-            other => {
-                return Err(LiveIndexError::UnsupportedSource(format!(
-                    "Unsupported source for {}: {other}",
-                    journal_title_from_row(row)
-                )));
+            Err(failure) => {
+                let LiveJournalFailure {
+                    source,
+                    attempts,
+                    error,
+                } = *failure;
+                record_live_journal_attempts(
+                    &mut stats,
+                    &source,
+                    &attempts,
+                    journal_id,
+                    &journal_title,
+                );
+                stats.finish_path(
+                    &path_key,
+                    "failed",
+                    timestamp.clone(),
+                    Some(&error.to_string()),
+                );
+                stats.finish("failed", timestamp.clone(), Some(error.to_string()));
+                persist_index_run_stats(&connection, &stats)?;
+                return Err(error);
             }
         }
     }

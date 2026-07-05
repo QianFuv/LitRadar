@@ -108,6 +108,31 @@ impl ApiCallStats {
             }
         }
     }
+
+    /// Merge another API statistics bucket into this bucket.
+    ///
+    /// # Arguments
+    ///
+    /// * `other` - API statistics bucket with the same aggregation key.
+    pub fn merge(&mut self, other: &ApiCallStats) {
+        self.logical_calls += other.logical_calls;
+        self.attempts += other.attempts;
+        self.successes += other.successes;
+        self.failures += other.failures;
+        self.retry_count += other.retry_count;
+        self.transport_errors += other.transport_errors;
+        self.rate_limit_failures += other.rate_limit_failures;
+        self.total_latency_ms += other.total_latency_ms;
+        for (status_code, count) in &other.status_codes {
+            *self.status_codes.entry(*status_code).or_insert(0) += count;
+        }
+        for sample in &other.error_samples {
+            if !self.error_samples.contains(sample) {
+                self.error_samples.push(sample.clone());
+                self.error_samples.truncate(5);
+            }
+        }
+    }
 }
 
 /// Path statistics aggregation key.
@@ -351,6 +376,27 @@ impl IndexRunStats {
                 .entry(key.clone())
                 .or_insert_with(|| ApiCallStats::new(key))
                 .record_attempt(attempt);
+        }
+    }
+
+    /// Merge worker statistics into this run.
+    ///
+    /// # Arguments
+    ///
+    /// * `worker` - Completed worker run statistics.
+    pub fn merge_worker_stats(&mut self, worker: IndexRunStats) {
+        self.total_journals += worker.total_journals;
+        self.succeeded_journals += worker.succeeded_journals;
+        self.failed_journals += worker.failed_journals;
+        self.resumed_journals += worker.resumed_journals;
+        for (key, path_stats) in worker.path_stats {
+            self.path_stats.insert(key, path_stats);
+        }
+        for (key, api_stats) in worker.api_stats {
+            self.api_stats
+                .entry(key.clone())
+                .or_insert_with(|| ApiCallStats::new(key))
+                .merge(&api_stats);
         }
     }
 
@@ -644,5 +690,70 @@ mod tests {
             .error_summary
             .expect("summary should exist")
             .contains("SECRET"));
+    }
+
+    #[test]
+    fn run_stats_merge_worker_stats_preserves_buckets_and_redaction() {
+        let mut parent = IndexRunStats::new(
+            "run-1".to_string(),
+            "journals.csv".to_string(),
+            "2026-07-05T00:00:00Z".to_string(),
+        );
+        let mut worker = IndexRunStats::new(
+            "run-1".to_string(),
+            "journals.csv".to_string(),
+            "2026-07-05T00:00:01Z".to_string(),
+        );
+        let path_key = worker.start_path(
+            "scholarly",
+            "journal",
+            Some(9),
+            "Worker Journal".to_string(),
+            "2026-07-05T00:00:01Z".to_string(),
+        );
+        worker.record_path_counts(
+            &path_key,
+            PathCountIncrements {
+                works_count: 2,
+                articles_written_count: 2,
+                ..PathCountIncrements::default()
+            },
+        );
+        worker.record_source_attempts(
+            &[SourceAttempt {
+                service: "openalex".to_string(),
+                endpoint: "works".to_string(),
+                method: "GET".to_string(),
+                url: "https://api.openalex.org/works?api_key=SECRET".to_string(),
+                status_code: Some(200),
+                did_succeed: true,
+                did_retry: false,
+                error: None,
+            }],
+            Some(9),
+            "Worker Journal",
+        );
+        worker.finish_path(
+            &path_key,
+            "succeeded",
+            "2026-07-05T00:00:02Z".to_string(),
+            None,
+        );
+
+        parent.merge_worker_stats(worker);
+
+        assert_eq!(parent.total_journals, 1);
+        assert_eq!(parent.succeeded_journals, 1);
+        assert!(parent.path_stats.contains_key(&path_key));
+        assert_eq!(
+            parent
+                .api_stats
+                .values()
+                .next()
+                .expect("api stats should merge")
+                .successes,
+            1
+        );
+        assert!(!format!("{parent:?}").contains("SECRET"));
     }
 }
