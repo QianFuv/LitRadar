@@ -126,6 +126,8 @@ struct LiveJournalRowsContext<'a> {
     csv_file: &'a str,
     run_id: &'a str,
     timestamp: &'a str,
+    worker_id: usize,
+    process_count: usize,
     config: &'a LiveIndexConfig,
 }
 
@@ -516,6 +518,8 @@ fn run_live_index_worker(
         csv_file: &request.csv_file,
         run_id: &request.run_id,
         timestamp: &request.timestamp,
+        worker_id: request.worker_id,
+        process_count: request.process_count,
         config: &config,
     };
 
@@ -628,7 +632,8 @@ fn run_live_journal_rows_locally(
         });
     }
 
-    let scholarly_config = LiveScholarlyConfig::from_environment(context.config.timeout_seconds);
+    let scholarly_config = LiveScholarlyConfig::from_environment(context.config.timeout_seconds)
+        .with_worker_context(context.worker_id, context.process_count);
     let mut scholarly_client = match LiveScholarlyTransport::new(scholarly_config.clone()) {
         Ok(transport) => {
             ScholarlyClient::new(transport, scholarly_config.has_semantic_scholar_key())
@@ -1031,6 +1036,8 @@ fn run_live_csv_index(
         csv_file: &csv_file,
         run_id: &run_id,
         timestamp: &timestamp,
+        worker_id: 0,
+        process_count: 1,
         config,
     };
     let journal_rows_outcome = if config.process_count > 1 && rows.len() > 1 {
@@ -1489,6 +1496,9 @@ mod tests {
                 openalex_api_keys: Vec::new(),
                 semantic_scholar_api_keys: Vec::new(),
                 crossref_mailtos: Vec::new(),
+                semantic_scholar_worker_id: 0,
+                semantic_scholar_process_count: 1,
+                semantic_scholar_base_interval_ms: 1_000,
             },
         )
         .expect_err("scholarly rows should require API configuration");
@@ -1503,6 +1513,9 @@ mod tests {
                 openalex_api_keys: vec!["openalex".to_string()],
                 semantic_scholar_api_keys: Vec::new(),
                 crossref_mailtos: Vec::new(),
+                semantic_scholar_worker_id: 0,
+                semantic_scholar_process_count: 1,
+                semantic_scholar_base_interval_ms: 1_000,
             },
         )
         .expect_err("scholarly rows should require Semantic Scholar configuration");
@@ -1521,6 +1534,9 @@ mod tests {
                 openalex_api_keys: Vec::new(),
                 semantic_scholar_api_keys: Vec::new(),
                 crossref_mailtos: Vec::new(),
+                semantic_scholar_worker_id: 0,
+                semantic_scholar_process_count: 1,
+                semantic_scholar_base_interval_ms: 1_000,
             },
         )
         .expect("CNKI-only rows should not require scholarly configuration");
@@ -1663,6 +1679,8 @@ mod tests {
             csv_file: "journals.csv",
             run_id: "run-test",
             timestamp: "2026-07-05T00:00:00Z",
+            worker_id: 0,
+            process_count: config.process_count,
             config,
         }
     }

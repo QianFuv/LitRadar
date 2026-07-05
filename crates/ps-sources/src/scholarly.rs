@@ -5,7 +5,7 @@ use std::env;
 use std::error::Error;
 use std::fmt;
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use reqwest::blocking::Client;
 use serde::{Deserialize, Serialize};
@@ -342,6 +342,12 @@ pub struct LiveScholarlyConfig {
     pub semantic_scholar_api_keys: Vec<String>,
     /// Crossref mailto candidates.
     pub crossref_mailtos: Vec<String>,
+    /// Current journal worker id for process-aware Semantic Scholar throttling.
+    pub semantic_scholar_worker_id: usize,
+    /// Journal worker process count for process-aware Semantic Scholar throttling.
+    pub semantic_scholar_process_count: usize,
+    /// Base Semantic Scholar global interval in milliseconds.
+    pub semantic_scholar_base_interval_ms: u64,
 }
 
 impl LiveScholarlyConfig {
@@ -360,7 +366,26 @@ impl LiveScholarlyConfig {
             openalex_api_keys: value_pool_from_env("OPENALEX_API_KEY_POOL"),
             semantic_scholar_api_keys: value_pool_from_env("SEMANTIC_SCHOLAR_API_KEY_POOL"),
             crossref_mailtos: value_pool_from_env("CROSSREF_MAILTO_POOL"),
+            semantic_scholar_worker_id: 0,
+            semantic_scholar_process_count: 1,
+            semantic_scholar_base_interval_ms: 1_000,
         }
+    }
+
+    /// Return a config with Semantic Scholar worker throttle context.
+    ///
+    /// # Arguments
+    ///
+    /// * `worker_id` - Current journal worker id.
+    /// * `process_count` - Total journal worker process count.
+    ///
+    /// # Returns
+    ///
+    /// Updated live Scholarly configuration.
+    pub fn with_worker_context(mut self, worker_id: usize, process_count: usize) -> Self {
+        self.semantic_scholar_worker_id = worker_id;
+        self.semantic_scholar_process_count = process_count.max(1);
+        self
     }
 
     /// Return whether Semantic Scholar enrichment can be authenticated.
@@ -373,12 +398,33 @@ impl LiveScholarlyConfig {
     }
 }
 
+fn semantic_scholar_worker_offset(config: &LiveScholarlyConfig) -> Duration {
+    let process_count = config.semantic_scholar_process_count.max(1);
+    let worker_id = config
+        .semantic_scholar_worker_id
+        .min(process_count.saturating_sub(1));
+    Duration::from_millis(
+        config
+            .semantic_scholar_base_interval_ms
+            .saturating_mul(worker_id as u64),
+    )
+}
+
+fn semantic_scholar_worker_interval(config: &LiveScholarlyConfig) -> Duration {
+    Duration::from_millis(
+        config
+            .semantic_scholar_base_interval_ms
+            .saturating_mul(config.semantic_scholar_process_count.max(1) as u64),
+    )
+}
+
 /// Blocking HTTP transport for live Scholarly sources.
 #[derive(Debug, Clone)]
 pub struct LiveScholarlyTransport {
     client: Client,
     config: LiveScholarlyConfig,
     attempts: Vec<SourceAttempt>,
+    next_semantic_scholar_at: Option<Instant>,
 }
 
 struct JsonRequest<'a> {
@@ -424,6 +470,9 @@ impl LiveScholarlyTransport {
             })?;
         Ok(Self {
             client,
+            next_semantic_scholar_at: Some(
+                Instant::now() + semantic_scholar_worker_offset(&config),
+            ),
             config,
             attempts: Vec::new(),
         })
@@ -594,6 +643,7 @@ impl LiveScholarlyTransport {
                 "Semantic Scholar API key is required for DOI enrichment.".to_string(),
             ));
         };
+        self.wait_for_semantic_scholar_slot();
         let query = vec![("fields".to_string(), SEMANTIC_SCHOLAR_FIELDS.to_string())];
         let body = json!({
             "ids": dois.iter().map(|doi| format!("DOI:{doi}")).collect::<Vec<_>>()
@@ -606,6 +656,20 @@ impl LiveScholarlyTransport {
             &body,
             Some(("x-api-key", api_key)),
         )
+    }
+
+    fn wait_for_semantic_scholar_slot(&mut self) {
+        let interval = semantic_scholar_worker_interval(&self.config);
+        if interval.is_zero() {
+            return;
+        }
+        if let Some(next_at) = self.next_semantic_scholar_at {
+            let now = Instant::now();
+            if next_at > now {
+                thread::sleep(next_at - now);
+            }
+        }
+        self.next_semantic_scholar_at = Some(Instant::now() + interval);
     }
 
     fn append_openalex_config(&self, query: &mut Vec<(String, String)>) {
@@ -1332,12 +1396,14 @@ fn redact_url(url: &str) -> String {
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
+    use std::time::Duration;
 
     use serde_json::json;
 
     use super::{
         normalize_doi, normalize_issn, normalize_source_title, openalex_short_source_id,
-        redact_url, value_pool_from_text, FixtureScholarlyTransport, ScholarlyClient,
+        redact_url, semantic_scholar_worker_interval, semantic_scholar_worker_offset,
+        value_pool_from_text, FixtureScholarlyTransport, LiveScholarlyConfig, ScholarlyClient,
         ScholarlyFixtureData, SourceError,
     };
 
@@ -1346,6 +1412,28 @@ mod tests {
         assert_eq!(
             value_pool_from_text(" one, two;one\nthree "),
             vec!["one".to_string(), "two".to_string(), "three".to_string()]
+        );
+    }
+
+    #[test]
+    fn semantic_scholar_throttle_uses_worker_offset_and_process_interval() {
+        let config = LiveScholarlyConfig {
+            timeout_seconds: 1,
+            openalex_api_keys: Vec::new(),
+            semantic_scholar_api_keys: vec!["s2".to_string()],
+            crossref_mailtos: Vec::new(),
+            semantic_scholar_worker_id: 2,
+            semantic_scholar_process_count: 4,
+            semantic_scholar_base_interval_ms: 25,
+        };
+
+        assert_eq!(
+            semantic_scholar_worker_offset(&config),
+            Duration::from_millis(50)
+        );
+        assert_eq!(
+            semantic_scholar_worker_interval(&config),
+            Duration::from_millis(100)
         );
     }
 
