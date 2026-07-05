@@ -10,7 +10,7 @@
   └── http://localhost:8000  -> api (api)
 
 worker sidecar
-  └── ps-cli worker shadow
+  └── ps-cli worker execute
 ```
 
 根 Compose 暴露 `3000` 和 `8000`，并把宿主机 `./data` 挂载到 Rust 后端容器的 `/app/data`。
@@ -37,12 +37,12 @@ worker sidecar
 ### `worker`
 
 - 复用后端镜像
-- 启动命令：`ps-cli worker shadow --interval-seconds 300`
+- 启动命令：`ps-cli worker execute --interval-seconds 300`
 - 卷挂载：`./data:/app/data`
 - 环境变量与 `api` 服务保持一致
 - 依赖：`api`
 
-`worker shadow` 会周期性加载并校验 `scheduled_tasks`，保持 sidecar 进程运行。需要实际执行或 dry-run 单个后台任务时，使用 `ps-cli scheduler run-once TASK_ID` 或 `ps-cli scheduler dry-run-once TASK_ID`。
+`worker execute` 会周期性加载 `scheduled_tasks`，按五段 cron 执行启用任务，并把结果写回 `last_run_at` 与 `last_status`。`worker shadow` 可用于只加载和校验任务配置；需要立即执行或 dry-run 单个后台任务时，使用 `ps-cli scheduler run-once TASK_ID` 或 `ps-cli scheduler dry-run-once TASK_ID`。
 
 ### `app`
 

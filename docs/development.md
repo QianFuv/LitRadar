@@ -17,7 +17,7 @@ data/push_state/*.changes.json
   -> /api/tracking/push-weekly
 ```
 
-Docker 运行时由 `api` 提供 API，由 `ps-cli worker shadow` 作为 sidecar 加载定时任务配置。`ps-cli scheduler` 和 `ps-cli worker` 是调度内部入口；用户侧保留 `api`、`index`、`notify` 和 `push` 四个旧命令名。
+Docker 运行时由 `api` 提供 API，由 `ps-cli worker execute` 作为 sidecar 按 cron 执行启用的定时任务。`ps-cli worker shadow` 仍用于只加载和校验配置；用户侧保留 `api`、`index`、`notify` 和 `push` 四个旧命令名。
 
 ## Rust 模块划分
 
@@ -87,8 +87,11 @@ RUST_LOG=ps_api=debug,tower_http=debug cargo run --bin api
 ### Rust worker
 
 ```bash
+cargo run -p ps-cli -- worker execute --interval-seconds 300
 cargo run -p ps-cli -- worker shadow --interval-seconds 300
 ```
+
+`worker execute` 会持续加载 `scheduled_tasks` 并按五段 cron 执行启用任务；`worker shadow` 只校验配置，不执行命令。
 
 ### Scheduler
 
@@ -179,7 +182,7 @@ docker compose build
 
 ### 管理员定时任务不是 API 进程内 APScheduler
 
-Rust worker sidecar 会加载任务配置；单次执行由 `ps-cli scheduler run-once TASK_ID` 触发，dry-run 由 `ps-cli scheduler dry-run-once TASK_ID` 触发。
+Rust worker sidecar 的 `worker execute` 模式会按 cron 自动执行启用任务；单次执行由 `ps-cli scheduler run-once TASK_ID` 触发，dry-run 由 `ps-cli scheduler dry-run-once TASK_ID` 触发。
 
 ### 通知配置不绑定单一 AI 服务商
 

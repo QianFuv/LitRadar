@@ -603,7 +603,8 @@ CNKI 精确匹配失败时返回受控错误，不会下载候选列表中的错
 补充说明：
 
 - `cron` 使用标准五段 crontab
-- Docker 默认运行 `ps-cli worker shadow`，用于持续加载并校验定时任务配置；不会自动执行 shell 命令
+- Docker 默认运行 `ps-cli worker execute --interval-seconds 300`，由 Rust worker sidecar 按 cron 自动执行启用任务
+- `ps-cli worker shadow` 仍可用于持续加载并校验任务配置，但不会执行 shell 命令
 - 立即执行和 dry-run 可通过 `ps-cli scheduler run-once TASK_ID` 与 `ps-cli scheduler dry-run-once TASK_ID` 从运维终端触发
 - 执行模式仍按 shell 命令处理，并在执行前应用 `runtime_settings` 数据库配置
 - 没有单独的“立即执行”管理 API

@@ -154,6 +154,8 @@ CNKI 索引与全文获取是两条独立链路：
 
 这个设计避免把一个用户的浙江图书馆凭据用于其他用户，也避免因 CNKI 搜索返回相近题名而下载错误 PDF。
 
+Rust API 的生产路径会真实执行浙江图书馆扫码登录、会话 warm-up、CNKI 搜索和 PDF 下载。`PAPER_SCANNER_CNKI_REPLAY_MODE`、`PAPER_SCANNER_ZJLIB_CNKI_FIXTURE_MODE` 和 `PAPER_SCANNER_CNKI_PDF_REPLAY_*` 只用于确定性测试或离线排障，不是生产功能限制。
+
 ## 八、并发与风控
 
 当前未接入代理池，也不读取任何代理配置。CNKI 客户端直连海外站。

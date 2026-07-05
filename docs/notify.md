@@ -189,6 +189,9 @@ cargo run --bin push -- --db utd24.sqlite --changes-file data/push_state/utd24.c
 
 - `data/push_state/<db>.json`
 - `data/push_state/<db>.changes.json`
+- `data/folder_push_state/<db>.json`
+
+`notify` 和 `/api/tracking/push-weekly` 使用 `data/push_state/`；`push` 默认使用 `data/folder_push_state/` 保存追踪文件夹推送状态。变更清单仍统一由 `data/push_state/*.changes.json` 提供。
 
 状态文件通常包含：
 

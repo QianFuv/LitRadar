@@ -547,7 +547,8 @@ announcements
 
 说明：
 
-- Docker 默认由 `ps-cli worker shadow` 持续加载和校验任务配置，不自动执行 shell 命令
+- Docker 默认由 `ps-cli worker execute --interval-seconds 300` 持续加载并按 cron 自动执行启用任务
+- `ps-cli worker shadow` 只加载和校验任务配置，不自动执行 shell 命令
 - 立即执行和 dry-run 由 `ps-cli scheduler run-once TASK_ID` 与 `ps-cli scheduler dry-run-once TASK_ID` 触发
 - 执行模式仍按 shell 命令处理，并会把 `runtime_settings` 中的数据库来源配置应用到命令环境
 
@@ -602,4 +603,6 @@ announcements
 
 ### 2. `data/push_state/<db>.json`
 
-PushPlus 通知和追踪文件夹推送运行状态。历史 Python 运行路径可能留下 `data/folder_push_state/<db>.json`，但当前 Rust CLI 默认使用 `data/push_state/`。
+PushPlus 通知、每周更新和 API 手动推送状态。Rust `notify` 默认使用 `data/push_state/`。
+
+Rust `push` 命令默认使用 `data/folder_push_state/<db>.json` 保存追踪文件夹推送状态；历史 Python 运行路径也可能留下同目录文件。
