@@ -778,3 +778,161 @@ fn map_index_error(error: IndexRepositoryError) -> ApiError {
         | IndexRepositoryError::Cnki(_) => ApiError::internal_server_error(),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::io;
+
+    use axum::http::StatusCode;
+    use rusqlite::Error as SqliteError;
+
+    use super::*;
+
+    #[test]
+    fn parses_article_query_repeated_values_and_last_scalar_values() {
+        let (db, params) = parse_article_query(Some(
+            "db=first.sqlite&db=fixture.sqlite&journal_id=1&journal_id=2&journal_id=&area=Medicine&area=Data+Science&issue_id=10&year=2026&in_press=yes&open_access=1&suppressed=no&within_library_holdings=off&date_from=2026-01-01&date_to=2026-02-01&doi=10.1000%2Fabc&pmid=PMID%2B42&q=genome+search&sort=date%3Aasc&limit=25&offset=5&cursor=2026-01-05%7C1001&include_total=false",
+        ))
+        .expect("query should parse");
+
+        assert_eq!(db.as_deref(), Some("fixture.sqlite"));
+        assert_eq!(params.journal_id, [1, 2]);
+        assert_eq!(params.area, ["Medicine", "Data Science"]);
+        assert_eq!(params.issue_id, Some(10));
+        assert_eq!(params.year, Some(2026));
+        assert_eq!(params.in_press, Some(true));
+        assert_eq!(params.open_access, Some(true));
+        assert_eq!(params.suppressed, Some(false));
+        assert_eq!(params.within_library_holdings, Some(false));
+        assert_eq!(params.date_from.as_deref(), Some("2026-01-01"));
+        assert_eq!(params.date_to.as_deref(), Some("2026-02-01"));
+        assert_eq!(params.doi.as_deref(), Some("10.1000/abc"));
+        assert_eq!(params.pmid.as_deref(), Some("PMID+42"));
+        assert_eq!(params.q.as_deref(), Some("genome search"));
+        assert_eq!(params.sort.as_deref(), Some("date:asc"));
+        assert_eq!(params.limit, 25);
+        assert_eq!(params.offset, 5);
+        assert_eq!(params.cursor.as_deref(), Some("2026-01-05|1001"));
+        assert!(!params.include_total);
+    }
+
+    #[test]
+    fn query_decoding_rejects_invalid_percent_and_utf8_sequences() {
+        assert_bad_request_detail(
+            parse_query_pairs(Some("q=%ZZ")).expect_err("invalid hex should fail"),
+            "Invalid query encoding",
+        );
+        assert_bad_request_detail(
+            parse_query_pairs(Some("q=%E4%ZZ")).expect_err("partial invalid utf8 should fail"),
+            "Invalid query encoding",
+        );
+        assert_bad_request_detail(
+            parse_query_pairs(Some("q=%E4")).expect_err("truncated percent should fail"),
+            "Invalid query encoding",
+        );
+        assert_bad_request_detail(
+            parse_query_pairs(Some("q=%FF")).expect_err("invalid UTF-8 should fail"),
+            "Invalid query encoding",
+        );
+    }
+
+    #[test]
+    fn query_scalar_parsers_report_field_specific_errors() {
+        let pairs = vec![
+            ("limit".to_string(), "abc".to_string()),
+            ("open_access".to_string(), "maybe".to_string()),
+        ];
+
+        assert_bad_request_detail(
+            parse_optional_i64(&pairs, "limit").expect_err("invalid integer should fail"),
+            "Invalid integer for limit",
+        );
+        assert_bad_request_detail(
+            parse_optional_bool(&pairs, "open_access").expect_err("invalid bool should fail"),
+            "Invalid boolean for open_access",
+        );
+
+        for value in ["true", "TRUE", "on", "yes", "1"] {
+            assert!(parse_bool("flag", value).expect("truthy value should parse"));
+        }
+        for value in ["false", "FALSE", "off", "no", "0"] {
+            assert!(!parse_bool("flag", value).expect("falsey value should parse"));
+        }
+    }
+
+    #[test]
+    fn filename_encoding_preserves_safe_ascii_and_encodes_other_bytes() {
+        assert_eq!(
+            percent_encode_filename("Alpha Journal_2026.pdf"),
+            "Alpha%20Journal_2026.pdf"
+        );
+        assert_eq!(
+            percent_encode_filename("中文 fulltext.pdf"),
+            "%E4%B8%AD%E6%96%87%20fulltext.pdf"
+        );
+        assert_eq!(
+            header_value("attachment; filename*=UTF-8''Alpha%20Journal.pdf")
+                .expect("header value should parse")
+                .to_str()
+                .expect("header value should be visible"),
+            "attachment; filename*=UTF-8''Alpha%20Journal.pdf"
+        );
+        assert_api_error(
+            header_value("bad\nheader").expect_err("invalid header should fail"),
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Internal Server Error",
+        );
+    }
+
+    #[test]
+    fn index_error_mapping_keeps_route_status_contract() {
+        assert_api_error(
+            map_index_error(IndexRepositoryError::DatabaseResolution(
+                DatabaseResolutionError::DatabaseNotFound,
+            )),
+            StatusCode::NOT_FOUND,
+            "Database not found",
+        );
+        assert_api_error(
+            map_index_error(IndexRepositoryError::DatabaseResolution(
+                DatabaseResolutionError::MultipleDatabasesFound,
+            )),
+            StatusCode::BAD_REQUEST,
+            "Multiple databases found, specify ?db=<name>",
+        );
+        assert_api_error(
+            map_index_error(IndexRepositoryError::UnsupportedArticleSort),
+            StatusCode::BAD_REQUEST,
+            "Articles only support sort=date:desc or date:asc",
+        );
+        assert_api_error(
+            map_index_error(IndexRepositoryError::Sqlite(SqliteError::InvalidQuery)),
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Internal Server Error",
+        );
+        assert_api_error(
+            map_index_error(IndexRepositoryError::DatabaseResolution(
+                DatabaseResolutionError::Io(io::Error::other("disk")),
+            )),
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Internal Server Error",
+        );
+    }
+
+    fn assert_bad_request_detail(error: ApiError, detail: &str) {
+        assert_api_error(error, StatusCode::BAD_REQUEST, detail);
+    }
+
+    fn assert_api_error(error: ApiError, status: StatusCode, detail: &str) {
+        match error {
+            ApiError::Http {
+                status: actual_status,
+                detail: actual_detail,
+            } => {
+                assert_eq!(actual_status, status);
+                assert_eq!(actual_detail, detail);
+            }
+            ApiError::JsonDetail { .. } => panic!("expected HTTP error"),
+        }
+    }
+}
