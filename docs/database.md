@@ -90,6 +90,11 @@ index_runs (1) ---- (N) index_path_stats
 - 为筛选页提供 `area`
 - 为调试与回溯保留原始 CSV 信息
 
+主要索引：
+
+- `idx_journal_meta_area`
+- `idx_journal_meta_area_journal`
+
 ### 3. `issues`
 
 期次表。
@@ -156,9 +161,13 @@ index_runs (1) ---- (N) index_path_stats
   - `idx_articles_issue_date_id`
 - 按可过滤状态：
   - `idx_articles_open_access`
+  - `idx_articles_open_access_date_id`
   - `idx_articles_in_press`
+  - `idx_articles_in_press_date_id`
   - `idx_articles_suppressed`
+  - `idx_articles_suppressed_date_id`
   - `idx_articles_within_holdings`
+  - `idx_articles_within_holdings_date_id`
 - 按常用精确查询：
   - `idx_articles_doi`
   - `idx_articles_pmid`
@@ -212,8 +221,10 @@ SQLite FTS5 虚表，用于全文检索。
 
 说明：
 
-- 如果成功加载 `simple` 扩展，则会以 `tokenize = 'simple'` 创建
-- 否则使用默认 FTS5 tokenizer
+- Rust 索引初始化会优先加载 `SIMPLE_TOKENIZER_PATH` 或项目内 `libs/simple-*` 下的 `simple` 扩展；如果加载成功，则以 `tokenize = 'simple'` 创建
+- 如果扩展不存在或加载失败，建库不会中断，会使用默认 FTS5 tokenizer
+- 查询层对 `q` 使用 SQLite FTS5 `MATCH ?`；中文、英文分词由 `article_search` 建表时的 tokenizer 决定，不做拼音查询展开
+- 对已经存在的 `article_search`，`CREATE VIRTUAL TABLE IF NOT EXISTS` 不会重建 FTS 表；从默认 tokenizer 迁移到 `simple` tokenizer 需要单独重建全文索引
 
 ### 7. `listing_state`
 
@@ -225,7 +236,13 @@ SQLite FTS5 虚表，用于全文检索。
 - `status`
 - `updated_at`
 
-当前代码会查询 `status = 'ready'` 来判断是否启用 `article_listing`。
+Rust 索引初始化只创建该表，不会在空库或未完成构建时写入 `ready`。live/fixture 索引成功完成后会写入：
+
+- `id = 1`
+- `status = 'ready'`
+- `updated_at = <本次索引时间戳>`
+
+当前查询代码会读取 `status = 'ready'`，并确认 `article_listing` 至少有一行后才启用 `article_listing` 分支；缺少该状态或状态不是 `ready` 时会回退到 `articles` 联查分支。
 
 ### 8. `journal_year_state`
 
