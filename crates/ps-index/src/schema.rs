@@ -2,6 +2,7 @@
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use rusqlite::{params, params_from_iter, Connection, LoadExtensionGuard};
 
@@ -9,6 +10,36 @@ use crate::stats::IndexRunStats;
 use crate::transforms::{ArticleRecord, IssueRecord, JournalRecord, MetaRecord};
 
 const SIMPLE_TOKENIZER_ENV: &str = "SIMPLE_TOKENIZER_PATH";
+const INDEX_BUSY_TIMEOUT_SECONDS: u64 = 30;
+
+/// Open and initialize an index SQLite database.
+///
+/// # Arguments
+///
+/// * `path` - SQLite database path.
+///
+/// # Returns
+///
+/// Open initialized SQLite connection.
+pub fn open_index_db(path: impl AsRef<Path>) -> rusqlite::Result<Connection> {
+    let connection = Connection::open(path)?;
+    connection.busy_timeout(Duration::from_secs(INDEX_BUSY_TIMEOUT_SECONDS))?;
+    init_index_db(&connection)?;
+    Ok(connection)
+}
+
+/// Run SQLite index maintenance after an index run.
+///
+/// # Arguments
+///
+/// * `connection` - Open SQLite connection.
+///
+/// # Returns
+///
+/// SQLite result.
+pub fn optimize_index_db(connection: &Connection) -> rusqlite::Result<()> {
+    connection.execute_batch("PRAGMA optimize;")
+}
 
 /// Initialize the index database schema used by Python-compatible readers.
 ///
@@ -499,39 +530,39 @@ pub fn upsert_meta(connection: &Connection, record: &MetaRecord) -> rusqlite::Re
 ///
 /// SQLite result.
 pub fn upsert_issues(connection: &Connection, records: &[IssueRecord]) -> rusqlite::Result<()> {
+    let mut statement = connection.prepare(
+        "
+        INSERT INTO issues (
+            issue_id, journal_id, publication_year, title, volume, number,
+            date, is_valid_issue, suppressed, embargoed, within_subscription
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+        ON CONFLICT(issue_id) DO UPDATE SET
+            journal_id = excluded.journal_id,
+            publication_year = excluded.publication_year,
+            title = excluded.title,
+            volume = excluded.volume,
+            number = excluded.number,
+            date = excluded.date,
+            is_valid_issue = excluded.is_valid_issue,
+            suppressed = excluded.suppressed,
+            embargoed = excluded.embargoed,
+            within_subscription = excluded.within_subscription
+        ",
+    )?;
     for record in records {
-        connection.execute(
-            "
-            INSERT INTO issues (
-                issue_id, journal_id, publication_year, title, volume, number,
-                date, is_valid_issue, suppressed, embargoed, within_subscription
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
-            ON CONFLICT(issue_id) DO UPDATE SET
-                journal_id = excluded.journal_id,
-                publication_year = excluded.publication_year,
-                title = excluded.title,
-                volume = excluded.volume,
-                number = excluded.number,
-                date = excluded.date,
-                is_valid_issue = excluded.is_valid_issue,
-                suppressed = excluded.suppressed,
-                embargoed = excluded.embargoed,
-                within_subscription = excluded.within_subscription
-            ",
-            params![
-                record.issue_id,
-                record.journal_id,
-                record.publication_year,
-                record.title,
-                record.volume,
-                record.number,
-                record.date,
-                record.is_valid_issue,
-                record.suppressed,
-                record.embargoed,
-                record.within_subscription,
-            ],
-        )?;
+        statement.execute(params![
+            record.issue_id,
+            record.journal_id,
+            record.publication_year,
+            record.title,
+            record.volume,
+            record.number,
+            record.date,
+            record.is_valid_issue,
+            record.suppressed,
+            record.embargoed,
+            record.within_subscription,
+        ])?;
     }
     Ok(())
 }
@@ -547,62 +578,62 @@ pub fn upsert_issues(connection: &Connection, records: &[IssueRecord]) -> rusqli
 ///
 /// SQLite result.
 pub fn upsert_articles(connection: &Connection, records: &[ArticleRecord]) -> rusqlite::Result<()> {
+    let mut statement = connection.prepare(
+        "
+        INSERT INTO articles (
+            article_id, journal_id, issue_id, title, date, authors, start_page,
+            end_page, abstract, doi, pmid, permalink, suppressed, in_press,
+            open_access, platform_id, retraction_doi, within_library_holdings,
+            content_location, full_text_file
+        ) VALUES (
+            ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14,
+            ?15, ?16, ?17, ?18, ?19, ?20
+        )
+        ON CONFLICT(article_id) DO UPDATE SET
+            journal_id = excluded.journal_id,
+            issue_id = excluded.issue_id,
+            title = excluded.title,
+            date = excluded.date,
+            authors = excluded.authors,
+            start_page = excluded.start_page,
+            end_page = excluded.end_page,
+            abstract = excluded.abstract,
+            doi = excluded.doi,
+            pmid = excluded.pmid,
+            permalink = excluded.permalink,
+            suppressed = excluded.suppressed,
+            in_press = excluded.in_press,
+            open_access = excluded.open_access,
+            platform_id = excluded.platform_id,
+            retraction_doi = excluded.retraction_doi,
+            within_library_holdings = excluded.within_library_holdings,
+            content_location = excluded.content_location,
+            full_text_file = excluded.full_text_file
+        ",
+    )?;
     for record in records {
-        connection.execute(
-            "
-            INSERT INTO articles (
-                article_id, journal_id, issue_id, title, date, authors, start_page,
-                end_page, abstract, doi, pmid, permalink, suppressed, in_press,
-                open_access, platform_id, retraction_doi, within_library_holdings,
-                content_location, full_text_file
-            ) VALUES (
-                ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14,
-                ?15, ?16, ?17, ?18, ?19, ?20
-            )
-            ON CONFLICT(article_id) DO UPDATE SET
-                journal_id = excluded.journal_id,
-                issue_id = excluded.issue_id,
-                title = excluded.title,
-                date = excluded.date,
-                authors = excluded.authors,
-                start_page = excluded.start_page,
-                end_page = excluded.end_page,
-                abstract = excluded.abstract,
-                doi = excluded.doi,
-                pmid = excluded.pmid,
-                permalink = excluded.permalink,
-                suppressed = excluded.suppressed,
-                in_press = excluded.in_press,
-                open_access = excluded.open_access,
-                platform_id = excluded.platform_id,
-                retraction_doi = excluded.retraction_doi,
-                within_library_holdings = excluded.within_library_holdings,
-                content_location = excluded.content_location,
-                full_text_file = excluded.full_text_file
-            ",
-            params![
-                record.article_id,
-                record.journal_id,
-                record.issue_id,
-                record.title,
-                record.date,
-                record.authors,
-                record.start_page,
-                record.end_page,
-                record.abstract_text,
-                record.doi,
-                record.pmid,
-                record.permalink,
-                record.suppressed,
-                record.in_press,
-                record.open_access,
-                record.platform_id,
-                record.retraction_doi,
-                record.within_library_holdings,
-                record.content_location,
-                record.full_text_file,
-            ],
-        )?;
+        statement.execute(params![
+            record.article_id,
+            record.journal_id,
+            record.issue_id,
+            record.title,
+            record.date,
+            record.authors,
+            record.start_page,
+            record.end_page,
+            record.abstract_text,
+            record.doi,
+            record.pmid,
+            record.permalink,
+            record.suppressed,
+            record.in_press,
+            record.open_access,
+            record.platform_id,
+            record.retraction_doi,
+            record.within_library_holdings,
+            record.content_location,
+            record.full_text_file,
+        ])?;
     }
     Ok(())
 }
@@ -618,13 +649,14 @@ pub fn upsert_articles(connection: &Connection, records: &[ArticleRecord]) -> ru
 ///
 /// SQLite result.
 pub fn delete_articles(connection: &Connection, article_ids: &[i64]) -> rusqlite::Result<()> {
+    let mut delete_search = connection.prepare("DELETE FROM article_search WHERE rowid = ?1")?;
+    let mut delete_listing =
+        connection.prepare("DELETE FROM article_listing WHERE article_id = ?1")?;
+    let mut delete_article = connection.prepare("DELETE FROM articles WHERE article_id = ?1")?;
     for article_id in article_ids {
-        connection.execute("DELETE FROM article_search WHERE rowid = ?1", [article_id])?;
-        connection.execute(
-            "DELETE FROM article_listing WHERE article_id = ?1",
-            [article_id],
-        )?;
-        connection.execute("DELETE FROM articles WHERE article_id = ?1", [article_id])?;
+        delete_search.execute([article_id])?;
+        delete_listing.execute([article_id])?;
+        delete_article.execute([article_id])?;
     }
     Ok(())
 }
@@ -645,23 +677,23 @@ pub fn upsert_article_search(
     records: &[ArticleRecord],
     journal_title: &str,
 ) -> rusqlite::Result<()> {
+    let mut statement = connection.prepare(
+        "
+        INSERT OR REPLACE INTO article_search (
+            rowid, article_id, title, abstract, doi, authors, journal_title
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+        ",
+    )?;
     for record in records {
-        connection.execute(
-            "
-            INSERT OR REPLACE INTO article_search (
-                rowid, article_id, title, abstract, doi, authors, journal_title
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
-            ",
-            params![
-                record.article_id,
-                record.article_id,
-                record.title.as_deref().unwrap_or(""),
-                record.abstract_text.as_deref().unwrap_or(""),
-                record.doi.as_deref().unwrap_or(""),
-                record.authors.as_deref().unwrap_or(""),
-                journal_title,
-            ],
-        )?;
+        statement.execute(params![
+            record.article_id,
+            record.article_id,
+            record.title.as_deref().unwrap_or(""),
+            record.abstract_text.as_deref().unwrap_or(""),
+            record.doi.as_deref().unwrap_or(""),
+            record.authors.as_deref().unwrap_or(""),
+            journal_title,
+        ])?;
     }
     Ok(())
 }
@@ -1029,13 +1061,14 @@ mod tests {
 
     use ps_sources::SourceAttempt;
     use rusqlite::Connection;
+    use tempfile::NamedTempFile;
 
     use crate::stats::{IndexRunStats, PathCountIncrements};
     use crate::transforms::{ArticleRecord, JournalRecord, MetaRecord};
 
     use super::{
         init_index_db, init_index_db_with_simple_tokenizer_path, mark_article_listing_ready,
-        persist_index_run_stats, refresh_article_listing_for_articles,
+        open_index_db, persist_index_run_stats, refresh_article_listing_for_articles,
         simple_tokenizer_path_from_root, upsert_article_search, upsert_articles, upsert_journal,
         upsert_meta,
     };
@@ -1074,6 +1107,17 @@ mod tests {
         "idx_journals_library_id",
         "idx_journals_scimago_rank",
     ];
+
+    #[test]
+    fn open_index_db_sets_busy_timeout() {
+        let db_file = NamedTempFile::new().expect("database file should be created");
+        let connection = open_index_db(db_file.path()).expect("index db should open");
+        let busy_timeout_ms: i64 = connection
+            .query_row("PRAGMA busy_timeout", [], |row| row.get(0))
+            .expect("busy timeout should be readable");
+
+        assert_eq!(busy_timeout_ms, 30_000);
+    }
 
     #[test]
     fn initializes_runtime_schema_metadata_with_default_fts() {

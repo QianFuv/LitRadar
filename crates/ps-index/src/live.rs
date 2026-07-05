@@ -6,7 +6,7 @@ use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use ps_sources::{
     CnkiClient, CnkiSourceError, CnkiTransport, LiveCnkiConfig, LiveCnkiTransport,
@@ -21,8 +21,8 @@ use crate::manifest::{
     build_change_manifest_from_snapshots, collect_article_snapshot, write_change_manifest,
 };
 use crate::schema::{
-    init_index_db, mark_article_listing_ready, mark_journal_done, mark_year_done,
-    persist_index_run_stats,
+    mark_article_listing_ready, mark_journal_done, mark_year_done, open_index_db,
+    optimize_index_db, persist_index_run_stats,
 };
 use crate::scholarly::{process_scholarly_row, ScholarlyIndexError};
 use crate::stats::{ApiCallStats, IndexRunStats, PathCountIncrements, PathStats};
@@ -33,7 +33,6 @@ use crate::transforms::{
 const SCHOLARLY_SOURCE: &str = "scholarly";
 const CNKI_SOURCE: &str = "cnki";
 const LIVE_INDEX_WORKER_REQUEST_ENV: &str = "PAPER_SCANNER_LIVE_INDEX_WORKER_REQUEST";
-const SQLITE_BUSY_TIMEOUT_SECONDS: u64 = 30;
 
 /// Live index run configuration.
 #[derive(Debug, Clone)]
@@ -548,10 +547,7 @@ fn run_live_index_worker(
 }
 
 fn open_live_index_connection(db_path: &Path) -> Result<Connection, LiveIndexError> {
-    let connection = Connection::open(db_path)?;
-    connection.busy_timeout(Duration::from_secs(SQLITE_BUSY_TIMEOUT_SECONDS))?;
-    init_index_db(&connection)?;
-    Ok(connection)
+    Ok(open_index_db(db_path)?)
 }
 
 fn write_live_worker_request_file(
@@ -1094,6 +1090,7 @@ fn run_live_csv_index(
         None
     };
     mark_article_listing_ready(&connection, &timestamp)?;
+    optimize_index_db(&connection)?;
 
     Ok(LiveCsvIndexOutcome {
         csv_path: csv_path.display().to_string(),

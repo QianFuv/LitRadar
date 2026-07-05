@@ -17,10 +17,10 @@ use serde_json::Value;
 
 use crate::manifest::{build_change_manifest, write_change_manifest};
 use crate::schema::{
-    delete_articles, get_completed_years, get_journal_issue_ids_with_articles, init_index_db,
-    is_journal_complete, mark_article_listing_ready, mark_journal_done, mark_year_done,
-    persist_index_run_stats, refresh_article_listing_for_articles, upsert_article_search,
-    upsert_articles, upsert_issues, upsert_journal, upsert_meta,
+    delete_articles, get_completed_years, get_journal_issue_ids_with_articles, is_journal_complete,
+    mark_article_listing_ready, mark_journal_done, mark_year_done, open_index_db,
+    optimize_index_db, persist_index_run_stats, refresh_article_listing_for_articles,
+    upsert_article_search, upsert_articles, upsert_issues, upsert_journal, upsert_meta,
 };
 use crate::stats::{IndexRunStats, PathCountIncrements};
 use crate::transforms::{
@@ -162,8 +162,7 @@ pub fn run_cnki_fixture_index(
     if let Some(parent) = config.output_db_path.parent() {
         fs::create_dir_all(parent)?;
     }
-    let connection = Connection::open(&config.output_db_path)?;
-    init_index_db(&connection)?;
+    let connection = open_index_db(&config.output_db_path)?;
     let csv_file = config
         .csv_path
         .file_name()
@@ -270,6 +269,7 @@ pub fn run_cnki_fixture_index(
         None
     };
     mark_article_listing_ready(&connection, &config.timestamp)?;
+    optimize_index_db(&connection)?;
 
     Ok(CnkiIndexOutcome {
         status: "succeeded".to_string(),
@@ -497,7 +497,6 @@ where
     }
 
     mark_journal_done(connection, journal_id, &config.timestamp)?;
-    connection.execute_batch("PRAGMA optimize;")?;
 
     Ok(ProcessOutcome {
         status: "succeeded".to_string(),
