@@ -607,7 +607,15 @@ fn default_timestamp() -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_csv_line, validate_sources};
+    use std::fs;
+
+    use ps_sources::LiveScholarlyConfig;
+    use tempfile::tempdir;
+
+    use super::{
+        parse_csv_line, read_csv_rows, run_live_index, validate_required_source_config,
+        validate_sources, LiveIndexConfig,
+    };
     use crate::transforms::CsvRow;
 
     #[test]
@@ -630,5 +638,83 @@ mod tests {
         ]);
 
         assert!(validate_sources(&[row]).is_err());
+    }
+
+    #[test]
+    fn live_index_skips_missing_or_empty_meta_inputs() {
+        let root = tempdir().expect("temp root should be created");
+        let missing_meta = run_live_index(&live_config(root.path()))
+            .expect("missing meta dir should return a skipped outcome");
+
+        assert_eq!(missing_meta.status, "skipped");
+        assert!(missing_meta
+            .message
+            .as_deref()
+            .expect("missing meta should explain skip")
+            .contains("Directory not found"));
+
+        fs::create_dir_all(root.path().join("data").join("meta"))
+            .expect("meta dir should be created");
+        let empty_meta =
+            run_live_index(&live_config(root.path())).expect("empty meta dir should skip");
+
+        assert_eq!(empty_meta.status, "skipped");
+        assert!(empty_meta
+            .message
+            .as_deref()
+            .expect("empty meta should explain skip")
+            .contains("No CSV files"));
+    }
+
+    #[test]
+    fn live_index_reports_empty_csv_without_network_transports() {
+        let root = tempdir().expect("temp root should be created");
+        let meta_dir = root.path().join("data").join("meta");
+        fs::create_dir_all(&meta_dir).expect("meta dir should be created");
+        fs::write(meta_dir.join("journals.csv"), "source,title,issn\n")
+            .expect("empty csv should be written");
+
+        let outcome = run_live_index(&live_config(root.path()))
+            .expect("empty csv should not construct live transports");
+
+        assert_eq!(outcome.status, "succeeded");
+        assert_eq!(outcome.csvs.len(), 1);
+        assert_eq!(outcome.csvs[0].status, "skipped");
+        assert!(outcome.csvs[0].written_article_ids.is_empty());
+    }
+
+    #[test]
+    fn csv_reader_defaults_source_and_validates_required_scholarly_config() {
+        let root = tempdir().expect("temp root should be created");
+        let csv_path = root.path().join("journals.csv");
+        fs::write(&csv_path, "title,issn\nJournal,1234-5678\n").expect("csv should be written");
+
+        let rows = read_csv_rows(&csv_path).expect("csv should parse");
+        let missing_config = validate_required_source_config(
+            &rows,
+            &LiveScholarlyConfig {
+                timeout_seconds: 1,
+                openalex_api_keys: Vec::new(),
+                semantic_scholar_api_keys: Vec::new(),
+                crossref_mailtos: Vec::new(),
+            },
+        )
+        .expect_err("scholarly rows should require API configuration");
+
+        assert_eq!(rows[0].get("source").map(String::as_str), Some("scholarly"));
+        assert!(missing_config.to_string().contains("OpenAlex API key"));
+    }
+
+    fn live_config(root: &std::path::Path) -> LiveIndexConfig {
+        LiveIndexConfig {
+            project_root: root.to_path_buf(),
+            file: None,
+            issue_batch_size: 10,
+            timeout_seconds: 1,
+            resume: false,
+            update: false,
+            notify: false,
+            notify_dry_run: true,
+        }
     }
 }

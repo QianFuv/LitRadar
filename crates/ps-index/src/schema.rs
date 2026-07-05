@@ -810,13 +810,15 @@ fn python_status_codes_json(status_codes: &std::collections::BTreeMap<u16, i64>)
 
 #[cfg(test)]
 mod tests {
+    use ps_sources::SourceAttempt;
     use rusqlite::Connection;
 
+    use crate::stats::{IndexRunStats, PathCountIncrements};
     use crate::transforms::{ArticleRecord, JournalRecord, MetaRecord};
 
     use super::{
-        init_index_db, refresh_article_listing_for_articles, upsert_article_search,
-        upsert_articles, upsert_journal, upsert_meta,
+        init_index_db, persist_index_run_stats, refresh_article_listing_for_articles,
+        upsert_article_search, upsert_articles, upsert_journal, upsert_meta,
     };
 
     #[test]
@@ -893,5 +895,66 @@ mod tests {
             .expect("listing should exist");
 
         assert_eq!(area, "testing");
+    }
+
+    #[test]
+    fn persists_index_run_path_and_api_stats() {
+        let connection = Connection::open_in_memory().expect("in-memory db should open");
+        init_index_db(&connection).expect("schema should initialize");
+        let mut stats = IndexRunStats::new(
+            "run-1".to_string(),
+            "journals.csv".to_string(),
+            "2026-07-05T00:00:00Z".to_string(),
+        );
+        let key = stats.start_path(
+            "scholarly",
+            "journal",
+            Some(1),
+            "Test Journal".to_string(),
+            "2026-07-05T00:00:01Z".to_string(),
+        );
+        stats.record_path_counts(
+            &key,
+            PathCountIncrements {
+                works_count: 3,
+                issues_count: 1,
+                articles_written_count: 2,
+                ..PathCountIncrements::default()
+            },
+        );
+        stats.record_source_attempts(
+            &[SourceAttempt {
+                service: "openalex".to_string(),
+                endpoint: "works".to_string(),
+                method: "GET".to_string(),
+                url: "https://api.openalex.org/works?api_key=SECRET".to_string(),
+                status_code: Some(200),
+                did_succeed: true,
+                did_retry: false,
+                error: None,
+            }],
+            Some(1),
+            "Test Journal",
+        );
+        stats.finish_path(&key, "succeeded", "2026-07-05T00:00:02Z".to_string(), None);
+        stats.finish("succeeded", "2026-07-05T00:00:03Z".to_string(), None);
+
+        persist_index_run_stats(&connection, &stats).expect("stats should persist");
+        persist_index_run_stats(&connection, &stats).expect("stats should replace prior rows");
+        let run_count: i64 = connection
+            .query_row("SELECT COUNT(*) FROM index_runs", [], |row| row.get(0))
+            .expect("run count should query");
+        let path_status: String = connection
+            .query_row("SELECT status FROM index_path_stats", [], |row| row.get(0))
+            .expect("path stats should query");
+        let attempts: i64 = connection
+            .query_row("SELECT attempts FROM index_api_call_stats", [], |row| {
+                row.get(0)
+            })
+            .expect("api stats should query");
+
+        assert_eq!(run_count, 1);
+        assert_eq!(path_status, "succeeded");
+        assert_eq!(attempts, 1);
     }
 }

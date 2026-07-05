@@ -1331,11 +1331,13 @@ fn redact_url(url: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+
     use serde_json::json;
 
     use super::{
-        value_pool_from_text, FixtureScholarlyTransport, ScholarlyClient, ScholarlyFixtureData,
-        SourceError,
+        normalize_doi, value_pool_from_text, FixtureScholarlyTransport, ScholarlyClient,
+        ScholarlyFixtureData, SourceError,
     };
 
     #[test]
@@ -1430,5 +1432,132 @@ mod tests {
             source.and_then(|value| value["id"].as_str().map(str::to_string)),
             Some("https://openalex.org/S1".into())
         );
+    }
+
+    #[test]
+    fn openalex_doi_lookup_deduplicates_and_batches() {
+        let transport = FixtureScholarlyTransport::new(ScholarlyFixtureData {
+            openalex_by_doi: BTreeMap::from([
+                (
+                    "10.1/a".to_string(),
+                    json!({"id": "https://openalex.org/W1", "doi": "https://doi.org/10.1/a"}),
+                ),
+                (
+                    "10.1/b".to_string(),
+                    json!({"id": "https://openalex.org/W2", "doi": "doi:10.1/b"}),
+                ),
+            ]),
+            ..ScholarlyFixtureData::default()
+        });
+        let mut client = ScholarlyClient::new(transport, true);
+
+        let results = client
+            .fetch_openalex_by_dois(
+                &[
+                    "HTTPS://DOI.ORG/10.1/A".to_string(),
+                    "doi:10.1/a".to_string(),
+                    "10.1/b".to_string(),
+                ],
+                1,
+            )
+            .expect("OpenAlex DOI fixture should succeed");
+        let transport = client.into_transport();
+
+        assert_eq!(
+            results.keys().cloned().collect::<Vec<_>>(),
+            vec!["10.1/a", "10.1/b"]
+        );
+        assert_eq!(
+            transport.openalex_doi_batches(),
+            &[vec!["10.1/a".to_string()], vec!["10.1/b".to_string()]]
+        );
+    }
+
+    #[test]
+    fn openalex_title_and_source_work_requests_are_captured() {
+        let transport = FixtureScholarlyTransport::new(ScholarlyFixtureData {
+            openalex_source_by_title: Some(json!({
+                "id": "https://openalex.org/S42",
+                "display_name": "Journal of Testing"
+            })),
+            openalex_source_works: vec![json!({"id": "https://openalex.org/W42"})],
+            ..ScholarlyFixtureData::default()
+        });
+        let mut client = ScholarlyClient::new(transport, true);
+
+        let source = client
+            .fetch_openalex_source_by_title("Journal of Testing")
+            .expect("title source lookup should succeed")
+            .expect("title source should match");
+        let works = client
+            .fetch_openalex_works_by_source(
+                source["id"].as_str().expect("source id should exist"),
+                Some("2026-01-01"),
+            )
+            .expect("source works should load");
+        let transport = client.into_transport();
+
+        assert_eq!(works[0]["id"], "https://openalex.org/W42");
+        assert_eq!(
+            transport.source_lookup_titles(),
+            &["Journal of Testing".to_string()]
+        );
+        assert_eq!(
+            transport.source_work_requests(),
+            &[(
+                "https://openalex.org/S42".to_string(),
+                Some("2026-01-01".to_string())
+            )]
+        );
+    }
+
+    #[test]
+    fn crossref_status_errors_record_attempts() {
+        let transport = FixtureScholarlyTransport::new(ScholarlyFixtureData {
+            crossref_status: Some(503),
+            ..ScholarlyFixtureData::default()
+        });
+        let mut client = ScholarlyClient::new(transport, true);
+
+        let error = client
+            .fetch_journal_works("1234-5678", Some("2026-01-01"))
+            .expect_err("Crossref fixture failure should fail loud");
+
+        assert!(matches!(
+            error,
+            SourceError::HttpStatus {
+                status_code: 503,
+                ..
+            }
+        ));
+        assert_eq!(client.attempts()[0].endpoint, "journal_works");
+        assert!(!client.attempts()[0].did_succeed);
+    }
+
+    #[test]
+    fn semantic_scholar_requires_key_before_transport_request() {
+        let transport = FixtureScholarlyTransport::new(ScholarlyFixtureData::default());
+        let mut client = ScholarlyClient::new(transport, false);
+
+        let error = client
+            .fetch_semantic_scholar_by_dois(&["10.1/a".to_string()], 10)
+            .expect_err("missing Semantic Scholar key should fail before transport");
+
+        assert!(matches!(error, SourceError::Configuration(_)));
+        assert!(client.attempts().is_empty());
+    }
+
+    #[test]
+    fn doi_normalization_handles_prefixes_and_empty_values() {
+        assert_eq!(
+            normalize_doi(Some(&json!("https://doi.org/10.1/ABC"))),
+            Some("10.1/abc".to_string())
+        );
+        assert_eq!(
+            normalize_doi(Some(&json!("doi:10.2/XYZ"))),
+            Some("10.2/xyz".to_string())
+        );
+        assert_eq!(normalize_doi(Some(&json!(" "))), None);
+        assert_eq!(normalize_doi(None), None);
     }
 }

@@ -1350,11 +1350,13 @@ fn fixture_url(endpoint: &str, key: Option<&str>) -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+
     use serde_json::json;
 
     use super::{
         checked_text, parse_article_detail, parse_issue_articles, parse_journal_detail,
-        parse_year_issues,
+        parse_year_issues, CnkiClient, CnkiFixtureData, CnkiSourceError, FixtureCnkiTransport,
     };
 
     #[test]
@@ -1435,5 +1437,124 @@ mod tests {
         .expect("empty section should parse");
 
         assert!(articles.is_empty());
+    }
+
+    #[test]
+    fn fixture_client_records_successful_cnki_attempts() {
+        let mut client = CnkiClient::new(FixtureCnkiTransport::new(cnki_fixture_data(None)));
+        let journal = client
+            .resolve_journal(&cnki_row())
+            .expect("journal should resolve")
+            .expect("journal should exist");
+        let issues = client.year_issues(&journal).expect("issues should resolve");
+        let articles = client
+            .issue_articles(&journal, &issues[0])
+            .expect("issue articles should resolve");
+        let detail = client
+            .article_detail(
+                articles[0]["article_url"]
+                    .as_str()
+                    .expect("article url should exist"),
+                articles[0]["platform_id"].as_str(),
+            )
+            .expect("article detail should resolve");
+
+        assert_eq!(detail["platform_id"], "CNKI202601001");
+        assert_eq!(
+            client
+                .attempts()
+                .iter()
+                .map(|attempt| attempt.endpoint.as_str())
+                .collect::<Vec<_>>(),
+            vec![
+                "journal_detail",
+                "year_issues",
+                "issue_articles",
+                "article_detail"
+            ]
+        );
+        assert!(client.attempts().iter().all(|attempt| attempt.did_succeed));
+    }
+
+    #[test]
+    fn fixture_client_records_missing_and_forced_failure_attempts() {
+        let mut missing_client =
+            CnkiClient::new(FixtureCnkiTransport::new(cnki_fixture_data(None)));
+        let missing_error = missing_client
+            .article_detail("https://example.test/missing", Some("missing"))
+            .expect_err("missing article detail fixture should fail");
+
+        assert!(matches!(missing_error, CnkiSourceError::MissingFixture(_)));
+        assert_eq!(missing_client.attempts()[0].status_code, Some(500));
+        assert!(!missing_client.attempts()[0].did_succeed);
+
+        let mut forced_client = CnkiClient::new(FixtureCnkiTransport::new(cnki_fixture_data(
+            Some("year_issues".to_string()),
+        )));
+        let journal = forced_client
+            .resolve_journal(&cnki_row())
+            .expect("journal should resolve")
+            .expect("journal should exist");
+        let forced_error = forced_client
+            .year_issues(&journal)
+            .expect_err("forced parser failure should fail");
+
+        assert!(matches!(forced_error, CnkiSourceError::Parse(_)));
+        assert_eq!(forced_client.attempts().len(), 2);
+        assert!(!forced_client.attempts()[1].did_succeed);
+    }
+
+    #[test]
+    fn malformed_cnki_pages_fail_loud() {
+        let error = parse_journal_detail("<html><title>Missing Pykm</title></html>")
+            .expect_err("journal detail missing pykm should fail");
+
+        assert!(error.to_string().contains("missing pykm"));
+    }
+
+    fn cnki_fixture_data(fail_endpoint: Option<String>) -> CnkiFixtureData {
+        CnkiFixtureData {
+            journal_detail_html: r#"
+                <html><head><title>CNKI Test Journal - 中国知网</title></head>
+                <body>
+                  <input id="pykm" value="TEST" />
+                  <input id="pCode" value="CJFD" />
+                  <input id="shareChName" value="CNKI Test Journal" />
+                </body></html>
+            "#
+            .to_string(),
+            year_issues_html:
+                r#"<div id="YearIssueTree"><a id="yq202601" value="202601">2026 No.01</a></div>"#
+                    .to_string(),
+            issue_articles_html: BTreeMap::from([(
+                "202601".to_string(),
+                r#"
+                <dt class="tit">Articles</dt>
+                <dd class="row">
+                  <a href="/kcms2/article/abstract?v=1&filename=CNKI202601001">CNKI article</a>
+                  <b name="encrypt" id="CNKI202601001"></b>
+                </dd>
+                "#
+                .to_string(),
+            )]),
+            article_detail_html: BTreeMap::from([(
+                "CNKI202601001".to_string(),
+                r#"
+                <html><head><title>CNKI article</title></head>
+                <body>
+                  <input id="paramfilename" value="CNKI202601001" />
+                  <input id="paramdbcode" value="CJFD" />
+                  <input id="paramdbname" value="CJFDLAST2026" />
+                  <p class="title-one">CNKI article</p>
+                </body></html>
+                "#
+                .to_string(),
+            )]),
+            fail_endpoint,
+        }
+    }
+
+    fn cnki_row() -> BTreeMap<String, String> {
+        BTreeMap::from([("title".to_string(), "CNKI Test Journal".to_string())])
     }
 }

@@ -515,7 +515,10 @@ fn redact_key_values(text: &str, key: &str) -> String {
 mod tests {
     use ps_sources::SourceAttempt;
 
-    use super::{sanitize_error_sample, sanitize_url_path, ApiCallStats, ApiStatsKey};
+    use super::{
+        sanitize_error_sample, sanitize_url_path, ApiCallStats, ApiStatsKey, IndexRunStats,
+        PathCountIncrements,
+    };
 
     #[test]
     fn stats_redact_query_secrets_and_aggregate_counts() {
@@ -570,5 +573,76 @@ mod tests {
         .expect("sample should sanitize");
 
         assert_eq!(sample, "Client error https://api.openalex.org/works");
+    }
+
+    #[test]
+    fn run_stats_record_path_lifecycle_and_source_attempts() {
+        let mut run = IndexRunStats::new(
+            "run-1".to_string(),
+            "journals.csv".to_string(),
+            "2026-07-05T00:00:00Z".to_string(),
+        );
+        let path_key = run.start_path(
+            "cnki",
+            "journal",
+            Some(7),
+            "CNKI Journal".to_string(),
+            "2026-07-05T00:00:01Z".to_string(),
+        );
+        run.record_path_counts(
+            &path_key,
+            PathCountIncrements {
+                article_summaries_count: 2,
+                article_details_count: 1,
+                articles_written_count: 1,
+                ..PathCountIncrements::default()
+            },
+        );
+        run.record_source_attempts_for_source(
+            "cnki",
+            &[SourceAttempt {
+                service: "cnki".to_string(),
+                endpoint: "issue_articles".to_string(),
+                method: "POST".to_string(),
+                url: "https://oversea.cnki.net/foo?token=SECRET".to_string(),
+                status_code: None,
+                did_succeed: false,
+                did_retry: false,
+                error: Some("failed https://oversea.cnki.net/foo?token=SECRET".to_string()),
+            }],
+            Some(7),
+            "CNKI Journal",
+        );
+        run.finish_path(
+            &path_key,
+            "failed",
+            "2026-07-05T00:00:02Z".to_string(),
+            Some("CnkiSourceError: https://oversea.cnki.net/foo?token=SECRET"),
+        );
+        run.finish(
+            "failed",
+            "2026-07-05T00:00:03Z".to_string(),
+            Some("run failed https://oversea.cnki.net/foo?token=SECRET".to_string()),
+        );
+
+        let path = run
+            .path_stats
+            .get(&path_key)
+            .expect("path stats should exist");
+        let api = run
+            .api_stats
+            .values()
+            .next()
+            .expect("api stats should exist");
+
+        assert_eq!(run.total_journals, 1);
+        assert_eq!(run.failed_journals, 1);
+        assert_eq!(path.article_summaries_count, 2);
+        assert_eq!(api.transport_errors, 1);
+        assert_eq!(api.key.url_path, "/foo");
+        assert!(!run
+            .error_summary
+            .expect("summary should exist")
+            .contains("SECRET"));
     }
 }

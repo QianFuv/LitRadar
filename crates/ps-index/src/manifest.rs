@@ -442,11 +442,16 @@ pub fn write_change_manifest(manifest: &ChangeManifest, path: &Path) -> std::io:
 
 #[cfg(test)]
 mod tests {
+    use std::collections::{BTreeMap, BTreeSet};
+    use std::fs;
     use std::path::Path;
 
     use crate::transforms::ArticleRecord;
 
-    use super::build_change_manifest;
+    use super::{
+        build_change_manifest, build_change_manifest_from_snapshots, write_change_manifest,
+        ArticleSnapshot,
+    };
 
     #[test]
     fn manifest_contains_notification_fields() {
@@ -484,5 +489,38 @@ mod tests {
         assert_eq!(manifest.changed_issue_keys, vec!["1:2"]);
         assert_eq!(manifest.notifiable_article_ids, vec![10]);
         assert_eq!(manifest.summary.added_article_count, 1);
+    }
+
+    #[test]
+    fn snapshot_manifest_tracks_added_and_removed_issue_and_inpress_articles() {
+        let temp_dir = tempfile::tempdir().expect("temp dir should be created");
+        let db_path = temp_dir.path().join("fixture.sqlite");
+        let before = ArticleSnapshot {
+            issue_articles: BTreeMap::from([("1:2".to_string(), BTreeSet::from([10, 11]))]),
+            inpress_articles: BTreeMap::from([(1, BTreeSet::from([20]))]),
+        };
+        let after = ArticleSnapshot {
+            issue_articles: BTreeMap::from([("1:2".to_string(), BTreeSet::from([11, 12]))]),
+            inpress_articles: BTreeMap::from([(1, BTreeSet::from([20, 21]))]),
+        };
+
+        let manifest = build_change_manifest_from_snapshots(
+            "fixture.sqlite",
+            &db_path,
+            "run-1",
+            "2026-07-05T00:00:00Z",
+            &before,
+            &after,
+        );
+        let manifest_path = temp_dir.path().join("nested").join("changes.json");
+        write_change_manifest(&manifest, &manifest_path).expect("manifest should write");
+        let payload = fs::read_to_string(&manifest_path).expect("manifest should be readable");
+
+        assert_eq!(manifest.changed_issue_keys, vec!["1:2"]);
+        assert_eq!(manifest.changed_inpress_journal_ids, vec![1]);
+        assert_eq!(manifest.notifiable_article_ids, vec![12, 21]);
+        assert_eq!(manifest.summary.removed_article_ids, vec![10]);
+        assert!(payload.ends_with('\n'));
+        assert!(payload.contains("notifiable_article_ids"));
     }
 }
