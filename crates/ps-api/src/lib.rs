@@ -1,6 +1,7 @@
 //! Rust API server skeleton for backend migration compatibility.
 
 pub mod config;
+mod observability;
 mod response;
 pub mod routes;
 pub mod state;
@@ -19,6 +20,8 @@ use ps_storage::StorageConfig;
 use state::ApiState;
 use tokio::net::TcpListener;
 use tower_http::cors::{AllowHeaders, AllowMethods, AllowOrigin, CorsLayer};
+use tower_http::trace::{DefaultOnResponse, TraceLayer};
+use tracing::Level;
 
 /// API route prefix preserved from the Python backend.
 pub const API_PREFIX: &str = "/api";
@@ -48,6 +51,8 @@ pub async fn serve_from_env() -> Result<(), Box<dyn Error>> {
 ///
 /// Result indicating whether the server exited cleanly.
 pub async fn serve(config: ApiConfig) -> Result<(), Box<dyn Error>> {
+    observability::init_tracing();
+
     let bind_address = config.bind_address();
     let listener = TcpListener::bind(&bind_address).await?;
     println!("ps-api listening on {}", listener.local_addr()?);
@@ -76,6 +81,17 @@ pub fn build_router(config: ApiConfig) -> Router {
         .nest(API_PREFIX, routes::public_routes())
         .layer(from_fn(cache_control_middleware))
         .layer(cors_layer(&config))
+        .layer(
+            TraceLayer::new_for_http()
+                .make_span_with(|request: &Request| {
+                    tracing::info_span!(
+                        "http_request",
+                        method = %request.method(),
+                        path = %request.uri().path()
+                    )
+                })
+                .on_response(DefaultOnResponse::new().level(Level::INFO)),
+        )
         .with_state(state)
 }
 
