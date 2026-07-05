@@ -645,7 +645,7 @@ mod tests {
 
     use super::{
         default_delivery_state_dir, grouped_usage, legacy_delivery_usage, legacy_index_usage,
-        normalize_db_name, resolve_delivery_targets,
+        normalize_db_name, resolve_delivery_targets, run_ps_cli,
     };
     use ps_worker::delivery::DeliveryWorkflow;
 
@@ -743,5 +743,90 @@ mod tests {
             default_delivery_state_dir(root, DeliveryWorkflow::Push),
             root.join("data").join("folder_push_state")
         );
+    }
+
+    #[test]
+    fn scheduler_dispatch_requires_valid_task_id() {
+        let root = temp_root("ps-cli-scheduler-dispatch");
+        let auth_db_path = root.join("auth.sqlite");
+        ps_storage::initialize_auth_database(&auth_db_path)
+            .expect("auth database should initialize");
+
+        let error = run_ps_cli(vec![
+            "--auth-db".to_string(),
+            auth_db_path.to_string_lossy().into_owned(),
+            "scheduler".to_string(),
+            "run-once".to_string(),
+            "not-a-number".to_string(),
+        ])
+        .expect_err("invalid scheduler task id should fail before execution");
+
+        assert!(error.to_string().contains("invalid digit"));
+        fs::remove_dir_all(root).expect("temp root should be removed");
+    }
+
+    #[test]
+    fn delivery_dispatch_requires_index_database_and_db_name() {
+        let root = temp_root("ps-cli-delivery-dispatch");
+        let auth_db_path = root.join("auth.sqlite");
+        ps_storage::initialize_auth_database(&auth_db_path)
+            .expect("auth database should initialize");
+
+        let missing_index = run_ps_cli(vec![
+            "--auth-db".to_string(),
+            auth_db_path.to_string_lossy().into_owned(),
+            "notify".to_string(),
+            "dry-run".to_string(),
+            "--db".to_string(),
+            "fixture".to_string(),
+        ])
+        .expect_err("notify dry-run should require an index database");
+
+        assert!(missing_index.to_string().contains("--index-db is required"));
+
+        let missing_db = run_ps_cli(vec![
+            "--auth-db".to_string(),
+            auth_db_path.to_string_lossy().into_owned(),
+            "--index-db".to_string(),
+            root.join("fixture.sqlite").to_string_lossy().into_owned(),
+            "push".to_string(),
+            "shadow".to_string(),
+        ])
+        .expect_err("push shadow should require a database name");
+
+        assert!(missing_db.to_string().contains("--db is required"));
+        fs::remove_dir_all(root).expect("temp root should be removed");
+    }
+
+    #[test]
+    fn grouped_dispatch_reports_unknown_worker_command() {
+        let root = temp_root("ps-cli-worker-dispatch");
+        let auth_db_path = root.join("auth.sqlite");
+        ps_storage::initialize_auth_database(&auth_db_path)
+            .expect("auth database should initialize");
+
+        let error = run_ps_cli(vec![
+            "--auth-db".to_string(),
+            auth_db_path.to_string_lossy().into_owned(),
+            "worker".to_string(),
+            "dry-run".to_string(),
+        ])
+        .expect_err("unknown worker command should return usage");
+
+        assert!(error.to_string().contains("ps-cli worker shadow"));
+        fs::remove_dir_all(root).expect("temp root should be removed");
+    }
+
+    fn temp_root(prefix: &str) -> std::path::PathBuf {
+        let root = std::env::temp_dir().join(format!(
+            "{}-{}",
+            prefix,
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("system time should be after epoch")
+                .as_nanos()
+        ));
+        fs::create_dir_all(&root).expect("temp root should be created");
+        root
     }
 }

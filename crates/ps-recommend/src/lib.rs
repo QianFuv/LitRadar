@@ -1277,7 +1277,12 @@ mod tests {
     };
     use serde_json::json;
 
-    use super::{apply_selection_rules, extract_response_payload, AiPayloadKind};
+    use super::{
+        apply_selection_rules, build_markdown_content, candidate_match_score,
+        deduplicate_candidates, extract_response_payload, has_selection_preferences,
+        is_database_selected, resolve_ai_runtime_configs, AiPayloadKind, NotificationDefaults,
+        NotificationGlobalConfig, MAX_ARTICLES_PER_PUSH, MAX_PUSH_CONTENT_LENGTH,
+    };
 
     #[test]
     fn normalizes_ai_selection_payload_variants() {
@@ -1340,6 +1345,180 @@ mod tests {
                 .map(|item| item.article_id)
                 .collect::<Vec<_>>(),
             vec![2, 1]
+        );
+    }
+
+    #[test]
+    fn filters_missing_deduped_and_over_limit_candidates() {
+        let subscriber = subscriber();
+        let candidates = (1..=25)
+            .map(|article_id| candidate(article_id, &format!("Rust article {article_id}")))
+            .map(|candidate| (candidate.article_id, candidate))
+            .collect::<BTreeMap<_, _>>();
+        let mut dedupe = BTreeMap::new();
+        dedupe.insert("1:2".to_string(), "2026-07-03T00:00:00Z".to_string());
+        let selections = vec![
+            RankedSelectionInfo {
+                article_id: 1,
+                score: 1.0,
+            },
+            RankedSelectionInfo {
+                article_id: 2,
+                score: 99.0,
+            },
+            RankedSelectionInfo {
+                article_id: 999,
+                score: 99.0,
+            },
+        ];
+
+        let accepted = apply_selection_rules(
+            &SelectionResultInfo {
+                summary: String::new(),
+                selections,
+            },
+            &subscriber,
+            &candidates,
+            &dedupe,
+        );
+
+        assert_eq!(accepted.len(), MAX_ARTICLES_PER_PUSH);
+        assert_eq!(accepted[0].article_id, 1);
+        assert!(!accepted.iter().any(|item| item.article_id == 2));
+        assert!(!accepted.iter().any(|item| item.article_id == 999));
+    }
+
+    #[test]
+    fn normalizes_summary_payloads_and_rejects_refusals() {
+        let summary_payload = json!({
+            "choices": [{
+                "message": {"content": [{"type": "text", "text": "summary line"}]}
+            }]
+        });
+
+        let summary = extract_response_payload(&summary_payload, AiPayloadKind::Summary)
+            .expect("summary payload should normalize");
+
+        assert_eq!(summary["summary"], "summary line");
+
+        let refusal_payload = json!({
+            "choices": [{
+                "message": {"refusal": "cannot comply", "content": "{}"}
+            }]
+        });
+
+        let error = extract_response_payload(&refusal_payload, AiPayloadKind::Selection)
+            .expect_err("refusals should be rejected");
+
+        assert!(error.to_string().contains("refused"));
+    }
+
+    #[test]
+    fn resolves_ai_configs_with_backup_dedupe_and_override() {
+        let mut subscriber = subscriber();
+        subscriber.ai_base_url = Some("https://primary.test".to_string());
+        subscriber.ai_api_key = Some("subscriber-key".to_string());
+        subscriber.ai_model = Some("subscriber-model".to_string());
+        subscriber.ai_backup_base_url = Some("https://primary.test".to_string());
+        subscriber.ai_backup_api_key = Some("subscriber-key".to_string());
+        subscriber.ai_backup_model = Some("subscriber-model".to_string());
+        let global_config = NotificationGlobalConfig {
+            ai_base_url: "https://global.test".to_string(),
+            ai_api_key: "global-key".to_string(),
+            pushplus_channel: "wechat".to_string(),
+            pushplus_template: "markdown".to_string(),
+            pushplus_topic: None,
+            pushplus_option: None,
+            ai_system_prompt: None,
+        };
+        let defaults = NotificationDefaults {
+            ai_model: "default-model".to_string(),
+            temperature: 0.2,
+            max_candidates: 20,
+        };
+
+        let configs =
+            resolve_ai_runtime_configs(&subscriber, &global_config, &defaults, Some("override"));
+
+        assert_eq!(configs.len(), 1);
+        assert_eq!(configs[0].base_url, "https://primary.test");
+        assert_eq!(configs[0].api_key, "subscriber-key");
+        assert_eq!(configs[0].model, "override");
+    }
+
+    #[test]
+    fn formats_content_with_boundaries_and_missing_candidate_skip() {
+        let subscriber = subscriber();
+        let mut candidates = BTreeMap::new();
+        let mut long_candidate = candidate(1, "Rust systems");
+        long_candidate.abstract_text = "x".repeat(MAX_PUSH_CONTENT_LENGTH);
+        candidates.insert(1, long_candidate);
+        let content = build_markdown_content(
+            "fixture.sqlite",
+            "run-123",
+            &subscriber,
+            "summary",
+            &[
+                RankedSelectionInfo {
+                    article_id: 1,
+                    score: 1.0,
+                },
+                RankedSelectionInfo {
+                    article_id: 404,
+                    score: 1.0,
+                },
+            ],
+            &candidates,
+        );
+
+        assert!(content.len() <= MAX_PUSH_CONTENT_LENGTH);
+        assert!(content.contains("Selected Articles: 0"));
+        assert!(content.contains("summary"));
+        assert!(!content.contains("Rust systems"));
+    }
+
+    #[test]
+    fn preference_and_database_helpers_match_delivery_rules() {
+        let mut subscriber = subscriber();
+        subscriber.directions = vec!["systems".to_string()];
+        let empty_subscriber = NotificationSubscriberInfo {
+            keywords: vec![" ".to_string()],
+            directions: Vec::new(),
+            ..subscriber.clone()
+        };
+
+        assert!(has_selection_preferences(&subscriber));
+        assert!(!has_selection_preferences(&empty_subscriber));
+        assert_eq!(
+            candidate_match_score(&candidate(1, "Rust systems"), &subscriber),
+            2
+        );
+        assert!(is_database_selected(&[], "fixture.sqlite"));
+        assert!(is_database_selected(
+            &["fixture".to_string()],
+            "/data/fixture.sqlite"
+        ));
+        assert!(!is_database_selected(
+            &["other.sqlite".to_string()],
+            "fixture.sqlite"
+        ));
+        assert!(!is_database_selected(&["fixture.sqlite".to_string()], ""));
+    }
+
+    #[test]
+    fn deduplicates_candidates_preserving_first_seen_order() {
+        let deduplicated = deduplicate_candidates(vec![
+            candidate(2, "Second first"),
+            candidate(1, "First"),
+            candidate(2, "Second duplicate"),
+        ]);
+
+        assert_eq!(
+            deduplicated
+                .iter()
+                .map(|candidate| candidate.title.as_str())
+                .collect::<Vec<_>>(),
+            vec!["Second first", "First"]
         );
     }
 
