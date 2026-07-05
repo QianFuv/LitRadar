@@ -1117,6 +1117,7 @@ dependencies = [
  "ps-domain",
  "ps-sources",
  "ps-storage",
+ "ps-worker",
  "rmcp",
  "rusqlite",
  "serde",

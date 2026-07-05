@@ -37,11 +37,11 @@ pub use cnki::{
 pub use config::{DatabaseResolutionError, StorageConfig};
 pub use index::{
     article_fulltext_redirect_url, article_fulltext_target, collect_inpress_article_counts,
-    collect_issue_article_counts, fetch_candidates_for_inpress_keys,
-    fetch_candidates_for_issue_keys, get_article, get_article_access, get_issue, get_journal,
-    get_weekly_updates, list_areas, list_articles, list_index_database_names, list_issues,
-    list_journal_options, list_journals, list_sources, list_years, ArticleFulltextTarget,
-    ArticleListParams, CnkiFulltextTarget, IndexRepositoryError, IssueListParams,
-    JournalListParams,
+    collect_issue_article_counts, fetch_candidates_for_article_ids,
+    fetch_candidates_for_inpress_keys, fetch_candidates_for_issue_keys, get_article,
+    get_article_access, get_issue, get_journal, get_weekly_updates, list_areas, list_articles,
+    list_index_database_names, list_issues, list_journal_options, list_journals, list_sources,
+    list_years, ArticleFulltextTarget, ArticleListParams, CnkiFulltextTarget, IndexRepositoryError,
+    IssueListParams, JournalListParams,
 };
 pub use sqlite::{open_sqlite_connection, try_load_extension};

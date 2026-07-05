@@ -354,6 +354,29 @@ pub fn fetch_candidates_for_inpress_keys(
     fetch_candidates_for_inpress_journal_ids(index_db_path, &journal_ids)
 }
 
+/// Fetch visible article candidates by explicit article identifiers.
+///
+/// # Arguments
+///
+/// * `index_db_path` - Path to the selected index database.
+/// * `article_ids` - Article identifiers to load.
+///
+/// # Returns
+///
+/// Candidate articles ordered like the Python notification query.
+pub fn fetch_candidates_for_article_ids(
+    index_db_path: impl AsRef<Path>,
+    article_ids: &[i64],
+) -> Result<Vec<ArticleCandidateInfo>, IndexRepositoryError> {
+    if article_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut article_ids = article_ids.to_vec();
+    article_ids.sort_unstable();
+    article_ids.dedup();
+    fetch_candidates_for_ids(index_db_path, &article_ids)
+}
+
 /// Full-text route target.
 #[derive(Debug, Clone, PartialEq)]
 pub enum ArticleFulltextTarget {
@@ -2035,6 +2058,28 @@ fn fetch_candidates_for_inpress_journal_ids(
     collect_rows(rows)
 }
 
+fn fetch_candidates_for_ids(
+    index_db_path: impl AsRef<Path>,
+    article_ids: &[i64],
+) -> Result<Vec<ArticleCandidateInfo>, IndexRepositoryError> {
+    if article_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let placeholders = repeat_placeholders(article_ids.len());
+    let sql = format!(
+        "SELECT a.article_id, a.journal_id, a.issue_id, a.title, a.abstract, a.date, \
+         a.open_access, a.in_press, a.within_library_holdings, a.doi, a.full_text_file, \
+         a.permalink, j.title AS journal_title \
+         FROM articles a JOIN journals j ON j.journal_id = a.journal_id \
+         WHERE a.article_id IN ({placeholders}) AND COALESCE(a.suppressed, 0) = 0 \
+         ORDER BY a.date DESC, a.article_id DESC"
+    );
+    let connection = Connection::open(index_db_path)?;
+    let mut statement = connection.prepare(&sql)?;
+    let rows = statement.query_map(params_from_iter(article_ids.iter()), candidate_from_row)?;
+    collect_rows(rows)
+}
+
 fn candidate_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ArticleCandidateInfo> {
     Ok(ArticleCandidateInfo {
         article_id: row.get(0)?,
@@ -2960,11 +3005,18 @@ mod tests {
         assert!(inpress_candidates[0].in_press);
         assert_eq!(inpress_candidates[0].issue_id, None);
 
+        let article_id_candidates = fetch_candidates_for_article_ids(&db_path, &[1002, 1001, 1002])
+            .expect("article id candidates should be fetched");
+        assert_eq!(candidate_ids(&article_id_candidates), vec![1001, 1002]);
+
         assert!(fetch_candidates_for_issue_keys(&db_path, &[])
             .expect("empty issue keys should resolve")
             .is_empty());
         assert!(fetch_candidates_for_inpress_keys(&db_path, &[])
             .expect("empty in-press keys should resolve")
+            .is_empty());
+        assert!(fetch_candidates_for_article_ids(&db_path, &[])
+            .expect("empty article ids should resolve")
             .is_empty());
 
         let invalid_issue_key = fetch_candidates_for_issue_keys(&db_path, &["bad".to_string()])

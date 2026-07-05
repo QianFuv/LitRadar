@@ -137,6 +137,14 @@ pub fn public_routes() -> Router<ApiState> {
         )
         .route("/tracking/status", axum::routing::get(tracking::status))
         .route(
+            "/tracking/push-weekly",
+            axum::routing::post(tracking::push_weekly_to_tracking),
+        )
+        .route(
+            "/tracking/push-weekly/status",
+            axum::routing::get(tracking::get_push_weekly_status),
+        )
+        .route(
             "/tracking/notification-settings",
             axum::routing::get(tracking::get_notification_settings)
                 .put(tracking::update_notification_settings),

@@ -4,6 +4,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::error::Error;
 use std::fmt;
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
@@ -25,6 +26,7 @@ use ps_recommend::{
     PUSHPLUS_CHANNEL,
 };
 use serde::Serialize;
+use serde_json::Value;
 
 const MAX_AI_SELECTION_ROUNDS: usize = 5;
 
@@ -41,6 +43,8 @@ pub enum DeliveryError {
     Ai(String),
     /// PushPlus delivery failed.
     PushPlus(String),
+    /// Manual delivery validation failed.
+    Manual(String),
 }
 
 impl fmt::Display for DeliveryError {
@@ -52,6 +56,7 @@ impl fmt::Display for DeliveryError {
             Self::Recommendation(error) => write!(formatter, "{error}"),
             Self::Ai(message) => formatter.write_str(message),
             Self::PushPlus(message) => formatter.write_str(message),
+            Self::Manual(message) => formatter.write_str(message),
         }
     }
 }
@@ -65,6 +70,7 @@ impl Error for DeliveryError {
             Self::Recommendation(error) => Some(error),
             Self::Ai(_) => None,
             Self::PushPlus(_) => None,
+            Self::Manual(_) => None,
         }
     }
 }
@@ -207,6 +213,46 @@ pub struct RecommendationRunOutcome {
     pub subscribers: Vec<SubscriberDeliveryPlan>,
 }
 
+/// Manual weekly push run configuration.
+#[derive(Debug, Clone)]
+pub struct ManualWeeklyPushConfig {
+    /// Storage path configuration.
+    pub storage_config: ps_storage::StorageConfig,
+    /// User that requested the manual push.
+    pub user_id: UserId,
+    /// Optional model override.
+    pub ai_model: Option<String>,
+    /// Optional max-candidates override.
+    pub max_candidates: Option<usize>,
+    /// HTTP timeout in seconds for AI and PushPlus requests.
+    pub timeout_seconds: u64,
+    /// Retry attempts for AI and PushPlus requests.
+    pub retry_attempts: usize,
+    /// Dedupe retention days.
+    pub dedupe_retention_days: i64,
+}
+
+/// Manual weekly push delivery result.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ManualWeeklyPushOutcome {
+    /// Final run status.
+    pub status: String,
+    /// Human-readable status message.
+    pub message: String,
+    /// Number of pushed or tracking-folder-synced articles.
+    pub pushed: i64,
+    /// Number of selected articles.
+    pub selected: i64,
+    /// Number of candidate articles considered by AI selection.
+    pub total_candidates: Option<i64>,
+    /// AI-generated summary text when available.
+    pub summary: String,
+    /// Tracking folder identifier when applicable.
+    pub folder_id: Option<i64>,
+    /// Tracking folder name when applicable.
+    pub folder_name: Option<String>,
+}
+
 /// Run notification or tracking delivery.
 ///
 /// # Arguments
@@ -223,11 +269,154 @@ pub fn run_recommendation_delivery(
     let mut ai_selector = DefaultDeliveryAiSelector::live(timeout_seconds, config.retry_attempts);
     let mut pushplus_sender =
         LiveDeliveryPushPlusSender::new(timeout_seconds, config.retry_attempts)?;
-    run_recommendation_delivery_with_services(config, &mut ai_selector, &mut pushplus_sender)
+    run_recommendation_delivery_with_services_for_user(
+        config,
+        None,
+        &mut ai_selector,
+        &mut pushplus_sender,
+    )
 }
 
+/// Run notification or tracking delivery for one user.
+///
+/// # Arguments
+///
+/// * `config` - Worker run configuration.
+/// * `user_id` - User whose subscriber settings should run.
+///
+/// # Returns
+///
+/// Dry-run, shadow, or execution outcome.
+pub fn run_recommendation_delivery_for_user(
+    config: &RecommendationRunConfig,
+    user_id: UserId,
+) -> Result<RecommendationRunOutcome, DeliveryError> {
+    let timeout_seconds = config.timeout_seconds.max(1);
+    let mut ai_selector = DefaultDeliveryAiSelector::live(timeout_seconds, config.retry_attempts);
+    let mut pushplus_sender =
+        LiveDeliveryPushPlusSender::new(timeout_seconds, config.retry_attempts)?;
+    run_recommendation_delivery_with_services_for_user(
+        config,
+        Some(user_id),
+        &mut ai_selector,
+        &mut pushplus_sender,
+    )
+}
+
+/// Run a manual weekly push for one authenticated user.
+///
+/// # Arguments
+///
+/// * `config` - Manual weekly push configuration.
+///
+/// # Returns
+///
+/// Aggregated manual push result across selected change manifests.
+pub fn run_manual_weekly_push(
+    config: &ManualWeeklyPushConfig,
+) -> Result<ManualWeeklyPushOutcome, DeliveryError> {
+    let settings = ps_storage::get_notification_settings(
+        config.storage_config.auth_db_path(),
+        config.user_id,
+    )?;
+    let Some(settings) = settings.filter(|item| item.enabled) else {
+        return Ok(manual_outcome(
+            "completed",
+            "Recommendation settings are not enabled; skipped push",
+            None,
+            None,
+        ));
+    };
+
+    let delivery_method = nonempty_text(&settings.delivery_method).unwrap_or("folder");
+    let folder =
+        ps_storage::get_tracking_folder(config.storage_config.auth_db_path(), config.user_id)?;
+    let requires_tracking_folder = delivery_method == "folder" || settings.sync_to_tracking_folder;
+    if requires_tracking_folder && folder.is_none() {
+        return Err(DeliveryError::Manual(
+            "No tracking folder configured. Create a folder and set it as tracking first."
+                .to_string(),
+        ));
+    }
+
+    let manifests = manual_weekly_manifests(
+        config.storage_config.project_root(),
+        &settings.selected_databases,
+    )?;
+    if manifests.is_empty() {
+        let message = if settings.selected_databases.is_empty() {
+            "No new weekly articles available"
+        } else {
+            "No new weekly articles available in selected databases"
+        };
+        return Ok(manual_outcome(
+            "completed",
+            message,
+            folder.as_ref().map(|item| item.id),
+            folder.as_ref().map(|item| item.name.clone()),
+        ));
+    }
+
+    if settings.keywords.is_empty() && settings.directions.is_empty() {
+        return Ok(manual_outcome(
+            "completed",
+            "No keywords or directions configured; skipped push",
+            folder.as_ref().map(|item| item.id),
+            folder.as_ref().map(|item| item.name.clone()),
+        ));
+    }
+
+    let workflow = if delivery_method == "pushplus" {
+        DeliveryWorkflow::Notify
+    } else {
+        DeliveryWorkflow::Push
+    };
+    let state_dir = manual_delivery_state_dir(config.storage_config.project_root(), workflow);
+    let mut outcomes = Vec::new();
+    for manifest in manifests {
+        let index_db_path = config
+            .storage_config
+            .resolve_index_db_path(Some(&manifest.db_name))
+            .map_err(ps_storage::IndexRepositoryError::from)?;
+        outcomes.push(run_recommendation_delivery_for_user(
+            &RecommendationRunConfig {
+                auth_db_path: config.storage_config.auth_db_path().to_path_buf(),
+                index_db_path,
+                db_name: manifest.db_name,
+                state_dir: state_dir.clone(),
+                changes_file: Some(manifest.path),
+                ai_model: config.ai_model.clone(),
+                max_candidates: config.max_candidates,
+                timeout_seconds: config.timeout_seconds,
+                retry_attempts: config.retry_attempts,
+                dedupe_retention_days: config.dedupe_retention_days,
+                mode: DeliveryMode::Execute,
+                workflow,
+            },
+            config.user_id,
+        )?);
+    }
+
+    Ok(manual_outcome_from_delivery(
+        delivery_method,
+        folder.as_ref().map(|item| item.id),
+        folder.as_ref().map(|item| item.name.clone()),
+        &outcomes,
+    ))
+}
+
+#[cfg(test)]
 fn run_recommendation_delivery_with_services(
     config: &RecommendationRunConfig,
+    ai_selector: &mut impl DeliveryAiSelector,
+    pushplus_sender: &mut impl DeliveryPushPlusSender,
+) -> Result<RecommendationRunOutcome, DeliveryError> {
+    run_recommendation_delivery_with_services_for_user(config, None, ai_selector, pushplus_sender)
+}
+
+fn run_recommendation_delivery_with_services_for_user(
+    config: &RecommendationRunConfig,
+    subscriber_user_id: Option<UserId>,
     ai_selector: &mut impl DeliveryAiSelector,
     pushplus_sender: &mut impl DeliveryPushPlusSender,
 ) -> Result<RecommendationRunOutcome, DeliveryError> {
@@ -261,7 +450,10 @@ fn run_recommendation_delivery_with_services(
             )
         };
 
-    if pending_issue_keys.is_empty() && pending_inpress_keys.is_empty() {
+    if pending_issue_keys.is_empty()
+        && pending_inpress_keys.is_empty()
+        && pending_article_ids.is_empty()
+    {
         state.status = "idle".to_string();
         state.run = None;
         state.updated_at = now.clone();
@@ -281,12 +473,19 @@ fn run_recommendation_delivery_with_services(
     state.updated_at = now.clone();
     save_state_atomic(&state_path, &state)?;
 
-    let mut candidates =
-        ps_storage::fetch_candidates_for_issue_keys(&config.index_db_path, &pending_issue_keys)?;
-    candidates.extend(ps_storage::fetch_candidates_for_inpress_keys(
-        &config.index_db_path,
-        &pending_inpress_keys,
-    )?);
+    let candidates = if pending_issue_keys.is_empty() && pending_inpress_keys.is_empty() {
+        ps_storage::fetch_candidates_for_article_ids(&config.index_db_path, &pending_article_ids)?
+    } else {
+        let mut candidates = ps_storage::fetch_candidates_for_issue_keys(
+            &config.index_db_path,
+            &pending_issue_keys,
+        )?;
+        candidates.extend(ps_storage::fetch_candidates_for_inpress_keys(
+            &config.index_db_path,
+            &pending_inpress_keys,
+        )?);
+        candidates
+    };
     let mut candidates = deduplicate_candidates(candidates);
     if config.changes_file.is_some() {
         let pending_article_ids = pending_article_ids.into_iter().collect::<BTreeSet<_>>();
@@ -322,7 +521,12 @@ fn run_recommendation_delivery_with_services(
     state.updated_at = now.clone();
     save_state_atomic(&state_path, &state)?;
 
-    let subscribers = filtered_subscribers(&config.auth_db_path, &config.db_name, config.workflow)?;
+    let subscribers = filtered_subscribers(
+        &config.auth_db_path,
+        &config.db_name,
+        config.workflow,
+        subscriber_user_id,
+    )?;
     if subscribers.is_empty() {
         run_state.status = "skipped".to_string();
         run_state.updated_at = now.clone();
@@ -755,9 +959,15 @@ fn filtered_subscribers(
     auth_db_path: &Path,
     db_name: &str,
     workflow: DeliveryWorkflow,
+    subscriber_user_id: Option<UserId>,
 ) -> Result<Vec<NotificationSubscriberInfo>, DeliveryError> {
     Ok(ps_storage::list_notification_subscribers(auth_db_path)?
         .into_iter()
+        .filter(|subscriber| {
+            subscriber_user_id
+                .map(|user_id| subscriber.user_id == user_id.value())
+                .unwrap_or(true)
+        })
         .filter(|subscriber| is_database_selected(&subscriber.selected_databases, db_name))
         .filter(|subscriber| match workflow {
             DeliveryWorkflow::Notify => {
@@ -769,6 +979,206 @@ fn filtered_subscribers(
             }
         })
         .collect())
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ManualWeeklyManifest {
+    db_name: String,
+    path: PathBuf,
+}
+
+fn manual_weekly_manifests(
+    project_root: &Path,
+    selected_databases: &[String],
+) -> Result<Vec<ManualWeeklyManifest>, DeliveryError> {
+    let push_state_dir = project_root.join("data").join("push_state");
+    if !push_state_dir.exists() {
+        return Ok(Vec::new());
+    }
+    let mut manifests = Vec::new();
+    for entry in
+        fs::read_dir(push_state_dir).map_err(|error| DeliveryError::Manual(error.to_string()))?
+    {
+        let path = entry
+            .map_err(|error| DeliveryError::Manual(error.to_string()))?
+            .path();
+        if !path
+            .file_name()
+            .and_then(|value| value.to_str())
+            .is_some_and(|name| name.ends_with(".changes.json"))
+        {
+            continue;
+        }
+        let payload = fs::read_to_string(&path)
+            .map_err(|error| DeliveryError::Manual(error.to_string()))
+            .and_then(|text| {
+                serde_json::from_str::<Value>(&text)
+                    .map_err(|error| DeliveryError::Manual(error.to_string()))
+            })?;
+        let Some(db_name) = manual_manifest_db_name(&payload) else {
+            continue;
+        };
+        if !is_database_selected(selected_databases, &db_name) {
+            continue;
+        }
+        if !manual_manifest_has_notifiable_articles(&payload) {
+            continue;
+        }
+        manifests.push(ManualWeeklyManifest { db_name, path });
+    }
+    manifests.sort_by(|left, right| {
+        left.db_name
+            .cmp(&right.db_name)
+            .then_with(|| left.path.cmp(&right.path))
+    });
+    Ok(manifests)
+}
+
+fn manual_manifest_db_name(payload: &Value) -> Option<String> {
+    let value = payload
+        .get("db_name")
+        .and_then(Value::as_str)
+        .or_else(|| payload.get("db_path").and_then(Value::as_str))?;
+    normalize_db_name(value)
+}
+
+fn manual_manifest_has_notifiable_articles(payload: &Value) -> bool {
+    payload
+        .get("notifiable_article_ids")
+        .and_then(Value::as_array)
+        .is_some_and(|items| items.iter().any(|item| item.as_i64().is_some()))
+}
+
+fn normalize_db_name(value: &str) -> Option<String> {
+    let filename = Path::new(value.trim()).file_name()?.to_str()?;
+    if filename.is_empty() {
+        None
+    } else if filename.ends_with(".sqlite") {
+        Some(filename.to_string())
+    } else {
+        Some(format!("{filename}.sqlite"))
+    }
+}
+
+fn manual_delivery_state_dir(project_root: &Path, workflow: DeliveryWorkflow) -> PathBuf {
+    match workflow {
+        DeliveryWorkflow::Notify => project_root.join("data").join("push_state"),
+        DeliveryWorkflow::Push => project_root.join("data").join("folder_push_state"),
+    }
+}
+
+fn manual_outcome(
+    status: &str,
+    message: &str,
+    folder_id: Option<i64>,
+    folder_name: Option<String>,
+) -> ManualWeeklyPushOutcome {
+    ManualWeeklyPushOutcome {
+        status: status.to_string(),
+        message: message.to_string(),
+        pushed: 0,
+        selected: 0,
+        total_candidates: None,
+        summary: String::new(),
+        folder_id,
+        folder_name,
+    }
+}
+
+fn manual_outcome_from_delivery(
+    delivery_method: &str,
+    folder_id: Option<i64>,
+    folder_name: Option<String>,
+    outcomes: &[RecommendationRunOutcome],
+) -> ManualWeeklyPushOutcome {
+    let mut pushed = 0_i64;
+    let mut selected = 0_i64;
+    let mut total_candidates = 0_i64;
+    let mut pushplus_messages = 0_i64;
+    let mut selected_databases = BTreeSet::new();
+    let mut errors = Vec::new();
+    let mut skip_messages = Vec::new();
+
+    for outcome in outcomes {
+        total_candidates += outcome.candidate_article_ids.len() as i64;
+        if outcome.status == "failed" {
+            errors.push(format!("{} delivery failed", outcome.db_name));
+        }
+        for subscriber in &outcome.subscribers {
+            selected += subscriber.selected_article_ids.len() as i64;
+            pushed += subscriber.folder_synced_count as i64;
+            if subscriber.message_id.is_some() {
+                pushplus_messages += 1;
+            }
+            if !subscriber.selected_article_ids.is_empty() {
+                selected_databases.insert(outcome.db_name.clone());
+            }
+            if let Some(error) = &subscriber.error {
+                skip_messages.push(error.clone());
+            }
+        }
+    }
+
+    if !errors.is_empty() {
+        return ManualWeeklyPushOutcome {
+            status: "failed".to_string(),
+            message: errors.join("; "),
+            pushed,
+            selected,
+            total_candidates: Some(total_candidates),
+            summary: String::new(),
+            folder_id,
+            folder_name,
+        };
+    }
+
+    let message = if selected > 0 && delivery_method == "pushplus" {
+        let message_suffix = if pushplus_messages == 1 { "" } else { "s" };
+        let article_suffix = if selected == 1 { "" } else { "s" };
+        let database_suffix = if selected_databases.len() == 1 {
+            ""
+        } else {
+            "s"
+        };
+        let mut message = format!(
+            "PushPlus sent successfully ({pushplus_messages} message{message_suffix}); selected {selected} article{article_suffix} across {} database{database_suffix}",
+            selected_databases.len()
+        );
+        if pushed > 0 {
+            let synced_suffix = if pushed == 1 { "" } else { "s" };
+            message.push_str(&format!(
+                "; synced {pushed} article{synced_suffix} to the tracking folder"
+            ));
+        }
+        message
+    } else if selected == 0 {
+        skip_messages
+            .into_iter()
+            .next()
+            .unwrap_or_else(|| "AI selection found no matching articles".to_string())
+    } else {
+        String::new()
+    };
+
+    ManualWeeklyPushOutcome {
+        status: "completed".to_string(),
+        message,
+        pushed,
+        selected,
+        total_candidates: Some(total_candidates),
+        summary: String::new(),
+        folder_id,
+        folder_name,
+    }
+}
+
+fn nonempty_text(value: &str) -> Option<&str> {
+    let value = value.trim();
+    if value.is_empty() {
+        None
+    } else {
+        Some(value)
+    }
 }
 
 struct SubscriberPlanRequest<'a> {
@@ -1282,6 +1692,29 @@ mod tests {
 
         assert_eq!(outcome.candidate_article_ids, vec![102]);
         assert_eq!(outcome.subscribers[0].selected_article_ids, vec![102]);
+
+        fs::write(
+            &changes_file,
+            r#"{"db_name":"fixture.sqlite","run_id":"article-only","notifiable_article_ids":[101]}"#,
+        )
+        .expect("article-only manifest should be written");
+        let (article_only_outcome, _pushplus_sender) = run_fixture_delivery(
+            &fixture.config(
+                DeliveryWorkflow::Push,
+                DeliveryMode::DryRun,
+                Some(changes_file.clone()),
+                None,
+            ),
+            vec![selection_outcome(&[101], "")],
+            Vec::new(),
+        )
+        .expect("article-only manifest run should load candidates");
+
+        assert_eq!(article_only_outcome.candidate_article_ids, vec![101]);
+        assert_eq!(
+            article_only_outcome.subscribers[0].selected_article_ids,
+            vec![101]
+        );
 
         fs::write(
             &changes_file,

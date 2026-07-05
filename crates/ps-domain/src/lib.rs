@@ -39,6 +39,7 @@ pub use index::{
     WeeklyDatabaseUpdate, WeeklyJournalUpdate, WeeklyUpdatesResponse, YearSummary,
 };
 pub use recommend::{
-    ArticleCandidateInfo, NotificationSubscriberInfo, RankedSelectionInfo, SelectionResultInfo,
+    ArticleCandidateInfo, ManualWeeklyPushStatus, NotificationSubscriberInfo, RankedSelectionInfo,
+    SelectionResultInfo,
 };
 pub use response::ErrorEnvelope;

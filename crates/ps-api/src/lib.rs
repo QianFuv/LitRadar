@@ -178,12 +178,14 @@ async fn shutdown_signal() {
 mod tests {
     use std::path::Path;
     use std::sync::atomic::{AtomicBool, Ordering};
+    use std::time::Duration;
 
     use axum::body::{to_bytes, Body};
     use axum::http::header::{
         AUTHORIZATION, CONTENT_DISPOSITION, CONTENT_TYPE, COOKIE, SET_COOKIE,
     };
     use axum::http::{Method, Request, StatusCode};
+    use axum::Router;
     use rusqlite::Connection;
     use serde_json::Value;
     use tower::ServiceExt;
@@ -1551,6 +1553,84 @@ mod tests {
         miri,
         ignore = "Miri does not support Tokio's Windows IOCP runtime initialization"
     )]
+    async fn tracking_manual_weekly_push_routes_cover_status_and_duplicate_start() {
+        let _env_guard =
+            EnvVarGuard::configured(&[("PAPER_SCANNER_MANUAL_PUSH_TEST_DELAY_MS", Some("120"))]);
+        let backend = TestBackend::new();
+        let user = backend.authenticated_user("manual_push", false);
+        let app = backend.router();
+        let auth = user.authorization_header();
+
+        let idle = json_request(
+            &app,
+            Method::GET,
+            "/api/tracking/push-weekly/status",
+            Some(&auth),
+            None,
+            None,
+        )
+        .await;
+        let started = json_request(
+            &app,
+            Method::POST,
+            "/api/tracking/push-weekly",
+            Some(&auth),
+            None,
+            None,
+        )
+        .await;
+        let duplicate = json_request(
+            &app,
+            Method::POST,
+            "/api/tracking/push-weekly",
+            Some(&auth),
+            None,
+            None,
+        )
+        .await;
+        let running = json_request(
+            &app,
+            Method::GET,
+            "/api/tracking/push-weekly/status",
+            Some(&auth),
+            None,
+            None,
+        )
+        .await;
+        let finished = wait_for_manual_push_completion(&app, &auth).await;
+
+        assert_eq!(idle.status, StatusCode::OK);
+        assert_eq!(idle.payload["status"], "idle");
+        assert_eq!(idle.payload["message"], "No manual push task is running");
+        assert!(idle.payload["job_id"].is_null());
+        assert_eq!(started.status, StatusCode::OK);
+        assert_eq!(started.payload["status"], "running");
+        assert!(started.payload["job_id"].is_string());
+        assert!(started.payload["started_at"].is_number());
+        assert!(started.payload["finished_at"].is_null());
+        assert_eq!(started.payload["pushed"], 0);
+        assert_eq!(started.payload["selected"], 0);
+        assert!(started.payload["total_candidates"].is_null());
+        assert_eq!(duplicate.status, StatusCode::OK);
+        assert_eq!(duplicate.payload["status"], "running");
+        assert_eq!(duplicate.payload["job_id"], started.payload["job_id"]);
+        assert_eq!(running.status, StatusCode::OK);
+        assert_eq!(running.payload["job_id"], started.payload["job_id"]);
+        assert_eq!(finished.status, StatusCode::OK);
+        assert_eq!(finished.payload["status"], "completed");
+        assert_eq!(finished.payload["job_id"], started.payload["job_id"]);
+        assert_eq!(
+            finished.payload["message"],
+            "Recommendation settings are not enabled; skipped push"
+        );
+        assert!(finished.payload["finished_at"].is_number());
+    }
+
+    #[tokio::test]
+    #[cfg_attr(
+        miri,
+        ignore = "Miri does not support Tokio's Windows IOCP runtime initialization"
+    )]
     async fn index_routes_cover_fixture_database_queries_and_resolution_errors() {
         let backend = TestBackend::new();
         let user = backend.authenticated_user("index_reader", false);
@@ -2259,6 +2339,26 @@ mod tests {
                 [article_id],
             )
             .expect("CNKI article should insert");
+    }
+
+    async fn wait_for_manual_push_completion(app: &Router, auth: &str) -> JsonTestResponse {
+        for _ in 0..100 {
+            let response = json_request(
+                app,
+                Method::GET,
+                "/api/tracking/push-weekly/status",
+                Some(auth),
+                None,
+                None,
+            )
+            .await;
+            if response.payload["status"] != "running" {
+                return response;
+            }
+            tokio::task::yield_now().await;
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        panic!("manual push job did not finish");
     }
 
     struct EnvVarGuard {

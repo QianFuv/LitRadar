@@ -1,6 +1,7 @@
 //! Recommendation and notification delivery compatibility models.
 
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
 /// Candidate article used by notification and tracking delivery.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -98,4 +99,31 @@ pub struct SelectionResultInfo {
     pub summary: String,
     /// Ranked selections.
     pub selections: Vec<RankedSelectionInfo>,
+}
+
+/// Manual weekly push job status payload.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct ManualWeeklyPushStatus {
+    /// Background job identifier.
+    pub job_id: Option<String>,
+    /// Job status: `idle`, `running`, `completed`, or `failed`.
+    pub status: String,
+    /// Human-readable status message.
+    pub message: String,
+    /// Unix timestamp when the job started.
+    pub started_at: Option<f64>,
+    /// Unix timestamp when the job finished.
+    pub finished_at: Option<f64>,
+    /// Number of pushed or tracking-folder-synced articles.
+    pub pushed: i64,
+    /// Number of selected articles.
+    pub selected: i64,
+    /// Number of candidate articles considered by AI selection.
+    pub total_candidates: Option<i64>,
+    /// AI-generated summary text when available.
+    pub summary: String,
+    /// Tracking folder identifier when applicable.
+    pub folder_id: Option<i64>,
+    /// Tracking folder name when applicable.
+    pub folder_name: Option<String>,
 }

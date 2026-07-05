@@ -1,11 +1,18 @@
 //! Tracking status and notification settings route handlers.
 
+use std::collections::HashMap;
+use std::sync::{Mutex, OnceLock};
+use std::time::{SystemTime, UNIX_EPOCH};
+
 use axum::extract::State;
 use axum::http::HeaderMap;
 use axum::Json;
 use ps_domain::{
-    NotificationSettingsResponse, NotificationSettingsUpdate, TrackingFolderSummary,
-    TrackingStatusResponse,
+    ManualWeeklyPushStatus, NotificationSettingsResponse, NotificationSettingsUpdate,
+    TrackingFolderSummary, TrackingStatusResponse,
+};
+use ps_worker::delivery::{
+    run_manual_weekly_push, ManualWeeklyPushConfig, ManualWeeklyPushOutcome,
 };
 
 use crate::response::ApiError;
@@ -13,6 +20,87 @@ use crate::routes::auth::require_current_user;
 use crate::state::ApiState;
 
 const ALLOWED_DELIVERY_METHODS: [&str; 2] = ["folder", "pushplus"];
+const MANUAL_PUSH_STARTED_MESSAGE: &str = "Manual push started and is running in the background";
+const MANUAL_PUSH_IDLE_MESSAGE: &str = "No manual push task is running";
+
+static MANUAL_PUSH_JOBS: OnceLock<Mutex<HashMap<String, ManualWeeklyPushStatus>>> = OnceLock::new();
+
+/// Start one manual weekly-push job for the authenticated user.
+#[utoipa::path(
+    post,
+    path = "/api/tracking/push-weekly",
+    tag = "tracking",
+    responses((status = 200, description = "Manual weekly push status.", body = ManualWeeklyPushStatus)),
+    security(("bearer_auth" = []), ("session_cookie" = []))
+)]
+pub(crate) async fn push_weekly_to_tracking(
+    State(state): State<ApiState>,
+    headers: HeaderMap,
+) -> Result<Json<ManualWeeklyPushStatus>, ApiError> {
+    let (user, _) = require_current_user(&state, &headers)?;
+    let key = manual_push_key(&state, user.id);
+    if let Some(status) = current_manual_push_status(&key) {
+        if status.status == "running" {
+            return Ok(Json(status));
+        }
+    }
+
+    let job_id = ps_storage::random_hex(state.storage_config().auth_db_path(), 16)
+        .map_err(|_| ApiError::internal_server_error())?;
+    let started_at = current_epoch_seconds();
+    let status = manual_push_status(
+        Some(job_id.clone()),
+        "running",
+        MANUAL_PUSH_STARTED_MESSAGE,
+        Some(started_at),
+        None,
+        ManualWeeklyPushOutcome {
+            status: "running".to_string(),
+            message: MANUAL_PUSH_STARTED_MESSAGE.to_string(),
+            pushed: 0,
+            selected: 0,
+            total_candidates: None,
+            summary: String::new(),
+            folder_id: None,
+            folder_name: None,
+        },
+    );
+    set_manual_push_status(key.clone(), status.clone());
+    spawn_manual_push_job(
+        key,
+        job_id,
+        started_at,
+        ManualWeeklyPushConfig {
+            storage_config: state.storage_config().clone(),
+            user_id: user.id,
+            ai_model: None,
+            max_candidates: None,
+            timeout_seconds: 120,
+            retry_attempts: 3,
+            dedupe_retention_days: 60,
+        },
+    );
+    Ok(Json(status))
+}
+
+/// Get the current manual weekly-push job status for the authenticated user.
+#[utoipa::path(
+    get,
+    path = "/api/tracking/push-weekly/status",
+    tag = "tracking",
+    responses((status = 200, description = "Manual weekly push status.", body = ManualWeeklyPushStatus)),
+    security(("bearer_auth" = []), ("session_cookie" = []))
+)]
+pub(crate) async fn get_push_weekly_status(
+    State(state): State<ApiState>,
+    headers: HeaderMap,
+) -> Result<Json<ManualWeeklyPushStatus>, ApiError> {
+    let (user, _) = require_current_user(&state, &headers)?;
+    let key = manual_push_key(&state, user.id);
+    Ok(Json(
+        current_manual_push_status(&key).unwrap_or_else(idle_manual_push_status),
+    ))
+}
 
 /// Get tracking status for the authenticated user.
 #[utoipa::path(
@@ -175,3 +263,166 @@ fn nonempty_or_default(value: String, default: &str) -> String {
         value.to_string()
     }
 }
+
+fn manual_push_jobs() -> &'static Mutex<HashMap<String, ManualWeeklyPushStatus>> {
+    MANUAL_PUSH_JOBS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn manual_push_key(state: &ApiState, user_id: ps_domain::UserId) -> String {
+    format!(
+        "{}:{}",
+        state.storage_config().auth_db_path().display(),
+        user_id.value()
+    )
+}
+
+fn current_manual_push_status(key: &str) -> Option<ManualWeeklyPushStatus> {
+    manual_push_jobs()
+        .lock()
+        .expect("manual push jobs lock should not be poisoned")
+        .get(key)
+        .cloned()
+}
+
+fn set_manual_push_status(key: String, status: ManualWeeklyPushStatus) {
+    manual_push_jobs()
+        .lock()
+        .expect("manual push jobs lock should not be poisoned")
+        .insert(key, status);
+}
+
+fn idle_manual_push_status() -> ManualWeeklyPushStatus {
+    ManualWeeklyPushStatus {
+        job_id: None,
+        status: "idle".to_string(),
+        message: MANUAL_PUSH_IDLE_MESSAGE.to_string(),
+        started_at: None,
+        finished_at: None,
+        pushed: 0,
+        selected: 0,
+        total_candidates: None,
+        summary: String::new(),
+        folder_id: None,
+        folder_name: None,
+    }
+}
+
+fn spawn_manual_push_job(
+    key: String,
+    job_id: String,
+    started_at: f64,
+    config: ManualWeeklyPushConfig,
+) {
+    tokio::spawn(async move {
+        let finished = tokio::task::spawn_blocking(move || {
+            delay_manual_push_for_tests();
+            run_manual_weekly_push(&config)
+        })
+        .await;
+        let finished_at = current_epoch_seconds();
+        let status = match finished {
+            Ok(Ok(outcome)) => {
+                let outcome_status = outcome.status.clone();
+                let outcome_message = outcome.message.clone();
+                manual_push_status(
+                    Some(job_id.clone()),
+                    &outcome_status,
+                    &outcome_message,
+                    Some(started_at),
+                    Some(finished_at),
+                    outcome,
+                )
+            }
+            Ok(Err(error)) => failed_manual_push_status(
+                Some(job_id.clone()),
+                started_at,
+                finished_at,
+                &format!("Manual push failed: {error}"),
+            ),
+            Err(error) => failed_manual_push_status(
+                Some(job_id.clone()),
+                started_at,
+                finished_at,
+                &format!("Manual push failed: {error}"),
+            ),
+        };
+        update_manual_push_status_if_current(key, &job_id, status);
+    });
+}
+
+fn update_manual_push_status_if_current(key: String, job_id: &str, status: ManualWeeklyPushStatus) {
+    let mut jobs = manual_push_jobs()
+        .lock()
+        .expect("manual push jobs lock should not be poisoned");
+    let Some(current) = jobs.get(&key) else {
+        return;
+    };
+    if current.job_id.as_deref() == Some(job_id) {
+        jobs.insert(key, status);
+    }
+}
+
+fn manual_push_status(
+    job_id: Option<String>,
+    status: &str,
+    message: &str,
+    started_at: Option<f64>,
+    finished_at: Option<f64>,
+    outcome: ManualWeeklyPushOutcome,
+) -> ManualWeeklyPushStatus {
+    ManualWeeklyPushStatus {
+        job_id,
+        status: status.to_string(),
+        message: message.to_string(),
+        started_at,
+        finished_at,
+        pushed: outcome.pushed,
+        selected: outcome.selected,
+        total_candidates: outcome.total_candidates,
+        summary: outcome.summary,
+        folder_id: outcome.folder_id,
+        folder_name: outcome.folder_name,
+    }
+}
+
+fn failed_manual_push_status(
+    job_id: Option<String>,
+    started_at: f64,
+    finished_at: f64,
+    message: &str,
+) -> ManualWeeklyPushStatus {
+    ManualWeeklyPushStatus {
+        job_id,
+        status: "failed".to_string(),
+        message: message.to_string(),
+        started_at: Some(started_at),
+        finished_at: Some(finished_at),
+        pushed: 0,
+        selected: 0,
+        total_candidates: None,
+        summary: String::new(),
+        folder_id: None,
+        folder_name: None,
+    }
+}
+
+fn current_epoch_seconds() -> f64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_secs_f64())
+        .unwrap_or(0.0)
+}
+
+#[cfg(test)]
+fn delay_manual_push_for_tests() {
+    let Some(delay_millis) = std::env::var("PAPER_SCANNER_MANUAL_PUSH_TEST_DELAY_MS")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+    else {
+        return;
+    };
+    std::thread::sleep(std::time::Duration::from_millis(delay_millis));
+}
+
+#[cfg(not(test))]
+fn delay_manual_push_for_tests() {}
