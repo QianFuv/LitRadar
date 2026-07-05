@@ -83,6 +83,8 @@ docker compose up -d
 
 - 前端：`http://localhost:3000`
 - API：`http://localhost:8000/api`
+- API 文档：`http://localhost:8000/docs/`
+- OpenAPI JSON：`http://localhost:8000/openapi.json`
 
 健康检查：
 
@@ -135,6 +137,10 @@ docker compose run --rm api index --file cnki_journals.csv --resume --issue-batc
 1. 检查 `api` 服务：`docker compose logs api`
 2. 检查宿主机 `data/index/` 下是否存在 `.sqlite` 文件
 3. 如需生成索引库，运行 `docker compose run --rm api index --file <csv>` 或把现有 `.sqlite` 放入 `data/index/`
+
+### API 请求日志太多或太少
+
+`api` 服务默认输出 HTTP 请求日志，包含 method、path、status 和 latency。需要调整过滤级别时，在 Compose 环境中设置 `RUST_LOG`，例如 `RUST_LOG=error` 只保留 error 级日志。
 
 ### 中文搜索命中差
 

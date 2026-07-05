@@ -72,6 +72,18 @@ cargo run --bin api
 
 默认后端地址：`http://127.0.0.1:8000`。
 
+启动后可访问：
+
+- `http://127.0.0.1:8000/docs/`：Swagger UI 交互式 API 文档
+- `http://127.0.0.1:8000/openapi.json`：由 Rust route 注解和 DTO schema 编译期生成的 OpenAPI JSON
+
+API 默认输出 HTTP 请求日志，包含 method、path、status 和 latency。设置 `RUST_LOG` 可覆盖默认过滤器：
+
+```bash
+RUST_LOG=error cargo run --bin api
+RUST_LOG=ps_api=debug,tower_http=debug cargo run --bin api
+```
+
 ### Rust worker
 
 ```bash

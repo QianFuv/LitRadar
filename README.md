@@ -95,6 +95,7 @@ Paper Scanner 是一个面向学术期刊的全栈检索与订阅平台。它负
 
    - 前端：`http://localhost:3000`
    - 后端 API：`http://localhost:8000/api`
+   - API 文档：`http://localhost:8000/docs/`
 
 5. 注册第一个用户
 
@@ -109,6 +110,14 @@ cargo run --bin api
 ```
 
 默认后端地址：`http://127.0.0.1:8000`
+
+交互式 API 文档地址：`http://127.0.0.1:8000/docs/`，生成的 OpenAPI JSON 地址：`http://127.0.0.1:8000/openapi.json`。
+
+默认启动会输出 HTTP 请求日志，包含 method、path、status 和 latency。可通过 `RUST_LOG` 调整过滤级别，例如：
+
+```bash
+RUST_LOG=error cargo run --bin api
+```
 
 另开一个终端可启动 Rust worker shadow 进程：
 
@@ -160,6 +169,14 @@ cargo run --bin index -- --file cnki_journals.csv --resume --issue-batch 10
 ```bash
 cargo run --bin api
 ```
+
+API 启动后会提供：
+
+- `/api/*`：业务接口
+- `/docs/`：Swagger UI 交互式文档
+- `/openapi.json`：由 Rust 注解和 DTO schema 编译期生成的 OpenAPI JSON
+
+终端默认显示请求日志；设置 `RUST_LOG=error` 可只显示 error 级日志。
 
 环境变量：
 

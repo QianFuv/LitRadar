@@ -2,7 +2,7 @@
 
 本文档以当前 Rust API 实现为准，覆盖检索接口、认证接口、收藏/追踪接口以及管理员接口。后端部署与正常运行入口已经切换到 Rust；公开路径、请求体、响应体、认证 Cookie/Bearer 行为和 SQLite 数据契约保持不变。
 
-当前 API 没有内置自动生成的 Swagger 或 OpenAPI 页面，接口信息以本文档为准。
+Rust API 会在启动时提供编译期生成的 OpenAPI 文档。交互式 Swagger UI 地址为 `/docs/`，OpenAPI JSON 地址为 `/openapi.json`。这些文档由 handler 上的 `#[utoipa::path]` 注解和共享 DTO 的 schema derive 生成；本文档保留补充说明、业务约束和运行行为细节。
 
 ## 基本约定
 
