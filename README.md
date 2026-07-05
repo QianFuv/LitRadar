@@ -19,7 +19,7 @@ Paper Scanner 是一个面向学术期刊的全栈检索与订阅平台。它负
 - 用户系统：注册、登录、邀请码、访问令牌、改密
 - 收藏与导出：文件夹管理、批量收藏、BibTeX / RIS / EndNote XML 导出
 - 文献追踪：将某个文件夹设为追踪文件夹，并按用户偏好自动写入相关文章
-- MCP：Rust API 直接提供 Streamable HTTP MCP 端点，Node MCP 包保留为 stdio-only 客户端兼容路径
+- MCP：Rust API 直接提供 Streamable HTTP MCP 端点，不需要额外 MCP 运行时
 - AI 选择：支持 OpenAI 兼容模型配置，不局限于单一服务商
 - 管理后台：用户、邀请码、系统统计、外部元数据运行配置、定时任务、系统公告
 - 首页公告：后台可配置全局公告，前台按优先级展示并支持本地关闭
@@ -294,4 +294,3 @@ cargo run --bin push -- --db utd24.sqlite --changes-file data/push_state/utd24.c
 - [Crossref / OpenAlex / Semantic Scholar 集成](docs/scholarly_api.md)
 - [CNKI overseas 集成](docs/cnki_oversea_api.md)
 - [前端说明](app/README.md)
-- [MCP Server](mcp/README.md)

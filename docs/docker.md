@@ -135,7 +135,7 @@ docker compose run --rm api index --file cnki_journals.csv --resume --issue-batc
 
 ## HTTP MCP 部署
 
-Rust API 容器内置 Streamable HTTP MCP 端点 `/mcp`，不需要启动单独的 Node HTTP MCP 服务。该端点复用现有 API 认证：
+Rust API 容器内置 Streamable HTTP MCP 端点 `/mcp`，不需要启动任何单独的 MCP 服务。该端点复用现有 API 认证：
 
 - 服务器端 MCP 客户端使用 `Authorization: Bearer <access_token>`
 - 同源浏览器调用可使用 `ps_session` Cookie

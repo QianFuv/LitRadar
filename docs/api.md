@@ -81,7 +81,7 @@ Rust API 进程直接提供 `POST/GET/DELETE /mcp`，用于 MCP Streamable HTTP 
 - `Authorization: Bearer <access_token>`
 - 或同源浏览器请求中的 `ps_session` Cookie
 
-`/mcp` 当前暴露的工具与 stdio MCP 兼容包一致：
+`/mcp` 当前暴露的工具包括：
 
 - 元数据：`list_databases`、`list_areas`、`list_years`、`list_journal_options`、`list_sources`
 - 期刊：`list_journals`、`get_journal`
