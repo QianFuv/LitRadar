@@ -1,4 +1,4 @@
-//! Binary entrypoint for the Rust API server.
+//! Legacy API binary entrypoint.
 
 use std::error::Error;
 

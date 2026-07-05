@@ -5,6 +5,8 @@ mod response;
 pub mod routes;
 pub mod state;
 
+use std::error::Error;
+
 use axum::extract::Request;
 use axum::http::header::{AUTHORIZATION, CACHE_CONTROL, COOKIE};
 use axum::http::HeaderValue;
@@ -15,6 +17,7 @@ use config::ApiConfig;
 use ps_auth::SESSION_COOKIE_NAME;
 use ps_storage::StorageConfig;
 use state::ApiState;
+use tokio::net::TcpListener;
 use tower_http::cors::{AllowHeaders, AllowMethods, AllowOrigin, CorsLayer};
 
 /// API route prefix preserved from the Python backend.
@@ -25,6 +28,36 @@ pub const AUTHENTICATED_CACHE_CONTROL: &str = "private, no-store";
 
 /// Cache-Control header for unauthenticated index reads.
 pub const PUBLIC_INDEX_CACHE_CONTROL: &str = "public, max-age=300, stale-while-revalidate=600";
+
+/// Start the API server from environment configuration.
+///
+/// # Returns
+///
+/// Result indicating whether the server exited cleanly.
+pub async fn serve_from_env() -> Result<(), Box<dyn Error>> {
+    serve(ApiConfig::from_env()?).await
+}
+
+/// Start the API server with an explicit runtime configuration.
+///
+/// # Arguments
+///
+/// * `config` - Runtime API configuration.
+///
+/// # Returns
+///
+/// Result indicating whether the server exited cleanly.
+pub async fn serve(config: ApiConfig) -> Result<(), Box<dyn Error>> {
+    let bind_address = config.bind_address();
+    let listener = TcpListener::bind(&bind_address).await?;
+    println!("ps-api listening on {}", listener.local_addr()?);
+
+    axum::serve(listener, build_router(config))
+        .with_graceful_shutdown(shutdown_signal())
+        .await?;
+
+    Ok(())
+}
 
 /// Build the Rust API router for the current migration phase.
 ///
@@ -111,6 +144,12 @@ fn has_session_cookie(cookie_header: &str) -> bool {
 fn is_public_index_cache_path(path: &str) -> bool {
     path.starts_with(&format!("{API_PREFIX}/articles"))
         || path.starts_with(&format!("{API_PREFIX}/meta"))
+}
+
+async fn shutdown_signal() {
+    if let Err(error) = tokio::signal::ctrl_c().await {
+        eprintln!("failed to install Ctrl+C handler: {error}");
+    }
 }
 
 #[cfg(test)]
