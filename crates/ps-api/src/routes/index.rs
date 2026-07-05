@@ -1,5 +1,8 @@
 //! Index database read route handlers.
 
+#[cfg(test)]
+use std::sync::{Mutex, OnceLock};
+
 use axum::extract::{Path, Query, RawQuery, State};
 use axum::http::header::{CONTENT_DISPOSITION, CONTENT_TYPE, LOCATION};
 use axum::http::{HeaderMap, HeaderValue, StatusCode};
@@ -21,7 +24,8 @@ use crate::response::ApiError;
 use crate::routes::auth::require_current_user;
 use crate::state::ApiState;
 
-const LIVE_FIXTURE_MODE_ENV: &str = "PAPER_SCANNER_ZJLIB_CNKI_FIXTURE_MODE";
+#[cfg(test)]
+static INDEX_ROUTE_FIXTURE_MODE: OnceLock<Mutex<Option<FixtureZjlibCnkiMode>>> = OnceLock::new();
 
 /// Query parameters that only select an index database.
 #[derive(Debug, Deserialize, IntoParams)]
@@ -638,9 +642,34 @@ pub(crate) async fn redirect_article_fulltext(
 }
 
 fn zjlib_fixture_mode() -> Option<FixtureZjlibCnkiMode> {
-    std::env::var(LIVE_FIXTURE_MODE_ENV)
-        .ok()
-        .and_then(|value| FixtureZjlibCnkiMode::parse(&value))
+    #[cfg(test)]
+    {
+        return index_route_fixture_mode()
+            .lock()
+            .expect("index route fixture mode lock should not be poisoned")
+            .clone();
+    }
+    #[cfg(not(test))]
+    {
+        None
+    }
+}
+
+#[cfg(test)]
+fn index_route_fixture_mode() -> &'static Mutex<Option<FixtureZjlibCnkiMode>> {
+    INDEX_ROUTE_FIXTURE_MODE.get_or_init(|| Mutex::new(None))
+}
+
+/// Set Zhejiang Library CNKI fixture transport mode for index route tests.
+///
+/// # Arguments
+///
+/// * `mode` - Optional fixture transport mode.
+#[cfg(test)]
+pub(crate) fn set_fixture_mode_for_tests(mode: Option<FixtureZjlibCnkiMode>) {
+    *index_route_fixture_mode()
+        .lock()
+        .expect("index route fixture mode lock should not be poisoned") = mode;
 }
 
 fn download_zjlib_cnki_fulltext(

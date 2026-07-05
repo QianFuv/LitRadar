@@ -1,7 +1,6 @@
 //! Notification and tracking delivery worker orchestration.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::env;
 use std::error::Error;
 use std::fmt;
 use std::fs;
@@ -1484,40 +1483,22 @@ fn outcome(
 
 fn load_global_config() -> NotificationGlobalConfig {
     NotificationGlobalConfig {
-        ai_base_url: read_env("NOTIFY_AI_BASE_URL")
-            .filter(|value| !value.is_empty())
-            .unwrap_or_else(|| DEFAULT_OPENAI_BASE_URL.to_string()),
-        ai_api_key: read_env("NOTIFY_AI_API_KEY").unwrap_or_default(),
-        pushplus_channel: read_env("NOTIFY_PUSHPLUS_CHANNEL")
-            .filter(|value| !value.is_empty())
-            .unwrap_or_else(|| PUSHPLUS_CHANNEL.to_string()),
-        pushplus_template: read_env("NOTIFY_PUSHPLUS_TEMPLATE")
-            .filter(|value| !value.is_empty())
-            .unwrap_or_else(|| "markdown".to_string()),
-        pushplus_topic: read_env("NOTIFY_PUSHPLUS_TOPIC").filter(|value| !value.is_empty()),
-        pushplus_option: read_env("NOTIFY_PUSHPLUS_OPTION").filter(|value| !value.is_empty()),
-        ai_system_prompt: read_env("NOTIFY_AI_SYSTEM_PROMPT").filter(|value| !value.is_empty()),
+        ai_base_url: DEFAULT_OPENAI_BASE_URL.to_string(),
+        ai_api_key: String::new(),
+        pushplus_channel: PUSHPLUS_CHANNEL.to_string(),
+        pushplus_template: "markdown".to_string(),
+        pushplus_topic: None,
+        pushplus_option: None,
+        ai_system_prompt: None,
     }
 }
 
 fn load_defaults() -> NotificationDefaults {
     NotificationDefaults {
-        max_candidates: read_env("NOTIFY_MAX_CANDIDATES")
-            .and_then(|value| value.parse::<usize>().ok())
-            .unwrap_or(120)
-            .max(1),
-        ai_model: read_env("NOTIFY_AI_MODEL")
-            .filter(|value| !value.is_empty())
-            .unwrap_or_else(|| DEFAULT_OPENAI_MODEL.to_string()),
-        temperature: read_env("NOTIFY_TEMPERATURE")
-            .and_then(|value| value.parse::<f64>().ok())
-            .unwrap_or(0.2)
-            .clamp(0.0, 1.0),
+        max_candidates: 120,
+        ai_model: DEFAULT_OPENAI_MODEL.to_string(),
+        temperature: 0.2,
     }
-}
-
-fn read_env(name: &str) -> Option<String> {
-    env::var(name).ok().map(|value| value.trim().to_string())
 }
 
 #[cfg(test)]

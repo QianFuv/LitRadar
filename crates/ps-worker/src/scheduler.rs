@@ -390,19 +390,8 @@ fn scheduled_job(task: &ScheduledTaskInfo) -> ScheduledJob {
 }
 
 fn execute_shell_command(auth_db_path: &Path, command: &str) -> String {
+    let _ = auth_db_path;
     let mut shell = shell_command(command);
-    if let Ok(settings) = ps_storage::list_runtime_settings(auth_db_path) {
-        for setting in settings {
-            if setting.source != "database" {
-                continue;
-            }
-            if setting.value.trim().is_empty() {
-                shell.env_remove(setting.field);
-            } else {
-                shell.env(setting.field, setting.value);
-            }
-        }
-    }
     match shell.output() {
         Ok(output) if output.status.success() => "success".to_string(),
         Ok(output) => match output.status.code() {
@@ -841,7 +830,7 @@ mod tests {
     }
 
     #[test]
-    fn run_now_applies_database_runtime_settings_to_shell_environment() {
+    fn run_now_does_not_inject_database_runtime_settings_to_shell_environment() {
         let temp_dir = tempdir().expect("temp dir should be created");
         let auth_db_path = temp_dir.path().join("auth.sqlite");
         initialize_auth_database(&auth_db_path).expect("auth database should initialize");
@@ -864,7 +853,7 @@ mod tests {
         let outcome =
             run_task_now(&auth_db_path, task.id, SchedulerMode::Execute).expect("task should run");
 
-        assert_eq!(outcome.status.as_deref(), Some("success"));
+        assert_eq!(outcome.status.as_deref(), Some("failed (9)"));
     }
 
     fn failing_command() -> &'static str {

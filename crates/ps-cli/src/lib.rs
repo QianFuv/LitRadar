@@ -1,14 +1,15 @@
 //! Shared Rust backend command entrypoints.
 
 use std::collections::BTreeSet;
-use std::env;
 use std::error::Error;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::thread;
 use std::time::Duration;
 
-use ps_index::{run_live_index, run_live_index_worker_from_environment, LiveIndexConfig};
+use ps_index::{
+    run_live_index, run_live_index_worker_from_file_path, LiveIndexConfig, LiveScholarlyConfig,
+};
 use ps_worker::delivery::{
     run_recommendation_delivery, DeliveryMode, DeliveryWorkflow, RecommendationRunConfig,
 };
@@ -27,20 +28,25 @@ use serde_json::json;
 ///
 /// Result indicating whether the command completed successfully.
 pub fn run_index_command(args: Vec<String>) -> Result<(), Box<dyn Error>> {
-    if run_internal_live_index_worker_if_requested()? {
-        return Ok(());
-    }
     let mut args = args;
     if has_help(&args) {
         println!("{}", index_usage());
         return Ok(());
     }
+    if let Some(request_path) = extract_path_option(&mut args, "--live-worker-request")? {
+        if !args.is_empty() {
+            return Err(format!("unexpected index worker arguments: {}", args.join(" ")).into());
+        }
+        println!("{}", run_live_index_worker_from_file_path(request_path)?);
+        return Ok(());
+    }
+    let project_root = extract_project_root(&mut args)?;
+    let auth_db_path = extract_auth_db_path_with_project_root(&mut args, &project_root)?;
     let options = parse_index_options(&mut args)?;
     if !args.is_empty() {
         return Err(format!("unexpected index arguments: {}", args.join(" ")).into());
     }
-    let project_root = project_root();
-    apply_runtime_settings(&project_root.join("data").join("auth.sqlite"));
+    let scholarly_config = live_scholarly_config(&auth_db_path, options.timeout_seconds)?;
     let outcome = run_live_index(&LiveIndexConfig {
         project_root,
         file: options.file,
@@ -52,17 +58,10 @@ pub fn run_index_command(args: Vec<String>) -> Result<(), Box<dyn Error>> {
         update: options.update,
         notify: options.notify,
         notify_dry_run: options.notify_dry_run,
+        scholarly_config,
     })?;
     println!("{}", serde_json::to_string(&outcome)?);
     Ok(())
-}
-
-fn run_internal_live_index_worker_if_requested() -> Result<bool, Box<dyn Error>> {
-    let Some(response) = run_live_index_worker_from_environment()? else {
-        return Ok(false);
-    };
-    println!("{response}");
-    Ok(true)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -216,7 +215,8 @@ fn run_delivery_command(
     if remove_flag(&mut args, "--no-dry-run") {
         mode = DeliveryMode::Execute;
     }
-    let auth_db_path = extract_auth_db_path(&mut args)?;
+    let project_root = extract_project_root(&mut args)?;
+    let auth_db_path = extract_auth_db_path_with_project_root(&mut args, &project_root)?;
     let index_db_path = extract_path_option(&mut args, "--index-db")?;
     let db_name = extract_string_option(&mut args, "--db")?;
     let state_dir = extract_path_option(&mut args, "--state-dir")?;
@@ -231,8 +231,6 @@ fn run_delivery_command(
         return Err(format!("unexpected {command_name} arguments: {}", args.join(" ")).into());
     }
 
-    let project_root = project_root();
-    apply_runtime_settings(&auth_db_path);
     let changes_file = changes_file
         .filter(|path| !path.as_os_str().is_empty())
         .map(|path| resolve_project_path(&project_root, path));
@@ -311,19 +309,10 @@ fn run_worker_execute(
     }
 }
 
+#[cfg(test)]
 fn extract_auth_db_path(args: &mut Vec<String>) -> Result<PathBuf, Box<dyn Error>> {
-    if let Some(index) = args.iter().position(|argument| argument == "--auth-db") {
-        if index + 1 >= args.len() {
-            return Err("--auth-db requires a path".into());
-        }
-        let path = PathBuf::from(args.remove(index + 1));
-        args.remove(index);
-        return Ok(path);
-    }
-    let project_root = env::var("PAPER_SCANNER_PROJECT_ROOT")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| env::current_dir().expect("current directory should be available"));
-    Ok(project_root.join("data").join("auth.sqlite"))
+    let project_root = std::env::current_dir().expect("current directory should be available");
+    extract_auth_db_path_with_project_root(args, &project_root)
 }
 
 fn extract_auth_db_path_with_project_root(
@@ -343,7 +332,7 @@ fn extract_auth_db_path_with_project_root(
 
 fn extract_project_root(args: &mut Vec<String>) -> Result<PathBuf, Box<dyn Error>> {
     Ok(extract_path_option(args, "--project-root")?
-        .unwrap_or_else(|| env::current_dir().expect("current directory should be available")))
+        .unwrap_or_else(|| std::env::current_dir().expect("current directory should be available")))
 }
 
 fn extract_path_option(
@@ -440,28 +429,6 @@ fn remove_flag(args: &mut Vec<String>, name: &str) -> bool {
 fn has_help(args: &[String]) -> bool {
     args.iter()
         .any(|argument| argument == "--help" || argument == "-h")
-}
-
-fn project_root() -> PathBuf {
-    env::var("PAPER_SCANNER_PROJECT_ROOT")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| env::current_dir().expect("current directory should be available"))
-}
-
-fn apply_runtime_settings(auth_db_path: &Path) {
-    let Ok(settings) = ps_storage::list_runtime_settings(auth_db_path) else {
-        return;
-    };
-    for setting in settings {
-        if setting.source != "database" {
-            continue;
-        }
-        if setting.value.trim().is_empty() {
-            env::remove_var(setting.field);
-        } else {
-            env::set_var(setting.field, setting.value);
-        }
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -580,9 +547,29 @@ fn default_delivery_state_dir(project_root: &Path, workflow: DeliveryWorkflow) -
     }
 }
 
+fn live_scholarly_config(
+    auth_db_path: &Path,
+    timeout_seconds: u64,
+) -> Result<LiveScholarlyConfig, Box<dyn Error>> {
+    let settings = ps_storage::list_runtime_settings(auth_db_path)?;
+    let setting_value = |field: &str| {
+        settings
+            .iter()
+            .find(|setting| setting.field == field)
+            .map(|setting| setting.value.as_str())
+            .unwrap_or_default()
+    };
+    Ok(LiveScholarlyConfig::from_value_pools(
+        timeout_seconds,
+        setting_value("openalex_api_key_pool"),
+        setting_value("semantic_scholar_api_key_pool"),
+        setting_value("crossref_mailto_pool"),
+    ))
+}
+
 fn index_usage() -> String {
     let payload = json!({
-        "usage": "index [--file FILE] [--workers N] [--processes N] [--issue-batch N] [--timeout N] [--resume|--no-resume] [--update|--no-update] [--notify] [--notify-dry-run]"
+        "usage": "index [--project-root PATH] [--auth-db PATH] [--file FILE] [--workers N] [--processes N] [--issue-batch N] [--timeout N] [--resume|--no-resume] [--update|--no-update] [--notify] [--notify-dry-run]"
     });
     payload.to_string()
 }
@@ -611,7 +598,7 @@ fn delivery_usage(workflow: DeliveryWorkflow) -> String {
         DeliveryWorkflow::Push => "push",
     };
     let payload = json!({
-        "usage": format!("{command_name} [--db NAME] [--state-dir PATH] [--changes-file PATH] [--ai-model MODEL] [--max-candidates N] [--timeout N] [--retries N] [--dedupe-retention-days N] [--dry-run|--no-dry-run]")
+        "usage": format!("{command_name} [--project-root PATH] [--auth-db PATH] [--db NAME] [--state-dir PATH] [--changes-file PATH] [--ai-model MODEL] [--max-candidates N] [--timeout N] [--retries N] [--dedupe-retention-days N] [--dry-run|--no-dry-run]")
     });
     payload.to_string()
 }
@@ -643,8 +630,8 @@ mod tests {
         assert!(index.contains("--workers N"));
         assert!(index.contains("--processes N"));
         assert!(index.contains("--notify-dry-run"));
-        assert!(notify.contains("notify [--db NAME]"));
-        assert!(push.contains("push [--db NAME]"));
+        assert!(notify.contains("notify [--project-root PATH]"));
+        assert!(push.contains("push [--project-root PATH]"));
         assert!(scheduler.contains("scheduler validate"));
         assert!(scheduler.contains("scheduler run-once TASK_ID"));
         assert!(scheduler.contains("scheduler dry-run-once TASK_ID"));
@@ -721,8 +708,8 @@ mod tests {
         let notify_usage = delivery_usage(DeliveryWorkflow::Notify);
         let push_usage = delivery_usage(DeliveryWorkflow::Push);
 
-        assert!(notify_usage.contains("notify [--db NAME]"));
-        assert!(push_usage.contains("push [--db NAME]"));
+        assert!(notify_usage.contains("notify [--project-root PATH]"));
+        assert!(push_usage.contains("push [--project-root PATH]"));
         assert!(notify_usage.contains("--dry-run|--no-dry-run"));
         assert!(push_usage.contains("--changes-file PATH"));
     }

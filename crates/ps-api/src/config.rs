@@ -1,29 +1,13 @@
 //! Runtime configuration for the Rust API server.
 
-use std::env;
 use std::error::Error;
 use std::fmt;
 use std::path::PathBuf;
 
 use axum::http::{HeaderValue, Uri};
+use ps_domain::RuntimeSettingInfo;
 
-/// Environment variable used by the Python API for the bind host.
-pub const API_HOST_ENV: &str = "API_HOST";
-
-/// Environment variable used by the Python API for credentialed CORS origins.
-pub const API_CORS_ALLOWED_ORIGINS_ENV: &str = "API_CORS_ALLOWED_ORIGINS";
-
-/// Environment variable used by the Rust API to locate existing data files.
-pub const PROJECT_ROOT_ENV: &str = "PAPER_SCANNER_PROJECT_ROOT";
-
-/// Environment variable used by the Rust API for MCP Host validation.
-pub const MCP_ALLOWED_HOSTS_ENV: &str = "MCP_ALLOWED_HOSTS";
-
-/// Environment variable used by the Rust API for MCP Origin validation.
-pub const MCP_ALLOWED_ORIGINS_ENV: &str = "MCP_ALLOWED_ORIGINS";
-
-const API_PORT_ENV: &str = "API_PORT";
-const DEFAULT_MCP_ALLOWED_HOSTS: [&str; 3] = ["localhost", "127.0.0.1", "::1"];
+const DEFAULT_MCP_HOSTS: [&str; 3] = ["localhost", "127.0.0.1", "::1"];
 
 /// Rust API runtime configuration.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -34,47 +18,101 @@ pub struct ApiConfig {
     pub host: String,
     /// TCP port to bind.
     pub port: u16,
-    /// Credentialed CORS origins configured through the Python-compatible env var.
+    /// Credentialed CORS origins configured through admin runtime settings.
     pub cors_allowed_origins: Vec<String>,
     /// Hosts accepted by the Streamable HTTP MCP endpoint.
     pub mcp_allowed_hosts: Vec<String>,
     /// Browser origins accepted by the Streamable HTTP MCP endpoint.
     pub mcp_allowed_origins: Vec<String>,
+    /// Whether browser session cookies include the Secure attribute.
+    pub are_session_cookies_secure: bool,
 }
 
 impl ApiConfig {
-    /// Load API configuration from process environment variables.
+    /// Build API configuration from explicit launch values.
+    ///
+    /// # Arguments
+    ///
+    /// * `project_root` - Project or deployment root used to resolve data paths.
+    /// * `host` - Bind host.
+    /// * `port` - Bind port.
     ///
     /// # Returns
     ///
     /// Runtime API configuration.
-    pub fn from_env() -> Result<Self, ApiConfigError> {
-        let project_root = match env::var(PROJECT_ROOT_ENV) {
-            Ok(value) if !value.trim().is_empty() => PathBuf::from(value),
-            _ => env::current_dir().map_err(ApiConfigError::CurrentDir)?,
-        };
-        let host = env::var(API_HOST_ENV).unwrap_or_else(|_| "127.0.0.1".to_string());
-        let port = match env::var(API_PORT_ENV) {
-            Ok(value) if !value.trim().is_empty() => value
-                .parse::<u16>()
-                .map_err(|_| ApiConfigError::InvalidPort(value))?,
-            _ => 8000,
-        };
-        let cors_allowed_origins = parse_cors_allowed_origins(
-            &env::var(API_CORS_ALLOWED_ORIGINS_ENV).unwrap_or_default(),
-        )?;
-        let mcp_allowed_hosts = parse_mcp_allowed_hosts(&env::var(MCP_ALLOWED_HOSTS_ENV).ok())?;
-        let mcp_allowed_origins =
-            parse_mcp_allowed_origins(&env::var(MCP_ALLOWED_ORIGINS_ENV).unwrap_or_default())?;
-
-        Ok(Self {
+    pub fn new(project_root: PathBuf, host: String, port: u16) -> Self {
+        Self {
             project_root,
             host,
             port,
-            cors_allowed_origins,
-            mcp_allowed_hosts,
-            mcp_allowed_origins,
-        })
+            cors_allowed_origins: Vec::new(),
+            mcp_allowed_hosts: default_mcp_allowed_hosts(),
+            mcp_allowed_origins: Vec::new(),
+            are_session_cookies_secure: false,
+        }
+    }
+
+    /// Build API configuration from explicit CLI arguments.
+    ///
+    /// # Arguments
+    ///
+    /// * `args` - Command arguments without the executable name.
+    ///
+    /// # Returns
+    ///
+    /// Runtime API configuration.
+    pub fn from_args(args: impl IntoIterator<Item = String>) -> Result<Self, ApiConfigError> {
+        let mut args = args.into_iter().collect::<Vec<_>>();
+        let host =
+            extract_string_option(&mut args, "--host")?.unwrap_or_else(|| "127.0.0.1".to_string());
+        let port = match extract_string_option(&mut args, "--port")? {
+            Some(value) => value
+                .parse::<u16>()
+                .map_err(|_| ApiConfigError::InvalidPort(value))?,
+            None => 8000,
+        };
+        let project_root = match extract_string_option(&mut args, "--project-root")? {
+            Some(value) => PathBuf::from(value),
+            None => std::env::current_dir().map_err(ApiConfigError::CurrentDir)?,
+        };
+        if let Some(argument) = args.first() {
+            return Err(ApiConfigError::UnexpectedArgument(argument.clone()));
+        }
+        Ok(Self::new(project_root, host, port))
+    }
+
+    /// Apply database-backed admin runtime settings.
+    ///
+    /// # Arguments
+    ///
+    /// * `settings` - Managed runtime settings loaded from the auth database.
+    ///
+    /// # Returns
+    ///
+    /// Result indicating whether all configured values were valid.
+    pub fn apply_runtime_settings(
+        &mut self,
+        settings: &[RuntimeSettingInfo],
+    ) -> Result<(), ApiConfigError> {
+        for setting in settings {
+            match setting.field.as_str() {
+                "cors_allowed_origins" => {
+                    self.cors_allowed_origins = parse_cors_allowed_origins(&setting.value)?;
+                }
+                "mcp_allowed_hosts" => {
+                    self.mcp_allowed_hosts = parse_mcp_allowed_hosts(&setting.value)?;
+                }
+                "mcp_allowed_origins" => {
+                    self.mcp_allowed_origins = parse_mcp_allowed_origins(&setting.value)?;
+                }
+                "secure_cookies" => {
+                    self.are_session_cookies_secure =
+                        parse_runtime_bool(&setting.field, &setting.value)?;
+                }
+                _ => {}
+            }
+        }
+        Ok(())
     }
 
     /// Return a host:port bind address.
@@ -94,12 +132,18 @@ pub enum ApiConfigError {
     CurrentDir(std::io::Error),
     /// The configured port is not a valid unsigned 16-bit integer.
     InvalidPort(String),
+    /// A command argument requires a following value.
+    MissingArgumentValue(String),
+    /// A command argument is not supported.
+    UnexpectedArgument(String),
     /// A configured CORS origin is not a valid HTTP header value.
     InvalidCorsOrigin(String),
     /// A configured MCP host is not a valid HTTP header value.
     InvalidMcpAllowedHost(String),
     /// A configured MCP origin is not a valid Origin value.
     InvalidMcpAllowedOrigin(String),
+    /// A configured boolean runtime setting is not valid.
+    InvalidRuntimeBoolean { field: String, value: String },
 }
 
 impl fmt::Display for ApiConfigError {
@@ -108,6 +152,10 @@ impl fmt::Display for ApiConfigError {
         match self {
             Self::CurrentDir(error) => write!(formatter, "{error}"),
             Self::InvalidPort(value) => write!(formatter, "Invalid API port: {value}"),
+            Self::MissingArgumentValue(name) => write!(formatter, "{name} requires a value"),
+            Self::UnexpectedArgument(argument) => {
+                write!(formatter, "Unexpected API argument: {argument}")
+            }
             Self::InvalidCorsOrigin(value) => {
                 write!(formatter, "Invalid CORS origin: {value}")
             }
@@ -116,6 +164,12 @@ impl fmt::Display for ApiConfigError {
             }
             Self::InvalidMcpAllowedOrigin(value) => {
                 write!(formatter, "Invalid MCP allowed origin: {value}")
+            }
+            Self::InvalidRuntimeBoolean { field, value } => {
+                write!(
+                    formatter,
+                    "Invalid boolean runtime setting {field}: {value}"
+                )
             }
         }
     }
@@ -129,6 +183,15 @@ impl Error for ApiConfigError {
             _ => None,
         }
     }
+}
+
+/// Return the API command usage text.
+///
+/// # Returns
+///
+/// Usage string for the standalone `api` command.
+pub fn api_usage() -> &'static str {
+    "api [--host HOST] [--port PORT] [--project-root PATH]"
 }
 
 fn parse_cors_allowed_origins(value: &str) -> Result<Vec<String>, ApiConfigError> {
@@ -145,14 +208,8 @@ fn parse_cors_allowed_origins(value: &str) -> Result<Vec<String>, ApiConfigError
     Ok(origins)
 }
 
-fn parse_mcp_allowed_hosts(value: &Option<String>) -> Result<Vec<String>, ApiConfigError> {
-    match value {
-        Some(value) => parse_header_value_list(value, ApiConfigError::InvalidMcpAllowedHost),
-        None => Ok(DEFAULT_MCP_ALLOWED_HOSTS
-            .iter()
-            .map(|host| (*host).to_string())
-            .collect()),
-    }
+fn parse_mcp_allowed_hosts(value: &str) -> Result<Vec<String>, ApiConfigError> {
+    parse_header_value_list(value, ApiConfigError::InvalidMcpAllowedHost)
 }
 
 fn parse_mcp_allowed_origins(value: &str) -> Result<Vec<String>, ApiConfigError> {
@@ -193,17 +250,46 @@ fn validate_mcp_origin(origin: &str) -> Result<(), ApiConfigError> {
     }
 }
 
+fn default_mcp_allowed_hosts() -> Vec<String> {
+    DEFAULT_MCP_HOSTS
+        .iter()
+        .map(|host| (*host).to_string())
+        .collect()
+}
+
+fn parse_runtime_bool(field: &str, value: &str) -> Result<bool, ApiConfigError> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "1" | "true" | "yes" | "on" => Ok(true),
+        "0" | "false" | "no" | "off" | "" => Ok(false),
+        _ => Err(ApiConfigError::InvalidRuntimeBoolean {
+            field: field.to_string(),
+            value: value.to_string(),
+        }),
+    }
+}
+
+fn extract_string_option(
+    args: &mut Vec<String>,
+    name: &str,
+) -> Result<Option<String>, ApiConfigError> {
+    if let Some(index) = args.iter().position(|argument| argument == name) {
+        if index + 1 >= args.len() {
+            return Err(ApiConfigError::MissingArgumentValue(name.to_string()));
+        }
+        let value = args.remove(index + 1);
+        args.remove(index);
+        return Ok(Some(value));
+    }
+    Ok(None)
+}
+
 #[cfg(test)]
 mod tests {
-    use std::env;
     use std::path::PathBuf;
-    use std::sync::{Mutex, MutexGuard, OnceLock};
 
-    use super::{
-        parse_cors_allowed_origins, ApiConfig, ApiConfigError, API_CORS_ALLOWED_ORIGINS_ENV,
-        API_HOST_ENV, API_PORT_ENV, MCP_ALLOWED_HOSTS_ENV, MCP_ALLOWED_ORIGINS_ENV,
-        PROJECT_ROOT_ENV,
-    };
+    use ps_domain::RuntimeSettingInfo;
+
+    use super::{parse_cors_allowed_origins, ApiConfig, ApiConfigError};
 
     #[test]
     fn parses_python_style_cors_origin_list() {
@@ -214,12 +300,10 @@ mod tests {
     }
 
     #[test]
-    fn from_env_uses_defaults_and_builds_bind_address() {
-        let _guard = env_guard();
-        clear_config_env();
-        let project_root = set_project_root_env();
+    fn new_uses_defaults_and_builds_bind_address() {
+        let project_root = PathBuf::from("paper-scanner-config-root");
 
-        let config = ApiConfig::from_env().expect("default config should load");
+        let config = ApiConfig::new(project_root.clone(), "127.0.0.1".to_string(), 8000);
 
         assert_eq!(config.project_root, project_root);
         assert_eq!(config.host, "127.0.0.1");
@@ -228,31 +312,52 @@ mod tests {
         assert!(config.cors_allowed_origins.is_empty());
         assert_eq!(config.mcp_allowed_hosts, ["localhost", "127.0.0.1", "::1"]);
         assert!(config.mcp_allowed_origins.is_empty());
+        assert!(!config.are_session_cookies_secure);
     }
 
     #[test]
-    fn from_env_reads_python_compatible_overrides() {
-        let _guard = env_guard();
-        clear_config_env();
-        let project_root = set_project_root_env();
-        env::set_var(API_HOST_ENV, "0.0.0.0");
-        env::set_var(API_PORT_ENV, "9001");
-        env::set_var(
-            API_CORS_ALLOWED_ORIGINS_ENV,
-            "https://paper.example, https://admin.example",
-        );
-        env::set_var(MCP_ALLOWED_HOSTS_ENV, "paper.example, paper.example:8443");
-        env::set_var(
-            MCP_ALLOWED_ORIGINS_ENV,
-            "https://paper.example, null, http://localhost:5173",
-        );
+    fn from_args_reads_explicit_process_arguments() {
+        let project_root = PathBuf::from("paper-scanner-config-root");
 
-        let config = ApiConfig::from_env().expect("overridden config should load");
+        let config = ApiConfig::from_args([
+            "--host".to_string(),
+            "0.0.0.0".to_string(),
+            "--port".to_string(),
+            "9001".to_string(),
+            "--project-root".to_string(),
+            project_root.display().to_string(),
+        ])
+        .expect("explicit config should load");
 
         assert_eq!(config.project_root, project_root);
         assert_eq!(config.host, "0.0.0.0");
         assert_eq!(config.port, 9001);
         assert_eq!(config.bind_address(), "0.0.0.0:9001");
+    }
+
+    #[test]
+    fn runtime_settings_apply_admin_values() {
+        let mut config = ApiConfig::new(
+            PathBuf::from("paper-scanner-config-root"),
+            "127.0.0.1".to_string(),
+            8000,
+        );
+
+        config
+            .apply_runtime_settings(&[
+                runtime_setting(
+                    "cors_allowed_origins",
+                    "https://paper.example, https://admin.example",
+                ),
+                runtime_setting("mcp_allowed_hosts", "paper.example, paper.example:8443"),
+                runtime_setting(
+                    "mcp_allowed_origins",
+                    "https://paper.example, null, http://localhost:5173",
+                ),
+                runtime_setting("secure_cookies", "true"),
+            ])
+            .expect("runtime settings should apply");
+
         assert_eq!(
             config.cors_allowed_origins,
             ["https://paper.example", "https://admin.example"]
@@ -265,97 +370,88 @@ mod tests {
             config.mcp_allowed_origins,
             ["https://paper.example", "null", "http://localhost:5173"]
         );
-        clear_config_env();
+        assert!(config.are_session_cookies_secure);
     }
 
     #[test]
-    fn from_env_rejects_invalid_port() {
-        let _guard = env_guard();
-        clear_config_env();
-        set_project_root_env();
-        env::set_var(API_PORT_ENV, "not-a-port");
-
-        let error = ApiConfig::from_env().expect_err("invalid port should fail");
+    fn from_args_rejects_invalid_port() {
+        let error = ApiConfig::from_args(["--port".to_string(), "not-a-port".to_string()])
+            .expect_err("invalid port should fail");
 
         assert!(matches!(&error, ApiConfigError::InvalidPort(value) if value == "not-a-port"));
         assert_eq!(error.to_string(), "Invalid API port: not-a-port");
-        clear_config_env();
     }
 
     #[test]
-    fn from_env_rejects_invalid_cors_origin_header_value() {
-        let _guard = env_guard();
-        clear_config_env();
-        set_project_root_env();
-        env::set_var(
-            API_CORS_ALLOWED_ORIGINS_ENV,
-            "https://ok.example,bad\norigin",
+    fn runtime_settings_reject_invalid_cors_origin_header_value() {
+        let mut config = ApiConfig::new(
+            PathBuf::from("paper-scanner-config-root"),
+            "127.0.0.1".to_string(),
+            8000,
         );
 
-        let error = ApiConfig::from_env().expect_err("invalid CORS origin should fail");
+        let error = config
+            .apply_runtime_settings(&[runtime_setting(
+                "cors_allowed_origins",
+                "https://ok.example,bad\norigin",
+            )])
+            .expect_err("invalid CORS origin should fail");
 
         assert!(
             matches!(&error, ApiConfigError::InvalidCorsOrigin(value) if value == "bad\norigin")
         );
         assert_eq!(error.to_string(), "Invalid CORS origin: bad\norigin");
-        clear_config_env();
     }
 
     #[test]
-    fn from_env_rejects_invalid_mcp_host_header_value() {
-        let _guard = env_guard();
-        clear_config_env();
-        set_project_root_env();
-        env::set_var(MCP_ALLOWED_HOSTS_ENV, "localhost,bad\nhost");
+    fn runtime_settings_reject_invalid_mcp_host_header_value() {
+        let mut config = ApiConfig::new(
+            PathBuf::from("paper-scanner-config-root"),
+            "127.0.0.1".to_string(),
+            8000,
+        );
 
-        let error = ApiConfig::from_env().expect_err("invalid MCP host should fail");
+        let error = config
+            .apply_runtime_settings(&[runtime_setting("mcp_allowed_hosts", "localhost,bad\nhost")])
+            .expect_err("invalid MCP host should fail");
 
         assert!(
             matches!(&error, ApiConfigError::InvalidMcpAllowedHost(value) if value == "bad\nhost")
         );
         assert_eq!(error.to_string(), "Invalid MCP allowed host: bad\nhost");
-        clear_config_env();
     }
 
     #[test]
-    fn from_env_rejects_invalid_mcp_origin() {
-        let _guard = env_guard();
-        clear_config_env();
-        set_project_root_env();
-        env::set_var(MCP_ALLOWED_ORIGINS_ENV, "https://paper.example,localhost");
+    fn runtime_settings_reject_invalid_mcp_origin() {
+        let mut config = ApiConfig::new(
+            PathBuf::from("paper-scanner-config-root"),
+            "127.0.0.1".to_string(),
+            8000,
+        );
 
-        let error = ApiConfig::from_env().expect_err("invalid MCP origin should fail");
+        let error = config
+            .apply_runtime_settings(&[runtime_setting(
+                "mcp_allowed_origins",
+                "https://paper.example,localhost",
+            )])
+            .expect_err("invalid MCP origin should fail");
 
         assert!(
             matches!(&error, ApiConfigError::InvalidMcpAllowedOrigin(value) if value == "localhost")
         );
         assert_eq!(error.to_string(), "Invalid MCP allowed origin: localhost");
-        clear_config_env();
     }
 
-    fn env_guard() -> MutexGuard<'static, ()> {
-        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        LOCK.get_or_init(|| Mutex::new(()))
-            .lock()
-            .expect("env lock should be acquired")
-    }
-
-    fn set_project_root_env() -> PathBuf {
-        let project_root = PathBuf::from("paper-scanner-config-root");
-        env::set_var(PROJECT_ROOT_ENV, &project_root);
-        project_root
-    }
-
-    fn clear_config_env() {
-        for name in [
-            PROJECT_ROOT_ENV,
-            API_HOST_ENV,
-            API_PORT_ENV,
-            API_CORS_ALLOWED_ORIGINS_ENV,
-            MCP_ALLOWED_HOSTS_ENV,
-            MCP_ALLOWED_ORIGINS_ENV,
-        ] {
-            env::remove_var(name);
+    fn runtime_setting(field: &str, value: &str) -> RuntimeSettingInfo {
+        RuntimeSettingInfo {
+            field: field.to_string(),
+            label: field.to_string(),
+            description: String::new(),
+            input_type: "text".to_string(),
+            is_secret: false,
+            value: value.to_string(),
+            source: "database".to_string(),
+            updated_at: Some(1.0),
         }
     }
 }

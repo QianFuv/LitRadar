@@ -1,6 +1,5 @@
 //! Live CSV index orchestration for the legacy `index` command.
 
-use std::env;
 use std::error::Error;
 use std::fmt;
 use std::fs;
@@ -32,7 +31,6 @@ use crate::transforms::{
 
 const SCHOLARLY_SOURCE: &str = "scholarly";
 const CNKI_SOURCE: &str = "cnki";
-const LIVE_INDEX_WORKER_REQUEST_ENV: &str = "PAPER_SCANNER_LIVE_INDEX_WORKER_REQUEST";
 
 /// Live index run configuration.
 #[derive(Debug, Clone)]
@@ -57,6 +55,8 @@ pub struct LiveIndexConfig {
     pub notify: bool,
     /// Whether notify handoff should use dry-run mode.
     pub notify_dry_run: bool,
+    /// Scholarly source runtime configuration.
+    pub scholarly_config: LiveScholarlyConfig,
 }
 
 /// Live index command outcome.
@@ -158,6 +158,7 @@ struct LiveIndexWorkerRequest {
     timeout_seconds: u64,
     resume: bool,
     update: bool,
+    scholarly_config: LiveScholarlyConfig,
     rows: Vec<CsvRow>,
 }
 
@@ -376,8 +377,8 @@ impl LiveWorkerLauncher for ProcessLiveWorkerLauncher {
         for request in &requests {
             let request_path = write_live_worker_request_file(request)?;
             let child = Command::new(&self.command_path)
-                .env(LIVE_INDEX_WORKER_REQUEST_ENV, &request_path)
-                .env("PAPER_SCANNER_PROJECT_ROOT", &request.project_root)
+                .arg("--live-worker-request")
+                .arg(&request_path)
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped())
                 .spawn()
@@ -474,17 +475,20 @@ pub fn run_live_index(config: &LiveIndexConfig) -> Result<LiveIndexOutcome, Live
     })
 }
 
-/// Run an internal live index worker when the worker environment is present.
+/// Run an internal live index worker from an explicit request file.
+///
+/// # Arguments
+///
+/// * `request_path` - Path to the serialized worker request.
 ///
 /// # Returns
 ///
-/// Serialized worker response when this process was launched as a worker.
-pub fn run_live_index_worker_from_environment() -> Result<Option<String>, LiveIndexError> {
-    let Ok(request_path) = env::var(LIVE_INDEX_WORKER_REQUEST_ENV) else {
-        return Ok(None);
-    };
-    let response = run_live_index_worker_from_file(Path::new(&request_path))?;
-    Ok(Some(serde_json::to_string(&response)?))
+/// Serialized worker response.
+pub fn run_live_index_worker_from_file_path(
+    request_path: impl AsRef<Path>,
+) -> Result<String, LiveIndexError> {
+    let response = run_live_index_worker_from_file(request_path.as_ref())?;
+    Ok(serde_json::to_string(&response)?)
 }
 
 fn run_live_index_worker_from_file(
@@ -509,6 +513,7 @@ fn run_live_index_worker(
         update: request.update,
         notify: false,
         notify_dry_run: true,
+        scholarly_config: request.scholarly_config.clone(),
     };
     let context = LiveJournalRowsContext {
         rows: &request.rows,
@@ -563,7 +568,7 @@ fn live_worker_request_path(worker_id: usize) -> PathBuf {
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_nanos())
         .unwrap_or(0);
-    env::temp_dir().join(format!(
+    std::env::temp_dir().join(format!(
         "paper-scanner-live-worker-{}-{nanos}-{worker_id}.json",
         std::process::id()
     ))
@@ -628,7 +633,10 @@ fn run_live_journal_rows_locally(
         });
     }
 
-    let scholarly_config = LiveScholarlyConfig::from_environment(context.config.timeout_seconds)
+    let scholarly_config = context
+        .config
+        .scholarly_config
+        .clone()
         .with_worker_context(context.worker_id, context.process_count);
     let mut scholarly_client = match LiveScholarlyTransport::new(scholarly_config.clone()) {
         Ok(transport) => {
@@ -863,6 +871,7 @@ fn build_live_worker_requests(context: &LiveJournalRowsContext<'_>) -> Vec<LiveI
                 timeout_seconds: context.config.timeout_seconds,
                 resume: context.config.resume,
                 update: context.config.update,
+                scholarly_config: context.config.scholarly_config.clone(),
                 rows,
             })
         })
@@ -995,8 +1004,7 @@ fn run_live_csv_index(
         });
     }
     validate_sources(&rows)?;
-    let scholarly_config = LiveScholarlyConfig::from_environment(config.timeout_seconds);
-    validate_required_source_config(&rows, &scholarly_config)?;
+    validate_required_source_config(&rows, &config.scholarly_config)?;
     let timestamp = default_timestamp();
     let csv_file = csv_path
         .file_name()
@@ -1037,7 +1045,7 @@ fn run_live_csv_index(
         config,
     };
     let journal_rows_outcome = if config.process_count > 1 && rows.len() > 1 {
-        let command_path = env::current_exe().map_err(|error| {
+        let command_path = std::env::current_exe().map_err(|error| {
             LiveIndexError::Worker(format!("failed to resolve current executable: {error}"))
         })?;
         let launcher = ProcessLiveWorkerLauncher::new(command_path);
@@ -1235,7 +1243,8 @@ fn run_notify_command_for_manifest(
         .arg(manifest_path)
         .arg("--state-dir")
         .arg(&state_dir)
-        .env("PAPER_SCANNER_PROJECT_ROOT", &config.project_root);
+        .arg("--project-root")
+        .arg(&config.project_root);
     if config.notify_dry_run {
         command.arg("--dry-run");
     }
@@ -1569,6 +1578,7 @@ mod tests {
         assert!(args.contains("fixture.changes.json"));
         assert!(args.contains("--state-dir"));
         assert!(args.contains("push_state"));
+        assert!(args.contains("--project-root"));
         assert!(args.contains("--dry-run"));
     }
 
@@ -1737,6 +1747,12 @@ mod tests {
             update: false,
             notify: false,
             notify_dry_run: true,
+            scholarly_config: LiveScholarlyConfig::from_value_pools(
+                1,
+                "openalex",
+                "semantic",
+                "crossref@example.test",
+            ),
         }
     }
 }

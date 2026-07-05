@@ -1,5 +1,8 @@
 //! Zhejiang Library CNKI session route handlers.
 
+#[cfg(test)]
+use std::sync::{Mutex, OnceLock};
+
 use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode};
 use axum::Json;
@@ -17,8 +20,6 @@ use crate::response::ApiError;
 use crate::routes::auth::require_current_user;
 use crate::state::ApiState;
 
-const REPLAY_MODE_ENV: &str = "PAPER_SCANNER_CNKI_REPLAY_MODE";
-const LIVE_FIXTURE_MODE_ENV: &str = "PAPER_SCANNER_ZJLIB_CNKI_FIXTURE_MODE";
 const REPLAY_START_SUCCESS: &str = "start_success";
 const REPLAY_POLL_SUCCESS: &str = "poll_success";
 const REPLAY_TIMEOUT: &str = "timeout";
@@ -27,6 +28,16 @@ const REPLAY_START_FAILURE: &str = "start_failure";
 const DEFAULT_QR_UUID: &str = "qr-rust-offline";
 const DEFAULT_QR_STATUS: &str = "WAITING_SCAN";
 const DEFAULT_QR_CODE: &str = "https://qr.test/qr-rust-offline.png";
+
+#[cfg(test)]
+#[derive(Default)]
+struct CnkiRouteTestConfig {
+    replay_mode: Option<String>,
+    fixture_mode: Option<FixtureZjlibCnkiMode>,
+}
+
+#[cfg(test)]
+static CNKI_ROUTE_TEST_CONFIG: OnceLock<Mutex<CnkiRouteTestConfig>> = OnceLock::new();
 
 /// Return the current user's CNKI session status.
 ///
@@ -368,16 +379,64 @@ fn cnki_json_error(status: StatusCode, code: &str, phase: &str, message: &str) -
 }
 
 fn replay_mode() -> Option<String> {
-    std::env::var(REPLAY_MODE_ENV)
-        .ok()
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
+    #[cfg(test)]
+    {
+        return cnki_route_test_config()
+            .lock()
+            .expect("CNKI route test config lock should not be poisoned")
+            .replay_mode
+            .clone();
+    }
+    #[cfg(not(test))]
+    {
+        None
+    }
 }
 
 fn zjlib_fixture_mode() -> Option<FixtureZjlibCnkiMode> {
-    std::env::var(LIVE_FIXTURE_MODE_ENV)
-        .ok()
-        .and_then(|value| FixtureZjlibCnkiMode::parse(&value))
+    #[cfg(test)]
+    {
+        return cnki_route_test_config()
+            .lock()
+            .expect("CNKI route test config lock should not be poisoned")
+            .fixture_mode
+            .clone();
+    }
+    #[cfg(not(test))]
+    {
+        None
+    }
+}
+
+#[cfg(test)]
+fn cnki_route_test_config() -> &'static Mutex<CnkiRouteTestConfig> {
+    CNKI_ROUTE_TEST_CONFIG.get_or_init(|| Mutex::new(CnkiRouteTestConfig::default()))
+}
+
+/// Set CNKI login replay mode for route tests.
+///
+/// # Arguments
+///
+/// * `mode` - Optional replay mode string.
+#[cfg(test)]
+pub(crate) fn set_replay_mode_for_tests(mode: Option<&str>) {
+    cnki_route_test_config()
+        .lock()
+        .expect("CNKI route test config lock should not be poisoned")
+        .replay_mode = mode.map(str::to_string);
+}
+
+/// Set Zhejiang Library CNKI fixture transport mode for route tests.
+///
+/// # Arguments
+///
+/// * `mode` - Optional fixture transport mode.
+#[cfg(test)]
+pub(crate) fn set_fixture_mode_for_tests(mode: Option<FixtureZjlibCnkiMode>) {
+    cnki_route_test_config()
+        .lock()
+        .expect("CNKI route test config lock should not be poisoned")
+        .fixture_mode = mode;
 }
 
 fn start_zjlib_login(

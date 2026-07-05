@@ -9,7 +9,6 @@ use rusqlite::{params, params_from_iter, Connection, LoadExtensionGuard};
 use crate::stats::IndexRunStats;
 use crate::transforms::{ArticleRecord, IssueRecord, JournalRecord, MetaRecord};
 
-const SIMPLE_TOKENIZER_ENV: &str = "SIMPLE_TOKENIZER_PATH";
 const INDEX_BUSY_TIMEOUT_SECONDS: u64 = 30;
 
 /// Open and initialize an index SQLite database.
@@ -348,13 +347,6 @@ fn try_load_simple_tokenizer(
 }
 
 fn resolve_simple_tokenizer_path(connection: &Connection) -> rusqlite::Result<Option<PathBuf>> {
-    if let Ok(value) = std::env::var(SIMPLE_TOKENIZER_ENV) {
-        let trimmed = value.trim();
-        if !trimmed.is_empty() {
-            return Ok(Some(PathBuf::from(trimmed)));
-        }
-    }
-
     for root in simple_tokenizer_root_candidates(connection)? {
         if let Some(path) = simple_tokenizer_path_from_root(&root) {
             return Ok(Some(path));

@@ -21,7 +21,6 @@ use crate::cnki::{get_cnki_session_data, get_cnki_session_status, CnkiRepository
 use crate::{open_sqlite_connection, try_load_extension, DatabaseResolutionError, StorageConfig};
 
 const MAX_LIMIT: i64 = 200;
-const SIMPLE_TOKENIZER_ENV: &str = "SIMPLE_TOKENIZER_PATH";
 const DETAIL_LABEL: &str = "查看详情";
 const CNKI_DETAIL_LABEL: &str = "查看摘要/详情";
 const FULLTEXT_LABEL: &str = "获取全文";
@@ -32,10 +31,6 @@ const ZJLIB_CNKI_PROVIDER: &str = "zjlib_cnki";
 const CNKI_SOURCE: &str = "cnki";
 const CNKI_PROTECTED_FULLTEXT_HOST: &str = "o.oversea.cnki.net";
 const CNKI_PROTECTED_FULLTEXT_PATH: &str = "/barnew/download/order";
-const CNKI_PDF_REPLAY_PATH_ENV: &str = "PAPER_SCANNER_CNKI_PDF_REPLAY_PATH";
-const CNKI_PDF_REPLAY_FILENAME_ENV: &str = "PAPER_SCANNER_CNKI_PDF_REPLAY_FILENAME";
-const CNKI_PDF_REPLAY_MODE_ENV: &str = "PAPER_SCANNER_CNKI_PDF_REPLAY_MODE";
-const CNKI_PDF_REPLAY_MISMATCH: &str = "mismatch";
 
 /// Repository errors for index read routes.
 #[derive(Debug)]
@@ -913,9 +908,6 @@ pub fn article_fulltext_target(
     let row = get_article_access_row(&connection, article_id)?
         .ok_or(IndexRepositoryError::NotFound("Article not found"))?;
     if is_cnki_article_row(&row) && is_cnki_session_active(config, user_id)? {
-        if is_cnki_pdf_replay_configured() {
-            return cnki_replay_pdf_target(config, user_id);
-        }
         let session = get_cnki_session_data(config.auth_db_path(), user_id)?
             .ok_or(IndexRepositoryError::NotFound("CNKI login is required"))?;
         return Ok(ArticleFulltextTarget::Cnki(CnkiFulltextTarget {
@@ -1911,12 +1903,6 @@ fn validate_limit_offset(limit: i64, offset: i64) -> Result<(), IndexRepositoryE
 }
 
 fn resolve_simple_tokenizer_path(config: &StorageConfig) -> Option<PathBuf> {
-    if let Ok(value) = std::env::var(SIMPLE_TOKENIZER_ENV) {
-        let trimmed = value.trim();
-        if !trimmed.is_empty() {
-            return Some(PathBuf::from(trimmed));
-        }
-    }
     let libs_dir = config.project_root().join("libs");
     if cfg!(windows) {
         Some(
@@ -1952,49 +1938,6 @@ fn is_cnki_session_active(
     }
     let status = get_cnki_session_status(config.auth_db_path(), user_id)?;
     Ok(status.status == "active")
-}
-
-fn cnki_replay_pdf_target(
-    config: &StorageConfig,
-    user_id: UserId,
-) -> Result<ArticleFulltextTarget, IndexRepositoryError> {
-    if std::env::var(CNKI_PDF_REPLAY_MODE_ENV)
-        .ok()
-        .is_some_and(|value| value.trim() == CNKI_PDF_REPLAY_MISMATCH)
-    {
-        return Err(IndexRepositoryError::NotFound(
-            "No exact CNKI full-text match found",
-        ));
-    }
-    let path = std::env::var(CNKI_PDF_REPLAY_PATH_ENV)
-        .ok()
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-        .ok_or(IndexRepositoryError::NotFound(
-            "CNKI full-text download fixture is not configured",
-        ))?;
-    let content = fs::read(path)?;
-    let filename = std::env::var(CNKI_PDF_REPLAY_FILENAME_ENV)
-        .ok()
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-        .unwrap_or_else(|| "cnki.pdf".to_string());
-    crate::touch_cnki_session_used(config.auth_db_path(), user_id)
-        .map_err(|_| IndexRepositoryError::NotFound("CNKI login is required"))?;
-    Ok(ArticleFulltextTarget::Pdf {
-        filename,
-        content_type: "application/pdf".to_string(),
-        content,
-    })
-}
-
-fn is_cnki_pdf_replay_configured() -> bool {
-    std::env::var(CNKI_PDF_REPLAY_MODE_ENV)
-        .ok()
-        .is_some_and(|value| !value.trim().is_empty())
-        || std::env::var(CNKI_PDF_REPLAY_PATH_ENV)
-            .ok()
-            .is_some_and(|value| !value.trim().is_empty())
 }
 
 fn is_cnki_protected_fulltext_url(url: &str) -> bool {

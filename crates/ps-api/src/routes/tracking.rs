@@ -24,6 +24,8 @@ const MANUAL_PUSH_STARTED_MESSAGE: &str = "Manual push started and is running in
 const MANUAL_PUSH_IDLE_MESSAGE: &str = "No manual push task is running";
 
 static MANUAL_PUSH_JOBS: OnceLock<Mutex<HashMap<String, ManualWeeklyPushStatus>>> = OnceLock::new();
+#[cfg(test)]
+static MANUAL_PUSH_TEST_DELAY_MS: OnceLock<Mutex<Option<u64>>> = OnceLock::new();
 
 /// Start one manual weekly-push job for the authenticated user.
 #[utoipa::path(
@@ -415,14 +417,31 @@ fn current_epoch_seconds() -> f64 {
 
 #[cfg(test)]
 fn delay_manual_push_for_tests() {
-    let Some(delay_millis) = std::env::var("PAPER_SCANNER_MANUAL_PUSH_TEST_DELAY_MS")
-        .ok()
-        .and_then(|value| value.parse::<u64>().ok())
-    else {
-        return;
-    };
-    std::thread::sleep(std::time::Duration::from_millis(delay_millis));
+    if let Some(delay_millis) = manual_push_test_delay_ms() {
+        std::thread::sleep(std::time::Duration::from_millis(delay_millis));
+    }
 }
 
 #[cfg(not(test))]
 fn delay_manual_push_for_tests() {}
+
+#[cfg(test)]
+fn manual_push_test_delay_ms() -> Option<u64> {
+    *MANUAL_PUSH_TEST_DELAY_MS
+        .get_or_init(|| Mutex::new(None))
+        .lock()
+        .expect("manual push test delay lock should not be poisoned")
+}
+
+/// Set the manual push background delay for route tests.
+///
+/// # Arguments
+///
+/// * `delay_millis` - Optional artificial delay in milliseconds.
+#[cfg(test)]
+pub(crate) fn set_manual_push_test_delay_ms(delay_millis: Option<u64>) {
+    *MANUAL_PUSH_TEST_DELAY_MS
+        .get_or_init(|| Mutex::new(None))
+        .lock()
+        .expect("manual push test delay lock should not be poisoned") = delay_millis;
+}

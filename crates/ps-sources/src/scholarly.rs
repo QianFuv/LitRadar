@@ -1,7 +1,6 @@
 //! Scholarly source clients backed by deterministic fixture transports.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::env;
 use std::error::Error;
 use std::fmt;
 use std::thread;
@@ -332,7 +331,7 @@ impl FixtureScholarlyTransport {
 }
 
 /// Live Scholarly source transport configuration.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq, Serialize)]
 pub struct LiveScholarlyConfig {
     /// HTTP request timeout in seconds.
     pub timeout_seconds: u64,
@@ -351,21 +350,29 @@ pub struct LiveScholarlyConfig {
 }
 
 impl LiveScholarlyConfig {
-    /// Build live Scholarly configuration from process environment variables.
+    /// Build live Scholarly configuration from explicit value pools.
     ///
     /// # Arguments
     ///
     /// * `timeout_seconds` - HTTP request timeout in seconds.
+    /// * `openalex_api_key_pool` - OpenAlex API key pool text.
+    /// * `semantic_scholar_api_key_pool` - Semantic Scholar API key pool text.
+    /// * `crossref_mailto_pool` - Crossref mailto pool text.
     ///
     /// # Returns
     ///
     /// Live Scholarly configuration.
-    pub fn from_environment(timeout_seconds: u64) -> Self {
+    pub fn from_value_pools(
+        timeout_seconds: u64,
+        openalex_api_key_pool: &str,
+        semantic_scholar_api_key_pool: &str,
+        crossref_mailto_pool: &str,
+    ) -> Self {
         Self {
             timeout_seconds,
-            openalex_api_keys: value_pool_from_env("OPENALEX_API_KEY_POOL"),
-            semantic_scholar_api_keys: value_pool_from_env("SEMANTIC_SCHOLAR_API_KEY_POOL"),
-            crossref_mailtos: value_pool_from_env("CROSSREF_MAILTO_POOL"),
+            openalex_api_keys: value_pool_from_text(openalex_api_key_pool),
+            semantic_scholar_api_keys: value_pool_from_text(semantic_scholar_api_key_pool),
+            crossref_mailtos: value_pool_from_text(crossref_mailto_pool),
             semantic_scholar_worker_id: 0,
             semantic_scholar_process_count: 1,
             semantic_scholar_base_interval_ms: 1_000,
@@ -1342,13 +1349,6 @@ fn json_text(value: &Value) -> Option<String> {
 fn non_empty(value: &str) -> Option<String> {
     let stripped = value.trim();
     (!stripped.is_empty()).then(|| stripped.to_string())
-}
-
-fn value_pool_from_env(name: &str) -> Vec<String> {
-    env::var(name)
-        .ok()
-        .map(|value| value_pool_from_text(&value))
-        .unwrap_or_default()
 }
 
 fn value_pool_from_text(value: &str) -> Vec<String> {

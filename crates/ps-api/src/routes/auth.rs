@@ -90,8 +90,12 @@ pub(crate) async fn login(
     let mut response = Json(payload).into_response();
     response.headers_mut().append(
         SET_COOKIE,
-        HeaderValue::from_str(&session_cookie_header(&session.token, session.expires_at))
-            .map_err(|_| ApiError::internal_server_error())?,
+        HeaderValue::from_str(&session_cookie_header(
+            &session.token,
+            session.expires_at,
+            state.are_session_cookies_secure(),
+        ))
+        .map_err(|_| ApiError::internal_server_error())?,
     );
     Ok(response)
 }
@@ -192,8 +196,10 @@ pub(crate) async fn logout(
     .into_response();
     response.headers_mut().append(
         SET_COOKIE,
-        HeaderValue::from_str(&clear_session_cookie_header())
-            .map_err(|_| ApiError::internal_server_error())?,
+        HeaderValue::from_str(&clear_session_cookie_header(
+            state.are_session_cookies_secure(),
+        ))
+        .map_err(|_| ApiError::internal_server_error())?,
     );
     Ok(response)
 }
@@ -441,33 +447,22 @@ fn session_cookie(headers: &HeaderMap) -> Option<String> {
         .find_map(|(name, value)| (name == SESSION_COOKIE_NAME).then_some(value.trim().to_string()))
 }
 
-fn session_cookie_header(token: &str, expires_at: f64) -> String {
+fn session_cookie_header(token: &str, expires_at: f64, is_secure: bool) -> String {
     let max_age = (expires_at - current_unix_time()).max(0.0).floor() as i64;
     let mut value =
         format!("{SESSION_COOKIE_NAME}={token}; Max-Age={max_age}; Path=/; SameSite=lax; HttpOnly");
-    if should_use_secure_session_cookie() {
+    if is_secure {
         value.push_str("; Secure");
     }
     value
 }
 
-fn clear_session_cookie_header() -> String {
+fn clear_session_cookie_header(is_secure: bool) -> String {
     let mut value = format!("{SESSION_COOKIE_NAME}=; Max-Age=0; Path=/; SameSite=lax; HttpOnly");
-    if should_use_secure_session_cookie() {
+    if is_secure {
         value.push_str("; Secure");
     }
     value
-}
-
-fn should_use_secure_session_cookie() -> bool {
-    std::env::var(ps_auth::AUTH_COOKIE_SECURE_ENV)
-        .map(|value| {
-            matches!(
-                value.trim().to_ascii_lowercase().as_str(),
-                "1" | "true" | "yes" | "on"
-            )
-        })
-        .unwrap_or(false)
 }
 
 fn current_unix_time() -> f64 {

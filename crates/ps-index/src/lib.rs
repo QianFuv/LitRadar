@@ -10,7 +10,8 @@ pub mod transforms;
 
 pub use cnki::{run_cnki_fixture_index, CnkiIndexConfig, CnkiIndexOutcome};
 pub use live::{
-    run_live_index, run_live_index_worker_from_environment, LiveCsvIndexOutcome, LiveIndexConfig,
+    run_live_index, run_live_index_worker_from_file_path, LiveCsvIndexOutcome, LiveIndexConfig,
     LiveIndexOutcome,
 };
+pub use ps_sources::LiveScholarlyConfig;
 pub use scholarly::{run_scholarly_fixture_index, ScholarlyIndexConfig, ScholarlyIndexOutcome};

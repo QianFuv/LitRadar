@@ -77,14 +77,10 @@ impl TestBackend {
     ///
     /// Axum router ready for one-shot test requests.
     pub(crate) fn router(&self) -> Router {
-        build_router(ApiConfig {
-            project_root: self.project_root().to_path_buf(),
-            host: TEST_HOST.to_string(),
-            port: 0,
-            cors_allowed_origins: Vec::new(),
-            mcp_allowed_hosts: vec!["localhost".to_string(), TEST_HOST.to_string()],
-            mcp_allowed_origins: Vec::new(),
-        })
+        let mut config =
+            ApiConfig::new(self.project_root().to_path_buf(), TEST_HOST.to_string(), 0);
+        config.mcp_allowed_hosts = vec!["localhost".to_string(), TEST_HOST.to_string()];
+        build_router(config)
     }
 
     /// Register a user and create a bearer token.

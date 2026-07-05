@@ -36,15 +36,6 @@ pub const AUTHENTICATED_CACHE_CONTROL: &str = "private, no-store";
 /// Cache-Control header for unauthenticated index reads.
 pub const PUBLIC_INDEX_CACHE_CONTROL: &str = "public, max-age=300, stale-while-revalidate=600";
 
-/// Start the API server from environment configuration.
-///
-/// # Returns
-///
-/// Result indicating whether the server exited cleanly.
-pub async fn serve_from_env() -> Result<(), Box<dyn Error>> {
-    serve(ApiConfig::from_env()?).await
-}
-
 /// Start the API server with an explicit runtime configuration.
 ///
 /// # Arguments
@@ -61,7 +52,7 @@ pub async fn serve(config: ApiConfig) -> Result<(), Box<dyn Error>> {
     let listener = TcpListener::bind(&bind_address).await?;
     println!("ps-api listening on {}", listener.local_addr()?);
 
-    axum::serve(listener, build_router(config))
+    axum::serve(listener, try_build_router(config)?)
         .with_graceful_shutdown(shutdown_signal())
         .await?;
 
@@ -78,10 +69,25 @@ pub async fn serve(config: ApiConfig) -> Result<(), Box<dyn Error>> {
 ///
 /// Axum router with only the currently migrated public endpoints.
 pub fn build_router(config: ApiConfig) -> Router {
-    let storage_config = StorageConfig::from_project_root(config.project_root.clone());
-    let state = ApiState::new(storage_config);
+    try_build_router(config).expect("API router configuration should be valid")
+}
 
-    Router::new()
+/// Try to build the Rust API router from explicit configuration and DB settings.
+///
+/// # Arguments
+///
+/// * `config` - Runtime API configuration.
+///
+/// # Returns
+///
+/// Axum router with database-backed runtime settings applied.
+pub fn try_build_router(mut config: ApiConfig) -> Result<Router, Box<dyn Error>> {
+    let storage_config = StorageConfig::from_project_root(config.project_root.clone());
+    let runtime_settings = ps_storage::list_runtime_settings(storage_config.auth_db_path())?;
+    config.apply_runtime_settings(&runtime_settings)?;
+    let state = ApiState::new(storage_config, config.are_session_cookies_secure);
+
+    Ok(Router::new()
         .nest_service("/mcp", mcp::service(&config, state.clone()))
         .merge(openapi::docs_router())
         .nest(API_PREFIX, routes::public_routes())
@@ -98,7 +104,7 @@ pub fn build_router(config: ApiConfig) -> Router {
                 })
                 .on_response(DefaultOnResponse::new().level(Level::INFO)),
         )
-        .with_state(state)
+        .with_state(state))
 }
 
 /// Build a CORS layer compatible with the existing Python configuration.
@@ -186,13 +192,14 @@ mod tests {
     };
     use axum::http::{Method, Request, StatusCode};
     use axum::Router;
+    use ps_sources::FixtureZjlibCnkiMode;
     use rusqlite::Connection;
     use serde_json::Value;
     use tower::ServiceExt;
 
     use crate::test_support::{json_request, FixtureIndexDatabase, JsonTestResponse, TestBackend};
 
-    static TEST_ENV_LOCK: AtomicBool = AtomicBool::new(false);
+    static TEST_CONFIG_LOCK: AtomicBool = AtomicBool::new(false);
 
     #[tokio::test]
     #[cfg_attr(
@@ -1584,8 +1591,8 @@ mod tests {
         ignore = "Miri does not support Tokio's Windows IOCP runtime initialization"
     )]
     async fn tracking_manual_weekly_push_routes_cover_status_and_duplicate_start() {
-        let _env_guard =
-            EnvVarGuard::configured(&[("PAPER_SCANNER_MANUAL_PUSH_TEST_DELAY_MS", Some("120"))]);
+        let route_config = TestRouteConfigGuard::new();
+        route_config.set_manual_push_delay_ms(Some(120));
         let backend = TestBackend::new();
         let user = backend.authenticated_user("manual_push", false);
         let app = backend.router();
@@ -1879,17 +1886,8 @@ mod tests {
         ignore = "Miri does not support Tokio's Windows IOCP runtime initialization"
     )]
     async fn article_fulltext_downloads_cnki_pdf_with_live_fixture_session() {
-        const LIVE_FIXTURE_MODE: &str = "PAPER_SCANNER_ZJLIB_CNKI_FIXTURE_MODE";
-        const CNKI_PDF_REPLAY_MODE: &str = "PAPER_SCANNER_CNKI_PDF_REPLAY_MODE";
-        const CNKI_PDF_REPLAY_PATH: &str = "PAPER_SCANNER_CNKI_PDF_REPLAY_PATH";
-        const CNKI_PDF_REPLAY_FILENAME: &str = "PAPER_SCANNER_CNKI_PDF_REPLAY_FILENAME";
-
-        let _env_guard = EnvVarGuard::configured(&[
-            (LIVE_FIXTURE_MODE, Some("success")),
-            (CNKI_PDF_REPLAY_MODE, None),
-            (CNKI_PDF_REPLAY_PATH, None),
-            (CNKI_PDF_REPLAY_FILENAME, None),
-        ]);
+        let route_config = TestRouteConfigGuard::new();
+        route_config.set_index_fixture_mode(Some(FixtureZjlibCnkiMode::Success));
         let backend = TestBackend::new();
         let user = backend.authenticated_user("cnki_fulltext_user", false);
         let index_database = backend.create_index_database("fixture.sqlite");
@@ -1963,7 +1961,7 @@ mod tests {
         assert!(body.starts_with(b"%PDF"));
         assert!(session_status.last_used_at.is_some());
 
-        std::env::set_var(LIVE_FIXTURE_MODE, "fulltext_mismatch");
+        route_config.set_index_fixture_mode(Some(FixtureZjlibCnkiMode::FulltextMismatch));
         let mismatch = json_request(
             &app,
             Method::GET,
@@ -1987,10 +1985,7 @@ mod tests {
         ignore = "Miri does not support Tokio's Windows IOCP runtime initialization"
     )]
     async fn cnki_routes_cover_replay_session_status_and_clear_without_secret_leaks() {
-        const REPLAY_MODE: &str = "PAPER_SCANNER_CNKI_REPLAY_MODE";
-        const LIVE_FIXTURE_MODE: &str = "PAPER_SCANNER_ZJLIB_CNKI_FIXTURE_MODE";
-
-        let _env_guard = EnvVarGuard::configured(&[(REPLAY_MODE, None), (LIVE_FIXTURE_MODE, None)]);
+        let route_config = TestRouteConfigGuard::new();
         let backend = TestBackend::new();
         let user = backend.authenticated_user("cnki_user", false);
         let app = backend.router();
@@ -2029,7 +2024,7 @@ mod tests {
             })),
         )
         .await;
-        std::env::set_var(REPLAY_MODE, "start_success");
+        route_config.set_cnki_replay_mode(Some("start_success"));
         let waiting_start = json_request(
             &app,
             Method::POST,
@@ -2052,7 +2047,7 @@ mod tests {
         )
         .await;
 
-        std::env::set_var(REPLAY_MODE, "warmup_failure");
+        route_config.set_cnki_replay_mode(Some("warmup_failure"));
         let warmup_poll = json_request(
             &app,
             Method::POST,
@@ -2066,7 +2061,7 @@ mod tests {
         )
         .await;
 
-        std::env::set_var(REPLAY_MODE, "poll_success");
+        route_config.set_cnki_replay_mode(Some("poll_success"));
         let success_start = json_request(
             &app,
             Method::POST,
@@ -2157,11 +2152,8 @@ mod tests {
         ignore = "Miri does not support Tokio's Windows IOCP runtime initialization"
     )]
     async fn cnki_routes_use_live_fixture_without_replay_mode() {
-        const REPLAY_MODE: &str = "PAPER_SCANNER_CNKI_REPLAY_MODE";
-        const LIVE_FIXTURE_MODE: &str = "PAPER_SCANNER_ZJLIB_CNKI_FIXTURE_MODE";
-
-        let _env_guard =
-            EnvVarGuard::configured(&[(REPLAY_MODE, None), (LIVE_FIXTURE_MODE, Some("success"))]);
+        let route_config = TestRouteConfigGuard::new();
+        route_config.set_cnki_fixture_mode(Some(FixtureZjlibCnkiMode::Success));
         let backend = TestBackend::new();
         let user = backend.authenticated_user("cnki_live_user", false);
         let app = backend.router();
@@ -2217,13 +2209,8 @@ mod tests {
         ignore = "Miri does not support Tokio's Windows IOCP runtime initialization"
     )]
     async fn cnki_routes_map_live_fixture_failures_to_stable_error_codes() {
-        const REPLAY_MODE: &str = "PAPER_SCANNER_CNKI_REPLAY_MODE";
-        const LIVE_FIXTURE_MODE: &str = "PAPER_SCANNER_ZJLIB_CNKI_FIXTURE_MODE";
-
-        let _env_guard = EnvVarGuard::configured(&[
-            (REPLAY_MODE, None),
-            (LIVE_FIXTURE_MODE, Some("start_failure")),
-        ]);
+        let route_config = TestRouteConfigGuard::new();
+        route_config.set_cnki_fixture_mode(Some(FixtureZjlibCnkiMode::StartFailure));
         let backend = TestBackend::new();
         let user = backend.authenticated_user("cnki_failure_user", false);
         let app = backend.router();
@@ -2239,7 +2226,7 @@ mod tests {
         )
         .await;
 
-        std::env::set_var(LIVE_FIXTURE_MODE, "success");
+        route_config.set_cnki_fixture_mode(Some(FixtureZjlibCnkiMode::Success));
         let started = json_request(
             &app,
             Method::POST,
@@ -2250,7 +2237,7 @@ mod tests {
         )
         .await;
 
-        std::env::set_var(LIVE_FIXTURE_MODE, "poll_timeout");
+        route_config.set_cnki_fixture_mode(Some(FixtureZjlibCnkiMode::PollTimeout));
         let timeout = json_request(
             &app,
             Method::POST,
@@ -2264,7 +2251,7 @@ mod tests {
         )
         .await;
 
-        std::env::set_var(LIVE_FIXTURE_MODE, "poll_failure");
+        route_config.set_cnki_fixture_mode(Some(FixtureZjlibCnkiMode::PollFailure));
         let poll_failure = json_request(
             &app,
             Method::POST,
@@ -2278,7 +2265,7 @@ mod tests {
         )
         .await;
 
-        std::env::set_var(LIVE_FIXTURE_MODE, "warmup_failure");
+        route_config.set_cnki_fixture_mode(Some(FixtureZjlibCnkiMode::WarmupFailure));
         let warmup_failure = json_request(
             &app,
             Method::POST,
@@ -2391,50 +2378,52 @@ mod tests {
         panic!("manual push job did not finish");
     }
 
-    struct EnvVarGuard {
-        originals: Vec<(&'static str, Option<String>)>,
-        _lock: EnvLockGuard,
+    struct TestRouteConfigGuard {
+        _lock: TestConfigLockGuard,
     }
 
-    impl EnvVarGuard {
-        fn configured(values: &[(&'static str, Option<&'static str>)]) -> Self {
-            let lock = EnvLockGuard::acquire();
-            let originals = values
-                .iter()
-                .map(|(name, value)| {
-                    let original = std::env::var(name).ok();
-                    if let Some(value) = value {
-                        std::env::set_var(name, value);
-                    } else {
-                        std::env::remove_var(name);
-                    }
-                    (*name, original)
-                })
-                .collect();
-            Self {
-                originals,
-                _lock: lock,
-            }
+    impl TestRouteConfigGuard {
+        fn new() -> Self {
+            let lock = TestConfigLockGuard::acquire();
+            reset_route_test_config();
+            Self { _lock: lock }
+        }
+
+        fn set_cnki_replay_mode(&self, mode: Option<&str>) {
+            crate::routes::cnki::set_replay_mode_for_tests(mode);
+        }
+
+        fn set_cnki_fixture_mode(&self, mode: Option<FixtureZjlibCnkiMode>) {
+            crate::routes::cnki::set_fixture_mode_for_tests(mode);
+        }
+
+        fn set_index_fixture_mode(&self, mode: Option<FixtureZjlibCnkiMode>) {
+            crate::routes::index::set_fixture_mode_for_tests(mode);
+        }
+
+        fn set_manual_push_delay_ms(&self, delay_millis: Option<u64>) {
+            crate::routes::tracking::set_manual_push_test_delay_ms(delay_millis);
         }
     }
 
-    impl Drop for EnvVarGuard {
+    impl Drop for TestRouteConfigGuard {
         fn drop(&mut self) {
-            for (name, original) in self.originals.iter().rev() {
-                if let Some(value) = original {
-                    std::env::set_var(name, value);
-                } else {
-                    std::env::remove_var(name);
-                }
-            }
+            reset_route_test_config();
         }
     }
 
-    struct EnvLockGuard;
+    fn reset_route_test_config() {
+        crate::routes::cnki::set_replay_mode_for_tests(None);
+        crate::routes::cnki::set_fixture_mode_for_tests(None);
+        crate::routes::index::set_fixture_mode_for_tests(None);
+        crate::routes::tracking::set_manual_push_test_delay_ms(None);
+    }
 
-    impl EnvLockGuard {
+    struct TestConfigLockGuard;
+
+    impl TestConfigLockGuard {
         fn acquire() -> Self {
-            while TEST_ENV_LOCK
+            while TEST_CONFIG_LOCK
                 .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
                 .is_err()
             {
@@ -2444,9 +2433,9 @@ mod tests {
         }
     }
 
-    impl Drop for EnvLockGuard {
+    impl Drop for TestConfigLockGuard {
         fn drop(&mut self) {
-            TEST_ENV_LOCK.store(false, Ordering::Release);
+            TEST_CONFIG_LOCK.store(false, Ordering::Release);
         }
     }
 }
