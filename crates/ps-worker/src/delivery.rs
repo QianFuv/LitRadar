@@ -1,6 +1,6 @@
 //! Notification and tracking delivery worker orchestration.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::error::Error;
 use std::fmt;
@@ -254,7 +254,7 @@ pub fn run_recommendation_delivery(
     )?);
     let mut candidates = deduplicate_candidates(candidates);
     if config.changes_file.is_some() {
-        let pending_article_ids = pending_article_ids.into_iter().collect::<Vec<_>>();
+        let pending_article_ids = pending_article_ids.into_iter().collect::<BTreeSet<_>>();
         candidates.retain(|candidate| pending_article_ids.contains(&candidate.article_id));
     }
 
@@ -354,7 +354,9 @@ pub fn run_recommendation_delivery(
         run_state.updated_at = utc_now_iso();
         state.updated_at = run_state.updated_at.clone();
         state.run = Some(run_state.clone());
-        save_state_atomic(&state_path, &state)?;
+        if should_save_subscriber_progress(config) {
+            save_state_atomic(&state_path, &state)?;
+        }
     }
 
     if errors.is_empty() {
@@ -394,6 +396,10 @@ pub fn run_recommendation_delivery(
             .unwrap_or_default(),
         plans,
     ))
+}
+
+fn should_save_subscriber_progress(config: &RecommendationRunConfig) -> bool {
+    config.mode == DeliveryMode::Execute
 }
 
 fn filtered_subscribers(
