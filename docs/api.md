@@ -1,6 +1,8 @@
 # API 参考
 
-本文档以当前 Rust API 兼容实现为准，覆盖检索接口、认证接口、收藏/追踪接口以及管理员接口。后端部署与正常运行入口已经切换到 Rust；公开路径、请求体、响应体、认证 Cookie/Bearer 行为和 SQLite 数据契约保持不变。Python FastAPI 模块仅作为契约测试和 fixture 比对参考保留。
+本文档以当前 Rust API 实现为准，覆盖检索接口、认证接口、收藏/追踪接口以及管理员接口。后端部署与正常运行入口已经切换到 Rust；公开路径、请求体、响应体、认证 Cookie/Bearer 行为和 SQLite 数据契约保持不变。
+
+当前 API 没有内置自动生成的 Swagger 或 OpenAPI 页面，接口信息以本文档为准。
 
 ## 基本约定
 
@@ -567,7 +569,7 @@ CNKI 精确匹配失败时返回受控错误，不会下载候选列表中的错
 ```json
 {
   "name": "nightly notify",
-  "command": "ps-cli notify shadow --auth-db /app/data/auth.sqlite --index-db /app/data/index/utd24.sqlite --db utd24.sqlite",
+  "command": "notify --db utd24.sqlite --changes-file /app/data/push_state/utd24.changes.json --no-dry-run",
   "cron": "0 8 * * *",
   "enabled": true
 }

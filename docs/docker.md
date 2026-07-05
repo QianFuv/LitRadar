@@ -1,13 +1,13 @@
 # Docker 部署说明
 
-本文档说明当前 Docker 镜像与根目录 `docker-compose.yml` 的实际行为。后端镜像只包含 Rust 运行时入口；Python 模块保留给契约测试和 fixture 比对，不再作为容器内运行命令。
+本文档说明当前 Docker 镜像与根目录 `docker-compose.yml` 的实际行为。后端镜像只包含 Rust 运行时入口，并提供旧命令名 `api`、`index`、`notify` 和 `push`。
 
 ## 服务拓扑
 
 ```text
 浏览器
   ├── http://localhost:3000  -> app (Next.js)
-  └── http://localhost:8000  -> api (ps-api)
+  └── http://localhost:8000  -> api (api)
 
 worker sidecar
   └── ps-cli worker shadow
@@ -22,7 +22,7 @@ worker sidecar
 - 构建上下文：仓库根目录
 - Dockerfile：根目录 `Dockerfile`
 - 镜像名：`ghcr.io/qianfuv/paper-scanner-api:latest`
-- 启动命令：`ps-api`
+- 启动命令：`api`
 - 端口：`8000:8000`
 - 卷挂载：`./data:/app/data`
 - 关键环境变量：
@@ -59,8 +59,8 @@ worker sidecar
 
 后端镜像分两阶段构建：
 
-1. `rust:1.85-bookworm` 构建阶段执行 `cargo build --release -p ps-api -p ps-cli`
-2. `debian:bookworm-slim` 运行阶段只复制 `ps-api`、`ps-cli`、`libs/simple-linux/` 和 `data/meta/`
+1. `rust:1.85-bookworm` 构建阶段执行 release 构建
+2. `debian:bookworm-slim` 运行阶段复制 `api`、`index`、`notify`、`push`、`ps-api`、`ps-cli`、`libs/simple-linux/` 和 `data/meta/`
 
 运行阶段默认设置：
 
@@ -70,7 +70,7 @@ worker sidecar
 | `PAPER_SCANNER_PROJECT_ROOT` | `/app` | 数据目录解析根路径 |
 | `SIMPLE_TOKENIZER_PATH` | `/app/libs/simple-linux/libsimple-linux-ubuntu-latest/libsimple.so` | SQLite `simple` 分词扩展 |
 
-镜像不复制 `.venv`、`paper_scanner/` 或 `uv`，因此不能在容器中运行 Python 后端命令。
+镜像不包含旧 Python 后端运行时。
 
 ## 快速启动
 
@@ -101,11 +101,11 @@ curl http://localhost:3000/api/health
 - `data/push_state/*.json`：通知、追踪和每周更新状态
 - `data/push_state/*.changes.json`：增量变更清单
 
-首次部署前应确认 `data/index/` 下已有需要服务的 `.sqlite` 索引库。需要生成离线 parity 索引时，在宿主机运行 Rust CLI：
+首次部署前应确认 `data/index/` 下已有需要服务的 `.sqlite` 索引库。需要重新生成索引时，可以在后端容器中运行 Rust CLI：
 
 ```bash
-cargo run -p ps-cli -- index fixture --csv tests/fixtures/contracts/scholarly/journals.csv --fixture tests/fixtures/contracts/scholarly/openalex_fallback_fixture.json --output-db data/index/scholarly-fixture.sqlite
-cargo run -p ps-cli -- index fixture --source cnki --csv tests/fixtures/contracts/cnki/journals.csv --fixture tests/fixtures/contracts/cnki/fixture.json --output-db data/index/cnki-fixture.sqlite
+docker compose run --rm api index --file english_journals.csv --update --notify-dry-run
+docker compose run --rm api index --file cnki_journals.csv --resume --issue-batch 10
 ```
 
 生产索引库可直接放入 `data/index/`。中文全文凭证和 scholarly API key 等运行时配置优先从 `data/auth.sqlite` 的 `runtime_settings` 读取；没有数据库配置时才使用容器环境变量。
@@ -134,7 +134,7 @@ cargo run -p ps-cli -- index fixture --source cnki --csv tests/fixtures/contract
 
 1. 检查 `api` 服务：`docker compose logs api`
 2. 检查宿主机 `data/index/` 下是否存在 `.sqlite` 文件
-3. 如需测试索引库，先在宿主机运行 `ps-cli index fixture` 生成离线 fixture 数据库
+3. 如需生成索引库，运行 `docker compose run --rm api index --file <csv>` 或把现有 `.sqlite` 放入 `data/index/`
 
 ### 中文搜索命中差
 

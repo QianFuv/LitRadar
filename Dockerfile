@@ -5,13 +5,17 @@ WORKDIR /app
 COPY Cargo.toml Cargo.lock ./
 COPY crates crates
 
-RUN cargo build --release -p ps-api -p ps-cli
+RUN cargo build --release --bin api --bin ps-api --bin ps-cli --bin index --bin notify --bin push
 
 
 FROM debian:bookworm-slim
 
 WORKDIR /app
 
+COPY --from=build /app/target/release/api /usr/local/bin/api
+COPY --from=build /app/target/release/index /usr/local/bin/index
+COPY --from=build /app/target/release/notify /usr/local/bin/notify
+COPY --from=build /app/target/release/push /usr/local/bin/push
 COPY --from=build /app/target/release/ps-api /usr/local/bin/ps-api
 COPY --from=build /app/target/release/ps-cli /usr/local/bin/ps-cli
 
@@ -24,4 +28,4 @@ ENV SIMPLE_TOKENIZER_PATH="/app/libs/simple-linux/libsimple-linux-ubuntu-latest/
 
 EXPOSE 8000
 
-CMD ["ps-api"]
+CMD ["api"]

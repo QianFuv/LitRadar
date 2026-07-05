@@ -1,56 +1,46 @@
 # 开发指南
 
-本文档说明当前 Rust 后端架构、数据流、运行命令和开发检查。Python 后端模块仍保留在仓库中，但只作为契约测试、fixture 比对和历史兼容参考，不再作为正常后端运行入口。
+本文档说明当前 Rust 后端架构、数据流、运行命令和开发检查。旧 Python 后端和迁移契约测试已经移除，正常开发、部署和调度都使用 Rust 命令。
 
 ## 整体架构
 
 ```text
-CSV / fixture / existing index data
-  -> ps-cli index fixture
+CSV / existing index data
+  -> index
   -> data/index/*.sqlite
-  -> ps-api
+  -> api
   -> Next.js app
 
 data/push_state/*.changes.json
-  -> ps-cli notify dry-run|shadow
-  -> ps-cli push dry-run|shadow
+  -> notify
+  -> push
   -> /api/tracking/push-weekly
 ```
 
-Docker 运行时由 `ps-api` 提供 API，由 `ps-cli worker shadow` 作为 sidecar 加载定时任务配置。Python 目录用于测试 Rust 兼容性，不再通过 package scripts 暴露 `api`、`index`、`notify` 或 `push` 命令。
+Docker 运行时由 `api` 提供 API，由 `ps-cli worker shadow` 作为 sidecar 加载定时任务配置。`ps-cli scheduler` 和 `ps-cli worker` 是调度内部入口；用户侧保留 `api`、`index`、`notify` 和 `push` 四个旧命令名。
 
 ## Rust 模块划分
 
 | Crate | 职责 |
 | --- | --- |
 | `ps-api` | Axum API 服务，保持现有 `/api/*` 契约 |
-| `ps-cli` | 索引 fixture、scheduler、worker、notify、push 命令入口 |
+| `ps-cli` | scheduler、worker、测试辅助和共享 CLI 调度入口 |
 | `ps-auth` | 认证、密码、令牌和 Cookie 兼容逻辑 |
 | `ps-storage` | SQLite auth/index 存储访问 |
-| `ps-index` | 索引 schema、写库、fixture parity 索引和变更清单 |
-| `ps-sources` | Crossref/OpenAlex/Semantic Scholar/CNKI fixture source 解析 |
+| `ps-index` | 索引 schema、写库、live 索引和变更清单 |
+| `ps-sources` | Crossref/OpenAlex/Semantic Scholar/CNKI source 客户端 |
 | `ps-recommend` | 通知候选、AI 选择、PushPlus 内容和状态文件逻辑 |
 | `ps-worker` | scheduler 加载和通知/追踪分发编排 |
 | `ps-domain` | 共享领域结构 |
-
-## Python 参考模块
-
-`paper_scanner/` 仍保留历史 Python 实现，以便：
-
-- 契约测试比较 Rust 与 Python fixture 输出
-- 保留历史解析、转换和 schema 行为的回归证据
-- 支撑未迁移到 Rust 生产模式的离线测试夹具
-
-不要把这些模块作为新的运行入口；正常开发和部署应使用 Rust 命令。
 
 ## 真实数据流
 
 ### 索引流
 
-1. `ps-cli index fixture` 读取测试 CSV 和 recorded fixture
-2. `ps-sources` 解析 source payload
+1. `index` 读取 `data/meta/*.csv`
+2. `ps-sources` 调用 Crossref、OpenAlex、Semantic Scholar 或 CNKI overseas
 3. `ps-index` 写入 `journals`、`issues`、`articles`、`article_listing`、`article_search`
-4. 可选 `--manifest` 输出 `data/push_state/*.changes.json` 兼容清单
+4. `--update` 输出 `data/push_state/*.changes.json` 变更清单
 
 现有生产索引库可以直接放在 `data/index/` 下供 Rust API 读取。
 
@@ -70,14 +60,14 @@ Docker 运行时由 `ps-api` 提供 API，由 `ps-cli worker shadow` 作为 side
 4. `notify` 生成 PushPlus 发送计划
 5. `push` 生成追踪文件夹写入计划
 
-`dry-run` 和 `shadow` 不执行外部发送或收藏写入副作用。
+`--dry-run` 不执行外部发送或收藏写入副作用。
 
 ## 本地运行
 
 ### Rust API
 
 ```bash
-cargo run -p ps-api
+cargo run --bin api
 ```
 
 默认后端地址：`http://127.0.0.1:8000`。
@@ -96,21 +86,25 @@ cargo run -p ps-cli -- scheduler run-once 1
 cargo run -p ps-cli -- scheduler dry-run-once 1
 ```
 
-### Fixture 索引
+### 索引
 
 ```bash
-cargo run -p ps-cli -- index fixture --csv tests/fixtures/contracts/scholarly/journals.csv --fixture tests/fixtures/contracts/scholarly/openalex_fallback_fixture.json --output-db data/index/scholarly-fixture.sqlite --manifest data/push_state/scholarly-fixture.changes.json
-cargo run -p ps-cli -- index fixture --source cnki --csv tests/fixtures/contracts/cnki/journals.csv --fixture tests/fixtures/contracts/cnki/fixture.json --output-db data/index/cnki-fixture.sqlite
+cargo run --bin index -- --file english_journals.csv --update
+cargo run --bin index -- --file cnki_journals.csv --resume --issue-batch 10
 ```
+
+省略 `--file` 时会处理 `data/meta/` 下所有 CSV。`--update` 会生成 `data/push_state/*.changes.json`，`--notify --notify-dry-run` 可在更新后串联通知 dry-run。
 
 ### 通知与追踪
 
 ```bash
-cargo run -p ps-cli -- notify dry-run --auth-db data/auth.sqlite --index-db data/index/utd24.sqlite --db utd24.sqlite
-cargo run -p ps-cli -- notify shadow --auth-db data/auth.sqlite --index-db data/index/utd24.sqlite --db utd24.sqlite --changes-file data/push_state/utd24.changes.json
-cargo run -p ps-cli -- push dry-run --auth-db data/auth.sqlite --index-db data/index/utd24.sqlite --db utd24.sqlite
-cargo run -p ps-cli -- push shadow --auth-db data/auth.sqlite --index-db data/index/utd24.sqlite --db utd24.sqlite --changes-file data/push_state/utd24.changes.json
+cargo run --bin notify -- --dry-run
+cargo run --bin notify -- --db utd24.sqlite --changes-file data/push_state/utd24.changes.json --no-dry-run
+cargo run --bin push -- --dry-run
+cargo run --bin push -- --db utd24.sqlite --changes-file data/push_state/utd24.changes.json --no-dry-run
 ```
+
+省略 `--db` 时会处理 `data/index/*.sqlite`。`notify` 默认状态目录是 `data/push_state`，`push` 默认状态目录是 `data/folder_push_state`。
 
 ### 前端
 
@@ -144,13 +138,6 @@ cargo clippy --all-targets --all-features -- -D warnings
 cargo test
 ```
 
-Python 兼容测试改动：
-
-```bash
-uv run ruff check tests
-uv run python -m unittest discover tests
-```
-
 前端改动：
 
 ```bash
@@ -169,10 +156,6 @@ docker compose build
 ### 每周更新不是按文章日期直接扫描
 
 每周更新、通知和追踪推送都依赖 `data/push_state/*.changes.json` 或状态快照差异。没有变更清单时，相关链路可能为空。
-
-### Python 模块不是运行入口
-
-`paper_scanner/` 是兼容参考面。正常后端、worker、通知、追踪和 fixture 索引命令都应使用 Rust。
 
 ### 管理员定时任务不是 API 进程内 APScheduler
 

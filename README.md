@@ -2,13 +2,13 @@
 
 Paper Scanner 是一个面向学术期刊的全栈检索与订阅平台。它负责从 Crossref、OpenAlex、Semantic Scholar 与 CNKI overseas 抓取期刊和文章元数据，构建 SQLite 检索库，并提供 Web 界面、收藏夹、追踪推送、每周更新、公告与后台管理能力。
 
-当前后端运行路径已经切换到 Rust 服务。Python 后端模块仅作为契约测试、fixture 比对和历史兼容参考保留，不再提供正常运行入口：
+当前后端运行路径已经切换到 Rust，保留原来的用户命令名：
 
-- `ps-api`：启动兼容现有 `/api/*` 契约的 Rust API 后端
+- `api`：启动兼容现有 `/api/*` 契约的 Rust API 后端
+- `index`：读取 `data/meta/*.csv`，抓取上游元数据并写入 `data/index/*.sqlite`
+- `notify`：执行或演练 PushPlus 通知链路
+- `push`：执行或演练追踪文件夹写入链路
 - `ps-cli worker shadow`：启动 Rust worker sidecar，周期性加载定时任务并保持服务运行
-- `ps-cli notify dry-run|shadow`：演练或 shadow 比对 PushPlus 通知链路
-- `ps-cli push dry-run|shadow`：演练或 shadow 比对追踪文件夹写入链路
-- `ps-cli index fixture`：运行 Rust 索引 fixture/parity 命令
 
 ## 主要功能
 
@@ -29,10 +29,10 @@ Paper Scanner 是一个面向学术期刊的全栈检索与订阅平台。它负
 | --- | --- |
 | 前端 | Next.js 16、React 19、TypeScript、Tailwind CSS 4、Radix UI、TanStack Query |
 | 后端 | Rust、Axum、Tokio、rusqlite |
-| 索引/抓取 | Rust workspace crates、SQLite FTS5；fixture/parity 索引由 `ps-cli index fixture` 提供 |
+| 索引/抓取 | Rust workspace crates、SQLite FTS5 |
 | AI 与推送 | OpenAI 兼容服务、PushPlus |
 | 调度 | Rust worker/CLI |
-| 开发工具 | Cargo、uv、Ruff、mypy、pnpm |
+| 开发工具 | Cargo、pnpm、Docker |
 
 ## 仓库结构
 
@@ -41,7 +41,6 @@ Paper Scanner 是一个面向学术期刊的全栈检索与订阅平台。它负
 ├── app/                     前端项目
 ├── crates/                  Rust 后端 workspace
 ├── docs/                    详细文档
-├── paper_scanner/           Python 兼容测试参考模块
 ├── data/
 │   ├── meta/                期刊 CSV 元数据源
 │   ├── index/               生成后的 SQLite 检索库
@@ -50,7 +49,7 @@ Paper Scanner 是一个面向学术期刊的全栈检索与订阅平台。它负
 ├── libs/                    SQLite simple tokenizer 预编译扩展
 ├── docker-compose.yml       根 Docker Compose 编排
 ├── Dockerfile               后端镜像构建
-└── pyproject.toml           Python 测试依赖配置
+└── Cargo.toml               Rust workspace 配置
 ```
 
 ## 快速开始
@@ -84,7 +83,13 @@ Paper Scanner 是一个面向学术期刊的全栈检索与订阅平台。它负
 
 3. 准备索引数据库
 
-   Docker 运行时读取宿主机 `data/index/*.sqlite`。如果该目录已有生产或测试索引库，可直接启动服务。需要生成离线 parity 索引时，在宿主机使用 Rust CLI 的 fixture 命令；Docker 后端镜像不包含 Python 运行入口。
+   Docker 运行时读取宿主机 `data/index/*.sqlite`。如果该目录已有生产或测试索引库，可直接启动服务；需要从 `data/meta/*.csv` 重新生成时，可运行：
+
+   ```bash
+   docker compose run --rm api index --file english_journals.csv --update --notify-dry-run
+   ```
+
+   `--file` 省略时会处理 `data/meta/` 下所有 CSV。
 
 4. 访问服务
 
@@ -100,7 +105,7 @@ Paper Scanner 是一个面向学术期刊的全栈检索与订阅平台。它负
 #### 后端
 
 ```bash
-cargo run -p ps-api
+cargo run --bin api
 ```
 
 默认后端地址：`http://127.0.0.1:8000`
@@ -111,7 +116,7 @@ cargo run -p ps-api
 cargo run -p ps-cli -- worker shadow --interval-seconds 300
 ```
 
-Python 参考模块不再作为本地后端入口。需要运行回归测试时使用 `uv run python -m unittest discover tests`。
+回归测试使用 Rust workspace 检查，见下方开发文档。
 
 #### 前端
 
@@ -131,29 +136,29 @@ pnpm dev
 ### 1. 索引
 
 ```bash
-cargo run -p ps-cli -- index fixture --csv tests/fixtures/contracts/scholarly/journals.csv --fixture tests/fixtures/contracts/scholarly/openalex_fallback_fixture.json --output-db data/index/scholarly-fixture.sqlite
-cargo run -p ps-cli -- index fixture --source cnki --csv tests/fixtures/contracts/cnki/journals.csv --fixture tests/fixtures/contracts/cnki/fixture.json --output-db data/index/cnki-fixture.sqlite
+cargo run --bin index -- --file english_journals.csv --update
+cargo run --bin index -- --file cnki_journals.csv --resume --issue-batch 10
 ```
 
-Rust fixture/parity 索引参数：
+`index` 参数：
 
 | 参数 | 默认值 | 说明 |
 | --- | --- | --- |
-| `--csv` | 必填 | CSV 元数据源路径 |
-| `--fixture` | 必填 | recorded fixture 目录或文件 |
-| `--output-db` | 必填 | 输出 SQLite 索引库 |
-| `--source` | `scholarly` | 可选 `scholarly` 或 `cnki` |
-| `--manifest` | 空 | 输出变更清单 |
-| `--resume` | `false` | CNKI fixture 索引恢复模式 |
-| `--update` | `false` | CNKI fixture 增量模式 |
-| `--issue-batch-size` | `10` | CNKI fixture issue 批大小 |
+| `--file`, `-f` | 空 | 只处理 `data/meta/` 下指定 CSV；省略时处理全部 CSV |
+| `--workers`, `-w` | `32` | 兼容旧命令的并发参数；当前 Rust live runner 串行执行 |
+| `--issue-batch` | 同 `--workers` | CNKI issue 批大小 |
+| `--timeout` | `20` | 上游请求超时秒数 |
+| `--resume` / `--no-resume` | `--resume` | 跳过已完成期刊或年份 |
+| `--update` / `--no-update` | `--no-update` | 增量更新并生成 `data/push_state/*.changes.json` |
+| `--notify` | `false` | 更新后调用 `notify` |
+| `--notify-dry-run` | `false` | `--notify` handoff 使用 dry-run |
 
-英文 scholarly fixture 路径会验证 Crossref、OpenAlex、Semantic Scholar 的兼容转换和写库契约。`SEMANTIC_SCHOLAR_API_KEY_POOL` 可通过环境变量或 `data/auth.sqlite` 的 `runtime_settings` 提供，以覆盖需要确认 key 存在的离线 parity 路径；`PROXY_POOL`、`OPENALEX_API_KEY_POOL` 和 `CROSSREF_MAILTO_POOL` 仍由管理员运行时配置表保存，供 Rust 服务和调度命令读取。
+`SEMANTIC_SCHOLAR_API_KEY_POOL`、`PROXY_POOL`、`OPENALEX_API_KEY_POOL` 和 `CROSSREF_MAILTO_POOL` 可通过环境变量或管理员运行时配置表提供，供 Rust 服务和调度命令读取。
 
 ### 2. API 服务
 
 ```bash
-cargo run -p ps-api
+cargo run --bin api
 ```
 
 环境变量：
@@ -178,20 +183,20 @@ API、索引器和调度任务启动时会读取 `runtime_settings` 并覆盖同
 ### 3. PushPlus 通知推送
 
 ```bash
-cargo run -p ps-cli -- notify dry-run --auth-db data/auth.sqlite --index-db data/index/utd24.sqlite --db utd24.sqlite
-cargo run -p ps-cli -- notify shadow --auth-db data/auth.sqlite --index-db data/index/utd24.sqlite --db utd24.sqlite --changes-file data/push_state/utd24.changes.json
+cargo run --bin notify -- --dry-run
+cargo run --bin notify -- --db utd24.sqlite --changes-file data/push_state/utd24.changes.json --no-dry-run
 ```
 
-该命令只处理 `delivery_method = "pushplus"` 的用户。`dry-run` 不发送消息；`shadow` 运行兼容流水但不作为 Python 入口回退。
+该命令只处理 `delivery_method = "pushplus"` 的用户。`--dry-run` 不发送消息；省略 `--db` 时会处理 `data/index/*.sqlite`。
 
 ### 4. 追踪文件夹推送
 
 ```bash
-cargo run -p ps-cli -- push dry-run --auth-db data/auth.sqlite --index-db data/index/utd24.sqlite --db utd24.sqlite
-cargo run -p ps-cli -- push shadow --auth-db data/auth.sqlite --index-db data/index/utd24.sqlite --db utd24.sqlite --changes-file data/push_state/utd24.changes.json
+cargo run --bin push -- --dry-run
+cargo run --bin push -- --db utd24.sqlite --changes-file data/push_state/utd24.changes.json --no-dry-run
 ```
 
-该命令只处理 `delivery_method = "folder"` 且已配置追踪文件夹的用户。`dry-run` 不写入收藏；`shadow` 用于兼容验证。
+该命令只处理 `delivery_method = "folder"` 且已配置追踪文件夹的用户。`--dry-run` 不写入收藏；省略 `--db` 时会处理 `data/index/*.sqlite`。
 
 ## AI 与推送配置
 
@@ -236,8 +241,8 @@ cargo run -p ps-cli -- push shadow --auth-db data/auth.sqlite --index-db data/in
 
 - `/api/weekly-updates`
 - `/api/tracking/push-weekly`
-- `ps-cli notify shadow --changes-file ...`
-- `ps-cli push shadow --changes-file ...`
+- `notify --changes-file ...`
+- `push --changes-file ...`
 
 这几条链路都依赖 `*.changes.json` 文件。
 
@@ -251,7 +256,7 @@ cargo run -p ps-cli -- push shadow --auth-db data/auth.sqlite --index-db data/in
 
 前端在 Docker 构建阶段使用 `INTERNAL_API_URL` 将 `/api/*` 重写到后端；`app/Dockerfile` 默认为 `http://api:8000`。根 Compose 文件里没有显式设置这个变量，是因为 `app/Dockerfile` 已提供该默认值。
 
-当前主前端登录流程只使用后端 `/api/auth/*`。仓库已移除旧的前端令牌认证工具与 `config` 挂载；根 Compose 现在只依赖 `data` 卷。Rust 服务读取现有 `data/index/*.sqlite`、`data/auth.sqlite` 与推送状态文件，Python 目录仅保留为兼容测试参考。
+当前主前端登录流程只使用后端 `/api/auth/*`。仓库已移除旧的前端令牌认证工具与 `config` 挂载；根 Compose 现在只依赖 `data` 卷。Rust 服务读取现有 `data/index/*.sqlite`、`data/auth.sqlite` 与推送状态文件。
 
 ## 详细文档
 
