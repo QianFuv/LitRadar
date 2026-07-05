@@ -82,6 +82,8 @@ impl TestBackend {
             host: TEST_HOST.to_string(),
             port: 0,
             cors_allowed_origins: Vec::new(),
+            mcp_allowed_hosts: vec!["localhost".to_string(), TEST_HOST.to_string()],
+            mcp_allowed_origins: Vec::new(),
         })
     }
 

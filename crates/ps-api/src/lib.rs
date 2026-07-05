@@ -1,6 +1,7 @@
 //! Rust API server skeleton for backend migration compatibility.
 
 pub mod config;
+mod mcp;
 mod observability;
 mod openapi;
 mod response;
@@ -81,6 +82,7 @@ pub fn build_router(config: ApiConfig) -> Router {
     let state = ApiState::new(storage_config);
 
     Router::new()
+        .nest_service("/mcp", mcp::service(&config, state.clone()))
         .merge(openapi::docs_router())
         .nest(API_PREFIX, routes::public_routes())
         .layer(from_fn(cache_control_middleware))
