@@ -182,6 +182,13 @@ pub trait CnkiTransport {
     ///
     /// Captured source attempts.
     fn attempts(&self) -> &[SourceAttempt];
+
+    /// Append attempts captured by cloned worker transports.
+    ///
+    /// # Arguments
+    ///
+    /// * `attempts` - Source attempts captured by worker transports.
+    fn append_attempts(&mut self, attempts: Vec<SourceAttempt>);
 }
 
 /// Deterministic fixture transport for CNKI source tests.
@@ -268,6 +275,11 @@ impl CnkiTransport for FixtureCnkiTransport {
     /// Return captured source attempts.
     fn attempts(&self) -> &[SourceAttempt] {
         &self.attempts
+    }
+
+    /// Append attempts captured by cloned worker transports.
+    fn append_attempts(&mut self, attempts: Vec<SourceAttempt>) {
+        self.attempts.extend(attempts);
     }
 }
 
@@ -618,6 +630,11 @@ impl CnkiTransport for LiveCnkiTransport {
     fn attempts(&self) -> &[SourceAttempt] {
         &self.attempts
     }
+
+    /// Append attempts captured by cloned worker transports.
+    fn append_attempts(&mut self, attempts: Vec<SourceAttempt>) {
+        self.attempts.extend(attempts);
+    }
 }
 
 /// CNKI metadata client using a transport implementation.
@@ -715,6 +732,15 @@ where
     /// Captured source attempts.
     pub fn attempts(&self) -> &[SourceAttempt] {
         self.transport.attempts()
+    }
+
+    /// Append attempts captured by cloned worker clients.
+    ///
+    /// # Arguments
+    ///
+    /// * `attempts` - Source attempts captured by worker clients.
+    pub fn append_attempts(&mut self, attempts: Vec<SourceAttempt>) {
+        self.transport.append_attempts(attempts);
     }
 }
 

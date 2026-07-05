@@ -5,9 +5,11 @@ use std::error::Error;
 use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::thread;
 
 use ps_sources::{
     CnkiClient, CnkiFixtureData, CnkiSourceError, CnkiTransport, FixtureCnkiTransport,
+    SourceAttempt,
 };
 use rusqlite::Connection;
 use serde::Serialize;
@@ -48,6 +50,8 @@ pub struct CnkiIndexConfig {
     pub update: bool,
     /// Number of issues processed together.
     pub issue_batch_size: usize,
+    /// Number of article detail workers per issue batch.
+    pub worker_count: usize,
 }
 
 /// CNKI fixture index outcome.
@@ -78,6 +82,8 @@ pub enum CnkiIndexError {
     Sqlite(rusqlite::Error),
     /// Source operation failed.
     Source(CnkiSourceError),
+    /// Article detail worker failed.
+    Worker(String),
     /// Journal row is invalid.
     InvalidJournal(String),
 }
@@ -90,6 +96,7 @@ impl fmt::Display for CnkiIndexError {
             Self::Json(error) => write!(formatter, "{error}"),
             Self::Sqlite(error) => write!(formatter, "{error}"),
             Self::Source(error) => write!(formatter, "{error}"),
+            Self::Worker(message) => formatter.write_str(message),
             Self::InvalidJournal(message) => formatter.write_str(message),
         }
     }
@@ -103,6 +110,7 @@ impl Error for CnkiIndexError {
             Self::Json(error) => Some(error),
             Self::Sqlite(error) => Some(error),
             Self::Source(error) => Some(error),
+            Self::Worker(_) => None,
             Self::InvalidJournal(_) => None,
         }
     }
@@ -286,6 +294,30 @@ pub(crate) struct ProcessOutcome {
     pub(crate) deleted_article_count: i64,
 }
 
+#[derive(Debug, Clone)]
+struct CnkiArticleDetailTask {
+    order: usize,
+    issue_id: i64,
+    summary: Value,
+    article_url: String,
+    platform_id: Option<String>,
+}
+
+#[derive(Debug)]
+struct CnkiArticleDetailResult {
+    order: usize,
+    issue_id: i64,
+    summary: Value,
+    detail: Value,
+}
+
+#[derive(Debug)]
+struct CnkiArticleDetailWorkerOutput {
+    task: CnkiArticleDetailTask,
+    result: Result<Value, CnkiSourceError>,
+    attempts: Vec<SourceAttempt>,
+}
+
 /// Process one CNKI CSV row into an index database.
 pub(crate) fn process_cnki_row<T>(
     connection: &Connection,
@@ -296,7 +328,7 @@ pub(crate) fn process_cnki_row<T>(
     config: &CnkiIndexConfig,
 ) -> Result<ProcessOutcome, CnkiIndexError>
 where
-    T: CnkiTransport,
+    T: CnkiTransport + Clone + Send + 'static,
 {
     if config.resume && !config.update && is_journal_complete(connection, journal_id)? {
         return Ok(ProcessOutcome::resumed());
@@ -411,6 +443,7 @@ where
         }
         for batch in issue_pairs.chunks(batch_size) {
             let mut batch_records = Vec::new();
+            let mut detail_tasks = Vec::new();
             for (issue_id, issue) in batch {
                 let summaries = client.issue_articles(&details, issue)?;
                 article_summaries_count += summaries.len() as i64;
@@ -419,16 +452,26 @@ where
                         continue;
                     };
                     let platform_id = json_text(summary.get("platform_id"));
-                    let detail = client.article_detail(&article_url, platform_id.as_deref())?;
-                    article_details_count += 1;
-                    if let Some(record) = build_cnki_article_record(
-                        Some(&detail),
-                        &summary,
-                        journal_id,
-                        Some(*issue_id),
-                    ) {
-                        batch_records.push(record);
-                    }
+                    detail_tasks.push(CnkiArticleDetailTask {
+                        order: detail_tasks.len(),
+                        issue_id: *issue_id,
+                        summary,
+                        article_url,
+                        platform_id,
+                    });
+                }
+            }
+            let detail_results =
+                fetch_cnki_article_details(client, detail_tasks, config.worker_count.max(1))?;
+            article_details_count += detail_results.len() as i64;
+            for result in detail_results {
+                if let Some(record) = build_cnki_article_record(
+                    Some(&result.detail),
+                    &result.summary,
+                    journal_id,
+                    Some(result.issue_id),
+                ) {
+                    batch_records.push(record);
                 }
             }
             let (batch_records, deleted_article_ids) =
@@ -464,6 +507,54 @@ where
         article_details_count,
         deleted_article_count,
     })
+}
+
+fn fetch_cnki_article_details<T>(
+    client: &mut CnkiClient<T>,
+    tasks: Vec<CnkiArticleDetailTask>,
+    worker_count: usize,
+) -> Result<Vec<CnkiArticleDetailResult>, CnkiIndexError>
+where
+    T: CnkiTransport + Clone + Send + 'static,
+{
+    let mut results = Vec::with_capacity(tasks.len());
+    for chunk in tasks.chunks(worker_count.max(1)) {
+        let mut handles = Vec::new();
+        for task in chunk.iter().cloned() {
+            let mut worker_client = client.clone();
+            let attempt_start = worker_client.attempts().len();
+            handles.push(thread::spawn(move || {
+                let result =
+                    worker_client.article_detail(&task.article_url, task.platform_id.as_deref());
+                let attempts = worker_client.attempts()[attempt_start..].to_vec();
+                CnkiArticleDetailWorkerOutput {
+                    task,
+                    result,
+                    attempts,
+                }
+            }));
+        }
+
+        let mut worker_outputs = Vec::new();
+        for handle in handles {
+            let output = handle.join().map_err(|_| {
+                CnkiIndexError::Worker("CNKI article detail worker panicked".to_string())
+            })?;
+            client.append_attempts(output.attempts.clone());
+            worker_outputs.push(output);
+        }
+        for output in worker_outputs {
+            let detail = output.result?;
+            results.push(CnkiArticleDetailResult {
+                order: output.task.order,
+                issue_id: output.task.issue_id,
+                summary: output.task.summary,
+                detail,
+            });
+        }
+    }
+    results.sort_by_key(|result| result.order);
+    Ok(results)
 }
 
 impl ProcessOutcome {
@@ -569,9 +660,17 @@ mod tests {
     use std::collections::BTreeSet;
     use std::fs;
     use std::path::PathBuf;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+    use std::thread;
+    use std::time::Duration;
 
-    use ps_sources::{CnkiClient, CnkiFixtureData, FixtureCnkiTransport};
+    use ps_sources::{
+        CnkiClient, CnkiFixtureData, CnkiSourceError, CnkiTransport, FixtureCnkiTransport,
+        SourceAttempt,
+    };
     use rusqlite::Connection;
+    use serde_json::{json, Value};
     use tempfile::tempdir;
 
     use crate::cnki::{
@@ -618,6 +717,7 @@ mod tests {
             resume: true,
             update: false,
             issue_batch_size: 10,
+            worker_count: 1,
         };
 
         let outcome = process_cnki_row(
@@ -633,6 +733,47 @@ mod tests {
         assert_eq!(outcome.status, "resumed");
         assert!(outcome.written_articles.is_empty());
         assert_eq!(client.attempts().len(), 0);
+    }
+
+    #[test]
+    fn article_details_use_worker_concurrency() {
+        let connection = Connection::open_in_memory().expect("in-memory db should open");
+        init_index_db(&connection).expect("schema should initialize");
+        let state = Arc::new(InstrumentedCnkiState::default());
+        let mut client = CnkiClient::new(InstrumentedCnkiTransport::new(state.clone()));
+        let row = CsvRow::from([
+            ("source".to_string(), "cnki".to_string()),
+            ("title".to_string(), "Concurrent CNKI".to_string()),
+            ("issn".to_string(), "1234-5678".to_string()),
+            ("id".to_string(), "Concurrent CNKI".to_string()),
+        ]);
+        let config = CnkiIndexConfig {
+            csv_path: PathBuf::new(),
+            fixture_path: PathBuf::new(),
+            output_db_path: PathBuf::new(),
+            manifest_path: None,
+            run_id: "run-cnki-concurrent".to_string(),
+            timestamp: "2026-07-05T00:00:00Z".to_string(),
+            resume: false,
+            update: false,
+            issue_batch_size: 1,
+            worker_count: 2,
+        };
+
+        let outcome = process_cnki_row(&connection, &mut client, &row, "journals.csv", 99, &config)
+            .expect("concurrent detail processing should succeed");
+
+        assert_eq!(outcome.article_details_count, 2);
+        assert_eq!(outcome.written_articles.len(), 2);
+        assert!(state.max_active.load(Ordering::SeqCst) >= 2);
+        assert_eq!(
+            client
+                .attempts()
+                .iter()
+                .filter(|attempt| attempt.endpoint == "article_detail")
+                .count(),
+            2
+        );
     }
 
     #[test]
@@ -659,6 +800,7 @@ mod tests {
             resume: false,
             update: false,
             issue_batch_size: 10,
+            worker_count: 10,
         })
         .expect("fixture index should succeed");
 
@@ -702,5 +844,119 @@ mod tests {
             "CNKI202601001": "<html><head><title>CNKI article CNKI202601001</title></head><body><input id=\"paramfilename\" value=\"CNKI202601001\" /><input id=\"paramdbcode\" value=\"CJFD\" /><input id=\"paramdbname\" value=\"CJFDLAST2026\" /><input id=\"abstract_text\" value=\"Test abstract.\" /><p class=\"title-one\">CNKI article CNKI202601001</p><h3 class=\"author\" id=\"authorpart\"><span>Test Author</span></h3><span class=\"rowtit\">Online Release Time:</span><p>2026-01-02</p><span class=\"rowtit\">DOI:</span><p>10.1/cnki</p><span class=\"rowtit\">Pages:</span><p>1-2</p><a href=\"/barnew/download/order?id=abc\">HTML阅读</a></body></html>"
           }
         }"#
+    }
+
+    #[derive(Debug, Default)]
+    struct InstrumentedCnkiState {
+        active: AtomicUsize,
+        max_active: AtomicUsize,
+    }
+
+    #[derive(Debug, Clone)]
+    struct InstrumentedCnkiTransport {
+        state: Arc<InstrumentedCnkiState>,
+        attempts: Vec<SourceAttempt>,
+    }
+
+    impl InstrumentedCnkiTransport {
+        fn new(state: Arc<InstrumentedCnkiState>) -> Self {
+            Self {
+                state,
+                attempts: Vec::new(),
+            }
+        }
+
+        fn record_attempt(&mut self, endpoint: &str, key: Option<&str>) {
+            self.attempts.push(SourceAttempt {
+                service: "cnki".to_string(),
+                endpoint: endpoint.to_string(),
+                method: if endpoint == "article_detail" {
+                    "GET".to_string()
+                } else {
+                    "POST".to_string()
+                },
+                url: format!("https://example.test/{}", key.unwrap_or(endpoint)),
+                status_code: Some(200),
+                did_succeed: true,
+                did_retry: false,
+                error: None,
+            });
+        }
+    }
+
+    impl CnkiTransport for InstrumentedCnkiTransport {
+        fn text(&mut self, endpoint: &str, _key: Option<&str>) -> Result<String, CnkiSourceError> {
+            Err(CnkiSourceError::Request(format!(
+                "instrumented transport does not use text endpoint {endpoint}"
+            )))
+        }
+
+        fn resolve_journal(&mut self, _row: &CsvRow) -> Result<Option<Value>, CnkiSourceError> {
+            self.record_attempt("journal_detail", None);
+            Ok(Some(json!({
+                "pykm": "TEST",
+                "pcode": "CJFD",
+                "title": "Concurrent CNKI",
+                "issn": "1234-5678"
+            })))
+        }
+
+        fn year_issues(&mut self, _journal: &Value) -> Result<Vec<Value>, CnkiSourceError> {
+            self.record_attempt("year_issues", None);
+            Ok(vec![json!({
+                "year": 2026,
+                "number": "1",
+                "title": "2026 No.1",
+                "year_issue": "202601"
+            })])
+        }
+
+        fn issue_articles(
+            &mut self,
+            _journal: &Value,
+            _issue: &Value,
+        ) -> Result<Vec<Value>, CnkiSourceError> {
+            self.record_attempt("issue_articles", Some("202601"));
+            Ok(vec![
+                json!({
+                    "title": "Article A",
+                    "article_url": "https://example.test/article-a",
+                    "platform_id": "ARTICLE-A",
+                    "authors": "Summary Author"
+                }),
+                json!({
+                    "title": "Article B",
+                    "article_url": "https://example.test/article-b",
+                    "platform_id": "ARTICLE-B",
+                    "authors": "Summary Author"
+                }),
+            ])
+        }
+
+        fn article_detail(
+            &mut self,
+            article_url: &str,
+            platform_id: Option<&str>,
+        ) -> Result<Value, CnkiSourceError> {
+            let active = self.state.active.fetch_add(1, Ordering::SeqCst) + 1;
+            self.state.max_active.fetch_max(active, Ordering::SeqCst);
+            thread::sleep(Duration::from_millis(50));
+            self.state.active.fetch_sub(1, Ordering::SeqCst);
+            self.record_attempt("article_detail", platform_id);
+            Ok(json!({
+                "platform_id": platform_id.unwrap_or(article_url),
+                "title": platform_id.unwrap_or(article_url),
+                "authors": "Detail Author",
+                "permalink": article_url
+            }))
+        }
+
+        fn attempts(&self) -> &[SourceAttempt] {
+            &self.attempts
+        }
+
+        fn append_attempts(&mut self, attempts: Vec<SourceAttempt>) {
+            self.attempts.extend(attempts);
+        }
     }
 }

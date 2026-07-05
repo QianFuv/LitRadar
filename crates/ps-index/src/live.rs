@@ -651,6 +651,7 @@ fn run_live_journal_rows_locally(
         resume: context.config.resume,
         update: context.config.update,
         issue_batch_size: context.config.issue_batch_size.max(1),
+        worker_count: context.config.worker_count.max(1),
     };
     let mut all_written_articles = Vec::new();
 
@@ -883,7 +884,7 @@ fn process_live_journal_row<S, C>(
 ) -> Result<LiveJournalOutcome, Box<LiveJournalFailure>>
 where
     S: ScholarlyTransport,
-    C: CnkiTransport,
+    C: CnkiTransport + Clone + Send + 'static,
 {
     let LiveJournalContext {
         connection,

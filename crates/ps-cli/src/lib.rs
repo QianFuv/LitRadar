@@ -245,6 +245,7 @@ fn run_grouped_command(mut args: Vec<String>) -> Result<(), Box<dyn Error>> {
                     resume: resume_index,
                     update: update_index,
                     issue_batch_size,
+                    worker_count: issue_batch_size,
                 })?)?,
                 other => return Err(format!("unsupported index fixture source: {other}").into()),
             };
