@@ -7,11 +7,14 @@ use std::sync::Arc;
 use std::task::{Context, Poll};
 
 use axum::extract::Request;
+use axum::http::request::Parts;
 use axum::response::{IntoResponse, Response};
+use ps_domain::{ArticleId, FavoriteAdd, OkResponse, UserId, UserResponse};
 use ps_storage::{
-    ArticleListParams, DatabaseResolutionError, IndexRepositoryError, JournalListParams,
+    ArticleListParams, BusinessRepositoryError, DatabaseResolutionError, IndexRepositoryError,
+    JournalListParams,
 };
-use rmcp::handler::server::{router::tool::ToolRouter, wrapper::Parameters};
+use rmcp::handler::server::{router::tool::ToolRouter, tool::Extension, wrapper::Parameters};
 use rmcp::model::{CallToolResult, ContentBlock, ErrorData, ServerCapabilities, ServerInfo};
 use rmcp::transport::streamable_http_server::{
     session::local::LocalSessionManager, StreamableHttpServerConfig, StreamableHttpService,
@@ -65,14 +68,18 @@ impl Service<Request> for AuthenticatedMcpService {
         Poll::Ready(Ok(()))
     }
 
-    fn call(&mut self, request: Request) -> Self::Future {
+    fn call(&mut self, mut request: Request) -> Self::Future {
         let state = self.state.clone();
         let mut inner = self.inner.clone();
 
         Box::pin(async move {
-            if let Err(error) = auth::require_current_user(&state, request.headers()) {
-                return Ok(error.into_response());
-            }
+            let (user, _) = match auth::require_current_user(&state, request.headers()) {
+                Ok(context) => context,
+                Err(error) => return Ok(error.into_response()),
+            };
+            request
+                .extensions_mut()
+                .insert(AuthenticatedMcpUser { user });
 
             match inner.call(request).await {
                 Ok(response) => Ok(response.into_response()),
@@ -80,6 +87,11 @@ impl Service<Request> for AuthenticatedMcpService {
             }
         })
     }
+}
+
+#[derive(Debug, Clone)]
+struct AuthenticatedMcpUser {
+    user: UserResponse,
 }
 
 #[derive(Debug, Clone)]
@@ -266,6 +278,70 @@ impl PaperScannerMcp {
     fn get_weekly_updates(&self) -> Result<CallToolResult, ErrorData> {
         self.index_tool(ps_storage::get_weekly_updates(self.state.storage_config()))
     }
+
+    #[tool(
+        name = "list_folders",
+        description = "List favorite folders for the authenticated Paper Scanner user."
+    )]
+    fn list_folders(
+        &self,
+        Extension(parts): Extension<Parts>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let user_id = authenticated_user_id(&parts)?;
+        self.business_tool(ps_storage::list_folders(
+            self.state.storage_config().auth_db_path(),
+            user_id,
+        ))
+    }
+
+    #[tool(
+        name = "add_favorite",
+        description = "Add an article to a favorite folder for the authenticated user."
+    )]
+    fn add_favorite(
+        &self,
+        Extension(parts): Extension<Parts>,
+        Parameters(input): Parameters<FavoriteInput>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let user_id = authenticated_user_id(&parts)?;
+        let favorite = match favorite_add(input) {
+            Ok(value) => value,
+            Err(message) => return Ok(tool_error(message)),
+        };
+        self.business_tool(ps_storage::add_favorite(
+            self.state.storage_config().auth_db_path(),
+            user_id,
+            favorite.folder_id,
+            &favorite.body,
+        ))
+    }
+
+    #[tool(
+        name = "remove_favorite",
+        description = "Remove an article from a favorite folder for the authenticated user."
+    )]
+    fn remove_favorite(
+        &self,
+        Extension(parts): Extension<Parts>,
+        Parameters(input): Parameters<FavoriteInput>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let user_id = authenticated_user_id(&parts)?;
+        let favorite = match favorite_add(input) {
+            Ok(value) => value,
+            Err(message) => return Ok(tool_error(message)),
+        };
+        match ps_storage::remove_favorite(
+            self.state.storage_config().auth_db_path(),
+            user_id,
+            favorite.folder_id,
+            favorite.body.article_id.value(),
+            &favorite.body.db_name,
+        ) {
+            Ok(true) => json_tool_result(&OkResponse { ok: true }),
+            Ok(false) => Ok(tool_error("Favorite not found")),
+            Err(error) => Ok(tool_error(business_tool_error_message(&error))),
+        }
+    }
 }
 
 #[tool_handler(router = self.tool_router)]
@@ -284,6 +360,16 @@ impl PaperScannerMcp {
         match result {
             Ok(payload) => json_tool_result(&payload),
             Err(error) => Ok(tool_error(index_tool_error_message(&error))),
+        }
+    }
+
+    fn business_tool<T: Serialize>(
+        &self,
+        result: Result<T, BusinessRepositoryError>,
+    ) -> Result<CallToolResult, ErrorData> {
+        match result {
+            Ok(payload) => json_tool_result(&payload),
+            Err(error) => Ok(tool_error(business_tool_error_message(&error))),
         }
     }
 }
@@ -341,6 +427,18 @@ struct SearchArticlesInput {
 struct GetArticleInput {
     article_id: String,
     db: Option<String>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+struct FavoriteInput {
+    article_id: String,
+    db_name: Option<String>,
+    folder_id: i64,
+}
+
+struct FavoriteAddInput {
+    body: FavoriteAdd,
+    folder_id: i64,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -404,6 +502,28 @@ fn article_list_params(
     Ok((optional_text("db", input.db)?, params))
 }
 
+fn favorite_add(input: FavoriteInput) -> Result<FavoriteAddInput, String> {
+    let folder_id = positive_i64("folder_id", input.folder_id)?;
+    let article_id = required_positive_id("article_id", input.article_id)?;
+    let db_name = optional_text("db_name", input.db_name)?.unwrap_or_default();
+    Ok(FavoriteAddInput {
+        body: FavoriteAdd {
+            article_id: ArticleId(article_id),
+            db_name,
+            note: String::new(),
+        },
+        folder_id,
+    })
+}
+
+fn authenticated_user_id(parts: &Parts) -> Result<UserId, ErrorData> {
+    parts
+        .extensions
+        .get::<AuthenticatedMcpUser>()
+        .map(|context| context.user.id)
+        .ok_or_else(|| ErrorData::internal_error("Authenticated MCP user is missing", None))
+}
+
 fn json_tool_result<T: Serialize>(payload: &T) -> Result<CallToolResult, ErrorData> {
     let text = serde_json::to_string_pretty(payload)
         .map_err(|_| ErrorData::internal_error("Failed to serialize MCP tool response", None))?;
@@ -422,6 +542,21 @@ fn index_tool_error_message(error: &IndexRepositoryError) -> String {
         | IndexRepositoryError::Json(_)
         | IndexRepositoryError::Cnki(_) => "Internal Server Error".to_string(),
         _ => error.to_string(),
+    }
+}
+
+fn business_tool_error_message(error: &BusinessRepositoryError) -> String {
+    match error {
+        BusinessRepositoryError::DuplicateFolderName
+        | BusinessRepositoryError::FolderNotFound
+        | BusinessRepositoryError::SourceFolderNotFound
+        | BusinessRepositoryError::TargetFolderNotFound
+        | BusinessRepositoryError::SourceAndTargetFoldersSame => error.to_string(),
+        BusinessRepositoryError::Sqlite(_)
+        | BusinessRepositoryError::Io(_)
+        | BusinessRepositoryError::Json(_)
+        | BusinessRepositoryError::UnknownRuntimeSetting(_)
+        | BusinessRepositoryError::InvalidRuntimeBoolean(_) => "Internal Server Error".to_string(),
     }
 }
 
@@ -466,6 +601,14 @@ fn required_positive_id(name: &str, value: String) -> Result<i64, String> {
         .map_err(|_| format!("{name} must be a positive integer"))?;
     if id > 0 {
         Ok(id)
+    } else {
+        Err(format!("{name} must be a positive integer"))
+    }
+}
+
+fn positive_i64(name: &str, value: i64) -> Result<i64, String> {
+    if value > 0 {
+        Ok(value)
     } else {
         Err(format!("{name} must be a positive integer"))
     }
@@ -771,6 +914,200 @@ mod tests {
         assert!(tool_text(&invalid_id).contains("article_id must be a positive integer"));
     }
 
+    #[tokio::test]
+    #[cfg_attr(
+        miri,
+        ignore = "Miri does not support Tokio's Windows IOCP runtime initialization"
+    )]
+    async fn mcp_favorites_tools_list_includes_favorite_tools() {
+        let backend = TestBackend::new();
+        let user = backend.authenticated_user("mcp_favorites_list_user", false);
+        let app = backend.router();
+        let authorization = user.authorization_header();
+        let session_id = initialize_mcp_session(&app, &authorization).await;
+
+        let payload = mcp_tools_list(&app, &authorization, &session_id).await;
+        let tools = tool_names(&payload);
+
+        for name in ["list_folders", "add_favorite", "remove_favorite"] {
+            assert!(tools.contains(&name.to_string()), "missing MCP tool {name}");
+        }
+    }
+
+    #[tokio::test]
+    #[cfg_attr(
+        miri,
+        ignore = "Miri does not support Tokio's Windows IOCP runtime initialization"
+    )]
+    async fn mcp_favorites_add_remove_use_authenticated_user_scope() {
+        let backend = TestBackend::new();
+        let user = backend.authenticated_user("mcp_favorites_owner", false);
+        let other_user = backend.authenticated_user("mcp_favorites_other", false);
+        let folder =
+            ps_storage::create_folder(backend.auth_db_path(), user.user_id(), "Reading", false)
+                .expect("owner folder should be created");
+        let other_folder =
+            ps_storage::create_folder(backend.auth_db_path(), other_user.user_id(), "Other", false)
+                .expect("other folder should be created");
+        let app = backend.router();
+        let authorization = user.authorization_header();
+        let other_authorization = other_user.authorization_header();
+        let session_id = initialize_mcp_session(&app, &authorization).await;
+        let other_session_id = initialize_mcp_session(&app, &other_authorization).await;
+
+        let initial_folders = call_mcp_tool(
+            &app,
+            &authorization,
+            &session_id,
+            30,
+            "list_folders",
+            json!({}),
+        )
+        .await;
+        let initial_payload = tool_payload(&initial_folders);
+        assert_eq!(
+            folder_by_id(&initial_payload, folder.id)["article_count"],
+            0
+        );
+        assert!(maybe_folder_by_id(&initial_payload, other_folder.id).is_none());
+
+        let added = call_mcp_tool(
+            &app,
+            &authorization,
+            &session_id,
+            31,
+            "add_favorite",
+            json!({
+                "article_id": "9001",
+                "db_name": "fixture.sqlite",
+                "folder_id": folder.id
+            }),
+        )
+        .await;
+        let added_payload = tool_payload(&added);
+        assert_eq!(added_payload["folder_id"], folder.id);
+        assert_eq!(added_payload["article_id"], "9001");
+
+        let updated_folders = call_mcp_tool(
+            &app,
+            &authorization,
+            &session_id,
+            32,
+            "list_folders",
+            json!({}),
+        )
+        .await;
+        let updated_payload = tool_payload(&updated_folders);
+        assert_eq!(
+            folder_by_id(&updated_payload, folder.id)["article_count"],
+            1
+        );
+
+        let other_folders = call_mcp_tool(
+            &app,
+            &other_authorization,
+            &other_session_id,
+            33,
+            "list_folders",
+            json!({}),
+        )
+        .await;
+        let other_payload = tool_payload(&other_folders);
+        assert_eq!(
+            folder_by_id(&other_payload, other_folder.id)["article_count"],
+            0
+        );
+        assert!(maybe_folder_by_id(&other_payload, folder.id).is_none());
+
+        let cross_user_add = call_mcp_tool(
+            &app,
+            &other_authorization,
+            &other_session_id,
+            34,
+            "add_favorite",
+            json!({
+                "article_id": "9001",
+                "db_name": "fixture.sqlite",
+                "folder_id": folder.id
+            }),
+        )
+        .await;
+        assert_eq!(cross_user_add["result"]["isError"], true);
+        assert!(tool_text(&cross_user_add).contains("Folder not found"));
+
+        let removed = call_mcp_tool(
+            &app,
+            &authorization,
+            &session_id,
+            35,
+            "remove_favorite",
+            json!({
+                "article_id": "9001",
+                "db_name": "fixture.sqlite",
+                "folder_id": folder.id
+            }),
+        )
+        .await;
+        assert_eq!(tool_payload(&removed), json!({ "ok": true }));
+
+        let final_folders = call_mcp_tool(
+            &app,
+            &authorization,
+            &session_id,
+            36,
+            "list_folders",
+            json!({}),
+        )
+        .await;
+        let final_payload = tool_payload(&final_folders);
+        assert_eq!(folder_by_id(&final_payload, folder.id)["article_count"], 0);
+    }
+
+    #[tokio::test]
+    #[cfg_attr(
+        miri,
+        ignore = "Miri does not support Tokio's Windows IOCP runtime initialization"
+    )]
+    async fn mcp_favorites_invalid_inputs_are_tool_level_results() {
+        let backend = TestBackend::new();
+        let user = backend.authenticated_user("mcp_favorites_error_user", false);
+        let app = backend.router();
+        let authorization = user.authorization_header();
+        let session_id = initialize_mcp_session(&app, &authorization).await;
+
+        let invalid_folder = call_mcp_tool(
+            &app,
+            &authorization,
+            &session_id,
+            40,
+            "add_favorite",
+            json!({
+                "article_id": "9001",
+                "db_name": "fixture.sqlite",
+                "folder_id": 0
+            }),
+        )
+        .await;
+        assert_eq!(invalid_folder["result"]["isError"], true);
+        assert!(tool_text(&invalid_folder).contains("folder_id must be a positive integer"));
+
+        let invalid_article = call_mcp_tool(
+            &app,
+            &authorization,
+            &session_id,
+            41,
+            "remove_favorite",
+            json!({
+                "article_id": "0",
+                "db_name": "fixture.sqlite",
+                "folder_id": 1
+            }),
+        )
+        .await;
+        assert_eq!(invalid_article["result"]["isError"], true);
+        assert!(tool_text(&invalid_article).contains("article_id must be a positive integer"));
+    }
+
     async fn initialize_mcp_session(app: &Router, authorization: &str) -> String {
         let initialize_response = send_mcp_post(
             app,
@@ -879,6 +1216,18 @@ mod tests {
         payload["result"]["content"][0]["text"]
             .as_str()
             .expect("tool result should include text content")
+    }
+
+    fn folder_by_id(payload: &Value, folder_id: i64) -> &Value {
+        maybe_folder_by_id(payload, folder_id).expect("folder should exist in payload")
+    }
+
+    fn maybe_folder_by_id(payload: &Value, folder_id: i64) -> Option<&Value> {
+        payload
+            .as_array()
+            .expect("folders should be an array")
+            .iter()
+            .find(|folder| folder["id"].as_i64() == Some(folder_id))
     }
 
     async fn send_mcp_post(
