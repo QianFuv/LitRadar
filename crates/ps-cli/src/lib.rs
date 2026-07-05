@@ -292,6 +292,8 @@ fn run_grouped_command(mut args: Vec<String>) -> Result<(), Box<dyn Error>> {
                 changes_file,
                 ai_model,
                 max_candidates,
+                timeout_seconds: 60,
+                retry_attempts: 3,
                 dedupe_retention_days,
                 mode,
                 workflow,
@@ -336,8 +338,8 @@ fn run_legacy_delivery(
     let changes_file = extract_path_option(&mut args, "--changes-file")?;
     let ai_model = extract_string_option(&mut args, "--ai-model")?;
     let max_candidates = extract_usize_option(&mut args, "--max-candidates")?;
-    let _timeout_seconds = extract_u64_option(&mut args, "--timeout")?.unwrap_or(60);
-    let _retries = extract_usize_option(&mut args, "--retries")?.unwrap_or(3);
+    let timeout_seconds = extract_u64_option(&mut args, "--timeout")?.unwrap_or(60);
+    let retry_attempts = extract_usize_option(&mut args, "--retries")?.unwrap_or(3);
     let dedupe_retention_days =
         extract_i64_option(&mut args, "--dedupe-retention-days")?.unwrap_or(60);
     if !args.is_empty() {
@@ -369,6 +371,8 @@ fn run_legacy_delivery(
             changes_file: changes_file.clone(),
             ai_model: ai_model.clone(),
             max_candidates,
+            timeout_seconds,
+            retry_attempts,
             dedupe_retention_days,
             mode,
             workflow,

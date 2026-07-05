@@ -26,8 +26,6 @@ use ps_recommend::{
 };
 use serde::Serialize;
 
-const DEFAULT_DELIVERY_TIMEOUT_SECONDS: u64 = 60;
-const DEFAULT_DELIVERY_RETRY_ATTEMPTS: usize = 3;
 const MAX_AI_SELECTION_ROUNDS: usize = 5;
 
 /// Delivery worker errors.
@@ -138,6 +136,10 @@ pub struct RecommendationRunConfig {
     pub ai_model: Option<String>,
     /// Optional max-candidates override.
     pub max_candidates: Option<usize>,
+    /// HTTP timeout in seconds for AI and PushPlus requests.
+    pub timeout_seconds: u64,
+    /// CLI retry attempts for AI and PushPlus requests.
+    pub retry_attempts: usize,
     /// Dedupe retention days.
     pub dedupe_retention_days: i64,
     /// Delivery mode.
@@ -217,14 +219,10 @@ pub struct RecommendationRunOutcome {
 pub fn run_recommendation_delivery(
     config: &RecommendationRunConfig,
 ) -> Result<RecommendationRunOutcome, DeliveryError> {
-    let mut ai_selector = DefaultDeliveryAiSelector::live(
-        DEFAULT_DELIVERY_TIMEOUT_SECONDS,
-        DEFAULT_DELIVERY_RETRY_ATTEMPTS,
-    );
-    let mut pushplus_sender = LiveDeliveryPushPlusSender::new(
-        DEFAULT_DELIVERY_TIMEOUT_SECONDS,
-        DEFAULT_DELIVERY_RETRY_ATTEMPTS,
-    )?;
+    let timeout_seconds = config.timeout_seconds.max(1);
+    let mut ai_selector = DefaultDeliveryAiSelector::live(timeout_seconds, config.retry_attempts);
+    let mut pushplus_sender =
+        LiveDeliveryPushPlusSender::new(timeout_seconds, config.retry_attempts)?;
     run_recommendation_delivery_with_services(config, &mut ai_selector, &mut pushplus_sender)
 }
 
@@ -365,14 +363,16 @@ fn run_recommendation_delivery_with_services(
 
     for subscriber in subscribers {
         match build_subscriber_plan(
-            config,
-            &subscriber,
-            &global_config,
-            &defaults,
-            &run_id,
-            &candidates_for_model,
-            &candidates_by_id,
-            &mut delivery_dedupe,
+            SubscriberPlanRequest {
+                config,
+                subscriber: &subscriber,
+                global_config: &global_config,
+                defaults: &defaults,
+                run_id: &run_id,
+                candidates_for_model: &candidates_for_model,
+                candidates_by_id: &candidates_by_id,
+                delivery_dedupe: &mut delivery_dedupe,
+            },
             ai_selector,
             pushplus_sender,
         ) {
@@ -453,14 +453,18 @@ struct AiSelectionOutcome {
 trait DeliveryAiSelector {
     fn select_for_subscriber(
         &mut self,
-        subscriber: &NotificationSubscriberInfo,
-        global_config: &NotificationGlobalConfig,
-        defaults: &NotificationDefaults,
-        override_model: Option<&str>,
-        candidates_for_model: &[ArticleCandidateInfo],
-        candidates_by_id: &BTreeMap<i64, ArticleCandidateInfo>,
-        delivery_dedupe: &BTreeMap<String, String>,
+        request: DeliveryAiSelectionRequest<'_>,
     ) -> Result<AiSelectionOutcome, DeliveryError>;
+}
+
+struct DeliveryAiSelectionRequest<'a> {
+    subscriber: &'a NotificationSubscriberInfo,
+    global_config: &'a NotificationGlobalConfig,
+    defaults: &'a NotificationDefaults,
+    override_model: Option<&'a str>,
+    candidates_for_model: &'a [ArticleCandidateInfo],
+    candidates_by_id: &'a BTreeMap<i64, ArticleCandidateInfo>,
+    delivery_dedupe: &'a BTreeMap<String, String>,
 }
 
 trait AiSelectionClient {
@@ -517,14 +521,17 @@ impl<F: AiSelectionClientFactory> DefaultDeliveryAiSelector<F> {
 impl<F: AiSelectionClientFactory> DeliveryAiSelector for DefaultDeliveryAiSelector<F> {
     fn select_for_subscriber(
         &mut self,
-        subscriber: &NotificationSubscriberInfo,
-        global_config: &NotificationGlobalConfig,
-        defaults: &NotificationDefaults,
-        override_model: Option<&str>,
-        candidates_for_model: &[ArticleCandidateInfo],
-        candidates_by_id: &BTreeMap<i64, ArticleCandidateInfo>,
-        delivery_dedupe: &BTreeMap<String, String>,
+        request: DeliveryAiSelectionRequest<'_>,
     ) -> Result<AiSelectionOutcome, DeliveryError> {
+        let DeliveryAiSelectionRequest {
+            subscriber,
+            global_config,
+            defaults,
+            override_model,
+            candidates_for_model,
+            candidates_by_id,
+            delivery_dedupe,
+        } = request;
         if !has_selection_preferences(subscriber) {
             return Ok(skipped_ai_selection("No keywords or directions configured"));
         }
@@ -764,27 +771,41 @@ fn filtered_subscribers(
         .collect())
 }
 
+struct SubscriberPlanRequest<'a> {
+    config: &'a RecommendationRunConfig,
+    subscriber: &'a NotificationSubscriberInfo,
+    global_config: &'a NotificationGlobalConfig,
+    defaults: &'a NotificationDefaults,
+    run_id: &'a str,
+    candidates_for_model: &'a [ArticleCandidateInfo],
+    candidates_by_id: &'a BTreeMap<i64, ArticleCandidateInfo>,
+    delivery_dedupe: &'a mut BTreeMap<String, String>,
+}
+
 fn build_subscriber_plan(
-    config: &RecommendationRunConfig,
-    subscriber: &NotificationSubscriberInfo,
-    global_config: &NotificationGlobalConfig,
-    defaults: &NotificationDefaults,
-    run_id: &str,
-    candidates_for_model: &[ArticleCandidateInfo],
-    candidates_by_id: &BTreeMap<i64, ArticleCandidateInfo>,
-    delivery_dedupe: &mut BTreeMap<String, String>,
+    request: SubscriberPlanRequest<'_>,
     ai_selector: &mut impl DeliveryAiSelector,
     pushplus_sender: &mut impl DeliveryPushPlusSender,
 ) -> Result<SubscriberDeliveryPlan, DeliveryError> {
-    let selection = ai_selector.select_for_subscriber(
+    let SubscriberPlanRequest {
+        config,
         subscriber,
         global_config,
         defaults,
-        config.ai_model.as_deref(),
         candidates_for_model,
         candidates_by_id,
         delivery_dedupe,
-    )?;
+        run_id,
+    } = request;
+    let selection = ai_selector.select_for_subscriber(DeliveryAiSelectionRequest {
+        subscriber,
+        global_config,
+        defaults,
+        override_model: config.ai_model.as_deref(),
+        candidates_for_model,
+        candidates_by_id,
+        delivery_dedupe,
+    })?;
     if let Some(reason) = selection.skip_reason {
         return Ok(skipped_plan(subscriber, &reason));
     }
@@ -1336,15 +1357,15 @@ mod tests {
         let candidates = vec![candidate_info(102)];
         let candidates_by_id = candidates_by_id(&candidates);
         let outcome = selector
-            .select_for_subscriber(
-                &subscriber,
-                &global_config(),
-                &defaults(),
-                None,
-                &candidates,
-                &candidates_by_id,
-                &BTreeMap::new(),
-            )
+            .select_for_subscriber(DeliveryAiSelectionRequest {
+                subscriber: &subscriber,
+                global_config: &global_config(),
+                defaults: &defaults(),
+                override_model: None,
+                candidates_for_model: &candidates,
+                candidates_by_id: &candidates_by_id,
+                delivery_dedupe: &BTreeMap::new(),
+            })
             .expect("AI selection should succeed through backup");
 
         assert_eq!(outcome.accepted[0].article_id, 102);
@@ -1378,15 +1399,15 @@ mod tests {
         let candidates = vec![candidate_info(101), candidate_info(102)];
         let candidates_by_id = candidates_by_id(&candidates);
         let outcome = selector
-            .select_for_subscriber(
-                &subscriber,
-                &global_config(),
-                &defaults(),
-                None,
-                &candidates,
-                &candidates_by_id,
-                &BTreeMap::new(),
-            )
+            .select_for_subscriber(DeliveryAiSelectionRequest {
+                subscriber: &subscriber,
+                global_config: &global_config(),
+                defaults: &defaults(),
+                override_model: None,
+                candidates_for_model: &candidates,
+                candidates_by_id: &candidates_by_id,
+                delivery_dedupe: &BTreeMap::new(),
+            })
             .expect("AI selection should aggregate rounds");
 
         assert_eq!(
@@ -1415,13 +1436,7 @@ mod tests {
     impl DeliveryAiSelector for FixtureDeliveryAiSelector {
         fn select_for_subscriber(
             &mut self,
-            _subscriber: &NotificationSubscriberInfo,
-            _global_config: &NotificationGlobalConfig,
-            _defaults: &NotificationDefaults,
-            _override_model: Option<&str>,
-            _candidates_for_model: &[ArticleCandidateInfo],
-            _candidates_by_id: &BTreeMap<i64, ArticleCandidateInfo>,
-            _delivery_dedupe: &BTreeMap<String, String>,
+            _request: DeliveryAiSelectionRequest<'_>,
         ) -> Result<AiSelectionOutcome, DeliveryError> {
             self.outcomes
                 .pop()
@@ -1702,6 +1717,8 @@ mod tests {
                 changes_file,
                 ai_model: None,
                 max_candidates,
+                timeout_seconds: 60,
+                retry_attempts: 3,
                 dedupe_retention_days: 30,
                 mode,
                 workflow,

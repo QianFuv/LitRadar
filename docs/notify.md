@@ -2,8 +2,8 @@
 
 本文档覆盖当前 Rust 后端中的新增文章分发链路：
 
-- `notify`：PushPlus 通知计划
-- `push`：追踪文件夹写入计划
+- `notify`：AI 选择后发送 PushPlus 通知
+- `push`：AI 选择后写入追踪文件夹
 - `/api/tracking/push-weekly`：面向当前登录用户的即时推送接口
 
 旧 Python `notify` 和 `push` package scripts 已退休；同名 Rust 命令是当前运行入口。
@@ -14,12 +14,14 @@
 
 1. `notify`
    - 处理 `delivery_method = "pushplus"` 的用户
-   - 生成 PushPlus 标题、正文和发送计划
-   - `--dry-run` 不发送外部消息
+   - 使用 OpenAI 兼容接口选择文章并生成摘要
+   - 生成 PushPlus 标题和正文
+   - `--dry-run` 不发送 PushPlus、不写入收藏表
 
 2. `push`
    - 处理 `delivery_method = "folder"` 且已配置追踪文件夹的用户
-   - 生成收藏写入计划
+   - 使用 OpenAI 兼容接口选择文章
+   - 写入收藏表
    - `--dry-run` 不写入收藏表
 
 3. `POST /api/tracking/push-weekly`
@@ -87,7 +89,7 @@
 | `NOTIFY_PUSHPLUS_TOPIC` | 空 | PushPlus 默认 topic |
 | `NOTIFY_PUSHPLUS_OPTION` | 空 | PushPlus 默认 option |
 
-用户级 AI 配置优先于全局默认值。用户配置备用 endpoint 时，主 endpoint 不可用后会尝试备用配置；主备都不可用时跳过该用户。
+用户级 AI 配置优先于全局默认值。用户配置备用 endpoint 时，主 endpoint 在重试后仍不可用会尝试备用配置；主备都不可用时跳过该用户。
 
 ## AI 选择逻辑
 
@@ -99,6 +101,8 @@ Rust 推荐逻辑位于 `ps-recommend`。选择原则：
 - 不得凭空编造文章 ID
 
 如果用户未配置偏好，或配置了偏好但缺少可用 AI key/model，该用户会被跳过。
+
+AI 请求使用 OpenAI 兼容 `/chat/completions` 接口。选择请求会依次尝试 `json_schema`、`json_object` 和无 `response_format` 三种格式；每种格式按 `max(--retries, ai_retry_attempts)` 重试。模型选择结果会经过本地规则过滤，过滤掉不存在的文章 ID 和已在 `delivery_dedupe` 中的文章，并在模型结果不足时用关键词/方向命中的候选补足。最终选中的文章会再请求一次模型生成摘要；摘要失败时保留选择阶段摘要。
 
 ## `notify`
 
@@ -120,7 +124,9 @@ cargo run --bin notify -- --db utd24.sqlite --changes-file data/push_state/utd24
 | `--changes-file` | 空 | 指定增量变更清单 |
 | `--ai-model` | 空 | 覆盖默认模型名 |
 | `--max-candidates` | 全局默认值 | 候选文章上限 |
-| `--dedupe-retention-days` | `30` | 去重记录保留天数 |
+| `--timeout` | `60` | AI 与 PushPlus 请求超时秒数 |
+| `--retries` | `3` | CLI 级重试次数；AI 实际使用 `max(--retries, ai_retry_attempts)` |
+| `--dedupe-retention-days` | `60` | 去重记录保留天数 |
 | `--dry-run` / `--no-dry-run` | `--no-dry-run` | 是否只演练，不发送 PushPlus |
 
 处理对象：
@@ -144,7 +150,13 @@ cargo run --bin push -- --db utd24.sqlite --changes-file data/push_state/utd24.c
 - 当前用户已设置追踪文件夹
 - `enabled = true`
 
-`push` 会生成 planned favorite writes；`--dry-run` 不写入收藏表。
+`push` 会写入选中文章到追踪文件夹；`--dry-run` 只返回 planned favorite writes，不写入收藏表。
+
+## PushPlus 发送与去重
+
+`notify --no-dry-run` 会调用 PushPlus `https://www.pushplus.plus/send`。HTTP `429`、`500`、`502`、`503`、`504` 和传输错误会按 `--retries` 重试；PushPlus JSON 响应必须满足 `code = 200`，返回的 `data` 会记录为 `message_id`。
+
+开启 `sync_to_tracking_folder` 后，Rust 命令与旧 Python 行为一致：先写入追踪文件夹，再发送 PushPlus。只有 execute side effects 成功完成后才写入 `delivery_dedupe`；如果 PushPlus 失败，本次 run 标记为 failed，去重记录不会更新。
 
 ## `/api/tracking/push-weekly`
 
@@ -155,7 +167,7 @@ cargo run --bin push -- --db utd24.sqlite --changes-file data/push_state/utd24.c
 - 可通过 `GET /api/tracking/push-weekly/status` 轮询
 - `delivery_method = "folder"` 时写入追踪文件夹
 - `delivery_method = "pushplus"` 时发送 PushPlus
-- 开启 `sync_to_tracking_folder` 后，PushPlus 成功后同步写入追踪文件夹
+- 开启 `sync_to_tracking_folder` 后，同步写入追踪文件夹并发送 PushPlus
 
 常见返回字段：
 
