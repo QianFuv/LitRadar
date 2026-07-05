@@ -7,18 +7,25 @@ use std::fmt;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
+use crate::ai::{live_ai_client, AiClientError, AiCompletionClient, ReqwestAiTransport};
 use ps_domain::{
-    ArticleCandidateInfo, FavoriteAdd, NotificationSubscriberInfo, SelectionResultInfo, UserId,
+    ArticleCandidateInfo, FavoriteAdd, NotificationSubscriberInfo, RankedSelectionInfo,
+    SelectionResultInfo, UserId,
 };
 use ps_recommend::{
     apply_selection_rules, build_markdown_content, build_message_title,
     compute_changed_inpress_keys, compute_changed_issue_keys, create_run_state,
     deduplicate_candidates, has_selection_preferences, is_database_selected, load_change_manifest,
     load_state, prune_delivery_dedupe, resolve_ai_runtime_configs, save_state_atomic, utc_now_iso,
-    NotificationDefaults, NotificationGlobalConfig, RecommendationState, RecommendationUserResult,
-    DEFAULT_OPENAI_BASE_URL, DEFAULT_OPENAI_MODEL, PUSHPLUS_CHANNEL,
+    AiRuntimeConfig, NotificationDefaults, NotificationGlobalConfig, RecommendationState,
+    RecommendationUserResult, DEFAULT_OPENAI_BASE_URL, DEFAULT_OPENAI_MODEL, MAX_ARTICLES_PER_PUSH,
+    PUSHPLUS_CHANNEL,
 };
 use serde::Serialize;
+
+const DEFAULT_DELIVERY_TIMEOUT_SECONDS: u64 = 60;
+const DEFAULT_DELIVERY_RETRY_ATTEMPTS: usize = 3;
+const MAX_AI_SELECTION_ROUNDS: usize = 5;
 
 /// Delivery worker errors.
 #[derive(Debug)]
@@ -29,6 +36,8 @@ pub enum DeliveryError {
     Business(ps_storage::BusinessRepositoryError),
     /// Recommendation logic failed.
     Recommendation(ps_recommend::RecommendationError),
+    /// AI selection client failed unexpectedly.
+    Ai(String),
     /// PushPlus execution is intentionally unavailable during dry-run parity.
     PushPlusExecutionUnavailable,
 }
@@ -40,6 +49,7 @@ impl fmt::Display for DeliveryError {
             Self::Index(error) => write!(formatter, "{error}"),
             Self::Business(error) => write!(formatter, "{error}"),
             Self::Recommendation(error) => write!(formatter, "{error}"),
+            Self::Ai(message) => formatter.write_str(message),
             Self::PushPlusExecutionUnavailable => {
                 formatter.write_str("PushPlus execution is unavailable in Rust dry-run parity mode")
             }
@@ -54,6 +64,7 @@ impl Error for DeliveryError {
             Self::Index(error) => Some(error),
             Self::Business(error) => Some(error),
             Self::Recommendation(error) => Some(error),
+            Self::Ai(_) => None,
             Self::PushPlusExecutionUnavailable => None,
         }
     }
@@ -196,6 +207,17 @@ pub struct RecommendationRunOutcome {
 pub fn run_recommendation_delivery(
     config: &RecommendationRunConfig,
 ) -> Result<RecommendationRunOutcome, DeliveryError> {
+    let mut ai_selector = DefaultDeliveryAiSelector::live(
+        DEFAULT_DELIVERY_TIMEOUT_SECONDS,
+        DEFAULT_DELIVERY_RETRY_ATTEMPTS,
+    );
+    run_recommendation_delivery_with_ai(config, &mut ai_selector)
+}
+
+fn run_recommendation_delivery_with_ai(
+    config: &RecommendationRunConfig,
+    ai_selector: &mut impl DeliveryAiSelector,
+) -> Result<RecommendationRunOutcome, DeliveryError> {
     let now = utc_now_iso();
     let state_path = state_path(&config.state_dir, &config.db_name);
     let mut state = load_state(&state_path, &config.db_name, &now)?;
@@ -312,11 +334,16 @@ pub fn run_recommendation_delivery(
     if let Some(max_candidates) = config.max_candidates {
         defaults.max_candidates = max_candidates.max(1);
     }
-    let candidates = candidates
-        .into_iter()
+    let candidates_for_model = candidates
+        .iter()
         .take(defaults.max_candidates)
+        .cloned()
         .collect::<Vec<_>>();
     let candidates_by_id = candidates_by_id(&candidates);
+    let candidate_article_ids = candidates
+        .iter()
+        .map(|candidate| candidate.article_id)
+        .collect::<Vec<_>>();
     let mut delivery_dedupe = state.delivery_dedupe.clone();
     let mut plans = Vec::new();
     let mut errors = Vec::new();
@@ -328,8 +355,10 @@ pub fn run_recommendation_delivery(
             &global_config,
             &defaults,
             &run_id,
+            &candidates_for_model,
             &candidates_by_id,
             &mut delivery_dedupe,
+            ai_selector,
         ) {
             Ok(plan) => {
                 run_state
@@ -389,17 +418,292 @@ pub fn run_recommendation_delivery(
         config,
         state_path,
         state.status.as_str(),
-        state
-            .run
-            .as_ref()
-            .map(|run| run.delivered_article_ids.clone())
-            .unwrap_or_default(),
+        candidate_article_ids,
         plans,
     ))
 }
 
 fn should_save_subscriber_progress(config: &RecommendationRunConfig) -> bool {
     config.mode == DeliveryMode::Execute
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct AiSelectionOutcome {
+    accepted: Vec<RankedSelectionInfo>,
+    summary: String,
+    skip_reason: Option<String>,
+}
+
+trait DeliveryAiSelector {
+    fn select_for_subscriber(
+        &mut self,
+        subscriber: &NotificationSubscriberInfo,
+        global_config: &NotificationGlobalConfig,
+        defaults: &NotificationDefaults,
+        override_model: Option<&str>,
+        candidates_for_model: &[ArticleCandidateInfo],
+        candidates_by_id: &BTreeMap<i64, ArticleCandidateInfo>,
+        delivery_dedupe: &BTreeMap<String, String>,
+    ) -> Result<AiSelectionOutcome, DeliveryError>;
+}
+
+trait AiSelectionClient {
+    fn select_articles(
+        &mut self,
+        subscriber: &NotificationSubscriberInfo,
+        defaults: &NotificationDefaults,
+        candidates: &[ArticleCandidateInfo],
+    ) -> Result<SelectionResultInfo, String>;
+
+    fn summarize_selected_articles(
+        &mut self,
+        subscriber: &NotificationSubscriberInfo,
+        selected_candidates: &[ArticleCandidateInfo],
+    ) -> Result<String, String>;
+}
+
+trait AiSelectionClientFactory {
+    fn build_client(
+        &mut self,
+        config: &AiRuntimeConfig,
+        retry_attempts: usize,
+        temperature: f64,
+    ) -> Result<Box<dyn AiSelectionClient>, String>;
+}
+
+struct DefaultDeliveryAiSelector<F: AiSelectionClientFactory> {
+    factory: F,
+    retry_attempts: usize,
+    max_rounds: usize,
+}
+
+impl DefaultDeliveryAiSelector<LiveAiSelectionClientFactory> {
+    fn live(timeout_seconds: u64, retry_attempts: usize) -> Self {
+        Self {
+            factory: LiveAiSelectionClientFactory { timeout_seconds },
+            retry_attempts,
+            max_rounds: MAX_AI_SELECTION_ROUNDS,
+        }
+    }
+}
+
+impl<F: AiSelectionClientFactory> DefaultDeliveryAiSelector<F> {
+    #[cfg(test)]
+    fn new(factory: F, retry_attempts: usize, max_rounds: usize) -> Self {
+        Self {
+            factory,
+            retry_attempts,
+            max_rounds,
+        }
+    }
+}
+
+impl<F: AiSelectionClientFactory> DeliveryAiSelector for DefaultDeliveryAiSelector<F> {
+    fn select_for_subscriber(
+        &mut self,
+        subscriber: &NotificationSubscriberInfo,
+        global_config: &NotificationGlobalConfig,
+        defaults: &NotificationDefaults,
+        override_model: Option<&str>,
+        candidates_for_model: &[ArticleCandidateInfo],
+        candidates_by_id: &BTreeMap<i64, ArticleCandidateInfo>,
+        delivery_dedupe: &BTreeMap<String, String>,
+    ) -> Result<AiSelectionOutcome, DeliveryError> {
+        if !has_selection_preferences(subscriber) {
+            return Ok(skipped_ai_selection("No keywords or directions configured"));
+        }
+        let ai_configs =
+            resolve_ai_runtime_configs(subscriber, global_config, defaults, override_model);
+        if ai_configs.is_empty() {
+            return Ok(skipped_ai_selection("AI configuration is unavailable"));
+        }
+        let effective_retries = self
+            .retry_attempts
+            .max(usize::try_from(subscriber.ai_retry_attempts.max(0)).unwrap_or(0));
+        let mut last_error = String::new();
+        for ai_config in ai_configs {
+            let mut client =
+                match self
+                    .factory
+                    .build_client(&ai_config, effective_retries, defaults.temperature)
+                {
+                    Ok(client) => client,
+                    Err(error) => {
+                        last_error = error;
+                        continue;
+                    }
+                };
+            match select_articles_with_retries(
+                client.as_mut(),
+                subscriber,
+                defaults,
+                candidates_for_model,
+                candidates_by_id,
+                delivery_dedupe,
+                self.max_rounds,
+            ) {
+                Ok(selection_result) => {
+                    let accepted = apply_selection_rules(
+                        &selection_result,
+                        subscriber,
+                        candidates_by_id,
+                        delivery_dedupe,
+                    );
+                    let mut final_summary = selection_result.summary;
+                    if !accepted.is_empty() {
+                        let selected_candidates = selected_candidates(&accepted, candidates_by_id);
+                        if !selected_candidates.is_empty() {
+                            if let Ok(summary) =
+                                client.summarize_selected_articles(subscriber, &selected_candidates)
+                            {
+                                if !summary.trim().is_empty() {
+                                    final_summary = summary;
+                                }
+                            }
+                        }
+                    }
+                    return Ok(AiSelectionOutcome {
+                        accepted,
+                        summary: final_summary,
+                        skip_reason: None,
+                    });
+                }
+                Err(error) => {
+                    last_error = error;
+                }
+            }
+        }
+        Ok(skipped_ai_selection(&format!(
+            "AI selection failed across configured endpoints: {last_error}"
+        )))
+    }
+}
+
+struct LiveAiSelectionClientFactory {
+    timeout_seconds: u64,
+}
+
+impl AiSelectionClientFactory for LiveAiSelectionClientFactory {
+    fn build_client(
+        &mut self,
+        config: &AiRuntimeConfig,
+        retry_attempts: usize,
+        temperature: f64,
+    ) -> Result<Box<dyn AiSelectionClient>, String> {
+        let client = live_ai_client(self.timeout_seconds, retry_attempts, temperature)
+            .map_err(|error| error.to_string())?;
+        Ok(Box::new(LiveAiSelectionClient {
+            config: config.clone(),
+            client,
+        }))
+    }
+}
+
+struct LiveAiSelectionClient {
+    config: AiRuntimeConfig,
+    client: AiCompletionClient<ReqwestAiTransport>,
+}
+
+impl AiSelectionClient for LiveAiSelectionClient {
+    fn select_articles(
+        &mut self,
+        subscriber: &NotificationSubscriberInfo,
+        defaults: &NotificationDefaults,
+        candidates: &[ArticleCandidateInfo],
+    ) -> Result<SelectionResultInfo, String> {
+        self.client
+            .select_articles(&self.config, subscriber, defaults, candidates)
+            .map_err(ai_client_error)
+    }
+
+    fn summarize_selected_articles(
+        &mut self,
+        subscriber: &NotificationSubscriberInfo,
+        selected_candidates: &[ArticleCandidateInfo],
+    ) -> Result<String, String> {
+        self.client
+            .summarize_selected_articles(&self.config, subscriber, selected_candidates)
+            .map_err(ai_client_error)
+    }
+}
+
+fn ai_client_error(error: AiClientError) -> String {
+    error.to_string()
+}
+
+fn skipped_ai_selection(reason: &str) -> AiSelectionOutcome {
+    AiSelectionOutcome {
+        accepted: Vec::new(),
+        summary: String::new(),
+        skip_reason: Some(reason.to_string()),
+    }
+}
+
+fn select_articles_with_retries(
+    client: &mut dyn AiSelectionClient,
+    subscriber: &NotificationSubscriberInfo,
+    defaults: &NotificationDefaults,
+    candidates_for_model: &[ArticleCandidateInfo],
+    candidates_by_id: &BTreeMap<i64, ArticleCandidateInfo>,
+    delivery_dedupe: &BTreeMap<String, String>,
+    max_rounds: usize,
+) -> Result<SelectionResultInfo, String> {
+    let mut remaining_candidates = candidates_for_model.to_vec();
+    let mut aggregated = BTreeMap::<i64, RankedSelectionInfo>::new();
+    let mut summary = String::new();
+    for _ in 0..max_rounds.max(1) {
+        if remaining_candidates.is_empty() {
+            break;
+        }
+        let round_result = client.select_articles(subscriber, defaults, &remaining_candidates)?;
+        if summary.is_empty() && !round_result.summary.trim().is_empty() {
+            summary = round_result.summary;
+        }
+        for selection in round_result.selections {
+            match aggregated.get(&selection.article_id) {
+                Some(existing) if existing.score >= selection.score => {}
+                _ => {
+                    aggregated.insert(selection.article_id, selection);
+                }
+            }
+        }
+        let merged = merged_selection_result(&summary, &aggregated);
+        let accepted =
+            apply_selection_rules(&merged, subscriber, candidates_by_id, delivery_dedupe);
+        if accepted.len() >= MAX_ARTICLES_PER_PUSH {
+            return Ok(merged);
+        }
+        let selected_ids = aggregated.keys().copied().collect::<BTreeSet<_>>();
+        remaining_candidates.retain(|candidate| !selected_ids.contains(&candidate.article_id));
+    }
+    Ok(merged_selection_result(&summary, &aggregated))
+}
+
+fn merged_selection_result(
+    summary: &str,
+    aggregated: &BTreeMap<i64, RankedSelectionInfo>,
+) -> SelectionResultInfo {
+    let mut selections = aggregated.values().copied().collect::<Vec<_>>();
+    selections.sort_by(|left, right| {
+        right
+            .score
+            .partial_cmp(&left.score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    SelectionResultInfo {
+        summary: summary.to_string(),
+        selections,
+    }
+}
+
+fn selected_candidates(
+    accepted: &[RankedSelectionInfo],
+    candidates_by_id: &BTreeMap<i64, ArticleCandidateInfo>,
+) -> Vec<ArticleCandidateInfo> {
+    accepted
+        .iter()
+        .filter_map(|selection| candidates_by_id.get(&selection.article_id).cloned())
+        .collect()
 }
 
 fn filtered_subscribers(
@@ -428,34 +732,24 @@ fn build_subscriber_plan(
     global_config: &NotificationGlobalConfig,
     defaults: &NotificationDefaults,
     run_id: &str,
+    candidates_for_model: &[ArticleCandidateInfo],
     candidates_by_id: &BTreeMap<i64, ArticleCandidateInfo>,
     delivery_dedupe: &mut BTreeMap<String, String>,
+    ai_selector: &mut impl DeliveryAiSelector,
 ) -> Result<SubscriberDeliveryPlan, DeliveryError> {
-    if !has_selection_preferences(subscriber) {
-        return Ok(skipped_plan(
-            subscriber,
-            "No keywords or directions configured",
-        ));
-    }
-    let ai_configs = resolve_ai_runtime_configs(
+    let selection = ai_selector.select_for_subscriber(
         subscriber,
         global_config,
         defaults,
         config.ai_model.as_deref(),
-    );
-    if ai_configs.is_empty() {
-        return Ok(skipped_plan(subscriber, "AI configuration is unavailable"));
-    }
-    let accepted = apply_selection_rules(
-        &SelectionResultInfo {
-            summary: String::new(),
-            selections: Vec::new(),
-        },
-        subscriber,
+        candidates_for_model,
         candidates_by_id,
         delivery_dedupe,
-    );
-    if accepted.is_empty() {
+    )?;
+    if let Some(reason) = selection.skip_reason {
+        return Ok(skipped_plan(subscriber, &reason));
+    }
+    if selection.accepted.is_empty() {
         return Ok(skipped_plan(
             subscriber,
             "AI selection found no matching articles",
@@ -464,7 +758,8 @@ fn build_subscriber_plan(
     if config.workflow == DeliveryWorkflow::Notify && config.mode == DeliveryMode::Execute {
         return Err(DeliveryError::PushPlusExecutionUnavailable);
     }
-    let selected_article_ids = accepted
+    let selected_article_ids = selection
+        .accepted
         .iter()
         .map(|selection| selection.article_id)
         .collect::<Vec<_>>();
@@ -486,8 +781,8 @@ fn build_subscriber_plan(
                     &config.db_name,
                     run_id,
                     subscriber,
-                    "",
-                    &accepted,
+                    &selection.summary,
+                    &selection.accepted,
                     candidates_by_id,
                 )),
                 true,
@@ -712,26 +1007,23 @@ fn read_env(name: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
     use std::fs;
     use std::path::{Path, PathBuf};
 
     use ps_domain::{NotificationSettingsUpdate, UserId};
     use tempfile::{tempdir, TempDir};
 
-    use super::{
-        run_recommendation_delivery, DeliveryMode, DeliveryWorkflow, RecommendationRunConfig,
-    };
+    use super::*;
 
     #[test]
     fn dry_run_push_plans_folder_writes_without_side_effects() {
         let fixture = DeliveryFixture::new(notification_settings("folder", true, vec![]));
 
-        let outcome = run_recommendation_delivery(&fixture.config(
-            DeliveryWorkflow::Push,
-            DeliveryMode::DryRun,
-            None,
-            None,
-        ))
+        let outcome = run_fixture_delivery(
+            &fixture.config(DeliveryWorkflow::Push, DeliveryMode::DryRun, None, None),
+            vec![selection_outcome(&[101, 102], "")],
+        )
         .expect("push dry-run should build a plan");
 
         assert_eq!(outcome.status, "completed");
@@ -754,12 +1046,15 @@ mod tests {
     fn shadow_notify_plans_pushplus_without_sending() {
         let fixture = DeliveryFixture::new(notification_settings("pushplus", true, vec![]));
 
-        let outcome = run_recommendation_delivery(&fixture.config(
-            DeliveryWorkflow::Notify,
-            DeliveryMode::Shadow,
-            None,
-            Some(1),
-        ))
+        let outcome = run_fixture_delivery(
+            &fixture.config(
+                DeliveryWorkflow::Notify,
+                DeliveryMode::Shadow,
+                None,
+                Some(1),
+            ),
+            vec![selection_outcome(&[102], "AI summary")],
+        )
         .expect("notify shadow run should build a PushPlus plan");
 
         assert_eq!(outcome.status, "completed");
@@ -779,6 +1074,11 @@ mod tests {
             .as_deref()
             .expect("content should be planned")
             .contains("Rust migration"));
+        assert!(plan
+            .message_content
+            .as_deref()
+            .expect("content should be planned")
+            .contains("AI summary"));
         assert_eq!(favorite_count(&fixture.auth_db_path), 0);
     }
 
@@ -786,12 +1086,10 @@ mod tests {
     fn execute_notify_fails_before_pushplus_side_effects() {
         let fixture = DeliveryFixture::new(notification_settings("pushplus", true, vec![]));
 
-        let outcome = run_recommendation_delivery(&fixture.config(
-            DeliveryWorkflow::Notify,
-            DeliveryMode::Execute,
-            None,
-            None,
-        ))
+        let outcome = run_fixture_delivery(
+            &fixture.config(DeliveryWorkflow::Notify, DeliveryMode::Execute, None, None),
+            vec![selection_outcome(&[101, 102], "")],
+        )
         .expect("notify execute should record PushPlus as a failed subscriber result");
 
         assert_eq!(outcome.status, "failed");
@@ -811,12 +1109,10 @@ mod tests {
     fn execute_push_writes_folder_state_and_dedupe() {
         let fixture = DeliveryFixture::new(notification_settings("folder", true, vec![]));
 
-        let outcome = run_recommendation_delivery(&fixture.config(
-            DeliveryWorkflow::Push,
-            DeliveryMode::Execute,
-            None,
-            None,
-        ))
+        let outcome = run_fixture_delivery(
+            &fixture.config(DeliveryWorkflow::Push, DeliveryMode::Execute, None, None),
+            vec![selection_outcome(&[101, 102], "")],
+        )
         .expect("push execute should write favorites");
 
         assert_eq!(outcome.status, "completed");
@@ -838,12 +1134,15 @@ mod tests {
         )
         .expect("manifest should be written");
 
-        let outcome = run_recommendation_delivery(&fixture.config(
-            DeliveryWorkflow::Push,
-            DeliveryMode::DryRun,
-            Some(changes_file.clone()),
-            None,
-        ))
+        let outcome = run_fixture_delivery(
+            &fixture.config(
+                DeliveryWorkflow::Push,
+                DeliveryMode::DryRun,
+                Some(changes_file.clone()),
+                None,
+            ),
+            vec![selection_outcome(&[102], "")],
+        )
         .expect("manifest run should filter candidates");
 
         assert_eq!(outcome.candidate_article_ids, vec![102]);
@@ -854,12 +1153,15 @@ mod tests {
             r#"{"db_name":"other.sqlite","changed_issue_keys":["1:11"],"changed_inpress_journal_ids":[],"notifiable_article_ids":[102]}"#,
         )
         .expect("manifest should be replaced");
-        let error = run_recommendation_delivery(&fixture.config(
-            DeliveryWorkflow::Push,
-            DeliveryMode::DryRun,
-            Some(changes_file),
-            None,
-        ))
+        let error = run_fixture_delivery(
+            &fixture.config(
+                DeliveryWorkflow::Push,
+                DeliveryMode::DryRun,
+                Some(changes_file),
+                None,
+            ),
+            Vec::new(),
+        )
         .expect_err("wrong database manifest should be rejected");
 
         assert!(error.to_string().contains("database mismatch"));
@@ -869,12 +1171,10 @@ mod tests {
     fn disabled_or_unselected_subscribers_are_skipped() {
         let disabled_fixture = DeliveryFixture::new(notification_settings("folder", false, vec![]));
 
-        let disabled_outcome = run_recommendation_delivery(&disabled_fixture.config(
-            DeliveryWorkflow::Push,
-            DeliveryMode::DryRun,
-            None,
-            None,
-        ))
+        let disabled_outcome = run_fixture_delivery(
+            &disabled_fixture.config(DeliveryWorkflow::Push, DeliveryMode::DryRun, None, None),
+            Vec::new(),
+        )
         .expect("disabled subscriber run should complete");
 
         assert_eq!(disabled_outcome.status, "skipped");
@@ -886,16 +1186,318 @@ mod tests {
             vec!["other.sqlite".to_string()],
         ));
 
-        let unselected_outcome = run_recommendation_delivery(&unselected_fixture.config(
-            DeliveryWorkflow::Push,
-            DeliveryMode::DryRun,
-            None,
-            None,
-        ))
+        let unselected_outcome = run_fixture_delivery(
+            &unselected_fixture.config(DeliveryWorkflow::Push, DeliveryMode::DryRun, None, None),
+            Vec::new(),
+        )
         .expect("unselected database run should complete");
 
         assert_eq!(unselected_outcome.status, "skipped");
         assert!(unselected_outcome.subscribers.is_empty());
+    }
+
+    #[test]
+    fn default_ai_selector_falls_back_to_backup_endpoint() {
+        let builds = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+        let factory = ScriptedAiFactory::new(
+            vec![
+                ScriptedAiClient::new(
+                    vec![Err("primary unavailable".to_string())],
+                    Vec::new(),
+                    None,
+                ),
+                ScriptedAiClient::new(
+                    vec![Ok(selection_result(&[102], "backup"))],
+                    vec![Ok("backup summary".to_string())],
+                    None,
+                ),
+            ],
+            builds.clone(),
+        );
+        let mut selector = DefaultDeliveryAiSelector::new(factory, 1, 5);
+        let subscriber = subscriber_info_with_backup();
+        let candidates = vec![candidate_info(102)];
+        let candidates_by_id = candidates_by_id(&candidates);
+        let outcome = selector
+            .select_for_subscriber(
+                &subscriber,
+                &global_config(),
+                &defaults(),
+                None,
+                &candidates,
+                &candidates_by_id,
+                &BTreeMap::new(),
+            )
+            .expect("AI selection should succeed through backup");
+
+        assert_eq!(outcome.accepted[0].article_id, 102);
+        assert_eq!(outcome.summary, "backup summary");
+        assert_eq!(
+            builds
+                .borrow()
+                .iter()
+                .map(|item| item.0.as_str())
+                .collect::<Vec<_>>(),
+            vec!["https://primary.test/v1", "https://backup.test/v1"]
+        );
+    }
+
+    #[test]
+    fn default_ai_selector_queries_remaining_candidates_across_rounds() {
+        let batch_sizes = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+        let factory = ScriptedAiFactory::new(
+            vec![ScriptedAiClient::new(
+                vec![
+                    Ok(selection_result(&[101], "round one")),
+                    Ok(selection_result(&[102], "")),
+                ],
+                Vec::new(),
+                Some(batch_sizes.clone()),
+            )],
+            std::rc::Rc::new(std::cell::RefCell::new(Vec::new())),
+        );
+        let mut selector = DefaultDeliveryAiSelector::new(factory, 1, 5);
+        let subscriber = subscriber_info();
+        let candidates = vec![candidate_info(101), candidate_info(102)];
+        let candidates_by_id = candidates_by_id(&candidates);
+        let outcome = selector
+            .select_for_subscriber(
+                &subscriber,
+                &global_config(),
+                &defaults(),
+                None,
+                &candidates,
+                &candidates_by_id,
+                &BTreeMap::new(),
+            )
+            .expect("AI selection should aggregate rounds");
+
+        assert_eq!(
+            outcome
+                .accepted
+                .iter()
+                .map(|selection| selection.article_id)
+                .collect::<Vec<_>>(),
+            vec![101, 102]
+        );
+        assert_eq!(*batch_sizes.borrow(), vec![2, 1]);
+    }
+
+    struct FixtureDeliveryAiSelector {
+        outcomes: Vec<AiSelectionOutcome>,
+    }
+
+    impl FixtureDeliveryAiSelector {
+        fn new(outcomes: Vec<AiSelectionOutcome>) -> Self {
+            Self {
+                outcomes: outcomes.into_iter().rev().collect(),
+            }
+        }
+    }
+
+    impl DeliveryAiSelector for FixtureDeliveryAiSelector {
+        fn select_for_subscriber(
+            &mut self,
+            _subscriber: &NotificationSubscriberInfo,
+            _global_config: &NotificationGlobalConfig,
+            _defaults: &NotificationDefaults,
+            _override_model: Option<&str>,
+            _candidates_for_model: &[ArticleCandidateInfo],
+            _candidates_by_id: &BTreeMap<i64, ArticleCandidateInfo>,
+            _delivery_dedupe: &BTreeMap<String, String>,
+        ) -> Result<AiSelectionOutcome, DeliveryError> {
+            self.outcomes
+                .pop()
+                .ok_or_else(|| DeliveryError::Ai("missing fixture AI selection".into()))
+        }
+    }
+
+    struct ScriptedAiFactory {
+        clients: Vec<ScriptedAiClient>,
+        builds: std::rc::Rc<std::cell::RefCell<Vec<(String, usize)>>>,
+    }
+
+    impl ScriptedAiFactory {
+        fn new(
+            clients: Vec<ScriptedAiClient>,
+            builds: std::rc::Rc<std::cell::RefCell<Vec<(String, usize)>>>,
+        ) -> Self {
+            Self {
+                clients: clients.into_iter().rev().collect(),
+                builds,
+            }
+        }
+    }
+
+    impl AiSelectionClientFactory for ScriptedAiFactory {
+        fn build_client(
+            &mut self,
+            config: &AiRuntimeConfig,
+            retry_attempts: usize,
+            _temperature: f64,
+        ) -> Result<Box<dyn AiSelectionClient>, String> {
+            self.builds
+                .borrow_mut()
+                .push((config.base_url.clone(), retry_attempts));
+            self.clients
+                .pop()
+                .map(|client| Box::new(client) as Box<dyn AiSelectionClient>)
+                .ok_or_else(|| "missing scripted AI client".to_string())
+        }
+    }
+
+    struct ScriptedAiClient {
+        selections: Vec<Result<SelectionResultInfo, String>>,
+        summaries: Vec<Result<String, String>>,
+        batch_sizes: Option<std::rc::Rc<std::cell::RefCell<Vec<usize>>>>,
+    }
+
+    impl ScriptedAiClient {
+        fn new(
+            selections: Vec<Result<SelectionResultInfo, String>>,
+            summaries: Vec<Result<String, String>>,
+            batch_sizes: Option<std::rc::Rc<std::cell::RefCell<Vec<usize>>>>,
+        ) -> Self {
+            Self {
+                selections: selections.into_iter().rev().collect(),
+                summaries: summaries.into_iter().rev().collect(),
+                batch_sizes,
+            }
+        }
+    }
+
+    impl AiSelectionClient for ScriptedAiClient {
+        fn select_articles(
+            &mut self,
+            _subscriber: &NotificationSubscriberInfo,
+            _defaults: &NotificationDefaults,
+            candidates: &[ArticleCandidateInfo],
+        ) -> Result<SelectionResultInfo, String> {
+            if let Some(batch_sizes) = &self.batch_sizes {
+                batch_sizes.borrow_mut().push(candidates.len());
+            }
+            self.selections
+                .pop()
+                .unwrap_or_else(|| Err("missing scripted selection".to_string()))
+        }
+
+        fn summarize_selected_articles(
+            &mut self,
+            _subscriber: &NotificationSubscriberInfo,
+            _selected_candidates: &[ArticleCandidateInfo],
+        ) -> Result<String, String> {
+            self.summaries.pop().unwrap_or_else(|| Ok(String::new()))
+        }
+    }
+
+    fn run_fixture_delivery(
+        config: &RecommendationRunConfig,
+        outcomes: Vec<AiSelectionOutcome>,
+    ) -> Result<RecommendationRunOutcome, DeliveryError> {
+        let mut ai_selector = FixtureDeliveryAiSelector::new(outcomes);
+        run_recommendation_delivery_with_ai(config, &mut ai_selector)
+    }
+
+    fn selection_outcome(article_ids: &[i64], summary: &str) -> AiSelectionOutcome {
+        AiSelectionOutcome {
+            accepted: article_ids
+                .iter()
+                .enumerate()
+                .map(|(index, article_id)| RankedSelectionInfo {
+                    article_id: *article_id,
+                    score: 100.0 - index as f64,
+                })
+                .collect(),
+            summary: summary.to_string(),
+            skip_reason: None,
+        }
+    }
+
+    fn selection_result(article_ids: &[i64], summary: &str) -> SelectionResultInfo {
+        SelectionResultInfo {
+            summary: summary.to_string(),
+            selections: article_ids
+                .iter()
+                .enumerate()
+                .map(|(index, article_id)| RankedSelectionInfo {
+                    article_id: *article_id,
+                    score: 100.0 - index as f64,
+                })
+                .collect(),
+        }
+    }
+
+    fn global_config() -> NotificationGlobalConfig {
+        NotificationGlobalConfig {
+            ai_base_url: "https://primary.test/v1".to_string(),
+            ai_api_key: "global-key".to_string(),
+            pushplus_channel: "wechat".to_string(),
+            pushplus_template: "markdown".to_string(),
+            pushplus_topic: None,
+            pushplus_option: None,
+            ai_system_prompt: None,
+        }
+    }
+
+    fn defaults() -> NotificationDefaults {
+        NotificationDefaults {
+            max_candidates: 120,
+            ai_model: "model".to_string(),
+            temperature: 0.2,
+        }
+    }
+
+    fn subscriber_info() -> NotificationSubscriberInfo {
+        NotificationSubscriberInfo {
+            subscriber_id: "1".to_string(),
+            user_id: 1,
+            name: "Alice".to_string(),
+            pushplus_token: "token".to_string(),
+            channel: Some("wechat".to_string()),
+            keywords: vec!["rust".to_string()],
+            directions: vec!["systems".to_string()],
+            selected_databases: Vec::new(),
+            topic: None,
+            template: Some("markdown".to_string()),
+            delivery_method: "pushplus".to_string(),
+            tracking_folder_id: Some(1),
+            sync_to_tracking_folder: true,
+            ai_base_url: Some("https://primary.test/v1".to_string()),
+            ai_api_key: Some("primary-key".to_string()),
+            ai_model: Some("model".to_string()),
+            ai_system_prompt: None,
+            ai_backup_base_url: None,
+            ai_backup_api_key: None,
+            ai_backup_model: None,
+            ai_backup_system_prompt: None,
+            ai_retry_attempts: 1,
+        }
+    }
+
+    fn subscriber_info_with_backup() -> NotificationSubscriberInfo {
+        NotificationSubscriberInfo {
+            ai_backup_base_url: Some("https://backup.test/v1".to_string()),
+            ai_backup_api_key: Some("backup-key".to_string()),
+            ..subscriber_info()
+        }
+    }
+
+    fn candidate_info(article_id: i64) -> ArticleCandidateInfo {
+        ArticleCandidateInfo {
+            article_id,
+            journal_id: 1,
+            issue_id: Some(11),
+            title: format!("Rust systems {article_id}"),
+            abstract_text: "rust systems".to_string(),
+            date: Some("2026-07-01".to_string()),
+            journal_title: "Fixture Journal".to_string(),
+            doi: Some(format!("10.0000/{article_id}")),
+            full_text_file: None,
+            permalink: Some(format!("https://example.test/{article_id}")),
+            open_access: true,
+            in_press: false,
+            within_library_holdings: true,
+        }
     }
 
     struct DeliveryFixture {
