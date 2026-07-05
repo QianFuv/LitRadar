@@ -1,5 +1,6 @@
 //! Shared Rust backend command dispatch.
 
+use std::collections::BTreeSet;
 use std::env;
 use std::error::Error;
 use std::fs;
@@ -14,7 +15,9 @@ use ps_index::{
 use ps_worker::delivery::{
     run_recommendation_delivery, DeliveryMode, DeliveryWorkflow, RecommendationRunConfig,
 };
-use ps_worker::scheduler::{load_scheduler_jobs, run_task_now, SchedulerMode};
+use ps_worker::scheduler::{
+    load_scheduler_jobs, run_due_scheduler_once, run_task_now, ScheduledRunSlot, SchedulerMode,
+};
 use serde_json::json;
 
 /// Run the grouped `ps-cli` command dispatcher.
@@ -194,6 +197,7 @@ fn run_grouped_command(mut args: Vec<String>) -> Result<(), Box<dyn Error>> {
     let issue_batch_size = extract_usize_option(&mut args, "--issue-batch-size")?.unwrap_or(10);
     let worker_interval_seconds =
         extract_u64_option(&mut args, "--interval-seconds")?.unwrap_or(300);
+    let worker_max_iterations = extract_usize_option(&mut args, "--max-iterations")?;
     let has_semantic_scholar_key = extract_flag(&mut args, "--semantic-scholar-key")
         || env::var("SEMANTIC_SCHOLAR_API_KEY_POOL")
             .map(|value| !value.trim().is_empty())
@@ -214,6 +218,11 @@ fn run_grouped_command(mut args: Vec<String>) -> Result<(), Box<dyn Error>> {
         [group, command] if group == "worker" && command == "shadow" => {
             run_worker_shadow(&auth_db_path, worker_interval_seconds)
         }
+        [group, command] if group == "worker" && command == "execute" => run_worker_execute(
+            &auth_db_path,
+            worker_interval_seconds,
+            worker_max_iterations,
+        ),
         [group, command] if group == "index" && command == "fixture" => {
             let csv_path = csv_path.ok_or("--csv is required for index fixture")?;
             let fixture_path = fixture_path.ok_or("--fixture is required for index fixture")?;
@@ -407,6 +416,37 @@ fn run_worker_shadow(auth_db_path: &Path, interval_seconds: u64) -> Result<(), B
             "status": "running"
         });
         println!("{}", serde_json::to_string(&payload)?);
+        thread::sleep(Duration::from_secs(interval_seconds));
+    }
+}
+
+fn run_worker_execute(
+    auth_db_path: &Path,
+    interval_seconds: u64,
+    max_iterations: Option<usize>,
+) -> Result<(), Box<dyn Error>> {
+    let interval_seconds = interval_seconds.max(1);
+    let mut executed_slots = BTreeSet::<ScheduledRunSlot>::new();
+    let mut iterations = 0_usize;
+    loop {
+        let result = run_due_scheduler_once(auth_db_path, &mut executed_slots)?;
+        let payload = json!({
+            "interval_seconds": interval_seconds,
+            "mode": "execute",
+            "status": result.status,
+            "minute_epoch": result.minute_epoch,
+            "jobs": result.jobs,
+            "skipped": result.skipped.len(),
+            "due": result.due,
+            "already_executed": result.already_executed,
+            "executed": result.executed.len(),
+            "executions": result.executed,
+        });
+        println!("{}", serde_json::to_string(&payload)?);
+        iterations += 1;
+        if max_iterations.is_some_and(|limit| iterations >= limit) {
+            return Ok(());
+        }
         thread::sleep(Duration::from_secs(interval_seconds));
     }
 }
@@ -679,6 +719,7 @@ fn grouped_usage() -> String {
             "ps-cli scheduler run-once TASK_ID [--auth-db PATH]",
             "ps-cli scheduler dry-run-once TASK_ID [--auth-db PATH]",
             "ps-cli worker shadow [--auth-db PATH] [--interval-seconds N]",
+            "ps-cli worker execute [--auth-db PATH] [--interval-seconds N] [--max-iterations N]",
             "index [--file FILE] [--workers N] [--processes N] [--issue-batch N] [--timeout N] [--resume|--no-resume] [--update|--no-update] [--notify] [--notify-dry-run]",
             "notify [--db NAME] [--state-dir PATH] [--changes-file PATH] [--ai-model MODEL] [--max-candidates N] [--timeout N] [--retries N] [--dedupe-retention-days N] [--dry-run|--no-dry-run]",
             "push [--db NAME] [--state-dir PATH] [--changes-file PATH] [--ai-model MODEL] [--max-candidates N] [--timeout N] [--retries N] [--dedupe-retention-days N] [--dry-run|--no-dry-run]"
@@ -728,6 +769,7 @@ mod tests {
         assert!(usage.contains("index [--file FILE]"));
         assert!(usage.contains("notify [--db NAME]"));
         assert!(usage.contains("push [--db NAME]"));
+        assert!(usage.contains("ps-cli worker execute"));
     }
 
     #[test]
@@ -1016,6 +1058,26 @@ mod tests {
         .expect_err("invalid scheduler task id should fail before execution");
 
         assert!(error.to_string().contains("invalid digit"));
+    }
+
+    #[test]
+    fn scheduler_worker_execute_dispatch_supports_finite_test_iterations() {
+        let root = temp_root("ps-cli-worker-execute");
+        let auth_db_path = root.path().join("auth.sqlite");
+        ps_storage::initialize_auth_database(&auth_db_path)
+            .expect("auth database should initialize");
+
+        run_ps_cli(vec![
+            "--auth-db".to_string(),
+            auth_db_path.to_string_lossy().into_owned(),
+            "--interval-seconds".to_string(),
+            "1".to_string(),
+            "--max-iterations".to_string(),
+            "1".to_string(),
+            "worker".to_string(),
+            "execute".to_string(),
+        ])
+        .expect("finite worker execute should return");
     }
 
     #[test]

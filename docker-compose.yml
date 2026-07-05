@@ -19,7 +19,7 @@ services:
   worker:
     build: .
     image: ghcr.io/qianfuv/paper-scanner-api:latest
-    command: ["ps-cli", "worker", "shadow", "--interval-seconds", "300"]
+    command: ["ps-cli", "worker", "execute", "--interval-seconds", "300"]
     volumes:
       - ./data:/app/data
     environment:
