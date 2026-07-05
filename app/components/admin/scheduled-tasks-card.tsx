@@ -82,10 +82,22 @@ const DEFAULT_FORM: TaskFormState = {
 
 const DEFAULT_PRESET: CommandPresetId = 'index-update-external';
 
+/**
+ * Resolve a stored command to a known preset.
+ *
+ * @param command - Stored scheduler shell command.
+ * @returns Matching preset id, or `custom` when no preset matches.
+ */
 function getPresetForCommand(command: string): CommandPresetId {
   return COMMAND_PRESETS.find((preset) => preset.command === command)?.value ?? 'custom';
 }
 
+/**
+ * Format a scheduler timestamp for display.
+ *
+ * @param value - Unix timestamp in seconds, or null when the task never ran.
+ * @returns Localized display text.
+ */
 function formatDateTime(value: number | null): string {
   if (!value) {
     return '从未执行';
@@ -100,6 +112,11 @@ function formatDateTime(value: number | null): string {
   });
 }
 
+/**
+ * Render the admin scheduled task management card.
+ *
+ * @returns Scheduled task management UI.
+ */
 export function ScheduledTasksCard() {
   const queryClient = useQueryClient();
   const [dialogOpen, setDialogOpen] = useState(false);
