@@ -51,7 +51,7 @@ worker sidecar
 
 后端镜像分两阶段构建：
 
-1. `rust:1.86-bookworm` 构建阶段执行 release 构建
+1. `rust:1.96-bookworm` 构建阶段执行 release 构建
 2. `debian:bookworm-slim` 运行阶段复制 `api`、`index`、`notify`、`push`、`scheduler`、`worker`、`ps-api`、`libs/simple-linux/` 和 `data/meta/`
 
 运行阶段默认命令为 `api --host 0.0.0.0 --port 8000 --project-root /app`。SQLite `simple` 分词扩展从镜像内 `libs/simple-linux/` 自动发现；没有单独的后端运行配置环境变量。
