@@ -1377,7 +1377,7 @@ fn search_result_form_fields(keyword: &str) -> Vec<(String, String)> {
         ("txt_i", "1"),
         ("txt_c", "7"),
         ("{key}_logical", "and"),
-        ("txt_1_sel", "题名"),
+        ("txt_1_sel", "主题"),
         ("txt_1_value1", keyword),
         ("txt_1_freq1", ""),
         ("txt_1_relation", "#CNKI_AND"),
@@ -1407,7 +1407,7 @@ fn search_handler_form_fields(keyword: &str) -> Vec<(String, String)> {
         ("ConfigFile", "SCDB.xml"),
         ("db_opt", "中国学术文献网络出版总库"),
         ("db_value", db_value),
-        ("txt_1_sel", "题名"),
+        ("txt_1_sel", "主题"),
         ("txt_1_value1", keyword),
         ("txt_1_relation", "#CNKI_AND"),
         ("txt_1_special1", "="),
@@ -1835,12 +1835,12 @@ fn attr_value(tag: &str, name: &str) -> Option<String> {
         return rest[first.len_utf8()..]
             .split(first)
             .next()
-            .map(decode_html)
+            .map(|value| decode_html(value).trim().to_string())
             .filter(|value| !value.trim().is_empty());
     }
     rest.split_whitespace()
         .next()
-        .map(decode_html)
+        .map(|value| decode_html(value).trim().to_string())
         .filter(|value| !value.trim().is_empty())
 }
 
@@ -1848,7 +1848,7 @@ fn extract_anchor_title(body: &str) -> Option<String> {
     if let Some(marker_start) = body.find("ReplaceJiankuohao('") {
         let start = marker_start + "ReplaceJiankuohao('".len();
         if let Some(end) = body[start..].find("')") {
-            return clean_text(&body[start..start + end]);
+            return clean_text(&strip_tags(&body[start..start + end]));
         }
     }
     clean_text(&strip_tags(body))
@@ -2038,12 +2038,50 @@ fn clean_text(value: &str) -> Option<String> {
 }
 
 fn decode_html(value: &str) -> String {
-    value
-        .replace("&amp;", "&")
-        .replace("&lt;", "<")
-        .replace("&gt;", ">")
-        .replace("&quot;", "\"")
-        .replace("&#39;", "'")
+    let mut output = String::with_capacity(value.len());
+    let mut rest = value;
+    while let Some(start) = rest.find('&') {
+        output.push_str(&rest[..start]);
+        rest = &rest[start..];
+        let Some(end) = rest.find(';') else {
+            output.push('&');
+            rest = &rest['&'.len_utf8()..];
+            continue;
+        };
+        let entity = &rest['&'.len_utf8()..end];
+        if let Some(decoded) = decode_html_entity(entity) {
+            output.push_str(&decoded);
+            rest = &rest[end + ';'.len_utf8()..];
+            continue;
+        }
+        output.push('&');
+        rest = &rest['&'.len_utf8()..];
+    }
+    output.push_str(rest);
+    output
+}
+
+fn decode_html_entity(entity: &str) -> Option<String> {
+    match entity {
+        "amp" => Some("&".to_string()),
+        "lt" => Some("<".to_string()),
+        "gt" => Some(">".to_string()),
+        "quot" => Some("\"".to_string()),
+        "apos" => Some("'".to_string()),
+        _ => {
+            let codepoint = if let Some(hex) = entity
+                .strip_prefix("#x")
+                .or_else(|| entity.strip_prefix("#X"))
+            {
+                u32::from_str_radix(hex, 16).ok()?
+            } else if let Some(decimal) = entity.strip_prefix('#') {
+                decimal.parse::<u32>().ok()?
+            } else {
+                return None;
+            };
+            char::from_u32(codepoint).map(|character| character.to_string())
+        }
+    }
 }
 
 fn safe_filename(value: &str) -> String {
@@ -2200,9 +2238,10 @@ fn decode_base64_url(value: &str) -> Option<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::{
-        extract_share_cookie_sync, extract_window_location, FixtureZjlibCnkiMode,
-        FixtureZjlibCnkiTransport, ZhejiangLibraryCnkiClient, ZjlibCnkiArticleIdentity,
-        ZjlibCnkiError,
+        extract_anchor_title, extract_pdf_download_url, extract_share_cookie_sync,
+        extract_window_location, search_handler_form_fields, search_result_form_fields,
+        FixtureZjlibCnkiMode, FixtureZjlibCnkiTransport, ZhejiangLibraryCnkiClient,
+        ZjlibCnkiArticleIdentity, ZjlibCnkiError,
     };
 
     #[test]
@@ -2349,6 +2388,17 @@ mod tests {
             "https://share.zjlib.cn/entry/area/35594/2120",
         )
         .expect("unicode-escaped window location should parse");
+        let pdf_url = extract_pdf_download_url(
+            r##"<a target="_blank" href="&#xA; /kcms/download.aspx?filename=abc&amp;tablename=CJFDLAST2025&amp;dflag=pdfdown&#xA; "><b>PDF下载</b></a>"##,
+            "https://http-10--18--17--173.elib.zyproxy.zjlib.cn/kcms/detail/detail.aspx?FileName=abc",
+        )
+        .expect("numeric-escaped PDF URL should parse");
+        let result_fields = search_result_form_fields("lstm");
+        let handler_fields = search_handler_form_fields("lstm");
+        let highlighted_title = extract_anchor_title(
+            "document.write(ReplaceChar1(ReplaceChar(ReplaceJiankuohao('基于<font class=Mark>LSTM</font>的股票预测'))));",
+        )
+        .expect("highlighted result title should parse");
 
         assert_eq!(sync.0, "https://share.zjlib.cn/entry/sso-login/cookie/sync");
         assert_eq!(sync.1["sign"], "abc");
@@ -2360,6 +2410,13 @@ mod tests {
             unicode_location,
             "https://login.elib.zyproxy.zjlib.cn/index.php?r=site%2Fenclogin&enc=abc&username=user&pre=http%3A%2F%2F10.18.17.173%2Fkns55%2F"
         );
+        assert_eq!(
+            pdf_url,
+            "https://http-10--18--17--173.elib.zyproxy.zjlib.cn/kcms/download.aspx?filename=abc&tablename=CJFDLAST2025&dflag=pdfdown"
+        );
+        assert!(result_fields.contains(&("txt_1_sel".to_string(), "主题".to_string())));
+        assert!(handler_fields.contains(&("txt_1_sel".to_string(), "主题".to_string())));
+        assert_eq!(highlighted_title, "基于 LSTM 的股票预测");
     }
 
     fn warmed_fixture_client(
