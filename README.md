@@ -258,7 +258,7 @@ AI、PushPlus 与投递方式是用户级设置。用户可在“文献追踪”
 - `notify --changes-file ...`
 - `push --changes-file ...`
 
-这几条链路都依赖 `*.changes.json` 文件。
+这几条链路都依赖 `*.changes.json` 文件，并只把顶层变更字段作为运行时输入；`summary` 仅用于计数与诊断信息。
 
 ## 部署说明
 

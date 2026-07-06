@@ -42,9 +42,9 @@
 - `changed_inpress_journal_ids`
 - `notifiable_article_ids`
 - `backfill_article_ids`
-- `summary`
+- `summary`（计数与诊断信息，不承诺包含文章 id 明细数组）
 
-`index --update` 会生成兼容变更清单。生产索引库和状态文件可直接放在 `data/` 下供 Rust API/CLI 读取。
+运行时链路只依赖顶层字段；`summary` 中的 issue/in-press 明细不会作为通知、每周更新或追踪推送输入。`index --update` 会生成兼容变更清单。生产索引库和状态文件可直接放在 `data/` 下供 Rust API/CLI 读取。
 
 ## 用户配置来源
 

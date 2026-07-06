@@ -47,9 +47,11 @@ pub struct ChangeSummary {
     pub added_article_count: usize,
     /// Removed article count.
     pub removed_article_count: usize,
-    /// Added article ids.
+    /// Added article ids retained in memory.
+    #[serde(skip_serializing)]
     pub added_article_ids: Vec<i64>,
-    /// Removed article ids.
+    /// Removed article ids retained in memory.
+    #[serde(skip_serializing)]
     pub removed_article_ids: Vec<i64>,
     /// Changed issue details.
     pub issues: Vec<IssueChangeDetail>,
@@ -59,7 +61,8 @@ pub struct ChangeSummary {
     pub raw_changed_issue_count: usize,
     /// Raw changed in-press count.
     pub raw_changed_inpress_count: usize,
-    /// Backfill article ids.
+    /// Backfill article ids retained in memory.
+    #[serde(skip_serializing)]
     pub backfill_article_ids: Vec<i64>,
     /// Backfill article count.
     pub backfill_article_count: usize,
@@ -78,13 +81,17 @@ pub struct IssueChangeDetail {
     pub before_count: usize,
     /// After article count.
     pub after_count: usize,
-    /// Added article ids.
+    /// Added article ids retained in memory.
+    #[serde(skip_serializing)]
     pub added_article_ids: Vec<i64>,
-    /// Removed article ids.
+    /// Removed article ids retained in memory.
+    #[serde(skip_serializing)]
     pub removed_article_ids: Vec<i64>,
-    /// Notifiable added article ids.
+    /// Notifiable added article ids retained in memory.
+    #[serde(skip_serializing)]
     pub notifiable_added_article_ids: Vec<i64>,
-    /// Backfill added article ids.
+    /// Backfill added article ids retained in memory.
+    #[serde(skip_serializing)]
     pub backfill_added_article_ids: Vec<i64>,
 }
 
@@ -97,13 +104,17 @@ pub struct InpressChangeDetail {
     pub before_count: usize,
     /// After article count.
     pub after_count: usize,
-    /// Added article ids.
+    /// Added article ids retained in memory.
+    #[serde(skip_serializing)]
     pub added_article_ids: Vec<i64>,
-    /// Removed article ids.
+    /// Removed article ids retained in memory.
+    #[serde(skip_serializing)]
     pub removed_article_ids: Vec<i64>,
-    /// Notifiable added article ids.
+    /// Notifiable added article ids retained in memory.
+    #[serde(skip_serializing)]
     pub notifiable_added_article_ids: Vec<i64>,
-    /// Backfill added article ids.
+    /// Backfill added article ids retained in memory.
+    #[serde(skip_serializing)]
     pub backfill_added_article_ids: Vec<i64>,
 }
 
@@ -436,7 +447,7 @@ pub fn write_change_manifest(manifest: &ChangeManifest, path: &Path) -> std::io:
         fs::create_dir_all(parent)?;
     }
     let payload =
-        serde_json::to_string_pretty(manifest).expect("change manifest payload should serialize");
+        serde_json::to_string(manifest).expect("change manifest payload should serialize");
     fs::write(path, format!("{payload}\n"))
 }
 
@@ -447,6 +458,7 @@ mod tests {
     use std::path::Path;
 
     use rusqlite::Connection;
+    use serde_json::json;
 
     use crate::schema::init_index_db;
     use crate::transforms::ArticleRecord;
@@ -564,6 +576,39 @@ mod tests {
         assert_eq!(manifest.notifiable_article_ids, vec![12, 21]);
         assert_eq!(manifest.summary.removed_article_ids, vec![10]);
         assert!(payload.ends_with('\n'));
-        assert!(payload.contains("notifiable_article_ids"));
+        assert!(!payload.trim_end().contains('\n'));
+        let payload_json: serde_json::Value =
+            serde_json::from_str(&payload).expect("manifest JSON should parse");
+        assert_eq!(payload_json["notifiable_article_ids"], json!([12, 21]));
+        assert_eq!(payload_json["backfill_article_ids"], json!([]));
+        assert!(payload_json["summary"].get("added_article_ids").is_none());
+        assert!(payload_json["summary"].get("removed_article_ids").is_none());
+        assert!(payload_json["summary"]
+            .get("backfill_article_ids")
+            .is_none());
+        assert!(payload_json["summary"]["issues"][0]
+            .get("added_article_ids")
+            .is_none());
+        assert!(payload_json["summary"]["issues"][0]
+            .get("removed_article_ids")
+            .is_none());
+        assert!(payload_json["summary"]["issues"][0]
+            .get("notifiable_added_article_ids")
+            .is_none());
+        assert!(payload_json["summary"]["issues"][0]
+            .get("backfill_added_article_ids")
+            .is_none());
+        assert!(payload_json["summary"]["inpress"][0]
+            .get("added_article_ids")
+            .is_none());
+        assert!(payload_json["summary"]["inpress"][0]
+            .get("removed_article_ids")
+            .is_none());
+        assert!(payload_json["summary"]["inpress"][0]
+            .get("notifiable_added_article_ids")
+            .is_none());
+        assert!(payload_json["summary"]["inpress"][0]
+            .get("backfill_added_article_ids")
+            .is_none());
     }
 }
