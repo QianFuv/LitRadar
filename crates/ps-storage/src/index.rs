@@ -15,6 +15,7 @@ use ps_domain::{
 };
 use rusqlite::types::Value as SqlValue;
 use rusqlite::{params_from_iter, Connection, OptionalExtension};
+use serde::Deserialize;
 use serde_json::Value as JsonValue;
 
 use crate::cnki::{get_cnki_session_data, get_cnki_session_status, CnkiRepositoryError};
@@ -1495,8 +1496,8 @@ fn load_weekly_manifests(
         {
             continue;
         }
-        let payload = serde_json::from_str::<JsonValue>(&fs::read_to_string(path)?)?;
-        if let Some(manifest) = parse_weekly_manifest(&payload) {
+        let payload = read_weekly_manifest_payload(&path)?;
+        if let Some(manifest) = parse_weekly_manifest(payload) {
             manifests.push(manifest);
         }
     }
@@ -1509,20 +1510,32 @@ fn load_weekly_manifests(
     Ok(manifests)
 }
 
-fn parse_weekly_manifest(payload: &JsonValue) -> Option<WeeklyManifest> {
+#[derive(Debug, Deserialize)]
+struct WeeklyManifestPayload {
+    db_name: Option<String>,
+    db_path: Option<String>,
+    generated_at: Option<String>,
+    run_id: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_json_i64_list")]
+    notifiable_article_ids: Vec<i64>,
+}
+
+fn read_weekly_manifest_payload(
+    path: &Path,
+) -> Result<WeeklyManifestPayload, IndexRepositoryError> {
+    let reader = std::io::BufReader::new(fs::File::open(path)?);
+    Ok(serde_json::from_reader(reader)?)
+}
+
+fn parse_weekly_manifest(payload: WeeklyManifestPayload) -> Option<WeeklyManifest> {
     let db_name = payload
-        .get("db_name")
-        .and_then(JsonValue::as_str)
-        .or_else(|| payload.get("db_path").and_then(JsonValue::as_str))
+        .db_name
+        .as_deref()
+        .or(payload.db_path.as_deref())
         .and_then(normalize_db_name)?;
     let mut seen = HashSet::new();
     let mut article_ids = Vec::new();
-    for item in payload
-        .get("notifiable_article_ids")
-        .and_then(JsonValue::as_array)?
-        .iter()
-        .filter_map(JsonValue::as_i64)
-    {
+    for item in payload.notifiable_article_ids {
         if seen.insert(item) {
             article_ids.push(item);
         }
@@ -1531,21 +1544,28 @@ fn parse_weekly_manifest(payload: &JsonValue) -> Option<WeeklyManifest> {
         return None;
     }
     let generated_at = payload
-        .get("generated_at")
-        .and_then(JsonValue::as_str)
-        .or_else(|| payload.get("run_id").and_then(JsonValue::as_str))
+        .generated_at
+        .as_deref()
+        .or(payload.run_id.as_deref())
         .and_then(normalize_iso_datetime)
         .unwrap_or_else(current_utc_iso_text);
-    let run_id = payload
-        .get("run_id")
-        .and_then(JsonValue::as_str)
-        .map(str::to_string);
     Some(WeeklyManifest {
         db_name,
-        run_id,
+        run_id: payload.run_id,
         generated_at,
         article_ids,
     })
+}
+
+fn deserialize_json_i64_list<'de, D>(deserializer: D) -> Result<Vec<i64>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = JsonValue::deserialize(deserializer)?;
+    let Some(items) = value.as_array() else {
+        return Ok(Vec::new());
+    };
+    Ok(items.iter().filter_map(JsonValue::as_i64).collect())
 }
 
 fn open_index_connection(
@@ -2768,7 +2788,11 @@ mod tests {
                 "db_name": fixture.db_name,
                 "generated_at": "2026-07-05T10:00:00Z",
                 "run_id": "run-a",
-                "notifiable_article_ids": [1001, 1003, 1001, 9999]
+                "notifiable_article_ids": [1001, 1003, 1001, 9999],
+                "summary": {
+                    "added_article_ids": [1001, 1003, 9999],
+                    "issues": [{"added_article_ids": [1001, 1003, 9999]}]
+                }
             }),
         );
         write_weekly_manifest(
@@ -2855,11 +2879,15 @@ mod tests {
 
     #[test]
     fn weekly_manifest_parsing_covers_normalization_empty_and_malformed_payloads() {
-        let manifest = parse_weekly_manifest(&json!({
+        let manifest = parse_weekly_manifest_payload(json!({
             "db_path": "data/index/fixture",
             "generated_at": "2026-07-05T10:00:00.250+00:00",
             "run_id": "run-1",
-            "notifiable_article_ids": [1001, 1001, "bad", 1002]
+            "notifiable_article_ids": [1001, 1001, "bad", 1002],
+            "summary": {
+                "added_article_ids": [1001, 1002],
+                "issues": [{"added_article_ids": [1001, 1002]}]
+            }
         }))
         .expect("valid manifest should parse");
 
@@ -2868,16 +2896,16 @@ mod tests {
         assert_eq!(manifest.run_id.as_deref(), Some("run-1"));
         assert_eq!(manifest.article_ids, vec![1001, 1002]);
 
-        assert!(parse_weekly_manifest(&json!({
+        assert!(parse_weekly_manifest_payload(json!({
             "db_name": "fixture.sqlite",
             "notifiable_article_ids": []
         }))
         .is_none());
-        assert!(parse_weekly_manifest(&json!({
+        assert!(parse_weekly_manifest_payload(json!({
             "notifiable_article_ids": [1001]
         }))
         .is_none());
-        assert!(parse_weekly_manifest(&json!({
+        assert!(parse_weekly_manifest_payload(json!({
             "db_name": "fixture.sqlite",
             "notifiable_article_ids": ["bad"]
         }))
@@ -3063,6 +3091,12 @@ mod tests {
             serde_json::to_string(&payload).expect("manifest should serialize"),
         )
         .expect("manifest should be written");
+    }
+
+    fn parse_weekly_manifest_payload(payload: JsonValue) -> Option<WeeklyManifest> {
+        parse_weekly_manifest(
+            serde_json::from_value(payload).expect("weekly manifest payload should deserialize"),
+        )
     }
 
     fn create_fixture_user(config: &StorageConfig) {

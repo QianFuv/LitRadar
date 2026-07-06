@@ -4,6 +4,7 @@ use std::collections::{BTreeMap, HashSet};
 use std::error::Error;
 use std::fmt;
 use std::fs;
+use std::io::{BufRead, BufReader};
 use std::path::Path;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -452,66 +453,42 @@ pub fn load_change_manifest(
     path: &Path,
     db_name: &str,
 ) -> Result<ChangeManifest, RecommendationError> {
-    let payload: Value = serde_json::from_str(&fs::read_to_string(path)?)?;
-    let object = payload.as_object().ok_or_else(|| {
-        RecommendationError::InvalidManifest("Invalid change manifest file".into())
-    })?;
-    let manifest_db = object
-        .get("db_name")
-        .and_then(Value::as_str)
-        .unwrap_or_default()
-        .trim();
+    let payload = read_change_manifest_payload(path)?;
+    let manifest_db = payload.db_name.as_deref().unwrap_or_default().trim();
     if !manifest_db.is_empty() && manifest_db != db_name {
         return Err(RecommendationError::InvalidManifest(format!(
             "Change manifest database mismatch: expected {db_name}, got {manifest_db}"
         )));
     }
-    let mut pending_issue_keys = object
-        .get("changed_issue_keys")
-        .and_then(Value::as_array)
-        .map(|items| {
-            items
-                .iter()
-                .filter_map(Value::as_str)
-                .filter(|item| parse_issue_key(item).is_some())
-                .map(ToOwned::to_owned)
-                .collect::<Vec<_>>()
-        })
-        .unwrap_or_default();
+    let mut pending_issue_keys = payload
+        .changed_issue_keys
+        .into_iter()
+        .filter(|item| parse_issue_key(item).is_some())
+        .collect::<Vec<_>>();
     pending_issue_keys.sort_by_key(|key| parse_issue_key(key).unwrap_or((0, 0)));
     pending_issue_keys.dedup();
 
-    let mut pending_inpress_keys = object
-        .get("changed_inpress_journal_ids")
-        .and_then(Value::as_array)
-        .map(|items| {
-            items
-                .iter()
-                .filter_map(json_i64)
-                .map(|value| value.to_string())
-                .collect::<Vec<_>>()
-        })
-        .unwrap_or_default();
+    let mut pending_inpress_keys = payload
+        .changed_inpress_journal_ids
+        .into_iter()
+        .map(|value| value.to_string())
+        .collect::<Vec<_>>();
     pending_inpress_keys.sort_by_key(|key| key.parse::<i64>().unwrap_or(0));
     pending_inpress_keys.dedup();
 
-    let article_values = object
-        .get("notifiable_article_ids")
-        .and_then(Value::as_array)
-        .ok_or_else(|| {
-            RecommendationError::InvalidManifest(
-                "Change manifest missing notifiable_article_ids".into(),
-            )
-        })?;
+    let article_values = payload.notifiable_article_ids.ok_or_else(|| {
+        RecommendationError::InvalidManifest(
+            "Change manifest missing notifiable_article_ids".into(),
+        )
+    })?;
     let mut seen_articles = HashSet::new();
     let pending_article_ids = article_values
-        .iter()
-        .filter_map(json_i64)
+        .into_iter()
         .filter(|article_id| seen_articles.insert(*article_id))
         .collect::<Vec<_>>();
-    let run_id = object
-        .get("run_id")
-        .and_then(Value::as_str)
+    let run_id = payload
+        .run_id
+        .as_deref()
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(ToOwned::to_owned);
@@ -522,6 +499,80 @@ pub fn load_change_manifest(
         pending_article_ids,
         run_id,
     })
+}
+
+#[derive(Debug, Deserialize)]
+struct ChangeManifestPayload {
+    db_name: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_json_string_list")]
+    changed_issue_keys: Vec<String>,
+    #[serde(default, deserialize_with = "deserialize_json_i64_list")]
+    changed_inpress_journal_ids: Vec<i64>,
+    #[serde(default, deserialize_with = "deserialize_optional_json_i64_list")]
+    notifiable_article_ids: Option<Vec<i64>>,
+    run_id: Option<String>,
+}
+
+fn read_change_manifest_payload(path: &Path) -> Result<ChangeManifestPayload, RecommendationError> {
+    let mut reader = BufReader::new(fs::File::open(path)?);
+    ensure_change_manifest_object(&mut reader)?;
+    Ok(serde_json::from_reader(reader)?)
+}
+
+fn ensure_change_manifest_object<R: BufRead>(reader: &mut R) -> Result<(), RecommendationError> {
+    loop {
+        let buffer = reader.fill_buf()?;
+        if buffer.is_empty() {
+            return Ok(());
+        }
+        if let Some(index) = buffer.iter().position(|byte| !byte.is_ascii_whitespace()) {
+            if buffer[index] != b'{' {
+                return Err(RecommendationError::InvalidManifest(
+                    "Invalid change manifest file".into(),
+                ));
+            }
+            reader.consume(index);
+            return Ok(());
+        }
+        let consumed = buffer.len();
+        reader.consume(consumed);
+    }
+}
+
+fn deserialize_json_string_list<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = Value::deserialize(deserializer)?;
+    let Some(items) = value.as_array() else {
+        return Ok(Vec::new());
+    };
+    Ok(items
+        .iter()
+        .filter_map(Value::as_str)
+        .map(ToOwned::to_owned)
+        .collect())
+}
+
+fn deserialize_json_i64_list<'de, D>(deserializer: D) -> Result<Vec<i64>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = Value::deserialize(deserializer)?;
+    let Some(items) = value.as_array() else {
+        return Ok(Vec::new());
+    };
+    Ok(items.iter().filter_map(json_i64).collect())
+}
+
+fn deserialize_optional_json_i64_list<'de, D>(deserializer: D) -> Result<Option<Vec<i64>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = Value::deserialize(deserializer)?;
+    Ok(value
+        .as_array()
+        .map(|items| items.iter().filter_map(json_i64).collect()))
 }
 
 /// Prune old delivery dedupe entries.
@@ -1598,7 +1649,11 @@ mod tests {
                 "changed_issue_keys": ["2:20", "bad", "1:10", "1:10"],
                 "changed_inpress_journal_ids": [3, "2", "bad", 2],
                 "notifiable_article_ids": [10, "11", 10, null],
-                "run_id": " run-1 "
+                "run_id": " run-1 ",
+                "summary": {
+                    "added_article_ids": [10, 11, 12],
+                    "issues": [{"added_article_ids": [10, 11, 12]}]
+                }
             }))
             .expect("manifest payload should serialize"),
         )
