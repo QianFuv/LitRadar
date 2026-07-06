@@ -1690,7 +1690,7 @@ fn get_push_stats(config: &StorageConfig) -> Result<Vec<PushStats>, BusinessRepo
     let mut paths = Vec::new();
     for entry in fs::read_dir(push_state_dir)? {
         let path = entry?.path();
-        if path.extension().and_then(|value| value.to_str()) == Some("json") {
+        if is_push_state_run_file(&path) {
             paths.push(path);
         }
     }
@@ -1738,6 +1738,14 @@ fn get_push_stats(config: &StorageConfig) -> Result<Vec<PushStats>, BusinessRepo
             },
         })
         .collect())
+}
+
+fn is_push_state_run_file(path: &Path) -> bool {
+    path.extension().and_then(|value| value.to_str()) == Some("json")
+        && !path
+            .file_name()
+            .and_then(|value| value.to_str())
+            .is_some_and(|name| name.ends_with(".changes.json"))
 }
 
 fn index_database_stats(path: &Path) -> Result<IndexDatabaseStats, BusinessRepositoryError> {
@@ -2180,15 +2188,16 @@ impl AuthRepositorySqliteError for crate::AuthRepositoryError {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
+    use std::{collections::HashMap, fs};
 
     use rusqlite::Connection;
     use tempfile::tempdir;
 
     use super::{
-        initialize_auth_database, list_runtime_settings, upsert_runtime_settings,
+        get_admin_stats, initialize_auth_database, list_runtime_settings, upsert_runtime_settings,
         BusinessRepositoryError,
     };
+    use crate::StorageConfig;
 
     #[test]
     fn runtime_settings_ignore_stale_env_keys_and_proxy_pool() {
@@ -2257,5 +2266,36 @@ mod tests {
             error,
             BusinessRepositoryError::UnknownRuntimeSetting(field) if field == "proxy_pool"
         ));
+    }
+
+    #[test]
+    fn admin_stats_skip_change_manifests_in_push_state_dir() {
+        let temp_dir = tempdir().expect("temp dir should be created");
+        let config = StorageConfig::from_project_root(temp_dir.path());
+        fs::create_dir_all(config.auth_db_path().parent().expect("auth parent should exist"))
+            .expect("data dir should be created");
+        initialize_auth_database(config.auth_db_path()).expect("auth database should initialize");
+        let push_state_dir = config.project_root().join("data").join("push_state");
+        fs::create_dir_all(&push_state_dir).expect("push state dir should be created");
+        fs::write(
+            push_state_dir.join("runtime.json"),
+            r#"{"status":"completed","last_completed_run_at":"2026-07-06T00:00:00Z","run":{"delivered_article_ids":[1,2],"user_results":[{}]}}"#,
+        )
+        .expect("push state should write");
+        fs::write(
+            push_state_dir.join("fixture.changes.json"),
+            r#"{"db_name":"fixture.sqlite","notifiable_article_ids":[1]}"#,
+        )
+        .expect("valid change manifest should write");
+        fs::write(push_state_dir.join("broken.changes.json"), "{")
+            .expect("broken change manifest should write");
+
+        let stats = get_admin_stats(&config).expect("admin stats should load");
+
+        assert_eq!(stats.push.len(), 1);
+        assert_eq!(stats.push[0].db_name, "runtime");
+        assert_eq!(stats.push[0].status, "completed");
+        assert_eq!(stats.push[0].delivered_count, Some(2));
+        assert_eq!(stats.push[0].user_results, Some(1));
     }
 }
