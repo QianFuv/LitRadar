@@ -1538,11 +1538,47 @@ fn extract_window_location(text: &str, base_url: &str) -> Result<String, ZjlibCn
 }
 
 fn decode_js_string(value: &str) -> String {
-    value
-        .replace("\\/", "/")
-        .replace("\\\"", "\"")
-        .replace("\\'", "'")
-        .replace("\\\\", "\\")
+    let mut decoded = String::new();
+    let mut chars = value.chars();
+    while let Some(character) = chars.next() {
+        if character != '\\' {
+            decoded.push(character);
+            continue;
+        }
+        let Some(escaped) = chars.next() else {
+            decoded.push('\\');
+            break;
+        };
+        match escaped {
+            '/' => decoded.push('/'),
+            '"' => decoded.push('"'),
+            '\'' => decoded.push('\''),
+            '\\' => decoded.push('\\'),
+            'b' => decoded.push('\u{0008}'),
+            'f' => decoded.push('\u{000c}'),
+            'n' => decoded.push('\n'),
+            'r' => decoded.push('\r'),
+            't' => decoded.push('\t'),
+            'u' => {
+                let digits = chars.by_ref().take(4).collect::<String>();
+                if digits.len() == 4 {
+                    if let Ok(codepoint) = u32::from_str_radix(&digits, 16) {
+                        if let Some(decoded_character) = char::from_u32(codepoint) {
+                            decoded.push(decoded_character);
+                            continue;
+                        }
+                    }
+                }
+                decoded.push_str("\\u");
+                decoded.push_str(&digits);
+            }
+            _ => {
+                decoded.push('\\');
+                decoded.push(escaped);
+            }
+        }
+    }
+    decoded
 }
 
 fn join_url(base_url: &str, reference: &str) -> Result<String, ZjlibCnkiError> {
@@ -2308,12 +2344,21 @@ mod tests {
             "https://login.elib.zyproxy.zjlib.cn/start",
         )
         .expect("window location should parse");
+        let unicode_location = extract_window_location(
+            r#"<script>window.location.href = "https:\/\/login.elib.zyproxy.zjlib.cn\/index.php?r=site%2Fenclogin\u0026enc=abc\u0026username=user\u0026pre=http%3A%2F%2F10.18.17.173%2Fkns55%2F";</script>"#,
+            "https://share.zjlib.cn/entry/area/35594/2120",
+        )
+        .expect("unicode-escaped window location should parse");
 
         assert_eq!(sync.0, "https://share.zjlib.cn/entry/sso-login/cookie/sync");
         assert_eq!(sync.1["sign"], "abc");
         assert_eq!(
             location,
             "https://login.elib.zyproxy.zjlib.cn/login?sid=abc"
+        );
+        assert_eq!(
+            unicode_location,
+            "https://login.elib.zyproxy.zjlib.cn/index.php?r=site%2Fenclogin&enc=abc&username=user&pre=http%3A%2F%2F10.18.17.173%2Fkns55%2F"
         );
     }
 
