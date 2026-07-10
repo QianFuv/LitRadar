@@ -6,6 +6,8 @@ use axum::response::{IntoResponse, Response};
 use axum::Json;
 use ps_domain::ErrorEnvelope;
 
+use crate::state::BlockingTaskError;
+
 /// API handler error mapped into FastAPI-compatible envelopes where possible.
 #[derive(Debug)]
 pub(crate) enum ApiError {
@@ -102,8 +104,25 @@ impl ApiError {
         }
     }
 
+    /// Build a service-unavailable error without exposing executor details.
+    pub(crate) fn service_unavailable() -> Self {
+        Self::Http {
+            status: StatusCode::SERVICE_UNAVAILABLE,
+            detail: "Service temporarily unavailable".to_string(),
+        }
+    }
+
     /// Build an error with a structured JSON detail payload.
     pub(crate) fn json_detail(status: StatusCode, detail: serde_json::Value) -> Self {
         Self::JsonDetail { status, detail }
+    }
+}
+
+impl From<BlockingTaskError> for ApiError {
+    fn from(error: BlockingTaskError) -> Self {
+        match error {
+            BlockingTaskError::Closed | BlockingTaskError::TimedOut => Self::service_unavailable(),
+            BlockingTaskError::Join => Self::internal_server_error(),
+        }
     }
 }

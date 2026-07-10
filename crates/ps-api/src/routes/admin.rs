@@ -12,7 +12,7 @@ use ps_domain::{
     OkResponse, RuntimeSettingInfo, RuntimeSettingsUpdate, ScheduledJobSpec, ScheduledTaskCreate,
     ScheduledTaskInfo, ScheduledTaskUpdate, SchedulerStatusResponse, UserId,
 };
-use ps_storage::BusinessRepositoryError;
+use ps_storage::{BusinessRepositoryError, StorageConfig};
 
 use crate::response::ApiError;
 use crate::routes::auth::{auth_service, map_auth_error, require_admin_user};
@@ -33,9 +33,11 @@ pub(crate) async fn list_users(
     State(state): State<ApiState>,
     headers: HeaderMap,
 ) -> Result<Json<Vec<AdminUserInfo>>, ApiError> {
-    require_admin_user(&state, &headers)?;
-    let users = ps_storage::list_all_users(state.storage_config().auth_db_path())
-        .map_err(map_business_error)?;
+    require_admin_user(&state, &headers).await?;
+    let users = run_business(&state, move |storage| {
+        ps_storage::list_all_users(storage.auth_db_path())
+    })
+    .await?;
     Ok(Json(users))
 }
 
@@ -55,17 +57,16 @@ pub(crate) async fn set_admin(
     Path(user_id): Path<i64>,
     Json(body): Json<AdminSetAdmin>,
 ) -> Result<Json<OkResponse>, ApiError> {
-    let (admin, _) = require_admin_user(&state, &headers)?;
+    let (admin, _) = require_admin_user(&state, &headers).await?;
     let target_id = UserId(user_id);
     if target_id == admin.id && !body.is_admin {
         return Err(ApiError::bad_request("Cannot revoke own admin status"));
     }
-    let did_update = ps_storage::set_user_admin(
-        state.storage_config().auth_db_path(),
-        target_id,
-        body.is_admin,
-    )
-    .map_err(map_business_error)?;
+    let is_admin = body.is_admin;
+    let did_update = run_business(&state, move |storage| {
+        ps_storage::set_user_admin(storage.auth_db_path(), target_id, is_admin)
+    })
+    .await?;
     if !did_update {
         return Err(ApiError::not_found("User not found"));
     }
@@ -88,14 +89,17 @@ pub(crate) async fn reset_password(
     Path(user_id): Path<i64>,
     Json(body): Json<AdminResetPassword>,
 ) -> Result<Json<OkResponse>, ApiError> {
-    require_admin_user(&state, &headers)?;
+    require_admin_user(&state, &headers).await?;
     if !is_valid_new_password(&body.new_password) {
         return Err(ApiError::bad_request(format!(
             "Password must be at least {MIN_PASSWORD_LENGTH} characters"
         )));
     }
-    let did_reset = auth_service(&state)
-        .reset_password(UserId(user_id), &body.new_password)
+    let service = auth_service(&state);
+    let new_password = body.new_password;
+    let did_reset = state
+        .run_blocking(move || service.reset_password(UserId(user_id), &new_password))
+        .await?
         .map_err(map_auth_error)?;
     if !did_reset {
         return Err(ApiError::not_found("User not found"));
@@ -117,13 +121,15 @@ pub(crate) async fn delete_user(
     headers: HeaderMap,
     Path(user_id): Path<i64>,
 ) -> Result<Json<OkResponse>, ApiError> {
-    let (admin, _) = require_admin_user(&state, &headers)?;
+    let (admin, _) = require_admin_user(&state, &headers).await?;
     let target_id = UserId(user_id);
     if target_id == admin.id {
         return Err(ApiError::bad_request("Cannot delete yourself"));
     }
-    let did_delete = ps_storage::delete_user(state.storage_config().auth_db_path(), target_id)
-        .map_err(map_business_error)?;
+    let did_delete = run_business(&state, move |storage| {
+        ps_storage::delete_user(storage.auth_db_path(), target_id)
+    })
+    .await?;
     if !did_delete {
         return Err(ApiError::not_found("User not found"));
     }
@@ -142,9 +148,11 @@ pub(crate) async fn list_invite_codes(
     State(state): State<ApiState>,
     headers: HeaderMap,
 ) -> Result<Json<Vec<AdminInviteCodeInfo>>, ApiError> {
-    require_admin_user(&state, &headers)?;
-    let codes = ps_storage::list_all_invite_codes(state.storage_config().auth_db_path())
-        .map_err(map_business_error)?;
+    require_admin_user(&state, &headers).await?;
+    let codes = run_business(&state, move |storage| {
+        ps_storage::list_all_invite_codes(storage.auth_db_path())
+    })
+    .await?;
     Ok(Json(codes))
 }
 
@@ -160,9 +168,11 @@ pub(crate) async fn create_invite_code(
     State(state): State<ApiState>,
     headers: HeaderMap,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    require_admin_user(&state, &headers)?;
-    let code = ps_storage::admin_create_invite_code(state.storage_config().auth_db_path())
-        .map_err(map_business_error)?;
+    require_admin_user(&state, &headers).await?;
+    let code = run_business(&state, move |storage| {
+        ps_storage::admin_create_invite_code(storage.auth_db_path())
+    })
+    .await?;
     Ok(Json(serde_json::json!({
         "id": code.id,
         "code": code.code,
@@ -184,9 +194,11 @@ pub(crate) async fn delete_invite_code(
     headers: HeaderMap,
     Path(code_id): Path<i64>,
 ) -> Result<Json<OkResponse>, ApiError> {
-    require_admin_user(&state, &headers)?;
-    let did_delete = ps_storage::delete_invite_code(state.storage_config().auth_db_path(), code_id)
-        .map_err(map_business_error)?;
+    require_admin_user(&state, &headers).await?;
+    let did_delete = run_business(&state, move |storage| {
+        ps_storage::delete_invite_code(storage.auth_db_path(), code_id)
+    })
+    .await?;
     if !did_delete {
         return Err(ApiError::not_found("Code not found or already used"));
     }
@@ -205,8 +217,8 @@ pub(crate) async fn stats(
     State(state): State<ApiState>,
     headers: HeaderMap,
 ) -> Result<Json<AdminStatsResponse>, ApiError> {
-    require_admin_user(&state, &headers)?;
-    let stats = ps_storage::get_admin_stats(state.storage_config()).map_err(map_business_error)?;
+    require_admin_user(&state, &headers).await?;
+    let stats = run_business(&state, move |storage| ps_storage::get_admin_stats(&storage)).await?;
     Ok(Json(stats))
 }
 
@@ -222,9 +234,11 @@ pub(crate) async fn list_scheduled_tasks(
     State(state): State<ApiState>,
     headers: HeaderMap,
 ) -> Result<Json<Vec<ScheduledTaskInfo>>, ApiError> {
-    require_admin_user(&state, &headers)?;
-    let tasks = ps_storage::list_scheduled_tasks(state.storage_config().auth_db_path())
-        .map_err(map_business_error)?;
+    require_admin_user(&state, &headers).await?;
+    let tasks = run_business(&state, move |storage| {
+        ps_storage::list_scheduled_tasks(storage.auth_db_path())
+    })
+    .await?;
     Ok(Json(tasks))
 }
 
@@ -242,7 +256,7 @@ pub(crate) async fn create_scheduled_task(
     headers: HeaderMap,
     Json(body): Json<ScheduledTaskCreate>,
 ) -> Result<Json<ScheduledTaskInfo>, ApiError> {
-    require_admin_user(&state, &headers)?;
+    require_admin_user(&state, &headers).await?;
     let (name, cron, timezone) = validate_scheduled_task_payload(
         Some(&body.name),
         Some(&body.cron),
@@ -250,19 +264,28 @@ pub(crate) async fn create_scheduled_task(
         Some(body.timeout_seconds),
         Some(&body.job),
     )?;
-    let task = ps_storage::create_scheduled_task(
-        state.storage_config().auth_db_path(),
-        ps_storage::ScheduledTaskCreateParams {
-            name: name.unwrap_or_default(),
-            job: &body.job,
-            cron: cron.unwrap_or_default(),
-            timezone: timezone.unwrap_or("UTC"),
-            timeout_seconds: body.timeout_seconds,
-            coalesce: body.coalesce,
-            enabled: body.enabled,
-        },
-    )
-    .map_err(map_business_error)?;
+    let name = name.unwrap_or_default().to_string();
+    let cron = cron.unwrap_or_default().to_string();
+    let timezone = timezone.unwrap_or("UTC").to_string();
+    let job = body.job;
+    let timeout_seconds = body.timeout_seconds;
+    let coalesce = body.coalesce;
+    let enabled = body.enabled;
+    let task = run_business(&state, move |storage| {
+        ps_storage::create_scheduled_task(
+            storage.auth_db_path(),
+            ps_storage::ScheduledTaskCreateParams {
+                name: &name,
+                job: &job,
+                cron: &cron,
+                timezone: &timezone,
+                timeout_seconds,
+                coalesce,
+                enabled,
+            },
+        )
+    })
+    .await?;
     Ok(Json(task))
 }
 
@@ -282,7 +305,7 @@ pub(crate) async fn update_scheduled_task(
     Path(task_id): Path<i64>,
     Json(body): Json<ScheduledTaskUpdate>,
 ) -> Result<Json<ScheduledTaskInfo>, ApiError> {
-    require_admin_user(&state, &headers)?;
+    require_admin_user(&state, &headers).await?;
     let (name, cron, timezone) = validate_scheduled_task_payload(
         body.name.as_deref(),
         body.cron.as_deref(),
@@ -290,20 +313,29 @@ pub(crate) async fn update_scheduled_task(
         body.timeout_seconds,
         body.job.as_ref(),
     )?;
-    let task = ps_storage::update_scheduled_task(
-        state.storage_config().auth_db_path(),
-        ps_storage::ScheduledTaskUpdateParams {
-            task_id,
-            name,
-            job: body.job.as_ref(),
-            cron,
-            timezone,
-            timeout_seconds: body.timeout_seconds,
-            coalesce: body.coalesce,
-            enabled: body.enabled,
-        },
-    )
-    .map_err(map_business_error)?;
+    let name = name.map(str::to_string);
+    let cron = cron.map(str::to_string);
+    let timezone = timezone.map(str::to_string);
+    let job = body.job;
+    let timeout_seconds = body.timeout_seconds;
+    let coalesce = body.coalesce;
+    let enabled = body.enabled;
+    let task = run_business(&state, move |storage| {
+        ps_storage::update_scheduled_task(
+            storage.auth_db_path(),
+            ps_storage::ScheduledTaskUpdateParams {
+                task_id,
+                name: name.as_deref(),
+                job: job.as_ref(),
+                cron: cron.as_deref(),
+                timezone: timezone.as_deref(),
+                timeout_seconds,
+                coalesce,
+                enabled,
+            },
+        )
+    })
+    .await?;
     let Some(task) = task else {
         return Err(ApiError::not_found("Scheduled task not found"));
     };
@@ -324,10 +356,11 @@ pub(crate) async fn delete_scheduled_task(
     headers: HeaderMap,
     Path(task_id): Path<i64>,
 ) -> Result<Json<OkResponse>, ApiError> {
-    require_admin_user(&state, &headers)?;
-    let did_delete =
-        ps_storage::delete_scheduled_task(state.storage_config().auth_db_path(), task_id)
-            .map_err(map_business_error)?;
+    require_admin_user(&state, &headers).await?;
+    let did_delete = run_business(&state, move |storage| {
+        ps_storage::delete_scheduled_task(storage.auth_db_path(), task_id)
+    })
+    .await?;
     if !did_delete {
         return Err(ApiError::not_found("Scheduled task not found"));
     }
@@ -346,14 +379,17 @@ pub(crate) async fn scheduler_status(
     State(state): State<ApiState>,
     headers: HeaderMap,
 ) -> Result<Json<SchedulerStatusResponse>, ApiError> {
-    require_admin_user(&state, &headers)?;
-    let status = ps_storage::get_scheduler_status(
-        state.storage_config().auth_db_path(),
-        current_unix_time(),
-        ps_worker::scheduler::SCHEDULER_HEALTH_WINDOW_SECONDS,
-        20,
-    )
-    .map_err(map_business_error)?;
+    require_admin_user(&state, &headers).await?;
+    let now = current_unix_time();
+    let status = run_business(&state, move |storage| {
+        ps_storage::get_scheduler_status(
+            storage.auth_db_path(),
+            now,
+            ps_worker::scheduler::SCHEDULER_HEALTH_WINDOW_SECONDS,
+            20,
+        )
+    })
+    .await?;
     Ok(Json(status))
 }
 
@@ -369,9 +405,11 @@ pub(crate) async fn list_runtime_settings(
     State(state): State<ApiState>,
     headers: HeaderMap,
 ) -> Result<Json<Vec<RuntimeSettingInfo>>, ApiError> {
-    require_admin_user(&state, &headers)?;
-    let settings = ps_storage::list_runtime_settings(state.storage_config().auth_db_path())
-        .map_err(map_business_error)?;
+    require_admin_user(&state, &headers).await?;
+    let settings = run_business(&state, move |storage| {
+        ps_storage::list_runtime_settings(storage.auth_db_path())
+    })
+    .await?;
     Ok(Json(settings))
 }
 
@@ -389,10 +427,12 @@ pub(crate) async fn update_runtime_settings(
     headers: HeaderMap,
     Json(body): Json<RuntimeSettingsUpdate>,
 ) -> Result<Json<Vec<RuntimeSettingInfo>>, ApiError> {
-    require_admin_user(&state, &headers)?;
-    let settings =
-        ps_storage::upsert_runtime_settings(state.storage_config().auth_db_path(), &body.values)
-            .map_err(map_business_error)?;
+    require_admin_user(&state, &headers).await?;
+    let values = body.values;
+    let settings = run_business(&state, move |storage| {
+        ps_storage::upsert_runtime_settings(storage.auth_db_path(), &values)
+    })
+    .await?;
     Ok(Json(settings))
 }
 
@@ -408,9 +448,11 @@ pub(crate) async fn list_announcements(
     State(state): State<ApiState>,
     headers: HeaderMap,
 ) -> Result<Json<Vec<AnnouncementInfo>>, ApiError> {
-    require_admin_user(&state, &headers)?;
-    let announcements = ps_storage::list_all_announcements(state.storage_config().auth_db_path())
-        .map_err(map_business_error)?;
+    require_admin_user(&state, &headers).await?;
+    let announcements = run_business(&state, move |storage| {
+        ps_storage::list_all_announcements(storage.auth_db_path())
+    })
+    .await?;
     Ok(Json(announcements))
 }
 
@@ -428,20 +470,26 @@ pub(crate) async fn create_announcement(
     headers: HeaderMap,
     Json(body): Json<AnnouncementCreate>,
 ) -> Result<Json<AnnouncementInfo>, ApiError> {
-    require_admin_user(&state, &headers)?;
+    require_admin_user(&state, &headers).await?;
     let (title, message, priority) = validate_announcement_payload(
         Some(&body.title),
         Some(&body.message),
         Some(&body.priority),
     )?;
-    let announcement = ps_storage::create_announcement(
-        state.storage_config().auth_db_path(),
-        title.unwrap_or_default(),
-        message.unwrap_or_default(),
-        priority.as_deref().unwrap_or("normal"),
-        body.enabled,
-    )
-    .map_err(map_business_error)?;
+    let title = title.unwrap_or_default().to_string();
+    let message = message.unwrap_or_default().to_string();
+    let priority = priority.unwrap_or_else(|| "normal".to_string());
+    let enabled = body.enabled;
+    let announcement = run_business(&state, move |storage| {
+        ps_storage::create_announcement(
+            storage.auth_db_path(),
+            &title,
+            &message,
+            &priority,
+            enabled,
+        )
+    })
+    .await?;
     Ok(Json(announcement))
 }
 
@@ -461,21 +509,26 @@ pub(crate) async fn update_announcement(
     Path(announcement_id): Path<i64>,
     Json(body): Json<AnnouncementUpdate>,
 ) -> Result<Json<AnnouncementInfo>, ApiError> {
-    require_admin_user(&state, &headers)?;
+    require_admin_user(&state, &headers).await?;
     let (title, message, priority) = validate_announcement_payload(
         body.title.as_deref(),
         body.message.as_deref(),
         body.priority.as_deref(),
     )?;
-    let announcement = ps_storage::update_announcement(
-        state.storage_config().auth_db_path(),
-        announcement_id,
-        title,
-        message,
-        priority.as_deref(),
-        body.enabled,
-    )
-    .map_err(map_business_error)?;
+    let title = title.map(str::to_string);
+    let message = message.map(str::to_string);
+    let enabled = body.enabled;
+    let announcement = run_business(&state, move |storage| {
+        ps_storage::update_announcement(
+            storage.auth_db_path(),
+            announcement_id,
+            title.as_deref(),
+            message.as_deref(),
+            priority.as_deref(),
+            enabled,
+        )
+    })
+    .await?;
     let Some(announcement) = announcement else {
         return Err(ApiError::not_found("Announcement not found"));
     };
@@ -496,10 +549,11 @@ pub(crate) async fn delete_announcement(
     headers: HeaderMap,
     Path(announcement_id): Path<i64>,
 ) -> Result<Json<OkResponse>, ApiError> {
-    require_admin_user(&state, &headers)?;
-    let did_delete =
-        ps_storage::delete_announcement(state.storage_config().auth_db_path(), announcement_id)
-            .map_err(map_business_error)?;
+    require_admin_user(&state, &headers).await?;
+    let did_delete = run_business(&state, move |storage| {
+        ps_storage::delete_announcement(storage.auth_db_path(), announcement_id)
+    })
+    .await?;
     if !did_delete {
         return Err(ApiError::not_found("Announcement not found"));
     }
@@ -581,6 +635,18 @@ fn map_business_error(error: BusinessRepositoryError) -> ApiError {
         }
         _ => ApiError::internal_server_error(),
     }
+}
+
+async fn run_business<Output, Work>(state: &ApiState, work: Work) -> Result<Output, ApiError>
+where
+    Work: FnOnce(StorageConfig) -> Result<Output, BusinessRepositoryError> + Send + 'static,
+    Output: Send + 'static,
+{
+    let storage = state.storage_config().clone();
+    state
+        .run_blocking(move || work(storage))
+        .await?
+        .map_err(map_business_error)
 }
 
 fn current_unix_time() -> f64 {

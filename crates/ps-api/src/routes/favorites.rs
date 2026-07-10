@@ -11,7 +11,7 @@ use ps_domain::{
     FavoriteCheckResponse, FavoriteResponse, FavoriteTrackingResponse, FolderCreate, FolderRename,
     FolderResponse, OkResponse, TrackingSetRequest,
 };
-use ps_storage::BusinessRepositoryError;
+use ps_storage::{BusinessRepositoryError, StorageConfig};
 use serde::Deserialize;
 use utoipa::IntoParams;
 
@@ -67,9 +67,11 @@ pub(crate) async fn list_folders(
     State(state): State<ApiState>,
     headers: HeaderMap,
 ) -> Result<Json<Vec<FolderResponse>>, ApiError> {
-    let (user, _) = require_current_user(&state, &headers)?;
-    let folders = ps_storage::list_folders(state.storage_config().auth_db_path(), user.id)
-        .map_err(map_business_error)?;
+    let (user, _) = require_current_user(&state, &headers).await?;
+    let folders = run_business(&state, move |storage| {
+        ps_storage::list_folders(storage.auth_db_path(), user.id)
+    })
+    .await?;
     Ok(Json(folders))
 }
 
@@ -87,16 +89,14 @@ pub(crate) async fn create_folder(
     headers: HeaderMap,
     Json(body): Json<FolderCreate>,
 ) -> Result<Json<FolderResponse>, ApiError> {
-    let (user, _) = require_current_user(&state, &headers)?;
-    let name = body.name.trim();
-    validate_folder_name(name)?;
-    let folder = ps_storage::create_folder(
-        state.storage_config().auth_db_path(),
-        user.id,
-        name,
-        body.is_tracking,
-    )
-    .map_err(map_business_error)?;
+    let (user, _) = require_current_user(&state, &headers).await?;
+    let name = body.name.trim().to_string();
+    validate_folder_name(&name)?;
+    let is_tracking = body.is_tracking;
+    let folder = run_business(&state, move |storage| {
+        ps_storage::create_folder(storage.auth_db_path(), user.id, &name, is_tracking)
+    })
+    .await?;
     Ok(Json(folder))
 }
 
@@ -116,16 +116,13 @@ pub(crate) async fn rename_folder(
     Path(folder_id): Path<i64>,
     Json(body): Json<FolderRename>,
 ) -> Result<Json<OkResponse>, ApiError> {
-    let (user, _) = require_current_user(&state, &headers)?;
-    let name = body.name.trim();
-    validate_folder_name(name)?;
-    let did_rename = ps_storage::rename_folder(
-        state.storage_config().auth_db_path(),
-        user.id,
-        folder_id,
-        name,
-    )
-    .map_err(map_business_error)?;
+    let (user, _) = require_current_user(&state, &headers).await?;
+    let name = body.name.trim().to_string();
+    validate_folder_name(&name)?;
+    let did_rename = run_business(&state, move |storage| {
+        ps_storage::rename_folder(storage.auth_db_path(), user.id, folder_id, &name)
+    })
+    .await?;
     if !did_rename {
         return Err(ApiError::not_found("Folder not found"));
     }
@@ -146,10 +143,11 @@ pub(crate) async fn delete_folder(
     headers: HeaderMap,
     Path(folder_id): Path<i64>,
 ) -> Result<Json<OkResponse>, ApiError> {
-    let (user, _) = require_current_user(&state, &headers)?;
-    let did_delete =
-        ps_storage::delete_folder(state.storage_config().auth_db_path(), user.id, folder_id)
-            .map_err(map_business_error)?;
+    let (user, _) = require_current_user(&state, &headers).await?;
+    let did_delete = run_business(&state, move |storage| {
+        ps_storage::delete_folder(storage.auth_db_path(), user.id, folder_id)
+    })
+    .await?;
     if !did_delete {
         return Err(ApiError::not_found("Folder not found"));
     }
@@ -168,9 +166,11 @@ pub(crate) async fn get_tracking(
     State(state): State<ApiState>,
     headers: HeaderMap,
 ) -> Result<Json<FavoriteTrackingResponse>, ApiError> {
-    let (user, _) = require_current_user(&state, &headers)?;
-    let folder = ps_storage::get_tracking_folder(state.storage_config().auth_db_path(), user.id)
-        .map_err(map_business_error)?;
+    let (user, _) = require_current_user(&state, &headers).await?;
+    let folder = run_business(&state, move |storage| {
+        ps_storage::get_tracking_folder(storage.auth_db_path(), user.id)
+    })
+    .await?;
     Ok(Json(FavoriteTrackingResponse {
         folder_id: folder.as_ref().map(|item| item.id),
         folder_name: folder.map(|item| item.name),
@@ -191,13 +191,12 @@ pub(crate) async fn set_tracking(
     headers: HeaderMap,
     Json(body): Json<TrackingSetRequest>,
 ) -> Result<Json<OkResponse>, ApiError> {
-    let (user, _) = require_current_user(&state, &headers)?;
-    let did_set = ps_storage::set_tracking_folder(
-        state.storage_config().auth_db_path(),
-        user.id,
-        body.folder_id,
-    )
-    .map_err(map_business_error)?;
+    let (user, _) = require_current_user(&state, &headers).await?;
+    let folder_id = body.folder_id;
+    let did_set = run_business(&state, move |storage| {
+        ps_storage::set_tracking_folder(storage.auth_db_path(), user.id, folder_id)
+    })
+    .await?;
     if !did_set {
         return Err(ApiError::not_found("Folder not found"));
     }
@@ -222,7 +221,7 @@ pub(crate) async fn list_folder_articles(
     Path(folder_id): Path<i64>,
     Query(query): Query<FolderArticlesQuery>,
 ) -> Result<Json<Vec<FavoriteArticleResponse>>, ApiError> {
-    let (user, _) = require_current_user(&state, &headers)?;
+    let (user, _) = require_current_user(&state, &headers).await?;
     let limit = query.limit.unwrap_or(100);
     let offset = query.offset.unwrap_or(0);
     if !(1..=500).contains(&limit) {
@@ -233,14 +232,10 @@ pub(crate) async fn list_folder_articles(
             "offset must be greater than or equal to 0",
         ));
     }
-    let rows = ps_storage::list_favorite_articles(
-        state.storage_config(),
-        user.id,
-        Some(folder_id),
-        limit,
-        offset,
-    )
-    .map_err(map_business_error)?;
+    let rows = run_business(&state, move |storage| {
+        ps_storage::list_favorite_articles(&storage, user.id, Some(folder_id), limit, offset)
+    })
+    .await?;
     Ok(Json(rows))
 }
 
@@ -258,13 +253,11 @@ pub(crate) async fn folder_count(
     headers: HeaderMap,
     Path(folder_id): Path<i64>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    let (user, _) = require_current_user(&state, &headers)?;
-    let count = ps_storage::count_favorites(
-        state.storage_config().auth_db_path(),
-        user.id,
-        Some(folder_id),
-    )
-    .map_err(map_business_error)?;
+    let (user, _) = require_current_user(&state, &headers).await?;
+    let count = run_business(&state, move |storage| {
+        ps_storage::count_favorites(storage.auth_db_path(), user.id, Some(folder_id))
+    })
+    .await?;
     Ok(Json(serde_json::json!({ "count": count })))
 }
 
@@ -286,20 +279,17 @@ pub(crate) async fn export_folder(
     Path(folder_id): Path<i64>,
     Query(query): Query<ExportQuery>,
 ) -> Result<Response, ApiError> {
-    let (user, _) = require_current_user(&state, &headers)?;
-    let folders = ps_storage::list_folders(state.storage_config().auth_db_path(), user.id)
-        .map_err(map_business_error)?;
+    let (user, _) = require_current_user(&state, &headers).await?;
+    let (folders, articles) = run_business(&state, move |storage| {
+        let folders = ps_storage::list_folders(storage.auth_db_path(), user.id)?;
+        let articles =
+            ps_storage::list_favorite_articles(&storage, user.id, Some(folder_id), 100_000, 0)?;
+        Ok((folders, articles))
+    })
+    .await?;
     let Some(folder) = folders.into_iter().find(|item| item.id == folder_id) else {
         return Err(ApiError::not_found("Folder not found"));
     };
-    let articles = ps_storage::list_favorite_articles(
-        state.storage_config(),
-        user.id,
-        Some(folder_id),
-        100_000,
-        0,
-    )
-    .map_err(map_business_error)?;
     let format = query.format.unwrap_or_else(|| "bibtex".to_string());
     let (content, media_type, extension) = match format.as_str() {
         "bibtex" => (to_bibtex(&articles), "application/x-bibtex", "bib"),
@@ -340,14 +330,11 @@ pub(crate) async fn add_favorite(
     Path(folder_id): Path<i64>,
     Json(body): Json<FavoriteAdd>,
 ) -> Result<Json<FavoriteResponse>, ApiError> {
-    let (user, _) = require_current_user(&state, &headers)?;
-    let favorite = ps_storage::add_favorite(
-        state.storage_config().auth_db_path(),
-        user.id,
-        folder_id,
-        &body,
-    )
-    .map_err(map_business_error)?;
+    let (user, _) = require_current_user(&state, &headers).await?;
+    let favorite = run_business(&state, move |storage| {
+        ps_storage::add_favorite(storage.auth_db_path(), user.id, folder_id, &body)
+    })
+    .await?;
     Ok(Json(favorite))
 }
 
@@ -370,15 +357,18 @@ pub(crate) async fn remove_favorite(
     Path((folder_id, article_id)): Path<(i64, i64)>,
     Query(query): Query<FavoriteDbQuery>,
 ) -> Result<Json<OkResponse>, ApiError> {
-    let (user, _) = require_current_user(&state, &headers)?;
-    let did_remove = ps_storage::remove_favorite(
-        state.storage_config().auth_db_path(),
-        user.id,
-        folder_id,
-        article_id,
-        query.db_name.as_deref().unwrap_or_default(),
-    )
-    .map_err(map_business_error)?;
+    let (user, _) = require_current_user(&state, &headers).await?;
+    let db_name = query.db_name.unwrap_or_default();
+    let did_remove = run_business(&state, move |storage| {
+        ps_storage::remove_favorite(
+            storage.auth_db_path(),
+            user.id,
+            folder_id,
+            article_id,
+            &db_name,
+        )
+    })
+    .await?;
     if !did_remove {
         return Err(ApiError::not_found("Favorite not found"));
     }
@@ -401,14 +391,12 @@ pub(crate) async fn bulk_add(
     Path(folder_id): Path<i64>,
     Json(body): Json<FavoriteBulkAdd>,
 ) -> Result<Json<FavoriteBulkAddResult>, ApiError> {
-    let (user, _) = require_current_user(&state, &headers)?;
-    let added = ps_storage::bulk_add_favorites(
-        state.storage_config().auth_db_path(),
-        user.id,
-        folder_id,
-        &body.articles,
-    )
-    .map_err(map_business_error)?;
+    let (user, _) = require_current_user(&state, &headers).await?;
+    let articles = body.articles;
+    let added = run_business(&state, move |storage| {
+        ps_storage::bulk_add_favorites(storage.auth_db_path(), user.id, folder_id, &articles)
+    })
+    .await?;
     Ok(Json(FavoriteBulkAddResult { added }))
 }
 
@@ -428,14 +416,12 @@ pub(crate) async fn bulk_remove(
     Path(folder_id): Path<i64>,
     Json(body): Json<FavoriteBulkRemove>,
 ) -> Result<Json<FavoriteBulkResult>, ApiError> {
-    let (user, _) = require_current_user(&state, &headers)?;
-    let count = ps_storage::bulk_remove_favorites(
-        state.storage_config().auth_db_path(),
-        user.id,
-        folder_id,
-        &body.articles,
-    )
-    .map_err(map_business_error)?;
+    let (user, _) = require_current_user(&state, &headers).await?;
+    let articles = body.articles;
+    let count = run_business(&state, move |storage| {
+        ps_storage::bulk_remove_favorites(storage.auth_db_path(), user.id, folder_id, &articles)
+    })
+    .await?;
     Ok(Json(FavoriteBulkResult { count }))
 }
 
@@ -455,15 +441,19 @@ pub(crate) async fn bulk_move(
     Path(folder_id): Path<i64>,
     Json(body): Json<FavoriteBulkMove>,
 ) -> Result<Json<FavoriteBulkResult>, ApiError> {
-    let (user, _) = require_current_user(&state, &headers)?;
-    let count = ps_storage::bulk_move_favorites(
-        state.storage_config().auth_db_path(),
-        user.id,
-        folder_id,
-        body.target_folder_id,
-        &body.articles,
-    )
-    .map_err(map_business_error)?;
+    let (user, _) = require_current_user(&state, &headers).await?;
+    let target_folder_id = body.target_folder_id;
+    let articles = body.articles;
+    let count = run_business(&state, move |storage| {
+        ps_storage::bulk_move_favorites(
+            storage.auth_db_path(),
+            user.id,
+            folder_id,
+            target_folder_id,
+            &articles,
+        )
+    })
+    .await?;
     Ok(Json(FavoriteBulkResult { count }))
 }
 
@@ -481,14 +471,13 @@ pub(crate) async fn check_favorite(
     headers: HeaderMap,
     Query(query): Query<FavoriteCheckQuery>,
 ) -> Result<Json<Vec<FavoriteCheckResponse>>, ApiError> {
-    let (user, _) = require_current_user(&state, &headers)?;
-    let rows = ps_storage::is_favorited(
-        state.storage_config().auth_db_path(),
-        user.id,
-        query.article_id,
-        query.db_name.as_deref().unwrap_or_default(),
-    )
-    .map_err(map_business_error)?;
+    let (user, _) = require_current_user(&state, &headers).await?;
+    let article_id = query.article_id;
+    let db_name = query.db_name.unwrap_or_default();
+    let rows = run_business(&state, move |storage| {
+        ps_storage::is_favorited(storage.auth_db_path(), user.id, article_id, &db_name)
+    })
+    .await?;
     Ok(Json(rows))
 }
 
@@ -506,19 +495,17 @@ pub(crate) async fn check_favorites_batch(
     headers: HeaderMap,
     Json(body): Json<FavoriteBatchCheckRequest>,
 ) -> Result<Json<Vec<ps_domain::FavoriteBatchCheckResponse>>, ApiError> {
-    let (user, _) = require_current_user(&state, &headers)?;
+    let (user, _) = require_current_user(&state, &headers).await?;
     let article_ids = body
         .article_ids
         .iter()
         .map(|article_id| article_id.value())
         .collect::<Vec<_>>();
-    let rows = ps_storage::batch_is_favorited(
-        state.storage_config().auth_db_path(),
-        user.id,
-        &article_ids,
-        &body.db_name,
-    )
-    .map_err(map_business_error)?;
+    let db_name = body.db_name;
+    let rows = run_business(&state, move |storage| {
+        ps_storage::batch_is_favorited(storage.auth_db_path(), user.id, &article_ids, &db_name)
+    })
+    .await?;
     Ok(Json(rows))
 }
 
@@ -544,6 +531,18 @@ fn map_business_error(error: BusinessRepositoryError) -> ApiError {
         }
         _ => ApiError::internal_server_error(),
     }
+}
+
+async fn run_business<Output, Work>(state: &ApiState, work: Work) -> Result<Output, ApiError>
+where
+    Work: FnOnce(StorageConfig) -> Result<Output, BusinessRepositoryError> + Send + 'static,
+    Output: Send + 'static,
+{
+    let storage = state.storage_config().clone();
+    state
+        .run_blocking(move || work(storage))
+        .await?
+        .map_err(map_business_error)
 }
 
 fn export_filename(folder_name: &str, extension: &str) -> String {

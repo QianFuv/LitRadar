@@ -26,7 +26,10 @@ use crate::state::ApiState;
 pub(crate) async fn get_announcements(
     State(state): State<ApiState>,
 ) -> Result<Json<Vec<AnnouncementInfo>>, ApiError> {
-    let announcements = list_active_announcements(state.storage_config().auth_db_path())
+    let auth_db_path = state.storage_config().auth_db_path().to_path_buf();
+    let announcements = state
+        .run_blocking(move || list_active_announcements(&auth_db_path))
+        .await?
         .map_err(|_| ApiError::internal_server_error())?;
     Ok(Json(announcements))
 }

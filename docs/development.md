@@ -107,6 +107,8 @@ printf '%s\n' "$ADMIN_PASSWORD" | cargo run --bin admin -- bootstrap --username 
 
 登录与注册限流保存在单个 `ApiState` 的有界内存结构中。用户名键会转为小写并定期清理，登录和注册另有各自的全局固定窗口。时间相关测试直接向 limiter 传入确定性秒值，不使用 sleep。
 
+API 和 MCP 的同步边界集中在 `ApiState` 的有界阻塞执行器。SQLite、PBKDF2、同步 HTTP 客户端、文件系统以及手动推送编排都必须通过该边界进入 Tokio blocking pool，不能直接在 route/tool future 中执行。默认最多同时运行 8 个阻塞任务，等待许可和执行结果共享 30 秒期限；worker 健康查询使用 1 秒期限，CNKI 使用与业务操作相符的显式期限。饱和或关闭时 HTTP 返回不泄露内部信息的 503，MCP 返回通用内部错误；已经开始的 `spawn_blocking` 无法安全取消，因此即使请求超时也会继续持有许可，直到同步任务真正结束。后台手动推送同样占用许可，但不套用 HTTP 请求期限，避免外部副作用仍在继续时提前记录失败。新增路由时必须复用这一边界，并为饱和时的轻量请求响应补确定性测试。
+
 ### Rust worker
 
 ```bash

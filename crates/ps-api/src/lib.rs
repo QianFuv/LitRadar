@@ -60,13 +60,15 @@ pub async fn serve(config: ApiConfig) -> Result<(), Box<dyn Error>> {
     observability::init_tracing();
 
     let bind_address = config.bind_address();
-    let router = try_build_router(config)?;
+    let (router, state) = try_build_router_with_state(config)?;
     let listener = TcpListener::bind(&bind_address).await?;
     println!("ps-api listening on {}", listener.local_addr()?);
 
-    axum::serve(listener, router)
-        .with_graceful_shutdown(shutdown_signal())
-        .await?;
+    let serve_result = axum::serve(listener, router)
+        .with_graceful_shutdown(shutdown_signal(state.clone()))
+        .await;
+    state.close_blocking_executor();
+    serve_result?;
 
     Ok(())
 }
@@ -93,14 +95,20 @@ pub fn build_router(config: ApiConfig) -> Router {
 /// # Returns
 ///
 /// Axum router with database-backed runtime settings applied.
-pub fn try_build_router(mut config: ApiConfig) -> Result<Router, Box<dyn Error>> {
+pub fn try_build_router(config: ApiConfig) -> Result<Router, Box<dyn Error>> {
+    try_build_router_with_state(config).map(|(router, _state)| router)
+}
+
+fn try_build_router_with_state(
+    mut config: ApiConfig,
+) -> Result<(Router, ApiState), Box<dyn Error>> {
     let storage_config = StorageConfig::from_project_root(config.project_root.clone());
     ps_storage::migrate_storage(&storage_config)?;
     let runtime_settings = ps_storage::list_runtime_settings(storage_config.auth_db_path())?;
     config.apply_runtime_settings(&runtime_settings)?;
     let state = ApiState::new(storage_config, config.are_session_cookies_secure);
 
-    Ok(Router::new()
+    let router = Router::new()
         .nest_service("/mcp", mcp::service(&config, state.clone()))
         .merge(openapi::docs_router())
         .nest(API_PREFIX, routes::public_routes())
@@ -117,7 +125,8 @@ pub fn try_build_router(mut config: ApiConfig) -> Result<Router, Box<dyn Error>>
                 })
                 .on_response(DefaultOnResponse::new().level(Level::INFO)),
         )
-        .with_state(state))
+        .with_state(state.clone());
+    Ok((router, state))
 }
 
 /// Build a CORS layer compatible with the existing Python configuration.
@@ -187,10 +196,11 @@ fn is_public_index_cache_path(path: &str) -> bool {
         || path.starts_with(&format!("{API_PREFIX}/meta"))
 }
 
-async fn shutdown_signal() {
+async fn shutdown_signal(state: ApiState) {
     if let Err(error) = tokio::signal::ctrl_c().await {
         eprintln!("failed to install Ctrl+C handler: {error}");
     }
+    state.close_blocking_executor();
 }
 
 #[cfg(test)]

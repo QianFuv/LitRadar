@@ -47,8 +47,8 @@ pub(crate) async fn register(
     State(state): State<ApiState>,
     Json(body): Json<RegisterRequest>,
 ) -> Result<Json<UserResponse>, ApiError> {
-    let username = body.username.trim();
-    if !is_valid_username(username) {
+    let username = body.username.trim().to_string();
+    if !is_valid_username(&username) {
         return Err(ApiError::bad_request(
             "Username must be 3-32 alphanumeric or underscore characters",
         ));
@@ -56,12 +56,15 @@ pub(crate) async fn register(
     if !is_valid_new_password(&body.password) {
         return Err(ApiError::bad_request(password_policy_message()));
     }
-    check_auth_rate_limit(&state, AuthAttemptKind::Register, username)?;
-    let invite_code = (!body.invite_code.is_empty()).then_some(body.invite_code.as_str());
-    let user = auth_service(&state)
-        .register(username, &body.password, invite_code)
-        .map_err(map_auth_error)?;
-    state.clear_auth_attempts(username);
+    check_auth_rate_limit(&state, AuthAttemptKind::Register, &username)?;
+    let password = body.password;
+    let invite_code = (!body.invite_code.is_empty()).then_some(body.invite_code);
+    let auth_username = username.clone();
+    let user = run_auth(&state, move |service| {
+        service.register(&auth_username, &password, invite_code.as_deref())
+    })
+    .await?;
+    state.clear_auth_attempts(&username);
     Ok(Json(user))
 }
 
@@ -89,12 +92,15 @@ pub(crate) async fn login(
     State(state): State<ApiState>,
     Json(body): Json<LoginRequest>,
 ) -> Result<Response, ApiError> {
-    let username = body.username.trim();
-    check_auth_rate_limit(&state, AuthAttemptKind::Login, username)?;
-    let session = auth_service(&state)
-        .login(username, &body.password)
-        .map_err(map_auth_error)?;
-    state.clear_auth_attempts(username);
+    let username = body.username.trim().to_string();
+    check_auth_rate_limit(&state, AuthAttemptKind::Login, &username)?;
+    let password = body.password;
+    let auth_username = username.clone();
+    let session = run_auth(&state, move |service| {
+        service.login(&auth_username, &password)
+    })
+    .await?;
+    state.clear_auth_attempts(&username);
     let payload = LoginResponse {
         user: session.user,
         expires_at: session.expires_at,
@@ -133,7 +139,7 @@ pub(crate) async fn get_me(
     State(state): State<ApiState>,
     headers: HeaderMap,
 ) -> Result<Json<UserResponse>, ApiError> {
-    let (user, _) = require_current_user(&state, &headers)?;
+    let (user, _) = require_current_user(&state, &headers).await?;
     Ok(Json(user))
 }
 
@@ -164,10 +170,13 @@ pub(crate) async fn change_password(
     if !is_valid_new_password(&body.new_password) {
         return Err(ApiError::bad_request(password_policy_message()));
     }
-    let (user, _) = require_current_user(&state, &headers)?;
-    let did_change = auth_service(&state)
-        .change_password(user.id, &body.old_password, &body.new_password)
-        .map_err(map_auth_error)?;
+    let (user, _) = require_current_user(&state, &headers).await?;
+    let old_password = body.old_password;
+    let new_password = body.new_password;
+    let did_change = run_auth(&state, move |service| {
+        service.change_password(user.id, &old_password, &new_password)
+    })
+    .await?;
     if !did_change {
         return Err(ApiError::bad_request("Old password is incorrect"));
     }
@@ -195,10 +204,12 @@ pub(crate) async fn logout(
     State(state): State<ApiState>,
     headers: HeaderMap,
 ) -> Result<Response, ApiError> {
-    let (user, token) = require_current_user(&state, &headers)?;
-    auth_service(&state)
-        .revoke_access_token_value(&token)
-        .map_err(map_auth_error)?;
+    let (user, token) = require_current_user(&state, &headers).await?;
+    let token_to_revoke = token.clone();
+    run_auth(&state, move |service| {
+        service.revoke_access_token_value(&token_to_revoke)
+    })
+    .await?;
     let mut response = Json(LogoutResponse {
         ok: true,
         user_id: user.id,
@@ -238,11 +249,13 @@ pub(crate) async fn create_token(
     headers: HeaderMap,
     Json(body): Json<TokenCreateRequest>,
 ) -> Result<Json<TokenCreateResponse>, ApiError> {
-    let (user, _) = require_current_user(&state, &headers)?;
+    let (user, _) = require_current_user(&state, &headers).await?;
     let ttl = body.ttl.clamp(MIN_TOKEN_TTL_SECONDS, MAX_TOKEN_TTL_SECONDS);
-    let token = auth_service(&state)
-        .create_access_token(user.id, body.name.trim(), ttl)
-        .map_err(map_auth_error)?;
+    let name = body.name.trim().to_string();
+    let token = run_auth(&state, move |service| {
+        service.create_access_token(user.id, &name, ttl)
+    })
+    .await?;
     Ok(Json(token))
 }
 
@@ -267,10 +280,8 @@ pub(crate) async fn get_tokens(
     State(state): State<ApiState>,
     headers: HeaderMap,
 ) -> Result<Json<Vec<TokenInfo>>, ApiError> {
-    let (user, _) = require_current_user(&state, &headers)?;
-    let tokens = auth_service(&state)
-        .list_access_tokens(user.id)
-        .map_err(map_auth_error)?;
+    let (user, _) = require_current_user(&state, &headers).await?;
+    let tokens = run_auth(&state, move |service| service.list_access_tokens(user.id)).await?;
     Ok(Json(tokens))
 }
 
@@ -298,10 +309,11 @@ pub(crate) async fn delete_token(
     headers: HeaderMap,
     Path(token_id): Path<i64>,
 ) -> Result<Json<OkResponse>, ApiError> {
-    let (user, _) = require_current_user(&state, &headers)?;
-    let did_delete = auth_service(&state)
-        .revoke_access_token(user.id, token_id)
-        .map_err(map_auth_error)?;
+    let (user, _) = require_current_user(&state, &headers).await?;
+    let did_delete = run_auth(&state, move |service| {
+        service.revoke_access_token(user.id, token_id)
+    })
+    .await?;
     if !did_delete {
         return Err(ApiError::not_found("Token not found"));
     }
@@ -329,10 +341,8 @@ pub(crate) async fn generate_invite_code(
     State(state): State<ApiState>,
     headers: HeaderMap,
 ) -> Result<Json<InviteCodeResponse>, ApiError> {
-    let (user, _) = require_current_user(&state, &headers)?;
-    let invite = auth_service(&state)
-        .create_invite_code(user.id)
-        .map_err(map_auth_error)?;
+    let (user, _) = require_current_user(&state, &headers).await?;
+    let invite = run_auth(&state, move |service| service.create_invite_code(user.id)).await?;
     Ok(Json(invite))
 }
 
@@ -357,10 +367,8 @@ pub(crate) async fn get_invite_code(
     State(state): State<ApiState>,
     headers: HeaderMap,
 ) -> Result<Json<Option<InviteCodeResponse>>, ApiError> {
-    let (user, _) = require_current_user(&state, &headers)?;
-    let invite = auth_service(&state)
-        .get_user_invite_code(user.id)
-        .map_err(map_auth_error)?;
+    let (user, _) = require_current_user(&state, &headers).await?;
+    let invite = run_auth(&state, move |service| service.get_user_invite_code(user.id)).await?;
     Ok(Json(invite))
 }
 
@@ -382,12 +390,13 @@ pub(crate) async fn get_invite_code(
 pub(crate) async fn check_invite_required(
     State(state): State<ApiState>,
 ) -> Result<Json<InviteRequiredResponse>, ApiError> {
-    let required = auth_service(&state)
-        .is_invite_required()
-        .map_err(map_auth_error)?;
-    let bootstrap_required = auth_service(&state)
-        .is_bootstrap_required()
-        .map_err(map_auth_error)?;
+    let (required, bootstrap_required) = run_auth(&state, move |service| {
+        Ok((
+            service.is_invite_required()?,
+            service.is_bootstrap_required()?,
+        ))
+    })
+    .await?;
     Ok(Json(InviteRequiredResponse {
         required,
         bootstrap_required,
@@ -398,17 +407,19 @@ pub(crate) fn auth_service(state: &ApiState) -> AuthService {
     AuthService::new(state.storage_config().auth_db_path())
 }
 
-pub(crate) fn require_current_user(
+pub(crate) async fn require_current_user(
     state: &ApiState,
     headers: &HeaderMap,
 ) -> Result<(UserResponse, String), ApiError> {
     let token = resolve_auth_token(headers)?
         .filter(|token| !token.is_empty())
         .ok_or_else(|| ApiError::unauthorized("Authentication required"))?;
-    let user = auth_service(state)
-        .verify_access_token(&token)
-        .map_err(map_auth_error)?
-        .ok_or_else(|| ApiError::unauthorized("Invalid or expired token"))?;
+    let token_to_verify = token.clone();
+    let user = run_auth(state, move |service| {
+        service.verify_access_token(&token_to_verify)
+    })
+    .await?
+    .ok_or_else(|| ApiError::unauthorized("Invalid or expired token"))?;
     Ok((user, token))
 }
 
@@ -422,15 +433,27 @@ pub(crate) fn require_current_user(
 /// # Returns
 ///
 /// Current admin user and raw token.
-pub(crate) fn require_admin_user(
+pub(crate) async fn require_admin_user(
     state: &ApiState,
     headers: &HeaderMap,
 ) -> Result<(UserResponse, String), ApiError> {
-    let (user, token) = require_current_user(state, headers)?;
+    let (user, token) = require_current_user(state, headers).await?;
     if !user.is_admin {
         return Err(ApiError::forbidden("Admin access required"));
     }
     Ok((user, token))
+}
+
+async fn run_auth<Output, Work>(state: &ApiState, work: Work) -> Result<Output, ApiError>
+where
+    Work: FnOnce(AuthService) -> Result<Output, AuthServiceError> + Send + 'static,
+    Output: Send + 'static,
+{
+    let service = auth_service(state);
+    state
+        .run_blocking(move || work(service))
+        .await?
+        .map_err(map_auth_error)
 }
 
 fn resolve_auth_token(headers: &HeaderMap) -> Result<Option<String>, ApiError> {

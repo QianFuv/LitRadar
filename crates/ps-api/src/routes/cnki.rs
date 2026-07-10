@@ -2,6 +2,7 @@
 
 #[cfg(test)]
 use std::sync::{Mutex, OnceLock};
+use std::time::Duration;
 
 use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode};
@@ -13,6 +14,7 @@ use ps_sources::{
     FixtureZjlibCnkiMode, FixtureZjlibCnkiTransport, LiveZjlibCnkiConfig, LiveZjlibCnkiTransport,
     ZhejiangLibraryCnkiClient, ZjlibCnkiError,
 };
+use ps_storage::{CnkiRepositoryError, StorageConfig};
 use serde_json::json;
 use serde_json::Value as JsonValue;
 
@@ -60,10 +62,11 @@ pub(crate) async fn get_session(
     State(state): State<ApiState>,
     headers: HeaderMap,
 ) -> Result<Json<CnkiSessionStatusResponse>, ApiError> {
-    let (user, _) = require_current_user(&state, &headers)?;
-    let status =
-        ps_storage::get_cnki_session_status(state.storage_config().auth_db_path(), user.id)
-            .map_err(map_cnki_error)?;
+    let (user, _) = require_current_user(&state, &headers).await?;
+    let status = run_cnki(&state, move |storage| {
+        ps_storage::get_cnki_session_status(storage.auth_db_path(), user.id)
+    })
+    .await?;
     Ok(Json(status))
 }
 
@@ -88,7 +91,7 @@ pub(crate) async fn start_login(
     State(state): State<ApiState>,
     headers: HeaderMap,
 ) -> Result<Json<CnkiLoginStartResponse>, ApiError> {
-    let (user, _) = require_current_user(&state, &headers)?;
+    let (user, _) = require_current_user(&state, &headers).await?;
     match replay_mode().as_deref() {
         Some(
             REPLAY_START_SUCCESS | REPLAY_POLL_SUCCESS | REPLAY_TIMEOUT | REPLAY_WARMUP_FAILURE,
@@ -97,14 +100,16 @@ pub(crate) async fn start_login(
                 "qr_uuid": DEFAULT_QR_UUID,
                 "cookies": [],
             });
-            let session = ps_storage::upsert_cnki_session(
-                state.storage_config().auth_db_path(),
-                user.id,
-                &session_data,
-                "waiting_scan",
-                Some(DEFAULT_QR_UUID),
-            )
-            .map_err(map_cnki_error)?;
+            let session = run_cnki(&state, move |storage| {
+                ps_storage::upsert_cnki_session(
+                    storage.auth_db_path(),
+                    user.id,
+                    &session_data,
+                    "waiting_scan",
+                    Some(DEFAULT_QR_UUID),
+                )
+            })
+            .await?;
             Ok(Json(CnkiLoginStartResponse {
                 uuid: DEFAULT_QR_UUID.to_string(),
                 status: DEFAULT_QR_STATUS.to_string(),
@@ -119,12 +124,13 @@ pub(crate) async fn start_login(
             "CNKI login start replay is not configured",
         )),
         None => {
-            let auth_db_path = state.storage_config().auth_db_path().to_path_buf();
             let user_id = user.id;
             let fixture_mode = zjlib_fixture_mode();
-            let login_result = tokio::task::spawn_blocking(move || start_zjlib_login(fixture_mode))
-                .await
-                .map_err(|_| ApiError::internal_server_error())?;
+            let login_result = state
+                .run_blocking_with_timeout(Duration::from_secs(30), move || {
+                    start_zjlib_login(fixture_mode)
+                })
+                .await?;
             let (qr_login, session_data) = login_result.map_err(|error| {
                 cnki_json_error(
                     StatusCode::BAD_GATEWAY,
@@ -133,14 +139,17 @@ pub(crate) async fn start_login(
                     &error.to_string(),
                 )
             })?;
-            let session = ps_storage::upsert_cnki_session(
-                auth_db_path,
-                user_id,
-                &session_data,
-                "waiting_scan",
-                Some(&qr_login.uuid),
-            )
-            .map_err(map_cnki_error)?;
+            let qr_uuid = qr_login.uuid.clone();
+            let session = run_cnki(&state, move |storage| {
+                ps_storage::upsert_cnki_session(
+                    storage.auth_db_path(),
+                    user_id,
+                    &session_data,
+                    "waiting_scan",
+                    Some(&qr_uuid),
+                )
+            })
+            .await?;
             Ok(Json(CnkiLoginStartResponse {
                 uuid: qr_login.uuid,
                 status: qr_login.status,
@@ -176,10 +185,11 @@ pub(crate) async fn poll_login(
     Json(body): Json<CnkiLoginPollRequest>,
 ) -> Result<Json<CnkiLoginPollResponse>, ApiError> {
     validate_poll_request(&body)?;
-    let (user, _) = require_current_user(&state, &headers)?;
-    let current =
-        ps_storage::get_cnki_session_status(state.storage_config().auth_db_path(), user.id)
-            .map_err(map_cnki_error)?;
+    let (user, _) = require_current_user(&state, &headers).await?;
+    let current = run_cnki(&state, move |storage| {
+        ps_storage::get_cnki_session_status(storage.auth_db_path(), user.id)
+    })
+    .await?;
     if !current.configured || current.status == "empty" {
         return Err(cnki_json_error(
             StatusCode::BAD_REQUEST,
@@ -200,14 +210,16 @@ pub(crate) async fn poll_login(
                 ],
                 "final_zyproxy_url": "https://cnki.elib.test/kns55/"
             });
-            let session = ps_storage::upsert_cnki_session(
-                state.storage_config().auth_db_path(),
-                user.id,
-                &session_data,
-                "active",
-                Some(DEFAULT_QR_UUID),
-            )
-            .map_err(map_cnki_error)?;
+            let session = run_cnki(&state, move |storage| {
+                ps_storage::upsert_cnki_session(
+                    storage.auth_db_path(),
+                    user.id,
+                    &session_data,
+                    "active",
+                    Some(DEFAULT_QR_UUID),
+                )
+            })
+            .await?;
             Ok(Json(CnkiLoginPollResponse {
                 status: "COMPLETE".to_string(),
                 session,
@@ -232,17 +244,18 @@ pub(crate) async fn poll_login(
             ),
         )),
         None => {
-            let row =
-                ps_storage::get_cnki_session_data(state.storage_config().auth_db_path(), user.id)
-                    .map_err(map_cnki_error)?
-                    .ok_or_else(|| {
-                        cnki_json_error(
-                            StatusCode::BAD_REQUEST,
-                            "cnki_login_not_started",
-                            "login",
-                            "CNKI QR login has not been started",
-                        )
-                    })?;
+            let row = run_cnki(&state, move |storage| {
+                ps_storage::get_cnki_session_data(storage.auth_db_path(), user.id)
+            })
+            .await?
+            .ok_or_else(|| {
+                cnki_json_error(
+                    StatusCode::BAD_REQUEST,
+                    "cnki_login_not_started",
+                    "login",
+                    "CNKI QR login has not been started",
+                )
+            })?;
             if row.qr_uuid.trim().is_empty() {
                 return Err(cnki_json_error(
                     StatusCode::BAD_REQUEST,
@@ -251,7 +264,6 @@ pub(crate) async fn poll_login(
                     "CNKI QR login has not been started",
                 ));
             }
-            let auth_db_path = state.storage_config().auth_db_path().to_path_buf();
             let user_id = user.id;
             let qr_uuid = row.qr_uuid.clone();
             let mut session_data = row.session_data;
@@ -263,16 +275,17 @@ pub(crate) async fn poll_login(
             let fixture_mode = zjlib_fixture_mode();
             let timeout_seconds = body.timeout_seconds;
             let interval_seconds = body.interval_seconds;
-            let poll_result = tokio::task::spawn_blocking(move || {
-                poll_zjlib_login(
-                    fixture_mode,
-                    &session_data,
-                    timeout_seconds,
-                    interval_seconds,
-                )
-            })
-            .await
-            .map_err(|_| ApiError::internal_server_error())?;
+            let poll_deadline = Duration::from_secs(timeout_seconds as u64 + 5);
+            let poll_result = state
+                .run_blocking_with_timeout(poll_deadline, move || {
+                    poll_zjlib_login(
+                        fixture_mode,
+                        &session_data,
+                        timeout_seconds,
+                        interval_seconds,
+                    )
+                })
+                .await?;
             let session_data = match poll_result {
                 Ok(session_data) => session_data,
                 Err(ZjlibPollError::Login(error)) if error.is_timeout() => {
@@ -300,17 +313,19 @@ pub(crate) async fn poll_login(
                     ));
                 }
             };
-            let session = ps_storage::upsert_cnki_session(
-                auth_db_path,
-                user_id,
-                &session_data,
-                "active",
-                session_data
-                    .get("qr_uuid")
-                    .and_then(JsonValue::as_str)
-                    .or(Some(qr_uuid.as_str())),
-            )
-            .map_err(map_cnki_error)?;
+            let session = run_cnki(&state, move |storage| {
+                ps_storage::upsert_cnki_session(
+                    storage.auth_db_path(),
+                    user_id,
+                    &session_data,
+                    "active",
+                    session_data
+                        .get("qr_uuid")
+                        .and_then(JsonValue::as_str)
+                        .or(Some(qr_uuid.as_str())),
+                )
+            })
+            .await?;
             Ok(Json(CnkiLoginPollResponse {
                 status: "COMPLETE".to_string(),
                 session,
@@ -340,12 +355,12 @@ pub(crate) async fn clear_session(
     State(state): State<ApiState>,
     headers: HeaderMap,
 ) -> Result<Json<CnkiSessionStatusResponse>, ApiError> {
-    let (user, _) = require_current_user(&state, &headers)?;
-    ps_storage::delete_cnki_session(state.storage_config().auth_db_path(), user.id)
-        .map_err(map_cnki_error)?;
-    let status =
-        ps_storage::get_cnki_session_status(state.storage_config().auth_db_path(), user.id)
-            .map_err(map_cnki_error)?;
+    let (user, _) = require_current_user(&state, &headers).await?;
+    let status = run_cnki(&state, move |storage| {
+        ps_storage::delete_cnki_session(storage.auth_db_path(), user.id)?;
+        ps_storage::get_cnki_session_status(storage.auth_db_path(), user.id)
+    })
+    .await?;
     Ok(Json(status))
 }
 
@@ -363,8 +378,20 @@ fn validate_poll_request(body: &CnkiLoginPollRequest) -> Result<(), ApiError> {
     Ok(())
 }
 
-fn map_cnki_error(_error: ps_storage::CnkiRepositoryError) -> ApiError {
+fn map_cnki_error(_error: CnkiRepositoryError) -> ApiError {
     ApiError::internal_server_error()
+}
+
+async fn run_cnki<Output, Work>(state: &ApiState, work: Work) -> Result<Output, ApiError>
+where
+    Work: FnOnce(StorageConfig) -> Result<Output, CnkiRepositoryError> + Send + 'static,
+    Output: Send + 'static,
+{
+    let storage = state.storage_config().clone();
+    state
+        .run_blocking(move || work(storage))
+        .await?
+        .map_err(map_cnki_error)
 }
 
 fn cnki_json_error(status: StatusCode, code: &str, phase: &str, message: &str) -> ApiError {

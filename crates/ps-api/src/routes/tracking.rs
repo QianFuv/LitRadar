@@ -11,6 +11,7 @@ use ps_domain::{
     ManualWeeklyPushStatus, NotificationSettingsResponse, NotificationSettingsUpdate,
     TrackingFolderSummary, TrackingStatusResponse,
 };
+use ps_storage::StorageConfig;
 use ps_worker::delivery::{
     run_manual_weekly_push, ManualWeeklyPushConfig, ManualWeeklyPushOutcome,
 };
@@ -39,7 +40,7 @@ pub(crate) async fn push_weekly_to_tracking(
     State(state): State<ApiState>,
     headers: HeaderMap,
 ) -> Result<Json<ManualWeeklyPushStatus>, ApiError> {
-    let (user, _) = require_current_user(&state, &headers)?;
+    let (user, _) = require_current_user(&state, &headers).await?;
     let key = manual_push_key(&state, user.id);
     if let Some(status) = current_manual_push_status(&key) {
         if status.status == "running" {
@@ -47,8 +48,10 @@ pub(crate) async fn push_weekly_to_tracking(
         }
     }
 
-    let job_id = ps_storage::random_hex(state.storage_config().auth_db_path(), 16)
-        .map_err(|_| ApiError::internal_server_error())?;
+    let job_id = run_storage(&state, move |storage| {
+        ps_storage::random_hex(storage.auth_db_path(), 16)
+    })
+    .await?;
     let started_at = current_epoch_seconds();
     let status = manual_push_status(
         Some(job_id.clone()),
@@ -68,20 +71,16 @@ pub(crate) async fn push_weekly_to_tracking(
         },
     );
     set_manual_push_status(key.clone(), status.clone());
-    spawn_manual_push_job(
-        key,
-        job_id,
-        started_at,
-        ManualWeeklyPushConfig {
-            storage_config: state.storage_config().clone(),
-            user_id: user.id,
-            ai_model: None,
-            max_candidates: None,
-            timeout_seconds: 120,
-            retry_attempts: 3,
-            dedupe_retention_days: 60,
-        },
-    );
+    let config = ManualWeeklyPushConfig {
+        storage_config: state.storage_config().clone(),
+        user_id: user.id,
+        ai_model: None,
+        max_candidates: None,
+        timeout_seconds: 120,
+        retry_attempts: 3,
+        dedupe_retention_days: 60,
+    };
+    spawn_manual_push_job(state, key, job_id, started_at, config);
     Ok(Json(status))
 }
 
@@ -97,7 +96,7 @@ pub(crate) async fn get_push_weekly_status(
     State(state): State<ApiState>,
     headers: HeaderMap,
 ) -> Result<Json<ManualWeeklyPushStatus>, ApiError> {
-    let (user, _) = require_current_user(&state, &headers)?;
+    let (user, _) = require_current_user(&state, &headers).await?;
     let key = manual_push_key(&state, user.id);
     Ok(Json(
         current_manual_push_status(&key).unwrap_or_else(idle_manual_push_status),
@@ -116,21 +115,26 @@ pub(crate) async fn status(
     State(state): State<ApiState>,
     headers: HeaderMap,
 ) -> Result<Json<TrackingStatusResponse>, ApiError> {
-    let (user, _) = require_current_user(&state, &headers)?;
-    let folder = ps_storage::get_tracking_folder(state.storage_config().auth_db_path(), user.id)
-        .map_err(|_| ApiError::internal_server_error())?;
-    let folders = ps_storage::list_folders(state.storage_config().auth_db_path(), user.id)
-        .map_err(|_| ApiError::internal_server_error())?;
-    let settings =
-        ps_storage::get_notification_settings(state.storage_config().auth_db_path(), user.id)
-            .map_err(|_| ApiError::internal_server_error())?;
-    let selected_databases = settings
-        .as_ref()
-        .map(|item| item.selected_databases.as_slice())
-        .unwrap_or_default();
-    let weekly_articles_available =
-        ps_storage::count_weekly_articles(state.storage_config(), selected_databases)
-            .map_err(|_| ApiError::internal_server_error())?;
+    let (user, _) = require_current_user(&state, &headers).await?;
+    let (folder, folders, settings, weekly_articles_available) =
+        run_storage(&state, move |storage| {
+            let folder = ps_storage::get_tracking_folder(storage.auth_db_path(), user.id)?;
+            let folders = ps_storage::list_folders(storage.auth_db_path(), user.id)?;
+            let settings = ps_storage::get_notification_settings(storage.auth_db_path(), user.id)?;
+            let selected_databases = settings
+                .as_ref()
+                .map(|item| item.selected_databases.as_slice())
+                .unwrap_or_default();
+            let weekly_articles_available =
+                ps_storage::count_weekly_articles(&storage, selected_databases)?;
+            Ok::<_, ps_storage::BusinessRepositoryError>((
+                folder,
+                folders,
+                settings,
+                weekly_articles_available,
+            ))
+        })
+        .await?;
     Ok(Json(TrackingStatusResponse {
         tracking_folder: folder.map(|item| TrackingFolderSummary {
             id: item.id,
@@ -154,10 +158,11 @@ pub(crate) async fn get_notification_settings(
     State(state): State<ApiState>,
     headers: HeaderMap,
 ) -> Result<Json<Option<NotificationSettingsResponse>>, ApiError> {
-    let (user, _) = require_current_user(&state, &headers)?;
-    let settings =
-        ps_storage::get_notification_settings(state.storage_config().auth_db_path(), user.id)
-            .map_err(|_| ApiError::internal_server_error())?;
+    let (user, _) = require_current_user(&state, &headers).await?;
+    let settings = run_storage(&state, move |storage| {
+        ps_storage::get_notification_settings(storage.auth_db_path(), user.id)
+    })
+    .await?;
     Ok(Json(settings))
 }
 
@@ -175,10 +180,14 @@ pub(crate) async fn update_notification_settings(
     headers: HeaderMap,
     Json(body): Json<NotificationSettingsUpdate>,
 ) -> Result<Json<NotificationSettingsResponse>, ApiError> {
-    let (user, _) = require_current_user(&state, &headers)?;
-    let available_databases = ps_storage::list_available_database_names(state.storage_config())
-        .map_err(|_| ApiError::internal_server_error())?;
-    let mut selected_databases = ps_storage::normalize_database_names(&body.selected_databases);
+    let (user, _) = require_current_user(&state, &headers).await?;
+    let requested_databases = body.selected_databases;
+    let (available_databases, mut selected_databases) = run_storage(&state, move |storage| {
+        let available_databases = ps_storage::list_available_database_names(&storage)?;
+        let selected_databases = ps_storage::normalize_database_names(&requested_databases);
+        Ok::<_, ps_storage::BusinessRepositoryError>((available_databases, selected_databases))
+    })
+    .await?;
     let invalid_databases = selected_databases
         .iter()
         .filter(|db_name| !available_databases.contains(db_name))
@@ -211,9 +220,11 @@ pub(crate) async fn update_notification_settings(
     }
     if body.delivery_method == "pushplus"
         && body.sync_to_tracking_folder
-        && ps_storage::get_tracking_folder(state.storage_config().auth_db_path(), user.id)
-            .map_err(|_| ApiError::internal_server_error())?
-            .is_none()
+        && run_storage(&state, move |storage| {
+            ps_storage::get_tracking_folder(storage.auth_db_path(), user.id)
+        })
+        .await?
+        .is_none()
     {
         return Err(ApiError::bad_request(
             "A tracking folder is required before enabling PushPlus sync to tracking",
@@ -240,12 +251,10 @@ pub(crate) async fn update_notification_settings(
         ai_retry_attempts: body.ai_retry_attempts,
         enabled: body.enabled,
     };
-    let settings = ps_storage::upsert_notification_settings(
-        state.storage_config().auth_db_path(),
-        user.id,
-        &normalized,
-    )
-    .map_err(|_| ApiError::internal_server_error())?;
+    let settings = run_storage(&state, move |storage| {
+        ps_storage::upsert_notification_settings(storage.auth_db_path(), user.id, &normalized)
+    })
+    .await?;
     Ok(Json(settings))
 }
 
@@ -310,17 +319,19 @@ fn idle_manual_push_status() -> ManualWeeklyPushStatus {
 }
 
 fn spawn_manual_push_job(
+    state: ApiState,
     key: String,
     job_id: String,
     started_at: f64,
     config: ManualWeeklyPushConfig,
 ) {
     tokio::spawn(async move {
-        let finished = tokio::task::spawn_blocking(move || {
-            delay_manual_push_for_tests();
-            run_manual_weekly_push(&config)
-        })
-        .await;
+        let finished = state
+            .run_background_blocking(move || {
+                delay_manual_push_for_tests();
+                run_manual_weekly_push(&config)
+            })
+            .await;
         let finished_at = current_epoch_seconds();
         let status = match finished {
             Ok(Ok(outcome)) => {
@@ -350,6 +361,22 @@ fn spawn_manual_push_job(
         };
         update_manual_push_status_if_current(key, &job_id, status);
     });
+}
+
+async fn run_storage<Output, StorageError, Work>(
+    state: &ApiState,
+    work: Work,
+) -> Result<Output, ApiError>
+where
+    Work: FnOnce(StorageConfig) -> Result<Output, StorageError> + Send + 'static,
+    Output: Send + 'static,
+    StorageError: Send + 'static,
+{
+    let storage = state.storage_config().clone();
+    state
+        .run_blocking(move || work(storage))
+        .await?
+        .map_err(|_| ApiError::internal_server_error())
 }
 
 fn update_manual_push_status_if_current(key: String, job_id: &str, status: ManualWeeklyPushStatus) {

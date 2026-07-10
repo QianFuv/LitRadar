@@ -12,7 +12,7 @@ use axum::response::{IntoResponse, Response};
 use ps_domain::{ArticleId, FavoriteAdd, OkResponse, UserId, UserResponse};
 use ps_storage::{
     ArticleListParams, BusinessRepositoryError, DatabaseResolutionError, IndexRepositoryError,
-    JournalListParams,
+    JournalListParams, StorageConfig,
 };
 use rmcp::handler::server::{router::tool::ToolRouter, tool::Extension, wrapper::Parameters};
 use rmcp::model::{CallToolResult, ContentBlock, ErrorData, ServerCapabilities, ServerInfo};
@@ -25,7 +25,7 @@ use tower::Service;
 
 use crate::config::ApiConfig;
 use crate::routes::auth;
-use crate::state::ApiState;
+use crate::state::{ApiState, BlockingTaskError};
 
 type InnerMcpService = StreamableHttpService<PaperScannerMcp, LocalSessionManager>;
 
@@ -73,7 +73,7 @@ impl Service<Request> for AuthenticatedMcpService {
         let mut inner = self.inner.clone();
 
         Box::pin(async move {
-            let (user, _) = match auth::require_current_user(&state, request.headers()) {
+            let (user, _) = match auth::require_current_user(&state, request.headers()).await {
                 Ok(context) => context,
                 Err(error) => return Ok(error.into_response()),
             };
@@ -115,17 +115,16 @@ impl PaperScannerMcp {
         name = "list_databases",
         description = "List available Paper Scanner SQLite databases."
     )]
-    fn list_databases(&self) -> Result<CallToolResult, ErrorData> {
-        self.index_tool(ps_storage::list_index_database_names(
-            self.state.storage_config(),
-        ))
+    async fn list_databases(&self) -> Result<CallToolResult, ErrorData> {
+        self.run_index_tool(move |storage| ps_storage::list_index_database_names(&storage))
+            .await
     }
 
     #[tool(
         name = "list_areas",
         description = "List research areas for the selected Paper Scanner database."
     )]
-    fn list_areas(
+    async fn list_areas(
         &self,
         Parameters(input): Parameters<DatabaseInput>,
     ) -> Result<CallToolResult, ErrorData> {
@@ -133,17 +132,15 @@ impl PaperScannerMcp {
             Ok(value) => value,
             Err(message) => return Ok(tool_error(message)),
         };
-        self.index_tool(ps_storage::list_areas(
-            self.state.storage_config(),
-            db.as_deref(),
-        ))
+        self.run_index_tool(move |storage| ps_storage::list_areas(&storage, db.as_deref()))
+            .await
     }
 
     #[tool(
         name = "list_years",
         description = "List publication years for the selected Paper Scanner database."
     )]
-    fn list_years(
+    async fn list_years(
         &self,
         Parameters(input): Parameters<DatabaseInput>,
     ) -> Result<CallToolResult, ErrorData> {
@@ -151,17 +148,15 @@ impl PaperScannerMcp {
             Ok(value) => value,
             Err(message) => return Ok(tool_error(message)),
         };
-        self.index_tool(ps_storage::list_years(
-            self.state.storage_config(),
-            db.as_deref(),
-        ))
+        self.run_index_tool(move |storage| ps_storage::list_years(&storage, db.as_deref()))
+            .await
     }
 
     #[tool(
         name = "list_journal_options",
         description = "List journal filter options for the selected Paper Scanner database."
     )]
-    fn list_journal_options(
+    async fn list_journal_options(
         &self,
         Parameters(input): Parameters<DatabaseInput>,
     ) -> Result<CallToolResult, ErrorData> {
@@ -169,17 +164,17 @@ impl PaperScannerMcp {
             Ok(value) => value,
             Err(message) => return Ok(tool_error(message)),
         };
-        self.index_tool(ps_storage::list_journal_options(
-            self.state.storage_config(),
-            db.as_deref(),
-        ))
+        self.run_index_tool(move |storage| {
+            ps_storage::list_journal_options(&storage, db.as_deref())
+        })
+        .await
     }
 
     #[tool(
         name = "list_sources",
         description = "List metadata source values for the selected Paper Scanner database."
     )]
-    fn list_sources(
+    async fn list_sources(
         &self,
         Parameters(input): Parameters<DatabaseInput>,
     ) -> Result<CallToolResult, ErrorData> {
@@ -187,17 +182,15 @@ impl PaperScannerMcp {
             Ok(value) => value,
             Err(message) => return Ok(tool_error(message)),
         };
-        self.index_tool(ps_storage::list_sources(
-            self.state.storage_config(),
-            db.as_deref(),
-        ))
+        self.run_index_tool(move |storage| ps_storage::list_sources(&storage, db.as_deref()))
+            .await
     }
 
     #[tool(
         name = "list_journals",
         description = "List journals from the selected Paper Scanner database."
     )]
-    fn list_journals(
+    async fn list_journals(
         &self,
         Parameters(input): Parameters<ListJournalsInput>,
     ) -> Result<CallToolResult, ErrorData> {
@@ -205,15 +198,14 @@ impl PaperScannerMcp {
             Ok(value) => value,
             Err(message) => return Ok(tool_error(message)),
         };
-        self.index_tool(ps_storage::list_journals(
-            self.state.storage_config(),
-            db.as_deref(),
-            &params,
-        ))
+        self.run_index_tool(move |storage| {
+            ps_storage::list_journals(&storage, db.as_deref(), &params)
+        })
+        .await
     }
 
     #[tool(name = "get_journal", description = "Get a single journal by ID.")]
-    fn get_journal(
+    async fn get_journal(
         &self,
         Parameters(input): Parameters<GetJournalInput>,
     ) -> Result<CallToolResult, ErrorData> {
@@ -225,18 +217,17 @@ impl PaperScannerMcp {
             Ok(value) => value,
             Err(message) => return Ok(tool_error(message)),
         };
-        self.index_tool(ps_storage::get_journal(
-            self.state.storage_config(),
-            db.as_deref(),
-            journal_id,
-        ))
+        self.run_index_tool(move |storage| {
+            ps_storage::get_journal(&storage, db.as_deref(), journal_id)
+        })
+        .await
     }
 
     #[tool(
         name = "search_articles",
         description = "Search articles in the Paper Scanner index."
     )]
-    fn search_articles(
+    async fn search_articles(
         &self,
         Parameters(input): Parameters<SearchArticlesInput>,
     ) -> Result<CallToolResult, ErrorData> {
@@ -244,15 +235,14 @@ impl PaperScannerMcp {
             Ok(value) => value,
             Err(message) => return Ok(tool_error(message)),
         };
-        self.index_tool(ps_storage::list_articles(
-            self.state.storage_config(),
-            db.as_deref(),
-            &params,
-        ))
+        self.run_index_tool(move |storage| {
+            ps_storage::list_articles(&storage, db.as_deref(), &params)
+        })
+        .await
     }
 
     #[tool(name = "get_article", description = "Get a single article by ID.")]
-    fn get_article(
+    async fn get_article(
         &self,
         Parameters(input): Parameters<GetArticleInput>,
     ) -> Result<CallToolResult, ErrorData> {
@@ -264,41 +254,41 @@ impl PaperScannerMcp {
             Ok(value) => value,
             Err(message) => return Ok(tool_error(message)),
         };
-        self.index_tool(ps_storage::get_article(
-            self.state.storage_config(),
-            db.as_deref(),
-            article_id,
-        ))
+        self.run_index_tool(move |storage| {
+            ps_storage::get_article(&storage, db.as_deref(), article_id)
+        })
+        .await
     }
 
     #[tool(
         name = "get_weekly_updates",
         description = "Get weekly update summaries across all Paper Scanner databases."
     )]
-    fn get_weekly_updates(&self) -> Result<CallToolResult, ErrorData> {
-        self.index_tool(ps_storage::get_weekly_updates(self.state.storage_config()))
+    async fn get_weekly_updates(&self) -> Result<CallToolResult, ErrorData> {
+        self.run_index_tool(move |storage| ps_storage::get_weekly_updates(&storage))
+            .await
     }
 
     #[tool(
         name = "list_folders",
         description = "List favorite folders for the authenticated Paper Scanner user."
     )]
-    fn list_folders(
+    async fn list_folders(
         &self,
         Extension(parts): Extension<Parts>,
     ) -> Result<CallToolResult, ErrorData> {
         let user_id = authenticated_user_id(&parts)?;
-        self.business_tool(ps_storage::list_folders(
-            self.state.storage_config().auth_db_path(),
-            user_id,
-        ))
+        self.run_business_tool(move |storage| {
+            ps_storage::list_folders(storage.auth_db_path(), user_id)
+        })
+        .await
     }
 
     #[tool(
         name = "add_favorite",
         description = "Add an article to a favorite folder for the authenticated user."
     )]
-    fn add_favorite(
+    async fn add_favorite(
         &self,
         Extension(parts): Extension<Parts>,
         Parameters(input): Parameters<FavoriteInput>,
@@ -308,19 +298,22 @@ impl PaperScannerMcp {
             Ok(value) => value,
             Err(message) => return Ok(tool_error(message)),
         };
-        self.business_tool(ps_storage::add_favorite(
-            self.state.storage_config().auth_db_path(),
-            user_id,
-            favorite.folder_id,
-            &favorite.body,
-        ))
+        self.run_business_tool(move |storage| {
+            ps_storage::add_favorite(
+                storage.auth_db_path(),
+                user_id,
+                favorite.folder_id,
+                &favorite.body,
+            )
+        })
+        .await
     }
 
     #[tool(
         name = "remove_favorite",
         description = "Remove an article from a favorite folder for the authenticated user."
     )]
-    fn remove_favorite(
+    async fn remove_favorite(
         &self,
         Extension(parts): Extension<Parts>,
         Parameters(input): Parameters<FavoriteInput>,
@@ -330,13 +323,21 @@ impl PaperScannerMcp {
             Ok(value) => value,
             Err(message) => return Ok(tool_error(message)),
         };
-        match ps_storage::remove_favorite(
-            self.state.storage_config().auth_db_path(),
-            user_id,
-            favorite.folder_id,
-            favorite.body.article_id.value(),
-            &favorite.body.db_name,
-        ) {
+        let storage = self.state.storage_config().clone();
+        let result = self
+            .state
+            .run_blocking(move || {
+                ps_storage::remove_favorite(
+                    storage.auth_db_path(),
+                    user_id,
+                    favorite.folder_id,
+                    favorite.body.article_id.value(),
+                    &favorite.body.db_name,
+                )
+            })
+            .await
+            .map_err(blocking_mcp_error)?;
+        match result {
             Ok(true) => json_tool_result(&OkResponse { ok: true }),
             Ok(false) => Ok(tool_error("Favorite not found")),
             Err(error) => Ok(tool_error(business_tool_error_message(&error))),
@@ -353,6 +354,34 @@ impl ServerHandler for PaperScannerMcp {
 }
 
 impl PaperScannerMcp {
+    async fn run_index_tool<Output, Work>(&self, work: Work) -> Result<CallToolResult, ErrorData>
+    where
+        Work: FnOnce(StorageConfig) -> Result<Output, IndexRepositoryError> + Send + 'static,
+        Output: Serialize + Send + 'static,
+    {
+        let storage = self.state.storage_config().clone();
+        let result = self
+            .state
+            .run_blocking(move || work(storage))
+            .await
+            .map_err(blocking_mcp_error)?;
+        self.index_tool(result)
+    }
+
+    async fn run_business_tool<Output, Work>(&self, work: Work) -> Result<CallToolResult, ErrorData>
+    where
+        Work: FnOnce(StorageConfig) -> Result<Output, BusinessRepositoryError> + Send + 'static,
+        Output: Serialize + Send + 'static,
+    {
+        let storage = self.state.storage_config().clone();
+        let result = self
+            .state
+            .run_blocking(move || work(storage))
+            .await
+            .map_err(blocking_mcp_error)?;
+        self.business_tool(result)
+    }
+
     fn index_tool<T: Serialize>(
         &self,
         result: Result<T, IndexRepositoryError>,
@@ -372,6 +401,10 @@ impl PaperScannerMcp {
             Err(error) => Ok(tool_error(business_tool_error_message(&error))),
         }
     }
+}
+
+fn blocking_mcp_error(_error: BlockingTaskError) -> ErrorData {
+    ErrorData::internal_error("Paper Scanner backend is temporarily unavailable", None)
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]

@@ -2,6 +2,7 @@
 
 #[cfg(test)]
 use std::sync::{Mutex, OnceLock};
+use std::time::Duration;
 
 use axum::extract::{Path, Query, RawQuery, State};
 use axum::http::header::{CONTENT_DISPOSITION, CONTENT_TYPE, LOCATION};
@@ -14,7 +15,7 @@ use ps_sources::{
 };
 use ps_storage::{
     ArticleListParams, DatabaseResolutionError, IndexRepositoryError, IssueListParams,
-    JournalListParams,
+    JournalListParams, StorageConfig,
 };
 use serde::Deserialize;
 use serde_json::Value as JsonValue;
@@ -110,9 +111,11 @@ pub(crate) async fn list_databases(
     State(state): State<ApiState>,
     headers: HeaderMap,
 ) -> Result<Json<Vec<String>>, ApiError> {
-    require_current_user(&state, &headers)?;
-    let databases =
-        ps_storage::list_index_database_names(state.storage_config()).map_err(map_index_error)?;
+    require_current_user(&state, &headers).await?;
+    let databases = run_index(&state, move |storage| {
+        ps_storage::list_index_database_names(&storage)
+    })
+    .await?;
     Ok(Json(databases))
 }
 
@@ -140,9 +143,12 @@ pub(crate) async fn list_areas(
     headers: HeaderMap,
     Query(query): Query<DbQuery>,
 ) -> Result<Json<Vec<ps_domain::ValueCount>>, ApiError> {
-    require_current_user(&state, &headers)?;
-    let rows = ps_storage::list_areas(state.storage_config(), db_name(&query.db))
-        .map_err(map_index_error)?;
+    require_current_user(&state, &headers).await?;
+    let db = query.db.and_then(nonempty_owned);
+    let rows = run_index(&state, move |storage| {
+        ps_storage::list_areas(&storage, db.as_deref())
+    })
+    .await?;
     Ok(Json(rows))
 }
 
@@ -170,9 +176,12 @@ pub(crate) async fn list_journal_options(
     headers: HeaderMap,
     Query(query): Query<DbQuery>,
 ) -> Result<Json<Vec<ps_domain::JournalOption>>, ApiError> {
-    require_current_user(&state, &headers)?;
-    let rows = ps_storage::list_journal_options(state.storage_config(), db_name(&query.db))
-        .map_err(map_index_error)?;
+    require_current_user(&state, &headers).await?;
+    let db = query.db.and_then(nonempty_owned);
+    let rows = run_index(&state, move |storage| {
+        ps_storage::list_journal_options(&storage, db.as_deref())
+    })
+    .await?;
     Ok(Json(rows))
 }
 
@@ -200,9 +209,12 @@ pub(crate) async fn list_sources(
     headers: HeaderMap,
     Query(query): Query<DbQuery>,
 ) -> Result<Json<Vec<ps_domain::ValueCount>>, ApiError> {
-    require_current_user(&state, &headers)?;
-    let rows = ps_storage::list_sources(state.storage_config(), db_name(&query.db))
-        .map_err(map_index_error)?;
+    require_current_user(&state, &headers).await?;
+    let db = query.db.and_then(nonempty_owned);
+    let rows = run_index(&state, move |storage| {
+        ps_storage::list_sources(&storage, db.as_deref())
+    })
+    .await?;
     Ok(Json(rows))
 }
 
@@ -230,9 +242,12 @@ pub(crate) async fn list_years(
     headers: HeaderMap,
     Query(query): Query<DbQuery>,
 ) -> Result<Json<Vec<ps_domain::YearSummary>>, ApiError> {
-    require_current_user(&state, &headers)?;
-    let rows = ps_storage::list_years(state.storage_config(), db_name(&query.db))
-        .map_err(map_index_error)?;
+    require_current_user(&state, &headers).await?;
+    let db = query.db.and_then(nonempty_owned);
+    let rows = run_index(&state, move |storage| {
+        ps_storage::list_years(&storage, db.as_deref())
+    })
+    .await?;
     Ok(Json(rows))
 }
 
@@ -260,7 +275,7 @@ pub(crate) async fn list_journals(
     headers: HeaderMap,
     Query(query): Query<JournalQuery>,
 ) -> Result<Json<ps_domain::JournalPage>, ApiError> {
-    require_current_user(&state, &headers)?;
+    require_current_user(&state, &headers).await?;
     let params = JournalListParams {
         area: query.area,
         library_id: query.library_id,
@@ -273,8 +288,11 @@ pub(crate) async fn list_journals(
         limit: query.limit.unwrap_or(50),
         offset: query.offset.unwrap_or(0),
     };
-    let page = ps_storage::list_journals(state.storage_config(), db_name(&query.db), &params)
-        .map_err(map_index_error)?;
+    let db = query.db.and_then(nonempty_owned);
+    let page = run_index(&state, move |storage| {
+        ps_storage::list_journals(&storage, db.as_deref(), &params)
+    })
+    .await?;
     Ok(Json(page))
 }
 
@@ -307,9 +325,12 @@ pub(crate) async fn get_journal(
     Path(journal_id): Path<i64>,
     Query(query): Query<DbQuery>,
 ) -> Result<Json<ps_domain::JournalRecord>, ApiError> {
-    require_current_user(&state, &headers)?;
-    let row = ps_storage::get_journal(state.storage_config(), db_name(&query.db), journal_id)
-        .map_err(map_index_error)?;
+    require_current_user(&state, &headers).await?;
+    let db = query.db.and_then(nonempty_owned);
+    let row = run_index(&state, move |storage| {
+        ps_storage::get_journal(&storage, db.as_deref(), journal_id)
+    })
+    .await?;
     Ok(Json(row))
 }
 
@@ -337,7 +358,7 @@ pub(crate) async fn list_issues(
     headers: HeaderMap,
     Query(query): Query<IssueQuery>,
 ) -> Result<Json<ps_domain::IssuePage>, ApiError> {
-    require_current_user(&state, &headers)?;
+    require_current_user(&state, &headers).await?;
     let params = IssueListParams {
         journal_id: query.journal_id,
         year: query.year,
@@ -349,8 +370,11 @@ pub(crate) async fn list_issues(
         limit: query.limit.unwrap_or(50),
         offset: query.offset.unwrap_or(0),
     };
-    let page = ps_storage::list_issues(state.storage_config(), db_name(&query.db), &params)
-        .map_err(map_index_error)?;
+    let db = query.db.and_then(nonempty_owned);
+    let page = run_index(&state, move |storage| {
+        ps_storage::list_issues(&storage, db.as_deref(), &params)
+    })
+    .await?;
     Ok(Json(page))
 }
 
@@ -383,9 +407,12 @@ pub(crate) async fn get_issue(
     Path(issue_id): Path<i64>,
     Query(query): Query<DbQuery>,
 ) -> Result<Json<ps_domain::IssueRecord>, ApiError> {
-    require_current_user(&state, &headers)?;
-    let row = ps_storage::get_issue(state.storage_config(), db_name(&query.db), issue_id)
-        .map_err(map_index_error)?;
+    require_current_user(&state, &headers).await?;
+    let db = query.db.and_then(nonempty_owned);
+    let row = run_index(&state, move |storage| {
+        ps_storage::get_issue(&storage, db.as_deref(), issue_id)
+    })
+    .await?;
     Ok(Json(row))
 }
 
@@ -410,9 +437,11 @@ pub(crate) async fn get_weekly_updates(
     State(state): State<ApiState>,
     headers: HeaderMap,
 ) -> Result<Json<ps_domain::WeeklyUpdatesResponse>, ApiError> {
-    require_current_user(&state, &headers)?;
-    let payload =
-        ps_storage::get_weekly_updates(state.storage_config()).map_err(map_index_error)?;
+    require_current_user(&state, &headers).await?;
+    let payload = run_index(&state, move |storage| {
+        ps_storage::get_weekly_updates(&storage)
+    })
+    .await?;
     Ok(Json(payload))
 }
 
@@ -460,10 +489,12 @@ pub(crate) async fn list_articles(
     headers: HeaderMap,
     RawQuery(raw_query): RawQuery,
 ) -> Result<Json<ps_domain::ArticlePage>, ApiError> {
-    require_current_user(&state, &headers)?;
+    require_current_user(&state, &headers).await?;
     let (db, params) = parse_article_query(raw_query.as_deref())?;
-    let page = ps_storage::list_articles(state.storage_config(), db.as_deref(), &params)
-        .map_err(map_index_error)?;
+    let page = run_index(&state, move |storage| {
+        ps_storage::list_articles(&storage, db.as_deref(), &params)
+    })
+    .await?;
     Ok(Json(page))
 }
 
@@ -496,9 +527,12 @@ pub(crate) async fn get_article(
     Path(article_id): Path<i64>,
     Query(query): Query<DbQuery>,
 ) -> Result<Json<ps_domain::ArticleRecord>, ApiError> {
-    require_current_user(&state, &headers)?;
-    let row = ps_storage::get_article(state.storage_config(), db_name(&query.db), article_id)
-        .map_err(map_index_error)?;
+    require_current_user(&state, &headers).await?;
+    let db = query.db.and_then(nonempty_owned);
+    let row = run_index(&state, move |storage| {
+        ps_storage::get_article(&storage, db.as_deref(), article_id)
+    })
+    .await?;
     Ok(Json(row))
 }
 
@@ -531,14 +565,12 @@ pub(crate) async fn get_article_access(
     Path(article_id): Path<i64>,
     Query(query): Query<DbQuery>,
 ) -> Result<Json<ps_domain::ArticleAccessResponse>, ApiError> {
-    let (user, _) = require_current_user(&state, &headers)?;
-    let payload = ps_storage::get_article_access(
-        state.storage_config(),
-        db_name(&query.db),
-        article_id,
-        user.id,
-    )
-    .map_err(map_index_error)?;
+    let (user, _) = require_current_user(&state, &headers).await?;
+    let db = query.db.and_then(nonempty_owned);
+    let payload = run_index(&state, move |storage| {
+        ps_storage::get_article_access(&storage, db.as_deref(), article_id, user.id)
+    })
+    .await?;
     Ok(Json(payload))
 }
 
@@ -574,14 +606,12 @@ pub(crate) async fn redirect_article_fulltext(
     Path(article_id): Path<i64>,
     Query(query): Query<DbQuery>,
 ) -> Result<Response, ApiError> {
-    let (user, _) = require_current_user(&state, &headers)?;
-    let target = ps_storage::article_fulltext_target(
-        state.storage_config(),
-        db_name(&query.db),
-        article_id,
-        user.id,
-    )
-    .map_err(map_index_error)?;
+    let (user, _) = require_current_user(&state, &headers).await?;
+    let db = query.db.and_then(nonempty_owned);
+    let target = run_index(&state, move |storage| {
+        ps_storage::article_fulltext_target(&storage, db.as_deref(), article_id, user.id)
+    })
+    .await?;
     match target {
         ps_storage::ArticleFulltextTarget::Redirect(url) => {
             let location =
@@ -617,24 +647,27 @@ pub(crate) async fn redirect_article_fulltext(
             };
             let session_data = target.session_data;
             let fixture_mode = zjlib_fixture_mode();
-            let download_result = tokio::task::spawn_blocking(move || {
-                download_zjlib_cnki_fulltext(fixture_mode, expected, session_data)
-            })
-            .await
-            .map_err(|_| ApiError::internal_server_error())?;
+            let download_result = state
+                .run_blocking_with_timeout(Duration::from_secs(120), move || {
+                    download_zjlib_cnki_fulltext(fixture_mode, expected, session_data)
+                })
+                .await?;
             let (downloaded, session_data) = download_result.map_err(map_zjlib_fulltext_error)?;
-            ps_storage::upsert_cnki_session(
-                &auth_db_path,
-                user_id,
-                &session_data,
-                "active",
-                session_data
-                    .get("qr_uuid")
-                    .and_then(JsonValue::as_str)
-                    .or(Some(qr_uuid.as_str())),
-            )
-            .map_err(|_| ApiError::internal_server_error())?;
-            ps_storage::touch_cnki_session_used(&auth_db_path, user_id)
+            state
+                .run_blocking(move || {
+                    ps_storage::upsert_cnki_session(
+                        &auth_db_path,
+                        user_id,
+                        &session_data,
+                        "active",
+                        session_data
+                            .get("qr_uuid")
+                            .and_then(JsonValue::as_str)
+                            .or(Some(qr_uuid.as_str())),
+                    )?;
+                    ps_storage::touch_cnki_session_used(&auth_db_path, user_id)
+                })
+                .await?
                 .map_err(|_| ApiError::internal_server_error())?;
             Ok(pdf_response(downloaded)?)
         }
@@ -865,15 +898,6 @@ fn parse_bool(key: &str, value: &str) -> Result<bool, ApiError> {
     }
 }
 
-fn db_name(value: &Option<String>) -> Option<&str> {
-    value.as_deref().and_then(nonempty)
-}
-
-fn nonempty(value: &str) -> Option<&str> {
-    let value = value.trim();
-    (!value.is_empty()).then_some(value)
-}
-
 fn nonempty_owned(value: String) -> Option<String> {
     let trimmed = value.trim();
     (!trimmed.is_empty()).then(|| trimmed.to_string())
@@ -899,6 +923,18 @@ fn map_index_error(error: IndexRepositoryError) -> ApiError {
         | IndexRepositoryError::Json(_)
         | IndexRepositoryError::Cnki(_) => ApiError::internal_server_error(),
     }
+}
+
+async fn run_index<Output, Work>(state: &ApiState, work: Work) -> Result<Output, ApiError>
+where
+    Work: FnOnce(StorageConfig) -> Result<Output, IndexRepositoryError> + Send + 'static,
+    Output: Send + 'static,
+{
+    let storage = state.storage_config().clone();
+    state
+        .run_blocking(move || work(storage))
+        .await?
+        .map_err(map_index_error)
 }
 
 #[cfg(test)]
