@@ -1,5 +1,5 @@
 /**
- * Tracking background-job polling coverage using the production page and API client.
+ * Tracking background-job polling coverage using the extracted feature view and API client.
  */
 
 import { screen } from '@testing-library/react';
@@ -7,8 +7,7 @@ import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
 import { describe, expect, test } from 'vitest';
 
-import TrackingPage from '@/app/(protected)/tracking/page';
-import { AuthProvider } from '@/lib/auth-context';
+import { TrackingPageContent } from '@/components/tracking/tracking-page-content';
 import { server } from '@/tests/mocks/server';
 import { renderWithQuery } from '@/tests/render';
 
@@ -36,15 +35,6 @@ function manualPushStatus(status: string, message: string, pushed: number) {
     folder_id: 4,
     folder_name: 'Tracking',
   };
-}
-
-/**
- * Return an authenticated fixture user.
- *
- * @returns Current-user response.
- */
-function currentUserResponse(): Response {
-  return HttpResponse.json({ id: 31, username: 'tracking_user', is_admin: false });
 }
 
 /**
@@ -119,7 +109,6 @@ function pollPushResponse(): Response {
 async function pollsUntilCompleted(): Promise<void> {
   statusRequestCount = 0;
   server.use(
-    http.get('http://localhost/api/auth/me', currentUserResponse),
     http.get('http://localhost/api/tracking/status', trackingStatusResponse),
     http.get('http://localhost/api/meta/databases', databasesResponse),
     http.get('http://localhost/api/favorites/folders', foldersResponse),
@@ -129,11 +118,7 @@ async function pollsUntilCompleted(): Promise<void> {
   );
   const user = userEvent.setup();
 
-  renderWithQuery(
-    <AuthProvider>
-      <TrackingPage />
-    </AuthProvider>,
-  );
+  renderWithQuery(<TrackingPageContent userId={31} />);
 
   await user.click(await screen.findByRole('button', { name: '推送到追踪文件夹' }));
   expect(await screen.findByText('任务执行中')).toBeInTheDocument();

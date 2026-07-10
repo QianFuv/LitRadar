@@ -1,0 +1,223 @@
+'use client';
+
+import { useState } from 'react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { Copy, Key, Plus, Trash2 } from 'lucide-react';
+
+import { createAccessToken, getAccessTokens, revokeAccessToken } from '@/lib/api';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from '@/components/ui/dialog';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import type {
+  SettingsCopyFeedback,
+  SettingsCopyScope,
+} from '@/components/settings/use-settings-copy';
+
+const TTL_OPTIONS = [
+  { label: '7天', value: 7 * 86400 },
+  { label: '30天', value: 30 * 86400 },
+  { label: '90天', value: 90 * 86400 },
+  { label: '1年', value: 365 * 86400 },
+];
+
+/**
+ * Format an access-token expiry timestamp.
+ *
+ * @param ts - Unix timestamp in seconds.
+ * @returns Localized expiry time.
+ */
+function formatExpiry(ts: number): string {
+  return new Date(ts * 1000).toLocaleDateString('zh-CN', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
+/**
+ * Render and manage current-user access tokens.
+ *
+ * @param props - Shared copy feedback and action.
+ * @returns Access-token settings card.
+ */
+export function AccessTokensCard({
+  copyFeedback,
+  handleCopy,
+}: {
+  copyFeedback: SettingsCopyFeedback | null;
+  handleCopy: (value: string, successMessage: string, scope: SettingsCopyScope) => Promise<void>;
+}) {
+  const queryClient = useQueryClient();
+  const [tokenName, setTokenName] = useState('');
+  const [tokenTtl, setTokenTtl] = useState(TTL_OPTIONS[0].value);
+  const [newTokenValue, setNewTokenValue] = useState<string | null>(null);
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const { data: tokens = [] } = useQuery({
+    queryKey: ['access-tokens'],
+    queryFn: () => getAccessTokens(),
+    enabled: true,
+  });
+  const createTokenMut = useMutation({
+    mutationFn: () => createAccessToken(tokenName.trim(), tokenTtl),
+    onSuccess: (data) => {
+      setNewTokenValue(data.token);
+      queryClient.invalidateQueries({ queryKey: ['access-tokens'] });
+      setTokenName('');
+    },
+  });
+  const revokeMut = useMutation({
+    mutationFn: (id: number) => revokeAccessToken(id),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['access-tokens'] }),
+  });
+
+  return (
+    <Card>
+      <CardHeader>
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <CardTitle>访问令牌</CardTitle>
+            <CardDescription>创建访问令牌，用于接口访问或第三方集成</CardDescription>
+          </div>
+          <Dialog
+            open={dialogOpen}
+            onOpenChange={(open: boolean) => {
+              setDialogOpen(open);
+              if (!open) setNewTokenValue(null);
+            }}
+          >
+            <DialogTrigger asChild>
+              <Button variant="outline" size="sm" className="w-full sm:w-auto">
+                <Plus className="h-4 w-4 mr-1" />
+                新建
+              </Button>
+            </DialogTrigger>
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle>创建访问令牌</DialogTitle>
+                <DialogDescription>令牌仅显示一次，请妥善保管</DialogDescription>
+              </DialogHeader>
+              {newTokenValue ? (
+                <div className="space-y-3">
+                  <p className="text-sm text-muted-foreground">新令牌已创建：</p>
+                  <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                    <code className="flex-1 rounded bg-muted p-2 text-xs break-all">
+                      {newTokenValue}
+                    </code>
+                    <Button
+                      variant="outline"
+                      size="icon"
+                      className="self-start sm:self-auto"
+                      aria-label="复制新访问令牌"
+                      onClick={() => void handleCopy(newTokenValue, '访问令牌已复制。', 'token')}
+                    >
+                      <Copy className="h-4 w-4" />
+                    </Button>
+                  </div>
+                  {copyFeedback?.scope === 'token' && (
+                    <p
+                      role={copyFeedback.tone === 'error' ? 'alert' : 'status'}
+                      className={
+                        copyFeedback.tone === 'error'
+                          ? 'text-sm text-destructive'
+                          : 'text-sm text-muted-foreground'
+                      }
+                    >
+                      {copyFeedback.message}
+                    </p>
+                  )}
+                </div>
+              ) : (
+                <form
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    createTokenMut.mutate();
+                  }}
+                  className="space-y-4"
+                >
+                  <div className="space-y-2">
+                    <Label htmlFor="access-token-name">名称</Label>
+                    <Input
+                      id="access-token-name"
+                      name="access_token_name"
+                      autoComplete="off"
+                      spellCheck={false}
+                      value={tokenName}
+                      onChange={(e) => setTokenName(e.target.value)}
+                      placeholder="例如：接口集成"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <div className="text-sm font-medium">有效期</div>
+                    <div className="flex gap-2 flex-wrap" role="group" aria-label="访问令牌有效期">
+                      {TTL_OPTIONS.map((opt) => (
+                        <Button
+                          type="button"
+                          key={opt.value}
+                          variant={tokenTtl === opt.value ? 'default' : 'outline'}
+                          size="sm"
+                          onClick={() => setTokenTtl(opt.value)}
+                        >
+                          {opt.label}
+                        </Button>
+                      ))}
+                    </div>
+                  </div>
+                  <Button type="submit" disabled={createTokenMut.isPending}>
+                    创建
+                  </Button>
+                </form>
+              )}
+            </DialogContent>
+          </Dialog>
+        </div>
+      </CardHeader>
+      <CardContent>
+        {tokens.length === 0 ? (
+          <p className="text-sm text-muted-foreground">暂无访问令牌</p>
+        ) : (
+          <div className="space-y-2">
+            {tokens.map((t) => (
+              <div
+                key={t.id}
+                className="flex flex-col gap-3 rounded-md border px-3 py-2 sm:flex-row sm:items-center sm:justify-between"
+              >
+                <div className="flex min-w-0 flex-wrap items-center gap-2">
+                  <Key className="h-4 w-4 text-muted-foreground" />
+                  <span className="break-all text-sm">{t.name || '（未命名）'}</span>
+                  <Badge variant="outline" className="text-[10px]">
+                    到 {formatExpiry(t.expires_at)} 过期
+                  </Badge>
+                </div>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-7 w-7 self-end text-destructive sm:self-auto"
+                  aria-label={`撤销访问令牌 ${t.name || t.id}`}
+                  onClick={() => {
+                    if (window.confirm(`确认撤销访问令牌“${t.name || t.id}”？`)) {
+                      revokeMut.mutate(t.id);
+                    }
+                  }}
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </Button>
+              </div>
+            ))}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
