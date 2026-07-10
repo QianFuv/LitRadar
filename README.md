@@ -9,8 +9,8 @@ Paper Scanner 是一个面向学术期刊的全栈检索与订阅平台。它负
 - `index`：读取 `data/meta/*.csv`，抓取上游元数据并写入 `data/index/*.sqlite`
 - `notify`：执行或演练 PushPlus 通知链路
 - `push`：执行或演练追踪文件夹写入链路
-- `scheduler`：校验或手动触发管理员定时任务
-- `worker`：启动 Rust worker sidecar，周期性加载并执行启用的定时任务
+- `scheduler`：校验或手动触发管理员类型化定时任务
+- `worker`：启动 Rust worker sidecar，周期性加载并直接执行启用的 `index`、`notify`、`push` job
 
 ## 主要功能
 

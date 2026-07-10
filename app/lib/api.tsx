@@ -42,6 +42,7 @@ export type {
   NotificationSettingsUpdate,
   RuntimeSettingInfo,
   RuntimeSettingsUpdate,
+  ScheduledJobSpec,
   ScheduledTaskCreate,
   ScheduledTaskInfo,
   ScheduledTaskUpdate,

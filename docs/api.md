@@ -613,20 +613,35 @@ CNKI 精确匹配失败时返回受控错误，不会下载候选列表中的错
 ```json
 {
   "name": "nightly notify",
-  "command": "notify --db utd24.sqlite --changes-file /app/data/push_state/utd24.changes.json --no-dry-run",
+  "job": {
+    "kind": "notify",
+    "database": "utd24.sqlite",
+    "max_candidates": 200
+  },
   "cron": "0 8 * * *",
   "enabled": true
 }
 ```
 
-更新时四个字段都可以省略。
+更新时 `name`、`job`、`cron`、`enabled` 都可以省略。
+
+`job` 是带 `kind` 标签的类型化对象，只支持以下组合：
+
+| `kind` | 可选字段 | 行为 |
+| --- | --- | --- |
+| `index` | `metadata_file`、`notify`、`push` | 运行索引更新，并可在成功后顺序执行通知或文件夹推送 |
+| `notify` | `database`、`max_candidates` | 执行外部通知 |
+| `push` | `database`、`max_candidates` | 执行追踪文件夹推送 |
+
+`metadata_file` 只能是 `.csv` 文件名，`database` 只能是 `.sqlite` 文件名；二者都不能包含目录、空格或 shell 特殊字符。`max_candidates` 必须是 `1-1000` 的整数。未知 `kind`、未知字段和旧版 `command` 字段会被拒绝。
 
 补充说明：
 
 - `cron` 使用标准五段 crontab
 - Docker 默认运行 `worker --project-root /app --interval-seconds 300`，由 Rust worker sidecar 按 cron 自动执行启用任务
 - 立即执行和 dry-run 可通过 `scheduler run-once TASK_ID` 与 `scheduler dry-run-once TASK_ID` 从运维终端触发
-- 执行模式仍按 shell 命令处理，不会把运行时配置注入子进程环境
+- worker 只会直接启动固定的 `index`、`notify`、`push` 可执行文件，并把已验证字段转换为独立 argv；不会调用 shell
+- 从旧版 `command` 列迁移的任务会保留 `legacy_command` 供审阅，但强制禁用，必须先替换为 `job` 才能启用或执行
 - 没有单独的“立即执行”管理 API
 
 ### 公告请求体

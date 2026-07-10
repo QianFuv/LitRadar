@@ -2297,21 +2297,49 @@ export interface components {
         [key: string]: string;
       };
     };
+    /** @description Arguments accepted by a notification or push scheduled job. */
+    ScheduledDeliveryJob: {
+      /** @description Optional index database basename. */
+      database?: string | null;
+      /** @description Optional upper bound for recommendation candidates. */
+      max_candidates?: number | null;
+    };
+    /** @description Arguments accepted by an index scheduled job. */
+    ScheduledIndexJob: {
+      /** @description Optional metadata CSV basename. */
+      metadata_file?: string | null;
+      /** @description Whether notification delivery runs after indexing succeeds. */
+      notify?: boolean;
+      /** @description Whether push delivery runs after indexing succeeds. */
+      push?: boolean;
+    };
+    /** @description Strictly typed scheduled job specification. */
+    ScheduledJobSpec:
+      | (components['schemas']['ScheduledIndexJob'] & {
+          /** @enum {string} */
+          kind: 'index';
+        })
+      | (components['schemas']['ScheduledDeliveryJob'] & {
+          /** @enum {string} */
+          kind: 'notify';
+        })
+      | (components['schemas']['ScheduledDeliveryJob'] & {
+          /** @enum {string} */
+          kind: 'push';
+        });
     /** @description Scheduled task creation payload. */
     ScheduledTaskCreate: {
-      /** @description Shell command. */
-      command: string;
       /** @description Five-field cron expression. */
       cron: string;
       /** @description Whether the task is enabled. */
       enabled?: boolean;
+      /** @description Validated job specification. */
+      job: components['schemas']['ScheduledJobSpec'];
       /** @description Display name. */
       name: string;
     };
     /** @description Scheduled task response payload. */
     ScheduledTaskInfo: {
-      /** @description Shell command. */
-      command: string;
       /**
        * Format: double
        * @description Creation timestamp.
@@ -2326,6 +2354,7 @@ export interface components {
        * @description Scheduled task row identifier.
        */
       id: number;
+      job?: null | components['schemas']['ScheduledJobSpec'];
       /**
        * Format: double
        * @description Last run timestamp.
@@ -2333,6 +2362,8 @@ export interface components {
       last_run_at?: number | null;
       /** @description Last run status. */
       last_status: string;
+      /** @description Read-only command text retained from a legacy row for administrator review. */
+      legacy_command?: string | null;
       /** @description Display name. */
       name: string;
       /**
@@ -2343,12 +2374,11 @@ export interface components {
     };
     /** @description Scheduled task update payload. */
     ScheduledTaskUpdate: {
-      /** @description Optional replacement shell command. */
-      command?: string | null;
       /** @description Optional replacement cron expression. */
       cron?: string | null;
       /** @description Optional enabled flag. */
       enabled?: boolean | null;
+      job?: null | components['schemas']['ScheduledJobSpec'];
       /** @description Optional replacement display name. */
       name?: string | null;
     };

@@ -4745,15 +4745,113 @@
           }
         }
       },
+      "ScheduledDeliveryJob": {
+        "type": "object",
+        "description": "Arguments accepted by a notification or push scheduled job.",
+        "properties": {
+          "database": {
+            "type": ["string", "null"],
+            "description": "Optional index database basename.",
+            "maxLength": 128,
+            "pattern": "^[A-Za-z0-9_-]+(?:\\.[A-Za-z0-9_-]+)*\\.sqlite$"
+          },
+          "max_candidates": {
+            "type": ["integer", "null"],
+            "description": "Optional upper bound for recommendation candidates.",
+            "maximum": 1000,
+            "minimum": 1
+          }
+        },
+        "additionalProperties": false
+      },
+      "ScheduledIndexJob": {
+        "type": "object",
+        "description": "Arguments accepted by an index scheduled job.",
+        "properties": {
+          "metadata_file": {
+            "type": ["string", "null"],
+            "description": "Optional metadata CSV basename.",
+            "maxLength": 128,
+            "pattern": "^[A-Za-z0-9_-]+(?:\\.[A-Za-z0-9_-]+)*\\.csv$"
+          },
+          "notify": {
+            "type": "boolean",
+            "description": "Whether notification delivery runs after indexing succeeds."
+          },
+          "push": {
+            "type": "boolean",
+            "description": "Whether push delivery runs after indexing succeeds."
+          }
+        },
+        "additionalProperties": false
+      },
+      "ScheduledJobSpec": {
+        "oneOf": [
+          {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ScheduledIndexJob",
+                "description": "Refresh the index and optionally run delivery workflows."
+              },
+              {
+                "type": "object",
+                "required": ["kind"],
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "enum": ["index"]
+                  }
+                }
+              }
+            ],
+            "description": "Refresh the index and optionally run delivery workflows."
+          },
+          {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ScheduledDeliveryJob",
+                "description": "Run notification delivery."
+              },
+              {
+                "type": "object",
+                "required": ["kind"],
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "enum": ["notify"]
+                  }
+                }
+              }
+            ],
+            "description": "Run notification delivery."
+          },
+          {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ScheduledDeliveryJob",
+                "description": "Run push delivery."
+              },
+              {
+                "type": "object",
+                "required": ["kind"],
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "enum": ["push"]
+                  }
+                }
+              }
+            ],
+            "description": "Run push delivery."
+          }
+        ],
+        "description": "Strictly typed scheduled job specification."
+      },
       "ScheduledTaskCreate": {
         "type": "object",
         "description": "Scheduled task creation payload.",
-        "required": ["name", "command", "cron"],
+        "required": ["name", "job", "cron"],
         "properties": {
-          "command": {
-            "type": "string",
-            "description": "Shell command."
-          },
           "cron": {
             "type": "string",
             "description": "Five-field cron expression."
@@ -4762,30 +4860,22 @@
             "type": "boolean",
             "description": "Whether the task is enabled."
           },
+          "job": {
+            "$ref": "#/components/schemas/ScheduledJobSpec",
+            "description": "Validated job specification."
+          },
           "name": {
             "type": "string",
             "description": "Display name."
           }
-        }
+        },
+        "additionalProperties": false
       },
       "ScheduledTaskInfo": {
         "type": "object",
         "description": "Scheduled task response payload.",
-        "required": [
-          "id",
-          "name",
-          "command",
-          "cron",
-          "enabled",
-          "last_status",
-          "created_at",
-          "updated_at"
-        ],
+        "required": ["id", "name", "cron", "enabled", "last_status", "created_at", "updated_at"],
         "properties": {
-          "command": {
-            "type": "string",
-            "description": "Shell command."
-          },
           "created_at": {
             "type": "number",
             "format": "double",
@@ -4804,6 +4894,17 @@
             "format": "int64",
             "description": "Scheduled task row identifier."
           },
+          "job": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ScheduledJobSpec",
+                "description": "Validated job specification, absent only for a migrated legacy row."
+              }
+            ]
+          },
           "last_run_at": {
             "type": ["number", "null"],
             "format": "double",
@@ -4812,6 +4913,10 @@
           "last_status": {
             "type": "string",
             "description": "Last run status."
+          },
+          "legacy_command": {
+            "type": ["string", "null"],
+            "description": "Read-only command text retained from a legacy row for administrator review."
           },
           "name": {
             "type": "string",
@@ -4828,10 +4933,6 @@
         "type": "object",
         "description": "Scheduled task update payload.",
         "properties": {
-          "command": {
-            "type": ["string", "null"],
-            "description": "Optional replacement shell command."
-          },
           "cron": {
             "type": ["string", "null"],
             "description": "Optional replacement cron expression."
@@ -4840,11 +4941,23 @@
             "type": ["boolean", "null"],
             "description": "Optional enabled flag."
           },
+          "job": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ScheduledJobSpec",
+                "description": "Optional replacement job specification."
+              }
+            ]
+          },
           "name": {
             "type": ["string", "null"],
             "description": "Optional replacement display name."
           }
-        }
+        },
+        "additionalProperties": false
       },
       "TokenCreateRequest": {
         "type": "object",

@@ -1,6 +1,8 @@
 //! Business API request and response models for migrated auth database routes.
 
 use std::collections::HashMap;
+use std::error::Error;
+use std::fmt;
 
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
@@ -356,6 +358,126 @@ pub struct NotificationSettingsResponse {
     pub updated_at: f64,
 }
 
+/// Arguments accepted by an index scheduled job.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ScheduledIndexJob {
+    /// Optional metadata CSV basename.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schema(
+        max_length = 128,
+        pattern = r"^[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*\.csv$"
+    )]
+    pub metadata_file: Option<String>,
+    /// Whether notification delivery runs after indexing succeeds.
+    #[serde(default)]
+    pub notify: bool,
+    /// Whether push delivery runs after indexing succeeds.
+    #[serde(default)]
+    pub push: bool,
+}
+
+/// Arguments accepted by a notification or push scheduled job.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ScheduledDeliveryJob {
+    /// Optional index database basename.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schema(
+        max_length = 128,
+        pattern = r"^[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*\.sqlite$"
+    )]
+    pub database: Option<String>,
+    /// Optional upper bound for recommendation candidates.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schema(minimum = 1, maximum = 1000)]
+    pub max_candidates: Option<usize>,
+}
+
+/// Strictly typed scheduled job specification.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ScheduledJobSpec {
+    /// Refresh the index and optionally run delivery workflows.
+    Index(ScheduledIndexJob),
+    /// Run notification delivery.
+    Notify(ScheduledDeliveryJob),
+    /// Run push delivery.
+    Push(ScheduledDeliveryJob),
+}
+
+/// Scheduled job validation error.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ScheduledJobValidationError {
+    message: String,
+}
+
+impl fmt::Display for ScheduledJobValidationError {
+    /// Format the validation error.
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(&self.message)
+    }
+}
+
+impl Error for ScheduledJobValidationError {}
+
+impl ScheduledJobSpec {
+    /// Validate every argument against the scheduler allowlist.
+    ///
+    /// # Returns
+    ///
+    /// Empty result when every argument is safe and within range.
+    pub fn validate(&self) -> Result<(), ScheduledJobValidationError> {
+        match self {
+            Self::Index(job) => {
+                if let Some(metadata_file) = job.metadata_file.as_deref() {
+                    validate_scheduled_filename(metadata_file, ".csv", "metadata file")?;
+                }
+            }
+            Self::Notify(job) | Self::Push(job) => {
+                if let Some(database) = job.database.as_deref() {
+                    validate_scheduled_filename(database, ".sqlite", "database")?;
+                }
+                if let Some(max_candidates) = job.max_candidates {
+                    if !(1..=1_000).contains(&max_candidates) {
+                        return Err(scheduled_job_error(
+                            "max_candidates must be between 1 and 1000",
+                        ));
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+fn validate_scheduled_filename(
+    value: &str,
+    extension: &str,
+    label: &str,
+) -> Result<(), ScheduledJobValidationError> {
+    let is_allowed = !value.is_empty()
+        && value.len() <= 128
+        && !value.starts_with('.')
+        && !value.contains("..")
+        && value.ends_with(extension)
+        && value.chars().all(|character| {
+            character.is_ascii_alphanumeric() || matches!(character, '.' | '_' | '-')
+        });
+    if !is_allowed {
+        return Err(scheduled_job_error(&format!(
+            "{label} must be a safe {extension} basename"
+        )));
+    }
+    Ok(())
+}
+
+fn scheduled_job_error(message: &str) -> ScheduledJobValidationError {
+    ScheduledJobValidationError {
+        message: message.to_string(),
+    }
+}
+
 /// Scheduled task response payload.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct ScheduledTaskInfo {
@@ -363,8 +485,10 @@ pub struct ScheduledTaskInfo {
     pub id: i64,
     /// Display name.
     pub name: String,
-    /// Shell command.
-    pub command: String,
+    /// Validated job specification, absent only for a migrated legacy row.
+    pub job: Option<ScheduledJobSpec>,
+    /// Read-only command text retained from a legacy row for administrator review.
+    pub legacy_command: Option<String>,
     /// Five-field cron expression.
     pub cron: String,
     /// Whether the task is enabled.
@@ -381,11 +505,12 @@ pub struct ScheduledTaskInfo {
 
 /// Scheduled task creation payload.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
 pub struct ScheduledTaskCreate {
     /// Display name.
     pub name: String,
-    /// Shell command.
-    pub command: String,
+    /// Validated job specification.
+    pub job: ScheduledJobSpec,
     /// Five-field cron expression.
     pub cron: String,
     /// Whether the task is enabled.
@@ -395,11 +520,12 @@ pub struct ScheduledTaskCreate {
 
 /// Scheduled task update payload.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
 pub struct ScheduledTaskUpdate {
     /// Optional replacement display name.
     pub name: Option<String>,
-    /// Optional replacement shell command.
-    pub command: Option<String>,
+    /// Optional replacement job specification.
+    pub job: Option<ScheduledJobSpec>,
     /// Optional replacement cron expression.
     pub cron: Option<String>,
     /// Optional enabled flag.
@@ -651,4 +777,61 @@ pub fn default_enabled() -> bool {
 /// Return the default announcement priority.
 pub fn default_announcement_priority() -> String {
     "normal".to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ScheduledDeliveryJob, ScheduledIndexJob, ScheduledJobSpec};
+
+    #[test]
+    fn scheduler_job_spec_accepts_allowlisted_arguments() {
+        let index = ScheduledJobSpec::Index(ScheduledIndexJob {
+            metadata_file: Some("journals_2026.csv".to_string()),
+            notify: true,
+            push: true,
+        });
+        let delivery = ScheduledJobSpec::Notify(ScheduledDeliveryJob {
+            database: Some("journals.sqlite".to_string()),
+            max_candidates: Some(250),
+        });
+
+        index.validate().expect("index arguments should validate");
+        delivery
+            .validate()
+            .expect("delivery arguments should validate");
+    }
+
+    #[test]
+    fn scheduler_job_spec_rejects_paths_metacharacters_and_invalid_ranges() {
+        for metadata_file in [
+            "../journals.csv",
+            "data/journals.csv",
+            "journals.csv && push",
+            "journals.txt",
+        ] {
+            let job = ScheduledJobSpec::Index(ScheduledIndexJob {
+                metadata_file: Some(metadata_file.to_string()),
+                notify: false,
+                push: false,
+            });
+            assert!(job.validate().is_err(), "{metadata_file} should fail");
+        }
+
+        for max_candidates in [0, 1_001] {
+            let job = ScheduledJobSpec::Push(ScheduledDeliveryJob {
+                database: None,
+                max_candidates: Some(max_candidates),
+            });
+            assert!(job.validate().is_err());
+        }
+    }
+
+    #[test]
+    fn scheduler_job_spec_deserialization_rejects_unknown_kinds_and_fields() {
+        assert!(serde_json::from_str::<ScheduledJobSpec>(r#"{"kind":"shell"}"#).is_err());
+        assert!(serde_json::from_str::<ScheduledJobSpec>(
+            r#"{"kind":"notify","database":"index.sqlite","command":"push"}"#,
+        )
+        .is_err());
+    }
 }

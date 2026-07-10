@@ -23,6 +23,72 @@ fn empty_auth_database_migration_creates_current_schema() {
     assert!(table_exists(&path, "scheduled_tasks"));
     assert!(table_columns(&path, "users").contains(&"is_admin".to_string()));
     assert!(table_columns(&path, "announcements").contains(&"priority".to_string()));
+    assert!(table_columns(&path, "scheduled_tasks").contains(&"job_spec".to_string()));
+    assert!(!table_columns(&path, "scheduled_tasks").contains(&"command".to_string()));
+}
+
+#[test]
+fn scheduler_migration_disables_and_preserves_legacy_commands() {
+    let temp_dir = tempdir().expect("temp directory should be created");
+    let path = temp_dir.path().join("auth.sqlite");
+    let connection = Connection::open(&path).expect("version one database should open");
+    connection
+        .execute_batch(
+            "
+            CREATE TABLE scheduled_tasks (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                name        TEXT    NOT NULL,
+                command     TEXT    NOT NULL,
+                cron        TEXT    NOT NULL,
+                enabled     INTEGER NOT NULL DEFAULT 1,
+                last_run_at REAL,
+                last_status TEXT    NOT NULL DEFAULT '',
+                created_at  REAL    NOT NULL,
+                updated_at  REAL    NOT NULL
+            );
+            INSERT INTO scheduled_tasks
+                (id, name, command, cron, enabled, last_run_at, last_status,
+                 created_at, updated_at)
+            VALUES
+                (9, 'Legacy shell task', 'index --update && push', '0 1 * * *',
+                 1, 20.0, 'success', 10.0, 21.0);
+            PRAGMA user_version = 1;
+            ",
+        )
+        .expect("version one fixture should be created");
+    drop(connection);
+
+    migrate_auth_database(&path).expect("version one database should migrate");
+
+    let connection = Connection::open(&path).expect("migrated database should open");
+    let task: (Option<String>, Option<String>, i64, Option<f64>, String) = connection
+        .query_row(
+            "SELECT job_spec, legacy_command, enabled, last_run_at, last_status
+             FROM scheduled_tasks WHERE id = 9",
+            [],
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                ))
+            },
+        )
+        .expect("migrated scheduled task should remain");
+
+    assert_eq!(
+        task,
+        (
+            None,
+            Some("index --update && push".to_string()),
+            0,
+            Some(20.0),
+            "success".to_string(),
+        )
+    );
+    assert_eq!(user_version(&path), AUTH_SCHEMA_VERSION);
 }
 
 #[test]

@@ -12,8 +12,9 @@ use ps_domain::{
     FavoriteAdd, FavoriteArticleRef, FavoriteArticleResponse, FavoriteBatchCheckResponse,
     FavoriteCheckResponse, FavoriteResponse, FolderResponse, IndexDatabaseStats, IndexStats,
     NotificationSettingsResponse, NotificationSettingsUpdate, NotificationSubscriberInfo,
-    PushStats, RuntimeSettingInfo, ScheduledTaskInfo, UserId,
+    PushStats, RuntimeSettingInfo, ScheduledJobSpec, ScheduledTaskInfo, UserId,
 };
+use rusqlite::types::Type;
 use rusqlite::{params, Connection, ErrorCode, OptionalExtension};
 use serde::Deserialize;
 use serde_json::Value;
@@ -115,6 +116,10 @@ pub enum BusinessRepositoryError {
     UnknownRuntimeSetting(String),
     /// Runtime boolean could not be parsed.
     InvalidRuntimeBoolean(String),
+    /// Scheduled job arguments failed allowlist validation.
+    InvalidScheduledJob(String),
+    /// A migrated legacy task was enabled without a typed replacement job.
+    LegacyScheduledTaskCannotBeEnabled,
 }
 
 impl fmt::Display for BusinessRepositoryError {
@@ -137,6 +142,10 @@ impl fmt::Display for BusinessRepositoryError {
             Self::InvalidRuntimeBoolean(value) => {
                 write!(formatter, "Invalid boolean value: {value}")
             }
+            Self::InvalidScheduledJob(message) => formatter.write_str(message),
+            Self::LegacyScheduledTaskCannotBeEnabled => formatter.write_str(
+                "A legacy scheduled task must be replaced with a typed job before it can be enabled",
+            ),
         }
     }
 }
@@ -1232,11 +1241,16 @@ pub fn list_scheduled_tasks(
 ) -> Result<Vec<ScheduledTaskInfo>, BusinessRepositoryError> {
     let connection = open_business_connection(auth_db_path)?;
     let mut statement = connection.prepare(
-        "SELECT id, name, command, cron, enabled, last_run_at, last_status, created_at, updated_at \
+        "SELECT id, name, job_spec, legacy_command, cron, enabled, last_run_at, last_status, created_at, updated_at \
          FROM scheduled_tasks ORDER BY created_at DESC",
     )?;
     let rows = statement.query_map([], scheduled_task_from_row)?;
     collect_rows(rows)
+}
+
+fn validate_scheduled_job(job: &ScheduledJobSpec) -> Result<(), BusinessRepositoryError> {
+    job.validate()
+        .map_err(|error| BusinessRepositoryError::InvalidScheduledJob(error.to_string()))
 }
 
 /// Get one scheduled task.
@@ -1263,7 +1277,7 @@ pub fn get_scheduled_task(
 ///
 /// * `auth_db_path` - Path to `auth.sqlite`.
 /// * `name` - Task name.
-/// * `command` - Shell command.
+/// * `job` - Validated job specification.
 /// * `cron` - Five-field cron expression.
 /// * `enabled` - Whether the task is enabled.
 ///
@@ -1273,17 +1287,19 @@ pub fn get_scheduled_task(
 pub fn create_scheduled_task(
     auth_db_path: impl AsRef<Path>,
     name: &str,
-    command: &str,
+    job: &ScheduledJobSpec,
     cron: &str,
     enabled: bool,
 ) -> Result<ScheduledTaskInfo, BusinessRepositoryError> {
+    validate_scheduled_job(job)?;
     let connection = open_business_connection(auth_db_path)?;
     let now = now_seconds();
+    let job_spec = serde_json::to_string(job)?;
     connection.execute(
         "INSERT INTO scheduled_tasks \
-         (name, command, cron, enabled, last_run_at, last_status, created_at, updated_at) \
-         VALUES (?1, ?2, ?3, ?4, NULL, '', ?5, ?6)",
-        params![name, command, cron, enabled as i64, now, now],
+         (name, job_spec, legacy_command, cron, enabled, last_run_at, last_status, created_at, updated_at) \
+         VALUES (?1, ?2, NULL, ?3, ?4, NULL, '', ?5, ?6)",
+        params![name, job_spec, cron, enabled as i64, now, now],
     )?;
     get_scheduled_task_from_connection(&connection, connection.last_insert_rowid())?
         .ok_or_else(|| rusqlite::Error::QueryReturnedNoRows.into())
@@ -1296,7 +1312,7 @@ pub fn create_scheduled_task(
 /// * `auth_db_path` - Path to `auth.sqlite`.
 /// * `task_id` - Scheduled task row identifier.
 /// * `name` - Optional replacement name.
-/// * `command` - Optional replacement command.
+/// * `job` - Optional replacement job specification.
 /// * `cron` - Optional replacement cron expression.
 /// * `enabled` - Optional replacement enabled flag.
 ///
@@ -1307,7 +1323,7 @@ pub fn update_scheduled_task(
     auth_db_path: impl AsRef<Path>,
     task_id: i64,
     name: Option<&str>,
-    command: Option<&str>,
+    job: Option<&ScheduledJobSpec>,
     cron: Option<&str>,
     enabled: Option<bool>,
 ) -> Result<Option<ScheduledTaskInfo>, BusinessRepositoryError> {
@@ -1315,14 +1331,29 @@ pub fn update_scheduled_task(
     let Some(current) = get_scheduled_task_from_connection(&connection, task_id)? else {
         return Ok(None);
     };
+    let next_job = job.or(current.job.as_ref());
+    if let Some(next_job) = next_job {
+        validate_scheduled_job(next_job)?;
+    }
+    let next_enabled = enabled.unwrap_or(current.enabled);
+    if next_job.is_none() && next_enabled {
+        return Err(BusinessRepositoryError::LegacyScheduledTaskCannotBeEnabled);
+    }
+    let job_spec = next_job.map(serde_json::to_string).transpose()?;
+    let legacy_command = if job.is_some() {
+        None
+    } else {
+        current.legacy_command.as_deref()
+    };
     connection.execute(
-        "UPDATE scheduled_tasks SET name = ?1, command = ?2, cron = ?3, enabled = ?4, \
-         updated_at = ?5 WHERE id = ?6",
+        "UPDATE scheduled_tasks SET name = ?1, job_spec = ?2, legacy_command = ?3, cron = ?4, \
+         enabled = ?5, updated_at = ?6 WHERE id = ?7",
         params![
             name.unwrap_or(&current.name),
-            command.unwrap_or(&current.command),
+            job_spec,
+            legacy_command,
             cron.unwrap_or(&current.cron),
-            enabled.unwrap_or(current.enabled) as i64,
+            next_enabled as i64,
             now_seconds(),
             task_id
         ],
@@ -1356,7 +1387,7 @@ pub fn delete_scheduled_task(
 /// * `auth_db_path` - Path to `auth.sqlite`.
 /// * `task_id` - Scheduled task row identifier.
 /// * `status` - Python-compatible status string.
-/// * `ran_at` - Unix timestamp when the command started.
+/// * `ran_at` - Unix timestamp when the job started.
 ///
 /// # Returns
 ///
@@ -1991,16 +2022,26 @@ fn favorite_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<FavoriteRespon
 }
 
 fn scheduled_task_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ScheduledTaskInfo> {
+    let job_spec = row.get::<_, Option<String>>(2)?;
+    let job = job_spec
+        .as_deref()
+        .map(|value| {
+            serde_json::from_str(value).map_err(|error| {
+                rusqlite::Error::FromSqlConversionFailure(2, Type::Text, Box::new(error))
+            })
+        })
+        .transpose()?;
     Ok(ScheduledTaskInfo {
         id: row.get(0)?,
         name: row.get(1)?,
-        command: row.get(2)?,
-        cron: row.get(3)?,
-        enabled: row.get::<_, i64>(4)? != 0,
-        last_run_at: row.get(5)?,
-        last_status: row.get(6)?,
-        created_at: row.get(7)?,
-        updated_at: row.get(8)?,
+        job,
+        legacy_command: row.get(3)?,
+        cron: row.get(4)?,
+        enabled: row.get::<_, i64>(5)? != 0,
+        last_run_at: row.get(6)?,
+        last_status: row.get(7)?,
+        created_at: row.get(8)?,
+        updated_at: row.get(9)?,
     })
 }
 
@@ -2022,7 +2063,7 @@ fn get_scheduled_task_from_connection(
 ) -> Result<Option<ScheduledTaskInfo>, BusinessRepositoryError> {
     connection
         .query_row(
-            "SELECT id, name, command, cron, enabled, last_run_at, last_status, created_at, updated_at \
+            "SELECT id, name, job_spec, legacy_command, cron, enabled, last_run_at, last_status, created_at, updated_at \
              FROM scheduled_tasks WHERE id = ?1",
             [task_id],
             scheduled_task_from_row,
@@ -2212,14 +2253,84 @@ impl AuthRepositorySqliteError for crate::AuthRepositoryError {
 mod tests {
     use std::{collections::HashMap, fs};
 
+    use ps_domain::{ScheduledIndexJob, ScheduledJobSpec};
     use rusqlite::Connection;
     use tempfile::tempdir;
 
     use super::{
-        count_weekly_articles, get_admin_stats, list_runtime_settings, upsert_runtime_settings,
-        BusinessRepositoryError,
+        count_weekly_articles, create_scheduled_task, get_admin_stats, list_runtime_settings,
+        update_scheduled_task, upsert_runtime_settings, BusinessRepositoryError,
     };
     use crate::{migrate_auth_database, StorageConfig};
+
+    #[test]
+    fn scheduler_repository_validates_typed_jobs_and_replaces_legacy_rows() {
+        let temp_dir = tempdir().expect("temp dir should be created");
+        let auth_db_path = temp_dir.path().join("auth.sqlite");
+        migrate_auth_database(&auth_db_path).expect("auth database should migrate");
+        let valid_job = ScheduledJobSpec::Index(ScheduledIndexJob {
+            metadata_file: Some("journals.csv".to_string()),
+            notify: true,
+            push: false,
+        });
+        let created =
+            create_scheduled_task(&auth_db_path, "Typed index", &valid_job, "0 1 * * *", true)
+                .expect("typed task should be created");
+
+        assert_eq!(created.job.as_ref(), Some(&valid_job));
+        assert_eq!(created.legacy_command, None);
+
+        let invalid_job = ScheduledJobSpec::Index(ScheduledIndexJob {
+            metadata_file: Some("../journals.csv".to_string()),
+            notify: false,
+            push: false,
+        });
+        let error = create_scheduled_task(
+            &auth_db_path,
+            "Invalid index",
+            &invalid_job,
+            "0 1 * * *",
+            true,
+        )
+        .expect_err("unsafe path should be rejected");
+        assert!(matches!(
+            error,
+            BusinessRepositoryError::InvalidScheduledJob(_)
+        ));
+
+        let connection = Connection::open(&auth_db_path).expect("auth database should open");
+        connection
+            .execute(
+                "INSERT INTO scheduled_tasks
+                 (name, job_spec, legacy_command, cron, enabled, last_status, created_at, updated_at)
+                 VALUES ('Legacy', NULL, 'index --update && push', '0 2 * * *', 0, '', 1.0, 1.0)",
+                [],
+            )
+            .expect("legacy fixture should insert");
+        let legacy_id = connection.last_insert_rowid();
+        drop(connection);
+
+        let error = update_scheduled_task(&auth_db_path, legacy_id, None, None, None, Some(true))
+            .expect_err("legacy task should not be enabled");
+        assert!(matches!(
+            error,
+            BusinessRepositoryError::LegacyScheduledTaskCannotBeEnabled
+        ));
+
+        let replaced = update_scheduled_task(
+            &auth_db_path,
+            legacy_id,
+            None,
+            Some(&valid_job),
+            None,
+            Some(true),
+        )
+        .expect("legacy task should accept a typed replacement")
+        .expect("legacy task should still exist");
+        assert_eq!(replaced.job, Some(valid_job));
+        assert_eq!(replaced.legacy_command, None);
+        assert!(replaced.enabled);
+    }
 
     #[test]
     fn runtime_settings_ignore_stale_env_keys_and_proxy_pool() {

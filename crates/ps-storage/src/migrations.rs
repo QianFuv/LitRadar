@@ -11,7 +11,7 @@ use rusqlite::{Connection, Transaction, TransactionBehavior};
 use crate::{try_load_extension, DatabaseResolutionError, StorageConfig};
 
 /// Current auth and business database schema version.
-pub const AUTH_SCHEMA_VERSION: i64 = 1;
+pub const AUTH_SCHEMA_VERSION: i64 = 2;
 
 /// Current index database schema version.
 pub const INDEX_SCHEMA_VERSION: i64 = 1;
@@ -146,6 +146,7 @@ pub fn migrate_auth_database(path: impl AsRef<Path>) -> Result<(), MigrationErro
         let transaction = Transaction::new_unchecked(&connection, TransactionBehavior::Immediate)?;
         match next_version {
             1 => apply_auth_version_one(&transaction)?,
+            2 => apply_auth_version_two(&transaction)?,
             _ => unreachable!("auth migration version should be implemented"),
         }
         transaction.pragma_update(None, "user_version", next_version)?;
@@ -270,6 +271,42 @@ fn apply_auth_version_one(transaction: &Transaction<'_>) -> rusqlite::Result<()>
     }
 
     transaction.execute_batch(AUTH_INDEXES_SQL)
+}
+
+fn apply_auth_version_two(transaction: &Transaction<'_>) -> rusqlite::Result<()> {
+    transaction.execute_batch(
+        "
+        CREATE TABLE scheduled_tasks_v2 (
+            id             INTEGER PRIMARY KEY AUTOINCREMENT,
+            name           TEXT    NOT NULL,
+            job_spec       TEXT,
+            legacy_command TEXT,
+            cron           TEXT    NOT NULL,
+            enabled        INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1)),
+            last_run_at    REAL,
+            last_status    TEXT    NOT NULL DEFAULT '',
+            created_at     REAL    NOT NULL,
+            updated_at     REAL    NOT NULL,
+            CHECK (
+                (job_spec IS NOT NULL AND legacy_command IS NULL)
+                OR (job_spec IS NULL AND legacy_command IS NOT NULL)
+            ),
+            CHECK (job_spec IS NOT NULL OR enabled = 0)
+        );
+
+        INSERT INTO scheduled_tasks_v2
+            (id, name, job_spec, legacy_command, cron, enabled, last_run_at,
+             last_status, created_at, updated_at)
+        SELECT
+            id, name, NULL, command, cron, 0, last_run_at, last_status,
+            created_at, updated_at
+        FROM scheduled_tasks;
+
+        DROP TABLE scheduled_tasks;
+        ALTER TABLE scheduled_tasks_v2 RENAME TO scheduled_tasks;
+        CREATE INDEX idx_scheduled_tasks_enabled ON scheduled_tasks(enabled);
+        ",
+    )
 }
 
 fn apply_index_version_one(

@@ -24,7 +24,8 @@ pub use business::{
     FavoriteBulkResult, FavoriteCheckResponse, FavoriteResponse, FavoriteTrackingResponse,
     FolderCreate, FolderRename, FolderResponse, IndexDatabaseStats, IndexStats,
     NotificationSettingsResponse, NotificationSettingsUpdate, PushStats, RuntimeSettingInfo,
-    RuntimeSettingsUpdate, ScheduledTaskCreate, ScheduledTaskInfo, ScheduledTaskUpdate,
+    RuntimeSettingsUpdate, ScheduledDeliveryJob, ScheduledIndexJob, ScheduledJobSpec,
+    ScheduledJobValidationError, ScheduledTaskCreate, ScheduledTaskInfo, ScheduledTaskUpdate,
     TrackingFolderSummary, TrackingSetRequest, TrackingStatusResponse,
 };
 pub use cnki::{

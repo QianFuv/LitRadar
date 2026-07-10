@@ -24,8 +24,14 @@ export type RuntimeSettingInfo = Omit<
 export type RuntimeSettingsUpdate = {
   values: NonNullable<ApiSchemas['RuntimeSettingsUpdate']['values']>;
 };
-export type ScheduledTaskInfo = Omit<ApiSchemas['ScheduledTaskInfo'], 'last_run_at'> & {
+export type ScheduledJobSpec = ApiSchemas['ScheduledJobSpec'];
+export type ScheduledTaskInfo = Omit<
+  ApiSchemas['ScheduledTaskInfo'],
+  'job' | 'last_run_at' | 'legacy_command'
+> & {
+  job: ScheduledJobSpec | null;
   last_run_at: number | null;
+  legacy_command: string | null;
 };
 export type ScheduledTaskCreate = Required<ApiSchemas['ScheduledTaskCreate']>;
 export type ScheduledTaskUpdate = ApiSchemas['ScheduledTaskUpdate'];
@@ -285,11 +291,15 @@ function isRuntimeSettingInfo(value: unknown): value is RuntimeSettingInfo {
  * @returns Whether the value matches the generated scheduled-task contract.
  */
 function isScheduledTaskInfo(value: unknown): value is ScheduledTaskInfo {
+  if (!isRecord(value)) {
+    return false;
+  }
+  const hasTypedJob = isScheduledJobSpec(value.job) && value.legacy_command === null;
+  const hasLegacyCommand = value.job === null && typeof value.legacy_command === 'string';
   return (
-    isRecord(value) &&
     isNumber(value.id) &&
     typeof value.name === 'string' &&
-    typeof value.command === 'string' &&
+    (hasTypedJob || hasLegacyCommand) &&
     typeof value.cron === 'string' &&
     typeof value.enabled === 'boolean' &&
     isNullableNumber(value.last_run_at) &&
@@ -297,6 +307,32 @@ function isScheduledTaskInfo(value: unknown): value is ScheduledTaskInfo {
     isNumber(value.created_at) &&
     isNumber(value.updated_at)
   );
+}
+
+/**
+ * Return whether a value is one strictly typed scheduler job.
+ *
+ * @param value - Value to inspect.
+ * @returns Whether the value matches a generated scheduler job variant.
+ */
+function isScheduledJobSpec(value: unknown): value is ScheduledJobSpec {
+  if (!isRecord(value) || typeof value.kind !== 'string') {
+    return false;
+  }
+  if (value.kind === 'index') {
+    return (
+      (!('metadata_file' in value) || isNullableString(value.metadata_file)) &&
+      (!('notify' in value) || typeof value.notify === 'boolean') &&
+      (!('push' in value) || typeof value.push === 'boolean')
+    );
+  }
+  if (value.kind === 'notify' || value.kind === 'push') {
+    return (
+      (!('database' in value) || isNullableString(value.database)) &&
+      (!('max_candidates' in value) || isNullableNumber(value.max_candidates))
+    );
+  }
+  return false;
 }
 
 /**

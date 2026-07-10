@@ -7,7 +7,8 @@ use ps_auth::{is_valid_new_password, MIN_PASSWORD_LENGTH};
 use ps_domain::{
     AdminInviteCodeInfo, AdminResetPassword, AdminSetAdmin, AdminStatsResponse, AdminUserInfo,
     AnnouncementCreate, AnnouncementInfo, AnnouncementUpdate, OkResponse, RuntimeSettingInfo,
-    RuntimeSettingsUpdate, ScheduledTaskCreate, ScheduledTaskInfo, ScheduledTaskUpdate, UserId,
+    RuntimeSettingsUpdate, ScheduledJobSpec, ScheduledTaskCreate, ScheduledTaskInfo,
+    ScheduledTaskUpdate, UserId,
 };
 use ps_storage::BusinessRepositoryError;
 
@@ -16,7 +17,7 @@ use crate::routes::auth::{auth_service, map_auth_error, require_admin_user};
 use crate::state::ApiState;
 
 type AnnouncementPayload<'a> = (Option<&'a str>, Option<&'a str>, Option<String>);
-type ScheduledTaskPayload<'a> = (Option<&'a str>, Option<&'a str>, Option<&'a str>);
+type ScheduledTaskPayload<'a> = (Option<&'a str>, Option<&'a str>);
 
 /// List all users with admin dashboard counts.
 #[utoipa::path(
@@ -240,12 +241,12 @@ pub(crate) async fn create_scheduled_task(
     Json(body): Json<ScheduledTaskCreate>,
 ) -> Result<Json<ScheduledTaskInfo>, ApiError> {
     require_admin_user(&state, &headers)?;
-    let (name, command, cron) =
-        validate_scheduled_task_payload(Some(&body.name), Some(&body.command), Some(&body.cron))?;
+    let (name, cron) =
+        validate_scheduled_task_payload(Some(&body.name), Some(&body.cron), Some(&body.job))?;
     let task = ps_storage::create_scheduled_task(
         state.storage_config().auth_db_path(),
         name.unwrap_or_default(),
-        command.unwrap_or_default(),
+        &body.job,
         cron.unwrap_or_default(),
         body.enabled,
     )
@@ -270,16 +271,16 @@ pub(crate) async fn update_scheduled_task(
     Json(body): Json<ScheduledTaskUpdate>,
 ) -> Result<Json<ScheduledTaskInfo>, ApiError> {
     require_admin_user(&state, &headers)?;
-    let (name, command, cron) = validate_scheduled_task_payload(
+    let (name, cron) = validate_scheduled_task_payload(
         body.name.as_deref(),
-        body.command.as_deref(),
         body.cron.as_deref(),
+        body.job.as_ref(),
     )?;
     let task = ps_storage::update_scheduled_task(
         state.storage_config().auth_db_path(),
         task_id,
         name,
-        command,
+        body.job.as_ref(),
         cron,
         body.enabled,
     )
@@ -489,41 +490,34 @@ fn validate_announcement_payload<'a>(
 
 fn validate_scheduled_task_payload<'a>(
     name: Option<&'a str>,
-    command: Option<&'a str>,
     cron: Option<&'a str>,
+    job: Option<&ScheduledJobSpec>,
 ) -> Result<ScheduledTaskPayload<'a>, ApiError> {
     let clean_name = name.map(str::trim);
-    let clean_command = command.map(str::trim);
     let clean_cron = cron.map(str::trim);
     if clean_name == Some("") {
         return Err(ApiError::bad_request("Task name must not be empty"));
-    }
-    if clean_command == Some("") {
-        return Err(ApiError::bad_request("Command must not be empty"));
     }
     if clean_cron == Some("") {
         return Err(ApiError::bad_request("Cron must not be empty"));
     }
     if let Some(cron) = clean_cron {
-        validate_cron_expression(cron)?;
+        ps_worker::scheduler::validate_cron_expression(cron)
+            .map_err(|error| ApiError::bad_request(error.to_string()))?;
     }
-    Ok((clean_name, clean_command, clean_cron))
-}
-
-fn validate_cron_expression(cron: &str) -> Result<(), ApiError> {
-    let fields = cron.split_whitespace().count();
-    if fields != 5 {
-        return Err(ApiError::bad_request(format!(
-            "Wrong number of fields; got {fields}, expected 5"
-        )));
+    if let Some(job) = job {
+        job.validate()
+            .map_err(|error| ApiError::bad_request(error.to_string()))?;
     }
-    Ok(())
+    Ok((clean_name, clean_cron))
 }
 
 fn map_business_error(error: BusinessRepositoryError) -> ApiError {
     match error {
         BusinessRepositoryError::UnknownRuntimeSetting(_)
-        | BusinessRepositoryError::InvalidRuntimeBoolean(_) => {
+        | BusinessRepositoryError::InvalidRuntimeBoolean(_)
+        | BusinessRepositoryError::InvalidScheduledJob(_)
+        | BusinessRepositoryError::LegacyScheduledTaskCannotBeEnabled => {
             ApiError::bad_request(error.to_string())
         }
         _ => ApiError::internal_server_error(),

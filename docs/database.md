@@ -15,7 +15,7 @@ Paper Scanner 当前实际使用两类数据库：
 
 ## 数据库版本与迁移生命周期
 
-认证库和每个索引库分别使用 SQLite `PRAGMA user_version` 记录 schema 版本。当前认证库版本和索引库版本均为 `1`。
+认证库和每个索引库分别使用 SQLite `PRAGMA user_version` 记录 schema 版本。当前认证库版本为 `2`，索引库版本为 `1`。
 
 - API 在绑定监听端口前迁移 `data/auth.sqlite` 和 `data/index/*.sqlite`
 - `worker` 在进入调度循环前迁移；`scheduler`、`index`、`notify` 和 `push` 在参数验证完成、首次业务访问前迁移
@@ -552,7 +552,8 @@ announcements
 
 - `id`
 - `name`
-- `command`
+- `job_spec`：类型化 job 的 JSON；新任务必须填写
+- `legacy_command`：从旧 schema 保留的只读命令文本；新任务必须为空
 - `cron`
 - `enabled`
 - `last_run_at`
@@ -564,7 +565,9 @@ announcements
 
 - Docker 默认由 `worker --project-root /app --interval-seconds 300` 持续加载并按 cron 自动执行启用任务
 - 立即执行和 dry-run 由 `scheduler run-once TASK_ID` 与 `scheduler dry-run-once TASK_ID` 触发
-- 执行模式仍按 shell 命令处理，不会把 `runtime_settings` 注入命令环境
+- `job_spec` 与 `legacy_command` 必须且只能有一个非空；没有 `job_spec` 的行在数据库约束层不能启用
+- 版本 `1 -> 2` 迁移不会猜测旧命令的含义：旧 `command` 原样进入 `legacy_command`，所有旧任务强制停用
+- worker 只把已验证 job 映射为固定的 `index`、`notify`、`push` 可执行文件与独立 argv，不经过 shell
 
 ### 9. `runtime_settings`
 

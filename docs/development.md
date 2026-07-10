@@ -113,7 +113,7 @@ printf '%s\n' "$ADMIN_PASSWORD" | cargo run --bin admin -- bootstrap --username 
 cargo run --bin worker -- --interval-seconds 300
 ```
 
-`worker` 会持续加载 `scheduled_tasks` 并按五段 cron 执行启用任务。
+`worker` 会持续加载 `scheduled_tasks` 并按五段 cron 执行启用任务。任务必须是 `index`、`notify` 或 `push` 类型化 job；worker 根据白名单字段构造 argv，直接启动对应可执行文件，不经过 shell。索引 job 可串联 notify/push，任一步失败都会停止后续步骤。
 
 ### Scheduler
 
@@ -122,6 +122,8 @@ cargo run --bin scheduler -- validate
 cargo run --bin scheduler -- run-once 1
 cargo run --bin scheduler -- dry-run-once 1
 ```
+
+从旧 `command` schema 迁移的记录只保留为禁用的审阅数据。`run-once` 也不会执行这类记录；管理员必须在后台选择结构化预设并保存，才能生成新的 job。API 与存储层都校验 cron、文件名和参数范围，worker 在执行前再次校验。
 
 ### 索引
 
@@ -216,9 +218,9 @@ docker compose build
 
 每周更新、通知和追踪推送都依赖 `data/push_state/*.changes.json` 或状态快照差异。没有变更清单时，相关链路可能为空。
 
-### 管理员定时任务不是 API 进程内 APScheduler
+### 管理员定时任务不是 API 进程内 APScheduler，也不是 shell 命令
 
-Rust worker sidecar 会按 cron 自动执行启用任务；单次执行由 `scheduler run-once TASK_ID` 触发，dry-run 由 `scheduler dry-run-once TASK_ID` 触发。
+Rust worker sidecar 会按 cron 自动执行启用的类型化任务；单次执行由 `scheduler run-once TASK_ID` 触发，dry-run 由 `scheduler dry-run-once TASK_ID` 触发。不要重新加入自由命令字段或命令解释器；新增调度能力时应扩展领域枚举、参数校验、进程映射、OpenAPI 与管理 UI。
 
 ### 通知配置不绑定单一 AI 服务商
 

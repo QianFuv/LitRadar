@@ -831,7 +831,7 @@ mod tests {
         miri,
         ignore = "Miri does not support Tokio's Windows IOCP runtime initialization"
     )]
-    async fn admin_routes_cover_user_invite_stats_settings_tasks_and_announcements() {
+    async fn scheduler_admin_routes_cover_user_invite_stats_settings_tasks_and_announcements() {
         let backend = TestBackend::new();
         let admin = backend.authenticated_user("admin", true);
         let member = backend.authenticated_user("member", false);
@@ -995,7 +995,12 @@ mod tests {
             None,
             Some(serde_json::json!({
                 "name": "Nightly index",
-                "command": "ps-cli index",
+                "job": {
+                    "kind": "index",
+                    "metadata_file": "journals.csv",
+                    "notify": true,
+                    "push": true
+                },
                 "cron": "0 1 * * *",
                 "enabled": true
             })),
@@ -1021,10 +1026,83 @@ mod tests {
             None,
             Some(serde_json::json!({
                 "name": "Bad cron",
-                "command": "ps-cli index",
+                "job": { "kind": "index" },
                 "cron": "* * *",
                 "enabled": true
             })),
+        )
+        .await;
+        let task_range_error = json_request(
+            &app,
+            Method::POST,
+            "/api/admin/scheduled-tasks",
+            Some(&admin_auth),
+            None,
+            Some(serde_json::json!({
+                "name": "Bad cron range",
+                "job": { "kind": "index" },
+                "cron": "60 * * * *",
+                "enabled": true
+            })),
+        )
+        .await;
+        let task_path_error = json_request(
+            &app,
+            Method::POST,
+            "/api/admin/scheduled-tasks",
+            Some(&admin_auth),
+            None,
+            Some(serde_json::json!({
+                "name": "Unsafe path",
+                "job": {
+                    "kind": "index",
+                    "metadata_file": "journals.csv && push"
+                },
+                "cron": "0 1 * * *",
+                "enabled": true
+            })),
+        )
+        .await;
+        let task_argument_error = json_request(
+            &app,
+            Method::POST,
+            "/api/admin/scheduled-tasks",
+            Some(&admin_auth),
+            None,
+            Some(serde_json::json!({
+                "name": "Invalid range",
+                "job": {
+                    "kind": "notify",
+                    "max_candidates": 1001
+                },
+                "cron": "0 1 * * *",
+                "enabled": true
+            })),
+        )
+        .await;
+        let task_kind_error = json_rejection_status(
+            &app,
+            "/api/admin/scheduled-tasks",
+            &admin_auth,
+            serde_json::json!({
+                "name": "Unknown kind",
+                "job": { "kind": "shell" },
+                "cron": "0 1 * * *",
+                "enabled": true
+            }),
+        )
+        .await;
+        let task_command_error = json_rejection_status(
+            &app,
+            "/api/admin/scheduled-tasks",
+            &admin_auth,
+            serde_json::json!({
+                "name": "Arbitrary command",
+                "job": { "kind": "index" },
+                "command": "index --update && push",
+                "cron": "0 1 * * *",
+                "enabled": true
+            }),
         )
         .await;
         let task_update = json_request(
@@ -1202,9 +1280,16 @@ mod tests {
         assert_eq!(runtime_proxy_error.status, StatusCode::BAD_REQUEST);
         assert_eq!(task.status, StatusCode::OK);
         assert_eq!(task.payload["name"], "Nightly index");
+        assert_eq!(task.payload["job"]["kind"], "index");
+        assert_eq!(task.payload["legacy_command"], serde_json::Value::Null);
         assert_eq!(task_list.status, StatusCode::OK);
         assert_eq!(task_list.payload[0]["id"], task.payload["id"]);
         assert_eq!(task_error.status, StatusCode::BAD_REQUEST);
+        assert_eq!(task_range_error.status, StatusCode::BAD_REQUEST);
+        assert_eq!(task_path_error.status, StatusCode::BAD_REQUEST);
+        assert_eq!(task_argument_error.status, StatusCode::BAD_REQUEST);
+        assert_eq!(task_kind_error, StatusCode::UNPROCESSABLE_ENTITY);
+        assert_eq!(task_command_error, StatusCode::UNPROCESSABLE_ENTITY);
         assert_eq!(task_update.status, StatusCode::OK);
         assert_eq!(task_update.payload["enabled"], false);
         assert_eq!(task_delete.status, StatusCode::OK);
@@ -2461,6 +2546,27 @@ mod tests {
             .to_str()
             .expect("set-cookie should be visible ASCII")
             .to_string()
+    }
+
+    async fn json_rejection_status(
+        app: &Router,
+        uri: &str,
+        authorization: &str,
+        payload: Value,
+    ) -> StatusCode {
+        app.clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri(uri)
+                    .header(AUTHORIZATION, authorization)
+                    .header(CONTENT_TYPE, "application/json")
+                    .body(Body::from(payload.to_string()))
+                    .expect("request should build"),
+            )
+            .await
+            .expect("response should be returned")
+            .status()
     }
 
     fn insert_cnki_fulltext_article(index_database: &FixtureIndexDatabase) -> i64 {
