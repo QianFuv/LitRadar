@@ -1054,7 +1054,9 @@ mod tests {
                 assert_eq!(actual_status, status);
                 assert_eq!(actual_detail, detail);
             }
-            ApiError::JsonDetail { .. } => panic!("expected HTTP error"),
+            ApiError::JsonDetail { .. } | ApiError::TooManyRequests { .. } => {
+                panic!("expected HTTP error")
+            }
         }
     }
 }

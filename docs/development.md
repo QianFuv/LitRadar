@@ -95,6 +95,18 @@ RUST_LOG=error cargo run --bin api
 RUST_LOG=ps_api=debug,tower_http=debug cargo run --bin api
 ```
 
+### 本机管理员初始化
+
+空用户库不会接受公开首用户注册。开发环境通过 stdin 创建一次管理员：
+
+```bash
+printf '%s\n' "$ADMIN_PASSWORD" | cargo run --bin admin -- bootstrap --username admin --password-stdin
+```
+
+不要添加接受 `--password VALUE` 的参数，也不要在调试日志中输出 stdin 内容。bootstrap 只在用户表为空时成功；测试应使用临时数据库，并覆盖并发调用只有一个成功的情况。
+
+登录与注册限流保存在单个 `ApiState` 的有界内存结构中。用户名键会转为小写并定期清理，登录和注册另有各自的全局固定窗口。时间相关测试直接向 limiter 传入确定性秒值，不使用 sleep。
+
 ### Rust worker
 
 ```bash

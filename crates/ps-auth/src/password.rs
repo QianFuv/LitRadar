@@ -6,7 +6,24 @@ use subtle::ConstantTimeEq;
 
 /// PBKDF2 iteration count used by the existing Python backend.
 pub const PBKDF2_ITERATIONS: u32 = 260_000;
+/// Minimum character count for newly created or replaced passwords.
+pub const MIN_PASSWORD_LENGTH: usize = 12;
 const HASH_BYTES: usize = 32;
+
+/// Return whether a new password satisfies the current creation policy.
+///
+/// Existing stored passwords are intentionally not checked by this function during login.
+///
+/// # Arguments
+///
+/// * `password` - Proposed new password.
+///
+/// # Returns
+///
+/// True when the password contains at least the required number of Unicode characters.
+pub fn is_valid_new_password(password: &str) -> bool {
+    password.chars().count() >= MIN_PASSWORD_LENGTH
+}
 
 /// Hash a password using PBKDF2-HMAC-SHA256 and return lowercase hex.
 ///
@@ -50,7 +67,7 @@ pub fn verify_password(password: &str, salt: &str, expected_hash: &str) -> bool 
 
 #[cfg(test)]
 mod tests {
-    use super::{hash_password, verify_password};
+    use super::{hash_password, is_valid_new_password, verify_password, MIN_PASSWORD_LENGTH};
 
     #[test]
     fn hashes_password_like_python() {
@@ -59,5 +76,11 @@ mod tests {
         assert_eq!(hash_password("secret123", "salt"), expected);
         assert!(verify_password("secret123", "salt", expected));
         assert!(!verify_password("wrong", "salt", expected));
+    }
+
+    #[test]
+    fn auth_password_policy_counts_characters_without_changing_hash_compatibility() {
+        assert!(!is_valid_new_password("short"));
+        assert!(is_valid_new_password(&"密".repeat(MIN_PASSWORD_LENGTH)));
     }
 }

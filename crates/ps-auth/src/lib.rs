@@ -10,8 +10,12 @@ use std::path::Path;
 use ps_domain::UserId;
 use serde::{Deserialize, Serialize};
 
-pub use password::{hash_password, verify_password, PBKDF2_ITERATIONS};
-pub use service::{AuthService, AuthServiceError, LoginSession, ACCESS_TOKEN_DEFAULT_TTL};
+pub use password::{
+    hash_password, is_valid_new_password, verify_password, MIN_PASSWORD_LENGTH, PBKDF2_ITERATIONS,
+};
+pub use service::{
+    is_valid_username, AuthService, AuthServiceError, LoginSession, ACCESS_TOKEN_DEFAULT_TTL,
+};
 pub use session::{SessionCookiePolicy, AUTH_COOKIE_SECURE_ENV, SESSION_COOKIE_NAME};
 pub use token::hash_token;
 

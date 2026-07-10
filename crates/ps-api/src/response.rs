@@ -1,5 +1,6 @@
 //! HTTP response mapping helpers.
 
+use axum::http::header::RETRY_AFTER;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::Json;
@@ -16,6 +17,10 @@ pub(crate) enum ApiError {
         status: StatusCode,
         detail: serde_json::Value,
     },
+    TooManyRequests {
+        detail: String,
+        retry_after_seconds: u64,
+    },
 }
 
 impl IntoResponse for ApiError {
@@ -27,6 +32,15 @@ impl IntoResponse for ApiError {
             Self::JsonDetail { status, detail } => {
                 (status, Json(serde_json::json!({ "detail": detail }))).into_response()
             }
+            Self::TooManyRequests {
+                detail,
+                retry_after_seconds,
+            } => (
+                StatusCode::TOO_MANY_REQUESTS,
+                [(RETRY_AFTER, retry_after_seconds.to_string())],
+                Json(ErrorEnvelope::new(detail)),
+            )
+                .into_response(),
         }
     }
 }
@@ -69,6 +83,14 @@ impl ApiError {
         Self::Http {
             status: StatusCode::FORBIDDEN,
             detail: detail.into(),
+        }
+    }
+
+    /// Build a rate-limit error with a Retry-After header.
+    pub(crate) fn too_many_requests(detail: impl Into<String>, retry_after_seconds: u64) -> Self {
+        Self::TooManyRequests {
+            detail: detail.into(),
+            retry_after_seconds,
         }
     }
 

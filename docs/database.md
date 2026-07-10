@@ -405,7 +405,9 @@ announcements
 
 说明：
 
-- 首个注册用户会被设为管理员
+- 首个管理员只能由本机 `admin bootstrap --username NAME --password-stdin` 在空用户表上创建
+- 公开注册始终需要邀请码，并且只创建非管理员用户
+- bootstrap 在 `BEGIN IMMEDIATE` 事务中检查用户表；重复或并发的后续尝试不会创建或提升用户
 
 ### 2. `access_tokens`
 

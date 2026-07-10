@@ -12,3 +12,6 @@ ps-storage = { path = "../ps-storage" }
 serde.workspace = true
 sha2.workspace = true
 subtle.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

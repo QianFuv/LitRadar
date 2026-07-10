@@ -23,7 +23,7 @@ pub struct RegisterRequest {
     pub username: String,
     /// Requested password.
     pub password: String,
-    /// Invite code text required after the first user.
+    /// Invite code text required for every public registration.
     pub invite_code: String,
 }
 
@@ -125,6 +125,8 @@ pub struct LogoutResponse {
 pub struct InviteRequiredResponse {
     /// Whether registration requires an invite code.
     pub required: bool,
+    /// Whether a local administrator bootstrap must run before invites can be issued.
+    pub bootstrap_required: bool,
 }
 
 /// Return the Python default access token TTL.
@@ -138,7 +140,7 @@ pub fn default_token_ttl() -> i64 {
 
 #[cfg(test)]
 mod tests {
-    use super::{default_token_ttl, TokenCreateRequest};
+    use super::{default_token_ttl, InviteRequiredResponse, TokenCreateRequest};
 
     #[test]
     fn token_create_request_keeps_python_default_ttl() {
@@ -147,5 +149,18 @@ mod tests {
 
         assert_eq!(request.name, "weekly");
         assert_eq!(request.ttl, default_token_ttl());
+    }
+
+    #[test]
+    fn auth_invite_requirement_reports_bootstrap_state() {
+        let response = InviteRequiredResponse {
+            required: true,
+            bootstrap_required: true,
+        };
+
+        assert_eq!(
+            serde_json::to_value(response).expect("response should serialize"),
+            serde_json::json!({"required": true, "bootstrap_required": true})
+        );
     }
 }

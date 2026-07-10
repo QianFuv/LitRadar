@@ -28,10 +28,14 @@ export default function LoginClient() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [mode, setMode] = useState<'login' | 'register'>('login');
   const [inviteRequired, setInviteRequired] = useState(true);
+  const [bootstrapRequired, setBootstrapRequired] = useState(false);
 
   useEffect(() => {
     getInviteRequirement()
-      .then((data) => setInviteRequired(data.required))
+      .then((data) => {
+        setInviteRequired(data.required);
+        setBootstrapRequired(data.bootstrap_required);
+      })
       .catch(() => {});
   }, []);
 
@@ -97,7 +101,8 @@ export default function LoginClient() {
                 value={password}
                 autoComplete={mode === 'register' ? 'new-password' : 'current-password'}
                 onChange={(event) => setPassword(event.target.value)}
-                placeholder="至少6位"
+                placeholder={mode === 'register' ? '至少12位' : '输入当前密码'}
+                minLength={mode === 'register' ? 12 : undefined}
                 aria-invalid={Boolean(error)}
                 aria-describedby={error ? 'login-error' : undefined}
                 required
@@ -121,6 +126,16 @@ export default function LoginClient() {
                 />
               </div>
             )}
+            {mode === 'register' && bootstrapRequired && (
+              <div
+                role="status"
+                className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-foreground"
+              >
+                系统管理员尚未完成本机初始化。请先在服务器上运行{' '}
+                <code>admin bootstrap --username NAME --password-stdin</code>
+                ，再使用管理员生成的邀请码注册。
+              </div>
+            )}
             {error && (
               <div
                 id="login-error"
@@ -130,7 +145,11 @@ export default function LoginClient() {
                 {error}
               </div>
             )}
-            <Button type="submit" className="w-full" disabled={isSubmitting}>
+            <Button
+              type="submit"
+              className="w-full"
+              disabled={isSubmitting || (mode === 'register' && bootstrapRequired)}
+            >
               {isSubmitting ? '请稍候…' : mode === 'login' ? '登录' : '注册'}
             </Button>
           </form>

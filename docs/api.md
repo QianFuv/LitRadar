@@ -1,6 +1,6 @@
 # API 参考
 
-本文档以当前 Rust API 实现为准，覆盖检索接口、认证接口、收藏/追踪接口以及管理员接口。后端部署与正常运行入口已经切换到 Rust；公开路径、请求体、响应体、认证 Cookie/Bearer 行为和 SQLite 数据契约保持不变。
+本文档以当前 Rust API 实现为准，覆盖检索接口、认证接口、收藏/追踪接口以及管理员接口。后端部署与正常运行入口已经切换到 Rust；认证初始化、密码策略和限流契约以本文说明为准。
 
 Rust API 会在启动时提供编译期生成的 OpenAPI 文档。交互式 Swagger UI 地址为 `/docs/`，OpenAPI JSON 地址为 `/openapi.json`。这些文档由 handler 上的 `#[utoipa::path]` 注解和共享 DTO 的 schema derive 生成；本文档保留补充说明、业务约束和运行行为细节。
 
@@ -274,31 +274,43 @@ CNKI 精确匹配失败时返回受控错误，不会下载候选列表中的错
 
 | 方法 | 路径 | 认证 | 说明 |
 | --- | --- | --- | --- |
-| `POST` | `/api/auth/register` | 否 | 注册账号；首个用户不需要邀请码且自动成为管理员 |
+| `POST` | `/api/auth/register` | 否 | 使用有效邀请码注册普通账号；永远不会创建管理员 |
 | `POST` | `/api/auth/login` | 否 | 登录并签发访问令牌 |
-| `GET` | `/api/auth/invite-required` | 否 | 返回当前是否需要邀请码注册 |
+| `GET` | `/api/auth/invite-required` | 否 | 返回邀请码要求和本机管理员初始化状态 |
 
 `POST /api/auth/register` 请求体：
 
 ```json
 {
   "username": "alice",
-  "password": "secret123",
-  "invite_code": "optional-code"
+  "password": "secret-password",
+  "invite_code": "required-code"
 }
 ```
 
 约束：
 
 - 用户名：`3..32` 位，仅允许字母、数字、下划线
-- 密码：至少 6 位
+- 密码：新注册密码至少 12 个 Unicode 字符
+- 邀请码：公开注册始终必填；注册用户始终为非管理员
+
+空安装时，`GET /api/auth/invite-required` 返回：
+
+```json
+{
+  "required": true,
+  "bootstrap_required": true
+}
+```
+
+管理员通过本机 `admin bootstrap` 创建后，`bootstrap_required` 变为 `false`，`required` 仍保持 `true`。API 不提供远程首管理员创建接口。
 
 `POST /api/auth/login` 请求体：
 
 ```json
 {
   "username": "alice",
-  "password": "secret123"
+  "password": "secret-password"
 }
 ```
 
@@ -308,6 +320,8 @@ CNKI 精确匹配失败时返回受控错误，不会下载候选列表中的错
 - `expires_at`
 
 登录响应不会返回原始登录令牌；浏览器会通过 `Set-Cookie: ps_session=...` 保存 HttpOnly 会话 Cookie。
+
+登录和注册使用进程内有界限流：同一规范化用户名 5 分钟最多 5 次失败尝试；每个 API 进程另有登录每分钟 100 次、注册每分钟 25 次的全局桶。超过限制时返回 `429` 和数值型 `Retry-After`，响应正文统一为 `Too many authentication attempts; try again later`，不会表明用户名是否存在。进程重启会清空这些计数，多副本和公网部署还应在反向代理层增加共享限流。
 
 ### 当前用户与改密
 
@@ -322,9 +336,11 @@ CNKI 精确匹配失败时返回受控错误，不会下载候选列表中的错
 ```json
 {
   "old_password": "old",
-  "new_password": "new-secret"
+  "new_password": "new-secret-password"
 }
 ```
+
+新密码至少 12 个字符。该规则只应用于注册、改密和管理员重置；升级前已经存在的较短密码哈希仍可登录。
 
 ### 访问令牌
 
@@ -641,3 +657,4 @@ CNKI 精确匹配失败时返回受控错误，不会下载候选列表中的错
 | `403` | 非管理员访问管理员接口 |
 | `404` | 目标记录或数据库不存在 |
 | `409` | 用户名冲突、文件夹重名等唯一约束冲突 |
+| `429` | 登录或注册超过进程内认证限流；响应含 `Retry-After` |

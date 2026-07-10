@@ -94,18 +94,18 @@ impl TestBackend {
     /// Authenticated user fixture.
     pub(crate) fn authenticated_user(&self, username: &str, is_admin: bool) -> TestUser {
         let service = AuthService::new(self.auth_db_path());
-        let invite_code = if count_users(self.auth_db_path()).expect("user count should load") > 0 {
-            Some(
-                admin_create_invite_code(self.auth_db_path())
-                    .expect("invite code should be created")
-                    .code,
-            )
+        let mut user = if count_users(self.auth_db_path()).expect("user count should load") == 0 {
+            service
+                .bootstrap_admin(username, TEST_PASSWORD)
+                .expect("first fixture administrator should bootstrap")
         } else {
-            None
+            let invite_code = admin_create_invite_code(self.auth_db_path())
+                .expect("invite code should be created")
+                .code;
+            service
+                .register(username, TEST_PASSWORD, Some(&invite_code))
+                .expect("invited fixture user should register")
         };
-        let mut user = service
-            .register(username, TEST_PASSWORD, invite_code.as_deref())
-            .expect("user should register");
         if user.is_admin != is_admin {
             ps_storage::set_user_admin(self.auth_db_path(), user.id, is_admin)
                 .expect("admin flag should update");

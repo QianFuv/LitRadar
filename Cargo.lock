@@ -1173,12 +1173,14 @@ dependencies = [
  "serde",
  "sha2 0.11.0",
  "subtle",
+ "tempfile",
 ]
 
 [[package]]
 name = "ps-cli"
 version = "0.1.0"
 dependencies = [
+ "ps-auth",
  "ps-index",
  "ps-storage",
  "ps-worker",

@@ -5,6 +5,7 @@ Paper Scanner 是一个面向学术期刊的全栈检索与订阅平台。它负
 当前后端运行路径已经切换到 Rust，保留原来的用户命令名：
 
 - `api`：启动兼容现有 `/api/*` 契约的 Rust API 后端
+- `admin`：在本机通过 stdin 初始化首个管理员，后续承载离线维护命令
 - `index`：读取 `data/meta/*.csv`，抓取上游元数据并写入 `data/index/*.sqlite`
 - `notify`：执行或演练 PushPlus 通知链路
 - `push`：执行或演练追踪文件夹写入链路
@@ -100,9 +101,15 @@ Paper Scanner 是一个面向学术期刊的全栈检索与订阅平台。它负
    - HTTP MCP：`http://localhost:8000/mcp`
    - API 文档：`http://localhost:8000/docs/`
 
-5. 注册第一个用户
+5. 在本机初始化第一个管理员
 
-   第一个注册用户不需要邀请码，并会自动成为管理员。之后新用户默认需要邀请码。
+   公开注册不会创建第一个用户。请通过标准输入把密码交给容器内的本地维护命令：
+
+   ```bash
+   printf '%s\n' "$ADMIN_PASSWORD" | docker compose run --rm -T api admin bootstrap --username admin --password-stdin
+   ```
+
+   `ADMIN_PASSWORD` 应由当前 shell 的安全输入或密码管理器提供，不要把实际密码写进命令历史。初始化成功后，管理员登录并生成邀请码；所有公开注册都必须提交有效邀请码。
 
 ### 方式二：本地开发
 
@@ -113,6 +120,12 @@ cargo run --bin api
 ```
 
 默认后端地址：`http://127.0.0.1:8000`
+
+首次本地启动还需要在另一个终端通过 stdin 创建管理员：
+
+```bash
+printf '%s\n' "$ADMIN_PASSWORD" | cargo run --bin admin -- bootstrap --username admin --password-stdin
+```
 
 交互式 API 文档地址：`http://127.0.0.1:8000/docs/`，生成的 OpenAPI JSON 地址：`http://127.0.0.1:8000/openapi.json`。
 
@@ -209,6 +222,8 @@ API 启动后会提供：
 
 API、索引器和调度任务启动时会读取 `runtime_settings`。Docker Compose 只挂载 `./data:/app/data`，因此可以复用现有 `data/auth.sqlite` 中的运行时配置。
 
+管理员初始化只能通过本机 `admin bootstrap --username NAME --password-stdin` 完成。该命令只接受标准输入密码，并且仅在用户表为空时成功。公开注册始终需要邀请码，新注册、改密和管理员重置密码的最小长度为 12 个字符；既有密码仍可直接登录。
+
 ### 3. PushPlus 通知推送
 
 ```bash
@@ -264,9 +279,9 @@ AI、PushPlus 与投递方式是用户级设置。用户可在“文献追踪”
 
 根目录 `docker-compose.yml` 使用三个服务：
 
-- `api`：Rust API 后端，暴露 `8000`
+- `api`：Rust API 后端，默认仅绑定宿主机 `127.0.0.1:8000`
 - `worker`：Rust worker 进程，复用后端镜像并挂载同一个 `data` 目录
-- `app`：前端，暴露 `3000`
+- `app`：前端，默认仅绑定宿主机 `127.0.0.1:3000`
 
 前端在 Docker 构建阶段使用 `INTERNAL_API_URL` 将 `/api/*` 重写到后端；`app/Dockerfile` 默认为 `http://api:8000`。根 Compose 文件里没有显式设置这个变量，是因为 `app/Dockerfile` 已提供该默认值。
 
@@ -278,6 +293,7 @@ AI、PushPlus 与投递方式是用户级设置。用户可在“文献追踪”
 - [数据库说明](docs/database.md)
 - [开发指南](docs/development.md)
 - [Docker 部署](docs/docker.md)
+- [安全说明](docs/security.md)
 - [通知与追踪推送](docs/notify.md)
 - [Crossref / OpenAlex / Semantic Scholar 集成](docs/scholarly_api.md)
 - [CNKI overseas 集成](docs/cnki_oversea_api.md)

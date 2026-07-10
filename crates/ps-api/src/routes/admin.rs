@@ -3,6 +3,7 @@
 use axum::extract::{Path, State};
 use axum::http::HeaderMap;
 use axum::Json;
+use ps_auth::{is_valid_new_password, MIN_PASSWORD_LENGTH};
 use ps_domain::{
     AdminInviteCodeInfo, AdminResetPassword, AdminSetAdmin, AdminStatsResponse, AdminUserInfo,
     AnnouncementCreate, AnnouncementInfo, AnnouncementUpdate, OkResponse, RuntimeSettingInfo,
@@ -13,8 +14,6 @@ use ps_storage::BusinessRepositoryError;
 use crate::response::ApiError;
 use crate::routes::auth::{auth_service, map_auth_error, require_admin_user};
 use crate::state::ApiState;
-
-const MIN_PASSWORD_LENGTH: usize = 6;
 
 type AnnouncementPayload<'a> = (Option<&'a str>, Option<&'a str>, Option<String>);
 type ScheduledTaskPayload<'a> = (Option<&'a str>, Option<&'a str>, Option<&'a str>);
@@ -87,10 +86,10 @@ pub(crate) async fn reset_password(
     Json(body): Json<AdminResetPassword>,
 ) -> Result<Json<OkResponse>, ApiError> {
     require_admin_user(&state, &headers)?;
-    if body.new_password.len() < MIN_PASSWORD_LENGTH {
-        return Err(ApiError::bad_request(
-            "Password must be at least 6 characters",
-        ));
+    if !is_valid_new_password(&body.new_password) {
+        return Err(ApiError::bad_request(format!(
+            "Password must be at least {MIN_PASSWORD_LENGTH} characters"
+        )));
     }
     let did_reset = auth_service(&state)
         .reset_password(UserId(user_id), &body.new_password)

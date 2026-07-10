@@ -3,7 +3,7 @@ services:
     build: .
     image: ghcr.io/qianfuv/paper-scanner-api:latest
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     volumes:
       - ./data:/app/data
     command: ["api", "--host", "0.0.0.0", "--port", "8000", "--project-root", "/app"]
@@ -21,7 +21,7 @@ services:
     build: ./app
     image: ghcr.io/qianfuv/paper-scanner-app:latest
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3000:3000"
     environment:
       - HOSTNAME=0.0.0.0
     depends_on:

@@ -570,7 +570,8 @@ export default function SettingsPage() {
                 autoComplete="new-password"
                 value={newPwd}
                 onChange={(e) => setNewPwd(e.target.value)}
-                placeholder="至少6位"
+                placeholder="至少12位"
+                minLength={12}
                 aria-invalid={changePwdMut.isError}
                 required
               />

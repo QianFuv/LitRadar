@@ -77,12 +77,16 @@ pub enum AuthRepositoryError {
     Migration(MigrationError),
     /// Registration requires an invite code.
     InviteCodeRequired,
+    /// Local administrator bootstrap must create the first user.
+    AdministratorBootstrapRequired,
     /// The provided invite code is missing or already used.
     InvalidOrUsedInviteCode,
     /// The user has already generated an invite code.
     UserHasAlreadyGeneratedInviteCode,
     /// The username already exists.
     UsernameAlreadyExists,
+    /// Local administrator bootstrap has already completed.
+    AdministratorBootstrapAlreadyCompleted,
 }
 
 impl fmt::Display for AuthRepositoryError {
@@ -93,11 +97,17 @@ impl fmt::Display for AuthRepositoryError {
             Self::Io(error) => write!(formatter, "{error}"),
             Self::Migration(error) => write!(formatter, "{error}"),
             Self::InviteCodeRequired => formatter.write_str("Invite code is required"),
+            Self::AdministratorBootstrapRequired => {
+                formatter.write_str("Administrator bootstrap is required")
+            }
             Self::InvalidOrUsedInviteCode => formatter.write_str("Invalid or used invite code"),
             Self::UserHasAlreadyGeneratedInviteCode => {
                 formatter.write_str("User has already generated an invite code")
             }
             Self::UsernameAlreadyExists => formatter.write_str("Username already exists"),
+            Self::AdministratorBootstrapAlreadyCompleted => {
+                formatter.write_str("Administrator bootstrap is already complete")
+            }
         }
     }
 }
@@ -184,7 +194,42 @@ pub fn count_users(auth_db_path: impl AsRef<Path>) -> Result<i64, AuthRepository
     Ok(connection.query_row("SELECT COUNT(*) FROM users", [], |row| row.get(0))?)
 }
 
-/// Register a user while enforcing Python invite semantics.
+/// Create the first administrator through an explicit local bootstrap transaction.
+///
+/// # Arguments
+///
+/// * `auth_db_path` - Path to the auth SQLite database.
+/// * `username` - Administrator username to create.
+/// * `password_hash` - Stored password hash.
+/// * `salt` - Stored password salt.
+/// * `now` - Current Unix timestamp.
+///
+/// # Returns
+///
+/// Created administrator row, or an error when any user already exists.
+pub fn bootstrap_admin(
+    auth_db_path: impl AsRef<Path>,
+    username: &str,
+    password_hash: &str,
+    salt: &str,
+    now: f64,
+) -> Result<AuthUserRow, AuthRepositoryError> {
+    let connection = open_auth_connection(auth_db_path)?;
+    connection.execute("BEGIN IMMEDIATE", [])?;
+    let result = bootstrap_admin_in_transaction(&connection, username, password_hash, salt, now);
+    match result {
+        Ok(user) => {
+            connection.execute("COMMIT", [])?;
+            Ok(user)
+        }
+        Err(error) => {
+            let _ = connection.execute("ROLLBACK", []);
+            Err(error)
+        }
+    }
+}
+
+/// Register a non-administrator using a required one-time invite code.
 ///
 /// # Arguments
 ///
@@ -582,12 +627,48 @@ fn register_user_in_transaction(
 ) -> Result<AuthUserRow, AuthRepositoryError> {
     let user_count: i64 =
         connection.query_row("SELECT COUNT(*) FROM users", [], |row| row.get(0))?;
-    let needs_invite = user_count > 0;
-    if needs_invite && invite_code.is_none() {
-        return Err(AuthRepositoryError::InviteCodeRequired);
+    if user_count == 0 {
+        return Err(AuthRepositoryError::AdministratorBootstrapRequired);
     }
-    let is_admin = !needs_invite;
+    let invite_code = invite_code.ok_or(AuthRepositoryError::InviteCodeRequired)?;
+    let user = insert_user_in_transaction(connection, username, password_hash, salt, false, now)?;
+    let count = connection.execute(
+        "UPDATE invite_codes SET used_by = ?1, used_at = ?2 \
+         WHERE code = ?3 AND used_by IS NULL",
+        params![user.id.value(), now, invite_code],
+    )?;
+    if count == 0 {
+        return Err(AuthRepositoryError::InvalidOrUsedInviteCode);
+    }
+    create_default_folder(connection, user.id, now)?;
+    Ok(user)
+}
 
+fn bootstrap_admin_in_transaction(
+    connection: &Connection,
+    username: &str,
+    password_hash: &str,
+    salt: &str,
+    now: f64,
+) -> Result<AuthUserRow, AuthRepositoryError> {
+    let user_count: i64 =
+        connection.query_row("SELECT COUNT(*) FROM users", [], |row| row.get(0))?;
+    if user_count != 0 {
+        return Err(AuthRepositoryError::AdministratorBootstrapAlreadyCompleted);
+    }
+    let user = insert_user_in_transaction(connection, username, password_hash, salt, true, now)?;
+    create_default_folder(connection, user.id, now)?;
+    Ok(user)
+}
+
+fn insert_user_in_transaction(
+    connection: &Connection,
+    username: &str,
+    password_hash: &str,
+    salt: &str,
+    is_admin: bool,
+    now: f64,
+) -> Result<AuthUserRow, AuthRepositoryError> {
     match connection.execute(
         "INSERT INTO users \
          (username, password_hash, salt, is_admin, created_at, updated_at) \
@@ -605,28 +686,20 @@ fn register_user_in_transaction(
         [username],
         user_from_row,
     )?;
+    Ok(user)
+}
 
-    if needs_invite {
-        let count = connection.execute(
-            "UPDATE invite_codes SET used_by = ?1, used_at = ?2 \
-             WHERE code = ?3 AND used_by IS NULL",
-            params![
-                user.id.value(),
-                now,
-                invite_code.expect("invite code should exist")
-            ],
-        )?;
-        if count == 0 {
-            return Err(AuthRepositoryError::InvalidOrUsedInviteCode);
-        }
-    }
-
+fn create_default_folder(
+    connection: &Connection,
+    user_id: UserId,
+    now: f64,
+) -> Result<(), AuthRepositoryError> {
     connection.execute(
         "INSERT INTO folders (user_id, name, is_tracking, created_at, updated_at) \
          VALUES (?1, ?2, 1, ?3, ?4)",
-        params![user.id.value(), "默认收藏", now, now],
+        params![user_id.value(), "默认收藏", now, now],
     )?;
-    Ok(user)
+    Ok(())
 }
 
 fn purge_expired_access_tokens(

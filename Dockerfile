@@ -5,13 +5,14 @@ WORKDIR /app
 COPY Cargo.toml Cargo.lock ./
 COPY crates crates
 
-RUN cargo build --release --bin api --bin ps-api --bin index --bin notify --bin push --bin scheduler --bin worker
+RUN cargo build --release --bin admin --bin api --bin ps-api --bin index --bin notify --bin push --bin scheduler --bin worker
 
 
 FROM debian:bookworm-slim
 
 WORKDIR /app
 
+COPY --from=build /app/target/release/admin /usr/local/bin/admin
 COPY --from=build /app/target/release/api /usr/local/bin/api
 COPY --from=build /app/target/release/index /usr/local/bin/index
 COPY --from=build /app/target/release/notify /usr/local/bin/notify

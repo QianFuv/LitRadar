@@ -121,6 +121,7 @@ export interface LoginResponse {
 
 export interface InviteRequirement {
   required: boolean;
+  bootstrap_required: boolean;
 }
 
 export interface Folder {
@@ -639,7 +640,7 @@ export function loginUser(username: string, password: string): Promise<LoginResp
 }
 
 /**
- * Register a user with an optional invite code.
+ * Register a user with a required invite code.
  *
  * @param username - Username.
  * @param password - Password.

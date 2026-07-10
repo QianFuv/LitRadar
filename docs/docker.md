@@ -13,7 +13,7 @@ worker sidecar
   └── worker
 ```
 
-根 Compose 暴露 `3000` 和 `8000`，并把宿主机 `./data` 挂载到 Rust 后端容器的 `/app/data`。
+根 Compose 把前端和 API 分别发布到宿主机 loopback 的 `127.0.0.1:3000` 与 `127.0.0.1:8000`，并把宿主机 `./data` 挂载到 Rust 后端容器的 `/app/data`。
 
 ## Compose 服务
 
@@ -23,7 +23,7 @@ worker sidecar
 - Dockerfile：根目录 `Dockerfile`
 - 镜像名：`ghcr.io/qianfuv/paper-scanner-api:latest`
 - 启动命令：`api --host 0.0.0.0 --port 8000 --project-root /app`
-- 端口：`8000:8000`
+- 端口：`127.0.0.1:8000:8000`
 - 卷挂载：`./data:/app/data`
 - 后端运行配置：来自 `data/auth.sqlite` 的管理员运行时配置
 
@@ -41,7 +41,7 @@ worker sidecar
 - 构建上下文：`./app`
 - Dockerfile：`app/Dockerfile`
 - 镜像名：`ghcr.io/qianfuv/paper-scanner-app:latest`
-- 端口：`3000:3000`
+- 端口：`127.0.0.1:3000:3000`
 - 环境变量：`HOSTNAME=0.0.0.0`
 - 依赖：`api`
 
@@ -52,7 +52,7 @@ worker sidecar
 后端镜像分两阶段构建：
 
 1. `rust:1.96-bookworm` 构建阶段执行 release 构建
-2. `debian:bookworm-slim` 运行阶段复制 `api`、`index`、`notify`、`push`、`scheduler`、`worker`、`ps-api`、`libs/simple-linux/` 和 `data/meta/`
+2. `debian:bookworm-slim` 运行阶段复制 `admin`、`api`、`index`、`notify`、`push`、`scheduler`、`worker`、`ps-api`、`libs/simple-linux/` 和 `data/meta/`
 
 运行阶段默认命令为 `api --host 0.0.0.0 --port 8000 --project-root /app`。SQLite `simple` 分词扩展从镜像内 `libs/simple-linux/` 自动发现；没有单独的后端运行配置环境变量。
 
@@ -64,6 +64,14 @@ worker sidecar
 docker compose build
 docker compose up -d
 ```
+
+首次启动后，用安全输入或密码管理器为当前 shell 提供 `ADMIN_PASSWORD`，再通过 stdin 初始化管理员：
+
+```bash
+printf '%s\n' "$ADMIN_PASSWORD" | docker compose run --rm -T api admin bootstrap --username admin --password-stdin
+```
+
+实际密码不能写在命令参数、Compose 文件或 shell 历史中。用户表非空时该命令会失败且不会修改任何账号。
 
 访问地址：
 
@@ -113,7 +121,7 @@ docker compose run --rm api index --file cnki_journals.csv --resume --issue-batc
 | `mcp_allowed_origins` | 空 | HTTP MCP 浏览器 `Origin` 白名单；仅浏览器跨源直连 MCP 时需要 |
 | `secure_cookies` | `false` | `ps_session` Cookie 是否带 `Secure` 标记 |
 
-API 监听位置由 `api` 命令参数控制，Compose 默认传入 `--host 0.0.0.0 --port 8000 --project-root /app`。
+API 在容器内仍监听 `0.0.0.0:8000` 供 Compose 网络访问，但宿主机端口默认只绑定 loopback。需要局域网或公网访问时，应通过 TLS 反向代理显式发布，并同时配置 `secure_cookies`、CORS/MCP Host 白名单和代理层共享认证限流。
 
 ## HTTP MCP 部署
 

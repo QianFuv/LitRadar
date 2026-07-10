@@ -331,6 +331,20 @@ mod tests {
         assert!(security_schemes.contains_key("session_cookie"));
     }
 
+    #[test]
+    fn openapi_documents_auth_bootstrap_and_rate_limit_contract() {
+        let document =
+            serde_json::to_value(ApiDoc::openapi()).expect("OpenAPI document should serialize");
+
+        assert!(
+            document["components"]["schemas"]["InviteRequiredResponse"]["properties"]
+                ["bootstrap_required"]
+                .is_object()
+        );
+        assert!(document["paths"]["/api/auth/login"]["post"]["responses"]["429"].is_object());
+        assert!(document["paths"]["/api/auth/register"]["post"]["responses"]["429"].is_object());
+    }
+
     fn has_operation(path_item: &PathItem, method: &str) -> bool {
         match method {
             "get" => path_item.get.is_some(),

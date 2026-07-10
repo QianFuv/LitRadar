@@ -510,7 +510,8 @@ export default function AdminPage() {
               autoComplete="new-password"
               value={resetPwValue}
               onChange={(e) => setResetPwValue(e.target.value)}
-              placeholder="新密码 (至少6位)"
+              placeholder="新密码 (至少12位)"
+              minLength={12}
             />
             <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
               <Button
@@ -522,7 +523,7 @@ export default function AdminPage() {
               </Button>
               <Button
                 className="w-full sm:w-auto"
-                disabled={resetPwValue.length < 6 || resetPwMut.isPending}
+                disabled={resetPwValue.length < 12 || resetPwMut.isPending}
                 onClick={() => {
                   if (resetPwUserId != null) {
                     resetPwMut.mutate({

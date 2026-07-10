@@ -191,10 +191,11 @@ mod tests {
 
     use axum::body::{to_bytes, Body};
     use axum::http::header::{
-        AUTHORIZATION, CONTENT_DISPOSITION, CONTENT_TYPE, COOKIE, SET_COOKIE,
+        AUTHORIZATION, CONTENT_DISPOSITION, CONTENT_TYPE, COOKIE, RETRY_AFTER, SET_COOKIE,
     };
     use axum::http::{Method, Request, StatusCode};
     use axum::Router;
+    use ps_auth::AuthService;
     use ps_sources::FixtureZjlibCnkiMode;
     use rusqlite::Connection;
     use serde_json::Value;
@@ -481,11 +482,14 @@ mod tests {
             None,
             Some(serde_json::json!({
                 "username": "alice",
-                "password": "secret123",
+                "password": "secret123456",
                 "invite_code": ""
             })),
         )
         .await;
+        AuthService::new(backend.auth_db_path())
+            .bootstrap_admin("alice", "secret123456")
+            .expect("local bootstrap should create the first administrator");
         let invite_after = json_request(
             &app,
             Method::GET,
@@ -503,7 +507,7 @@ mod tests {
             None,
             Some(serde_json::json!({
                 "username": "bob",
-                "password": "secret123",
+                "password": "secret123456",
                 "invite_code": ""
             })),
         )
@@ -516,7 +520,7 @@ mod tests {
             None,
             Some(serde_json::json!({
                 "username": "alice",
-                "password": "secret123"
+                "password": "secret123456"
             })),
         )
         .await;
@@ -593,7 +597,7 @@ mod tests {
             None,
             Some(serde_json::json!({
                 "username": "bob",
-                "password": "secret123",
+                "password": "secret123456",
                 "invite_code": invite.payload["code"].as_str().expect("invite code should exist")
             })),
         )
@@ -606,7 +610,7 @@ mod tests {
             Some(&session_cookie),
             Some(serde_json::json!({
                 "old_password": "wrong-password",
-                "new_password": "secret456"
+                "new_password": "secret456789"
             })),
         )
         .await;
@@ -617,8 +621,8 @@ mod tests {
             None,
             Some(&session_cookie),
             Some(serde_json::json!({
-                "old_password": "secret123",
-                "new_password": "secret456"
+                "old_password": "secret123456",
+                "new_password": "secret456789"
             })),
         )
         .await;
@@ -639,7 +643,7 @@ mod tests {
             None,
             Some(serde_json::json!({
                 "username": "alice",
-                "password": "secret456"
+                "password": "secret456789"
             })),
         )
         .await;
@@ -664,11 +668,15 @@ mod tests {
         .await;
 
         assert_eq!(invite_before.status, StatusCode::OK);
-        assert_eq!(invite_before.payload["required"], false);
-        assert_eq!(register.status, StatusCode::OK);
-        assert_eq!(register.payload["username"], "alice");
-        assert_eq!(register.payload["is_admin"], true);
+        assert_eq!(invite_before.payload["required"], true);
+        assert_eq!(invite_before.payload["bootstrap_required"], true);
+        assert_eq!(register.status, StatusCode::BAD_REQUEST);
+        assert_eq!(
+            register.payload["detail"],
+            "Administrator bootstrap is required"
+        );
         assert_eq!(invite_after.payload["required"], true);
+        assert_eq!(invite_after.payload["bootstrap_required"], false);
         assert_eq!(missing_invite.status, StatusCode::BAD_REQUEST);
         assert_eq!(missing_invite.payload["detail"], "Invite code is required");
         assert_eq!(login.status, StatusCode::OK);
@@ -697,6 +705,114 @@ mod tests {
         assert_eq!(logout.payload["ok"], true);
         assert!(set_cookie_header(&logout).contains("Max-Age=0"));
         assert_eq!(logged_out.status, StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    #[cfg_attr(
+        miri,
+        ignore = "Miri does not support Tokio's Windows IOCP runtime initialization"
+    )]
+    async fn auth_rate_limit_returns_uniform_429_with_retry_after() {
+        let backend = TestBackend::new();
+        backend.authenticated_user("limited_user", false);
+        let app = backend.router();
+        let mut limited_responses = Vec::new();
+
+        for username in ["limited_user", "missing_user"] {
+            let mut last_response = None;
+            for _ in 0..=5 {
+                last_response = Some(
+                    json_request(
+                        &app,
+                        Method::POST,
+                        "/api/auth/login",
+                        None,
+                        None,
+                        Some(serde_json::json!({
+                            "username": username,
+                            "password": "always-wrong"
+                        })),
+                    )
+                    .await,
+                );
+            }
+            limited_responses.push(last_response.expect("rate-limit response should exist"));
+        }
+
+        for response in &limited_responses {
+            assert_eq!(response.status, StatusCode::TOO_MANY_REQUESTS);
+            assert_eq!(
+                response.payload["detail"],
+                "Too many authentication attempts; try again later"
+            );
+            let retry_after = response
+                .headers
+                .get(RETRY_AFTER)
+                .expect("Retry-After should be present")
+                .to_str()
+                .expect("Retry-After should be valid text")
+                .parse::<u64>()
+                .expect("Retry-After should be numeric");
+            assert!((1..=300).contains(&retry_after));
+        }
+        assert_eq!(limited_responses[0].payload, limited_responses[1].payload);
+    }
+
+    #[tokio::test]
+    #[cfg_attr(
+        miri,
+        ignore = "Miri does not support Tokio's Windows IOCP runtime initialization"
+    )]
+    async fn auth_password_policy_rejects_weak_register_change_and_reset() {
+        let backend = TestBackend::new();
+        let admin = backend.authenticated_user("policy_admin", true);
+        let member = backend.authenticated_user("policy_member", false);
+        let app = backend.router();
+        let weak_register = json_request(
+            &app,
+            Method::POST,
+            "/api/auth/register",
+            None,
+            None,
+            Some(serde_json::json!({
+                "username": "weak_member",
+                "password": "too-short",
+                "invite_code": "unused"
+            })),
+        )
+        .await;
+        let weak_change = json_request(
+            &app,
+            Method::POST,
+            "/api/auth/change-password",
+            Some(&member.authorization_header()),
+            None,
+            Some(serde_json::json!({
+                "old_password": "fixture-password",
+                "new_password": "too-short"
+            })),
+        )
+        .await;
+        let weak_reset = json_request(
+            &app,
+            Method::POST,
+            &format!(
+                "/api/admin/users/{}/reset-password",
+                member.user_id().value()
+            ),
+            Some(&admin.authorization_header()),
+            None,
+            Some(serde_json::json!({"new_password": "too-short"})),
+        )
+        .await;
+
+        for response in [weak_register, weak_change, weak_reset] {
+            assert_eq!(response.status, StatusCode::BAD_REQUEST);
+            assert_eq!(
+                response.payload["detail"],
+                "Password must be at least 12 characters"
+            );
+        }
     }
 
     #[tokio::test]
@@ -758,7 +874,7 @@ mod tests {
             ),
             Some(&admin_auth),
             None,
-            Some(serde_json::json!({ "new_password": "reset123" })),
+            Some(serde_json::json!({ "new_password": "reset1234567" })),
         )
         .await;
         let reset_login = json_request(
@@ -769,7 +885,7 @@ mod tests {
             None,
             Some(serde_json::json!({
                 "username": "member",
-                "password": "reset123"
+                "password": "reset1234567"
             })),
         )
         .await;

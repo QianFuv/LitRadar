@@ -3,10 +3,12 @@
 use std::collections::BTreeSet;
 use std::error::Error;
 use std::fs;
+use std::io::BufRead;
 use std::path::{Path, PathBuf};
 use std::thread;
 use std::time::Duration;
 
+use ps_auth::AuthService;
 use ps_index::{
     run_live_index, run_live_index_worker_from_file_path, LiveIndexConfig, LiveScholarlyConfig,
 };
@@ -20,6 +22,51 @@ use ps_worker::scheduler::{
     load_scheduler_jobs, run_due_scheduler_once, run_task_now, ScheduledRunSlot, SchedulerMode,
 };
 use serde_json::json;
+
+/// Run the standalone local `admin` maintenance command.
+///
+/// # Arguments
+///
+/// * `args` - Command arguments without the executable name.
+///
+/// # Returns
+///
+/// Result indicating whether the command completed successfully.
+pub fn run_admin_command(args: Vec<String>) -> Result<(), Box<dyn Error>> {
+    if has_help(&args) {
+        println!("{}", admin_usage());
+        return Ok(());
+    }
+    let stdin = std::io::stdin();
+    let payload = run_admin_command_with_reader(args, stdin.lock())?;
+    println!("{}", serde_json::to_string(&payload)?);
+    Ok(())
+}
+
+fn run_admin_command_with_reader(
+    mut args: Vec<String>,
+    mut password_reader: impl BufRead,
+) -> Result<serde_json::Value, Box<dyn Error>> {
+    let project_root = extract_project_root(&mut args)?;
+    let auth_db_path = extract_auth_db_path_with_project_root(&mut args, &project_root)?;
+    let username = extract_string_option(&mut args, "--username")?;
+    let should_read_password = remove_flag(&mut args, "--password-stdin");
+    if args.as_slice() != ["bootstrap"] || username.is_none() || !should_read_password {
+        return Err(admin_usage().into());
+    }
+
+    migrate_auth_database(&auth_db_path)?;
+    let mut password = String::new();
+    if password_reader.read_line(&mut password)? == 0 {
+        return Err("password stdin was empty".into());
+    }
+    while password.ends_with(['\r', '\n']) {
+        password.pop();
+    }
+    let user = AuthService::new(&auth_db_path)
+        .bootstrap_admin(username.as_deref().unwrap_or_default().trim(), &password)?;
+    Ok(json!({"status": "created", "user": user}))
+}
 
 /// Run the standalone `index` command.
 ///
@@ -623,6 +670,13 @@ fn worker_usage() -> String {
     payload.to_string()
 }
 
+fn admin_usage() -> String {
+    json!({
+        "usage": "admin bootstrap --username NAME --password-stdin [--project-root PATH] [--auth-db PATH]"
+    })
+    .to_string()
+}
+
 fn delivery_usage(workflow: DeliveryWorkflow) -> String {
     let command_name = match workflow {
         DeliveryWorkflow::Notify => "notify",
@@ -641,16 +695,17 @@ mod tests {
     use tempfile::{Builder, TempDir};
 
     use super::{
-        default_delivery_state_dir, delivery_usage, extract_auth_db_path, extract_bool_pair,
-        extract_string_option, extract_usize_option, index_usage, normalize_db_name,
-        parse_index_options, resolve_delivery_targets, resolve_project_path, run_index_command,
-        run_notify_command, run_push_command, run_scheduler_command, run_worker_command,
-        scheduler_usage, worker_usage,
+        admin_usage, default_delivery_state_dir, delivery_usage, extract_auth_db_path,
+        extract_bool_pair, extract_string_option, extract_usize_option, index_usage,
+        normalize_db_name, parse_index_options, resolve_delivery_targets, resolve_project_path,
+        run_admin_command_with_reader, run_index_command, run_notify_command, run_push_command,
+        run_scheduler_command, run_worker_command, scheduler_usage, worker_usage,
     };
     use ps_worker::delivery::DeliveryWorkflow;
 
     #[test]
     fn standalone_usage_lists_only_supported_commands() {
+        let admin = admin_usage();
         let index = index_usage();
         let notify = delivery_usage(DeliveryWorkflow::Notify);
         let push = delivery_usage(DeliveryWorkflow::Push);
@@ -667,13 +722,76 @@ mod tests {
         assert!(scheduler.contains("scheduler run-once TASK_ID"));
         assert!(scheduler.contains("scheduler dry-run-once TASK_ID"));
         assert!(worker.contains("worker [--project-root PATH]"));
-        for usage in [index, notify, push, scheduler, worker] {
+        assert!(admin.contains("admin bootstrap --username NAME --password-stdin"));
+        assert!(!admin.contains("--password "));
+        for usage in [admin, index, notify, push, scheduler, worker] {
             assert!(!usage.contains("ps-cli"));
             assert!(!usage.contains("shadow"));
             assert!(!usage.contains("index fixture"));
             assert!(!usage.contains("worker execute"));
             assert!(!usage.contains("PAPER_SCANNER_LIVE_INDEX_WORKER_REQUEST"));
         }
+    }
+
+    #[test]
+    fn admin_bootstrap_reads_password_from_stdin_and_refuses_repeat() {
+        let root = temp_root("ps-cli-admin-bootstrap");
+        let auth_db_path = root.path().join("auth.sqlite");
+        let args = vec![
+            "bootstrap".to_string(),
+            "--username".to_string(),
+            "fixture_admin".to_string(),
+            "--password-stdin".to_string(),
+            "--auth-db".to_string(),
+            auth_db_path.to_string_lossy().into_owned(),
+        ];
+
+        let payload =
+            run_admin_command_with_reader(args.clone(), std::io::Cursor::new("fixture-password\n"))
+                .expect("first bootstrap should succeed");
+        let repeat_error =
+            run_admin_command_with_reader(args, std::io::Cursor::new("different-password\n"))
+                .expect_err("repeat bootstrap should fail");
+        let user = ps_storage::find_user_credentials_by_username(&auth_db_path, "fixture_admin")
+            .expect("bootstrapped user should load")
+            .expect("bootstrapped user should exist");
+
+        assert_eq!(payload["status"], "created");
+        assert_eq!(payload["user"]["username"], "fixture_admin");
+        assert_eq!(payload["user"]["is_admin"], true);
+        assert!(!payload.to_string().contains("fixture-password"));
+        assert!(user.is_admin);
+        assert_eq!(
+            repeat_error.to_string(),
+            "Administrator bootstrap is already complete"
+        );
+        assert_eq!(
+            ps_storage::count_users(&auth_db_path).expect("user count should load"),
+            1
+        );
+    }
+
+    #[test]
+    fn admin_bootstrap_rejects_command_line_passwords_without_reading_them() {
+        let root = temp_root("ps-cli-admin-password-argument");
+        let auth_db_path = root.path().join("auth.sqlite");
+
+        let error = run_admin_command_with_reader(
+            vec![
+                "bootstrap".to_string(),
+                "--username".to_string(),
+                "fixture_admin".to_string(),
+                "--password".to_string(),
+                "forbidden-password".to_string(),
+                "--auth-db".to_string(),
+                auth_db_path.to_string_lossy().into_owned(),
+            ],
+            std::io::Cursor::new(Vec::<u8>::new()),
+        )
+        .expect_err("command-line password should be rejected");
+
+        assert!(error.to_string().contains("--password-stdin"));
+        assert!(!auth_db_path.exists());
     }
 
     #[test]

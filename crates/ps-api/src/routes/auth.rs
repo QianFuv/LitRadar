@@ -5,20 +5,23 @@ use axum::http::header::{AUTHORIZATION, COOKIE, SET_COOKIE};
 use axum::http::{HeaderMap, HeaderValue};
 use axum::response::{IntoResponse, Response};
 use axum::Json;
-use ps_auth::{AuthService, AuthServiceError, SESSION_COOKIE_NAME};
+use ps_auth::{
+    is_valid_new_password, is_valid_username, AuthService, AuthServiceError, MIN_PASSWORD_LENGTH,
+    SESSION_COOKIE_NAME,
+};
 use ps_domain::{
-    ChangePasswordRequest, InviteCodeResponse, InviteRequiredResponse, LoginRequest, LoginResponse,
-    LogoutResponse, OkResponse, RegisterRequest, TokenCreateRequest, TokenCreateResponse,
-    TokenInfo, UserResponse,
+    ChangePasswordRequest, ErrorEnvelope, InviteCodeResponse, InviteRequiredResponse, LoginRequest,
+    LoginResponse, LogoutResponse, OkResponse, RegisterRequest, TokenCreateRequest,
+    TokenCreateResponse, TokenInfo, UserResponse,
 };
 use ps_storage::AuthRepositoryError;
 
 use crate::response::ApiError;
-use crate::state::ApiState;
+use crate::state::{ApiState, AuthAttemptKind};
 
-const MIN_PASSWORD_LENGTH: usize = 6;
 const MIN_TOKEN_TTL_SECONDS: i64 = 3600;
 const MAX_TOKEN_TTL_SECONDS: i64 = 365 * 24 * 3600;
+const AUTH_RATE_LIMIT_DETAIL: &str = "Too many authentication attempts; try again later";
 
 /// Register a new user account.
 ///
@@ -35,7 +38,10 @@ const MAX_TOKEN_TTL_SECONDS: i64 = 365 * 24 * 3600;
     path = "/api/auth/register",
     tag = "auth",
     request_body = RegisterRequest,
-    responses((status = 200, description = "Registered user.", body = UserResponse))
+    responses(
+        (status = 200, description = "Registered user.", body = UserResponse),
+        (status = 429, description = "Authentication rate limit exceeded.", body = ErrorEnvelope)
+    )
 )]
 pub(crate) async fn register(
     State(state): State<ApiState>,
@@ -47,15 +53,15 @@ pub(crate) async fn register(
             "Username must be 3-32 alphanumeric or underscore characters",
         ));
     }
-    if body.password.len() < MIN_PASSWORD_LENGTH {
-        return Err(ApiError::bad_request(
-            "Password must be at least 6 characters",
-        ));
+    if !is_valid_new_password(&body.password) {
+        return Err(ApiError::bad_request(password_policy_message()));
     }
+    check_auth_rate_limit(&state, AuthAttemptKind::Register, username)?;
     let invite_code = (!body.invite_code.is_empty()).then_some(body.invite_code.as_str());
     let user = auth_service(&state)
         .register(username, &body.password, invite_code)
         .map_err(map_auth_error)?;
+    state.clear_auth_attempts(username);
     Ok(Json(user))
 }
 
@@ -74,15 +80,21 @@ pub(crate) async fn register(
     path = "/api/auth/login",
     tag = "auth",
     request_body = LoginRequest,
-    responses((status = 200, description = "Login response.", body = LoginResponse))
+    responses(
+        (status = 200, description = "Login response.", body = LoginResponse),
+        (status = 429, description = "Authentication rate limit exceeded.", body = ErrorEnvelope)
+    )
 )]
 pub(crate) async fn login(
     State(state): State<ApiState>,
     Json(body): Json<LoginRequest>,
 ) -> Result<Response, ApiError> {
+    let username = body.username.trim();
+    check_auth_rate_limit(&state, AuthAttemptKind::Login, username)?;
     let session = auth_service(&state)
-        .login(body.username.trim(), &body.password)
+        .login(username, &body.password)
         .map_err(map_auth_error)?;
+    state.clear_auth_attempts(username);
     let payload = LoginResponse {
         user: session.user,
         expires_at: session.expires_at,
@@ -149,10 +161,8 @@ pub(crate) async fn change_password(
     headers: HeaderMap,
     Json(body): Json<ChangePasswordRequest>,
 ) -> Result<Json<OkResponse>, ApiError> {
-    if body.new_password.len() < MIN_PASSWORD_LENGTH {
-        return Err(ApiError::bad_request(
-            "New password must be at least 6 characters",
-        ));
+    if !is_valid_new_password(&body.new_password) {
+        return Err(ApiError::bad_request(password_policy_message()));
     }
     let (user, _) = require_current_user(&state, &headers)?;
     let did_change = auth_service(&state)
@@ -375,7 +385,13 @@ pub(crate) async fn check_invite_required(
     let required = auth_service(&state)
         .is_invite_required()
         .map_err(map_auth_error)?;
-    Ok(Json(InviteRequiredResponse { required }))
+    let bootstrap_required = auth_service(&state)
+        .is_bootstrap_required()
+        .map_err(map_auth_error)?;
+    Ok(Json(InviteRequiredResponse {
+        required,
+        bootstrap_required,
+    }))
 }
 
 pub(crate) fn auth_service(state: &ApiState) -> AuthService {
@@ -472,11 +488,18 @@ fn current_unix_time() -> f64 {
         .as_secs_f64()
 }
 
-fn is_valid_username(username: &str) -> bool {
-    (3..=32).contains(&username.len())
-        && username
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+fn check_auth_rate_limit(
+    state: &ApiState,
+    kind: AuthAttemptKind,
+    username: &str,
+) -> Result<(), ApiError> {
+    state
+        .check_auth_attempt(kind, username)
+        .map_err(|retry_after| ApiError::too_many_requests(AUTH_RATE_LIMIT_DETAIL, retry_after))
+}
+
+fn password_policy_message() -> String {
+    format!("Password must be at least {MIN_PASSWORD_LENGTH} characters")
 }
 
 pub(crate) fn map_auth_error(error: AuthServiceError) -> ApiError {
@@ -484,7 +507,11 @@ pub(crate) fn map_auth_error(error: AuthServiceError) -> ApiError {
         AuthServiceError::InvalidCredentials => {
             ApiError::unauthorized("Invalid username or password")
         }
+        AuthServiceError::InvalidUsername | AuthServiceError::PasswordTooShort => {
+            ApiError::bad_request(error.to_string())
+        }
         AuthServiceError::Repository(AuthRepositoryError::InviteCodeRequired)
+        | AuthServiceError::Repository(AuthRepositoryError::AdministratorBootstrapRequired)
         | AuthServiceError::Repository(AuthRepositoryError::InvalidOrUsedInviteCode)
         | AuthServiceError::Repository(AuthRepositoryError::UserHasAlreadyGeneratedInviteCode) => {
             ApiError::bad_request(error.to_string())

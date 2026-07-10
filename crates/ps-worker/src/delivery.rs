@@ -2139,15 +2139,8 @@ mod tests {
             let auth_db_path = root.path().join("auth.sqlite");
             ps_storage::initialize_auth_database(&auth_db_path)
                 .expect("auth database should initialize");
-            let user = ps_storage::register_user_with_invite(
-                &auth_db_path,
-                "alice",
-                "hash",
-                "salt",
-                None,
-                1.0,
-            )
-            .expect("user should be registered");
+            let user = ps_storage::bootstrap_admin(&auth_db_path, "alice", "hash", "salt", 1.0)
+                .expect("fixture administrator should be bootstrapped");
             ps_storage::create_folder(&auth_db_path, user.id, "Tracking", true)
                 .expect("tracking folder should be created");
             ps_storage::upsert_notification_settings(&auth_db_path, user.id, &settings)

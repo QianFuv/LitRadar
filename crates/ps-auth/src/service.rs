@@ -7,14 +7,17 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use ps_domain::{InviteCodeResponse, TokenCreateResponse, TokenInfo, UserId, UserResponse};
 use ps_storage::{
-    count_users, create_invite_code, delete_access_token, delete_access_token_by_hash,
-    delete_access_tokens_by_name, find_user_credentials_by_id, find_user_credentials_by_username,
-    get_user_invite_code, initialize_auth_database, insert_access_token, list_access_tokens,
-    random_hex, register_user_with_invite, update_user_password_and_delete_tokens,
-    verify_access_token_hash, AuthRepositoryError, AuthUserRow, InviteCodeRow,
+    bootstrap_admin, count_users, create_invite_code, delete_access_token,
+    delete_access_token_by_hash, delete_access_tokens_by_name, find_user_credentials_by_id,
+    find_user_credentials_by_username, get_user_invite_code, initialize_auth_database,
+    insert_access_token, list_access_tokens, random_hex, register_user_with_invite,
+    update_user_password_and_delete_tokens, verify_access_token_hash, AuthRepositoryError,
+    AuthUserRow, InviteCodeRow,
 };
 
-use crate::{hash_password, hash_token, verify_password};
+use crate::{
+    hash_password, hash_token, is_valid_new_password, verify_password, MIN_PASSWORD_LENGTH,
+};
 
 /// Python-compatible default access token TTL in seconds.
 pub const ACCESS_TOKEN_DEFAULT_TTL: i64 = 7 * 24 * 3600;
@@ -23,6 +26,8 @@ const ACCESS_TOKEN_BYTES: i64 = 32;
 const PASSWORD_SALT_BYTES: i64 = 16;
 const INVITE_CODE_BYTES: i64 = 8;
 const LOGIN_TOKEN_NAME: &str = "login";
+const MIN_USERNAME_LENGTH: usize = 3;
+const MAX_USERNAME_LENGTH: usize = 32;
 
 /// Authentication service error.
 #[derive(Debug)]
@@ -31,6 +36,10 @@ pub enum AuthServiceError {
     Repository(AuthRepositoryError),
     /// Credentials did not match a stored user.
     InvalidCredentials,
+    /// Username does not satisfy the public account naming policy.
+    InvalidUsername,
+    /// A newly created or replaced password is too short.
+    PasswordTooShort,
 }
 
 impl fmt::Display for AuthServiceError {
@@ -39,6 +48,13 @@ impl fmt::Display for AuthServiceError {
         match self {
             Self::Repository(error) => write!(formatter, "{error}"),
             Self::InvalidCredentials => formatter.write_str("Invalid username or password"),
+            Self::InvalidUsername => {
+                formatter.write_str("Username must be 3-32 alphanumeric or underscore characters")
+            }
+            Self::PasswordTooShort => write!(
+                formatter,
+                "Password must be at least {MIN_PASSWORD_LENGTH} characters"
+            ),
         }
     }
 }
@@ -48,7 +64,7 @@ impl Error for AuthServiceError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             Self::Repository(error) => Some(error),
-            Self::InvalidCredentials => None,
+            Self::InvalidCredentials | Self::InvalidUsername | Self::PasswordTooShort => None,
         }
     }
 }
@@ -120,6 +136,7 @@ impl AuthService {
         password: &str,
         invite_code: Option<&str>,
     ) -> Result<UserResponse, AuthServiceError> {
+        validate_new_credentials(username, password)?;
         let salt = random_hex(&self.auth_db_path, PASSWORD_SALT_BYTES)?;
         let password_hash = hash_password(password, &salt);
         let user = register_user_with_invite(
@@ -128,6 +145,34 @@ impl AuthService {
             &password_hash,
             &salt,
             invite_code,
+            now_seconds(),
+        )?;
+        Ok(user_response(user))
+    }
+
+    /// Create the first administrator through the local bootstrap path.
+    ///
+    /// # Arguments
+    ///
+    /// * `username` - Administrator username.
+    /// * `password` - Plain-text password read from standard input by the caller.
+    ///
+    /// # Returns
+    ///
+    /// Created administrator response.
+    pub fn bootstrap_admin(
+        &self,
+        username: &str,
+        password: &str,
+    ) -> Result<UserResponse, AuthServiceError> {
+        validate_new_credentials(username, password)?;
+        let salt = random_hex(&self.auth_db_path, PASSWORD_SALT_BYTES)?;
+        let password_hash = hash_password(password, &salt);
+        let user = bootstrap_admin(
+            &self.auth_db_path,
+            username,
+            &password_hash,
+            &salt,
             now_seconds(),
         )?;
         Ok(user_response(user))
@@ -314,6 +359,7 @@ impl AuthService {
         old_password: &str,
         new_password: &str,
     ) -> Result<bool, AuthServiceError> {
+        validate_new_password(new_password)?;
         let Some(row) = find_user_credentials_by_id(&self.auth_db_path, user_id)? else {
             return Ok(false);
         };
@@ -347,6 +393,7 @@ impl AuthService {
         user_id: UserId,
         new_password: &str,
     ) -> Result<bool, AuthServiceError> {
+        validate_new_password(new_password)?;
         if find_user_credentials_by_id(&self.auth_db_path, user_id)?.is_none() {
             return Ok(false);
         }
@@ -400,10 +447,49 @@ impl AuthService {
     ///
     /// # Returns
     ///
-    /// True when one or more users already exist.
+    /// True because public registration always requires an invite code.
     pub fn is_invite_required(&self) -> Result<bool, AuthServiceError> {
-        Ok(count_users(&self.auth_db_path)? > 0)
+        Ok(true)
     }
+
+    /// Return whether local administrator bootstrap is still required.
+    ///
+    /// # Returns
+    ///
+    /// True when the database contains no users.
+    pub fn is_bootstrap_required(&self) -> Result<bool, AuthServiceError> {
+        Ok(count_users(&self.auth_db_path)? == 0)
+    }
+}
+
+/// Return whether a username satisfies the account naming policy.
+///
+/// # Arguments
+///
+/// * `username` - Proposed normalized username.
+///
+/// # Returns
+///
+/// True for 3-32 ASCII letters, digits, or underscores.
+pub fn is_valid_username(username: &str) -> bool {
+    (MIN_USERNAME_LENGTH..=MAX_USERNAME_LENGTH).contains(&username.len())
+        && username
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+}
+
+fn validate_new_credentials(username: &str, password: &str) -> Result<(), AuthServiceError> {
+    if !is_valid_username(username) {
+        return Err(AuthServiceError::InvalidUsername);
+    }
+    validate_new_password(password)
+}
+
+fn validate_new_password(password: &str) -> Result<(), AuthServiceError> {
+    if !is_valid_new_password(password) {
+        return Err(AuthServiceError::PasswordTooShort);
+    }
+    Ok(())
 }
 
 fn user_response(row: AuthUserRow) -> UserResponse {
@@ -428,4 +514,73 @@ fn now_seconds() -> f64 {
         .duration_since(UNIX_EPOCH)
         .expect("system time should be after Unix epoch")
         .as_secs_f64()
+}
+
+#[cfg(test)]
+mod tests {
+    use ps_storage::{bootstrap_admin, count_users, migrate_auth_database};
+    use tempfile::tempdir;
+
+    use super::{AuthService, AuthServiceError};
+    use crate::hash_password;
+
+    const STRONG_PASSWORD: &str = "strong-password";
+
+    #[test]
+    fn auth_service_rejects_weak_new_passwords() {
+        let temp_dir = tempdir().expect("temporary directory should be created");
+        let auth_db_path = temp_dir.path().join("auth.sqlite");
+        migrate_auth_database(&auth_db_path).expect("auth database should migrate");
+        let service = AuthService::new(&auth_db_path);
+
+        let error = service
+            .bootstrap_admin("admin", "short")
+            .expect_err("weak bootstrap password should fail");
+
+        assert!(matches!(error, AuthServiceError::PasswordTooShort));
+        assert_eq!(
+            count_users(&auth_db_path).expect("user count should load"),
+            0
+        );
+    }
+
+    #[test]
+    fn auth_service_keeps_existing_short_password_hashes_compatible() {
+        let temp_dir = tempdir().expect("temporary directory should be created");
+        let auth_db_path = temp_dir.path().join("auth.sqlite");
+        migrate_auth_database(&auth_db_path).expect("auth database should migrate");
+        let salt = "legacy-salt";
+        let password_hash = hash_password("short", salt);
+        bootstrap_admin(&auth_db_path, "legacy-admin", &password_hash, salt, 1.0)
+            .expect("legacy administrator should be inserted");
+        let service = AuthService::new(&auth_db_path);
+
+        let user = service
+            .verify_user("legacy-admin", "short")
+            .expect("legacy credentials should verify")
+            .expect("legacy user should exist");
+
+        assert!(user.is_admin);
+    }
+
+    #[test]
+    fn auth_service_bootstrap_requires_an_empty_database() {
+        let temp_dir = tempdir().expect("temporary directory should be created");
+        let auth_db_path = temp_dir.path().join("auth.sqlite");
+        migrate_auth_database(&auth_db_path).expect("auth database should migrate");
+        let service = AuthService::new(&auth_db_path);
+        service
+            .bootstrap_admin("first_admin", STRONG_PASSWORD)
+            .expect("first bootstrap should succeed");
+
+        let error = service
+            .bootstrap_admin("second_admin", STRONG_PASSWORD)
+            .expect_err("second bootstrap should fail");
+
+        assert!(matches!(error, AuthServiceError::Repository(_)));
+        assert_eq!(
+            count_users(&auth_db_path).expect("user count should load"),
+            1
+        );
+    }
 }

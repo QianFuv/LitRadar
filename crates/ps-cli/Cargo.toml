@@ -5,6 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+ps-auth = { path = "../ps-auth" }
 ps-index = { path = "../ps-index" }
 ps-storage = { path = "../ps-storage" }
 ps-worker = { path = "../ps-worker" }
