@@ -1,0 +1,240 @@
+# 开发指南
+
+本文档面向修改 Paper Scanner 源码的贡献者，说明本地环境、日常开发流程、契约生成和质量检查。系统边界见[架构说明](../architecture.md)，完整命令参数见 [CLI 参考](../reference/cli.md)。
+
+## 工具链
+
+CI 和容器使用以下主版本：
+
+| 工具    | 版本/来源                                      |
+| ------- | ---------------------------------------------- |
+| Rust    | 1.96，workspace edition 2021                   |
+| Node.js | 24                                             |
+| pnpm    | 10.32.0                                        |
+| Docker  | 当前 Docker Engine / Docker Desktop 与 Compose |
+
+Rust 依赖由 `Cargo.lock` 锁定，前端依赖由 `app/pnpm-lock.yaml` 锁定。不要在普通开发任务中绕过 lockfile。
+
+## 初始准备
+
+### 部署密钥
+
+本地后端也要求一个 32 字节原始密钥文件。`secrets/` 已被 Git 忽略：
+
+```bash
+mkdir -p secrets
+openssl rand -out secrets/paper-scanner.key 32
+wc -c secrets/paper-scanner.key
+```
+
+最后一条命令应输出 `32`。测试使用临时密钥和临时数据库，不应读取本机 `secrets/` 或仓库中的真实 `data/auth.sqlite`。
+
+### 前端依赖
+
+```bash
+cd app
+corepack enable pnpm
+pnpm install --frozen-lockfile
+```
+
+## 运行开发服务
+
+### API
+
+在仓库根目录运行：
+
+```bash
+cargo run --bin api -- \
+  --secret-key-file secrets/paper-scanner.key
+```
+
+默认监听 `http://127.0.0.1:8000`，并提供：
+
+- Swagger UI：`http://127.0.0.1:8000/docs/`
+- OpenAPI：`http://127.0.0.1:8000/openapi.json`
+- MCP：`http://127.0.0.1:8000/mcp`
+
+请求日志默认包含 method、path、status 和 latency。使用标准 `RUST_LOG` 过滤 tracing，例如：
+
+```bash
+RUST_LOG=ps_api=debug,tower_http=debug cargo run --bin api -- \
+  --secret-key-file secrets/paper-scanner.key
+```
+
+### 首个管理员
+
+空用户库只能通过本机命令创建管理员：
+
+```bash
+printf '%s\n' "$ADMIN_PASSWORD" |
+  cargo run --bin admin -- bootstrap \
+    --username admin \
+    --password-stdin
+```
+
+该命令只在用户表为空时成功，不接受 `--password VALUE`。
+
+### Worker
+
+需要验证持久化调度时另开终端：
+
+```bash
+cargo run --bin worker -- \
+  --secret-key-file secrets/paper-scanner.key \
+  --interval-seconds 30
+```
+
+worker 只执行数据库中启用的类型化任务。单次验证或触发使用 `scheduler validate`、`scheduler run-once` 或 `scheduler dry-run-once`，具体语法见 [CLI 参考](../reference/cli.md)。
+
+### 前端
+
+```bash
+cd app
+pnpm dev
+```
+
+默认地址为 `http://localhost:3000`。`next.config.ts` 会把同源 `/api/*` rewrite 到 `INTERNAL_API_URL`，本地默认 `http://localhost:8000`。只有浏览器需要跨源直连 API 时才设置 `NEXT_PUBLIC_API_URL`。
+
+### 索引和投递
+
+开发时优先选择单个小型 CSV 或离线 fixture。真实索引和投递会访问外部服务：
+
+```bash
+cargo run --bin index -- \
+  --secret-key-file secrets/paper-scanner.key \
+  --file chinese_journals.csv \
+  --update
+
+cargo run --bin notify -- \
+  --secret-key-file secrets/paper-scanner.key \
+  --dry-run
+```
+
+Scholarly 索引需要先在 `data/auth.sqlite` 的运行配置中保存 OpenAlex 和 Semantic Scholar key。通知 dry-run 仍会调用配置的 AI endpoint，但不会发送 PushPlus或写入收藏；完全确定性的开发检查应使用现有 fixture 测试。
+
+## 修改位置
+
+| 任务                | 主要位置                                                    |
+| ------------------- | ----------------------------------------------------------- |
+| REST 路由或 OpenAPI | `crates/ps-api/src/routes/`、`crates/ps-api/src/openapi.rs` |
+| 认证                | `crates/ps-auth/`、`crates/ps-storage/src/auth.rs`          |
+| 业务存储            | `crates/ps-storage/src/business/`                           |
+| 数据库迁移          | `crates/ps-storage/src/migrations.rs`                       |
+| 索引和 schema       | `crates/ps-index/`                                          |
+| 上游数据源          | `crates/ps-sources/`                                        |
+| 推荐、通知和调度    | `crates/ps-recommend/`、`crates/ps-worker/`                 |
+| 前端 API facade     | `app/lib/api/`、`app/lib/api.tsx`                           |
+| 前端页面和组件      | `app/app/`、`app/components/`                               |
+| 前端测试            | `app/tests/`                                                |
+
+## OpenAPI 与前端类型
+
+Rust `ps-api` 是控制面 API schema 的来源。修改路由注解、DTO 或响应 schema 后，在 `app/` 运行：
+
+```bash
+pnpm generate:api
+```
+
+该命令：
+
+1. 运行 Rust `openapi` emitter
+2. 更新 `lib/generated/openapi.json`
+3. 用 `openapi-typescript` 更新 `lib/generated/api-schema.tsx`
+4. 格式化两个生成文件
+
+CI 使用：
+
+```bash
+pnpm generate:api:check
+```
+
+认证、管理员任务、推送状态和秘密设置等关键响应还要经过 `app/lib/api-contract.tsx` 的运行时校验。不要用泛型断言替代这些边界。
+
+## 数据库变更
+
+认证库和索引库分别使用 `PRAGMA user_version`。修改 schema 时：
+
+1. 在 `migrations.rs` 增加下一个有序版本。
+2. 每个版本在独立事务内执行 DDL 和数据迁移。
+3. 在同一事务末尾更新 `user_version`。
+4. 覆盖空库、代表性旧库、当前版本幂等、失败回滚和未来版本拒绝。
+5. 不在 repository 查询函数或连接 helper 中执行迁移。
+
+索引新库的当前 schema 由 `ps-index` 创建；storage migration 负责既有库升级。逻辑模型见[数据库参考](../reference/database.md)。
+
+## 调度变更
+
+定时任务是带 `kind` 的结构化 job，只允许 `index`、`notify` 和 `push`。worker 把已验证字段转换为固定二进制的独立 argv，不调用 shell。
+
+新增调度能力时必须同步更新：
+
+- `ps-domain` 的 job 类型
+- API 和存储校验
+- worker argv 构造与运行认领
+- OpenAPI 和前端管理界面
+- 确定性 cron、时区、租约和失败测试
+
+不要恢复自由命令字段或 API 进程内调度器。
+
+## Rust 检查
+
+与 Rust CI 对齐：
+
+```bash
+cargo fmt --all -- --check
+cargo sort --workspace --check
+cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+cargo test --workspace --locked
+cargo build --workspace --all-targets --locked
+```
+
+覆盖率摘要可单独运行：
+
+```bash
+cargo llvm-cov --workspace --summary-only
+```
+
+## 前端检查
+
+与 frontend CI 对齐：
+
+```bash
+cd app
+pnpm generate:api:check
+pnpm lint
+pnpm format:check
+pnpm exec tsc --noEmit
+pnpm test
+pnpm exec playwright install --with-deps chromium
+pnpm test:e2e
+pnpm build
+```
+
+Vitest/Testing Library/MSW 测试不访问真实后端。Playwright 使用本地 Next.js server 和 `page.route` fixture，不访问真实上游服务。
+
+## 部署检查
+
+修改 Docker 或 Compose 时至少运行：
+
+```bash
+docker compose config --quiet
+docker compose build
+```
+
+镜像必须保持非 root；根 Compose 的只读根文件系统、tmpfs、显式数据卷、空 capability 集合、`no-new-privileges`、健康检查和重启策略都是部署契约。
+
+## 测试边界
+
+- 后端测试使用临时目录、临时 SQLite、临时密钥和 fixture transport。
+- 不对仓库真实 `data/` 执行备份恢复、密文迁移或写入。
+- 时间相关测试传入确定性时间值，不使用长时间 sleep。
+- 上游 HTML/JSON 解析使用 replay 或 fixture；凭据失效不是读取本机生产数据库的理由。
+- 并发和调度测试通过唯一约束、租约和可控时钟验证，不依赖偶然执行顺序。
+
+## 常见误区
+
+- `--notify-dry-run` 只决定 `index --notify` 的下游模式；要发生 handoff，必须同时使用 `--update --notify`。
+- `push` 的默认状态目录是 `data/folder_push_state`，不是 `data/push_state`。
+- 每周更新和投递依赖 `*.changes.json`，不是按文章日期实时扫描。
+- 前端 API 入口是 `app/lib/api.tsx` 和 `app/lib/api/`。
+- 全局 scholarly key 池与用户级 AI/PushPlus 设置是两套不同配置。
