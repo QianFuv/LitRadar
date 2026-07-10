@@ -79,6 +79,12 @@ Paper Scanner 是一个面向学术期刊的全栈检索与订阅平台。它负
 
 2. 构建并启动 Rust API、Rust worker 与前端服务
 
+   Linux 原生 Docker Engine 上，后端镜像以固定 UID/GID `10001:10001` 运行。首次挂载或迁移既有数据前，先让该账号拥有数据目录；Docker Desktop for macOS/Windows 通常不需要这一步：
+
+   ```bash
+   sudo chown -R 10001:10001 data
+   ```
+
    ```bash
    docker compose build
    docker compose up -d
@@ -138,7 +144,7 @@ RUST_LOG=error cargo run --bin api
 另开一个终端可启动 Rust worker 进程：
 
 ```bash
-cargo run --bin worker -- --interval-seconds 300
+cargo run --bin worker -- --interval-seconds 30
 ```
 
 回归测试和覆盖率检查使用 Rust workspace 命令，见下方开发文档。常用覆盖率摘要：
@@ -209,6 +215,7 @@ API 启动后会提供：
 - `--host`：监听地址，默认 `127.0.0.1`
 - `--port`：监听端口，默认 `8000`
 - `--project-root`：项目根目录，默认当前目录；Docker 中为 `/app`
+- `--require-secure-cookies`：生产启动门；数据库中的 `secure_cookies` 不是 `true` 时拒绝启动
 
 共享运行配置通过管理员后台写入 `data/auth.sqlite` 的 `runtime_settings` 表。当前受管理的配置项为：
 
@@ -284,6 +291,8 @@ AI、PushPlus 与投递方式是用户级设置。用户可在“文献追踪”
 - `api`：Rust API 后端，默认仅绑定宿主机 `127.0.0.1:8000`
 - `worker`：Rust worker 进程，复用后端镜像并挂载同一个 `data` 目录
 - `app`：前端，默认仅绑定宿主机 `127.0.0.1:3000`
+
+三个运行容器都使用非 root 用户、只读根文件系统、独立 `/tmp` tmpfs、`no-new-privileges`、空 Linux capability 集合、健康检查和 `restart: unless-stopped`。API 健康检查访问 `/api/health`；worker 健康检查通过 `/api/health/worker` 读取持久心跳；前端健康检查同时验证 Next.js 与内部 API rewrite。公网部署应在 TLS 反向代理后运行，并用 `--require-secure-cookies` 强制数据库配置与 HTTPS 边界一致。
 
 前端在 Docker 构建阶段使用 `INTERNAL_API_URL` 将 `/api/*` 重写到后端；`app/Dockerfile` 默认为 `http://api:8000`。根 Compose 文件里没有显式设置这个变量，是因为 `app/Dockerfile` 已提供该默认值。
 

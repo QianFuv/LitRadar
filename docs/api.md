@@ -105,6 +105,9 @@ Rust API 进程直接提供 `POST/GET/DELETE /mcp`，用于 MCP Streamable HTTP 
 | 方法 | 路径 | 认证 | 说明 |
 | --- | --- | --- | --- |
 | `GET` | `/api/health` | 否 | 返回 `{"status":"ok"}` |
+| `GET` | `/api/health/worker` | 否 | 最近 90 秒存在持久 worker 心跳时返回 `200` 与 `{"status":"ok"}`，否则返回 `503` 与 `{"status":"unhealthy"}` |
+
+`/api/health/worker` 只暴露汇总健康状态，不返回 worker 标识、任务、运行输出或数据库错误。根 Compose 的 worker 容器健康检查使用该接口。
 
 ### 元数据接口
 

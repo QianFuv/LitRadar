@@ -1,6 +1,6 @@
 # 安全说明
 
-本文档记录 Paper Scanner 当前已经实现的认证初始化、密码、限流和网络暴露边界。后续密钥加密与容器权限强化完成后继续在此更新。
+本文档记录 Paper Scanner 当前已经实现的认证初始化、密码、限流、网络暴露和容器权限边界。后续密钥加密完成后继续在此更新。
 
 ## 管理员初始化
 
@@ -67,6 +67,20 @@ API 每个进程维护以下固定窗口：
 - `127.0.0.1:8000:8000`
 
 容器内 API 和前端仍监听 `0.0.0.0`，以便 Compose 内部通信，但不会默认发布到宿主机所有网卡。远程访问应通过明确配置的 TLS 反向代理，并启用安全 Cookie、精确 CORS Origin、MCP Host/Origin 白名单和代理层限流。
+
+生产 API 可附加 `--require-secure-cookies`。该参数不会从环境变量覆盖配置，而是在加载 `data/auth.sqlite` 后验证 `secure_cookies = true`；不满足时进程在绑定端口前失败。Secure Cookie 只能经 HTTPS 正常使用，因此生产部署必须先配置 TLS 反向代理和数据库运行设置，再启用该启动门。
+
+## 容器权限边界
+
+根 Compose 的三个运行容器具备以下共同约束：
+
+- 后端使用固定 `paper` 用户 UID/GID `10001:10001`，前端使用 Node 镜像内置的非 root `node` 用户
+- 根文件系统只读，`/tmp` 使用带 `noexec,nosuid` 的 tmpfs；前端另有临时图片缓存 `/app/.next/cache`，后端只有 `/app/data` 是显式可写绑定挂载
+- 丢弃全部 Linux capabilities，并启用 `no-new-privileges:true`
+- 使用 `restart: unless-stopped`；非零进程退出会重启，手工停止保持停止
+- API、前端和持久 worker 心跳分别提供健康检查；健康状态本身不会替代进程退出策略
+
+Linux 原生 Docker Engine 必须在启动前把宿主机 `data` 目录所有权安排给 `10001:10001`，或提供等效 ACL。不要用 root 容器、放宽整个宿主机目录权限或挂载 Docker socket 解决写权限问题。macOS/Windows Docker Desktop 的 bind mount 权限由虚拟化层转换，通常不需要 `chown`。
 
 ## 恢复边界
 

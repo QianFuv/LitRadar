@@ -26,6 +26,8 @@ pub struct ApiConfig {
     pub mcp_allowed_origins: Vec<String>,
     /// Whether browser session cookies include the Secure attribute.
     pub are_session_cookies_secure: bool,
+    /// Whether startup must fail unless secure session cookies are enabled.
+    pub are_secure_cookies_required: bool,
 }
 
 impl ApiConfig {
@@ -49,6 +51,7 @@ impl ApiConfig {
             mcp_allowed_hosts: default_mcp_allowed_hosts(),
             mcp_allowed_origins: Vec::new(),
             are_session_cookies_secure: false,
+            are_secure_cookies_required: false,
         }
     }
 
@@ -75,10 +78,13 @@ impl ApiConfig {
             Some(value) => PathBuf::from(value),
             None => std::env::current_dir().map_err(ApiConfigError::CurrentDir)?,
         };
+        let are_secure_cookies_required = extract_flag(&mut args, "--require-secure-cookies");
         if let Some(argument) = args.first() {
             return Err(ApiConfigError::UnexpectedArgument(argument.clone()));
         }
-        Ok(Self::new(project_root, host, port))
+        let mut config = Self::new(project_root, host, port);
+        config.are_secure_cookies_required = are_secure_cookies_required;
+        Ok(config)
     }
 
     /// Apply database-backed admin runtime settings.
@@ -112,6 +118,9 @@ impl ApiConfig {
                 _ => {}
             }
         }
+        if self.are_secure_cookies_required && !self.are_session_cookies_secure {
+            return Err(ApiConfigError::SecureCookiesRequired);
+        }
         Ok(())
     }
 
@@ -144,6 +153,8 @@ pub enum ApiConfigError {
     InvalidMcpAllowedOrigin(String),
     /// A configured boolean runtime setting is not valid.
     InvalidRuntimeBoolean { field: String, value: String },
+    /// Production startup requires secure session cookies.
+    SecureCookiesRequired,
 }
 
 impl fmt::Display for ApiConfigError {
@@ -171,6 +182,9 @@ impl fmt::Display for ApiConfigError {
                     "Invalid boolean runtime setting {field}: {value}"
                 )
             }
+            Self::SecureCookiesRequired => formatter.write_str(
+                "Secure session cookies are required; set secure_cookies to true before startup",
+            ),
         }
     }
 }
@@ -191,7 +205,7 @@ impl Error for ApiConfigError {
 ///
 /// Usage string for the standalone `api` command.
 pub fn api_usage() -> &'static str {
-    "api [--host HOST] [--port PORT] [--project-root PATH]"
+    "api [--host HOST] [--port PORT] [--project-root PATH] [--require-secure-cookies]"
 }
 
 fn parse_cors_allowed_origins(value: &str) -> Result<Vec<String>, ApiConfigError> {
@@ -283,6 +297,13 @@ fn extract_string_option(
     Ok(None)
 }
 
+fn extract_flag(args: &mut Vec<String>, name: &str) -> bool {
+    args.iter()
+        .position(|argument| argument == name)
+        .map(|index| args.remove(index))
+        .is_some()
+}
+
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
@@ -313,6 +334,7 @@ mod tests {
         assert_eq!(config.mcp_allowed_hosts, ["localhost", "127.0.0.1", "::1"]);
         assert!(config.mcp_allowed_origins.is_empty());
         assert!(!config.are_session_cookies_secure);
+        assert!(!config.are_secure_cookies_required);
     }
 
     #[test]
@@ -326,6 +348,7 @@ mod tests {
             "9001".to_string(),
             "--project-root".to_string(),
             project_root.display().to_string(),
+            "--require-secure-cookies".to_string(),
         ])
         .expect("explicit config should load");
 
@@ -333,6 +356,7 @@ mod tests {
         assert_eq!(config.host, "0.0.0.0");
         assert_eq!(config.port, 9001);
         assert_eq!(config.bind_address(), "0.0.0.0:9001");
+        assert!(config.are_secure_cookies_required);
     }
 
     #[test]
@@ -380,6 +404,25 @@ mod tests {
 
         assert!(matches!(&error, ApiConfigError::InvalidPort(value) if value == "not-a-port"));
         assert_eq!(error.to_string(), "Invalid API port: not-a-port");
+    }
+
+    #[test]
+    fn production_flag_requires_secure_cookie_runtime_setting() {
+        let mut config = ApiConfig::from_args([
+            "--project-root".to_string(),
+            "fixture-root".to_string(),
+            "--require-secure-cookies".to_string(),
+        ])
+        .expect("production flag should parse");
+
+        let error = config
+            .apply_runtime_settings(&[runtime_setting("secure_cookies", "false")])
+            .expect_err("insecure cookies should fail closed");
+        assert!(matches!(error, ApiConfigError::SecureCookiesRequired));
+
+        config
+            .apply_runtime_settings(&[runtime_setting("secure_cookies", "true")])
+            .expect("secure cookies should satisfy the production gate");
     }
 
     #[test]

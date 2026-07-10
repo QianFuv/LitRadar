@@ -25,6 +25,7 @@ pub const OPENAPI_JSON_PATH: &str = "/openapi.json";
     ),
     paths(
         crate::routes::health::health,
+        crate::routes::health::worker_health,
         crate::routes::announcements::get_announcements,
         crate::routes::index::list_databases,
         crate::routes::index::list_areas,
@@ -240,6 +241,7 @@ mod tests {
 
     const EXPECTED_OPERATIONS: &[(&str, &str)] = &[
         ("/api/health", "get"),
+        ("/api/health/worker", "get"),
         ("/api/announcements", "get"),
         ("/api/meta/databases", "get"),
         ("/api/meta/areas", "get"),

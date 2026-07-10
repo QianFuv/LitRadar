@@ -2268,6 +2268,36 @@
         }
       }
     },
+    "/api/health/worker": {
+      "get": {
+        "tags": ["health"],
+        "summary": "Return whether at least one scheduler worker has a recent persisted heartbeat.",
+        "description": "# Arguments\n\n* `state` - API state containing the shared scheduler database path.\n\n# Returns\n\nHTTP 200 for a healthy worker or 503 when no healthy heartbeat exists.",
+        "operationId": "worker_health",
+        "responses": {
+          "200": {
+            "description": "A scheduler worker heartbeat is healthy.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "No scheduler worker heartbeat is healthy.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/issues": {
       "get": {
         "tags": ["index"],

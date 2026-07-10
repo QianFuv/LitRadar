@@ -21,6 +21,7 @@ use crate::state::ApiState;
 pub fn public_routes() -> Router<ApiState> {
     Router::new()
         .route("/health", axum::routing::get(health::health))
+        .route("/health/worker", axum::routing::get(health::worker_health))
         .route(
             "/announcements",
             axum::routing::get(announcements::get_announcements),

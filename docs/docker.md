@@ -24,15 +24,19 @@ worker sidecar
 - 镜像名：`ghcr.io/qianfuv/paper-scanner-api:latest`
 - 启动命令：`api --host 0.0.0.0 --port 8000 --project-root /app`
 - 端口：`127.0.0.1:8000:8000`
-- 卷挂载：`./data:/app/data`
+- 卷挂载：`./data:/app/data:rw`
 - 后端运行配置：来自 `data/auth.sqlite` 的管理员运行时配置
+- 容器用户：`paper`（UID/GID `10001:10001`）
+- 健康检查：容器内请求 `/api/health`
 
 ### `worker`
 
 - 复用后端镜像
 - 启动命令：`worker --project-root /app --interval-seconds 30`
-- 卷挂载：`./data:/app/data`
+- 卷挂载：`./data:/app/data:rw`
 - 依赖：`api`
+- 容器用户：`paper`（UID/GID `10001:10001`）
+- 健康检查：通过 API 请求 `/api/health/worker`，读取最近 90 秒的持久心跳
 
 `worker` 每 30 秒持久化一次检查游标和心跳，按任务的 IANA 时区与五段 cron 生成运行槽，再通过 SQLite 唯一约束和事务认领执行。多个共享 `data/auth.sqlite` 的 worker 可以安全竞争任务；同一任务同时最多运行一个实例。进程退出后，未开始的过期认领可以回收，已经开始但失去心跳的运行会标记为 `unknown`，避免自动重复产生外部副作用。需要立即执行或 dry-run 单个后台任务时，使用 `scheduler run-once TASK_ID` 或 `scheduler dry-run-once TASK_ID`。
 
@@ -44,6 +48,8 @@ worker sidecar
 - 端口：`127.0.0.1:3000:3000`
 - 环境变量：`HOSTNAME=0.0.0.0`
 - 依赖：`api`
+- 容器用户：Node 镜像内置的 `node` 非 root 用户
+- 健康检查：容器内请求 Next.js 的 `/api/health`，同时验证内部 API rewrite
 
 `app/Dockerfile` 的构建参数 `INTERNAL_API_URL` 默认是 `http://api:8000`，因此前端镜像会把 `/api/*` rewrite 到 Docker 网络内的 Rust API 服务。
 
@@ -54,13 +60,14 @@ worker sidecar
 1. `rust:1.96-bookworm` 构建阶段执行 release 构建
 2. `debian:bookworm-slim` 运行阶段复制 `admin`、`api`、`index`、`notify`、`push`、`scheduler`、`worker`、`ps-api`、`libs/simple-linux/` 和 `data/meta/`
 
-运行阶段默认命令为 `api --host 0.0.0.0 --port 8000 --project-root /app`。SQLite `simple` 分词扩展从镜像内 `libs/simple-linux/` 自动发现；没有单独的后端运行配置环境变量。
+运行阶段默认命令为 `api --host 0.0.0.0 --port 8000 --project-root /app`。SQLite `simple` 分词扩展从镜像内 `libs/simple-linux/` 自动发现；没有单独的后端运行配置环境变量。运行镜像安装 CA 证书和 `curl` 供 HTTPS 工作流与容器健康探针使用，然后切换到固定的非 root `paper` 用户。
 
 镜像不包含旧 Python 后端运行时。
 
 ## 快速启动
 
 ```bash
+sudo chown -R 10001:10001 data  # 仅 Linux 原生 Docker Engine
 docker compose build
 docker compose up -d
 ```
@@ -85,8 +92,12 @@ printf '%s\n' "$ADMIN_PASSWORD" | docker compose run --rm -T api admin bootstrap
 
 ```bash
 curl http://localhost:8000/api/health
+curl --fail http://localhost:8000/api/health/worker
 curl http://localhost:3000/api/health
+docker compose ps
 ```
+
+worker 刚启动但还未写入首个心跳时，`/api/health/worker` 返回 `503`；首轮调度后转为 `200`。worker 停止心跳超过 90 秒后重新转为 `503`。该接口不返回 worker 或任务细节。
 
 ## 数据与初始化
 
@@ -97,6 +108,8 @@ curl http://localhost:3000/api/health
 - `data/auth.sqlite`：用户、收藏、通知、管理员数据
 - `data/push_state/*.json`：通知、追踪和每周更新状态
 - `data/push_state/*.changes.json`：增量变更清单
+
+后端镜像固定使用 UID/GID `10001:10001`。Linux 原生 Docker Engine 不转换 bind mount 所有权，因此启动前必须让该账号可读写整个 `data` 目录；可使用上面的 `chown`，或由运维系统配置等效 ACL。不要把容器改回 root。Docker Desktop for macOS/Windows 通常由虚拟化层处理挂载权限。
 
 首次部署前应确认 `data/index/` 下已有需要服务的 `.sqlite` 索引库。需要重新生成索引时，可以在后端容器中运行 Rust CLI：
 
@@ -122,6 +135,46 @@ docker compose run --rm api index --file cnki_journals.csv --resume --issue-batc
 | `secure_cookies` | `false` | `ps_session` Cookie 是否带 `Secure` 标记 |
 
 API 在容器内仍监听 `0.0.0.0:8000` 供 Compose 网络访问，但宿主机端口默认只绑定 loopback。需要局域网或公网访问时，应通过 TLS 反向代理显式发布，并同时配置 `secure_cookies`、CORS/MCP Host 白名单和代理层共享认证限流。
+
+## 运行时安全与生产覆盖
+
+根 Compose 为全部服务设置：
+
+- `restart: unless-stopped`
+- `read_only: true`
+- `/tmp` 的 `noexec,nosuid` tmpfs
+- 前端图片优化缓存使用仅对 `node` 用户可写的 `/app/.next/cache` tmpfs
+- `cap_drop: [ALL]`
+- `security_opt: [no-new-privileges:true]`
+
+后端只通过 `./data:/app/data:rw` 保留业务写入。API 和 app 必须先通过健康检查，依赖服务才启动。Docker 的 unhealthy 状态不会自行重启仍在运行的进程；`restart: unless-stopped` 负责非零退出和 daemon 重启后的恢复。
+
+生产环境应先通过本地受控启动或管理员后台把 `secure_cookies` 设置为 `true`，停止服务，然后保存以下覆盖为 `compose.production.yaml`。示例中的 `!reset` 需要 Docker Compose 2.24.4 或更高版本：
+
+```yaml
+services:
+  api:
+    ports: !reset []
+    command:
+      - api
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
+      - --project-root
+      - /app
+      - --require-secure-cookies
+  app:
+    ports: !reset []
+```
+
+使用覆盖启动：
+
+```bash
+docker compose -f docker-compose.yml -f compose.production.yaml up -d
+```
+
+`!reset []` 移除 API 和 app 的宿主机端口，`--require-secure-cookies` 会在 API 绑定端口前验证数据库设置；仍为 `false` 时启动失败。生产编排必须再加入同一 Compose 网络中的 TLS 反向代理服务，只由代理发布 `443` 并转发到 `app:3000`。不要直接恢复明文宿主机端口或把端口改为 `0.0.0.0`。
 
 ## HTTP MCP 部署
 

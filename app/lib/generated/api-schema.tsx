@@ -962,6 +962,32 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  '/api/health/worker': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Return whether at least one scheduler worker has a recent persisted heartbeat.
+     * @description # Arguments
+     *
+     *     * `state` - API state containing the shared scheduler database path.
+     *
+     *     # Returns
+     *
+     *     HTTP 200 for a healthy worker or 503 when no healthy heartbeat exists.
+     */
+    get: operations['worker_health'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   '/api/issues': {
     parameters: {
       query?: never;
@@ -4043,6 +4069,35 @@ export interface operations {
     responses: {
       /** @description Service is healthy. */
       200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['HealthResponse'];
+        };
+      };
+    };
+  };
+  worker_health: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description A scheduler worker heartbeat is healthy. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['HealthResponse'];
+        };
+      };
+      /** @description No scheduler worker heartbeat is healthy. */
+      503: {
         headers: {
           [name: string]: unknown;
         };

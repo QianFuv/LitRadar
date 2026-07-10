@@ -195,6 +195,7 @@ async fn shutdown_signal() {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
     use std::fs;
     use std::path::Path;
     use std::sync::atomic::{AtomicBool, Ordering};
@@ -243,6 +244,30 @@ mod tests {
         assert_eq!(index_version, ps_storage::INDEX_SCHEMA_VERSION);
     }
 
+    #[test]
+    fn secure_cookie_startup_gate_fails_closed_and_accepts_database_setting() {
+        let temp_dir = tempfile::tempdir().expect("temporary project should be created");
+        let mut required =
+            ApiConfig::new(temp_dir.path().to_path_buf(), "127.0.0.1".to_string(), 0);
+        required.are_secure_cookies_required = true;
+
+        let error = try_build_router(required.clone())
+            .expect_err("production startup should reject insecure cookies");
+        assert!(error
+            .to_string()
+            .contains("Secure session cookies are required"));
+
+        let storage_config = ps_storage::StorageConfig::from_project_root(temp_dir.path());
+        ps_storage::upsert_runtime_settings(
+            storage_config.auth_db_path(),
+            &HashMap::from([("secure_cookies".to_string(), "true".to_string())]),
+        )
+        .expect("secure cookie runtime setting should persist");
+
+        let _router =
+            try_build_router(required).expect("production startup should accept secure cookies");
+    }
+
     #[tokio::test]
     #[cfg_attr(
         miri,
@@ -269,6 +294,43 @@ mod tests {
 
         assert_eq!(status, StatusCode::OK);
         assert_eq!(payload, serde_json::json!({"status": "ok"}));
+    }
+
+    #[tokio::test]
+    #[cfg_attr(
+        miri,
+        ignore = "Miri does not support Tokio's Windows IOCP runtime initialization"
+    )]
+    async fn worker_health_follows_persisted_heartbeat_age() {
+        let backend = TestBackend::new();
+        let app = backend.router();
+
+        let missing = json_request(&app, Method::GET, "/api/health/worker", None, None, None).await;
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system time should be after Unix epoch")
+            .as_secs_f64();
+        ps_storage::record_scheduler_heartbeat(
+            backend.storage_config().auth_db_path(),
+            "health-fixture",
+            now,
+        )
+        .expect("fresh worker heartbeat should persist");
+        let healthy = json_request(&app, Method::GET, "/api/health/worker", None, None, None).await;
+        ps_storage::record_scheduler_heartbeat(
+            backend.storage_config().auth_db_path(),
+            "health-fixture",
+            now - 120.0,
+        )
+        .expect("stale worker heartbeat should persist");
+        let stale = json_request(&app, Method::GET, "/api/health/worker", None, None, None).await;
+
+        assert_eq!(missing.status, StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(missing.payload, serde_json::json!({"status": "unhealthy"}));
+        assert_eq!(healthy.status, StatusCode::OK);
+        assert_eq!(healthy.payload, serde_json::json!({"status": "ok"}));
+        assert_eq!(stale.status, StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(stale.payload, serde_json::json!({"status": "unhealthy"}));
     }
 
     #[tokio::test]
