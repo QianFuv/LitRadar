@@ -1,6 +1,7 @@
 name: Rust CI
 
 on:
+  workflow_call:
   push:
     paths:
       - "Cargo.toml"
@@ -19,7 +20,7 @@ on:
       - ".github/workflows/rust.yaml"
 
 concurrency:
-  group: rust-ci-${{ github.ref }}
+  group: rust-ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 env:
@@ -33,11 +34,20 @@ jobs:
 
       - name: Install Rust toolchain
         run: |
-          rustup toolchain install 1.96 --profile minimal --component rustfmt
+          rustup toolchain install 1.96 --profile minimal --component rustfmt,clippy
           rustup default 1.96
+
+      - name: Install cargo-sort
+        run: cargo install cargo-sort --version 2.1.4 --locked
 
       - name: Check formatting
         run: cargo fmt --all -- --check
+
+      - name: Check dependency ordering
+        run: cargo sort --workspace --check
+
+      - name: Run Clippy
+        run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
 
       - name: Test workspace
         run: cargo test --workspace --locked

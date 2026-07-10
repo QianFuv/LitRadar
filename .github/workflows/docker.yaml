@@ -39,7 +39,7 @@ jobs:
               - "app/**"
 
   build-api:
-    needs: changes
+    needs: [changes, rust-quality]
     if: needs.changes.outputs.api == 'true'
     runs-on: ubuntu-latest
     permissions:
@@ -74,7 +74,7 @@ jobs:
           cache-to: type=gha,mode=max
 
   build-app:
-    needs: changes
+    needs: [changes, frontend-quality]
     if: needs.changes.outputs.app == 'true'
     runs-on: ubuntu-latest
     permissions:
@@ -107,3 +107,13 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+  rust-quality:
+    needs: changes
+    if: needs.changes.outputs.api == 'true'
+    uses: ./.github/workflows/rust.yaml
+
+  frontend-quality:
+    needs: changes
+    if: needs.changes.outputs.app == 'true'
+    uses: ./.github/workflows/frontend.yaml

@@ -20,6 +20,9 @@
 - nuqs
 - next-themes
 - lucide-react
+- openapi-typescript
+- Vitest、Testing Library 与 MSW
+- Playwright
 
 ## 启动方式
 
@@ -77,11 +80,38 @@ app/
 │   └── ui/                   通用 UI 组件
 ├── lib/
 │   ├── api.tsx               前端 API 封装
+│   ├── api-contract.tsx      关键响应的生成类型别名与运行时校验
+│   ├── generated/            Rust OpenAPI JSON 与生成的 TypeScript schema
 │   ├── auth-context.tsx      登录态上下文
 │   ├── citation.tsx          引文文本生成
 │   └── utils.tsx             前端通用辅助函数
+├── tests/                    Vitest/MSW 组件测试与 Playwright 本地流程
 └── next.config.ts            `/api/*` rewrite 配置
 ```
+
+## 契约与质量检查
+
+Rust `ps-api` 的 OpenAPI 文档是控制面类型的来源。后端 DTO 或路由注解变化后运行：
+
+```bash
+pnpm generate:api
+```
+
+该命令更新 `lib/generated/openapi.json` 和 `lib/generated/api-schema.tsx`；`pnpm generate:api:check` 会在 CI 中重新生成并拒绝未提交的差异。认证、定时任务、后台推送状态和凭证设置响应同时经过运行时校验。
+
+完整前端检查：
+
+```bash
+pnpm lint
+pnpm format:check
+pnpm exec tsc --noEmit
+pnpm test
+pnpm exec playwright install chromium
+pnpm test:e2e
+pnpm build
+```
+
+Vitest/MSW 测试不访问真实后端；Playwright 使用本地 Next.js server 和 `page.route` fixture，不访问真实上游服务。
 
 ## 与后端的真实耦合关系
 

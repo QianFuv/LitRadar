@@ -160,6 +160,8 @@ pnpm dev
 
 如果前后端分离运行，前端可通过 `NEXT_PUBLIC_API_URL` 指定 API 根地址。
 
+Rust OpenAPI 是前端控制面类型的唯一来源。修改 API DTO 或路由注解后，在 `app/` 运行 `pnpm generate:api`，并提交 `lib/generated/openapi.json` 与 `lib/generated/api-schema.tsx`。前端质量检查使用 `pnpm lint`、`pnpm format:check`、`pnpm exec tsc --noEmit`、`pnpm test`、`pnpm test:e2e` 和 `pnpm build`。
+
 ## 核心命令
 
 ### 1. 索引

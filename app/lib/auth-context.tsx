@@ -53,7 +53,7 @@ function isAuthUser(value: unknown): value is AuthUser {
   return (
     typeof user.id === 'number' &&
     typeof user.username === 'string' &&
-    (user.is_admin === undefined || typeof user.is_admin === 'boolean')
+    typeof user.is_admin === 'boolean'
   );
 }
 

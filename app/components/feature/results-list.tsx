@@ -69,6 +69,16 @@ function monthKeyToDateTo(value: string | null): string | null {
   return `${value}-${String(lastDay).padStart(2, '0')}`;
 }
 
+/**
+ * Resolve the cursor for the next article page.
+ *
+ * @param lastPage - Most recently loaded article page.
+ * @returns Next cursor or undefined when pagination is complete.
+ */
+export function getNextArticlePageParam(lastPage: ArticlePage): string | undefined {
+  return lastPage.page.next_cursor ?? undefined;
+}
+
 export function ResultsList() {
   const { user } = useAuth();
   const queryClient = useQueryClient();
@@ -110,7 +120,7 @@ export function ResultsList() {
       queryKey: ['articles', currentDb, paramsString],
       queryFn: ({ pageParam }) => getArticles(params, pageParam, includeTotal, currentDb),
       initialPageParam: null,
-      getNextPageParam: (lastPage) => lastPage.page.next_cursor ?? undefined,
+      getNextPageParam: getNextArticlePageParam,
       staleTime: 5 * 60 * 1000,
       gcTime: 10 * 60 * 1000,
     });

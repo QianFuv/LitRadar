@@ -36,6 +36,17 @@ pub const AUTHENTICATED_CACHE_CONTROL: &str = "private, no-store";
 /// Cache-Control header for unauthenticated index reads.
 pub const PUBLIC_INDEX_CACHE_CONTROL: &str = "public, max-age=300, stale-while-revalidate=600";
 
+/// Serialize the generated OpenAPI document for checked-in client generation.
+///
+/// # Returns
+///
+/// Deterministic pretty JSON terminated by one newline.
+pub fn generated_openapi_json() -> Result<String, serde_json::Error> {
+    let mut json = serde_json::to_string_pretty(&openapi::document())?;
+    json.push('\n');
+    Ok(json)
+}
+
 /// Start the API server with an explicit runtime configuration.
 ///
 /// # Arguments

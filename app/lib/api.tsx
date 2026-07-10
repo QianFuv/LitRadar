@@ -7,6 +7,46 @@ import {
   removeLocalStorageValue,
   writeLocalStorageValue,
 } from '@/lib/browser-storage';
+import {
+  parseAuthUser,
+  parseInviteRequirement,
+  parseLoginResponse,
+  parseManualPushStatus,
+  parseNotificationSettings,
+  parseNullableNotificationSettings,
+  parseRuntimeSettingList,
+  parseScheduledTaskInfo,
+  parseScheduledTaskList,
+  parseTrackingStatus,
+  type AuthUser,
+  type ContractParser,
+  type InviteRequirement,
+  type LoginResponse,
+  type ManualPushStatus,
+  type NotificationSettings,
+  type NotificationSettingsUpdate,
+  type RuntimeSettingInfo,
+  type RuntimeSettingsUpdate,
+  type ScheduledTaskCreate,
+  type ScheduledTaskInfo,
+  type ScheduledTaskUpdate,
+  type TrackingStatus,
+} from '@/lib/api-contract';
+
+export type {
+  AuthUser,
+  InviteRequirement,
+  LoginResponse,
+  ManualPushStatus,
+  NotificationSettings,
+  NotificationSettingsUpdate,
+  RuntimeSettingInfo,
+  RuntimeSettingsUpdate,
+  ScheduledTaskCreate,
+  ScheduledTaskInfo,
+  ScheduledTaskUpdate,
+  TrackingStatus,
+} from '@/lib/api-contract';
 
 export type ArticleId = string;
 
@@ -106,22 +146,6 @@ export interface AnnouncementInfo {
   enabled: boolean;
   created_at: number;
   updated_at: number;
-}
-
-export interface AuthUser {
-  id: number;
-  username: string;
-  is_admin?: boolean;
-}
-
-export interface LoginResponse {
-  expires_at: number;
-  user: AuthUser;
-}
-
-export interface InviteRequirement {
-  required: boolean;
-  bootstrap_required: boolean;
 }
 
 export interface Folder {
@@ -247,75 +271,6 @@ export interface InviteCode {
   created_at: number;
 }
 
-export interface TrackingStatus {
-  tracking_folder: { id: number; name: string } | null;
-  total_folders: number;
-  weekly_articles_available: number;
-  notification_configured: boolean;
-}
-
-export interface ManualPushStatus {
-  job_id: string | null;
-  status: 'idle' | 'running' | 'completed' | 'failed';
-  message: string;
-  started_at: number | null;
-  finished_at: number | null;
-  pushed: number;
-  selected: number;
-  total_candidates?: number | null;
-  summary: string;
-  folder_id?: number | null;
-  folder_name?: string | null;
-}
-
-export interface NotificationSettings {
-  id: number;
-  user_id: number;
-  keywords: string[];
-  directions: string[];
-  selected_databases: string[];
-  delivery_method: 'folder' | 'pushplus';
-  pushplus_token: string;
-  pushplus_template: string;
-  pushplus_topic: string;
-  pushplus_channel: string;
-  sync_to_tracking_folder: boolean;
-  ai_base_url: string;
-  ai_api_key: string;
-  ai_model: string;
-  ai_system_prompt: string;
-  ai_backup_base_url: string;
-  ai_backup_api_key: string;
-  ai_backup_model: string;
-  ai_backup_system_prompt: string;
-  ai_retry_attempts: number;
-  enabled: boolean;
-  created_at: number;
-  updated_at: number;
-}
-
-export interface NotificationSettingsUpdate {
-  keywords: string[];
-  directions: string[];
-  selected_databases: string[];
-  delivery_method: 'folder' | 'pushplus';
-  pushplus_token: string;
-  pushplus_template: string;
-  pushplus_topic: string;
-  pushplus_channel: string;
-  sync_to_tracking_folder: boolean;
-  ai_base_url: string;
-  ai_api_key: string;
-  ai_model: string;
-  ai_system_prompt: string;
-  ai_backup_base_url: string;
-  ai_backup_api_key: string;
-  ai_backup_model: string;
-  ai_backup_system_prompt: string;
-  ai_retry_attempts: number;
-  enabled: boolean;
-}
-
 export interface AdminUserInfo {
   id: number;
   username: string;
@@ -374,47 +329,6 @@ export interface AdminStats {
     total_journals: number;
   };
   push: PushDbStats[];
-}
-
-export interface RuntimeSettingInfo {
-  field: string;
-  label: string;
-  description: string;
-  input_type: 'text' | 'password' | 'email' | 'boolean';
-  is_secret: boolean;
-  value: string;
-  source: 'database' | 'default';
-  updated_at: number | null;
-}
-
-export interface RuntimeSettingsUpdate {
-  values: Record<string, string>;
-}
-
-export interface ScheduledTaskInfo {
-  id: number;
-  name: string;
-  command: string;
-  cron: string;
-  enabled: boolean;
-  last_run_at: number | null;
-  last_status: string;
-  created_at: number;
-  updated_at: number;
-}
-
-export interface ScheduledTaskCreate {
-  name: string;
-  command: string;
-  cron: string;
-  enabled: boolean;
-}
-
-export interface ScheduledTaskUpdate {
-  name?: string;
-  command?: string;
-  cron?: string;
-  enabled?: boolean;
 }
 
 export interface AnnouncementCreate {
@@ -574,11 +488,17 @@ function extractErrorInfo(payload: unknown, fallback: string): ApiErrorInfo {
  *
  * @param response - Fetch response.
  * @param fallback - Fallback error message.
+ * @param parser - Optional runtime contract parser for control-plane responses.
  * @returns Parsed response body.
  */
-async function parseJson<T>(response: Response, fallback: string): Promise<T> {
+async function parseJson<T>(
+  response: Response,
+  fallback: string,
+  parser?: ContractParser<T>,
+): Promise<T> {
   if (response.ok) {
-    return response.json() as Promise<T>;
+    const payload: unknown = await response.json();
+    return parser ? parser(payload) : (payload as T);
   }
   const payload = await response.json().catch(() => null);
   const errorInfo = extractErrorInfo(payload, fallback);
@@ -592,6 +512,7 @@ async function parseJson<T>(response: Response, fallback: string): Promise<T> {
  * @param token - Optional explicit bearer access token.
  * @param init - Fetch options.
  * @param fallback - Fallback error message.
+ * @param parser - Optional runtime contract parser for control-plane responses.
  * @returns Parsed response body.
  */
 async function requestJson<T>(
@@ -599,6 +520,7 @@ async function requestJson<T>(
   token?: string | null,
   init?: RequestInit,
   fallback = '请求失败',
+  parser?: ContractParser<T>,
 ): Promise<T> {
   const hasBody = typeof init?.body !== 'undefined';
   const headers: Record<string, string> = {
@@ -607,7 +529,7 @@ async function requestJson<T>(
     ...(init?.headers as Record<string, string> | undefined),
   };
   const response = await fetch(url, { ...init, credentials: 'include', headers });
-  return parseJson<T>(response, fallback);
+  return parseJson<T>(response, fallback, parser);
 }
 
 /**
@@ -617,7 +539,13 @@ async function requestJson<T>(
  * @returns Current user.
  */
 export function getCurrentUser(token?: string | null): Promise<AuthUser> {
-  return requestJson<AuthUser>(buildApiUrl('/api/auth/me'), token, undefined, '获取用户失败');
+  return requestJson<AuthUser>(
+    buildApiUrl('/api/auth/me'),
+    token,
+    undefined,
+    '获取用户失败',
+    parseAuthUser,
+  );
 }
 
 /**
@@ -636,6 +564,7 @@ export function loginUser(username: string, password: string): Promise<LoginResp
       body: JSON.stringify({ username, password }),
     },
     '登录失败',
+    parseLoginResponse,
   );
 }
 
@@ -687,6 +616,7 @@ export function getInviteRequirement(): Promise<InviteRequirement> {
     null,
     undefined,
     '获取邀请码状态失败',
+    parseInviteRequirement,
   );
 }
 
@@ -1146,6 +1076,7 @@ export function getTrackingStatus(): Promise<TrackingStatus> {
     null,
     undefined,
     '获取追踪状态失败',
+    parseTrackingStatus,
   );
 }
 
@@ -1160,6 +1091,7 @@ export function pushWeeklyToTracking(): Promise<ManualPushStatus> {
     null,
     { method: 'POST' },
     '推送每周文章失败',
+    parseManualPushStatus,
   );
 }
 
@@ -1174,6 +1106,7 @@ export function getPushWeeklyStatus(): Promise<ManualPushStatus> {
     null,
     undefined,
     '获取推送状态失败',
+    parseManualPushStatus,
   );
 }
 
@@ -1188,6 +1121,7 @@ export function getNotificationSettings(): Promise<NotificationSettings | null> 
     null,
     undefined,
     '获取通知设置失败',
+    parseNullableNotificationSettings,
   );
 }
 
@@ -1208,6 +1142,7 @@ export function updateNotificationSettings(
       body: JSON.stringify(settings),
     },
     '更新通知设置失败',
+    parseNotificationSettings,
   );
 }
 
@@ -1505,6 +1440,7 @@ export function adminGetRuntimeSettings(): Promise<RuntimeSettingInfo[]> {
     null,
     undefined,
     '获取运行配置失败',
+    parseRuntimeSettingList,
   );
 }
 
@@ -1525,6 +1461,7 @@ export function adminUpdateRuntimeSettings(
       body: JSON.stringify(payload),
     },
     '更新运行配置失败',
+    parseRuntimeSettingList,
   );
 }
 
@@ -1539,6 +1476,7 @@ export function adminGetScheduledTasks(): Promise<ScheduledTaskInfo[]> {
     null,
     undefined,
     '获取定时任务失败',
+    parseScheduledTaskList,
   );
 }
 
@@ -1557,6 +1495,7 @@ export function adminCreateScheduledTask(payload: ScheduledTaskCreate): Promise<
       body: JSON.stringify(payload),
     },
     '创建定时任务失败',
+    parseScheduledTaskInfo,
   );
 }
 
@@ -1579,6 +1518,7 @@ export function adminUpdateScheduledTask(
       body: JSON.stringify(payload),
     },
     '更新定时任务失败',
+    parseScheduledTaskInfo,
   );
 }
 

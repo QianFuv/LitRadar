@@ -1,0 +1,78 @@
+name: Frontend CI
+
+on:
+  workflow_call:
+  push:
+    paths:
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "crates/ps-api/**"
+      - "crates/ps-domain/**"
+      - "app/**"
+      - ".github/workflows/frontend.yaml"
+  pull_request:
+    paths:
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "crates/ps-api/**"
+      - "crates/ps-domain/**"
+      - "app/**"
+      - ".github/workflows/frontend.yaml"
+
+concurrency:
+  group: frontend-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust toolchain
+        run: |
+          rustup toolchain install 1.96 --profile minimal
+          rustup default 1.96
+        working-directory: .
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          version: 10.32.0
+
+      - name: Install Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: app/pnpm-lock.yaml
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Check generated API contract
+        run: pnpm generate:api:check
+
+      - name: Lint frontend
+        run: pnpm lint
+
+      - name: Check frontend formatting
+        run: pnpm format:check
+
+      - name: Type-check frontend
+        run: pnpm exec tsc --noEmit
+
+      - name: Test frontend components
+        run: pnpm test
+
+      - name: Install Chromium
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Test local browser flows
+        run: pnpm test:e2e
+
+      - name: Build frontend
+        run: pnpm build

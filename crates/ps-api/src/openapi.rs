@@ -207,20 +207,29 @@ impl Modify for SecuritySchemeAddon {
     }
 }
 
+/// Build the generated OpenAPI document without starting the HTTP server.
+///
+/// # Returns
+///
+/// Complete OpenAPI document shared by the emitter and Swagger UI.
+pub(crate) fn document() -> OpenApiDocument {
+    ApiDoc::openapi()
+}
+
 /// Build the Swagger UI and OpenAPI JSON router.
 ///
 /// # Returns
 ///
 /// Router serving `/docs` and `/openapi.json`.
 pub fn docs_router() -> Router<ApiState> {
-    Router::from(SwaggerUi::new(DOCS_PATH).url(OPENAPI_JSON_PATH, ApiDoc::openapi()))
+    Router::from(SwaggerUi::new(DOCS_PATH).url(OPENAPI_JSON_PATH, document()))
 }
 
 #[cfg(test)]
 mod tests {
     use utoipa::openapi::path::PathItem;
 
-    use super::{ApiDoc, OpenApi};
+    use super::{document, ApiDoc, OpenApi};
 
     const EXPECTED_OPERATIONS: &[(&str, &str)] = &[
         ("/api/health", "get"),
@@ -343,6 +352,16 @@ mod tests {
         );
         assert!(document["paths"]["/api/auth/login"]["post"]["responses"]["429"].is_object());
         assert!(document["paths"]["/api/auth/register"]["post"]["responses"]["429"].is_object());
+    }
+
+    #[test]
+    fn openapi_document_generation_is_deterministic() {
+        let first = serde_json::to_string_pretty(&document())
+            .expect("first OpenAPI document should serialize");
+        let second = serde_json::to_string_pretty(&document())
+            .expect("second OpenAPI document should serialize");
+
+        assert_eq!(first, second);
     }
 
     fn has_operation(path_item: &PathItem, method: &str) -> bool {

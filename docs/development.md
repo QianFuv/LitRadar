@@ -174,8 +174,9 @@ Rust 后端改动：
 
 ```bash
 cargo fmt --all -- --check
-cargo clippy --all-targets --all-features -- -D warnings
-cargo test
+cargo sort --workspace --check
+cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+cargo test --workspace --locked
 ```
 
 Rust 后端覆盖率摘要：
@@ -190,8 +191,18 @@ cargo llvm-cov --workspace --summary-only
 
 ```bash
 cd app
+pnpm generate:api:check
+pnpm lint
+pnpm format:check
 pnpm exec tsc --noEmit
+pnpm test
+pnpm test:e2e
+pnpm build
 ```
+
+`pnpm generate:api` 先运行 Rust `openapi` emitter，再用 `openapi-typescript` 生成已签入的 JSON/TypeScript 契约。认证、定时任务、后台推送状态和包含凭证字段的设置响应还会经过 `app/lib/api-contract.tsx` 的运行时校验；不要把这些调用退回为仅靠泛型断言的 JSON 解析。
+
+Vitest 使用 jsdom、Testing Library 和 MSW，覆盖认证恢复、查询序列化、游标分页、收藏缓存更新、追踪轮询与管理员 mutation。Playwright 只使用 `page.route` 本地 fixture，不依赖真实后端或上游服务；首次本地运行需要执行 `pnpm exec playwright install chromium`。
 
 部署相关改动：
 
