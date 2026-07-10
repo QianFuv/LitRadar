@@ -426,7 +426,7 @@ pub fn create_backup(options: &BackupCreateOptions) -> Result<BackupManifest, Ba
         components,
     };
     write_manifest(staging.path(), &manifest)?;
-    verify_backup(staging.path())?;
+    let manifest = verify_backup(staging.path())?;
     fs::rename(staging.path(), &options.output_dir)?;
     Ok(manifest)
 }
