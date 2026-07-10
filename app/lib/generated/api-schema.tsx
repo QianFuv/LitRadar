@@ -2317,6 +2317,20 @@ export interface components {
       /** @description Requested username. */
       username: string;
     };
+    /** @description Individually manageable secret-pool item metadata. */
+    RuntimeSecretItemInfo: {
+      /** @description Human-readable prefix mask that never contains the complete secret. */
+      masked_value: string;
+      /** @description Opaque authenticated reference accepted by a pool removal update. */
+      reference: string;
+    };
+    /** @description Additions and removals applied to one secret runtime pool. */
+    RuntimeSecretPoolUpdate: {
+      /** @description New plaintext entries to normalize and append. */
+      add?: string[];
+      /** @description Opaque item references to remove. */
+      remove?: string[];
+    };
     /** @description Runtime setting response payload. */
     RuntimeSettingInfo: {
       /** @description Human-readable description. */
@@ -2333,6 +2347,8 @@ export interface components {
       label: string;
       /** @description Fixed non-secret mask when a credential value is configured. */
       masked_value: string;
+      /** @description Individually manageable masked entries for a secret pool. */
+      secret_items?: components['schemas']['RuntimeSecretItemInfo'][];
       /** @description Effective setting source. */
       source: string;
       /**
@@ -2345,6 +2361,10 @@ export interface components {
     };
     /** @description Runtime settings update payload. */
     RuntimeSettingsUpdate: {
+      /** @description Incremental secret-pool mutations keyed by API field name. */
+      secret_pool_updates?: {
+        [key: string]: components['schemas']['RuntimeSecretPoolUpdate'];
+      };
       /** @description Values keyed by API field name; null clears and a blank secret preserves. */
       values?: {
         [key: string]: string | null;

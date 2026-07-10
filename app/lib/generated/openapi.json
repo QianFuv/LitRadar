@@ -4761,6 +4761,41 @@
           }
         }
       },
+      "RuntimeSecretItemInfo": {
+        "type": "object",
+        "description": "Individually manageable secret-pool item metadata.",
+        "required": ["reference", "masked_value"],
+        "properties": {
+          "masked_value": {
+            "type": "string",
+            "description": "Human-readable prefix mask that never contains the complete secret."
+          },
+          "reference": {
+            "type": "string",
+            "description": "Opaque authenticated reference accepted by a pool removal update."
+          }
+        }
+      },
+      "RuntimeSecretPoolUpdate": {
+        "type": "object",
+        "description": "Additions and removals applied to one secret runtime pool.",
+        "properties": {
+          "add": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "New plaintext entries to normalize and append."
+          },
+          "remove": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Opaque item references to remove."
+          }
+        }
+      },
       "RuntimeSettingInfo": {
         "type": "object",
         "description": "Runtime setting response payload.",
@@ -4804,6 +4839,13 @@
             "type": "string",
             "description": "Fixed non-secret mask when a credential value is configured."
           },
+          "secret_items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RuntimeSecretItemInfo"
+            },
+            "description": "Individually manageable masked entries for a secret pool."
+          },
           "source": {
             "type": "string",
             "description": "Effective setting source."
@@ -4823,6 +4865,16 @@
         "type": "object",
         "description": "Runtime settings update payload.",
         "properties": {
+          "secret_pool_updates": {
+            "type": "object",
+            "description": "Incremental secret-pool mutations keyed by API field name.",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/RuntimeSecretPoolUpdate"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
           "values": {
             "type": "object",
             "description": "Values keyed by API field name; null clears and a blank secret preserves.",

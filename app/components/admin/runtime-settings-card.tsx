@@ -8,6 +8,7 @@ import {
   adminGetRuntimeSettings,
   adminUpdateRuntimeSettings,
   type RuntimeSettingInfo,
+  type RuntimeSettingsUpdate,
 } from '@/lib/api';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -17,8 +18,10 @@ import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 
 type RuntimeSettingsForm = Record<string, string>;
+type RuntimeSecretPoolRemovals = Record<string, Set<string>>;
 
 const EMPTY_RUNTIME_SETTINGS: RuntimeSettingInfo[] = [];
+const EMPTY_SECRET_REFERENCES = new Set<string>();
 
 /**
  * Convert settings into editable form state.
@@ -51,6 +54,16 @@ function getSourceLabel(source: RuntimeSettingInfo['source']): string {
  */
 function isPoolSetting(setting: RuntimeSettingInfo): boolean {
   return setting.field.endsWith('_pool');
+}
+
+/**
+ * Check whether a setting is an encrypted value pool.
+ *
+ * @param setting - Runtime setting metadata.
+ * @returns Whether the setting needs the stored-secret pool editor.
+ */
+function isSecretPoolSetting(setting: RuntimeSettingInfo): boolean {
+  return setting.is_secret && isPoolSetting(setting);
 }
 
 /**
@@ -98,6 +111,23 @@ function splitPoolValue(value: string): string[] {
 }
 
 /**
+ * Normalize newly entered pool values for an incremental update.
+ *
+ * @param value - Editable pool text.
+ * @returns Unique non-empty values in first-seen order.
+ */
+function normalizePoolValues(value: string): string[] {
+  const normalized: string[] = [];
+  for (const part of value.split(/[,;\n]+/)) {
+    const item = part.trim();
+    if (item && !normalized.includes(item)) {
+      normalized.push(item);
+    }
+  }
+  return normalized;
+}
+
+/**
  * Render the input type used for one pool row.
  *
  * @param inputType - Runtime setting input type.
@@ -118,6 +148,7 @@ type RuntimePoolEditorProps = {
   inputType: RuntimeSettingInfo['input_type'];
   label: string;
   value: string;
+  disabled?: boolean;
   onChange: (value: string) => void;
 };
 
@@ -133,6 +164,7 @@ function RuntimePoolEditor({
   inputType,
   label,
   value,
+  disabled = false,
   onChange,
 }: RuntimePoolEditorProps) {
   const rows = splitPoolValue(value);
@@ -166,6 +198,7 @@ function RuntimePoolEditor({
             inputMode={isUrlSetting(field) ? 'url' : undefined}
             spellCheck={shouldDisableSpellCheck ? false : undefined}
             value={row}
+            disabled={disabled}
             onChange={(event) => updateRow(index, event.target.value)}
             aria-label={`${label} ${index + 1}`}
           />
@@ -174,6 +207,7 @@ function RuntimePoolEditor({
             variant="ghost"
             size="icon-sm"
             className="shrink-0 text-destructive hover:text-destructive"
+            disabled={disabled}
             aria-label={`删除${label}第 ${index + 1} 行`}
             onClick={() => deleteRow(index)}
           >
@@ -181,10 +215,98 @@ function RuntimePoolEditor({
           </Button>
         </div>
       ))}
-      <Button type="button" variant="outline" size="sm" onClick={addRow}>
+      <Button type="button" variant="outline" size="sm" disabled={disabled} onClick={addRow}>
         <Plus className="mr-2 h-4 w-4" />
         添加
       </Button>
+    </div>
+  );
+}
+
+type RuntimeSecretPoolEditorProps = {
+  setting: RuntimeSettingInfo;
+  value: string;
+  removedReferences: Set<string>;
+  isCleared: boolean;
+  onChange: (value: string) => void;
+  onToggleRemoval: (reference: string) => void;
+};
+
+/**
+ * Render stored masked secret rows separately from new plaintext inputs.
+ *
+ * @param props - Component props.
+ * @returns Secret-pool editor.
+ */
+function RuntimeSecretPoolEditor({
+  setting,
+  value,
+  removedReferences,
+  isCleared,
+  onChange,
+  onToggleRemoval,
+}: RuntimeSecretPoolEditorProps) {
+  return (
+    <div className="space-y-3">
+      <div className="space-y-2">
+        {setting.secret_items.length === 0 ? (
+          <p className="text-sm text-muted-foreground">尚未保存密钥</p>
+        ) : (
+          setting.secret_items.map((item, index) => {
+            const isPendingRemoval = isCleared || removedReferences.has(item.reference);
+            return (
+              <div
+                key={item.reference}
+                className={`flex items-center justify-between gap-3 rounded-md border px-3 py-2 ${
+                  isPendingRemoval ? 'bg-muted/50 text-muted-foreground' : ''
+                }`}
+              >
+                <span
+                  className={
+                    isPendingRemoval ? 'font-mono text-sm line-through' : 'font-mono text-sm'
+                  }
+                >
+                  {item.masked_value}
+                </span>
+                <div className="flex items-center gap-2">
+                  {isPendingRemoval && <Badge variant="outline">保存后删除</Badge>}
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    disabled={isCleared}
+                    className="text-destructive hover:text-destructive"
+                    aria-label={
+                      removedReferences.has(item.reference)
+                        ? `撤销删除${setting.label}第 ${index + 1} 个密钥`
+                        : `删除${setting.label}第 ${index + 1} 个密钥`
+                    }
+                    onClick={() => onToggleRemoval(item.reference)}
+                  >
+                    {removedReferences.has(item.reference) ? (
+                      '撤销删除'
+                    ) : (
+                      <Trash2 className="h-4 w-4" />
+                    )}
+                  </Button>
+                </div>
+              </div>
+            );
+          })
+        )}
+      </div>
+      <div className="space-y-2">
+        <span className="text-xs text-muted-foreground">添加新密钥</span>
+        <RuntimePoolEditor
+          field={setting.field}
+          id={`runtime-${setting.field}`}
+          inputType={setting.input_type}
+          label={`${setting.label} 新密钥`}
+          value={value}
+          disabled={isCleared}
+          onChange={onChange}
+        />
+      </div>
     </div>
   );
 }
@@ -199,6 +321,8 @@ export function RuntimeSettingsCard() {
   const queryClient = useQueryClient();
   const [formOverrides, setFormOverrides] = useState<RuntimeSettingsForm>({});
   const [clearedSecrets, setClearedSecrets] = useState<Set<string>>(new Set());
+  const [secretPoolAdditions, setSecretPoolAdditions] = useState<RuntimeSettingsForm>({});
+  const [secretPoolRemovals, setSecretPoolRemovals] = useState<RuntimeSecretPoolRemovals>({});
 
   const {
     data: settings = EMPTY_RUNTIME_SETTINGS,
@@ -213,10 +337,14 @@ export function RuntimeSettingsCard() {
   const form = useMemo(() => {
     return { ...baseForm, ...formOverrides };
   }, [baseForm, formOverrides]);
-  const hasFormOverrides = Object.keys(formOverrides).length > 0 || clearedSecrets.size > 0;
+  const hasPendingChanges =
+    Object.keys(formOverrides).length > 0 ||
+    clearedSecrets.size > 0 ||
+    Object.keys(secretPoolAdditions).length > 0 ||
+    Object.keys(secretPoolRemovals).length > 0;
 
   useEffect(() => {
-    if (!hasFormOverrides) {
+    if (!hasPendingChanges) {
       return;
     }
     const handleBeforeUnload = (event: BeforeUnloadEvent) => {
@@ -225,19 +353,32 @@ export function RuntimeSettingsCard() {
     };
     window.addEventListener('beforeunload', handleBeforeUnload);
     return () => window.removeEventListener('beforeunload', handleBeforeUnload);
-  }, [hasFormOverrides]);
+  }, [hasPendingChanges]);
 
   const saveMutation = useMutation({
     mutationFn: () => {
-      const values: Record<string, string | null> = { ...form };
+      const values: Record<string, string | null> = { ...formOverrides };
       for (const field of clearedSecrets) {
         values[field] = null;
       }
-      return adminUpdateRuntimeSettings({ values });
+      const secretPoolUpdates: RuntimeSettingsUpdate['secret_pool_updates'] = {};
+      for (const setting of settings) {
+        if (!isSecretPoolSetting(setting) || clearedSecrets.has(setting.field)) {
+          continue;
+        }
+        const add = normalizePoolValues(secretPoolAdditions[setting.field] ?? '');
+        const remove = [...(secretPoolRemovals[setting.field] ?? EMPTY_SECRET_REFERENCES)];
+        if (add.length > 0 || remove.length > 0) {
+          secretPoolUpdates[setting.field] = { add, remove };
+        }
+      }
+      return adminUpdateRuntimeSettings({ values, secret_pool_updates: secretPoolUpdates });
     },
     onSuccess: (updatedSettings) => {
       setFormOverrides({});
       setClearedSecrets(new Set());
+      setSecretPoolAdditions({});
+      setSecretPoolRemovals({});
       queryClient.setQueryData(['admin-runtime-settings'], updatedSettings);
       queryClient.invalidateQueries({ queryKey: ['admin-runtime-settings'] });
     },
@@ -261,6 +402,28 @@ export function RuntimeSettingsCard() {
       }
       const next = new Set(current);
       next.delete(field);
+      return next;
+    });
+  };
+
+  const updateSecretPoolAddition = (field: string, value: string) => {
+    setSecretPoolAdditions((current) => ({ ...current, [field]: value }));
+  };
+
+  const toggleSecretItemRemoval = (field: string, reference: string) => {
+    setSecretPoolRemovals((current) => {
+      const references = new Set(current[field] ?? EMPTY_SECRET_REFERENCES);
+      if (references.has(reference)) {
+        references.delete(reference);
+      } else {
+        references.add(reference);
+      }
+      const next = { ...current };
+      if (references.size === 0) {
+        delete next[field];
+      } else {
+        next[field] = references;
+      }
       return next;
     });
   };
@@ -299,7 +462,12 @@ export function RuntimeSettingsCard() {
                 <div key={setting.field} className="grid gap-2 rounded-md border p-3">
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <Label htmlFor={`runtime-${setting.field}`}>{setting.label}</Label>
-                    <Badge variant="secondary">{getSourceLabel(setting.source)}</Badge>
+                    <div className="flex flex-wrap items-center gap-2">
+                      {isSecretPoolSetting(setting) && (
+                        <Badge variant="outline">{setting.secret_items.length} 个密钥</Badge>
+                      )}
+                      <Badge variant="secondary">{getSourceLabel(setting.source)}</Badge>
+                    </div>
                   </div>
                   {setting.input_type === 'boolean' ? (
                     <div className="flex items-center justify-between gap-3">
@@ -313,6 +481,19 @@ export function RuntimeSettingsCard() {
                         }
                       />
                     </div>
+                  ) : isSecretPoolSetting(setting) ? (
+                    <RuntimeSecretPoolEditor
+                      setting={setting}
+                      value={secretPoolAdditions[setting.field] ?? ''}
+                      removedReferences={
+                        secretPoolRemovals[setting.field] ?? EMPTY_SECRET_REFERENCES
+                      }
+                      isCleared={clearedSecrets.has(setting.field)}
+                      onChange={(nextValue) => updateSecretPoolAddition(setting.field, nextValue)}
+                      onToggleRemoval={(reference) =>
+                        toggleSecretItemRemoval(setting.field, reference)
+                      }
+                    />
                   ) : isPoolSetting(setting) ? (
                     <RuntimePoolEditor
                       field={setting.field}
@@ -345,8 +526,10 @@ export function RuntimeSettingsCard() {
                         {setting.description}
                         {setting.is_secret && setting.has_value
                           ? clearedSecrets.has(setting.field)
-                            ? '（保存后清除）'
-                            : '（已安全保存，留空会保留）'
+                            ? '（保存后清除全部）'
+                            : (secretPoolRemovals[setting.field]?.size ?? 0) > 0
+                              ? `（${secretPoolRemovals[setting.field]?.size} 个保存后删除）`
+                              : '（已安全保存）'
                           : ''}
                       </span>
                       {setting.is_secret && setting.has_value && (
@@ -356,7 +539,7 @@ export function RuntimeSettingsCard() {
                           size="sm"
                           onClick={() => toggleSecretClear(setting.field)}
                         >
-                          {clearedSecrets.has(setting.field) ? '保留原密钥' : '清除密钥'}
+                          {clearedSecrets.has(setting.field) ? '保留全部密钥' : '清除全部密钥'}
                         </Button>
                       )}
                     </div>

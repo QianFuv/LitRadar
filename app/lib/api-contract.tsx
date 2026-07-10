@@ -18,16 +18,20 @@ export type NotificationSettingsUpdate = Required<
   Omit<GeneratedNotificationSettingsUpdate, NotificationSecretField>
 > &
   Pick<GeneratedNotificationSettingsUpdate, NotificationSecretField>;
+export type RuntimeSecretItemInfo = ApiSchemas['RuntimeSecretItemInfo'];
+export type RuntimeSecretPoolUpdate = Required<ApiSchemas['RuntimeSecretPoolUpdate']>;
 export type RuntimeSettingInfo = Omit<
   ApiSchemas['RuntimeSettingInfo'],
-  'input_type' | 'source' | 'updated_at'
+  'input_type' | 'secret_items' | 'source' | 'updated_at'
 > & {
   input_type: 'text' | 'password' | 'email' | 'boolean';
+  secret_items: RuntimeSecretItemInfo[];
   source: 'database' | 'default';
   updated_at: number | null;
 };
 export type RuntimeSettingsUpdate = {
   values: NonNullable<ApiSchemas['RuntimeSettingsUpdate']['values']>;
+  secret_pool_updates: Record<string, RuntimeSecretPoolUpdate>;
 };
 export type ScheduledJobSpec = ApiSchemas['ScheduledJobSpec'];
 export type ScheduledTaskInfo = Omit<
@@ -294,6 +298,18 @@ function isNotificationSettings(value: unknown): value is NotificationSettings {
 }
 
 /**
+ * Return whether a value is one secret-pool item descriptor.
+ *
+ * @param value - Value to inspect.
+ * @returns Whether the value matches the generated secret-pool item contract.
+ */
+function isRuntimeSecretItemInfo(value: unknown): value is RuntimeSecretItemInfo {
+  return (
+    isRecord(value) && typeof value.reference === 'string' && typeof value.masked_value === 'string'
+  );
+}
+
+/**
  * Return whether a value is one runtime setting descriptor.
  *
  * @param value - Value to inspect.
@@ -310,6 +326,7 @@ function isRuntimeSettingInfo(value: unknown): value is RuntimeSettingInfo {
     typeof value.value === 'string' &&
     typeof value.has_value === 'boolean' &&
     typeof value.masked_value === 'string' &&
+    isArrayOf(value.secret_items, isRuntimeSecretItemInfo) &&
     ['database', 'default'].includes(String(value.source)) &&
     isNullableNumber(value.updated_at)
   );
