@@ -126,6 +126,7 @@ pub fn load_runtime_settings(
 /// * `auth_db_path` - Path to `auth.sqlite`.
 /// * `codec` - Deployment secret codec.
 /// * `values` - Values keyed by API field name; null clears secret fields.
+/// * `secret_pool_updates` - Incremental secret-pool mutations keyed by API field name.
 ///
 /// # Returns
 ///
@@ -134,47 +135,62 @@ pub fn upsert_runtime_settings(
     auth_db_path: impl AsRef<Path>,
     codec: &SecretCodec,
     values: &HashMap<String, Option<String>>,
+    secret_pool_updates: &HashMap<String, RuntimeSecretPoolUpdate>,
 ) -> Result<Vec<RuntimeSettingInfo>, BusinessRepositoryError> {
     let mut connection = open_business_connection(auth_db_path.as_ref())?;
     let now = now_seconds();
     let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
     let existing = read_runtime_setting_rows(&transaction)?;
+    let fields = values
+        .keys()
+        .chain(secret_pool_updates.keys())
+        .cloned()
+        .collect::<HashSet<_>>();
     {
         let mut statement = transaction.prepare(
             "INSERT INTO runtime_settings (key, value, updated_at) VALUES (?1, ?2, ?3) \
              ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
         )?;
-        for (field, update) in values {
-            let definition = runtime_definition_by_field(field)
+        for field in fields {
+            let definition = runtime_definition_by_field(&field)
                 .ok_or_else(|| BusinessRepositoryError::UnknownRuntimeSetting(field.clone()))?;
-            let current = existing.get(field).map(|row| row.0.as_str());
-            let mut value = if definition.is_secret {
-                if let Some(stored) = current {
-                    codec.decrypt(stored, &runtime_context(field))?;
-                }
-                match update {
-                    None => String::new(),
-                    Some(raw_value) if raw_value.trim().is_empty() => {
-                        current.unwrap_or_default().to_string()
+            let current =
+                internal_runtime_setting_from_definition(definition, existing.get(&field), codec)?
+                    .value;
+            let mut value = if let Some(update) = values.get(&field) {
+                if definition.is_secret {
+                    match update {
+                        None => String::new(),
+                        Some(raw_value) if raw_value.trim().is_empty() => current,
+                        Some(raw_value) => raw_value.trim().to_string(),
                     }
-                    Some(raw_value) => codec.encrypt(raw_value.trim(), &runtime_context(field))?,
+                } else {
+                    update
+                        .as_deref()
+                        .ok_or_else(|| {
+                            BusinessRepositoryError::NonSecretRuntimeSettingCannotBeCleared(
+                                field.clone(),
+                            )
+                        })?
+                        .trim()
+                        .to_string()
                 }
             } else {
-                update
-                    .as_deref()
-                    .ok_or_else(|| {
-                        BusinessRepositoryError::NonSecretRuntimeSettingCannotBeCleared(
-                            field.clone(),
-                        )
-                    })?
-                    .trim()
-                    .to_string()
+                current
             };
+            if let Some(pool_update) = secret_pool_updates.get(&field) {
+                value = apply_secret_pool_update(definition, &value, pool_update, codec)?;
+            }
             if !definition.is_secret && definition.input_type == "boolean" {
                 let default = definition.default_value.trim().eq_ignore_ascii_case("true");
                 value = runtime_bool_to_text(&value, default)?;
             }
-            statement.execute(params![definition.field, value, now])?;
+            let stored_value = if definition.is_secret {
+                codec.encrypt(&value, &runtime_context(&field))?
+            } else {
+                value
+            };
+            statement.execute(params![definition.field, stored_value, now])?;
         }
     }
     transaction.commit()?;
@@ -204,7 +220,12 @@ fn public_runtime_setting_from_definition(
     codec: &SecretCodec,
 ) -> Result<RuntimeSettingInfo, BusinessRepositoryError> {
     let internal = internal_runtime_setting_from_definition(definition, row, codec)?;
-    let has_value = !internal.value.trim().is_empty();
+    let secret_items = runtime_secret_items(definition, &internal.value, codec)?;
+    let has_value = if is_secret_pool(definition) {
+        !secret_items.is_empty()
+    } else {
+        !internal.value.trim().is_empty()
+    };
     Ok(RuntimeSettingInfo {
         field: definition.field.to_string(),
         label: definition.label.to_string(),
@@ -222,9 +243,99 @@ fn public_runtime_setting_from_definition(
         } else {
             String::new()
         },
+        secret_items,
         source: internal.source,
         updated_at: internal.updated_at,
     })
+}
+
+fn apply_secret_pool_update(
+    definition: &RuntimeConfigDefinition,
+    value: &str,
+    update: &RuntimeSecretPoolUpdate,
+    codec: &SecretCodec,
+) -> Result<String, BusinessRepositoryError> {
+    if !is_secret_pool(definition) {
+        return Err(BusinessRepositoryError::InvalidRuntimeSecretPoolUpdate(
+            definition.field.to_string(),
+        ));
+    }
+    let mut pool = runtime_pool_from_text(value);
+    let mut removals = HashSet::new();
+    for reference in &update.remove {
+        let item = codec
+            .decrypt(reference, &runtime_secret_item_context(definition.field))
+            .map_err(|_| {
+                BusinessRepositoryError::InvalidRuntimeSecretPoolUpdate(
+                    definition.field.to_string(),
+                )
+            })?;
+        if item.is_empty() || !pool.iter().any(|candidate| candidate == &item) {
+            return Err(BusinessRepositoryError::InvalidRuntimeSecretPoolUpdate(
+                definition.field.to_string(),
+            ));
+        }
+        removals.insert(item);
+    }
+    pool.retain(|item| !removals.contains(item));
+    for addition in &update.add {
+        for item in runtime_pool_from_text(addition) {
+            if !pool.iter().any(|candidate| candidate == &item) {
+                pool.push(item);
+            }
+        }
+    }
+    Ok(pool.join("\n"))
+}
+
+fn runtime_secret_items(
+    definition: &RuntimeConfigDefinition,
+    value: &str,
+    codec: &SecretCodec,
+) -> Result<Vec<RuntimeSecretItemInfo>, BusinessRepositoryError> {
+    if !is_secret_pool(definition) {
+        return Ok(Vec::new());
+    }
+    runtime_pool_from_text(value)
+        .into_iter()
+        .map(|item| {
+            Ok(RuntimeSecretItemInfo {
+                reference: codec.encrypt(&item, &runtime_secret_item_context(definition.field))?,
+                masked_value: mask_runtime_secret_item(&item),
+            })
+        })
+        .collect()
+}
+
+fn runtime_pool_from_text(value: &str) -> Vec<String> {
+    let mut pool = Vec::new();
+    for part in value.split([',', ';', '\n']) {
+        let item = part.trim();
+        if !item.is_empty() && !pool.iter().any(|candidate| candidate == item) {
+            pool.push(item.to_string());
+        }
+    }
+    pool
+}
+
+fn mask_runtime_secret_item(value: &str) -> String {
+    let characters = value.chars().collect::<Vec<_>>();
+    if characters.len() <= 5 {
+        return "*".repeat(characters.len());
+    }
+    format!(
+        "{}{}",
+        characters.iter().take(5).collect::<String>(),
+        "*".repeat(characters.len() - 5)
+    )
+}
+
+fn is_secret_pool(definition: &RuntimeConfigDefinition) -> bool {
+    definition.is_secret && definition.field.ends_with("_pool")
+}
+
+fn runtime_secret_item_context(field: &str) -> String {
+    format!("{}:pool-item-reference", runtime_context(field))
 }
 
 fn internal_runtime_setting_from_definition(
@@ -332,7 +443,7 @@ mod tests {
         let mut values = HashMap::new();
         values.insert("secure_cookies".to_string(), Some("yes".to_string()));
 
-        let settings = upsert_runtime_settings(&auth_db_path, &codec, &values)
+        let settings = upsert_runtime_settings(&auth_db_path, &codec, &values, &HashMap::new())
             .expect("runtime settings should update");
         let secure_cookies = settings
             .iter()
@@ -344,7 +455,7 @@ mod tests {
 
         values.clear();
         values.insert("proxy_pool".to_string(), Some("proxy".to_string()));
-        let error = upsert_runtime_settings(&auth_db_path, &codec, &values)
+        let error = upsert_runtime_settings(&auth_db_path, &codec, &values, &HashMap::new())
             .expect_err("proxy pool should be rejected");
 
         assert!(matches!(
@@ -364,7 +475,7 @@ mod tests {
             Some("key-one,key-two".to_string()),
         )]);
 
-        let public = upsert_runtime_settings(&auth_db_path, &codec, &values)
+        let public = upsert_runtime_settings(&auth_db_path, &codec, &values, &HashMap::new())
             .expect("secret runtime setting should update");
         let openalex = public
             .iter()
@@ -373,6 +484,9 @@ mod tests {
         assert_eq!(openalex.value, "");
         assert!(openalex.has_value);
         assert_eq!(openalex.masked_value, "••••");
+        assert_eq!(openalex.secret_items.len(), 2);
+        assert_eq!(openalex.secret_items[0].masked_value, "key-o**");
+        assert_eq!(openalex.secret_items[1].masked_value, "key-t**");
         let raw: String = Connection::open(&auth_db_path)
             .expect("auth database should open")
             .query_row(
@@ -398,6 +512,7 @@ mod tests {
             &auth_db_path,
             &codec,
             &HashMap::from([("openalex_api_key_pool".to_string(), Some(" ".to_string()))]),
+            &HashMap::new(),
         )
         .expect("blank secret should preserve");
         assert_eq!(
@@ -414,6 +529,7 @@ mod tests {
             &auth_db_path,
             &codec,
             &HashMap::from([("openalex_api_key_pool".to_string(), None)]),
+            &HashMap::new(),
         )
         .expect("null secret should clear");
         let openalex = cleared
@@ -422,5 +538,165 @@ mod tests {
             .expect("OpenAlex setting should exist");
         assert!(!openalex.has_value);
         assert!(openalex.masked_value.is_empty());
+        assert!(openalex.secret_items.is_empty());
+    }
+
+    #[test]
+    fn runtime_secret_pool_updates_are_exact_atomic_and_secret_safe() {
+        let temp_dir = tempdir().expect("temp dir should be created");
+        let auth_db_path = temp_dir.path().join("auth.sqlite");
+        migrate_auth_database(&auth_db_path).expect("auth database should migrate");
+        let codec = SecretCodec::from_key([29_u8; 32]);
+        let initial_values = HashMap::from([(
+            "openalex_api_key_pool".to_string(),
+            Some("abcde-one,abcde-two,tiny".to_string()),
+        )]);
+        let initial =
+            upsert_runtime_settings(&auth_db_path, &codec, &initial_values, &HashMap::new())
+                .expect("initial secret pool should update");
+        let openalex = initial
+            .iter()
+            .find(|setting| setting.field == "openalex_api_key_pool")
+            .expect("OpenAlex setting should exist");
+
+        assert_eq!(openalex.secret_items.len(), 3);
+        assert_eq!(openalex.secret_items[0].masked_value, "abcde****");
+        assert_eq!(openalex.secret_items[1].masked_value, "abcde****");
+        assert_eq!(openalex.secret_items[2].masked_value, "****");
+        assert!(!format!("{openalex:?}").contains(&openalex.secret_items[0].reference));
+
+        let first_reference = openalex.secret_items[0].reference.clone();
+        let second_reference = openalex.secret_items[1].reference.clone();
+        let pool_updates = HashMap::from([(
+            "openalex_api_key_pool".to_string(),
+            RuntimeSecretPoolUpdate {
+                add: vec!["abcde-three; abcde-two\nnew-key".to_string()],
+                remove: vec![first_reference.clone()],
+            },
+        )]);
+        upsert_runtime_settings(&auth_db_path, &codec, &HashMap::new(), &pool_updates)
+            .expect("incremental pool update should succeed");
+
+        let internal = load_runtime_settings(&auth_db_path, &codec)
+            .expect("updated secret pool should decrypt");
+        let updated_value = &internal
+            .iter()
+            .find(|setting| setting.field == "openalex_api_key_pool")
+            .expect("OpenAlex setting should exist")
+            .value;
+        assert_eq!(updated_value, "abcde-two\ntiny\nabcde-three\nnew-key");
+        let raw: String = Connection::open(&auth_db_path)
+            .expect("auth database should open")
+            .query_row(
+                "SELECT value FROM runtime_settings WHERE key = 'openalex_api_key_pool'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("encrypted setting should load");
+        assert!(raw.starts_with("psenc:v1:"));
+        assert!(!raw.contains("abcde-two"));
+
+        let stale_update = HashMap::from([(
+            "openalex_api_key_pool".to_string(),
+            RuntimeSecretPoolUpdate {
+                add: vec!["must-not-commit".to_string()],
+                remove: vec![first_reference],
+            },
+        )]);
+        let stale_error =
+            upsert_runtime_settings(&auth_db_path, &codec, &HashMap::new(), &stale_update)
+                .expect_err("stale item reference should fail");
+        assert!(matches!(
+            stale_error,
+            BusinessRepositoryError::InvalidRuntimeSecretPoolUpdate(field)
+                if field == "openalex_api_key_pool"
+        ));
+        assert_eq!(
+            load_runtime_settings(&auth_db_path, &codec)
+                .expect("failed update should roll back")
+                .into_iter()
+                .find(|setting| setting.field == "openalex_api_key_pool")
+                .expect("OpenAlex setting should exist")
+                .value,
+            "abcde-two\ntiny\nabcde-three\nnew-key"
+        );
+
+        let tampered_update = HashMap::from([(
+            "openalex_api_key_pool".to_string(),
+            RuntimeSecretPoolUpdate {
+                add: Vec::new(),
+                remove: vec![format!("{second_reference}A")],
+            },
+        )]);
+        assert!(matches!(
+            upsert_runtime_settings(
+                &auth_db_path,
+                &codec,
+                &HashMap::new(),
+                &tampered_update,
+            ),
+            Err(BusinessRepositoryError::InvalidRuntimeSecretPoolUpdate(field))
+                if field == "openalex_api_key_pool"
+        ));
+
+        let cross_field_update = HashMap::from([(
+            "semantic_scholar_api_key_pool".to_string(),
+            RuntimeSecretPoolUpdate {
+                add: Vec::new(),
+                remove: vec![second_reference],
+            },
+        )]);
+        assert!(matches!(
+            upsert_runtime_settings(
+                &auth_db_path,
+                &codec,
+                &HashMap::new(),
+                &cross_field_update,
+            ),
+            Err(BusinessRepositoryError::InvalidRuntimeSecretPoolUpdate(field))
+                if field == "semantic_scholar_api_key_pool"
+        ));
+
+        let non_secret_update = HashMap::from([(
+            "crossref_mailto_pool".to_string(),
+            RuntimeSecretPoolUpdate {
+                add: vec!["admin@example.test".to_string()],
+                remove: Vec::new(),
+            },
+        )]);
+        assert!(matches!(
+            upsert_runtime_settings(
+                &auth_db_path,
+                &codec,
+                &HashMap::new(),
+                &non_secret_update,
+            ),
+            Err(BusinessRepositoryError::InvalidRuntimeSecretPoolUpdate(field))
+                if field == "crossref_mailto_pool"
+        ));
+
+        let replacement = HashMap::from([(
+            "openalex_api_key_pool".to_string(),
+            RuntimeSecretPoolUpdate {
+                add: vec!["replacement-key".to_string()],
+                remove: Vec::new(),
+            },
+        )]);
+        upsert_runtime_settings(
+            &auth_db_path,
+            &codec,
+            &HashMap::from([("openalex_api_key_pool".to_string(), None)]),
+            &replacement,
+        )
+        .expect("clear then add should replace the pool");
+        assert_eq!(
+            load_runtime_settings(&auth_db_path, &codec)
+                .expect("replacement pool should decrypt")
+                .into_iter()
+                .find(|setting| setting.field == "openalex_api_key_pool")
+                .expect("OpenAlex setting should exist")
+                .value,
+            "replacement-key"
+        );
     }
 }

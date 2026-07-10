@@ -12,9 +12,9 @@ use ps_domain::{
     AnnouncementInfo, AuthStats, FavoriteAdd, FavoriteArticleRef, FavoriteArticleResponse,
     FavoriteBatchCheckResponse, FavoriteCheckResponse, FavoriteResponse, FolderResponse,
     IndexDatabaseStats, IndexStats, NotificationSettings, NotificationSettingsUpdate,
-    NotificationSubscriberInfo, PushStats, RuntimeSettingInfo, RuntimeSettingValue,
-    ScheduledJobSpec, ScheduledTaskInfo, ScheduledTaskRunInfo, SchedulerStatusResponse,
-    SchedulerWorkerInfo, UserId,
+    NotificationSubscriberInfo, PushStats, RuntimeSecretItemInfo, RuntimeSecretPoolUpdate,
+    RuntimeSettingInfo, RuntimeSettingValue, ScheduledJobSpec, ScheduledTaskInfo,
+    ScheduledTaskRunInfo, SchedulerStatusResponse, SchedulerWorkerInfo, UserId,
 };
 use rusqlite::types::Type;
 use rusqlite::{params, Connection, ErrorCode, OptionalExtension, TransactionBehavior};
@@ -83,6 +83,8 @@ pub enum BusinessRepositoryError {
     InvalidRuntimeBoolean(String),
     /// A null update attempted to clear a non-secret runtime setting.
     NonSecretRuntimeSettingCannotBeCleared(String),
+    /// A secret-pool mutation contained an invalid field or item reference.
+    InvalidRuntimeSecretPoolUpdate(String),
     /// Scheduled job arguments failed allowlist validation.
     InvalidScheduledJob(String),
     /// Scheduled task timing settings failed validation.
@@ -114,6 +116,9 @@ impl fmt::Display for BusinessRepositoryError {
             }
             Self::NonSecretRuntimeSettingCannotBeCleared(field) => {
                 write!(formatter, "Only secret runtime settings may be cleared: {field}")
+            }
+            Self::InvalidRuntimeSecretPoolUpdate(field) => {
+                write!(formatter, "Invalid runtime secret pool update: {field}")
             }
             Self::InvalidScheduledJob(message) => formatter.write_str(message),
             Self::InvalidScheduledTask(message) => formatter.write_str(message),

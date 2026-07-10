@@ -412,6 +412,7 @@ mod tests {
             storage_config.auth_db_path(),
             &secret_codec,
             &HashMap::from([("secure_cookies".to_string(), Some("true".to_string()))]),
+            &HashMap::new(),
         )
         .expect("secure cookie runtime setting should persist");
 
@@ -436,6 +437,7 @@ mod tests {
                 "openalex_api_key_pool".to_string(),
                 Some("startup-secret-value".to_string()),
             )]),
+            &HashMap::new(),
         )
         .expect("encrypted fixture should persist");
 
@@ -1228,9 +1230,70 @@ mod tests {
             None,
             Some(serde_json::json!({
                 "values": {
-                    "openalex_api_key_pool": " key-one "
+                    "openalex_api_key_pool": "abcde-one,abcde-two"
                 }
             })),
+        )
+        .await;
+        let openalex_update = runtime_update
+            .payload
+            .as_array()
+            .expect("runtime settings should be an array")
+            .iter()
+            .find(|setting| setting["field"] == "openalex_api_key_pool")
+            .expect("OpenAlex setting should exist");
+        let first_openalex_reference = openalex_update["secret_items"][0]["reference"]
+            .as_str()
+            .expect("secret item reference should be a string")
+            .to_string();
+        let stale_openalex_reference = first_openalex_reference.clone();
+        let stored_openalex_ciphertext: String = rusqlite::Connection::open(backend.auth_db_path())
+            .expect("auth database should open")
+            .query_row(
+                "SELECT value FROM runtime_settings WHERE key = 'openalex_api_key_pool'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("encrypted runtime setting should load");
+        let runtime_pool_update = json_request(
+            &app,
+            Method::PUT,
+            "/api/admin/runtime-settings",
+            Some(&admin_auth),
+            None,
+            Some(serde_json::json!({
+                "secret_pool_updates": {
+                    "openalex_api_key_pool": {
+                        "add": ["abcde-three"],
+                        "remove": [first_openalex_reference]
+                    }
+                }
+            })),
+        )
+        .await;
+        let runtime_pool_error = json_request(
+            &app,
+            Method::PUT,
+            "/api/admin/runtime-settings",
+            Some(&admin_auth),
+            None,
+            Some(serde_json::json!({
+                "secret_pool_updates": {
+                    "openalex_api_key_pool": {
+                        "add": ["must-not-commit"],
+                        "remove": [stale_openalex_reference]
+                    }
+                }
+            })),
+        )
+        .await;
+        let runtime_after_pool_error = json_request(
+            &app,
+            Method::GET,
+            "/api/admin/runtime-settings",
+            Some(&admin_auth),
+            None,
+            None,
         )
         .await;
         let runtime_error = json_request(
@@ -1617,19 +1680,58 @@ mod tests {
             )
         }));
         assert_eq!(runtime_update.status, StatusCode::OK);
-        assert!(runtime_update
+        let updated_openalex = runtime_update
             .payload
             .as_array()
             .expect("runtime settings should be array")
             .iter()
-            .any(|setting| {
-                setting["field"] == "openalex_api_key_pool"
-                    && setting["value"] == ""
-                    && setting["has_value"] == true
-                    && setting["masked_value"] == "••••"
-                    && setting["source"] == "database"
-            }));
-        assert!(!runtime_update.payload.to_string().contains("key-one"));
+            .find(|setting| setting["field"] == "openalex_api_key_pool")
+            .expect("OpenAlex setting should exist");
+        assert_eq!(updated_openalex["value"], "");
+        assert_eq!(updated_openalex["has_value"], true);
+        assert_eq!(updated_openalex["masked_value"], "••••");
+        assert_eq!(updated_openalex["source"], "database");
+        assert_eq!(
+            updated_openalex["secret_items"]
+                .as_array()
+                .expect("secret items should be an array")
+                .len(),
+            2
+        );
+        assert_eq!(
+            updated_openalex["secret_items"][0]["masked_value"],
+            "abcde****"
+        );
+        assert_eq!(
+            updated_openalex["secret_items"][1]["masked_value"],
+            "abcde****"
+        );
+        assert!(!runtime_update.payload.to_string().contains("abcde-one"));
+        assert!(!runtime_update.payload.to_string().contains("abcde-two"));
+        assert!(!runtime_update
+            .payload
+            .to_string()
+            .contains(&stored_openalex_ciphertext));
+        assert_eq!(runtime_pool_update.status, StatusCode::OK);
+        assert_eq!(runtime_pool_error.status, StatusCode::BAD_REQUEST);
+        let openalex_after_error = runtime_after_pool_error
+            .payload
+            .as_array()
+            .expect("runtime settings should be array")
+            .iter()
+            .find(|setting| setting["field"] == "openalex_api_key_pool")
+            .expect("OpenAlex setting should exist");
+        assert_eq!(
+            openalex_after_error["secret_items"]
+                .as_array()
+                .expect("secret items should be an array")
+                .len(),
+            2
+        );
+        assert!(!runtime_after_pool_error
+            .payload
+            .to_string()
+            .contains("must-not-commit"));
         assert_eq!(runtime_error.status, StatusCode::BAD_REQUEST);
         assert_eq!(runtime_proxy_error.status, StatusCode::BAD_REQUEST);
         assert_eq!(task.status, StatusCode::OK);

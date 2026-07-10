@@ -156,6 +156,8 @@ pub const OPENAPI_JSON_PATH: &str = "/openapi.json";
         ps_domain::PageMeta,
         ps_domain::PushStats,
         ps_domain::RegisterRequest,
+        ps_domain::RuntimeSecretItemInfo,
+        ps_domain::RuntimeSecretPoolUpdate,
         ps_domain::RuntimeSettingInfo,
         ps_domain::RuntimeSettingsUpdate,
         ps_domain::ScheduledDeliveryJob,

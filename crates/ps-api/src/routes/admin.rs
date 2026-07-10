@@ -430,9 +430,15 @@ pub(crate) async fn update_runtime_settings(
 ) -> Result<Json<Vec<RuntimeSettingInfo>>, ApiError> {
     require_admin_user(&state, &headers).await?;
     let values = body.values;
+    let secret_pool_updates = body.secret_pool_updates;
     let secret_codec = state.secret_codec().clone();
     let settings = run_business(&state, move |storage| {
-        ps_storage::upsert_runtime_settings(storage.auth_db_path(), &secret_codec, &values)
+        ps_storage::upsert_runtime_settings(
+            storage.auth_db_path(),
+            &secret_codec,
+            &values,
+            &secret_pool_updates,
+        )
     })
     .await?;
     Ok(Json(settings))
@@ -630,6 +636,7 @@ fn map_business_error(error: BusinessRepositoryError) -> ApiError {
     match error {
         BusinessRepositoryError::UnknownRuntimeSetting(_)
         | BusinessRepositoryError::InvalidRuntimeBoolean(_)
+        | BusinessRepositoryError::InvalidRuntimeSecretPoolUpdate(_)
         | BusinessRepositoryError::InvalidScheduledJob(_)
         | BusinessRepositoryError::InvalidScheduledTask(_)
         | BusinessRepositoryError::LegacyScheduledTaskCannotBeEnabled => {

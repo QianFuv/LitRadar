@@ -795,10 +795,51 @@ pub struct RuntimeSettingInfo {
     pub has_value: bool,
     /// Fixed non-secret mask when a credential value is configured.
     pub masked_value: String,
+    /// Individually manageable masked entries for a secret pool.
+    #[serde(default)]
+    pub secret_items: Vec<RuntimeSecretItemInfo>,
     /// Effective setting source.
     pub source: String,
     /// Database update timestamp.
     pub updated_at: Option<f64>,
+}
+
+/// Individually manageable secret-pool item metadata.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct RuntimeSecretItemInfo {
+    /// Opaque authenticated reference accepted by a pool removal update.
+    pub reference: String,
+    /// Human-readable prefix mask that never contains the complete secret.
+    pub masked_value: String,
+}
+
+impl std::fmt::Debug for RuntimeSecretItemInfo {
+    /// Format item metadata without exposing its encrypted reference.
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("RuntimeSecretItemInfo")
+            .field("reference", &"[REDACTED]")
+            .field("masked_value", &self.masked_value)
+            .finish()
+    }
+}
+
+/// Additions and removals applied to one secret runtime pool.
+#[derive(Clone, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct RuntimeSecretPoolUpdate {
+    /// New plaintext entries to normalize and append.
+    #[serde(default)]
+    pub add: Vec<String>,
+    /// Opaque item references to remove.
+    #[serde(default)]
+    pub remove: Vec<String>,
+}
+
+impl std::fmt::Debug for RuntimeSecretPoolUpdate {
+    /// Format pool mutations without exposing additions or references.
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("RuntimeSecretPoolUpdate([REDACTED])")
+    }
 }
 
 /// Runtime settings update payload.
@@ -807,6 +848,9 @@ pub struct RuntimeSettingsUpdate {
     /// Values keyed by API field name; null clears and a blank secret preserves.
     #[serde(default)]
     pub values: HashMap<String, Option<String>>,
+    /// Incremental secret-pool mutations keyed by API field name.
+    #[serde(default)]
+    pub secret_pool_updates: HashMap<String, RuntimeSecretPoolUpdate>,
 }
 
 impl std::fmt::Debug for RuntimeSettingsUpdate {
