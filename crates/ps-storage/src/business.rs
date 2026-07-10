@@ -18,7 +18,7 @@ use rusqlite::{params, Connection, ErrorCode, OptionalExtension};
 use serde::Deserialize;
 use serde_json::Value;
 
-use crate::{initialize_auth_database, random_hex, StorageConfig};
+use crate::{open_sqlite_connection, random_hex, StorageConfig};
 
 const ADMIN_INVITE_CODE_BYTES: i64 = 8;
 
@@ -1877,20 +1877,14 @@ fn load_metadata_from_index(
 }
 
 fn open_business_connection(path: impl AsRef<Path>) -> Result<Connection, BusinessRepositoryError> {
-    initialize_auth_database(path.as_ref())
-        .map_err(|error| BusinessRepositoryError::Io(std::io::Error::other(error)))?;
     let path = path.as_ref();
-    if let Some(parent) = path.parent() {
+    if let Some(parent) = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    {
         fs::create_dir_all(parent)?;
     }
-    let connection = Connection::open(path)?;
-    connection.execute_batch(
-        "
-        PRAGMA journal_mode=WAL;
-        PRAGMA foreign_keys=ON;
-        ",
-    )?;
-    Ok(connection)
+    Ok(open_sqlite_connection(path)?)
 }
 
 fn ensure_folder_exists(
@@ -2222,16 +2216,16 @@ mod tests {
     use tempfile::tempdir;
 
     use super::{
-        count_weekly_articles, get_admin_stats, initialize_auth_database, list_runtime_settings,
-        upsert_runtime_settings, BusinessRepositoryError,
+        count_weekly_articles, get_admin_stats, list_runtime_settings, upsert_runtime_settings,
+        BusinessRepositoryError,
     };
-    use crate::StorageConfig;
+    use crate::{migrate_auth_database, StorageConfig};
 
     #[test]
     fn runtime_settings_ignore_stale_env_keys_and_proxy_pool() {
         let temp_dir = tempdir().expect("temp dir should be created");
         let auth_db_path = temp_dir.path().join("auth.sqlite");
-        initialize_auth_database(&auth_db_path).expect("auth database should initialize");
+        migrate_auth_database(&auth_db_path).expect("auth database should migrate");
         let connection = Connection::open(&auth_db_path).expect("auth database should open");
         connection
             .execute(
@@ -2271,7 +2265,7 @@ mod tests {
     fn runtime_settings_reject_proxy_pool_and_normalize_boolean() {
         let temp_dir = tempdir().expect("temp dir should be created");
         let auth_db_path = temp_dir.path().join("auth.sqlite");
-        initialize_auth_database(&auth_db_path).expect("auth database should initialize");
+        migrate_auth_database(&auth_db_path).expect("auth database should migrate");
         let mut values = HashMap::new();
         values.insert("secure_cookies".to_string(), "yes".to_string());
 
@@ -2307,7 +2301,7 @@ mod tests {
                 .expect("auth parent should exist"),
         )
         .expect("data dir should be created");
-        initialize_auth_database(config.auth_db_path()).expect("auth database should initialize");
+        migrate_auth_database(config.auth_db_path()).expect("auth database should migrate");
         let push_state_dir = config.project_root().join("data").join("push_state");
         fs::create_dir_all(&push_state_dir).expect("push state dir should be created");
         fs::write(

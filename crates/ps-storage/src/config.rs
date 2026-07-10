@@ -59,6 +59,34 @@ impl StorageConfig {
         &self.auth_db_path
     }
 
+    /// Resolve the bundled SQLite `simple` tokenizer for this project root.
+    ///
+    /// # Returns
+    ///
+    /// Existing platform-specific extension path, or None when unavailable.
+    pub fn simple_tokenizer_path(&self) -> Option<PathBuf> {
+        let libs_dir = self.project_root.join("libs");
+        if cfg!(windows) {
+            Some(
+                libs_dir
+                    .join("simple-windows")
+                    .join("libsimple-windows-x64")
+                    .join("simple.dll"),
+            )
+            .filter(|path| path.exists())
+        } else if cfg!(target_os = "linux") {
+            Some(
+                libs_dir
+                    .join("simple-linux")
+                    .join("libsimple-linux-ubuntu-latest")
+                    .join("libsimple.so"),
+            )
+            .filter(|path| path.exists())
+        } else {
+            None
+        }
+    }
+
     /// Resolve one index database path with Python-compatible semantics.
     ///
     /// # Arguments

@@ -11,13 +11,26 @@ Paper Scanner 当前实际使用两类数据库：
    - 路径：`data/auth.sqlite`
    - 作用：用户、访问令牌、CNKI 会话、收藏夹、通知设置、运行时配置、定时任务、公告
 
-后端部署与正常运行入口已经切换到 Rust 服务，不迁移数据库、不改表结构、不改状态文件格式。Rust API、Rust CLI 和保留的 Python 兼容测试模块读取同一套 `data/`。
+后端部署与正常运行入口已经切换到 Rust 服务。Rust API、worker 和 CLI 在业务访问前执行版本化迁移，并继续读取同一套 `data/`；数据库之外的状态文件格式不变。
+
+## 数据库版本与迁移生命周期
+
+认证库和每个索引库分别使用 SQLite `PRAGMA user_version` 记录 schema 版本。当前认证库版本和索引库版本均为 `1`。
+
+- API 在绑定监听端口前迁移 `data/auth.sqlite` 和 `data/index/*.sqlite`
+- `worker` 在进入调度循环前迁移；`scheduler`、`index`、`notify` 和 `push` 在参数验证完成、首次业务访问前迁移
+- `index` 在执行结束后再次扫描本次新建的索引库；已经是当前版本的库不会执行写操作
+- 普通 repository 连接只设置连接级 pragma 和执行数据查询，不创建表、不执行 `ALTER TABLE`，也不通过 schema introspection 决定迁移
+
+每个待执行版本都在独立的 `BEGIN IMMEDIATE` 事务中完成，`user_version` 只在同一事务末尾更新。任何 DDL 或索引创建失败都会回滚该版本，启动命令以非零错误退出，不会继续提供部分升级后的服务。
+
+如果数据库的 `user_version` 高于当前二进制支持的版本，启动会在切换 WAL 或执行其他写操作前拒绝该文件。此时应升级应用二进制，不能手工降低 `user_version`。生产升级前仍应备份 `data/auth.sqlite`、所有 `data/index/*.sqlite` 及关联状态目录；迁移失败时修复不兼容的旧 schema 或从备份恢复后重试。
 
 ## 一、索引数据库
 
 ### 初始化参数
 
-索引数据库由 Rust 索引 schema 代码初始化；保留的 Python 兼容测试路径继续验证同一套 schema。两条路径当前会设置以下 pragma：
+索引数据库的版本状态和旧库升级由版本化 storage migration 管理；Rust 索引写入路径负责创建新库的当前 schema，`index` 命令会在结束前将新库纳入同一版本管理。连接会设置以下 pragma：
 
 | Pragma | 值 | 说明 |
 | --- | --- | --- |
@@ -348,7 +361,7 @@ Rust 索引初始化只创建该表，不会在空库或未完成构建时写入
 
 ### 初始化参数
 
-认证与业务数据库由 Rust storage/auth 代码初始化；保留的 Python 兼容测试路径继续使用兼容初始化逻辑。当前会设置：
+认证与业务数据库由 Rust storage migration 初始化。当前连接会设置：
 
 | Pragma | 值 |
 | --- | --- |

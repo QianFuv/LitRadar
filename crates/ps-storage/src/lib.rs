@@ -6,6 +6,7 @@ pub mod business;
 pub mod cnki;
 pub mod config;
 pub mod index;
+pub mod migrations;
 pub mod sqlite;
 
 pub use announcements::{list_active_announcements, AnnouncementRepositoryError};
@@ -43,5 +44,9 @@ pub use index::{
     list_index_database_names, list_issues, list_journal_options, list_journals, list_sources,
     list_years, ArticleFulltextTarget, ArticleListParams, CnkiFulltextTarget, IndexRepositoryError,
     IssueListParams, JournalListParams,
+};
+pub use migrations::{
+    migrate_auth_database, migrate_existing_index_databases, migrate_index_database,
+    migrate_storage, MigrationError, AUTH_SCHEMA_VERSION, INDEX_SCHEMA_VERSION,
 };
 pub use sqlite::{open_sqlite_connection, try_load_extension};

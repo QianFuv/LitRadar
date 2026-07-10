@@ -10,6 +10,9 @@ use std::time::Duration;
 use ps_index::{
     run_live_index, run_live_index_worker_from_file_path, LiveIndexConfig, LiveScholarlyConfig,
 };
+use ps_storage::{
+    migrate_auth_database, migrate_existing_index_databases, migrate_index_database, StorageConfig,
+};
 use ps_worker::delivery::{
     run_recommendation_delivery, DeliveryMode, DeliveryWorkflow, RecommendationRunConfig,
 };
@@ -46,9 +49,10 @@ pub fn run_index_command(args: Vec<String>) -> Result<(), Box<dyn Error>> {
     if !args.is_empty() {
         return Err(format!("unexpected index arguments: {}", args.join(" ")).into());
     }
+    migrate_command_databases(&project_root, &auth_db_path)?;
     let scholarly_config = live_scholarly_config(&auth_db_path, options.timeout_seconds)?;
     let outcome = run_live_index(&LiveIndexConfig {
-        project_root,
+        project_root: project_root.clone(),
         file: options.file,
         worker_count: options.worker_count,
         process_count: options.process_count,
@@ -59,7 +63,9 @@ pub fn run_index_command(args: Vec<String>) -> Result<(), Box<dyn Error>> {
         notify: options.notify,
         notify_dry_run: options.notify_dry_run,
         scholarly_config,
-    })?;
+    });
+    migrate_existing_index_databases(&StorageConfig::from_project_root(&project_root))?;
+    let outcome = outcome?;
     println!("{}", serde_json::to_string(&outcome)?);
     Ok(())
 }
@@ -154,22 +160,32 @@ pub fn run_scheduler_command(mut args: Vec<String>) -> Result<(), Box<dyn Error>
     }
     let project_root = extract_project_root(&mut args)?;
     let auth_db_path = extract_auth_db_path_with_project_root(&mut args, &project_root)?;
-    match args.as_slice() {
-        [command] if command == "validate" => print_scheduler_load(&auth_db_path),
+    let action = match args.as_slice() {
+        [command] if command == "validate" => SchedulerAction::Validate,
         [command, task_id] if command == "run-once" => {
             let task_id = task_id.parse::<i64>()?;
-            let outcome = run_task_now(&auth_db_path, task_id, SchedulerMode::Execute)?;
-            println!("{}", serde_json::to_string(&outcome)?);
-            Ok(())
+            SchedulerAction::RunOnce(task_id, SchedulerMode::Execute)
         }
         [command, task_id] if command == "dry-run-once" => {
             let task_id = task_id.parse::<i64>()?;
-            let outcome = run_task_now(&auth_db_path, task_id, SchedulerMode::DryRun)?;
+            SchedulerAction::RunOnce(task_id, SchedulerMode::DryRun)
+        }
+        _ => return Err(scheduler_usage().into()),
+    };
+    migrate_command_databases(&project_root, &auth_db_path)?;
+    match action {
+        SchedulerAction::Validate => print_scheduler_load(&auth_db_path),
+        SchedulerAction::RunOnce(task_id, mode) => {
+            let outcome = run_task_now(&auth_db_path, task_id, mode)?;
             println!("{}", serde_json::to_string(&outcome)?);
             Ok(())
         }
-        _ => Err(scheduler_usage().into()),
     }
+}
+
+enum SchedulerAction {
+    Validate,
+    RunOnce(i64, SchedulerMode),
 }
 
 /// Run the standalone `worker` command.
@@ -193,6 +209,7 @@ pub fn run_worker_command(mut args: Vec<String>) -> Result<(), Box<dyn Error>> {
     if !args.is_empty() {
         return Err(worker_usage().into());
     }
+    migrate_command_databases(&project_root, &auth_db_path)?;
     run_worker_execute(&auth_db_path, interval_seconds, max_iterations)
 }
 
@@ -230,7 +247,6 @@ fn run_delivery_command(
     if !args.is_empty() {
         return Err(format!("unexpected {command_name} arguments: {}", args.join(" ")).into());
     }
-
     let changes_file = changes_file
         .filter(|path| !path.as_os_str().is_empty())
         .map(|path| resolve_project_path(&project_root, path));
@@ -244,6 +260,12 @@ fn run_delivery_command(
         db_name,
         changes_file.as_deref(),
     )?;
+    migrate_command_databases(&project_root, &auth_db_path)?;
+    let storage_config = StorageConfig::from_project_root(&project_root);
+    let tokenizer_path = storage_config.simple_tokenizer_path();
+    for target in &targets {
+        migrate_index_database(&target.index_db_path, tokenizer_path.as_deref())?;
+    }
     let mut outcomes = Vec::new();
     for target in targets {
         let outcome = run_recommendation_delivery(&RecommendationRunConfig {
@@ -275,6 +297,15 @@ fn run_delivery_command(
 fn print_scheduler_load(auth_db_path: &Path) -> Result<(), Box<dyn Error>> {
     let result = load_scheduler_jobs(auth_db_path)?;
     println!("{}", serde_json::to_string(&result)?);
+    Ok(())
+}
+
+fn migrate_command_databases(
+    project_root: &Path,
+    auth_db_path: &Path,
+) -> Result<(), Box<dyn Error>> {
+    migrate_auth_database(auth_db_path)?;
+    migrate_existing_index_databases(&StorageConfig::from_project_root(project_root))?;
     Ok(())
 }
 
@@ -905,8 +936,6 @@ mod tests {
     fn scheduler_command_requires_valid_task_id() {
         let root = temp_root("ps-cli-scheduler-dispatch");
         let auth_db_path = root.path().join("auth.sqlite");
-        ps_storage::initialize_auth_database(&auth_db_path)
-            .expect("auth database should initialize");
 
         let error = run_scheduler_command(vec![
             "--auth-db".to_string(),
@@ -917,14 +946,13 @@ mod tests {
         .expect_err("invalid scheduler task id should fail before execution");
 
         assert!(error.to_string().contains("invalid digit"));
+        assert!(!auth_db_path.exists());
     }
 
     #[test]
-    fn worker_command_supports_finite_test_iterations() {
+    fn worker_startup_migration_precedes_scheduler_loop() {
         let root = temp_root("ps-cli-worker-execute");
         let auth_db_path = root.path().join("auth.sqlite");
-        ps_storage::initialize_auth_database(&auth_db_path)
-            .expect("auth database should initialize");
 
         run_worker_command(vec![
             "--auth-db".to_string(),
@@ -935,14 +963,16 @@ mod tests {
             "1".to_string(),
         ])
         .expect("finite worker run should return");
+        assert_eq!(
+            ps_storage::count_users(&auth_db_path).expect("migrated users table should load"),
+            0
+        );
     }
 
     #[test]
-    fn scheduler_validate_loads_jobs() {
+    fn scheduler_startup_migration_precedes_job_load() {
         let root = temp_root("ps-cli-scheduler-validate");
         let auth_db_path = root.path().join("auth.sqlite");
-        ps_storage::initialize_auth_database(&auth_db_path)
-            .expect("auth database should initialize");
 
         run_scheduler_command(vec![
             "--auth-db".to_string(),
@@ -950,6 +980,10 @@ mod tests {
             "validate".to_string(),
         ])
         .expect("scheduler validate should load jobs");
+        assert_eq!(
+            ps_storage::count_users(&auth_db_path).expect("migrated users table should load"),
+            0
+        );
     }
 
     #[test]

@@ -19,6 +19,17 @@ data/push_state/*.changes.json
 
 Docker 运行时由 `api` 提供 API，由 `worker` 作为 sidecar 按 cron 执行启用的定时任务。用户侧命令为 `api`、`index`、`notify`、`push`、`scheduler` 和 `worker`。
 
+## 启动与数据库迁移
+
+所有正式入口都以版本化 SQLite migration 作为业务访问的前置条件：
+
+1. 先完成参数和配置路径解析
+2. 迁移 `data/auth.sqlite` 以及本次入口会使用的 `data/index/*.sqlite`
+3. API 迁移成功后才绑定监听端口；worker 迁移成功后才进入循环
+4. 迁移失败或发现高于当前二进制支持的 `PRAGMA user_version` 时立即退出
+
+迁移实现位于 `crates/ps-storage/src/migrations.rs`。新增 schema 变更时必须追加下一个有序版本，在独立事务中修改 schema 并在同一事务内更新 `user_version`；不要在 repository 查询函数或连接 helper 中加入 `CREATE TABLE`、`ALTER TABLE` 或迁移判断。迁移至少要覆盖空库、代表性旧库、当前库幂等、失败回滚和未来版本拒绝测试。
+
 ## Rust 模块划分
 
 | Crate | 职责 |

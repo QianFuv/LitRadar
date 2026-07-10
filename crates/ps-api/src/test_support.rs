@@ -9,7 +9,7 @@ use axum::http::{HeaderMap, Method, Request, StatusCode};
 use axum::Router;
 use ps_auth::{AuthService, ACCESS_TOKEN_DEFAULT_TTL, SESSION_COOKIE_NAME};
 use ps_domain::{UserId, UserResponse};
-use ps_storage::{admin_create_invite_code, count_users, initialize_auth_database, StorageConfig};
+use ps_storage::{admin_create_invite_code, count_users, migrate_storage, StorageConfig};
 use rusqlite::Connection;
 use serde_json::Value;
 use tempfile::{tempdir, TempDir};
@@ -36,8 +36,7 @@ impl TestBackend {
         let temp_dir = tempdir().expect("temp dir should be created");
         let storage_config = StorageConfig::from_project_root(temp_dir.path());
         fs::create_dir_all(storage_config.index_dir()).expect("index dir should be created");
-        initialize_auth_database(storage_config.auth_db_path())
-            .expect("auth database should initialize");
+        migrate_storage(&storage_config).expect("test databases should migrate");
         Self {
             temp_dir,
             storage_config,

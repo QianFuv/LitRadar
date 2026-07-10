@@ -4,7 +4,9 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::error::Error;
 use std::fmt;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
+#[cfg(test)]
+use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use ps_domain::{
@@ -1574,21 +1576,9 @@ fn open_index_connection(
 ) -> Result<Connection, IndexRepositoryError> {
     let db_path = config.resolve_index_db_path(db_name)?;
     let connection = open_sqlite_connection(db_path)?;
-    let extension_path = resolve_simple_tokenizer_path(config);
+    let extension_path = config.simple_tokenizer_path();
     try_load_extension(&connection, extension_path.as_deref())?;
-    ensure_journal_platform_id_column(&connection)?;
     Ok(connection)
-}
-
-fn ensure_journal_platform_id_column(connection: &Connection) -> Result<(), IndexRepositoryError> {
-    let columns = table_columns(connection, "journals")?;
-    if !columns.iter().any(|column| column == "platform_journal_id") {
-        connection.execute(
-            "ALTER TABLE journals ADD COLUMN platform_journal_id TEXT",
-            [],
-        )?;
-    }
-    Ok(())
 }
 
 fn is_article_listing_ready(connection: &Connection) -> bool {
@@ -1605,15 +1595,6 @@ fn is_article_listing_ready(connection: &Connection) -> bool {
             row.get::<_, i64>(0)
         })
         .is_ok()
-}
-
-fn table_columns(
-    connection: &Connection,
-    table_name: &str,
-) -> Result<Vec<String>, IndexRepositoryError> {
-    let mut statement = connection.prepare(&format!("PRAGMA table_info({table_name})"))?;
-    let rows = statement.query_map([], |row| row.get::<_, String>(1))?;
-    collect_rows(rows)
 }
 
 fn value_count_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ValueCount> {
@@ -1920,29 +1901,6 @@ fn validate_limit_offset(limit: i64, offset: i64) -> Result<(), IndexRepositoryE
         ));
     }
     Ok(())
-}
-
-fn resolve_simple_tokenizer_path(config: &StorageConfig) -> Option<PathBuf> {
-    let libs_dir = config.project_root().join("libs");
-    if cfg!(windows) {
-        Some(
-            libs_dir
-                .join("simple-windows")
-                .join("libsimple-windows-x64")
-                .join("simple.dll"),
-        )
-        .filter(|path| path.exists())
-    } else if cfg!(target_os = "linux") {
-        Some(
-            libs_dir
-                .join("simple-linux")
-                .join("libsimple-linux-ubuntu-latest")
-                .join("libsimple.so"),
-        )
-        .filter(|path| path.exists())
-    } else {
-        None
-    }
 }
 
 fn is_cnki_article_row(row: &ArticleAccessRow) -> bool {
@@ -3122,6 +3080,7 @@ mod tests {
                 CREATE TABLE journals (
                     journal_id INTEGER PRIMARY KEY,
                     library_id TEXT NOT NULL,
+                    platform_journal_id TEXT,
                     title TEXT,
                     issn TEXT,
                     eissn TEXT,
@@ -3304,5 +3263,8 @@ mod tests {
                 "#
             ))
             .expect("fixture schema and data should be created");
+        connection
+            .pragma_update(None, "user_version", crate::INDEX_SCHEMA_VERSION)
+            .expect("fixture schema version should be set");
     }
 }

@@ -8,6 +8,8 @@ use std::path::Path;
 use ps_domain::UserId;
 use rusqlite::{params, Connection, ErrorCode, OptionalExtension};
 
+use crate::{migrate_auth_database, open_sqlite_connection, MigrationError};
+
 /// Stored user row returned by auth repository queries.
 #[derive(Debug, Clone, PartialEq)]
 pub struct AuthUserRow {
@@ -71,6 +73,8 @@ pub enum AuthRepositoryError {
     Sqlite(rusqlite::Error),
     /// Filesystem setup failed.
     Io(std::io::Error),
+    /// Database migration failed.
+    Migration(MigrationError),
     /// Registration requires an invite code.
     InviteCodeRequired,
     /// The provided invite code is missing or already used.
@@ -87,6 +91,7 @@ impl fmt::Display for AuthRepositoryError {
         match self {
             Self::Sqlite(error) => write!(formatter, "{error}"),
             Self::Io(error) => write!(formatter, "{error}"),
+            Self::Migration(error) => write!(formatter, "{error}"),
             Self::InviteCodeRequired => formatter.write_str("Invite code is required"),
             Self::InvalidOrUsedInviteCode => formatter.write_str("Invalid or used invite code"),
             Self::UserHasAlreadyGeneratedInviteCode => {
@@ -103,6 +108,7 @@ impl Error for AuthRepositoryError {
         match self {
             Self::Sqlite(error) => Some(error),
             Self::Io(error) => Some(error),
+            Self::Migration(error) => Some(error),
             _ => None,
         }
     }
@@ -122,7 +128,14 @@ impl From<std::io::Error> for AuthRepositoryError {
     }
 }
 
-/// Create auth tables needed by the migrated auth routes.
+impl From<MigrationError> for AuthRepositoryError {
+    /// Convert migration errors into repository errors.
+    fn from(error: MigrationError) -> Self {
+        Self::Migration(error)
+    }
+}
+
+/// Migrate the auth database to the current schema version.
 ///
 /// # Arguments
 ///
@@ -132,222 +145,7 @@ impl From<std::io::Error> for AuthRepositoryError {
 ///
 /// Empty result on success.
 pub fn initialize_auth_database(auth_db_path: impl AsRef<Path>) -> Result<(), AuthRepositoryError> {
-    let connection = open_auth_connection(auth_db_path)?;
-    connection.execute_batch(
-        "
-        CREATE TABLE IF NOT EXISTS users (
-            id            INTEGER PRIMARY KEY AUTOINCREMENT,
-            username      TEXT    NOT NULL UNIQUE COLLATE NOCASE,
-            password_hash TEXT    NOT NULL,
-            salt          TEXT    NOT NULL,
-            is_admin      INTEGER NOT NULL DEFAULT 0,
-            created_at    REAL    NOT NULL,
-            updated_at    REAL    NOT NULL
-        );
-
-        CREATE TABLE IF NOT EXISTS access_tokens (
-            id          INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-            token_hash  TEXT    NOT NULL UNIQUE,
-            name        TEXT    NOT NULL DEFAULT '',
-            expires_at  REAL    NOT NULL,
-            created_at  REAL    NOT NULL
-        );
-
-        CREATE TABLE IF NOT EXISTS cnki_sessions (
-            user_id          INTEGER PRIMARY KEY
-                             REFERENCES users(id) ON DELETE CASCADE,
-            session_json     TEXT    NOT NULL DEFAULT '{}',
-            qr_uuid          TEXT    NOT NULL DEFAULT '',
-            status           TEXT    NOT NULL DEFAULT 'empty',
-            token_expires_at REAL,
-            created_at       REAL    NOT NULL,
-            updated_at       REAL    NOT NULL,
-            last_used_at     REAL
-        );
-
-        CREATE TABLE IF NOT EXISTS folders (
-            id          INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-            name        TEXT    NOT NULL,
-            is_tracking INTEGER NOT NULL DEFAULT 0,
-            created_at  REAL    NOT NULL,
-            updated_at  REAL    NOT NULL,
-            UNIQUE(user_id, name)
-        );
-
-        CREATE TABLE IF NOT EXISTS favorites (
-            id          INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-            folder_id   INTEGER NOT NULL REFERENCES folders(id) ON DELETE CASCADE,
-            article_id  INTEGER NOT NULL,
-            db_name     TEXT    NOT NULL DEFAULT '',
-            note        TEXT    NOT NULL DEFAULT '',
-            created_at  REAL    NOT NULL,
-            UNIQUE(user_id, folder_id, article_id, db_name)
-        );
-
-        CREATE TABLE IF NOT EXISTS invite_codes (
-            id          INTEGER PRIMARY KEY AUTOINCREMENT,
-            code        TEXT    NOT NULL UNIQUE,
-            created_by  INTEGER REFERENCES users(id) ON DELETE SET NULL,
-            used_by     INTEGER REFERENCES users(id) ON DELETE SET NULL,
-            used_at     REAL,
-            created_at  REAL   NOT NULL
-        );
-
-        CREATE TABLE IF NOT EXISTS notification_settings (
-            id              INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id         INTEGER NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
-            keywords        TEXT    NOT NULL DEFAULT '[]',
-            directions      TEXT    NOT NULL DEFAULT '[]',
-            selected_databases TEXT NOT NULL DEFAULT '[]',
-            delivery_method TEXT    NOT NULL DEFAULT 'folder',
-            pushplus_token  TEXT    NOT NULL DEFAULT '',
-            pushplus_template TEXT  NOT NULL DEFAULT 'markdown',
-            pushplus_topic  TEXT    NOT NULL DEFAULT '',
-            pushplus_channel TEXT   NOT NULL DEFAULT 'wechat',
-            sync_to_tracking_folder INTEGER NOT NULL DEFAULT 0,
-            ai_base_url     TEXT    NOT NULL DEFAULT '',
-            ai_api_key      TEXT    NOT NULL DEFAULT '',
-            ai_model        TEXT    NOT NULL DEFAULT '',
-            ai_system_prompt TEXT   NOT NULL DEFAULT '',
-            ai_backup_base_url TEXT NOT NULL DEFAULT '',
-            ai_backup_api_key TEXT NOT NULL DEFAULT '',
-            ai_backup_model TEXT NOT NULL DEFAULT '',
-            ai_backup_system_prompt TEXT NOT NULL DEFAULT '',
-            ai_retry_attempts INTEGER NOT NULL DEFAULT 3,
-            enabled         INTEGER NOT NULL DEFAULT 1,
-            created_at      REAL    NOT NULL,
-            updated_at      REAL    NOT NULL
-        );
-
-        CREATE TABLE IF NOT EXISTS scheduled_tasks (
-            id              INTEGER PRIMARY KEY AUTOINCREMENT,
-            name            TEXT    NOT NULL,
-            command         TEXT    NOT NULL,
-            cron            TEXT    NOT NULL,
-            enabled         INTEGER NOT NULL DEFAULT 1,
-            last_run_at     REAL,
-            last_status     TEXT    NOT NULL DEFAULT '',
-            created_at      REAL    NOT NULL,
-            updated_at      REAL    NOT NULL
-        );
-
-        CREATE TABLE IF NOT EXISTS runtime_settings (
-            key             TEXT PRIMARY KEY,
-            value           TEXT NOT NULL DEFAULT '',
-            updated_at      REAL NOT NULL
-        );
-
-        CREATE TABLE IF NOT EXISTS announcements (
-            id              INTEGER PRIMARY KEY AUTOINCREMENT,
-            title           TEXT    NOT NULL,
-            message         TEXT    NOT NULL,
-            priority        TEXT    NOT NULL DEFAULT 'normal',
-            enabled         INTEGER NOT NULL DEFAULT 1,
-            created_at      REAL    NOT NULL,
-            updated_at      REAL    NOT NULL
-        );
-
-        CREATE INDEX IF NOT EXISTS idx_access_tokens_user
-            ON access_tokens(user_id);
-        CREATE INDEX IF NOT EXISTS idx_folders_user
-            ON folders(user_id);
-        CREATE INDEX IF NOT EXISTS idx_favorites_folder
-            ON favorites(folder_id);
-        CREATE INDEX IF NOT EXISTS idx_favorites_user
-            ON favorites(user_id);
-        CREATE INDEX IF NOT EXISTS idx_invite_codes_code
-            ON invite_codes(code);
-        CREATE INDEX IF NOT EXISTS idx_invite_codes_created_by
-            ON invite_codes(created_by);
-        CREATE INDEX IF NOT EXISTS idx_notification_settings_user
-            ON notification_settings(user_id);
-        CREATE INDEX IF NOT EXISTS idx_scheduled_tasks_enabled
-            ON scheduled_tasks(enabled);
-        CREATE INDEX IF NOT EXISTS idx_announcements_enabled
-            ON announcements(enabled);
-        ",
-    )?;
-    let user_columns = table_columns(&connection, "users")?;
-    if !user_columns.iter().any(|column| column == "is_admin") {
-        connection.execute(
-            "ALTER TABLE users ADD COLUMN is_admin INTEGER NOT NULL DEFAULT 0",
-            [],
-        )?;
-        connection.execute(
-            "UPDATE users SET is_admin = 1 WHERE id = (SELECT MIN(id) FROM users)",
-            [],
-        )?;
-    }
-    let notification_columns = table_columns(&connection, "notification_settings")?;
-    let notification_migrations = [
-        (
-            "selected_databases",
-            "ALTER TABLE notification_settings ADD COLUMN selected_databases TEXT NOT NULL DEFAULT '[]'",
-        ),
-        (
-            "ai_base_url",
-            "ALTER TABLE notification_settings ADD COLUMN ai_base_url TEXT NOT NULL DEFAULT ''",
-        ),
-        (
-            "ai_api_key",
-            "ALTER TABLE notification_settings ADD COLUMN ai_api_key TEXT NOT NULL DEFAULT ''",
-        ),
-        (
-            "ai_model",
-            "ALTER TABLE notification_settings ADD COLUMN ai_model TEXT NOT NULL DEFAULT ''",
-        ),
-        (
-            "ai_system_prompt",
-            "ALTER TABLE notification_settings ADD COLUMN ai_system_prompt TEXT NOT NULL DEFAULT ''",
-        ),
-        (
-            "ai_backup_base_url",
-            "ALTER TABLE notification_settings ADD COLUMN ai_backup_base_url TEXT NOT NULL DEFAULT ''",
-        ),
-        (
-            "ai_backup_api_key",
-            "ALTER TABLE notification_settings ADD COLUMN ai_backup_api_key TEXT NOT NULL DEFAULT ''",
-        ),
-        (
-            "ai_backup_model",
-            "ALTER TABLE notification_settings ADD COLUMN ai_backup_model TEXT NOT NULL DEFAULT ''",
-        ),
-        (
-            "ai_backup_system_prompt",
-            "ALTER TABLE notification_settings ADD COLUMN ai_backup_system_prompt TEXT NOT NULL DEFAULT ''",
-        ),
-        (
-            "ai_retry_attempts",
-            "ALTER TABLE notification_settings ADD COLUMN ai_retry_attempts INTEGER NOT NULL DEFAULT 3",
-        ),
-        (
-            "sync_to_tracking_folder",
-            "ALTER TABLE notification_settings ADD COLUMN sync_to_tracking_folder INTEGER NOT NULL DEFAULT 0",
-        ),
-    ];
-    for (column, statement) in notification_migrations {
-        if !notification_columns
-            .iter()
-            .any(|existing| existing == column)
-        {
-            connection.execute(statement, [])?;
-        }
-    }
-    let announcement_columns = table_columns(&connection, "announcements")?;
-    if !announcement_columns.is_empty()
-        && !announcement_columns
-            .iter()
-            .any(|column| column == "priority")
-    {
-        connection.execute(
-            "ALTER TABLE announcements ADD COLUMN priority TEXT NOT NULL DEFAULT 'normal'",
-            [],
-        )?;
-    }
-    Ok(())
+    migrate_auth_database(auth_db_path).map_err(AuthRepositoryError::from)
 }
 
 /// Generate lowercase random hex using SQLite `randomblob`.
@@ -382,7 +180,6 @@ pub fn random_hex(
 ///
 /// Registered user count.
 pub fn count_users(auth_db_path: impl AsRef<Path>) -> Result<i64, AuthRepositoryError> {
-    initialize_auth_database(auth_db_path.as_ref())?;
     let connection = open_auth_connection(auth_db_path)?;
     Ok(connection.query_row("SELECT COUNT(*) FROM users", [], |row| row.get(0))?)
 }
@@ -409,7 +206,6 @@ pub fn register_user_with_invite(
     invite_code: Option<&str>,
     now: f64,
 ) -> Result<AuthUserRow, AuthRepositoryError> {
-    initialize_auth_database(auth_db_path.as_ref())?;
     let connection = open_auth_connection(auth_db_path)?;
     connection.execute("BEGIN IMMEDIATE", [])?;
     let result =
@@ -440,7 +236,6 @@ pub fn find_user_credentials_by_username(
     auth_db_path: impl AsRef<Path>,
     username: &str,
 ) -> Result<Option<UserCredentialRow>, AuthRepositoryError> {
-    initialize_auth_database(auth_db_path.as_ref())?;
     let connection = open_auth_connection(auth_db_path)?;
     connection
         .query_row(
@@ -467,7 +262,6 @@ pub fn find_user_credentials_by_id(
     auth_db_path: impl AsRef<Path>,
     user_id: UserId,
 ) -> Result<Option<UserCredentialRow>, AuthRepositoryError> {
-    initialize_auth_database(auth_db_path.as_ref())?;
     let connection = open_auth_connection(auth_db_path)?;
     connection
         .query_row(
@@ -496,7 +290,6 @@ pub fn delete_access_tokens_by_name(
     user_id: UserId,
     name: &str,
 ) -> Result<usize, AuthRepositoryError> {
-    initialize_auth_database(auth_db_path.as_ref())?;
     let connection = open_auth_connection(auth_db_path)?;
     let count = connection.execute(
         "DELETE FROM access_tokens WHERE user_id = ?1 AND name = ?2",
@@ -527,7 +320,6 @@ pub fn insert_access_token(
     expires_at: f64,
     created_at: f64,
 ) -> Result<AccessTokenRow, AuthRepositoryError> {
-    initialize_auth_database(auth_db_path.as_ref())?;
     let connection = open_auth_connection(auth_db_path)?;
     purge_expired_access_tokens(&connection, created_at)?;
     connection.execute(
@@ -560,7 +352,6 @@ pub fn verify_access_token_hash(
     token_hash: &str,
     now: f64,
 ) -> Result<Option<AuthUserRow>, AuthRepositoryError> {
-    initialize_auth_database(auth_db_path.as_ref())?;
     let connection = open_auth_connection(auth_db_path)?;
     let row = connection
         .query_row(
@@ -613,7 +404,6 @@ pub fn list_access_tokens(
     user_id: UserId,
     now: f64,
 ) -> Result<Vec<AccessTokenRow>, AuthRepositoryError> {
-    initialize_auth_database(auth_db_path.as_ref())?;
     let connection = open_auth_connection(auth_db_path)?;
     purge_expired_access_tokens(&connection, now)?;
     let mut statement = connection.prepare(
@@ -641,7 +431,6 @@ pub fn delete_access_token(
     user_id: UserId,
     token_id: i64,
 ) -> Result<bool, AuthRepositoryError> {
-    initialize_auth_database(auth_db_path.as_ref())?;
     let connection = open_auth_connection(auth_db_path)?;
     let count = connection.execute(
         "DELETE FROM access_tokens WHERE id = ?1 AND user_id = ?2",
@@ -664,7 +453,6 @@ pub fn delete_access_token_by_hash(
     auth_db_path: impl AsRef<Path>,
     token_hash: &str,
 ) -> Result<bool, AuthRepositoryError> {
-    initialize_auth_database(auth_db_path.as_ref())?;
     let connection = open_auth_connection(auth_db_path)?;
     let count = connection.execute(
         "DELETE FROM access_tokens WHERE token_hash = ?1",
@@ -693,7 +481,6 @@ pub fn update_user_password_and_delete_tokens(
     salt: &str,
     now: f64,
 ) -> Result<(), AuthRepositoryError> {
-    initialize_auth_database(auth_db_path.as_ref())?;
     let connection = open_auth_connection(auth_db_path)?;
     connection.execute(
         "UPDATE users SET password_hash = ?1, salt = ?2, updated_at = ?3 WHERE id = ?4",
@@ -724,7 +511,6 @@ pub fn create_invite_code(
     code: &str,
     now: f64,
 ) -> Result<InviteCodeRow, AuthRepositoryError> {
-    initialize_auth_database(auth_db_path.as_ref())?;
     let connection = open_auth_connection(auth_db_path)?;
     let existing = connection
         .query_row(
@@ -762,7 +548,6 @@ pub fn get_user_invite_code(
     auth_db_path: impl AsRef<Path>,
     user_id: UserId,
 ) -> Result<Option<InviteCodeRow>, AuthRepositoryError> {
-    initialize_auth_database(auth_db_path.as_ref())?;
     let connection = open_auth_connection(auth_db_path)?;
     connection
         .query_row(
@@ -778,17 +563,13 @@ pub(crate) fn open_auth_connection(
     path: impl AsRef<Path>,
 ) -> Result<Connection, AuthRepositoryError> {
     let path = path.as_ref();
-    if let Some(parent) = path.parent() {
+    if let Some(parent) = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    {
         fs::create_dir_all(parent)?;
     }
-    let connection = Connection::open(path)?;
-    connection.execute_batch(
-        "
-        PRAGMA journal_mode=WAL;
-        PRAGMA foreign_keys=ON;
-        ",
-    )?;
-    Ok(connection)
+    open_sqlite_connection(path).map_err(AuthRepositoryError::from)
 }
 
 fn register_user_in_transaction(
@@ -909,13 +690,4 @@ fn is_constraint_error(error: &rusqlite::Error) -> bool {
         rusqlite::Error::SqliteFailure(failure, _)
             if failure.code == ErrorCode::ConstraintViolation
     )
-}
-
-fn table_columns(
-    connection: &Connection,
-    table_name: &str,
-) -> Result<Vec<String>, AuthRepositoryError> {
-    let mut statement = connection.prepare(&format!("PRAGMA table_info({table_name})"))?;
-    let rows = statement.query_map([], |row| row.get::<_, String>(1))?;
-    collect_rows(rows)
 }

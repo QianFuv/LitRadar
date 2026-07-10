@@ -49,10 +49,11 @@ pub async fn serve(config: ApiConfig) -> Result<(), Box<dyn Error>> {
     observability::init_tracing();
 
     let bind_address = config.bind_address();
+    let router = try_build_router(config)?;
     let listener = TcpListener::bind(&bind_address).await?;
     println!("ps-api listening on {}", listener.local_addr()?);
 
-    axum::serve(listener, try_build_router(config)?)
+    axum::serve(listener, router)
         .with_graceful_shutdown(shutdown_signal())
         .await?;
 
@@ -83,6 +84,7 @@ pub fn build_router(config: ApiConfig) -> Router {
 /// Axum router with database-backed runtime settings applied.
 pub fn try_build_router(mut config: ApiConfig) -> Result<Router, Box<dyn Error>> {
     let storage_config = StorageConfig::from_project_root(config.project_root.clone());
+    ps_storage::migrate_storage(&storage_config)?;
     let runtime_settings = ps_storage::list_runtime_settings(storage_config.auth_db_path())?;
     config.apply_runtime_settings(&runtime_settings)?;
     let state = ApiState::new(storage_config, config.are_session_cookies_secure);
@@ -182,6 +184,7 @@ async fn shutdown_signal() {
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
     use std::path::Path;
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::time::Duration;
@@ -198,8 +201,35 @@ mod tests {
     use tower::ServiceExt;
 
     use crate::test_support::{json_request, FixtureIndexDatabase, JsonTestResponse, TestBackend};
+    use crate::{try_build_router, ApiConfig};
 
     static TEST_CONFIG_LOCK: AtomicBool = AtomicBool::new(false);
+
+    #[test]
+    fn router_startup_migration_runs_before_business_settings_load() {
+        let temp_dir = tempfile::tempdir().expect("temporary project should be created");
+        let storage_config = ps_storage::StorageConfig::from_project_root(temp_dir.path());
+        fs::create_dir_all(storage_config.index_dir()).expect("index directory should be created");
+        let index_path = storage_config.index_dir().join("startup.sqlite");
+        Connection::open(&index_path).expect("empty index database should be created");
+        let config = ApiConfig::new(temp_dir.path().to_path_buf(), "127.0.0.1".to_string(), 0);
+
+        let _router = try_build_router(config)
+            .expect("router startup should migrate before reading settings");
+
+        let auth_connection =
+            Connection::open(storage_config.auth_db_path()).expect("auth database should open");
+        let index_connection = Connection::open(index_path).expect("index database should open");
+        let auth_version: i64 = auth_connection
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .expect("auth schema version should load");
+        let index_version: i64 = index_connection
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .expect("index schema version should load");
+
+        assert_eq!(auth_version, ps_storage::AUTH_SCHEMA_VERSION);
+        assert_eq!(index_version, ps_storage::INDEX_SCHEMA_VERSION);
+    }
 
     #[tokio::test]
     #[cfg_attr(
