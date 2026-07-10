@@ -36,7 +36,7 @@
 - [数据库参考](reference/database.md)：当前 schema、表关系、迁移版本和外部状态文件
 - [Scholarly 数据源](reference/sources/scholarly.md)：Crossref、OpenAlex、Semantic Scholar
 - [CNKI 数据源](reference/sources/cnki.md)：CNKI overseas 元数据和浙江图书馆全文边界
-- [前端设计说明](design.md)：当前设计系统说明；将在前端文档任务中迁移到最终参考路径
+- [前端设计系统](reference/design-system.md)：字体、主题 token、组件 variants、响应式与无障碍约定
 
 参考文档回答“系统当前是什么”。请求/响应 schema 以运行时生成的 OpenAPI 为准，Markdown 只补充跨接口和业务语义。
 
@@ -66,6 +66,7 @@
 | SQLite schema    | `crates/ps-storage/src/migrations.rs`、`crates/ps-index/src/schema.rs` | [数据库参考](reference/database.md)           |
 | Docker 行为      | `Dockerfile`、`app/Dockerfile`、`docker-compose.yml`                   | [Docker 部署](operations/docker.md)           |
 | 前端结构         | `app/package.json`、`app/app/`、`app/lib/`、`app/components/`          | [前端包说明](../app/README.md)                |
+| UI token 与组件  | `app/app/globals.css`、`app/components/ui/`                            | [前端设计系统](reference/design-system.md)    |
 
 ## 维护原则
 

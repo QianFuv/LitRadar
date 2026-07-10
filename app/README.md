@@ -1,138 +1,158 @@
-# Paper Scanner 前端说明
+# Paper Scanner 前端包
 
-`app/` 是 Paper Scanner 的 Next.js 前端工程，负责提供登录、检索、收藏、每周更新、文献追踪、系统设置与管理后台等页面。
+`app/` 是 Paper Scanner 的 Next.js Web 客户端，负责登录、检索、收藏、每周更新、文献追踪、个人设置和管理后台。本页只说明前端包的开发边界：
 
-## 当前前端职责
+- 系统进程与数据流见[系统架构](../docs/architecture.md)。
+- REST 契约与认证方式见[API 参考](../docs/reference/api.md)。
+- 环境变量的系统级语义见[运行配置](../docs/reference/configuration.md)。
+- UI token 与组件约定见[设计系统](../docs/reference/design-system.md)。
 
-- 调用后端 `/api/*` 路由获取文章、期刊、收藏与管理数据
-- 维护登录态与访问令牌
-- 提供检索筛选、收藏导出、追踪设置、CNKI 会话设置、公告展示与后台管理界面
-- 在 Docker 部署下通过 Next.js rewrite 将 `/api/*` 转发给 Rust API 后端
+## 工具链
 
-## 技术栈
+CI 与容器使用：
 
-- Next.js 16
-- React 19
-- TypeScript 5
-- Tailwind CSS 4
-- Radix UI
-- TanStack React Query
-- nuqs
-- next-themes
-- lucide-react
-- openapi-typescript
-- Vitest、Testing Library 与 MSW
-- Playwright
+| 工具              | 版本                              |
+| ----------------- | --------------------------------- |
+| Node.js           | 24                                |
+| pnpm              | 10.32.0                           |
+| Next.js           | 16.2.4                            |
+| React / React DOM | 19.2.3                            |
+| TypeScript        | 5.x                               |
+| Tailwind CSS      | 4.x                               |
+| Rust              | 1.96；只在生成 OpenAPI 契约时需要 |
 
-## 启动方式
+依赖由 `pnpm-lock.yaml` 锁定。前端状态与 UI 的主要库包括 TanStack Query、nuqs、next-themes、Radix UI、class-variance-authority 和 lucide-react。
 
-前提：
+## 本地运行
 
-- Node.js 20+
-- 推荐使用 `pnpm`
-- 后端 API 已启动，默认 `http://localhost:8000`
+先启动仓库根目录的 Rust API，再在 `app/` 中运行：
 
 ```bash
 corepack enable pnpm
-pnpm install
+pnpm install --frozen-lockfile
 pnpm dev
 ```
 
-默认访问地址：`http://localhost:3000`
+默认地址：
+
+- 前端：`http://localhost:3000`
+- 后端：`http://localhost:8000`
+
+本地默认使用同源 `/api/*` rewrite，不需要单独配置浏览器 API 地址。
 
 ## 环境变量
 
-| 变量                  | 默认值                                                              | 说明                                       |
-| --------------------- | ------------------------------------------------------------------- | ------------------------------------------ |
-| `NEXT_PUBLIC_API_URL` | 空                                                                  | 浏览器侧 API 根地址；为空时走同源 `/api/*` |
-| `INTERNAL_API_URL`    | Docker 构建默认 `http://api:8000`；本地回退 `http://localhost:8000` | 用于 rewrite `/api/*` 的后端地址           |
-| `HOSTNAME`            | 由运行环境决定                                                      | Next.js standalone 运行时监听地址          |
+| 变量                  | 默认值                                                           | 作用                                   |
+| --------------------- | ---------------------------------------------------------------- | -------------------------------------- |
+| `NEXT_PUBLIC_API_URL` | 空                                                               | 浏览器 API 根地址；空值使用当前 Origin |
+| `INTERNAL_API_URL`    | 本地 `http://localhost:8000`；Docker build arg `http://api:8000` | Next.js rewrite 的后端目标             |
+| `HOSTNAME`            | 运行环境决定；Compose 设置 `0.0.0.0`                             | standalone server 监听地址             |
 
-说明：
+`next.config.ts` 的 fallback rewrite 将 `/api/:path*` 转发到 `INTERNAL_API_URL/api/:path*`。只有浏览器需要跨源直连后端时才设置 `NEXT_PUBLIC_API_URL`；此时后端必须允许对应 CORS Origin。
 
-- 本地开发建议使用默认同源 `/api/*` rewrite；只有前后端分离跨源访问时才设置 `NEXT_PUBLIC_API_URL`
-- Docker 构建时更关键的是 `INTERNAL_API_URL`
-- 跨源浏览器请求需要后端显式配置允许的 CORS Origin，并且请求必须携带 Cookie credentials
+## 路由
 
-## 页面结构
+| 路由              | 访问边界 | 页面职责                                      |
+| ----------------- | -------- | --------------------------------------------- |
+| `/login`          | 公开     | 登录、注册和邀请码状态                        |
+| `/`               | 已登录   | 数据库/领域/期刊/日期筛选、FTS 搜索与文章列表 |
+| `/weekly-updates` | 已登录   | 按数据库和期刊浏览本周变化                    |
+| `/favorites`      | 已登录   | 文件夹、收藏、批量操作与引文导出              |
+| `/tracking`       | 已登录   | 追踪文件夹、AI/PushPlus 设置与手动推送        |
+| `/settings`       | 已登录   | 账号、改密、邀请码、访问令牌与 CNKI 会话      |
+| `/admin`          | 管理员   | 用户、邀请码、统计、运行配置、计划任务与公告  |
 
-| 路由              | 说明                                                       |
-| ----------------- | ---------------------------------------------------------- |
-| `/login`          | 注册、登录、邀请码判断                                     |
-| `/`               | 主检索页，包含筛选侧栏、搜索栏、结果列表、首页公告         |
-| `/weekly-updates` | 每周更新聚合页面                                           |
-| `/favorites`      | 收藏夹、导出、追踪文件夹设置                               |
-| `/tracking`       | 追踪文件夹、通知设置、手动推送                             |
-| `/settings`       | 个人设置、邀请码、访问令牌、修改密码、浙江图书馆 CNKI 会话 |
-| `/admin`          | 管理后台：用户、邀请码、统计、运行配置、定时任务、公告     |
+除 `/login` 外，页面都位于 `app/(protected)/`，布局会通过 `AuthProvider` 恢复当前用户并把未登录访问重定向到 `/login?next=...`。`/admin` 还在页面层检查 `is_admin`。
 
-## 目录概览
+## 目录职责
 
 ```text
 app/
-├── app/                      App Router 页面
-│   ├── (protected)/          需要登录的页面
-│   ├── login/                登录与注册页面
-│   └── layout.tsx            根布局
+├── app/
+│   ├── (protected)/       认证后的 App Router 页面
+│   ├── login/             公开登录/注册页面
+│   ├── globals.css        Tailwind、主题 token、字体和全局无障碍规则
+│   ├── layout.tsx         元数据、字体变量、skip link 和根 Provider
+│   └── providers.tsx      Theme、nuqs、React Query 与认证上下文
 ├── components/
-│   ├── admin/                管理后台组件
-│   ├── feature/              搜索、收藏、每周更新等业务组件
-│   └── ui/                   通用 UI 组件
+│   ├── admin/             管理后台功能卡片
+│   ├── favorites/         收藏页视图与 view model
+│   ├── feature/           检索、文章详情、侧栏和周报入口
+│   ├── settings/          个人设置功能
+│   ├── tracking/          追踪页视图与 view model
+│   └── ui/                Radix/CVA 基础组件
 ├── lib/
-│   ├── api.tsx               前端 API 封装
-│   ├── api-contract.tsx      关键响应的生成类型别名与运行时校验
-│   ├── generated/            Rust OpenAPI JSON 与生成的 TypeScript schema
-│   ├── auth-context.tsx      登录态上下文
-│   ├── citation.tsx          引文文本生成
-│   └── utils.tsx             前端通用辅助函数
-├── tests/                    Vitest/MSW 组件测试与 Playwright 本地流程
-└── next.config.ts            `/api/*` rewrite 配置
+│   ├── api/               按 auth/index/favorites/tracking/admin 拆分的 facade
+│   ├── generated/         OpenAPI JSON 与生成的 TypeScript schema
+│   ├── api.tsx            API facade 的公共导出
+│   ├── api-contract.tsx   安全敏感响应的运行时校验
+│   ├── auth-context.tsx   Cookie 会话恢复与认证操作
+│   └── browser-storage.tsx
+└── tests/
+    ├── *.test.tsx         Vitest/jsdom/MSW 测试
+    └── e2e/               Playwright 本地 fixture 流程
 ```
 
-## 契约与质量检查
+新增业务逻辑时优先放入对应 feature 目录；可复用的视觉原语放入 `components/ui/`。仓库约定所有 TypeScript 源文件使用 `.tsx`，即使文件不包含 JSX。
 
-Rust `ps-api` 的 OpenAPI 文档是控制面类型的来源。后端 DTO 或路由注解变化后运行：
+## 客户端状态
+
+| 状态                 | 所有者                                  |
+| -------------------- | --------------------------------------- |
+| 后端查询与 mutation  | TanStack Query                          |
+| 搜索、筛选和周报选择 | nuqs URL query state                    |
+| 登录用户             | `AuthProvider` + `GET /api/auth/me`     |
+| 当前数据库           | `localStorage: ps:v1:selected_database` |
+| 搜索历史             | `localStorage: ps:v1:search_history`    |
+| 主题                 | next-themes 的 `class` 属性             |
+
+浏览器 API 请求默认 `credentials: include`，登录令牌只存在后端设置的 `ps_session` HttpOnly Cookie 中。设置页创建的 Bearer 访问令牌用于外部客户端，不作为前端登录态存入 Web Storage。
+
+Web Storage helper 会容忍 SSR、隐私模式和 quota 错误；调用方不应假定写入必然成功。
+
+## API 契约
+
+Rust API 注解是 REST schema 的来源。前端生成物：
+
+- `lib/generated/openapi.json`
+- `lib/generated/api-schema.tsx`
+
+后端路由、DTO 或 OpenAPI 注解变化后运行：
 
 ```bash
 pnpm generate:api
 ```
 
-该命令更新 `lib/generated/openapi.json` 和 `lib/generated/api-schema.tsx`；`pnpm generate:api:check` 会在 CI 中重新生成并拒绝未提交的差异。认证、定时任务、后台推送状态和凭证设置响应同时经过运行时校验。
-
-完整前端检查：
+CI 使用：
 
 ```bash
+pnpm generate:api:check
+```
+
+生成命令会重新运行 Rust `openapi` 二进制、生成 TypeScript 类型并格式化产物。不要手工修改 `lib/generated/`。
+
+`lib/api/` 提供面向页面的请求 facade；`lib/api-contract.tsx` 对认证、秘密配置、计划任务和手动推送等控制面响应再做运行时校验。普通页面不应绕过共享 transport 自行复制 Cookie、Bearer、数据库选择或错误解析逻辑。
+
+## 质量检查
+
+与前端 CI 一致的顺序：
+
+```bash
+pnpm generate:api:check
 pnpm lint
 pnpm format:check
 pnpm exec tsc --noEmit
 pnpm test
-pnpm exec playwright install chromium
+pnpm exec playwright install --with-deps chromium
 pnpm test:e2e
 pnpm build
 ```
 
-Vitest/MSW 测试不访问真实后端；Playwright 使用本地 Next.js server 和 `page.route` fixture，不访问真实上游服务。
+测试边界：
 
-## 与后端的真实耦合关系
+- Vitest 使用 jsdom，`tests/setup.tsx` 注册 MSW；`*.test.tsx` 不访问真实后端。
+- Playwright 在 `127.0.0.1:3100` 启动本地 Next.js dev server，`tests/e2e/` 使用页面路由 fixture，不访问真实上游服务。
+- CI 对 Chromium 使用单 worker 和最多两次重试，本地保持 Playwright 默认并行度。
+- 覆盖率排除生成代码和 `components/ui/`，聚焦业务 facade、组件和页面。
 
-当前前端实际依赖的主要后端能力包括：
-
-- 检索接口：`/api/articles`、`/api/journals`、`/api/issues`、`/api/meta/*`
-- 每周更新与公告：`/api/weekly-updates`、`/api/announcements`
-- 用户与认证：`/api/auth/*`
-- 浙江图书馆 CNKI 会话：`/api/cnki/*`
-- 收藏与追踪：`/api/favorites/*`、`/api/tracking/*`
-- 管理后台：`/api/admin/*`，包括用户、邀请码、统计、运行配置、定时任务与公告
-
-首页公告展示使用 `app/components/announcements-dialog.tsx`，后台公告管理使用 `app/components/admin/announcements-card.tsx`。外部元数据运行配置由 `app/components/admin/runtime-settings-card.tsx` 调用 `/api/admin/runtime-settings` 管理。
-
-## 当前认证说明
-
-当前主流程使用后端账号体系：
-
-- 登录：`POST /api/auth/login`
-- 注册：`POST /api/auth/register`
-- 获取当前用户：`GET /api/auth/me`
-- 访问令牌：`/api/auth/tokens`
-
-前端登录态由 `app/lib/auth-context.tsx` 与后端 `/api/auth/*` 共同完成。登录成功后后端设置 `HttpOnly` 的 `ps_session` Cookie，刷新页面时前端通过 `/api/auth/me` 校验并恢复用户；设置页的访问令牌由 `/api/auth/tokens` 管理，只用于外部脚本/API 客户端的 Bearer 认证。
+实现变更应运行与影响范围相称的检查；API facade、认证或生成契约变化时至少执行生成检查、类型检查和相关测试。
