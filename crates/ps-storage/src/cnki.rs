@@ -10,9 +10,11 @@ use rusqlite::{params, OptionalExtension};
 use serde_json::Value as JsonValue;
 
 use crate::auth::{open_auth_connection, AuthRepositoryError};
+use crate::secrets::cnki_context;
+use crate::{SecretCodec, SecretError};
 
 /// Persisted CNKI session state for one user.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Clone, PartialEq)]
 pub struct CnkiSessionData {
     /// Raw session JSON payload.
     pub session_data: JsonValue,
@@ -20,6 +22,18 @@ pub struct CnkiSessionData {
     pub qr_uuid: String,
     /// Stored status label.
     pub status: String,
+}
+
+impl fmt::Debug for CnkiSessionData {
+    /// Format session metadata without exposing decrypted session state.
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("CnkiSessionData")
+            .field("session_data", &"[REDACTED]")
+            .field("qr_uuid", &self.qr_uuid)
+            .field("status", &self.status)
+            .finish()
+    }
 }
 
 /// Repository errors for CNKI session operations.
@@ -31,6 +45,8 @@ pub enum CnkiRepositoryError {
     Json(serde_json::Error),
     /// Auth database setup failed.
     Auth(AuthRepositoryError),
+    /// Secret encryption or decryption failed.
+    Secret(SecretError),
 }
 
 impl fmt::Display for CnkiRepositoryError {
@@ -40,6 +56,7 @@ impl fmt::Display for CnkiRepositoryError {
             Self::Sqlite(error) => write!(formatter, "{error}"),
             Self::Json(error) => write!(formatter, "{error}"),
             Self::Auth(error) => write!(formatter, "{error}"),
+            Self::Secret(error) => write!(formatter, "{error}"),
         }
     }
 }
@@ -51,6 +68,7 @@ impl Error for CnkiRepositoryError {
             Self::Sqlite(error) => Some(error),
             Self::Json(error) => Some(error),
             Self::Auth(error) => Some(error),
+            Self::Secret(error) => Some(error),
         }
     }
 }
@@ -76,11 +94,19 @@ impl From<AuthRepositoryError> for CnkiRepositoryError {
     }
 }
 
+impl From<SecretError> for CnkiRepositoryError {
+    /// Convert secret errors into CNKI repository errors.
+    fn from(error: SecretError) -> Self {
+        Self::Secret(error)
+    }
+}
+
 /// Return the safe CNKI session status for one user.
 ///
 /// # Arguments
 ///
 /// * `auth_db_path` - Auth database path.
+/// * `codec` - Deployment secret codec.
 /// * `user_id` - User identifier.
 ///
 /// # Returns
@@ -88,9 +114,10 @@ impl From<AuthRepositoryError> for CnkiRepositoryError {
 /// Safe session status.
 pub fn get_cnki_session_status(
     auth_db_path: impl AsRef<Path>,
+    codec: &SecretCodec,
     user_id: UserId,
 ) -> Result<CnkiSessionStatusResponse, CnkiRepositoryError> {
-    let row = get_cnki_session_row(auth_db_path, user_id)?;
+    let row = get_cnki_session_row(auth_db_path, codec, user_id)?;
     Ok(summarize_cnki_session(row.as_ref(), current_unix_time()))
 }
 
@@ -99,6 +126,7 @@ pub fn get_cnki_session_status(
 /// # Arguments
 ///
 /// * `auth_db_path` - Auth database path.
+/// * `codec` - Deployment secret codec.
 /// * `user_id` - User identifier.
 ///
 /// # Returns
@@ -106,9 +134,10 @@ pub fn get_cnki_session_status(
 /// Raw session data, QR UUID, and status when present.
 pub fn get_cnki_session_data(
     auth_db_path: impl AsRef<Path>,
+    codec: &SecretCodec,
     user_id: UserId,
 ) -> Result<Option<CnkiSessionData>, CnkiRepositoryError> {
-    let row = get_cnki_session_row(auth_db_path, user_id)?;
+    let row = get_cnki_session_row(auth_db_path, codec, user_id)?;
     row.map(|row| {
         Ok(CnkiSessionData {
             session_data: serde_json::from_str(&row.session_json)?,
@@ -124,6 +153,7 @@ pub fn get_cnki_session_data(
 /// # Arguments
 ///
 /// * `auth_db_path` - Auth database path.
+/// * `codec` - Deployment secret codec.
 /// * `user_id` - User identifier.
 /// * `session_data` - JSON session payload.
 /// * `status` - Persisted status label.
@@ -134,6 +164,7 @@ pub fn get_cnki_session_data(
 /// Safe session status after upsert.
 pub fn upsert_cnki_session(
     auth_db_path: impl AsRef<Path>,
+    codec: &SecretCodec,
     user_id: UserId,
     session_data: &JsonValue,
     status: &str,
@@ -155,7 +186,8 @@ pub fn upsert_cnki_session(
                 .map(str::to_string)
         })
         .unwrap_or_default();
-    let session_json = serde_json::to_string(session_data)?;
+    let plaintext_session_json = serde_json::to_string(session_data)?;
+    let session_json = codec.encrypt(&plaintext_session_json, &cnki_context(user_id.value()))?;
     let connection = open_auth_connection(auth_db_path)?;
     let created_at = connection
         .query_row(
@@ -184,7 +216,7 @@ pub fn upsert_cnki_session(
         ],
     )?;
     let row = CnkiSessionRow {
-        session_json,
+        session_json: plaintext_session_json,
         qr_uuid: resolved_qr_uuid,
         status: status.to_string(),
         updated_at: Some(now),
@@ -239,10 +271,11 @@ pub fn touch_cnki_session_used(
 
 fn get_cnki_session_row(
     auth_db_path: impl AsRef<Path>,
+    codec: &SecretCodec,
     user_id: UserId,
 ) -> Result<Option<CnkiSessionRow>, CnkiRepositoryError> {
     let connection = open_auth_connection(auth_db_path)?;
-    connection
+    let row = connection
         .query_row(
             "SELECT session_json, qr_uuid, status, updated_at, last_used_at \
              FROM cnki_sessions WHERE user_id = ?1",
@@ -258,7 +291,12 @@ fn get_cnki_session_row(
             },
         )
         .optional()
-        .map_err(CnkiRepositoryError::from)
+        .map_err(CnkiRepositoryError::from)?;
+    row.map(|mut row| {
+        row.session_json = codec.decrypt(&row.session_json, &cnki_context(user_id.value()))?;
+        Ok(row)
+    })
+    .transpose()
 }
 
 fn summarize_cnki_session(row: Option<&CnkiSessionRow>, now: f64) -> CnkiSessionStatusResponse {
@@ -384,6 +422,7 @@ mod tests {
 
     use super::{get_cnki_session_data, get_cnki_session_status, upsert_cnki_session};
     use crate::auth::initialize_auth_database;
+    use crate::SecretCodec;
 
     #[test]
     fn cnki_session_data_preserves_raw_state_but_status_hides_secrets() {
@@ -407,20 +446,22 @@ mod tests {
                 {"name": "vpn358_sid", "value": "SECRET_VPN_COOKIE"}
             ],
         });
+        let codec = SecretCodec::from_key([9_u8; 32]);
 
         upsert_cnki_session(
             &auth_db_path,
+            &codec,
             user_id,
             &session_data,
             "active",
             Some("qr-fixture"),
         )
         .expect("session should upsert");
-        let raw_session = get_cnki_session_data(&auth_db_path, user_id)
+        let raw_session = get_cnki_session_data(&auth_db_path, &codec, user_id)
             .expect("session data should load")
             .expect("session data should exist");
-        let safe_status =
-            get_cnki_session_status(&auth_db_path, user_id).expect("session status should load");
+        let safe_status = get_cnki_session_status(&auth_db_path, &codec, user_id)
+            .expect("session status should load");
         let safe_json = serde_json::to_string(&safe_status).expect("status should serialize");
 
         assert_eq!(raw_session.qr_uuid, "qr-fixture");
@@ -431,5 +472,15 @@ mod tests {
         assert_eq!(safe_status.cookie_names, ["userToken", "vpn358_sid"]);
         assert!(!safe_json.contains("SECRET_TOKEN_COOKIE"));
         assert!(!safe_json.contains("SECRET_VPN_COOKIE"));
+        let stored: String = Connection::open(&auth_db_path)
+            .expect("auth database should reopen")
+            .query_row(
+                "SELECT session_json FROM cnki_sessions WHERE user_id = ?1",
+                [user_id.value()],
+                |row| row.get(0),
+            )
+            .expect("stored session should load");
+        assert!(stored.starts_with("psenc:v1:"));
+        assert!(!stored.contains("SECRET_TOKEN_COOKIE"));
     }
 }

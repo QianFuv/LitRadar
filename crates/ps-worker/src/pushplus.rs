@@ -58,7 +58,7 @@ impl fmt::Display for PushPlusError {
 impl Error for PushPlusError {}
 
 /// PushPlus message payload.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct PushPlusMessage {
     /// PushPlus token.
     pub token: String,
@@ -78,13 +78,39 @@ pub struct PushPlusMessage {
     pub to: Option<String>,
 }
 
+impl fmt::Debug for PushPlusMessage {
+    /// Format a message without exposing the PushPlus token.
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("PushPlusMessage")
+            .field("token", &"[REDACTED]")
+            .field("title", &self.title)
+            .field("content", &self.content)
+            .field("channel", &self.channel)
+            .field("template", &self.template)
+            .field("topic", &self.topic)
+            .finish()
+    }
+}
+
 /// HTTP request sent to PushPlus.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Clone, PartialEq)]
 pub struct PushPlusHttpRequest {
     /// Request URL.
     pub url: String,
     /// JSON request body.
     pub body: Value,
+}
+
+impl fmt::Debug for PushPlusHttpRequest {
+    /// Format a PushPlus request without exposing token-bearing body data.
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("PushPlusHttpRequest")
+            .field("url", &self.url)
+            .field("body", &"[REDACTED]")
+            .finish()
+    }
 }
 
 /// HTTP response returned by a PushPlus transport.
@@ -463,5 +489,29 @@ mod tests {
             option: Some("option".to_string()),
             to: None,
         }
+    }
+
+    #[test]
+    fn message_debug_redacts_token() {
+        let mut message = message();
+        message.token = "pushplus-secret".to_string();
+
+        let debug = format!("{message:?}");
+
+        assert!(debug.contains("[REDACTED]"));
+        assert!(!debug.contains("pushplus-secret"));
+    }
+
+    #[test]
+    fn request_debug_redacts_token_bearing_body() {
+        let request = PushPlusHttpRequest {
+            url: PUSHPLUS_ENDPOINT.to_string(),
+            body: json!({"token": "request-secret", "content": "message"}),
+        };
+
+        let debug = format!("{request:?}");
+
+        assert!(debug.contains("[REDACTED]"));
+        assert!(!debug.contains("request-secret"));
     }
 }

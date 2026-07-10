@@ -438,7 +438,7 @@ announcements
 主要字段：
 
 - `user_id`：主键，同时外键到 `users`
-- `session_json`：序列化后的客户端会话状态
+- `session_json`：`psenc:v1:` 版本化认证密文；解密后才是客户端会话 JSON
 - `qr_uuid`：最近一次扫码登录 UUID
 - `status`：常见值为 `empty`、`waiting_scan`、`active`、`expired`
 - `token_expires_at`
@@ -454,6 +454,7 @@ announcements
 
 - 每个 Paper Scanner 用户最多保存一条独立 CNKI 会话
 - API 状态响应只派生安全元数据，例如过期时间和 cookie 名称，不返回 token 或 cookie 值
+- 普通读取拒绝旧明文、错误密钥和被修改的密文；旧数据只能通过显式 `admin secrets migrate` 事务迁移
 - 该表只用于中文 CNKI 全文 provider；英文数据库与 CCF 数据库不使用浙江图书馆 CNKI 会话
 
 ### 4. `folders`
@@ -546,6 +547,8 @@ announcements
 
 - 当前 API 只接受 `delivery_method = "folder"` 或 `"pushplus"`
 - 这张表是 `notify`、`push` 与 `/api/tracking/push-weekly` 的真实订阅源
+- `pushplus_token`、`ai_api_key` 和 `ai_backup_api_key` 的非空值使用 `psenc:v1:` 认证密文；其余配置保持普通文本
+- 秘密响应只返回是否配置和固定掩码，不能从 API 取得明文或数据库密文
 
 ### 8. `scheduled_tasks`
 
@@ -631,8 +634,11 @@ worker 心跳表。
 说明：
 
 - 当前受管理的 `key` 包括 `openalex_api_key_pool`、`semantic_scholar_api_key_pool`、`crossref_mailto_pool`、`cors_allowed_origins`、`mcp_allowed_hosts`、`mcp_allowed_origins` 和 `secure_cookies`
+- `openalex_api_key_pool` 与 `semantic_scholar_api_key_pool` 的非空 `value` 使用 `psenc:v1:` 认证密文；管理员列表接口对它们返回空 `value`、`has_value` 与固定掩码
 - Rust API、索引命令和调度任务会读取该表并应用运行时配置
 - 数据库中没有值时使用代码默认值；运行时配置不从进程环境变量回退
+
+密钥不存储在任何 SQLite 表中。关联数据绑定表/行/字段，密文不能在秘密列之间互换。数据库备份必须与匹配的 32 字节部署密钥分开保管；详见 [安全说明](security.md)。
 
 ### 13. `announcements`
 

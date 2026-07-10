@@ -1,6 +1,70 @@
 # 安全说明
 
-本文档记录 Paper Scanner 当前已经实现的认证初始化、密码、限流、网络暴露和容器权限边界。后续密钥加密完成后继续在此更新。
+本文档记录 Paper Scanner 当前已经实现的认证初始化、凭据加密、密码、限流、网络暴露和容器权限边界。
+
+## 集成凭据加密
+
+以下 `data/auth.sqlite` 字段使用 XChaCha20-Poly1305 版本化信封保存：
+
+- `notification_settings.pushplus_token`
+- `notification_settings.ai_api_key`
+- `notification_settings.ai_backup_api_key`
+- `runtime_settings` 中的 `openalex_api_key_pool` 与 `semantic_scholar_api_key_pool`
+- `cnki_sessions.session_json`
+
+信封以 `psenc:v1:` 开头，每次写入生成随机 24 字节 nonce，并把表、用户/配置键和字段名作为关联数据。密文被复制到错误字段或错误用户时无法通过认证。空值可以保持为空；所有非空新凭据只允许写入版本化密文。
+
+API、worker、`index`、`notify`、`push` 和调度子进程都必须显式接收 `--secret-key-file PATH`。密钥文件必须是原始二进制的 32 字节，不能是 64 字符十六进制文本、Base64 文本或带换行的口令。进程在绑定端口或进入循环前验证全部已有密文；文件缺失、长度错误、密钥错误、密文被修改或仍有旧明文都会失败关闭，错误消息不包含凭据内容。
+
+### 生成与保存密钥
+
+在仓库外或已被 Git 忽略的 `secrets/` 目录生成：
+
+```bash
+mkdir -p secrets
+openssl rand -out secrets/paper-scanner.key 32
+chmod 600 secrets/paper-scanner.key
+wc -c secrets/paper-scanner.key
+```
+
+最后一条命令必须输出 `32`。生产环境优先由容器编排 secret、KMS/HSM 解封流程或主机级 secret manager 提供文件。不要把密钥放入 Git、镜像层、Compose YAML、环境变量、SQLite、应用日志、普通备份或与数据库相同的存储位置。根 `.gitignore` 已忽略 `/secrets/`，但这不是密钥管理机制。
+
+### 旧数据库首次迁移
+
+迁移不会在普通启动中自动发生。维护窗口内按以下顺序操作：
+
+1. 停止 API、worker、scheduler 以及可能写入 `auth.sqlite` 的 CLI。
+2. 对停止状态的 `data/auth.sqlite` 做独立备份，并确认密钥不在备份目录中。
+3. 生成并安全保存 32 字节密钥。
+4. 运行 `admin secrets migrate --secret-key-file PATH --project-root PATH`。该命令在单个 `BEGIN IMMEDIATE` 事务中加密旧明文；发现损坏的现有信封时整体回滚。
+5. 运行 `admin secrets verify --secret-key-file PATH --project-root PATH`。
+6. 把同一密钥文件挂载给 API 和 worker，再启动服务并检查健康状态。
+
+Docker 示例：
+
+```bash
+docker compose run --rm api admin secrets migrate --secret-key-file /run/secrets/paper_scanner_key --project-root /app
+docker compose run --rm api admin secrets verify --secret-key-file /run/secrets/paper_scanner_key --project-root /app
+```
+
+不要在本计划或日常测试中对真实数据自动执行迁移；命令只应由掌握备份和维护窗口的操作员显式运行。
+
+### 轮换与丢失
+
+轮换需要停写、独立备份和两个同时可用的密钥文件：
+
+```bash
+admin secrets rotate --old-key-file OLD --new-key-file NEW --project-root PATH
+admin secrets verify --secret-key-file NEW --project-root PATH
+```
+
+轮换在一个事务内先用旧密钥认证并解密每个值，再用新密钥和新随机 nonce 加密。验证新密钥、更新所有服务挂载并完成一次启动检查前，不要销毁旧密钥。回滚数据库备份时必须同时恢复与该备份匹配的旧密钥，但两者仍应分开保存。
+
+密钥永久丢失时，密文不可恢复；系统会拒绝读取而不是降级为明文。恢复路径只有“数据库备份 + 与其匹配的密钥备份”，或清除并重新录入所有受保护凭据。加密只保护静态数据库、备份或磁盘被单独读取的场景；已取得运行进程权限、密钥文件权限或管理员写权限的攻击者仍可能使用解密后的凭据。
+
+### 脱敏 API 与更新语义
+
+通知设置响应不返回凭据或密文，只返回 `has_*` 布尔值与固定 `••••` 掩码。管理员运行时配置对秘密项返回空 `value`、`has_value` 和固定 `masked_value`。写入语义为：字段缺省保留，JSON `null` 明确清除，非空字符串替换；密码框中的空白字符串也保留已有值。前端必须通过单独的“清除”操作发送 `null`，不能回传响应掩码。
 
 ## 管理员初始化
 

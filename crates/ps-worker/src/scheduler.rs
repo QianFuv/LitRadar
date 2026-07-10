@@ -4,7 +4,7 @@ use std::error::Error;
 use std::ffi::OsString;
 use std::fmt;
 use std::io::Read;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -191,7 +191,9 @@ trait ScheduledJobRunner {
     ) -> ProcessExecution;
 }
 
-struct ProcessScheduledJobRunner;
+struct ProcessScheduledJobRunner {
+    secret_key_file: PathBuf,
+}
 
 impl ScheduledJobRunner for ProcessScheduledJobRunner {
     fn run(
@@ -205,7 +207,15 @@ impl ScheduledJobRunner for ProcessScheduledJobRunner {
                 status: "error".to_string(),
                 output_summary: "Legacy task requires a typed job".to_string(),
             },
-            |job| execute_scheduled_job(auth_db_path, job, task.timeout_seconds, on_heartbeat),
+            |job| {
+                execute_scheduled_job(
+                    auth_db_path,
+                    &self.secret_key_file,
+                    job,
+                    task.timeout_seconds,
+                    on_heartbeat,
+                )
+            },
         )
     }
 }
@@ -302,6 +312,7 @@ pub fn load_scheduler_jobs(
 /// # Arguments
 ///
 /// * `auth_db_path` - Path to `auth.sqlite`.
+/// * `secret_key_file` - Raw 32-byte deployment secret key file.
 /// * `task_id` - Scheduled task row identifier.
 /// * `mode` - Scheduler execution mode.
 ///
@@ -310,10 +321,13 @@ pub fn load_scheduler_jobs(
 /// Manual run outcome.
 pub fn run_task_now(
     auth_db_path: impl AsRef<Path>,
+    secret_key_file: impl AsRef<Path>,
     task_id: i64,
     mode: SchedulerMode,
 ) -> Result<RunTaskOutcome, SchedulerError> {
-    let mut runner = ProcessScheduledJobRunner;
+    let mut runner = ProcessScheduledJobRunner {
+        secret_key_file: secret_key_file.as_ref().to_path_buf(),
+    };
     run_task_now_with_runner(auth_db_path.as_ref(), task_id, mode, &mut runner)
 }
 
@@ -360,6 +374,7 @@ fn run_task_now_with_runner(
 /// # Arguments
 ///
 /// * `auth_db_path` - Path to `auth.sqlite`.
+/// * `secret_key_file` - Raw 32-byte deployment secret key file.
 /// * `worker_id` - Stable worker process identifier.
 ///
 /// # Returns
@@ -367,9 +382,11 @@ fn run_task_now_with_runner(
 /// Execution tick result.
 pub fn run_due_scheduler_once(
     auth_db_path: impl AsRef<Path>,
+    secret_key_file: impl AsRef<Path>,
     worker_id: &str,
 ) -> Result<SchedulerExecutionResult, SchedulerError> {
     let auth_db_path = auth_db_path.as_ref().to_path_buf();
+    let secret_key_file = secret_key_file.as_ref().to_path_buf();
     let (mut result, claims) =
         prepare_scheduler_tick(&auth_db_path, worker_id, current_unix_time())?;
     let executed = thread::scope(|scope| -> Result<Vec<_>, SchedulerError> {
@@ -377,8 +394,9 @@ pub fn run_due_scheduler_once(
             .into_iter()
             .map(|claim| {
                 let auth_db_path = auth_db_path.clone();
+                let secret_key_file = secret_key_file.clone();
                 scope.spawn(move || {
-                    let mut runner = ProcessScheduledJobRunner;
+                    let mut runner = ProcessScheduledJobRunner { secret_key_file };
                     execute_scheduled_claim(&auth_db_path, claim, &mut runner)
                 })
             })
@@ -604,11 +622,12 @@ struct ScheduledProcess {
 
 fn execute_scheduled_job(
     auth_db_path: &Path,
+    secret_key_file: &Path,
     job: &ScheduledJobSpec,
     timeout_seconds: u64,
     on_heartbeat: &mut dyn FnMut(),
 ) -> ProcessExecution {
-    let processes = match scheduled_processes(auth_db_path, job) {
+    let processes = match scheduled_processes(auth_db_path, secret_key_file, job) {
         Ok(processes) => processes,
         Err(error) => {
             return ProcessExecution {
@@ -740,13 +759,14 @@ fn bounded_output_summary(summary: &str) -> String {
 
 fn scheduled_processes(
     auth_db_path: &Path,
+    secret_key_file: &Path,
     job: &ScheduledJobSpec,
 ) -> Result<Vec<ScheduledProcess>, SchedulerError> {
     validate_job(Some(job))?;
     let mut processes = Vec::new();
     match job {
         ScheduledJobSpec::Index(index) => {
-            let mut arguments = auth_arguments(auth_db_path);
+            let mut arguments = auth_arguments(auth_db_path, secret_key_file);
             arguments.push("--update".into());
             if let Some(metadata_file) = index.metadata_file.as_deref() {
                 arguments.push("--file".into());
@@ -760,6 +780,7 @@ fn scheduled_processes(
                 processes.push(delivery_process(
                     "notify",
                     auth_db_path,
+                    secret_key_file,
                     &ScheduledDeliveryJob {
                         database: None,
                         max_candidates: None,
@@ -770,6 +791,7 @@ fn scheduled_processes(
                 processes.push(delivery_process(
                     "push",
                     auth_db_path,
+                    secret_key_file,
                     &ScheduledDeliveryJob {
                         database: None,
                         max_candidates: None,
@@ -778,25 +800,41 @@ fn scheduled_processes(
             }
         }
         ScheduledJobSpec::Notify(delivery) => {
-            processes.push(delivery_process("notify", auth_db_path, delivery));
+            processes.push(delivery_process(
+                "notify",
+                auth_db_path,
+                secret_key_file,
+                delivery,
+            ));
         }
         ScheduledJobSpec::Push(delivery) => {
-            processes.push(delivery_process("push", auth_db_path, delivery));
+            processes.push(delivery_process(
+                "push",
+                auth_db_path,
+                secret_key_file,
+                delivery,
+            ));
         }
     }
     Ok(processes)
 }
 
-fn auth_arguments(auth_db_path: &Path) -> Vec<OsString> {
-    vec!["--auth-db".into(), auth_db_path.as_os_str().to_owned()]
+fn auth_arguments(auth_db_path: &Path, secret_key_file: &Path) -> Vec<OsString> {
+    vec![
+        "--auth-db".into(),
+        auth_db_path.as_os_str().to_owned(),
+        "--secret-key-file".into(),
+        secret_key_file.as_os_str().to_owned(),
+    ]
 }
 
 fn delivery_process(
     executable: &'static str,
     auth_db_path: &Path,
+    secret_key_file: &Path,
     job: &ScheduledDeliveryJob,
 ) -> ScheduledProcess {
-    let mut arguments = auth_arguments(auth_db_path);
+    let mut arguments = auth_arguments(auth_db_path, secret_key_file);
     arguments.push("--no-dry-run".into());
     if let Some(database) = job.database.as_deref() {
         arguments.push("--db".into());
@@ -1412,6 +1450,7 @@ mod tests {
         let auth_db_path = Path::new("data/auth.sqlite");
         let processes = scheduled_processes(
             auth_db_path,
+            Path::new("secret.key"),
             &ScheduledJobSpec::Index(ps_domain::ScheduledIndexJob {
                 metadata_file: Some("journals.csv".to_string()),
                 notify: true,
@@ -1432,6 +1471,8 @@ mod tests {
             vec![
                 "--auth-db",
                 "data/auth.sqlite",
+                "--secret-key-file",
+                "secret.key",
                 "--update",
                 "--file",
                 "journals.csv",
@@ -1439,11 +1480,18 @@ mod tests {
         );
         assert_eq!(
             process_arguments(&processes[1]),
-            vec!["--auth-db", "data/auth.sqlite", "--no-dry-run"]
+            vec![
+                "--auth-db",
+                "data/auth.sqlite",
+                "--secret-key-file",
+                "secret.key",
+                "--no-dry-run",
+            ]
         );
 
         let push = scheduled_processes(
             auth_db_path,
+            Path::new("secret.key"),
             &ScheduledJobSpec::Push(ScheduledDeliveryJob {
                 database: Some("journals.sqlite".to_string()),
                 max_candidates: Some(100),
@@ -1456,6 +1504,8 @@ mod tests {
             vec![
                 "--auth-db",
                 "data/auth.sqlite",
+                "--secret-key-file",
+                "secret.key",
                 "--no-dry-run",
                 "--db",
                 "journals.sqlite",

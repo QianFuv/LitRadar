@@ -8,6 +8,7 @@ import {
   ApiContractError,
   parseLoginResponse,
   parseManualPushStatus,
+  parseNotificationSettings,
   parseRuntimeSettingList,
   parseSchedulerStatus,
 } from '@/lib/api-contract';
@@ -109,8 +110,49 @@ function acceptsSchedulerStatusContract(): void {
   expect(parseSchedulerStatus(payload)).toBe(payload);
 }
 
+/**
+ * Verify notification responses expose only fixed masks and configured flags.
+ */
+function acceptsMaskedNotificationContract(): void {
+  const payload = {
+    id: 1,
+    user_id: 7,
+    keywords: [],
+    directions: [],
+    selected_databases: [],
+    delivery_method: 'pushplus',
+    has_pushplus_token: true,
+    pushplus_token_mask: '••••',
+    pushplus_template: 'markdown',
+    pushplus_topic: '',
+    pushplus_channel: 'wechat',
+    sync_to_tracking_folder: false,
+    ai_base_url: 'https://ai.example/v1',
+    has_ai_api_key: true,
+    ai_api_key_mask: '••••',
+    ai_model: 'fixture-model',
+    ai_system_prompt: '',
+    ai_backup_base_url: '',
+    has_ai_backup_api_key: false,
+    ai_backup_api_key_mask: '',
+    ai_backup_model: '',
+    ai_backup_system_prompt: '',
+    ai_retry_attempts: 3,
+    enabled: true,
+    created_at: 1,
+    updated_at: 2,
+  };
+
+  expect(parseNotificationSettings(payload)).toBe(payload);
+  expect(() =>
+    parseNotificationSettings({ ...payload, pushplus_token: 'plaintext-secret' }),
+  ).toThrow(ApiContractError);
+  expect(JSON.stringify(parseNotificationSettings(payload))).not.toContain('plaintext-secret');
+}
+
 describe('generated API runtime contracts', () => {
   test('accepts a valid login response', acceptsValidLoginContract);
   test('accepts durable scheduler status metadata', acceptsSchedulerStatusContract);
+  test('accepts only the masked notification response contract', acceptsMaskedNotificationContract);
   test('rejects malformed control-plane responses', rejectsMalformedControlPlaneContracts);
 });

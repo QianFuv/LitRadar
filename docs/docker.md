@@ -1,6 +1,6 @@
 # Docker 部署说明
 
-本文档说明当前 Docker 镜像与根目录 `docker-compose.yml` 的实际行为。后端镜像只包含 Rust 运行时入口，并提供 `api`、`index`、`notify`、`push`、`scheduler` 和 `worker`。
+本文档说明当前 Docker 镜像与根目录 `docker-compose.yml` 的实际行为。后端镜像只包含 Rust 运行时入口，并提供 `admin`、`api`、`index`、`notify`、`push`、`scheduler` 和 `worker`。
 
 ## 服务拓扑
 
@@ -13,7 +13,7 @@ worker sidecar
   └── worker
 ```
 
-根 Compose 把前端和 API 分别发布到宿主机 loopback 的 `127.0.0.1:3000` 与 `127.0.0.1:8000`，并把宿主机 `./data` 挂载到 Rust 后端容器的 `/app/data`。
+根 Compose 把前端和 API 分别发布到宿主机 loopback 的 `127.0.0.1:3000` 与 `127.0.0.1:8000`，把宿主机 `./data` 挂载到 Rust 后端容器的 `/app/data`，并把 `./secrets/paper-scanner.key` 作为只读 Compose secret 挂载到 `/run/secrets/paper_scanner_key`。密钥不进入镜像或数据卷。
 
 ## Compose 服务
 
@@ -22,7 +22,7 @@ worker sidecar
 - 构建上下文：仓库根目录
 - Dockerfile：根目录 `Dockerfile`
 - 镜像名：`ghcr.io/qianfuv/paper-scanner-api:latest`
-- 启动命令：`api --host 0.0.0.0 --port 8000 --project-root /app`
+- 启动命令：`api --host 0.0.0.0 --port 8000 --project-root /app --secret-key-file /run/secrets/paper_scanner_key`
 - 端口：`127.0.0.1:8000:8000`
 - 卷挂载：`./data:/app/data:rw`
 - 后端运行配置：来自 `data/auth.sqlite` 的管理员运行时配置
@@ -32,7 +32,7 @@ worker sidecar
 ### `worker`
 
 - 复用后端镜像
-- 启动命令：`worker --project-root /app --interval-seconds 30`
+- 启动命令：`worker --project-root /app --secret-key-file /run/secrets/paper_scanner_key --interval-seconds 30`
 - 卷挂载：`./data:/app/data:rw`
 - 依赖：`api`
 - 容器用户：`paper`（UID/GID `10001:10001`）
@@ -60,7 +60,7 @@ worker sidecar
 1. `rust:1.96-bookworm` 构建阶段执行 release 构建
 2. `debian:bookworm-slim` 运行阶段复制 `admin`、`api`、`index`、`notify`、`push`、`scheduler`、`worker`、`ps-api`、`libs/simple-linux/` 和 `data/meta/`
 
-运行阶段默认命令为 `api --host 0.0.0.0 --port 8000 --project-root /app`。SQLite `simple` 分词扩展从镜像内 `libs/simple-linux/` 自动发现；没有单独的后端运行配置环境变量。运行镜像安装 CA 证书和 `curl` 供 HTTPS 工作流与容器健康探针使用，然后切换到固定的非 root `paper` 用户。
+运行阶段默认命令仍只提供通用 API 参数；根 Compose 用包含显式密钥文件参数的命令覆盖它。直接 `docker run` 时必须自行只读挂载密钥并传入 `--secret-key-file`。SQLite `simple` 分词扩展从镜像内 `libs/simple-linux/` 自动发现；没有后端凭据环境变量。运行镜像安装 CA 证书和 `curl` 供 HTTPS 工作流与容器健康探针使用，然后切换到固定的非 root `paper` 用户。
 
 镜像不包含旧 Python 后端运行时。
 
@@ -68,9 +68,14 @@ worker sidecar
 
 ```bash
 sudo chown -R 10001:10001 data  # 仅 Linux 原生 Docker Engine
+mkdir -p secrets
+openssl rand -out secrets/paper-scanner.key 32
+chmod 600 secrets/paper-scanner.key
 docker compose build
 docker compose up -d
 ```
+
+已有明文凭据的部署不能直接启动：先保持服务停止，备份 `data/auth.sqlite`，然后按 [安全说明](security.md) 执行 `admin secrets migrate` 与 `admin secrets verify`。密钥文件必须恰好 32 字节；丢失后无法恢复数据库中的集成凭据。
 
 首次启动后，用安全输入或密码管理器为当前 shell 提供 `ADMIN_PASSWORD`，再通过 stdin 初始化管理员：
 
@@ -114,11 +119,11 @@ worker 刚启动但还未写入首个心跳时，`/api/health/worker` 返回 `50
 首次部署前应确认 `data/index/` 下已有需要服务的 `.sqlite` 索引库。需要重新生成索引时，可以在后端容器中运行 Rust CLI：
 
 ```bash
-docker compose run --rm api index --file english_journals.csv --update --notify-dry-run
-docker compose run --rm api index --file cnki_journals.csv --resume --issue-batch 10
+docker compose run --rm api index --secret-key-file /run/secrets/paper_scanner_key --file english_journals.csv --update --notify-dry-run
+docker compose run --rm api index --secret-key-file /run/secrets/paper_scanner_key --file cnki_journals.csv --resume --issue-batch 10
 ```
 
-生产索引库可直接放入 `data/index/`。中文全文凭证保存在用户级 CNKI session 表；scholarly API key、CORS、MCP 和 Cookie 安全策略从 `data/auth.sqlite` 的 `runtime_settings` 读取。
+生产索引库可直接放入 `data/index/`。中文全文 session、用户级 PushPlus/AI key 和 scholarly API key 池以版本化密文保存在 `data/auth.sqlite`；CORS、MCP 和 Cookie 安全策略仍以普通运行配置保存。设置 API 只返回秘密项的配置状态与固定掩码。
 
 ## 运行时配置
 
@@ -163,6 +168,8 @@ services:
       - "8000"
       - --project-root
       - /app
+      - --secret-key-file
+      - /run/secrets/paper_scanner_key
       - --require-secure-cookies
   app:
     ports: !reset []
@@ -197,7 +204,7 @@ mcp_allowed_hosts: paper.example,paper.example:443
 
 1. 检查 `api` 服务：`docker compose logs api`
 2. 检查宿主机 `data/index/` 下是否存在 `.sqlite` 文件
-3. 如需生成索引库，运行 `docker compose run --rm api index --file <csv>` 或把现有 `.sqlite` 放入 `data/index/`
+3. 如需生成索引库，运行 `docker compose run --rm api index --secret-key-file /run/secrets/paper_scanner_key --file <csv>` 或把现有 `.sqlite` 放入 `data/index/`
 
 ### API 请求日志太多或太少
 

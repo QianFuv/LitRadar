@@ -2159,10 +2159,10 @@ export interface components {
     };
     /** @description Notification settings response payload. */
     NotificationSettingsResponse: {
-      /** @description Primary AI endpoint API key. */
-      ai_api_key: string;
-      /** @description Backup AI endpoint API key. */
-      ai_backup_api_key: string;
+      /** @description Fixed non-secret mask when a primary AI API key is configured. */
+      ai_api_key_mask: string;
+      /** @description Fixed non-secret mask when a backup AI API key is configured. */
+      ai_backup_api_key_mask: string;
       /** @description Backup AI endpoint base URL. */
       ai_backup_base_url: string;
       /** @description Backup AI model. */
@@ -2191,6 +2191,12 @@ export interface components {
       directions: string[];
       /** @description Whether recommendations are enabled. */
       enabled: boolean;
+      /** @description Whether a primary AI API key is configured. */
+      has_ai_api_key: boolean;
+      /** @description Whether a backup AI API key is configured. */
+      has_ai_backup_api_key: boolean;
+      /** @description Whether a PushPlus token is configured. */
+      has_pushplus_token: boolean;
       /**
        * Format: int64
        * @description Settings row identifier.
@@ -2202,8 +2208,8 @@ export interface components {
       pushplus_channel: string;
       /** @description PushPlus template. */
       pushplus_template: string;
-      /** @description PushPlus token. */
-      pushplus_token: string;
+      /** @description Fixed non-secret mask when a PushPlus token is configured. */
+      pushplus_token_mask: string;
       /** @description PushPlus topic. */
       pushplus_topic: string;
       /** @description Selected index database names. */
@@ -2220,10 +2226,10 @@ export interface components {
     };
     /** @description Notification settings update payload. */
     NotificationSettingsUpdate: {
-      /** @description Primary AI endpoint API key. */
-      ai_api_key?: string;
-      /** @description Backup AI endpoint API key. */
-      ai_backup_api_key?: string;
+      /** @description Primary AI API key update: omitted preserves, null clears, and non-empty replaces. */
+      ai_api_key?: string | null;
+      /** @description Backup AI API key update: omitted preserves, null clears, and non-empty replaces. */
+      ai_backup_api_key?: string | null;
       /** @description Backup AI endpoint base URL. */
       ai_backup_base_url?: string;
       /** @description Backup AI model. */
@@ -2253,8 +2259,8 @@ export interface components {
       pushplus_channel?: string;
       /** @description PushPlus template. */
       pushplus_template?: string;
-      /** @description PushPlus token. */
-      pushplus_token?: string;
+      /** @description PushPlus token update: omitted preserves, null clears, and non-empty replaces. */
+      pushplus_token?: string | null;
       /** @description PushPlus topic. */
       pushplus_topic?: string;
       /** @description Selected index database names. */
@@ -2317,12 +2323,16 @@ export interface components {
       description: string;
       /** @description API field name. */
       field: string;
+      /** @description Whether a credential value is configured. */
+      has_value: boolean;
       /** @description Frontend input type. */
       input_type: string;
       /** @description Whether the value contains credentials. */
       is_secret: boolean;
       /** @description Human-readable label. */
       label: string;
+      /** @description Fixed non-secret mask when a credential value is configured. */
+      masked_value: string;
       /** @description Effective setting source. */
       source: string;
       /**
@@ -2335,9 +2345,9 @@ export interface components {
     };
     /** @description Runtime settings update payload. */
     RuntimeSettingsUpdate: {
-      /** @description Values keyed by API field name. */
+      /** @description Values keyed by API field name; null clears and a blank secret preserves. */
       values?: {
-        [key: string]: string;
+        [key: string]: string | null;
       };
     };
     /** @description Arguments accepted by a notification or push scheduled job. */

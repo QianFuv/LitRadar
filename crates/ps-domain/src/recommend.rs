@@ -35,7 +35,7 @@ pub struct ArticleCandidateInfo {
 }
 
 /// Notification subscriber row with tracking-folder metadata.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct NotificationSubscriberInfo {
     /// Stable subscriber identifier.
     pub subscriber_id: String,
@@ -81,6 +81,19 @@ pub struct NotificationSubscriberInfo {
     pub ai_backup_system_prompt: Option<String>,
     /// Retry attempts per AI endpoint.
     pub ai_retry_attempts: i64,
+}
+
+impl std::fmt::Debug for NotificationSubscriberInfo {
+    /// Format subscriber metadata without exposing integration credentials.
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("NotificationSubscriberInfo")
+            .field("subscriber_id", &self.subscriber_id)
+            .field("user_id", &self.user_id)
+            .field("name", &self.name)
+            .field("credentials", &"[REDACTED]")
+            .finish_non_exhaustive()
+    }
 }
 
 /// Ranked article selection.

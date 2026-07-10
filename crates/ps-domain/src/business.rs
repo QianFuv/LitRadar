@@ -246,7 +246,7 @@ pub struct FavoriteTrackingResponse {
 }
 
 /// Notification settings update payload.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct NotificationSettingsUpdate {
     /// Keyword preferences.
     #[serde(default)]
@@ -260,9 +260,13 @@ pub struct NotificationSettingsUpdate {
     /// Delivery method.
     #[serde(default = "default_delivery_method")]
     pub delivery_method: String,
-    /// PushPlus token.
-    #[serde(default)]
-    pub pushplus_token: String,
+    /// PushPlus token update: omitted preserves, null clears, and non-empty replaces.
+    #[serde(
+        default,
+        deserialize_with = "deserialize_present_optional",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub pushplus_token: Option<Option<String>>,
     /// PushPlus template.
     #[serde(default = "default_pushplus_template")]
     pub pushplus_template: String,
@@ -278,9 +282,13 @@ pub struct NotificationSettingsUpdate {
     /// Primary AI endpoint base URL.
     #[serde(default)]
     pub ai_base_url: String,
-    /// Primary AI endpoint API key.
-    #[serde(default)]
-    pub ai_api_key: String,
+    /// Primary AI API key update: omitted preserves, null clears, and non-empty replaces.
+    #[serde(
+        default,
+        deserialize_with = "deserialize_present_optional",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub ai_api_key: Option<Option<String>>,
     /// Primary AI model.
     #[serde(default)]
     pub ai_model: String,
@@ -290,9 +298,13 @@ pub struct NotificationSettingsUpdate {
     /// Backup AI endpoint base URL.
     #[serde(default)]
     pub ai_backup_base_url: String,
-    /// Backup AI endpoint API key.
-    #[serde(default)]
-    pub ai_backup_api_key: String,
+    /// Backup AI API key update: omitted preserves, null clears, and non-empty replaces.
+    #[serde(
+        default,
+        deserialize_with = "deserialize_present_optional",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub ai_backup_api_key: Option<Option<String>>,
     /// Backup AI model.
     #[serde(default)]
     pub ai_backup_model: String,
@@ -305,6 +317,13 @@ pub struct NotificationSettingsUpdate {
     /// Whether recommendations are enabled.
     #[serde(default = "default_enabled")]
     pub enabled: bool,
+}
+
+impl std::fmt::Debug for NotificationSettingsUpdate {
+    /// Format an update without exposing submitted credential values.
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("NotificationSettingsUpdate([REDACTED])")
+    }
 }
 
 /// Notification settings response payload.
@@ -322,7 +341,64 @@ pub struct NotificationSettingsResponse {
     pub selected_databases: Vec<String>,
     /// Delivery method.
     pub delivery_method: String,
-    /// PushPlus token.
+    /// Whether a PushPlus token is configured.
+    pub has_pushplus_token: bool,
+    /// Fixed non-secret mask when a PushPlus token is configured.
+    pub pushplus_token_mask: String,
+    /// PushPlus template.
+    pub pushplus_template: String,
+    /// PushPlus topic.
+    pub pushplus_topic: String,
+    /// PushPlus channel.
+    pub pushplus_channel: String,
+    /// Whether PushPlus delivery also syncs to the tracking folder.
+    pub sync_to_tracking_folder: bool,
+    /// Primary AI endpoint base URL.
+    pub ai_base_url: String,
+    /// Whether a primary AI API key is configured.
+    pub has_ai_api_key: bool,
+    /// Fixed non-secret mask when a primary AI API key is configured.
+    pub ai_api_key_mask: String,
+    /// Primary AI model.
+    pub ai_model: String,
+    /// Primary AI system prompt.
+    pub ai_system_prompt: String,
+    /// Backup AI endpoint base URL.
+    pub ai_backup_base_url: String,
+    /// Whether a backup AI API key is configured.
+    pub has_ai_backup_api_key: bool,
+    /// Fixed non-secret mask when a backup AI API key is configured.
+    pub ai_backup_api_key_mask: String,
+    /// Backup AI model.
+    pub ai_backup_model: String,
+    /// Backup AI system prompt.
+    pub ai_backup_system_prompt: String,
+    /// Retry attempts per AI endpoint.
+    pub ai_retry_attempts: i64,
+    /// Whether recommendations are enabled.
+    pub enabled: bool,
+    /// Creation timestamp.
+    pub created_at: f64,
+    /// Last update timestamp.
+    pub updated_at: f64,
+}
+
+/// Internal notification settings with decrypted credentials.
+#[derive(Clone, PartialEq)]
+pub struct NotificationSettings {
+    /// Settings row identifier.
+    pub id: i64,
+    /// User row identifier.
+    pub user_id: UserId,
+    /// Keyword preferences.
+    pub keywords: Vec<String>,
+    /// Research direction preferences.
+    pub directions: Vec<String>,
+    /// Selected index database names.
+    pub selected_databases: Vec<String>,
+    /// Delivery method.
+    pub delivery_method: String,
+    /// Decrypted PushPlus token.
     pub pushplus_token: String,
     /// PushPlus template.
     pub pushplus_template: String,
@@ -334,7 +410,7 @@ pub struct NotificationSettingsResponse {
     pub sync_to_tracking_folder: bool,
     /// Primary AI endpoint base URL.
     pub ai_base_url: String,
-    /// Primary AI endpoint API key.
+    /// Decrypted primary AI endpoint API key.
     pub ai_api_key: String,
     /// Primary AI model.
     pub ai_model: String,
@@ -342,7 +418,7 @@ pub struct NotificationSettingsResponse {
     pub ai_system_prompt: String,
     /// Backup AI endpoint base URL.
     pub ai_backup_base_url: String,
-    /// Backup AI endpoint API key.
+    /// Decrypted backup AI endpoint API key.
     pub ai_backup_api_key: String,
     /// Backup AI model.
     pub ai_backup_model: String,
@@ -356,6 +432,58 @@ pub struct NotificationSettingsResponse {
     pub created_at: f64,
     /// Last update timestamp.
     pub updated_at: f64,
+}
+
+impl std::fmt::Debug for NotificationSettings {
+    /// Format internal settings without exposing credential values.
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("NotificationSettings([REDACTED])")
+    }
+}
+
+impl From<&NotificationSettings> for NotificationSettingsResponse {
+    /// Build a safe public response with fixed credential masks.
+    fn from(settings: &NotificationSettings) -> Self {
+        let has_pushplus_token = !settings.pushplus_token.is_empty();
+        let has_ai_api_key = !settings.ai_api_key.is_empty();
+        let has_ai_backup_api_key = !settings.ai_backup_api_key.is_empty();
+        Self {
+            id: settings.id,
+            user_id: settings.user_id,
+            keywords: settings.keywords.clone(),
+            directions: settings.directions.clone(),
+            selected_databases: settings.selected_databases.clone(),
+            delivery_method: settings.delivery_method.clone(),
+            has_pushplus_token,
+            pushplus_token_mask: fixed_secret_mask(has_pushplus_token),
+            pushplus_template: settings.pushplus_template.clone(),
+            pushplus_topic: settings.pushplus_topic.clone(),
+            pushplus_channel: settings.pushplus_channel.clone(),
+            sync_to_tracking_folder: settings.sync_to_tracking_folder,
+            ai_base_url: settings.ai_base_url.clone(),
+            has_ai_api_key,
+            ai_api_key_mask: fixed_secret_mask(has_ai_api_key),
+            ai_model: settings.ai_model.clone(),
+            ai_system_prompt: settings.ai_system_prompt.clone(),
+            ai_backup_base_url: settings.ai_backup_base_url.clone(),
+            has_ai_backup_api_key,
+            ai_backup_api_key_mask: fixed_secret_mask(has_ai_backup_api_key),
+            ai_backup_model: settings.ai_backup_model.clone(),
+            ai_backup_system_prompt: settings.ai_backup_system_prompt.clone(),
+            ai_retry_attempts: settings.ai_retry_attempts,
+            enabled: settings.enabled,
+            created_at: settings.created_at,
+            updated_at: settings.updated_at,
+        }
+    }
+}
+
+fn fixed_secret_mask(is_configured: bool) -> String {
+    if is_configured {
+        "••••".to_string()
+    } else {
+        String::new()
+    }
 }
 
 /// Arguments accepted by an index scheduled job.
@@ -663,6 +791,10 @@ pub struct RuntimeSettingInfo {
     pub is_secret: bool,
     /// Effective setting value.
     pub value: String,
+    /// Whether a credential value is configured.
+    pub has_value: bool,
+    /// Fixed non-secret mask when a credential value is configured.
+    pub masked_value: String,
     /// Effective setting source.
     pub source: String,
     /// Database update timestamp.
@@ -670,11 +802,44 @@ pub struct RuntimeSettingInfo {
 }
 
 /// Runtime settings update payload.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct RuntimeSettingsUpdate {
-    /// Values keyed by API field name.
+    /// Values keyed by API field name; null clears and a blank secret preserves.
     #[serde(default)]
-    pub values: HashMap<String, String>,
+    pub values: HashMap<String, Option<String>>,
+}
+
+impl std::fmt::Debug for RuntimeSettingsUpdate {
+    /// Format an update without exposing submitted credential values.
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("RuntimeSettingsUpdate([REDACTED])")
+    }
+}
+
+/// Internal runtime setting value, including decrypted credentials.
+#[derive(Clone, PartialEq)]
+pub struct RuntimeSettingValue {
+    /// API field name.
+    pub field: String,
+    /// Effective decrypted or non-secret value.
+    pub value: String,
+    /// Effective setting source.
+    pub source: String,
+    /// Database update timestamp.
+    pub updated_at: Option<f64>,
+}
+
+impl std::fmt::Debug for RuntimeSettingValue {
+    /// Format internal settings without exposing credential values.
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("RuntimeSettingValue")
+            .field("field", &self.field)
+            .field("value", &"[REDACTED]")
+            .field("source", &self.source)
+            .field("updated_at", &self.updated_at)
+            .finish()
+    }
 }
 
 /// Admin user response payload.
@@ -865,6 +1030,16 @@ pub struct AdminStatsResponse {
     pub push: Vec<PushStats>,
 }
 
+/// Preserve the distinction between a missing secret field and explicit JSON null.
+fn deserialize_present_optional<'de, Deserializer>(
+    deserializer: Deserializer,
+) -> Result<Option<Option<String>>, Deserializer::Error>
+where
+    Deserializer: serde::Deserializer<'de>,
+{
+    Option::<String>::deserialize(deserializer).map(Some)
+}
+
 /// Return the default notification delivery method.
 pub fn default_delivery_method() -> String {
     "folder".to_string()
@@ -908,7 +1083,8 @@ pub fn default_announcement_priority() -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        validate_scheduled_task_timing, ScheduledDeliveryJob, ScheduledIndexJob, ScheduledJobSpec,
+        validate_scheduled_task_timing, NotificationSettingsUpdate, ScheduledDeliveryJob,
+        ScheduledIndexJob, ScheduledJobSpec,
     };
 
     #[test]
@@ -971,5 +1147,27 @@ mod tests {
         assert!(validate_scheduled_task_timing("Local", 3_600).is_err());
         assert!(validate_scheduled_task_timing("UTC", 0).is_err());
         assert!(validate_scheduled_task_timing("UTC", 86_401).is_err());
+    }
+
+    #[test]
+    fn notification_secret_updates_distinguish_missing_null_and_string() {
+        let missing = serde_json::from_str::<NotificationSettingsUpdate>("{}")
+            .expect("missing secret fields should deserialize");
+        let clear = serde_json::from_str::<NotificationSettingsUpdate>(
+            r#"{"pushplus_token":null,"ai_api_key":null}"#,
+        )
+        .expect("null secret fields should deserialize");
+        let replace = serde_json::from_str::<NotificationSettingsUpdate>(
+            r#"{"pushplus_token":"replacement"}"#,
+        )
+        .expect("string secret field should deserialize");
+
+        assert_eq!(missing.pushplus_token, None);
+        assert_eq!(clear.pushplus_token, Some(None));
+        assert_eq!(clear.ai_api_key, Some(None));
+        assert_eq!(
+            replace.pushplus_token,
+            Some(Some("replacement".to_string()))
+        );
     }
 }

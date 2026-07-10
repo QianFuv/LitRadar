@@ -127,6 +127,8 @@ pub enum DeliveryMode {
 pub struct RecommendationRunConfig {
     /// Path to `auth.sqlite`.
     pub auth_db_path: PathBuf,
+    /// Deployment secret codec.
+    pub secret_codec: ps_storage::SecretCodec,
     /// Path to selected index SQLite database.
     pub index_db_path: PathBuf,
     /// Selected database filename.
@@ -215,6 +217,8 @@ pub struct RecommendationRunOutcome {
 pub struct ManualWeeklyPushConfig {
     /// Storage path configuration.
     pub storage_config: ps_storage::StorageConfig,
+    /// Deployment secret codec.
+    pub secret_codec: ps_storage::SecretCodec,
     /// User that requested the manual push.
     pub user_id: UserId,
     /// Optional model override.
@@ -314,6 +318,7 @@ pub fn run_manual_weekly_push(
 ) -> Result<ManualWeeklyPushOutcome, DeliveryError> {
     let settings = ps_storage::get_notification_settings(
         config.storage_config.auth_db_path(),
+        &config.secret_codec,
         config.user_id,
     )?;
     let Some(settings) = settings.filter(|item| item.enabled) else {
@@ -378,6 +383,7 @@ pub fn run_manual_weekly_push(
         outcomes.push(run_recommendation_delivery_for_user(
             &RecommendationRunConfig {
                 auth_db_path: config.storage_config.auth_db_path().to_path_buf(),
+                secret_codec: config.secret_codec.clone(),
                 index_db_path,
                 db_name: manifest.db_name,
                 state_dir: state_dir.clone(),
@@ -520,6 +526,7 @@ fn run_recommendation_delivery_with_services_for_user(
 
     let subscribers = filtered_subscribers(
         &config.auth_db_path,
+        &config.secret_codec,
         &config.db_name,
         config.workflow,
         subscriber_user_id,
@@ -954,28 +961,32 @@ impl DeliveryPushPlusSender for LiveDeliveryPushPlusSender {
 
 fn filtered_subscribers(
     auth_db_path: &Path,
+    secret_codec: &ps_storage::SecretCodec,
     db_name: &str,
     workflow: DeliveryWorkflow,
     subscriber_user_id: Option<UserId>,
 ) -> Result<Vec<NotificationSubscriberInfo>, DeliveryError> {
-    Ok(ps_storage::list_notification_subscribers(auth_db_path)?
-        .into_iter()
-        .filter(|subscriber| {
-            subscriber_user_id
-                .map(|user_id| subscriber.user_id == user_id.value())
-                .unwrap_or(true)
-        })
-        .filter(|subscriber| is_database_selected(&subscriber.selected_databases, db_name))
-        .filter(|subscriber| match workflow {
-            DeliveryWorkflow::Notify => {
-                subscriber.delivery_method == "pushplus"
-                    && !subscriber.pushplus_token.trim().is_empty()
-            }
-            DeliveryWorkflow::Push => {
-                subscriber.delivery_method == "folder" && subscriber.tracking_folder_id.is_some()
-            }
-        })
-        .collect())
+    Ok(
+        ps_storage::list_notification_subscribers(auth_db_path, secret_codec)?
+            .into_iter()
+            .filter(|subscriber| {
+                subscriber_user_id
+                    .map(|user_id| subscriber.user_id == user_id.value())
+                    .unwrap_or(true)
+            })
+            .filter(|subscriber| is_database_selected(&subscriber.selected_databases, db_name))
+            .filter(|subscriber| match workflow {
+                DeliveryWorkflow::Notify => {
+                    subscriber.delivery_method == "pushplus"
+                        && !subscriber.pushplus_token.trim().is_empty()
+                }
+                DeliveryWorkflow::Push => {
+                    subscriber.delivery_method == "folder"
+                        && subscriber.tracking_folder_id.is_some()
+                }
+            })
+            .collect(),
+    )
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -2128,6 +2139,7 @@ mod tests {
     struct DeliveryFixture {
         root: TempDir,
         auth_db_path: PathBuf,
+        secret_codec: ps_storage::SecretCodec,
         index_db_path: PathBuf,
         state_dir: PathBuf,
         db_name: String,
@@ -2137,20 +2149,27 @@ mod tests {
         fn new(settings: NotificationSettingsUpdate) -> Self {
             let root = tempdir().expect("temp dir should be created");
             let auth_db_path = root.path().join("auth.sqlite");
+            let secret_codec = ps_storage::SecretCodec::from_key([17_u8; 32]);
             ps_storage::initialize_auth_database(&auth_db_path)
                 .expect("auth database should initialize");
             let user = ps_storage::bootstrap_admin(&auth_db_path, "alice", "hash", "salt", 1.0)
                 .expect("fixture administrator should be bootstrapped");
             ps_storage::create_folder(&auth_db_path, user.id, "Tracking", true)
                 .expect("tracking folder should be created");
-            ps_storage::upsert_notification_settings(&auth_db_path, user.id, &settings)
-                .expect("notification settings should be saved");
+            ps_storage::upsert_notification_settings(
+                &auth_db_path,
+                &secret_codec,
+                user.id,
+                &settings,
+            )
+            .expect("notification settings should be saved");
             let index_db_path = root.path().join("fixture.sqlite");
             create_index_database(&index_db_path);
             let state_dir = root.path().join("state");
             Self {
                 root,
                 auth_db_path,
+                secret_codec,
                 index_db_path,
                 state_dir,
                 db_name: "fixture.sqlite".to_string(),
@@ -2166,6 +2185,7 @@ mod tests {
         ) -> RecommendationRunConfig {
             RecommendationRunConfig {
                 auth_db_path: self.auth_db_path.clone(),
+                secret_codec: self.secret_codec.clone(),
                 index_db_path: self.index_db_path.clone(),
                 db_name: self.db_name.clone(),
                 state_dir: self.state_dir.clone(),
@@ -2192,20 +2212,20 @@ mod tests {
             selected_databases,
             delivery_method: delivery_method.to_string(),
             pushplus_token: if delivery_method == "pushplus" {
-                "token".to_string()
+                Some(Some("token".to_string()))
             } else {
-                String::new()
+                None
             },
             pushplus_template: "markdown".to_string(),
             pushplus_topic: String::new(),
             pushplus_channel: "wechat".to_string(),
             sync_to_tracking_folder: true,
             ai_base_url: String::new(),
-            ai_api_key: "key".to_string(),
+            ai_api_key: Some(Some("key".to_string())),
             ai_model: "model".to_string(),
             ai_system_prompt: String::new(),
             ai_backup_base_url: String::new(),
-            ai_backup_api_key: String::new(),
+            ai_backup_api_key: None,
             ai_backup_model: String::new(),
             ai_backup_system_prompt: String::new(),
             ai_retry_attempts: 1,

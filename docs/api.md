@@ -2,7 +2,7 @@
 
 本文档以当前 Rust API 实现为准，覆盖检索接口、认证接口、收藏/追踪接口以及管理员接口。后端部署与正常运行入口已经切换到 Rust；认证初始化、密码策略和限流契约以本文说明为准。
 
-Rust API 会在启动时提供编译期生成的 OpenAPI 文档。交互式 Swagger UI 地址为 `/docs/`，OpenAPI JSON 地址为 `/openapi.json`。这些文档由 handler 上的 `#[utoipa::path]` 注解和共享 DTO 的 schema derive 生成；本文档保留补充说明、业务约束和运行行为细节。
+Rust API 会在启动时提供编译期生成的 OpenAPI 文档。交互式 Swagger UI 地址为 `/docs/`，OpenAPI JSON 地址为 `/openapi.json`。这些文档由 handler 上的 `#[utoipa::path]` 注解和共享 DTO 的 schema derive 生成；本文档保留补充说明、业务约束和运行行为细节。API 启动命令必须显式提供 `--secret-key-file PATH`，并在绑定端口前验证数据库中的全部集成凭据密文。
 
 ## 基本约定
 
@@ -487,6 +487,19 @@ CNKI 精确匹配失败时返回受控错误，不会下载候选列表中的错
 | `GET` | `/api/tracking/notification-settings` | 获取当前用户通知设置 |
 | `PUT` | `/api/tracking/notification-settings` | 更新当前用户通知设置 |
 
+`GET /api/tracking/notification-settings` 不返回任何 token、API key 或数据库密文。秘密字段使用以下形式：
+
+```json
+{
+  "has_pushplus_token": true,
+  "pushplus_token_mask": "••••",
+  "has_ai_api_key": true,
+  "ai_api_key_mask": "••••",
+  "has_ai_backup_api_key": false,
+  "ai_backup_api_key_mask": ""
+}
+```
+
 ### `POST /api/tracking/push-weekly`
 
 说明：
@@ -517,7 +530,6 @@ CNKI 精确匹配失败时返回受控错误，不会下载候选列表中的错
   "ai_model": "deepseek-ai/DeepSeek-V3",
   "ai_system_prompt": "",
   "ai_backup_base_url": "",
-  "ai_backup_api_key": "",
   "ai_backup_model": "",
   "ai_backup_system_prompt": "",
   "ai_retry_attempts": 3,
@@ -529,6 +541,8 @@ CNKI 精确匹配失败时返回受控错误，不会下载候选列表中的错
 
 - `delivery_method` 当前只允许 `folder` 或 `pushplus`
 - 当 `delivery_method = "pushplus"` 时，`pushplus_token` 必填
+- `pushplus_token`、`ai_api_key`、`ai_backup_api_key` 缺省或传空白字符串时保留现有值，传 JSON `null` 时明确清除，传非空字符串时替换
+- 响应中的固定掩码不能作为更新值回传
 - `selected_databases` 为空表示全部数据库；传入值必须对应 `data/index/` 下已有 `.sqlite` 文件
 - 当 `delivery_method = "pushplus"` 且 `sync_to_tracking_folder = true` 时，必须已经设置追踪文件夹
 
@@ -577,6 +591,8 @@ CNKI 精确匹配失败时返回受控错误，不会下载候选列表中的错
 - `input_type`
 - `is_secret`
 - `value`
+- `has_value`
+- `masked_value`
 - `source`：`database` 或 `default`
 - `updated_at`
 
@@ -608,7 +624,7 @@ CNKI 精确匹配失败时返回受控错误，不会下载候选列表中的错
 | `mcp_allowed_origins` | HTTP MCP 浏览器 `Origin` 白名单 |
 | `secure_cookies` | `ps_session` Cookie 是否带 `Secure` 标记 |
 
-未知字段会返回 `400`。清空某个值会把该配置保存为空字符串，列表接口仍会把该项显示为 `database` 来源。
+未知字段会返回 `400`。秘密配置的 `value` 始终为空；`has_value` 表示是否已配置，`masked_value` 只可能是固定 `••••` 或空字符串。秘密字段缺省或空白字符串会保留现有密文，JSON `null` 明确清除，非空字符串替换。非秘密字段不接受 `null`。API 响应不会返回明文或 `psenc:v1:` 密文。
 
 ### 定时任务请求体
 
@@ -646,7 +662,7 @@ CNKI 精确匹配失败时返回受控错误，不会下载候选列表中的错
 
 - `cron` 使用标准五段 crontab，并在 `timezone` 指定的 IANA 时区中计算；非法时区和不在 `1-86400` 秒范围内的超时会返回 `400`
 - 夏令时跳过的本地分钟不会执行；回拨后重复出现且都匹配 cron 的本地分钟会对应两个不同的 UTC 执行槽
-- Docker 默认运行 `worker --project-root /app --interval-seconds 30`。worker 使用持久化检查游标补齐轮询间隔内的执行槽，最长回看 24 小时；`coalesce = true` 时只保留最近一个错过的槽
+- Docker 默认运行 `worker --project-root /app --secret-key-file /run/secrets/paper_scanner_key --interval-seconds 30`。worker 使用持久化检查游标补齐轮询间隔内的执行槽，最长回看 24 小时；`coalesce = true` 时只保留最近一个错过的槽
 - 每个 `(task_id, scheduled_for)` 只有一条运行记录，同一任务同时最多有一个 `claimed` 或 `running` 实例，因此多个 worker 不会重复执行同一槽
 - 每个任务的 `timeout_seconds` 覆盖完整类型化 job 链路；一个任务失败或超时不会阻止同轮的其他任务继续执行
 - 立即执行和 dry-run 可通过 `scheduler run-once TASK_ID` 与 `scheduler dry-run-once TASK_ID` 从运维终端触发

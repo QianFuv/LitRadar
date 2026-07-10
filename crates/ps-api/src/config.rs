@@ -5,7 +5,7 @@ use std::fmt;
 use std::path::PathBuf;
 
 use axum::http::{HeaderValue, Uri};
-use ps_domain::RuntimeSettingInfo;
+use ps_domain::RuntimeSettingValue;
 
 const DEFAULT_MCP_HOSTS: [&str; 3] = ["localhost", "127.0.0.1", "::1"];
 
@@ -18,6 +18,8 @@ pub struct ApiConfig {
     pub host: String,
     /// TCP port to bind.
     pub port: u16,
+    /// Raw 32-byte deployment secret key file.
+    pub secret_key_file: PathBuf,
     /// Credentialed CORS origins configured through admin runtime settings.
     pub cors_allowed_origins: Vec<String>,
     /// Hosts accepted by the Streamable HTTP MCP endpoint.
@@ -38,15 +40,17 @@ impl ApiConfig {
     /// * `project_root` - Project or deployment root used to resolve data paths.
     /// * `host` - Bind host.
     /// * `port` - Bind port.
+    /// * `secret_key_file` - Raw 32-byte deployment secret key file.
     ///
     /// # Returns
     ///
     /// Runtime API configuration.
-    pub fn new(project_root: PathBuf, host: String, port: u16) -> Self {
+    pub fn new(project_root: PathBuf, host: String, port: u16, secret_key_file: PathBuf) -> Self {
         Self {
             project_root,
             host,
             port,
+            secret_key_file,
             cors_allowed_origins: Vec::new(),
             mcp_allowed_hosts: default_mcp_allowed_hosts(),
             mcp_allowed_origins: Vec::new(),
@@ -78,11 +82,14 @@ impl ApiConfig {
             Some(value) => PathBuf::from(value),
             None => std::env::current_dir().map_err(ApiConfigError::CurrentDir)?,
         };
+        let secret_key_file = extract_string_option(&mut args, "--secret-key-file")?
+            .map(PathBuf::from)
+            .ok_or(ApiConfigError::MissingSecretKeyFile)?;
         let are_secure_cookies_required = extract_flag(&mut args, "--require-secure-cookies");
         if let Some(argument) = args.first() {
             return Err(ApiConfigError::UnexpectedArgument(argument.clone()));
         }
-        let mut config = Self::new(project_root, host, port);
+        let mut config = Self::new(project_root, host, port, secret_key_file);
         config.are_secure_cookies_required = are_secure_cookies_required;
         Ok(config)
     }
@@ -98,7 +105,7 @@ impl ApiConfig {
     /// Result indicating whether all configured values were valid.
     pub fn apply_runtime_settings(
         &mut self,
-        settings: &[RuntimeSettingInfo],
+        settings: &[RuntimeSettingValue],
     ) -> Result<(), ApiConfigError> {
         for setting in settings {
             match setting.field.as_str() {
@@ -135,7 +142,6 @@ impl ApiConfig {
 }
 
 /// Configuration loading error.
-#[derive(Debug)]
 pub enum ApiConfigError {
     /// Current directory resolution failed.
     CurrentDir(std::io::Error),
@@ -143,6 +149,8 @@ pub enum ApiConfigError {
     InvalidPort(String),
     /// A command argument requires a following value.
     MissingArgumentValue(String),
+    /// The required deployment secret key file argument is missing.
+    MissingSecretKeyFile,
     /// A command argument is not supported.
     UnexpectedArgument(String),
     /// A configured CORS origin is not a valid HTTP header value.
@@ -157,6 +165,13 @@ pub enum ApiConfigError {
     SecureCookiesRequired,
 }
 
+impl fmt::Debug for ApiConfigError {
+    /// Format configuration failures as user-facing non-secret diagnostics.
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Display::fmt(self, formatter)
+    }
+}
+
 impl fmt::Display for ApiConfigError {
     /// Format the configuration error.
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -164,6 +179,7 @@ impl fmt::Display for ApiConfigError {
             Self::CurrentDir(error) => write!(formatter, "{error}"),
             Self::InvalidPort(value) => write!(formatter, "Invalid API port: {value}"),
             Self::MissingArgumentValue(name) => write!(formatter, "{name} requires a value"),
+            Self::MissingSecretKeyFile => formatter.write_str("--secret-key-file is required"),
             Self::UnexpectedArgument(argument) => {
                 write!(formatter, "Unexpected API argument: {argument}")
             }
@@ -205,7 +221,7 @@ impl Error for ApiConfigError {
 ///
 /// Usage string for the standalone `api` command.
 pub fn api_usage() -> &'static str {
-    "api [--host HOST] [--port PORT] [--project-root PATH] [--require-secure-cookies]"
+    "api --secret-key-file PATH [--host HOST] [--port PORT] [--project-root PATH] [--require-secure-cookies]"
 }
 
 fn parse_cors_allowed_origins(value: &str) -> Result<Vec<String>, ApiConfigError> {
@@ -308,7 +324,7 @@ fn extract_flag(args: &mut Vec<String>, name: &str) -> bool {
 mod tests {
     use std::path::PathBuf;
 
-    use ps_domain::RuntimeSettingInfo;
+    use ps_domain::RuntimeSettingValue;
 
     use super::{parse_cors_allowed_origins, ApiConfig, ApiConfigError};
 
@@ -324,7 +340,12 @@ mod tests {
     fn new_uses_defaults_and_builds_bind_address() {
         let project_root = PathBuf::from("paper-scanner-config-root");
 
-        let config = ApiConfig::new(project_root.clone(), "127.0.0.1".to_string(), 8000);
+        let config = ApiConfig::new(
+            project_root.clone(),
+            "127.0.0.1".to_string(),
+            8000,
+            PathBuf::from("secret.key"),
+        );
 
         assert_eq!(config.project_root, project_root);
         assert_eq!(config.host, "127.0.0.1");
@@ -348,6 +369,8 @@ mod tests {
             "9001".to_string(),
             "--project-root".to_string(),
             project_root.display().to_string(),
+            "--secret-key-file".to_string(),
+            "secret.key".to_string(),
             "--require-secure-cookies".to_string(),
         ])
         .expect("explicit config should load");
@@ -365,6 +388,7 @@ mod tests {
             PathBuf::from("paper-scanner-config-root"),
             "127.0.0.1".to_string(),
             8000,
+            PathBuf::from("secret.key"),
         );
 
         config
@@ -411,6 +435,8 @@ mod tests {
         let mut config = ApiConfig::from_args([
             "--project-root".to_string(),
             "fixture-root".to_string(),
+            "--secret-key-file".to_string(),
+            "secret.key".to_string(),
             "--require-secure-cookies".to_string(),
         ])
         .expect("production flag should parse");
@@ -431,6 +457,7 @@ mod tests {
             PathBuf::from("paper-scanner-config-root"),
             "127.0.0.1".to_string(),
             8000,
+            PathBuf::from("secret.key"),
         );
 
         let error = config
@@ -452,6 +479,7 @@ mod tests {
             PathBuf::from("paper-scanner-config-root"),
             "127.0.0.1".to_string(),
             8000,
+            PathBuf::from("secret.key"),
         );
 
         let error = config
@@ -470,6 +498,7 @@ mod tests {
             PathBuf::from("paper-scanner-config-root"),
             "127.0.0.1".to_string(),
             8000,
+            PathBuf::from("secret.key"),
         );
 
         let error = config
@@ -485,13 +514,9 @@ mod tests {
         assert_eq!(error.to_string(), "Invalid MCP allowed origin: localhost");
     }
 
-    fn runtime_setting(field: &str, value: &str) -> RuntimeSettingInfo {
-        RuntimeSettingInfo {
+    fn runtime_setting(field: &str, value: &str) -> RuntimeSettingValue {
+        RuntimeSettingValue {
             field: field.to_string(),
-            label: field.to_string(),
-            description: String::new(),
-            input_type: "text".to_string(),
-            is_secret: false,
             value: value.to_string(),
             source: "database".to_string(),
             updated_at: Some(1.0),

@@ -80,17 +80,17 @@ export default function TrackingPage() {
       directions: settings?.directions || [],
       selected_databases: settings?.selected_databases || [],
       delivery_method: settings?.delivery_method || 'folder',
-      pushplus_token: settings?.pushplus_token || '',
+      pushplus_token: undefined,
       pushplus_template: settings?.pushplus_template || 'markdown',
       pushplus_topic: settings?.pushplus_topic || '',
       pushplus_channel: settings?.pushplus_channel || 'wechat',
       sync_to_tracking_folder: settings?.sync_to_tracking_folder ?? false,
       ai_base_url: settings?.ai_base_url || '',
-      ai_api_key: settings?.ai_api_key || '',
+      ai_api_key: undefined,
       ai_model: settings?.ai_model || '',
       ai_system_prompt: settings?.ai_system_prompt || '',
       ai_backup_base_url: settings?.ai_backup_base_url || '',
-      ai_backup_api_key: settings?.ai_backup_api_key || '',
+      ai_backup_api_key: undefined,
       ai_backup_model: settings?.ai_backup_model || '',
       ai_backup_system_prompt: settings?.ai_backup_system_prompt || '',
       ai_retry_attempts: settings?.ai_retry_attempts ?? 3,
@@ -760,7 +760,7 @@ export default function TrackingPage() {
                     type="password"
                     autoComplete="off"
                     spellCheck={false}
-                    value={aiApiKey}
+                    value={aiApiKey ?? ''}
                     onChange={(e) =>
                       updateDraftSettings((current) => ({
                         ...current,
@@ -769,6 +769,30 @@ export default function TrackingPage() {
                     }
                     placeholder="sk-…"
                   />
+                  <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
+                    <span>
+                      {notifySettings?.has_ai_api_key
+                        ? aiApiKey === null
+                          ? '保存后清除当前密钥'
+                          : '已安全保存；留空不会覆盖'
+                        : '尚未配置'}
+                    </span>
+                    {notifySettings?.has_ai_api_key && (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        onClick={() =>
+                          updateDraftSettings((current) => ({
+                            ...current,
+                            ai_api_key: current.ai_api_key === null ? undefined : null,
+                          }))
+                        }
+                      >
+                        {aiApiKey === null ? '保留原密钥' : '清除密钥'}
+                      </Button>
+                    )}
+                  </div>
                 </div>
                 <div className="space-y-1">
                   <Label htmlFor="ai-system-prompt">System Prompt</Label>
@@ -861,7 +885,7 @@ export default function TrackingPage() {
                       type="password"
                       autoComplete="off"
                       spellCheck={false}
-                      value={aiBackupApiKey}
+                      value={aiBackupApiKey ?? ''}
                       onChange={(e) =>
                         updateDraftSettings((current) => ({
                           ...current,
@@ -870,6 +894,31 @@ export default function TrackingPage() {
                       }
                       placeholder="sk-…"
                     />
+                    <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
+                      <span>
+                        {notifySettings?.has_ai_backup_api_key
+                          ? aiBackupApiKey === null
+                            ? '保存后清除当前密钥'
+                            : '已安全保存；留空不会覆盖'
+                          : '尚未配置'}
+                      </span>
+                      {notifySettings?.has_ai_backup_api_key && (
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          onClick={() =>
+                            updateDraftSettings((current) => ({
+                              ...current,
+                              ai_backup_api_key:
+                                current.ai_backup_api_key === null ? undefined : null,
+                            }))
+                          }
+                        >
+                          {aiBackupApiKey === null ? '保留原密钥' : '清除密钥'}
+                        </Button>
+                      )}
+                    </div>
                   </div>
                   <div className="space-y-1">
                     <Label htmlFor="ai-backup-system-prompt">Backup System Prompt</Label>
@@ -904,7 +953,8 @@ export default function TrackingPage() {
                       name="pushplus_token"
                       autoComplete="off"
                       spellCheck={false}
-                      value={pushplusToken}
+                      type="password"
+                      value={pushplusToken ?? ''}
                       onChange={(e) =>
                         updateDraftSettings((current) => ({
                           ...current,
@@ -913,6 +963,30 @@ export default function TrackingPage() {
                       }
                       placeholder="输入你的 PushPlus 令牌"
                     />
+                    <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
+                      <span>
+                        {notifySettings?.has_pushplus_token
+                          ? pushplusToken === null
+                            ? '保存后清除当前令牌'
+                            : '已安全保存；留空不会覆盖'
+                          : '尚未配置'}
+                      </span>
+                      {notifySettings?.has_pushplus_token && (
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          onClick={() =>
+                            updateDraftSettings((current) => ({
+                              ...current,
+                              pushplus_token: current.pushplus_token === null ? undefined : null,
+                            }))
+                          }
+                        >
+                          {pushplusToken === null ? '保留原令牌' : '清除令牌'}
+                        </Button>
+                      )}
+                    </div>
                   </div>
                   <div className="grid gap-3 sm:grid-cols-2">
                     <div className="space-y-1">

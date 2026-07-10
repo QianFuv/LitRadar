@@ -6,7 +6,9 @@ services:
       - "127.0.0.1:8000:8000"
     volumes:
       - ./data:/app/data:rw
-    command: ["api", "--host", "0.0.0.0", "--port", "8000", "--project-root", "/app"]
+    secrets:
+      - paper_scanner_key
+    command: ["api", "--host", "0.0.0.0", "--port", "8000", "--project-root", "/app", "--secret-key-file", "/run/secrets/paper_scanner_key"]
     restart: unless-stopped
     read_only: true
     tmpfs:
@@ -25,9 +27,11 @@ services:
   worker:
     build: .
     image: ghcr.io/qianfuv/paper-scanner-api:latest
-    command: ["worker", "--project-root", "/app", "--interval-seconds", "30"]
+    command: ["worker", "--project-root", "/app", "--secret-key-file", "/run/secrets/paper_scanner_key", "--interval-seconds", "30"]
     volumes:
       - ./data:/app/data:rw
+    secrets:
+      - paper_scanner_key
     depends_on:
       api:
         condition: service_healthy
@@ -71,3 +75,7 @@ services:
       timeout: 5s
       retries: 3
       start_period: 20s
+
+secrets:
+  paper_scanner_key:
+    file: ./secrets/paper-scanner.key

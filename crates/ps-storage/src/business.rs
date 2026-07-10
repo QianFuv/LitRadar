@@ -11,16 +11,18 @@ use ps_domain::{
     validate_scheduled_task_timing, AdminInviteCodeInfo, AdminStatsResponse, AdminUserInfo,
     AnnouncementInfo, AuthStats, FavoriteAdd, FavoriteArticleRef, FavoriteArticleResponse,
     FavoriteBatchCheckResponse, FavoriteCheckResponse, FavoriteResponse, FolderResponse,
-    IndexDatabaseStats, IndexStats, NotificationSettingsResponse, NotificationSettingsUpdate,
-    NotificationSubscriberInfo, PushStats, RuntimeSettingInfo, ScheduledJobSpec, ScheduledTaskInfo,
-    ScheduledTaskRunInfo, SchedulerStatusResponse, SchedulerWorkerInfo, UserId,
+    IndexDatabaseStats, IndexStats, NotificationSettings, NotificationSettingsUpdate,
+    NotificationSubscriberInfo, PushStats, RuntimeSettingInfo, RuntimeSettingValue,
+    ScheduledJobSpec, ScheduledTaskInfo, ScheduledTaskRunInfo, SchedulerStatusResponse,
+    SchedulerWorkerInfo, UserId,
 };
 use rusqlite::types::Type;
 use rusqlite::{params, Connection, ErrorCode, OptionalExtension, TransactionBehavior};
 use serde::Deserialize;
 use serde_json::Value;
 
-use crate::{open_sqlite_connection, random_hex, StorageConfig};
+use crate::secrets::{notification_context, runtime_context};
+use crate::{open_sqlite_connection, random_hex, SecretCodec, SecretError, StorageConfig};
 
 const ADMIN_INVITE_CODE_BYTES: i64 = 8;
 
@@ -103,6 +105,8 @@ pub enum BusinessRepositoryError {
     Io(std::io::Error),
     /// JSON parsing or encoding failed.
     Json(serde_json::Error),
+    /// Secret encryption or decryption failed.
+    Secret(SecretError),
     /// Folder name duplicates an existing user folder.
     DuplicateFolderName,
     /// Folder does not exist for the user.
@@ -117,6 +121,8 @@ pub enum BusinessRepositoryError {
     UnknownRuntimeSetting(String),
     /// Runtime boolean could not be parsed.
     InvalidRuntimeBoolean(String),
+    /// A null update attempted to clear a non-secret runtime setting.
+    NonSecretRuntimeSettingCannotBeCleared(String),
     /// Scheduled job arguments failed allowlist validation.
     InvalidScheduledJob(String),
     /// Scheduled task timing settings failed validation.
@@ -132,6 +138,7 @@ impl fmt::Display for BusinessRepositoryError {
             Self::Sqlite(error) => write!(formatter, "{error}"),
             Self::Io(error) => write!(formatter, "{error}"),
             Self::Json(error) => write!(formatter, "{error}"),
+            Self::Secret(error) => write!(formatter, "{error}"),
             Self::DuplicateFolderName => formatter.write_str("Folder name already exists"),
             Self::FolderNotFound => formatter.write_str("Folder not found"),
             Self::SourceAndTargetFoldersSame => {
@@ -144,6 +151,9 @@ impl fmt::Display for BusinessRepositoryError {
             }
             Self::InvalidRuntimeBoolean(value) => {
                 write!(formatter, "Invalid boolean value: {value}")
+            }
+            Self::NonSecretRuntimeSettingCannotBeCleared(field) => {
+                write!(formatter, "Only secret runtime settings may be cleared: {field}")
             }
             Self::InvalidScheduledJob(message) => formatter.write_str(message),
             Self::InvalidScheduledTask(message) => formatter.write_str(message),
@@ -214,6 +224,7 @@ impl Error for BusinessRepositoryError {
             Self::Sqlite(error) => Some(error),
             Self::Io(error) => Some(error),
             Self::Json(error) => Some(error),
+            Self::Secret(error) => Some(error),
             _ => None,
         }
     }
@@ -240,11 +251,20 @@ impl From<serde_json::Error> for BusinessRepositoryError {
     }
 }
 
+impl From<SecretError> for BusinessRepositoryError {
+    /// Convert secret errors into repository errors.
+    fn from(error: SecretError) -> Self {
+        Self::Secret(error)
+    }
+}
+
 /// Create a folder for a user.
 ///
 /// # Arguments
 ///
 /// * `auth_db_path` - Path to `auth.sqlite`.
+/// * `codec` - Deployment secret codec.
+/// * `codec` - Deployment secret codec.
 /// * `user_id` - Owner user identifier.
 /// * `name` - Trimmed folder name.
 /// * `is_tracking` - Whether the folder becomes the tracking folder.
@@ -910,8 +930,9 @@ pub fn bulk_move_favorites(
 /// Notification settings or None.
 pub fn get_notification_settings(
     auth_db_path: impl AsRef<Path>,
+    codec: &SecretCodec,
     user_id: UserId,
-) -> Result<Option<NotificationSettingsResponse>, BusinessRepositoryError> {
+) -> Result<Option<NotificationSettings>, BusinessRepositoryError> {
     let connection = open_business_connection(auth_db_path)?;
     connection
         .query_row(
@@ -920,9 +941,9 @@ pub fn get_notification_settings(
              sync_to_tracking_folder, ai_base_url, ai_api_key, ai_model, ai_system_prompt, \
              ai_backup_base_url, ai_backup_api_key, ai_backup_model, ai_backup_system_prompt, \
              ai_retry_attempts, enabled, created_at, updated_at \
-             FROM notification_settings WHERE user_id = ?1",
+            FROM notification_settings WHERE user_id = ?1",
             [user_id.value()],
-            notification_settings_from_row,
+            |row| notification_settings_from_row(row, codec),
         )
         .optional()
         .map_err(BusinessRepositoryError::from)?
@@ -934,12 +955,14 @@ pub fn get_notification_settings(
 /// # Arguments
 ///
 /// * `auth_db_path` - Path to `auth.sqlite`.
+/// * `codec` - Deployment secret codec.
 ///
 /// # Returns
 ///
 /// Enabled subscriber settings ordered by user id.
 pub fn list_notification_subscribers(
     auth_db_path: impl AsRef<Path>,
+    codec: &SecretCodec,
 ) -> Result<Vec<NotificationSubscriberInfo>, BusinessRepositoryError> {
     let connection = open_business_connection(auth_db_path)?;
     let mut statement = connection.prepare(
@@ -953,8 +976,8 @@ pub fn list_notification_subscribers(
          FROM notification_settings ns JOIN users u ON u.id = ns.user_id \
          WHERE ns.enabled = 1 ORDER BY ns.user_id",
     )?;
-    let rows = statement.query_map([], notification_subscriber_from_row)?;
-    collect_rows(rows)
+    let rows = statement.query_map([], |row| notification_subscriber_from_row(row, codec))?;
+    collect_nested_rows(rows)
 }
 
 /// Create or update notification settings.
@@ -962,6 +985,7 @@ pub fn list_notification_subscribers(
 /// # Arguments
 ///
 /// * `auth_db_path` - Path to `auth.sqlite`.
+/// * `codec` - Deployment secret codec.
 /// * `user_id` - Owner user identifier.
 /// * `settings` - Normalized notification settings.
 ///
@@ -970,14 +994,64 @@ pub fn list_notification_subscribers(
 /// Updated notification settings.
 pub fn upsert_notification_settings(
     auth_db_path: impl AsRef<Path>,
+    codec: &SecretCodec,
     user_id: UserId,
     settings: &NotificationSettingsUpdate,
-) -> Result<NotificationSettingsResponse, BusinessRepositoryError> {
+) -> Result<NotificationSettings, BusinessRepositoryError> {
     let connection = open_business_connection(auth_db_path.as_ref())?;
     let now = now_seconds();
     let keywords = serde_json::to_string(&settings.keywords)?;
     let directions = serde_json::to_string(&settings.directions)?;
     let selected_databases = serde_json::to_string(&settings.selected_databases)?;
+    let current_secrets = connection
+        .query_row(
+            "SELECT pushplus_token, ai_api_key, ai_backup_api_key \
+             FROM notification_settings WHERE user_id = ?1",
+            [user_id.value()],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
+            },
+        )
+        .optional()?;
+    if let Some((pushplus_token, ai_api_key, ai_backup_api_key)) = current_secrets.as_ref() {
+        codec.decrypt(
+            pushplus_token,
+            &notification_context(user_id.value(), "pushplus_token"),
+        )?;
+        codec.decrypt(
+            ai_api_key,
+            &notification_context(user_id.value(), "ai_api_key"),
+        )?;
+        codec.decrypt(
+            ai_backup_api_key,
+            &notification_context(user_id.value(), "ai_backup_api_key"),
+        )?;
+    }
+    let pushplus_token = resolve_notification_secret(
+        codec,
+        user_id,
+        "pushplus_token",
+        &settings.pushplus_token,
+        current_secrets.as_ref().map(|values| values.0.as_str()),
+    )?;
+    let ai_api_key = resolve_notification_secret(
+        codec,
+        user_id,
+        "ai_api_key",
+        &settings.ai_api_key,
+        current_secrets.as_ref().map(|values| values.1.as_str()),
+    )?;
+    let ai_backup_api_key = resolve_notification_secret(
+        codec,
+        user_id,
+        "ai_backup_api_key",
+        &settings.ai_backup_api_key,
+        current_secrets.as_ref().map(|values| values.2.as_str()),
+    )?;
     connection.execute(
         "INSERT INTO notification_settings \
          (user_id, keywords, directions, selected_databases, delivery_method, \
@@ -1006,17 +1080,17 @@ pub fn upsert_notification_settings(
             directions,
             selected_databases,
             settings.delivery_method,
-            settings.pushplus_token,
+            pushplus_token,
             settings.pushplus_template,
             settings.pushplus_topic,
             settings.pushplus_channel,
             settings.sync_to_tracking_folder as i64,
             settings.ai_base_url,
-            settings.ai_api_key,
+            ai_api_key,
             settings.ai_model,
             settings.ai_system_prompt,
             settings.ai_backup_base_url,
-            settings.ai_backup_api_key,
+            ai_backup_api_key,
             settings.ai_backup_model,
             settings.ai_backup_system_prompt,
             settings.ai_retry_attempts,
@@ -1025,8 +1099,27 @@ pub fn upsert_notification_settings(
             now
         ],
     )?;
-    get_notification_settings(auth_db_path, user_id)?
+    get_notification_settings(auth_db_path, codec, user_id)?
         .ok_or_else(|| rusqlite::Error::QueryReturnedNoRows.into())
+}
+
+fn resolve_notification_secret(
+    codec: &SecretCodec,
+    user_id: UserId,
+    field: &str,
+    update: &Option<Option<String>>,
+    existing: Option<&str>,
+) -> Result<String, BusinessRepositoryError> {
+    match update {
+        None => Ok(existing.unwrap_or_default().to_string()),
+        Some(None) => Ok(String::new()),
+        Some(Some(value)) if value.trim().is_empty() => {
+            Ok(existing.unwrap_or_default().to_string())
+        }
+        Some(Some(value)) => codec
+            .encrypt(value.trim(), &notification_context(user_id.value(), field))
+            .map_err(BusinessRepositoryError::from),
+    }
 }
 
 /// List all users with admin dashboard counts.
@@ -1228,25 +1321,40 @@ pub fn get_admin_stats(
 /// Runtime setting payloads.
 pub fn list_runtime_settings(
     auth_db_path: impl AsRef<Path>,
+    codec: &SecretCodec,
 ) -> Result<Vec<RuntimeSettingInfo>, BusinessRepositoryError> {
     let connection = open_business_connection(auth_db_path)?;
-    let mut statement =
-        connection.prepare("SELECT key, value, updated_at FROM runtime_settings")?;
-    let rows = statement.query_map([], |row| {
-        Ok((
-            row.get::<_, String>(0)?,
-            row.get::<_, String>(1)?,
-            row.get::<_, f64>(2)?,
-        ))
-    })?;
-    let rows: HashMap<String, (String, f64)> = collect_rows(rows)?
-        .into_iter()
-        .map(|(key, value, updated_at)| (key, (value, updated_at)))
-        .collect();
-    Ok(RUNTIME_CONFIG_DEFINITIONS
+    let rows = read_runtime_setting_rows(&connection)?;
+    RUNTIME_CONFIG_DEFINITIONS
         .iter()
-        .map(|definition| runtime_setting_from_definition(definition, rows.get(definition.field)))
-        .collect())
+        .map(|definition| {
+            public_runtime_setting_from_definition(definition, rows.get(definition.field), codec)
+        })
+        .collect()
+}
+
+/// Load managed runtime settings for trusted backend consumers.
+///
+/// # Arguments
+///
+/// * `auth_db_path` - Path to `auth.sqlite`.
+/// * `codec` - Deployment secret codec.
+///
+/// # Returns
+///
+/// Effective values with secret fields decrypted in non-serializable types.
+pub fn load_runtime_settings(
+    auth_db_path: impl AsRef<Path>,
+    codec: &SecretCodec,
+) -> Result<Vec<RuntimeSettingValue>, BusinessRepositoryError> {
+    let connection = open_business_connection(auth_db_path)?;
+    let rows = read_runtime_setting_rows(&connection)?;
+    RUNTIME_CONFIG_DEFINITIONS
+        .iter()
+        .map(|definition| {
+            internal_runtime_setting_from_definition(definition, rows.get(definition.field), codec)
+        })
+        .collect()
 }
 
 /// Upsert managed runtime settings.
@@ -1254,34 +1362,61 @@ pub fn list_runtime_settings(
 /// # Arguments
 ///
 /// * `auth_db_path` - Path to `auth.sqlite`.
-/// * `values` - Values keyed by API field name.
+/// * `codec` - Deployment secret codec.
+/// * `values` - Values keyed by API field name; null clears secret fields.
 ///
 /// # Returns
 ///
 /// Updated runtime setting payloads.
 pub fn upsert_runtime_settings(
     auth_db_path: impl AsRef<Path>,
-    values: &HashMap<String, String>,
+    codec: &SecretCodec,
+    values: &HashMap<String, Option<String>>,
 ) -> Result<Vec<RuntimeSettingInfo>, BusinessRepositoryError> {
-    let connection = open_business_connection(auth_db_path.as_ref())?;
+    let mut connection = open_business_connection(auth_db_path.as_ref())?;
     let now = now_seconds();
+    let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    let existing = read_runtime_setting_rows(&transaction)?;
     {
-        let mut statement = connection.prepare(
+        let mut statement = transaction.prepare(
             "INSERT INTO runtime_settings (key, value, updated_at) VALUES (?1, ?2, ?3) \
              ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
         )?;
-        for (field, raw_value) in values {
+        for (field, update) in values {
             let definition = runtime_definition_by_field(field)
                 .ok_or_else(|| BusinessRepositoryError::UnknownRuntimeSetting(field.clone()))?;
-            let mut value = raw_value.trim().to_string();
-            if definition.input_type == "boolean" {
+            let current = existing.get(field).map(|row| row.0.as_str());
+            let mut value = if definition.is_secret {
+                if let Some(stored) = current {
+                    codec.decrypt(stored, &runtime_context(field))?;
+                }
+                match update {
+                    None => String::new(),
+                    Some(raw_value) if raw_value.trim().is_empty() => {
+                        current.unwrap_or_default().to_string()
+                    }
+                    Some(raw_value) => codec.encrypt(raw_value.trim(), &runtime_context(field))?,
+                }
+            } else {
+                update
+                    .as_deref()
+                    .ok_or_else(|| {
+                        BusinessRepositoryError::NonSecretRuntimeSettingCannotBeCleared(
+                            field.clone(),
+                        )
+                    })?
+                    .trim()
+                    .to_string()
+            };
+            if !definition.is_secret && definition.input_type == "boolean" {
                 let default = definition.default_value.trim().eq_ignore_ascii_case("true");
                 value = runtime_bool_to_text(&value, default)?;
             }
             statement.execute(params![definition.field, value, now])?;
         }
     }
-    list_runtime_settings(auth_db_path)
+    transaction.commit()?;
+    list_runtime_settings(auth_db_path, codec)
 }
 
 /// List scheduled tasks.
@@ -2456,26 +2591,37 @@ fn ensure_folder_exists(
 
 fn notification_settings_from_row(
     row: &rusqlite::Row<'_>,
-) -> rusqlite::Result<Result<NotificationSettingsResponse, BusinessRepositoryError>> {
+    codec: &SecretCodec,
+) -> rusqlite::Result<Result<NotificationSettings, BusinessRepositoryError>> {
     Ok((|| {
-        Ok(NotificationSettingsResponse {
+        let user_id = UserId(row.get(1)?);
+        Ok(NotificationSettings {
             id: row.get(0)?,
-            user_id: UserId(row.get(1)?),
+            user_id,
             keywords: parse_string_list(row.get::<_, String>(2)?),
             directions: parse_string_list(row.get::<_, String>(3)?),
             selected_databases: parse_string_list(row.get::<_, String>(4)?),
             delivery_method: row.get(5)?,
-            pushplus_token: row.get(6)?,
+            pushplus_token: codec.decrypt(
+                &row.get::<_, String>(6)?,
+                &notification_context(user_id.value(), "pushplus_token"),
+            )?,
             pushplus_template: row.get(7)?,
             pushplus_topic: row.get(8)?,
             pushplus_channel: row.get(9)?,
             sync_to_tracking_folder: row.get::<_, i64>(10)? != 0,
             ai_base_url: row.get(11)?,
-            ai_api_key: row.get(12)?,
+            ai_api_key: codec.decrypt(
+                &row.get::<_, String>(12)?,
+                &notification_context(user_id.value(), "ai_api_key"),
+            )?,
             ai_model: row.get(13)?,
             ai_system_prompt: row.get(14)?,
             ai_backup_base_url: row.get(15)?,
-            ai_backup_api_key: row.get(16)?,
+            ai_backup_api_key: codec.decrypt(
+                &row.get::<_, String>(16)?,
+                &notification_context(user_id.value(), "ai_backup_api_key"),
+            )?,
             ai_backup_model: row.get(17)?,
             ai_backup_system_prompt: row.get(18)?,
             ai_retry_attempts: row.get::<_, i64>(19)?.max(1),
@@ -2488,32 +2634,44 @@ fn notification_settings_from_row(
 
 fn notification_subscriber_from_row(
     row: &rusqlite::Row<'_>,
-) -> rusqlite::Result<NotificationSubscriberInfo> {
+    codec: &SecretCodec,
+) -> rusqlite::Result<Result<NotificationSubscriberInfo, BusinessRepositoryError>> {
     let user_id = row.get::<_, i64>(0)?;
-    Ok(NotificationSubscriberInfo {
-        subscriber_id: user_id.to_string(),
-        user_id,
-        name: row.get(1)?,
-        keywords: parse_string_list(row.get::<_, String>(2)?),
-        directions: parse_string_list(row.get::<_, String>(3)?),
-        selected_databases: parse_string_list(row.get::<_, String>(4)?),
-        delivery_method: row.get(5)?,
-        pushplus_token: row.get(6)?,
-        template: optional_trimmed(row.get::<_, String>(7)?),
-        topic: optional_trimmed(row.get::<_, String>(8)?),
-        channel: optional_trimmed(row.get::<_, String>(9)?),
-        sync_to_tracking_folder: row.get::<_, i64>(10)? != 0,
-        ai_base_url: optional_trimmed(row.get::<_, String>(11)?),
-        ai_api_key: optional_trimmed(row.get::<_, String>(12)?),
-        ai_model: optional_trimmed(row.get::<_, String>(13)?),
-        ai_system_prompt: optional_trimmed(row.get::<_, String>(14)?),
-        ai_backup_base_url: optional_trimmed(row.get::<_, String>(15)?),
-        ai_backup_api_key: optional_trimmed(row.get::<_, String>(16)?),
-        ai_backup_model: optional_trimmed(row.get::<_, String>(17)?),
-        ai_backup_system_prompt: optional_trimmed(row.get::<_, String>(18)?),
-        ai_retry_attempts: row.get::<_, i64>(19)?.max(1),
-        tracking_folder_id: row.get(20)?,
-    })
+    Ok((|| {
+        Ok(NotificationSubscriberInfo {
+            subscriber_id: user_id.to_string(),
+            user_id,
+            name: row.get(1)?,
+            keywords: parse_string_list(row.get::<_, String>(2)?),
+            directions: parse_string_list(row.get::<_, String>(3)?),
+            selected_databases: parse_string_list(row.get::<_, String>(4)?),
+            delivery_method: row.get(5)?,
+            pushplus_token: codec.decrypt(
+                &row.get::<_, String>(6)?,
+                &notification_context(user_id, "pushplus_token"),
+            )?,
+            template: optional_trimmed(row.get::<_, String>(7)?),
+            topic: optional_trimmed(row.get::<_, String>(8)?),
+            channel: optional_trimmed(row.get::<_, String>(9)?),
+            sync_to_tracking_folder: row.get::<_, i64>(10)? != 0,
+            ai_base_url: optional_trimmed(row.get::<_, String>(11)?),
+            ai_api_key: optional_trimmed(codec.decrypt(
+                &row.get::<_, String>(12)?,
+                &notification_context(user_id, "ai_api_key"),
+            )?),
+            ai_model: optional_trimmed(row.get::<_, String>(13)?),
+            ai_system_prompt: optional_trimmed(row.get::<_, String>(14)?),
+            ai_backup_base_url: optional_trimmed(row.get::<_, String>(15)?),
+            ai_backup_api_key: optional_trimmed(codec.decrypt(
+                &row.get::<_, String>(16)?,
+                &notification_context(user_id, "ai_backup_api_key"),
+            )?),
+            ai_backup_model: optional_trimmed(row.get::<_, String>(17)?),
+            ai_backup_system_prompt: optional_trimmed(row.get::<_, String>(18)?),
+            ai_retry_attempts: row.get::<_, i64>(19)?.max(1),
+            tracking_folder_id: row.get(20)?,
+        })
+    })())
 }
 
 fn folder_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<FolderResponse> {
@@ -2621,29 +2779,74 @@ fn get_announcement_from_connection(
         .map_err(BusinessRepositoryError::from)
 }
 
-fn runtime_setting_from_definition(
+fn read_runtime_setting_rows(
+    connection: &Connection,
+) -> Result<HashMap<String, (String, f64)>, BusinessRepositoryError> {
+    let mut statement =
+        connection.prepare("SELECT key, value, updated_at FROM runtime_settings")?;
+    let rows = statement.query_map([], |row| {
+        Ok((
+            row.get::<_, String>(0)?,
+            row.get::<_, String>(1)?,
+            row.get::<_, f64>(2)?,
+        ))
+    })?;
+    Ok(collect_rows(rows)?
+        .into_iter()
+        .map(|(key, value, updated_at)| (key, (value, updated_at)))
+        .collect())
+}
+
+fn public_runtime_setting_from_definition(
     definition: &RuntimeConfigDefinition,
     row: Option<&(String, f64)>,
-) -> RuntimeSettingInfo {
-    let (value, source, updated_at) = if let Some((value, updated_at)) = row {
-        (value.clone(), "database".to_string(), Some(*updated_at))
-    } else {
-        (
-            definition.default_value.to_string(),
-            "default".to_string(),
-            None,
-        )
-    };
-    RuntimeSettingInfo {
+    codec: &SecretCodec,
+) -> Result<RuntimeSettingInfo, BusinessRepositoryError> {
+    let internal = internal_runtime_setting_from_definition(definition, row, codec)?;
+    let has_value = !internal.value.trim().is_empty();
+    Ok(RuntimeSettingInfo {
         field: definition.field.to_string(),
         label: definition.label.to_string(),
         description: definition.description.to_string(),
         input_type: definition.input_type.to_string(),
         is_secret: definition.is_secret,
+        value: if definition.is_secret {
+            String::new()
+        } else {
+            internal.value
+        },
+        has_value,
+        masked_value: if definition.is_secret && has_value {
+            "••••".to_string()
+        } else {
+            String::new()
+        },
+        source: internal.source,
+        updated_at: internal.updated_at,
+    })
+}
+
+fn internal_runtime_setting_from_definition(
+    definition: &RuntimeConfigDefinition,
+    row: Option<&(String, f64)>,
+    codec: &SecretCodec,
+) -> Result<RuntimeSettingValue, BusinessRepositoryError> {
+    let (stored, source, updated_at) = if let Some((value, updated_at)) = row {
+        (value.as_str(), "database".to_string(), Some(*updated_at))
+    } else {
+        (definition.default_value, "default".to_string(), None)
+    };
+    let value = if definition.is_secret && row.is_some() {
+        codec.decrypt(stored, &runtime_context(definition.field))?
+    } else {
+        stored.to_string()
+    };
+    Ok(RuntimeSettingValue {
+        field: definition.field.to_string(),
         value,
         source,
         updated_at,
-    }
+    })
 }
 
 fn runtime_definition_by_field(field: &str) -> Option<&'static RuntimeConfigDefinition> {
@@ -2755,6 +2958,19 @@ fn collect_rows<T>(
     Ok(items)
 }
 
+fn collect_nested_rows<T>(
+    rows: rusqlite::MappedRows<
+        '_,
+        impl FnMut(&rusqlite::Row<'_>) -> rusqlite::Result<Result<T, BusinessRepositoryError>>,
+    >,
+) -> Result<Vec<T>, BusinessRepositoryError> {
+    let mut items = Vec::new();
+    for row in rows {
+        items.push(row??);
+    }
+    Ok(items)
+}
+
 fn is_constraint_error(error: &rusqlite::Error) -> bool {
     matches!(
         error,
@@ -2788,7 +3004,10 @@ mod tests {
     use std::sync::{Arc, Barrier};
     use std::{collections::HashMap, fs, thread};
 
-    use ps_domain::{ScheduledIndexJob, ScheduledJobSpec};
+    use ps_domain::{
+        NotificationSettingsResponse, NotificationSettingsUpdate, ScheduledIndexJob,
+        ScheduledJobSpec,
+    };
     use rusqlite::Connection;
     use tempfile::tempdir;
 
@@ -2800,7 +3019,7 @@ mod tests {
         upsert_runtime_settings, BusinessRepositoryError, ScheduledTaskCreateParams,
         ScheduledTaskUpdateParams,
     };
-    use crate::{migrate_auth_database, StorageConfig};
+    use crate::{migrate_auth_database, SecretCodec, StorageConfig};
 
     #[test]
     fn scheduler_repository_validates_typed_jobs_and_replaces_legacy_rows() {
@@ -3049,7 +3268,9 @@ mod tests {
             )
             .expect("stale proxy row should insert");
 
-        let settings = list_runtime_settings(&auth_db_path).expect("runtime settings should load");
+        let codec = SecretCodec::from_key([8_u8; 32]);
+        let settings =
+            list_runtime_settings(&auth_db_path, &codec).expect("runtime settings should load");
         let fields = settings
             .iter()
             .map(|setting| setting.field.as_str())
@@ -3071,14 +3292,92 @@ mod tests {
     }
 
     #[test]
+    fn notification_credentials_are_encrypted_masked_preserved_and_cleared_explicitly() {
+        let temp_dir = tempdir().expect("temp dir should be created");
+        let auth_db_path = temp_dir.path().join("auth.sqlite");
+        migrate_auth_database(&auth_db_path).expect("auth database should migrate");
+        let user = crate::bootstrap_admin(&auth_db_path, "secret-user", "hash", "salt", 1.0)
+            .expect("fixture user should bootstrap");
+        let codec = SecretCodec::from_key([19_u8; 32]);
+        let settings = NotificationSettingsUpdate {
+            keywords: vec!["systems".to_string()],
+            directions: vec!["security".to_string()],
+            selected_databases: Vec::new(),
+            delivery_method: "pushplus".to_string(),
+            pushplus_token: Some(Some("push-secret-value".to_string())),
+            pushplus_template: "markdown".to_string(),
+            pushplus_topic: String::new(),
+            pushplus_channel: "wechat".to_string(),
+            sync_to_tracking_folder: false,
+            ai_base_url: "https://ai.example/v1".to_string(),
+            ai_api_key: Some(Some("primary-secret-value".to_string())),
+            ai_model: "fixture-model".to_string(),
+            ai_system_prompt: String::new(),
+            ai_backup_base_url: "https://backup.example/v1".to_string(),
+            ai_backup_api_key: Some(Some("backup-secret-value".to_string())),
+            ai_backup_model: "backup-model".to_string(),
+            ai_backup_system_prompt: String::new(),
+            ai_retry_attempts: 3,
+            enabled: true,
+        };
+
+        let stored = super::upsert_notification_settings(&auth_db_path, &codec, user.id, &settings)
+            .expect("notification settings should persist");
+        assert_eq!(stored.pushplus_token, "push-secret-value");
+        let connection = Connection::open(&auth_db_path).expect("auth database should open");
+        let raw = connection
+            .query_row(
+                "SELECT pushplus_token, ai_api_key, ai_backup_api_key \
+                 FROM notification_settings WHERE user_id = ?1",
+                [user.id.value()],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                    ))
+                },
+            )
+            .expect("encrypted settings should load");
+        for ciphertext in [&raw.0, &raw.1, &raw.2] {
+            assert!(ciphertext.starts_with("psenc:v1:"));
+            assert!(!ciphertext.contains("secret-value"));
+        }
+        let response = NotificationSettingsResponse::from(&stored);
+        let response_json = serde_json::to_string(&response).expect("response should serialize");
+        assert!(response.has_pushplus_token);
+        assert_eq!(response.pushplus_token_mask, "••••");
+        assert!(!response_json.contains("push-secret-value"));
+        assert!(!response_json.contains("psenc:v1:"));
+
+        let mut preserve = settings.clone();
+        preserve.pushplus_token = Some(Some("   ".to_string()));
+        preserve.ai_api_key = None;
+        preserve.ai_backup_api_key = None;
+        let preserved =
+            super::upsert_notification_settings(&auth_db_path, &codec, user.id, &preserve)
+                .expect("blank and omitted secrets should preserve");
+        assert_eq!(preserved.pushplus_token, "push-secret-value");
+        assert_eq!(preserved.ai_api_key, "primary-secret-value");
+
+        preserve.pushplus_token = Some(None);
+        let cleared =
+            super::upsert_notification_settings(&auth_db_path, &codec, user.id, &preserve)
+                .expect("explicit null should clear");
+        assert!(cleared.pushplus_token.is_empty());
+        assert_eq!(cleared.ai_api_key, "primary-secret-value");
+    }
+
+    #[test]
     fn runtime_settings_reject_proxy_pool_and_normalize_boolean() {
         let temp_dir = tempdir().expect("temp dir should be created");
         let auth_db_path = temp_dir.path().join("auth.sqlite");
         migrate_auth_database(&auth_db_path).expect("auth database should migrate");
+        let codec = SecretCodec::from_key([8_u8; 32]);
         let mut values = HashMap::new();
-        values.insert("secure_cookies".to_string(), "yes".to_string());
+        values.insert("secure_cookies".to_string(), Some("yes".to_string()));
 
-        let settings = upsert_runtime_settings(&auth_db_path, &values)
+        let settings = upsert_runtime_settings(&auth_db_path, &codec, &values)
             .expect("runtime settings should update");
         let secure_cookies = settings
             .iter()
@@ -3089,14 +3388,85 @@ mod tests {
         assert_eq!(secure_cookies.source, "database");
 
         values.clear();
-        values.insert("proxy_pool".to_string(), "proxy".to_string());
-        let error = upsert_runtime_settings(&auth_db_path, &values)
+        values.insert("proxy_pool".to_string(), Some("proxy".to_string()));
+        let error = upsert_runtime_settings(&auth_db_path, &codec, &values)
             .expect_err("proxy pool should be rejected");
 
         assert!(matches!(
             error,
             BusinessRepositoryError::UnknownRuntimeSetting(field) if field == "proxy_pool"
         ));
+    }
+
+    #[test]
+    fn runtime_credentials_are_encrypted_and_use_preserve_replace_clear_updates() {
+        let temp_dir = tempdir().expect("temp dir should be created");
+        let auth_db_path = temp_dir.path().join("auth.sqlite");
+        migrate_auth_database(&auth_db_path).expect("auth database should migrate");
+        let codec = SecretCodec::from_key([23_u8; 32]);
+        let values = HashMap::from([(
+            "openalex_api_key_pool".to_string(),
+            Some("key-one,key-two".to_string()),
+        )]);
+
+        let public = upsert_runtime_settings(&auth_db_path, &codec, &values)
+            .expect("secret runtime setting should update");
+        let openalex = public
+            .iter()
+            .find(|setting| setting.field == "openalex_api_key_pool")
+            .expect("OpenAlex setting should exist");
+        assert_eq!(openalex.value, "");
+        assert!(openalex.has_value);
+        assert_eq!(openalex.masked_value, "••••");
+        let raw: String = Connection::open(&auth_db_path)
+            .expect("auth database should open")
+            .query_row(
+                "SELECT value FROM runtime_settings WHERE key = 'openalex_api_key_pool'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("encrypted setting should load");
+        assert!(raw.starts_with("psenc:v1:"));
+        assert!(!raw.contains("key-one"));
+        let internal = super::load_runtime_settings(&auth_db_path, &codec)
+            .expect("trusted settings should decrypt");
+        assert_eq!(
+            internal
+                .iter()
+                .find(|setting| setting.field == "openalex_api_key_pool")
+                .expect("OpenAlex setting should exist")
+                .value,
+            "key-one,key-two"
+        );
+
+        upsert_runtime_settings(
+            &auth_db_path,
+            &codec,
+            &HashMap::from([("openalex_api_key_pool".to_string(), Some(" ".to_string()))]),
+        )
+        .expect("blank secret should preserve");
+        assert_eq!(
+            super::load_runtime_settings(&auth_db_path, &codec)
+                .expect("trusted settings should decrypt")
+                .into_iter()
+                .find(|setting| setting.field == "openalex_api_key_pool")
+                .expect("OpenAlex setting should exist")
+                .value,
+            "key-one,key-two"
+        );
+
+        let cleared = upsert_runtime_settings(
+            &auth_db_path,
+            &codec,
+            &HashMap::from([("openalex_api_key_pool".to_string(), None)]),
+        )
+        .expect("null secret should clear");
+        let openalex = cleared
+            .iter()
+            .find(|setting| setting.field == "openalex_api_key_pool")
+            .expect("OpenAlex setting should exist");
+        assert!(!openalex.has_value);
+        assert!(openalex.masked_value.is_empty());
     }
 
     #[test]

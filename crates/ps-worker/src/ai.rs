@@ -60,12 +60,23 @@ impl fmt::Display for AiClientError {
 impl Error for AiClientError {}
 
 /// HTTP header sent by an AI transport.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct AiHttpHeader {
     /// Header name.
     pub name: String,
     /// Header value.
     pub value: String,
+}
+
+impl fmt::Debug for AiHttpHeader {
+    /// Format an HTTP header without exposing its value.
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("AiHttpHeader")
+            .field("name", &self.name)
+            .field("value", &"[REDACTED]")
+            .finish()
+    }
 }
 
 /// HTTP request sent to an OpenAI-compatible endpoint.
@@ -609,6 +620,23 @@ mod tests {
                 .pop()
                 .unwrap_or_else(|| Err(AiClientError::Transport("missing fixture response".into())))
         }
+    }
+
+    #[test]
+    fn request_debug_redacts_authorization_header() {
+        let request = AiHttpRequest {
+            url: "https://ai.example.com/chat/completions".to_string(),
+            headers: vec![AiHttpHeader {
+                name: "Authorization".to_string(),
+                value: "Bearer ai-request-secret".to_string(),
+            }],
+            body: json!({"model": "fixture-model"}),
+        };
+
+        let debug = format!("{request:?}");
+
+        assert!(debug.contains("[REDACTED]"));
+        assert!(!debug.contains("ai-request-secret"));
     }
 
     #[test]

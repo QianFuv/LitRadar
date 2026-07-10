@@ -12,7 +12,12 @@ export type InviteRequirement = ApiSchemas['InviteRequiredResponse'];
 export type TrackingStatus = ApiSchemas['TrackingStatusResponse'];
 export type ManualPushStatus = ApiSchemas['ManualWeeklyPushStatus'];
 export type NotificationSettings = ApiSchemas['NotificationSettingsResponse'];
-export type NotificationSettingsUpdate = Required<ApiSchemas['NotificationSettingsUpdate']>;
+type GeneratedNotificationSettingsUpdate = ApiSchemas['NotificationSettingsUpdate'];
+type NotificationSecretField = 'ai_api_key' | 'ai_backup_api_key' | 'pushplus_token';
+export type NotificationSettingsUpdate = Required<
+  Omit<GeneratedNotificationSettingsUpdate, NotificationSecretField>
+> &
+  Pick<GeneratedNotificationSettingsUpdate, NotificationSecretField>;
 export type RuntimeSettingInfo = Omit<
   ApiSchemas['RuntimeSettingInfo'],
   'input_type' | 'source' | 'updated_at'
@@ -245,16 +250,16 @@ function isManualPushStatus(value: unknown): value is ManualPushStatus {
 
 const NOTIFICATION_STRING_FIELDS = [
   'delivery_method',
-  'pushplus_token',
+  'pushplus_token_mask',
   'pushplus_template',
   'pushplus_topic',
   'pushplus_channel',
   'ai_base_url',
-  'ai_api_key',
+  'ai_api_key_mask',
   'ai_model',
   'ai_system_prompt',
   'ai_backup_base_url',
-  'ai_backup_api_key',
+  'ai_backup_api_key_mask',
   'ai_backup_model',
   'ai_backup_system_prompt',
 ] as const;
@@ -273,7 +278,13 @@ function isNotificationSettings(value: unknown): value is NotificationSettings {
     isStringArray(value.keywords) &&
     isStringArray(value.directions) &&
     isStringArray(value.selected_databases) &&
+    !('pushplus_token' in value) &&
+    !('ai_api_key' in value) &&
+    !('ai_backup_api_key' in value) &&
     NOTIFICATION_STRING_FIELDS.every((field) => typeof value[field] === 'string') &&
+    typeof value.has_pushplus_token === 'boolean' &&
+    typeof value.has_ai_api_key === 'boolean' &&
+    typeof value.has_ai_backup_api_key === 'boolean' &&
     typeof value.sync_to_tracking_folder === 'boolean' &&
     isNumber(value.ai_retry_attempts) &&
     typeof value.enabled === 'boolean' &&
@@ -297,6 +308,8 @@ function isRuntimeSettingInfo(value: unknown): value is RuntimeSettingInfo {
     ['text', 'password', 'email', 'boolean'].includes(String(value.input_type)) &&
     typeof value.is_secret === 'boolean' &&
     typeof value.value === 'string' &&
+    typeof value.has_value === 'boolean' &&
+    typeof value.masked_value === 'string' &&
     ['database', 'default'].includes(String(value.source)) &&
     isNullableNumber(value.updated_at)
   );

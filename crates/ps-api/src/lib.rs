@@ -104,9 +104,16 @@ fn try_build_router_with_state(
 ) -> Result<(Router, ApiState), Box<dyn Error>> {
     let storage_config = StorageConfig::from_project_root(config.project_root.clone());
     ps_storage::migrate_storage(&storage_config)?;
-    let runtime_settings = ps_storage::list_runtime_settings(storage_config.auth_db_path())?;
+    let secret_codec = ps_storage::SecretCodec::load(&config.secret_key_file)?;
+    ps_storage::verify_database_secrets(storage_config.auth_db_path(), &secret_codec)?;
+    let runtime_settings =
+        ps_storage::load_runtime_settings(storage_config.auth_db_path(), &secret_codec)?;
     config.apply_runtime_settings(&runtime_settings)?;
-    let state = ApiState::new(storage_config, config.are_session_cookies_secure);
+    let state = ApiState::new(
+        storage_config,
+        secret_codec,
+        config.are_session_cookies_secure,
+    );
 
     let router = Router::new()
         .nest_service("/mcp", mcp::service(&config, state.clone()))
@@ -232,10 +239,17 @@ mod tests {
     fn router_startup_migration_runs_before_business_settings_load() {
         let temp_dir = tempfile::tempdir().expect("temporary project should be created");
         let storage_config = ps_storage::StorageConfig::from_project_root(temp_dir.path());
+        let secret_key_file = temp_dir.path().join("secret.key");
+        fs::write(&secret_key_file, [6_u8; 32]).expect("secret key should write");
         fs::create_dir_all(storage_config.index_dir()).expect("index directory should be created");
         let index_path = storage_config.index_dir().join("startup.sqlite");
         Connection::open(&index_path).expect("empty index database should be created");
-        let config = ApiConfig::new(temp_dir.path().to_path_buf(), "127.0.0.1".to_string(), 0);
+        let config = ApiConfig::new(
+            temp_dir.path().to_path_buf(),
+            "127.0.0.1".to_string(),
+            0,
+            secret_key_file,
+        );
 
         let _router = try_build_router(config)
             .expect("router startup should migrate before reading settings");
@@ -257,8 +271,14 @@ mod tests {
     #[test]
     fn secure_cookie_startup_gate_fails_closed_and_accepts_database_setting() {
         let temp_dir = tempfile::tempdir().expect("temporary project should be created");
-        let mut required =
-            ApiConfig::new(temp_dir.path().to_path_buf(), "127.0.0.1".to_string(), 0);
+        let secret_key_file = temp_dir.path().join("secret.key");
+        fs::write(&secret_key_file, [6_u8; 32]).expect("secret key should write");
+        let mut required = ApiConfig::new(
+            temp_dir.path().to_path_buf(),
+            "127.0.0.1".to_string(),
+            0,
+            secret_key_file.clone(),
+        );
         required.are_secure_cookies_required = true;
 
         let error = try_build_router(required.clone())
@@ -268,14 +288,76 @@ mod tests {
             .contains("Secure session cookies are required"));
 
         let storage_config = ps_storage::StorageConfig::from_project_root(temp_dir.path());
+        let secret_codec =
+            ps_storage::SecretCodec::load(secret_key_file).expect("secret key should load");
         ps_storage::upsert_runtime_settings(
             storage_config.auth_db_path(),
-            &HashMap::from([("secure_cookies".to_string(), "true".to_string())]),
+            &secret_codec,
+            &HashMap::from([("secure_cookies".to_string(), Some("true".to_string()))]),
         )
         .expect("secure cookie runtime setting should persist");
 
         let _router =
             try_build_router(required).expect("production startup should accept secure cookies");
+    }
+
+    #[test]
+    fn router_startup_rejects_missing_wrong_and_tampered_secret_material() {
+        let temp_dir = tempfile::tempdir().expect("temporary project should be created");
+        let storage = ps_storage::StorageConfig::from_project_root(temp_dir.path());
+        ps_storage::migrate_storage(&storage).expect("fixture storage should migrate");
+        let correct_key = temp_dir.path().join("correct.key");
+        let wrong_key = temp_dir.path().join("wrong.key");
+        fs::write(&correct_key, [31_u8; 32]).expect("correct key should write");
+        fs::write(&wrong_key, [32_u8; 32]).expect("wrong key should write");
+        let codec = ps_storage::SecretCodec::load(&correct_key).expect("correct key should load");
+        ps_storage::upsert_runtime_settings(
+            storage.auth_db_path(),
+            &codec,
+            &HashMap::from([(
+                "openalex_api_key_pool".to_string(),
+                Some("startup-secret-value".to_string()),
+            )]),
+        )
+        .expect("encrypted fixture should persist");
+
+        let missing = try_build_router(ApiConfig::new(
+            temp_dir.path().to_path_buf(),
+            "127.0.0.1".to_string(),
+            0,
+            temp_dir.path().join("missing.key"),
+        ))
+        .expect_err("missing key should fail startup");
+        assert!(missing
+            .to_string()
+            .contains("Unable to read the secret key file"));
+
+        let wrong = try_build_router(ApiConfig::new(
+            temp_dir.path().to_path_buf(),
+            "127.0.0.1".to_string(),
+            0,
+            wrong_key,
+        ))
+        .expect_err("wrong key should fail startup");
+        assert_eq!(wrong.to_string(), "Stored secret authentication failed");
+        assert!(!wrong.to_string().contains("startup-secret-value"));
+
+        Connection::open(storage.auth_db_path())
+            .expect("auth database should open")
+            .execute(
+                "UPDATE runtime_settings SET value = value || 'A' \
+                 WHERE key = 'openalex_api_key_pool'",
+                [],
+            )
+            .expect("ciphertext should tamper");
+        let tampered = try_build_router(ApiConfig::new(
+            temp_dir.path().to_path_buf(),
+            "127.0.0.1".to_string(),
+            0,
+            correct_key,
+        ))
+        .expect_err("tampered ciphertext should fail startup");
+        assert_eq!(tampered.to_string(), "Stored secret authentication failed");
     }
 
     #[tokio::test]
@@ -1424,9 +1506,12 @@ mod tests {
             .iter()
             .any(|setting| {
                 setting["field"] == "openalex_api_key_pool"
-                    && setting["value"] == "key-one"
+                    && setting["value"] == ""
+                    && setting["has_value"] == true
+                    && setting["masked_value"] == "••••"
                     && setting["source"] == "database"
             }));
+        assert!(!runtime_update.payload.to_string().contains("key-one"));
         assert_eq!(runtime_error.status, StatusCode::BAD_REQUEST);
         assert_eq!(runtime_proxy_error.status, StatusCode::BAD_REQUEST);
         assert_eq!(task.status, StatusCode::OK);
@@ -1958,8 +2043,37 @@ mod tests {
             })),
         )
         .await;
-        let subscribers = ps_storage::list_notification_subscribers(backend.auth_db_path())
-            .expect("subscribers should load");
+        let preserved_pushplus = json_request(
+            &app,
+            Method::PUT,
+            "/api/tracking/notification-settings",
+            Some(&auth),
+            None,
+            Some(serde_json::json!({
+                "delivery_method": "pushplus",
+                "pushplus_token": "",
+                "enabled": true
+            })),
+        )
+        .await;
+        let cleared_pushplus = json_request(
+            &app,
+            Method::PUT,
+            "/api/tracking/notification-settings",
+            Some(&auth),
+            None,
+            Some(serde_json::json!({
+                "delivery_method": "folder",
+                "pushplus_token": null,
+                "enabled": true
+            })),
+        )
+        .await;
+        let subscribers = ps_storage::list_notification_subscribers(
+            backend.auth_db_path(),
+            backend.secret_codec(),
+        )
+        .expect("subscribers should load");
 
         assert_eq!(initial_status.status, StatusCode::OK);
         assert_eq!(initial_status.payload["total_folders"], 1);
@@ -1990,6 +2104,15 @@ mod tests {
         assert_eq!(pushplus_settings.status, StatusCode::OK);
         assert_eq!(pushplus_settings.payload["delivery_method"], "pushplus");
         assert_eq!(pushplus_settings.payload["pushplus_template"], "markdown");
+        assert_eq!(pushplus_settings.payload["has_pushplus_token"], true);
+        assert_eq!(pushplus_settings.payload["pushplus_token_mask"], "••••");
+        assert!(pushplus_settings.payload.get("pushplus_token").is_none());
+        assert!(!pushplus_settings.payload.to_string().contains("token-1"));
+        assert!(!pushplus_settings.payload.to_string().contains("psenc:v1:"));
+        assert_eq!(preserved_pushplus.status, StatusCode::OK);
+        assert_eq!(preserved_pushplus.payload["has_pushplus_token"], true);
+        assert_eq!(cleared_pushplus.status, StatusCode::OK);
+        assert_eq!(cleared_pushplus.payload["has_pushplus_token"], false);
         assert_eq!(subscribers.len(), 1);
         assert_eq!(subscribers[0].user_id, user.user_id().value());
         assert_eq!(subscribers[0].tracking_folder_id, Some(1));
@@ -2304,6 +2427,7 @@ mod tests {
         let cnki_article_id = insert_cnki_fulltext_article(&index_database);
         ps_storage::upsert_cnki_session(
             backend.auth_db_path(),
+            backend.secret_codec(),
             user.user_id(),
             &serde_json::json!({
                 "bff_user_token": "x.eyJleHAiOjQxMDI0NDQ4MDB9.y",
@@ -2346,9 +2470,12 @@ mod tests {
         let body = to_bytes(response.into_body(), usize::MAX)
             .await
             .expect("body should read");
-        let session_status =
-            ps_storage::get_cnki_session_status(backend.auth_db_path(), user.user_id())
-                .expect("CNKI session status should load");
+        let session_status = ps_storage::get_cnki_session_status(
+            backend.auth_db_path(),
+            backend.secret_codec(),
+            user.user_id(),
+        )
+        .expect("CNKI session status should load");
 
         assert_eq!(access.status, StatusCode::OK);
         assert_eq!(access.payload["fulltext"]["available"], true);
@@ -2502,9 +2629,12 @@ mod tests {
             None,
         )
         .await;
-        let storage_session =
-            ps_storage::get_cnki_session_status(backend.auth_db_path(), user.user_id())
-                .expect("CNKI session status should load");
+        let storage_session = ps_storage::get_cnki_session_status(
+            backend.auth_db_path(),
+            backend.secret_codec(),
+            user.user_id(),
+        )
+        .expect("CNKI session status should load");
         let cleared = json_request(
             &app,
             Method::DELETE,
@@ -2590,10 +2720,13 @@ mod tests {
             })),
         )
         .await;
-        let session_data =
-            ps_storage::get_cnki_session_data(backend.auth_db_path(), user.user_id())
-                .expect("CNKI session data should load")
-                .expect("CNKI session data should exist");
+        let session_data = ps_storage::get_cnki_session_data(
+            backend.auth_db_path(),
+            backend.secret_codec(),
+            user.user_id(),
+        )
+        .expect("CNKI session data should load")
+        .expect("CNKI session data should exist");
 
         assert_eq!(start.status, StatusCode::OK);
         assert_eq!(start.payload["uuid"], "qr-rust-live-fixture");

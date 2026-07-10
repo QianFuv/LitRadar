@@ -73,6 +73,7 @@ pub(crate) async fn push_weekly_to_tracking(
     set_manual_push_status(key.clone(), status.clone());
     let config = ManualWeeklyPushConfig {
         storage_config: state.storage_config().clone(),
+        secret_codec: state.secret_codec().clone(),
         user_id: user.id,
         ai_model: None,
         max_candidates: None,
@@ -116,11 +117,16 @@ pub(crate) async fn status(
     headers: HeaderMap,
 ) -> Result<Json<TrackingStatusResponse>, ApiError> {
     let (user, _) = require_current_user(&state, &headers).await?;
-    let (folder, folders, settings, weekly_articles_available) =
-        run_storage(&state, move |storage| {
+    let (folder, folders, settings, weekly_articles_available) = run_storage(&state, {
+        let secret_codec = state.secret_codec().clone();
+        move |storage| {
             let folder = ps_storage::get_tracking_folder(storage.auth_db_path(), user.id)?;
             let folders = ps_storage::list_folders(storage.auth_db_path(), user.id)?;
-            let settings = ps_storage::get_notification_settings(storage.auth_db_path(), user.id)?;
+            let settings = ps_storage::get_notification_settings(
+                storage.auth_db_path(),
+                &secret_codec,
+                user.id,
+            )?;
             let selected_databases = settings
                 .as_ref()
                 .map(|item| item.selected_databases.as_slice())
@@ -133,8 +139,9 @@ pub(crate) async fn status(
                 settings,
                 weekly_articles_available,
             ))
-        })
-        .await?;
+        }
+    })
+    .await?;
     Ok(Json(TrackingStatusResponse {
         tracking_folder: folder.map(|item| TrackingFolderSummary {
             id: item.id,
@@ -159,11 +166,14 @@ pub(crate) async fn get_notification_settings(
     headers: HeaderMap,
 ) -> Result<Json<Option<NotificationSettingsResponse>>, ApiError> {
     let (user, _) = require_current_user(&state, &headers).await?;
+    let secret_codec = state.secret_codec().clone();
     let settings = run_storage(&state, move |storage| {
-        ps_storage::get_notification_settings(storage.auth_db_path(), user.id)
+        ps_storage::get_notification_settings(storage.auth_db_path(), &secret_codec, user.id)
     })
     .await?;
-    Ok(Json(settings))
+    Ok(Json(
+        settings.as_ref().map(NotificationSettingsResponse::from),
+    ))
 }
 
 /// Create or update the user's notification settings.
@@ -213,7 +223,23 @@ pub(crate) async fn update_notification_settings(
             ALLOWED_DELIVERY_METHODS.join(", ")
         )));
     }
-    if body.delivery_method == "pushplus" && body.pushplus_token.trim().is_empty() {
+    let existing_secret_codec = state.secret_codec().clone();
+    let existing_settings = run_storage(&state, move |storage| {
+        ps_storage::get_notification_settings(
+            storage.auth_db_path(),
+            &existing_secret_codec,
+            user.id,
+        )
+    })
+    .await?;
+    let has_effective_pushplus_token = match body.pushplus_token.as_ref() {
+        Some(None) => false,
+        Some(Some(value)) if !value.trim().is_empty() => true,
+        _ => existing_settings
+            .as_ref()
+            .is_some_and(|settings| !settings.pushplus_token.is_empty()),
+    };
+    if body.delivery_method == "pushplus" && !has_effective_pushplus_token {
         return Err(ApiError::bad_request(
             "pushplus_token is required when delivery_method is 'pushplus'",
         ));
@@ -235,27 +261,37 @@ pub(crate) async fn update_notification_settings(
         directions: trim_nonempty(body.directions),
         selected_databases,
         delivery_method: body.delivery_method,
-        pushplus_token: body.pushplus_token.trim().to_string(),
+        pushplus_token: normalize_secret_update(body.pushplus_token),
         pushplus_template: nonempty_or_default(body.pushplus_template, "markdown"),
         pushplus_topic: body.pushplus_topic.trim().to_string(),
         pushplus_channel: body.pushplus_channel.trim().to_string(),
         sync_to_tracking_folder: body.sync_to_tracking_folder,
         ai_base_url: body.ai_base_url.trim().to_string(),
-        ai_api_key: body.ai_api_key.trim().to_string(),
+        ai_api_key: normalize_secret_update(body.ai_api_key),
         ai_model: body.ai_model.trim().to_string(),
         ai_system_prompt: body.ai_system_prompt.trim().to_string(),
         ai_backup_base_url: body.ai_backup_base_url.trim().to_string(),
-        ai_backup_api_key: body.ai_backup_api_key.trim().to_string(),
+        ai_backup_api_key: normalize_secret_update(body.ai_backup_api_key),
         ai_backup_model: body.ai_backup_model.trim().to_string(),
         ai_backup_system_prompt: body.ai_backup_system_prompt.trim().to_string(),
         ai_retry_attempts: body.ai_retry_attempts,
         enabled: body.enabled,
     };
+    let secret_codec = state.secret_codec().clone();
     let settings = run_storage(&state, move |storage| {
-        ps_storage::upsert_notification_settings(storage.auth_db_path(), user.id, &normalized)
+        ps_storage::upsert_notification_settings(
+            storage.auth_db_path(),
+            &secret_codec,
+            user.id,
+            &normalized,
+        )
     })
     .await?;
-    Ok(Json(settings))
+    Ok(Json(NotificationSettingsResponse::from(&settings)))
+}
+
+fn normalize_secret_update(update: Option<Option<String>>) -> Option<Option<String>> {
+    update.map(|value| value.map(|secret| secret.trim().to_string()))
 }
 
 fn trim_nonempty(values: Vec<String>) -> Vec<String> {

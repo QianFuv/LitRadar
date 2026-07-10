@@ -406,8 +406,9 @@ pub(crate) async fn list_runtime_settings(
     headers: HeaderMap,
 ) -> Result<Json<Vec<RuntimeSettingInfo>>, ApiError> {
     require_admin_user(&state, &headers).await?;
+    let secret_codec = state.secret_codec().clone();
     let settings = run_business(&state, move |storage| {
-        ps_storage::list_runtime_settings(storage.auth_db_path())
+        ps_storage::list_runtime_settings(storage.auth_db_path(), &secret_codec)
     })
     .await?;
     Ok(Json(settings))
@@ -429,8 +430,9 @@ pub(crate) async fn update_runtime_settings(
 ) -> Result<Json<Vec<RuntimeSettingInfo>>, ApiError> {
     require_admin_user(&state, &headers).await?;
     let values = body.values;
+    let secret_codec = state.secret_codec().clone();
     let settings = run_business(&state, move |storage| {
-        ps_storage::upsert_runtime_settings(storage.auth_db_path(), &values)
+        ps_storage::upsert_runtime_settings(storage.auth_db_path(), &secret_codec, &values)
     })
     .await?;
     Ok(Json(settings))

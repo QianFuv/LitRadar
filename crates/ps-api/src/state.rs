@@ -5,7 +5,7 @@ use std::fmt;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use ps_storage::StorageConfig;
+use ps_storage::{SecretCodec, StorageConfig};
 use tokio::sync::Semaphore;
 
 const AUTH_USERNAME_ATTEMPT_LIMIT: u32 = 5;
@@ -21,6 +21,7 @@ const DEFAULT_BLOCKING_TIMEOUT: Duration = Duration::from_secs(30);
 #[derive(Debug, Clone)]
 pub struct ApiState {
     storage_config: StorageConfig,
+    secret_codec: SecretCodec,
     are_session_cookies_secure: bool,
     auth_rate_limiter: Arc<Mutex<AuthRateLimiter>>,
     blocking_executor: BlockingExecutor,
@@ -32,14 +33,20 @@ impl ApiState {
     /// # Arguments
     ///
     /// * `storage_config` - Data path configuration.
+    /// * `secret_codec` - Deployment secret codec.
     /// * `are_session_cookies_secure` - Whether session cookies include Secure.
     ///
     /// # Returns
     ///
     /// Shared API state.
-    pub fn new(storage_config: StorageConfig, are_session_cookies_secure: bool) -> Self {
+    pub fn new(
+        storage_config: StorageConfig,
+        secret_codec: SecretCodec,
+        are_session_cookies_secure: bool,
+    ) -> Self {
         Self {
             storage_config,
+            secret_codec,
             are_session_cookies_secure,
             auth_rate_limiter: Arc::new(Mutex::new(AuthRateLimiter::new(
                 AuthRateLimitConfig::default(),
@@ -56,6 +63,7 @@ impl ApiState {
     /// # Arguments
     ///
     /// * `storage_config` - Data path configuration.
+    /// * `secret_codec` - Deployment secret codec.
     /// * `are_session_cookies_secure` - Whether session cookies include Secure.
     /// * `concurrency` - Maximum simultaneously running blocking jobs.
     /// * `timeout` - Default permit-and-result deadline.
@@ -66,12 +74,14 @@ impl ApiState {
     #[cfg(test)]
     pub(crate) fn new_with_blocking_limits(
         storage_config: StorageConfig,
+        secret_codec: SecretCodec,
         are_session_cookies_secure: bool,
         concurrency: usize,
         timeout: Duration,
     ) -> Self {
         Self {
             storage_config,
+            secret_codec,
             are_session_cookies_secure,
             auth_rate_limiter: Arc::new(Mutex::new(AuthRateLimiter::new(
                 AuthRateLimitConfig::default(),
@@ -87,6 +97,15 @@ impl ApiState {
     /// Storage configuration used by repositories.
     pub fn storage_config(&self) -> &StorageConfig {
         &self.storage_config
+    }
+
+    /// Return the deployment secret codec.
+    ///
+    /// # Returns
+    ///
+    /// Codec used for persisted integration credentials.
+    pub fn secret_codec(&self) -> &SecretCodec {
+        &self.secret_codec
     }
 
     /// Run synchronous work on Tokio's blocking pool behind the shared concurrency limit.
@@ -433,7 +452,7 @@ mod tests {
 
     use axum::body::{to_bytes, Body};
     use axum::http::{Request, StatusCode};
-    use ps_storage::StorageConfig;
+    use ps_storage::{SecretCodec, StorageConfig};
     use tower::ServiceExt;
 
     use super::{
@@ -494,6 +513,7 @@ mod tests {
     async fn blocking_executor_bounds_concurrency_and_keeps_runtime_responsive() {
         let state = ApiState::new_with_blocking_limits(
             StorageConfig::from_project_root("blocking-test-root"),
+            SecretCodec::from_key([1_u8; 32]),
             false,
             1,
             Duration::from_millis(50),
@@ -571,6 +591,7 @@ mod tests {
     async fn blocking_executor_close_rejects_new_work() {
         let state = ApiState::new_with_blocking_limits(
             StorageConfig::from_project_root("blocking-test-root"),
+            SecretCodec::from_key([1_u8; 32]),
             false,
             1,
             Duration::from_secs(1),

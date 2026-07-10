@@ -48,7 +48,7 @@
 
 ## 用户配置来源
 
-订阅源为 `data/auth.sqlite` 中的 `notification_settings` 表。字段包括：
+订阅源为 `data/auth.sqlite` 中的 `notification_settings` 表。PushPlus token 与主备 AI key 以 `psenc:v1:` 认证密文保存；worker 只能通过显式部署密钥解密。字段包括：
 
 | 字段 | 说明 |
 | --- | --- |
@@ -76,7 +76,7 @@
 
 通知链路使用用户级配置，不读取进程环境变量作为默认凭据。用户可通过前端“文献追踪”页面或 `/api/tracking/notification-settings` API 配置 OpenAI 兼容 endpoint、模型、API key、系统提示词、备用 endpoint、PushPlus token、模板、topic 和 channel。
 
-用户配置备用 endpoint 时，主 endpoint 在重试后仍不可用会尝试备用配置；主备都不可用时跳过该用户。未配置可用 AI key/model 的用户也会被跳过。
+用户配置备用 endpoint 时，主 endpoint 在重试后仍不可用会尝试备用配置；主备都不可用时跳过该用户。未配置可用 AI key/model 的用户也会被跳过。读取接口不返回 token、API key 或密文，只返回 `has_*` 与固定掩码；更新时缺省或空白保留，JSON `null` 明确清除，非空字符串替换。
 
 ## AI 选择逻辑
 
@@ -96,8 +96,8 @@ AI 请求使用 OpenAI 兼容 `/chat/completions` 接口。选择请求会依次
 示例：
 
 ```bash
-cargo run --bin notify -- --dry-run
-cargo run --bin notify -- --db utd24.sqlite --changes-file data/push_state/utd24.changes.json --no-dry-run
+cargo run --bin notify -- --secret-key-file secrets/paper-scanner.key --dry-run
+cargo run --bin notify -- --secret-key-file secrets/paper-scanner.key --db utd24.sqlite --changes-file data/push_state/utd24.changes.json --no-dry-run
 ```
 
 参数：
@@ -105,6 +105,7 @@ cargo run --bin notify -- --db utd24.sqlite --changes-file data/push_state/utd24
 | 参数 | 默认值 | 说明 |
 | --- | --- | --- |
 | `--auth-db` | `data/auth.sqlite` | 用户与通知设置数据库 |
+| `--secret-key-file` | 必填 | 原始 32 字节部署密钥文件 |
 | `--index-db` | 空 | 指定单个目标索引 SQLite 文件 |
 | `--db` | 空 | 数据库文件名或显示名；省略时处理所有 `data/index/*.sqlite` |
 | `--state-dir` | `data/push_state` | 状态文件目录 |
@@ -127,8 +128,8 @@ cargo run --bin notify -- --db utd24.sqlite --changes-file data/push_state/utd24
 示例：
 
 ```bash
-cargo run --bin push -- --dry-run
-cargo run --bin push -- --db utd24.sqlite --changes-file data/push_state/utd24.changes.json --no-dry-run
+cargo run --bin push -- --secret-key-file secrets/paper-scanner.key --dry-run
+cargo run --bin push -- --secret-key-file secrets/paper-scanner.key --db utd24.sqlite --changes-file data/push_state/utd24.changes.json --no-dry-run
 ```
 
 参数与 `notify` 一致，但默认状态目录是 `data/folder_push_state`。处理对象：

@@ -63,8 +63,8 @@ pub(crate) async fn get_session(
     headers: HeaderMap,
 ) -> Result<Json<CnkiSessionStatusResponse>, ApiError> {
     let (user, _) = require_current_user(&state, &headers).await?;
-    let status = run_cnki(&state, move |storage| {
-        ps_storage::get_cnki_session_status(storage.auth_db_path(), user.id)
+    let status = run_cnki(&state, move |storage, secret_codec| {
+        ps_storage::get_cnki_session_status(storage.auth_db_path(), &secret_codec, user.id)
     })
     .await?;
     Ok(Json(status))
@@ -100,9 +100,10 @@ pub(crate) async fn start_login(
                 "qr_uuid": DEFAULT_QR_UUID,
                 "cookies": [],
             });
-            let session = run_cnki(&state, move |storage| {
+            let session = run_cnki(&state, move |storage, secret_codec| {
                 ps_storage::upsert_cnki_session(
                     storage.auth_db_path(),
+                    &secret_codec,
                     user.id,
                     &session_data,
                     "waiting_scan",
@@ -140,9 +141,10 @@ pub(crate) async fn start_login(
                 )
             })?;
             let qr_uuid = qr_login.uuid.clone();
-            let session = run_cnki(&state, move |storage| {
+            let session = run_cnki(&state, move |storage, secret_codec| {
                 ps_storage::upsert_cnki_session(
                     storage.auth_db_path(),
+                    &secret_codec,
                     user_id,
                     &session_data,
                     "waiting_scan",
@@ -186,8 +188,8 @@ pub(crate) async fn poll_login(
 ) -> Result<Json<CnkiLoginPollResponse>, ApiError> {
     validate_poll_request(&body)?;
     let (user, _) = require_current_user(&state, &headers).await?;
-    let current = run_cnki(&state, move |storage| {
-        ps_storage::get_cnki_session_status(storage.auth_db_path(), user.id)
+    let current = run_cnki(&state, move |storage, secret_codec| {
+        ps_storage::get_cnki_session_status(storage.auth_db_path(), &secret_codec, user.id)
     })
     .await?;
     if !current.configured || current.status == "empty" {
@@ -210,9 +212,10 @@ pub(crate) async fn poll_login(
                 ],
                 "final_zyproxy_url": "https://cnki.elib.test/kns55/"
             });
-            let session = run_cnki(&state, move |storage| {
+            let session = run_cnki(&state, move |storage, secret_codec| {
                 ps_storage::upsert_cnki_session(
                     storage.auth_db_path(),
+                    &secret_codec,
                     user.id,
                     &session_data,
                     "active",
@@ -244,8 +247,8 @@ pub(crate) async fn poll_login(
             ),
         )),
         None => {
-            let row = run_cnki(&state, move |storage| {
-                ps_storage::get_cnki_session_data(storage.auth_db_path(), user.id)
+            let row = run_cnki(&state, move |storage, secret_codec| {
+                ps_storage::get_cnki_session_data(storage.auth_db_path(), &secret_codec, user.id)
             })
             .await?
             .ok_or_else(|| {
@@ -313,9 +316,10 @@ pub(crate) async fn poll_login(
                     ));
                 }
             };
-            let session = run_cnki(&state, move |storage| {
+            let session = run_cnki(&state, move |storage, secret_codec| {
                 ps_storage::upsert_cnki_session(
                     storage.auth_db_path(),
+                    &secret_codec,
                     user_id,
                     &session_data,
                     "active",
@@ -356,9 +360,9 @@ pub(crate) async fn clear_session(
     headers: HeaderMap,
 ) -> Result<Json<CnkiSessionStatusResponse>, ApiError> {
     let (user, _) = require_current_user(&state, &headers).await?;
-    let status = run_cnki(&state, move |storage| {
+    let status = run_cnki(&state, move |storage, secret_codec| {
         ps_storage::delete_cnki_session(storage.auth_db_path(), user.id)?;
-        ps_storage::get_cnki_session_status(storage.auth_db_path(), user.id)
+        ps_storage::get_cnki_session_status(storage.auth_db_path(), &secret_codec, user.id)
     })
     .await?;
     Ok(Json(status))
@@ -384,12 +388,15 @@ fn map_cnki_error(_error: CnkiRepositoryError) -> ApiError {
 
 async fn run_cnki<Output, Work>(state: &ApiState, work: Work) -> Result<Output, ApiError>
 where
-    Work: FnOnce(StorageConfig) -> Result<Output, CnkiRepositoryError> + Send + 'static,
+    Work: FnOnce(StorageConfig, ps_storage::SecretCodec) -> Result<Output, CnkiRepositoryError>
+        + Send
+        + 'static,
     Output: Send + 'static,
 {
     let storage = state.storage_config().clone();
+    let secret_codec = state.secret_codec().clone();
     state
-        .run_blocking(move || work(storage))
+        .run_blocking(move || work(storage, secret_codec))
         .await?
         .map_err(map_cnki_error)
 }

@@ -9,7 +9,9 @@ use axum::http::{HeaderMap, Method, Request, StatusCode};
 use axum::Router;
 use ps_auth::{AuthService, ACCESS_TOKEN_DEFAULT_TTL, SESSION_COOKIE_NAME};
 use ps_domain::{UserId, UserResponse};
-use ps_storage::{admin_create_invite_code, count_users, migrate_storage, StorageConfig};
+use ps_storage::{
+    admin_create_invite_code, count_users, migrate_storage, SecretCodec, StorageConfig,
+};
 use rusqlite::Connection;
 use serde_json::Value;
 use tempfile::{tempdir, TempDir};
@@ -24,6 +26,7 @@ const TEST_PASSWORD: &str = "fixture-password";
 pub(crate) struct TestBackend {
     temp_dir: TempDir,
     storage_config: StorageConfig,
+    secret_codec: SecretCodec,
 }
 
 impl TestBackend {
@@ -35,11 +38,15 @@ impl TestBackend {
     pub(crate) fn new() -> Self {
         let temp_dir = tempdir().expect("temp dir should be created");
         let storage_config = StorageConfig::from_project_root(temp_dir.path());
+        let secret_key_file = temp_dir.path().join("secret.key");
+        fs::write(&secret_key_file, [42_u8; 32]).expect("secret key should write");
         fs::create_dir_all(storage_config.index_dir()).expect("index dir should be created");
         migrate_storage(&storage_config).expect("test databases should migrate");
         Self {
             temp_dir,
             storage_config,
+            secret_codec: SecretCodec::load(secret_key_file)
+                .expect("fixture secret codec should load"),
         }
     }
 
@@ -70,14 +77,27 @@ impl TestBackend {
         self.storage_config.auth_db_path()
     }
 
+    /// Return the fixture deployment secret codec.
+    ///
+    /// # Returns
+    ///
+    /// Secret codec initialized from the temporary key file.
+    pub(crate) fn secret_codec(&self) -> &SecretCodec {
+        &self.secret_codec
+    }
+
     /// Build an API router bound to this fixture's project root.
     ///
     /// # Returns
     ///
     /// Axum router ready for one-shot test requests.
     pub(crate) fn router(&self) -> Router {
-        let mut config =
-            ApiConfig::new(self.project_root().to_path_buf(), TEST_HOST.to_string(), 0);
+        let mut config = ApiConfig::new(
+            self.project_root().to_path_buf(),
+            TEST_HOST.to_string(),
+            0,
+            self.project_root().join("secret.key"),
+        );
         config.mcp_allowed_hosts = vec!["localhost".to_string(), TEST_HOST.to_string()];
         build_router(config)
     }

@@ -11,6 +11,7 @@ data/index/
 data/push_state/
 ps.egg-info/
 backup/
+secrets/
 test/
 docs/
 *.md

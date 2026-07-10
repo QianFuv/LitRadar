@@ -567,8 +567,9 @@ pub(crate) async fn get_article_access(
 ) -> Result<Json<ps_domain::ArticleAccessResponse>, ApiError> {
     let (user, _) = require_current_user(&state, &headers).await?;
     let db = query.db.and_then(nonempty_owned);
+    let secret_codec = state.secret_codec().clone();
     let payload = run_index(&state, move |storage| {
-        ps_storage::get_article_access(&storage, db.as_deref(), article_id, user.id)
+        ps_storage::get_article_access(&storage, &secret_codec, db.as_deref(), article_id, user.id)
     })
     .await?;
     Ok(Json(payload))
@@ -608,8 +609,15 @@ pub(crate) async fn redirect_article_fulltext(
 ) -> Result<Response, ApiError> {
     let (user, _) = require_current_user(&state, &headers).await?;
     let db = query.db.and_then(nonempty_owned);
+    let target_secret_codec = state.secret_codec().clone();
     let target = run_index(&state, move |storage| {
-        ps_storage::article_fulltext_target(&storage, db.as_deref(), article_id, user.id)
+        ps_storage::article_fulltext_target(
+            &storage,
+            &target_secret_codec,
+            db.as_deref(),
+            article_id,
+            user.id,
+        )
     })
     .await?;
     match target {
@@ -638,6 +646,7 @@ pub(crate) async fn redirect_article_fulltext(
         }
         ps_storage::ArticleFulltextTarget::Cnki(target) => {
             let auth_db_path = state.storage_config().auth_db_path().to_path_buf();
+            let secret_codec = state.secret_codec().clone();
             let user_id = user.id;
             let qr_uuid = target.qr_uuid.clone();
             let expected = ZjlibCnkiArticleIdentity {
@@ -657,6 +666,7 @@ pub(crate) async fn redirect_article_fulltext(
                 .run_blocking(move || {
                     ps_storage::upsert_cnki_session(
                         &auth_db_path,
+                        &secret_codec,
                         user_id,
                         &session_data,
                         "active",

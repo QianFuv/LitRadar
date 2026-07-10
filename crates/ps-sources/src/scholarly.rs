@@ -331,7 +331,7 @@ impl FixtureScholarlyTransport {
 }
 
 /// Live Scholarly source transport configuration.
-#[derive(Debug, Clone, Deserialize, PartialEq, Eq, Serialize)]
+#[derive(Clone, Deserialize, PartialEq, Eq, Serialize)]
 pub struct LiveScholarlyConfig {
     /// HTTP request timeout in seconds.
     pub timeout_seconds: u64,
@@ -347,6 +347,23 @@ pub struct LiveScholarlyConfig {
     pub semantic_scholar_process_count: usize,
     /// Base Semantic Scholar global interval in milliseconds.
     pub semantic_scholar_base_interval_ms: u64,
+}
+
+impl fmt::Debug for LiveScholarlyConfig {
+    /// Format source configuration without exposing key or mailto values.
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("LiveScholarlyConfig")
+            .field("timeout_seconds", &self.timeout_seconds)
+            .field("openalex_api_key_count", &self.openalex_api_keys.len())
+            .field(
+                "semantic_scholar_api_key_count",
+                &self.semantic_scholar_api_keys.len(),
+            )
+            .field("crossref_mailto_count", &self.crossref_mailtos.len())
+            .field("credentials", &"[REDACTED]")
+            .finish()
+    }
 }
 
 impl LiveScholarlyConfig {
@@ -1413,6 +1430,26 @@ mod tests {
             value_pool_from_text(" one, two;one\nthree "),
             vec!["one".to_string(), "two".to_string(), "three".to_string()]
         );
+    }
+
+    #[test]
+    fn live_config_debug_redacts_credentials() {
+        let config = LiveScholarlyConfig {
+            timeout_seconds: 30,
+            openalex_api_keys: vec!["openalex-secret".to_string()],
+            semantic_scholar_api_keys: vec!["semantic-secret".to_string()],
+            crossref_mailtos: vec!["private@example.com".to_string()],
+            semantic_scholar_worker_id: 0,
+            semantic_scholar_process_count: 1,
+            semantic_scholar_base_interval_ms: 1,
+        };
+
+        let debug = format!("{config:?}");
+
+        assert!(debug.contains("openalex_api_key_count: 1"));
+        assert!(!debug.contains("openalex-secret"));
+        assert!(!debug.contains("semantic-secret"));
+        assert!(!debug.contains("private@example.com"));
     }
 
     #[test]

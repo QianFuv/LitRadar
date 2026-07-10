@@ -37,6 +37,8 @@ const CNKI_SOURCE: &str = "cnki";
 pub struct LiveIndexConfig {
     /// Project root containing the `data` directory.
     pub project_root: PathBuf,
+    /// Deployment secret key file forwarded to notification handoff.
+    pub secret_key_file: PathBuf,
     /// Optional CSV filename under `data/meta`.
     pub file: Option<String>,
     /// Number of CNKI article-detail request workers per journal worker.
@@ -504,6 +506,7 @@ fn run_live_index_worker(
     let connection = open_live_index_connection(&request.db_path)?;
     let config = LiveIndexConfig {
         project_root: request.project_root.clone(),
+        secret_key_file: PathBuf::new(),
         file: None,
         worker_count: request.worker_count,
         process_count: 1,
@@ -1237,6 +1240,8 @@ fn run_notify_command_for_manifest(
     let state_dir = config.project_root.join("data").join("push_state");
     let mut command = Command::new(command_path);
     command
+        .arg("--secret-key-file")
+        .arg(&config.secret_key_file)
         .arg("--db")
         .arg(db_name)
         .arg("--changes-file")
@@ -1738,6 +1743,7 @@ mod tests {
     fn live_config(root: &Path) -> LiveIndexConfig {
         LiveIndexConfig {
             project_root: root.to_path_buf(),
+            secret_key_file: root.join("secret.key"),
             file: None,
             worker_count: 32,
             process_count: 2,

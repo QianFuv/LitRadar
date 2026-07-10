@@ -4439,17 +4439,20 @@
           "directions",
           "selected_databases",
           "delivery_method",
-          "pushplus_token",
+          "has_pushplus_token",
+          "pushplus_token_mask",
           "pushplus_template",
           "pushplus_topic",
           "pushplus_channel",
           "sync_to_tracking_folder",
           "ai_base_url",
-          "ai_api_key",
+          "has_ai_api_key",
+          "ai_api_key_mask",
           "ai_model",
           "ai_system_prompt",
           "ai_backup_base_url",
-          "ai_backup_api_key",
+          "has_ai_backup_api_key",
+          "ai_backup_api_key_mask",
           "ai_backup_model",
           "ai_backup_system_prompt",
           "ai_retry_attempts",
@@ -4458,13 +4461,13 @@
           "updated_at"
         ],
         "properties": {
-          "ai_api_key": {
+          "ai_api_key_mask": {
             "type": "string",
-            "description": "Primary AI endpoint API key."
+            "description": "Fixed non-secret mask when a primary AI API key is configured."
           },
-          "ai_backup_api_key": {
+          "ai_backup_api_key_mask": {
             "type": "string",
-            "description": "Backup AI endpoint API key."
+            "description": "Fixed non-secret mask when a backup AI API key is configured."
           },
           "ai_backup_base_url": {
             "type": "string",
@@ -4515,6 +4518,18 @@
             "type": "boolean",
             "description": "Whether recommendations are enabled."
           },
+          "has_ai_api_key": {
+            "type": "boolean",
+            "description": "Whether a primary AI API key is configured."
+          },
+          "has_ai_backup_api_key": {
+            "type": "boolean",
+            "description": "Whether a backup AI API key is configured."
+          },
+          "has_pushplus_token": {
+            "type": "boolean",
+            "description": "Whether a PushPlus token is configured."
+          },
           "id": {
             "type": "integer",
             "format": "int64",
@@ -4535,9 +4550,9 @@
             "type": "string",
             "description": "PushPlus template."
           },
-          "pushplus_token": {
+          "pushplus_token_mask": {
             "type": "string",
-            "description": "PushPlus token."
+            "description": "Fixed non-secret mask when a PushPlus token is configured."
           },
           "pushplus_topic": {
             "type": "string",
@@ -4570,12 +4585,12 @@
         "description": "Notification settings update payload.",
         "properties": {
           "ai_api_key": {
-            "type": "string",
-            "description": "Primary AI endpoint API key."
+            "type": ["string", "null"],
+            "description": "Primary AI API key update: omitted preserves, null clears, and non-empty replaces."
           },
           "ai_backup_api_key": {
-            "type": "string",
-            "description": "Backup AI endpoint API key."
+            "type": ["string", "null"],
+            "description": "Backup AI API key update: omitted preserves, null clears, and non-empty replaces."
           },
           "ai_backup_base_url": {
             "type": "string",
@@ -4637,8 +4652,8 @@
             "description": "PushPlus template."
           },
           "pushplus_token": {
-            "type": "string",
-            "description": "PushPlus token."
+            "type": ["string", "null"],
+            "description": "PushPlus token update: omitted preserves, null clears, and non-empty replaces."
           },
           "pushplus_topic": {
             "type": "string",
@@ -4749,7 +4764,17 @@
       "RuntimeSettingInfo": {
         "type": "object",
         "description": "Runtime setting response payload.",
-        "required": ["field", "label", "description", "input_type", "is_secret", "value", "source"],
+        "required": [
+          "field",
+          "label",
+          "description",
+          "input_type",
+          "is_secret",
+          "value",
+          "has_value",
+          "masked_value",
+          "source"
+        ],
         "properties": {
           "description": {
             "type": "string",
@@ -4758,6 +4783,10 @@
           "field": {
             "type": "string",
             "description": "API field name."
+          },
+          "has_value": {
+            "type": "boolean",
+            "description": "Whether a credential value is configured."
           },
           "input_type": {
             "type": "string",
@@ -4770,6 +4799,10 @@
           "label": {
             "type": "string",
             "description": "Human-readable label."
+          },
+          "masked_value": {
+            "type": "string",
+            "description": "Fixed non-secret mask when a credential value is configured."
           },
           "source": {
             "type": "string",
@@ -4792,9 +4825,9 @@
         "properties": {
           "values": {
             "type": "object",
-            "description": "Values keyed by API field name.",
+            "description": "Values keyed by API field name; null clears and a blank secret preserves.",
             "additionalProperties": {
-              "type": "string"
+              "type": ["string", "null"]
             },
             "propertyNames": {
               "type": "string"

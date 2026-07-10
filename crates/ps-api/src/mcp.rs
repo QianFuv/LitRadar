@@ -591,8 +591,12 @@ fn business_tool_error_message(error: &BusinessRepositoryError) -> String {
         BusinessRepositoryError::Sqlite(_)
         | BusinessRepositoryError::Io(_)
         | BusinessRepositoryError::Json(_)
+        | BusinessRepositoryError::Secret(_)
         | BusinessRepositoryError::UnknownRuntimeSetting(_)
-        | BusinessRepositoryError::InvalidRuntimeBoolean(_) => "Internal Server Error".to_string(),
+        | BusinessRepositoryError::InvalidRuntimeBoolean(_)
+        | BusinessRepositoryError::NonSecretRuntimeSettingCannotBeCleared(_) => {
+            "Internal Server Error".to_string()
+        }
     }
 }
 

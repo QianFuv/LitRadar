@@ -189,7 +189,7 @@ pub struct ChangeManifest {
 }
 
 /// Global notification runtime configuration.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Clone, PartialEq)]
 pub struct NotificationGlobalConfig {
     /// Default OpenAI-compatible API base URL.
     pub ai_base_url: String,
@@ -207,6 +207,22 @@ pub struct NotificationGlobalConfig {
     pub ai_system_prompt: Option<String>,
 }
 
+impl fmt::Debug for NotificationGlobalConfig {
+    /// Format global notification configuration without exposing the API key.
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("NotificationGlobalConfig")
+            .field("ai_base_url", &self.ai_base_url)
+            .field("ai_api_key", &"[REDACTED]")
+            .field("pushplus_channel", &self.pushplus_channel)
+            .field("pushplus_template", &self.pushplus_template)
+            .field("pushplus_topic", &self.pushplus_topic)
+            .field("pushplus_option", &self.pushplus_option)
+            .field("ai_system_prompt", &self.ai_system_prompt)
+            .finish()
+    }
+}
+
 /// Default selection runtime settings.
 #[derive(Debug, Clone, PartialEq)]
 pub struct NotificationDefaults {
@@ -219,7 +235,7 @@ pub struct NotificationDefaults {
 }
 
 /// Resolved AI endpoint configuration.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct AiRuntimeConfig {
     /// OpenAI-compatible base URL.
     pub base_url: String,
@@ -229,6 +245,19 @@ pub struct AiRuntimeConfig {
     pub model: String,
     /// System prompt.
     pub system_prompt: String,
+}
+
+impl fmt::Debug for AiRuntimeConfig {
+    /// Format AI runtime configuration without exposing the API key.
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("AiRuntimeConfig")
+            .field("base_url", &self.base_url)
+            .field("api_key", &"[REDACTED]")
+            .field("model", &self.model)
+            .field("system_prompt", &self.system_prompt)
+            .finish()
+    }
 }
 
 /// Expected AI payload category.
@@ -1336,10 +1365,43 @@ mod tests {
         compute_changed_inpress_keys, compute_changed_issue_keys, create_run_state,
         deduplicate_candidates, extract_response_payload, has_selection_preferences,
         is_database_selected, load_change_manifest, load_state, prune_delivery_dedupe,
-        resolve_ai_runtime_configs, save_state_atomic, utc_now_iso, AiPayloadKind,
+        resolve_ai_runtime_configs, save_state_atomic, utc_now_iso, AiPayloadKind, AiRuntimeConfig,
         NotificationDefaults, NotificationGlobalConfig, RecommendationError, MAX_ARTICLES_PER_PUSH,
         MAX_PUSH_CONTENT_LENGTH,
     };
+
+    #[test]
+    fn ai_runtime_config_debug_redacts_api_key() {
+        let config = AiRuntimeConfig {
+            base_url: "https://ai.example.com".to_string(),
+            api_key: "ai-secret".to_string(),
+            model: "fixture-model".to_string(),
+            system_prompt: "fixture prompt".to_string(),
+        };
+
+        let debug = format!("{config:?}");
+
+        assert!(debug.contains("[REDACTED]"));
+        assert!(!debug.contains("ai-secret"));
+    }
+
+    #[test]
+    fn notification_global_config_debug_redacts_api_key() {
+        let config = NotificationGlobalConfig {
+            ai_base_url: "https://ai.example.com".to_string(),
+            ai_api_key: "global-ai-secret".to_string(),
+            pushplus_channel: "wechat".to_string(),
+            pushplus_template: "markdown".to_string(),
+            pushplus_topic: None,
+            pushplus_option: None,
+            ai_system_prompt: None,
+        };
+
+        let debug = format!("{config:?}");
+
+        assert!(debug.contains("[REDACTED]"));
+        assert!(!debug.contains("global-ai-secret"));
+    }
 
     #[test]
     fn normalizes_ai_selection_payload_variants() {

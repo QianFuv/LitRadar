@@ -21,7 +21,9 @@ use serde::Deserialize;
 use serde_json::Value as JsonValue;
 
 use crate::cnki::{get_cnki_session_data, get_cnki_session_status, CnkiRepositoryError};
-use crate::{open_sqlite_connection, try_load_extension, DatabaseResolutionError, StorageConfig};
+use crate::{
+    open_sqlite_connection, try_load_extension, DatabaseResolutionError, SecretCodec, StorageConfig,
+};
 
 const MAX_LIMIT: i64 = 200;
 const DETAIL_LABEL: &str = "查看详情";
@@ -833,6 +835,7 @@ pub fn get_article(
 /// Article access response.
 pub fn get_article_access(
     config: &StorageConfig,
+    codec: &SecretCodec,
     db_name: Option<&str>,
     article_id: i64,
     user_id: UserId,
@@ -840,7 +843,7 @@ pub fn get_article_access(
     let connection = open_index_connection(config, db_name)?;
     let row = get_article_access_row(&connection, article_id)?
         .ok_or(IndexRepositoryError::NotFound("Article not found"))?;
-    Ok(article_access_response(&row, config, user_id))
+    article_access_response(&row, config, codec, user_id)
 }
 
 /// Return the full-text redirect URL for an article.
@@ -857,6 +860,7 @@ pub fn get_article_access(
 /// Redirect URL.
 pub fn article_fulltext_redirect_url(
     config: &StorageConfig,
+    codec: &SecretCodec,
     db_name: Option<&str>,
     article_id: i64,
     user_id: UserId,
@@ -865,7 +869,7 @@ pub fn article_fulltext_redirect_url(
     let row = get_article_access_row(&connection, article_id)?
         .ok_or(IndexRepositoryError::NotFound("Article not found"))?;
     if is_cnki_article_row(&row) {
-        if is_cnki_session_active(config, user_id)? {
+        if is_cnki_session_active(config, codec, user_id)? {
             return Err(IndexRepositoryError::NotFound(
                 "CNKI full-text download is not migrated yet",
             ));
@@ -903,6 +907,7 @@ pub fn article_fulltext_redirect_url(
 /// Redirect or PDF response target.
 pub fn article_fulltext_target(
     config: &StorageConfig,
+    codec: &SecretCodec,
     db_name: Option<&str>,
     article_id: i64,
     user_id: UserId,
@@ -910,8 +915,8 @@ pub fn article_fulltext_target(
     let connection = open_index_connection(config, db_name)?;
     let row = get_article_access_row(&connection, article_id)?
         .ok_or(IndexRepositoryError::NotFound("Article not found"))?;
-    if is_cnki_article_row(&row) && is_cnki_session_active(config, user_id)? {
-        let session = get_cnki_session_data(config.auth_db_path(), user_id)?
+    if is_cnki_article_row(&row) && is_cnki_session_active(config, codec, user_id)? {
+        let session = get_cnki_session_data(config.auth_db_path(), codec, user_id)?
             .ok_or(IndexRepositoryError::NotFound("CNKI login is required"))?;
         return Ok(ArticleFulltextTarget::Cnki(CnkiFulltextTarget {
             title: row.title.unwrap_or_default(),
@@ -922,7 +927,7 @@ pub fn article_fulltext_target(
         }));
     }
     Ok(ArticleFulltextTarget::Redirect(
-        article_fulltext_redirect_url(config, db_name, article_id, user_id)?,
+        article_fulltext_redirect_url(config, codec, db_name, article_id, user_id)?,
     ))
 }
 
@@ -1318,12 +1323,13 @@ fn get_article_access_row(
 fn article_access_response(
     row: &ArticleAccessRow,
     config: &StorageConfig,
+    codec: &SecretCodec,
     user_id: UserId,
-) -> ArticleAccessResponse {
-    ArticleAccessResponse {
+) -> Result<ArticleAccessResponse, IndexRepositoryError> {
+    Ok(ArticleAccessResponse {
         detail: detail_access_action(row),
-        fulltext: fulltext_access_action(row, config, user_id),
-    }
+        fulltext: fulltext_access_action(row, config, codec, user_id)?,
+    })
 }
 
 fn detail_access_action(row: &ArticleAccessRow) -> ArticleAccessAction {
@@ -1364,39 +1370,40 @@ fn detail_access_action(row: &ArticleAccessRow) -> ArticleAccessAction {
 fn fulltext_access_action(
     row: &ArticleAccessRow,
     config: &StorageConfig,
+    codec: &SecretCodec,
     user_id: UserId,
-) -> ArticleAccessAction {
+) -> Result<ArticleAccessAction, IndexRepositoryError> {
     if let Some(full_text_file) = nonempty(row.full_text_file.as_deref()) {
         if !is_cnki_protected_fulltext_url(full_text_file) {
-            return ArticleAccessAction {
+            return Ok(ArticleAccessAction {
                 available: true,
                 label: FULLTEXT_LABEL.to_string(),
                 provider: Some(STORED_FULLTEXT_PROVIDER.to_string()),
                 url: None,
                 requires_login: false,
                 message: None,
-            };
+            });
         }
     }
     if is_cnki_article_row(row) {
-        let is_active = is_cnki_session_active(config, user_id).unwrap_or(false);
-        return ArticleAccessAction {
+        let is_active = is_cnki_session_active(config, codec, user_id)?;
+        return Ok(ArticleAccessAction {
             available: is_active,
             label: FULLTEXT_LABEL.to_string(),
             provider: Some(ZJLIB_CNKI_PROVIDER.to_string()),
             url: None,
             requires_login: !is_active,
             message: (!is_active).then(|| "需要先在设置中完成浙江图书馆扫码登录".to_string()),
-        };
+        });
     }
-    ArticleAccessAction {
+    Ok(ArticleAccessAction {
         available: false,
         label: FULLTEXT_LABEL.to_string(),
         provider: None,
         url: None,
         requires_login: false,
         message: Some("Full text is not available".to_string()),
-    }
+    })
 }
 
 fn fetch_weekly_articles(
@@ -1909,12 +1916,13 @@ fn is_cnki_article_row(row: &ArticleAccessRow) -> bool {
 
 fn is_cnki_session_active(
     config: &StorageConfig,
+    codec: &SecretCodec,
     user_id: UserId,
 ) -> Result<bool, IndexRepositoryError> {
     if !config.auth_db_path().exists() {
         return Ok(false);
     }
-    let status = get_cnki_session_status(config.auth_db_path(), user_id)?;
+    let status = get_cnki_session_status(config.auth_db_path(), codec, user_id)?;
     Ok(status.status == "active")
 }
 
@@ -2240,6 +2248,7 @@ mod tests {
     struct IndexFixture {
         _project_root: TempDir,
         config: StorageConfig,
+        secret_codec: SecretCodec,
         db_name: String,
     }
 
@@ -2258,6 +2267,7 @@ mod tests {
             Self {
                 _project_root: project_root,
                 config,
+                secret_codec: SecretCodec::from_key([12_u8; 32]),
                 db_name,
             }
         }
@@ -2625,9 +2635,14 @@ mod tests {
         let fixture = IndexFixture::new(true);
         let user_id = UserId(1);
 
-        let stored_access =
-            get_article_access(&fixture.config, Some(&fixture.db_name), 1001, user_id)
-                .expect("stored full text access should resolve");
+        let stored_access = get_article_access(
+            &fixture.config,
+            &fixture.secret_codec,
+            Some(&fixture.db_name),
+            1001,
+            user_id,
+        )
+        .expect("stored full text access should resolve");
         assert!(stored_access.fulltext.available);
         assert_eq!(
             stored_access.fulltext.provider.as_deref(),
@@ -2635,32 +2650,60 @@ mod tests {
         );
 
         assert_eq!(
-            article_fulltext_redirect_url(&fixture.config, Some(&fixture.db_name), 1001, user_id)
-                .expect("stored full text should redirect"),
+            article_fulltext_redirect_url(
+                &fixture.config,
+                &fixture.secret_codec,
+                Some(&fixture.db_name),
+                1001,
+                user_id,
+            )
+            .expect("stored full text should redirect"),
             "https://files.example/fulltext.pdf"
         );
         assert_eq!(
-            article_fulltext_redirect_url(&fixture.config, Some(&fixture.db_name), 1003, user_id)
-                .expect("CNKI permalink should redirect without an active session"),
+            article_fulltext_redirect_url(
+                &fixture.config,
+                &fixture.secret_codec,
+                Some(&fixture.db_name),
+                1003,
+                user_id,
+            )
+            .expect("CNKI permalink should redirect without an active session"),
             "https://oversea.cnki.net/kcms/detail/abc?foo=bar&language=chs"
         );
         assert_eq!(
-            article_fulltext_redirect_url(&fixture.config, Some(&fixture.db_name), 1005, user_id)
-                .expect("DOI fallback should redirect"),
+            article_fulltext_redirect_url(
+                &fixture.config,
+                &fixture.secret_codec,
+                Some(&fixture.db_name),
+                1005,
+                user_id,
+            )
+            .expect("DOI fallback should redirect"),
             "https://doi.org/10.1000/doi-only"
         );
 
-        let missing_url =
-            article_fulltext_redirect_url(&fixture.config, Some(&fixture.db_name), 1008, user_id)
-                .expect_err("missing full text should fail");
+        let missing_url = article_fulltext_redirect_url(
+            &fixture.config,
+            &fixture.secret_codec,
+            Some(&fixture.db_name),
+            1008,
+            user_id,
+        )
+        .expect_err("missing full text should fail");
         assert!(matches!(
             missing_url,
             IndexRepositoryError::NotFound("Full text not available")
         ));
 
-        let cnki_access =
-            get_article_access(&fixture.config, Some(&fixture.db_name), 1003, user_id)
-                .expect("CNKI access should resolve");
+        let cnki_access = get_article_access(
+            &fixture.config,
+            &fixture.secret_codec,
+            Some(&fixture.db_name),
+            1003,
+            user_id,
+        )
+        .expect("CNKI access should resolve");
         assert_eq!(cnki_access.detail.provider.as_deref(), Some("detail_url"));
         assert_eq!(
             cnki_access.detail.url.as_deref(),
@@ -2670,8 +2713,14 @@ mod tests {
         assert!(cnki_access.fulltext.requires_login);
         assert_eq!(cnki_access.fulltext.provider.as_deref(), Some("zjlib_cnki"));
 
-        match article_fulltext_target(&fixture.config, Some(&fixture.db_name), 1001, user_id)
-            .expect("stored full text target should resolve")
+        match article_fulltext_target(
+            &fixture.config,
+            &fixture.secret_codec,
+            Some(&fixture.db_name),
+            1001,
+            user_id,
+        )
+        .expect("stored full text target should resolve")
         {
             ArticleFulltextTarget::Redirect(url) => {
                 assert_eq!(url, "https://files.example/fulltext.pdf");
@@ -2682,20 +2731,32 @@ mod tests {
 
         crate::upsert_cnki_session(
             fixture.config.auth_db_path(),
+            &fixture.secret_codec,
             user_id,
             &json!({"bff_user_token":"x.eyJleHAiOjQxMDI0NDQ4MDB9.y"}),
             "active",
             None,
         )
         .expect("CNKI session should be stored");
-        let active_cnki =
-            get_article_access(&fixture.config, Some(&fixture.db_name), 1003, user_id)
-                .expect("active CNKI access should resolve");
+        let active_cnki = get_article_access(
+            &fixture.config,
+            &fixture.secret_codec,
+            Some(&fixture.db_name),
+            1003,
+            user_id,
+        )
+        .expect("active CNKI access should resolve");
         assert!(active_cnki.fulltext.available);
         assert!(!active_cnki.fulltext.requires_login);
 
-        match article_fulltext_target(&fixture.config, Some(&fixture.db_name), 1003, user_id)
-            .expect("active CNKI full text target should resolve")
+        match article_fulltext_target(
+            &fixture.config,
+            &fixture.secret_codec,
+            Some(&fixture.db_name),
+            1003,
+            user_id,
+        )
+        .expect("active CNKI full text target should resolve")
         {
             ArticleFulltextTarget::Cnki(target) => {
                 assert_eq!(target.title, "CNKI Protected Knowledge");

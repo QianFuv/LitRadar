@@ -198,6 +198,7 @@ function RuntimePoolEditor({
 export function RuntimeSettingsCard() {
   const queryClient = useQueryClient();
   const [formOverrides, setFormOverrides] = useState<RuntimeSettingsForm>({});
+  const [clearedSecrets, setClearedSecrets] = useState<Set<string>>(new Set());
 
   const {
     data: settings = EMPTY_RUNTIME_SETTINGS,
@@ -212,7 +213,7 @@ export function RuntimeSettingsCard() {
   const form = useMemo(() => {
     return { ...baseForm, ...formOverrides };
   }, [baseForm, formOverrides]);
-  const hasFormOverrides = Object.keys(formOverrides).length > 0;
+  const hasFormOverrides = Object.keys(formOverrides).length > 0 || clearedSecrets.size > 0;
 
   useEffect(() => {
     if (!hasFormOverrides) {
@@ -227,9 +228,16 @@ export function RuntimeSettingsCard() {
   }, [hasFormOverrides]);
 
   const saveMutation = useMutation({
-    mutationFn: () => adminUpdateRuntimeSettings({ values: form }),
+    mutationFn: () => {
+      const values: Record<string, string | null> = { ...form };
+      for (const field of clearedSecrets) {
+        values[field] = null;
+      }
+      return adminUpdateRuntimeSettings({ values });
+    },
     onSuccess: (updatedSettings) => {
       setFormOverrides({});
+      setClearedSecrets(new Set());
       queryClient.setQueryData(['admin-runtime-settings'], updatedSettings);
       queryClient.invalidateQueries({ queryKey: ['admin-runtime-settings'] });
     },
@@ -244,6 +252,30 @@ export function RuntimeSettingsCard() {
     }
     return '';
   }, [error, saveMutation.error]);
+
+  const updateFormValue = (field: string, value: string) => {
+    setFormOverrides((current) => ({ ...current, [field]: value }));
+    setClearedSecrets((current) => {
+      if (!current.has(field)) {
+        return current;
+      }
+      const next = new Set(current);
+      next.delete(field);
+      return next;
+    });
+  };
+
+  const toggleSecretClear = (field: string) => {
+    setClearedSecrets((current) => {
+      const next = new Set(current);
+      if (next.has(field)) {
+        next.delete(field);
+      } else {
+        next.add(field);
+      }
+      return next;
+    });
+  };
 
   return (
     <Card>
@@ -277,10 +309,7 @@ export function RuntimeSettingsCard() {
                         name={`runtime_${setting.field}`}
                         checked={value !== 'false'}
                         onCheckedChange={(checked: boolean) =>
-                          setFormOverrides((current) => ({
-                            ...current,
-                            [setting.field]: checked ? 'true' : 'false',
-                          }))
+                          updateFormValue(setting.field, checked ? 'true' : 'false')
                         }
                       />
                     </div>
@@ -291,12 +320,7 @@ export function RuntimeSettingsCard() {
                       inputType={setting.input_type}
                       label={setting.label}
                       value={value}
-                      onChange={(nextValue) =>
-                        setFormOverrides((current) => ({
-                          ...current,
-                          [setting.field]: nextValue,
-                        }))
-                      }
+                      onChange={(nextValue) => updateFormValue(setting.field, nextValue)}
                     />
                   ) : (
                     <Input
@@ -311,17 +335,31 @@ export function RuntimeSettingsCard() {
                           : undefined
                       }
                       value={value}
-                      onChange={(event) =>
-                        setFormOverrides((current) => ({
-                          ...current,
-                          [setting.field]: event.target.value,
-                        }))
-                      }
+                      onChange={(event) => updateFormValue(setting.field, event.target.value)}
                       placeholder={setting.description}
                     />
                   )}
                   {setting.input_type !== 'boolean' && (
-                    <div className="text-xs text-muted-foreground">{setting.description}</div>
+                    <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
+                      <span>
+                        {setting.description}
+                        {setting.is_secret && setting.has_value
+                          ? clearedSecrets.has(setting.field)
+                            ? '（保存后清除）'
+                            : '（已安全保存，留空会保留）'
+                          : ''}
+                      </span>
+                      {setting.is_secret && setting.has_value && (
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => toggleSecretClear(setting.field)}
+                        >
+                          {clearedSecrets.has(setting.field) ? '保留原密钥' : '清除密钥'}
+                        </Button>
+                      )}
+                    </div>
                   )}
                 </div>
               );

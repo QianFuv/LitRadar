@@ -12,7 +12,9 @@ use ps_index::{
     run_live_index, run_live_index_worker_from_file_path, LiveIndexConfig, LiveScholarlyConfig,
 };
 use ps_storage::{
-    migrate_auth_database, migrate_existing_index_databases, migrate_index_database, StorageConfig,
+    migrate_auth_database, migrate_database_secrets, migrate_existing_index_databases,
+    migrate_index_database, rotate_database_secrets, verify_database_secrets, SecretCodec,
+    StorageConfig,
 };
 use ps_worker::delivery::{
     run_recommendation_delivery, DeliveryMode, DeliveryWorkflow, RecommendationRunConfig,
@@ -50,21 +52,72 @@ fn run_admin_command_with_reader(
     let auth_db_path = extract_auth_db_path_with_project_root(&mut args, &project_root)?;
     let username = extract_string_option(&mut args, "--username")?;
     let should_read_password = remove_flag(&mut args, "--password-stdin");
-    if args.as_slice() != ["bootstrap"] || username.is_none() || !should_read_password {
-        return Err(admin_usage().into());
+    let secret_key_file = extract_path_option(&mut args, "--secret-key-file")?;
+    let old_key_file = extract_path_option(&mut args, "--old-key-file")?;
+    let new_key_file = extract_path_option(&mut args, "--new-key-file")?;
+    match args.as_slice() {
+        [command] if command == "bootstrap" && username.is_some() && should_read_password => {
+            migrate_auth_database(&auth_db_path)?;
+            let mut password = String::new();
+            if password_reader.read_line(&mut password)? == 0 {
+                return Err("password stdin was empty".into());
+            }
+            while password.ends_with(['\r', '\n']) {
+                password.pop();
+            }
+            let user = AuthService::new(&auth_db_path)
+                .bootstrap_admin(username.as_deref().unwrap_or_default().trim(), &password)?;
+            Ok(json!({"status": "created", "user": user}))
+        }
+        [group, command]
+            if group == "secrets"
+                && command == "migrate"
+                && secret_key_file.is_some()
+                && username.is_none()
+                && !should_read_password =>
+        {
+            migrate_auth_database(&auth_db_path)?;
+            let codec = SecretCodec::load(secret_key_file.as_ref().expect("checked key path"))?;
+            let report = migrate_database_secrets(&auth_db_path, &codec)?;
+            Ok(json!({
+                "status": "migrated",
+                "migrated": report.migrated,
+                "verified": report.verified,
+                "empty": report.empty,
+            }))
+        }
+        [group, command]
+            if group == "secrets"
+                && command == "verify"
+                && secret_key_file.is_some()
+                && username.is_none()
+                && !should_read_password =>
+        {
+            migrate_auth_database(&auth_db_path)?;
+            let codec = SecretCodec::load(secret_key_file.as_ref().expect("checked key path"))?;
+            let report = verify_database_secrets(&auth_db_path, &codec)?;
+            Ok(json!({
+                "status": "verified",
+                "verified": report.verified,
+                "empty": report.empty,
+            }))
+        }
+        [group, command]
+            if group == "secrets"
+                && command == "rotate"
+                && old_key_file.is_some()
+                && new_key_file.is_some()
+                && username.is_none()
+                && !should_read_password =>
+        {
+            migrate_auth_database(&auth_db_path)?;
+            let old_codec = SecretCodec::load(old_key_file.as_ref().expect("checked old path"))?;
+            let new_codec = SecretCodec::load(new_key_file.as_ref().expect("checked new path"))?;
+            let rotated = rotate_database_secrets(&auth_db_path, &old_codec, &new_codec)?;
+            Ok(json!({"status": "rotated", "rotated": rotated}))
+        }
+        _ => Err(admin_usage().into()),
     }
-
-    migrate_auth_database(&auth_db_path)?;
-    let mut password = String::new();
-    if password_reader.read_line(&mut password)? == 0 {
-        return Err("password stdin was empty".into());
-    }
-    while password.ends_with(['\r', '\n']) {
-        password.pop();
-    }
-    let user = AuthService::new(&auth_db_path)
-        .bootstrap_admin(username.as_deref().unwrap_or_default().trim(), &password)?;
-    Ok(json!({"status": "created", "user": user}))
 }
 
 /// Run the standalone `index` command.
@@ -91,14 +144,20 @@ pub fn run_index_command(args: Vec<String>) -> Result<(), Box<dyn Error>> {
     }
     let project_root = extract_project_root(&mut args)?;
     let auth_db_path = extract_auth_db_path_with_project_root(&mut args, &project_root)?;
+    let secret_key_file = extract_path_option(&mut args, "--secret-key-file")?;
     let options = parse_index_options(&mut args)?;
     if !args.is_empty() {
         return Err(format!("unexpected index arguments: {}", args.join(" ")).into());
     }
+    let secret_key_file = required_secret_key_file(secret_key_file)?;
     migrate_command_databases(&project_root, &auth_db_path)?;
-    let scholarly_config = live_scholarly_config(&auth_db_path, options.timeout_seconds)?;
+    let secret_codec = SecretCodec::load(&secret_key_file)?;
+    verify_database_secrets(&auth_db_path, &secret_codec)?;
+    let scholarly_config =
+        live_scholarly_config(&auth_db_path, &secret_codec, options.timeout_seconds)?;
     let outcome = run_live_index(&LiveIndexConfig {
         project_root: project_root.clone(),
+        secret_key_file: secret_key_file.clone(),
         file: options.file,
         worker_count: options.worker_count,
         process_count: options.process_count,
@@ -206,6 +265,7 @@ pub fn run_scheduler_command(mut args: Vec<String>) -> Result<(), Box<dyn Error>
     }
     let project_root = extract_project_root(&mut args)?;
     let auth_db_path = extract_auth_db_path_with_project_root(&mut args, &project_root)?;
+    let secret_key_file = extract_path_option(&mut args, "--secret-key-file")?;
     let action = match args.as_slice() {
         [command] if command == "validate" => SchedulerAction::Validate,
         [command, task_id] if command == "run-once" => {
@@ -218,11 +278,14 @@ pub fn run_scheduler_command(mut args: Vec<String>) -> Result<(), Box<dyn Error>
         }
         _ => return Err(scheduler_usage().into()),
     };
+    let secret_key_file = required_secret_key_file(secret_key_file)?;
     migrate_command_databases(&project_root, &auth_db_path)?;
+    let secret_codec = SecretCodec::load(&secret_key_file)?;
+    verify_database_secrets(&auth_db_path, &secret_codec)?;
     match action {
         SchedulerAction::Validate => print_scheduler_load(&auth_db_path),
         SchedulerAction::RunOnce(task_id, mode) => {
-            let outcome = run_task_now(&auth_db_path, task_id, mode)?;
+            let outcome = run_task_now(&auth_db_path, &secret_key_file, task_id, mode)?;
             println!("{}", serde_json::to_string(&outcome)?);
             Ok(())
         }
@@ -250,13 +313,22 @@ pub fn run_worker_command(mut args: Vec<String>) -> Result<(), Box<dyn Error>> {
     }
     let project_root = extract_project_root(&mut args)?;
     let auth_db_path = extract_auth_db_path_with_project_root(&mut args, &project_root)?;
+    let secret_key_file = extract_path_option(&mut args, "--secret-key-file")?;
     let interval_seconds = extract_u64_option(&mut args, "--interval-seconds")?.unwrap_or(30);
     let max_iterations = extract_usize_option(&mut args, "--max-iterations")?;
     if !args.is_empty() {
         return Err(worker_usage().into());
     }
+    let secret_key_file = required_secret_key_file(secret_key_file)?;
     migrate_command_databases(&project_root, &auth_db_path)?;
-    run_worker_execute(&auth_db_path, interval_seconds, max_iterations)
+    let secret_codec = SecretCodec::load(&secret_key_file)?;
+    verify_database_secrets(&auth_db_path, &secret_codec)?;
+    run_worker_execute(
+        &auth_db_path,
+        &secret_key_file,
+        interval_seconds,
+        max_iterations,
+    )
 }
 
 fn run_delivery_command(
@@ -280,6 +352,7 @@ fn run_delivery_command(
     }
     let project_root = extract_project_root(&mut args)?;
     let auth_db_path = extract_auth_db_path_with_project_root(&mut args, &project_root)?;
+    let secret_key_file = extract_path_option(&mut args, "--secret-key-file")?;
     let index_db_path = extract_path_option(&mut args, "--index-db")?;
     let db_name = extract_string_option(&mut args, "--db")?;
     let state_dir = extract_path_option(&mut args, "--state-dir")?;
@@ -293,6 +366,7 @@ fn run_delivery_command(
     if !args.is_empty() {
         return Err(format!("unexpected {command_name} arguments: {}", args.join(" ")).into());
     }
+    let secret_key_file = required_secret_key_file(secret_key_file)?;
     let changes_file = changes_file
         .filter(|path| !path.as_os_str().is_empty())
         .map(|path| resolve_project_path(&project_root, path));
@@ -307,6 +381,8 @@ fn run_delivery_command(
         changes_file.as_deref(),
     )?;
     migrate_command_databases(&project_root, &auth_db_path)?;
+    let secret_codec = SecretCodec::load(&secret_key_file)?;
+    verify_database_secrets(&auth_db_path, &secret_codec)?;
     let storage_config = StorageConfig::from_project_root(&project_root);
     let tokenizer_path = storage_config.simple_tokenizer_path();
     for target in &targets {
@@ -316,6 +392,7 @@ fn run_delivery_command(
     for target in targets {
         let outcome = run_recommendation_delivery(&RecommendationRunConfig {
             auth_db_path: auth_db_path.clone(),
+            secret_codec: secret_codec.clone(),
             index_db_path: target.index_db_path,
             db_name: target.db_name,
             state_dir: state_dir.clone(),
@@ -357,6 +434,7 @@ fn migrate_command_databases(
 
 fn run_worker_execute(
     auth_db_path: &Path,
+    secret_key_file: &Path,
     interval_seconds: u64,
     max_iterations: Option<usize>,
 ) -> Result<(), Box<dyn Error>> {
@@ -364,7 +442,7 @@ fn run_worker_execute(
     let worker_id = scheduler_worker_id();
     let mut iterations = 0_usize;
     loop {
-        let result = run_due_scheduler_once(auth_db_path, &worker_id)?;
+        let result = run_due_scheduler_once(auth_db_path, secret_key_file, &worker_id)?;
         let payload = json!({
             "worker_id": worker_id,
             "interval_seconds": interval_seconds,
@@ -420,6 +498,10 @@ fn extract_path_option(
     name: &str,
 ) -> Result<Option<PathBuf>, Box<dyn Error>> {
     Ok(extract_string_option(args, name)?.map(PathBuf::from))
+}
+
+fn required_secret_key_file(path: Option<PathBuf>) -> Result<PathBuf, Box<dyn Error>> {
+    path.ok_or_else(|| "--secret-key-file is required".into())
 }
 
 fn extract_string_option(
@@ -629,9 +711,10 @@ fn default_delivery_state_dir(project_root: &Path, workflow: DeliveryWorkflow) -
 
 fn live_scholarly_config(
     auth_db_path: &Path,
+    secret_codec: &SecretCodec,
     timeout_seconds: u64,
 ) -> Result<LiveScholarlyConfig, Box<dyn Error>> {
-    let settings = ps_storage::list_runtime_settings(auth_db_path)?;
+    let settings = ps_storage::load_runtime_settings(auth_db_path, secret_codec)?;
     let setting_value = |field: &str| {
         settings
             .iter()
@@ -649,7 +732,7 @@ fn live_scholarly_config(
 
 fn index_usage() -> String {
     let payload = json!({
-        "usage": "index [--project-root PATH] [--auth-db PATH] [--file FILE] [--workers N] [--processes N] [--issue-batch N] [--timeout N] [--resume|--no-resume] [--update|--no-update] [--notify] [--notify-dry-run]"
+        "usage": "index --secret-key-file PATH [--project-root PATH] [--auth-db PATH] [--file FILE] [--workers N] [--processes N] [--issue-batch N] [--timeout N] [--resume|--no-resume] [--update|--no-update] [--notify] [--notify-dry-run]"
     });
     payload.to_string()
 }
@@ -657,9 +740,9 @@ fn index_usage() -> String {
 fn scheduler_usage() -> String {
     let payload = json!({
         "usage": [
-            "scheduler validate [--project-root PATH] [--auth-db PATH]",
-            "scheduler run-once TASK_ID [--project-root PATH] [--auth-db PATH]",
-            "scheduler dry-run-once TASK_ID [--project-root PATH] [--auth-db PATH]"
+            "scheduler validate --secret-key-file PATH [--project-root PATH] [--auth-db PATH]",
+            "scheduler run-once TASK_ID --secret-key-file PATH [--project-root PATH] [--auth-db PATH]",
+            "scheduler dry-run-once TASK_ID --secret-key-file PATH [--project-root PATH] [--auth-db PATH]"
         ]
     });
     payload.to_string()
@@ -667,14 +750,19 @@ fn scheduler_usage() -> String {
 
 fn worker_usage() -> String {
     let payload = json!({
-        "usage": "worker [--project-root PATH] [--auth-db PATH] [--interval-seconds N] [--max-iterations N]"
+        "usage": "worker --secret-key-file PATH [--project-root PATH] [--auth-db PATH] [--interval-seconds N] [--max-iterations N]"
     });
     payload.to_string()
 }
 
 fn admin_usage() -> String {
     json!({
-        "usage": "admin bootstrap --username NAME --password-stdin [--project-root PATH] [--auth-db PATH]"
+        "usage": [
+            "admin bootstrap --username NAME --password-stdin [--project-root PATH] [--auth-db PATH]",
+            "admin secrets migrate --secret-key-file PATH [--project-root PATH] [--auth-db PATH]",
+            "admin secrets verify --secret-key-file PATH [--project-root PATH] [--auth-db PATH]",
+            "admin secrets rotate --old-key-file PATH --new-key-file PATH [--project-root PATH] [--auth-db PATH]"
+        ]
     })
     .to_string()
 }
@@ -685,7 +773,7 @@ fn delivery_usage(workflow: DeliveryWorkflow) -> String {
         DeliveryWorkflow::Push => "push",
     };
     let payload = json!({
-        "usage": format!("{command_name} [--project-root PATH] [--auth-db PATH] [--db NAME] [--state-dir PATH] [--changes-file PATH] [--ai-model MODEL] [--max-candidates N] [--timeout N] [--retries N] [--dedupe-retention-days N] [--dry-run|--no-dry-run]")
+        "usage": format!("{command_name} --secret-key-file PATH [--project-root PATH] [--auth-db PATH] [--db NAME] [--state-dir PATH] [--changes-file PATH] [--ai-model MODEL] [--max-candidates N] [--timeout N] [--retries N] [--dedupe-retention-days N] [--dry-run|--no-dry-run]")
     });
     payload.to_string()
 }
@@ -718,12 +806,12 @@ mod tests {
         assert!(index.contains("--workers N"));
         assert!(index.contains("--processes N"));
         assert!(index.contains("--notify-dry-run"));
-        assert!(notify.contains("notify [--project-root PATH]"));
-        assert!(push.contains("push [--project-root PATH]"));
+        assert!(notify.contains("notify --secret-key-file PATH"));
+        assert!(push.contains("push --secret-key-file PATH"));
         assert!(scheduler.contains("scheduler validate"));
         assert!(scheduler.contains("scheduler run-once TASK_ID"));
         assert!(scheduler.contains("scheduler dry-run-once TASK_ID"));
-        assert!(worker.contains("worker [--project-root PATH]"));
+        assert!(worker.contains("worker --secret-key-file PATH"));
         assert!(admin.contains("admin bootstrap --username NAME --password-stdin"));
         assert!(!admin.contains("--password "));
         for usage in [admin, index, notify, push, scheduler, worker] {
@@ -797,6 +885,62 @@ mod tests {
     }
 
     #[test]
+    fn admin_secret_migration_and_verification_are_explicit() {
+        let root = temp_root("ps-cli-secret-migration");
+        let auth_db_path = root.path().join("auth.sqlite");
+        let secret_key_file = root.path().join("secret.key");
+        fs::write(&secret_key_file, [15_u8; 32]).expect("secret key should write");
+        ps_storage::migrate_auth_database(&auth_db_path).expect("auth database should migrate");
+        ps_storage::open_sqlite_connection(&auth_db_path)
+            .expect("auth database should open")
+            .execute(
+                "INSERT INTO runtime_settings (key, value, updated_at) VALUES (?1, ?2, 1)",
+                ("openalex_api_key_pool", "legacy-plaintext-key"),
+            )
+            .expect("legacy plaintext fixture should insert");
+
+        let migrated = run_admin_command_with_reader(
+            vec![
+                "--auth-db".to_string(),
+                auth_db_path.to_string_lossy().into_owned(),
+                "--secret-key-file".to_string(),
+                secret_key_file.to_string_lossy().into_owned(),
+                "secrets".to_string(),
+                "migrate".to_string(),
+            ],
+            "".as_bytes(),
+        )
+        .expect("explicit migration should succeed");
+        assert_eq!(migrated["status"], "migrated");
+        assert_eq!(migrated["migrated"], 1);
+
+        let verified = run_admin_command_with_reader(
+            vec![
+                "--auth-db".to_string(),
+                auth_db_path.to_string_lossy().into_owned(),
+                "--secret-key-file".to_string(),
+                secret_key_file.to_string_lossy().into_owned(),
+                "secrets".to_string(),
+                "verify".to_string(),
+            ],
+            "".as_bytes(),
+        )
+        .expect("explicit verification should succeed");
+        assert_eq!(verified["status"], "verified");
+        assert_eq!(verified["verified"], 1);
+        let raw: String = ps_storage::open_sqlite_connection(&auth_db_path)
+            .expect("auth database should reopen")
+            .query_row(
+                "SELECT value FROM runtime_settings WHERE key = 'openalex_api_key_pool'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("encrypted value should load");
+        assert!(raw.starts_with("psenc:v1:"));
+        assert!(!raw.contains("legacy-plaintext-key"));
+    }
+
+    #[test]
     fn index_options_preserve_concurrency_flags() {
         let mut args = vec![
             "--file".to_string(),
@@ -859,8 +1003,8 @@ mod tests {
         let notify_usage = delivery_usage(DeliveryWorkflow::Notify);
         let push_usage = delivery_usage(DeliveryWorkflow::Push);
 
-        assert!(notify_usage.contains("notify [--project-root PATH]"));
-        assert!(push_usage.contains("push [--project-root PATH]"));
+        assert!(notify_usage.contains("notify --secret-key-file PATH"));
+        assert!(push_usage.contains("push --secret-key-file PATH"));
         assert!(notify_usage.contains("--dry-run|--no-dry-run"));
         assert!(push_usage.contains("--changes-file PATH"));
     }
@@ -1073,10 +1217,14 @@ mod tests {
     fn worker_startup_migration_precedes_scheduler_loop() {
         let root = temp_root("ps-cli-worker-execute");
         let auth_db_path = root.path().join("auth.sqlite");
+        let secret_key_file = root.path().join("secret.key");
+        fs::write(&secret_key_file, [5_u8; 32]).expect("secret key should write");
 
         run_worker_command(vec![
             "--auth-db".to_string(),
             auth_db_path.to_string_lossy().into_owned(),
+            "--secret-key-file".to_string(),
+            secret_key_file.to_string_lossy().into_owned(),
             "--interval-seconds".to_string(),
             "1".to_string(),
             "--max-iterations".to_string(),
@@ -1093,10 +1241,14 @@ mod tests {
     fn scheduler_startup_migration_precedes_job_load() {
         let root = temp_root("ps-cli-scheduler-validate");
         let auth_db_path = root.path().join("auth.sqlite");
+        let secret_key_file = root.path().join("secret.key");
+        fs::write(&secret_key_file, [5_u8; 32]).expect("secret key should write");
 
         run_scheduler_command(vec![
             "--auth-db".to_string(),
             auth_db_path.to_string_lossy().into_owned(),
+            "--secret-key-file".to_string(),
+            secret_key_file.to_string_lossy().into_owned(),
             "validate".to_string(),
         ])
         .expect("scheduler validate should load jobs");
@@ -1131,7 +1283,7 @@ mod tests {
         assert!(scheduler_dry_run.to_string().contains("scheduler validate"));
         assert!(worker_execute
             .to_string()
-            .contains("worker [--project-root"));
+            .contains("worker --secret-key-file PATH"));
     }
 
     fn temp_root(prefix: &str) -> TempDir {

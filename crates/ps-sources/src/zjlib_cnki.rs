@@ -135,7 +135,7 @@ pub struct ZjlibCnkiDownloadedPdf {
 }
 
 /// JSON-serializable cookie state persisted with a CNKI session.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct ZjlibCnkiCookie {
     /// Cookie name.
     pub name: String,
@@ -151,6 +151,20 @@ pub struct ZjlibCnkiCookie {
     pub expires: Option<i64>,
     /// Whether the cookie should be discarded after the session.
     pub discard: bool,
+}
+
+impl fmt::Debug for ZjlibCnkiCookie {
+    /// Format cookie metadata without exposing its value.
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("ZjlibCnkiCookie")
+            .field("name", &self.name)
+            .field("value", &"[REDACTED]")
+            .field("domain", &self.domain)
+            .field("path", &self.path)
+            .field("secure", &self.secure)
+            .finish()
+    }
 }
 
 impl ZjlibCnkiCookie {
@@ -349,13 +363,25 @@ pub trait ZjlibCnkiTransport {
 }
 
 /// Zhejiang Library CNKI client using a transport implementation.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct ZhejiangLibraryCnkiClient<T> {
     transport: T,
     bff_user_token: Option<String>,
     qr_uuid: Option<String>,
     fulltext_warmed_at: Option<i64>,
     final_zyproxy_url: Option<String>,
+}
+
+impl<T> fmt::Debug for ZhejiangLibraryCnkiClient<T> {
+    /// Format client state without exposing tokens, cookies, or transport internals.
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("ZhejiangLibraryCnkiClient")
+            .field("session", &"[REDACTED]")
+            .field("is_configured", &self.bff_user_token.is_some())
+            .field("fulltext_warmed_at", &self.fulltext_warmed_at)
+            .finish_non_exhaustive()
+    }
 }
 
 impl<T> ZhejiangLibraryCnkiClient<T>
@@ -606,12 +632,22 @@ impl Default for LiveZjlibCnkiConfig {
 }
 
 /// Blocking HTTP transport for live Zhejiang Library CNKI login.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct LiveZjlibCnkiTransport {
     redirect_client: Client,
     no_redirect_client: Client,
     cookie_jar: Arc<Jar>,
     last_brief_url: Option<String>,
+}
+
+impl fmt::Debug for LiveZjlibCnkiTransport {
+    /// Format live transport state without exposing its cookie jar.
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("LiveZjlibCnkiTransport")
+            .field("session", &"[REDACTED]")
+            .finish_non_exhaustive()
+    }
 }
 
 impl LiveZjlibCnkiTransport {
@@ -1131,10 +1167,22 @@ impl FixtureZjlibCnkiMode {
 }
 
 /// Deterministic Zhejiang Library CNKI transport for route and client tests.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct FixtureZjlibCnkiTransport {
     mode: FixtureZjlibCnkiMode,
     cookies: Vec<ZjlibCnkiCookie>,
+}
+
+impl fmt::Debug for FixtureZjlibCnkiTransport {
+    /// Format fixture transport state without exposing cookie values.
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("FixtureZjlibCnkiTransport")
+            .field("mode", &self.mode)
+            .field("cookie_count", &self.cookies.len())
+            .field("cookies", &"[REDACTED]")
+            .finish()
+    }
 }
 
 impl FixtureZjlibCnkiTransport {
@@ -2241,8 +2289,29 @@ mod tests {
         extract_anchor_title, extract_pdf_download_url, extract_share_cookie_sync,
         extract_window_location, search_handler_form_fields, search_result_form_fields,
         FixtureZjlibCnkiMode, FixtureZjlibCnkiTransport, ZhejiangLibraryCnkiClient,
-        ZjlibCnkiArticleIdentity, ZjlibCnkiError,
+        ZjlibCnkiArticleIdentity, ZjlibCnkiCookie, ZjlibCnkiError,
     };
+
+    #[test]
+    fn session_debug_redacts_cookie_and_client_credentials() {
+        let cookie = ZjlibCnkiCookie::new("userToken", "cookie-secret", ".elib.zyproxy.zjlib.cn");
+        let cookie_debug = format!("{cookie:?}");
+        assert!(cookie_debug.contains("[REDACTED]"));
+        assert!(!cookie_debug.contains("cookie-secret"));
+
+        let mut client = ZhejiangLibraryCnkiClient::new(FixtureZjlibCnkiTransport::new(
+            FixtureZjlibCnkiMode::Success,
+        ));
+        client.start_qr_login().expect("fixture start should work");
+        let token = client
+            .poll_qr_login(1, 0.1)
+            .expect("fixture poll should complete");
+        let client_debug = format!("{client:?}");
+
+        assert!(client_debug.contains("[REDACTED]"));
+        assert!(!client_debug.contains(&token));
+        assert!(!client_debug.contains("qr-rust-live-fixture"));
+    }
 
     #[test]
     fn fixture_client_persists_safe_login_and_warmup_state() {

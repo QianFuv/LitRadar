@@ -7,6 +7,7 @@ pub mod cnki;
 pub mod config;
 pub mod index;
 pub mod migrations;
+pub mod secrets;
 pub mod sqlite;
 
 pub use announcements::{list_active_announcements, AnnouncementRepositoryError};
@@ -28,7 +29,7 @@ pub use business::{
     get_scheduler_status, get_tracking_folder, heartbeat_scheduled_run, is_favorited,
     list_all_announcements, list_all_invite_codes, list_all_users, list_available_database_names,
     list_favorite_articles, list_favorites, list_folders, list_notification_subscribers,
-    list_runtime_settings, list_scheduled_tasks, normalize_database_names,
+    list_runtime_settings, list_scheduled_tasks, load_runtime_settings, normalize_database_names,
     record_scheduled_task_run, record_scheduler_check, record_scheduler_heartbeat, remove_favorite,
     rename_folder, set_tracking_folder, set_user_admin, start_scheduled_run, update_announcement,
     update_scheduled_task, upsert_notification_settings, upsert_runtime_settings,
@@ -52,5 +53,9 @@ pub use index::{
 pub use migrations::{
     migrate_auth_database, migrate_existing_index_databases, migrate_index_database,
     migrate_storage, MigrationError, AUTH_SCHEMA_VERSION, INDEX_SCHEMA_VERSION,
+};
+pub use secrets::{
+    migrate_database_secrets, rotate_database_secrets, verify_database_secrets, SecretCodec,
+    SecretError, SecretMigrationReport, SecretVerificationReport,
 };
 pub use sqlite::{open_sqlite_connection, try_load_extension};
