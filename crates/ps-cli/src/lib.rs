@@ -1,6 +1,5 @@
 //! Shared Rust backend command entrypoints.
 
-use std::collections::BTreeSet;
 use std::error::Error;
 use std::fs;
 use std::io::BufRead;
@@ -19,7 +18,7 @@ use ps_worker::delivery::{
     run_recommendation_delivery, DeliveryMode, DeliveryWorkflow, RecommendationRunConfig,
 };
 use ps_worker::scheduler::{
-    load_scheduler_jobs, run_due_scheduler_once, run_task_now, ScheduledRunSlot, SchedulerMode,
+    load_scheduler_jobs, run_due_scheduler_once, run_task_now, scheduler_worker_id, SchedulerMode,
 };
 use serde_json::json;
 
@@ -251,7 +250,7 @@ pub fn run_worker_command(mut args: Vec<String>) -> Result<(), Box<dyn Error>> {
     }
     let project_root = extract_project_root(&mut args)?;
     let auth_db_path = extract_auth_db_path_with_project_root(&mut args, &project_root)?;
-    let interval_seconds = extract_u64_option(&mut args, "--interval-seconds")?.unwrap_or(300);
+    let interval_seconds = extract_u64_option(&mut args, "--interval-seconds")?.unwrap_or(30);
     let max_iterations = extract_usize_option(&mut args, "--max-iterations")?;
     if !args.is_empty() {
         return Err(worker_usage().into());
@@ -362,11 +361,12 @@ fn run_worker_execute(
     max_iterations: Option<usize>,
 ) -> Result<(), Box<dyn Error>> {
     let interval_seconds = interval_seconds.max(1);
-    let mut executed_slots = BTreeSet::<ScheduledRunSlot>::new();
+    let worker_id = scheduler_worker_id();
     let mut iterations = 0_usize;
     loop {
-        let result = run_due_scheduler_once(auth_db_path, &mut executed_slots)?;
+        let result = run_due_scheduler_once(auth_db_path, &worker_id)?;
         let payload = json!({
+            "worker_id": worker_id,
             "interval_seconds": interval_seconds,
             "mode": "execute",
             "status": result.status,
@@ -375,6 +375,8 @@ fn run_worker_execute(
             "skipped": result.skipped.len(),
             "due": result.due,
             "already_executed": result.already_executed,
+            "queued": result.queued,
+            "claimed": result.claimed,
             "executed": result.executed.len(),
             "executions": result.executed,
         });

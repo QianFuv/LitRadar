@@ -11,7 +11,7 @@ services:
   worker:
     build: .
     image: ghcr.io/qianfuv/paper-scanner-api:latest
-    command: ["worker", "--project-root", "/app", "--interval-seconds", "300"]
+    command: ["worker", "--project-root", "/app", "--interval-seconds", "30"]
     volumes:
       - ./data:/app/data
     depends_on:

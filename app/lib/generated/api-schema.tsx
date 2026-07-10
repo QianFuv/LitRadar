@@ -129,6 +129,23 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  '/api/admin/scheduler/status': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Read durable scheduler cursor, worker heartbeat, and run status. */
+    get: operations['scheduler_status'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   '/api/admin/stats': {
     parameters: {
       query?: never;
@@ -2329,6 +2346,8 @@ export interface components {
         });
     /** @description Scheduled task creation payload. */
     ScheduledTaskCreate: {
+      /** @description Whether missed slots are collapsed to the latest slot. */
+      coalesce?: boolean;
       /** @description Five-field cron expression. */
       cron: string;
       /** @description Whether the task is enabled. */
@@ -2337,9 +2356,18 @@ export interface components {
       job: components['schemas']['ScheduledJobSpec'];
       /** @description Display name. */
       name: string;
+      /**
+       * Format: int64
+       * @description Maximum execution time in seconds.
+       */
+      timeout_seconds?: number;
+      /** @description Explicit IANA time zone used for cron evaluation. */
+      timezone?: string;
     };
     /** @description Scheduled task response payload. */
     ScheduledTaskInfo: {
+      /** @description Whether missed slots are collapsed to the latest slot. */
+      coalesce: boolean;
       /**
        * Format: double
        * @description Creation timestamp.
@@ -2367,13 +2395,61 @@ export interface components {
       /** @description Display name. */
       name: string;
       /**
+       * Format: int64
+       * @description Maximum execution time in seconds.
+       */
+      timeout_seconds: number;
+      /** @description Explicit IANA time zone used for cron evaluation. */
+      timezone: string;
+      /**
        * Format: double
        * @description Last update timestamp.
        */
       updated_at: number;
     };
+    /** @description Persisted scheduled task run visible to administrators. */
+    ScheduledTaskRunInfo: {
+      /**
+       * Format: double
+       * @description Claim timestamp.
+       */
+      claimed_at?: number | null;
+      /**
+       * Format: double
+       * @description Terminal or unknown-state timestamp.
+       */
+      finished_at?: number | null;
+      /**
+       * Format: int64
+       * @description Run row identifier.
+       */
+      id: number;
+      /**
+       * Format: int64
+       * @description Scheduled UTC Unix timestamp aligned to a minute.
+       */
+      scheduled_for: number;
+      /**
+       * Format: double
+       * @description Execution start timestamp.
+       */
+      started_at?: number | null;
+      /** @description Durable run status. */
+      status: string;
+      /**
+       * Format: int64
+       * @description Scheduled task row identifier.
+       */
+      task_id: number;
+      /** @description Task name captured when the slot was queued. */
+      task_name: string;
+      /** @description Worker identifier currently owning the run. */
+      worker_id?: string | null;
+    };
     /** @description Scheduled task update payload. */
     ScheduledTaskUpdate: {
+      /** @description Optional coalescing flag. */
+      coalesce?: boolean | null;
       /** @description Optional replacement cron expression. */
       cron?: string | null;
       /** @description Optional enabled flag. */
@@ -2381,6 +2457,42 @@ export interface components {
       job?: null | components['schemas']['ScheduledJobSpec'];
       /** @description Optional replacement display name. */
       name?: string | null;
+      /**
+       * Format: int64
+       * @description Optional replacement timeout in seconds.
+       */
+      timeout_seconds?: number | null;
+      /** @description Optional replacement IANA time zone. */
+      timezone?: string | null;
+    };
+    /** @description Administrator scheduler status response. */
+    SchedulerStatusResponse: {
+      /**
+       * Format: double
+       * @description Last completed scheduler wall-clock check.
+       */
+      last_checked_at?: number | null;
+      /** @description Recent durable task runs ordered from newest to oldest. */
+      recent_runs: components['schemas']['ScheduledTaskRunInfo'][];
+      /** @description Known worker heartbeats ordered from newest to oldest. */
+      workers: components['schemas']['SchedulerWorkerInfo'][];
+    };
+    /** @description Persisted scheduler worker heartbeat visible to administrators. */
+    SchedulerWorkerInfo: {
+      /**
+       * Format: double
+       * @description Most recent heartbeat timestamp.
+       */
+      heartbeat_at: number;
+      /** @description Whether the heartbeat is within the health threshold. */
+      is_healthy: boolean;
+      /**
+       * Format: double
+       * @description Worker start timestamp.
+       */
+      started_at: number;
+      /** @description Stable worker process identifier. */
+      worker_id: string;
     };
     /** @description Access token creation request. */
     TokenCreateRequest: {
@@ -2878,6 +2990,26 @@ export interface operations {
         };
         content: {
           'application/json': components['schemas']['OkResponse'];
+        };
+      };
+    };
+  };
+  scheduler_status: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Durable scheduler status. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['SchedulerStatusResponse'];
         };
       };
     };

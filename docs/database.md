@@ -15,7 +15,7 @@ Paper Scanner 当前实际使用两类数据库：
 
 ## 数据库版本与迁移生命周期
 
-认证库和每个索引库分别使用 SQLite `PRAGMA user_version` 记录 schema 版本。当前认证库版本为 `2`，索引库版本为 `1`。
+认证库和每个索引库分别使用 SQLite `PRAGMA user_version` 记录 schema 版本。当前认证库版本为 `3`，索引库版本为 `1`。
 
 - API 在绑定监听端口前迁移 `data/auth.sqlite` 和 `data/index/*.sqlite`
 - `worker` 在进入调度循环前迁移；`scheduler`、`index`、`notify` 和 `push` 在参数验证完成、首次业务访问前迁移
@@ -385,6 +385,9 @@ users
   └── notification_settings
 
 scheduled_tasks
+  └── scheduled_task_runs
+scheduler_state
+scheduler_workers
 runtime_settings
 announcements
 ```
@@ -555,6 +558,9 @@ announcements
 - `job_spec`：类型化 job 的 JSON；新任务必须填写
 - `legacy_command`：从旧 schema 保留的只读命令文本；新任务必须为空
 - `cron`
+- `timezone`：用于 cron 计算的 IANA 时区，默认 `UTC`
+- `timeout_seconds`：完整 job 链的超时秒数，范围 `1-86400`
+- `coalesce`：是否把错过的多个槽合并为最近一个
 - `enabled`
 - `last_run_at`
 - `last_status`
@@ -563,13 +569,56 @@ announcements
 
 说明：
 
-- Docker 默认由 `worker --project-root /app --interval-seconds 300` 持续加载并按 cron 自动执行启用任务
+- Docker 默认由 `worker --project-root /app --interval-seconds 30` 持续加载并按 cron 自动执行启用任务
 - 立即执行和 dry-run 由 `scheduler run-once TASK_ID` 与 `scheduler dry-run-once TASK_ID` 触发
 - `job_spec` 与 `legacy_command` 必须且只能有一个非空；没有 `job_spec` 的行在数据库约束层不能启用
 - 版本 `1 -> 2` 迁移不会猜测旧命令的含义：旧 `command` 原样进入 `legacy_command`，所有旧任务强制停用
+- 版本 `2 -> 3` 为既有任务补入安全默认值 `UTC`、`3600` 和 `coalesce = 1`，并创建持久化游标、心跳和运行认领表
 - worker 只把已验证 job 映射为固定的 `index`、`notify`、`push` 可执行文件与独立 argv，不经过 shell
 
-### 9. `runtime_settings`
+### 9. `scheduler_state`
+
+调度器全局检查游标。固定行 `id = 1` 的 `last_checked_at` 只允许单调前进；worker 用它计算轮询间隔内错过的分钟，回看上限为 24 小时。
+
+### 10. `scheduler_workers`
+
+worker 心跳表。
+
+字段：
+
+- `worker_id`：主键
+- `started_at`
+- `heartbeat_at`
+
+管理员状态接口以最近 90 秒内有心跳作为健康标准。worker 会清理超过 7 天的其他陈旧心跳。
+
+### 11. `scheduled_task_runs`
+
+持久化执行槽、认领租约和终态历史。
+
+字段：
+
+- `id`
+- `task_id`：原任务 ID；任务删除后历史记录仍可保留
+- `task_name`：入队时保存的任务名快照
+- `scheduled_for`：按分钟对齐的 UTC Unix 时间戳
+- `status`
+- `worker_id`
+- `claim_expires_at`
+- `claimed_at`
+- `started_at`
+- `finished_at`
+- `output_summary`：有界 stdout/stderr 或错误摘要，仅供数据库内部诊断
+
+说明：
+
+- `(task_id, scheduled_for)` 唯一，两个 worker 不能为同一任务槽创建重复运行
+- 状态可为 `pending`、`claimed`、`running`、`success`、`failed`、`timed_out`、`error` 或 `unknown`
+- 同一任务同时最多有一个 `claimed` 或 `running` 实例
+- 未进入 `running` 的过期认领恢复为 `pending`；已经运行但租约过期的记录转为 `unknown`，不会自动重试
+- 管理 API 返回运行时间与状态，但不会返回 `output_summary`
+
+### 12. `runtime_settings`
 
 管理员后台维护的外部元数据运行配置表。
 
@@ -585,7 +634,7 @@ announcements
 - Rust API、索引命令和调度任务会读取该表并应用运行时配置
 - 数据库中没有值时使用代码默认值；运行时配置不从进程环境变量回退
 
-### 10. `announcements`
+### 13. `announcements`
 
 系统公告表。
 

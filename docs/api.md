@@ -556,6 +556,7 @@ CNKI 精确匹配失败时返回受控错误，不会下载候选列表中的错
 | `POST` | `/api/admin/scheduled-tasks` | 创建定时任务 |
 | `PUT` | `/api/admin/scheduled-tasks/{task_id}` | 更新定时任务 |
 | `DELETE` | `/api/admin/scheduled-tasks/{task_id}` | 删除定时任务 |
+| `GET` | `/api/admin/scheduler/status` | 返回调度游标、worker 心跳与最近运行元数据 |
 | `GET` | `/api/admin/announcements` | 列出全部公告 |
 | `POST` | `/api/admin/announcements` | 创建公告 |
 | `PUT` | `/api/admin/announcements/{announcement_id}` | 更新公告 |
@@ -619,11 +620,14 @@ CNKI 精确匹配失败时返回受控错误，不会下载候选列表中的错
     "max_candidates": 200
   },
   "cron": "0 8 * * *",
+  "timezone": "Asia/Shanghai",
+  "timeout_seconds": 3600,
+  "coalesce": true,
   "enabled": true
 }
 ```
 
-更新时 `name`、`job`、`cron`、`enabled` 都可以省略。
+创建时 `timezone`、`timeout_seconds`、`coalesce` 和 `enabled` 可以省略，默认分别为 `UTC`、`3600`、`true` 和 `true`。更新时所有字段都可以省略。
 
 `job` 是带 `kind` 标签的类型化对象，只支持以下组合：
 
@@ -637,12 +641,23 @@ CNKI 精确匹配失败时返回受控错误，不会下载候选列表中的错
 
 补充说明：
 
-- `cron` 使用标准五段 crontab
-- Docker 默认运行 `worker --project-root /app --interval-seconds 300`，由 Rust worker sidecar 按 cron 自动执行启用任务
+- `cron` 使用标准五段 crontab，并在 `timezone` 指定的 IANA 时区中计算；非法时区和不在 `1-86400` 秒范围内的超时会返回 `400`
+- 夏令时跳过的本地分钟不会执行；回拨后重复出现且都匹配 cron 的本地分钟会对应两个不同的 UTC 执行槽
+- Docker 默认运行 `worker --project-root /app --interval-seconds 30`。worker 使用持久化检查游标补齐轮询间隔内的执行槽，最长回看 24 小时；`coalesce = true` 时只保留最近一个错过的槽
+- 每个 `(task_id, scheduled_for)` 只有一条运行记录，同一任务同时最多有一个 `claimed` 或 `running` 实例，因此多个 worker 不会重复执行同一槽
+- 每个任务的 `timeout_seconds` 覆盖完整类型化 job 链路；一个任务失败或超时不会阻止同轮的其他任务继续执行
 - 立即执行和 dry-run 可通过 `scheduler run-once TASK_ID` 与 `scheduler dry-run-once TASK_ID` 从运维终端触发
 - worker 只会直接启动固定的 `index`、`notify`、`push` 可执行文件，并把已验证字段转换为独立 argv；不会调用 shell
 - 从旧版 `command` 列迁移的任务会保留 `legacy_command` 供审阅，但强制禁用，必须先替换为 `job` 才能启用或执行
 - 没有单独的“立即执行”管理 API
+
+`GET /api/admin/scheduler/status` 返回：
+
+- `last_checked_at`：最近完成的持久化检查时间，尚未运行时为 `null`
+- `workers`：worker 标识、启动时间、最近心跳和按 90 秒窗口计算的 `is_healthy`
+- `recent_runs`：最近 20 条运行的任务、计划时间、状态和认领/开始/完成时间
+
+运行状态包括 `pending`、`claimed`、`running`、`success`、`failed`、`timed_out`、`error` 和 `unknown`。接口不会返回进程 stdout、stderr 或内部错误摘要。
 
 ### 公告请求体
 

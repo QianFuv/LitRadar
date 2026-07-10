@@ -180,6 +180,10 @@ pub fn public_routes() -> Router<ApiState> {
             axum::routing::put(admin::update_scheduled_task).delete(admin::delete_scheduled_task),
         )
         .route(
+            "/admin/scheduler/status",
+            axum::routing::get(admin::scheduler_status),
+        )
+        .route(
             "/admin/runtime-settings",
             axum::routing::get(admin::list_runtime_settings).put(admin::update_runtime_settings),
         )

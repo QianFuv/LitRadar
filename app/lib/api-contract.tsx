@@ -35,6 +35,24 @@ export type ScheduledTaskInfo = Omit<
 };
 export type ScheduledTaskCreate = Required<ApiSchemas['ScheduledTaskCreate']>;
 export type ScheduledTaskUpdate = ApiSchemas['ScheduledTaskUpdate'];
+export type ScheduledTaskRunInfo = Omit<
+  ApiSchemas['ScheduledTaskRunInfo'],
+  'claimed_at' | 'finished_at' | 'started_at' | 'worker_id'
+> & {
+  claimed_at: number | null;
+  finished_at: number | null;
+  started_at: number | null;
+  worker_id: string | null;
+};
+export type SchedulerWorkerInfo = ApiSchemas['SchedulerWorkerInfo'];
+export type SchedulerStatus = Omit<
+  ApiSchemas['SchedulerStatusResponse'],
+  'last_checked_at' | 'recent_runs' | 'workers'
+> & {
+  last_checked_at: number | null;
+  recent_runs: ScheduledTaskRunInfo[];
+  workers: SchedulerWorkerInfo[];
+};
 
 /**
  * Convert an unknown JSON value into a trusted contract type.
@@ -301,11 +319,77 @@ function isScheduledTaskInfo(value: unknown): value is ScheduledTaskInfo {
     typeof value.name === 'string' &&
     (hasTypedJob || hasLegacyCommand) &&
     typeof value.cron === 'string' &&
+    typeof value.timezone === 'string' &&
+    Number.isInteger(value.timeout_seconds) &&
+    Number(value.timeout_seconds) >= 1 &&
+    Number(value.timeout_seconds) <= 86_400 &&
+    typeof value.coalesce === 'boolean' &&
     typeof value.enabled === 'boolean' &&
     isNullableNumber(value.last_run_at) &&
     typeof value.last_status === 'string' &&
     isNumber(value.created_at) &&
     isNumber(value.updated_at)
+  );
+}
+
+/**
+ * Return whether a value is one durable scheduler run response.
+ *
+ * @param value - Value to inspect.
+ * @returns Whether the value matches the generated scheduler-run contract.
+ */
+function isScheduledTaskRunInfo(value: unknown): value is ScheduledTaskRunInfo {
+  return (
+    isRecord(value) &&
+    isNumber(value.id) &&
+    isNumber(value.task_id) &&
+    typeof value.task_name === 'string' &&
+    isNumber(value.scheduled_for) &&
+    [
+      'pending',
+      'claimed',
+      'running',
+      'success',
+      'failed',
+      'timed_out',
+      'error',
+      'unknown',
+    ].includes(String(value.status)) &&
+    isNullableString(value.worker_id) &&
+    isNullableNumber(value.claimed_at) &&
+    isNullableNumber(value.started_at) &&
+    isNullableNumber(value.finished_at)
+  );
+}
+
+/**
+ * Return whether a value is one persisted scheduler worker heartbeat.
+ *
+ * @param value - Value to inspect.
+ * @returns Whether the value matches the generated scheduler-worker contract.
+ */
+function isSchedulerWorkerInfo(value: unknown): value is SchedulerWorkerInfo {
+  return (
+    isRecord(value) &&
+    typeof value.worker_id === 'string' &&
+    isNumber(value.started_at) &&
+    isNumber(value.heartbeat_at) &&
+    typeof value.is_healthy === 'boolean'
+  );
+}
+
+/**
+ * Return whether a value is the durable scheduler status response.
+ *
+ * @param value - Value to inspect.
+ * @returns Whether the value matches the generated scheduler-status contract.
+ */
+function isSchedulerStatus(value: unknown): value is SchedulerStatus {
+  return (
+    isRecord(value) &&
+    isNullableNumber(value.last_checked_at) &&
+    isArrayOf(value.workers, isSchedulerWorkerInfo) &&
+    isArrayOf(value.recent_runs, isScheduledTaskRunInfo)
   );
 }
 
@@ -444,4 +528,14 @@ export function parseScheduledTaskList(value: unknown): ScheduledTaskInfo[] {
     'ScheduledTaskInfo[]',
     (candidate): candidate is ScheduledTaskInfo[] => isArrayOf(candidate, isScheduledTaskInfo),
   );
+}
+
+/**
+ * Parse the durable scheduler status response.
+ *
+ * @param value - Unknown JSON payload.
+ * @returns Validated scheduler status.
+ */
+export function parseSchedulerStatus(value: unknown): SchedulerStatus {
+  return parseContract(value, 'SchedulerStatusResponse', isSchedulerStatus);
 }

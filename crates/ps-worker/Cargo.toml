@@ -5,6 +5,8 @@ edition.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+chrono.workspace = true
+chrono-tz.workspace = true
 ps-domain = { path = "../ps-domain" }
 ps-recommend = { path = "../ps-recommend" }
 ps-storage = { path = "../ps-storage" }

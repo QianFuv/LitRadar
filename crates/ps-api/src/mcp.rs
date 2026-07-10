@@ -553,6 +553,7 @@ fn business_tool_error_message(error: &BusinessRepositoryError) -> String {
         | BusinessRepositoryError::TargetFolderNotFound
         | BusinessRepositoryError::SourceAndTargetFoldersSame
         | BusinessRepositoryError::InvalidScheduledJob(_)
+        | BusinessRepositoryError::InvalidScheduledTask(_)
         | BusinessRepositoryError::LegacyScheduledTaskCannotBeEnabled => error.to_string(),
         BusinessRepositoryError::Sqlite(_)
         | BusinessRepositoryError::Io(_)

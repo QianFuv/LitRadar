@@ -110,10 +110,14 @@ printf '%s\n' "$ADMIN_PASSWORD" | cargo run --bin admin -- bootstrap --username 
 ### Rust worker
 
 ```bash
-cargo run --bin worker -- --interval-seconds 300
+cargo run --bin worker -- --interval-seconds 30
 ```
 
-`worker` 会持续加载 `scheduled_tasks` 并按五段 cron 执行启用任务。任务必须是 `index`、`notify` 或 `push` 类型化 job；worker 根据白名单字段构造 argv，直接启动对应可执行文件，不经过 shell。索引 job 可串联 notify/push，任一步失败都会停止后续步骤。
+`worker` 使用 `scheduler_state.last_checked_at` 记录已检查到的墙钟时间，而不是只判断当前分钟。每轮会回看上次游标到当前时间的 UTC 分钟，最多回看 24 小时，再转换到任务的 IANA 时区匹配五段 cron。夏令时前跳缺失的本地分钟不会生成运行，回拨重复的本地分钟会生成两个不同 UTC 槽。任务默认 `coalesce = true`，因此离线后只补跑最近一个错过的槽；关闭后会保留回看窗口内的每个槽。
+
+`scheduled_task_runs` 通过 `(task_id, scheduled_for)` 唯一约束和 `BEGIN IMMEDIATE` 认领事务协调多个 worker。每个任务同时最多有一个认领或运行实例。认领后尚未开始且租约过期的运行可以重新认领；已开始但心跳过期的运行被标为 `unknown`，不会自动重复执行。worker 与运行租约会在长任务期间续期，管理员可通过 `/api/admin/scheduler/status` 查看按 90 秒窗口计算的健康状态。
+
+任务必须是 `index`、`notify` 或 `push` 类型化 job。worker 根据白名单字段构造 argv，直接启动对应可执行文件，不经过 shell。`timeout_seconds` 限制完整 job 链，stdout/stderr 只以有界摘要保存在数据库内部，不通过管理 API 返回。索引 job 可串联 notify/push，任一步失败都会停止该任务的后续步骤；不同任务并发执行，一个任务失败或超时不会阻止同轮其他任务。
 
 ### Scheduler
 
@@ -220,7 +224,7 @@ docker compose build
 
 ### 管理员定时任务不是 API 进程内 APScheduler，也不是 shell 命令
 
-Rust worker sidecar 会按 cron 自动执行启用的类型化任务；单次执行由 `scheduler run-once TASK_ID` 触发，dry-run 由 `scheduler dry-run-once TASK_ID` 触发。不要重新加入自由命令字段或命令解释器；新增调度能力时应扩展领域枚举、参数校验、进程映射、OpenAPI 与管理 UI。
+Rust worker sidecar 会按持久化游标、时区和 cron 自动执行启用的类型化任务；单次执行由 `scheduler run-once TASK_ID` 触发，dry-run 由 `scheduler dry-run-once TASK_ID` 触发。不要重新加入自由命令字段或命令解释器；新增调度能力时应同步扩展领域枚举、参数校验、运行认领、OpenAPI 与管理 UI。
 
 ### 通知配置不绑定单一 AI 服务商
 

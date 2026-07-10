@@ -24,7 +24,11 @@ fn empty_auth_database_migration_creates_current_schema() {
     assert!(table_columns(&path, "users").contains(&"is_admin".to_string()));
     assert!(table_columns(&path, "announcements").contains(&"priority".to_string()));
     assert!(table_columns(&path, "scheduled_tasks").contains(&"job_spec".to_string()));
+    assert!(table_columns(&path, "scheduled_tasks").contains(&"timezone".to_string()));
+    assert!(table_columns(&path, "scheduled_tasks").contains(&"timeout_seconds".to_string()));
     assert!(!table_columns(&path, "scheduled_tasks").contains(&"command".to_string()));
+    assert!(table_exists(&path, "scheduled_task_runs"));
+    assert!(table_exists(&path, "scheduler_workers"));
 }
 
 #[test]
@@ -88,6 +92,69 @@ fn scheduler_migration_disables_and_preserves_legacy_commands() {
             "success".to_string(),
         )
     );
+    assert_eq!(user_version(&path), AUTH_SCHEMA_VERSION);
+}
+
+#[test]
+fn scheduler_durable_migration_preserves_tasks_and_adds_safe_defaults() {
+    let temp_dir = tempdir().expect("temp directory should be created");
+    let path = temp_dir.path().join("auth.sqlite");
+    let connection = Connection::open(&path).expect("version two database should open");
+    connection
+        .execute_batch(
+            r#"
+            CREATE TABLE scheduled_tasks (
+                id             INTEGER PRIMARY KEY AUTOINCREMENT,
+                name           TEXT NOT NULL,
+                job_spec       TEXT,
+                legacy_command TEXT,
+                cron           TEXT NOT NULL,
+                enabled        INTEGER NOT NULL DEFAULT 1,
+                last_run_at    REAL,
+                last_status    TEXT NOT NULL DEFAULT '',
+                created_at     REAL NOT NULL,
+                updated_at     REAL NOT NULL
+            );
+            INSERT INTO scheduled_tasks
+                (id, name, job_spec, legacy_command, cron, enabled, created_at, updated_at)
+            VALUES
+                (12, 'Typed task', '{"kind":"index","notify":false,"push":false}',
+                 NULL, '0 8 * * *', 1, 1.0, 2.0),
+                (13, 'Legacy task', NULL, 'index --update', '0 9 * * *', 0, 1.0, 2.0);
+            PRAGMA user_version = 2;
+            "#,
+        )
+        .expect("version two fixture should be created");
+    drop(connection);
+
+    migrate_auth_database(&path).expect("version two database should migrate");
+
+    let connection = Connection::open(&path).expect("migrated database should open");
+    let defaults: (String, i64, i64) = connection
+        .query_row(
+            "SELECT timezone, timeout_seconds, coalesce FROM scheduled_tasks WHERE id = 12",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .expect("scheduler defaults should load");
+    let legacy_enabled: i64 = connection
+        .query_row(
+            "SELECT enabled FROM scheduled_tasks WHERE id = 13",
+            [],
+            |row| row.get(0),
+        )
+        .expect("legacy task should remain");
+    let cursor: Option<f64> = connection
+        .query_row(
+            "SELECT last_checked_at FROM scheduler_state WHERE id = 1",
+            [],
+            |row| row.get(0),
+        )
+        .expect("scheduler cursor should exist");
+
+    assert_eq!(defaults, ("UTC".to_string(), 3_600, 1));
+    assert_eq!(legacy_enabled, 0);
+    assert_eq!(cursor, None);
     assert_eq!(user_version(&path), AUTH_SCHEMA_VERSION);
 }
 

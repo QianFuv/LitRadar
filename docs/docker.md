@@ -30,11 +30,11 @@ worker sidecar
 ### `worker`
 
 - 复用后端镜像
-- 启动命令：`worker --project-root /app --interval-seconds 300`
+- 启动命令：`worker --project-root /app --interval-seconds 30`
 - 卷挂载：`./data:/app/data`
 - 依赖：`api`
 
-`worker` 会周期性加载 `scheduled_tasks`，按五段 cron 执行启用任务，并把结果写回 `last_run_at` 与 `last_status`。需要立即执行或 dry-run 单个后台任务时，使用 `scheduler run-once TASK_ID` 或 `scheduler dry-run-once TASK_ID`。
+`worker` 每 30 秒持久化一次检查游标和心跳，按任务的 IANA 时区与五段 cron 生成运行槽，再通过 SQLite 唯一约束和事务认领执行。多个共享 `data/auth.sqlite` 的 worker 可以安全竞争任务；同一任务同时最多运行一个实例。进程退出后，未开始的过期认领可以回收，已经开始但失去心跳的运行会标记为 `unknown`，避免自动重复产生外部副作用。需要立即执行或 dry-run 单个后台任务时，使用 `scheduler run-once TASK_ID` 或 `scheduler dry-run-once TASK_ID`。
 
 ### `app`
 

@@ -1,14 +1,16 @@
 //! Admin route handlers for auth database business state.
 
+use std::time::{SystemTime, UNIX_EPOCH};
+
 use axum::extract::{Path, State};
 use axum::http::HeaderMap;
 use axum::Json;
 use ps_auth::{is_valid_new_password, MIN_PASSWORD_LENGTH};
 use ps_domain::{
-    AdminInviteCodeInfo, AdminResetPassword, AdminSetAdmin, AdminStatsResponse, AdminUserInfo,
-    AnnouncementCreate, AnnouncementInfo, AnnouncementUpdate, OkResponse, RuntimeSettingInfo,
-    RuntimeSettingsUpdate, ScheduledJobSpec, ScheduledTaskCreate, ScheduledTaskInfo,
-    ScheduledTaskUpdate, UserId,
+    validate_scheduled_task_timing, AdminInviteCodeInfo, AdminResetPassword, AdminSetAdmin,
+    AdminStatsResponse, AdminUserInfo, AnnouncementCreate, AnnouncementInfo, AnnouncementUpdate,
+    OkResponse, RuntimeSettingInfo, RuntimeSettingsUpdate, ScheduledJobSpec, ScheduledTaskCreate,
+    ScheduledTaskInfo, ScheduledTaskUpdate, SchedulerStatusResponse, UserId,
 };
 use ps_storage::BusinessRepositoryError;
 
@@ -17,7 +19,7 @@ use crate::routes::auth::{auth_service, map_auth_error, require_admin_user};
 use crate::state::ApiState;
 
 type AnnouncementPayload<'a> = (Option<&'a str>, Option<&'a str>, Option<String>);
-type ScheduledTaskPayload<'a> = (Option<&'a str>, Option<&'a str>);
+type ScheduledTaskPayload<'a> = (Option<&'a str>, Option<&'a str>, Option<&'a str>);
 
 /// List all users with admin dashboard counts.
 #[utoipa::path(
@@ -241,14 +243,24 @@ pub(crate) async fn create_scheduled_task(
     Json(body): Json<ScheduledTaskCreate>,
 ) -> Result<Json<ScheduledTaskInfo>, ApiError> {
     require_admin_user(&state, &headers)?;
-    let (name, cron) =
-        validate_scheduled_task_payload(Some(&body.name), Some(&body.cron), Some(&body.job))?;
+    let (name, cron, timezone) = validate_scheduled_task_payload(
+        Some(&body.name),
+        Some(&body.cron),
+        Some(&body.timezone),
+        Some(body.timeout_seconds),
+        Some(&body.job),
+    )?;
     let task = ps_storage::create_scheduled_task(
         state.storage_config().auth_db_path(),
-        name.unwrap_or_default(),
-        &body.job,
-        cron.unwrap_or_default(),
-        body.enabled,
+        ps_storage::ScheduledTaskCreateParams {
+            name: name.unwrap_or_default(),
+            job: &body.job,
+            cron: cron.unwrap_or_default(),
+            timezone: timezone.unwrap_or("UTC"),
+            timeout_seconds: body.timeout_seconds,
+            coalesce: body.coalesce,
+            enabled: body.enabled,
+        },
     )
     .map_err(map_business_error)?;
     Ok(Json(task))
@@ -271,18 +283,25 @@ pub(crate) async fn update_scheduled_task(
     Json(body): Json<ScheduledTaskUpdate>,
 ) -> Result<Json<ScheduledTaskInfo>, ApiError> {
     require_admin_user(&state, &headers)?;
-    let (name, cron) = validate_scheduled_task_payload(
+    let (name, cron, timezone) = validate_scheduled_task_payload(
         body.name.as_deref(),
         body.cron.as_deref(),
+        body.timezone.as_deref(),
+        body.timeout_seconds,
         body.job.as_ref(),
     )?;
     let task = ps_storage::update_scheduled_task(
         state.storage_config().auth_db_path(),
-        task_id,
-        name,
-        body.job.as_ref(),
-        cron,
-        body.enabled,
+        ps_storage::ScheduledTaskUpdateParams {
+            task_id,
+            name,
+            job: body.job.as_ref(),
+            cron,
+            timezone,
+            timeout_seconds: body.timeout_seconds,
+            coalesce: body.coalesce,
+            enabled: body.enabled,
+        },
     )
     .map_err(map_business_error)?;
     let Some(task) = task else {
@@ -313,6 +332,29 @@ pub(crate) async fn delete_scheduled_task(
         return Err(ApiError::not_found("Scheduled task not found"));
     }
     Ok(Json(OkResponse { ok: true }))
+}
+
+/// Read durable scheduler cursor, worker heartbeat, and run status.
+#[utoipa::path(
+    get,
+    path = "/api/admin/scheduler/status",
+    tag = "admin",
+    responses((status = 200, description = "Durable scheduler status.", body = SchedulerStatusResponse)),
+    security(("bearer_auth" = []), ("session_cookie" = []))
+)]
+pub(crate) async fn scheduler_status(
+    State(state): State<ApiState>,
+    headers: HeaderMap,
+) -> Result<Json<SchedulerStatusResponse>, ApiError> {
+    require_admin_user(&state, &headers)?;
+    let status = ps_storage::get_scheduler_status(
+        state.storage_config().auth_db_path(),
+        current_unix_time(),
+        ps_worker::scheduler::SCHEDULER_HEALTH_WINDOW_SECONDS,
+        20,
+    )
+    .map_err(map_business_error)?;
+    Ok(Json(status))
 }
 
 /// List managed runtime settings.
@@ -491,15 +533,21 @@ fn validate_announcement_payload<'a>(
 fn validate_scheduled_task_payload<'a>(
     name: Option<&'a str>,
     cron: Option<&'a str>,
+    timezone: Option<&'a str>,
+    timeout_seconds: Option<u64>,
     job: Option<&ScheduledJobSpec>,
 ) -> Result<ScheduledTaskPayload<'a>, ApiError> {
     let clean_name = name.map(str::trim);
     let clean_cron = cron.map(str::trim);
+    let clean_timezone = timezone.map(str::trim);
     if clean_name == Some("") {
         return Err(ApiError::bad_request("Task name must not be empty"));
     }
     if clean_cron == Some("") {
         return Err(ApiError::bad_request("Cron must not be empty"));
+    }
+    if clean_timezone == Some("") {
+        return Err(ApiError::bad_request("Timezone must not be empty"));
     }
     if let Some(cron) = clean_cron {
         ps_worker::scheduler::validate_cron_expression(cron)
@@ -509,7 +557,17 @@ fn validate_scheduled_task_payload<'a>(
         job.validate()
             .map_err(|error| ApiError::bad_request(error.to_string()))?;
     }
-    Ok((clean_name, clean_cron))
+    if let (Some(timezone), Some(timeout_seconds)) = (clean_timezone, timeout_seconds) {
+        validate_scheduled_task_timing(timezone, timeout_seconds)
+            .map_err(|error| ApiError::bad_request(error.to_string()))?;
+    } else if let Some(timezone) = clean_timezone {
+        validate_scheduled_task_timing(timezone, 3_600)
+            .map_err(|error| ApiError::bad_request(error.to_string()))?;
+    } else if let Some(timeout_seconds) = timeout_seconds {
+        validate_scheduled_task_timing("UTC", timeout_seconds)
+            .map_err(|error| ApiError::bad_request(error.to_string()))?;
+    }
+    Ok((clean_name, clean_cron, clean_timezone))
 }
 
 fn map_business_error(error: BusinessRepositoryError) -> ApiError {
@@ -517,9 +575,17 @@ fn map_business_error(error: BusinessRepositoryError) -> ApiError {
         BusinessRepositoryError::UnknownRuntimeSetting(_)
         | BusinessRepositoryError::InvalidRuntimeBoolean(_)
         | BusinessRepositoryError::InvalidScheduledJob(_)
+        | BusinessRepositoryError::InvalidScheduledTask(_)
         | BusinessRepositoryError::LegacyScheduledTaskCannotBeEnabled => {
             ApiError::bad_request(error.to_string())
         }
         _ => ApiError::internal_server_error(),
     }
+}
+
+fn current_unix_time() -> f64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system time should be after Unix epoch")
+        .as_secs_f64()
 }

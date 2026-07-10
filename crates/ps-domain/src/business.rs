@@ -478,6 +478,52 @@ fn scheduled_job_error(message: &str) -> ScheduledJobValidationError {
     }
 }
 
+/// Scheduled task timing validation error.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ScheduledTaskValidationError {
+    message: String,
+}
+
+impl fmt::Display for ScheduledTaskValidationError {
+    /// Format the validation error.
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(&self.message)
+    }
+}
+
+impl Error for ScheduledTaskValidationError {}
+
+/// Validate scheduler time zone and timeout settings.
+///
+/// # Arguments
+///
+/// * `timezone` - Explicit IANA time zone name.
+/// * `timeout_seconds` - Maximum task runtime in seconds.
+///
+/// # Returns
+///
+/// Empty result when the timing configuration is valid.
+pub fn validate_scheduled_task_timing(
+    timezone: &str,
+    timeout_seconds: u64,
+) -> Result<(), ScheduledTaskValidationError> {
+    if timezone.parse::<chrono_tz::Tz>().is_err() {
+        return Err(scheduled_task_error("timezone must be a valid IANA name"));
+    }
+    if !(1..=86_400).contains(&timeout_seconds) {
+        return Err(scheduled_task_error(
+            "timeout_seconds must be between 1 and 86400",
+        ));
+    }
+    Ok(())
+}
+
+fn scheduled_task_error(message: &str) -> ScheduledTaskValidationError {
+    ScheduledTaskValidationError {
+        message: message.to_string(),
+    }
+}
+
 /// Scheduled task response payload.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct ScheduledTaskInfo {
@@ -491,6 +537,12 @@ pub struct ScheduledTaskInfo {
     pub legacy_command: Option<String>,
     /// Five-field cron expression.
     pub cron: String,
+    /// Explicit IANA time zone used for cron evaluation.
+    pub timezone: String,
+    /// Maximum execution time in seconds.
+    pub timeout_seconds: u64,
+    /// Whether missed slots are collapsed to the latest slot.
+    pub coalesce: bool,
     /// Whether the task is enabled.
     pub enabled: bool,
     /// Last run timestamp.
@@ -513,6 +565,16 @@ pub struct ScheduledTaskCreate {
     pub job: ScheduledJobSpec,
     /// Five-field cron expression.
     pub cron: String,
+    /// Explicit IANA time zone used for cron evaluation.
+    #[serde(default = "default_scheduler_timezone")]
+    pub timezone: String,
+    /// Maximum execution time in seconds.
+    #[serde(default = "default_scheduler_timeout_seconds")]
+    #[schema(minimum = 1, maximum = 86400)]
+    pub timeout_seconds: u64,
+    /// Whether missed slots are collapsed to the latest slot.
+    #[serde(default = "default_enabled")]
+    pub coalesce: bool,
     /// Whether the task is enabled.
     #[serde(default = "default_enabled")]
     pub enabled: bool,
@@ -528,8 +590,62 @@ pub struct ScheduledTaskUpdate {
     pub job: Option<ScheduledJobSpec>,
     /// Optional replacement cron expression.
     pub cron: Option<String>,
+    /// Optional replacement IANA time zone.
+    pub timezone: Option<String>,
+    /// Optional replacement timeout in seconds.
+    #[schema(minimum = 1, maximum = 86400)]
+    pub timeout_seconds: Option<u64>,
+    /// Optional coalescing flag.
+    pub coalesce: Option<bool>,
     /// Optional enabled flag.
     pub enabled: Option<bool>,
+}
+
+/// Persisted scheduled task run visible to administrators.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct ScheduledTaskRunInfo {
+    /// Run row identifier.
+    pub id: i64,
+    /// Scheduled task row identifier.
+    pub task_id: i64,
+    /// Task name captured when the slot was queued.
+    pub task_name: String,
+    /// Scheduled UTC Unix timestamp aligned to a minute.
+    pub scheduled_for: i64,
+    /// Durable run status.
+    pub status: String,
+    /// Worker identifier currently owning the run.
+    pub worker_id: Option<String>,
+    /// Claim timestamp.
+    pub claimed_at: Option<f64>,
+    /// Execution start timestamp.
+    pub started_at: Option<f64>,
+    /// Terminal or unknown-state timestamp.
+    pub finished_at: Option<f64>,
+}
+
+/// Persisted scheduler worker heartbeat visible to administrators.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct SchedulerWorkerInfo {
+    /// Stable worker process identifier.
+    pub worker_id: String,
+    /// Worker start timestamp.
+    pub started_at: f64,
+    /// Most recent heartbeat timestamp.
+    pub heartbeat_at: f64,
+    /// Whether the heartbeat is within the health threshold.
+    pub is_healthy: bool,
+}
+
+/// Administrator scheduler status response.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct SchedulerStatusResponse {
+    /// Last completed scheduler wall-clock check.
+    pub last_checked_at: Option<f64>,
+    /// Known worker heartbeats ordered from newest to oldest.
+    pub workers: Vec<SchedulerWorkerInfo>,
+    /// Recent durable task runs ordered from newest to oldest.
+    pub recent_runs: Vec<ScheduledTaskRunInfo>,
 }
 
 /// Runtime setting response payload.
@@ -774,6 +890,16 @@ pub fn default_enabled() -> bool {
     true
 }
 
+/// Return the default scheduler time zone.
+pub fn default_scheduler_timezone() -> String {
+    "UTC".to_string()
+}
+
+/// Return the default scheduled task timeout in seconds.
+pub fn default_scheduler_timeout_seconds() -> u64 {
+    3_600
+}
+
 /// Return the default announcement priority.
 pub fn default_announcement_priority() -> String {
     "normal".to_string()
@@ -781,7 +907,9 @@ pub fn default_announcement_priority() -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{ScheduledDeliveryJob, ScheduledIndexJob, ScheduledJobSpec};
+    use super::{
+        validate_scheduled_task_timing, ScheduledDeliveryJob, ScheduledIndexJob, ScheduledJobSpec,
+    };
 
     #[test]
     fn scheduler_job_spec_accepts_allowlisted_arguments() {
@@ -833,5 +961,15 @@ mod tests {
             r#"{"kind":"notify","database":"index.sqlite","command":"push"}"#,
         )
         .is_err());
+    }
+
+    #[test]
+    fn scheduler_timing_requires_iana_timezone_and_bounded_timeout() {
+        validate_scheduled_task_timing("Asia/Shanghai", 3_600)
+            .expect("valid scheduler timing should pass");
+
+        assert!(validate_scheduled_task_timing("Local", 3_600).is_err());
+        assert!(validate_scheduled_task_timing("UTC", 0).is_err());
+        assert!(validate_scheduled_task_timing("UTC", 86_401).is_err());
     }
 }

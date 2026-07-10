@@ -11,7 +11,7 @@ use rusqlite::{Connection, Transaction, TransactionBehavior};
 use crate::{try_load_extension, DatabaseResolutionError, StorageConfig};
 
 /// Current auth and business database schema version.
-pub const AUTH_SCHEMA_VERSION: i64 = 2;
+pub const AUTH_SCHEMA_VERSION: i64 = 3;
 
 /// Current index database schema version.
 pub const INDEX_SCHEMA_VERSION: i64 = 1;
@@ -147,6 +147,7 @@ pub fn migrate_auth_database(path: impl AsRef<Path>) -> Result<(), MigrationErro
         match next_version {
             1 => apply_auth_version_one(&transaction)?,
             2 => apply_auth_version_two(&transaction)?,
+            3 => apply_auth_version_three(&transaction)?,
             _ => unreachable!("auth migration version should be implemented"),
         }
         transaction.pragma_update(None, "user_version", next_version)?;
@@ -305,6 +306,58 @@ fn apply_auth_version_two(transaction: &Transaction<'_>) -> rusqlite::Result<()>
         DROP TABLE scheduled_tasks;
         ALTER TABLE scheduled_tasks_v2 RENAME TO scheduled_tasks;
         CREATE INDEX idx_scheduled_tasks_enabled ON scheduled_tasks(enabled);
+        ",
+    )
+}
+
+fn apply_auth_version_three(transaction: &Transaction<'_>) -> rusqlite::Result<()> {
+    transaction.execute_batch(
+        "
+        ALTER TABLE scheduled_tasks
+            ADD COLUMN timezone TEXT NOT NULL DEFAULT 'UTC';
+        ALTER TABLE scheduled_tasks
+            ADD COLUMN timeout_seconds INTEGER NOT NULL DEFAULT 3600
+            CHECK (timeout_seconds BETWEEN 1 AND 86400);
+        ALTER TABLE scheduled_tasks
+            ADD COLUMN coalesce INTEGER NOT NULL DEFAULT 1
+            CHECK (coalesce IN (0, 1));
+
+        CREATE TABLE scheduler_state (
+            id              INTEGER PRIMARY KEY CHECK (id = 1),
+            last_checked_at REAL
+        );
+
+        INSERT INTO scheduler_state (id, last_checked_at) VALUES (1, NULL);
+
+        CREATE TABLE scheduler_workers (
+            worker_id    TEXT PRIMARY KEY,
+            started_at   REAL NOT NULL,
+            heartbeat_at REAL NOT NULL
+        );
+
+        CREATE TABLE scheduled_task_runs (
+            id               INTEGER PRIMARY KEY AUTOINCREMENT,
+            task_id          INTEGER NOT NULL,
+            task_name        TEXT    NOT NULL,
+            scheduled_for    INTEGER NOT NULL,
+            status           TEXT    NOT NULL
+                CHECK (status IN ('pending', 'claimed', 'running', 'success',
+                                  'failed', 'timed_out', 'error', 'unknown')),
+            worker_id        TEXT,
+            claim_expires_at REAL,
+            claimed_at       REAL,
+            started_at       REAL,
+            finished_at      REAL,
+            output_summary   TEXT NOT NULL DEFAULT '',
+            UNIQUE(task_id, scheduled_for)
+        );
+
+        CREATE INDEX idx_scheduled_task_runs_task
+            ON scheduled_task_runs(task_id, scheduled_for DESC);
+        CREATE INDEX idx_scheduled_task_runs_status
+            ON scheduled_task_runs(status, claim_expires_at);
+        CREATE INDEX idx_scheduler_workers_heartbeat
+            ON scheduler_workers(heartbeat_at DESC);
         ",
     )
 }

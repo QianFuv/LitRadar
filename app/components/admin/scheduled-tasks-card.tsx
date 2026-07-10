@@ -7,6 +7,7 @@ import { AlertTriangle, Clock3, Pencil, Plus, Trash2 } from 'lucide-react';
 import {
   adminCreateScheduledTask,
   adminDeleteScheduledTask,
+  adminGetSchedulerStatus,
   adminGetScheduledTasks,
   adminUpdateScheduledTask,
   type ScheduledJobSpec,
@@ -35,12 +36,15 @@ import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 
 type TaskFormState = {
+  coalesce: boolean;
   cron: string;
   database: string;
   enabled: boolean;
   maxCandidates: string;
   metadataFile: string;
   name: string;
+  timeoutSeconds: string;
+  timezone: string;
 };
 
 type JobPresetId =
@@ -61,15 +65,27 @@ const JOB_PRESETS: { label: string; value: JobPresetId }[] = [
 ];
 
 const DEFAULT_FORM: TaskFormState = {
+  coalesce: true,
   cron: '0 8 * * *',
   database: '',
   enabled: true,
   maxCandidates: '',
   metadataFile: '',
   name: '',
+  timeoutSeconds: '3600',
+  timezone: 'UTC',
 };
 
 const DEFAULT_PRESET: JobPresetId = 'index-update-external';
+
+/**
+ * Resolve the browser's IANA time zone for new task defaults.
+ *
+ * @returns Browser time zone, or UTC when the runtime does not expose one.
+ */
+function getBrowserTimeZone(): string {
+  return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+}
 
 /**
  * Return whether a preset starts with an index refresh.
@@ -177,6 +193,36 @@ function isJobFormValid(form: TaskFormState, preset: JobPresetId): boolean {
 }
 
 /**
+ * Return whether a scheduler time zone can be resolved by the browser runtime.
+ *
+ * @param value - Candidate IANA time-zone name.
+ * @returns Whether the time-zone name is valid.
+ */
+function isValidTimeZone(value: string): boolean {
+  const timezone = value.trim();
+  if (!timezone) {
+    return false;
+  }
+  try {
+    Intl.DateTimeFormat('en-US', { timeZone: timezone }).format();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Return whether a scheduler timeout is a whole number within the backend limit.
+ *
+ * @param value - Timeout input in seconds.
+ * @returns Whether the timeout can be submitted.
+ */
+function isValidTimeout(value: string): boolean {
+  const timeoutSeconds = Number(value);
+  return Number.isInteger(timeoutSeconds) && timeoutSeconds >= 1 && timeoutSeconds <= 86_400;
+}
+
+/**
  * Format a typed job for administrator review.
  *
  * @param job - Typed job, or null for a migrated legacy task.
@@ -243,14 +289,26 @@ export function ScheduledTasksCard() {
     queryKey: ['admin-scheduled-tasks'],
     queryFn: () => adminGetScheduledTasks(),
   });
+  const {
+    data: schedulerStatus,
+    error: schedulerStatusError,
+    isLoading: isSchedulerStatusLoading,
+  } = useQuery({
+    queryKey: ['admin-scheduler-status'],
+    queryFn: () => adminGetSchedulerStatus(),
+    refetchInterval: 30_000,
+  });
 
   const saveMutation = useMutation({
     mutationFn: async () => {
       const payload: ScheduledTaskCreate = {
+        coalesce: form.coalesce,
         cron: form.cron,
         enabled: form.enabled,
         job: buildScheduledJob(form, jobPreset),
         name: form.name,
+        timeout_seconds: Number(form.timeoutSeconds),
+        timezone: form.timezone.trim(),
       };
       if (editingTask) {
         return adminUpdateScheduledTask(editingTask.id, payload);
@@ -260,6 +318,7 @@ export function ScheduledTasksCard() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['admin-scheduled-tasks'] });
       queryClient.invalidateQueries({ queryKey: ['admin-stats'] });
+      queryClient.invalidateQueries({ queryKey: ['admin-scheduler-status'] });
       setDialogOpen(false);
       setEditingTask(null);
       setForm(DEFAULT_FORM);
@@ -273,6 +332,7 @@ export function ScheduledTasksCard() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['admin-scheduled-tasks'] });
       queryClient.invalidateQueries({ queryKey: ['admin-stats'] });
+      queryClient.invalidateQueries({ queryKey: ['admin-scheduler-status'] });
     },
   });
 
@@ -281,6 +341,7 @@ export function ScheduledTasksCard() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['admin-scheduled-tasks'] });
       queryClient.invalidateQueries({ queryKey: ['admin-stats'] });
+      queryClient.invalidateQueries({ queryKey: ['admin-scheduler-status'] });
     },
   });
 
@@ -299,7 +360,7 @@ export function ScheduledTasksCard() {
 
   const openCreateDialog = () => {
     setEditingTask(null);
-    setForm(DEFAULT_FORM);
+    setForm({ ...DEFAULT_FORM, timezone: getBrowserTimeZone() });
     setJobPreset(DEFAULT_PRESET);
     setDialogOpen(true);
   };
@@ -308,6 +369,7 @@ export function ScheduledTasksCard() {
     const preset = getPresetForJob(task.job);
     setEditingTask(task);
     setForm({
+      coalesce: task.coalesce,
       cron: task.cron,
       database:
         task.job?.kind === 'notify' || task.job?.kind === 'push' ? (task.job.database ?? '') : '',
@@ -318,13 +380,21 @@ export function ScheduledTasksCard() {
           : '',
       metadataFile: task.job?.kind === 'index' ? (task.job.metadata_file ?? '') : '',
       name: task.name,
+      timeoutSeconds: task.timeout_seconds.toString(),
+      timezone: task.timezone,
     });
     setJobPreset(preset);
     setDialogOpen(true);
   };
 
   const isFormValid =
-    Boolean(form.name.trim()) && Boolean(form.cron.trim()) && isJobFormValid(form, jobPreset);
+    Boolean(form.name.trim()) &&
+    Boolean(form.cron.trim()) &&
+    isValidTimeZone(form.timezone) &&
+    isValidTimeout(form.timeoutSeconds) &&
+    isJobFormValid(form, jobPreset);
+  const healthyWorkerCount =
+    schedulerStatus?.workers.filter((worker) => worker.is_healthy).length ?? 0;
 
   return (
     <Card>
@@ -351,7 +421,9 @@ export function ScheduledTasksCard() {
           <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
             <DialogHeader>
               <DialogTitle>{editingTask ? '编辑定时任务' : '新建定时任务'}</DialogTitle>
-              <DialogDescription>使用五段 crontab 表达式，例如 `0 8 * * *`。</DialogDescription>
+              <DialogDescription>
+                使用五段 crontab 表达式和明确的 IANA 时区，例如 `0 8 * * *` 与 `Asia/Shanghai`。
+              </DialogDescription>
             </DialogHeader>
             <div className="space-y-4 py-2">
               {editingTask?.job === null && (
@@ -394,6 +466,47 @@ export function ScheduledTasksCard() {
                   }
                   placeholder="Cron 表达式"
                 />
+              </div>
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div className="space-y-2">
+                  <Label htmlFor="scheduled-task-timezone">IANA 时区</Label>
+                  <Input
+                    id="scheduled-task-timezone"
+                    name="scheduled_task_timezone"
+                    autoComplete="off"
+                    spellCheck={false}
+                    value={form.timezone}
+                    onChange={(event) =>
+                      setForm((current) => ({ ...current, timezone: event.target.value }))
+                    }
+                    placeholder="Asia/Shanghai"
+                  />
+                  {!isValidTimeZone(form.timezone) && (
+                    <p role="alert" className="text-sm text-destructive">
+                      请输入有效的 IANA 时区，例如 Asia/Shanghai。
+                    </p>
+                  )}
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="scheduled-task-timeout">超时秒数</Label>
+                  <Input
+                    id="scheduled-task-timeout"
+                    name="scheduled_task_timeout_seconds"
+                    type="number"
+                    min={1}
+                    max={86_400}
+                    step={1}
+                    value={form.timeoutSeconds}
+                    onChange={(event) =>
+                      setForm((current) => ({ ...current, timeoutSeconds: event.target.value }))
+                    }
+                  />
+                  {!isValidTimeout(form.timeoutSeconds) && (
+                    <p role="alert" className="text-sm text-destructive">
+                      超时必须为 1 到 86400 秒的整数。
+                    </p>
+                  )}
+                </div>
               </div>
               <div className="space-y-2">
                 <Label htmlFor="scheduled-task-preset">任务预设</Label>
@@ -487,6 +600,23 @@ export function ScheduledTasksCard() {
                   }
                 />
               </div>
+              <div className="flex items-start justify-between gap-3 rounded-md border px-3 py-2">
+                <div className="space-y-1">
+                  <Label htmlFor="scheduled-task-coalesce" className="text-sm">
+                    合并补跑
+                  </Label>
+                  <p className="text-xs text-muted-foreground">
+                    worker 离线后仅补跑最近一次错过的执行。
+                  </p>
+                </div>
+                <Switch
+                  id="scheduled-task-coalesce"
+                  checked={form.coalesce}
+                  onCheckedChange={(checked: boolean) =>
+                    setForm((current) => ({ ...current, coalesce: checked }))
+                  }
+                />
+              </div>
               {mutationError && (
                 <p role="alert" className="text-sm text-destructive">
                   {mutationError}
@@ -512,6 +642,25 @@ export function ScheduledTasksCard() {
           </DialogContent>
         </Dialog>
 
+        <div aria-label="调度器状态" className="rounded-lg border bg-muted/30 p-3 text-sm">
+          {isSchedulerStatusLoading ? (
+            <span className="text-muted-foreground">正在读取调度器状态…</span>
+          ) : schedulerStatusError instanceof Error ? (
+            <span role="alert" className="text-destructive">
+              {schedulerStatusError.message}
+            </span>
+          ) : (
+            <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+              <span>
+                健康 worker：{healthyWorkerCount}/{schedulerStatus?.workers.length ?? 0}
+              </span>
+              <span className="text-xs text-muted-foreground">
+                最近检查：{formatDateTime(schedulerStatus?.last_checked_at ?? null)}
+              </span>
+            </div>
+          )}
+        </div>
+
         {error instanceof Error && (
           <p role="alert" className="text-sm text-destructive">
             {error.message}
@@ -532,6 +681,10 @@ export function ScheduledTasksCard() {
                   <div className="min-w-0 flex-1 space-y-1">
                     <div className="font-medium">{task.name}</div>
                     <div className="font-mono text-xs text-muted-foreground">{task.cron}</div>
+                    <div className="text-xs text-muted-foreground">
+                      {task.timezone} · 超时 {task.timeout_seconds} 秒 ·
+                      {task.coalesce ? ' 合并补跑' : ' 逐次补跑'}
+                    </div>
                     <div className="text-sm text-muted-foreground break-all">
                       {describeJob(task.job)}
                     </div>
@@ -585,6 +738,29 @@ export function ScheduledTasksCard() {
                 </div>
               </div>
             ))}
+          </div>
+        )}
+
+        {schedulerStatus && (
+          <div className="space-y-2">
+            <h3 className="text-sm font-medium">最近调度运行</h3>
+            {schedulerStatus.recent_runs.length === 0 ? (
+              <p className="text-sm text-muted-foreground">暂无调度运行记录</p>
+            ) : (
+              <div className="divide-y rounded-lg border">
+                {schedulerStatus.recent_runs.slice(0, 5).map((run) => (
+                  <div
+                    key={run.id}
+                    className="flex flex-col gap-1 px-3 py-2 text-sm sm:flex-row sm:items-center sm:justify-between"
+                  >
+                    <span className="min-w-0 truncate">{run.task_name}</span>
+                    <span className="text-xs text-muted-foreground">
+                      {run.status} · {formatDateTime(run.scheduled_for)}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         )}
       </CardContent>

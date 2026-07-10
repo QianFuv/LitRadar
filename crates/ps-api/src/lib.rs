@@ -198,7 +198,7 @@ mod tests {
     use std::fs;
     use std::path::Path;
     use std::sync::atomic::{AtomicBool, Ordering};
-    use std::time::Duration;
+    use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
     use axum::body::{to_bytes, Body};
     use axum::http::header::{
@@ -1009,6 +1009,53 @@ mod tests {
         let task_id = task.payload["id"]
             .as_i64()
             .expect("task id should be numeric");
+        let scheduler_now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system time should be after Unix epoch")
+            .as_secs_f64();
+        ps_storage::record_scheduler_heartbeat(
+            backend.storage_config().auth_db_path(),
+            "fixture-worker",
+            scheduler_now,
+        )
+        .expect("fixture heartbeat should persist");
+        ps_storage::record_scheduler_check(backend.storage_config().auth_db_path(), scheduler_now)
+            .expect("fixture scheduler cursor should persist");
+        let persisted_task =
+            ps_storage::get_scheduled_task(backend.storage_config().auth_db_path(), task_id)
+                .expect("fixture task should load")
+                .expect("fixture task should exist");
+        ps_storage::enqueue_scheduled_runs(
+            backend.storage_config().auth_db_path(),
+            &persisted_task,
+            &[(scheduler_now as i64).div_euclid(60) * 60],
+        )
+        .expect("fixture run should queue");
+        let fixture_claim = ps_storage::claim_ready_scheduled_runs(
+            backend.storage_config().auth_db_path(),
+            "fixture-worker",
+            scheduler_now,
+            90.0,
+        )
+        .expect("fixture run should claim")
+        .remove(0);
+        ps_storage::finish_scheduled_run(
+            backend.storage_config().auth_db_path(),
+            &fixture_claim,
+            "success",
+            "internal fixture output",
+            scheduler_now,
+        )
+        .expect("fixture run should finish");
+        let scheduler_status = json_request(
+            &app,
+            Method::GET,
+            "/api/admin/scheduler/status",
+            Some(&admin_auth),
+            None,
+            None,
+        )
+        .await;
         let task_list = json_request(
             &app,
             Method::GET,
@@ -1076,6 +1123,38 @@ mod tests {
                     "max_candidates": 1001
                 },
                 "cron": "0 1 * * *",
+                "enabled": true
+            })),
+        )
+        .await;
+        let task_timezone_error = json_request(
+            &app,
+            Method::POST,
+            "/api/admin/scheduled-tasks",
+            Some(&admin_auth),
+            None,
+            Some(serde_json::json!({
+                "name": "Invalid timezone",
+                "job": { "kind": "index" },
+                "cron": "0 1 * * *",
+                "timezone": "Local",
+                "timeout_seconds": 60,
+                "enabled": true
+            })),
+        )
+        .await;
+        let task_timeout_error = json_request(
+            &app,
+            Method::POST,
+            "/api/admin/scheduled-tasks",
+            Some(&admin_auth),
+            None,
+            Some(serde_json::json!({
+                "name": "Invalid timeout",
+                "job": { "kind": "index" },
+                "cron": "0 1 * * *",
+                "timezone": "UTC",
+                "timeout_seconds": 86401,
                 "enabled": true
             })),
         )
@@ -1282,12 +1361,29 @@ mod tests {
         assert_eq!(task.payload["name"], "Nightly index");
         assert_eq!(task.payload["job"]["kind"], "index");
         assert_eq!(task.payload["legacy_command"], serde_json::Value::Null);
+        assert_eq!(task.payload["timezone"], "UTC");
+        assert_eq!(task.payload["timeout_seconds"], 3600);
+        assert_eq!(task.payload["coalesce"], true);
+        assert_eq!(scheduler_status.status, StatusCode::OK);
+        assert_eq!(
+            scheduler_status.payload["workers"][0]["worker_id"],
+            "fixture-worker"
+        );
+        assert_eq!(
+            scheduler_status.payload["recent_runs"][0]["status"],
+            "success"
+        );
+        assert!(scheduler_status.payload["recent_runs"][0]
+            .get("output_summary")
+            .is_none());
         assert_eq!(task_list.status, StatusCode::OK);
         assert_eq!(task_list.payload[0]["id"], task.payload["id"]);
         assert_eq!(task_error.status, StatusCode::BAD_REQUEST);
         assert_eq!(task_range_error.status, StatusCode::BAD_REQUEST);
         assert_eq!(task_path_error.status, StatusCode::BAD_REQUEST);
         assert_eq!(task_argument_error.status, StatusCode::BAD_REQUEST);
+        assert_eq!(task_timezone_error.status, StatusCode::BAD_REQUEST);
+        assert_eq!(task_timeout_error.status, StatusCode::BAD_REQUEST);
         assert_eq!(task_kind_error, StatusCode::UNPROCESSABLE_ENTITY);
         assert_eq!(task_command_error, StatusCode::UNPROCESSABLE_ENTITY);
         assert_eq!(task_update.status, StatusCode::OK);

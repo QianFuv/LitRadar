@@ -471,6 +471,33 @@
         ]
       }
     },
+    "/api/admin/scheduler/status": {
+      "get": {
+        "tags": ["admin"],
+        "summary": "Read durable scheduler cursor, worker heartbeat, and run status.",
+        "operationId": "scheduler_status",
+        "responses": {
+          "200": {
+            "description": "Durable scheduler status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SchedulerStatusResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          },
+          {
+            "session_cookie": []
+          }
+        ]
+      }
+    },
     "/api/admin/stats": {
       "get": {
         "tags": ["admin"],
@@ -4852,6 +4879,10 @@
         "description": "Scheduled task creation payload.",
         "required": ["name", "job", "cron"],
         "properties": {
+          "coalesce": {
+            "type": "boolean",
+            "description": "Whether missed slots are collapsed to the latest slot."
+          },
           "cron": {
             "type": "string",
             "description": "Five-field cron expression."
@@ -4867,6 +4898,17 @@
           "name": {
             "type": "string",
             "description": "Display name."
+          },
+          "timeout_seconds": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Maximum execution time in seconds.",
+            "maximum": 86400,
+            "minimum": 1
+          },
+          "timezone": {
+            "type": "string",
+            "description": "Explicit IANA time zone used for cron evaluation."
           }
         },
         "additionalProperties": false
@@ -4874,8 +4916,23 @@
       "ScheduledTaskInfo": {
         "type": "object",
         "description": "Scheduled task response payload.",
-        "required": ["id", "name", "cron", "enabled", "last_status", "created_at", "updated_at"],
+        "required": [
+          "id",
+          "name",
+          "cron",
+          "timezone",
+          "timeout_seconds",
+          "coalesce",
+          "enabled",
+          "last_status",
+          "created_at",
+          "updated_at"
+        ],
         "properties": {
+          "coalesce": {
+            "type": "boolean",
+            "description": "Whether missed slots are collapsed to the latest slot."
+          },
           "created_at": {
             "type": "number",
             "format": "double",
@@ -4922,6 +4979,16 @@
             "type": "string",
             "description": "Display name."
           },
+          "timeout_seconds": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Maximum execution time in seconds.",
+            "minimum": 0
+          },
+          "timezone": {
+            "type": "string",
+            "description": "Explicit IANA time zone used for cron evaluation."
+          },
           "updated_at": {
             "type": "number",
             "format": "double",
@@ -4929,10 +4996,63 @@
           }
         }
       },
+      "ScheduledTaskRunInfo": {
+        "type": "object",
+        "description": "Persisted scheduled task run visible to administrators.",
+        "required": ["id", "task_id", "task_name", "scheduled_for", "status"],
+        "properties": {
+          "claimed_at": {
+            "type": ["number", "null"],
+            "format": "double",
+            "description": "Claim timestamp."
+          },
+          "finished_at": {
+            "type": ["number", "null"],
+            "format": "double",
+            "description": "Terminal or unknown-state timestamp."
+          },
+          "id": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Run row identifier."
+          },
+          "scheduled_for": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Scheduled UTC Unix timestamp aligned to a minute."
+          },
+          "started_at": {
+            "type": ["number", "null"],
+            "format": "double",
+            "description": "Execution start timestamp."
+          },
+          "status": {
+            "type": "string",
+            "description": "Durable run status."
+          },
+          "task_id": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Scheduled task row identifier."
+          },
+          "task_name": {
+            "type": "string",
+            "description": "Task name captured when the slot was queued."
+          },
+          "worker_id": {
+            "type": ["string", "null"],
+            "description": "Worker identifier currently owning the run."
+          }
+        }
+      },
       "ScheduledTaskUpdate": {
         "type": "object",
         "description": "Scheduled task update payload.",
         "properties": {
+          "coalesce": {
+            "type": ["boolean", "null"],
+            "description": "Optional coalescing flag."
+          },
           "cron": {
             "type": ["string", "null"],
             "description": "Optional replacement cron expression."
@@ -4955,9 +5075,71 @@
           "name": {
             "type": ["string", "null"],
             "description": "Optional replacement display name."
+          },
+          "timeout_seconds": {
+            "type": ["integer", "null"],
+            "format": "int64",
+            "description": "Optional replacement timeout in seconds.",
+            "maximum": 86400,
+            "minimum": 1
+          },
+          "timezone": {
+            "type": ["string", "null"],
+            "description": "Optional replacement IANA time zone."
           }
         },
         "additionalProperties": false
+      },
+      "SchedulerStatusResponse": {
+        "type": "object",
+        "description": "Administrator scheduler status response.",
+        "required": ["workers", "recent_runs"],
+        "properties": {
+          "last_checked_at": {
+            "type": ["number", "null"],
+            "format": "double",
+            "description": "Last completed scheduler wall-clock check."
+          },
+          "recent_runs": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ScheduledTaskRunInfo"
+            },
+            "description": "Recent durable task runs ordered from newest to oldest."
+          },
+          "workers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SchedulerWorkerInfo"
+            },
+            "description": "Known worker heartbeats ordered from newest to oldest."
+          }
+        }
+      },
+      "SchedulerWorkerInfo": {
+        "type": "object",
+        "description": "Persisted scheduler worker heartbeat visible to administrators.",
+        "required": ["worker_id", "started_at", "heartbeat_at", "is_healthy"],
+        "properties": {
+          "heartbeat_at": {
+            "type": "number",
+            "format": "double",
+            "description": "Most recent heartbeat timestamp."
+          },
+          "is_healthy": {
+            "type": "boolean",
+            "description": "Whether the heartbeat is within the health threshold."
+          },
+          "started_at": {
+            "type": "number",
+            "format": "double",
+            "description": "Worker start timestamp."
+          },
+          "worker_id": {
+            "type": "string",
+            "description": "Stable worker process identifier."
+          }
+        }
       },
       "TokenCreateRequest": {
         "type": "object",

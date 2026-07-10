@@ -1,15 +1,30 @@
 //! Scheduler validation and typed job execution utilities.
 
-use std::collections::BTreeSet;
 use std::error::Error;
 use std::ffi::OsString;
 use std::fmt;
+use std::io::Read;
 use std::path::Path;
-use std::process::Command;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::process::{Command, Stdio};
+use std::thread;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use ps_domain::{ScheduledDeliveryJob, ScheduledJobSpec, ScheduledTaskInfo};
+use chrono::{DateTime, Datelike, Timelike, Utc};
+use ps_domain::{
+    validate_scheduled_task_timing, ScheduledDeliveryJob, ScheduledJobSpec, ScheduledTaskInfo,
+};
+use ps_storage::ScheduledRunClaim;
 use serde::Serialize;
+
+const CATCH_UP_SECONDS: f64 = 86_400.0;
+const RUN_LEASE_SECONDS: f64 = 90.0;
+const PROCESS_POLL_INTERVAL: Duration = Duration::from_millis(25);
+const PROCESS_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5);
+const MAX_CAPTURE_BYTES: usize = 2_048;
+const MAX_OUTPUT_SUMMARY_CHARS: usize = 4_096;
+
+/// Maximum age of a healthy persisted worker heartbeat.
+pub const SCHEDULER_HEALTH_WINDOW_SECONDS: f64 = 90.0;
 
 /// Worker scheduler errors.
 #[derive(Debug)]
@@ -20,6 +35,8 @@ pub enum SchedulerError {
     InvalidCron(String),
     /// Typed job arguments are invalid.
     InvalidJob(String),
+    /// A scheduler execution thread failed unexpectedly.
+    ExecutionThread,
 }
 
 impl fmt::Display for SchedulerError {
@@ -29,6 +46,7 @@ impl fmt::Display for SchedulerError {
             Self::Storage(error) => write!(formatter, "{error}"),
             Self::InvalidCron(message) => formatter.write_str(message),
             Self::InvalidJob(message) => formatter.write_str(message),
+            Self::ExecutionThread => formatter.write_str("Scheduler execution thread failed"),
         }
     }
 }
@@ -38,7 +56,7 @@ impl Error for SchedulerError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             Self::Storage(error) => Some(error),
-            Self::InvalidCron(_) | Self::InvalidJob(_) => None,
+            Self::InvalidCron(_) | Self::InvalidJob(_) | Self::ExecutionThread => None,
         }
     }
 }
@@ -73,10 +91,14 @@ pub struct ScheduledJob {
     pub job: ScheduledJobSpec,
     /// Five-field cron expression.
     pub cron: String,
+    /// Explicit IANA time zone.
+    pub timezone: String,
+    /// Maximum execution time in seconds.
+    pub timeout_seconds: u64,
+    /// Whether missed runs coalesce.
+    pub coalesce: bool,
     /// APScheduler-compatible `max_instances` setting.
     pub max_instances: i64,
-    /// APScheduler-compatible coalescing setting.
-    pub coalesce: bool,
 }
 
 /// Scheduled task skipped while loading jobs.
@@ -112,15 +134,6 @@ pub struct RunTaskOutcome {
     pub status: Option<String>,
 }
 
-/// Scheduler execution slot used to avoid duplicate same-minute runs.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub struct ScheduledRunSlot {
-    /// Scheduled task row identifier.
-    pub task_id: i64,
-    /// Unix minute bucket.
-    pub minute_epoch: i64,
-}
-
 /// One scheduled task execution record.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ScheduledTaskExecution {
@@ -135,7 +148,7 @@ pub struct ScheduledTaskExecution {
 }
 
 /// One scheduler execute-loop tick result.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct SchedulerExecutionResult {
     /// Scheduler mode.
     pub mode: SchedulerMode,
@@ -143,29 +156,56 @@ pub struct SchedulerExecutionResult {
     pub status: String,
     /// Current Unix minute bucket.
     pub minute_epoch: i64,
+    /// Beginning of the evaluated persisted interval.
+    pub checked_from: f64,
+    /// End of the evaluated persisted interval.
+    pub checked_to: f64,
     /// Runnable job count.
     pub jobs: usize,
     /// Enabled tasks skipped because they cannot be scheduled.
     pub skipped: Vec<SkippedScheduledTask>,
     /// Due task count before duplicate suppression.
     pub due: usize,
-    /// Same-minute duplicate count.
+    /// Slots already represented by durable run rows.
     pub already_executed: usize,
+    /// Newly queued durable run count.
+    pub queued: usize,
+    /// Runs claimed by this worker.
+    pub claimed: usize,
     /// Executed tasks.
     pub executed: Vec<ScheduledTaskExecution>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ProcessExecution {
+    status: String,
+    output_summary: String,
+}
+
 trait ScheduledJobRunner {
-    fn run(&mut self, auth_db_path: &Path, task: &ScheduledTaskInfo) -> String;
+    fn run(
+        &mut self,
+        auth_db_path: &Path,
+        task: &ScheduledTaskInfo,
+        on_heartbeat: &mut dyn FnMut(),
+    ) -> ProcessExecution;
 }
 
 struct ProcessScheduledJobRunner;
 
 impl ScheduledJobRunner for ProcessScheduledJobRunner {
-    fn run(&mut self, auth_db_path: &Path, task: &ScheduledTaskInfo) -> String {
+    fn run(
+        &mut self,
+        auth_db_path: &Path,
+        task: &ScheduledTaskInfo,
+        on_heartbeat: &mut dyn FnMut(),
+    ) -> ProcessExecution {
         task.job.as_ref().map_or_else(
-            || "blocked: legacy task requires a typed job".to_string(),
-            |job| execute_scheduled_job(auth_db_path, job),
+            || ProcessExecution {
+                status: "error".to_string(),
+                output_summary: "Legacy task requires a typed job".to_string(),
+            },
+            |job| execute_scheduled_job(auth_db_path, job, task.timeout_seconds, on_heartbeat),
         )
     }
 }
@@ -243,8 +283,7 @@ pub fn load_scheduler_jobs(
         if !task.enabled {
             continue;
         }
-        let validation =
-            validate_cron_expression(&task.cron).and_then(|()| validate_job(task.job.as_ref()));
+        let validation = validate_task(&task);
         match validation {
             Ok(()) => jobs.push(scheduled_job(&task)),
             Err(error) => skipped.push(SkippedScheduledTask {
@@ -298,21 +337,21 @@ fn run_task_now_with_runner(
             status: None,
         });
     }
-    let Some(job) = task.job.as_ref() else {
+    if task.job.is_none() {
         return Ok(RunTaskOutcome {
             found: true,
             did_execute: false,
             status: Some("blocked: legacy task requires a typed job".to_string()),
         });
     };
-    validate_job(Some(job))?;
+    validate_task(&task)?;
     let ran_at = current_unix_time();
-    let status = runner.run(auth_db_path, &task);
-    ps_storage::record_scheduled_task_run(auth_db_path, task.id, &status, ran_at)?;
+    let execution = runner.run(auth_db_path, &task, &mut || {});
+    ps_storage::record_scheduled_task_run(auth_db_path, task.id, &execution.status, ran_at)?;
     Ok(RunTaskOutcome {
         found: true,
         did_execute: true,
-        status: Some(status),
+        status: Some(execution.status),
     })
 }
 
@@ -321,45 +360,76 @@ fn run_task_now_with_runner(
 /// # Arguments
 ///
 /// * `auth_db_path` - Path to `auth.sqlite`.
-/// * `executed_slots` - Mutable same-minute execution guard.
+/// * `worker_id` - Stable worker process identifier.
 ///
 /// # Returns
 ///
 /// Execution tick result.
 pub fn run_due_scheduler_once(
     auth_db_path: impl AsRef<Path>,
-    executed_slots: &mut BTreeSet<ScheduledRunSlot>,
+    worker_id: &str,
 ) -> Result<SchedulerExecutionResult, SchedulerError> {
-    let mut runner = ProcessScheduledJobRunner;
-    run_due_scheduler_once_at_with_runner(
-        auth_db_path.as_ref(),
-        current_unix_time(),
-        executed_slots,
-        &mut runner,
-    )
+    let auth_db_path = auth_db_path.as_ref().to_path_buf();
+    let (mut result, claims) =
+        prepare_scheduler_tick(&auth_db_path, worker_id, current_unix_time())?;
+    let executed = thread::scope(|scope| -> Result<Vec<_>, SchedulerError> {
+        let handles = claims
+            .into_iter()
+            .map(|claim| {
+                let auth_db_path = auth_db_path.clone();
+                scope.spawn(move || {
+                    let mut runner = ProcessScheduledJobRunner;
+                    execute_scheduled_claim(&auth_db_path, claim, &mut runner)
+                })
+            })
+            .collect::<Vec<_>>();
+        handles
+            .into_iter()
+            .map(|handle| handle.join().map_err(|_| SchedulerError::ExecutionThread)?)
+            .collect()
+    })?;
+    result.executed = executed;
+    Ok(result)
 }
 
+#[cfg(test)]
 fn run_due_scheduler_once_at_with_runner(
     auth_db_path: &Path,
+    worker_id: &str,
     now: f64,
-    executed_slots: &mut BTreeSet<ScheduledRunSlot>,
     runner: &mut impl ScheduledJobRunner,
 ) -> Result<SchedulerExecutionResult, SchedulerError> {
-    let current_minute = (now as i64).div_euclid(60);
-    let current_time = cron_time_from_unix_seconds(now as i64);
+    let (mut result, claims) = prepare_scheduler_tick(auth_db_path, worker_id, now)?;
+    for claim in claims {
+        result
+            .executed
+            .push(execute_scheduled_claim(auth_db_path, claim, runner)?);
+    }
+    Ok(result)
+}
+
+fn prepare_scheduler_tick(
+    auth_db_path: &Path,
+    worker_id: &str,
+    now: f64,
+) -> Result<(SchedulerExecutionResult, Vec<ScheduledRunClaim>), SchedulerError> {
+    ps_storage::record_scheduler_heartbeat(auth_db_path, worker_id, now)?;
+    let previous_check = ps_storage::get_scheduler_last_checked_at(auth_db_path)?;
+    let checked_from = previous_check
+        .filter(|previous| *previous <= now)
+        .unwrap_or(now - CATCH_UP_SECONDS)
+        .max(now - CATCH_UP_SECONDS);
     let mut jobs = 0;
     let mut skipped = Vec::new();
     let mut due = 0;
     let mut already_executed = 0;
-    let mut executed = Vec::new();
+    let mut queued = 0;
 
     for task in ps_storage::list_scheduled_tasks(auth_db_path)? {
         if !task.enabled {
             continue;
         }
-        let validation =
-            validate_cron_expression(&task.cron).and_then(|()| validate_job(task.job.as_ref()));
-        match validation {
+        match validate_task(&task) {
             Ok(()) => jobs += 1,
             Err(error) => {
                 skipped.push(SkippedScheduledTask {
@@ -371,37 +441,92 @@ fn run_due_scheduler_once_at_with_runner(
                 continue;
             }
         }
-        if !cron_matches_time(&task.cron, current_time)? {
-            continue;
-        }
-        due += 1;
-        let slot = ScheduledRunSlot {
-            task_id: task.id,
-            minute_epoch: current_minute,
+        let task_checked_from = checked_from.max(task.created_at - 0.001);
+        let slots = scheduled_slots(&task, task_checked_from, now)?;
+        due += slots.len();
+        let represented_slots = if task.coalesce {
+            usize::from(!slots.is_empty())
+        } else {
+            slots.len()
         };
-        if !executed_slots.insert(slot) {
-            already_executed += 1;
-            continue;
-        }
-        let status = runner.run(auth_db_path, &task);
-        ps_storage::record_scheduled_task_run(auth_db_path, task.id, &status, now)?;
-        executed.push(ScheduledTaskExecution {
-            task_id: task.id,
-            job_id: format!("scheduled-task-{}", task.id),
-            name: task.name,
-            status,
+        let inserted = ps_storage::enqueue_scheduled_runs(auth_db_path, &task, &slots)?;
+        queued += inserted;
+        already_executed += represented_slots.saturating_sub(inserted);
+    }
+    ps_storage::record_scheduler_check(auth_db_path, now)?;
+    let claims =
+        ps_storage::claim_ready_scheduled_runs(auth_db_path, worker_id, now, RUN_LEASE_SECONDS)?;
+    let claimed = claims.len();
+
+    Ok((
+        SchedulerExecutionResult {
+            mode: SchedulerMode::Execute,
+            status: "running".to_string(),
+            minute_epoch: (now as i64).div_euclid(60),
+            checked_from,
+            checked_to: now,
+            jobs,
+            skipped,
+            due,
+            already_executed,
+            queued,
+            claimed,
+            executed: Vec::new(),
+        },
+        claims,
+    ))
+}
+
+fn execute_scheduled_claim(
+    auth_db_path: &Path,
+    claim: ScheduledRunClaim,
+    runner: &mut impl ScheduledJobRunner,
+) -> Result<ScheduledTaskExecution, SchedulerError> {
+    let started_at = current_unix_time();
+    if !ps_storage::start_scheduled_run(
+        auth_db_path,
+        claim.run_id,
+        &claim.worker_id,
+        started_at,
+        RUN_LEASE_SECONDS,
+    )? {
+        return Ok(ScheduledTaskExecution {
+            task_id: claim.task.id,
+            job_id: format!("scheduled-task-{}", claim.task.id),
+            name: claim.task.name,
+            status: "unknown".to_string(),
         });
     }
-
-    Ok(SchedulerExecutionResult {
-        mode: SchedulerMode::Execute,
-        status: "running".to_string(),
-        minute_epoch: current_minute,
-        jobs,
-        skipped,
-        due,
-        already_executed,
-        executed,
+    let mut heartbeat_error = None;
+    let mut on_heartbeat = || {
+        if heartbeat_error.is_none() {
+            heartbeat_error = ps_storage::heartbeat_scheduled_run(
+                auth_db_path,
+                claim.run_id,
+                &claim.worker_id,
+                current_unix_time(),
+                RUN_LEASE_SECONDS,
+            )
+            .err();
+        }
+    };
+    let execution = runner.run(auth_db_path, &claim.task, &mut on_heartbeat);
+    let finished_at = current_unix_time();
+    ps_storage::finish_scheduled_run(
+        auth_db_path,
+        &claim,
+        &execution.status,
+        &execution.output_summary,
+        finished_at,
+    )?;
+    if let Some(error) = heartbeat_error {
+        return Err(error.into());
+    }
+    Ok(ScheduledTaskExecution {
+        task_id: claim.task.id,
+        job_id: format!("scheduled-task-{}", claim.task.id),
+        name: claim.task.name,
+        status: execution.status,
     })
 }
 
@@ -415,8 +540,10 @@ fn scheduled_job(task: &ScheduledTaskInfo) -> ScheduledJob {
             .clone()
             .expect("validated runnable task should have a typed job"),
         cron: task.cron.clone(),
+        timezone: task.timezone.clone(),
+        timeout_seconds: task.timeout_seconds,
         max_instances: 1,
-        coalesce: true,
+        coalesce: task.coalesce,
     }
 }
 
@@ -428,32 +555,187 @@ fn validate_job(job: Option<&ScheduledJobSpec>) -> Result<(), SchedulerError> {
         .map_err(|error| SchedulerError::InvalidJob(error.to_string()))
 }
 
+fn validate_task(task: &ScheduledTaskInfo) -> Result<(), SchedulerError> {
+    validate_cron_expression(&task.cron)?;
+    validate_job(task.job.as_ref())?;
+    validate_scheduled_task_timing(&task.timezone, task.timeout_seconds)
+        .map_err(|error| SchedulerError::InvalidJob(error.to_string()))
+}
+
+fn scheduled_slots(
+    task: &ScheduledTaskInfo,
+    checked_from: f64,
+    checked_to: f64,
+) -> Result<Vec<i64>, SchedulerError> {
+    if checked_from >= checked_to {
+        return Ok(Vec::new());
+    }
+    let timezone = task.timezone.parse::<chrono_tz::Tz>().map_err(|_| {
+        SchedulerError::InvalidJob("timezone must be a valid IANA name".to_string())
+    })?;
+    let first_minute = (checked_from.floor() as i64).div_euclid(60) + 1;
+    let last_minute = (checked_to.floor() as i64).div_euclid(60);
+    let mut slots = Vec::new();
+    for minute_epoch in first_minute..=last_minute {
+        let scheduled_for = minute_epoch * 60;
+        let Some(utc) = DateTime::<Utc>::from_timestamp(scheduled_for, 0) else {
+            continue;
+        };
+        let local = utc.with_timezone(&timezone);
+        let time = CronTime {
+            minute: i64::from(local.minute()),
+            hour: i64::from(local.hour()),
+            day: i64::from(local.day()),
+            month: i64::from(local.month()),
+            weekday: i64::from(local.weekday().num_days_from_sunday()),
+        };
+        if cron_matches_time(&task.cron, time)? {
+            slots.push(scheduled_for);
+        }
+    }
+    Ok(slots)
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ScheduledProcess {
-    executable: &'static str,
+    executable: OsString,
     arguments: Vec<OsString>,
 }
 
-fn execute_scheduled_job(auth_db_path: &Path, job: &ScheduledJobSpec) -> String {
+fn execute_scheduled_job(
+    auth_db_path: &Path,
+    job: &ScheduledJobSpec,
+    timeout_seconds: u64,
+    on_heartbeat: &mut dyn FnMut(),
+) -> ProcessExecution {
     let processes = match scheduled_processes(auth_db_path, job) {
         Ok(processes) => processes,
-        Err(error) => return format!("error: {error}"),
+        Err(error) => {
+            return ProcessExecution {
+                status: "error".to_string(),
+                output_summary: error.to_string(),
+            };
+        }
     };
+    let deadline = Instant::now() + Duration::from_secs(timeout_seconds);
+    let mut summaries = Vec::new();
     for process in processes {
-        let mut command = Command::new(process.executable);
-        command.args(process.arguments);
-        match command.output() {
-            Ok(output) if output.status.success() => {}
-            Ok(output) => {
-                return output
-                    .status
-                    .code()
-                    .map_or_else(|| "failed".to_string(), |code| format!("failed ({code})"));
-            }
-            Err(error) => return format!("error: {error}"),
+        let execution = execute_scheduled_process(process, deadline, on_heartbeat);
+        if !execution.output_summary.is_empty() {
+            summaries.push(execution.output_summary);
+        }
+        if execution.status != "success" {
+            return ProcessExecution {
+                status: execution.status,
+                output_summary: bounded_output_summary(&summaries.join("\n")),
+            };
         }
     }
-    "success".to_string()
+    ProcessExecution {
+        status: "success".to_string(),
+        output_summary: bounded_output_summary(&summaries.join("\n")),
+    }
+}
+
+fn execute_scheduled_process(
+    process: ScheduledProcess,
+    deadline: Instant,
+    on_heartbeat: &mut dyn FnMut(),
+) -> ProcessExecution {
+    let executable = process.executable.to_string_lossy().into_owned();
+    let mut command = Command::new(&process.executable);
+    command
+        .args(process.arguments)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let mut child = match command.spawn() {
+        Ok(child) => child,
+        Err(error) => {
+            return ProcessExecution {
+                status: "error".to_string(),
+                output_summary: format!("{executable}: {error}"),
+            };
+        }
+    };
+    let stdout_reader = child.stdout.take().map(spawn_bounded_reader);
+    let stderr_reader = child.stderr.take().map(spawn_bounded_reader);
+    let mut last_heartbeat = Instant::now();
+    let (status, detail) = loop {
+        match child.try_wait() {
+            Ok(Some(status)) if status.success() => break ("success", String::new()),
+            Ok(Some(status)) => {
+                let detail = status.code().map_or_else(
+                    || format!("{executable}: process failed"),
+                    |code| format!("{executable}: exit code {code}"),
+                );
+                break ("failed", detail);
+            }
+            Ok(None) if Instant::now() >= deadline => {
+                let _ = child.kill();
+                let _ = child.wait();
+                break ("timed_out", format!("{executable}: timed out"));
+            }
+            Ok(None) => {}
+            Err(error) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                break ("error", format!("{executable}: {error}"));
+            }
+        }
+        if last_heartbeat.elapsed() >= PROCESS_HEARTBEAT_INTERVAL {
+            on_heartbeat();
+            last_heartbeat = Instant::now();
+        }
+        thread::sleep(PROCESS_POLL_INTERVAL);
+    };
+    let stdout = join_bounded_reader(stdout_reader);
+    let stderr = join_bounded_reader(stderr_reader);
+    let mut summary = detail;
+    append_captured_output(&mut summary, "stdout", &stdout);
+    append_captured_output(&mut summary, "stderr", &stderr);
+    ProcessExecution {
+        status: status.to_string(),
+        output_summary: bounded_output_summary(&summary),
+    }
+}
+
+fn spawn_bounded_reader(mut reader: impl Read + Send + 'static) -> thread::JoinHandle<Vec<u8>> {
+    thread::spawn(move || {
+        let mut captured = Vec::new();
+        let mut buffer = [0_u8; 1_024];
+        loop {
+            match reader.read(&mut buffer) {
+                Ok(0) | Err(_) => break,
+                Ok(count) => {
+                    let remaining = MAX_CAPTURE_BYTES.saturating_sub(captured.len());
+                    captured.extend_from_slice(&buffer[..count.min(remaining)]);
+                }
+            }
+        }
+        captured
+    })
+}
+
+fn join_bounded_reader(reader: Option<thread::JoinHandle<Vec<u8>>>) -> Vec<u8> {
+    reader
+        .and_then(|reader| reader.join().ok())
+        .unwrap_or_default()
+}
+
+fn append_captured_output(summary: &mut String, label: &str, output: &[u8]) {
+    if output.is_empty() {
+        return;
+    }
+    if !summary.is_empty() {
+        summary.push('\n');
+    }
+    summary.push_str(label);
+    summary.push_str(": ");
+    summary.push_str(&String::from_utf8_lossy(output));
+}
+
+fn bounded_output_summary(summary: &str) -> String {
+    summary.chars().take(MAX_OUTPUT_SUMMARY_CHARS).collect()
 }
 
 fn scheduled_processes(
@@ -471,7 +753,7 @@ fn scheduled_processes(
                 arguments.push(metadata_file.into());
             }
             processes.push(ScheduledProcess {
-                executable: "index",
+                executable: "index".into(),
                 arguments,
             });
             if index.notify {
@@ -525,7 +807,7 @@ fn delivery_process(
         arguments.push(max_candidates.to_string().into());
     }
     ScheduledProcess {
-        executable,
+        executable: executable.into(),
         arguments,
     }
 }
@@ -730,34 +1012,6 @@ fn cron_value_matches_range(value: i64, start: i64, end: i64, maximum: i64) -> b
     value >= start && value <= end
 }
 
-fn cron_time_from_unix_seconds(seconds: i64) -> CronTime {
-    let days = seconds.div_euclid(86_400);
-    let day_seconds = seconds.rem_euclid(86_400);
-    let (_year, month, day) = civil_from_days(days);
-    CronTime {
-        minute: (day_seconds % 3_600) / 60,
-        hour: day_seconds / 3_600,
-        day,
-        month,
-        weekday: (days + 4).rem_euclid(7),
-    }
-}
-
-fn civil_from_days(days: i64) -> (i64, i64, i64) {
-    let days = days + 719_468;
-    let era = days.div_euclid(146_097);
-    let day_of_era = days - era * 146_097;
-    let year_of_era =
-        (day_of_era - day_of_era / 1_460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
-    let year = year_of_era + era * 400;
-    let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
-    let month_prime = (5 * day_of_year + 2) / 153;
-    let day = day_of_year - (153 * month_prime + 2) / 5 + 1;
-    let month = month_prime + if month_prime < 10 { 3 } else { -9 };
-    let year = year + i64::from(month <= 2);
-    (year, month, day)
-}
-
 fn current_unix_time() -> f64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -765,11 +1019,28 @@ fn current_unix_time() -> f64 {
         .as_secs_f64()
 }
 
+/// Generate one stable identifier for a worker process lifetime.
+///
+/// # Returns
+///
+/// Process-scoped identifier suitable for persisted claims and heartbeats.
+pub fn scheduler_worker_id() -> String {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system time should be after Unix epoch")
+        .as_nanos();
+    format!("worker-{}-{nanos}", std::process::id())
+}
+
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeSet;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::{Arc, Barrier};
 
-    use ps_storage::{create_scheduled_task, get_scheduled_task, initialize_auth_database};
+    use ps_storage::{
+        create_scheduled_task, get_scheduled_task, initialize_auth_database,
+        ScheduledTaskCreateParams,
+    };
     use tempfile::tempdir;
 
     use super::*;
@@ -861,12 +1132,17 @@ mod tests {
         let not_due = create_index_task(&auth_db_path, "not-due", "31 10 6 7 *", true);
         let invalid = create_index_task(&auth_db_path, "invalid", "bad", true);
         let mut runner = FixtureRunner::new(["success"]);
-        let mut executed_slots = BTreeSet::new();
+        set_task_created_at(&auth_db_path, unix_seconds(2026, 7, 6, 9, 0, 0) as f64);
+        ps_storage::record_scheduler_check(
+            &auth_db_path,
+            unix_seconds(2026, 7, 6, 10, 29, 0) as f64,
+        )
+        .expect("scheduler cursor should be set");
 
         let result = run_due_scheduler_once_at_with_runner(
             &auth_db_path,
+            "worker-test",
             unix_seconds(2026, 7, 6, 10, 30, 0) as f64,
-            &mut executed_slots,
             &mut runner,
         )
         .expect("scheduler tick should run");
@@ -889,10 +1165,7 @@ mod tests {
         assert_eq!(result.executed[0].task_id, due.id);
         assert_eq!(runner.jobs, vec![index_job()]);
         assert_eq!(updated_due.last_status, "success");
-        assert_eq!(
-            updated_due.last_run_at,
-            Some(unix_seconds(2026, 7, 6, 10, 30, 0) as f64)
-        );
+        assert!(updated_due.last_run_at.is_some());
         assert_eq!(updated_not_due.last_status, "");
         assert_eq!(updated_invalid.last_status, "");
     }
@@ -904,30 +1177,202 @@ mod tests {
         initialize_auth_database(&auth_db_path).expect("auth database should initialize");
         let task = create_index_task(&auth_db_path, "due", "* * * * *", true);
         let mut runner = FixtureRunner::new(["success", "unexpected"]);
-        let mut executed_slots = BTreeSet::new();
         let now = unix_seconds(2026, 7, 6, 10, 30, 0) as f64;
+        set_task_created_at(&auth_db_path, unix_seconds(2026, 7, 6, 9, 0, 0) as f64);
+        ps_storage::record_scheduler_check(&auth_db_path, now - 60.0)
+            .expect("scheduler cursor should be set");
 
-        let first = run_due_scheduler_once_at_with_runner(
-            &auth_db_path,
-            now,
-            &mut executed_slots,
-            &mut runner,
-        )
-        .expect("first tick should run");
+        let first =
+            run_due_scheduler_once_at_with_runner(&auth_db_path, "worker-test", now, &mut runner)
+                .expect("first tick should run");
         let second = run_due_scheduler_once_at_with_runner(
             &auth_db_path,
+            "worker-test",
             now + 30.0,
-            &mut executed_slots,
             &mut runner,
         )
         .expect("second tick should run");
 
         assert_eq!(first.executed.len(), 1);
         assert_eq!(first.executed[0].task_id, task.id);
-        assert_eq!(second.due, 1);
-        assert_eq!(second.already_executed, 1);
+        assert_eq!(second.due, 0);
+        assert_eq!(second.already_executed, 0);
         assert!(second.executed.is_empty());
         assert_eq!(runner.jobs, vec![index_job()]);
+    }
+
+    #[test]
+    fn scheduler_continues_after_one_task_times_out() {
+        let temp_dir = tempdir().expect("temp dir should be created");
+        let auth_db_path = temp_dir.path().join("auth.sqlite");
+        initialize_auth_database(&auth_db_path).expect("auth database should initialize");
+        let timed_out = create_index_task(&auth_db_path, "timed-out", "* * * * *", true);
+        let successful = create_index_task(&auth_db_path, "successful", "* * * * *", true);
+        let now = unix_seconds(2026, 7, 6, 10, 30, 0) as f64;
+        set_task_created_at(&auth_db_path, now - 3_600.0);
+        ps_storage::record_scheduler_check(&auth_db_path, now - 60.0)
+            .expect("scheduler cursor should be set");
+        let mut runner = FixtureRunner::new(["timed_out", "success"]);
+
+        let result =
+            run_due_scheduler_once_at_with_runner(&auth_db_path, "worker-test", now, &mut runner)
+                .expect("scheduler tick should isolate task outcomes");
+
+        assert_eq!(result.executed.len(), 2);
+        assert_eq!(result.executed[0].task_id, timed_out.id);
+        assert_eq!(result.executed[0].status, "timed_out");
+        assert_eq!(result.executed[1].task_id, successful.id);
+        assert_eq!(result.executed[1].status, "success");
+    }
+
+    #[test]
+    fn concurrent_fixture_workers_execute_one_side_effect_per_slot() {
+        let temp_dir = tempdir().expect("temp dir should be created");
+        let auth_db_path = temp_dir.path().join("auth.sqlite");
+        initialize_auth_database(&auth_db_path).expect("auth database should initialize");
+        create_index_task(&auth_db_path, "contended", "* * * * *", true);
+        let now = unix_seconds(2026, 7, 6, 10, 30, 0) as f64;
+        set_task_created_at(&auth_db_path, now - 3_600.0);
+        ps_storage::record_scheduler_check(&auth_db_path, now - 60.0)
+            .expect("scheduler cursor should be set");
+        let barrier = Arc::new(Barrier::new(3));
+        let side_effects = Arc::new(AtomicUsize::new(0));
+
+        let results = thread::scope(|scope| {
+            let handles = (1..=2)
+                .map(|worker_number| {
+                    let auth_db_path = auth_db_path.clone();
+                    let barrier = Arc::clone(&barrier);
+                    let side_effects = Arc::clone(&side_effects);
+                    scope.spawn(move || {
+                        let mut runner = CountingRunner { side_effects };
+                        barrier.wait();
+                        run_due_scheduler_once_at_with_runner(
+                            &auth_db_path,
+                            &format!("worker-{worker_number}"),
+                            now,
+                            &mut runner,
+                        )
+                    })
+                })
+                .collect::<Vec<_>>();
+            barrier.wait();
+            handles
+                .into_iter()
+                .map(|handle| {
+                    handle
+                        .join()
+                        .expect("fixture worker should not panic")
+                        .expect("fixture worker should complete")
+                })
+                .collect::<Vec<_>>()
+        });
+        let status = ps_storage::get_scheduler_status(&auth_db_path, now, 90.0, 10)
+            .expect("scheduler status should load");
+
+        assert_eq!(
+            results
+                .iter()
+                .map(|result| result.executed.len())
+                .sum::<usize>(),
+            1
+        );
+        assert_eq!(side_effects.load(Ordering::SeqCst), 1);
+        assert_eq!(status.recent_runs.len(), 1);
+        assert_eq!(status.recent_runs[0].status, "success");
+    }
+
+    #[test]
+    fn scheduler_phase_offset_catches_the_latest_missed_slot() {
+        let temp_dir = tempdir().expect("temp dir should be created");
+        let auth_db_path = temp_dir.path().join("auth.sqlite");
+        initialize_auth_database(&auth_db_path).expect("auth database should initialize");
+        let task = create_index_task(&auth_db_path, "phase-offset", "0 10 * * *", true);
+        set_task_created_at(&auth_db_path, unix_seconds(2026, 7, 6, 9, 0, 0) as f64);
+        ps_storage::record_scheduler_check(
+            &auth_db_path,
+            unix_seconds(2026, 7, 6, 9, 59, 30) as f64,
+        )
+        .expect("scheduler cursor should be set");
+        let mut runner = FixtureRunner::new(["success"]);
+
+        let result = run_due_scheduler_once_at_with_runner(
+            &auth_db_path,
+            "worker-phase",
+            unix_seconds(2026, 7, 6, 10, 2, 0) as f64,
+            &mut runner,
+        )
+        .expect("phase-offset scheduler tick should run");
+
+        assert_eq!(result.due, 1);
+        assert_eq!(result.queued, 1);
+        assert_eq!(result.claimed, 1);
+        assert_eq!(result.executed[0].task_id, task.id);
+        assert_eq!(result.executed[0].status, "success");
+    }
+
+    #[test]
+    fn scheduler_timezone_handles_dst_gaps_and_repeated_minutes() {
+        let mut task = scheduled_task_fixture("30 1 * * *", "Europe/London");
+        task.coalesce = false;
+
+        let spring_slots = scheduled_slots(
+            &task,
+            unix_seconds(2016, 3, 26, 23, 59, 0) as f64,
+            unix_seconds(2016, 3, 27, 3, 0, 0) as f64,
+        )
+        .expect("spring DST slots should evaluate");
+        let autumn_slots = scheduled_slots(
+            &task,
+            unix_seconds(2016, 10, 29, 23, 59, 0) as f64,
+            unix_seconds(2016, 10, 30, 2, 0, 0) as f64,
+        )
+        .expect("autumn DST slots should evaluate");
+
+        assert!(spring_slots.is_empty());
+        assert_eq!(
+            autumn_slots,
+            vec![
+                unix_seconds(2016, 10, 30, 0, 30, 0),
+                unix_seconds(2016, 10, 30, 1, 30, 0),
+            ]
+        );
+    }
+
+    #[test]
+    fn scheduler_process_timeout_terminates_child_and_bounds_output() {
+        let executable = std::env::current_exe().expect("test executable should resolve");
+        let process = ScheduledProcess {
+            executable: executable.into_os_string(),
+            arguments: vec![
+                "--ignored".into(),
+                "--exact".into(),
+                "scheduler::tests::scheduler_timeout_child_fixture".into(),
+                "--nocapture".into(),
+            ],
+        };
+        let started = Instant::now();
+
+        let result = execute_scheduled_process(
+            process,
+            Instant::now() + Duration::from_millis(150),
+            &mut || {},
+        );
+
+        assert_eq!(result.status, "timed_out");
+        assert!(started.elapsed() < Duration::from_secs(2));
+        assert_eq!(
+            bounded_output_summary(&"x".repeat(MAX_OUTPUT_SUMMARY_CHARS * 2))
+                .chars()
+                .count(),
+            MAX_OUTPUT_SUMMARY_CHARS
+        );
+    }
+
+    #[test]
+    #[ignore = "helper process for scheduler timeout coverage"]
+    fn scheduler_timeout_child_fixture() {
+        thread::sleep(Duration::from_secs(5));
     }
 
     #[test]
@@ -978,7 +1423,7 @@ mod tests {
         assert_eq!(
             processes
                 .iter()
-                .map(|process| process.executable)
+                .map(|process| process.executable.to_string_lossy().into_owned())
                 .collect::<Vec<_>>(),
             vec!["index", "notify", "push"]
         );
@@ -1005,7 +1450,7 @@ mod tests {
             }),
         )
         .expect("push process plan should build");
-        assert_eq!(push[0].executable, "push");
+        assert_eq!(push[0].executable.to_string_lossy(), "push");
         assert_eq!(
             process_arguments(&push[0]),
             vec![
@@ -1037,10 +1482,39 @@ mod tests {
     }
 
     impl ScheduledJobRunner for FixtureRunner {
-        fn run(&mut self, _auth_db_path: &Path, task: &ScheduledTaskInfo) -> String {
+        fn run(
+            &mut self,
+            _auth_db_path: &Path,
+            task: &ScheduledTaskInfo,
+            on_heartbeat: &mut dyn FnMut(),
+        ) -> ProcessExecution {
             self.jobs
                 .push(task.job.clone().expect("fixture task should have a job"));
-            self.statuses.pop().unwrap_or_else(|| "success".to_string())
+            on_heartbeat();
+            ProcessExecution {
+                status: self.statuses.pop().unwrap_or_else(|| "success".to_string()),
+                output_summary: "fixture output".to_string(),
+            }
+        }
+    }
+
+    struct CountingRunner {
+        side_effects: Arc<AtomicUsize>,
+    }
+
+    impl ScheduledJobRunner for CountingRunner {
+        fn run(
+            &mut self,
+            _auth_db_path: &Path,
+            _task: &ScheduledTaskInfo,
+            on_heartbeat: &mut dyn FnMut(),
+        ) -> ProcessExecution {
+            self.side_effects.fetch_add(1, Ordering::SeqCst);
+            on_heartbeat();
+            ProcessExecution {
+                status: "success".to_string(),
+                output_summary: "fixture output".to_string(),
+            }
         }
     }
 
@@ -1052,14 +1526,54 @@ mod tests {
         })
     }
 
+    fn scheduled_task_fixture(cron: &str, timezone: &str) -> ScheduledTaskInfo {
+        ScheduledTaskInfo {
+            id: 1,
+            name: "fixture".to_string(),
+            job: Some(index_job()),
+            legacy_command: None,
+            cron: cron.to_string(),
+            timezone: timezone.to_string(),
+            timeout_seconds: 60,
+            coalesce: true,
+            enabled: true,
+            last_run_at: None,
+            last_status: String::new(),
+            created_at: 0.0,
+            updated_at: 0.0,
+        }
+    }
+
     fn create_index_task(
         auth_db_path: &Path,
         name: &str,
         cron: &str,
         enabled: bool,
     ) -> ScheduledTaskInfo {
-        create_scheduled_task(auth_db_path, name, &index_job(), cron, enabled)
-            .expect("index task should be created")
+        create_scheduled_task(
+            auth_db_path,
+            ScheduledTaskCreateParams {
+                name,
+                job: &index_job(),
+                cron,
+                timezone: "UTC",
+                timeout_seconds: 60,
+                coalesce: true,
+                enabled,
+            },
+        )
+        .expect("index task should be created")
+    }
+
+    fn set_task_created_at(auth_db_path: &Path, created_at: f64) {
+        let connection = ps_storage::open_sqlite_connection(auth_db_path)
+            .expect("auth database should open for fixture setup");
+        connection
+            .execute(
+                "UPDATE scheduled_tasks SET created_at = ?1, updated_at = ?1",
+                [created_at],
+            )
+            .expect("task timestamps should update");
     }
 
     fn process_arguments(process: &ScheduledProcess) -> Vec<String> {

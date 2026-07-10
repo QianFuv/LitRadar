@@ -32,6 +32,9 @@ function scheduledTaskFixture() {
     },
     legacy_command: null,
     cron: '0 8 * * *',
+    timezone: 'UTC',
+    timeout_seconds: 3600,
+    coalesce: true,
     enabled: isTaskEnabled,
     last_run_at: null,
     last_status: '',
@@ -52,12 +55,47 @@ function legacyScheduledTaskFixture() {
     job: null,
     legacy_command: 'index --update && push',
     cron: '0 8 * * *',
+    timezone: 'UTC',
+    timeout_seconds: 3600,
+    coalesce: true,
     enabled: false,
     last_run_at: null,
     last_status: '',
     created_at: 1,
     updated_at: 2,
   };
+}
+
+/**
+ * Return persisted scheduler health without internal process output.
+ *
+ * @returns Scheduler status response.
+ */
+function schedulerStatusResponse(): Response {
+  return HttpResponse.json({
+    last_checked_at: 1_700_000_000,
+    workers: [
+      {
+        worker_id: 'worker-fixture',
+        started_at: 1_699_999_000,
+        heartbeat_at: 1_700_000_000,
+        is_healthy: true,
+      },
+    ],
+    recent_runs: [
+      {
+        id: 12,
+        task_id: 8,
+        task_name: 'Weekly index',
+        scheduled_for: 1_699_999_800,
+        status: 'success',
+        worker_id: 'worker-fixture',
+        claimed_at: 1_699_999_801,
+        started_at: 1_699_999_802,
+        finished_at: 1_699_999_803,
+      },
+    ],
+  });
 }
 
 /**
@@ -114,12 +152,16 @@ async function updatesAndDeletesTask(): Promise<void> {
   vi.spyOn(window, 'confirm').mockReturnValue(true);
   server.use(
     http.get('http://localhost/api/admin/scheduled-tasks', scheduledTaskListResponse),
+    http.get('http://localhost/api/admin/scheduler/status', schedulerStatusResponse),
     http.put('http://localhost/api/admin/scheduled-tasks/8', updateScheduledTaskResponse),
     http.delete('http://localhost/api/admin/scheduled-tasks/8', deleteScheduledTaskResponse),
   );
   const user = userEvent.setup();
 
   renderWithQuery(<ScheduledTasksCard />);
+
+  expect(await screen.findByText('健康 worker：1/1')).toBeInTheDocument();
+  expect(screen.getByText(/success/)).toBeInTheDocument();
 
   await user.click(await screen.findByRole('switch', { name: '停用定时任务 Weekly index' }));
   await waitFor(() => expect(taskPatch).toEqual({ enabled: false }));
@@ -140,6 +182,7 @@ async function createsTypedScheduledTask(): Promise<void> {
   createdTask = null;
   server.use(
     http.get('http://localhost/api/admin/scheduled-tasks', scheduledTaskListResponse),
+    http.get('http://localhost/api/admin/scheduler/status', schedulerStatusResponse),
     http.post('http://localhost/api/admin/scheduled-tasks', createScheduledTaskResponse),
   );
   const user = userEvent.setup();
@@ -148,11 +191,18 @@ async function createsTypedScheduledTask(): Promise<void> {
 
   await user.click(await screen.findByRole('button', { name: '新建任务' }));
   await user.type(screen.getByLabelText('任务名称'), 'Daily typed task');
+  const timezoneInput = screen.getByLabelText('IANA 时区');
+  expect(timezoneInput).toHaveValue(Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC');
+  await user.clear(timezoneInput);
+  await user.type(timezoneInput, 'Asia/Shanghai');
+  await user.clear(screen.getByLabelText('超时秒数'));
+  await user.type(screen.getByLabelText('超时秒数'), '120');
   expect(screen.queryByLabelText('自定义执行命令')).not.toBeInTheDocument();
   await user.click(screen.getByRole('button', { name: '创建' }));
 
   await waitFor(() =>
     expect(createdTask).toEqual({
+      coalesce: true,
       cron: '0 8 * * *',
       enabled: true,
       job: {
@@ -161,6 +211,8 @@ async function createsTypedScheduledTask(): Promise<void> {
         push: false,
       },
       name: 'Daily typed task',
+      timeout_seconds: 120,
+      timezone: 'Asia/Shanghai',
     }),
   );
 }
@@ -174,6 +226,7 @@ async function replacesLegacyScheduledTask(): Promise<void> {
     http.get('http://localhost/api/admin/scheduled-tasks', () =>
       HttpResponse.json([legacyScheduledTaskFixture()]),
     ),
+    http.get('http://localhost/api/admin/scheduler/status', schedulerStatusResponse),
     http.put('http://localhost/api/admin/scheduled-tasks/8', updateScheduledTaskResponse),
   );
   const user = userEvent.setup();
@@ -194,6 +247,7 @@ async function replacesLegacyScheduledTask(): Promise<void> {
 
   await waitFor(() =>
     expect(taskPatch).toEqual({
+      coalesce: true,
       cron: '0 8 * * *',
       enabled: true,
       job: {
@@ -202,6 +256,8 @@ async function replacesLegacyScheduledTask(): Promise<void> {
         push: false,
       },
       name: 'Legacy job',
+      timeout_seconds: 3600,
+      timezone: 'UTC',
     }),
   );
 }

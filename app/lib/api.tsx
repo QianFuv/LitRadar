@@ -15,6 +15,7 @@ import {
   parseNotificationSettings,
   parseNullableNotificationSettings,
   parseRuntimeSettingList,
+  parseSchedulerStatus,
   parseScheduledTaskInfo,
   parseScheduledTaskList,
   parseTrackingStatus,
@@ -27,6 +28,7 @@ import {
   type NotificationSettingsUpdate,
   type RuntimeSettingInfo,
   type RuntimeSettingsUpdate,
+  type SchedulerStatus,
   type ScheduledTaskCreate,
   type ScheduledTaskInfo,
   type ScheduledTaskUpdate,
@@ -42,6 +44,7 @@ export type {
   NotificationSettingsUpdate,
   RuntimeSettingInfo,
   RuntimeSettingsUpdate,
+  SchedulerStatus,
   ScheduledJobSpec,
   ScheduledTaskCreate,
   ScheduledTaskInfo,
@@ -1478,6 +1481,21 @@ export function adminGetScheduledTasks(): Promise<ScheduledTaskInfo[]> {
     undefined,
     '获取定时任务失败',
     parseScheduledTaskList,
+  );
+}
+
+/**
+ * Fetch persisted scheduler health and recent run metadata.
+ *
+ * @returns Durable scheduler status without captured process output.
+ */
+export function adminGetSchedulerStatus(): Promise<SchedulerStatus> {
+  return requestJson<SchedulerStatus>(
+    buildApiUrl('/api/admin/scheduler/status'),
+    null,
+    undefined,
+    '获取调度器状态失败',
+    parseSchedulerStatus,
   );
 }
 
