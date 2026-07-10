@@ -5,6 +5,7 @@
 /.vscode
 /*.egg-info
 /backup
+/backups/
 /data/index
 /data/push/subscriptions.json
 /data/push_state

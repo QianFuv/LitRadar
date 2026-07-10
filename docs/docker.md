@@ -104,6 +104,8 @@ docker compose ps
 
 worker 刚启动但还未写入首个心跳时，`/api/health/worker` 返回 `503`；首轮调度后转为 `200`。worker 停止心跳超过 90 秒后重新转为 `503`。该接口不返回 worker 或任务细节。
 
+备份不要写入 `/app/data`，也不要把 `secrets/` 与数据放进同一归档。运行镜像已经包含 `admin backup create|verify|restore`；通过额外的 `/backups` bind mount 使用它，并在离线恢复前停止三个服务、等待心跳过期。命令、确认开关、可选索引/推送状态语义和回滚流程见 [备份与离线恢复](backup.md)。
+
 ## 数据与初始化
 
 `api` 和 `worker` 都读取挂载的宿主机 `./data`：

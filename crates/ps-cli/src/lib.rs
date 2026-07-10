@@ -12,9 +12,10 @@ use ps_index::{
     run_live_index, run_live_index_worker_from_file_path, LiveIndexConfig, LiveScholarlyConfig,
 };
 use ps_storage::{
-    migrate_auth_database, migrate_database_secrets, migrate_existing_index_databases,
-    migrate_index_database, rotate_database_secrets, verify_database_secrets, SecretCodec,
-    StorageConfig,
+    create_backup, migrate_auth_database, migrate_database_secrets,
+    migrate_existing_index_databases, migrate_index_database, restore_backup,
+    rotate_database_secrets, verify_backup, verify_database_secrets, BackupCreateOptions,
+    BackupRestoreOptions, SecretCodec, StorageConfig,
 };
 use ps_worker::delivery::{
     run_recommendation_delivery, DeliveryMode, DeliveryWorkflow, RecommendationRunConfig,
@@ -55,8 +56,23 @@ fn run_admin_command_with_reader(
     let secret_key_file = extract_path_option(&mut args, "--secret-key-file")?;
     let old_key_file = extract_path_option(&mut args, "--old-key-file")?;
     let new_key_file = extract_path_option(&mut args, "--new-key-file")?;
+    let output_dir = extract_path_option(&mut args, "--output")?;
+    let backup_dir = extract_path_option(&mut args, "--backup")?;
+    let include_index_databases = remove_flag(&mut args, "--include-indexes");
+    let include_push_state = remove_flag(&mut args, "--include-push-state");
+    let is_restore_confirmed = remove_flag(&mut args, "--confirm-restore");
+    let has_backup_options = output_dir.is_some()
+        || backup_dir.is_some()
+        || include_index_databases
+        || include_push_state
+        || is_restore_confirmed;
     match args.as_slice() {
-        [command] if command == "bootstrap" && username.is_some() && should_read_password => {
+        [command]
+            if command == "bootstrap"
+                && username.is_some()
+                && should_read_password
+                && !has_backup_options =>
+        {
             migrate_auth_database(&auth_db_path)?;
             let mut password = String::new();
             if password_reader.read_line(&mut password)? == 0 {
@@ -74,7 +90,8 @@ fn run_admin_command_with_reader(
                 && command == "migrate"
                 && secret_key_file.is_some()
                 && username.is_none()
-                && !should_read_password =>
+                && !should_read_password
+                && !has_backup_options =>
         {
             migrate_auth_database(&auth_db_path)?;
             let codec = SecretCodec::load(secret_key_file.as_ref().expect("checked key path"))?;
@@ -91,7 +108,8 @@ fn run_admin_command_with_reader(
                 && command == "verify"
                 && secret_key_file.is_some()
                 && username.is_none()
-                && !should_read_password =>
+                && !should_read_password
+                && !has_backup_options =>
         {
             migrate_auth_database(&auth_db_path)?;
             let codec = SecretCodec::load(secret_key_file.as_ref().expect("checked key path"))?;
@@ -108,13 +126,97 @@ fn run_admin_command_with_reader(
                 && old_key_file.is_some()
                 && new_key_file.is_some()
                 && username.is_none()
-                && !should_read_password =>
+                && !should_read_password
+                && !has_backup_options =>
         {
             migrate_auth_database(&auth_db_path)?;
             let old_codec = SecretCodec::load(old_key_file.as_ref().expect("checked old path"))?;
             let new_codec = SecretCodec::load(new_key_file.as_ref().expect("checked new path"))?;
             let rotated = rotate_database_secrets(&auth_db_path, &old_codec, &new_codec)?;
             Ok(json!({"status": "rotated", "rotated": rotated}))
+        }
+        [group, command]
+            if group == "backup"
+                && command == "create"
+                && output_dir.is_some()
+                && backup_dir.is_none()
+                && !is_restore_confirmed
+                && username.is_none()
+                && !should_read_password
+                && secret_key_file.is_none()
+                && old_key_file.is_none()
+                && new_key_file.is_none() =>
+        {
+            let output_dir = resolve_project_path(
+                &project_root,
+                output_dir.as_ref().expect("checked output path").clone(),
+            );
+            let manifest = create_backup(&BackupCreateOptions {
+                storage_config: StorageConfig::from_project_root(&project_root),
+                auth_db_path,
+                output_dir: output_dir.clone(),
+                include_index_databases,
+                include_push_state,
+            })?;
+            Ok(json!({
+                "status": "created",
+                "backup": output_dir,
+                "manifest": manifest,
+            }))
+        }
+        [group, command]
+            if group == "backup"
+                && command == "verify"
+                && backup_dir.is_some()
+                && output_dir.is_none()
+                && !include_index_databases
+                && !include_push_state
+                && !is_restore_confirmed
+                && username.is_none()
+                && !should_read_password
+                && secret_key_file.is_none()
+                && old_key_file.is_none()
+                && new_key_file.is_none() =>
+        {
+            let backup_dir = resolve_project_path(
+                &project_root,
+                backup_dir.as_ref().expect("checked backup path").clone(),
+            );
+            let manifest = verify_backup(&backup_dir)?;
+            Ok(json!({
+                "status": "verified",
+                "backup": backup_dir,
+                "manifest": manifest,
+            }))
+        }
+        [group, command]
+            if group == "backup"
+                && command == "restore"
+                && backup_dir.is_some()
+                && output_dir.is_none()
+                && !include_index_databases
+                && !include_push_state
+                && is_restore_confirmed
+                && username.is_none()
+                && !should_read_password
+                && secret_key_file.is_none()
+                && old_key_file.is_none()
+                && new_key_file.is_none() =>
+        {
+            let backup_dir = resolve_project_path(
+                &project_root,
+                backup_dir.as_ref().expect("checked backup path").clone(),
+            );
+            let report = restore_backup(&BackupRestoreOptions {
+                storage_config: StorageConfig::from_project_root(&project_root),
+                auth_db_path,
+                backup_dir: backup_dir.clone(),
+            })?;
+            Ok(json!({
+                "status": "restored",
+                "backup": backup_dir,
+                "report": report,
+            }))
         }
         _ => Err(admin_usage().into()),
     }
@@ -761,7 +863,10 @@ fn admin_usage() -> String {
             "admin bootstrap --username NAME --password-stdin [--project-root PATH] [--auth-db PATH]",
             "admin secrets migrate --secret-key-file PATH [--project-root PATH] [--auth-db PATH]",
             "admin secrets verify --secret-key-file PATH [--project-root PATH] [--auth-db PATH]",
-            "admin secrets rotate --old-key-file PATH --new-key-file PATH [--project-root PATH] [--auth-db PATH]"
+            "admin secrets rotate --old-key-file PATH --new-key-file PATH [--project-root PATH] [--auth-db PATH]",
+            "admin backup create --output PATH [--include-indexes] [--include-push-state] [--project-root PATH] [--auth-db PATH]",
+            "admin backup verify --backup PATH [--project-root PATH]",
+            "admin backup restore --backup PATH --confirm-restore [--project-root PATH] [--auth-db PATH]"
         ]
     })
     .to_string()
@@ -813,6 +918,8 @@ mod tests {
         assert!(scheduler.contains("scheduler dry-run-once TASK_ID"));
         assert!(worker.contains("worker --secret-key-file PATH"));
         assert!(admin.contains("admin bootstrap --username NAME --password-stdin"));
+        assert!(admin.contains("admin backup create --output PATH"));
+        assert!(admin.contains("admin backup restore --backup PATH --confirm-restore"));
         assert!(!admin.contains("--password "));
         for usage in [admin, index, notify, push, scheduler, worker] {
             assert!(!usage.contains("ps-cli"));
@@ -938,6 +1045,95 @@ mod tests {
             .expect("encrypted value should load");
         assert!(raw.starts_with("psenc:v1:"));
         assert!(!raw.contains("legacy-plaintext-key"));
+    }
+
+    #[test]
+    fn admin_backup_create_verify_and_confirmed_restore_are_explicit() {
+        let root = temp_root("ps-cli-backup");
+        let source_root = root.path().join("source");
+        let source_config = ps_storage::StorageConfig::from_project_root(&source_root);
+        ps_storage::migrate_auth_database(source_config.auth_db_path())
+            .expect("source auth database should migrate");
+        ps_storage::open_sqlite_connection(source_config.auth_db_path())
+            .expect("source auth database should open")
+            .execute_batch(
+                "CREATE TABLE backup_cli_probe (id INTEGER PRIMARY KEY, value TEXT NOT NULL);
+                 INSERT INTO backup_cli_probe (id, value) VALUES (1, 'cli-row');",
+            )
+            .expect("source probe should write");
+
+        let created = run_admin_command_with_reader(
+            vec![
+                "--project-root".to_string(),
+                source_root.to_string_lossy().into_owned(),
+                "--output".to_string(),
+                "backups/fixture".to_string(),
+                "backup".to_string(),
+                "create".to_string(),
+            ],
+            "".as_bytes(),
+        )
+        .expect("backup create should succeed");
+        let backup_dir = source_root.join("backups").join("fixture");
+        assert_eq!(created["status"], "created");
+        assert!(backup_dir.join("manifest.json").is_file());
+
+        let verified = run_admin_command_with_reader(
+            vec![
+                "--project-root".to_string(),
+                source_root.to_string_lossy().into_owned(),
+                "--backup".to_string(),
+                backup_dir.to_string_lossy().into_owned(),
+                "backup".to_string(),
+                "verify".to_string(),
+            ],
+            "".as_bytes(),
+        )
+        .expect("backup verify should succeed");
+        assert_eq!(verified["status"], "verified");
+
+        let restore_root = root.path().join("restored");
+        let missing_confirmation = run_admin_command_with_reader(
+            vec![
+                "--project-root".to_string(),
+                restore_root.to_string_lossy().into_owned(),
+                "--backup".to_string(),
+                backup_dir.to_string_lossy().into_owned(),
+                "backup".to_string(),
+                "restore".to_string(),
+            ],
+            "".as_bytes(),
+        )
+        .expect_err("restore without confirmation should fail");
+        assert!(missing_confirmation
+            .to_string()
+            .contains("--confirm-restore"));
+        let restore_config = ps_storage::StorageConfig::from_project_root(&restore_root);
+        assert!(!restore_config.auth_db_path().exists());
+
+        let restored = run_admin_command_with_reader(
+            vec![
+                "--project-root".to_string(),
+                restore_root.to_string_lossy().into_owned(),
+                "--backup".to_string(),
+                backup_dir.to_string_lossy().into_owned(),
+                "--confirm-restore".to_string(),
+                "backup".to_string(),
+                "restore".to_string(),
+            ],
+            "".as_bytes(),
+        )
+        .expect("confirmed restore should succeed");
+        assert_eq!(restored["status"], "restored");
+        let value: String = ps_storage::open_sqlite_connection(restore_config.auth_db_path())
+            .expect("restored auth database should open")
+            .query_row(
+                "SELECT value FROM backup_cli_probe WHERE id = 1",
+                [],
+                |row| row.get(0),
+            )
+            .expect("restored probe should load");
+        assert_eq!(value, "cli-row");
     }
 
     #[test]

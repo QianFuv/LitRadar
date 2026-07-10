@@ -11,6 +11,7 @@ pub mod state;
 pub(crate) mod test_support;
 
 use std::error::Error;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use axum::extract::Request;
 use axum::http::header::{AUTHORIZATION, CACHE_CONTROL, COOKIE};
@@ -20,8 +21,8 @@ use axum::response::Response;
 use axum::Router;
 use config::ApiConfig;
 use ps_auth::SESSION_COOKIE_NAME;
-use ps_storage::StorageConfig;
-use state::ApiState;
+use ps_storage::{ServiceKind, StorageConfig};
+use state::{ApiState, BlockingTaskError};
 use tokio::net::TcpListener;
 use tower_http::cors::{AllowHeaders, AllowMethods, AllowOrigin, CorsLayer};
 use tower_http::trace::{DefaultOnResponse, TraceLayer};
@@ -35,6 +36,8 @@ pub const AUTHENTICATED_CACHE_CONTROL: &str = "private, no-store";
 
 /// Cache-Control header for unauthenticated index reads.
 pub const PUBLIC_INDEX_CACHE_CONTROL: &str = "public, max-age=300, stale-while-revalidate=600";
+
+const API_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(10);
 
 /// Serialize the generated OpenAPI document for checked-in client generation.
 ///
@@ -64,11 +67,46 @@ pub async fn serve(config: ApiConfig) -> Result<(), Box<dyn Error>> {
     let listener = TcpListener::bind(&bind_address).await?;
     println!("ps-api listening on {}", listener.local_addr()?);
 
-    let serve_result = axum::serve(listener, router)
-        .with_graceful_shutdown(shutdown_signal(state.clone()))
-        .await;
+    let instance_id = api_instance_id()?;
+    ps_storage::record_service_heartbeat(
+        state.storage_config().auth_db_path(),
+        ServiceKind::Api,
+        &instance_id,
+        current_unix_time()?,
+    )?;
+    let mut heartbeat_task = tokio::spawn(api_heartbeat_loop(state.clone(), instance_id.clone()));
+
+    let shutdown_state = state.clone();
+    let server = async move {
+        axum::serve(listener, router)
+            .with_graceful_shutdown(shutdown_signal(shutdown_state))
+            .await
+    };
+    tokio::pin!(server);
+    let serve_result: Result<(), Box<dyn Error>> = tokio::select! {
+        result = &mut server => result.map_err(Into::into),
+        heartbeat = &mut heartbeat_task => {
+            state.close_blocking_executor();
+            let message = match heartbeat {
+                Ok(Ok(())) => "API heartbeat stopped unexpectedly",
+                Ok(Err(message)) => message,
+                Err(_) => "API heartbeat task failed",
+            };
+            Err(std::io::Error::other(message).into())
+        }
+    };
+    if !heartbeat_task.is_finished() {
+        heartbeat_task.abort();
+        let _ = heartbeat_task.await;
+    }
+    let cleanup_result = ps_storage::delete_service_heartbeat(
+        state.storage_config().auth_db_path(),
+        ServiceKind::Api,
+        &instance_id,
+    );
     state.close_blocking_executor();
     serve_result?;
+    cleanup_result?;
 
     Ok(())
 }
@@ -210,6 +248,48 @@ async fn shutdown_signal(state: ApiState) {
     state.close_blocking_executor();
 }
 
+async fn api_heartbeat_loop(state: ApiState, instance_id: String) -> Result<(), &'static str> {
+    api_heartbeat_loop_with_interval(state, instance_id, API_HEARTBEAT_INTERVAL).await
+}
+
+async fn api_heartbeat_loop_with_interval(
+    state: ApiState,
+    instance_id: String,
+    interval: Duration,
+) -> Result<(), &'static str> {
+    loop {
+        tokio::time::sleep(interval).await;
+        let auth_db_path = state.storage_config().auth_db_path().to_path_buf();
+        let heartbeat_instance_id = instance_id.clone();
+        let heartbeat_at = current_unix_time().map_err(|_| "API heartbeat clock failed")?;
+        match state
+            .run_blocking(move || {
+                ps_storage::record_service_heartbeat(
+                    auth_db_path,
+                    ServiceKind::Api,
+                    &heartbeat_instance_id,
+                    heartbeat_at,
+                )
+            })
+            .await
+        {
+            Ok(Ok(())) => {}
+            Ok(Err(_)) => return Err("API heartbeat persistence failed"),
+            Err(BlockingTaskError::Closed) => return Ok(()),
+            Err(_) => return Err("API heartbeat execution failed"),
+        }
+    }
+}
+
+fn api_instance_id() -> Result<String, Box<dyn Error>> {
+    let nanos = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
+    Ok(format!("api-{}-{nanos}", std::process::id()))
+}
+
+fn current_unix_time() -> Result<f64, Box<dyn Error>> {
+    Ok(SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs_f64())
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
@@ -230,10 +310,48 @@ mod tests {
     use serde_json::Value;
     use tower::ServiceExt;
 
+    use crate::state::ApiState;
     use crate::test_support::{json_request, FixtureIndexDatabase, JsonTestResponse, TestBackend};
-    use crate::{try_build_router, ApiConfig};
+    use crate::{api_heartbeat_loop_with_interval, try_build_router, ApiConfig};
 
     static TEST_CONFIG_LOCK: AtomicBool = AtomicBool::new(false);
+
+    #[tokio::test]
+    async fn api_heartbeat_loop_persists_restore_safety_heartbeat() {
+        let backend = TestBackend::new();
+        let state = ApiState::new(
+            backend.storage_config().clone(),
+            backend.secret_codec().clone(),
+            false,
+        );
+        let auth_db_path = backend.auth_db_path().to_path_buf();
+        let heartbeat = tokio::spawn(api_heartbeat_loop_with_interval(
+            state.clone(),
+            "api-test".to_string(),
+            Duration::from_millis(1),
+        ));
+
+        tokio::time::timeout(Duration::from_secs(1), async {
+            loop {
+                let now = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .expect("system time should be valid")
+                    .as_secs_f64();
+                if ps_storage::has_recent_service_heartbeat(&auth_db_path, now, 90.0)
+                    .expect("heartbeat should load")
+                {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(1)).await;
+            }
+        })
+        .await
+        .expect("API heartbeat should be persisted promptly");
+
+        heartbeat.abort();
+        let _ = heartbeat.await;
+        state.close_blocking_executor();
+    }
 
     #[test]
     fn router_startup_migration_runs_before_business_settings_load() {

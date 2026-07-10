@@ -11,7 +11,7 @@ use rusqlite::{Connection, Transaction, TransactionBehavior};
 use crate::{try_load_extension, DatabaseResolutionError, StorageConfig};
 
 /// Current auth and business database schema version.
-pub const AUTH_SCHEMA_VERSION: i64 = 3;
+pub const AUTH_SCHEMA_VERSION: i64 = 4;
 
 /// Current index database schema version.
 pub const INDEX_SCHEMA_VERSION: i64 = 1;
@@ -148,6 +148,7 @@ pub fn migrate_auth_database(path: impl AsRef<Path>) -> Result<(), MigrationErro
             1 => apply_auth_version_one(&transaction)?,
             2 => apply_auth_version_two(&transaction)?,
             3 => apply_auth_version_three(&transaction)?,
+            4 => apply_auth_version_four(&transaction)?,
             _ => unreachable!("auth migration version should be implemented"),
         }
         transaction.pragma_update(None, "user_version", next_version)?;
@@ -358,6 +359,23 @@ fn apply_auth_version_three(transaction: &Transaction<'_>) -> rusqlite::Result<(
             ON scheduled_task_runs(status, claim_expires_at);
         CREATE INDEX idx_scheduler_workers_heartbeat
             ON scheduler_workers(heartbeat_at DESC);
+        ",
+    )
+}
+
+fn apply_auth_version_four(transaction: &Transaction<'_>) -> rusqlite::Result<()> {
+    transaction.execute_batch(
+        "
+        CREATE TABLE service_heartbeats (
+            service      TEXT NOT NULL CHECK (service IN ('api', 'worker')),
+            instance_id  TEXT NOT NULL,
+            started_at   REAL NOT NULL,
+            heartbeat_at REAL NOT NULL,
+            PRIMARY KEY(service, instance_id)
+        );
+
+        CREATE INDEX idx_service_heartbeats_recent
+            ON service_heartbeats(heartbeat_at DESC);
         ",
     )
 }

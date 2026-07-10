@@ -29,6 +29,38 @@ fn empty_auth_database_migration_creates_current_schema() {
     assert!(!table_columns(&path, "scheduled_tasks").contains(&"command".to_string()));
     assert!(table_exists(&path, "scheduled_task_runs"));
     assert!(table_exists(&path, "scheduler_workers"));
+    assert!(table_exists(&path, "service_heartbeats"));
+}
+
+#[test]
+fn service_heartbeat_migration_preserves_version_three_scheduler_rows() {
+    let temp_dir = tempdir().expect("temp directory should be created");
+    let path = temp_dir.path().join("auth.sqlite");
+    migrate_auth_database(&path).expect("current auth database should migrate");
+    let connection = Connection::open(&path).expect("auth database should open");
+    connection
+        .execute_batch(
+            "DROP TABLE service_heartbeats;
+             PRAGMA user_version = 3;
+             INSERT INTO scheduler_workers (worker_id, started_at, heartbeat_at)
+             VALUES ('worker-v3', 10, 20);",
+        )
+        .expect("version three fixture should be created");
+    drop(connection);
+
+    migrate_auth_database(&path).expect("version three database should migrate");
+
+    assert_eq!(user_version(&path), AUTH_SCHEMA_VERSION);
+    assert!(table_exists(&path, "service_heartbeats"));
+    let worker_count: i64 = Connection::open(&path)
+        .expect("migrated database should open")
+        .query_row(
+            "SELECT COUNT(*) FROM scheduler_workers WHERE worker_id = 'worker-v3'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("worker row should load");
+    assert_eq!(worker_count, 1);
 }
 
 #[test]

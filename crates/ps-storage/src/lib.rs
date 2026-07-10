@@ -2,6 +2,7 @@
 
 pub mod announcements;
 pub mod auth;
+pub mod backup;
 pub mod business;
 pub mod cnki;
 pub mod config;
@@ -18,6 +19,12 @@ pub use auth::{
     insert_access_token, list_access_tokens, random_hex, register_user_with_invite,
     update_user_password_and_delete_tokens, verify_access_token_hash, AccessTokenRow,
     AuthRepositoryError, AuthUserRow, InviteCodeRow, UserCredentialRow,
+};
+pub use backup::{
+    create_backup, delete_service_heartbeat, has_recent_service_heartbeat,
+    record_service_heartbeat, restore_backup, verify_backup, BackupComponent, BackupComponentKind,
+    BackupCreateOptions, BackupError, BackupManifest, BackupRestoreOptions, BackupRestoreReport,
+    BackupSelection, ServiceKind, ACTIVE_HEARTBEAT_MAX_AGE_SECONDS, BACKUP_FORMAT_VERSION,
 };
 pub use business::{
     add_favorite, admin_create_invite_code, batch_is_favorited, bulk_add_favorites,

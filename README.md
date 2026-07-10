@@ -274,7 +274,7 @@ AI、PushPlus 与投递方式是用户级设置。用户可在“文献追踪”
 ### 用户数据库
 
 - 路径：`data/auth.sqlite`
-- 主要表：`users`、`access_tokens`、`cnki_sessions`、`folders`、`favorites`、`invite_codes`、`notification_settings`、`scheduled_tasks`、`runtime_settings`、`announcements`
+- 主要表：`users`、`access_tokens`、`cnki_sessions`、`folders`、`favorites`、`invite_codes`、`notification_settings`、`scheduled_tasks`、`service_heartbeats`、`runtime_settings`、`announcements`
 
 ### 变更与推送状态
 
@@ -289,6 +289,10 @@ AI、PushPlus 与投递方式是用户级设置。用户可在“文献追踪”
 - `push --changes-file ...`
 
 这几条链路都依赖 `*.changes.json` 文件，并只把顶层变更字段作为运行时输入；`summary` 仅用于计数与诊断信息。
+
+### 备份与离线恢复
+
+使用 `admin backup create --output PATH` 创建带 SHA-256、schema 版本与 SQLite 完整性检查的目录备份；`--include-indexes` 和 `--include-push-state` 显式加入可选数据。使用 `admin backup verify --backup PATH` 独立验证，恢复时必须停止服务并执行 `admin backup restore --backup PATH --confirm-restore`。最近 90 秒内存在 API/worker 心跳时恢复会拒绝，部署密钥始终排除并必须单独保管。完整流程见 [备份与离线恢复](docs/backup.md)。
 
 ## 部署说明
 
@@ -311,6 +315,7 @@ AI、PushPlus 与投递方式是用户级设置。用户可在“文献追踪”
 - [开发指南](docs/development.md)
 - [Docker 部署](docs/docker.md)
 - [安全说明](docs/security.md)
+- [备份与离线恢复](docs/backup.md)
 - [通知与追踪推送](docs/notify.md)
 - [Crossref / OpenAlex / Semantic Scholar 集成](docs/scholarly_api.md)
 - [CNKI overseas 集成](docs/cnki_oversea_api.md)

@@ -1686,6 +1686,12 @@ pub fn record_scheduler_heartbeat(
         params![worker_id, heartbeat_at, heartbeat_at],
     )?;
     connection.execute(
+        "INSERT INTO service_heartbeats (service, instance_id, started_at, heartbeat_at)
+         VALUES ('worker', ?1, ?2, ?2)
+         ON CONFLICT(service, instance_id) DO UPDATE SET heartbeat_at = excluded.heartbeat_at",
+        params![worker_id, heartbeat_at],
+    )?;
+    connection.execute(
         "DELETE FROM scheduler_workers WHERE worker_id <> ?1 AND heartbeat_at < ?2",
         params![worker_id, heartbeat_at - 604_800.0],
     )?;
@@ -1926,6 +1932,12 @@ pub fn heartbeat_scheduled_run(
          VALUES (?1, ?2, ?3)
          ON CONFLICT(worker_id) DO UPDATE SET heartbeat_at = excluded.heartbeat_at",
         params![worker_id, heartbeat_at, heartbeat_at],
+    )?;
+    transaction.execute(
+        "INSERT INTO service_heartbeats (service, instance_id, started_at, heartbeat_at)
+         VALUES ('worker', ?1, ?2, ?2)
+         ON CONFLICT(service, instance_id) DO UPDATE SET heartbeat_at = excluded.heartbeat_at",
+        params![worker_id, heartbeat_at],
     )?;
     let count = transaction.execute(
         "UPDATE scheduled_task_runs SET claim_expires_at = ?1
@@ -3219,6 +3231,10 @@ mod tests {
         );
         record_scheduler_heartbeat(&auth_db_path, "worker-a", 110.0)
             .expect("heartbeat should persist");
+        assert!(
+            crate::has_recent_service_heartbeat(&auth_db_path, 150.0, 60.0)
+                .expect("restore-safety heartbeat should load")
+        );
         assert!(
             get_scheduler_status(&auth_db_path, 150.0, 60.0, 10)
                 .expect("healthy status should load")

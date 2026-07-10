@@ -15,7 +15,7 @@ Paper Scanner 当前实际使用两类数据库：
 
 ## 数据库版本与迁移生命周期
 
-认证库和每个索引库分别使用 SQLite `PRAGMA user_version` 记录 schema 版本。当前认证库版本为 `3`，索引库版本为 `1`。
+认证库和每个索引库分别使用 SQLite `PRAGMA user_version` 记录 schema 版本。当前认证库版本为 `4`，索引库版本为 `1`。
 
 - API 在绑定监听端口前迁移 `data/auth.sqlite` 和 `data/index/*.sqlite`
 - `worker` 在进入调度循环前迁移；`scheduler`、`index`、`notify` 和 `push` 在参数验证完成、首次业务访问前迁移
@@ -388,6 +388,7 @@ scheduled_tasks
   └── scheduled_task_runs
 scheduler_state
 scheduler_workers
+service_heartbeats
 runtime_settings
 announcements
 ```
@@ -577,6 +578,7 @@ announcements
 - `job_spec` 与 `legacy_command` 必须且只能有一个非空；没有 `job_spec` 的行在数据库约束层不能启用
 - 版本 `1 -> 2` 迁移不会猜测旧命令的含义：旧 `command` 原样进入 `legacy_command`，所有旧任务强制停用
 - 版本 `2 -> 3` 为既有任务补入安全默认值 `UTC`、`3600` 和 `coalesce = 1`，并创建持久化游标、心跳和运行认领表
+- 版本 `3 -> 4` 创建 API/worker 通用心跳表，供离线恢复拒绝活动目标
 - worker 只把已验证 job 映射为固定的 `index`、`notify`、`push` 可执行文件与独立 argv，不经过 shell
 
 ### 9. `scheduler_state`
@@ -621,7 +623,11 @@ worker 心跳表。
 - 未进入 `running` 的过期认领恢复为 `pending`；已经运行但租约过期的记录转为 `unknown`，不会自动重试
 - 管理 API 返回运行时间与状态，但不会返回 `output_summary`
 
-### 12. `runtime_settings`
+### 12. `service_heartbeats`
+
+离线恢复安全心跳表。主键为 `(service, instance_id)`，`service` 仅允许 `api` 或 `worker`；另有 `started_at` 和 `heartbeat_at`。API 每 10 秒续期并在优雅退出时删除自己的行，worker 的调度/运行租约心跳同时续期该表。`admin backup restore` 在替换文件前后检查最近 90 秒的该表与旧 `scheduler_workers`，发现活动目标时拒绝恢复。
+
+### 13. `runtime_settings`
 
 管理员后台维护的外部元数据运行配置表。
 
@@ -640,7 +646,7 @@ worker 心跳表。
 
 密钥不存储在任何 SQLite 表中。关联数据绑定表/行/字段，密文不能在秘密列之间互换。数据库备份必须与匹配的 32 字节部署密钥分开保管；详见 [安全说明](security.md)。
 
-### 13. `announcements`
+### 14. `announcements`
 
 系统公告表。
 
