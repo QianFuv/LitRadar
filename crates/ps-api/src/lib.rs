@@ -291,7 +291,11 @@ mod tests {
     };
     use axum::http::{Method, Request, StatusCode};
     use axum::Router;
-    use ps_auth::AuthService;
+    use ps_auth::{
+        AuthService, ACCESS_TOKEN_ACTIVE_LIMIT, ACCESS_TOKEN_LIMIT_DETAIL,
+        ACCESS_TOKEN_NAME_LENGTH_DETAIL, ACCESS_TOKEN_RESERVED_NAME_DETAIL,
+        ACCESS_TOKEN_TTL_DETAIL, ACCESS_TOKEN_TTL_MAX_SECONDS, ACCESS_TOKEN_TTL_MIN_SECONDS,
+    };
     use ps_sources::FixtureZjlibCnkiMode;
     use rusqlite::Connection;
     use serde_json::Value;
@@ -950,7 +954,7 @@ mod tests {
             Some(&session_cookie),
             Some(serde_json::json!({
                 "name": "fixture-api",
-                "ttl": 60
+                "ttl": ACCESS_TOKEN_TTL_MIN_SECONDS
             })),
         )
         .await;
@@ -1113,6 +1117,252 @@ mod tests {
         assert_eq!(logout.payload["ok"], true);
         assert!(set_cookie_header(&logout).contains("Max-Age=0"));
         assert_eq!(logged_out.status, StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    #[cfg_attr(
+        miri,
+        ignore = "Miri does not support Tokio's Windows IOCP runtime initialization"
+    )]
+    async fn access_token_route_enforces_authentication_before_creation_validation() {
+        let backend = TestBackend::new();
+        let user = backend.authenticated_user("token_boundary", false);
+        let app = backend.router();
+        let authorization = user.authorization_header();
+        let overlong_name = "😀".repeat(101);
+        let multi_invalid_payload =
+            serde_json::json!({"name": format!("{overlong_name}login"), "ttl": 0});
+
+        let unauthorized = json_request(
+            &app,
+            Method::POST,
+            "/api/auth/tokens",
+            None,
+            None,
+            Some(multi_invalid_payload.clone()),
+        )
+        .await;
+        let invalid_bearer = json_request(
+            &app,
+            Method::POST,
+            "/api/auth/tokens",
+            Some("Bearer invalid-token"),
+            None,
+            Some(multi_invalid_payload.clone()),
+        )
+        .await;
+        let mut invalid_responses = Vec::new();
+        for (payload, expected_detail) in [
+            (multi_invalid_payload, ACCESS_TOKEN_NAME_LENGTH_DETAIL),
+            (
+                serde_json::json!({
+                    "name": format!(" {} ", "a".repeat(99)),
+                    "ttl": ACCESS_TOKEN_TTL_MIN_SECONDS
+                }),
+                ACCESS_TOKEN_NAME_LENGTH_DETAIL,
+            ),
+            (
+                serde_json::json!({"name": "  login\t", "ttl": 0}),
+                ACCESS_TOKEN_RESERVED_NAME_DETAIL,
+            ),
+            (
+                serde_json::json!({
+                    "name": "ttl-low",
+                    "ttl": ACCESS_TOKEN_TTL_MIN_SECONDS - 1
+                }),
+                ACCESS_TOKEN_TTL_DETAIL,
+            ),
+            (
+                serde_json::json!({
+                    "name": "ttl-high",
+                    "ttl": ACCESS_TOKEN_TTL_MAX_SECONDS + 1
+                }),
+                ACCESS_TOKEN_TTL_DETAIL,
+            ),
+        ] {
+            invalid_responses.push((
+                json_request(
+                    &app,
+                    Method::POST,
+                    "/api/auth/tokens",
+                    Some(&authorization),
+                    None,
+                    Some(payload),
+                )
+                .await,
+                expected_detail,
+            ));
+        }
+
+        assert_eq!(unauthorized.status, StatusCode::UNAUTHORIZED);
+        assert_eq!(unauthorized.payload["detail"], "Authentication required");
+        assert_eq!(invalid_bearer.status, StatusCode::UNAUTHORIZED);
+        assert_eq!(invalid_bearer.payload["detail"], "Invalid or expired token");
+        for (response, expected_detail) in invalid_responses {
+            assert_eq!(response.status, StatusCode::BAD_REQUEST);
+            assert_eq!(response.payload["detail"], expected_detail);
+        }
+        let service = AuthService::new(backend.auth_db_path());
+        assert_eq!(
+            service
+                .list_access_tokens(user.user_id())
+                .expect("tokens should list after rejected requests")
+                .len(),
+            1
+        );
+
+        let accepted_astral = json_request(
+            &app,
+            Method::POST,
+            "/api/auth/tokens",
+            Some(&authorization),
+            None,
+            Some(serde_json::json!({
+                "name": "😀".repeat(100),
+                "ttl": ACCESS_TOKEN_TTL_MIN_SECONDS
+            })),
+        )
+        .await;
+        let minimum = json_request(
+            &app,
+            Method::POST,
+            "/api/auth/tokens",
+            Some(&authorization),
+            None,
+            Some(serde_json::json!({
+                "name": "minimum",
+                "ttl": ACCESS_TOKEN_TTL_MIN_SECONDS
+            })),
+        )
+        .await;
+        let maximum = json_request(
+            &app,
+            Method::POST,
+            "/api/auth/tokens",
+            Some(&authorization),
+            None,
+            Some(serde_json::json!({
+                "name": "maximum",
+                "ttl": ACCESS_TOKEN_TTL_MAX_SECONDS
+            })),
+        )
+        .await;
+        let unnamed = json_request(
+            &app,
+            Method::POST,
+            "/api/auth/tokens",
+            Some(&authorization),
+            None,
+            Some(serde_json::json!({
+                "name": " \t ",
+                "ttl": ACCESS_TOKEN_TTL_MIN_SECONDS
+            })),
+        )
+        .await;
+
+        for response in [&accepted_astral, &minimum, &maximum, &unnamed] {
+            assert_eq!(response.status, StatusCode::OK);
+            assert_eq!(
+                response.payload["token"]
+                    .as_str()
+                    .expect("created raw token should be returned once")
+                    .len(),
+                64
+            );
+        }
+        assert_eq!(accepted_astral.payload["name"], "😀".repeat(100));
+        assert_eq!(minimum.payload["name"], "minimum");
+        assert_eq!(maximum.payload["name"], "maximum");
+        assert_eq!(unnamed.payload["name"], "");
+
+        let existing_count = service
+            .list_access_tokens(user.user_id())
+            .expect("accepted tokens should list")
+            .len() as i64;
+        let created_at = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system time should be valid")
+            .as_secs_f64();
+        let mut revoke_token_id = None;
+        for index in existing_count..ACCESS_TOKEN_ACTIVE_LIMIT {
+            let row = ps_storage::insert_personal_access_token(
+                backend.auth_db_path(),
+                user.user_id(),
+                &format!("quota-route-hash-{index}"),
+                &format!("quota-route-{index}"),
+                created_at + ACCESS_TOKEN_TTL_MAX_SECONDS as f64,
+                created_at + index as f64 / 1000.0,
+            )
+            .expect("quota fixture token should be admitted");
+            revoke_token_id = Some(row.id);
+        }
+        let quota = json_request(
+            &app,
+            Method::POST,
+            "/api/auth/tokens",
+            Some(&authorization),
+            None,
+            Some(serde_json::json!({
+                "name": "quota",
+                "ttl": ACCESS_TOKEN_TTL_MIN_SECONDS
+            })),
+        )
+        .await;
+        let listed_at_quota = json_request(
+            &app,
+            Method::GET,
+            "/api/auth/tokens",
+            Some(&authorization),
+            None,
+            None,
+        )
+        .await;
+        let revoked = json_request(
+            &app,
+            Method::DELETE,
+            &format!(
+                "/api/auth/tokens/{}",
+                revoke_token_id.expect("one quota fixture should exist")
+            ),
+            Some(&authorization),
+            None,
+            None,
+        )
+        .await;
+        let recovered = json_request(
+            &app,
+            Method::POST,
+            "/api/auth/tokens",
+            Some(&authorization),
+            None,
+            Some(serde_json::json!({
+                "name": "quota-recovered",
+                "ttl": ACCESS_TOKEN_TTL_MIN_SECONDS
+            })),
+        )
+        .await;
+
+        assert_eq!(quota.status, StatusCode::CONFLICT);
+        assert_eq!(quota.payload["detail"], ACCESS_TOKEN_LIMIT_DETAIL);
+        assert_eq!(listed_at_quota.status, StatusCode::OK);
+        assert_eq!(
+            listed_at_quota
+                .payload
+                .as_array()
+                .expect("token list should be an array")
+                .len() as i64,
+            ACCESS_TOKEN_ACTIVE_LIMIT
+        );
+        assert_eq!(revoked.status, StatusCode::OK);
+        assert_eq!(recovered.status, StatusCode::OK);
+        assert_eq!(recovered.payload["name"], "quota-recovered");
+        assert_eq!(
+            service
+                .list_access_tokens(user.user_id())
+                .expect("recovered token should list")
+                .len() as i64,
+            ACCESS_TOKEN_ACTIVE_LIMIT
+        );
     }
 
     #[tokio::test]

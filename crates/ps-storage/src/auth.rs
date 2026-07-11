@@ -5,7 +5,9 @@ use std::fmt;
 use std::fs;
 use std::path::Path;
 
-use ps_domain::UserId;
+use ps_domain::{
+    UserId, ACCESS_TOKEN_ACTIVE_LIMIT, ACCESS_TOKEN_LIMIT_DETAIL, ACCESS_TOKEN_RESERVED_NAME,
+};
 use rusqlite::{params, Connection, ErrorCode, OptionalExtension};
 
 use crate::{migrate_auth_database, open_sqlite_connection, MigrationError};
@@ -87,6 +89,8 @@ pub enum AuthRepositoryError {
     UsernameAlreadyExists,
     /// Local administrator bootstrap has already completed.
     AdministratorBootstrapAlreadyCompleted,
+    /// The user already owns the maximum active personal access tokens.
+    AccessTokenLimitReached,
 }
 
 impl fmt::Display for AuthRepositoryError {
@@ -108,6 +112,7 @@ impl fmt::Display for AuthRepositoryError {
             Self::AdministratorBootstrapAlreadyCompleted => {
                 formatter.write_str("Administrator bootstrap is already complete")
             }
+            Self::AccessTokenLimitReached => formatter.write_str(ACCESS_TOKEN_LIMIT_DETAIL),
         }
     }
 }
@@ -319,31 +324,7 @@ pub fn find_user_credentials_by_id(
         .map_err(AuthRepositoryError::from)
 }
 
-/// Delete access tokens by display name.
-///
-/// # Arguments
-///
-/// * `auth_db_path` - Path to the auth SQLite database.
-/// * `user_id` - User identifier.
-/// * `name` - Token display name.
-///
-/// # Returns
-///
-/// Number of deleted rows.
-pub fn delete_access_tokens_by_name(
-    auth_db_path: impl AsRef<Path>,
-    user_id: UserId,
-    name: &str,
-) -> Result<usize, AuthRepositoryError> {
-    let connection = open_auth_connection(auth_db_path)?;
-    let count = connection.execute(
-        "DELETE FROM access_tokens WHERE user_id = ?1 AND name = ?2",
-        params![user_id.value(), name],
-    )?;
-    Ok(count)
-}
-
-/// Insert a hashed access token.
+/// Insert a personal access token under the active per-user quota.
 ///
 /// # Arguments
 ///
@@ -356,8 +337,8 @@ pub fn delete_access_tokens_by_name(
 ///
 /// # Returns
 ///
-/// Inserted token metadata.
-pub fn insert_access_token(
+/// Inserted token metadata, or a typed quota error.
+pub fn insert_personal_access_token(
     auth_db_path: impl AsRef<Path>,
     user_id: UserId,
     token_hash: &str,
@@ -366,19 +347,48 @@ pub fn insert_access_token(
     created_at: f64,
 ) -> Result<AccessTokenRow, AuthRepositoryError> {
     let connection = open_auth_connection(auth_db_path)?;
-    purge_expired_access_tokens(&connection, created_at)?;
-    connection.execute(
-        "INSERT INTO access_tokens \
-         (user_id, token_hash, name, expires_at, created_at) \
-         VALUES (?1, ?2, ?3, ?4, ?5)",
-        params![user_id.value(), token_hash, name, expires_at, created_at],
-    )?;
-    Ok(AccessTokenRow {
-        id: connection.last_insert_rowid(),
-        name: name.to_string(),
+    connection.execute("BEGIN IMMEDIATE", [])?;
+    let result = insert_personal_access_token_in_transaction(
+        &connection,
+        user_id,
+        token_hash,
+        name,
         expires_at,
         created_at,
-    })
+    );
+    finish_immediate_transaction(&connection, result)
+}
+
+/// Atomically replace the internal browser login access token.
+///
+/// # Arguments
+///
+/// * `auth_db_path` - Path to the auth SQLite database.
+/// * `user_id` - User identifier.
+/// * `token_hash` - SHA-256 token hash.
+/// * `expires_at` - Expiration timestamp.
+/// * `created_at` - Creation timestamp.
+///
+/// # Returns
+///
+/// Inserted login token metadata.
+pub fn replace_login_access_token(
+    auth_db_path: impl AsRef<Path>,
+    user_id: UserId,
+    token_hash: &str,
+    expires_at: f64,
+    created_at: f64,
+) -> Result<AccessTokenRow, AuthRepositoryError> {
+    let connection = open_auth_connection(auth_db_path)?;
+    connection.execute("BEGIN IMMEDIATE", [])?;
+    let result = replace_login_access_token_in_transaction(
+        &connection,
+        user_id,
+        token_hash,
+        expires_at,
+        created_at,
+    );
+    finish_immediate_transaction(&connection, result)
 }
 
 /// Verify an access token hash and return the owning user.
@@ -709,6 +719,92 @@ fn purge_expired_access_tokens(
     Ok(connection.execute("DELETE FROM access_tokens WHERE expires_at <= ?1", [now])?)
 }
 
+fn insert_personal_access_token_in_transaction(
+    connection: &Connection,
+    user_id: UserId,
+    token_hash: &str,
+    name: &str,
+    expires_at: f64,
+    created_at: f64,
+) -> Result<AccessTokenRow, AuthRepositoryError> {
+    purge_expired_access_tokens(connection, created_at)?;
+    let active_count: i64 = connection.query_row(
+        "SELECT COUNT(*) FROM access_tokens \
+         WHERE user_id = ?1 AND expires_at > ?2 AND name != ?3",
+        params![user_id.value(), created_at, ACCESS_TOKEN_RESERVED_NAME],
+        |row| row.get(0),
+    )?;
+    if active_count >= ACCESS_TOKEN_ACTIVE_LIMIT {
+        return Err(AuthRepositoryError::AccessTokenLimitReached);
+    }
+    insert_access_token_row(
+        connection, user_id, token_hash, name, expires_at, created_at,
+    )
+}
+
+fn replace_login_access_token_in_transaction(
+    connection: &Connection,
+    user_id: UserId,
+    token_hash: &str,
+    expires_at: f64,
+    created_at: f64,
+) -> Result<AccessTokenRow, AuthRepositoryError> {
+    purge_expired_access_tokens(connection, created_at)?;
+    connection.execute(
+        "DELETE FROM access_tokens WHERE user_id = ?1 AND name = ?2",
+        params![user_id.value(), ACCESS_TOKEN_RESERVED_NAME],
+    )?;
+    insert_access_token_row(
+        connection,
+        user_id,
+        token_hash,
+        ACCESS_TOKEN_RESERVED_NAME,
+        expires_at,
+        created_at,
+    )
+}
+
+fn insert_access_token_row(
+    connection: &Connection,
+    user_id: UserId,
+    token_hash: &str,
+    name: &str,
+    expires_at: f64,
+    created_at: f64,
+) -> Result<AccessTokenRow, AuthRepositoryError> {
+    connection.execute(
+        "INSERT INTO access_tokens \
+         (user_id, token_hash, name, expires_at, created_at) \
+         VALUES (?1, ?2, ?3, ?4, ?5)",
+        params![user_id.value(), token_hash, name, expires_at, created_at],
+    )?;
+    Ok(AccessTokenRow {
+        id: connection.last_insert_rowid(),
+        name: name.to_string(),
+        expires_at,
+        created_at,
+    })
+}
+
+fn finish_immediate_transaction<Output>(
+    connection: &Connection,
+    result: Result<Output, AuthRepositoryError>,
+) -> Result<Output, AuthRepositoryError> {
+    match result {
+        Ok(output) => match connection.execute("COMMIT", []) {
+            Ok(_) => Ok(output),
+            Err(error) => {
+                let _ = connection.execute("ROLLBACK", []);
+                Err(error.into())
+            }
+        },
+        Err(error) => {
+            let _ = connection.execute("ROLLBACK", []);
+            Err(error)
+        }
+    }
+}
+
 fn user_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<AuthUserRow> {
     Ok(AuthUserRow {
         id: UserId(row.get(0)?),
@@ -763,4 +859,313 @@ fn is_constraint_error(error: &rusqlite::Error) -> bool {
         rusqlite::Error::SqliteFailure(failure, _)
             if failure.code == ErrorCode::ConstraintViolation
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::{Path, PathBuf};
+    use std::sync::{Arc, Barrier};
+
+    use ps_domain::{UserId, ACCESS_TOKEN_ACTIVE_LIMIT, ACCESS_TOKEN_RESERVED_NAME};
+    use rusqlite::params;
+    use tempfile::{tempdir, TempDir};
+
+    use super::{
+        bootstrap_admin, delete_access_token, initialize_auth_database,
+        insert_personal_access_token, list_access_tokens, open_auth_connection,
+        replace_login_access_token, verify_access_token_hash, AuthRepositoryError,
+    };
+
+    fn access_token_fixture() -> (TempDir, PathBuf, UserId) {
+        let temp_dir = tempdir().expect("temporary directory should be created");
+        let auth_db_path = temp_dir.path().join("auth.sqlite");
+        initialize_auth_database(&auth_db_path).expect("auth database should initialize");
+        let user = bootstrap_admin(&auth_db_path, "token_admin", "password-hash", "salt", 1.0)
+            .expect("fixture administrator should be created");
+        (temp_dir, auth_db_path, user.id)
+    }
+
+    fn insert_raw_access_token(
+        auth_db_path: &Path,
+        user_id: UserId,
+        token_hash: &str,
+        name: &str,
+        expires_at: f64,
+        created_at: f64,
+    ) -> i64 {
+        let connection = open_auth_connection(auth_db_path).expect("auth connection should open");
+        connection
+            .execute(
+                "INSERT INTO access_tokens \
+                 (user_id, token_hash, name, expires_at, created_at) \
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![user_id.value(), token_hash, name, expires_at, created_at],
+            )
+            .expect("raw fixture token should insert");
+        connection.last_insert_rowid()
+    }
+
+    fn count_tokens_by_hash(auth_db_path: &Path, token_hash: &str) -> i64 {
+        let connection = open_auth_connection(auth_db_path).expect("auth connection should open");
+        connection
+            .query_row(
+                "SELECT COUNT(*) FROM access_tokens WHERE token_hash = ?1",
+                [token_hash],
+                |row| row.get(0),
+            )
+            .expect("token hash count should load")
+    }
+
+    fn login_token_hashes(auth_db_path: &Path, user_id: UserId) -> Vec<String> {
+        let connection = open_auth_connection(auth_db_path).expect("auth connection should open");
+        let mut statement = connection
+            .prepare(
+                "SELECT token_hash FROM access_tokens \
+                 WHERE user_id = ?1 AND name = ?2 ORDER BY id",
+            )
+            .expect("login token query should prepare");
+        statement
+            .query_map(
+                params![user_id.value(), ACCESS_TOKEN_RESERVED_NAME],
+                |row| row.get(0),
+            )
+            .expect("login token query should run")
+            .map(|row| row.expect("login token hash should load"))
+            .collect()
+    }
+
+    #[test]
+    fn access_token_concurrent_admission_is_bounded() {
+        let (_temp_dir, auth_db_path, user_id) = access_token_fixture();
+        for index in 0..(ACCESS_TOKEN_ACTIVE_LIMIT - 1) {
+            insert_personal_access_token(
+                &auth_db_path,
+                user_id,
+                &format!("existing-hash-{index}"),
+                &format!("existing-{index}"),
+                4_000_000_000.0,
+                2.0 + index as f64,
+            )
+            .expect("existing token should be inserted");
+        }
+        let barrier = Arc::new(Barrier::new(2));
+        let handles = (0..2)
+            .map(|index| {
+                let auth_db_path = auth_db_path.clone();
+                let barrier = Arc::clone(&barrier);
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    insert_personal_access_token(
+                        auth_db_path,
+                        user_id,
+                        &format!("concurrent-hash-{index}"),
+                        &format!("concurrent-{index}"),
+                        4_000_000_000.0,
+                        100.0 + index as f64,
+                    )
+                })
+            })
+            .collect::<Vec<_>>();
+        let results = handles
+            .into_iter()
+            .map(|handle| handle.join().expect("admission thread should finish"))
+            .collect::<Vec<_>>();
+        let active =
+            list_access_tokens(&auth_db_path, user_id, 200.0).expect("active tokens should list");
+
+        assert_eq!(results.iter().filter(|result| result.is_ok()).count(), 1);
+        assert_eq!(
+            results
+                .iter()
+                .filter(|result| matches!(
+                    result,
+                    Err(AuthRepositoryError::AccessTokenLimitReached)
+                ))
+                .count(),
+            1
+        );
+        assert_eq!(active.len() as i64, ACCESS_TOKEN_ACTIVE_LIMIT);
+    }
+
+    #[test]
+    fn access_token_admission_ignores_expired_and_login_rows_without_rewriting_legacy_rows() {
+        let (_temp_dir, auth_db_path, user_id) = access_token_fixture();
+        let mut first_active_id = None;
+        for index in 0..(ACCESS_TOKEN_ACTIVE_LIMIT - 1) {
+            let token_id = insert_raw_access_token(
+                &auth_db_path,
+                user_id,
+                &format!("active-hash-{index}"),
+                &format!("active-{index}"),
+                4_000_000_000.0,
+                2.0 + index as f64,
+            );
+            first_active_id.get_or_insert(token_id);
+        }
+        insert_raw_access_token(
+            &auth_db_path,
+            user_id,
+            "login-hash",
+            ACCESS_TOKEN_RESERVED_NAME,
+            4_000_000_000.0,
+            60.0,
+        );
+        insert_raw_access_token(&auth_db_path, user_id, "expired-hash", "expired", 50.0, 3.0);
+
+        insert_personal_access_token(
+            &auth_db_path,
+            user_id,
+            "fiftieth-hash",
+            "fiftieth",
+            4_000_000_000.0,
+            100.0,
+        )
+        .expect("expired and login rows should not consume personal quota");
+        assert_eq!(count_tokens_by_hash(&auth_db_path, "expired-hash"), 0);
+        let legacy_over_limit_id = insert_raw_access_token(
+            &auth_db_path,
+            user_id,
+            "legacy-over-limit-hash",
+            "legacy-over-limit",
+            4_000_000_000.0,
+            101.0,
+        );
+
+        let error = insert_personal_access_token(
+            &auth_db_path,
+            user_id,
+            "rejected-hash",
+            "rejected",
+            4_000_000_000.0,
+            102.0,
+        )
+        .expect_err("legacy over-limit rows should block only new admission");
+        let listed = list_access_tokens(&auth_db_path, user_id, 200.0)
+            .expect("legacy personal tokens should remain listable");
+        let verified = verify_access_token_hash(&auth_db_path, "legacy-over-limit-hash", 200.0)
+            .expect("legacy token verification should run")
+            .expect("legacy over-limit token should remain usable");
+
+        assert!(matches!(
+            error,
+            AuthRepositoryError::AccessTokenLimitReached
+        ));
+        assert_eq!(listed.len() as i64, ACCESS_TOKEN_ACTIVE_LIMIT + 1);
+        assert_eq!(verified.id, user_id);
+        assert_eq!(login_token_hashes(&auth_db_path, user_id), ["login-hash"]);
+        assert_eq!(count_tokens_by_hash(&auth_db_path, "rejected-hash"), 0);
+        assert!(
+            delete_access_token(&auth_db_path, user_id, legacy_over_limit_id)
+                .expect("legacy over-limit token should be revocable")
+        );
+        assert!(delete_access_token(
+            &auth_db_path,
+            user_id,
+            first_active_id.expect("one active fixture should exist")
+        )
+        .expect("second legacy token should be revocable"));
+        insert_personal_access_token(
+            &auth_db_path,
+            user_id,
+            "recovered-hash",
+            "recovered",
+            4_000_000_000.0,
+            103.0,
+        )
+        .expect("admission should recover after active count drops below the limit");
+        assert_eq!(
+            list_access_tokens(&auth_db_path, user_id, 200.0)
+                .expect("recovered token should list")
+                .len() as i64,
+            ACCESS_TOKEN_ACTIVE_LIMIT
+        );
+    }
+
+    #[test]
+    fn access_token_transactions_roll_back_failures_and_serialize_login_replacement() {
+        let (_temp_dir, auth_db_path, user_id) = access_token_fixture();
+        insert_raw_access_token(
+            &auth_db_path,
+            user_id,
+            "duplicate-hash",
+            "existing",
+            4_000_000_000.0,
+            2.0,
+        );
+        insert_raw_access_token(
+            &auth_db_path,
+            user_id,
+            "old-login-hash",
+            ACCESS_TOKEN_RESERVED_NAME,
+            4_000_000_000.0,
+            3.0,
+        );
+        insert_raw_access_token(
+            &auth_db_path,
+            user_id,
+            "rollback-expired-hash",
+            "expired",
+            50.0,
+            4.0,
+        );
+
+        let personal_error = insert_personal_access_token(
+            &auth_db_path,
+            user_id,
+            "duplicate-hash",
+            "new-personal",
+            4_000_000_000.0,
+            100.0,
+        )
+        .expect_err("duplicate personal hash should fail");
+        let login_error = replace_login_access_token(
+            &auth_db_path,
+            user_id,
+            "duplicate-hash",
+            4_000_000_000.0,
+            101.0,
+        )
+        .expect_err("duplicate login hash should fail");
+
+        assert!(matches!(personal_error, AuthRepositoryError::Sqlite(_)));
+        assert!(matches!(login_error, AuthRepositoryError::Sqlite(_)));
+        assert_eq!(
+            count_tokens_by_hash(&auth_db_path, "rollback-expired-hash"),
+            1
+        );
+        assert_eq!(
+            login_token_hashes(&auth_db_path, user_id),
+            ["old-login-hash"]
+        );
+
+        let barrier = Arc::new(Barrier::new(2));
+        let handles = (0..2)
+            .map(|index| {
+                let auth_db_path = auth_db_path.clone();
+                let barrier = Arc::clone(&barrier);
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    replace_login_access_token(
+                        auth_db_path,
+                        user_id,
+                        &format!("concurrent-login-hash-{index}"),
+                        4_000_000_000.0,
+                        200.0 + index as f64,
+                    )
+                })
+            })
+            .collect::<Vec<_>>();
+        let results = handles
+            .into_iter()
+            .map(|handle| handle.join().expect("login thread should finish"))
+            .collect::<Vec<_>>();
+        let hashes = login_token_hashes(&auth_db_path, user_id);
+
+        assert!(results.iter().all(Result::is_ok));
+        assert_eq!(hashes.len(), 1);
+        assert!(matches!(
+            hashes[0].as_str(),
+            "concurrent-login-hash-0" | "concurrent-login-hash-1"
+        ));
+    }
 }

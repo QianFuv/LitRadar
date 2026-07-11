@@ -8,15 +8,18 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use ps_domain::{InviteCodeResponse, TokenCreateResponse, TokenInfo, UserId, UserResponse};
 use ps_storage::{
     bootstrap_admin, count_users, create_invite_code, delete_access_token,
-    delete_access_token_by_hash, delete_access_tokens_by_name, find_user_credentials_by_id,
-    find_user_credentials_by_username, get_user_invite_code, initialize_auth_database,
-    insert_access_token, list_access_tokens, random_hex, register_user_with_invite,
+    delete_access_token_by_hash, find_user_credentials_by_id, find_user_credentials_by_username,
+    get_user_invite_code, initialize_auth_database, insert_personal_access_token,
+    list_access_tokens, random_hex, register_user_with_invite, replace_login_access_token,
     update_user_password_and_delete_tokens, verify_access_token_hash, AuthRepositoryError,
     AuthUserRow, InviteCodeRow,
 };
 
 use crate::{
-    hash_password, hash_token, is_valid_new_password, verify_password, MIN_PASSWORD_LENGTH,
+    hash_password, hash_token, is_valid_new_password, verify_password,
+    ACCESS_TOKEN_NAME_LENGTH_DETAIL, ACCESS_TOKEN_NAME_MAX_CODE_POINTS, ACCESS_TOKEN_RESERVED_NAME,
+    ACCESS_TOKEN_RESERVED_NAME_DETAIL, ACCESS_TOKEN_TTL_DETAIL, ACCESS_TOKEN_TTL_MAX_SECONDS,
+    ACCESS_TOKEN_TTL_MIN_SECONDS, MIN_PASSWORD_LENGTH,
 };
 
 /// Python-compatible default access token TTL in seconds.
@@ -25,7 +28,6 @@ pub const ACCESS_TOKEN_DEFAULT_TTL: i64 = 7 * 24 * 3600;
 const ACCESS_TOKEN_BYTES: i64 = 32;
 const PASSWORD_SALT_BYTES: i64 = 16;
 const INVITE_CODE_BYTES: i64 = 8;
-const LOGIN_TOKEN_NAME: &str = "login";
 const MIN_USERNAME_LENGTH: usize = 3;
 const MAX_USERNAME_LENGTH: usize = 32;
 
@@ -40,6 +42,12 @@ pub enum AuthServiceError {
     InvalidUsername,
     /// A newly created or replaced password is too short.
     PasswordTooShort,
+    /// The untrimmed personal access-token name exceeds the code-point limit.
+    AccessTokenNameTooLong,
+    /// The normalized personal access-token name is reserved for browser login.
+    AccessTokenNameReserved,
+    /// The requested personal access-token TTL is outside the accepted range.
+    AccessTokenTtlOutOfRange,
 }
 
 impl fmt::Display for AuthServiceError {
@@ -55,6 +63,9 @@ impl fmt::Display for AuthServiceError {
                 formatter,
                 "Password must be at least {MIN_PASSWORD_LENGTH} characters"
             ),
+            Self::AccessTokenNameTooLong => formatter.write_str(ACCESS_TOKEN_NAME_LENGTH_DETAIL),
+            Self::AccessTokenNameReserved => formatter.write_str(ACCESS_TOKEN_RESERVED_NAME_DETAIL),
+            Self::AccessTokenTtlOutOfRange => formatter.write_str(ACCESS_TOKEN_TTL_DETAIL),
         }
     }
 }
@@ -64,7 +75,12 @@ impl Error for AuthServiceError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             Self::Repository(error) => Some(error),
-            Self::InvalidCredentials | Self::InvalidUsername | Self::PasswordTooShort => None,
+            Self::InvalidCredentials
+            | Self::InvalidUsername
+            | Self::PasswordTooShort
+            | Self::AccessTokenNameTooLong
+            | Self::AccessTokenNameReserved
+            | Self::AccessTokenTtlOutOfRange => None,
         }
     }
 }
@@ -220,13 +236,21 @@ impl AuthService {
         let user = self
             .verify_user(username, password)?
             .ok_or(AuthServiceError::InvalidCredentials)?;
-        delete_access_tokens_by_name(&self.auth_db_path, user.id, LOGIN_TOKEN_NAME)?;
-        let token =
-            self.create_access_token(user.id, LOGIN_TOKEN_NAME, ACCESS_TOKEN_DEFAULT_TTL)?;
+        let token = random_hex(&self.auth_db_path, ACCESS_TOKEN_BYTES)?;
+        let token_hash = hash_token(&token);
+        let created_at = now_seconds();
+        let expires_at = created_at + ACCESS_TOKEN_DEFAULT_TTL as f64;
+        let row = replace_login_access_token(
+            &self.auth_db_path,
+            user.id,
+            &token_hash,
+            expires_at,
+            created_at,
+        )?;
         Ok(LoginSession {
             user,
-            token: token.token,
-            expires_at: token.expires_at,
+            token,
+            expires_at: row.expires_at,
         })
     }
 
@@ -235,7 +259,7 @@ impl AuthService {
     /// # Arguments
     ///
     /// * `user_id` - Owner user identifier.
-    /// * `name` - Token display name.
+    /// * `name` - Untrimmed token display name.
     /// * `ttl` - Token TTL in seconds.
     ///
     /// # Returns
@@ -247,11 +271,21 @@ impl AuthService {
         name: &str,
         ttl: i64,
     ) -> Result<TokenCreateResponse, AuthServiceError> {
+        if name.chars().count() > ACCESS_TOKEN_NAME_MAX_CODE_POINTS {
+            return Err(AuthServiceError::AccessTokenNameTooLong);
+        }
+        let name = name.trim();
+        if name == ACCESS_TOKEN_RESERVED_NAME {
+            return Err(AuthServiceError::AccessTokenNameReserved);
+        }
+        if !(ACCESS_TOKEN_TTL_MIN_SECONDS..=ACCESS_TOKEN_TTL_MAX_SECONDS).contains(&ttl) {
+            return Err(AuthServiceError::AccessTokenTtlOutOfRange);
+        }
         let token = random_hex(&self.auth_db_path, ACCESS_TOKEN_BYTES)?;
         let token_hash = hash_token(&token);
         let created_at = now_seconds();
         let expires_at = created_at + ttl as f64;
-        let row = insert_access_token(
+        let row = insert_personal_access_token(
             &self.auth_db_path,
             user_id,
             &token_hash,
@@ -518,11 +552,16 @@ fn now_seconds() -> f64 {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::{Arc, Barrier};
+
     use ps_storage::{bootstrap_admin, count_users, migrate_auth_database};
     use tempfile::tempdir;
 
     use super::{AuthService, AuthServiceError};
-    use crate::hash_password;
+    use crate::{
+        hash_password, ACCESS_TOKEN_NAME_LENGTH_DETAIL, ACCESS_TOKEN_RESERVED_NAME_DETAIL,
+        ACCESS_TOKEN_TTL_DETAIL, ACCESS_TOKEN_TTL_MAX_SECONDS, ACCESS_TOKEN_TTL_MIN_SECONDS,
+    };
 
     const STRONG_PASSWORD: &str = "strong-password";
 
@@ -582,5 +621,137 @@ mod tests {
             count_users(&auth_db_path).expect("user count should load"),
             1
         );
+    }
+
+    #[test]
+    fn access_token_service_validates_raw_name_before_reserved_name_and_ttl() {
+        let temp_dir = tempdir().expect("temporary directory should be created");
+        let auth_db_path = temp_dir.path().join("auth.sqlite");
+        migrate_auth_database(&auth_db_path).expect("auth database should migrate");
+        let service = AuthService::new(&auth_db_path);
+        let user = service
+            .bootstrap_admin("token_admin", STRONG_PASSWORD)
+            .expect("fixture administrator should bootstrap");
+        let overlong_reserved_name = format!("{}login", "😀".repeat(101));
+        let surrounding_spaces = format!(" {} ", "a".repeat(99));
+
+        let accepted_astral = service
+            .create_access_token(user.id, &"😀".repeat(100), ACCESS_TOKEN_TTL_MIN_SECONDS)
+            .expect("100 astral code points should be accepted");
+
+        let overlong_error = service
+            .create_access_token(user.id, &overlong_reserved_name, 0)
+            .expect_err("raw overlength should win over reserved name and TTL");
+        let spaces_error = service
+            .create_access_token(user.id, &surrounding_spaces, ACCESS_TOKEN_TTL_MIN_SECONDS)
+            .expect_err("surrounding spaces should count before trimming");
+        let reserved_error = service
+            .create_access_token(user.id, "  login\t", 0)
+            .expect_err("reserved name should win over TTL after trimming");
+        let unnamed = service
+            .create_access_token(user.id, " \t ", ACCESS_TOKEN_TTL_MIN_SECONDS)
+            .expect("whitespace-only names should retain unnamed-token compatibility");
+
+        assert_eq!(accepted_astral.name, "😀".repeat(100));
+        assert!(matches!(
+            overlong_error,
+            AuthServiceError::AccessTokenNameTooLong
+        ));
+        assert_eq!(overlong_error.to_string(), ACCESS_TOKEN_NAME_LENGTH_DETAIL);
+        assert!(matches!(
+            spaces_error,
+            AuthServiceError::AccessTokenNameTooLong
+        ));
+        assert_eq!(spaces_error.to_string(), ACCESS_TOKEN_NAME_LENGTH_DETAIL);
+        assert!(matches!(
+            reserved_error,
+            AuthServiceError::AccessTokenNameReserved
+        ));
+        assert_eq!(
+            reserved_error.to_string(),
+            ACCESS_TOKEN_RESERVED_NAME_DETAIL
+        );
+        assert_eq!(unnamed.name, "");
+    }
+
+    #[test]
+    fn access_token_service_rejects_out_of_range_ttl() {
+        let temp_dir = tempdir().expect("temporary directory should be created");
+        let auth_db_path = temp_dir.path().join("auth.sqlite");
+        migrate_auth_database(&auth_db_path).expect("auth database should migrate");
+        let service = AuthService::new(&auth_db_path);
+        let user = service
+            .bootstrap_admin("token_admin", STRONG_PASSWORD)
+            .expect("fixture administrator should bootstrap");
+
+        for ttl in [
+            ACCESS_TOKEN_TTL_MIN_SECONDS - 1,
+            ACCESS_TOKEN_TTL_MAX_SECONDS + 1,
+        ] {
+            let error = service
+                .create_access_token(user.id, "integration", ttl)
+                .expect_err("out-of-range TTL should be rejected");
+
+            assert!(matches!(error, AuthServiceError::AccessTokenTtlOutOfRange));
+            assert_eq!(error.to_string(), ACCESS_TOKEN_TTL_DETAIL);
+        }
+        let minimum = service
+            .create_access_token(user.id, "minimum", ACCESS_TOKEN_TTL_MIN_SECONDS)
+            .expect("minimum TTL should be accepted");
+        let maximum = service
+            .create_access_token(user.id, "maximum", ACCESS_TOKEN_TTL_MAX_SECONDS)
+            .expect("maximum TTL should be accepted");
+
+        assert_eq!(minimum.name, "minimum");
+        assert_eq!(maximum.name, "maximum");
+    }
+
+    #[test]
+    fn access_token_login_replacement_serializes_concurrent_sessions() {
+        let temp_dir = tempdir().expect("temporary directory should be created");
+        let auth_db_path = temp_dir.path().join("auth.sqlite");
+        migrate_auth_database(&auth_db_path).expect("auth database should migrate");
+        let service = AuthService::new(&auth_db_path);
+        service
+            .bootstrap_admin("token_admin", STRONG_PASSWORD)
+            .expect("fixture administrator should bootstrap");
+        let previous = service
+            .login("token_admin", STRONG_PASSWORD)
+            .expect("initial login should succeed");
+        let barrier = Arc::new(Barrier::new(2));
+        let handles = (0..2)
+            .map(|_| {
+                let service = service.clone();
+                let barrier = Arc::clone(&barrier);
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    service.login("token_admin", STRONG_PASSWORD)
+                })
+            })
+            .collect::<Vec<_>>();
+        let sessions = handles
+            .into_iter()
+            .map(|handle| {
+                handle
+                    .join()
+                    .expect("login thread should finish")
+                    .expect("concurrent login should succeed")
+            })
+            .collect::<Vec<_>>();
+        let valid_session_count = sessions
+            .iter()
+            .filter(|session| {
+                service
+                    .verify_access_token(&session.token)
+                    .expect("returned session token should verify deterministically")
+                    .is_some()
+            })
+            .count();
+
+        assert_eq!(valid_session_count, 1);
+        assert!(service
+            .verify_access_token(&previous.token)
+            .expect("previous session should resolve")
+            .is_none());
     }
 }

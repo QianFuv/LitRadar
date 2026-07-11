@@ -19,8 +19,6 @@ use ps_storage::AuthRepositoryError;
 use crate::response::ApiError;
 use crate::state::{ApiState, AuthAttemptKind};
 
-const MIN_TOKEN_TTL_SECONDS: i64 = 3600;
-const MAX_TOKEN_TTL_SECONDS: i64 = 365 * 24 * 3600;
 const AUTH_RATE_LIMIT_DETAIL: &str = "Too many authentication attempts; try again later";
 
 /// Register a new user account.
@@ -241,7 +239,19 @@ pub(crate) async fn logout(
     path = "/api/auth/tokens",
     tag = "auth",
     request_body = TokenCreateRequest,
-    responses((status = 200, description = "Created access token.", body = TokenCreateResponse)),
+    responses(
+        (status = 200, description = "Created access token.", body = TokenCreateResponse),
+        (
+            status = 400,
+            description = "Validation order: authentication, raw name length, normalized reserved name, TTL, then quota. Errors: Access token name must be at most 100 Unicode code points; Access token name \"login\" is reserved; Access token TTL must be between 3600 and 31536000 seconds.",
+            body = ErrorEnvelope
+        ),
+        (
+            status = 409,
+            description = "Validation order: authentication, raw name length, normalized reserved name, TTL, then quota. Error: Active access token limit of 50 reached; revoke a token before creating another.",
+            body = ErrorEnvelope
+        )
+    ),
     security(("bearer_auth" = []), ("session_cookie" = []))
 )]
 pub(crate) async fn create_token(
@@ -250,8 +260,8 @@ pub(crate) async fn create_token(
     Json(body): Json<TokenCreateRequest>,
 ) -> Result<Json<TokenCreateResponse>, ApiError> {
     let (user, _) = require_current_user(&state, &headers).await?;
-    let ttl = body.ttl.clamp(MIN_TOKEN_TTL_SECONDS, MAX_TOKEN_TTL_SECONDS);
-    let name = body.name.trim().to_string();
+    let name = body.name;
+    let ttl = body.ttl;
     let token = run_auth(&state, move |service| {
         service.create_access_token(user.id, &name, ttl)
     })
@@ -530,9 +540,11 @@ pub(crate) fn map_auth_error(error: AuthServiceError) -> ApiError {
         AuthServiceError::InvalidCredentials => {
             ApiError::unauthorized("Invalid username or password")
         }
-        AuthServiceError::InvalidUsername | AuthServiceError::PasswordTooShort => {
-            ApiError::bad_request(error.to_string())
-        }
+        AuthServiceError::InvalidUsername
+        | AuthServiceError::PasswordTooShort
+        | AuthServiceError::AccessTokenNameTooLong
+        | AuthServiceError::AccessTokenNameReserved
+        | AuthServiceError::AccessTokenTtlOutOfRange => ApiError::bad_request(error.to_string()),
         AuthServiceError::Repository(AuthRepositoryError::InviteCodeRequired)
         | AuthServiceError::Repository(AuthRepositoryError::AdministratorBootstrapRequired)
         | AuthServiceError::Repository(AuthRepositoryError::InvalidOrUsedInviteCode)
@@ -541,6 +553,9 @@ pub(crate) fn map_auth_error(error: AuthServiceError) -> ApiError {
         }
         AuthServiceError::Repository(AuthRepositoryError::UsernameAlreadyExists) => {
             ApiError::conflict("Username already exists")
+        }
+        AuthServiceError::Repository(AuthRepositoryError::AccessTokenLimitReached) => {
+            ApiError::conflict(error.to_string())
         }
         AuthServiceError::Repository(_) => ApiError::internal_server_error(),
     }

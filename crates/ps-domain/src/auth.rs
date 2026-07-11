@@ -5,6 +5,40 @@ use utoipa::ToSchema;
 
 use crate::UserId;
 
+/// Maximum active personal access tokens admitted for one user.
+pub const ACCESS_TOKEN_ACTIVE_LIMIT: i64 = 50;
+
+/// Maximum Unicode code points in an untrimmed access-token name.
+pub const ACCESS_TOKEN_NAME_MAX_CODE_POINTS: usize = 100;
+
+/// Reserved display name for the internal browser login token.
+pub const ACCESS_TOKEN_RESERVED_NAME: &str = "login";
+
+/// Minimum accepted personal access-token TTL in seconds.
+pub const ACCESS_TOKEN_TTL_MIN_SECONDS: i64 = 3600;
+
+/// Maximum accepted personal access-token TTL in seconds.
+pub const ACCESS_TOKEN_TTL_MAX_SECONDS: i64 = 31_536_000;
+
+/// Exact error detail for an overlength raw access-token name.
+pub const ACCESS_TOKEN_NAME_LENGTH_DETAIL: &str =
+    "Access token name must be at most 100 Unicode code points";
+
+/// Exact error detail for the normalized reserved access-token name.
+pub const ACCESS_TOKEN_RESERVED_NAME_DETAIL: &str = "Access token name \"login\" is reserved";
+
+/// Exact error detail for an out-of-range access-token TTL.
+pub const ACCESS_TOKEN_TTL_DETAIL: &str =
+    "Access token TTL must be between 3600 and 31536000 seconds";
+
+/// Exact error detail for exhausted personal access-token capacity.
+pub const ACCESS_TOKEN_LIMIT_DETAIL: &str =
+    "Active access token limit of 50 reached; revoke a token before creating another";
+
+/// Published validation order for new personal access-token requests.
+pub const ACCESS_TOKEN_VALIDATION_ORDER: &str =
+    "authentication, raw name length, normalized reserved name, TTL, then quota";
+
 /// User profile returned by auth endpoints.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct UserResponse {
@@ -50,9 +84,11 @@ pub struct LoginResponse {
 pub struct TokenCreateRequest {
     /// Token display name.
     #[serde(default)]
+    #[schema(max_length = 100)]
     pub name: String,
     /// Requested token TTL in seconds.
     #[serde(default = "default_token_ttl")]
+    #[schema(minimum = 3600, maximum = 31536000)]
     pub ttl: i64,
 }
 

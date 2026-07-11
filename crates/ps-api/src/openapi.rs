@@ -237,6 +237,12 @@ pub fn docs_router() -> Router<ApiState> {
 
 #[cfg(test)]
 mod tests {
+    use ps_auth::{
+        ACCESS_TOKEN_LIMIT_DETAIL, ACCESS_TOKEN_NAME_LENGTH_DETAIL,
+        ACCESS_TOKEN_NAME_MAX_CODE_POINTS, ACCESS_TOKEN_RESERVED_NAME_DETAIL,
+        ACCESS_TOKEN_TTL_DETAIL, ACCESS_TOKEN_TTL_MAX_SECONDS, ACCESS_TOKEN_TTL_MIN_SECONDS,
+        ACCESS_TOKEN_VALIDATION_ORDER,
+    };
     use utoipa::openapi::path::PathItem;
 
     use super::{document, ApiDoc, OpenApi};
@@ -364,6 +370,60 @@ mod tests {
         );
         assert!(document["paths"]["/api/auth/login"]["post"]["responses"]["429"].is_object());
         assert!(document["paths"]["/api/auth/register"]["post"]["responses"]["429"].is_object());
+    }
+
+    #[test]
+    fn openapi_documents_access_token_limits() {
+        let document =
+            serde_json::to_value(ApiDoc::openapi()).expect("OpenAPI document should serialize");
+        let request = &document["components"]["schemas"]["TokenCreateRequest"]["properties"];
+        let responses = &document["paths"]["/api/auth/tokens"]["post"]["responses"];
+        let bad_request_description = responses["400"]["description"]
+            .as_str()
+            .expect("400 response description should exist");
+        let conflict_description = responses["409"]["description"]
+            .as_str()
+            .expect("409 response description should exist");
+
+        assert_eq!(
+            request["name"]["maxLength"],
+            serde_json::json!(ACCESS_TOKEN_NAME_MAX_CODE_POINTS)
+        );
+        assert_eq!(
+            request["ttl"]["minimum"],
+            serde_json::json!(ACCESS_TOKEN_TTL_MIN_SECONDS)
+        );
+        assert_eq!(
+            request["ttl"]["maximum"],
+            serde_json::json!(ACCESS_TOKEN_TTL_MAX_SECONDS)
+        );
+        assert_eq!(
+            responses["400"]["content"]["application/json"]["schema"]["$ref"],
+            "#/components/schemas/ErrorEnvelope"
+        );
+        assert_eq!(
+            responses["409"]["content"]["application/json"]["schema"]["$ref"],
+            "#/components/schemas/ErrorEnvelope"
+        );
+        assert!(bad_request_description.contains(ACCESS_TOKEN_VALIDATION_ORDER));
+        assert!(bad_request_description.contains(ACCESS_TOKEN_NAME_LENGTH_DETAIL));
+        assert!(bad_request_description.contains(ACCESS_TOKEN_RESERVED_NAME_DETAIL));
+        assert!(bad_request_description.contains(ACCESS_TOKEN_TTL_DETAIL));
+        assert!(conflict_description.contains(ACCESS_TOKEN_VALIDATION_ORDER));
+        assert!(conflict_description.contains(ACCESS_TOKEN_LIMIT_DETAIL));
+        let detail_positions = [
+            ACCESS_TOKEN_NAME_LENGTH_DETAIL,
+            ACCESS_TOKEN_RESERVED_NAME_DETAIL,
+            ACCESS_TOKEN_TTL_DETAIL,
+        ]
+        .map(|detail| {
+            bad_request_description
+                .find(detail)
+                .expect("exact validation detail should be documented")
+        });
+        assert!(detail_positions
+            .windows(2)
+            .all(|positions| positions[0] < positions[1]));
     }
 
     #[test]
