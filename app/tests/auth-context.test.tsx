@@ -41,7 +41,7 @@ function AuthProbe() {
  */
 async function restoresServerSession(): Promise<void> {
   window.localStorage.setItem(
-    'ps:v1:user',
+    'litradar:v1:user',
     JSON.stringify({ id: 5, username: 'stale_user', is_admin: false }),
   );
   server.use(http.get('http://localhost/api/auth/me', currentUserResponse));
@@ -54,9 +54,34 @@ async function restoresServerSession(): Promise<void> {
 
   expect(await screen.findByText('restored_admin')).toBeInTheDocument();
   expect(screen.getByText('ready')).toBeInTheDocument();
-  expect(JSON.parse(window.localStorage.getItem('ps:v1:user') ?? '{}')).toEqual(RESTORED_USER);
+  expect(JSON.parse(window.localStorage.getItem('litradar:v1:user') ?? '{}')).toEqual(
+    RESTORED_USER,
+  );
+}
+
+/**
+ * Verify local metadata cannot preserve authentication without a valid server session.
+ */
+async function requiresAuthoritativeServerSession(): Promise<void> {
+  window.localStorage.setItem('litradar:v1:user', JSON.stringify(RESTORED_USER));
+  server.use(
+    http.get('http://localhost/api/auth/me', () =>
+      HttpResponse.json({ detail: 'Not authenticated' }, { status: 401 }),
+    ),
+  );
+
+  renderWithQuery(
+    <AuthProvider>
+      <AuthProbe />
+    </AuthProvider>,
+  );
+
+  expect(await screen.findByText('anonymous')).toBeInTheDocument();
+  expect(screen.getByText('ready')).toBeInTheDocument();
+  expect(window.localStorage.getItem('litradar:v1:user')).toBeNull();
 }
 
 describe('AuthProvider restore', () => {
   test('reconciles stored metadata with the server session', restoresServerSession);
+  test('requires an authoritative server session', requiresAuthoritativeServerSession);
 });

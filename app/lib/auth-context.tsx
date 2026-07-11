@@ -33,11 +33,8 @@ interface AuthState {
 }
 
 const AuthContext = createContext<AuthState | null>(null);
-const ACCESS_TOKEN_STORAGE_KEY = 'ps:v1:session_access_token';
-const LEGACY_SESSION_ACCESS_TOKEN_KEY = 'ps_session_access_token';
-const LEGACY_ACCESS_TOKEN_KEY = 'ps_access_token';
-const USER_STORAGE_KEY = 'ps:v1:user';
-const LEGACY_USER_STORAGE_KEY = 'ps_user';
+const ACCESS_TOKEN_STORAGE_KEY = 'litradar:v1:session_access_token';
+const USER_STORAGE_KEY = 'litradar:v1:user';
 
 /**
  * Check whether a parsed value matches the stored user shape.
@@ -66,29 +63,19 @@ function readStoredUser(): AuthUser | null {
   if (typeof window === 'undefined') {
     return null;
   }
-  let rawUser = readLocalStorageValue(USER_STORAGE_KEY);
-  const didReadLegacyUser = rawUser === null;
-  if (rawUser === null) {
-    rawUser = readLocalStorageValue(LEGACY_USER_STORAGE_KEY);
-  }
+  const rawUser = readLocalStorageValue(USER_STORAGE_KEY);
   if (!rawUser) {
     return null;
   }
   try {
     const parsedUser: unknown = JSON.parse(rawUser);
     if (isAuthUser(parsedUser)) {
-      if (didReadLegacyUser) {
-        writeLocalStorageValue(USER_STORAGE_KEY, rawUser);
-        removeLocalStorageValue(LEGACY_USER_STORAGE_KEY);
-      }
       return parsedUser;
     }
     removeLocalStorageValue(USER_STORAGE_KEY);
-    removeLocalStorageValue(LEGACY_USER_STORAGE_KEY);
     return null;
   } catch {
     removeLocalStorageValue(USER_STORAGE_KEY);
-    removeLocalStorageValue(LEGACY_USER_STORAGE_KEY);
     return null;
   }
 }
@@ -100,25 +87,21 @@ function readStoredUser(): AuthUser | null {
  */
 function writeStoredUser(user: AuthUser): void {
   writeLocalStorageValue(USER_STORAGE_KEY, JSON.stringify(user));
-  removeLocalStorageValue(LEGACY_USER_STORAGE_KEY);
 }
 
 /**
- * Remove access tokens stored by current and older frontend versions.
+ * Remove access tokens stored in the current frontend namespace.
  */
 function clearStoredAccessTokens(): void {
   removeSessionStorageValue(ACCESS_TOKEN_STORAGE_KEY);
-  removeSessionStorageValue(LEGACY_SESSION_ACCESS_TOKEN_KEY);
-  removeLocalStorageValue(LEGACY_ACCESS_TOKEN_KEY);
 }
 
 /**
- * Remove locally persisted non-secret session metadata and legacy tokens.
+ * Remove locally persisted non-secret session metadata and access tokens.
  */
 function clearStoredSession(): void {
   clearStoredAccessTokens();
   removeLocalStorageValue(USER_STORAGE_KEY);
-  removeLocalStorageValue(LEGACY_USER_STORAGE_KEY);
 }
 
 /**

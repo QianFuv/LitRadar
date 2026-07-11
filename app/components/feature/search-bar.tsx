@@ -13,7 +13,7 @@ import {
 } from '@/lib/browser-storage';
 import { cn } from '@/lib/utils';
 
-const SEARCH_HISTORY_KEY = 'ps:v1:search_history';
+const SEARCH_HISTORY_KEY = 'litradar:v1:search_history';
 const LEGACY_SEARCH_HISTORY_KEY = 'search_history';
 const MAX_HISTORY_ITEMS = 10;
 

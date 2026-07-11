@@ -1,7 +1,7 @@
 {
   "openapi": "3.1.0",
   "info": {
-    "title": "Paper Scanner API",
+    "title": "LitRadar API",
     "description": "Generated OpenAPI document for the Rust API.",
     "license": {
       "name": ""
@@ -5646,7 +5646,7 @@
       "session_cookie": {
         "type": "apiKey",
         "in": "cookie",
-        "name": "ps_session"
+        "name": "litradar_session"
       }
     }
   },

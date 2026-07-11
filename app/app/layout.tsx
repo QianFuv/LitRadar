@@ -14,8 +14,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: 'Paper Scanner | QianFuv',
-  description: 'Paper Scanner by QianFuv',
+  title: 'LitRadar | QianFuv',
+  description: 'LitRadar by QianFuv',
   icons: {
     icon: 'https://cdn.sa.net/2026/01/29/6uRXpHqQfC89kF7.png',
   },

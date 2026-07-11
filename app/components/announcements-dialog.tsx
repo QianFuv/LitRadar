@@ -19,7 +19,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 
-const STORAGE_PREFIX = 'ps:v1:announcement_dismissed:';
+const STORAGE_PREFIX = 'litradar:v1:announcement_dismissed:';
 const PRIORITY_LABELS = {
   high: '高优先级',
   low: '低优先级',

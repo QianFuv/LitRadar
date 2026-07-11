@@ -42,7 +42,7 @@ export class ApiError extends Error {
 }
 export const DEFAULT_DATABASE = 'ccf_computer_journals.sqlite';
 export const DEFAULT_DB = DEFAULT_DATABASE;
-export const SELECTED_DATABASE_KEY = 'ps:v1:selected_database';
+export const SELECTED_DATABASE_KEY = 'litradar:v1:selected_database';
 const LEGACY_SELECTED_DATABASE_KEY = 'selected_database';
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || '';

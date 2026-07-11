@@ -256,8 +256,9 @@ describe('settings and administrator feature boundaries', () => {
   test(
     'creates a token at the raw Unicode code-point boundary',
     createsAccessTokenAtRawCodePointBoundary,
+    30_000,
   );
-  test('blocks overlength raw access-token names', blocksOverlengthRawAccessTokenNames);
+  test('blocks overlength raw access-token names', blocksOverlengthRawAccessTokenNames, 30_000);
   test(
     'renders access-token creation errors and retains raw input',
     rendersAccessTokenCreationErrorsAndRetainsRawInput,

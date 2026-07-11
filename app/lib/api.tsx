@@ -1,5 +1,5 @@
 /**
- * Compatibility facade for the domain-oriented Paper Scanner browser API client.
+ * Compatibility facade for the domain-oriented LitRadar browser API client.
  */
 
 export type {
