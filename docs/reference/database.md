@@ -187,7 +187,11 @@ announcements
 
 `id`、`user_id`、唯一 `token_hash`、`name`、`expires_at`、`created_at`。
 
-登录创建名为 `login` 的令牌并通过 `ps_session` Cookie 传输；用户创建的长期令牌用于外部 Bearer 认证。
+`login` 是浏览器会话的保留名称，对应令牌通过 `ps_session` Cookie 传输；用户创建的 personal tokens 用于外部 Bearer 认证。表没有 token-kind 列：服务以 `name = 'login'` 识别保留行，并在个人令牌列表与配额中排除它。
+
+active personal token 指当前用户拥有、`expires_at > now` 且 `name != 'login'` 的行。令牌新建、列表或验证会按各自操作边界清理过期行；新建个人令牌时，存储层在同一个 `BEGIN IMMEDIATE` 事务内清理、计数并插入，最多接纳 50 行。登录替换则在一个事务内删除并插入保留行，因此并发成功登录最终只保留一个 `login` 行。
+
+配额只约束新接纳，不执行 schema migration，也不重命名、截断或删除已有 personal token。已有账号即使超过 50 行，仍可列出、验证和撤销现有令牌，但必须降到 50 以下才能再创建。历史 `login` 行不会自动分类或改写；它们只会通过正常过期清理、令牌撤销、密码变更/重置或后续登录替换消失。
 
 #### `invite_codes`
 
