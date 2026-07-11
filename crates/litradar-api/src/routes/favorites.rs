@@ -1,0 +1,833 @@
+//! Favorites and folder route handlers.
+
+use axum::extract::{Path, Query, State};
+use axum::http::header::{CONTENT_DISPOSITION, CONTENT_TYPE};
+use axum::http::{HeaderMap, HeaderValue};
+use axum::response::{IntoResponse, Response};
+use axum::Json;
+use litradar_domain::{
+    FavoriteAdd, FavoriteArticleResponse, FavoriteBatchCheckRequest, FavoriteBulkAdd,
+    FavoriteBulkAddResult, FavoriteBulkMove, FavoriteBulkRemove, FavoriteBulkResult,
+    FavoriteCheckResponse, FavoriteResponse, FavoriteTrackingResponse, FolderCreate, FolderRename,
+    FolderResponse, OkResponse, TrackingSetRequest,
+};
+use litradar_storage::{BusinessRepositoryError, StorageConfig};
+use serde::Deserialize;
+use utoipa::IntoParams;
+
+use crate::response::ApiError;
+use crate::routes::auth::require_current_user;
+use crate::state::ApiState;
+
+/// Query parameters for listing favorite articles.
+#[derive(Debug, Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
+pub(crate) struct FolderArticlesQuery {
+    /// Maximum row count.
+    limit: Option<i64>,
+    /// Offset row count.
+    offset: Option<i64>,
+}
+
+/// Query parameters for removing or checking favorites.
+#[derive(Debug, Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
+pub(crate) struct FavoriteDbQuery {
+    /// Source database name.
+    db_name: Option<String>,
+}
+
+/// Query parameters for checking one favorite.
+#[derive(Debug, Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
+pub(crate) struct FavoriteCheckQuery {
+    /// Article identifier.
+    article_id: i64,
+    /// Source database name.
+    db_name: Option<String>,
+}
+
+/// Query parameters for exporting favorites.
+#[derive(Debug, Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
+pub(crate) struct ExportQuery {
+    /// Export format.
+    format: Option<String>,
+}
+
+/// List all folders for the authenticated user.
+#[utoipa::path(
+    get,
+    path = "/api/favorites/folders",
+    tag = "favorites",
+    responses((status = 200, description = "Favorite folders.", body = Vec<FolderResponse>)),
+    security(("bearer_auth" = []), ("session_cookie" = []))
+)]
+pub(crate) async fn list_folders(
+    State(state): State<ApiState>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<FolderResponse>>, ApiError> {
+    let (user, _) = require_current_user(&state, &headers).await?;
+    let folders = run_business(&state, move |storage| {
+        litradar_storage::list_folders(storage.auth_db_path(), user.id)
+    })
+    .await?;
+    Ok(Json(folders))
+}
+
+/// Create a new folder.
+#[utoipa::path(
+    post,
+    path = "/api/favorites/folders",
+    tag = "favorites",
+    request_body = FolderCreate,
+    responses((status = 200, description = "Created favorite folder.", body = FolderResponse)),
+    security(("bearer_auth" = []), ("session_cookie" = []))
+)]
+pub(crate) async fn create_folder(
+    State(state): State<ApiState>,
+    headers: HeaderMap,
+    Json(body): Json<FolderCreate>,
+) -> Result<Json<FolderResponse>, ApiError> {
+    let (user, _) = require_current_user(&state, &headers).await?;
+    let name = body.name.trim().to_string();
+    validate_folder_name(&name)?;
+    let is_tracking = body.is_tracking;
+    let folder = run_business(&state, move |storage| {
+        litradar_storage::create_folder(storage.auth_db_path(), user.id, &name, is_tracking)
+    })
+    .await?;
+    Ok(Json(folder))
+}
+
+/// Rename an existing folder.
+#[utoipa::path(
+    put,
+    path = "/api/favorites/folders/{folder_id}",
+    tag = "favorites",
+    params(("folder_id" = i64, Path, description = "Folder row identifier.")),
+    request_body = FolderRename,
+    responses((status = 200, description = "Folder renamed.", body = OkResponse)),
+    security(("bearer_auth" = []), ("session_cookie" = []))
+)]
+pub(crate) async fn rename_folder(
+    State(state): State<ApiState>,
+    headers: HeaderMap,
+    Path(folder_id): Path<i64>,
+    Json(body): Json<FolderRename>,
+) -> Result<Json<OkResponse>, ApiError> {
+    let (user, _) = require_current_user(&state, &headers).await?;
+    let name = body.name.trim().to_string();
+    validate_folder_name(&name)?;
+    let did_rename = run_business(&state, move |storage| {
+        litradar_storage::rename_folder(storage.auth_db_path(), user.id, folder_id, &name)
+    })
+    .await?;
+    if !did_rename {
+        return Err(ApiError::not_found("Folder not found"));
+    }
+    Ok(Json(OkResponse { ok: true }))
+}
+
+/// Delete an existing folder.
+#[utoipa::path(
+    delete,
+    path = "/api/favorites/folders/{folder_id}",
+    tag = "favorites",
+    params(("folder_id" = i64, Path, description = "Folder row identifier.")),
+    responses((status = 200, description = "Folder deleted.", body = OkResponse)),
+    security(("bearer_auth" = []), ("session_cookie" = []))
+)]
+pub(crate) async fn delete_folder(
+    State(state): State<ApiState>,
+    headers: HeaderMap,
+    Path(folder_id): Path<i64>,
+) -> Result<Json<OkResponse>, ApiError> {
+    let (user, _) = require_current_user(&state, &headers).await?;
+    let did_delete = run_business(&state, move |storage| {
+        litradar_storage::delete_folder(storage.auth_db_path(), user.id, folder_id)
+    })
+    .await?;
+    if !did_delete {
+        return Err(ApiError::not_found("Folder not found"));
+    }
+    Ok(Json(OkResponse { ok: true }))
+}
+
+/// Get the current tracking folder for the user.
+#[utoipa::path(
+    get,
+    path = "/api/favorites/tracking",
+    tag = "favorites",
+    responses((status = 200, description = "Current favorite tracking folder.", body = FavoriteTrackingResponse)),
+    security(("bearer_auth" = []), ("session_cookie" = []))
+)]
+pub(crate) async fn get_tracking(
+    State(state): State<ApiState>,
+    headers: HeaderMap,
+) -> Result<Json<FavoriteTrackingResponse>, ApiError> {
+    let (user, _) = require_current_user(&state, &headers).await?;
+    let folder = run_business(&state, move |storage| {
+        litradar_storage::get_tracking_folder(storage.auth_db_path(), user.id)
+    })
+    .await?;
+    Ok(Json(FavoriteTrackingResponse {
+        folder_id: folder.as_ref().map(|item| item.id),
+        folder_name: folder.map(|item| item.name),
+    }))
+}
+
+/// Set a folder as the current tracking folder.
+#[utoipa::path(
+    put,
+    path = "/api/favorites/tracking",
+    tag = "favorites",
+    request_body = TrackingSetRequest,
+    responses((status = 200, description = "Tracking folder updated.", body = OkResponse)),
+    security(("bearer_auth" = []), ("session_cookie" = []))
+)]
+pub(crate) async fn set_tracking(
+    State(state): State<ApiState>,
+    headers: HeaderMap,
+    Json(body): Json<TrackingSetRequest>,
+) -> Result<Json<OkResponse>, ApiError> {
+    let (user, _) = require_current_user(&state, &headers).await?;
+    let folder_id = body.folder_id;
+    let did_set = run_business(&state, move |storage| {
+        litradar_storage::set_tracking_folder(storage.auth_db_path(), user.id, folder_id)
+    })
+    .await?;
+    if !did_set {
+        return Err(ApiError::not_found("Folder not found"));
+    }
+    Ok(Json(OkResponse { ok: true }))
+}
+
+/// List favorited articles in a folder.
+#[utoipa::path(
+    get,
+    path = "/api/favorites/folders/{folder_id}/articles",
+    tag = "favorites",
+    params(
+        ("folder_id" = i64, Path, description = "Folder row identifier."),
+        FolderArticlesQuery
+    ),
+    responses((status = 200, description = "Favorite articles.", body = Vec<FavoriteArticleResponse>)),
+    security(("bearer_auth" = []), ("session_cookie" = []))
+)]
+pub(crate) async fn list_folder_articles(
+    State(state): State<ApiState>,
+    headers: HeaderMap,
+    Path(folder_id): Path<i64>,
+    Query(query): Query<FolderArticlesQuery>,
+) -> Result<Json<Vec<FavoriteArticleResponse>>, ApiError> {
+    let (user, _) = require_current_user(&state, &headers).await?;
+    let limit = query.limit.unwrap_or(100);
+    let offset = query.offset.unwrap_or(0);
+    if !(1..=500).contains(&limit) {
+        return Err(ApiError::bad_request("limit must be between 1 and 500"));
+    }
+    if offset < 0 {
+        return Err(ApiError::bad_request(
+            "offset must be greater than or equal to 0",
+        ));
+    }
+    let rows = run_business(&state, move |storage| {
+        litradar_storage::list_favorite_articles(&storage, user.id, Some(folder_id), limit, offset)
+    })
+    .await?;
+    Ok(Json(rows))
+}
+
+/// Get the favorite count for a folder.
+#[utoipa::path(
+    get,
+    path = "/api/favorites/folders/{folder_id}/count",
+    tag = "favorites",
+    params(("folder_id" = i64, Path, description = "Folder row identifier.")),
+    responses((status = 200, description = "Favorite count.", body = serde_json::Value)),
+    security(("bearer_auth" = []), ("session_cookie" = []))
+)]
+pub(crate) async fn folder_count(
+    State(state): State<ApiState>,
+    headers: HeaderMap,
+    Path(folder_id): Path<i64>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let (user, _) = require_current_user(&state, &headers).await?;
+    let count = run_business(&state, move |storage| {
+        litradar_storage::count_favorites(storage.auth_db_path(), user.id, Some(folder_id))
+    })
+    .await?;
+    Ok(Json(serde_json::json!({ "count": count })))
+}
+
+/// Export one folder's favorites in a citation format.
+#[utoipa::path(
+    get,
+    path = "/api/favorites/folders/{folder_id}/export",
+    tag = "favorites",
+    params(
+        ("folder_id" = i64, Path, description = "Folder row identifier."),
+        ExportQuery
+    ),
+    responses((status = 200, description = "Citation export download.")),
+    security(("bearer_auth" = []), ("session_cookie" = []))
+)]
+pub(crate) async fn export_folder(
+    State(state): State<ApiState>,
+    headers: HeaderMap,
+    Path(folder_id): Path<i64>,
+    Query(query): Query<ExportQuery>,
+) -> Result<Response, ApiError> {
+    let (user, _) = require_current_user(&state, &headers).await?;
+    let (folders, articles) = run_business(&state, move |storage| {
+        let folders = litradar_storage::list_folders(storage.auth_db_path(), user.id)?;
+        let articles = litradar_storage::list_favorite_articles(
+            &storage,
+            user.id,
+            Some(folder_id),
+            100_000,
+            0,
+        )?;
+        Ok((folders, articles))
+    })
+    .await?;
+    let Some(folder) = folders.into_iter().find(|item| item.id == folder_id) else {
+        return Err(ApiError::not_found("Folder not found"));
+    };
+    let format = query.format.unwrap_or_else(|| "bibtex".to_string());
+    let (content, media_type, extension) = match format.as_str() {
+        "bibtex" => (to_bibtex(&articles), "application/x-bibtex", "bib"),
+        "ris" => (
+            to_ris(&articles),
+            "application/x-research-info-systems",
+            "ris",
+        ),
+        "endnote" => (to_endnote(&articles), "application/xml", "xml"),
+        _ => return Err(ApiError::bad_request("Invalid export format")),
+    };
+    let filename = export_filename(&folder.name, extension);
+    let mut response = content.into_response();
+    response
+        .headers_mut()
+        .insert(CONTENT_TYPE, HeaderValue::from_static(media_type));
+    response.headers_mut().insert(
+        CONTENT_DISPOSITION,
+        HeaderValue::from_str(&format!("attachment; filename=\"{filename}\""))
+            .map_err(|_| ApiError::internal_server_error())?,
+    );
+    Ok(response)
+}
+
+/// Add one favorite to a folder.
+#[utoipa::path(
+    post,
+    path = "/api/favorites/folders/{folder_id}/articles",
+    tag = "favorites",
+    params(("folder_id" = i64, Path, description = "Folder row identifier.")),
+    request_body = FavoriteAdd,
+    responses((status = 200, description = "Created favorite row.", body = FavoriteResponse)),
+    security(("bearer_auth" = []), ("session_cookie" = []))
+)]
+pub(crate) async fn add_favorite(
+    State(state): State<ApiState>,
+    headers: HeaderMap,
+    Path(folder_id): Path<i64>,
+    Json(body): Json<FavoriteAdd>,
+) -> Result<Json<FavoriteResponse>, ApiError> {
+    let (user, _) = require_current_user(&state, &headers).await?;
+    let favorite = run_business(&state, move |storage| {
+        litradar_storage::add_favorite(storage.auth_db_path(), user.id, folder_id, &body)
+    })
+    .await?;
+    Ok(Json(favorite))
+}
+
+/// Remove one favorite from a folder.
+#[utoipa::path(
+    delete,
+    path = "/api/favorites/folders/{folder_id}/articles/{article_id}",
+    tag = "favorites",
+    params(
+        ("folder_id" = i64, Path, description = "Folder row identifier."),
+        ("article_id" = i64, Path, description = "Article identifier."),
+        FavoriteDbQuery
+    ),
+    responses((status = 200, description = "Favorite removed.", body = OkResponse)),
+    security(("bearer_auth" = []), ("session_cookie" = []))
+)]
+pub(crate) async fn remove_favorite(
+    State(state): State<ApiState>,
+    headers: HeaderMap,
+    Path((folder_id, article_id)): Path<(i64, i64)>,
+    Query(query): Query<FavoriteDbQuery>,
+) -> Result<Json<OkResponse>, ApiError> {
+    let (user, _) = require_current_user(&state, &headers).await?;
+    let db_name = query.db_name.unwrap_or_default();
+    let did_remove = run_business(&state, move |storage| {
+        litradar_storage::remove_favorite(
+            storage.auth_db_path(),
+            user.id,
+            folder_id,
+            article_id,
+            &db_name,
+        )
+    })
+    .await?;
+    if !did_remove {
+        return Err(ApiError::not_found("Favorite not found"));
+    }
+    Ok(Json(OkResponse { ok: true }))
+}
+
+/// Bulk add favorites to a folder.
+#[utoipa::path(
+    post,
+    path = "/api/favorites/folders/{folder_id}/articles/bulk",
+    tag = "favorites",
+    params(("folder_id" = i64, Path, description = "Folder row identifier.")),
+    request_body = FavoriteBulkAdd,
+    responses((status = 200, description = "Bulk favorite add result.", body = FavoriteBulkAddResult)),
+    security(("bearer_auth" = []), ("session_cookie" = []))
+)]
+pub(crate) async fn bulk_add(
+    State(state): State<ApiState>,
+    headers: HeaderMap,
+    Path(folder_id): Path<i64>,
+    Json(body): Json<FavoriteBulkAdd>,
+) -> Result<Json<FavoriteBulkAddResult>, ApiError> {
+    let (user, _) = require_current_user(&state, &headers).await?;
+    let articles = body.articles;
+    let added = run_business(&state, move |storage| {
+        litradar_storage::bulk_add_favorites(storage.auth_db_path(), user.id, folder_id, &articles)
+    })
+    .await?;
+    Ok(Json(FavoriteBulkAddResult { added }))
+}
+
+/// Bulk remove favorites from a folder.
+#[utoipa::path(
+    post,
+    path = "/api/favorites/folders/{folder_id}/articles/bulk-remove",
+    tag = "favorites",
+    params(("folder_id" = i64, Path, description = "Folder row identifier.")),
+    request_body = FavoriteBulkRemove,
+    responses((status = 200, description = "Bulk favorite remove result.", body = FavoriteBulkResult)),
+    security(("bearer_auth" = []), ("session_cookie" = []))
+)]
+pub(crate) async fn bulk_remove(
+    State(state): State<ApiState>,
+    headers: HeaderMap,
+    Path(folder_id): Path<i64>,
+    Json(body): Json<FavoriteBulkRemove>,
+) -> Result<Json<FavoriteBulkResult>, ApiError> {
+    let (user, _) = require_current_user(&state, &headers).await?;
+    let articles = body.articles;
+    let count = run_business(&state, move |storage| {
+        litradar_storage::bulk_remove_favorites(
+            storage.auth_db_path(),
+            user.id,
+            folder_id,
+            &articles,
+        )
+    })
+    .await?;
+    Ok(Json(FavoriteBulkResult { count }))
+}
+
+/// Bulk move favorites between folders.
+#[utoipa::path(
+    post,
+    path = "/api/favorites/folders/{folder_id}/articles/bulk-move",
+    tag = "favorites",
+    params(("folder_id" = i64, Path, description = "Folder row identifier.")),
+    request_body = FavoriteBulkMove,
+    responses((status = 200, description = "Bulk favorite move result.", body = FavoriteBulkResult)),
+    security(("bearer_auth" = []), ("session_cookie" = []))
+)]
+pub(crate) async fn bulk_move(
+    State(state): State<ApiState>,
+    headers: HeaderMap,
+    Path(folder_id): Path<i64>,
+    Json(body): Json<FavoriteBulkMove>,
+) -> Result<Json<FavoriteBulkResult>, ApiError> {
+    let (user, _) = require_current_user(&state, &headers).await?;
+    let target_folder_id = body.target_folder_id;
+    let articles = body.articles;
+    let count = run_business(&state, move |storage| {
+        litradar_storage::bulk_move_favorites(
+            storage.auth_db_path(),
+            user.id,
+            folder_id,
+            target_folder_id,
+            &articles,
+        )
+    })
+    .await?;
+    Ok(Json(FavoriteBulkResult { count }))
+}
+
+/// Check which folders contain an article.
+#[utoipa::path(
+    get,
+    path = "/api/favorites/check",
+    tag = "favorites",
+    params(FavoriteCheckQuery),
+    responses((status = 200, description = "Favorite folder memberships.", body = Vec<FavoriteCheckResponse>)),
+    security(("bearer_auth" = []), ("session_cookie" = []))
+)]
+pub(crate) async fn check_favorite(
+    State(state): State<ApiState>,
+    headers: HeaderMap,
+    Query(query): Query<FavoriteCheckQuery>,
+) -> Result<Json<Vec<FavoriteCheckResponse>>, ApiError> {
+    let (user, _) = require_current_user(&state, &headers).await?;
+    let article_id = query.article_id;
+    let db_name = query.db_name.unwrap_or_default();
+    let rows = run_business(&state, move |storage| {
+        litradar_storage::is_favorited(storage.auth_db_path(), user.id, article_id, &db_name)
+    })
+    .await?;
+    Ok(Json(rows))
+}
+
+/// Batch check which folders contain articles.
+#[utoipa::path(
+    post,
+    path = "/api/favorites/check/batch",
+    tag = "favorites",
+    request_body = FavoriteBatchCheckRequest,
+    responses((status = 200, description = "Batch favorite folder memberships.", body = Vec<litradar_domain::FavoriteBatchCheckResponse>)),
+    security(("bearer_auth" = []), ("session_cookie" = []))
+)]
+pub(crate) async fn check_favorites_batch(
+    State(state): State<ApiState>,
+    headers: HeaderMap,
+    Json(body): Json<FavoriteBatchCheckRequest>,
+) -> Result<Json<Vec<litradar_domain::FavoriteBatchCheckResponse>>, ApiError> {
+    let (user, _) = require_current_user(&state, &headers).await?;
+    let article_ids = body
+        .article_ids
+        .iter()
+        .map(|article_id| article_id.value())
+        .collect::<Vec<_>>();
+    let db_name = body.db_name;
+    let rows = run_business(&state, move |storage| {
+        litradar_storage::batch_is_favorited(
+            storage.auth_db_path(),
+            user.id,
+            &article_ids,
+            &db_name,
+        )
+    })
+    .await?;
+    Ok(Json(rows))
+}
+
+fn validate_folder_name(name: &str) -> Result<(), ApiError> {
+    if name.is_empty() || name.len() > 100 {
+        return Err(ApiError::bad_request(
+            "Folder name must be 1-100 characters",
+        ));
+    }
+    Ok(())
+}
+
+fn map_business_error(error: BusinessRepositoryError) -> ApiError {
+    match error {
+        BusinessRepositoryError::DuplicateFolderName => {
+            ApiError::conflict("Folder name already exists")
+        }
+        BusinessRepositoryError::FolderNotFound
+        | BusinessRepositoryError::SourceFolderNotFound
+        | BusinessRepositoryError::TargetFolderNotFound => ApiError::not_found(error.to_string()),
+        BusinessRepositoryError::SourceAndTargetFoldersSame => {
+            ApiError::bad_request(error.to_string())
+        }
+        _ => ApiError::internal_server_error(),
+    }
+}
+
+async fn run_business<Output, Work>(state: &ApiState, work: Work) -> Result<Output, ApiError>
+where
+    Work: FnOnce(StorageConfig) -> Result<Output, BusinessRepositoryError> + Send + 'static,
+    Output: Send + 'static,
+{
+    let storage = state.storage_config().clone();
+    state
+        .run_blocking(move || work(storage))
+        .await?
+        .map_err(map_business_error)
+}
+
+fn export_filename(folder_name: &str, extension: &str) -> String {
+    let safe_name = folder_name
+        .chars()
+        .map(|character| {
+            if character.is_ascii_alphanumeric() || matches!(character, '.' | '_' | '-') {
+                character
+            } else {
+                '_'
+            }
+        })
+        .collect::<String>()
+        .trim_matches(['.', '_'])
+        .to_string();
+    let base_name = if safe_name.is_empty() {
+        "favorites".to_string()
+    } else {
+        safe_name
+    };
+    format!("{base_name}.{extension}")
+}
+
+fn to_bibtex(articles: &[FavoriteArticleResponse]) -> String {
+    articles
+        .iter()
+        .enumerate()
+        .map(|(index, article)| {
+            let key = article
+                .doi
+                .as_deref()
+                .filter(|value| !value.is_empty())
+                .unwrap_or("favorite");
+            format!(
+                "@article{{{}{},\n  title = {{{}}},\n  author = {{{}}},\n  journal = {{{}}},\n  year = {{{}}},\n  doi = {{{}}}\n}}",
+                sanitize_citation_key(key),
+                index + 1,
+                article.title.as_deref().unwrap_or(""),
+                article.authors.as_deref().unwrap_or(""),
+                article.journal_title.as_deref().unwrap_or(""),
+                article.date.as_deref().unwrap_or(""),
+                article.doi.as_deref().unwrap_or("")
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n\n")
+}
+
+fn to_ris(articles: &[FavoriteArticleResponse]) -> String {
+    articles
+        .iter()
+        .map(|article| {
+            format!(
+                "TY  - JOUR\nTI  - {}\nAU  - {}\nJO  - {}\nPY  - {}\nDO  - {}\nER  -",
+                article.title.as_deref().unwrap_or(""),
+                article.authors.as_deref().unwrap_or(""),
+                article.journal_title.as_deref().unwrap_or(""),
+                article.date.as_deref().unwrap_or(""),
+                article.doi.as_deref().unwrap_or("")
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n\n")
+}
+
+fn to_endnote(articles: &[FavoriteArticleResponse]) -> String {
+    let records = articles
+        .iter()
+        .map(|article| {
+            format!(
+                "<record><titles><title>{}</title></titles><contributors><authors><author>{}</author></authors></contributors><dates><year>{}</year></dates><electronic-resource-num>{}</electronic-resource-num></record>",
+                escape_xml(article.title.as_deref().unwrap_or("")),
+                escape_xml(article.authors.as_deref().unwrap_or("")),
+                escape_xml(article.date.as_deref().unwrap_or("")),
+                escape_xml(article.doi.as_deref().unwrap_or(""))
+            )
+        })
+        .collect::<String>();
+    format!("<?xml version=\"1.0\" encoding=\"UTF-8\"?><xml><records>{records}</records></xml>")
+}
+
+fn sanitize_citation_key(value: &str) -> String {
+    value
+        .chars()
+        .filter(|character| character.is_ascii_alphanumeric())
+        .collect::<String>()
+}
+
+fn escape_xml(value: &str) -> String {
+    value
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&apos;")
+}
+
+#[cfg(test)]
+mod tests {
+    use litradar_domain::{ArticleId, JournalId};
+
+    use super::*;
+
+    #[test]
+    fn validates_folder_names_and_maps_known_business_errors() {
+        validate_folder_name("Inbox").expect("valid folder name should pass");
+
+        assert_bad_request_detail(
+            validate_folder_name("").expect_err("empty folder should fail"),
+            "Folder name must be 1-100 characters",
+        );
+        assert_bad_request_detail(
+            validate_folder_name(&"x".repeat(101)).expect_err("long folder should fail"),
+            "Folder name must be 1-100 characters",
+        );
+        assert_api_error(
+            map_business_error(BusinessRepositoryError::DuplicateFolderName),
+            "Folder name already exists",
+        );
+        assert_api_error(
+            map_business_error(BusinessRepositoryError::SourceAndTargetFoldersSame),
+            "Source and target folders must be different",
+        );
+    }
+
+    #[test]
+    fn export_filename_sanitizes_names_and_uses_default_when_empty() {
+        assert_eq!(export_filename("Reading List", "bib"), "Reading_List.bib");
+        assert_eq!(export_filename("..///", "ris"), "favorites.ris");
+        assert_eq!(
+            export_filename("CNKI-2026_v1.2", "xml"),
+            "CNKI-2026_v1.2.xml"
+        );
+        assert_eq!(export_filename("中文收藏", "bib"), "favorites.bib");
+    }
+
+    #[test]
+    fn bibtex_export_sanitizes_keys_and_keeps_missing_fields_empty() {
+        let articles = vec![favorite_article(
+            1,
+            Some("A & B <Genome>".to_string()),
+            Some("Alice and Bob".to_string()),
+            Some("Journal {One}".to_string()),
+            Some("2026-01-05".to_string()),
+            Some("10.1000/abc-def".to_string()),
+        )];
+        let fallback = vec![favorite_article(2, None, None, None, None, None)];
+
+        let bibtex = to_bibtex(&articles);
+        let fallback_bibtex = to_bibtex(&fallback);
+
+        assert!(bibtex.contains("@article{101000abcdef1,"));
+        assert!(bibtex.contains("title = {A & B <Genome>}"));
+        assert!(bibtex.contains("author = {Alice and Bob}"));
+        assert!(bibtex.contains("journal = {Journal {One}}"));
+        assert!(bibtex.contains("year = {2026-01-05}"));
+        assert!(fallback_bibtex.contains("@article{favorite1,"));
+        assert!(fallback_bibtex.contains("title = {}"));
+    }
+
+    #[test]
+    fn ris_export_keeps_journal_fields_and_empty_missing_values() {
+        let articles = vec![
+            favorite_article(
+                1,
+                Some("Clinical Data".to_string()),
+                Some("Carol".to_string()),
+                Some("Alpha Journal".to_string()),
+                Some("2026".to_string()),
+                Some("10.1000/clinical".to_string()),
+            ),
+            favorite_article(2, None, None, None, None, None),
+        ];
+
+        let ris = to_ris(&articles);
+
+        assert!(ris.contains("TY  - JOUR\nTI  - Clinical Data"));
+        assert!(ris.contains("AU  - Carol"));
+        assert!(ris.contains("JO  - Alpha Journal"));
+        assert!(ris.contains("DO  - 10.1000/clinical"));
+        assert!(ris.contains("TI  - \nAU  - \nJO  - \nPY  - \nDO  - \nER  -"));
+    }
+
+    #[test]
+    fn endnote_export_escapes_xml_reserved_characters() {
+        let articles = vec![favorite_article(
+            1,
+            Some("A&B <Study> \"One\"".to_string()),
+            Some("Alice O'Neil".to_string()),
+            Some("Alpha Journal".to_string()),
+            Some("2026".to_string()),
+            Some("10.1000/a&b".to_string()),
+        )];
+
+        let endnote = to_endnote(&articles);
+
+        assert!(endnote.starts_with("<?xml version=\"1.0\" encoding=\"UTF-8\"?>"));
+        assert!(endnote.contains("A&amp;B &lt;Study&gt; &quot;One&quot;"));
+        assert!(endnote.contains("Alice O&apos;Neil"));
+        assert!(endnote.contains("10.1000/a&amp;b"));
+    }
+
+    #[test]
+    fn citation_key_and_xml_helpers_cover_edge_characters() {
+        assert_eq!(sanitize_citation_key("10.1000/a-b_c"), "101000abc");
+        assert_eq!(
+            escape_xml("A&B <C> \"D\" 'E'"),
+            "A&amp;B &lt;C&gt; &quot;D&quot; &apos;E&apos;"
+        );
+    }
+
+    fn favorite_article(
+        id: i64,
+        title: Option<String>,
+        authors: Option<String>,
+        journal_title: Option<String>,
+        date: Option<String>,
+        doi: Option<String>,
+    ) -> FavoriteArticleResponse {
+        FavoriteArticleResponse {
+            id,
+            folder_id: 10,
+            article_id: ArticleId(1_000 + id),
+            db_name: "fixture.sqlite".to_string(),
+            note: String::new(),
+            created_at: 1.0,
+            journal_id: Some(JournalId(1)),
+            issue_id: Some(20),
+            title,
+            date,
+            authors,
+            abstract_text: None,
+            doi,
+            platform_id: None,
+            permalink: None,
+            journal_title,
+            open_access: None,
+            in_press: None,
+            volume: None,
+            number: None,
+            issn: None,
+            eissn: None,
+            full_text_file: None,
+        }
+    }
+
+    fn assert_bad_request_detail(error: ApiError, detail: &str) {
+        match error {
+            ApiError::Http {
+                status: actual_status,
+                detail: actual_detail,
+            } => {
+                assert_eq!(actual_status, axum::http::StatusCode::BAD_REQUEST);
+                assert_eq!(actual_detail, detail);
+            }
+            ApiError::JsonDetail { .. } | ApiError::TooManyRequests { .. } => {
+                panic!("expected HTTP error")
+            }
+        }
+    }
+
+    fn assert_api_error(error: ApiError, detail: &str) {
+        match error {
+            ApiError::Http {
+                detail: actual_detail,
+                ..
+            } => assert_eq!(actual_detail, detail),
+            ApiError::JsonDetail { .. } | ApiError::TooManyRequests { .. } => {
+                panic!("expected HTTP error")
+            }
+        }
+    }
+}

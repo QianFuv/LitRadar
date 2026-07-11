@@ -1,0 +1,28 @@
+[package]
+name = "litradar-api"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+default-run = "litradar-api"
+
+[dependencies]
+axum.workspace = true
+litradar-auth = { path = "../litradar-auth" }
+litradar-domain = { path = "../litradar-domain" }
+litradar-sources = { path = "../litradar-sources" }
+litradar-storage = { path = "../litradar-storage" }
+litradar-worker = { path = "../litradar-worker" }
+rmcp = { version = "2.1.0", features = ["transport-streamable-http-server"] }
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+tower.workspace = true
+tower-http.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+utoipa.workspace = true
+utoipa-swagger-ui.workspace = true
+
+[dev-dependencies]
+rusqlite.workspace = true
+tempfile.workspace = true

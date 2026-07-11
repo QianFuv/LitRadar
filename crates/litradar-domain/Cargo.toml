@@ -1,0 +1,14 @@
+[package]
+name = "litradar-domain"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+chrono-tz.workspace = true
+serde.workspace = true
+sha2.workspace = true
+utoipa.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true

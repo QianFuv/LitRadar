@@ -1,0 +1,16 @@
+[package]
+name = "litradar-storage"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+base64.workspace = true
+chacha20poly1305.workspace = true
+litradar-domain = { path = "../litradar-domain" }
+rusqlite.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+tempfile.workspace = true
+zeroize.workspace = true

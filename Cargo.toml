@@ -1,14 +1,14 @@
 [workspace]
 members = [
-    "crates/ps-api",
-    "crates/ps-auth",
-    "crates/ps-cli",
-    "crates/ps-domain",
-    "crates/ps-index",
-    "crates/ps-recommend",
-    "crates/ps-sources",
-    "crates/ps-storage",
-    "crates/ps-worker",
+    "crates/litradar-api",
+    "crates/litradar-auth",
+    "crates/litradar-cli",
+    "crates/litradar-domain",
+    "crates/litradar-index",
+    "crates/litradar-recommend",
+    "crates/litradar-sources",
+    "crates/litradar-storage",
+    "crates/litradar-worker",
 ]
 resolver = "2"
 

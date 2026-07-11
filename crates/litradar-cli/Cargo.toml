@@ -1,0 +1,16 @@
+[package]
+name = "litradar-cli"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+litradar-auth = { path = "../litradar-auth" }
+litradar-domain = { path = "../litradar-domain" }
+litradar-index = { path = "../litradar-index" }
+litradar-storage = { path = "../litradar-storage" }
+litradar-worker = { path = "../litradar-worker" }
+serde_json.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

@@ -1040,6 +1040,129 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "92daf443525c4cce67b150400bc2316076100ce0b3686209eb8cf3c31612e6f0"
 
 [[package]]
+name = "litradar-api"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "litradar-auth",
+ "litradar-domain",
+ "litradar-sources",
+ "litradar-storage",
+ "litradar-worker",
+ "rmcp",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tower",
+ "tower-http 0.7.0",
+ "tracing",
+ "tracing-subscriber",
+ "utoipa",
+ "utoipa-swagger-ui",
+]
+
+[[package]]
+name = "litradar-auth"
+version = "0.1.0"
+dependencies = [
+ "hex",
+ "litradar-domain",
+ "litradar-storage",
+ "pbkdf2",
+ "serde",
+ "sha2 0.11.0",
+ "subtle",
+ "tempfile",
+]
+
+[[package]]
+name = "litradar-cli"
+version = "0.1.0"
+dependencies = [
+ "litradar-auth",
+ "litradar-domain",
+ "litradar-index",
+ "litradar-storage",
+ "litradar-worker",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
+name = "litradar-domain"
+version = "0.1.0"
+dependencies = [
+ "chrono-tz",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
+ "utoipa",
+]
+
+[[package]]
+name = "litradar-index"
+version = "0.1.0"
+dependencies = [
+ "litradar-domain",
+ "litradar-sources",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
+name = "litradar-recommend"
+version = "0.1.0"
+dependencies = [
+ "litradar-domain",
+ "serde",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
+name = "litradar-sources"
+version = "0.1.0"
+dependencies = [
+ "reqwest",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "litradar-storage"
+version = "0.1.0"
+dependencies = [
+ "base64",
+ "chacha20poly1305",
+ "litradar-domain",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
+ "tempfile",
+ "zeroize",
+]
+
+[[package]]
+name = "litradar-worker"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "chrono-tz",
+ "litradar-domain",
+ "litradar-recommend",
+ "litradar-storage",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
 name = "litrs"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1236,129 +1359,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8fd00f0bb2e90d81d1044c2b32617f68fcb9fa3bb7640c23e9c748e53fb30934"
 dependencies = [
  "unicode-ident",
-]
-
-[[package]]
-name = "ps-api"
-version = "0.1.0"
-dependencies = [
- "axum",
- "ps-auth",
- "ps-domain",
- "ps-sources",
- "ps-storage",
- "ps-worker",
- "rmcp",
- "rusqlite",
- "serde",
- "serde_json",
- "tempfile",
- "tokio",
- "tower",
- "tower-http 0.7.0",
- "tracing",
- "tracing-subscriber",
- "utoipa",
- "utoipa-swagger-ui",
-]
-
-[[package]]
-name = "ps-auth"
-version = "0.1.0"
-dependencies = [
- "hex",
- "pbkdf2",
- "ps-domain",
- "ps-storage",
- "serde",
- "sha2 0.11.0",
- "subtle",
- "tempfile",
-]
-
-[[package]]
-name = "ps-cli"
-version = "0.1.0"
-dependencies = [
- "ps-auth",
- "ps-domain",
- "ps-index",
- "ps-storage",
- "ps-worker",
- "serde_json",
- "tempfile",
-]
-
-[[package]]
-name = "ps-domain"
-version = "0.1.0"
-dependencies = [
- "chrono-tz",
- "serde",
- "serde_json",
- "sha2 0.11.0",
- "utoipa",
-]
-
-[[package]]
-name = "ps-index"
-version = "0.1.0"
-dependencies = [
- "ps-domain",
- "ps-sources",
- "rusqlite",
- "serde",
- "serde_json",
- "tempfile",
-]
-
-[[package]]
-name = "ps-recommend"
-version = "0.1.0"
-dependencies = [
- "ps-domain",
- "serde",
- "serde_json",
- "tempfile",
-]
-
-[[package]]
-name = "ps-sources"
-version = "0.1.0"
-dependencies = [
- "reqwest",
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "ps-storage"
-version = "0.1.0"
-dependencies = [
- "base64",
- "chacha20poly1305",
- "ps-domain",
- "rusqlite",
- "serde",
- "serde_json",
- "sha2 0.11.0",
- "tempfile",
- "zeroize",
-]
-
-[[package]]
-name = "ps-worker"
-version = "0.1.0"
-dependencies = [
- "chrono",
- "chrono-tz",
- "ps-domain",
- "ps-recommend",
- "ps-storage",
- "reqwest",
- "serde",
- "serde_json",
- "tempfile",
 ]
 
 [[package]]
