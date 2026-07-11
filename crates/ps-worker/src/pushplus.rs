@@ -8,6 +8,8 @@ use std::time::Duration;
 use reqwest::blocking::Client;
 use serde_json::{json, Value};
 
+use crate::retry::{bounded_retry_attempts, retry_backoff_delay};
+
 /// PushPlus send endpoint.
 pub const PUSHPLUS_ENDPOINT: &str = "https://www.pushplus.plus/send";
 
@@ -207,7 +209,7 @@ impl<T: PushPlusTransport> PushPlusClient<T> {
     pub fn new(transport: T, retry_attempts: usize) -> Self {
         Self {
             transport,
-            retry_attempts,
+            retry_attempts: bounded_retry_attempts(retry_attempts),
             sleep: Box::new(thread::sleep),
         }
     }
@@ -265,11 +267,11 @@ impl<T: PushPlusTransport> PushPlusClient<T> {
                         };
                     last_error = error;
                     if should_retry {
-                        (self.sleep)(Duration::from_secs(2_u64.pow(attempt as u32)));
+                        (self.sleep)(retry_backoff_delay(attempt));
                         continue;
                     }
                     if can_retry && !matches!(last_error, PushPlusError::HttpStatus { .. }) {
-                        (self.sleep)(Duration::from_secs(2_u64.pow(attempt as u32)));
+                        (self.sleep)(retry_backoff_delay(attempt));
                         continue;
                     }
                     break;
@@ -406,6 +408,16 @@ mod tests {
                 .pop()
                 .unwrap_or_else(|| Err(PushPlusError::Transport("missing fixture response".into())))
         }
+    }
+
+    #[test]
+    fn pushplus_oversized_retry_counts_are_bounded() {
+        let client = PushPlusClient::new(FixturePushPlusTransport::default(), usize::MAX);
+
+        assert_eq!(
+            client.retry_attempts,
+            ps_domain::DELIVERY_RETRY_ATTEMPTS_MAX
+        );
     }
 
     #[test]

@@ -1281,6 +1281,7 @@ name = "ps-cli"
 version = "0.1.0"
 dependencies = [
  "ps-auth",
+ "ps-domain",
  "ps-index",
  "ps-storage",
  "ps-worker",

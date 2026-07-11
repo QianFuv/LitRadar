@@ -14,6 +14,8 @@ use ps_recommend::{
 use reqwest::blocking::Client;
 use serde_json::{json, Value};
 
+use crate::retry::{bounded_retry_attempts, retry_backoff_delay};
+
 const CHAT_COMPLETIONS_PATH: &str = "chat/completions";
 const HTTP_REFERER: &str = "https://github.com/openai/codex";
 const X_TITLE: &str = "Paper Scanner";
@@ -182,7 +184,7 @@ impl<T: AiTransport> AiCompletionClient<T> {
     pub fn new(transport: T, retry_attempts: usize, temperature: f64) -> Self {
         Self {
             transport,
-            retry_attempts,
+            retry_attempts: bounded_retry_attempts(retry_attempts),
             temperature,
             sleep: Box::new(thread::sleep),
         }
@@ -408,7 +410,7 @@ impl<T: AiTransport> AiCompletionClient<T> {
                     Err(error) => {
                         last_error = error;
                         if attempt < self.retry_attempts {
-                            (self.sleep)(Duration::from_secs(2_u64.pow(attempt as u32)));
+                            (self.sleep)(retry_backoff_delay(attempt));
                         }
                     }
                 }
@@ -623,6 +625,16 @@ mod tests {
     }
 
     #[test]
+    fn ai_oversized_retry_counts_are_bounded() {
+        let client = AiCompletionClient::new(FixtureAiTransport::default(), usize::MAX, 0.2);
+
+        assert_eq!(
+            client.retry_attempts,
+            ps_domain::DELIVERY_RETRY_ATTEMPTS_MAX
+        );
+    }
+
+    #[test]
     fn request_debug_redacts_authorization_header() {
         let request = AiHttpRequest {
             url: "https://ai.example.com/chat/completions".to_string(),
@@ -730,6 +742,40 @@ mod tests {
         assert_eq!(
             client.transport().requests[1].body["response_format"]["type"],
             "json_schema"
+        );
+    }
+
+    #[test]
+    fn retry_backoff_is_capped_for_later_attempts() {
+        let mut responses = (0..10)
+            .map(|_| Err(AiClientError::Transport("temporary".into())))
+            .collect::<Vec<_>>();
+        responses.push(ok_response(json!({
+            "choices": [{
+                "message": {
+                    "content": "{\"summary\":\"retried\",\"selected\":[{\"article_id\":103,\"score\":60}]}"
+                }
+            }]
+        })));
+        let delays = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let captured_delays = delays.clone();
+        let mut client = AiCompletionClient::new(FixtureAiTransport::new(responses), 10, 0.2)
+            .with_sleep(move |delay| {
+                captured_delays
+                    .lock()
+                    .expect("retry delay lock should not be poisoned")
+                    .push(delay);
+            });
+
+        client
+            .select_articles(&ai_config(), &subscriber(), &defaults(), &[candidate(103)])
+            .expect("retry sequence should eventually succeed");
+
+        assert_eq!(
+            *delays
+                .lock()
+                .expect("retry delay lock should not be poisoned"),
+            [1_u64, 2, 4, 8, 8, 8, 8, 8, 8, 8].map(Duration::from_secs)
         );
     }
 

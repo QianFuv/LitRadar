@@ -2,6 +2,8 @@
 
 use super::*;
 
+use crate::retry::{bounded_retry_attempts, bounded_retry_attempts_from_i64};
+
 const MAX_AI_SELECTION_ROUNDS: usize = 5;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -101,9 +103,9 @@ impl<F: AiSelectionClientFactory> DeliveryAiSelector for DefaultDeliveryAiSelect
         if ai_configs.is_empty() {
             return Ok(skipped_ai_selection("AI configuration is unavailable"));
         }
-        let effective_retries = self
-            .retry_attempts
-            .max(usize::try_from(subscriber.ai_retry_attempts.max(0)).unwrap_or(0));
+        let effective_retries = bounded_retry_attempts(self.retry_attempts.max(
+            bounded_retry_attempts_from_i64(subscriber.ai_retry_attempts),
+        ));
         let mut last_error = String::new();
         for ai_config in ai_configs {
             let mut client =
@@ -348,6 +350,40 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec!["https://primary.test/v1", "https://backup.test/v1"]
         );
+    }
+
+    #[test]
+    fn oversized_retry_counts_are_bounded_before_client_construction() {
+        let builds = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+        let factory = ScriptedAiFactory::new(
+            vec![ScriptedAiClient::new(
+                vec![Ok(selection_result(&[101], "bounded"))],
+                Vec::new(),
+                None,
+            )],
+            builds.clone(),
+        );
+        let mut selector = DefaultDeliveryAiSelector::new(factory, usize::MAX, 5);
+        let subscriber = NotificationSubscriberInfo {
+            ai_retry_attempts: i64::MAX,
+            ..subscriber_info()
+        };
+        let candidates = vec![candidate_info(101)];
+        let candidates_by_id = candidates_by_id(&candidates);
+
+        selector
+            .select_for_subscriber(DeliveryAiSelectionRequest {
+                subscriber: &subscriber,
+                global_config: &global_config(),
+                defaults: &defaults(),
+                override_model: None,
+                candidates_for_model: &candidates,
+                candidates_by_id: &candidates_by_id,
+                delivery_dedupe: &BTreeMap::new(),
+            })
+            .expect("AI selection should use a bounded retry count");
+
+        assert_eq!(builds.borrow()[0].1, ps_domain::DELIVERY_RETRY_ATTEMPTS_MAX);
     }
 
     #[test]

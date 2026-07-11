@@ -8,6 +8,7 @@ use std::thread;
 use std::time::Duration;
 
 use ps_auth::AuthService;
+use ps_domain::{DELIVERY_RETRY_ATTEMPTS_MAX, DELIVERY_RETRY_ATTEMPTS_MIN};
 use ps_index::{
     run_live_index, run_live_index_worker_from_file_path, LiveIndexConfig, LiveScholarlyConfig,
 };
@@ -463,6 +464,12 @@ fn run_delivery_command(
     let max_candidates = extract_usize_option(&mut args, "--max-candidates")?;
     let timeout_seconds = extract_u64_option(&mut args, "--timeout")?.unwrap_or(60);
     let retry_attempts = extract_usize_option(&mut args, "--retries")?.unwrap_or(3);
+    if !(DELIVERY_RETRY_ATTEMPTS_MIN..=DELIVERY_RETRY_ATTEMPTS_MAX).contains(&retry_attempts) {
+        return Err(format!(
+            "--retries must be between {DELIVERY_RETRY_ATTEMPTS_MIN} and {DELIVERY_RETRY_ATTEMPTS_MAX}"
+        )
+        .into());
+    }
     let dedupe_retention_days =
         extract_i64_option(&mut args, "--dedupe-retention-days")?.unwrap_or(60);
     if !args.is_empty() {
@@ -1203,6 +1210,54 @@ mod tests {
         assert!(push_usage.contains("push --secret-key-file PATH"));
         assert!(notify_usage.contains("--dry-run|--no-dry-run"));
         assert!(push_usage.contains("--changes-file PATH"));
+    }
+
+    #[test]
+    fn delivery_retry_arguments_are_bounded() {
+        let root = temp_root("ps-cli-delivery-retries");
+        let auth_db_path = root.path().join("auth.sqlite");
+
+        for retry_attempts in [0_usize, 3, 10] {
+            for workflow in [DeliveryWorkflow::Notify, DeliveryWorkflow::Push] {
+                let arguments = vec![
+                    "--project-root".to_string(),
+                    root.path().to_string_lossy().into_owned(),
+                    "--auth-db".to_string(),
+                    auth_db_path.to_string_lossy().into_owned(),
+                    "--retries".to_string(),
+                    retry_attempts.to_string(),
+                ];
+                let error = match workflow {
+                    DeliveryWorkflow::Notify => run_notify_command(arguments),
+                    DeliveryWorkflow::Push => run_push_command(arguments),
+                }
+                .expect_err("bounded retry count should reach secret-key validation");
+
+                assert_eq!(error.to_string(), "--secret-key-file is required");
+                assert!(!auth_db_path.exists());
+            }
+        }
+
+        for retry_attempts in [11_usize, usize::MAX] {
+            for workflow in [DeliveryWorkflow::Notify, DeliveryWorkflow::Push] {
+                let arguments = vec![
+                    "--project-root".to_string(),
+                    root.path().to_string_lossy().into_owned(),
+                    "--auth-db".to_string(),
+                    auth_db_path.to_string_lossy().into_owned(),
+                    "--retries".to_string(),
+                    retry_attempts.to_string(),
+                ];
+                let error = match workflow {
+                    DeliveryWorkflow::Notify => run_notify_command(arguments),
+                    DeliveryWorkflow::Push => run_push_command(arguments),
+                }
+                .expect_err("oversized retry count should fail before runtime setup");
+
+                assert_eq!(error.to_string(), "--retries must be between 0 and 10");
+                assert!(!auth_db_path.exists());
+            }
+        }
     }
 
     #[test]
