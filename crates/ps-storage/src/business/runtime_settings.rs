@@ -43,7 +43,7 @@ const RUNTIME_CONFIG_DEFINITIONS: [RuntimeConfigDefinition; 7] = [
         label: "CORS allowed origins",
         input_type: "text",
         is_secret: false,
-        description: "Comma-separated browser origins allowed to send credentialed API requests.",
+        description: "Comma-separated exact HTTP(S) origins for credentialed API requests; paths, wildcard, user-info, query, fragment, and null are rejected. Changes apply after API restart.",
         default_value: "",
     },
     RuntimeConfigDefinition {
@@ -59,8 +59,7 @@ const RUNTIME_CONFIG_DEFINITIONS: [RuntimeConfigDefinition; 7] = [
         label: "MCP allowed origins",
         input_type: "text",
         is_secret: false,
-        description:
-            "Comma-separated browser origins accepted by the Streamable HTTP MCP endpoint.",
+        description: "Comma-separated exact HTTP(S) origins accepted by the Streamable HTTP MCP endpoint; null is also supported. Changes apply after API restart.",
         default_value: "",
     },
     RuntimeConfigDefinition {

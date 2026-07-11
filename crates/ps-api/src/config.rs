@@ -5,7 +5,7 @@ use std::fmt;
 use std::path::PathBuf;
 
 use axum::http::{HeaderValue, Uri};
-use ps_domain::RuntimeSettingValue;
+use ps_domain::{RuntimeSettingValue, RuntimeSettingsUpdate};
 
 const DEFAULT_MCP_HOSTS: [&str; 3] = ["localhost", "127.0.0.1", "::1"];
 
@@ -224,28 +224,63 @@ pub fn api_usage() -> &'static str {
     "api --secret-key-file PATH [--host HOST] [--port PORT] [--project-root PATH] [--require-secure-cookies]"
 }
 
-fn parse_cors_allowed_origins(value: &str) -> Result<Vec<String>, ApiConfigError> {
-    let mut origins = Vec::new();
-    for origin in value
-        .split(',')
-        .map(str::trim)
-        .filter(|origin| !origin.is_empty())
-    {
-        HeaderValue::from_str(origin)
-            .map_err(|_| ApiConfigError::InvalidCorsOrigin(origin.to_string()))?;
-        origins.push(origin.to_string());
+/// Validate changed runtime Origin settings before persistence.
+///
+/// # Arguments
+///
+/// * `update` - Runtime settings update submitted by an authenticated administrator.
+///
+/// # Returns
+///
+/// Result indicating whether every changed Origin field uses the startup grammar.
+pub(crate) fn validate_runtime_origin_settings_update(
+    update: &RuntimeSettingsUpdate,
+) -> Result<(), ApiConfigError> {
+    for (field, value) in &update.values {
+        let Some(value) = value else {
+            continue;
+        };
+        match field.as_str() {
+            "cors_allowed_origins" => {
+                parse_cors_allowed_origins(value)?;
+            }
+            "mcp_allowed_origins" => {
+                parse_mcp_allowed_origins(value)?;
+            }
+            _ => {}
+        }
     }
-    Ok(origins)
+    Ok(())
+}
+
+/// Parse credentialed CORS origins as exact HTTP(S) Origins.
+fn parse_cors_allowed_origins(value: &str) -> Result<Vec<String>, ApiConfigError> {
+    parse_exact_origin_list(value, false, ApiConfigError::InvalidCorsOrigin)
 }
 
 fn parse_mcp_allowed_hosts(value: &str) -> Result<Vec<String>, ApiConfigError> {
     parse_header_value_list(value, ApiConfigError::InvalidMcpAllowedHost)
 }
 
+/// Parse MCP origins as exact HTTP(S) Origins plus the opaque `null` value.
 fn parse_mcp_allowed_origins(value: &str) -> Result<Vec<String>, ApiConfigError> {
-    let origins = parse_header_value_list(value, ApiConfigError::InvalidMcpAllowedOrigin)?;
+    parse_exact_origin_list(value, true, ApiConfigError::InvalidMcpAllowedOrigin)
+}
+
+/// Parse a comma-separated exact-Origin list with one optional `null` exception.
+fn parse_exact_origin_list(
+    value: &str,
+    is_null_allowed: bool,
+    error: fn(String) -> ApiConfigError,
+) -> Result<Vec<String>, ApiConfigError> {
+    let origins = parse_header_value_list(value, error)?;
     for origin in &origins {
-        validate_mcp_origin(origin)?;
+        if is_null_allowed && origin == "null" {
+            continue;
+        }
+        if !is_exact_http_origin(origin) {
+            return Err(error(origin.clone()));
+        }
     }
     Ok(origins)
 }
@@ -266,18 +301,26 @@ fn parse_header_value_list(
     Ok(values)
 }
 
-fn validate_mcp_origin(origin: &str) -> Result<(), ApiConfigError> {
-    if origin == "null" {
-        return Ok(());
+/// Return whether a value is an exact HTTP(S) Origin without user-info or URL suffixes.
+fn is_exact_http_origin(origin: &str) -> bool {
+    let Some((scheme, authority_text)) = origin.split_once("://") else {
+        return false;
+    };
+    if !(scheme.eq_ignore_ascii_case("http") || scheme.eq_ignore_ascii_case("https"))
+        || authority_text.is_empty()
+        || authority_text.contains(['/', '?', '#', '@'])
+    {
+        return false;
     }
-    let uri = origin
-        .parse::<Uri>()
-        .map_err(|_| ApiConfigError::InvalidMcpAllowedOrigin(origin.to_string()))?;
-    if uri.scheme().is_some() && uri.authority().is_some() {
-        Ok(())
-    } else {
-        Err(ApiConfigError::InvalidMcpAllowedOrigin(origin.to_string()))
-    }
+    let Ok(uri) = origin.parse::<Uri>() else {
+        return false;
+    };
+    uri.scheme_str()
+        .is_some_and(|value| value.eq_ignore_ascii_case(scheme))
+        && uri.authority().is_some()
+        && uri.host().is_some_and(|host| !host.is_empty())
+        && uri.path() == "/"
+        && uri.query().is_none()
 }
 
 fn default_mcp_allowed_hosts() -> Vec<String> {
@@ -326,7 +369,7 @@ mod tests {
 
     use ps_domain::RuntimeSettingValue;
 
-    use super::{parse_cors_allowed_origins, ApiConfig, ApiConfigError};
+    use super::{parse_cors_allowed_origins, parse_mcp_allowed_origins, ApiConfig, ApiConfigError};
 
     #[test]
     fn parses_python_style_cors_origin_list() {
@@ -334,6 +377,83 @@ mod tests {
             .expect("origins should parse");
 
         assert_eq!(origins, ["https://a.example", "https://b.example"]);
+    }
+
+    #[test]
+    fn runtime_origin_parsers_accept_exact_compatibility_values() {
+        let cors = parse_cors_allowed_origins(
+            " ,https://paper.example,http://localhost:3000,http://[::1]:3000,https://paper.example, ",
+        )
+        .expect("exact CORS origins should parse");
+        let mcp = parse_mcp_allowed_origins(
+            "null,https://paper.example,http://localhost:3000,http://[::1]:3000",
+        )
+        .expect("exact MCP origins and null should parse");
+
+        assert_eq!(
+            cors,
+            [
+                "https://paper.example",
+                "http://localhost:3000",
+                "http://[::1]:3000",
+                "https://paper.example"
+            ]
+        );
+        assert_eq!(
+            mcp,
+            [
+                "null",
+                "https://paper.example",
+                "http://localhost:3000",
+                "http://[::1]:3000"
+            ]
+        );
+        assert!(parse_cors_allowed_origins(" , ").is_ok());
+        assert!(parse_mcp_allowed_origins("").is_ok());
+    }
+
+    #[test]
+    fn runtime_origin_parsers_reject_unsafe_forms() {
+        let rejected_cors = [
+            "*",
+            "null",
+            "paper.example",
+            "ftp://paper.example",
+            "https://user@paper.example",
+            "https://paper.example/",
+            "https://paper.example/path",
+            "https://paper.example?mode=admin",
+            "https://paper.example#admin",
+        ];
+        let rejected_mcp = [
+            "*",
+            "paper.example",
+            "ftp://paper.example",
+            "https://user@paper.example",
+            "https://paper.example/",
+            "https://paper.example/path",
+            "https://paper.example?mode=admin",
+            "https://paper.example#admin",
+        ];
+
+        for origin in rejected_cors {
+            assert!(
+                matches!(
+                    parse_cors_allowed_origins(origin),
+                    Err(ApiConfigError::InvalidCorsOrigin(value)) if value == origin
+                ),
+                "CORS origin should be rejected: {origin}"
+            );
+        }
+        for origin in rejected_mcp {
+            assert!(
+                matches!(
+                    parse_mcp_allowed_origins(origin),
+                    Err(ApiConfigError::InvalidMcpAllowedOrigin(value)) if value == origin
+                ),
+                "MCP origin should be rejected: {origin}"
+            );
+        }
     }
 
     #[test]

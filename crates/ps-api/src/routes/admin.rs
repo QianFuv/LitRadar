@@ -14,6 +14,7 @@ use ps_domain::{
 };
 use ps_storage::{BusinessRepositoryError, StorageConfig};
 
+use crate::config::validate_runtime_origin_settings_update;
 use crate::response::ApiError;
 use crate::routes::auth::{auth_service, map_auth_error, require_admin_user};
 use crate::state::ApiState;
@@ -429,6 +430,8 @@ pub(crate) async fn update_runtime_settings(
     Json(body): Json<RuntimeSettingsUpdate>,
 ) -> Result<Json<Vec<RuntimeSettingInfo>>, ApiError> {
     require_admin_user(&state, &headers).await?;
+    validate_runtime_origin_settings_update(&body)
+        .map_err(|error| ApiError::bad_request(error.to_string()))?;
     let values = body.values;
     let secret_pool_updates = body.secret_pool_updates;
     let secret_codec = state.secret_codec().clone();

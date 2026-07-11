@@ -421,6 +421,48 @@ mod tests {
     }
 
     #[test]
+    fn runtime_origin_startup_rejects_legacy_values_without_panicking() {
+        for (field, value, expected_error) in [
+            ("cors_allowed_origins", "*", "Invalid CORS origin: *"),
+            (
+                "mcp_allowed_origins",
+                "https://paper.example/path",
+                "Invalid MCP allowed origin: https://paper.example/path",
+            ),
+        ] {
+            let temp_dir = tempfile::tempdir().expect("temporary project should be created");
+            let storage = ps_storage::StorageConfig::from_project_root(temp_dir.path());
+            ps_storage::migrate_storage(&storage).expect("fixture storage should migrate");
+            let secret_key_file = temp_dir.path().join("secret.key");
+            fs::write(&secret_key_file, [41_u8; 32]).expect("secret key should write");
+            let codec =
+                ps_storage::SecretCodec::load(&secret_key_file).expect("secret key should load");
+            ps_storage::upsert_runtime_settings(
+                storage.auth_db_path(),
+                &codec,
+                &HashMap::from([(field.to_string(), Some(value.to_string()))]),
+                &HashMap::new(),
+            )
+            .expect("legacy runtime origin should persist");
+            let config = ApiConfig::new(
+                temp_dir.path().to_path_buf(),
+                "127.0.0.1".to_string(),
+                0,
+                secret_key_file,
+            );
+
+            let startup = std::panic::catch_unwind(|| try_build_router(config));
+            let startup_result = match startup {
+                Ok(result) => result,
+                Err(_) => panic!("invalid runtime origin should not panic: {field}"),
+            };
+            let error = startup_result.expect_err("invalid runtime origin should fail startup");
+
+            assert_eq!(error.to_string(), expected_error);
+        }
+    }
+
+    #[test]
     fn router_startup_rejects_missing_wrong_and_tampered_secret_material() {
         let temp_dir = tempfile::tempdir().expect("temporary project should be created");
         let storage = ps_storage::StorageConfig::from_project_root(temp_dir.path());
@@ -1098,6 +1140,121 @@ mod tests {
                 "Password must be at least 12 characters"
             );
         }
+    }
+
+    #[tokio::test]
+    #[cfg_attr(
+        miri,
+        ignore = "Miri does not support Tokio's Windows IOCP runtime initialization"
+    )]
+    async fn runtime_origin_updates_are_validated_before_persistence() {
+        let backend = TestBackend::new();
+        let admin = backend.authenticated_user("origin_admin", true);
+        let member = backend.authenticated_user("origin_member", false);
+        let app = backend.router();
+        let admin_auth = admin.authorization_header();
+        let member_auth = member.authorization_header();
+        let initial = json_request(
+            &app,
+            Method::PUT,
+            "/api/admin/runtime-settings",
+            Some(&admin_auth),
+            None,
+            Some(serde_json::json!({
+                "values": {
+                    "cors_allowed_origins": "https://paper.example,http://[::1]:3000",
+                    "mcp_allowed_origins": "null,http://localhost:3000",
+                    "secure_cookies": "false"
+                }
+            })),
+        )
+        .await;
+        let forbidden = json_request(
+            &app,
+            Method::PUT,
+            "/api/admin/runtime-settings",
+            Some(&member_auth),
+            None,
+            Some(serde_json::json!({
+                "values": {"cors_allowed_origins": "*"}
+            })),
+        )
+        .await;
+        let invalid_cors = json_request(
+            &app,
+            Method::PUT,
+            "/api/admin/runtime-settings",
+            Some(&admin_auth),
+            None,
+            Some(serde_json::json!({
+                "values": {
+                    "cors_allowed_origins": "*",
+                    "mcp_allowed_origins": "https://changed.example",
+                    "secure_cookies": "true"
+                }
+            })),
+        )
+        .await;
+        let invalid_mcp = json_request(
+            &app,
+            Method::PUT,
+            "/api/admin/runtime-settings",
+            Some(&admin_auth),
+            None,
+            Some(serde_json::json!({
+                "values": {
+                    "cors_allowed_origins": "https://changed.example",
+                    "mcp_allowed_origins": "https://paper.example/path",
+                    "secure_cookies": "true"
+                }
+            })),
+        )
+        .await;
+        let stored =
+            ps_storage::load_runtime_settings(backend.auth_db_path(), backend.secret_codec())
+                .expect("runtime settings should load");
+        let stored_value = |field: &str| {
+            stored
+                .iter()
+                .find(|setting| setting.field == field)
+                .expect("runtime setting should exist")
+                .value
+                .as_str()
+        };
+        let initial_settings = initial
+            .payload
+            .as_array()
+            .expect("runtime settings should be an array");
+        let description_for = |field: &str| {
+            initial_settings
+                .iter()
+                .find(|setting| setting["field"] == field)
+                .and_then(|setting| setting["description"].as_str())
+                .expect("runtime setting description should exist")
+        };
+
+        assert_eq!(initial.status, StatusCode::OK);
+        assert!(description_for("cors_allowed_origins").contains("exact HTTP(S) origins"));
+        assert!(description_for("cors_allowed_origins").contains("restart"));
+        assert!(description_for("mcp_allowed_origins").contains("null"));
+        assert!(description_for("mcp_allowed_origins").contains("restart"));
+        assert_eq!(forbidden.status, StatusCode::FORBIDDEN);
+        assert_eq!(invalid_cors.status, StatusCode::BAD_REQUEST);
+        assert_eq!(invalid_cors.payload["detail"], "Invalid CORS origin: *");
+        assert_eq!(invalid_mcp.status, StatusCode::BAD_REQUEST);
+        assert_eq!(
+            invalid_mcp.payload["detail"],
+            "Invalid MCP allowed origin: https://paper.example/path"
+        );
+        assert_eq!(
+            stored_value("cors_allowed_origins"),
+            "https://paper.example,http://[::1]:3000"
+        );
+        assert_eq!(
+            stored_value("mcp_allowed_origins"),
+            "null,http://localhost:3000"
+        );
+        assert_eq!(stored_value("secure_cookies"), "false");
     }
 
     #[tokio::test]
