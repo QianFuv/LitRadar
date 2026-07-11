@@ -200,7 +200,7 @@ notify|push --secret-key-file PATH
 | `--ai-model MODEL`           | 用户设置或代码默认 | 覆盖模型名，不提供 API key      |
 | `--max-candidates N`         | `120`              | 进入模型前的候选上限            |
 | `--timeout N`                | `60`               | AI/PushPlus HTTP 超时秒数       |
-| `--retries N`                | `3`                | CLI 级重试次数                  |
+| `--retries N`                | `3`                | CLI 级重试次数，范围 `0..=10`   |
 | `--dedupe-retention-days N`  | `60`               | 去重记录保留天数                |
 | `--dry-run` / `--no-dry-run` | 执行模式           | 是否禁止外部发送和收藏/去重写入 |
 
@@ -212,6 +212,8 @@ notify|push --secret-key-file PATH
 | `push`   | `data/folder_push_state` |
 
 `--db` 省略时按名称排序处理全部 `data/index/*.sqlite`。`utd24` 和 `utd24.sqlite` 等价；路径部分会被去掉。
+
+`--retries 0` 表示只执行首次请求、不再重试；默认值为 3。大于 10 的值会在密钥、数据库、目标和传输初始化前被拒绝。该参数是每个适用传输或 AI 响应格式的重试次数，不是作业总时限或全局请求总数。
 
 ## `scheduler`
 

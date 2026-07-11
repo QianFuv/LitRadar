@@ -146,6 +146,8 @@ CNKI 会话按 Paper Scanner 用户隔离；状态接口只返回安全元数据
 
 手动周报是异步任务；启动接口返回后，应通过状态接口查询进展。完整通知链路见[通知指南](../guides/notifications.md)。
 
+`PUT /api/tracking/notification-settings` 的 `ai_retry_attempts` 只接受 `1..=10`。超出范围时返回 `400`，且不会替换已有设置。历史或被手工修改的数据库值在读取时会归一到该范围，但服务不会因此自动改写数据库。
+
 ### 管理接口
 
 | 方法             | 路径                                         | 作用                            |

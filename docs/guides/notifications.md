@@ -39,6 +39,8 @@
 
 `selected_databases=[]` 表示所有数据库。没有非空 keyword/direction、设置未启用、数据库未被选中或没有可用 AI key/model 时，该用户会被跳过。
 
+`ai_retry_attempts` 的写入范围为 `1..=10`；超出范围的 API 更新会被拒绝。历史或被手工修改的值在读取时归一到该范围，不会触发自动数据库更新。
+
 秘密字段以 `psenc:v1:` 密文保存。读取 API 只返回 `has_*` 和固定掩码；更新时：
 
 - 字段缺省或空白字符串：保留现值
@@ -56,7 +58,9 @@
 - API key 没有可用的全局 fallback，用户必须配置
 - 只有用户填写了任一备用字段时才构建备用 endpoint
 
-每个 endpoint 的实际重试次数为 CLI `--retries` 与用户 `ai_retry_attempts` 的较大值。请求依次尝试 `json_schema`、`json_object` 和无 `response_format` 三种兼容形式；主 endpoint 完整失败后才尝试备用 endpoint。
+CLI `--retries` 的范围是 `0..=10`、默认值是 3；用户 `ai_retry_attempts` 的范围是 `1..=10`。两者分别受限后，每个 endpoint 的实际 AI 重试次数仍取两者较大值。该次数分别应用于 `json_schema`、`json_object` 和无 `response_format` 三种兼容形式：值为 N 时，每种形式最多执行一次初始请求和 N 次重试，并按 `1/2/4/8/8...` 秒等待。它不是完整作业时限或所有 endpoint 的请求总数。
+
+请求超时、三种响应格式的顺序和主 endpoint 完整失败后再尝试备用 endpoint 的行为保持不变；`--dry-run` 仍会执行 AI 请求。
 
 模型输出还会经过本地约束：
 
@@ -111,7 +115,7 @@ cargo run --bin push -- \
 
 PushPlus 失败时，本次用户结果失败且不会写入去重记录。若在发送前已经执行了可选文件夹同步，该收藏写入不会被自动回滚；后续重试仍需以最终状态和去重记录为准。
 
-PushPlus 传输会对网络错误以及 `429`、`500`、`502`、`503`、`504` 重试。响应 JSON 必须满足 `code=200`，`data` 记录为 message ID。
+PushPlus 传输使用受限后的 CLI `--retries`，并以相同的 `1/2/4/8/8...` 秒封顶退避对网络错误以及 `429`、`500`、`502`、`503`、`504` 重试。响应 JSON 必须满足 `code=200`，`data` 记录为 message ID。
 
 ## 手动推送 API
 
