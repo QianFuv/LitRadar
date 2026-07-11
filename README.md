@@ -1,6 +1,6 @@
-# Paper Scanner
+# LitRadar
 
-Paper Scanner 是一个面向学术期刊的自托管检索与订阅平台。它从 Crossref、OpenAlex、Semantic Scholar 和 CNKI overseas 获取元数据，构建 SQLite 全文检索库，并通过 Web 界面提供检索、收藏、每周更新、文献追踪和后台管理。
+LitRadar 是一个面向学术期刊的自托管检索与订阅平台。它从 Crossref、OpenAlex、Semantic Scholar 和 CNKI overseas 获取元数据，构建 SQLite 全文检索库，并通过 Web 界面提供检索、收藏、每周更新、文献追踪和后台管理。
 
 ## 能力概览
 
@@ -35,8 +35,8 @@ Paper Scanner 是一个面向学术期刊的自托管检索与订阅平台。它
 
 ```bash
 mkdir -p secrets
-openssl rand -out secrets/paper-scanner.key 32
-chmod 600 secrets/paper-scanner.key
+openssl rand -out secrets/litradar.key 32
+chmod 600 secrets/litradar.key
 ```
 
 Linux 原生 Docker Engine 还需要让容器内固定账号 `10001:10001` 读写数据目录：
@@ -72,7 +72,7 @@ printf '%s\n' "$ADMIN_PASSWORD" |
 
 ```bash
 docker compose run --rm api index \
-  --secret-key-file /run/secrets/paper_scanner_key \
+  --secret-key-file /run/secrets/litradar_key \
   --file chinese_journals.csv \
   --update
 ```

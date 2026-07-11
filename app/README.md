@@ -1,6 +1,6 @@
-# Paper Scanner 前端包
+# LitRadar 前端包
 
-`app/` 是 Paper Scanner 的 Next.js Web 客户端，负责登录、检索、收藏、每周更新、文献追踪、个人设置和管理后台。本页只说明前端包的开发边界：
+`app/` 是 LitRadar 的 Next.js Web 客户端，负责登录、检索、收藏、每周更新、文献追踪、个人设置和管理后台。本页只说明前端包的开发边界：
 
 - 系统进程与数据流见[系统架构](../docs/architecture.md)。
 - REST 契约与认证方式见[API 参考](../docs/reference/api.md)。
@@ -97,16 +97,18 @@ app/
 
 ## 客户端状态
 
-| 状态                 | 所有者                                  |
-| -------------------- | --------------------------------------- |
-| 后端查询与 mutation  | TanStack Query                          |
-| 搜索、筛选和周报选择 | nuqs URL query state                    |
-| 登录用户             | `AuthProvider` + `GET /api/auth/me`     |
-| 当前数据库           | `localStorage: ps:v1:selected_database` |
-| 搜索历史             | `localStorage: ps:v1:search_history`    |
-| 主题                 | next-themes 的 `class` 属性             |
+| 状态                 | 所有者                                        |
+| -------------------- | --------------------------------------------- |
+| 后端查询与 mutation  | TanStack Query                                |
+| 搜索、筛选和周报选择 | nuqs URL query state                          |
+| 登录用户             | `AuthProvider` + `GET /api/auth/me`           |
+| 当前数据库           | `localStorage: litradar:v1:selected_database` |
+| 搜索历史             | `localStorage: litradar:v1:search_history`    |
+| 主题                 | next-themes 的 `class` 属性                   |
 
-浏览器 API 请求默认 `credentials: include`，登录令牌只存在后端设置的 `ps_session` HttpOnly Cookie 中。设置页创建的 Bearer 访问令牌用于外部客户端，不作为前端登录态存入 Web Storage。
+浏览器 API 请求默认 `credentials: include`，登录令牌只存在后端设置的 `litradar_session` HttpOnly Cookie 中。设置页创建的 Bearer 访问令牌用于外部客户端，不作为前端登录态存入 Web Storage。
+
+升级前的浏览器命名空间不会被读取、复制或清理。升级后用户需要重新登录，数据库选择和搜索历史会在新命名空间中重新建立。
 
 Web Storage helper 会容忍 SSR、隐私模式和 quota 错误；调用方不应假定写入必然成功。
 

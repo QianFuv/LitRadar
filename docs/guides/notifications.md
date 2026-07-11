@@ -41,7 +41,7 @@
 
 `ai_retry_attempts` 的写入范围为 `1..=10`；超出范围的 API 更新会被拒绝。历史或被手工修改的值在读取时归一到该范围，不会触发自动数据库更新。
 
-秘密字段以 `psenc:v1:` 密文保存。读取 API 只返回 `has_*` 和固定掩码；更新时：
+秘密字段以 `litradarenc:v1:` 密文保存。读取 API 只返回 `has_*` 和固定掩码；更新时：
 
 - 字段缺省或空白字符串：保留现值
 - JSON `null`：明确清除
@@ -77,11 +77,11 @@ CLI `--retries` 的范围是 `0..=10`、默认值是 3；用户 `ai_retry_attemp
 
 ```bash
 cargo run --bin notify -- \
-  --secret-key-file secrets/paper-scanner.key \
+  --secret-key-file secrets/litradar.key \
   --dry-run
 
 cargo run --bin notify -- \
-  --secret-key-file secrets/paper-scanner.key \
+  --secret-key-file secrets/litradar.key \
   --db utd24.sqlite \
   --changes-file data/push_state/utd24.changes.json \
   --no-dry-run
@@ -93,11 +93,11 @@ cargo run --bin notify -- \
 
 ```bash
 cargo run --bin push -- \
-  --secret-key-file secrets/paper-scanner.key \
+  --secret-key-file secrets/litradar.key \
   --dry-run
 
 cargo run --bin push -- \
-  --secret-key-file secrets/paper-scanner.key \
+  --secret-key-file secrets/litradar.key \
   --db utd24.sqlite \
   --changes-file data/push_state/utd24.changes.json \
   --no-dry-run

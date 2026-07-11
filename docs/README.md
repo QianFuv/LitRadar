@@ -1,4 +1,4 @@
-# Paper Scanner 文档中心
+# LitRadar 文档中心
 
 这里是项目文档的统一入口。根目录 [README](../README.md) 负责介绍项目和最短启动路径；本页负责把不同读者引导到唯一的主题文档。
 
@@ -45,7 +45,7 @@
 - [前端包说明](../app/README.md)：`app/` 的启动、目录、API 契约和测试
 - [simple 分词器](../libs/simple/README.md)：仓库内置扩展、发现规则和上游许可证
 
-`libs/simple-*/**/dict/README.md` 是第三方词典说明，不属于 Paper Scanner 的项目文档，保持上游内容。
+`libs/simple-*/**/dict/README.md` 是第三方词典说明，不属于 LitRadar 的项目文档，保持上游内容。
 
 ## 事实来源
 
@@ -58,15 +58,15 @@
 
 主要映射：
 
-| 事实             | 实现来源                                                               | 文档所有者                                    |
-| ---------------- | ---------------------------------------------------------------------- | --------------------------------------------- |
-| CLI 参数和默认值 | `crates/ps-cli/src/lib.rs`、`crates/ps-api/src/config.rs`              | [CLI 参考](reference/cli.md)                  |
-| 全局运行配置     | `crates/ps-storage/src/business/runtime_settings.rs`                   | [运行配置](reference/configuration.md)        |
-| REST schema      | `app/lib/generated/openapi.json`                                       | OpenAPI；[API 参考](reference/api.md)补充语义 |
-| SQLite schema    | `crates/ps-storage/src/migrations.rs`、`crates/ps-index/src/schema.rs` | [数据库参考](reference/database.md)           |
-| Docker 行为      | `Dockerfile`、`app/Dockerfile`、`docker-compose.yml`                   | [Docker 部署](operations/docker.md)           |
-| 前端结构         | `app/package.json`、`app/app/`、`app/lib/`、`app/components/`          | [前端包说明](../app/README.md)                |
-| UI token 与组件  | `app/app/globals.css`、`app/components/ui/`                            | [前端设计系统](reference/design-system.md)    |
+| 事实             | 实现来源                                                                           | 文档所有者                                    |
+| ---------------- | ---------------------------------------------------------------------------------- | --------------------------------------------- |
+| CLI 参数和默认值 | `crates/litradar-cli/src/lib.rs`、`crates/litradar-api/src/config.rs`              | [CLI 参考](reference/cli.md)                  |
+| 全局运行配置     | `crates/litradar-storage/src/business/runtime_settings.rs`                         | [运行配置](reference/configuration.md)        |
+| REST schema      | `app/lib/generated/openapi.json`                                                   | OpenAPI；[API 参考](reference/api.md)补充语义 |
+| SQLite schema    | `crates/litradar-storage/src/migrations.rs`、`crates/litradar-index/src/schema.rs` | [数据库参考](reference/database.md)           |
+| Docker 行为      | `Dockerfile`、`app/Dockerfile`、`docker-compose.yml`                               | [Docker 部署](operations/docker.md)           |
+| 前端结构         | `app/package.json`、`app/app/`、`app/lib/`、`app/components/`                      | [前端包说明](../app/README.md)                |
+| UI token 与组件  | `app/app/globals.css`、`app/components/ui/`                                        | [前端设计系统](reference/design-system.md)    |
 
 ## 维护原则
 

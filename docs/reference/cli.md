@@ -49,7 +49,7 @@ api --secret-key-file PATH
 | `--project-root PATH`      | 当前工作目录 | 数据和扩展根目录                                     |
 | `--require-secure-cookies` | 关闭         | 要求数据库 `secure_cookies=true`，否则绑定端口前失败 |
 
-`api` 是规范入口。workspace 和后端镜像还包含行为相同的 `ps-api` 二进制，主要用于包级兼容；文档和部署命令统一使用 `api`。
+`api` 是规范入口。workspace 和后端镜像还包含行为相同的包名二进制 `litradar-api`；文档和部署命令统一使用 `api`。
 
 ## `admin`
 
@@ -83,7 +83,7 @@ admin secrets verify
     [--auth-db PATH]
 ```
 
-`migrate` 把旧明文秘密转换为 `psenc:v1:`；`verify` 只验证当前密文。操作顺序见[安全说明](../operations/security.md)。
+`migrate` 把明文秘密转换为 `litradarenc:v1:`；`verify` 只验证当前密文。操作顺序见[安全说明](../operations/security.md)。
 
 ### 轮换部署密钥
 
@@ -118,7 +118,7 @@ admin backup restore
     [--auth-db PATH]
 ```
 
-备份命令不接收部署密钥。`--include-push-state` 同时选择 `data/push_state` 和 `data/folder_push_state`。
+备份命令不接收部署密钥。清单格式名固定为 `litradar-backup`，不接受改名前的格式。`--include-push-state` 同时选择 `data/push_state` 和 `data/folder_push_state`。
 
 ## `index`
 
@@ -162,7 +162,7 @@ index --secret-key-file PATH
 
 ```bash
 index \
-  --secret-key-file secrets/paper-scanner.key \
+  --secret-key-file secrets/litradar.key \
   --file english_journals.csv \
   --update \
   --notify \

@@ -8,9 +8,9 @@
 
 ```bash
 mkdir -p secrets
-openssl rand -out secrets/paper-scanner.key 32
-chmod 600 secrets/paper-scanner.key
-wc -c secrets/paper-scanner.key
+openssl rand -out secrets/litradar.key 32
+chmod 600 secrets/litradar.key
+wc -c secrets/litradar.key
 ```
 
 `wc` 必须输出 `32`。
@@ -26,7 +26,7 @@ wc -c secrets/paper-scanner.key
 
 ## 数据库凭据加密
 
-以下非空字段使用 `psenc:v1:` XChaCha20-Poly1305 认证信封：
+以下非空字段使用 `litradarenc:v1:` XChaCha20-Poly1305 认证信封：
 
 - `notification_settings.pushplus_token`
 - `notification_settings.ai_api_key`
@@ -38,6 +38,8 @@ wc -c secrets/paper-scanner.key
 每次写入生成随机 24 字节 nonce，并把表、行/配置键和字段名作为关联数据。密文复制到其他用户或字段后无法通过认证。
 
 进程在绑定端口或进入循环前验证现有秘密值。密钥缺失、长度错误、密文损坏、密钥不匹配或残留明文都会使启动失败；错误消息不包含凭据。
+
+当前二进制只接受 `litradarenc:v1:` 信封。改名前的信封格式不会被读取或自动迁移；`admin secrets migrate` 只把明文转换为当前格式。
 
 Crossref 联系邮箱、CORS、MCP 和 Cookie 设置不是秘密字段，以普通运行配置保存。
 
@@ -102,7 +104,7 @@ printf '%s\n' "$ADMIN_PASSWORD" |
 - bootstrap、注册、改密和管理员重置的新密码至少 12 个 Unicode 字符。
 - 既有短密码哈希仍可登录，直到下次改密。
 - 密码使用 PBKDF2-HMAC-SHA256 hash 和独立 salt。
-- 浏览器登录令牌只通过 `HttpOnly`、`SameSite=Lax` 的 `ps_session` Cookie 传输。
+- 浏览器登录令牌只通过 `HttpOnly`、`SameSite=Lax` 的 `litradar_session` Cookie 传输。
 - 用户创建的长期令牌只通过 Bearer 请求头用于外部客户端。
 - 令牌不得放入 URL 查询参数。
 
@@ -178,11 +180,11 @@ MCP 的 `Host` 防护与浏览器 CORS 分开：
 
 ```bash
 admin secrets migrate \
-  --secret-key-file secrets/paper-scanner.key \
+  --secret-key-file secrets/litradar.key \
   --project-root .
 
 admin secrets verify \
-  --secret-key-file secrets/paper-scanner.key \
+  --secret-key-file secrets/litradar.key \
   --project-root .
 ```
 

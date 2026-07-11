@@ -1,6 +1,6 @@
 # 开发指南
 
-本文档面向修改 Paper Scanner 源码的贡献者，说明本地环境、日常开发流程、契约生成和质量检查。系统边界见[架构说明](../architecture.md)，完整命令参数见 [CLI 参考](../reference/cli.md)。
+本文档面向修改 LitRadar 源码的贡献者，说明本地环境、日常开发流程、契约生成和质量检查。系统边界见[架构说明](../architecture.md)，完整命令参数见 [CLI 参考](../reference/cli.md)。
 
 ## 工具链
 
@@ -23,8 +23,8 @@ Rust 依赖由 `Cargo.lock` 锁定，前端依赖由 `app/pnpm-lock.yaml` 锁定
 
 ```bash
 mkdir -p secrets
-openssl rand -out secrets/paper-scanner.key 32
-wc -c secrets/paper-scanner.key
+openssl rand -out secrets/litradar.key 32
+wc -c secrets/litradar.key
 ```
 
 最后一条命令应输出 `32`。测试使用临时密钥和临时数据库，不应读取本机 `secrets/` 或仓库中的真实 `data/auth.sqlite`。
@@ -45,7 +45,7 @@ pnpm install --frozen-lockfile
 
 ```bash
 cargo run --bin api -- \
-  --secret-key-file secrets/paper-scanner.key
+  --secret-key-file secrets/litradar.key
 ```
 
 默认监听 `http://127.0.0.1:8000`，并提供：
@@ -57,8 +57,8 @@ cargo run --bin api -- \
 请求日志默认包含 method、path、status 和 latency。使用标准 `RUST_LOG` 过滤 tracing，例如：
 
 ```bash
-RUST_LOG=ps_api=debug,tower_http=debug cargo run --bin api -- \
-  --secret-key-file secrets/paper-scanner.key
+RUST_LOG=litradar_api=debug,tower_http=debug cargo run --bin api -- \
+  --secret-key-file secrets/litradar.key
 ```
 
 ### 首个管理员
@@ -80,7 +80,7 @@ printf '%s\n' "$ADMIN_PASSWORD" |
 
 ```bash
 cargo run --bin worker -- \
-  --secret-key-file secrets/paper-scanner.key \
+  --secret-key-file secrets/litradar.key \
   --interval-seconds 30
 ```
 
@@ -101,12 +101,12 @@ pnpm dev
 
 ```bash
 cargo run --bin index -- \
-  --secret-key-file secrets/paper-scanner.key \
+  --secret-key-file secrets/litradar.key \
   --file chinese_journals.csv \
   --update
 
 cargo run --bin notify -- \
-  --secret-key-file secrets/paper-scanner.key \
+  --secret-key-file secrets/litradar.key \
   --dry-run
 ```
 
@@ -114,22 +114,22 @@ Scholarly 索引需要先在 `data/auth.sqlite` 的运行配置中保存 OpenAle
 
 ## 修改位置
 
-| 任务                | 主要位置                                                    |
-| ------------------- | ----------------------------------------------------------- |
-| REST 路由或 OpenAPI | `crates/ps-api/src/routes/`、`crates/ps-api/src/openapi.rs` |
-| 认证                | `crates/ps-auth/`、`crates/ps-storage/src/auth.rs`          |
-| 业务存储            | `crates/ps-storage/src/business/`                           |
-| 数据库迁移          | `crates/ps-storage/src/migrations.rs`                       |
-| 索引和 schema       | `crates/ps-index/`                                          |
-| 上游数据源          | `crates/ps-sources/`                                        |
-| 推荐、通知和调度    | `crates/ps-recommend/`、`crates/ps-worker/`                 |
-| 前端 API facade     | `app/lib/api/`、`app/lib/api.tsx`                           |
-| 前端页面和组件      | `app/app/`、`app/components/`                               |
-| 前端测试            | `app/tests/`                                                |
+| 任务                | 主要位置                                                                |
+| ------------------- | ----------------------------------------------------------------------- |
+| REST 路由或 OpenAPI | `crates/litradar-api/src/routes/`、`crates/litradar-api/src/openapi.rs` |
+| 认证                | `crates/litradar-auth/`、`crates/litradar-storage/src/auth.rs`          |
+| 业务存储            | `crates/litradar-storage/src/business/`                                 |
+| 数据库迁移          | `crates/litradar-storage/src/migrations.rs`                             |
+| 索引和 schema       | `crates/litradar-index/`                                                |
+| 上游数据源          | `crates/litradar-sources/`                                              |
+| 推荐、通知和调度    | `crates/litradar-recommend/`、`crates/litradar-worker/`                 |
+| 前端 API facade     | `app/lib/api/`、`app/lib/api.tsx`                                       |
+| 前端页面和组件      | `app/app/`、`app/components/`                                           |
+| 前端测试            | `app/tests/`                                                            |
 
 ## OpenAPI 与前端类型
 
-Rust `ps-api` 是控制面 API schema 的来源。修改路由注解、DTO 或响应 schema 后，在 `app/` 运行：
+Rust `litradar-api` 是控制面 API schema 的来源。修改路由注解、DTO 或响应 schema 后，在 `app/` 运行：
 
 ```bash
 pnpm generate:api
@@ -160,7 +160,7 @@ pnpm generate:api:check
 4. 覆盖空库、代表性旧库、当前版本幂等、失败回滚和未来版本拒绝。
 5. 不在 repository 查询函数或连接 helper 中执行迁移。
 
-索引新库的当前 schema 由 `ps-index` 创建；storage migration 负责既有库升级。逻辑模型见[数据库参考](../reference/database.md)。
+索引新库的当前 schema 由 `litradar-index` 创建；storage migration 负责既有库升级。逻辑模型见[数据库参考](../reference/database.md)。
 
 ## 调度变更
 
@@ -168,7 +168,7 @@ pnpm generate:api:check
 
 新增调度能力时必须同步更新：
 
-- `ps-domain` 的 job 类型
+- `litradar-domain` 的 job 类型
 - API 和存储校验
 - worker argv 构造与运行认领
 - OpenAPI 和前端管理界面

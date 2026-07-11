@@ -15,34 +15,34 @@ browser
                          worker sidecar
 
 api + worker --> ./data:/app/data
-api + worker --> paper_scanner_key Compose secret
+api + worker --> litradar_key Compose secret
 ```
 
-Compose 默认只发布宿主机 loopback，不直接暴露到局域网或公网。
+Compose 项目名固定为 `litradar`，默认只发布宿主机 loopback，不直接暴露到局域网或公网。
 
 ## 服务
 
 ### `api`
 
-| 项目       | 值                                                                                                    |
-| ---------- | ----------------------------------------------------------------------------------------------------- |
-| 构建上下文 | 仓库根目录                                                                                            |
-| 镜像       | `ghcr.io/qianfuv/paper-scanner-api:latest`                                                            |
-| 命令       | `api --host 0.0.0.0 --port 8000 --project-root /app --secret-key-file /run/secrets/paper_scanner_key` |
-| 宿主机端口 | `127.0.0.1:8000:8000`                                                                                 |
-| 可写数据   | `./data:/app/data:rw`                                                                                 |
-| 运行用户   | `paper`，UID/GID `10001:10001`                                                                        |
-| 健康检查   | `GET /api/health`                                                                                     |
+| 项目       | 值                                                                                               |
+| ---------- | ------------------------------------------------------------------------------------------------ |
+| 构建上下文 | 仓库根目录                                                                                       |
+| 镜像       | `ghcr.io/qianfuv/litradar-api:latest`                                                            |
+| 命令       | `api --host 0.0.0.0 --port 8000 --project-root /app --secret-key-file /run/secrets/litradar_key` |
+| 宿主机端口 | `127.0.0.1:8000:8000`                                                                            |
+| 可写数据   | `./data:/app/data:rw`                                                                            |
+| 运行用户   | `litradar`，UID/GID `10001:10001`                                                                |
+| 健康检查   | `GET /api/health`                                                                                |
 
 ### `worker`
 
-| 项目     | 值                                                                                                  |
-| -------- | --------------------------------------------------------------------------------------------------- |
-| 镜像     | 与 `api` 相同                                                                                       |
-| 命令     | `worker --project-root /app --secret-key-file /run/secrets/paper_scanner_key --interval-seconds 30` |
-| 可写数据 | `./data:/app/data:rw`                                                                               |
-| 依赖     | `api` 健康                                                                                          |
-| 健康检查 | 通过 `api:8000/api/health/worker` 读取持久心跳                                                      |
+| 项目     | 值                                                                                             |
+| -------- | ---------------------------------------------------------------------------------------------- |
+| 镜像     | 与 `api` 相同                                                                                  |
+| 命令     | `worker --project-root /app --secret-key-file /run/secrets/litradar_key --interval-seconds 30` |
+| 可写数据 | `./data:/app/data:rw`                                                                          |
+| 依赖     | `api` 健康                                                                                     |
+| 健康检查 | 通过 `api:8000/api/health/worker` 读取持久心跳                                                 |
 
 worker 每轮更新调度游标和心跳。`/api/health/worker` 在最近 90 秒没有 worker 心跳时返回 `503`。
 
@@ -51,7 +51,7 @@ worker 每轮更新调度游标和心跳。`/api/health/worker` 在最近 90 秒
 | 项目       | 值                                               |
 | ---------- | ------------------------------------------------ |
 | 构建上下文 | `app/`                                           |
-| 镜像       | `ghcr.io/qianfuv/paper-scanner-app:latest`       |
+| 镜像       | `ghcr.io/qianfuv/litradar-app:latest`            |
 | 宿主机端口 | `127.0.0.1:3000:3000`                            |
 | 环境       | `HOSTNAME=0.0.0.0`                               |
 | 运行用户   | Node 镜像内置 `node` 用户                        |
@@ -65,7 +65,7 @@ worker 每轮更新调度游标和心跳。`/api/health/worker` 在最近 90 秒
 后端镜像分两阶段：
 
 1. `rust:1.96-bookworm` 构建 release 二进制。
-2. `debian:bookworm-slim` 复制 `admin`、`api`、`ps-api`、`index`、`notify`、`push`、`scheduler`、`worker`、Linux `simple` 扩展和 `data/meta/`。
+2. `debian:bookworm-slim` 复制 `admin`、`api`、`litradar-api`、`index`、`notify`、`push`、`scheduler`、`worker`、Linux `simple` 扩展和 `data/meta/`。
 
 运行层安装 CA 证书和 `curl`，随后切换到固定非 root 用户。镜像不包含 Python 运行时。
 
@@ -79,8 +79,8 @@ worker 每轮更新调度游标和心跳。`/api/health/worker` 在最近 90 秒
 
 ```bash
 mkdir -p secrets
-openssl rand -out secrets/paper-scanner.key 32
-chmod 600 secrets/paper-scanner.key
+openssl rand -out secrets/litradar.key 32
+chmod 600 secrets/litradar.key
 ```
 
 Linux 原生 Docker Engine：
@@ -129,7 +129,7 @@ CNKI 示例：
 
 ```bash
 docker compose run --rm api index \
-  --secret-key-file /run/secrets/paper_scanner_key \
+  --secret-key-file /run/secrets/litradar_key \
   --file chinese_journals.csv \
   --update
 ```
@@ -138,11 +138,11 @@ docker compose run --rm api index \
 
 ## 数据和秘密
 
-| 宿主机路径                    | 容器路径                         | 说明                                |
-| ----------------------------- | -------------------------------- | ----------------------------------- |
-| `./data`                      | `/app/data`                      | API/worker 唯一持久可写业务挂载     |
-| `./secrets/paper-scanner.key` | `/run/secrets/paper_scanner_key` | Compose secret，只读                |
-| 镜像内 `data/meta`            | `/app/data/meta` 的初始镜像内容  | bind mount 后以宿主机 `./data` 为准 |
+| 宿主机路径               | 容器路径                        | 说明                                |
+| ------------------------ | ------------------------------- | ----------------------------------- |
+| `./data`                 | `/app/data`                     | API/worker 唯一持久可写业务挂载     |
+| `./secrets/litradar.key` | `/run/secrets/litradar_key`     | Compose secret，只读                |
+| 镜像内 `data/meta`       | `/app/data/meta` 的初始镜像内容 | bind mount 后以宿主机 `./data` 为准 |
 
 重要数据包括：
 
@@ -204,7 +204,7 @@ services:
       - --project-root
       - /app
       - --secret-key-file
-      - /run/secrets/paper_scanner_key
+      - /run/secrets/litradar_key
       - --require-secure-cookies
   app:
     ports: !reset []
@@ -226,7 +226,7 @@ docker compose \
 MCP 端点内置于 API 的 `/mcp`，不需要单独服务：
 
 - 桌面/命令行客户端使用 `Authorization: Bearer <access_token>`
-- 同源浏览器可使用 `ps_session` Cookie
+- 同源浏览器可使用 `litradar_session` Cookie
 - 非 loopback 域名或反向代理必须加入 `mcp_allowed_hosts`
 - 浏览器跨源直连时再配置 `mcp_allowed_origins`
 

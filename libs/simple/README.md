@@ -1,6 +1,6 @@
 # SQLite `simple` 分词扩展
 
-本目录记录 Paper Scanner 内置的 SQLite FTS5 `simple` 扩展、发现规则与许可证边界。
+本目录记录 LitRadar 内置的 SQLite FTS5 `simple` 扩展、发现规则与许可证边界。
 
 ## 打包文件
 
@@ -25,7 +25,7 @@ tokenize = 'simple'
 
 文件缺失、平台不受支持或扩展加载失败时，schema 仍会创建，并回退到 SQLite FTS5 默认 tokenizer。已经创建的 FTS 表不会仅因后来加入扩展而自动改变 tokenizer；需要通过受支持的迁移或重建流程处理。
 
-Paper Scanner 不额外实现拼音查询展开。
+LitRadar 不额外实现拼音查询展开。
 
 ## 上游与许可证
 
