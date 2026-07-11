@@ -11,6 +11,9 @@ on:
       - "data/meta/**"
       - "Dockerfile"
       - "app/**"
+      - ".github/workflows/rust.yaml"
+      - ".github/workflows/frontend.yaml"
+      - ".github/workflows/docker.yaml"
 
 env:
   REGISTRY: ghcr.io
@@ -19,8 +22,10 @@ jobs:
   changes:
     runs-on: ubuntu-latest
     outputs:
-      api: ${{ steps.filter.outputs.api }}
-      app: ${{ steps.filter.outputs.app }}
+      api_quality: ${{ steps.filter.outputs.api_quality }}
+      app_quality: ${{ steps.filter.outputs.app_quality }}
+      api_image: ${{ steps.filter.outputs.api_image }}
+      app_image: ${{ steps.filter.outputs.app_image }}
     steps:
       - uses: actions/checkout@v6
 
@@ -28,19 +33,34 @@ jobs:
         id: filter
         with:
           filters: |
-            api:
+            api_quality:
               - "Cargo.toml"
               - "Cargo.lock"
               - "crates/**"
               - "libs/**"
               - "data/meta/**"
               - "Dockerfile"
-            app:
+              - ".github/workflows/rust.yaml"
+            app_quality:
+              - "Cargo.toml"
+              - "Cargo.lock"
+              - "crates/ps-api/**"
+              - "crates/ps-domain/**"
+              - "app/**"
+              - ".github/workflows/frontend.yaml"
+            api_image:
+              - "Cargo.toml"
+              - "Cargo.lock"
+              - "crates/**"
+              - "libs/**"
+              - "data/meta/**"
+              - "Dockerfile"
+            app_image:
               - "app/**"
 
   build-api:
     needs: [changes, rust-quality]
-    if: needs.changes.outputs.api == 'true'
+    if: needs.changes.outputs.api_image == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -75,7 +95,7 @@ jobs:
 
   build-app:
     needs: [changes, frontend-quality]
-    if: needs.changes.outputs.app == 'true'
+    if: needs.changes.outputs.app_image == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -110,10 +130,10 @@ jobs:
 
   rust-quality:
     needs: changes
-    if: needs.changes.outputs.api == 'true'
+    if: needs.changes.outputs.api_quality == 'true'
     uses: ./.github/workflows/rust.yaml
 
   frontend-quality:
     needs: changes
-    if: needs.changes.outputs.app == 'true'
+    if: needs.changes.outputs.app_quality == 'true'
     uses: ./.github/workflows/frontend.yaml
