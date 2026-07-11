@@ -9,7 +9,7 @@ app/node_modules/
 app/.next/
 data/index/
 data/push_state/
-ps.egg-info/
+litradar.egg-info/
 backup/
 backups/
 secrets/

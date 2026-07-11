@@ -1,14 +1,16 @@
+name: litradar
+
 services:
   api:
     build: .
-    image: ghcr.io/qianfuv/paper-scanner-api:latest
+    image: ghcr.io/qianfuv/litradar-api:latest
     ports:
       - "127.0.0.1:8000:8000"
     volumes:
       - ./data:/app/data:rw
     secrets:
-      - paper_scanner_key
-    command: ["api", "--host", "0.0.0.0", "--port", "8000", "--project-root", "/app", "--secret-key-file", "/run/secrets/paper_scanner_key"]
+      - litradar_key
+    command: ["api", "--host", "0.0.0.0", "--port", "8000", "--project-root", "/app", "--secret-key-file", "/run/secrets/litradar_key"]
     restart: unless-stopped
     read_only: true
     tmpfs:
@@ -26,12 +28,12 @@ services:
 
   worker:
     build: .
-    image: ghcr.io/qianfuv/paper-scanner-api:latest
-    command: ["worker", "--project-root", "/app", "--secret-key-file", "/run/secrets/paper_scanner_key", "--interval-seconds", "30"]
+    image: ghcr.io/qianfuv/litradar-api:latest
+    command: ["worker", "--project-root", "/app", "--secret-key-file", "/run/secrets/litradar_key", "--interval-seconds", "30"]
     volumes:
       - ./data:/app/data:rw
     secrets:
-      - paper_scanner_key
+      - litradar_key
     depends_on:
       api:
         condition: service_healthy
@@ -52,7 +54,7 @@ services:
 
   app:
     build: ./app
-    image: ghcr.io/qianfuv/paper-scanner-app:latest
+    image: ghcr.io/qianfuv/litradar-app:latest
     ports:
       - "127.0.0.1:3000:3000"
     environment:
@@ -77,5 +79,5 @@ services:
       start_period: 20s
 
 secrets:
-  paper_scanner_key:
-    file: ./secrets/paper-scanner.key
+  litradar_key:
+    file: ./secrets/litradar.key

@@ -8,16 +8,16 @@ on:
     paths:
       - "Cargo.toml"
       - "Cargo.lock"
-      - "crates/ps-api/**"
-      - "crates/ps-domain/**"
+      - "crates/litradar-api/**"
+      - "crates/litradar-domain/**"
       - "app/**"
       - ".github/workflows/frontend.yaml"
   pull_request:
     paths:
       - "Cargo.toml"
       - "Cargo.lock"
-      - "crates/ps-api/**"
-      - "crates/ps-domain/**"
+      - "crates/litradar-api/**"
+      - "crates/litradar-domain/**"
       - "app/**"
       - ".github/workflows/frontend.yaml"
 

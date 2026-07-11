@@ -44,8 +44,8 @@ jobs:
             app_quality:
               - "Cargo.toml"
               - "Cargo.lock"
-              - "crates/ps-api/**"
-              - "crates/ps-domain/**"
+              - "crates/litradar-api/**"
+              - "crates/litradar-domain/**"
               - "app/**"
               - ".github/workflows/frontend.yaml"
             api_image:
