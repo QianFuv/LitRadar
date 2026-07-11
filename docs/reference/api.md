@@ -146,6 +146,8 @@ CNKI 会话按 Paper Scanner 用户隔离；状态接口只返回安全元数据
 
 手动周报是异步任务；启动接口返回后，应通过状态接口查询进展。完整通知链路见[通知指南](../guides/notifications.md)。
 
+同一 API 进程对每个 storage instance 同时只接纳一个 running manual `push-weekly` job。同一用户重复启动返回现有状态；另一用户竞争该 slot 时，`POST /api/tracking/push-weekly` 返回通用 `503` ErrorEnvelope，不创建该用户的 job。当前 job 完成或失败后可以重试；该限制不是队列或 `cross-process` 锁。
+
 `PUT /api/tracking/notification-settings` 的 `ai_retry_attempts` 只接受 `1..=10`。超出范围时返回 `400`，且不会替换已有设置。历史或被手工修改的数据库值在读取时会归一到该范围，但服务不会因此自动改写数据库。
 
 ### 管理接口

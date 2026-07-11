@@ -124,10 +124,12 @@ PushPlus 传输使用受限后的 CLI `--retries`，并以相同的 `1/2/4/8/8..
 - 只操作当前认证用户
 - 从 `data/push_state/*.changes.json` 读取最新候选
 - 立即返回后台 job 状态
-- 同一用户已有任务时返回现有任务
+- 同一用户已有 running job 时返回该现有状态和 job id，不启动第二份工作
+- 每个 API 进程对同一 storage instance 最多接纳 1 个 running manual job
+- 另一用户占用该 slot 时，启动请求立即返回通用 `503`；调用方应等待当前 job 进入 completed/failed 后再重试
 - 通过 `GET /api/tracking/push-weekly/status` 轮询
 
-该 API 使用与 CLI 相同的选择、投递和状态逻辑，但工作流由当前用户的 `delivery_method` 决定。API 契约见 [API 参考](../reference/api.md)和运行时 OpenAPI。
+该 API 使用与 CLI 相同的选择、投递和状态逻辑，但工作流由当前用户的 `delivery_method` 决定。单槽 admission 只约束当前 API 进程，不提供 `cross-process` 协调；CLI、scheduler、worker 和其他 API 进程的并发行为保持不变。API 契约见 [API 参考](../reference/api.md)和运行时 OpenAPI。
 
 ## 状态文件
 

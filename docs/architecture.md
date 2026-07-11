@@ -168,6 +168,8 @@ API 在迁移成功后才绑定端口，worker 在迁移成功后才进入循环
 
 SQLite、PBKDF2、阻塞 HTTP、文件系统和手动推送编排是同步工作。API 通过 `ApiState` 的有界阻塞执行器把这些工作送入 Tokio blocking pool，避免在路由或 MCP future 中直接阻塞运行时。worker 和 CLI 本身按同步作业模型执行。
 
+API 共享的 `blocking executor` 有 8 个 permit。除此之外，手动周推在每个 API 进程内按 `auth.sqlite` 路径设置 1 个 admission slot：同一用户重复启动会复用当前 running job，不同用户竞争同一 storage instance 时立即收到 `503`，因此最多 1 个 manual API job 等待或占用共享 permit。该边界不排队、不持久化，也不是 `cross-process` 锁；CLI、scheduler、worker 或其他 API 进程的投递并不受它协调。
+
 ## 部署边界
 
 默认 Compose 只把前端和 API 发布到宿主机 loopback，三个常驻容器均为非 root、只读根文件系统，并丢弃 Linux capabilities。公网部署必须增加 TLS 反向代理和共享限流，不能把默认端口直接改为所有网卡。详见 [Docker 部署](operations/docker.md)和[安全说明](operations/security.md)。
