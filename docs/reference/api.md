@@ -168,7 +168,7 @@ CNKI 会话按 Paper Scanner 用户隔离；状态接口只返回安全元数据
 
 计划任务只接受固定的类型化 job。worker 将已验证字段转换为独立 argv 并直接启动 `index`、`notify` 或 `push`，不会执行 shell 命令。旧 `legacy_command` 只供审阅，不能启用或执行。
 
-运行时配置键及秘密字段的更新语义见[配置参考](configuration.md)。
+`PUT /api/admin/runtime-settings` 会在管理员认证后校验发生变化的 CORS/MCP Origin。无效 Origin 返回 `400`，且同一请求的任何字段都不会保存；有效设置仍在 API 下次启动时生效，不会热加载。完整语法及旧配置恢复边界见[配置参考](configuration.md#origin-语法)。
 
 ## 文章访问边界
 

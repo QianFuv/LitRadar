@@ -127,7 +127,8 @@ printf '%s\n' "$ADMIN_PASSWORD" |
 默认前端通过同源 rewrite 调用 API。浏览器跨源直连时：
 
 - 在 `cors_allowed_origins` 列出准确 Origin
-- 不使用 `*` 搭配 credentials
+- credentialed CORS 拒绝 `*` wildcard，避免把任意网站纳入携带 Cookie 的信任边界
+- CORS 也拒绝 opaque `null`，避免把不同不透明上下文视为同一个受信 Origin
 - 浏览器请求携带 Cookie credentials
 
 MCP 的 `Host` 防护与浏览器 CORS 分开：
@@ -135,6 +136,9 @@ MCP 的 `Host` 防护与浏览器 CORS 分开：
 - `mcp_allowed_hosts` 默认 `localhost,127.0.0.1,::1`
 - 公网域名、局域网 IP 或反向代理 Host 必须显式加入
 - `mcp_allowed_origins` 只用于浏览器跨源直连 MCP
+- MCP Origin 通常遵循同一准确 HTTP(S) tuple 语法，但为现有 opaque Origin 客户端保留精确字面量 `null`
+
+管理员提交无效 CORS/MCP Origin 时，API 返回 `400` 且整份更新不落库；有效修改在下次 API 启动时生效。旧版本或库外修改留下的无效行会在监听端口绑定前使启动明确失败，不会静默忽略或自动修复，从而避免意外放宽网络策略。
 
 全局配置详见[运行配置参考](../reference/configuration.md)。
 
