@@ -29,6 +29,8 @@ const TTL_OPTIONS = [
   { label: '90天', value: 90 * 86400 },
   { label: '1年', value: 365 * 86400 },
 ];
+const ACCESS_TOKEN_NAME_MAX_CODE_POINTS = 100;
+const ACCESS_TOKEN_NAME_LENGTH_DETAIL = 'Access token name must be at most 100 Unicode code points';
 
 /**
  * Format an access-token expiry timestamp.
@@ -64,19 +66,25 @@ export function AccessTokensCard({
   const [tokenTtl, setTokenTtl] = useState(TTL_OPTIONS[0].value);
   const [newTokenValue, setNewTokenValue] = useState<string | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
+  const tokenNameCodePointCount = Array.from(tokenName).length;
+  const tokenNameError =
+    tokenNameCodePointCount > ACCESS_TOKEN_NAME_MAX_CODE_POINTS
+      ? ACCESS_TOKEN_NAME_LENGTH_DETAIL
+      : null;
   const { data: tokens = [] } = useQuery({
     queryKey: ['access-tokens'],
     queryFn: () => getAccessTokens(),
     enabled: true,
   });
   const createTokenMut = useMutation({
-    mutationFn: () => createAccessToken(tokenName.trim(), tokenTtl),
+    mutationFn: () => createAccessToken(tokenName, tokenTtl),
     onSuccess: (data) => {
       setNewTokenValue(data.token);
       queryClient.invalidateQueries({ queryKey: ['access-tokens'] });
       setTokenName('');
     },
   });
+  const creationError = tokenNameError ?? createTokenMut.error?.message ?? null;
   const revokeMut = useMutation({
     mutationFn: (id: number) => revokeAccessToken(id),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['access-tokens'] }),
@@ -142,6 +150,7 @@ export function AccessTokensCard({
                 <form
                   onSubmit={(e) => {
                     e.preventDefault();
+                    if (tokenNameError) return;
                     createTokenMut.mutate();
                   }}
                   className="space-y-4"
@@ -155,8 +164,13 @@ export function AccessTokensCard({
                       spellCheck={false}
                       value={tokenName}
                       onChange={(e) => setTokenName(e.target.value)}
+                      aria-invalid={creationError ? true : undefined}
                       placeholder="例如：接口集成"
                     />
+                    <p className="text-xs text-muted-foreground">
+                      {tokenNameCodePointCount}/{ACCESS_TOKEN_NAME_MAX_CODE_POINTS} Unicode code
+                      points
+                    </p>
                   </div>
                   <div className="space-y-2">
                     <div className="text-sm font-medium">有效期</div>
@@ -174,7 +188,15 @@ export function AccessTokensCard({
                       ))}
                     </div>
                   </div>
-                  <Button type="submit" disabled={createTokenMut.isPending}>
+                  {creationError && (
+                    <p role="alert" className="text-sm text-destructive">
+                      {creationError}
+                    </p>
+                  )}
+                  <Button
+                    type="submit"
+                    disabled={createTokenMut.isPending || tokenNameError !== null}
+                  >
                     创建
                   </Button>
                 </form>

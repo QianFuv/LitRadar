@@ -1380,6 +1380,26 @@
                 }
               }
             }
+          },
+          "400": {
+            "description": "Validation order: authentication, raw name length, normalized reserved name, TTL, then quota. Errors: Access token name must be at most 100 Unicode code points; Access token name \"login\" is reserved; Access token TTL must be between 3600 and 31536000 seconds.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Validation order: authentication, raw name length, normalized reserved name, TTL, then quota. Error: Active access token limit of 50 reached; revoke a token before creating another.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -5274,12 +5294,15 @@
         "properties": {
           "name": {
             "type": "string",
-            "description": "Token display name."
+            "description": "Token display name.",
+            "maxLength": 100
           },
           "ttl": {
             "type": "integer",
             "format": "int64",
-            "description": "Requested token TTL in seconds."
+            "description": "Requested token TTL in seconds.",
+            "maximum": 31536000,
+            "minimum": 3600
           }
         }
       },

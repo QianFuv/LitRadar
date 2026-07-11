@@ -3581,6 +3581,24 @@ export interface operations {
           'application/json': components['schemas']['TokenCreateResponse'];
         };
       };
+      /** @description Validation order: authentication, raw name length, normalized reserved name, TTL, then quota. Errors: Access token name must be at most 100 Unicode code points; Access token name "login" is reserved; Access token TTL must be between 3600 and 31536000 seconds. */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorEnvelope'];
+        };
+      };
+      /** @description Validation order: authentication, raw name length, normalized reserved name, TTL, then quota. Error: Active access token limit of 50 reached; revoke a token before creating another. */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorEnvelope'];
+        };
+      };
     };
   };
   delete_token: {
