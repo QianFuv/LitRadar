@@ -65,6 +65,42 @@ pub fn list_notification_subscribers(
     collect_nested_rows(rows)
 }
 
+/// Get one enabled notification subscriber with tracking folder metadata.
+///
+/// # Arguments
+///
+/// * `auth_db_path` - Path to `auth.sqlite`.
+/// * `codec` - Deployment secret codec.
+/// * `user_id` - Subscriber user identifier.
+///
+/// # Returns
+///
+/// The enabled subscriber, or None when settings are missing or disabled.
+pub fn get_notification_subscriber(
+    auth_db_path: impl AsRef<Path>,
+    codec: &SecretCodec,
+    user_id: UserId,
+) -> Result<Option<NotificationSubscriberInfo>, BusinessRepositoryError> {
+    let connection = open_business_connection(auth_db_path)?;
+    connection
+        .query_row(
+            "SELECT ns.user_id, u.username, ns.keywords, ns.directions, ns.selected_databases, \
+             ns.delivery_method, ns.pushplus_token, ns.pushplus_template, ns.pushplus_topic, \
+             ns.pushplus_channel, ns.sync_to_tracking_folder, ns.ai_base_url, ns.ai_api_key, \
+             ns.ai_model, ns.ai_system_prompt, ns.ai_backup_base_url, ns.ai_backup_api_key, \
+             ns.ai_backup_model, ns.ai_backup_system_prompt, ns.ai_retry_attempts, \
+             (SELECT id FROM folders f WHERE f.user_id = ns.user_id AND f.is_tracking = 1 LIMIT 1) \
+                 AS tracking_folder_id \
+             FROM notification_settings ns JOIN users u ON u.id = ns.user_id \
+             WHERE ns.enabled = 1 AND ns.user_id = ?1",
+            [user_id.value()],
+            |row| notification_subscriber_from_row(row, codec),
+        )
+        .optional()
+        .map_err(BusinessRepositoryError::from)?
+        .transpose()
+}
+
 /// Create or update notification settings.
 ///
 /// # Arguments
@@ -325,7 +361,7 @@ mod tests {
     use tempfile::tempdir;
 
     use super::*;
-    use crate::{migrate_auth_database, SecretCodec};
+    use crate::{migrate_auth_database, SecretCodec, SecretError};
 
     #[test]
     fn notification_credentials_are_encrypted_masked_preserved_and_cleared_explicitly() {
@@ -443,6 +479,117 @@ mod tests {
             assert_eq!(subscribers.len(), 1);
             assert_eq!(subscribers[0].ai_retry_attempts, expected_attempts);
             assert_eq!(raw_attempts, stored_attempts);
+        }
+    }
+
+    #[test]
+    fn scoped_notification_subscriber_loading_isolates_secret_decryption() {
+        let temp_dir = tempdir().expect("temp dir should be created");
+        let auth_db_path = temp_dir.path().join("auth.sqlite");
+        migrate_auth_database(&auth_db_path).expect("auth database should migrate");
+        let target_user = crate::bootstrap_admin(&auth_db_path, "target-user", "hash", "salt", 1.0)
+            .expect("target user should bootstrap");
+        let connection = Connection::open(&auth_db_path).expect("auth database should open");
+        connection
+            .execute(
+                "INSERT INTO users \
+                 (username, password_hash, salt, is_admin, created_at, updated_at) \
+                 VALUES (?1, ?2, ?3, 0, ?4, ?4)",
+                ("unrelated-user", "hash", "salt", 2.0_f64),
+            )
+            .expect("unrelated user should be inserted");
+        let unrelated_user_id = UserId(connection.last_insert_rowid());
+        let codec = SecretCodec::from_key([29_u8; 32]);
+        let settings = notification_subscriber_settings();
+        super::upsert_notification_settings(&auth_db_path, &codec, target_user.id, &settings)
+            .expect("target settings should persist");
+        super::upsert_notification_settings(&auth_db_path, &codec, unrelated_user_id, &settings)
+            .expect("unrelated settings should persist");
+        connection
+            .execute(
+                "UPDATE notification_settings SET ai_api_key = 'psenc:v1:bad' \
+                 WHERE user_id = ?1",
+                [unrelated_user_id.value()],
+            )
+            .expect("unrelated ciphertext should be corrupted");
+
+        let target = super::get_notification_subscriber(&auth_db_path, &codec, target_user.id)
+            .expect("healthy target lookup should succeed")
+            .expect("healthy target should exist");
+        assert_eq!(target.user_id, target_user.id.value());
+        assert_eq!(target.pushplus_token, "target-push-token");
+        assert_eq!(target.ai_api_key.as_deref(), Some("target-ai-key"));
+        assert_eq!(
+            target.ai_backup_api_key.as_deref(),
+            Some("target-backup-key")
+        );
+        assert_eq!(target.ai_retry_attempts, 3);
+
+        assert!(
+            super::get_notification_subscriber(&auth_db_path, &codec, UserId(i64::MAX))
+                .expect("missing target lookup should succeed")
+                .is_none()
+        );
+        connection
+            .execute(
+                "UPDATE notification_settings SET enabled = 0 WHERE user_id = ?1",
+                [target_user.id.value()],
+            )
+            .expect("target settings should be disabled");
+        assert!(
+            super::get_notification_subscriber(&auth_db_path, &codec, target_user.id)
+                .expect("disabled target lookup should succeed")
+                .is_none()
+        );
+        connection
+            .execute(
+                "UPDATE notification_settings SET enabled = 1 WHERE user_id = ?1",
+                [target_user.id.value()],
+            )
+            .expect("target settings should be enabled");
+
+        let target_error =
+            super::get_notification_subscriber(&auth_db_path, &codec, unrelated_user_id)
+                .expect_err("corrupt target should fail closed");
+        assert!(matches!(
+            &target_error,
+            BusinessRepositoryError::Secret(SecretError::Authentication)
+        ));
+        assert_eq!(
+            target_error.to_string(),
+            "Stored secret authentication failed"
+        );
+        assert!(!target_error.to_string().contains("psenc:v1:bad"));
+
+        let all_subscribers_error = super::list_notification_subscribers(&auth_db_path, &codec)
+            .expect_err("all-subscriber loading should remain fail closed");
+        assert!(matches!(
+            all_subscribers_error,
+            BusinessRepositoryError::Secret(SecretError::Authentication)
+        ));
+    }
+
+    fn notification_subscriber_settings() -> NotificationSettingsUpdate {
+        NotificationSettingsUpdate {
+            keywords: vec!["systems".to_string()],
+            directions: vec!["security".to_string()],
+            selected_databases: Vec::new(),
+            delivery_method: "pushplus".to_string(),
+            pushplus_token: Some(Some("target-push-token".to_string())),
+            pushplus_template: "markdown".to_string(),
+            pushplus_topic: String::new(),
+            pushplus_channel: "wechat".to_string(),
+            sync_to_tracking_folder: false,
+            ai_base_url: "https://ai.example/v1".to_string(),
+            ai_api_key: Some(Some("target-ai-key".to_string())),
+            ai_model: "fixture-model".to_string(),
+            ai_system_prompt: String::new(),
+            ai_backup_base_url: "https://backup.example/v1".to_string(),
+            ai_backup_api_key: Some(Some("target-backup-key".to_string())),
+            ai_backup_model: "backup-model".to_string(),
+            ai_backup_system_prompt: String::new(),
+            ai_retry_attempts: 3,
+            enabled: true,
         }
     }
 }

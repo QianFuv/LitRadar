@@ -43,7 +43,8 @@ pub use favorites::{
     rename_folder, set_tracking_folder,
 };
 pub use notifications::{
-    get_notification_settings, list_notification_subscribers, upsert_notification_settings,
+    get_notification_settings, get_notification_subscriber, list_notification_subscribers,
+    upsert_notification_settings,
 };
 pub use runtime_settings::{list_runtime_settings, load_runtime_settings, upsert_runtime_settings};
 pub use scheduled_tasks::{

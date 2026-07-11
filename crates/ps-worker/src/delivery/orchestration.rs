@@ -406,27 +406,27 @@ fn filtered_subscribers(
     workflow: DeliveryWorkflow,
     subscriber_user_id: Option<UserId>,
 ) -> Result<Vec<NotificationSubscriberInfo>, DeliveryError> {
-    Ok(
-        ps_storage::list_notification_subscribers(auth_db_path, secret_codec)?
-            .into_iter()
-            .filter(|subscriber| {
-                subscriber_user_id
-                    .map(|user_id| subscriber.user_id == user_id.value())
-                    .unwrap_or(true)
-            })
-            .filter(|subscriber| is_database_selected(&subscriber.selected_databases, db_name))
-            .filter(|subscriber| match workflow {
-                DeliveryWorkflow::Notify => {
-                    subscriber.delivery_method == "pushplus"
-                        && !subscriber.pushplus_token.trim().is_empty()
-                }
-                DeliveryWorkflow::Push => {
-                    subscriber.delivery_method == "folder"
-                        && subscriber.tracking_folder_id.is_some()
-                }
-            })
-            .collect(),
-    )
+    let subscribers = match subscriber_user_id {
+        Some(user_id) => {
+            ps_storage::get_notification_subscriber(auth_db_path, secret_codec, user_id)?
+                .into_iter()
+                .collect()
+        }
+        None => ps_storage::list_notification_subscribers(auth_db_path, secret_codec)?,
+    };
+    Ok(subscribers
+        .into_iter()
+        .filter(|subscriber| is_database_selected(&subscriber.selected_databases, db_name))
+        .filter(|subscriber| match workflow {
+            DeliveryWorkflow::Notify => {
+                subscriber.delivery_method == "pushplus"
+                    && !subscriber.pushplus_token.trim().is_empty()
+            }
+            DeliveryWorkflow::Push => {
+                subscriber.delivery_method == "folder" && subscriber.tracking_folder_id.is_some()
+            }
+        })
+        .collect())
 }
 fn manual_outcome(
     status: &str,
@@ -950,14 +950,132 @@ mod tests {
         assert_eq!(unselected_outcome.status, "skipped");
         assert!(unselected_outcome.subscribers.is_empty());
     }
+
+    #[test]
+    fn user_scoped_subscriber_loading_isolates_secret_decryption() {
+        let fixture = DeliveryFixture::new(notification_settings("pushplus", true, vec![]));
+        let unrelated_user_id = fixture.add_subscriber(
+            "unrelated-user",
+            notification_settings("pushplus", true, vec![]),
+        );
+        let disabled_user_id = fixture.add_subscriber(
+            "disabled-user",
+            notification_settings("pushplus", false, vec![]),
+        );
+        fixture.corrupt_notification_ai_key(unrelated_user_id);
+
+        let mut ai_selector = FixtureDeliveryAiSelector::new(vec![selection_outcome(&[101], "")]);
+        let mut pushplus_sender =
+            FixturePushPlusSender::new(vec![Ok("target-message".to_string())]);
+        let outcome = run_recommendation_delivery_with_services_for_user(
+            &fixture.config(DeliveryWorkflow::Notify, DeliveryMode::Execute, None, None),
+            Some(fixture.user_id),
+            &mut ai_selector,
+            &mut pushplus_sender,
+        )
+        .expect("healthy target should not decrypt an unrelated subscriber");
+
+        assert_eq!(outcome.status, "completed");
+        assert_eq!(outcome.subscribers.len(), 1);
+        assert_eq!(
+            outcome.subscribers[0].subscriber_id,
+            fixture.user_id.value().to_string()
+        );
+        assert_eq!(
+            ai_selector.subscriber_ids,
+            vec![fixture.user_id.value().to_string()]
+        );
+        assert_eq!(pushplus_sender.messages.len(), 1);
+        assert_eq!(pushplus_sender.messages[0].token, "token");
+        assert_eq!(favorite_count(&fixture.auth_db_path), 1);
+        assert_eq!(
+            ps_storage::count_favorites(&fixture.auth_db_path, unrelated_user_id, None)
+                .expect("unrelated favorites should be counted"),
+            0
+        );
+        let state = ps_recommend::load_state(&outcome.state_path, &fixture.db_name, "ignored")
+            .expect("completed state should load");
+        assert!(state
+            .delivery_dedupe
+            .keys()
+            .all(|key| key.starts_with(&format!("{}:", fixture.user_id.value()))));
+
+        let missing = filtered_subscribers(
+            &fixture.auth_db_path,
+            &fixture.secret_codec,
+            &fixture.db_name,
+            DeliveryWorkflow::Notify,
+            Some(UserId(i64::MAX)),
+        )
+        .expect("missing scoped subscriber should not load unrelated rows");
+        assert!(missing.is_empty());
+        let disabled = filtered_subscribers(
+            &fixture.auth_db_path,
+            &fixture.secret_codec,
+            &fixture.db_name,
+            DeliveryWorkflow::Notify,
+            Some(disabled_user_id),
+        )
+        .expect("disabled scoped subscriber should not load unrelated rows");
+        assert!(disabled.is_empty());
+        assert!(filtered_subscribers(
+            &fixture.auth_db_path,
+            &fixture.secret_codec,
+            &fixture.db_name,
+            DeliveryWorkflow::Notify,
+            None,
+        )
+        .is_err());
+
+        let mut corrupt_target_config =
+            fixture.config(DeliveryWorkflow::Notify, DeliveryMode::Execute, None, None);
+        corrupt_target_config.state_dir = fixture.root.path().join("corrupt-target-state");
+        let mut corrupt_target_ai_selector =
+            FixtureDeliveryAiSelector::new(vec![selection_outcome(&[101], "")]);
+        let mut corrupt_target_pushplus_sender =
+            FixturePushPlusSender::new(vec![Ok("unexpected-message".to_string())]);
+        let target_error = run_recommendation_delivery_with_services_for_user(
+            &corrupt_target_config,
+            Some(unrelated_user_id),
+            &mut corrupt_target_ai_selector,
+            &mut corrupt_target_pushplus_sender,
+        )
+        .expect_err("corrupt target should fail before delivery side effects");
+
+        assert_eq!(
+            target_error.to_string(),
+            "Stored secret authentication failed"
+        );
+        assert!(corrupt_target_ai_selector.subscriber_ids.is_empty());
+        assert!(corrupt_target_pushplus_sender.messages.is_empty());
+        assert_eq!(
+            ps_storage::count_favorites(&fixture.auth_db_path, unrelated_user_id, None)
+                .expect("corrupt target favorites should be counted"),
+            0
+        );
+        let corrupt_target_state = ps_recommend::load_state(
+            &state_path(
+                &corrupt_target_config.state_dir,
+                &corrupt_target_config.db_name,
+            ),
+            &corrupt_target_config.db_name,
+            "ignored",
+        )
+        .expect("corrupt target state should load");
+        assert_eq!(corrupt_target_state.status, "running");
+        assert!(corrupt_target_state.delivery_dedupe.is_empty());
+    }
+
     struct FixtureDeliveryAiSelector {
         outcomes: Vec<AiSelectionOutcome>,
+        subscriber_ids: Vec<String>,
     }
 
     impl FixtureDeliveryAiSelector {
         fn new(outcomes: Vec<AiSelectionOutcome>) -> Self {
             Self {
                 outcomes: outcomes.into_iter().rev().collect(),
+                subscriber_ids: Vec::new(),
             }
         }
     }
@@ -965,8 +1083,10 @@ mod tests {
     impl DeliveryAiSelector for FixtureDeliveryAiSelector {
         fn select_for_subscriber(
             &mut self,
-            _request: DeliveryAiSelectionRequest<'_>,
+            request: DeliveryAiSelectionRequest<'_>,
         ) -> Result<AiSelectionOutcome, DeliveryError> {
+            self.subscriber_ids
+                .push(request.subscriber.subscriber_id.clone());
             self.outcomes
                 .pop()
                 .ok_or_else(|| DeliveryError::Ai("missing fixture AI selection".into()))
@@ -1029,6 +1149,7 @@ mod tests {
         root: TempDir,
         auth_db_path: PathBuf,
         secret_codec: ps_storage::SecretCodec,
+        user_id: UserId,
         index_db_path: PathBuf,
         state_dir: PathBuf,
         db_name: String,
@@ -1059,6 +1180,7 @@ mod tests {
                 root,
                 auth_db_path,
                 secret_codec,
+                user_id: user.id,
                 index_db_path,
                 state_dir,
                 db_name: "fixture.sqlite".to_string(),
@@ -1087,6 +1209,43 @@ mod tests {
                 mode,
                 workflow,
             }
+        }
+
+        fn add_subscriber(&self, username: &str, settings: NotificationSettingsUpdate) -> UserId {
+            let connection = ps_storage::open_sqlite_connection(&self.auth_db_path)
+                .expect("auth database should open");
+            connection
+                .execute(
+                    "INSERT INTO users \
+                     (username, password_hash, salt, is_admin, created_at, updated_at) \
+                     VALUES (?1, ?2, ?3, 0, ?4, ?4)",
+                    (username, "hash", "salt", 2.0_f64),
+                )
+                .expect("subscriber user should be inserted");
+            let user_id = UserId(connection.last_insert_rowid());
+            drop(connection);
+            ps_storage::create_folder(&self.auth_db_path, user_id, "Tracking", true)
+                .expect("subscriber tracking folder should be created");
+            ps_storage::upsert_notification_settings(
+                &self.auth_db_path,
+                &self.secret_codec,
+                user_id,
+                &settings,
+            )
+            .expect("subscriber settings should be saved");
+            user_id
+        }
+
+        fn corrupt_notification_ai_key(&self, user_id: UserId) {
+            let connection = ps_storage::open_sqlite_connection(&self.auth_db_path)
+                .expect("auth database should open");
+            connection
+                .execute(
+                    "UPDATE notification_settings SET ai_api_key = 'psenc:v1:bad' \
+                     WHERE user_id = ?1",
+                    [user_id.value()],
+                )
+                .expect("subscriber ciphertext should be corrupted");
         }
     }
 
