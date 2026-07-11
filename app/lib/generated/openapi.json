@@ -2895,6 +2895,16 @@
                 }
               }
             }
+          },
+          "503": {
+            "description": "Another manual weekly push owns the process-local storage slot.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
           }
         },
         "security": [

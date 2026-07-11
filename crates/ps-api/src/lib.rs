@@ -2569,13 +2569,15 @@ mod tests {
         miri,
         ignore = "Miri does not support Tokio's Windows IOCP runtime initialization"
     )]
-    async fn tracking_manual_weekly_push_routes_cover_status_and_duplicate_start() {
+    async fn tracking_manual_push_routes_cover_status_capacity_and_release() {
         let route_config = TestRouteConfigGuard::new();
-        route_config.set_manual_push_delay_ms(Some(120));
+        route_config.set_manual_push_delay_ms(Some(500));
         let backend = TestBackend::new();
         let user = backend.authenticated_user("manual_push", false);
+        let competing_user = backend.authenticated_user("manual_push_competing", false);
         let app = backend.router();
         let auth = user.authorization_header();
+        let competing_auth = competing_user.authorization_header();
 
         let idle = json_request(
             &app,
@@ -2613,7 +2615,44 @@ mod tests {
             None,
         )
         .await;
+        let saturated = json_request(
+            &app,
+            Method::POST,
+            "/api/tracking/push-weekly",
+            Some(&competing_auth),
+            None,
+            None,
+        )
+        .await;
+        let competing_idle = json_request(
+            &app,
+            Method::GET,
+            "/api/tracking/push-weekly/status",
+            Some(&competing_auth),
+            None,
+            None,
+        )
+        .await;
+        let responsive_status = json_request(
+            &app,
+            Method::GET,
+            "/api/tracking/status",
+            Some(&competing_auth),
+            None,
+            None,
+        )
+        .await;
         let finished = wait_for_manual_push_completion(&app, &auth).await;
+        let competing_started = json_request(
+            &app,
+            Method::POST,
+            "/api/tracking/push-weekly",
+            Some(&competing_auth),
+            None,
+            None,
+        )
+        .await;
+        let competing_finished = wait_for_manual_push_completion(&app, &competing_auth).await;
 
         assert_eq!(idle.status, StatusCode::OK);
         assert_eq!(idle.payload["status"], "idle");
@@ -2632,6 +2671,15 @@ mod tests {
         assert_eq!(duplicate.payload["job_id"], started.payload["job_id"]);
         assert_eq!(running.status, StatusCode::OK);
         assert_eq!(running.payload["job_id"], started.payload["job_id"]);
+        assert_eq!(saturated.status, StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(
+            saturated.payload,
+            serde_json::json!({"detail": "Service temporarily unavailable"})
+        );
+        assert_eq!(competing_idle.status, StatusCode::OK);
+        assert_eq!(competing_idle.payload["status"], "idle");
+        assert!(competing_idle.payload["job_id"].is_null());
+        assert_eq!(responsive_status.status, StatusCode::OK);
         assert_eq!(finished.status, StatusCode::OK);
         assert_eq!(finished.payload["status"], "completed");
         assert_eq!(finished.payload["job_id"], started.payload["job_id"]);
@@ -2640,6 +2688,15 @@ mod tests {
             "Recommendation settings are not enabled; skipped push"
         );
         assert!(finished.payload["finished_at"].is_number());
+        assert_eq!(competing_started.status, StatusCode::OK);
+        assert_eq!(competing_started.payload["status"], "running");
+        assert!(competing_started.payload["job_id"].is_string());
+        assert_eq!(competing_finished.status, StatusCode::OK);
+        assert_eq!(competing_finished.payload["status"], "completed");
+        assert_eq!(
+            competing_finished.payload["job_id"],
+            competing_started.payload["job_id"]
+        );
     }
 
     #[tokio::test]

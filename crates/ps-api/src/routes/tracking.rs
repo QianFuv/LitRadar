@@ -1,6 +1,7 @@
 //! Tracking status and notification settings route handlers.
 
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::{Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -8,9 +9,9 @@ use axum::extract::State;
 use axum::http::HeaderMap;
 use axum::Json;
 use ps_domain::{
-    ManualWeeklyPushStatus, NotificationSettingsResponse, NotificationSettingsUpdate,
-    TrackingFolderSummary, TrackingStatusResponse, NOTIFICATION_AI_RETRY_ATTEMPTS_MAX,
-    NOTIFICATION_AI_RETRY_ATTEMPTS_MIN,
+    ErrorEnvelope, ManualWeeklyPushStatus, NotificationSettingsResponse,
+    NotificationSettingsUpdate, TrackingFolderSummary, TrackingStatusResponse, UserId,
+    NOTIFICATION_AI_RETRY_ATTEMPTS_MAX, NOTIFICATION_AI_RETRY_ATTEMPTS_MIN,
 };
 use ps_storage::StorageConfig;
 use ps_worker::delivery::{
@@ -25,16 +26,87 @@ const ALLOWED_DELIVERY_METHODS: [&str; 2] = ["folder", "pushplus"];
 const MANUAL_PUSH_STARTED_MESSAGE: &str = "Manual push started and is running in the background";
 const MANUAL_PUSH_IDLE_MESSAGE: &str = "No manual push task is running";
 
-static MANUAL_PUSH_JOBS: OnceLock<Mutex<HashMap<String, ManualWeeklyPushStatus>>> = OnceLock::new();
+static MANUAL_PUSH_REGISTRY: OnceLock<ManualPushRegistry> = OnceLock::new();
 #[cfg(test)]
 static MANUAL_PUSH_TEST_DELAY_MS: OnceLock<Mutex<Option<u64>>> = OnceLock::new();
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+struct ManualPushKey {
+    auth_db_path: PathBuf,
+    user_id: UserId,
+}
+
+#[derive(Default)]
+struct ManualPushRegistry {
+    jobs: Mutex<HashMap<ManualPushKey, ManualWeeklyPushStatus>>,
+}
+
+#[derive(Debug)]
+enum ManualPushAdmission {
+    Started(ManualWeeklyPushStatus),
+    Existing(ManualWeeklyPushStatus),
+    Saturated,
+}
+
+impl ManualPushRegistry {
+    fn admit(&self, key: ManualPushKey, proposed: ManualWeeklyPushStatus) -> ManualPushAdmission {
+        let mut jobs = self
+            .jobs
+            .lock()
+            .expect("manual push jobs lock should not be poisoned");
+        if let Some(status) = jobs.get(&key).filter(|status| status.status == "running") {
+            return ManualPushAdmission::Existing(status.clone());
+        }
+        if jobs.iter().any(|(existing_key, status)| {
+            existing_key.auth_db_path == key.auth_db_path && status.status == "running"
+        }) {
+            return ManualPushAdmission::Saturated;
+        }
+        jobs.insert(key, proposed.clone());
+        ManualPushAdmission::Started(proposed)
+    }
+
+    fn current(&self, key: &ManualPushKey) -> Option<ManualWeeklyPushStatus> {
+        self.jobs
+            .lock()
+            .expect("manual push jobs lock should not be poisoned")
+            .get(key)
+            .cloned()
+    }
+
+    fn update_if_current(&self, key: ManualPushKey, job_id: &str, status: ManualWeeklyPushStatus) {
+        let mut jobs = self
+            .jobs
+            .lock()
+            .expect("manual push jobs lock should not be poisoned");
+        let Some(current) = jobs.get(&key) else {
+            return;
+        };
+        if current.job_id.as_deref() == Some(job_id) {
+            jobs.insert(key, status);
+        }
+    }
+
+    #[cfg(test)]
+    fn running_count(&self, auth_db_path: &std::path::Path) -> usize {
+        self.jobs
+            .lock()
+            .expect("manual push jobs lock should not be poisoned")
+            .iter()
+            .filter(|(key, status)| key.auth_db_path == auth_db_path && status.status == "running")
+            .count()
+    }
+}
 
 /// Start one manual weekly-push job for the authenticated user.
 #[utoipa::path(
     post,
     path = "/api/tracking/push-weekly",
     tag = "tracking",
-    responses((status = 200, description = "Manual weekly push status.", body = ManualWeeklyPushStatus)),
+    responses(
+        (status = 200, description = "Manual weekly push status.", body = ManualWeeklyPushStatus),
+        (status = 503, description = "Another manual weekly push owns the process-local storage slot.", body = ErrorEnvelope)
+    ),
     security(("bearer_auth" = []), ("session_cookie" = []))
 )]
 pub(crate) async fn push_weekly_to_tracking(
@@ -43,12 +115,6 @@ pub(crate) async fn push_weekly_to_tracking(
 ) -> Result<Json<ManualWeeklyPushStatus>, ApiError> {
     let (user, _) = require_current_user(&state, &headers).await?;
     let key = manual_push_key(&state, user.id);
-    if let Some(status) = current_manual_push_status(&key) {
-        if status.status == "running" {
-            return Ok(Json(status));
-        }
-    }
-
     let job_id = run_storage(&state, move |storage| {
         ps_storage::random_hex(storage.auth_db_path(), 16)
     })
@@ -71,7 +137,11 @@ pub(crate) async fn push_weekly_to_tracking(
             folder_name: None,
         },
     );
-    set_manual_push_status(key.clone(), status.clone());
+    let status = match manual_push_registry().admit(key.clone(), status) {
+        ManualPushAdmission::Started(status) => status,
+        ManualPushAdmission::Existing(status) => return Ok(Json(status)),
+        ManualPushAdmission::Saturated => return Err(ApiError::service_unavailable()),
+    };
     let config = ManualWeeklyPushConfig {
         storage_config: state.storage_config().clone(),
         secret_codec: state.secret_codec().clone(),
@@ -319,31 +389,19 @@ fn nonempty_or_default(value: String, default: &str) -> String {
     }
 }
 
-fn manual_push_jobs() -> &'static Mutex<HashMap<String, ManualWeeklyPushStatus>> {
-    MANUAL_PUSH_JOBS.get_or_init(|| Mutex::new(HashMap::new()))
+fn manual_push_registry() -> &'static ManualPushRegistry {
+    MANUAL_PUSH_REGISTRY.get_or_init(ManualPushRegistry::default)
 }
 
-fn manual_push_key(state: &ApiState, user_id: ps_domain::UserId) -> String {
-    format!(
-        "{}:{}",
-        state.storage_config().auth_db_path().display(),
-        user_id.value()
-    )
+fn manual_push_key(state: &ApiState, user_id: UserId) -> ManualPushKey {
+    ManualPushKey {
+        auth_db_path: state.storage_config().auth_db_path().to_path_buf(),
+        user_id,
+    }
 }
 
-fn current_manual_push_status(key: &str) -> Option<ManualWeeklyPushStatus> {
-    manual_push_jobs()
-        .lock()
-        .expect("manual push jobs lock should not be poisoned")
-        .get(key)
-        .cloned()
-}
-
-fn set_manual_push_status(key: String, status: ManualWeeklyPushStatus) {
-    manual_push_jobs()
-        .lock()
-        .expect("manual push jobs lock should not be poisoned")
-        .insert(key, status);
+fn current_manual_push_status(key: &ManualPushKey) -> Option<ManualWeeklyPushStatus> {
+    manual_push_registry().current(key)
 }
 
 fn idle_manual_push_status() -> ManualWeeklyPushStatus {
@@ -364,7 +422,7 @@ fn idle_manual_push_status() -> ManualWeeklyPushStatus {
 
 fn spawn_manual_push_job(
     state: ApiState,
-    key: String,
+    key: ManualPushKey,
     job_id: String,
     started_at: f64,
     config: ManualWeeklyPushConfig,
@@ -423,16 +481,12 @@ where
         .map_err(|_| ApiError::internal_server_error())
 }
 
-fn update_manual_push_status_if_current(key: String, job_id: &str, status: ManualWeeklyPushStatus) {
-    let mut jobs = manual_push_jobs()
-        .lock()
-        .expect("manual push jobs lock should not be poisoned");
-    let Some(current) = jobs.get(&key) else {
-        return;
-    };
-    if current.job_id.as_deref() == Some(job_id) {
-        jobs.insert(key, status);
-    }
+fn update_manual_push_status_if_current(
+    key: ManualPushKey,
+    job_id: &str,
+    status: ManualWeeklyPushStatus,
+) {
+    manual_push_registry().update_if_current(key, job_id, status);
 }
 
 fn manual_push_status(
@@ -515,4 +569,125 @@ pub(crate) fn set_manual_push_test_delay_ms(delay_millis: Option<u64>) {
         .get_or_init(|| Mutex::new(None))
         .lock()
         .expect("manual push test delay lock should not be poisoned") = delay_millis;
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+    use std::sync::{Arc, Barrier};
+    use std::thread;
+
+    use ps_domain::{ManualWeeklyPushStatus, UserId};
+
+    use super::{ManualPushAdmission, ManualPushKey, ManualPushRegistry};
+
+    #[test]
+    fn manual_push_admission_is_atomic_and_bounded() {
+        let registry = Arc::new(ManualPushRegistry::default());
+        let key = ManualPushKey {
+            auth_db_path: PathBuf::from("atomic/auth.sqlite"),
+            user_id: UserId(7),
+        };
+        let barrier = Arc::new(Barrier::new(2));
+        let handles = ["job-one", "job-two"].map(|job_id| {
+            let registry = Arc::clone(&registry);
+            let key = key.clone();
+            let barrier = Arc::clone(&barrier);
+            thread::spawn(move || {
+                barrier.wait();
+                registry.admit(key, test_status(job_id, "running"))
+            })
+        });
+        let results = handles.map(|handle| handle.join().expect("admission thread should finish"));
+        let mut started_job_id = None;
+        let mut existing_job_id = None;
+
+        for result in results {
+            match result {
+                ManualPushAdmission::Started(status) => started_job_id = status.job_id,
+                ManualPushAdmission::Existing(status) => existing_job_id = status.job_id,
+                ManualPushAdmission::Saturated => {
+                    panic!("same-user admission should not report saturation")
+                }
+            }
+        }
+
+        assert!(started_job_id.is_some());
+        assert_eq!(existing_job_id, started_job_id);
+        assert_eq!(registry.running_count(&key.auth_db_path), 1);
+    }
+
+    #[test]
+    fn manual_push_admission_scopes_capacity_and_guards_completion() {
+        let registry = ManualPushRegistry::default();
+        let first_key = ManualPushKey {
+            auth_db_path: PathBuf::from("shared/auth.sqlite"),
+            user_id: UserId(1),
+        };
+        let competing_key = ManualPushKey {
+            auth_db_path: first_key.auth_db_path.clone(),
+            user_id: UserId(2),
+        };
+        let independent_key = ManualPushKey {
+            auth_db_path: PathBuf::from("independent/auth.sqlite"),
+            user_id: UserId(3),
+        };
+
+        assert!(matches!(
+            registry.admit(first_key.clone(), test_status("job-first", "running")),
+            ManualPushAdmission::Started(_)
+        ));
+        assert!(matches!(
+            registry.admit(
+                competing_key.clone(),
+                test_status("job-competing", "running")
+            ),
+            ManualPushAdmission::Saturated
+        ));
+        assert!(matches!(
+            registry.admit(independent_key, test_status("job-independent", "running")),
+            ManualPushAdmission::Started(_)
+        ));
+
+        registry.update_if_current(
+            first_key.clone(),
+            "job-first",
+            test_status("job-first", "completed"),
+        );
+        assert!(matches!(
+            registry.admit(
+                competing_key.clone(),
+                test_status("job-competing", "running")
+            ),
+            ManualPushAdmission::Started(_)
+        ));
+        registry.update_if_current(
+            competing_key.clone(),
+            "job-first",
+            test_status("job-first", "failed"),
+        );
+
+        let current = registry
+            .current(&competing_key)
+            .expect("competing job should remain present");
+        assert_eq!(current.status, "running");
+        assert_eq!(current.job_id.as_deref(), Some("job-competing"));
+        assert_eq!(registry.running_count(&competing_key.auth_db_path), 1);
+    }
+
+    fn test_status(job_id: &str, status: &str) -> ManualWeeklyPushStatus {
+        ManualWeeklyPushStatus {
+            job_id: Some(job_id.to_string()),
+            status: status.to_string(),
+            message: status.to_string(),
+            started_at: Some(1.0),
+            finished_at: (status != "running").then_some(2.0),
+            pushed: 0,
+            selected: 0,
+            total_candidates: None,
+            summary: String::new(),
+            folder_id: None,
+            folder_name: None,
+        }
+    }
 }

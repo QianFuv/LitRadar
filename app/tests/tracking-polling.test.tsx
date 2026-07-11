@@ -90,6 +90,15 @@ function startPushResponse(): Response {
 }
 
 /**
+ * Reject a manual push because another user owns the process-local slot.
+ *
+ * @returns Generic service-capacity error response.
+ */
+function saturatedPushResponse(): Response {
+  return HttpResponse.json({ detail: 'Service temporarily unavailable' }, { status: 503 });
+}
+
+/**
  * Return one running poll followed by a completed poll.
  *
  * @returns Current background status response.
@@ -128,6 +137,29 @@ async function pollsUntilCompleted(): Promise<void> {
   expect(statusRequestCount).toBeGreaterThanOrEqual(2);
 }
 
+/**
+ * Verify a capacity rejection displays its safe detail without starting polling.
+ */
+async function displaysCapacityErrorWithoutPolling(): Promise<void> {
+  statusRequestCount = 0;
+  server.use(
+    http.get('http://localhost/api/tracking/status', trackingStatusResponse),
+    http.get('http://localhost/api/meta/databases', databasesResponse),
+    http.get('http://localhost/api/favorites/folders', foldersResponse),
+    http.get('http://localhost/api/tracking/notification-settings', notificationSettingsResponse),
+    http.post('http://localhost/api/tracking/push-weekly', saturatedPushResponse),
+    http.get('http://localhost/api/tracking/push-weekly/status', pollPushResponse),
+  );
+  const user = userEvent.setup();
+
+  renderWithQuery(<TrackingPageContent userId={32} />);
+
+  await user.click(await screen.findByRole('button', { name: '推送到追踪文件夹' }));
+  expect(await screen.findByText('Service temporarily unavailable')).toBeInTheDocument();
+  expect(statusRequestCount).toBe(0);
+}
+
 describe('tracking polling flow', () => {
   test('polls a running push until completion', pollsUntilCompleted, 10_000);
+  test('shows a capacity error without polling', displaysCapacityErrorWithoutPolling);
 });
