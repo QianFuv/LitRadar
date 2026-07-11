@@ -4615,7 +4615,9 @@
           "ai_retry_attempts": {
             "type": "integer",
             "format": "int64",
-            "description": "Retry attempts per AI endpoint."
+            "description": "Retry attempts per AI endpoint.",
+            "maximum": 10,
+            "minimum": 1
           },
           "ai_system_prompt": {
             "type": "string",

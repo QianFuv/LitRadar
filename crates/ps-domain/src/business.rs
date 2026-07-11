@@ -245,6 +245,18 @@ pub struct FavoriteTrackingResponse {
     pub folder_name: Option<String>,
 }
 
+/// Minimum delivery retry count accepted from command-line callers.
+pub const DELIVERY_RETRY_ATTEMPTS_MIN: usize = 0;
+
+/// Maximum delivery retry count accepted by executable delivery paths.
+pub const DELIVERY_RETRY_ATTEMPTS_MAX: usize = 10;
+
+/// Minimum AI retry count accepted for persisted notification settings.
+pub const NOTIFICATION_AI_RETRY_ATTEMPTS_MIN: i64 = 1;
+
+/// Maximum AI retry count accepted for persisted notification settings.
+pub const NOTIFICATION_AI_RETRY_ATTEMPTS_MAX: i64 = DELIVERY_RETRY_ATTEMPTS_MAX as i64;
+
 /// Notification settings update payload.
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct NotificationSettingsUpdate {
@@ -313,6 +325,7 @@ pub struct NotificationSettingsUpdate {
     pub ai_backup_system_prompt: String,
     /// Retry attempts per AI endpoint.
     #[serde(default = "default_ai_retry_attempts")]
+    #[schema(minimum = 1, maximum = 10)]
     pub ai_retry_attempts: i64,
     /// Whether recommendations are enabled.
     #[serde(default = "default_enabled")]

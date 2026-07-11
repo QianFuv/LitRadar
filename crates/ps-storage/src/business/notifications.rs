@@ -241,7 +241,10 @@ fn notification_settings_from_row(
             )?,
             ai_backup_model: row.get(17)?,
             ai_backup_system_prompt: row.get(18)?,
-            ai_retry_attempts: row.get::<_, i64>(19)?.max(1),
+            ai_retry_attempts: row.get::<_, i64>(19)?.clamp(
+                ps_domain::NOTIFICATION_AI_RETRY_ATTEMPTS_MIN,
+                ps_domain::NOTIFICATION_AI_RETRY_ATTEMPTS_MAX,
+            ),
             enabled: row.get::<_, i64>(20)? != 0,
             created_at: row.get(21)?,
             updated_at: row.get(22)?,
@@ -285,7 +288,10 @@ fn notification_subscriber_from_row(
             )?),
             ai_backup_model: optional_trimmed(row.get::<_, String>(17)?),
             ai_backup_system_prompt: optional_trimmed(row.get::<_, String>(18)?),
-            ai_retry_attempts: row.get::<_, i64>(19)?.max(1),
+            ai_retry_attempts: row.get::<_, i64>(19)?.clamp(
+                ps_domain::NOTIFICATION_AI_RETRY_ATTEMPTS_MIN,
+                ps_domain::NOTIFICATION_AI_RETRY_ATTEMPTS_MAX,
+            ),
             tracking_folder_id: row.get(20)?,
         })
     })())
@@ -396,5 +402,47 @@ mod tests {
                 .expect("explicit null should clear");
         assert!(cleared.pushplus_token.is_empty());
         assert_eq!(cleared.ai_api_key, "primary-secret-value");
+    }
+
+    #[test]
+    fn notification_retry_attempts_are_normalized_on_read() {
+        let temp_dir = tempdir().expect("temp dir should be created");
+        let auth_db_path = temp_dir.path().join("auth.sqlite");
+        migrate_auth_database(&auth_db_path).expect("auth database should migrate");
+        let user = crate::bootstrap_admin(&auth_db_path, "retry-user", "hash", "salt", 1.0)
+            .expect("fixture user should bootstrap");
+        let codec = SecretCodec::from_key([23_u8; 32]);
+        let settings = serde_json::from_str::<NotificationSettingsUpdate>("{}")
+            .expect("default notification settings should deserialize");
+        super::upsert_notification_settings(&auth_db_path, &codec, user.id, &settings)
+            .expect("notification settings should persist");
+        let connection = Connection::open(&auth_db_path).expect("auth database should open");
+
+        for (stored_attempts, expected_attempts) in [(-1_i64, 1_i64), (i64::MAX, 10_i64)] {
+            connection
+                .execute(
+                    "UPDATE notification_settings SET ai_retry_attempts = ?1 WHERE user_id = ?2",
+                    params![stored_attempts, user.id.value()],
+                )
+                .expect("retry attempts fixture should update");
+
+            let loaded = super::get_notification_settings(&auth_db_path, &codec, user.id)
+                .expect("notification settings should load")
+                .expect("notification settings should exist");
+            let subscribers = super::list_notification_subscribers(&auth_db_path, &codec)
+                .expect("notification subscribers should load");
+            let raw_attempts = connection
+                .query_row(
+                    "SELECT ai_retry_attempts FROM notification_settings WHERE user_id = ?1",
+                    [user.id.value()],
+                    |row| row.get::<_, i64>(0),
+                )
+                .expect("raw retry attempts should load");
+
+            assert_eq!(loaded.ai_retry_attempts, expected_attempts);
+            assert_eq!(subscribers.len(), 1);
+            assert_eq!(subscribers[0].ai_retry_attempts, expected_attempts);
+            assert_eq!(raw_attempts, stored_attempts);
+        }
     }
 }

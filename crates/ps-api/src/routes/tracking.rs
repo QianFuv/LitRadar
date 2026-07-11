@@ -9,7 +9,8 @@ use axum::http::HeaderMap;
 use axum::Json;
 use ps_domain::{
     ManualWeeklyPushStatus, NotificationSettingsResponse, NotificationSettingsUpdate,
-    TrackingFolderSummary, TrackingStatusResponse,
+    TrackingFolderSummary, TrackingStatusResponse, NOTIFICATION_AI_RETRY_ATTEMPTS_MAX,
+    NOTIFICATION_AI_RETRY_ATTEMPTS_MIN,
 };
 use ps_storage::StorageConfig;
 use ps_worker::delivery::{
@@ -191,6 +192,13 @@ pub(crate) async fn update_notification_settings(
     Json(body): Json<NotificationSettingsUpdate>,
 ) -> Result<Json<NotificationSettingsResponse>, ApiError> {
     let (user, _) = require_current_user(&state, &headers).await?;
+    if !(NOTIFICATION_AI_RETRY_ATTEMPTS_MIN..=NOTIFICATION_AI_RETRY_ATTEMPTS_MAX)
+        .contains(&body.ai_retry_attempts)
+    {
+        return Err(ApiError::bad_request(format!(
+            "ai_retry_attempts must be between {NOTIFICATION_AI_RETRY_ATTEMPTS_MIN} and {NOTIFICATION_AI_RETRY_ATTEMPTS_MAX}"
+        )));
+    }
     let requested_databases = body.selected_databases;
     let (available_databases, mut selected_databases) = run_storage(&state, move |storage| {
         let available_databases = ps_storage::list_available_database_names(&storage)?;

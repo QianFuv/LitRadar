@@ -29,7 +29,8 @@ pub use business::{
     ScheduledJobSpec, ScheduledJobValidationError, ScheduledTaskCreate, ScheduledTaskInfo,
     ScheduledTaskRunInfo, ScheduledTaskUpdate, ScheduledTaskValidationError,
     SchedulerStatusResponse, SchedulerWorkerInfo, TrackingFolderSummary, TrackingSetRequest,
-    TrackingStatusResponse,
+    TrackingStatusResponse, DELIVERY_RETRY_ATTEMPTS_MAX, DELIVERY_RETRY_ATTEMPTS_MIN,
+    NOTIFICATION_AI_RETRY_ATTEMPTS_MAX, NOTIFICATION_AI_RETRY_ATTEMPTS_MIN,
 };
 pub use cnki::{
     CnkiErrorDetail, CnkiLoginPollRequest, CnkiLoginPollResponse, CnkiLoginStartResponse,

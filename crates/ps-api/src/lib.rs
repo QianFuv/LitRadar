@@ -2245,6 +2245,59 @@ mod tests {
             None,
         )
         .await;
+        let minimum_retry_settings = json_request(
+            &app,
+            Method::PUT,
+            "/api/tracking/notification-settings",
+            Some(&auth),
+            None,
+            Some(serde_json::json!({
+                "delivery_method": "folder",
+                "ai_retry_attempts": 1,
+                "enabled": true
+            })),
+        )
+        .await;
+        let maximum_retry_settings = json_request(
+            &app,
+            Method::PUT,
+            "/api/tracking/notification-settings",
+            Some(&auth),
+            None,
+            Some(serde_json::json!({
+                "delivery_method": "folder",
+                "ai_retry_attempts": 10,
+                "enabled": true
+            })),
+        )
+        .await;
+        let mut invalid_retry_settings = Vec::new();
+        for ai_retry_attempts in [0_i64, -1, 11, i64::MAX] {
+            invalid_retry_settings.push(
+                json_request(
+                    &app,
+                    Method::PUT,
+                    "/api/tracking/notification-settings",
+                    Some(&auth),
+                    None,
+                    Some(serde_json::json!({
+                        "delivery_method": "folder",
+                        "ai_retry_attempts": ai_retry_attempts,
+                        "enabled": true
+                    })),
+                )
+                .await,
+            );
+        }
+        let retry_settings_after_rejections = json_request(
+            &app,
+            Method::GET,
+            "/api/tracking/notification-settings",
+            Some(&auth),
+            None,
+            None,
+        )
+        .await;
         let pushplus_settings = json_request(
             &app,
             Method::PUT,
@@ -2321,6 +2374,22 @@ mod tests {
         assert_eq!(stored_settings.payload["delivery_method"], "folder");
         assert_eq!(configured_status.status, StatusCode::OK);
         assert_eq!(configured_status.payload["notification_configured"], true);
+        assert_eq!(minimum_retry_settings.status, StatusCode::OK);
+        assert_eq!(minimum_retry_settings.payload["ai_retry_attempts"], 1);
+        assert_eq!(maximum_retry_settings.status, StatusCode::OK);
+        assert_eq!(maximum_retry_settings.payload["ai_retry_attempts"], 10);
+        for response in invalid_retry_settings {
+            assert_eq!(response.status, StatusCode::BAD_REQUEST);
+            assert_eq!(
+                response.payload["detail"],
+                "ai_retry_attempts must be between 1 and 10"
+            );
+        }
+        assert_eq!(retry_settings_after_rejections.status, StatusCode::OK);
+        assert_eq!(
+            retry_settings_after_rejections.payload["ai_retry_attempts"],
+            10
+        );
         assert_eq!(pushplus_settings.status, StatusCode::OK);
         assert_eq!(pushplus_settings.payload["delivery_method"], "pushplus");
         assert_eq!(pushplus_settings.payload["pushplus_template"], "markdown");
