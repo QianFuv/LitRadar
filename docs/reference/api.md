@@ -185,17 +185,13 @@ CNKI 会话按 Paper Scanner 用户隔离；状态接口只返回安全元数据
 
 ## 缓存与 CORS
 
-匿名请求访问 `/api/articles*` 和 `/api/meta*` 时，后端可以返回：
-
-```http
-Cache-Control: public, max-age=300, stale-while-revalidate=600
-```
-
-请求带有 `Authorization` 或 `ps_session` 时，同一类响应使用：
+`/api/articles*`、`/api/meta*` 及其他受保护路由需要普通用户或管理员身份，不能作为匿名共享缓存内容。请求带有 `Authorization` 或 `ps_session` 时，以及任何返回 `401 Unauthorized` 的响应，后端都会设置：
 
 ```http
 Cache-Control: private, no-store
 ```
+
+前文列出的免认证端点在成功响应时保持现有缓存头行为；本策略不会为它们新增共享缓存 TTL。
 
 默认 Web 部署通过 Next.js rewrite 同源访问 `/api/*`。浏览器跨源直连时，管理员必须在 `cors_allowed_origins` 中显式列出 Origin；不要使用通配 Origin 搭配 Cookie credentials。
 
