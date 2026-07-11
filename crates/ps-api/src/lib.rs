@@ -15,7 +15,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use axum::extract::Request;
 use axum::http::header::{AUTHORIZATION, CACHE_CONTROL, COOKIE};
-use axum::http::HeaderValue;
+use axum::http::{HeaderValue, StatusCode};
 use axum::middleware::{from_fn, Next};
 use axum::response::Response;
 use axum::Router;
@@ -31,11 +31,8 @@ use tracing::Level;
 /// API route prefix preserved from the Python backend.
 pub const API_PREFIX: &str = "/api";
 
-/// Cache-Control header for credentialed requests.
+/// Cache-Control header for credentialed requests and unauthorized responses.
 pub const AUTHENTICATED_CACHE_CONTROL: &str = "private, no-store";
-
-/// Cache-Control header for unauthenticated index reads.
-pub const PUBLIC_INDEX_CACHE_CONTROL: &str = "public, max-age=300, stale-while-revalidate=600";
 
 const API_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(10);
 
@@ -211,18 +208,12 @@ async fn cache_control_middleware(request: Request, next: Next) -> Response {
             .get(COOKIE)
             .and_then(|value| value.to_str().ok())
             .is_some_and(has_session_cookie);
-    let is_public_index_path = is_public_index_cache_path(request.uri().path());
     let mut response = next.run(request).await;
 
-    if has_auth_credentials {
+    if has_auth_credentials || response.status() == StatusCode::UNAUTHORIZED {
         response.headers_mut().insert(
             CACHE_CONTROL,
             HeaderValue::from_static(AUTHENTICATED_CACHE_CONTROL),
-        );
-    } else if is_public_index_path {
-        response.headers_mut().insert(
-            CACHE_CONTROL,
-            HeaderValue::from_static(PUBLIC_INDEX_CACHE_CONTROL),
         );
     }
 
@@ -234,11 +225,6 @@ fn has_session_cookie(cookie_header: &str) -> bool {
         .split(';')
         .map(str::trim)
         .any(|cookie| cookie.starts_with(&format!("{SESSION_COOKIE_NAME}=")))
-}
-
-fn is_public_index_cache_path(path: &str) -> bool {
-    path.starts_with(&format!("{API_PREFIX}/articles"))
-        || path.starts_with(&format!("{API_PREFIX}/meta"))
 }
 
 async fn shutdown_signal(state: ApiState) {
@@ -300,7 +286,8 @@ mod tests {
 
     use axum::body::{to_bytes, Body};
     use axum::http::header::{
-        AUTHORIZATION, CONTENT_DISPOSITION, CONTENT_TYPE, COOKIE, RETRY_AFTER, SET_COOKIE,
+        AUTHORIZATION, CACHE_CONTROL, CONTENT_DISPOSITION, CONTENT_TYPE, COOKIE, RETRY_AFTER,
+        SET_COOKIE,
     };
     use axum::http::{Method, Request, StatusCode};
     use axum::Router;
@@ -351,6 +338,100 @@ mod tests {
         heartbeat.abort();
         let _ = heartbeat.await;
         state.close_blocking_executor();
+    }
+
+    #[tokio::test]
+    #[cfg_attr(
+        miri,
+        ignore = "Miri does not support Tokio's Windows IOCP runtime initialization"
+    )]
+    async fn cache_control_prevents_shared_reuse_of_protected_authorization_failures() {
+        let backend = TestBackend::new();
+        let user = backend.authenticated_user("cache_reader", false);
+        let index_database = backend.create_index_database("fixture.sqlite");
+        let app = backend.router();
+        let authorization = user.authorization_header();
+        let cookie = user.cookie_header();
+
+        let anonymous_articles = json_request(
+            &app,
+            Method::GET,
+            "/api/articles?db=fixture",
+            None,
+            None,
+            None,
+        )
+        .await;
+        let anonymous_metadata =
+            json_request(&app, Method::GET, "/api/meta/databases", None, None, None).await;
+        let bearer_article = json_request(
+            &app,
+            Method::GET,
+            &format!("/api/articles/{}?db=fixture", index_database.article_id),
+            Some(&authorization),
+            None,
+            None,
+        )
+        .await;
+        let cookie_metadata = json_request(
+            &app,
+            Method::GET,
+            "/api/meta/databases",
+            None,
+            Some(&cookie),
+            None,
+        )
+        .await;
+        let public_health = json_request(&app, Method::GET, "/api/health", None, None, None).await;
+
+        for response in [&anonymous_articles, &anonymous_metadata] {
+            assert_eq!(response.status, StatusCode::UNAUTHORIZED);
+            assert_eq!(
+                response.payload,
+                serde_json::json!({"detail": "Authentication required"})
+            );
+        }
+        assert_eq!(
+            [
+                anonymous_articles
+                    .headers
+                    .get(CACHE_CONTROL)
+                    .and_then(|value| value.to_str().ok()),
+                anonymous_metadata
+                    .headers
+                    .get(CACHE_CONTROL)
+                    .and_then(|value| value.to_str().ok()),
+            ],
+            [Some("private, no-store"), Some("private, no-store")]
+        );
+        assert_eq!(bearer_article.status, StatusCode::OK);
+        assert_eq!(
+            bearer_article.payload["article_id"],
+            index_database.article_id.to_string()
+        );
+        assert_eq!(bearer_article.payload["doi"], "10.1234/fixture");
+        assert_eq!(
+            bearer_article
+                .headers
+                .get(CACHE_CONTROL)
+                .and_then(|value| value.to_str().ok()),
+            Some("private, no-store")
+        );
+        assert_eq!(cookie_metadata.status, StatusCode::OK);
+        assert_eq!(
+            cookie_metadata.payload,
+            serde_json::json!(["fixture.sqlite"])
+        );
+        assert_eq!(
+            cookie_metadata
+                .headers
+                .get(CACHE_CONTROL)
+                .and_then(|value| value.to_str().ok()),
+            Some("private, no-store")
+        );
+        assert_eq!(public_health.status, StatusCode::OK);
+        assert_eq!(public_health.payload, serde_json::json!({"status": "ok"}));
+        assert!(public_health.headers.get(CACHE_CONTROL).is_none());
     }
 
     #[test]
