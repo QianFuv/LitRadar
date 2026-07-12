@@ -7,6 +7,11 @@ node_modules/
 .next/
 app/node_modules/
 app/.next/
+app/out/
+app/coverage/
+app/test-results/
+app/playwright-report/
+app/*.tsbuildinfo
 data/index/
 data/push_state/
 litradar.egg-info/

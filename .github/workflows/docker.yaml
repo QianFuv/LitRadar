@@ -1,4 +1,4 @@
-name: Build and Push Docker Images
+name: Build and Push Docker Image
 
 on:
   push:
@@ -9,6 +9,7 @@ on:
       - "crates/**"
       - "libs/**"
       - "data/meta/**"
+      - ".dockerignore"
       - "Dockerfile"
       - "app/**"
       - ".github/workflows/backend.yaml"
@@ -22,10 +23,9 @@ jobs:
   changes:
     runs-on: ubuntu-latest
     outputs:
-      api_quality: ${{ steps.filter.outputs.api_quality }}
-      app_quality: ${{ steps.filter.outputs.app_quality }}
-      api_image: ${{ steps.filter.outputs.api_image }}
-      app_image: ${{ steps.filter.outputs.app_image }}
+      runtime_image: ${{ steps.filter.outputs.runtime_image }}
+      backend_workflow: ${{ steps.filter.outputs.backend_workflow }}
+      frontend_workflow: ${{ steps.filter.outputs.frontend_workflow }}
     steps:
       - uses: actions/checkout@v6
 
@@ -33,34 +33,38 @@ jobs:
         id: filter
         with:
           filters: |
-            api_quality:
+            runtime_image:
               - "Cargo.toml"
               - "Cargo.lock"
               - "crates/**"
               - "libs/**"
               - "data/meta/**"
+              - ".dockerignore"
               - "Dockerfile"
+              - "app/**"
+            backend_workflow:
               - ".github/workflows/backend.yaml"
-            app_quality:
-              - "Cargo.toml"
-              - "Cargo.lock"
-              - "crates/litradar-api/**"
-              - "crates/litradar-domain/**"
-              - "app/**"
+            frontend_workflow:
               - ".github/workflows/frontend.yaml"
-            api_image:
-              - "Cargo.toml"
-              - "Cargo.lock"
-              - "crates/**"
-              - "libs/**"
-              - "data/meta/**"
-              - "Dockerfile"
-            app_image:
-              - "app/**"
 
-  build-api:
-    needs: [changes, backend-quality]
-    if: needs.changes.outputs.api_image == 'true'
+  backend-quality:
+    needs: changes
+    if: needs.changes.outputs.runtime_image == 'true' || needs.changes.outputs.backend_workflow == 'true'
+    uses: ./.github/workflows/backend.yaml
+
+  frontend-quality:
+    needs: changes
+    if: needs.changes.outputs.runtime_image == 'true' || needs.changes.outputs.frontend_workflow == 'true'
+    uses: ./.github/workflows/frontend.yaml
+
+  build-image:
+    needs: [changes, backend-quality, frontend-quality]
+    if: |
+      always() &&
+      needs.changes.result == 'success' &&
+      needs.changes.outputs.runtime_image == 'true' &&
+      needs.backend-quality.result == 'success' &&
+      needs.frontend-quality.result == 'success'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -79,7 +83,7 @@ jobs:
       - uses: docker/metadata-action@v5
         id: meta
         with:
-          images: ${{ env.REGISTRY }}/${{ github.repository }}-api
+          images: ${{ env.REGISTRY }}/${{ github.repository }}
           tags: |
             type=sha
             type=raw,value=latest
@@ -92,48 +96,3 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-
-  build-app:
-    needs: [changes, frontend-quality]
-    if: needs.changes.outputs.app_image == 'true'
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write
-    steps:
-      - uses: actions/checkout@v6
-
-      - uses: docker/setup-buildx-action@v3
-
-      - uses: docker/login-action@v3
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - uses: docker/metadata-action@v5
-        id: meta
-        with:
-          images: ${{ env.REGISTRY }}/${{ github.repository }}-app
-          tags: |
-            type=sha
-            type=raw,value=latest
-
-      - uses: docker/build-push-action@v6
-        with:
-          context: ./app
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-  backend-quality:
-    needs: changes
-    if: needs.changes.outputs.api_quality == 'true'
-    uses: ./.github/workflows/backend.yaml
-
-  frontend-quality:
-    needs: changes
-    if: needs.changes.outputs.app_quality == 'true'
-    uses: ./.github/workflows/frontend.yaml
