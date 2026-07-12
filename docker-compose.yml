@@ -1,7 +1,7 @@
 name: litradar
 
 services:
-  api:
+  litradar:
     build: .
     image: ghcr.io/qianfuv/litradar:latest
     ports:
@@ -10,7 +10,6 @@ services:
       - ./data:/app/data:rw
     secrets:
       - litradar_key
-    command: ["api", "--host", "0.0.0.0", "--port", "8000", "--project-root", "/app", "--secret-key-file", "/run/secrets/litradar_key"]
     restart: unless-stopped
     read_only: true
     tmpfs:
@@ -20,37 +19,11 @@ services:
     security_opt:
       - no-new-privileges:true
     healthcheck:
-      test: ["CMD-SHELL", "curl --fail --silent --show-error http://127.0.0.1:8000/api/health >/dev/null && curl --fail --silent --show-error http://127.0.0.1:8000/ >/dev/null"]
+      test: ["CMD-SHELL", "curl --fail --silent --show-error http://127.0.0.1:8000/health/ready >/dev/null && curl --fail --silent --show-error http://127.0.0.1:8000/ >/dev/null"]
       interval: 10s
       timeout: 3s
       retries: 3
       start_period: 10s
-
-  worker:
-    build: .
-    image: ghcr.io/qianfuv/litradar:latest
-    command: ["worker", "--project-root", "/app", "--secret-key-file", "/run/secrets/litradar_key", "--interval-seconds", "30"]
-    volumes:
-      - ./data:/app/data:rw
-    secrets:
-      - litradar_key
-    depends_on:
-      api:
-        condition: service_healthy
-    restart: unless-stopped
-    read_only: true
-    tmpfs:
-      - /tmp:rw,noexec,nosuid,size=64m
-    cap_drop:
-      - ALL
-    security_opt:
-      - no-new-privileges:true
-    healthcheck:
-      test: ["CMD", "curl", "--fail", "--silent", "--show-error", "http://api:8000/api/health/worker"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 45s
 
 secrets:
   litradar_key:

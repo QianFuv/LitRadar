@@ -40,7 +40,7 @@ WORKDIR /app
 COPY Cargo.toml Cargo.lock ./
 COPY crates crates
 
-RUN cargo build --release --bin admin --bin api --bin litradar-api --bin index --bin notify --bin push --bin scheduler --bin worker
+RUN cargo build --release --locked --bin litradar
 
 
 FROM debian:bookworm-slim
@@ -55,14 +55,7 @@ RUN apt-get update \
     && mkdir -p /app/data \
     && chown -R litradar:litradar /app
 
-COPY --from=rust-build /app/target/release/admin /usr/local/bin/admin
-COPY --from=rust-build /app/target/release/api /usr/local/bin/api
-COPY --from=rust-build /app/target/release/index /usr/local/bin/index
-COPY --from=rust-build /app/target/release/notify /usr/local/bin/notify
-COPY --from=rust-build /app/target/release/push /usr/local/bin/push
-COPY --from=rust-build /app/target/release/litradar-api /usr/local/bin/litradar-api
-COPY --from=rust-build /app/target/release/scheduler /usr/local/bin/scheduler
-COPY --from=rust-build /app/target/release/worker /usr/local/bin/worker
+COPY --from=rust-build /app/target/release/litradar /usr/local/bin/litradar
 
 COPY --chown=litradar:litradar libs/simple-linux libs/simple-linux
 COPY --chown=litradar:litradar data/meta data/meta
@@ -74,4 +67,6 @@ USER litradar
 
 EXPOSE 8000
 
-CMD ["api", "--host", "0.0.0.0", "--port", "8000", "--project-root", "/app"]
+ENTRYPOINT ["litradar"]
+
+CMD ["serve", "--host", "0.0.0.0", "--port", "8000", "--project-root", "/app", "--secret-key-file", "/run/secrets/litradar_key"]
