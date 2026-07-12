@@ -178,7 +178,7 @@ pnpm generate:api:check
 
 ## Rust 检查
 
-与 Rust CI 对齐：
+与 Backend CI 对齐：
 
 ```bash
 cargo fmt --all -- --check

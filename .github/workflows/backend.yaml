@@ -1,4 +1,4 @@
-name: Rust CI
+name: Backend CI
 
 on:
   workflow_call:
@@ -11,7 +11,7 @@ on:
       - "crates/**"
       - "libs/**"
       - "data/meta/**"
-      - ".github/workflows/rust.yaml"
+      - ".github/workflows/backend.yaml"
   pull_request:
     paths:
       - "Cargo.toml"
@@ -19,17 +19,17 @@ on:
       - "crates/**"
       - "libs/**"
       - "data/meta/**"
-      - ".github/workflows/rust.yaml"
+      - ".github/workflows/backend.yaml"
 
 concurrency:
-  group: rust-ci-${{ github.workflow }}-${{ github.ref }}
+  group: backend-ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  rust:
+  backend:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6

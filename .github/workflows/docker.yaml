@@ -11,7 +11,7 @@ on:
       - "data/meta/**"
       - "Dockerfile"
       - "app/**"
-      - ".github/workflows/rust.yaml"
+      - ".github/workflows/backend.yaml"
       - ".github/workflows/frontend.yaml"
       - ".github/workflows/docker.yaml"
 
@@ -40,7 +40,7 @@ jobs:
               - "libs/**"
               - "data/meta/**"
               - "Dockerfile"
-              - ".github/workflows/rust.yaml"
+              - ".github/workflows/backend.yaml"
             app_quality:
               - "Cargo.toml"
               - "Cargo.lock"
@@ -59,7 +59,7 @@ jobs:
               - "app/**"
 
   build-api:
-    needs: [changes, rust-quality]
+    needs: [changes, backend-quality]
     if: needs.changes.outputs.api_image == 'true'
     runs-on: ubuntu-latest
     permissions:
@@ -128,10 +128,10 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-  rust-quality:
+  backend-quality:
     needs: changes
     if: needs.changes.outputs.api_quality == 'true'
-    uses: ./.github/workflows/rust.yaml
+    uses: ./.github/workflows/backend.yaml
 
   frontend-quality:
     needs: changes
