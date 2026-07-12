@@ -71,7 +71,7 @@ admin backup verify \
 
 ## Docker Compose
 
-后端容器只有 `/app/data` 持久挂载，备份应使用独立 `/backups`：
+`api` 和 `worker` 只有 `/app/data` 持久挂载，备份应使用独立 `/backups`：
 
 ```bash
 mkdir -p backups
@@ -103,7 +103,7 @@ docker compose run --rm --no-deps \
 4. 保留当前目标数据的独立回滚副本。
 5. 执行带显式确认的恢复。
 6. 用与备份匹配的部署密钥运行 `admin secrets verify`。
-7. 启动服务并检查 API、worker 和前端健康。
+7. 启动服务并通过同一 8000 入口检查 Web、API 和 worker 健康。
 
 本机：
 
@@ -117,7 +117,7 @@ admin backup restore \
 Docker：
 
 ```bash
-docker compose stop app api worker
+docker compose stop api worker
 
 docker compose run --rm --no-deps \
   -v "$PWD/backups:/backups:ro" \

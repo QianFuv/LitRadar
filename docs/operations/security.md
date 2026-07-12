@@ -126,7 +126,7 @@ printf '%s\n' "$ADMIN_PASSWORD" |
 
 默认 `secure_cookies=false`，适合 loopback HTTP。生产 HTTPS 应先把数据库设置改为 `true`，再用 `api --require-secure-cookies` 作为启动门；不满足时 API 在绑定端口前失败。
 
-默认前端通过同源 rewrite 调用 API。浏览器跨源直连时：
+生产 Web 静态资源和后端命名空间由同一个 Rust 监听器直接提供，因此浏览器默认同源调用 API，不经过 Next.js 服务或生产 rewrite。本地开发由 Next.js 8000 端口代理内部 Rust 8001；浏览器跨源直连时：
 
 - 在 `cors_allowed_origins` 列出准确 Origin
 - credentialed CORS 拒绝 `*` wildcard，避免把任意网站纳入携带 Cookie 的信任边界
@@ -144,23 +144,33 @@ MCP 的 `Host` 防护与浏览器 CORS 分开：
 
 全局配置详见[运行配置参考](../reference/configuration.md)。
 
+### 静态 Web 缓存
+
+生产导出的 Web 文件是公开构建产物，不得包含部署密钥或用户秘密。Rust 按以下边界设置缓存：
+
+- 成功的 `/_next/static/*` 哈希资源使用 `public, max-age=31536000, immutable`，即使请求携带会话 Cookie 也不会变成用户专属内容。
+- 页面、导航 payload 和导出的 404 使用 `no-cache`，以便浏览器重新验证版本。
+- 受保护 API、携带 Bearer/Cookie 的非静态响应和 `401` 继续使用 `private, no-store`。
+- 支持 gzip 的客户端读取镜像内预压缩兄弟文件；不支持的客户端读取原文件。
+
+`/api`、`/mcp`、`/docs` 和 `/openapi.json` 始终由后端路由优先处理，未知路径不会借静态 fallback 读取项目数据或密钥。
+
 ## 网络暴露
 
 根 Compose 仅发布：
 
-- `127.0.0.1:3000:3000`
 - `127.0.0.1:8000:8000`
 
-容器内监听 `0.0.0.0` 只用于 Compose 网络通信。远程访问应经 TLS 反向代理，并同时配置 Secure Cookie、准确 CORS/MCP 白名单和共享限流。不要直接把宿主机端口改为所有网卡。
+该 Rust 入口同时提供 Web、REST、Swagger/OpenAPI 和 MCP。容器内监听 `0.0.0.0` 只用于 Compose 网络通信。远程访问应经 TLS 反向代理，并同时配置 Secure Cookie、准确 CORS/MCP 白名单和共享限流。不要直接把宿主机端口改为所有网卡。
 
 ## 容器边界
 
-三个常驻容器：
+`api` 和 `worker` 两个常驻容器使用同一个无后缀镜像：
 
-- 后端使用 UID/GID `10001:10001`，前端使用 `node`
+- 两者都使用 UID/GID `10001:10001`；最终镜像没有 Node.js 运行时
 - 根文件系统只读
 - `/tmp` 使用 `noexec,nosuid` tmpfs
-- 后端只允许 `/app/data` 持久写入
+- 只允许 `/app/data` 持久写入；`/app/web` 保持只读
 - 丢弃全部 Linux capabilities
 - 启用 `no-new-privileges:true`
 - 提供独立健康检查

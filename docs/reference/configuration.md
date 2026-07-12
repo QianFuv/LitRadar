@@ -4,14 +4,14 @@ LitRadar 不使用单一 `.env` 作为配置中心。不同配置来源服务于
 
 ## 配置来源
 
-| 来源                                | 范围               | 典型内容                                  |
-| ----------------------------------- | ------------------ | ----------------------------------------- |
-| CLI 参数                            | 单个进程或单次作业 | 路径、监听地址、并发、超时、dry-run       |
-| `data/auth.sqlite.runtime_settings` | 后端全局           | scholarly key 池、CORS、MCP、Cookie       |
-| `notification_settings`             | 单个用户           | AI、PushPlus、偏好、投递方式              |
-| 前端环境变量                        | 前端构建/运行      | 浏览器 API 地址、服务端 rewrite、监听地址 |
-| 部署密钥文件                        | 一个部署           | 认证和解密数据库秘密值                    |
-| `RUST_LOG`                          | 一个 Rust 进程     | tracing 过滤                              |
+| 来源                                | 范围               | 典型内容                            |
+| ----------------------------------- | ------------------ | ----------------------------------- |
+| CLI 参数                            | 单个进程或单次作业 | 路径、监听地址、并发、超时、dry-run |
+| `data/auth.sqlite.runtime_settings` | 后端全局           | scholarly key 池、CORS、MCP、Cookie |
+| `notification_settings`             | 单个用户           | AI、PushPlus、偏好、投递方式        |
+| 前端环境变量                        | 前端构建/本地开发  | 浏览器 API 地址、开发 rewrite 目标  |
+| 部署密钥文件                        | 一个部署           | 认证和解密数据库秘密值              |
+| `RUST_LOG`                          | 一个 Rust 进程     | tracing 过滤                        |
 
 后端不从环境变量读取 scholarly、AI、PushPlus、CORS、MCP、Cookie 或代理凭据。
 
@@ -56,8 +56,8 @@ key/mailto 池按逗号、分号或换行拆分，去除空项并按首次出现
 每个非空 Origin 必须是准确的 `http://` 或 `https://` scheme、非空 authority 以及可选显式端口组成的 tuple，例如：
 
 - `https://paper.example`
-- `http://localhost:3000`
-- `http://[::1]:3000`
+- `http://localhost:8000`
+- `http://[::1]:8000`
 
 不接受 `*` wildcard、裸主机名、非 HTTP(S) scheme、user-info、尾随 `/` 或其他 path、query、fragment。`cors_allowed_origins` 也不接受 `null`；`mcp_allowed_origins` 额外保留精确字面量 `null`，用于现有 opaque Origin MCP 客户端兼容。
 
@@ -126,13 +126,12 @@ AI 和 PushPlus 是用户级设置，不是全局运行设置。每个用户在 
 
 ## 前端变量
 
-| 变量                  | 默认值                                                           | 生效位置                                 |
-| --------------------- | ---------------------------------------------------------------- | ---------------------------------------- |
-| `NEXT_PUBLIC_API_URL` | 空                                                               | 浏览器 API 根地址；空值使用同源 `/api/*` |
-| `INTERNAL_API_URL`    | 本地 `http://localhost:8000`；Docker build arg `http://api:8000` | Next.js 服务端 rewrite                   |
-| `HOSTNAME`            | 运行环境决定；Compose 为 `0.0.0.0`                               | standalone 服务监听                      |
+| 变量                  | 默认值                  | 生效位置                                                                |
+| --------------------- | ----------------------- | ----------------------------------------------------------------------- |
+| `NEXT_PUBLIC_API_URL` | 空                      | 前端构建时写入浏览器 API 根地址；空值使用当前 Origin 的同源 `/api/*`    |
+| `INTERNAL_API_URL`    | `http://localhost:8001` | 仅供 `next dev` 代理 `/api`、`/mcp`、`/docs` 和 `/openapi.json` 到 Rust |
 
-本地同源开发通常不设置 `NEXT_PUBLIC_API_URL`。浏览器跨源直连时，后端 `cors_allowed_origins` 必须包含前端 Origin。
+标准本地开发不设置 `NEXT_PUBLIC_API_URL`：浏览器只访问 Next.js 8000，Rust 内部监听 8001。生产执行静态导出并由 Rust 8000 直接提供，既没有前端运行时环境变量，也不使用 `INTERNAL_API_URL` 或 standalone 监听配置。浏览器跨源直连时，必须在构建前设置 `NEXT_PUBLIC_API_URL`，并让后端 `cors_allowed_origins` 包含前端 Origin。
 
 ## `RUST_LOG`
 

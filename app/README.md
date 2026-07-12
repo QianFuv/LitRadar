@@ -1,6 +1,6 @@
 # LitRadar 前端包
 
-`app/` 是 LitRadar 的 Next.js Web 客户端，负责登录、检索、收藏、每周更新、文献追踪、个人设置和管理后台。本页只说明前端包的开发边界：
+`app/` 是 LitRadar 的 Next.js Web 客户端源码，负责登录、检索、收藏、每周更新、文献追踪、个人设置和管理后台。生产构建输出静态 `out/`，由 Rust API 进程直接提供；生产镜像没有独立 Next.js 进程或 Node.js 运行时。本页只说明前端包的开发边界：
 
 - 系统进程与数据流见[系统架构](../docs/architecture.md)。
 - REST 契约与认证方式见[API 参考](../docs/reference/api.md)。
@@ -9,7 +9,7 @@
 
 ## 工具链
 
-CI 与容器使用：
+CI 与前端构建阶段使用：
 
 | 工具              | 版本                              |
 | ----------------- | --------------------------------- |
@@ -25,7 +25,16 @@ CI 与容器使用：
 
 ## 本地运行
 
-先启动仓库根目录的 Rust API，再在 `app/` 中运行：
+先在仓库根目录启动只监听 loopback 8001 的 Rust API：
+
+```bash
+cargo run --bin api -- \
+  --host 127.0.0.1 \
+  --port 8001 \
+  --secret-key-file secrets/litradar.key
+```
+
+再在 `app/` 中运行：
 
 ```bash
 corepack enable pnpm
@@ -33,22 +42,24 @@ pnpm install --frozen-lockfile
 pnpm dev
 ```
 
-默认地址：
+默认浏览器入口统一为 `http://localhost:8000`。Next.js 开发服务器保留 HMR，并把 `/api/*`、`/mcp/*`、`/docs/*` 和 `/openapi.json` 代理到内部 Rust 地址 `http://localhost:8001`；浏览器不需要访问第二个端口。
 
-- 前端：`http://localhost:3000`
-- 后端：`http://localhost:8000`
+- Web：`http://localhost:8000/`
+- REST API：`http://localhost:8000/api`
+- Swagger UI：`http://localhost:8000/docs/`
+- OpenAPI JSON：`http://localhost:8000/openapi.json`
+- MCP：`http://localhost:8000/mcp`
 
-本地默认使用同源 `/api/*` rewrite，不需要单独配置浏览器 API 地址。
+生产构建执行 `pnpm build` 并写入 `out/`。生产静态文件和后端路由由同一个 Rust 监听器提供，不使用 Next.js rewrite，也没有 `pnpm start`/`next start` 路径。
 
 ## 环境变量
 
-| 变量                  | 默认值                                                           | 作用                                   |
-| --------------------- | ---------------------------------------------------------------- | -------------------------------------- |
-| `NEXT_PUBLIC_API_URL` | 空                                                               | 浏览器 API 根地址；空值使用当前 Origin |
-| `INTERNAL_API_URL`    | 本地 `http://localhost:8000`；Docker build arg `http://api:8000` | Next.js rewrite 的后端目标             |
-| `HOSTNAME`            | 运行环境决定；Compose 设置 `0.0.0.0`                             | standalone server 监听地址             |
+| 变量                  | 默认值                  | 作用                                                                 |
+| --------------------- | ----------------------- | -------------------------------------------------------------------- |
+| `NEXT_PUBLIC_API_URL` | 空                      | 浏览器 API 根地址；空值使用当前 Origin                               |
+| `INTERNAL_API_URL`    | `http://localhost:8001` | 仅供 `next dev` 将后端命名空间转发到内部 Rust 监听器；生产导出不使用 |
 
-`next.config.ts` 的 fallback rewrite 将 `/api/:path*` 转发到 `INTERNAL_API_URL/api/:path*`。只有浏览器需要跨源直连后端时才设置 `NEXT_PUBLIC_API_URL`；此时后端必须允许对应 CORS Origin。
+只有浏览器需要跨源直连后端时才设置 `NEXT_PUBLIC_API_URL`；该值会进入前端构建产物，此时后端必须允许对应 CORS Origin。标准开发和生产拓扑都保持同源，不需要设置它。
 
 ## 路由
 
@@ -153,7 +164,7 @@ pnpm build
 测试边界：
 
 - Vitest 使用 jsdom，`tests/setup.tsx` 注册 MSW；`*.test.tsx` 不访问真实后端。
-- Playwright 在 `127.0.0.1:3100` 启动本地 Next.js dev server，`tests/e2e/` 使用页面路由 fixture，不访问真实上游服务。
+- Playwright 默认在 `127.0.0.1:3100` 启动隔离的 Next.js dev server；设置 `PLAYWRIGHT_BASE_URL` 时改为验证已经运行的 Rust 静态站点。`tests/e2e/` 使用页面路由 fixture，不访问真实上游服务。
 - CI 对 Chromium 使用单 worker 和最多两次重试，本地保持 Playwright 默认并行度。
 - 覆盖率排除生成代码和 `components/ui/`，聚焦业务 facade、组件和页面。
 

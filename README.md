@@ -13,13 +13,13 @@ LitRadar 是一个面向学术期刊的自托管检索与订阅平台。它从 C
 
 ## 运行组成
 
-| 组件     | 职责                                            |
-| -------- | ----------------------------------------------- |
-| `app`    | Next.js 前端                                    |
-| `api`    | Rust/Axum REST API、OpenAPI 和 MCP 服务         |
-| `worker` | 持久化调度、索引、通知和追踪任务执行            |
-| `index`  | 从 `data/meta/*.csv` 构建 `data/index/*.sqlite` |
-| `admin`  | 本机管理员初始化、凭据维护和备份恢复            |
+| 组件     | 职责                                                         |
+| -------- | ------------------------------------------------------------ |
+| `app/`   | Next.js 前端源码；构建为静态资源后由 Rust 提供，不是常驻服务 |
+| `api`    | Rust/Axum Web 静态资源、REST API、OpenAPI 和 MCP 服务        |
+| `worker` | 持久化调度、索引、通知和追踪任务执行                         |
+| `index`  | 从 `data/meta/*.csv` 构建 `data/index/*.sqlite`              |
+| `admin`  | 本机管理员初始化、凭据维护和备份恢复                         |
 
 完整的模块边界和数据流见[系统架构](docs/architecture.md)。
 
@@ -49,9 +49,14 @@ sudo chown -R 10001:10001 data
 
 ### 2. 启动服务
 
+Compose 只运行 `api` 和 `worker` 两个容器，它们使用同一个 `ghcr.io/qianfuv/litradar:latest` 镜像。使用已发布镜像：
+
 ```bash
-docker compose up -d --build
+docker compose pull
+docker compose up -d --remove-orphans
 ```
+
+需要从当前源码构建时，改用 `docker compose up -d --build --remove-orphans`。`--remove-orphans` 会清理旧拓扑遗留的 `app` 容器；该容器和端口 3000 不再是受支持的生产入口。
 
 ### 3. 初始化首个管理员
 
@@ -81,7 +86,7 @@ docker compose run --rm api index \
 
 ### 5. 访问服务
 
-- 前端：`http://localhost:3000`
+- Web：`http://localhost:8000/`
 - REST API：`http://localhost:8000/api`
 - Swagger UI：`http://localhost:8000/docs/`
 - OpenAPI JSON：`http://localhost:8000/openapi.json`

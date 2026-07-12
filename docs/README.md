@@ -64,7 +64,7 @@
 | 全局运行配置     | `crates/litradar-storage/src/business/runtime_settings.rs`                         | [运行配置](reference/configuration.md)        |
 | REST schema      | `app/lib/generated/openapi.json`                                                   | OpenAPI；[API 参考](reference/api.md)补充语义 |
 | SQLite schema    | `crates/litradar-storage/src/migrations.rs`、`crates/litradar-index/src/schema.rs` | [数据库参考](reference/database.md)           |
-| Docker 行为      | `Dockerfile`、`app/Dockerfile`、`docker-compose.yml`                               | [Docker 部署](operations/docker.md)           |
+| Docker 行为      | `Dockerfile`、`docker-compose.yml`                                                 | [Docker 部署](operations/docker.md)           |
 | 前端结构         | `app/package.json`、`app/app/`、`app/lib/`、`app/components/`                      | [前端包说明](../app/README.md)                |
 | UI token 与组件  | `app/app/globals.css`、`app/components/ui/`                                        | [前端设计系统](reference/design-system.md)    |
 

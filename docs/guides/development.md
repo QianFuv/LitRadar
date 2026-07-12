@@ -45,19 +45,25 @@ pnpm install --frozen-lockfile
 
 ```bash
 cargo run --bin api -- \
+  --host 127.0.0.1 \
+  --port 8001 \
   --secret-key-file secrets/litradar.key
 ```
 
-默认监听 `http://127.0.0.1:8000`，并提供：
+开发 API 只在内部地址 `http://127.0.0.1:8001` 监听。启动下文的 Next.js 开发服务器后，浏览器统一通过以下 8000 端口地址访问：
 
-- Swagger UI：`http://127.0.0.1:8000/docs/`
-- OpenAPI：`http://127.0.0.1:8000/openapi.json`
-- MCP：`http://127.0.0.1:8000/mcp`
+- Web：`http://localhost:8000/`
+- REST API：`http://localhost:8000/api`
+- Swagger UI：`http://localhost:8000/docs/`
+- OpenAPI：`http://localhost:8000/openapi.json`
+- MCP：`http://localhost:8000/mcp`
 
 请求日志默认包含 method、path、status 和 latency。使用标准 `RUST_LOG` 过滤 tracing，例如：
 
 ```bash
 RUST_LOG=litradar_api=debug,tower_http=debug cargo run --bin api -- \
+  --host 127.0.0.1 \
+  --port 8001 \
   --secret-key-file secrets/litradar.key
 ```
 
@@ -93,7 +99,9 @@ cd app
 pnpm dev
 ```
 
-默认地址为 `http://localhost:3000`。`next.config.ts` 会把同源 `/api/*` rewrite 到 `INTERNAL_API_URL`，本地默认 `http://localhost:8000`。只有浏览器需要跨源直连 API 时才设置 `NEXT_PUBLIC_API_URL`。
+默认地址为 `http://localhost:8000`。`next.config.ts` 只在开发模式把同源 `/api/*`、`/mcp/*`、`/docs/*` 和 `/openapi.json` rewrite 到 `INTERNAL_API_URL`，默认 `http://localhost:8001`。只有浏览器需要跨源直连 API 时才设置 `NEXT_PUBLIC_API_URL`。
+
+生产构建执行静态导出，rewrite 不会进入产物；Rust 直接从 `/app/web` 提供页面和压缩资源，并在同一 8000 监听器处理后端命名空间。
 
 ### 索引和投递
 
@@ -210,7 +218,7 @@ pnpm test:e2e
 pnpm build
 ```
 
-Vitest/Testing Library/MSW 测试不访问真实后端。Playwright 使用本地 Next.js server 和 `page.route` fixture，不访问真实上游服务。
+Vitest/Testing Library/MSW 测试不访问真实后端。Playwright 默认使用隔离的本地 Next.js server 和 `page.route` fixture，不访问真实上游服务；设置 `PLAYWRIGHT_BASE_URL=http://127.0.0.1:<port>` 可用相同 fixture 流程验证已运行的 Rust 静态站点。
 
 ## 部署检查
 
@@ -221,7 +229,7 @@ docker compose config --quiet
 docker compose build
 ```
 
-镜像必须保持非 root；根 Compose 的只读根文件系统、tmpfs、显式数据卷、空 capability 集合、`no-new-privileges`、健康检查和重启策略都是部署契约。
+根 Dockerfile 必须成功导出前端并把 `out/` 复制到最终 Debian 层。最终镜像必须没有 Node.js/standalone 运行时并保持非 root；根 Compose 的只读根文件系统、tmpfs、显式数据卷、空 capability 集合、`no-new-privileges`、健康检查和重启策略都是部署契约。
 
 ## 测试边界
 
@@ -237,4 +245,5 @@ docker compose build
 - `push` 的默认状态目录是 `data/folder_push_state`，不是 `data/push_state`。
 - 每周更新和投递依赖 `*.changes.json`，不是按文章日期实时扫描。
 - 前端 API 入口是 `app/lib/api.tsx` 和 `app/lib/api/`。
+- `INTERNAL_API_URL` 只控制本地 `next dev` 的内部代理目标，不是生产容器配置。
 - 全局 scholarly key 池与用户级 AI/PushPlus 设置是两套不同配置。
