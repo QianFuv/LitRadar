@@ -6,15 +6,15 @@
 
 | 入口                             | 用户范围                                     | 投递                         |
 | -------------------------------- | -------------------------------------------- | ---------------------------- |
-| `notify`                         | 所有启用且 `delivery_method=pushplus` 的用户 | PushPlus；可选同步追踪文件夹 |
-| `push`                           | 所有启用且 `delivery_method=folder` 的用户   | 追踪文件夹                   |
+| `litradar notify`                | 所有启用且 `delivery_method=pushplus` 的用户 | PushPlus；可选同步追踪文件夹 |
+| `litradar push`                  | 所有启用且 `delivery_method=folder` 的用户   | 追踪文件夹                   |
 | `POST /api/tracking/push-weekly` | 当前登录用户                                 | 按该用户的投递方式执行       |
 
 `--dry-run` 不发送 PushPlus，也不写收藏或去重状态；AI 请求仍会执行。
 
 ## 输入：变更清单
 
-`index --update` 在 `data/push_state/<db>.changes.json` 写入本次增量变化。分发链路读取的顶层字段包括：
+`litradar index --update` 在 `data/push_state/<db>.changes.json` 写入本次增量变化。分发链路读取的顶层字段包括：
 
 - `changed_issue_keys`
 - `changed_inpress_journal_ids`
@@ -76,11 +76,11 @@ CLI `--retries` 的范围是 `0..=10`、默认值是 3；用户 `ai_retry_attemp
 ### PushPlus
 
 ```bash
-cargo run --bin notify -- \
+cargo run --bin litradar -- notify \
   --secret-key-file secrets/litradar.key \
   --dry-run
 
-cargo run --bin notify -- \
+cargo run --bin litradar -- notify \
   --secret-key-file secrets/litradar.key \
   --db utd24.sqlite \
   --changes-file data/push_state/utd24.changes.json \
@@ -92,11 +92,11 @@ cargo run --bin notify -- \
 ### 追踪文件夹
 
 ```bash
-cargo run --bin push -- \
+cargo run --bin litradar -- push \
   --secret-key-file secrets/litradar.key \
   --dry-run
 
-cargo run --bin push -- \
+cargo run --bin litradar -- push \
   --secret-key-file secrets/litradar.key \
   --db utd24.sqlite \
   --changes-file data/push_state/utd24.changes.json \
@@ -125,11 +125,11 @@ PushPlus 传输使用受限后的 CLI `--retries`，并以相同的 `1/2/4/8/8..
 - 从 `data/push_state/*.changes.json` 读取最新候选
 - 立即返回后台 job 状态
 - 同一用户已有 running job 时返回该现有状态和 job id，不启动第二份工作
-- 每个 API 进程对同一 storage instance 最多接纳 1 个 running manual job
+- 每个 `litradar serve` 进程对同一 storage instance 最多接纳 1 个 running manual job
 - 另一用户占用该 slot 时，启动请求立即返回通用 `503`；调用方应等待当前 job 进入 completed/failed 后再重试
 - 通过 `GET /api/tracking/push-weekly/status` 轮询
 
-该 API 使用与 CLI 相同的选择、投递和状态逻辑，但工作流由当前用户的 `delivery_method` 决定。单槽 admission 只约束当前 API 进程，不提供 `cross-process` 协调；CLI、scheduler、worker 和其他 API 进程的并发行为保持不变。API 契约见 [API 参考](../reference/api.md)和运行时 OpenAPI。
+该 API 使用与 CLI 相同的选择、投递和状态逻辑，但工作流由当前用户的 `delivery_method` 决定。单槽 admission 只约束当前 `litradar serve` 进程，不提供 `cross-process` 协调；独立调用的投递子命令、计划任务子进程或其他应用实例不受它协调。API 契约见 [API 参考](../reference/api.md)和运行时 OpenAPI。
 
 ## 状态文件
 
@@ -148,15 +148,16 @@ PushPlus 传输使用受限后的 CLI `--retries`，并以相同的 `1/2/4/8/8..
 
 状态文件由原子写入路径维护，不应手工编辑。
 
-## 与 scheduler 的关系
+## 与内嵌调度的关系
 
-管理员保存的是类型化 `index`、`notify` 或 `push` job。worker 按 cron 认领后直接启动固定二进制：
+管理员保存的是类型化 `index`、`notify` 或 `push` job。`litradar serve` 的调度组件按 cron 认领后，通过当前应用可执行路径启动 `litradar index`、`litradar notify` 或 `litradar push` 子进程：
 
 - `index` job 可以在成功后顺序串联 notify/push
 - 任一步失败会停止该 job 的后续步骤
 - 一个任务失败不阻止同轮其他任务
 - `timeout_seconds` 覆盖完整 job 链
-- dry-run 单次执行使用 `scheduler dry-run-once TASK_ID`
+- SIGINT/SIGTERM 会终止并等待当前子进程、保存 `cancelled`，且不启动剩余步骤
+- dry-run 单次执行使用 `litradar scheduler dry-run-once TASK_ID`
 
 ## 排障
 

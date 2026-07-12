@@ -1,64 +1,80 @@
 # CLI 参考
 
-本文档是 Rust 后端命令、参数和默认值的唯一完整参考。任务流程分别见[开发指南](../guides/development.md)、[Docker 部署](../operations/docker.md)、[通知与追踪](../guides/notifications.md)和[备份与恢复](../operations/backup.md)。
+LitRadar 只发布一个可执行文件 `litradar`。本文档是其七个规范子命令、参数和默认值的完整参考。任务流程分别见[开发指南](../guides/development.md)、[Docker 部署](../operations/docker.md)、[通知与追踪](../guides/notifications.md)和[备份与恢复](../operations/backup.md)。
 
 ## 调用形式
 
-本地开发：
+本地源码：
 
 ```bash
-cargo run --bin <command> -- <arguments>
+cargo run --bin litradar -- <subcommand> <arguments>
 ```
 
-已安装二进制或容器内：
+已安装二进制：
 
 ```bash
-<command> <arguments>
+litradar <subcommand> <arguments>
 ```
 
-使用 `--help` 或 `-h` 查看当前命令接受的概要语法。
+Compose 镜像的入口已经是 `litradar`：
+
+```bash
+docker compose run --rm litradar <subcommand> <arguments>
+```
+
+顶层 `--help` 只列出：
+
+- `serve`
+- `admin`
+- `index`
+- `notify`
+- `push`
+- `scheduler`
+- `openapi`
+
+每个子命令都接受 `--help` 或 `-h`。未知子命令会写入 stderr 并以非零状态退出。
 
 ## 公共路径参数
 
-除 `api` 外，Rust CLI 共享：
+除 `serve` 和 `openapi` 的特殊边界外，业务子命令共享：
 
 | 参数                  | 默认值                            | 含义                                     |
 | --------------------- | --------------------------------- | ---------------------------------------- |
 | `--project-root PATH` | 当前工作目录                      | 解析 `data/`、`libs/` 和相对路径的根目录 |
 | `--auth-db PATH`      | `<project-root>/data/auth.sqlite` | 显式认证/业务数据库                      |
 
-`api` 接受 `--project-root`，但不接受 `--auth-db`；它始终使用项目根下的 `data/auth.sqlite`。
+`serve` 接受 `--project-root`，但不接受 `--auth-db`；它始终使用项目根下的 `data/auth.sqlite`。相对路径按 `project-root` 解析，绝对路径保持不变。
 
-相对路径按 `project-root` 解析，绝对路径保持不变。
-
-## `api`
+## `serve`
 
 ```text
-api --secret-key-file PATH
+litradar serve --secret-key-file PATH
     [--host HOST]
     [--port PORT]
     [--project-root PATH]
+    [--scheduler-interval-seconds N]
     [--require-secure-cookies]
 ```
 
-| 参数                       | 默认值       | 含义                                                 |
-| -------------------------- | ------------ | ---------------------------------------------------- |
-| `--secret-key-file PATH`   | 必填         | 32 字节部署密钥                                      |
-| `--host HOST`              | `127.0.0.1`  | 监听地址                                             |
-| `--port PORT`              | `8000`       | TCP 端口                                             |
-| `--project-root PATH`      | 当前工作目录 | 数据和扩展根目录                                     |
-| `--require-secure-cookies` | 关闭         | 要求数据库 `secure_cookies=true`，否则绑定端口前失败 |
+| 参数                             | 默认值       | 含义                                                 |
+| -------------------------------- | ------------ | ---------------------------------------------------- |
+| `--secret-key-file PATH`         | 必填         | 32 字节部署密钥                                      |
+| `--host HOST`                    | `127.0.0.1`  | HTTP 监听地址                                        |
+| `--port PORT`                    | `8000`       | HTTP TCP 端口                                        |
+| `--project-root PATH`            | 当前工作目录 | 数据、静态 Web 和扩展根目录                          |
+| `--scheduler-interval-seconds N` | `30`         | 立即执行首个 tick 后的调度间隔；必须大于 0           |
+| `--require-secure-cookies`       | 关闭         | 要求数据库 `secure_cookies=true`，否则绑定端口前失败 |
 
-`api` 是规范入口。workspace 和后端镜像还包含行为相同的包名二进制 `litradar-api`；文档和部署命令统一使用 `api`。
+`serve` 是唯一常驻入口。它先准备和迁移存储，再在一个进程中并发运行 HTTP 与内嵌调度。计划任务使用当前 `litradar` 可执行文件启动子命令进程。SIGINT/SIGTERM 会取消活动子进程并保存 `cancelled`；任一运行组件意外失败会关闭另一组件并使进程非零退出。
 
 ## `admin`
 
-`admin` 是本机维护入口，不启动网络服务。
+`admin` 是本机维护入口，不启动 HTTP 或调度循环。
 
 ### 初始化管理员
 
 ```text
-admin bootstrap
+litradar admin bootstrap
     --username NAME
     --password-stdin
     [--project-root PATH]
@@ -72,12 +88,12 @@ admin bootstrap
 ### 迁移和验证秘密
 
 ```text
-admin secrets migrate
+litradar admin secrets migrate
     --secret-key-file PATH
     [--project-root PATH]
     [--auth-db PATH]
 
-admin secrets verify
+litradar admin secrets verify
     --secret-key-file PATH
     [--project-root PATH]
     [--auth-db PATH]
@@ -88,7 +104,7 @@ admin secrets verify
 ### 轮换部署密钥
 
 ```text
-admin secrets rotate
+litradar admin secrets rotate
     --old-key-file PATH
     --new-key-file PATH
     [--project-root PATH]
@@ -100,30 +116,30 @@ admin secrets rotate
 ### 备份
 
 ```text
-admin backup create
+litradar admin backup create
     --output PATH
     [--include-indexes]
     [--include-push-state]
     [--project-root PATH]
     [--auth-db PATH]
 
-admin backup verify
+litradar admin backup verify
     --backup PATH
     [--project-root PATH]
 
-admin backup restore
+litradar admin backup restore
     --backup PATH
     --confirm-restore
     [--project-root PATH]
     [--auth-db PATH]
 ```
 
-备份命令不接收部署密钥。清单格式名固定为 `litradar-backup`，不接受改名前的格式。`--include-push-state` 同时选择 `data/push_state` 和 `data/folder_push_state`。
+备份命令不接收部署密钥。清单格式名固定为 `litradar-backup`。`--include-push-state` 同时选择 `data/push_state` 和 `data/folder_push_state`。
 
 ## `index`
 
 ```text
-index --secret-key-file PATH
+litradar index --secret-key-file PATH
     [--project-root PATH]
     [--auth-db PATH]
     [--file FILE]
@@ -137,18 +153,18 @@ index --secret-key-file PATH
     [--notify-dry-run | --no-notify-dry-run]
 ```
 
-| 参数                                       | 默认值    | 含义                               |
-| ------------------------------------------ | --------- | ---------------------------------- |
-| `--secret-key-file PATH`                   | 必填      | 解密 scholarly 运行配置            |
-| `--file FILE`、`-f FILE`                   | 全部 CSV  | 只处理 `data/meta/` 下的一个文件   |
-| `--workers N`、`-w N`                      | `32`      | 每个期刊进程内的 CNKI 文章详情并发 |
-| `--processes N`                            | `2`       | 单个 CSV 的期刊进程数              |
-| `--issue-batch N`                          | `workers` | 每轮合并的 CNKI issue 数           |
-| `--timeout N`                              | `20`      | 上游 HTTP 超时秒数                 |
-| `--resume` / `--no-resume`                 | 开启      | 是否跳过已完成期刊/年份            |
-| `--update` / `--no-update`                 | 关闭      | 是否生成增量变更清单               |
-| `--notify` / `--no-notify`                 | 关闭      | 更新成功后启动 `notify`            |
-| `--notify-dry-run` / `--no-notify-dry-run` | 关闭      | 下游 notify 是否 dry-run           |
+| 参数                                       | 默认值    | 含义                                 |
+| ------------------------------------------ | --------- | ------------------------------------ |
+| `--secret-key-file PATH`                   | 必填      | 解密 scholarly 运行配置              |
+| `--file FILE`、`-f FILE`                   | 全部 CSV  | 只处理 `data/meta/` 下的一个文件     |
+| `--workers N`、`-w N`                      | `32`      | 每个期刊子进程内的 CNKI 文章详情并发 |
+| `--processes N`                            | `2`       | 单个 CSV 的期刊子进程数              |
+| `--issue-batch N`                          | `workers` | 每轮合并的 CNKI issue 数             |
+| `--timeout N`                              | `20`      | 上游 HTTP 超时秒数                   |
+| `--resume` / `--no-resume`                 | 开启      | 是否跳过已完成期刊/年份              |
+| `--update` / `--no-update`                 | 关闭      | 是否生成增量变更清单                 |
+| `--notify` / `--no-notify`                 | 关闭      | 更新成功后启动 `litradar notify`     |
+| `--notify-dry-run` / `--no-notify-dry-run` | 关闭      | 下游 notify 是否 dry-run             |
 
 约束：
 
@@ -158,10 +174,12 @@ index --secret-key-file PATH
 - `--workers` 不扩大 scholarly 请求并发；Semantic Scholar 按 `processes` 做进程感知错峰。
 - 多个 CSV 仍逐个处理。
 
+索引多进程也通过当前可执行路径启动 `litradar index` 的内部工作请求；不依赖另一个程序名。
+
 示例：
 
 ```bash
-index \
+litradar index \
   --secret-key-file secrets/litradar.key \
   --file english_journals.csv \
   --update \
@@ -171,10 +189,23 @@ index \
 
 ## `notify` 和 `push`
 
-两个命令共享 parser：
+两个子命令共享 parser：
 
 ```text
-notify|push --secret-key-file PATH
+litradar notify --secret-key-file PATH
+    [--project-root PATH]
+    [--auth-db PATH]
+    [--db NAME]
+    [--state-dir PATH]
+    [--changes-file PATH]
+    [--ai-model MODEL]
+    [--max-candidates N]
+    [--timeout N]
+    [--retries N]
+    [--dedupe-retention-days N]
+    [--dry-run | --no-dry-run]
+
+litradar push --secret-key-file PATH
     [--project-root PATH]
     [--auth-db PATH]
     [--db NAME]
@@ -188,7 +219,7 @@ notify|push --secret-key-file PATH
     [--dry-run | --no-dry-run]
 ```
 
-当前 parser 还接受 `--index-db PATH` 直接指定索引文件，但帮助字符串尚未列出该参数。普通使用优先选择 `--db`。
+parser 还接受 `--index-db PATH` 直接指定索引文件；普通使用优先选择 `--db`。
 
 | 参数                         | 默认值             | 含义                            |
 | ---------------------------- | ------------------ | ------------------------------- |
@@ -206,7 +237,7 @@ notify|push --secret-key-file PATH
 
 默认状态目录：
 
-| 命令     | 目录                     |
+| 子命令   | 目录                     |
 | -------- | ------------------------ |
 | `notify` | `data/push_state`        |
 | `push`   | `data/folder_push_state` |
@@ -218,17 +249,17 @@ notify|push --secret-key-file PATH
 ## `scheduler`
 
 ```text
-scheduler validate
+litradar scheduler validate
     --secret-key-file PATH
     [--project-root PATH]
     [--auth-db PATH]
 
-scheduler run-once TASK_ID
+litradar scheduler run-once TASK_ID
     --secret-key-file PATH
     [--project-root PATH]
     [--auth-db PATH]
 
-scheduler dry-run-once TASK_ID
+litradar scheduler dry-run-once TASK_ID
     --secret-key-file PATH
     [--project-root PATH]
     [--auth-db PATH]
@@ -240,30 +271,21 @@ scheduler dry-run-once TASK_ID
 | `run-once`     | 立即执行一个任务                   |
 | `dry-run-once` | 立即按 dry-run 模式执行一个任务    |
 
-旧 `legacy_command` 任务保持禁用，不能被 `run-once` 执行。
+保存的任务只能展开为同一 `litradar` 可执行文件的 `index`、`notify` 或 `push` argv，不执行 shell 文本。
 
-## `worker`
+## `openapi`
 
 ```text
-worker --secret-key-file PATH
-    [--project-root PATH]
-    [--auth-db PATH]
-    [--interval-seconds N]
-    [--max-iterations N]
+litradar openapi [--output PATH]
 ```
 
-| 参数                     | 默认值 | 含义                             |
-| ------------------------ | ------ | -------------------------------- |
-| `--secret-key-file PATH` | 必填   | 解密任务需要的凭据               |
-| `--interval-seconds N`   | `30`   | 调度轮询间隔                     |
-| `--max-iterations N`     | 无限   | 有限循环，主要用于测试和受控运行 |
-
-worker 迁移数据库后进入循环，按持久化游标回看最多 24 小时的 UTC 分钟槽。
+不传 `--output` 时把格式化 JSON 写到 stdout；传入路径时写入该文件。该子命令不需要数据库或部署密钥，也不启动 HTTP/调度运行时。
 
 ## 输出和失败
 
-- 维护和作业命令成功时向 stdout 输出 JSON。
+- `serve` 是唯一长驻子命令；正常 SIGINT/SIGTERM 返回 0。
+- 维护和作业子命令成功时向 stdout 输出 JSON。
+- `openapi` 输出 OpenAPI JSON 或写入指定文件。
 - 错误写入 stderr，并以非零状态退出。
-- `api` 和 `worker` 是长驻进程。
 - 不支持的位置参数或未知选项会 fail loud，不会静默忽略。
 - 密文和密码不会出现在结构化输出。

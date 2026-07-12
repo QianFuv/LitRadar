@@ -31,7 +31,7 @@
 ## 参考
 
 - [API 参考](reference/api.md)：认证、数据库选择、分页、缓存、端点目录、MCP 和业务约束
-- [CLI 参考](reference/cli.md)：`admin`、`api`、`index`、`notify`、`push`、`scheduler`、`worker`
+- [CLI 参考](reference/cli.md)：唯一可执行文件 `litradar` 的 `serve`、`admin`、`index`、`notify`、`push`、`scheduler`、`openapi`
 - [运行配置](reference/configuration.md)：配置层次、七个全局运行设置、密钥文件和前端变量
 - [数据库参考](reference/database.md)：当前 schema、表关系、迁移版本和外部状态文件
 - [Scholarly 数据源](reference/sources/scholarly.md)：Crossref、OpenAlex、Semantic Scholar
@@ -58,15 +58,16 @@
 
 主要映射：
 
-| 事实             | 实现来源                                                                           | 文档所有者                                    |
-| ---------------- | ---------------------------------------------------------------------------------- | --------------------------------------------- |
-| CLI 参数和默认值 | `crates/litradar-cli/src/lib.rs`、`crates/litradar-api/src/config.rs`              | [CLI 参考](reference/cli.md)                  |
-| 全局运行配置     | `crates/litradar-storage/src/business/runtime_settings.rs`                         | [运行配置](reference/configuration.md)        |
-| REST schema      | `app/lib/generated/openapi.json`                                                   | OpenAPI；[API 参考](reference/api.md)补充语义 |
-| SQLite schema    | `crates/litradar-storage/src/migrations.rs`、`crates/litradar-index/src/schema.rs` | [数据库参考](reference/database.md)           |
-| Docker 行为      | `Dockerfile`、`docker-compose.yml`                                                 | [Docker 部署](operations/docker.md)           |
-| 前端结构         | `app/package.json`、`app/app/`、`app/lib/`、`app/components/`                      | [前端包说明](../app/README.md)                |
-| UI token 与组件  | `app/app/globals.css`、`app/components/ui/`                                        | [前端设计系统](reference/design-system.md)    |
+| 事实               | 实现来源                                                                                        | 文档所有者                                    |
+| ------------------ | ----------------------------------------------------------------------------------------------- | --------------------------------------------- |
+| 进程与服务生命周期 | `crates/litradar/src/`                                                                          | [系统架构](architecture.md)                   |
+| CLI 参数和默认值   | `crates/litradar/src/config.rs`、`crates/litradar/src/lib.rs`、`crates/litradar-cli/src/lib.rs` | [CLI 参考](reference/cli.md)                  |
+| 全局运行配置       | `crates/litradar-storage/src/business/runtime_settings.rs`                                      | [运行配置](reference/configuration.md)        |
+| REST schema        | `app/lib/generated/openapi.json`                                                                | OpenAPI；[API 参考](reference/api.md)补充语义 |
+| SQLite schema      | `crates/litradar-storage/src/migrations.rs`、`crates/litradar-index/src/schema.rs`              | [数据库参考](reference/database.md)           |
+| Docker 行为        | `Dockerfile`、`docker-compose.yml`                                                              | [Docker 部署](operations/docker.md)           |
+| 前端结构           | `app/package.json`、`app/app/`、`app/lib/`、`app/components/`                                   | [前端包说明](../app/README.md)                |
+| UI token 与组件    | `app/app/globals.css`、`app/components/ui/`                                                     | [前端设计系统](reference/design-system.md)    |
 
 ## 维护原则
 

@@ -39,18 +39,18 @@ pnpm install --frozen-lockfile
 
 ## 运行开发服务
 
-### API
+### 统一应用服务
 
 在仓库根目录运行：
 
 ```bash
-cargo run --bin api -- \
+cargo run --bin litradar -- serve \
   --host 127.0.0.1 \
   --port 8001 \
   --secret-key-file secrets/litradar.key
 ```
 
-开发 API 只在内部地址 `http://127.0.0.1:8001` 监听。启动下文的 Next.js 开发服务器后，浏览器统一通过以下 8000 端口地址访问：
+该命令在一个进程中启动 HTTP 与内嵌调度；调度会立即执行一次 tick，之后默认每 30 秒检查一次。开发 HTTP 只在内部地址 `http://127.0.0.1:8001` 监听。启动下文的 Next.js 开发服务器后，浏览器统一通过以下 8000 端口地址访问：
 
 - Web：`http://localhost:8000/`
 - REST API：`http://localhost:8000/api`
@@ -61,7 +61,7 @@ cargo run --bin api -- \
 请求日志默认包含 method、path、status 和 latency。使用标准 `RUST_LOG` 过滤 tracing，例如：
 
 ```bash
-RUST_LOG=litradar_api=debug,tower_http=debug cargo run --bin api -- \
+RUST_LOG=litradar_api=debug,tower_http=debug cargo run --bin litradar -- serve \
   --host 127.0.0.1 \
   --port 8001 \
   --secret-key-file secrets/litradar.key
@@ -73,24 +73,18 @@ RUST_LOG=litradar_api=debug,tower_http=debug cargo run --bin api -- \
 
 ```bash
 printf '%s\n' "$ADMIN_PASSWORD" |
-  cargo run --bin admin -- bootstrap \
+  cargo run --bin litradar -- admin bootstrap \
     --username admin \
     --password-stdin
 ```
 
 该命令只在用户表为空时成功，不接受 `--password VALUE`。
 
-### Worker
+### 内嵌调度
 
-需要验证持久化调度时另开终端：
+不需要第二个终端或独立调度服务。`litradar serve` 在同一生命周期内执行数据库中启用的类型化任务；可用 `--scheduler-interval-seconds N` 调整 tick 间隔。单次验证或触发使用 `litradar scheduler validate`、`litradar scheduler run-once` 或 `litradar scheduler dry-run-once`，具体语法见 [CLI 参考](../reference/cli.md)。
 
-```bash
-cargo run --bin worker -- \
-  --secret-key-file secrets/litradar.key \
-  --interval-seconds 30
-```
-
-worker 只执行数据库中启用的类型化任务。单次验证或触发使用 `scheduler validate`、`scheduler run-once` 或 `scheduler dry-run-once`，具体语法见 [CLI 参考](../reference/cli.md)。
+调度任务通过当前 `litradar` 可执行文件启动短生命周期子进程。SIGINT/SIGTERM 会取消正在运行的子进程、等待退出并保存 `cancelled` 状态；HTTP、心跳或调度组件意外失败会终止整个服务进程。
 
 ### 前端
 
@@ -108,12 +102,12 @@ pnpm dev
 开发时优先选择单个小型 CSV 或离线 fixture。真实索引和投递会访问外部服务：
 
 ```bash
-cargo run --bin index -- \
+cargo run --bin litradar -- index \
   --secret-key-file secrets/litradar.key \
   --file chinese_journals.csv \
   --update
 
-cargo run --bin notify -- \
+cargo run --bin litradar -- notify \
   --secret-key-file secrets/litradar.key \
   --dry-run
 ```
@@ -124,6 +118,7 @@ Scholarly 索引需要先在 `data/auth.sqlite` 的运行配置中保存 OpenAle
 
 | 任务                | 主要位置                                                                |
 | ------------------- | ----------------------------------------------------------------------- |
+| 进程入口与生命周期  | `crates/litradar/src/`                                                  |
 | REST 路由或 OpenAPI | `crates/litradar-api/src/routes/`、`crates/litradar-api/src/openapi.rs` |
 | 认证                | `crates/litradar-auth/`、`crates/litradar-storage/src/auth.rs`          |
 | 业务存储            | `crates/litradar-storage/src/business/`                                 |
@@ -137,7 +132,7 @@ Scholarly 索引需要先在 `data/auth.sqlite` 的运行配置中保存 OpenAle
 
 ## OpenAPI 与前端类型
 
-Rust `litradar-api` 是控制面 API schema 的来源。修改路由注解、DTO 或响应 schema 后，在 `app/` 运行：
+库 crate `litradar-api` 是控制面 API schema 的来源；它不拥有可执行入口或 OS 信号。修改路由注解、DTO 或响应 schema 后，在 `app/` 运行：
 
 ```bash
 pnpm generate:api
@@ -145,7 +140,7 @@ pnpm generate:api
 
 该命令：
 
-1. 运行 Rust `openapi` emitter
+1. 运行 Rust `litradar openapi` 子命令
 2. 更新 `lib/generated/openapi.json`
 3. 用 `openapi-typescript` 更新 `lib/generated/api-schema.tsx`
 4. 格式化两个生成文件
@@ -172,17 +167,17 @@ pnpm generate:api:check
 
 ## 调度变更
 
-定时任务是带 `kind` 的结构化 job，只允许 `index`、`notify` 和 `push`。worker 把已验证字段转换为固定二进制的独立 argv，不调用 shell。
+定时任务是带 `kind` 的结构化 job，只允许 `index`、`notify` 和 `push`。内嵌调度器把已验证字段转换为当前 `litradar` 可执行文件加规范子命令的完整 argv，不调用 shell。
 
 新增调度能力时必须同步更新：
 
 - `litradar-domain` 的 job 类型
 - API 和存储校验
-- worker argv 构造与运行认领
+- 内嵌调度的 argv 构造、运行认领、取消和持久状态
 - OpenAPI 和前端管理界面
 - 确定性 cron、时区、租约和失败测试
 
-不要恢复自由命令字段或 API 进程内调度器。
+不要恢复自由命令字段、独立 worker 服务或按功能拆分的可执行文件。
 
 ## Rust 检查
 
@@ -229,7 +224,7 @@ docker compose config --quiet
 docker compose build
 ```
 
-根 Dockerfile 必须成功导出前端并把 `out/` 复制到最终 Debian 层。最终镜像必须没有 Node.js/standalone 运行时并保持非 root；根 Compose 的只读根文件系统、tmpfs、显式数据卷、空 capability 集合、`no-new-privileges`、健康检查和重启策略都是部署契约。
+根 Dockerfile 必须成功导出前端并把 `out/` 复制到最终 Debian 层。最终镜像只复制 release `litradar`，必须没有其他应用可执行文件、Node.js/standalone 运行时并保持非 root；根 Compose 只能声明一个 `litradar` 服务。只读根文件系统、tmpfs、显式数据卷、空 capability 集合、`no-new-privileges`、健康检查和重启策略都是部署契约。
 
 ## 测试边界
 

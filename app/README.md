@@ -1,6 +1,6 @@
 # LitRadar 前端包
 
-`app/` 是 LitRadar 的 Next.js Web 客户端源码，负责登录、检索、收藏、每周更新、文献追踪、个人设置和管理后台。生产构建输出静态 `out/`，由 Rust API 进程直接提供；生产镜像没有独立 Next.js 进程或 Node.js 运行时。本页只说明前端包的开发边界：
+`app/` 是 LitRadar 的 Next.js Web 客户端源码，负责登录、检索、收藏、每周更新、文献追踪、个人设置和管理后台。生产构建输出静态 `out/`，由唯一的 `litradar serve` 应用进程直接提供；生产镜像没有独立 Next.js 进程或 Node.js 运行时。本页只说明前端包的开发边界：
 
 - 系统进程与数据流见[系统架构](../docs/architecture.md)。
 - REST 契约与认证方式见[API 参考](../docs/reference/api.md)。
@@ -25,10 +25,10 @@ CI 与前端构建阶段使用：
 
 ## 本地运行
 
-先在仓库根目录启动只监听 loopback 8001 的 Rust API：
+先在仓库根目录启动只监听 loopback 8001 的统一 Rust 应用；HTTP 和内嵌调度共享该进程：
 
 ```bash
-cargo run --bin api -- \
+cargo run --bin litradar -- serve \
   --host 127.0.0.1 \
   --port 8001 \
   --secret-key-file secrets/litradar.key
@@ -142,7 +142,7 @@ CI 使用：
 pnpm generate:api:check
 ```
 
-生成命令会重新运行 Rust `openapi` 二进制、生成 TypeScript 类型并格式化产物。不要手工修改 `lib/generated/`。
+生成命令会运行 Rust `litradar openapi` 子命令、生成 TypeScript 类型并格式化产物。不要手工修改 `lib/generated/`。
 
 `lib/api/` 提供面向页面的请求 facade；`lib/api-contract.tsx` 对认证、秘密配置、计划任务和手动推送等控制面响应再做运行时校验。普通页面不应绕过共享 transport 自行复制 Cookie、Bearer、数据库选择或错误解析逻辑。
 

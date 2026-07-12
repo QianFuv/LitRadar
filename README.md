@@ -13,13 +13,14 @@ LitRadar 是一个面向学术期刊的自托管检索与订阅平台。它从 C
 
 ## 运行组成
 
-| 组件     | 职责                                                         |
-| -------- | ------------------------------------------------------------ |
-| `app/`   | Next.js 前端源码；构建为静态资源后由 Rust 提供，不是常驻服务 |
-| `api`    | Rust/Axum Web 静态资源、REST API、OpenAPI 和 MCP 服务        |
-| `worker` | 持久化调度、索引、通知和追踪任务执行                         |
-| `index`  | 从 `data/meta/*.csv` 构建 `data/index/*.sqlite`              |
-| `admin`  | 本机管理员初始化、凭据维护和备份恢复                         |
+LitRadar 只发布一个可执行文件 `litradar`。`litradar serve` 是应用组合根：一个常驻进程同时承载 Web、REST、Swagger/OpenAPI、MCP 和持久化调度。计划任务需要隔离时，由该进程使用当前 `litradar` 可执行文件启动短生命周期的 `index`、`notify` 或 `push` 子进程；这些子进程不是独立服务。
+
+| 组件                 | 职责                                                                 |
+| -------------------- | -------------------------------------------------------------------- |
+| `crates/litradar/`   | 唯一二进制、命令分发、HTTP/调度生命周期、信号和失败耦合              |
+| `litradar serve`     | 唯一常驻应用进程                                                     |
+| `litradar <command>` | 管理、索引、投递、手动调度和 OpenAPI 等按需命令                      |
+| `app/`               | Next.js 前端源码；构建为静态资源后由同一 Rust 进程提供，不是运行服务 |
 
 完整的模块边界和数据流见[系统架构](docs/architecture.md)。
 
@@ -49,14 +50,14 @@ sudo chown -R 10001:10001 data
 
 ### 2. 启动服务
 
-Compose 只运行 `api` 和 `worker` 两个容器，它们使用同一个 `ghcr.io/qianfuv/litradar:latest` 镜像。使用已发布镜像：
+Compose 只运行一个名为 `litradar` 的容器，镜像为 `ghcr.io/qianfuv/litradar:latest`。使用已发布镜像：
 
 ```bash
 docker compose pull
 docker compose up -d --remove-orphans
 ```
 
-需要从当前源码构建时，改用 `docker compose up -d --build --remove-orphans`。`--remove-orphans` 会清理旧拓扑遗留的 `app` 容器；该容器和端口 3000 不再是受支持的生产入口。
+需要从当前源码构建时，改用 `docker compose up -d --build --remove-orphans`。
 
 ### 3. 初始化首个管理员
 
@@ -64,7 +65,7 @@ docker compose up -d --remove-orphans
 
 ```bash
 printf '%s\n' "$ADMIN_PASSWORD" |
-  docker compose run --rm -T api admin bootstrap \
+  docker compose run --rm -T litradar admin bootstrap \
     --username admin \
     --password-stdin
 ```
@@ -76,7 +77,7 @@ printf '%s\n' "$ADMIN_PASSWORD" |
 仓库自带 `data/meta/*.csv`。CNKI 元数据索引不需要 scholarly API key，可先验证完整链路：
 
 ```bash
-docker compose run --rm api index \
+docker compose run --rm litradar index \
   --secret-key-file /run/secrets/litradar_key \
   --file chinese_journals.csv \
   --update
