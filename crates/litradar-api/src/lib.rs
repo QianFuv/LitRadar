@@ -1,4 +1,4 @@
-//! Rust API server skeleton for backend migration compatibility.
+//! Rust API server and static frontend host.
 
 pub mod config;
 mod mcp;
@@ -10,21 +10,28 @@ pub mod state;
 #[cfg(test)]
 pub(crate) mod test_support;
 
+use std::convert::Infallible;
 use std::error::Error;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use axum::body::Body;
 use axum::extract::Request;
-use axum::http::header::{AUTHORIZATION, CACHE_CONTROL, COOKIE};
-use axum::http::{HeaderValue, StatusCode};
+use axum::http::header::{AUTHORIZATION, CACHE_CONTROL, COOKIE, LOCATION};
+use axum::http::uri::PathAndQuery;
+use axum::http::{HeaderValue, Method, StatusCode};
 use axum::middleware::{from_fn, Next};
-use axum::response::Response;
+use axum::response::{IntoResponse, Response};
 use axum::Router;
 use config::ApiConfig;
 use litradar_auth::SESSION_COOKIE_NAME;
 use litradar_storage::{ServiceKind, StorageConfig};
 use state::{ApiState, BlockingTaskError};
 use tokio::net::TcpListener;
+use tower::util::BoxCloneSyncService;
+use tower::{service_fn, ServiceExt};
 use tower_http::cors::{AllowHeaders, AllowMethods, AllowOrigin, CorsLayer};
+use tower_http::services::{ServeDir, ServeFile};
 use tower_http::trace::{DefaultOnResponse, TraceLayer};
 use tracing::Level;
 
@@ -33,6 +40,12 @@ pub const API_PREFIX: &str = "/api";
 
 /// Cache-Control header for credentialed requests and unauthorized responses.
 pub const AUTHENTICATED_CACHE_CONTROL: &str = "private, no-store";
+
+/// Cache-Control header for immutable Next.js build assets.
+pub const STATIC_ASSET_CACHE_CONTROL: &str = "public, max-age=31536000, immutable";
+
+/// Cache-Control header for frontend documents and navigation payloads.
+pub const FRONTEND_CACHE_CONTROL: &str = "no-cache";
 
 const API_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(10);
 
@@ -116,7 +129,7 @@ pub async fn serve(config: ApiConfig) -> Result<(), Box<dyn Error>> {
 ///
 /// # Returns
 ///
-/// Axum router with only the currently migrated public endpoints.
+/// Axum router with backend endpoints and the static frontend fallback.
 pub fn build_router(config: ApiConfig) -> Router {
     try_build_router(config).expect("API router configuration should be valid")
 }
@@ -137,6 +150,7 @@ pub fn try_build_router(config: ApiConfig) -> Result<Router, Box<dyn Error>> {
 fn try_build_router_with_state(
     mut config: ApiConfig,
 ) -> Result<(Router, ApiState), Box<dyn Error>> {
+    let web_root = config.project_root.join("web");
     let storage_config = StorageConfig::from_project_root(config.project_root.clone());
     litradar_storage::migrate_storage(&storage_config)?;
     let secret_codec = litradar_storage::SecretCodec::load(&config.secret_key_file)?;
@@ -154,6 +168,7 @@ fn try_build_router_with_state(
         .nest_service("/mcp", mcp::service(&config, state.clone()))
         .merge(openapi::docs_router())
         .nest(API_PREFIX, routes::public_routes())
+        .fallback_service(static_frontend_service(web_root))
         .layer(from_fn(cache_control_middleware))
         .layer(cors_layer(&config))
         .layer(
@@ -169,6 +184,53 @@ fn try_build_router_with_state(
         )
         .with_state(state.clone());
     Ok((router, state))
+}
+
+fn static_frontend_service(
+    web_root: PathBuf,
+) -> BoxCloneSyncService<Request, Response, Infallible> {
+    let not_found = ServeFile::new(web_root.join("404.html"));
+    let files = ServeDir::new(web_root)
+        .html_as_default_extension(true)
+        .precompressed_gzip()
+        .not_found_service(not_found);
+
+    BoxCloneSyncService::new(service_fn(move |mut request: Request| {
+        let files = files.clone();
+        async move {
+            if is_backend_path(request.uri().path()) {
+                return Ok(StatusCode::NOT_FOUND.into_response());
+            }
+            append_frontend_html_extension(&mut request);
+            let response = files
+                .oneshot(request)
+                .await
+                .expect("static file service should be infallible");
+            Ok(response.map(Body::new))
+        }
+    }))
+}
+
+fn append_frontend_html_extension(request: &mut Request) {
+    if request.method() != Method::GET && request.method() != Method::HEAD {
+        return;
+    }
+    let path = request.uri().path();
+    if path == "/" || path.ends_with('/') || Path::new(path).extension().is_some() {
+        return;
+    }
+    let path_and_query = match request.uri().query() {
+        Some(query) => format!("{path}.html?{query}"),
+        None => format!("{path}.html"),
+    };
+    let Ok(path_and_query) = path_and_query.parse::<PathAndQuery>() else {
+        return;
+    };
+    let mut parts = request.uri().clone().into_parts();
+    parts.path_and_query = Some(path_and_query);
+    if let Ok(uri) = axum::http::Uri::from_parts(parts) {
+        *request.uri_mut() = uri;
+    }
 }
 
 /// Build a CORS layer compatible with the existing Python configuration.
@@ -202,6 +264,14 @@ pub fn cors_layer(config: &ApiConfig) -> CorsLayer {
 }
 
 async fn cache_control_middleware(request: Request, next: Next) -> Response {
+    if let Some(location) = frontend_redirect_location(&request) {
+        let mut response = StatusCode::PERMANENT_REDIRECT.into_response();
+        response.headers_mut().insert(LOCATION, location);
+        return response;
+    }
+
+    let path = request.uri().path().to_string();
+    let method = request.method().clone();
     let has_auth_credentials = request.headers().contains_key(AUTHORIZATION)
         || request
             .headers()
@@ -210,14 +280,75 @@ async fn cache_control_middleware(request: Request, next: Next) -> Response {
             .is_some_and(has_session_cookie);
     let mut response = next.run(request).await;
 
-    if has_auth_credentials || response.status() == StatusCode::UNAUTHORIZED {
-        response.headers_mut().insert(
-            CACHE_CONTROL,
-            HeaderValue::from_static(AUTHENTICATED_CACHE_CONTROL),
-        );
+    let cache_control = if is_static_asset_path(&path)
+        && is_successful_static_response(response.status())
+    {
+        Some(STATIC_ASSET_CACHE_CONTROL)
+    } else if has_auth_credentials || response.status() == StatusCode::UNAUTHORIZED {
+        Some(AUTHENTICATED_CACHE_CONTROL)
+    } else if !is_backend_path(&path) && is_frontend_cacheable_response(&method, response.status())
+    {
+        Some(FRONTEND_CACHE_CONTROL)
+    } else {
+        None
+    };
+    if let Some(value) = cache_control {
+        response
+            .headers_mut()
+            .insert(CACHE_CONTROL, HeaderValue::from_static(value));
     }
 
     response
+}
+
+fn frontend_redirect_location(request: &Request) -> Option<HeaderValue> {
+    if request.method() != Method::GET && request.method() != Method::HEAD {
+        return None;
+    }
+    let path = request.uri().path();
+    if path == "/" || !path.ends_with('/') || is_backend_path(path) {
+        return None;
+    }
+    let normalized_path = path.trim_end_matches('/');
+    if normalized_path.is_empty() {
+        return None;
+    }
+    let location = match request.uri().query() {
+        Some(query) => format!("{normalized_path}?{query}"),
+        None => normalized_path.to_string(),
+    };
+    HeaderValue::from_str(&location).ok()
+}
+
+fn is_backend_path(path: &str) -> bool {
+    [
+        API_PREFIX,
+        "/mcp",
+        openapi::DOCS_PATH,
+        openapi::OPENAPI_JSON_PATH,
+    ]
+    .iter()
+    .any(|prefix| {
+        path == *prefix
+            || path
+                .strip_prefix(prefix)
+                .is_some_and(|rest| rest.starts_with('/'))
+    })
+}
+
+fn is_static_asset_path(path: &str) -> bool {
+    path.starts_with("/_next/static/")
+}
+
+fn is_successful_static_response(status: StatusCode) -> bool {
+    status.is_success() || status == StatusCode::NOT_MODIFIED
+}
+
+fn is_frontend_cacheable_response(method: &Method, status: StatusCode) -> bool {
+    (method == Method::GET || method == Method::HEAD)
+        && (status.is_success()
+            || status == StatusCode::NOT_FOUND
+            || status == StatusCode::NOT_MODIFIED)
 }
 
 fn has_session_cookie(cookie_header: &str) -> bool {
@@ -286,15 +417,17 @@ mod tests {
 
     use axum::body::{to_bytes, Body};
     use axum::http::header::{
-        AUTHORIZATION, CACHE_CONTROL, CONTENT_DISPOSITION, CONTENT_TYPE, COOKIE, RETRY_AFTER,
-        SET_COOKIE,
+        ACCEPT_ENCODING, ACCEPT_RANGES, AUTHORIZATION, CACHE_CONTROL, CONTENT_DISPOSITION,
+        CONTENT_ENCODING, CONTENT_RANGE, CONTENT_TYPE, COOKIE, IF_MODIFIED_SINCE, LAST_MODIFIED,
+        LOCATION, RANGE, RETRY_AFTER, SET_COOKIE, VARY,
     };
-    use axum::http::{Method, Request, StatusCode};
+    use axum::http::{HeaderMap, Method, Request, StatusCode};
     use axum::Router;
     use litradar_auth::{
         AuthService, ACCESS_TOKEN_ACTIVE_LIMIT, ACCESS_TOKEN_LIMIT_DETAIL,
         ACCESS_TOKEN_NAME_LENGTH_DETAIL, ACCESS_TOKEN_RESERVED_NAME_DETAIL,
         ACCESS_TOKEN_TTL_DETAIL, ACCESS_TOKEN_TTL_MAX_SECONDS, ACCESS_TOKEN_TTL_MIN_SECONDS,
+        SESSION_COOKIE_NAME,
     };
     use litradar_sources::FixtureZjlibCnkiMode;
     use rusqlite::Connection;
@@ -303,9 +436,405 @@ mod tests {
 
     use crate::state::ApiState;
     use crate::test_support::{json_request, FixtureIndexDatabase, JsonTestResponse, TestBackend};
-    use crate::{api_heartbeat_loop_with_interval, try_build_router, ApiConfig};
+    use crate::{
+        api_heartbeat_loop_with_interval, try_build_router, ApiConfig, AUTHENTICATED_CACHE_CONTROL,
+        FRONTEND_CACHE_CONTROL, STATIC_ASSET_CACHE_CONTROL,
+    };
 
     static TEST_CONFIG_LOCK: AtomicBool = AtomicBool::new(false);
+
+    const STATIC_FRONTEND_ROUTES: [(&str, &str); 7] = [
+        ("/", "home"),
+        ("/login", "login"),
+        ("/admin", "admin"),
+        ("/favorites", "favorites"),
+        ("/settings", "settings"),
+        ("/tracking", "tracking"),
+        ("/weekly-updates", "weekly-updates"),
+    ];
+    const STATIC_JAVASCRIPT: &[u8] = b"console.log('asset');";
+    const STATIC_JAVASCRIPT_GZIP: &[u8] = &[
+        0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0a, 0x4b, 0xce, 0xcf, 0x2b, 0xce,
+        0xcf, 0x49, 0xd5, 0xcb, 0xc9, 0x4f, 0xd7, 0x50, 0x4f, 0x2c, 0x2e, 0x4e, 0x2d, 0x51, 0xd7,
+        0xb4, 0x06, 0x00, 0xd0, 0xc5, 0x38, 0xb6, 0x15, 0x00, 0x00, 0x00,
+    ];
+
+    struct StaticFrontendFixture {
+        backend: TestBackend,
+    }
+
+    impl StaticFrontendFixture {
+        fn new() -> Self {
+            let backend = TestBackend::new();
+            let web_root = backend.project_root().join("web");
+            for (uri, marker) in STATIC_FRONTEND_ROUTES {
+                let relative_path = if uri == "/" {
+                    "index.html".to_string()
+                } else {
+                    format!("{}.html", uri.trim_start_matches('/'))
+                };
+                write_static_file(
+                    &web_root,
+                    &relative_path,
+                    format!("<!doctype html><title>{marker}</title><main>{marker}</main>"),
+                );
+            }
+            write_static_file(
+                &web_root,
+                "404.html",
+                "<!doctype html><title>not found</title><main>missing frontend</main>",
+            );
+            write_static_file(&web_root, "index.txt", "root navigation payload");
+            write_static_file(&web_root, "tracking.txt", "tracking navigation payload");
+            write_static_file(
+                &web_root,
+                "tracking/__next._full.txt",
+                "tracking full payload",
+            );
+            write_static_file(
+                &web_root,
+                "_next/static/chunks/app-abc123.js",
+                STATIC_JAVASCRIPT,
+            );
+            write_static_file(
+                &web_root,
+                "_next/static/chunks/app-abc123.js.gz",
+                STATIC_JAVASCRIPT_GZIP,
+            );
+            write_static_file(
+                &web_root,
+                "_next/static/css/app-abc123.css",
+                "body { color: #123456; }",
+            );
+            write_static_file(
+                &web_root,
+                "_next/static/media/font-abc123.woff2",
+                b"fixture-font",
+            );
+            write_static_file(&web_root, "logo.png", b"\x89PNG\r\n\x1a\nfixture");
+            write_static_file(&web_root, "api.html", "static api collision");
+            write_static_file(&web_root, "api/health.html", "static health collision");
+            write_static_file(&web_root, "api/collision.html", "static api collision");
+            write_static_file(&web_root, "docs.html", "static docs collision");
+            write_static_file(&web_root, "docs/collision.html", "static docs collision");
+            write_static_file(&web_root, "mcp.html", "static mcp collision");
+            write_static_file(&web_root, "mcp/collision.html", "static mcp collision");
+            write_static_file(&web_root, "openapi.json", "static OpenAPI collision");
+            Self { backend }
+        }
+
+        fn router(&self) -> Router {
+            self.backend.router()
+        }
+    }
+
+    struct StaticTestResponse {
+        status: StatusCode,
+        headers: HeaderMap,
+        body: Vec<u8>,
+    }
+
+    impl StaticTestResponse {
+        fn text(&self) -> String {
+            String::from_utf8_lossy(&self.body).into_owned()
+        }
+    }
+
+    fn write_static_file(root: &Path, relative_path: &str, contents: impl AsRef<[u8]>) {
+        let path = root.join(relative_path);
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).expect("static fixture parent should be created");
+        }
+        fs::write(path, contents).expect("static fixture should be written");
+    }
+
+    async fn static_frontend_request(
+        app: &Router,
+        method: Method,
+        uri: &str,
+        headers: &[(&str, &str)],
+    ) -> StaticTestResponse {
+        let mut builder = Request::builder().method(method).uri(uri);
+        for (name, value) in headers {
+            builder = builder.header(*name, *value);
+        }
+        let response = app
+            .clone()
+            .oneshot(builder.body(Body::empty()).expect("request should build"))
+            .await
+            .expect("response should be returned");
+        let status = response.status();
+        let headers = response.headers().clone();
+        let body = to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("response body should read")
+            .to_vec();
+        StaticTestResponse {
+            status,
+            headers,
+            body,
+        }
+    }
+
+    #[tokio::test]
+    #[cfg_attr(
+        miri,
+        ignore = "Miri does not support Tokio's Windows IOCP runtime initialization"
+    )]
+    async fn static_frontend_serves_routes_navigation_payloads_and_head() {
+        let fixture = StaticFrontendFixture::new();
+        let app = fixture.router();
+
+        for (uri, marker) in STATIC_FRONTEND_ROUTES {
+            let response = static_frontend_request(&app, Method::GET, uri, &[]).await;
+            assert_eq!(response.status, StatusCode::OK, "GET {uri}");
+            assert_eq!(
+                response.headers.get(CACHE_CONTROL).unwrap(),
+                FRONTEND_CACHE_CONTROL
+            );
+            assert!(response
+                .headers
+                .get(CONTENT_TYPE)
+                .and_then(|value| value.to_str().ok())
+                .is_some_and(|value| value.starts_with("text/html")));
+            assert!(response.text().contains(marker));
+
+            let head = static_frontend_request(&app, Method::HEAD, uri, &[]).await;
+            assert_eq!(head.status, StatusCode::OK, "HEAD {uri}");
+            assert_eq!(
+                head.headers.get(CACHE_CONTROL).unwrap(),
+                FRONTEND_CACHE_CONTROL
+            );
+            assert!(head.body.is_empty());
+        }
+
+        let query_refresh =
+            static_frontend_request(&app, Method::GET, "/tracking?view=week", &[]).await;
+        assert_eq!(query_refresh.status, StatusCode::OK);
+        assert!(query_refresh.text().contains("tracking"));
+
+        for (uri, payload) in [
+            ("/index.txt", "root navigation payload"),
+            ("/tracking.txt", "tracking navigation payload"),
+            ("/tracking/__next._full.txt", "tracking full payload"),
+        ] {
+            let response = static_frontend_request(&app, Method::GET, uri, &[]).await;
+            assert_eq!(response.status, StatusCode::OK, "GET {uri}");
+            assert_eq!(
+                response.headers.get(CACHE_CONTROL).unwrap(),
+                FRONTEND_CACHE_CONTROL
+            );
+            assert_eq!(response.text(), payload);
+        }
+    }
+
+    #[tokio::test]
+    #[cfg_attr(
+        miri,
+        ignore = "Miri does not support Tokio's Windows IOCP runtime initialization"
+    )]
+    async fn static_frontend_redirects_ui_paths_and_preserves_backend_precedence() {
+        let fixture = StaticFrontendFixture::new();
+        let app = fixture.router();
+
+        let redirect =
+            static_frontend_request(&app, Method::GET, "/tracking/?view=week", &[]).await;
+        assert_eq!(redirect.status, StatusCode::PERMANENT_REDIRECT);
+        assert_eq!(
+            redirect.headers.get(LOCATION).unwrap(),
+            "/tracking?view=week"
+        );
+
+        let root = static_frontend_request(&app, Method::GET, "/?view=week", &[]).await;
+        assert_eq!(root.status, StatusCode::OK);
+
+        for uri in ["/api/", "/mcp/", "/docs/", "/openapi.json/"] {
+            let response = static_frontend_request(&app, Method::GET, uri, &[]).await;
+            assert_ne!(response.status, StatusCode::PERMANENT_REDIRECT, "GET {uri}");
+            assert!(response.headers.get(LOCATION).is_none(), "GET {uri}");
+        }
+
+        let health = static_frontend_request(&app, Method::GET, "/api/health", &[]).await;
+        assert_eq!(health.status, StatusCode::OK);
+        assert_eq!(health.text(), r#"{"status":"ok"}"#);
+
+        let docs = static_frontend_request(&app, Method::GET, "/docs/", &[]).await;
+        assert_eq!(docs.status, StatusCode::OK);
+        assert!(docs.text().contains("<title>Swagger UI</title>"));
+        let docs_asset =
+            static_frontend_request(&app, Method::GET, "/docs/swagger-ui.css", &[]).await;
+        assert_eq!(docs_asset.status, StatusCode::OK);
+        assert_eq!(docs_asset.headers.get(CONTENT_TYPE).unwrap(), "text/css");
+
+        let openapi = static_frontend_request(&app, Method::GET, "/openapi.json", &[]).await;
+        assert_eq!(openapi.status, StatusCode::OK);
+        assert!(openapi.text().contains(r#""openapi""#));
+        assert!(!openapi.text().contains("static OpenAPI collision"));
+
+        for uri in ["/api/collision", "/docs/collision", "/mcp/collision"] {
+            let response = static_frontend_request(&app, Method::GET, uri, &[]).await;
+            assert_ne!(response.status, StatusCode::OK, "GET {uri}");
+            assert!(!response.text().contains("static"), "GET {uri}");
+        }
+
+        let backend_without_web = TestBackend::new();
+        let app_without_web = backend_without_web.router();
+        let health_without_web =
+            static_frontend_request(&app_without_web, Method::GET, "/api/health", &[]).await;
+        assert_eq!(health_without_web.status, StatusCode::OK);
+        let root_without_web =
+            static_frontend_request(&app_without_web, Method::GET, "/", &[]).await;
+        assert_eq!(root_without_web.status, StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    #[cfg_attr(
+        miri,
+        ignore = "Miri does not support Tokio's Windows IOCP runtime initialization"
+    )]
+    async fn static_frontend_negotiates_files_ranges_and_cache_policies() {
+        let fixture = StaticFrontendFixture::new();
+        let app = fixture.router();
+        let javascript_uri = "/_next/static/chunks/app-abc123.js";
+
+        let javascript = static_frontend_request(&app, Method::GET, javascript_uri, &[]).await;
+        assert_eq!(javascript.status, StatusCode::OK);
+        assert_eq!(javascript.body, STATIC_JAVASCRIPT);
+        assert_eq!(
+            javascript.headers.get(CACHE_CONTROL).unwrap(),
+            STATIC_ASSET_CACHE_CONTROL
+        );
+        assert_eq!(
+            javascript.headers.get(CONTENT_TYPE).unwrap(),
+            "text/javascript"
+        );
+        assert!(javascript.headers.get(CONTENT_ENCODING).is_none());
+
+        let gzip = static_frontend_request(
+            &app,
+            Method::GET,
+            javascript_uri,
+            &[(ACCEPT_ENCODING.as_str(), "gzip")],
+        )
+        .await;
+        assert_eq!(gzip.status, StatusCode::OK);
+        assert_eq!(gzip.body, STATIC_JAVASCRIPT_GZIP);
+        assert_eq!(gzip.headers.get(CONTENT_ENCODING).unwrap(), "gzip");
+        assert_eq!(gzip.headers.get(VARY).unwrap(), "accept-encoding");
+
+        let range = static_frontend_request(
+            &app,
+            Method::GET,
+            javascript_uri,
+            &[(RANGE.as_str(), "bytes=0-6")],
+        )
+        .await;
+        assert_eq!(range.status, StatusCode::PARTIAL_CONTENT);
+        assert_eq!(range.body, &STATIC_JAVASCRIPT[..=6]);
+        assert_eq!(range.headers.get(ACCEPT_RANGES).unwrap(), "bytes");
+        let expected_content_range = format!("bytes 0-6/{}", STATIC_JAVASCRIPT.len());
+        assert_eq!(
+            range.headers.get(CONTENT_RANGE).unwrap().to_str().unwrap(),
+            expected_content_range
+        );
+        assert_eq!(
+            range.headers.get(CACHE_CONTROL).unwrap(),
+            STATIC_ASSET_CACHE_CONTROL
+        );
+
+        for (uri, content_type) in [
+            ("/_next/static/css/app-abc123.css", "text/css"),
+            ("/_next/static/media/font-abc123.woff2", "font/woff2"),
+            ("/logo.png", "image/png"),
+        ] {
+            let response = static_frontend_request(&app, Method::GET, uri, &[]).await;
+            assert_eq!(response.status, StatusCode::OK, "GET {uri}");
+            assert_eq!(response.headers.get(CONTENT_TYPE).unwrap(), content_type);
+        }
+
+        let last_modified = javascript
+            .headers
+            .get(LAST_MODIFIED)
+            .expect("static asset should expose last-modified")
+            .to_str()
+            .expect("last-modified should be ASCII");
+        let not_modified = static_frontend_request(
+            &app,
+            Method::GET,
+            javascript_uri,
+            &[(IF_MODIFIED_SINCE.as_str(), last_modified)],
+        )
+        .await;
+        assert_eq!(not_modified.status, StatusCode::NOT_MODIFIED);
+        assert_eq!(
+            not_modified.headers.get(CACHE_CONTROL).unwrap(),
+            STATIC_ASSET_CACHE_CONTROL
+        );
+
+        let cookie = format!("{SESSION_COOKIE_NAME}=fixture");
+        let credentialed_asset = static_frontend_request(
+            &app,
+            Method::GET,
+            javascript_uri,
+            &[(COOKIE.as_str(), &cookie)],
+        )
+        .await;
+        assert_eq!(
+            credentialed_asset.headers.get(CACHE_CONTROL).unwrap(),
+            STATIC_ASSET_CACHE_CONTROL
+        );
+
+        let credentialed_document =
+            static_frontend_request(&app, Method::GET, "/", &[(COOKIE.as_str(), &cookie)]).await;
+        assert_eq!(
+            credentialed_document.headers.get(CACHE_CONTROL).unwrap(),
+            AUTHENTICATED_CACHE_CONTROL
+        );
+    }
+
+    #[tokio::test]
+    #[cfg_attr(
+        miri,
+        ignore = "Miri does not support Tokio's Windows IOCP runtime initialization"
+    )]
+    async fn static_frontend_returns_404_rejects_methods_and_blocks_traversal() {
+        let fixture = StaticFrontendFixture::new();
+        let app = fixture.router();
+
+        let missing = static_frontend_request(&app, Method::GET, "/missing", &[]).await;
+        assert_eq!(missing.status, StatusCode::NOT_FOUND);
+        assert!(missing.text().contains("missing frontend"));
+        assert_eq!(
+            missing.headers.get(CACHE_CONTROL).unwrap(),
+            FRONTEND_CACHE_CONTROL
+        );
+
+        let missing_head = static_frontend_request(&app, Method::HEAD, "/missing", &[]).await;
+        assert_eq!(missing_head.status, StatusCode::NOT_FOUND);
+        assert!(missing_head.body.is_empty());
+
+        for uri in ["/tracking", "/missing"] {
+            let response = static_frontend_request(&app, Method::POST, uri, &[]).await;
+            assert_eq!(
+                response.status,
+                StatusCode::METHOD_NOT_ALLOWED,
+                "POST {uri}"
+            );
+            assert!(!response.text().contains("tracking"));
+            assert!(!response.text().contains("missing frontend"));
+        }
+
+        for uri in [
+            "/%2e%2e/secret.key",
+            "/%2e%2e%2fsecret.key",
+            "/%2e%2e%5csecret.key",
+        ] {
+            let response = static_frontend_request(&app, Method::GET, uri, &[]).await;
+            assert_eq!(response.status, StatusCode::NOT_FOUND, "GET {uri}");
+            assert_ne!(response.body, vec![42_u8; 32]);
+            assert!(response.text().contains("missing frontend"));
+        }
+    }
 
     #[tokio::test]
     async fn api_heartbeat_loop_persists_restore_safety_heartbeat() {
