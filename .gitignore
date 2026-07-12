@@ -13,6 +13,7 @@
 /docs/plan/
 /docs/report/
 /output/
+/app/out/
 /secrets/
 /.playwright-cli/
 /.antigravitycli/

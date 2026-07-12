@@ -4,7 +4,9 @@
 
 import { defineConfig, devices } from '@playwright/test';
 
-const BASE_URL = 'http://127.0.0.1:3100';
+const MANAGED_BASE_URL = 'http://127.0.0.1:3100';
+const EXTERNAL_BASE_URL = process.env.PLAYWRIGHT_BASE_URL?.trim();
+const BASE_URL = EXTERNAL_BASE_URL || MANAGED_BASE_URL;
 
 export default defineConfig({
   testDir: './tests/e2e',
@@ -25,12 +27,14 @@ export default defineConfig({
       use: { ...devices['Desktop Chrome'] },
     },
   ],
-  webServer: {
-    command: 'pnpm dev --hostname 127.0.0.1 --port 3100',
-    url: BASE_URL,
-    reuseExistingServer: !process.env.CI,
-    timeout: 120_000,
-    stdout: 'ignore',
-    stderr: 'pipe',
-  },
+  webServer: EXTERNAL_BASE_URL
+    ? undefined
+    : {
+        command: 'pnpm exec next dev --hostname 127.0.0.1 --port 3100',
+        url: MANAGED_BASE_URL,
+        reuseExistingServer: !process.env.CI,
+        timeout: 120_000,
+        stdout: 'ignore',
+        stderr: 'pipe',
+      },
 });
