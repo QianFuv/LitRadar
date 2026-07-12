@@ -12,6 +12,7 @@ pub(crate) mod test_support;
 
 use std::convert::Infallible;
 use std::error::Error;
+use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -49,6 +50,14 @@ pub const FRONTEND_CACHE_CONTROL: &str = "no-cache";
 
 const API_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(10);
 
+/// Prepared HTTP service with storage, routes, and listener ready to run.
+pub struct PreparedApiService {
+    listener: TcpListener,
+    router: Router,
+    state: ApiState,
+    instance_id: String,
+}
+
 /// Serialize the generated OpenAPI document for checked-in client generation.
 ///
 /// # Returns
@@ -60,65 +69,93 @@ pub fn generated_openapi_json() -> Result<String, serde_json::Error> {
     Ok(json)
 }
 
-/// Start the API server with an explicit runtime configuration.
-///
-/// # Arguments
-///
-/// * `config` - Runtime API configuration.
-///
-/// # Returns
-///
-/// Result indicating whether the server exited cleanly.
-pub async fn serve(config: ApiConfig) -> Result<(), Box<dyn Error>> {
-    observability::init_tracing();
+impl PreparedApiService {
+    /// Prepare storage, routes, and the TCP listener without starting request handling.
+    ///
+    /// # Arguments
+    ///
+    /// * `config` - Runtime API configuration.
+    ///
+    /// # Returns
+    ///
+    /// Prepared service ready for coordinated execution.
+    pub async fn prepare(config: ApiConfig) -> Result<Self, Box<dyn Error>> {
+        observability::init_tracing();
 
-    let bind_address = config.bind_address();
-    let (router, state) = try_build_router_with_state(config)?;
-    let listener = TcpListener::bind(&bind_address).await?;
-    println!("litradar-api listening on {}", listener.local_addr()?);
+        let bind_address = config.bind_address();
+        let (router, state) = try_build_router_with_state(config)?;
+        let listener = TcpListener::bind(&bind_address).await?;
+        let instance_id = api_instance_id()?;
+        println!("litradar listening on {}", listener.local_addr()?);
 
-    let instance_id = api_instance_id()?;
-    litradar_storage::record_service_heartbeat(
-        state.storage_config().auth_db_path(),
-        ServiceKind::Api,
-        &instance_id,
-        current_unix_time()?,
-    )?;
-    let mut heartbeat_task = tokio::spawn(api_heartbeat_loop(state.clone(), instance_id.clone()));
-
-    let shutdown_state = state.clone();
-    let server = async move {
-        axum::serve(listener, router)
-            .with_graceful_shutdown(shutdown_signal(shutdown_state))
-            .await
-    };
-    tokio::pin!(server);
-    let serve_result: Result<(), Box<dyn Error>> = tokio::select! {
-        result = &mut server => result.map_err(Into::into),
-        heartbeat = &mut heartbeat_task => {
-            state.close_blocking_executor();
-            let message = match heartbeat {
-                Ok(Ok(())) => "API heartbeat stopped unexpectedly",
-                Ok(Err(message)) => message,
-                Err(_) => "API heartbeat task failed",
-            };
-            Err(std::io::Error::other(message).into())
-        }
-    };
-    if !heartbeat_task.is_finished() {
-        heartbeat_task.abort();
-        let _ = heartbeat_task.await;
+        Ok(Self {
+            listener,
+            router,
+            state,
+            instance_id,
+        })
     }
-    let cleanup_result = litradar_storage::delete_service_heartbeat(
-        state.storage_config().auth_db_path(),
-        ServiceKind::Api,
-        &instance_id,
-    );
-    state.close_blocking_executor();
-    serve_result?;
-    cleanup_result?;
 
-    Ok(())
+    /// Run the prepared HTTP service until coordinated shutdown or component failure.
+    ///
+    /// # Arguments
+    ///
+    /// * `shutdown` - Future resolved by the application lifecycle coordinator.
+    ///
+    /// # Returns
+    ///
+    /// Result indicating whether serving and heartbeat cleanup completed successfully.
+    pub async fn run<Shutdown>(self, shutdown: Shutdown) -> Result<(), Box<dyn Error>>
+    where
+        Shutdown: Future<Output = ()> + Send + 'static,
+    {
+        let Self {
+            listener,
+            router,
+            state,
+            instance_id,
+        } = self;
+        litradar_storage::record_service_heartbeat(
+            state.storage_config().auth_db_path(),
+            ServiceKind::Api,
+            &instance_id,
+            current_unix_time()?,
+        )?;
+        let mut heartbeat_task =
+            tokio::spawn(api_heartbeat_loop(state.clone(), instance_id.clone()));
+
+        let server = async move {
+            axum::serve(listener, router)
+                .with_graceful_shutdown(shutdown)
+                .await
+        };
+        tokio::pin!(server);
+        let serve_result: Result<(), Box<dyn Error>> = tokio::select! {
+            result = &mut server => result.map_err(Into::into),
+            heartbeat = &mut heartbeat_task => {
+                let message = match heartbeat {
+                    Ok(Ok(())) => "API heartbeat stopped unexpectedly",
+                    Ok(Err(message)) => message,
+                    Err(_) => "API heartbeat task failed",
+                };
+                Err(std::io::Error::other(message).into())
+            }
+        };
+        if !heartbeat_task.is_finished() {
+            heartbeat_task.abort();
+            let _ = heartbeat_task.await;
+        }
+        let cleanup_result = litradar_storage::delete_service_heartbeat(
+            state.storage_config().auth_db_path(),
+            ServiceKind::Api,
+            &instance_id,
+        );
+        state.close_blocking_executor();
+        serve_result?;
+        cleanup_result?;
+
+        Ok(())
+    }
 }
 
 /// Build the Rust API router for the current migration phase.
@@ -167,6 +204,7 @@ fn try_build_router_with_state(
     let router = Router::new()
         .nest_service("/mcp", mcp::service(&config, state.clone()))
         .merge(openapi::docs_router())
+        .merge(routes::health_routes())
         .nest(API_PREFIX, routes::public_routes())
         .fallback_service(static_frontend_service(web_root))
         .layer(from_fn(cache_control_middleware))
@@ -323,6 +361,7 @@ fn frontend_redirect_location(request: &Request) -> Option<HeaderValue> {
 fn is_backend_path(path: &str) -> bool {
     [
         API_PREFIX,
+        "/health",
         "/mcp",
         openapi::DOCS_PATH,
         openapi::OPENAPI_JSON_PATH,
@@ -356,13 +395,6 @@ fn has_session_cookie(cookie_header: &str) -> bool {
         .split(';')
         .map(str::trim)
         .any(|cookie| cookie.starts_with(&format!("{SESSION_COOKIE_NAME}=")))
-}
-
-async fn shutdown_signal(state: ApiState) {
-    if let Err(error) = tokio::signal::ctrl_c().await {
-        eprintln!("failed to install Ctrl+C handler: {error}");
-    }
-    state.close_blocking_executor();
 }
 
 async fn api_heartbeat_loop(state: ApiState, instance_id: String) -> Result<(), &'static str> {
@@ -513,7 +545,7 @@ mod tests {
             );
             write_static_file(&web_root, "logo.png", b"\x89PNG\r\n\x1a\nfixture");
             write_static_file(&web_root, "api.html", "static api collision");
-            write_static_file(&web_root, "api/health.html", "static health collision");
+            write_static_file(&web_root, "health/live.html", "static health collision");
             write_static_file(&web_root, "api/collision.html", "static api collision");
             write_static_file(&web_root, "docs.html", "static docs collision");
             write_static_file(&web_root, "docs/collision.html", "static docs collision");
@@ -648,13 +680,13 @@ mod tests {
         let root = static_frontend_request(&app, Method::GET, "/?view=week", &[]).await;
         assert_eq!(root.status, StatusCode::OK);
 
-        for uri in ["/api/", "/mcp/", "/docs/", "/openapi.json/"] {
+        for uri in ["/api/", "/health/", "/mcp/", "/docs/", "/openapi.json/"] {
             let response = static_frontend_request(&app, Method::GET, uri, &[]).await;
             assert_ne!(response.status, StatusCode::PERMANENT_REDIRECT, "GET {uri}");
             assert!(response.headers.get(LOCATION).is_none(), "GET {uri}");
         }
 
-        let health = static_frontend_request(&app, Method::GET, "/api/health", &[]).await;
+        let health = static_frontend_request(&app, Method::GET, "/health/live", &[]).await;
         assert_eq!(health.status, StatusCode::OK);
         assert_eq!(health.text(), r#"{"status":"ok"}"#);
 
@@ -680,7 +712,7 @@ mod tests {
         let backend_without_web = TestBackend::new();
         let app_without_web = backend_without_web.router();
         let health_without_web =
-            static_frontend_request(&app_without_web, Method::GET, "/api/health", &[]).await;
+            static_frontend_request(&app_without_web, Method::GET, "/health/live", &[]).await;
         assert_eq!(health_without_web.status, StatusCode::OK);
         let root_without_web =
             static_frontend_request(&app_without_web, Method::GET, "/", &[]).await;
@@ -915,7 +947,7 @@ mod tests {
             None,
         )
         .await;
-        let public_health = json_request(&app, Method::GET, "/api/health", None, None, None).await;
+        let public_health = json_request(&app, Method::GET, "/health/live", None, None, None).await;
 
         for response in [&anonymous_articles, &anonymous_metadata] {
             assert_eq!(response.status, StatusCode::UNAUTHORIZED);
@@ -1142,14 +1174,15 @@ mod tests {
         miri,
         ignore = "Miri does not support Tokio's Windows IOCP runtime initialization"
     )]
-    async fn health_route_matches_python_payload() {
+    async fn liveness_route_returns_service_payload_and_old_routes_are_removed() {
         let backend = TestBackend::new();
         let app = backend.router();
 
         let response = app
+            .clone()
             .oneshot(
                 Request::builder()
-                    .uri("/api/health")
+                    .uri("/health/live")
                     .body(Body::empty())
                     .expect("request should build"),
             )
@@ -1163,6 +1196,11 @@ mod tests {
 
         assert_eq!(status, StatusCode::OK);
         assert_eq!(payload, serde_json::json!({"status": "ok"}));
+
+        for uri in ["/api/health", "/api/health/worker"] {
+            let removed = json_request(&app, Method::GET, uri, None, None, None).await;
+            assert_eq!(removed.status, StatusCode::NOT_FOUND, "GET {uri}");
+        }
     }
 
     #[tokio::test]
@@ -1170,11 +1208,11 @@ mod tests {
         miri,
         ignore = "Miri does not support Tokio's Windows IOCP runtime initialization"
     )]
-    async fn worker_health_follows_persisted_heartbeat_age() {
+    async fn readiness_follows_embedded_scheduler_heartbeat_age() {
         let backend = TestBackend::new();
         let app = backend.router();
 
-        let missing = json_request(&app, Method::GET, "/api/health/worker", None, None, None).await;
+        let missing = json_request(&app, Method::GET, "/health/ready", None, None, None).await;
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("system time should be after Unix epoch")
@@ -1185,14 +1223,14 @@ mod tests {
             now,
         )
         .expect("fresh worker heartbeat should persist");
-        let healthy = json_request(&app, Method::GET, "/api/health/worker", None, None, None).await;
+        let healthy = json_request(&app, Method::GET, "/health/ready", None, None, None).await;
         litradar_storage::record_scheduler_heartbeat(
             backend.storage_config().auth_db_path(),
             "health-fixture",
             now - 120.0,
         )
         .expect("stale worker heartbeat should persist");
-        let stale = json_request(&app, Method::GET, "/api/health/worker", None, None, None).await;
+        let stale = json_request(&app, Method::GET, "/health/ready", None, None, None).await;
 
         assert_eq!(missing.status, StatusCode::SERVICE_UNAVAILABLE);
         assert_eq!(missing.payload, serde_json::json!({"status": "unhealthy"}));
@@ -1228,7 +1266,10 @@ mod tests {
 
         assert_eq!(status, StatusCode::OK);
         assert_eq!(payload["openapi"], "3.1.0");
-        assert!(payload["paths"]["/api/health"].is_object());
+        assert!(payload["paths"]["/health/live"].is_object());
+        assert!(payload["paths"]["/health/ready"].is_object());
+        assert!(payload["paths"]["/api/health"].is_null());
+        assert!(payload["paths"]["/api/health/worker"].is_null());
         assert!(payload["paths"]["/api/admin/scheduled-tasks"].is_object());
     }
 

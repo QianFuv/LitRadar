@@ -24,8 +24,8 @@ pub const OPENAPI_JSON_PATH: &str = "/openapi.json";
         description = "Generated OpenAPI document for the Rust API."
     ),
     paths(
-        crate::routes::health::health,
-        crate::routes::health::worker_health,
+        crate::routes::health::live,
+        crate::routes::health::ready,
         crate::routes::announcements::get_announcements,
         crate::routes::index::list_databases,
         crate::routes::index::list_areas,
@@ -248,8 +248,8 @@ mod tests {
     use super::{document, ApiDoc, OpenApi};
 
     const EXPECTED_OPERATIONS: &[(&str, &str)] = &[
-        ("/api/health", "get"),
-        ("/api/health/worker", "get"),
+        ("/health/live", "get"),
+        ("/health/ready", "get"),
         ("/api/announcements", "get"),
         ("/api/meta/databases", "get"),
         ("/api/meta/areas", "get"),

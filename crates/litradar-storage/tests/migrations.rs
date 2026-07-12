@@ -64,6 +64,132 @@ fn service_heartbeat_migration_preserves_version_three_scheduler_rows() {
 }
 
 #[test]
+fn cancellation_status_migration_preserves_version_four_runs() {
+    let temp_dir = tempdir().expect("temp directory should be created");
+    let path = temp_dir.path().join("version-four-auth.sqlite");
+    let connection = Connection::open(&path).expect("version four database should open");
+    connection
+        .execute_batch(
+            "
+            CREATE TABLE scheduled_task_runs (
+                id               INTEGER PRIMARY KEY AUTOINCREMENT,
+                task_id          INTEGER NOT NULL,
+                task_name        TEXT    NOT NULL,
+                scheduled_for    INTEGER NOT NULL,
+                status           TEXT    NOT NULL
+                    CHECK (status IN ('pending', 'claimed', 'running', 'success',
+                                      'failed', 'timed_out', 'error', 'unknown')),
+                worker_id        TEXT,
+                claim_expires_at REAL,
+                claimed_at       REAL,
+                started_at       REAL,
+                finished_at      REAL,
+                output_summary   TEXT NOT NULL DEFAULT '',
+                UNIQUE(task_id, scheduled_for)
+            );
+            CREATE INDEX idx_scheduled_task_runs_task
+                ON scheduled_task_runs(task_id, scheduled_for DESC);
+            CREATE INDEX idx_scheduled_task_runs_status
+                ON scheduled_task_runs(status, claim_expires_at);
+            INSERT INTO scheduled_task_runs
+                (id, task_id, task_name, scheduled_for, status, worker_id,
+                 claim_expires_at, claimed_at, started_at, finished_at,
+                 output_summary)
+            VALUES
+                (7, 11, 'Existing run', 1800, 'running', 'worker-a',
+                 1900.0, 1810.0, 1820.0, NULL, 'partial output'),
+                (8, 12, 'Finished run', 1860, 'success', 'worker-b',
+                 NULL, 1861.0, 1862.0, 1870.0, 'complete output');
+            PRAGMA user_version = 4;
+            ",
+        )
+        .expect("version four fixture should be created");
+    drop(connection);
+
+    migrate_auth_database(&path).expect("version four database should migrate");
+
+    let connection = Connection::open(&path).expect("migrated database should open");
+    let rows = connection
+        .prepare(
+            "SELECT id, task_id, task_name, scheduled_for, status, worker_id,
+                    claim_expires_at, claimed_at, started_at, finished_at,
+                    output_summary
+             FROM scheduled_task_runs ORDER BY id",
+        )
+        .expect("scheduled runs query should prepare")
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, i64>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, i64>(3)?,
+                row.get::<_, String>(4)?,
+                row.get::<_, Option<String>>(5)?,
+                row.get::<_, Option<f64>>(6)?,
+                row.get::<_, Option<f64>>(7)?,
+                row.get::<_, Option<f64>>(8)?,
+                row.get::<_, Option<f64>>(9)?,
+                row.get::<_, String>(10)?,
+            ))
+        })
+        .expect("scheduled runs should query")
+        .collect::<Result<Vec<_>, _>>()
+        .expect("scheduled runs should collect");
+
+    assert_eq!(rows.len(), 2);
+    assert_eq!(rows[0].0, 7);
+    assert_eq!(rows[0].1, 11);
+    assert_eq!(rows[0].2, "Existing run");
+    assert_eq!(rows[0].3, 1800);
+    assert_eq!(rows[0].4, "running");
+    assert_eq!(rows[0].5.as_deref(), Some("worker-a"));
+    assert_eq!(rows[0].6, Some(1900.0));
+    assert_eq!(rows[0].7, Some(1810.0));
+    assert_eq!(rows[0].8, Some(1820.0));
+    assert_eq!(rows[0].9, None);
+    assert_eq!(rows[0].10, "partial output");
+    assert_eq!(rows[1].0, 8);
+    assert_eq!(rows[1].4, "success");
+    assert_eq!(rows[1].9, Some(1870.0));
+    assert_eq!(rows[1].10, "complete output");
+
+    for (offset, status) in [
+        "pending",
+        "claimed",
+        "running",
+        "success",
+        "failed",
+        "timed_out",
+        "error",
+        "unknown",
+        "cancelled",
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        connection
+            .execute(
+                "INSERT INTO scheduled_task_runs
+                    (task_id, task_name, scheduled_for, status)
+                 VALUES (?1, 'Status fixture', ?2, ?3)",
+                rusqlite::params![100 + offset as i64, 3000 + offset as i64, status],
+            )
+            .expect("supported scheduled run status should insert");
+    }
+    assert!(connection
+        .execute(
+            "INSERT INTO scheduled_task_runs
+                (task_id, task_name, scheduled_for, status)
+             VALUES (999, 'Invalid status', 9999, 'stopped')",
+            [],
+        )
+        .is_err());
+    assert_eq!(user_version(&path), AUTH_SCHEMA_VERSION);
+    assert!(index_exists(&path, "idx_scheduled_task_runs_task"));
+    assert!(index_exists(&path, "idx_scheduled_task_runs_status"));
+}
+
+#[test]
 fn scheduler_migration_disables_and_preserves_legacy_commands() {
     let temp_dir = tempdir().expect("temp directory should be created");
     let path = temp_dir.path().join("auth.sqlite");
@@ -570,6 +696,19 @@ fn table_exists(path: &Path, table_name: &str) -> bool {
             |row| row.get(0),
         )
         .expect("table existence should be readable")
+}
+
+fn index_exists(path: &Path, index_name: &str) -> bool {
+    let connection = Connection::open(path).expect("database should open for index query");
+    connection
+        .query_row(
+            "SELECT EXISTS(
+                SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = ?1
+             )",
+            [index_name],
+            |row| row.get(0),
+        )
+        .expect("index existence should be readable")
 }
 
 fn table_columns(path: &Path, table_name: &str) -> Vec<String> {

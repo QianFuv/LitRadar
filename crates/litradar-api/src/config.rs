@@ -59,41 +59,6 @@ impl ApiConfig {
         }
     }
 
-    /// Build API configuration from explicit CLI arguments.
-    ///
-    /// # Arguments
-    ///
-    /// * `args` - Command arguments without the executable name.
-    ///
-    /// # Returns
-    ///
-    /// Runtime API configuration.
-    pub fn from_args(args: impl IntoIterator<Item = String>) -> Result<Self, ApiConfigError> {
-        let mut args = args.into_iter().collect::<Vec<_>>();
-        let host =
-            extract_string_option(&mut args, "--host")?.unwrap_or_else(|| "127.0.0.1".to_string());
-        let port = match extract_string_option(&mut args, "--port")? {
-            Some(value) => value
-                .parse::<u16>()
-                .map_err(|_| ApiConfigError::InvalidPort(value))?,
-            None => 8000,
-        };
-        let project_root = match extract_string_option(&mut args, "--project-root")? {
-            Some(value) => PathBuf::from(value),
-            None => std::env::current_dir().map_err(ApiConfigError::CurrentDir)?,
-        };
-        let secret_key_file = extract_string_option(&mut args, "--secret-key-file")?
-            .map(PathBuf::from)
-            .ok_or(ApiConfigError::MissingSecretKeyFile)?;
-        let are_secure_cookies_required = extract_flag(&mut args, "--require-secure-cookies");
-        if let Some(argument) = args.first() {
-            return Err(ApiConfigError::UnexpectedArgument(argument.clone()));
-        }
-        let mut config = Self::new(project_root, host, port, secret_key_file);
-        config.are_secure_cookies_required = are_secure_cookies_required;
-        Ok(config)
-    }
-
     /// Apply database-backed admin runtime settings.
     ///
     /// # Arguments
@@ -143,16 +108,6 @@ impl ApiConfig {
 
 /// Configuration loading error.
 pub enum ApiConfigError {
-    /// Current directory resolution failed.
-    CurrentDir(std::io::Error),
-    /// The configured port is not a valid unsigned 16-bit integer.
-    InvalidPort(String),
-    /// A command argument requires a following value.
-    MissingArgumentValue(String),
-    /// The required deployment secret key file argument is missing.
-    MissingSecretKeyFile,
-    /// A command argument is not supported.
-    UnexpectedArgument(String),
     /// A configured CORS origin is not a valid HTTP header value.
     InvalidCorsOrigin(String),
     /// A configured MCP host is not a valid HTTP header value.
@@ -176,13 +131,6 @@ impl fmt::Display for ApiConfigError {
     /// Format the configuration error.
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::CurrentDir(error) => write!(formatter, "{error}"),
-            Self::InvalidPort(value) => write!(formatter, "Invalid API port: {value}"),
-            Self::MissingArgumentValue(name) => write!(formatter, "{name} requires a value"),
-            Self::MissingSecretKeyFile => formatter.write_str("--secret-key-file is required"),
-            Self::UnexpectedArgument(argument) => {
-                write!(formatter, "Unexpected API argument: {argument}")
-            }
             Self::InvalidCorsOrigin(value) => {
                 write!(formatter, "Invalid CORS origin: {value}")
             }
@@ -205,24 +153,7 @@ impl fmt::Display for ApiConfigError {
     }
 }
 
-impl Error for ApiConfigError {
-    /// Return the underlying source error.
-    fn source(&self) -> Option<&(dyn Error + 'static)> {
-        match self {
-            Self::CurrentDir(error) => Some(error),
-            _ => None,
-        }
-    }
-}
-
-/// Return the API command usage text.
-///
-/// # Returns
-///
-/// Usage string for the standalone `api` command.
-pub fn api_usage() -> &'static str {
-    "api --secret-key-file PATH [--host HOST] [--port PORT] [--project-root PATH] [--require-secure-cookies]"
-}
+impl Error for ApiConfigError {}
 
 /// Validate changed runtime Origin settings before persistence.
 ///
@@ -341,28 +272,6 @@ fn parse_runtime_bool(field: &str, value: &str) -> Result<bool, ApiConfigError> 
     }
 }
 
-fn extract_string_option(
-    args: &mut Vec<String>,
-    name: &str,
-) -> Result<Option<String>, ApiConfigError> {
-    if let Some(index) = args.iter().position(|argument| argument == name) {
-        if index + 1 >= args.len() {
-            return Err(ApiConfigError::MissingArgumentValue(name.to_string()));
-        }
-        let value = args.remove(index + 1);
-        args.remove(index);
-        return Ok(Some(value));
-    }
-    Ok(None)
-}
-
-fn extract_flag(args: &mut Vec<String>, name: &str) -> bool {
-    args.iter()
-        .position(|argument| argument == name)
-        .map(|index| args.remove(index))
-        .is_some()
-}
-
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
@@ -479,30 +388,6 @@ mod tests {
     }
 
     #[test]
-    fn from_args_reads_explicit_process_arguments() {
-        let project_root = PathBuf::from("litradar-config-root");
-
-        let config = ApiConfig::from_args([
-            "--host".to_string(),
-            "0.0.0.0".to_string(),
-            "--port".to_string(),
-            "9001".to_string(),
-            "--project-root".to_string(),
-            project_root.display().to_string(),
-            "--secret-key-file".to_string(),
-            "secret.key".to_string(),
-            "--require-secure-cookies".to_string(),
-        ])
-        .expect("explicit config should load");
-
-        assert_eq!(config.project_root, project_root);
-        assert_eq!(config.host, "0.0.0.0");
-        assert_eq!(config.port, 9001);
-        assert_eq!(config.bind_address(), "0.0.0.0:9001");
-        assert!(config.are_secure_cookies_required);
-    }
-
-    #[test]
     fn runtime_settings_apply_admin_values() {
         let mut config = ApiConfig::new(
             PathBuf::from("litradar-config-root"),
@@ -542,24 +427,14 @@ mod tests {
     }
 
     #[test]
-    fn from_args_rejects_invalid_port() {
-        let error = ApiConfig::from_args(["--port".to_string(), "not-a-port".to_string()])
-            .expect_err("invalid port should fail");
-
-        assert!(matches!(&error, ApiConfigError::InvalidPort(value) if value == "not-a-port"));
-        assert_eq!(error.to_string(), "Invalid API port: not-a-port");
-    }
-
-    #[test]
     fn production_flag_requires_secure_cookie_runtime_setting() {
-        let mut config = ApiConfig::from_args([
-            "--project-root".to_string(),
-            "fixture-root".to_string(),
-            "--secret-key-file".to_string(),
-            "secret.key".to_string(),
-            "--require-secure-cookies".to_string(),
-        ])
-        .expect("production flag should parse");
+        let mut config = ApiConfig::new(
+            PathBuf::from("fixture-root"),
+            "127.0.0.1".to_string(),
+            8000,
+            PathBuf::from("secret.key"),
+        );
+        config.are_secure_cookies_required = true;
 
         let error = config
             .apply_runtime_settings(&[runtime_setting("secure_cookies", "false")])

@@ -4,8 +4,6 @@ use std::error::Error;
 use std::fs;
 use std::io::BufRead;
 use std::path::{Path, PathBuf};
-use std::thread;
-use std::time::Duration;
 
 use litradar_auth::AuthService;
 use litradar_domain::{DELIVERY_RETRY_ATTEMPTS_MAX, DELIVERY_RETRY_ATTEMPTS_MIN};
@@ -21,12 +19,10 @@ use litradar_storage::{
 use litradar_worker::delivery::{
     run_recommendation_delivery, DeliveryMode, DeliveryWorkflow, RecommendationRunConfig,
 };
-use litradar_worker::scheduler::{
-    load_scheduler_jobs, run_due_scheduler_once, run_task_now, scheduler_worker_id, SchedulerMode,
-};
+use litradar_worker::scheduler::{load_scheduler_jobs, run_task_now, SchedulerMode};
 use serde_json::json;
 
-/// Run the standalone local `admin` maintenance command.
+/// Run the unified application's local `admin` maintenance command.
 ///
 /// # Arguments
 ///
@@ -223,16 +219,20 @@ fn run_admin_command_with_reader(
     }
 }
 
-/// Run the standalone `index` command.
+/// Run the unified application's `index` command.
 ///
 /// # Arguments
 ///
 /// * `args` - Command arguments without the executable name.
+/// * `application_executable` - Canonical application executable used for child processes.
 ///
 /// # Returns
 ///
 /// Result indicating whether the command completed successfully.
-pub fn run_index_command(args: Vec<String>) -> Result<(), Box<dyn Error>> {
+pub fn run_index_command(
+    args: Vec<String>,
+    application_executable: impl AsRef<Path>,
+) -> Result<(), Box<dyn Error>> {
     let mut args = args;
     if has_help(&args) {
         println!("{}", index_usage());
@@ -259,6 +259,7 @@ pub fn run_index_command(args: Vec<String>) -> Result<(), Box<dyn Error>> {
     let scholarly_config =
         live_scholarly_config(&auth_db_path, &secret_codec, options.timeout_seconds)?;
     let outcome = run_live_index(&LiveIndexConfig {
+        application_executable: application_executable.as_ref().to_path_buf(),
         project_root: project_root.clone(),
         secret_key_file: secret_key_file.clone(),
         file: options.file,
@@ -326,7 +327,7 @@ fn parse_index_options(args: &mut Vec<String>) -> Result<IndexOptions, Box<dyn E
     })
 }
 
-/// Run the standalone `notify` command.
+/// Run the unified application's `notify` command.
 ///
 /// # Arguments
 ///
@@ -339,7 +340,7 @@ pub fn run_notify_command(args: Vec<String>) -> Result<(), Box<dyn Error>> {
     run_delivery_command(DeliveryWorkflow::Notify, args)
 }
 
-/// Run the standalone `push` command.
+/// Run the unified application's `push` command.
 ///
 /// # Arguments
 ///
@@ -352,16 +353,20 @@ pub fn run_push_command(args: Vec<String>) -> Result<(), Box<dyn Error>> {
     run_delivery_command(DeliveryWorkflow::Push, args)
 }
 
-/// Run the standalone `scheduler` command.
+/// Run the unified application's `scheduler` command.
 ///
 /// # Arguments
 ///
 /// * `args` - Command arguments without the executable name.
+/// * `application_executable` - Canonical application executable used for task subprocesses.
 ///
 /// # Returns
 ///
 /// Result indicating whether the command completed successfully.
-pub fn run_scheduler_command(mut args: Vec<String>) -> Result<(), Box<dyn Error>> {
+pub fn run_scheduler_command(
+    mut args: Vec<String>,
+    application_executable: impl AsRef<Path>,
+) -> Result<(), Box<dyn Error>> {
     if has_help(&args) {
         println!("{}", scheduler_usage());
         return Ok(());
@@ -388,7 +393,13 @@ pub fn run_scheduler_command(mut args: Vec<String>) -> Result<(), Box<dyn Error>
     match action {
         SchedulerAction::Validate => print_scheduler_load(&auth_db_path),
         SchedulerAction::RunOnce(task_id, mode) => {
-            let outcome = run_task_now(&auth_db_path, &secret_key_file, task_id, mode)?;
+            let outcome = run_task_now(
+                &auth_db_path,
+                application_executable,
+                &secret_key_file,
+                task_id,
+                mode,
+            )?;
             println!("{}", serde_json::to_string(&outcome)?);
             Ok(())
         }
@@ -398,40 +409,6 @@ pub fn run_scheduler_command(mut args: Vec<String>) -> Result<(), Box<dyn Error>
 enum SchedulerAction {
     Validate,
     RunOnce(i64, SchedulerMode),
-}
-
-/// Run the standalone `worker` command.
-///
-/// # Arguments
-///
-/// * `args` - Command arguments without the executable name.
-///
-/// # Returns
-///
-/// Result indicating whether the command completed successfully.
-pub fn run_worker_command(mut args: Vec<String>) -> Result<(), Box<dyn Error>> {
-    if has_help(&args) {
-        println!("{}", worker_usage());
-        return Ok(());
-    }
-    let project_root = extract_project_root(&mut args)?;
-    let auth_db_path = extract_auth_db_path_with_project_root(&mut args, &project_root)?;
-    let secret_key_file = extract_path_option(&mut args, "--secret-key-file")?;
-    let interval_seconds = extract_u64_option(&mut args, "--interval-seconds")?.unwrap_or(30);
-    let max_iterations = extract_usize_option(&mut args, "--max-iterations")?;
-    if !args.is_empty() {
-        return Err(worker_usage().into());
-    }
-    let secret_key_file = required_secret_key_file(secret_key_file)?;
-    migrate_command_databases(&project_root, &auth_db_path)?;
-    let secret_codec = SecretCodec::load(&secret_key_file)?;
-    verify_database_secrets(&auth_db_path, &secret_codec)?;
-    run_worker_execute(
-        &auth_db_path,
-        &secret_key_file,
-        interval_seconds,
-        max_iterations,
-    )
 }
 
 fn run_delivery_command(
@@ -539,41 +516,6 @@ fn migrate_command_databases(
     migrate_auth_database(auth_db_path)?;
     migrate_existing_index_databases(&StorageConfig::from_project_root(project_root))?;
     Ok(())
-}
-
-fn run_worker_execute(
-    auth_db_path: &Path,
-    secret_key_file: &Path,
-    interval_seconds: u64,
-    max_iterations: Option<usize>,
-) -> Result<(), Box<dyn Error>> {
-    let interval_seconds = interval_seconds.max(1);
-    let worker_id = scheduler_worker_id();
-    let mut iterations = 0_usize;
-    loop {
-        let result = run_due_scheduler_once(auth_db_path, secret_key_file, &worker_id)?;
-        let payload = json!({
-            "worker_id": worker_id,
-            "interval_seconds": interval_seconds,
-            "mode": "execute",
-            "status": result.status,
-            "minute_epoch": result.minute_epoch,
-            "jobs": result.jobs,
-            "skipped": result.skipped.len(),
-            "due": result.due,
-            "already_executed": result.already_executed,
-            "queued": result.queued,
-            "claimed": result.claimed,
-            "executed": result.executed.len(),
-            "executions": result.executed,
-        });
-        println!("{}", serde_json::to_string(&payload)?);
-        iterations += 1;
-        if max_iterations.is_some_and(|limit| iterations >= limit) {
-            return Ok(());
-        }
-        thread::sleep(Duration::from_secs(interval_seconds));
-    }
 }
 
 #[cfg(test)]
@@ -841,7 +783,7 @@ fn live_scholarly_config(
 
 fn index_usage() -> String {
     let payload = json!({
-        "usage": "index --secret-key-file PATH [--project-root PATH] [--auth-db PATH] [--file FILE] [--workers N] [--processes N] [--issue-batch N] [--timeout N] [--resume|--no-resume] [--update|--no-update] [--notify] [--notify-dry-run]"
+        "usage": "litradar index --secret-key-file PATH [--project-root PATH] [--auth-db PATH] [--file FILE] [--workers N] [--processes N] [--issue-batch N] [--timeout N] [--resume|--no-resume] [--update|--no-update] [--notify] [--notify-dry-run]"
     });
     payload.to_string()
 }
@@ -849,17 +791,10 @@ fn index_usage() -> String {
 fn scheduler_usage() -> String {
     let payload = json!({
         "usage": [
-            "scheduler validate --secret-key-file PATH [--project-root PATH] [--auth-db PATH]",
-            "scheduler run-once TASK_ID --secret-key-file PATH [--project-root PATH] [--auth-db PATH]",
-            "scheduler dry-run-once TASK_ID --secret-key-file PATH [--project-root PATH] [--auth-db PATH]"
+            "litradar scheduler validate --secret-key-file PATH [--project-root PATH] [--auth-db PATH]",
+            "litradar scheduler run-once TASK_ID --secret-key-file PATH [--project-root PATH] [--auth-db PATH]",
+            "litradar scheduler dry-run-once TASK_ID --secret-key-file PATH [--project-root PATH] [--auth-db PATH]"
         ]
-    });
-    payload.to_string()
-}
-
-fn worker_usage() -> String {
-    let payload = json!({
-        "usage": "worker --secret-key-file PATH [--project-root PATH] [--auth-db PATH] [--interval-seconds N] [--max-iterations N]"
     });
     payload.to_string()
 }
@@ -867,13 +802,13 @@ fn worker_usage() -> String {
 fn admin_usage() -> String {
     json!({
         "usage": [
-            "admin bootstrap --username NAME --password-stdin [--project-root PATH] [--auth-db PATH]",
-            "admin secrets migrate --secret-key-file PATH [--project-root PATH] [--auth-db PATH]",
-            "admin secrets verify --secret-key-file PATH [--project-root PATH] [--auth-db PATH]",
-            "admin secrets rotate --old-key-file PATH --new-key-file PATH [--project-root PATH] [--auth-db PATH]",
-            "admin backup create --output PATH [--include-indexes] [--include-push-state] [--project-root PATH] [--auth-db PATH]",
-            "admin backup verify --backup PATH [--project-root PATH]",
-            "admin backup restore --backup PATH --confirm-restore [--project-root PATH] [--auth-db PATH]"
+            "litradar admin bootstrap --username NAME --password-stdin [--project-root PATH] [--auth-db PATH]",
+            "litradar admin secrets migrate --secret-key-file PATH [--project-root PATH] [--auth-db PATH]",
+            "litradar admin secrets verify --secret-key-file PATH [--project-root PATH] [--auth-db PATH]",
+            "litradar admin secrets rotate --old-key-file PATH --new-key-file PATH [--project-root PATH] [--auth-db PATH]",
+            "litradar admin backup create --output PATH [--include-indexes] [--include-push-state] [--project-root PATH] [--auth-db PATH]",
+            "litradar admin backup verify --backup PATH [--project-root PATH]",
+            "litradar admin backup restore --backup PATH --confirm-restore [--project-root PATH] [--auth-db PATH]"
         ]
     })
     .to_string()
@@ -885,7 +820,7 @@ fn delivery_usage(workflow: DeliveryWorkflow) -> String {
         DeliveryWorkflow::Push => "push",
     };
     let payload = json!({
-        "usage": format!("{command_name} --secret-key-file PATH [--project-root PATH] [--auth-db PATH] [--db NAME] [--state-dir PATH] [--changes-file PATH] [--ai-model MODEL] [--max-candidates N] [--timeout N] [--retries N] [--dedupe-retention-days N] [--dry-run|--no-dry-run]")
+        "usage": format!("litradar {command_name} --secret-key-file PATH [--project-root PATH] [--auth-db PATH] [--db NAME] [--state-dir PATH] [--changes-file PATH] [--ai-model MODEL] [--max-candidates N] [--timeout N] [--retries N] [--dedupe-retention-days N] [--dry-run|--no-dry-run]")
     });
     payload.to_string()
 }
@@ -893,6 +828,7 @@ fn delivery_usage(workflow: DeliveryWorkflow) -> String {
 #[cfg(test)]
 mod tests {
     use std::fs;
+    use std::path::Path;
 
     use tempfile::{Builder, TempDir};
 
@@ -901,18 +837,17 @@ mod tests {
         extract_bool_pair, extract_string_option, extract_usize_option, index_usage,
         normalize_db_name, parse_index_options, resolve_delivery_targets, resolve_project_path,
         run_admin_command_with_reader, run_index_command, run_notify_command, run_push_command,
-        run_scheduler_command, run_worker_command, scheduler_usage, worker_usage,
+        run_scheduler_command, scheduler_usage,
     };
     use litradar_worker::delivery::DeliveryWorkflow;
 
     #[test]
-    fn standalone_usage_lists_only_supported_commands() {
+    fn unified_usage_lists_only_supported_commands() {
         let admin = admin_usage();
         let index = index_usage();
         let notify = delivery_usage(DeliveryWorkflow::Notify);
         let push = delivery_usage(DeliveryWorkflow::Push);
         let scheduler = scheduler_usage();
-        let worker = worker_usage();
 
         assert!(index.contains("--file FILE"));
         assert!(index.contains("--workers N"));
@@ -923,12 +858,12 @@ mod tests {
         assert!(scheduler.contains("scheduler validate"));
         assert!(scheduler.contains("scheduler run-once TASK_ID"));
         assert!(scheduler.contains("scheduler dry-run-once TASK_ID"));
-        assert!(worker.contains("worker --secret-key-file PATH"));
         assert!(admin.contains("admin bootstrap --username NAME --password-stdin"));
         assert!(admin.contains("admin backup create --output PATH"));
         assert!(admin.contains("admin backup restore --backup PATH --confirm-restore"));
         assert!(!admin.contains("--password "));
-        for usage in [admin, index, notify, push, scheduler, worker] {
+        for usage in [admin, index, notify, push, scheduler] {
+            assert!(usage.contains("litradar "));
             assert!(!usage.contains("litradar-cli"));
             assert!(!usage.contains("shadow"));
             assert!(!usage.contains("index fixture"));
@@ -1430,7 +1365,7 @@ mod tests {
 
     #[test]
     fn index_notify_requires_update_before_live_execution() {
-        let error = run_index_command(vec!["--notify".to_string()])
+        let error = run_index_command(vec!["--notify".to_string()], Path::new("litradar"))
             .expect_err("notify handoff should require update mode");
 
         assert_eq!(error.to_string(), "--notify requires --update");
@@ -1438,7 +1373,8 @@ mod tests {
 
     #[test]
     fn help_and_delivery_errors_return_before_execution() {
-        run_scheduler_command(vec!["--help".to_string()]).expect("scheduler help should succeed");
+        run_scheduler_command(vec!["--help".to_string()], Path::new("litradar"))
+            .expect("scheduler help should succeed");
 
         let error = run_notify_command(vec!["--unexpected".to_string()])
             .expect_err("unexpected delivery args should fail");
@@ -1454,40 +1390,19 @@ mod tests {
         let root = temp_root("litradar-cli-scheduler-dispatch");
         let auth_db_path = root.path().join("auth.sqlite");
 
-        let error = run_scheduler_command(vec![
-            "--auth-db".to_string(),
-            auth_db_path.to_string_lossy().into_owned(),
-            "run-once".to_string(),
-            "not-a-number".to_string(),
-        ])
+        let error = run_scheduler_command(
+            vec![
+                "--auth-db".to_string(),
+                auth_db_path.to_string_lossy().into_owned(),
+                "run-once".to_string(),
+                "not-a-number".to_string(),
+            ],
+            Path::new("litradar"),
+        )
         .expect_err("invalid scheduler task id should fail before execution");
 
         assert!(error.to_string().contains("invalid digit"));
         assert!(!auth_db_path.exists());
-    }
-
-    #[test]
-    fn worker_startup_migration_precedes_scheduler_loop() {
-        let root = temp_root("litradar-cli-worker-execute");
-        let auth_db_path = root.path().join("auth.sqlite");
-        let secret_key_file = root.path().join("secret.key");
-        fs::write(&secret_key_file, [5_u8; 32]).expect("secret key should write");
-
-        run_worker_command(vec![
-            "--auth-db".to_string(),
-            auth_db_path.to_string_lossy().into_owned(),
-            "--secret-key-file".to_string(),
-            secret_key_file.to_string_lossy().into_owned(),
-            "--interval-seconds".to_string(),
-            "1".to_string(),
-            "--max-iterations".to_string(),
-            "1".to_string(),
-        ])
-        .expect("finite worker run should return");
-        assert_eq!(
-            litradar_storage::count_users(&auth_db_path).expect("migrated users table should load"),
-            0
-        );
     }
 
     #[test]
@@ -1497,13 +1412,16 @@ mod tests {
         let secret_key_file = root.path().join("secret.key");
         fs::write(&secret_key_file, [5_u8; 32]).expect("secret key should write");
 
-        run_scheduler_command(vec![
-            "--auth-db".to_string(),
-            auth_db_path.to_string_lossy().into_owned(),
-            "--secret-key-file".to_string(),
-            secret_key_file.to_string_lossy().into_owned(),
-            "validate".to_string(),
-        ])
+        run_scheduler_command(
+            vec![
+                "--auth-db".to_string(),
+                auth_db_path.to_string_lossy().into_owned(),
+                "--secret-key-file".to_string(),
+                secret_key_file.to_string_lossy().into_owned(),
+                "validate".to_string(),
+            ],
+            Path::new("litradar"),
+        )
         .expect("scheduler validate should load jobs");
         assert_eq!(
             litradar_storage::count_users(&auth_db_path).expect("migrated users table should load"),
@@ -1513,16 +1431,15 @@ mod tests {
 
     #[test]
     fn removed_public_command_paths_are_rejected() {
-        let index_fixture =
-            run_index_command(vec!["fixture".to_string()]).expect_err("fixture command is removed");
+        let index_fixture = run_index_command(vec!["fixture".to_string()], Path::new("litradar"))
+            .expect_err("fixture command is removed");
         let notify_positional_dry_run = run_notify_command(vec!["dry-run".to_string()])
             .expect_err("positional notify dry-run is removed");
         let push_shadow =
             run_push_command(vec!["shadow".to_string()]).expect_err("push shadow is removed");
-        let scheduler_dry_run = run_scheduler_command(vec!["dry-run".to_string()])
-            .expect_err("scheduler dry-run alias is removed");
-        let worker_execute =
-            run_worker_command(vec!["execute".to_string()]).expect_err("worker execute is removed");
+        let scheduler_dry_run =
+            run_scheduler_command(vec!["dry-run".to_string()], Path::new("litradar"))
+                .expect_err("scheduler dry-run alias is removed");
 
         assert!(index_fixture
             .to_string()
@@ -1534,9 +1451,6 @@ mod tests {
             .to_string()
             .contains("unexpected push arguments: shadow"));
         assert!(scheduler_dry_run.to_string().contains("scheduler validate"));
-        assert!(worker_execute
-            .to_string()
-            .contains("worker --secret-key-file PATH"));
     }
 
     fn temp_root(prefix: &str) -> TempDir {

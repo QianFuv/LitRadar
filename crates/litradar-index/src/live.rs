@@ -1,4 +1,4 @@
-//! Live CSV index orchestration for the legacy `index` command.
+//! Live CSV index orchestration for the unified application.
 
 use std::error::Error;
 use std::fmt;
@@ -35,6 +35,8 @@ const CNKI_SOURCE: &str = "cnki";
 /// Live index run configuration.
 #[derive(Debug, Clone)]
 pub struct LiveIndexConfig {
+    /// Canonical application executable used for worker and notification subprocesses.
+    pub application_executable: PathBuf,
     /// Project root containing the `data` directory.
     pub project_root: PathBuf,
     /// Deployment secret key file forwarded to notification handoff.
@@ -378,11 +380,7 @@ impl LiveWorkerLauncher for ProcessLiveWorkerLauncher {
         let mut spawned_workers = Vec::new();
         for request in &requests {
             let request_path = write_live_worker_request_file(request)?;
-            let child = Command::new(&self.command_path)
-                .arg("--live-worker-request")
-                .arg(&request_path)
-                .stdout(Stdio::piped())
-                .stderr(Stdio::piped())
+            let child = live_worker_command(&self.command_path, &request_path)
                 .spawn()
                 .map_err(|error| {
                     LiveIndexError::Worker(format!(
@@ -430,7 +428,18 @@ impl LiveWorkerLauncher for ProcessLiveWorkerLauncher {
     }
 }
 
-/// Run live indexing for the legacy `index` command.
+fn live_worker_command(application_executable: &Path, request_path: &Path) -> Command {
+    let mut command = Command::new(application_executable);
+    command
+        .arg("index")
+        .arg("--live-worker-request")
+        .arg(request_path)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    command
+}
+
+/// Run live indexing for the unified application's `index` command.
 ///
 /// # Arguments
 ///
@@ -505,6 +514,7 @@ fn run_live_index_worker(
 ) -> Result<LiveIndexWorkerResponse, LiveIndexError> {
     let connection = open_live_index_connection(&request.db_path)?;
     let config = LiveIndexConfig {
+        application_executable: PathBuf::new(),
         project_root: request.project_root.clone(),
         secret_key_file: PathBuf::new(),
         file: None,
@@ -1048,10 +1058,7 @@ fn run_live_csv_index(
         config,
     };
     let journal_rows_outcome = if config.process_count > 1 && rows.len() > 1 {
-        let command_path = std::env::current_exe().map_err(|error| {
-            LiveIndexError::Worker(format!("failed to resolve current executable: {error}"))
-        })?;
-        let launcher = ProcessLiveWorkerLauncher::new(command_path);
+        let launcher = ProcessLiveWorkerLauncher::new(config.application_executable.clone());
         run_live_journal_rows_in_worker_processes(&journal_context, &launcher)
     } else {
         run_live_journal_rows_locally(&connection, &journal_context)
@@ -1227,7 +1234,12 @@ fn run_notify_for_manifest(
     db_name: &str,
     manifest_path: &Path,
 ) -> Result<i32, LiveIndexError> {
-    run_notify_command_for_manifest(Path::new("notify"), config, db_name, manifest_path)
+    run_notify_command_for_manifest(
+        &config.application_executable,
+        config,
+        db_name,
+        manifest_path,
+    )
 }
 
 fn run_notify_command_for_manifest(
@@ -1239,6 +1251,7 @@ fn run_notify_command_for_manifest(
     let state_dir = config.project_root.join("data").join("push_state");
     let mut command = Command::new(command_path);
     command
+        .arg("notify")
         .arg("--secret-key-file")
         .arg(&config.secret_key_file)
         .arg("--db")
@@ -1275,7 +1288,7 @@ mod tests {
     use tempfile::tempdir;
 
     use super::{
-        csv_paths, parse_csv_line, read_csv_rows, run_live_index,
+        csv_paths, live_worker_command, parse_csv_line, read_csv_rows, run_live_index,
         run_live_journal_rows_in_worker_processes, run_notify_command_for_manifest,
         validate_required_source_config, validate_sources, LiveIndexConfig, LiveIndexError,
         LiveIndexWorkerRequest, LiveIndexWorkerResponse, LiveIndexWorkerStats,
@@ -1576,6 +1589,7 @@ mod tests {
         let args =
             fs::read_to_string(root.path().join("args.txt")).expect("args should be captured");
         assert_eq!(exit_code, 7);
+        assert!(args.trim_start().starts_with("notify "));
         assert!(args.contains("--db"));
         assert!(args.contains("fixture.sqlite"));
         assert!(args.contains("--changes-file"));
@@ -1600,6 +1614,24 @@ mod tests {
         .expect_err("missing notify command should fail");
 
         assert!(matches!(error, LiveIndexError::Notify(message) if !message.is_empty()));
+    }
+
+    #[test]
+    fn live_worker_command_uses_the_same_application_and_index_subcommand() {
+        let command = live_worker_command(
+            Path::new("/app/litradar"),
+            Path::new("requests/worker-1.json"),
+        );
+        let arguments = command
+            .get_args()
+            .map(|argument| argument.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+
+        assert_eq!(command.get_program(), "/app/litradar");
+        assert_eq!(
+            arguments,
+            ["index", "--live-worker-request", "requests/worker-1.json"]
+        );
     }
 
     fn csv_file_names(paths: &[PathBuf]) -> Vec<String> {
@@ -1741,6 +1773,7 @@ mod tests {
 
     fn live_config(root: &Path) -> LiveIndexConfig {
         LiveIndexConfig {
+            application_executable: root.join("litradar"),
             project_root: root.to_path_buf(),
             secret_key_file: root.join("secret.key"),
             file: None,

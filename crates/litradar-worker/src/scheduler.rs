@@ -6,6 +6,8 @@ use std::fmt;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -25,6 +27,37 @@ const MAX_OUTPUT_SUMMARY_CHARS: usize = 4_096;
 
 /// Maximum age of a healthy persisted worker heartbeat.
 pub const SCHEDULER_HEALTH_WINDOW_SECONDS: f64 = 90.0;
+
+/// Shared cancellation signal for scheduler ticks and active child processes.
+#[derive(Debug, Clone, Default)]
+pub struct SchedulerCancellation {
+    is_cancelled: Arc<AtomicBool>,
+}
+
+impl SchedulerCancellation {
+    /// Create an active scheduler cancellation handle.
+    ///
+    /// # Returns
+    ///
+    /// Cancellation handle whose initial state is not cancelled.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Request cancellation for current and future scheduled process work.
+    pub fn cancel(&self) {
+        self.is_cancelled.store(true, Ordering::SeqCst);
+    }
+
+    /// Return whether cancellation has been requested.
+    ///
+    /// # Returns
+    ///
+    /// True after any clone requests cancellation.
+    pub fn is_cancelled(&self) -> bool {
+        self.is_cancelled.load(Ordering::SeqCst)
+    }
+}
 
 /// Worker scheduler errors.
 #[derive(Debug)]
@@ -192,6 +225,8 @@ trait ScheduledJobRunner {
 }
 
 struct ProcessScheduledJobRunner {
+    application_executable: PathBuf,
+    cancellation: SchedulerCancellation,
     secret_key_file: PathBuf,
 }
 
@@ -210,9 +245,11 @@ impl ScheduledJobRunner for ProcessScheduledJobRunner {
             |job| {
                 execute_scheduled_job(
                     auth_db_path,
+                    &self.application_executable,
                     &self.secret_key_file,
                     job,
                     task.timeout_seconds,
+                    &self.cancellation,
                     on_heartbeat,
                 )
             },
@@ -312,6 +349,7 @@ pub fn load_scheduler_jobs(
 /// # Arguments
 ///
 /// * `auth_db_path` - Path to `auth.sqlite`.
+/// * `application_executable` - Canonical application executable used for the task subprocess.
 /// * `secret_key_file` - Raw 32-byte deployment secret key file.
 /// * `task_id` - Scheduled task row identifier.
 /// * `mode` - Scheduler execution mode.
@@ -321,11 +359,14 @@ pub fn load_scheduler_jobs(
 /// Manual run outcome.
 pub fn run_task_now(
     auth_db_path: impl AsRef<Path>,
+    application_executable: impl AsRef<Path>,
     secret_key_file: impl AsRef<Path>,
     task_id: i64,
     mode: SchedulerMode,
 ) -> Result<RunTaskOutcome, SchedulerError> {
     let mut runner = ProcessScheduledJobRunner {
+        application_executable: application_executable.as_ref().to_path_buf(),
+        cancellation: SchedulerCancellation::new(),
         secret_key_file: secret_key_file.as_ref().to_path_buf(),
     };
     run_task_now_with_runner(auth_db_path.as_ref(), task_id, mode, &mut runner)
@@ -374,18 +415,23 @@ fn run_task_now_with_runner(
 /// # Arguments
 ///
 /// * `auth_db_path` - Path to `auth.sqlite`.
+/// * `application_executable` - Canonical application executable used for child processes.
 /// * `secret_key_file` - Raw 32-byte deployment secret key file.
 /// * `worker_id` - Stable worker process identifier.
+/// * `cancellation` - Shared shutdown cancellation signal.
 ///
 /// # Returns
 ///
 /// Execution tick result.
 pub fn run_due_scheduler_once(
     auth_db_path: impl AsRef<Path>,
+    application_executable: impl AsRef<Path>,
     secret_key_file: impl AsRef<Path>,
     worker_id: &str,
+    cancellation: SchedulerCancellation,
 ) -> Result<SchedulerExecutionResult, SchedulerError> {
     let auth_db_path = auth_db_path.as_ref().to_path_buf();
+    let application_executable = application_executable.as_ref().to_path_buf();
     let secret_key_file = secret_key_file.as_ref().to_path_buf();
     let (mut result, claims) =
         prepare_scheduler_tick(&auth_db_path, worker_id, current_unix_time())?;
@@ -394,9 +440,15 @@ pub fn run_due_scheduler_once(
             .into_iter()
             .map(|claim| {
                 let auth_db_path = auth_db_path.clone();
+                let application_executable = application_executable.clone();
+                let cancellation = cancellation.clone();
                 let secret_key_file = secret_key_file.clone();
                 scope.spawn(move || {
-                    let mut runner = ProcessScheduledJobRunner { secret_key_file };
+                    let mut runner = ProcessScheduledJobRunner {
+                        application_executable,
+                        cancellation,
+                        secret_key_file,
+                    };
                     execute_scheduled_claim(&auth_db_path, claim, &mut runner)
                 })
             })
@@ -626,24 +678,33 @@ struct ScheduledProcess {
 
 fn execute_scheduled_job(
     auth_db_path: &Path,
+    application_executable: &Path,
     secret_key_file: &Path,
     job: &ScheduledJobSpec,
     timeout_seconds: u64,
+    cancellation: &SchedulerCancellation,
     on_heartbeat: &mut dyn FnMut(),
 ) -> ProcessExecution {
-    let processes = match scheduled_processes(auth_db_path, secret_key_file, job) {
-        Ok(processes) => processes,
-        Err(error) => {
-            return ProcessExecution {
-                status: "error".to_string(),
-                output_summary: error.to_string(),
-            };
-        }
-    };
+    let processes =
+        match scheduled_processes(auth_db_path, application_executable, secret_key_file, job) {
+            Ok(processes) => processes,
+            Err(error) => {
+                return ProcessExecution {
+                    status: "error".to_string(),
+                    output_summary: error.to_string(),
+                };
+            }
+        };
     let deadline = Instant::now() + Duration::from_secs(timeout_seconds);
     let mut summaries = Vec::new();
     for process in processes {
-        let execution = execute_scheduled_process(process, deadline, on_heartbeat);
+        if cancellation.is_cancelled() {
+            return ProcessExecution {
+                status: "cancelled".to_string(),
+                output_summary: bounded_output_summary(&summaries.join("\n")),
+            };
+        }
+        let execution = execute_scheduled_process(process, deadline, cancellation, on_heartbeat);
         if !execution.output_summary.is_empty() {
             summaries.push(execution.output_summary);
         }
@@ -663,9 +724,16 @@ fn execute_scheduled_job(
 fn execute_scheduled_process(
     process: ScheduledProcess,
     deadline: Instant,
+    cancellation: &SchedulerCancellation,
     on_heartbeat: &mut dyn FnMut(),
 ) -> ProcessExecution {
     let executable = process.executable.to_string_lossy().into_owned();
+    if cancellation.is_cancelled() {
+        return ProcessExecution {
+            status: "cancelled".to_string(),
+            output_summary: format!("{executable}: cancelled before start"),
+        };
+    }
     let mut command = Command::new(&process.executable);
     command
         .args(process.arguments)
@@ -684,6 +752,11 @@ fn execute_scheduled_process(
     let stderr_reader = child.stderr.take().map(spawn_bounded_reader);
     let mut last_heartbeat = Instant::now();
     let (status, detail) = loop {
+        if cancellation.is_cancelled() {
+            let _ = child.kill();
+            let _ = child.wait();
+            break ("cancelled", format!("{executable}: cancelled"));
+        }
         match child.try_wait() {
             Ok(Some(status)) if status.success() => break ("success", String::new()),
             Ok(Some(status)) => {
@@ -763,6 +836,7 @@ fn bounded_output_summary(summary: &str) -> String {
 
 fn scheduled_processes(
     auth_db_path: &Path,
+    application_executable: &Path,
     secret_key_file: &Path,
     job: &ScheduledJobSpec,
 ) -> Result<Vec<ScheduledProcess>, SchedulerError> {
@@ -770,20 +844,22 @@ fn scheduled_processes(
     let mut processes = Vec::new();
     match job {
         ScheduledJobSpec::Index(index) => {
-            let mut arguments = auth_arguments(auth_db_path, secret_key_file);
+            let mut arguments = vec![OsString::from("index")];
+            arguments.extend(auth_arguments(auth_db_path, secret_key_file));
             arguments.push("--update".into());
             if let Some(metadata_file) = index.metadata_file.as_deref() {
                 arguments.push("--file".into());
                 arguments.push(metadata_file.into());
             }
             processes.push(ScheduledProcess {
-                executable: "index".into(),
+                executable: application_executable.as_os_str().to_owned(),
                 arguments,
             });
             if index.notify {
                 processes.push(delivery_process(
                     "notify",
                     auth_db_path,
+                    application_executable,
                     secret_key_file,
                     &ScheduledDeliveryJob {
                         database: None,
@@ -795,6 +871,7 @@ fn scheduled_processes(
                 processes.push(delivery_process(
                     "push",
                     auth_db_path,
+                    application_executable,
                     secret_key_file,
                     &ScheduledDeliveryJob {
                         database: None,
@@ -807,6 +884,7 @@ fn scheduled_processes(
             processes.push(delivery_process(
                 "notify",
                 auth_db_path,
+                application_executable,
                 secret_key_file,
                 delivery,
             ));
@@ -815,6 +893,7 @@ fn scheduled_processes(
             processes.push(delivery_process(
                 "push",
                 auth_db_path,
+                application_executable,
                 secret_key_file,
                 delivery,
             ));
@@ -833,12 +912,14 @@ fn auth_arguments(auth_db_path: &Path, secret_key_file: &Path) -> Vec<OsString> 
 }
 
 fn delivery_process(
-    executable: &'static str,
+    subcommand: &'static str,
     auth_db_path: &Path,
+    application_executable: &Path,
     secret_key_file: &Path,
     job: &ScheduledDeliveryJob,
 ) -> ScheduledProcess {
-    let mut arguments = auth_arguments(auth_db_path, secret_key_file);
+    let mut arguments = vec![OsString::from(subcommand)];
+    arguments.extend(auth_arguments(auth_db_path, secret_key_file));
     arguments.push("--no-dry-run".into());
     if let Some(database) = job.database.as_deref() {
         arguments.push("--db".into());
@@ -849,7 +930,7 @@ fn delivery_process(
         arguments.push(max_candidates.to_string().into());
     }
     ScheduledProcess {
-        executable: executable.into(),
+        executable: application_executable.as_os_str().to_owned(),
         arguments,
     }
 }
@@ -1268,6 +1349,30 @@ mod tests {
     }
 
     #[test]
+    fn scheduler_persists_cancelled_claim_status() {
+        let temp_dir = tempdir().expect("temp dir should be created");
+        let auth_db_path = temp_dir.path().join("auth.sqlite");
+        initialize_auth_database(&auth_db_path).expect("auth database should initialize");
+        let task = create_index_task(&auth_db_path, "cancelled", "* * * * *", true);
+        let now = unix_seconds(2026, 7, 6, 10, 30, 0) as f64;
+        set_task_created_at(&auth_db_path, now - 3_600.0);
+        litradar_storage::record_scheduler_check(&auth_db_path, now - 60.0)
+            .expect("scheduler cursor should be set");
+        let mut runner = FixtureRunner::new(["cancelled"]);
+
+        let result =
+            run_due_scheduler_once_at_with_runner(&auth_db_path, "worker-test", now, &mut runner)
+                .expect("cancelled task status should persist");
+        let updated = get_scheduled_task(&auth_db_path, task.id)
+            .expect("task lookup should succeed")
+            .expect("task should exist");
+
+        assert_eq!(result.executed[0].status, "cancelled");
+        assert_eq!(updated.last_status, "cancelled");
+        assert!(updated.last_run_at.is_some());
+    }
+
+    #[test]
     fn concurrent_fixture_workers_execute_one_side_effect_per_slot() {
         let temp_dir = tempdir().expect("temp dir should be created");
         let auth_db_path = temp_dir.path().join("auth.sqlite");
@@ -1398,6 +1503,7 @@ mod tests {
         let result = execute_scheduled_process(
             process,
             Instant::now() + Duration::from_millis(150),
+            &SchedulerCancellation::new(),
             &mut || {},
         );
 
@@ -1409,6 +1515,41 @@ mod tests {
                 .count(),
             MAX_OUTPUT_SUMMARY_CHARS
         );
+    }
+
+    #[test]
+    fn scheduler_cancellation_terminates_and_waits_for_active_child() {
+        let executable = std::env::current_exe().expect("test executable should resolve");
+        let process = ScheduledProcess {
+            executable: executable.into_os_string(),
+            arguments: vec![
+                "--ignored".into(),
+                "--exact".into(),
+                "scheduler::tests::scheduler_timeout_child_fixture".into(),
+                "--nocapture".into(),
+            ],
+        };
+        let cancellation = SchedulerCancellation::new();
+        let cancellation_request = cancellation.clone();
+        let cancel_thread = thread::spawn(move || {
+            thread::sleep(Duration::from_millis(150));
+            cancellation_request.cancel();
+        });
+        let started = Instant::now();
+
+        let result = execute_scheduled_process(
+            process,
+            Instant::now() + Duration::from_secs(5),
+            &cancellation,
+            &mut || {},
+        );
+        cancel_thread
+            .join()
+            .expect("cancellation request should complete");
+
+        assert_eq!(result.status, "cancelled");
+        assert!(result.output_summary.contains("cancelled"));
+        assert!(started.elapsed() < Duration::from_secs(2));
     }
 
     #[test]
@@ -1450,10 +1591,11 @@ mod tests {
     }
 
     #[test]
-    fn scheduler_builds_fixed_processes_and_allowlisted_arguments() {
+    fn scheduler_builds_same_application_subcommands_and_allowlisted_arguments() {
         let auth_db_path = Path::new("data/auth.sqlite");
         let processes = scheduled_processes(
             auth_db_path,
+            Path::new("/app/litradar"),
             Path::new("secret.key"),
             &ScheduledJobSpec::Index(litradar_domain::ScheduledIndexJob {
                 metadata_file: Some("journals.csv".to_string()),
@@ -1468,11 +1610,12 @@ mod tests {
                 .iter()
                 .map(|process| process.executable.to_string_lossy().into_owned())
                 .collect::<Vec<_>>(),
-            vec!["index", "notify", "push"]
+            vec!["/app/litradar", "/app/litradar", "/app/litradar"]
         );
         assert_eq!(
             process_arguments(&processes[0]),
             vec![
+                "index",
                 "--auth-db",
                 "data/auth.sqlite",
                 "--secret-key-file",
@@ -1485,6 +1628,7 @@ mod tests {
         assert_eq!(
             process_arguments(&processes[1]),
             vec![
+                "notify",
                 "--auth-db",
                 "data/auth.sqlite",
                 "--secret-key-file",
@@ -1495,6 +1639,7 @@ mod tests {
 
         let push = scheduled_processes(
             auth_db_path,
+            Path::new("/app/litradar"),
             Path::new("secret.key"),
             &ScheduledJobSpec::Push(ScheduledDeliveryJob {
                 database: Some("journals.sqlite".to_string()),
@@ -1502,10 +1647,11 @@ mod tests {
             }),
         )
         .expect("push process plan should build");
-        assert_eq!(push[0].executable.to_string_lossy(), "push");
+        assert_eq!(push[0].executable.to_string_lossy(), "/app/litradar");
         assert_eq!(
             process_arguments(&push[0]),
             vec![
+                "push",
                 "--auth-db",
                 "data/auth.sqlite",
                 "--secret-key-file",

@@ -11,7 +11,7 @@ use rusqlite::{Connection, Transaction, TransactionBehavior};
 use crate::{try_load_extension, DatabaseResolutionError, StorageConfig};
 
 /// Current auth and business database schema version.
-pub const AUTH_SCHEMA_VERSION: i64 = 4;
+pub const AUTH_SCHEMA_VERSION: i64 = 5;
 
 /// Current index database schema version.
 pub const INDEX_SCHEMA_VERSION: i64 = 1;
@@ -149,6 +149,7 @@ pub fn migrate_auth_database(path: impl AsRef<Path>) -> Result<(), MigrationErro
             2 => apply_auth_version_two(&transaction)?,
             3 => apply_auth_version_three(&transaction)?,
             4 => apply_auth_version_four(&transaction)?,
+            5 => apply_auth_version_five(&transaction)?,
             _ => unreachable!("auth migration version should be implemented"),
         }
         transaction.pragma_update(None, "user_version", next_version)?;
@@ -376,6 +377,47 @@ fn apply_auth_version_four(transaction: &Transaction<'_>) -> rusqlite::Result<()
 
         CREATE INDEX idx_service_heartbeats_recent
             ON service_heartbeats(heartbeat_at DESC);
+        ",
+    )
+}
+
+fn apply_auth_version_five(transaction: &Transaction<'_>) -> rusqlite::Result<()> {
+    transaction.execute_batch(
+        "
+        CREATE TABLE scheduled_task_runs_v5 (
+            id               INTEGER PRIMARY KEY AUTOINCREMENT,
+            task_id          INTEGER NOT NULL,
+            task_name        TEXT    NOT NULL,
+            scheduled_for    INTEGER NOT NULL,
+            status           TEXT    NOT NULL
+                CHECK (status IN ('pending', 'claimed', 'running', 'success',
+                                  'failed', 'timed_out', 'error', 'unknown',
+                                  'cancelled')),
+            worker_id        TEXT,
+            claim_expires_at REAL,
+            claimed_at       REAL,
+            started_at       REAL,
+            finished_at      REAL,
+            output_summary   TEXT NOT NULL DEFAULT '',
+            UNIQUE(task_id, scheduled_for)
+        );
+
+        INSERT INTO scheduled_task_runs_v5
+            (id, task_id, task_name, scheduled_for, status, worker_id,
+             claim_expires_at, claimed_at, started_at, finished_at,
+             output_summary)
+        SELECT
+            id, task_id, task_name, scheduled_for, status, worker_id,
+            claim_expires_at, claimed_at, started_at, finished_at,
+            output_summary
+        FROM scheduled_task_runs;
+
+        DROP TABLE scheduled_task_runs;
+        ALTER TABLE scheduled_task_runs_v5 RENAME TO scheduled_task_runs;
+        CREATE INDEX idx_scheduled_task_runs_task
+            ON scheduled_task_runs(task_id, scheduled_for DESC);
+        CREATE INDEX idx_scheduled_task_runs_status
+            ON scheduled_task_runs(status, claim_expires_at);
         ",
     )
 }

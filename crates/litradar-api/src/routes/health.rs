@@ -9,22 +9,22 @@ use litradar_domain::HealthResponse;
 
 use crate::state::ApiState;
 
-/// Return the public health status payload.
+/// Return application event-loop liveness.
 ///
 /// # Returns
 ///
 /// JSON health response.
 #[utoipa::path(
     get,
-    path = "/api/health",
+    path = "/health/live",
     tag = "health",
-    responses((status = 200, description = "Service is healthy.", body = HealthResponse))
+    responses((status = 200, description = "The application event loop is live.", body = HealthResponse))
 )]
-pub(crate) async fn health() -> Json<HealthResponse> {
+pub(crate) async fn live() -> Json<HealthResponse> {
     Json(HealthResponse::ok())
 }
 
-/// Return whether at least one scheduler worker has a recent persisted heartbeat.
+/// Return whether the embedded scheduler has a recent persisted heartbeat.
 ///
 /// # Arguments
 ///
@@ -32,19 +32,17 @@ pub(crate) async fn health() -> Json<HealthResponse> {
 ///
 /// # Returns
 ///
-/// HTTP 200 for a healthy worker or 503 when no healthy heartbeat exists.
+/// HTTP 200 when ready or 503 until the embedded scheduler heartbeat is healthy.
 #[utoipa::path(
     get,
-    path = "/api/health/worker",
+    path = "/health/ready",
     tag = "health",
     responses(
-        (status = 200, description = "A scheduler worker heartbeat is healthy.", body = HealthResponse),
-        (status = 503, description = "No scheduler worker heartbeat is healthy.", body = HealthResponse)
+        (status = 200, description = "The embedded scheduler heartbeat is healthy.", body = HealthResponse),
+        (status = 503, description = "The embedded scheduler is not ready.", body = HealthResponse)
     )
 )]
-pub(crate) async fn worker_health(
-    State(state): State<ApiState>,
-) -> (StatusCode, Json<HealthResponse>) {
+pub(crate) async fn ready(State(state): State<ApiState>) -> (StatusCode, Json<HealthResponse>) {
     let auth_db_path = state.storage_config().auth_db_path().to_path_buf();
     let now = current_unix_time();
     let status = state

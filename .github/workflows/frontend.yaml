@@ -8,6 +8,7 @@ on:
     paths:
       - "Cargo.toml"
       - "Cargo.lock"
+      - "crates/litradar/**"
       - "crates/litradar-api/**"
       - "crates/litradar-domain/**"
       - "app/**"
@@ -16,6 +17,7 @@ on:
     paths:
       - "Cargo.toml"
       - "Cargo.lock"
+      - "crates/litradar/**"
       - "crates/litradar-api/**"
       - "crates/litradar-domain/**"
       - "app/**"

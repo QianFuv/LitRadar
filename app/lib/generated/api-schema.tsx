@@ -940,54 +940,6 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
-  '/api/health': {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    /**
-     * Return the public health status payload.
-     * @description # Returns
-     *
-     *     JSON health response.
-     */
-    get: operations['health'];
-    put?: never;
-    post?: never;
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
-  '/api/health/worker': {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    /**
-     * Return whether at least one scheduler worker has a recent persisted heartbeat.
-     * @description # Arguments
-     *
-     *     * `state` - API state containing the shared scheduler database path.
-     *
-     *     # Returns
-     *
-     *     HTTP 200 for a healthy worker or 503 when no healthy heartbeat exists.
-     */
-    get: operations['worker_health'];
-    put?: never;
-    post?: never;
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
   '/api/issues': {
     parameters: {
       query?: never;
@@ -1329,6 +1281,54 @@ export interface paths {
      *     Year summary records.
      */
     get: operations['list_years'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/health/live': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Return application event-loop liveness.
+     * @description # Returns
+     *
+     *     JSON health response.
+     */
+    get: operations['live'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/health/ready': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Return whether the embedded scheduler has a recent persisted heartbeat.
+     * @description # Arguments
+     *
+     *     * `state` - API state containing the shared scheduler database path.
+     *
+     *     # Returns
+     *
+     *     HTTP 200 when ready or 503 until the embedded scheduler heartbeat is healthy.
+     */
+    get: operations['ready'];
     put?: never;
     post?: never;
     delete?: never;
@@ -4106,55 +4106,6 @@ export interface operations {
       };
     };
   };
-  health: {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    requestBody?: never;
-    responses: {
-      /** @description Service is healthy. */
-      200: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['HealthResponse'];
-        };
-      };
-    };
-  };
-  worker_health: {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    requestBody?: never;
-    responses: {
-      /** @description A scheduler worker heartbeat is healthy. */
-      200: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['HealthResponse'];
-        };
-      };
-      /** @description No scheduler worker heartbeat is healthy. */
-      503: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['HealthResponse'];
-        };
-      };
-    };
-  };
   list_issues: {
     parameters: {
       query?: {
@@ -4532,6 +4483,55 @@ export interface operations {
         };
         content: {
           'application/json': components['schemas']['YearSummary'][];
+        };
+      };
+    };
+  };
+  live: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description The application event loop is live. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['HealthResponse'];
+        };
+      };
+    };
+  };
+  ready: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description The embedded scheduler heartbeat is healthy. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['HealthResponse'];
+        };
+      };
+      /** @description The embedded scheduler is not ready. */
+      503: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['HealthResponse'];
         };
       };
     };

@@ -2268,56 +2268,6 @@
         ]
       }
     },
-    "/api/health": {
-      "get": {
-        "tags": ["health"],
-        "summary": "Return the public health status payload.",
-        "description": "# Returns\n\nJSON health response.",
-        "operationId": "health",
-        "responses": {
-          "200": {
-            "description": "Service is healthy.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HealthResponse"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/health/worker": {
-      "get": {
-        "tags": ["health"],
-        "summary": "Return whether at least one scheduler worker has a recent persisted heartbeat.",
-        "description": "# Arguments\n\n* `state` - API state containing the shared scheduler database path.\n\n# Returns\n\nHTTP 200 for a healthy worker or 503 when no healthy heartbeat exists.",
-        "operationId": "worker_health",
-        "responses": {
-          "200": {
-            "description": "A scheduler worker heartbeat is healthy.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HealthResponse"
-                }
-              }
-            }
-          },
-          "503": {
-            "description": "No scheduler worker heartbeat is healthy.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HealthResponse"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
     "/api/issues": {
       "get": {
         "tags": ["index"],
@@ -3059,6 +3009,56 @@
             "session_cookie": []
           }
         ]
+      }
+    },
+    "/health/live": {
+      "get": {
+        "tags": ["health"],
+        "summary": "Return application event-loop liveness.",
+        "description": "# Returns\n\nJSON health response.",
+        "operationId": "live",
+        "responses": {
+          "200": {
+            "description": "The application event loop is live.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/health/ready": {
+      "get": {
+        "tags": ["health"],
+        "summary": "Return whether the embedded scheduler has a recent persisted heartbeat.",
+        "description": "# Arguments\n\n* `state` - API state containing the shared scheduler database path.\n\n# Returns\n\nHTTP 200 when ready or 503 until the embedded scheduler heartbeat is healthy.",
+        "operationId": "ready",
+        "responses": {
+          "200": {
+            "description": "The embedded scheduler heartbeat is healthy.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The embedded scheduler is not ready.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthResponse"
+                }
+              }
+            }
+          }
+        }
       }
     }
   },

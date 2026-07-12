@@ -539,11 +539,13 @@ mod tests {
 
         let queued_state = state.clone();
         let queued = tokio::spawn(async move { queued_state.run_blocking(|| "queued").await });
-        let router = crate::routes::public_routes().with_state(state.clone());
+        let router = crate::routes::public_routes()
+            .merge(crate::routes::health_routes())
+            .with_state(state.clone());
         let health_result = tokio::time::timeout(
             Duration::from_millis(250),
             router.clone().oneshot(
-                Request::get("/health")
+                Request::get("/health/live")
                     .body(Body::empty())
                     .expect("request"),
             ),

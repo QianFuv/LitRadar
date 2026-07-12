@@ -1,0 +1,16 @@
+[package]
+name = "litradar"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+litradar-api = { path = "../litradar-api" }
+litradar-cli = { path = "../litradar-cli" }
+litradar-storage = { path = "../litradar-storage" }
+litradar-worker = { path = "../litradar-worker" }
+serde_json.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

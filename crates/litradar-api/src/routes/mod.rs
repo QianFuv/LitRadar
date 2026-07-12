@@ -20,8 +20,6 @@ use crate::state::ApiState;
 /// Router containing only public compatibility endpoints.
 pub fn public_routes() -> Router<ApiState> {
     Router::new()
-        .route("/health", axum::routing::get(health::health))
-        .route("/health/worker", axum::routing::get(health::worker_health))
         .route(
             "/announcements",
             axum::routing::get(announcements::get_announcements),
@@ -196,4 +194,15 @@ pub fn public_routes() -> Router<ApiState> {
             "/admin/announcements/{announcement_id}",
             axum::routing::put(admin::update_announcement).delete(admin::delete_announcement),
         )
+}
+
+/// Build root-level service health routes.
+///
+/// # Returns
+///
+/// Router containing liveness and readiness endpoints.
+pub fn health_routes() -> Router<ApiState> {
+    Router::new()
+        .route("/health/live", axum::routing::get(health::live))
+        .route("/health/ready", axum::routing::get(health::ready))
 }
