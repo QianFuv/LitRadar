@@ -153,18 +153,18 @@ litradar index --secret-key-file PATH
     [--notify-dry-run | --no-notify-dry-run]
 ```
 
-| 参数                                       | 默认值    | 含义                                 |
-| ------------------------------------------ | --------- | ------------------------------------ |
-| `--secret-key-file PATH`                   | 必填      | 解密 scholarly 运行配置              |
-| `--file FILE`、`-f FILE`                   | 全部 CSV  | 只处理 `data/meta/` 下的一个文件     |
-| `--workers N`、`-w N`                      | `32`      | 每个期刊子进程内的 CNKI 文章详情并发 |
-| `--processes N`                            | `2`       | 单个 CSV 的期刊子进程数              |
-| `--issue-batch N`                          | `workers` | 每轮合并的 CNKI issue 数             |
-| `--timeout N`                              | `20`      | 上游 HTTP 超时秒数                   |
-| `--resume` / `--no-resume`                 | 开启      | 是否跳过已完成期刊/年份              |
-| `--update` / `--no-update`                 | 关闭      | 是否生成增量变更清单                 |
-| `--notify` / `--no-notify`                 | 关闭      | 更新成功后启动 `litradar notify`     |
-| `--notify-dry-run` / `--no-notify-dry-run` | 关闭      | 下游 notify 是否 dry-run             |
+| 参数                                       | 默认值   | 含义                                 |
+| ------------------------------------------ | -------- | ------------------------------------ |
+| `--secret-key-file PATH`                   | 必填     | 解密 scholarly 运行配置              |
+| `--file FILE`、`-f FILE`                   | 全部 CSV | 只处理 `data/meta/` 下的一个文件     |
+| `--workers N`、`-w N`                      | `8`      | 每个期刊子进程内的 CNKI 文章详情并发 |
+| `--processes N`                            | `1`      | 单个 CSV 的期刊子进程数              |
+| `--issue-batch N`                          | `8`      | 每轮合并的 CNKI issue 数             |
+| `--timeout N`                              | `20`     | 上游 HTTP 超时秒数                   |
+| `--resume` / `--no-resume`                 | 开启     | 是否跳过已完成期刊/年份              |
+| `--update` / `--no-update`                 | 关闭     | 是否生成增量变更清单                 |
+| `--notify` / `--no-notify`                 | 关闭     | 更新成功后启动 `litradar notify`     |
+| `--notify-dry-run` / `--no-notify-dry-run` | 关闭     | 下游 notify 是否 dry-run             |
 
 约束：
 
@@ -173,8 +173,11 @@ litradar index --secret-key-file PATH
 - 单独传 `--notify-dry-run` 不会启动 notify；它只修改 `--notify` handoff 的模式。
 - `--workers` 不扩大 scholarly 请求并发；Semantic Scholar 按 `processes` 做进程感知错峰。
 - 多个 CSV 仍逐个处理。
+- `8/1/8` 是约 100 MiB 索引内存目标下的默认并发。显式提高任一并发参数仍受支持，但可能超过该预算。
 
-索引多进程也通过当前可执行路径启动 `litradar index` 的内部工作请求；不依赖另一个程序名。
+索引多进程也通过当前可执行路径启动 `litradar index` 的内部工作请求；不依赖另一个程序名。同步 CLI 命令不创建 Tokio 工作线程池，只有 `serve` 使用固定为 2 个工作线程的小型异步运行时。
+
+命令结果保持原有顶层 `status`、`message` 和 `csvs` 字段，并新增不含密钥的 `effective_concurrency`，记录本次实际使用的 `workers`、`processes` 和 `issue_batch`。每个 CSV 结果使用定长的 `written_article_count`；旧的 `written_article_ids` 列表不再返回。内部索引工作进程同样只返回计数，避免结果大小随文章数量增长。
 
 示例：
 

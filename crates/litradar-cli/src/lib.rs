@@ -8,7 +8,8 @@ use std::path::{Path, PathBuf};
 use litradar_auth::AuthService;
 use litradar_domain::{DELIVERY_RETRY_ATTEMPTS_MAX, DELIVERY_RETRY_ATTEMPTS_MIN};
 use litradar_index::{
-    run_live_index, run_live_index_worker_from_file_path, LiveIndexConfig, LiveScholarlyConfig,
+    run_live_index, run_live_index_worker_from_file_path, LiveIndexConfig, LiveIndexOutcome,
+    LiveScholarlyConfig,
 };
 use litradar_storage::{
     create_backup, migrate_auth_database, migrate_database_secrets,
@@ -21,6 +22,10 @@ use litradar_worker::delivery::{
 };
 use litradar_worker::scheduler::{load_scheduler_jobs, run_task_now, SchedulerMode};
 use serde_json::json;
+
+const DEFAULT_INDEX_WORKER_COUNT: usize = 8;
+const DEFAULT_INDEX_PROCESS_COUNT: usize = 1;
+const DEFAULT_INDEX_ISSUE_BATCH_SIZE: usize = 8;
 
 /// Run the unified application's local `admin` maintenance command.
 ///
@@ -258,6 +263,11 @@ pub fn run_index_command(
     verify_database_secrets(&auth_db_path, &secret_codec)?;
     let scholarly_config =
         live_scholarly_config(&auth_db_path, &secret_codec, options.timeout_seconds)?;
+    let effective_concurrency = json!({
+        "workers": options.worker_count,
+        "processes": options.process_count,
+        "issue_batch": options.issue_batch_size,
+    });
     let outcome = run_live_index(&LiveIndexConfig {
         application_executable: application_executable.as_ref().to_path_buf(),
         project_root: project_root.clone(),
@@ -275,7 +285,10 @@ pub fn run_index_command(
     });
     migrate_existing_index_databases(&StorageConfig::from_project_root(&project_root))?;
     let outcome = outcome?;
-    println!("{}", serde_json::to_string(&outcome)?);
+    println!(
+        "{}",
+        serialize_index_outcome(&outcome, effective_concurrency)?
+    );
     Ok(())
 }
 
@@ -298,15 +311,15 @@ fn parse_index_options(args: &mut Vec<String>) -> Result<IndexOptions, Box<dyn E
         "--workers",
         extract_usize_option_any(args, &["--workers", "-w"])?,
     )?
-    .unwrap_or(32);
+    .unwrap_or(DEFAULT_INDEX_WORKER_COUNT);
     let issue_batch_size = positive_usize(
         "--issue-batch",
         extract_usize_option(args, "--issue-batch")?,
     )?
-    .unwrap_or(worker_count);
+    .unwrap_or(DEFAULT_INDEX_ISSUE_BATCH_SIZE);
     let timeout_seconds = extract_u64_option(args, "--timeout")?.unwrap_or(20);
-    let process_count =
-        positive_usize("--processes", extract_usize_option(args, "--processes")?)?.unwrap_or(2);
+    let process_count = positive_usize("--processes", extract_usize_option(args, "--processes")?)?
+        .unwrap_or(DEFAULT_INDEX_PROCESS_COUNT);
     let resume = extract_bool_pair(args, "--resume", "--no-resume", true);
     let update = extract_bool_pair(args, "--update", "--no-update", false);
     let notify = extract_bool_pair(args, "--notify", "--no-notify", false);
@@ -325,6 +338,18 @@ fn parse_index_options(args: &mut Vec<String>) -> Result<IndexOptions, Box<dyn E
         notify,
         notify_dry_run,
     })
+}
+
+fn serialize_index_outcome(
+    outcome: &LiveIndexOutcome,
+    effective_concurrency: serde_json::Value,
+) -> Result<String, serde_json::Error> {
+    let mut payload = serde_json::to_value(outcome)?;
+    payload
+        .as_object_mut()
+        .expect("live index outcomes should serialize as objects")
+        .insert("effective_concurrency".to_string(), effective_concurrency);
+    serde_json::to_string(&payload)
 }
 
 /// Run the unified application's `notify` command.
@@ -783,7 +808,12 @@ fn live_scholarly_config(
 
 fn index_usage() -> String {
     let payload = json!({
-        "usage": "litradar index --secret-key-file PATH [--project-root PATH] [--auth-db PATH] [--file FILE] [--workers N] [--processes N] [--issue-batch N] [--timeout N] [--resume|--no-resume] [--update|--no-update] [--notify] [--notify-dry-run]"
+        "usage": "litradar index --secret-key-file PATH [--project-root PATH] [--auth-db PATH] [--file FILE] [--workers N] [--processes N] [--issue-batch N] [--timeout N] [--resume|--no-resume] [--update|--no-update] [--notify] [--notify-dry-run]",
+        "defaults": {
+            "workers": DEFAULT_INDEX_WORKER_COUNT,
+            "processes": DEFAULT_INDEX_PROCESS_COUNT,
+            "issue_batch": DEFAULT_INDEX_ISSUE_BATCH_SIZE,
+        }
     });
     payload.to_string()
 }
@@ -837,8 +867,9 @@ mod tests {
         extract_bool_pair, extract_string_option, extract_usize_option, index_usage,
         normalize_db_name, parse_index_options, resolve_delivery_targets, resolve_project_path,
         run_admin_command_with_reader, run_index_command, run_notify_command, run_push_command,
-        run_scheduler_command, scheduler_usage,
+        run_scheduler_command, scheduler_usage, serialize_index_outcome,
     };
+    use litradar_index::LiveIndexOutcome;
     use litradar_worker::delivery::DeliveryWorkflow;
 
     #[test]
@@ -853,6 +884,11 @@ mod tests {
         assert!(index.contains("--workers N"));
         assert!(index.contains("--processes N"));
         assert!(index.contains("--notify-dry-run"));
+        let index_payload: serde_json::Value =
+            serde_json::from_str(&index).expect("index usage should be JSON");
+        assert_eq!(index_payload["defaults"]["workers"], 8);
+        assert_eq!(index_payload["defaults"]["processes"], 1);
+        assert_eq!(index_payload["defaults"]["issue_batch"], 8);
         assert!(notify.contains("notify --secret-key-file PATH"));
         assert!(push.contains("push --secret-key-file PATH"));
         assert!(scheduler.contains("scheduler validate"));
@@ -1114,14 +1150,47 @@ mod tests {
     }
 
     #[test]
-    fn index_options_default_issue_batch_to_workers() {
+    fn index_options_keep_memory_defaults_independent() {
         let mut args = vec!["--workers".to_string(), "5".to_string()];
 
         let options = parse_index_options(&mut args).expect("index options should parse");
 
         assert_eq!(options.worker_count, 5);
-        assert_eq!(options.process_count, 2);
-        assert_eq!(options.issue_batch_size, 5);
+        assert_eq!(options.process_count, 1);
+        assert_eq!(options.issue_batch_size, 8);
+
+        let mut default_args = Vec::new();
+        let defaults =
+            parse_index_options(&mut default_args).expect("default index options should parse");
+        assert_eq!(defaults.worker_count, 8);
+        assert_eq!(defaults.process_count, 1);
+        assert_eq!(defaults.issue_batch_size, 8);
+    }
+
+    #[test]
+    fn index_outcome_reports_effective_concurrency_without_changing_status_shape() {
+        let outcome = LiveIndexOutcome {
+            status: "succeeded".to_string(),
+            message: None,
+            csvs: Vec::new(),
+        };
+
+        let payload: serde_json::Value = serde_json::from_str(
+            &serialize_index_outcome(
+                &outcome,
+                serde_json::json!({"workers": 4, "processes": 2, "issue_batch": 3}),
+            )
+            .expect("index outcome should serialize"),
+        )
+        .expect("serialized index outcome should be JSON");
+
+        assert_eq!(payload["status"], "succeeded");
+        assert_eq!(payload["message"], serde_json::Value::Null);
+        assert_eq!(payload["csvs"], serde_json::json!([]));
+        assert_eq!(payload["effective_concurrency"]["workers"], 4);
+        assert_eq!(payload["effective_concurrency"]["processes"], 2);
+        assert_eq!(payload["effective_concurrency"]["issue_batch"], 3);
+        assert!(payload.get("secret_key_file").is_none());
     }
 
     #[test]

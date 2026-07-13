@@ -83,6 +83,8 @@ docker compose run --rm litradar index \
   --update
 ```
 
+索引默认使用 `--processes 1 --workers 8 --issue-batch 8`，以控制容器峰值内存。可以显式覆盖这些参数，但更高并发不再保证约 100 MiB 的索引内存目标。`admin`、`index`、`notify`、`push`、`scheduler` 和 `openapi` 是同步短生命周期命令，不会创建 Tokio 工作线程池；只有常驻的 `serve` 使用小型异步运行时。
+
 索引 `english_journals.csv` 或 `ccf_computer_journals.csv` 前，先登录管理后台，在“运行配置”中填写 OpenAlex 和 Semantic Scholar API key。所有命令和参数见 [CLI 参考](docs/reference/cli.md)，配置来源与默认值见[运行配置参考](docs/reference/configuration.md)。
 
 ### 5. 访问服务

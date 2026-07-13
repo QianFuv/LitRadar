@@ -7,6 +7,8 @@ mod runtime;
 use std::error::Error;
 use std::path::Path;
 
+const SERVICE_RUNTIME_WORKER_THREADS: usize = 2;
+
 /// Run the application command selected by process arguments.
 ///
 /// # Arguments
@@ -16,12 +18,12 @@ use std::path::Path;
 /// # Returns
 ///
 /// Result indicating whether the selected command completed successfully.
-pub async fn run(args: Vec<String>) -> Result<(), Box<dyn Error>> {
+pub fn run(args: Vec<String>) -> Result<(), Box<dyn Error>> {
     let application_executable = std::env::current_exe()?;
-    run_with_executable(args, &application_executable).await
+    run_with_executable(args, &application_executable)
 }
 
-async fn run_with_executable(
+fn run_with_executable(
     args: Vec<String>,
     application_executable: &Path,
 ) -> Result<(), Box<dyn Error>> {
@@ -44,7 +46,7 @@ async fn run_with_executable(
                 subcommand_args.to_vec(),
                 application_executable.to_path_buf(),
             )?;
-            runtime::run_service(config).await
+            run_service(config)
         }
         "admin" => litradar_cli::run_admin_command(subcommand_args.to_vec()),
         "index" => {
@@ -62,6 +64,15 @@ async fn run_with_executable(
         )
         .into()),
     }
+}
+
+fn run_service(config: config::ServeConfig) -> Result<(), Box<dyn Error>> {
+    let service_runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(SERVICE_RUNTIME_WORKER_THREADS)
+        .thread_name("litradar-service")
+        .enable_all()
+        .build()?;
+    service_runtime.block_on(runtime::run_service(config))
 }
 
 /// Return the canonical top-level application usage.
@@ -84,14 +95,26 @@ mod tests {
 
     use super::run_with_executable;
 
-    #[tokio::test]
-    async fn unknown_subcommands_fail_without_legacy_dispatch() {
+    #[test]
+    fn unknown_subcommands_fail_without_legacy_dispatch() {
         let error = run_with_executable(vec!["worker".to_string()], Path::new("litradar"))
-            .await
             .expect_err("removed worker command should fail");
 
         assert!(error
             .to_string()
             .contains("unknown LitRadar subcommand: worker"));
+    }
+
+    #[test]
+    fn synchronous_help_dispatch_does_not_require_a_tokio_runtime() {
+        assert!(tokio::runtime::Handle::try_current().is_err());
+
+        run_with_executable(
+            vec!["index".to_string(), "--help".to_string()],
+            Path::new("litradar"),
+        )
+        .expect("synchronous help should succeed");
+
+        assert!(tokio::runtime::Handle::try_current().is_err());
     }
 }
