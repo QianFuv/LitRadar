@@ -3,10 +3,10 @@
 use std::error::Error;
 use std::fmt;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use rusqlite::{Connection, Transaction, TransactionBehavior};
+use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior};
 
 use crate::{try_load_extension, DatabaseResolutionError, StorageConfig};
 
@@ -176,17 +176,25 @@ pub fn migrate_index_database(
     let connection = open_migration_connection(path.as_ref())?;
     let mut version = schema_version(&connection)?;
     reject_newer_version(INDEX_DATABASE, version, INDEX_SCHEMA_VERSION)?;
+    let existing_simple_tokenizer = article_search_uses_simple_tokenizer(&connection)?;
+    if existing_simple_tokenizer != Some(false) {
+        let resolved_path = resolve_simple_tokenizer_path(simple_tokenizer_path)
+            .ok_or_else(missing_simple_tokenizer_error)?;
+        try_load_extension(&connection, Some(&resolved_path))?;
+        if existing_simple_tokenizer == Some(true) {
+            probe_article_search(&connection)?;
+        }
+    }
     if version == INDEX_SCHEMA_VERSION {
         return Ok(());
     }
     configure_writable_connection(&connection)?;
-    let is_simple_tokenizer_loaded = try_load_extension(&connection, simple_tokenizer_path)?;
 
     while version < INDEX_SCHEMA_VERSION {
         let next_version = version + 1;
         let transaction = Transaction::new_unchecked(&connection, TransactionBehavior::Immediate)?;
         match next_version {
-            1 => apply_index_version_one(&transaction, is_simple_tokenizer_loaded)?,
+            1 => apply_index_version_one(&transaction)?,
             _ => unreachable!("index migration version should be implemented"),
         }
         transaction.pragma_update(None, "user_version", next_version)?;
@@ -422,10 +430,7 @@ fn apply_auth_version_five(transaction: &Transaction<'_>) -> rusqlite::Result<()
     )
 }
 
-fn apply_index_version_one(
-    transaction: &Transaction<'_>,
-    is_simple_tokenizer_loaded: bool,
-) -> rusqlite::Result<()> {
+fn apply_index_version_one(transaction: &Transaction<'_>) -> rusqlite::Result<()> {
     transaction.execute_batch(INDEX_TABLES_SQL)?;
     let journal_columns = table_columns(transaction, "journals")?;
     if !journal_columns
@@ -438,12 +443,7 @@ fn apply_index_version_one(
         )?;
     }
 
-    let tokenizer_sql = if is_simple_tokenizer_loaded {
-        ", tokenize = 'simple'"
-    } else {
-        ""
-    };
-    transaction.execute_batch(&format!(
+    transaction.execute_batch(
         "
         CREATE VIRTUAL TABLE IF NOT EXISTS article_search
         USING fts5(
@@ -452,12 +452,76 @@ fn apply_index_version_one(
             abstract,
             doi,
             authors,
-            journal_title
-            {tokenizer_sql}
+            journal_title,
+            tokenize = 'simple'
         );
-        "
-    ))?;
+        ",
+    )?;
+    probe_article_search(transaction)?;
     transaction.execute_batch(INDEX_INDEXES_SQL)
+}
+
+fn article_search_uses_simple_tokenizer(connection: &Connection) -> rusqlite::Result<Option<bool>> {
+    let sql = connection
+        .query_row(
+            "SELECT sql FROM sqlite_schema WHERE type = 'table' AND name = 'article_search'",
+            [],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()?;
+    Ok(sql.map(|value| {
+        let compact = value
+            .to_ascii_lowercase()
+            .chars()
+            .filter(|character| !character.is_whitespace())
+            .collect::<String>();
+        compact.contains("tokenize='simple'")
+            || compact.contains("tokenize=\"simple\"")
+            || compact.contains("tokenize=simple")
+    }))
+}
+
+fn probe_article_search(connection: &Connection) -> rusqlite::Result<()> {
+    connection
+        .query_row(
+            "SELECT rowid FROM article_search WHERE article_search MATCH ?1 LIMIT 1",
+            ["litradartokenizerprobe"],
+            |row| row.get::<_, i64>(0),
+        )
+        .optional()?;
+    Ok(())
+}
+
+fn resolve_simple_tokenizer_path(configured_path: Option<&Path>) -> Option<PathBuf> {
+    configured_path.map(Path::to_path_buf).or_else(|| {
+        let current_dir = std::env::current_dir().ok()?;
+        current_dir.ancestors().find_map(|root| {
+            StorageConfig::from_project_root(root)
+                .simple_tokenizer_path()
+                .filter(|path| path.exists())
+        })
+    })
+}
+
+fn missing_simple_tokenizer_error() -> rusqlite::Error {
+    rusqlite::Error::InvalidPath(expected_simple_tokenizer_path())
+}
+
+fn expected_simple_tokenizer_path() -> PathBuf {
+    let libs_dir = PathBuf::from("libs");
+    if cfg!(windows) {
+        libs_dir
+            .join("simple-windows")
+            .join("libsimple-windows-x64")
+            .join("simple.dll")
+    } else if cfg!(target_os = "linux") {
+        libs_dir
+            .join("simple-linux")
+            .join("libsimple-linux-ubuntu-latest")
+            .join("libsimple.so")
+    } else {
+        libs_dir.join("simple-tokenizer-extension")
+    }
 }
 
 fn table_columns(connection: &Connection, table_name: &str) -> rusqlite::Result<Vec<String>> {

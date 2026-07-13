@@ -4,7 +4,7 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use rusqlite::{params, params_from_iter, Connection, LoadExtensionGuard};
+use rusqlite::{params, params_from_iter, Connection, LoadExtensionGuard, OptionalExtension};
 
 use crate::stats::IndexRunStats;
 use crate::transforms::{ArticleRecord, IssueRecord, JournalRecord, MetaRecord};
@@ -58,6 +58,15 @@ fn init_index_db_with_simple_tokenizer_path(
     connection: &Connection,
     simple_tokenizer_path: Option<&Path>,
 ) -> rusqlite::Result<()> {
+    let existing_simple_tokenizer = article_search_uses_simple_tokenizer(connection)?;
+    if existing_simple_tokenizer != Some(false) {
+        let path = simple_tokenizer_path.ok_or_else(missing_simple_tokenizer_error)?;
+        load_simple_tokenizer(connection, path)?;
+        if existing_simple_tokenizer == Some(true) {
+            probe_article_search(connection)?;
+        }
+    }
+
     connection.execute_batch(
         "
         PRAGMA foreign_keys = ON;
@@ -234,21 +243,15 @@ fn init_index_db_with_simple_tokenizer_path(
         );
         ",
     )?;
-    let is_simple_tokenizer_loaded = try_load_simple_tokenizer(connection, simple_tokenizer_path)?;
-    create_article_search(connection, is_simple_tokenizer_loaded)?;
+    create_article_search(connection)?;
+    if existing_simple_tokenizer.is_none() {
+        probe_article_search(connection)?;
+    }
     create_runtime_indexes(connection)
 }
 
-fn create_article_search(
-    connection: &Connection,
-    is_simple_tokenizer_loaded: bool,
-) -> rusqlite::Result<()> {
-    let tokenizer_sql = if is_simple_tokenizer_loaded {
-        ", tokenize = 'simple'"
-    } else {
-        ""
-    };
-    let sql = format!(
+fn create_article_search(connection: &Connection) -> rusqlite::Result<()> {
+    connection.execute_batch(
         "
         CREATE VIRTUAL TABLE IF NOT EXISTS article_search
         USING fts5(
@@ -257,12 +260,11 @@ fn create_article_search(
             abstract,
             doi,
             authors,
-            journal_title
-            {tokenizer_sql}
+            journal_title,
+            tokenize = 'simple'
         );
-        "
-    );
-    connection.execute_batch(&sql)
+        ",
+    )
 }
 
 fn create_runtime_indexes(connection: &Connection) -> rusqlite::Result<()> {
@@ -326,23 +328,75 @@ fn create_runtime_indexes(connection: &Connection) -> rusqlite::Result<()> {
     )
 }
 
-fn try_load_simple_tokenizer(
-    connection: &Connection,
-    simple_tokenizer_path: Option<&Path>,
-) -> rusqlite::Result<bool> {
-    let Some(path) = simple_tokenizer_path else {
-        return Ok(false);
-    };
-    if !path.exists() {
-        return Ok(false);
-    }
+fn load_simple_tokenizer(connection: &Connection, path: &Path) -> rusqlite::Result<()> {
+    let _guard = unsafe { LoadExtensionGuard::new(connection)? };
+    unsafe { connection.load_extension(path, None::<&str>) }
+        .map_err(|error| simple_tokenizer_load_error(path, error))
+}
 
-    let guard = unsafe { LoadExtensionGuard::new(connection)? };
-    let result = unsafe { connection.load_extension(path, None::<&str>) };
-    drop(guard);
-    match result {
-        Ok(()) => Ok(true),
-        Err(_) => Ok(false),
+fn simple_tokenizer_load_error(path: &Path, error: rusqlite::Error) -> rusqlite::Error {
+    let detail = error.to_string();
+    match error {
+        rusqlite::Error::SqliteFailure(code, _) => rusqlite::Error::SqliteFailure(
+            code,
+            Some(format!(
+                "failed to load SQLite simple tokenizer {}: {detail}",
+                path.display()
+            )),
+        ),
+        other => other,
+    }
+}
+
+fn article_search_uses_simple_tokenizer(connection: &Connection) -> rusqlite::Result<Option<bool>> {
+    let sql = connection
+        .query_row(
+            "SELECT sql FROM sqlite_schema WHERE type = 'table' AND name = 'article_search'",
+            [],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()?;
+    Ok(sql.map(|value| {
+        let compact = value
+            .to_ascii_lowercase()
+            .chars()
+            .filter(|character| !character.is_whitespace())
+            .collect::<String>();
+        compact.contains("tokenize='simple'")
+            || compact.contains("tokenize=\"simple\"")
+            || compact.contains("tokenize=simple")
+    }))
+}
+
+fn probe_article_search(connection: &Connection) -> rusqlite::Result<()> {
+    connection
+        .query_row(
+            "SELECT rowid FROM article_search WHERE article_search MATCH ?1 LIMIT 1",
+            ["litradartokenizerprobe"],
+            |row| row.get::<_, i64>(0),
+        )
+        .optional()?;
+    Ok(())
+}
+
+fn missing_simple_tokenizer_error() -> rusqlite::Error {
+    rusqlite::Error::InvalidPath(expected_simple_tokenizer_path())
+}
+
+fn expected_simple_tokenizer_path() -> PathBuf {
+    let libs_dir = PathBuf::from("libs");
+    if cfg!(windows) {
+        libs_dir
+            .join("simple-windows")
+            .join("libsimple-windows-x64")
+            .join("simple.dll")
+    } else if cfg!(target_os = "linux") {
+        libs_dir
+            .join("simple-linux")
+            .join("libsimple-linux-ubuntu-latest")
+            .join("libsimple.so")
+    } else {
+        libs_dir.join("simple-tokenizer-extension")
     }
 }
 
@@ -1112,10 +1166,22 @@ mod tests {
     }
 
     #[test]
-    fn initializes_runtime_schema_metadata_with_default_fts() {
+    fn preserves_existing_default_fts_schema() {
         let connection = Connection::open_in_memory().expect("in-memory db should open");
+        connection
+            .execute_batch(
+                "CREATE VIRTUAL TABLE article_search USING fts5(
+                    article_id UNINDEXED,
+                    title,
+                    abstract,
+                    doi,
+                    authors,
+                    journal_title
+                );",
+            )
+            .expect("default FTS table should be created");
         init_index_db_with_simple_tokenizer_path(&connection, None)
-            .expect("schema should initialize without tokenizer extension");
+            .expect("existing default FTS schema should remain compatible");
 
         let listing_state_sql = object_sql(&connection, "listing_state");
         assert!(listing_state_sql.contains("CHECK (id = 1)"));
@@ -1157,23 +1223,31 @@ mod tests {
     }
 
     #[test]
-    fn missing_simple_tokenizer_path_falls_back_to_default_fts() {
+    fn invalid_simple_tokenizer_fails_before_schema_mutation() {
         let connection = Connection::open_in_memory().expect("in-memory db should open");
-        init_index_db_with_simple_tokenizer_path(
+        let error = init_index_db_with_simple_tokenizer_path(
             &connection,
             Some(Path::new("missing-simple-tokenizer-extension")),
         )
-        .expect("missing tokenizer extension should not fail schema initialization");
+        .expect_err("missing tokenizer extension should fail schema initialization");
 
-        let article_search_sql = object_sql(&connection, "article_search").to_ascii_lowercase();
-        assert!(!article_search_sql.contains("tokenize = 'simple'"));
+        let object_count: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_schema WHERE name NOT LIKE 'sqlite_%'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("schema object count should query");
+        assert!(error
+            .to_string()
+            .contains("missing-simple-tokenizer-extension"));
+        assert_eq!(object_count, 0);
     }
 
     #[test]
     fn mark_article_listing_ready_upserts_single_ready_row() {
         let connection = Connection::open_in_memory().expect("in-memory db should open");
-        init_index_db_with_simple_tokenizer_path(&connection, None)
-            .expect("schema should initialize");
+        init_index_db(&connection).expect("schema should initialize");
         mark_article_listing_ready(&connection, "2026-07-05T12:00:00Z")
             .expect("listing should be marked ready");
         mark_article_listing_ready(&connection, "2026-07-05T12:01:00Z")

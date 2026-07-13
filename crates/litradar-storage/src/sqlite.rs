@@ -36,7 +36,7 @@ pub fn open_sqlite_connection(path: impl AsRef<Path>) -> rusqlite::Result<Connec
 ///
 /// # Returns
 ///
-/// True when the extension loaded, false when no path or load failure occurred.
+/// True when the extension loaded, or false when no path was configured.
 pub fn try_load_extension(
     connection: &Connection,
     extension_path: Option<&Path>,
@@ -44,16 +44,23 @@ pub fn try_load_extension(
     let Some(path) = extension_path else {
         return Ok(false);
     };
-    if !path.exists() {
-        return Ok(false);
-    }
+    let _guard = unsafe { LoadExtensionGuard::new(connection)? };
+    unsafe { connection.load_extension(path, None::<&str>) }
+        .map_err(|error| extension_load_error(path, error))?;
+    Ok(true)
+}
 
-    let guard = unsafe { LoadExtensionGuard::new(connection)? };
-    let result = unsafe { connection.load_extension(path, None::<&str>) };
-    drop(guard);
-    match result {
-        Ok(()) => Ok(true),
-        Err(_) => Ok(false),
+fn extension_load_error(path: &Path, error: rusqlite::Error) -> rusqlite::Error {
+    let detail = error.to_string();
+    match error {
+        rusqlite::Error::SqliteFailure(code, _) => rusqlite::Error::SqliteFailure(
+            code,
+            Some(format!(
+                "failed to load SQLite extension {}: {detail}",
+                path.display()
+            )),
+        ),
+        other => other,
     }
 }
 
@@ -86,12 +93,12 @@ mod tests {
     }
 
     #[test]
-    fn missing_extension_is_a_nonfatal_false_result() {
+    fn missing_extension_preserves_loader_error() {
         let connection = rusqlite::Connection::open_in_memory().expect("connection should open");
-        let did_load =
+        let error =
             try_load_extension(&connection, Some(std::path::Path::new("missing-extension")))
-                .expect("missing extension should not fail");
+                .expect_err("missing extension should preserve the loader failure");
 
-        assert!(!did_load);
+        assert!(error.to_string().contains("missing-extension"));
     }
 }

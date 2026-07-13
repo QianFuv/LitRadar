@@ -43,12 +43,12 @@ COPY crates crates
 RUN cargo build --release --locked --bin litradar
 
 
-FROM debian:bookworm-slim
+FROM debian:trixie-slim
 
 WORKDIR /app
 
 RUN apt-get update \
-    && apt-get install --yes --no-install-recommends ca-certificates curl passwd \
+    && apt-get install --yes --no-install-recommends ca-certificates curl libstdc++6 passwd \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd --gid 10001 litradar \
     && useradd --uid 10001 --gid litradar --no-create-home --home-dir /app --shell /usr/sbin/nologin litradar \
