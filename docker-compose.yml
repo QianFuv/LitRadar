@@ -11,6 +11,7 @@ services:
     secrets:
       - litradar_key
     restart: unless-stopped
+    mem_limit: 160m
     read_only: true
     tmpfs:
       - /tmp:rw,noexec,nosuid,size=64m

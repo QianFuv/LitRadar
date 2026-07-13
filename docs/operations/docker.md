@@ -34,6 +34,7 @@ Compose 项目名固定为 `litradar`，并且只声明一个同名服务。HTTP
 | 可写数据   | `./data:/app/data:rw`                                                                              |
 | 运行用户   | `litradar`，UID/GID `10001:10001`                                                                  |
 | 健康检查   | `GET /health/ready` 后再请求根 Web 文档 `GET /`                                                    |
+| 内存上限   | 160 MiB，覆盖服务进程及同 cgroup 的计划任务子进程                                                  |
 
 `litradar serve` 在绑定端口前完成数据库迁移、密钥验证和 HTTP 准备，然后立即执行第一个调度 tick。默认每 30 秒再次检查计划任务。调度任务通过同一 `/usr/local/bin/litradar` 启动短生命周期的 `index`、`notify` 或 `push` 子进程；这些子进程不是 Compose 服务。
 
@@ -164,12 +165,120 @@ docker compose ps
 
 - `read_only: true`
 - `restart: unless-stopped`
+- `mem_limit: 160m`
 - `cap_drop: [ALL]`
 - `no-new-privileges:true`
 - 带 `noexec,nosuid` 的 `/tmp` tmpfs
 - 一份数据挂载、密钥挂载和健康检查
 
 除 `/app/data` 外没有持久写路径。`/app/web` 随镜像只读提供，运行时不生成 Next.js cache。不要通过 root 容器、开放整个宿主机目录或挂载 Docker socket 解决权限问题。
+
+`160m` 由 Compose 渲染为 167,772,160 字节的 cgroup v2 `memory.max`。该限制同时适用于 `docker compose up` 和 `docker compose run`；内嵌调度启动的子进程与 `serve` 共享同一个限制。它是高于 120 MiB 作业峰值门禁的失控保护，不是可用内存目标。触发硬上限可能直接终止作业，因此不能用它替代画像和低内存默认值。自行使用 `docker run` 时必须显式提供等价的 `--memory 160m`。
+
+## 内存画像与门禁
+
+仓库提供 PowerShell 7 脚本 `scripts/profile_docker_memory.ps1`。脚本为每次运行生成唯一的 Compose 项目、容器和网络，只删除这些具名测试资源，并把不含命令参数和密钥值的 JSON 写入已忽略的 `output/memory/`。Docker 必须使用 cgroup v2，目标镜像必须先构建：
+
+```powershell
+docker compose build litradar
+docker compose config --quiet
+```
+
+`-DataPath` 是强制参数。脚本会把该目录以读写方式挂载到 `/app/data`，服务启动会迁移其中的数据库，索引/更新会写入其中的数据。确定性测试应传隔离副本；只有完成停机和已验证备份后，才可把真实 `./data` 传给更新场景。部署密钥仍由 Compose secret 挂载，命令只传容器内密钥路径。
+
+### 指标口径
+
+| JSON 字段/来源 | 含义 | 用途 |
+| -------------- | ---- | ---- |
+| `Memory.WorkingSet*` | `memory.current - memory.stat.inactive_file`，与 Docker working-set 口径一致 | 20/24 和 100/120 MiB 门禁 |
+| `Memory.CgroupCurrent*` | 原始 cgroup 当前用量，包含可回收文件页缓存 | 分析页缓存和 cgroup 总占用 |
+| `Memory.CgroupLifetimePeakBytes` | 容器创建以来的原始 `memory.peak` | 诊断启动或作业瞬时峰值 |
+| `PeakProcesses` | `docker top` 的进程 RSS、线程数和命令名峰值拆分 | 区分 `serve`、作业子进程和辅助进程 |
+| `Memory.SwapPeakBytes` | `memory.swap.current` 的采样峰值 | 必须为 0 |
+| `EventDelta` | 新建 cgroup 生命周期内的 `memory.events` 计数 | `max`、`oom`、`oom_kill` 必须为 0 |
+| `FullPressureAvg10Max` | `memory.pressure` 的 full `avg10` 采样最大值 | 验收窗口应为 0 |
+
+每个样本还保存选定的 `memory.stat`、PSI、进程 RSS 总和、进程数和线程数。摘要报告 working-set 的 p50、p95、采样峰值、持续时间、场景退出码、OOM 状态和门禁失败原因。采样需要短生命周期的 `docker exec`，因此 cgroup 数值是略偏保守的；进程 RSS 与 cgroup working set 的记账方式不同，不能相加。
+
+默认门禁：
+
+| 场景 | p95 | 采样峰值 |
+| ---- | --- | -------- |
+| `warm-idle` | 20 MiB | 24 MiB |
+| `index`、`update`、`scheduled-child` | 100 MiB | 120 MiB |
+
+所有场景还要求 swap、OOM 和 `memory.events.max` 为 0、业务命令退出 0。`-P95LimitMiB` 和 `-PeakLimitMiB` 可显式覆盖阈值；这用于独立预算或门禁自测，不改变生产目标。`-ExpectedMemoryLimitMiB 160` 会同时校验实际容器限制。任何并发覆盖，尤其是提高 `--processes`、`--workers` 或 `--issue-batch`，都必须使用相同数据和场景重新画像。
+
+### 场景命令
+
+五分钟预热后采集十分钟 warm idle 和轻流量：
+
+```powershell
+pwsh ./scripts/profile_docker_memory.ps1 `
+  -Scenario warm-idle `
+  -DataPath ./data `
+  -WarmupSeconds 300 `
+  -DurationSeconds 600 `
+  -TrafficPath /health/live,/health/ready,/ `
+  -ExpectedMemoryLimitMiB 160
+```
+
+一次索引或更新；`DurationSeconds` 是保护性超时，作业提前完成时立即结束：
+
+```powershell
+pwsh ./scripts/profile_docker_memory.ps1 `
+  -Scenario index `
+  -DataPath ./data `
+  -DurationSeconds 14400 `
+  -Command @(
+    'index',
+    '--secret-key-file', '/run/secrets/litradar_key',
+    '--file', 'chinese_journals.csv'
+  ) `
+  -ExpectedMemoryLimitMiB 160
+
+pwsh ./scripts/profile_docker_memory.ps1 `
+  -Scenario update `
+  -DataPath ./data `
+  -DurationSeconds 14400 `
+  -Command @(
+    'index',
+    '--secret-key-file', '/run/secrets/litradar_key',
+    '--file', 'english_journals.csv',
+    '--update'
+  ) `
+  -ExpectedMemoryLimitMiB 160
+```
+
+常驻服务和同 cgroup 子任务的合并画像：
+
+```powershell
+pwsh ./scripts/profile_docker_memory.ps1 `
+  -Scenario scheduled-child `
+  -DataPath ./data `
+  -DurationSeconds 14400 `
+  -Command @(
+    'index',
+    '--secret-key-file', '/run/secrets/litradar_key',
+    '--file', 'ccf_computer_journals.csv',
+    '--update'
+  ) `
+  -ExpectedMemoryLimitMiB 160
+```
+
+脚本成功返回 0，任何预算、swap、事件、流量或命令失败返回 1。可用极小的显式阈值验证门禁确实失败：
+
+```powershell
+pwsh ./scripts/profile_docker_memory.ps1 `
+  -Scenario warm-idle `
+  -DataPath ./isolated-profile-data `
+  -DurationSeconds 10 `
+  -P95LimitMiB 0.001 `
+  -PeakLimitMiB 0.001 `
+  -ExpectedMemoryLimitMiB 160
+```
+
+该命令预期返回 1，并在 JSON 的 `Gate.Failures` 中同时列出 p95 和峰值超限。中断或失败时 `finally` 仍只按本次唯一名称删除容器和网络；若宿主机或 Docker daemon 被强制终止，可用 `docker ps -a --filter name=litradar-memory-` 检查后按完整名称清理。
 
 ## 公网部署
 
