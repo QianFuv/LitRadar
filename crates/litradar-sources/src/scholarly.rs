@@ -49,6 +49,15 @@ pub struct SourceAttempt {
     pub error: Option<String>,
 }
 
+/// One bounded page of scholarly work payloads.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ScholarlyWorksPage {
+    /// Work payloads in upstream order.
+    pub items: Vec<Value>,
+    /// Cursor for the next page when one is available.
+    pub next_cursor: Option<String>,
+}
+
 /// Request shape sent through a scholarly transport.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ScholarlyRequest {
@@ -73,6 +82,8 @@ pub enum ScholarlyRequestKind {
         issn: String,
         /// Optional lower publication-date filter.
         from_pub_date: Option<String>,
+        /// Cursor returned by the previous page.
+        cursor: Option<String>,
     },
     /// Fetch an OpenAlex source by ISSN.
     OpenAlexSourceByIssn {
@@ -90,6 +101,8 @@ pub enum ScholarlyRequestKind {
         source_id: String,
         /// Optional lower publication-date filter.
         from_pub_date: Option<String>,
+        /// Cursor returned by the previous page.
+        cursor: Option<String>,
     },
     /// Fetch OpenAlex works by DOI filters.
     OpenAlexWorksByDoi {
@@ -112,6 +125,9 @@ pub struct ScholarlyFixtureData {
     /// Crossref works returned by journal ISSN lookup.
     #[serde(default)]
     pub crossref_works: Vec<Value>,
+    /// Optional Crossref pages used by bounded pagination tests.
+    #[serde(default)]
+    pub crossref_work_pages: Vec<Vec<Value>>,
     /// OpenAlex source returned by ISSN lookup.
     #[serde(default)]
     pub openalex_source_by_issns: Option<Value>,
@@ -121,6 +137,9 @@ pub struct ScholarlyFixtureData {
     /// OpenAlex works returned by source lookup.
     #[serde(default)]
     pub openalex_source_works: Vec<Value>,
+    /// Optional OpenAlex source-work pages used by bounded pagination tests.
+    #[serde(default)]
+    pub openalex_source_work_pages: Vec<Vec<Value>>,
     /// OpenAlex works returned by DOI enrichment.
     #[serde(default)]
     pub openalex_by_doi: BTreeMap<String, Value>,
@@ -209,6 +228,13 @@ pub trait ScholarlyTransport {
     ///
     /// Captured source attempts.
     fn attempts(&self) -> &[SourceAttempt];
+
+    /// Remove and return captured source attempts.
+    ///
+    /// # Returns
+    ///
+    /// Captured attempts, leaving the transport buffer empty.
+    fn drain_attempts(&mut self) -> Vec<SourceAttempt>;
 }
 
 /// Deterministic fixture transport for scholarly source tests.
@@ -506,51 +532,40 @@ impl LiveScholarlyTransport {
         &mut self,
         issn: &str,
         from_pub_date: Option<&str>,
+        cursor: Option<&str>,
     ) -> Result<Value, SourceError> {
-        let mut cursor = "*".to_string();
-        let mut works = Vec::new();
-        loop {
-            let mut filters = vec!["type:journal-article".to_string()];
-            if let Some(value) = from_pub_date.filter(|value| !value.trim().is_empty()) {
-                filters.push(format!("from-pub-date:{value}"));
-            }
-            let mut query = vec![
-                ("rows".to_string(), CROSSREF_ROWS.to_string()),
-                ("cursor".to_string(), cursor.clone()),
-                ("filter".to_string(), filters.join(",")),
-                ("sort".to_string(), "published".to_string()),
-                ("order".to_string(), "asc".to_string()),
-            ];
-            if let Some(mailto) = self.config.crossref_mailtos.first() {
-                query.push(("mailto".to_string(), mailto.clone()));
-            }
-            let payload = self.get_json(
-                CROSSREF_SOURCE,
-                "journal_works",
-                &format!("{CROSSREF_BASE_URL}/journals/{issn}/works"),
-                &query,
-            )?;
-            let message = payload.get("message").cloned().unwrap_or_else(|| json!({}));
-            let items = message
-                .get("items")
-                .and_then(Value::as_array)
-                .cloned()
-                .unwrap_or_default();
-            let next_cursor = message
-                .get("next-cursor")
-                .and_then(Value::as_str)
-                .map(str::to_string);
-            let item_count = items.len();
-            works.extend(items);
-            let Some(next_cursor) = next_cursor else {
-                break;
-            };
-            if item_count < CROSSREF_ROWS {
-                break;
-            }
-            cursor = next_cursor;
+        let mut filters = vec!["type:journal-article".to_string()];
+        if let Some(value) = from_pub_date.filter(|value| !value.trim().is_empty()) {
+            filters.push(format!("from-pub-date:{value}"));
         }
-        Ok(json!({ "message": { "items": works } }))
+        let mut query = vec![
+            ("rows".to_string(), CROSSREF_ROWS.to_string()),
+            ("cursor".to_string(), cursor.unwrap_or("*").to_string()),
+            ("filter".to_string(), filters.join(",")),
+            ("sort".to_string(), "published".to_string()),
+            ("order".to_string(), "asc".to_string()),
+        ];
+        if let Some(mailto) = self.config.crossref_mailtos.first() {
+            query.push(("mailto".to_string(), mailto.clone()));
+        }
+        let mut payload = self.get_json(
+            CROSSREF_SOURCE,
+            "journal_works",
+            &format!("{CROSSREF_BASE_URL}/journals/{issn}/works"),
+            &query,
+        )?;
+        let item_count = payload
+            .get("message")
+            .and_then(|message| message.get("items"))
+            .and_then(Value::as_array)
+            .map(Vec::len)
+            .unwrap_or(0);
+        if item_count < CROSSREF_ROWS {
+            if let Some(message) = payload.get_mut("message").and_then(Value::as_object_mut) {
+                message.remove("next-cursor");
+            }
+        }
+        Ok(payload)
     }
 
     fn openalex_source_by_issn(&mut self, issn: &str) -> Result<Value, SourceError> {
@@ -587,58 +602,46 @@ impl LiveScholarlyTransport {
         &mut self,
         source_id: &str,
         from_pub_date: Option<&str>,
+        cursor: Option<&str>,
     ) -> Result<Value, SourceError> {
         let Some(source_key) = openalex_short_source_id(source_id) else {
             return Ok(json!({ "results": [] }));
         };
-        let mut cursor = "*".to_string();
-        let mut works = Vec::new();
-        loop {
-            let mut filters = vec![
-                format!("primary_location.source.id:{source_key}"),
-                "type:article".to_string(),
-            ];
-            if let Some(value) = from_pub_date.filter(|value| !value.trim().is_empty()) {
-                filters.push(format!("from_publication_date:{value}"));
-            }
-            let mut query = vec![
-                ("filter".to_string(), filters.join(",")),
-                (
-                    "per-page".to_string(),
-                    OPENALEX_SOURCE_WORK_ROWS.to_string(),
-                ),
-                ("cursor".to_string(), cursor.clone()),
-                ("sort".to_string(), "publication_date:asc".to_string()),
-                ("select".to_string(), OPENALEX_WORK_FIELDS.to_string()),
-            ];
-            self.append_openalex_config(&mut query);
-            let payload = self.get_json(
-                OPENALEX_SOURCE,
-                "source_works",
-                &format!("{OPENALEX_BASE_URL}/works"),
-                &query,
-            )?;
-            let items = payload
-                .get("results")
-                .and_then(Value::as_array)
-                .cloned()
-                .unwrap_or_default();
-            let next_cursor = payload
-                .get("meta")
-                .and_then(|meta| meta.get("next_cursor"))
-                .and_then(Value::as_str)
-                .map(str::to_string);
-            let item_count = items.len();
-            works.extend(items);
-            let Some(next_cursor) = next_cursor else {
-                break;
-            };
-            if item_count < OPENALEX_SOURCE_WORK_ROWS {
-                break;
-            }
-            cursor = next_cursor;
+        let mut filters = vec![
+            format!("primary_location.source.id:{source_key}"),
+            "type:article".to_string(),
+        ];
+        if let Some(value) = from_pub_date.filter(|value| !value.trim().is_empty()) {
+            filters.push(format!("from_publication_date:{value}"));
         }
-        Ok(json!({ "results": works }))
+        let mut query = vec![
+            ("filter".to_string(), filters.join(",")),
+            (
+                "per-page".to_string(),
+                OPENALEX_SOURCE_WORK_ROWS.to_string(),
+            ),
+            ("cursor".to_string(), cursor.unwrap_or("*").to_string()),
+            ("sort".to_string(), "publication_date:asc".to_string()),
+            ("select".to_string(), OPENALEX_WORK_FIELDS.to_string()),
+        ];
+        self.append_openalex_config(&mut query);
+        let mut payload = self.get_json(
+            OPENALEX_SOURCE,
+            "source_works",
+            &format!("{OPENALEX_BASE_URL}/works"),
+            &query,
+        )?;
+        let item_count = payload
+            .get("results")
+            .and_then(Value::as_array)
+            .map(Vec::len)
+            .unwrap_or(0);
+        if item_count < OPENALEX_SOURCE_WORK_ROWS {
+            if let Some(meta) = payload.get_mut("meta").and_then(Value::as_object_mut) {
+                meta.insert("next_cursor".to_string(), Value::Null);
+            }
+        }
+        Ok(payload)
     }
 
     fn openalex_works_by_doi(&mut self, dois: &[String]) -> Result<Value, SourceError> {
@@ -859,7 +862,7 @@ impl ScholarlyTransport for FixtureScholarlyTransport {
     /// Execute one scholarly fixture request.
     fn request(&mut self, request: ScholarlyRequest) -> Result<Value, SourceError> {
         match &request.kind {
-            ScholarlyRequestKind::CrossrefJournalWorks { .. } => {
+            ScholarlyRequestKind::CrossrefJournalWorks { cursor, .. } => {
                 let status_code = self.data.crossref_status.unwrap_or(200);
                 if status_code != 200 {
                     return Err(self.http_error(
@@ -869,7 +872,18 @@ impl ScholarlyTransport for FixtureScholarlyTransport {
                     ));
                 }
                 self.record_attempt(&request, Some(200), true, None);
-                Ok(json!({"message": {"items": self.data.crossref_works}}))
+                let page_index = fixture_page_index(cursor.as_deref());
+                let (items, next_cursor) = fixture_page(
+                    &self.data.crossref_work_pages,
+                    &self.data.crossref_works,
+                    page_index,
+                );
+                Ok(json!({
+                    "message": {
+                        "items": items,
+                        "next-cursor": next_cursor,
+                    }
+                }))
             }
             ScholarlyRequestKind::OpenAlexSourceByIssn { issn } => {
                 self.source_lookup_issns.push(issn.clone());
@@ -896,11 +910,21 @@ impl ScholarlyTransport for FixtureScholarlyTransport {
             ScholarlyRequestKind::OpenAlexWorksBySource {
                 source_id,
                 from_pub_date,
+                cursor,
             } => {
                 self.source_work_requests
                     .push((source_id.clone(), from_pub_date.clone()));
                 self.record_attempt(&request, Some(200), true, None);
-                Ok(json!({"results": self.data.openalex_source_works}))
+                let page_index = fixture_page_index(cursor.as_deref());
+                let (items, next_cursor) = fixture_page(
+                    &self.data.openalex_source_work_pages,
+                    &self.data.openalex_source_works,
+                    page_index,
+                );
+                Ok(json!({
+                    "results": items,
+                    "meta": {"next_cursor": next_cursor},
+                }))
             }
             ScholarlyRequestKind::OpenAlexWorksByDoi { dois } => {
                 self.openalex_doi_batches.push(dois.clone());
@@ -938,6 +962,11 @@ impl ScholarlyTransport for FixtureScholarlyTransport {
     fn attempts(&self) -> &[SourceAttempt] {
         &self.attempts
     }
+
+    /// Drain captured source attempts.
+    fn drain_attempts(&mut self) -> Vec<SourceAttempt> {
+        std::mem::take(&mut self.attempts)
+    }
 }
 
 impl ScholarlyTransport for LiveScholarlyTransport {
@@ -947,7 +976,8 @@ impl ScholarlyTransport for LiveScholarlyTransport {
             ScholarlyRequestKind::CrossrefJournalWorks {
                 issn,
                 from_pub_date,
-            } => self.crossref_journal_works(&issn, from_pub_date.as_deref()),
+                cursor,
+            } => self.crossref_journal_works(&issn, from_pub_date.as_deref(), cursor.as_deref()),
             ScholarlyRequestKind::OpenAlexSourceByIssn { issn } => {
                 self.openalex_source_by_issn(&issn)
             }
@@ -957,7 +987,12 @@ impl ScholarlyTransport for LiveScholarlyTransport {
             ScholarlyRequestKind::OpenAlexWorksBySource {
                 source_id,
                 from_pub_date,
-            } => self.openalex_works_by_source(&source_id, from_pub_date.as_deref()),
+                cursor,
+            } => self.openalex_works_by_source(
+                &source_id,
+                from_pub_date.as_deref(),
+                cursor.as_deref(),
+            ),
             ScholarlyRequestKind::OpenAlexWorksByDoi { dois } => self.openalex_works_by_doi(&dois),
             ScholarlyRequestKind::SemanticScholarBatch { dois } => {
                 self.semantic_scholar_batch(&dois)
@@ -969,6 +1004,36 @@ impl ScholarlyTransport for LiveScholarlyTransport {
     fn attempts(&self) -> &[SourceAttempt] {
         &self.attempts
     }
+
+    /// Drain captured live source attempts.
+    fn drain_attempts(&mut self) -> Vec<SourceAttempt> {
+        std::mem::take(&mut self.attempts)
+    }
+}
+
+fn fixture_page_index(cursor: Option<&str>) -> usize {
+    cursor
+        .and_then(|value| value.strip_prefix("fixture-page-"))
+        .and_then(|value| value.parse::<usize>().ok())
+        .unwrap_or(0)
+}
+
+fn fixture_page(
+    pages: &[Vec<Value>],
+    fallback: &[Value],
+    page_index: usize,
+) -> (Vec<Value>, Option<String>) {
+    if pages.is_empty() {
+        return if page_index == 0 {
+            (fallback.to_vec(), None)
+        } else {
+            (Vec::new(), None)
+        };
+    }
+    let items = pages.get(page_index).cloned().unwrap_or_default();
+    let next_cursor =
+        (page_index + 1 < pages.len()).then(|| format!("fixture-page-{}", page_index + 1));
+    (items, next_cursor)
 }
 
 /// Scholarly metadata client using a transport implementation.
@@ -999,21 +1064,23 @@ where
         }
     }
 
-    /// Fetch Crossref journal article works by ISSN.
+    /// Fetch one Crossref journal-work page by ISSN.
     ///
     /// # Arguments
     ///
     /// * `issn` - ISSN lookup candidate.
     /// * `from_pub_date` - Optional lower publication-date filter.
+    /// * `cursor` - Cursor returned by the previous page.
     ///
     /// # Returns
     ///
-    /// Crossref works.
-    pub fn fetch_journal_works(
+    /// Bounded Crossref works page.
+    pub fn fetch_journal_works_page(
         &mut self,
         issn: &str,
         from_pub_date: Option<&str>,
-    ) -> Result<Vec<Value>, SourceError> {
+        cursor: Option<&str>,
+    ) -> Result<ScholarlyWorksPage, SourceError> {
         let url = format!("https://api.crossref.org/journals/{issn}/works");
         let payload = self.transport.request(ScholarlyRequest {
             service: CROSSREF_SOURCE.to_string(),
@@ -1023,14 +1090,20 @@ where
             kind: ScholarlyRequestKind::CrossrefJournalWorks {
                 issn: issn.to_string(),
                 from_pub_date: from_pub_date.map(str::to_string),
+                cursor: cursor.map(str::to_string),
             },
         })?;
-        Ok(payload
-            .get("message")
+        let message = payload.get("message");
+        let items = message
             .and_then(|message| message.get("items"))
             .and_then(Value::as_array)
             .cloned()
-            .unwrap_or_default())
+            .unwrap_or_default();
+        let next_cursor = message
+            .and_then(|message| message.get("next-cursor"))
+            .and_then(Value::as_str)
+            .map(str::to_string);
+        Ok(ScholarlyWorksPage { items, next_cursor })
     }
 
     /// Fetch an OpenAlex source matching the provided ISSNs.
@@ -1097,21 +1170,23 @@ where
         Ok(None)
     }
 
-    /// Fetch OpenAlex works for a source identifier.
+    /// Fetch one OpenAlex work page for a source identifier.
     ///
     /// # Arguments
     ///
     /// * `source_id` - OpenAlex source id or URL.
     /// * `from_pub_date` - Optional lower publication-date filter.
+    /// * `cursor` - Cursor returned by the previous page.
     ///
     /// # Returns
     ///
-    /// OpenAlex work payloads.
-    pub fn fetch_openalex_works_by_source(
+    /// Bounded OpenAlex works page.
+    pub fn fetch_openalex_works_by_source_page(
         &mut self,
         source_id: &str,
         from_pub_date: Option<&str>,
-    ) -> Result<Vec<Value>, SourceError> {
+        cursor: Option<&str>,
+    ) -> Result<ScholarlyWorksPage, SourceError> {
         let payload = self.transport.request(ScholarlyRequest {
             service: OPENALEX_SOURCE.to_string(),
             endpoint: "source_works".to_string(),
@@ -1120,9 +1195,16 @@ where
             kind: ScholarlyRequestKind::OpenAlexWorksBySource {
                 source_id: source_id.to_string(),
                 from_pub_date: from_pub_date.map(str::to_string),
+                cursor: cursor.map(str::to_string),
             },
         })?;
-        Ok(json_array(&payload, "results"))
+        let items = json_array(&payload, "results");
+        let next_cursor = payload
+            .get("meta")
+            .and_then(|meta| meta.get("next_cursor"))
+            .and_then(Value::as_str)
+            .map(str::to_string);
+        Ok(ScholarlyWorksPage { items, next_cursor })
     }
 
     /// Fetch OpenAlex enrichment by DOI.
@@ -1224,6 +1306,15 @@ where
     /// Captured source attempts.
     pub fn attempts(&self) -> &[SourceAttempt] {
         self.transport.attempts()
+    }
+
+    /// Remove and return captured source attempts.
+    ///
+    /// # Returns
+    ///
+    /// Captured attempts, leaving the client buffer empty.
+    pub fn drain_attempts(&mut self) -> Vec<SourceAttempt> {
+        self.transport.drain_attempts()
     }
 
     /// Consume the client and return its transport.
@@ -1421,7 +1512,7 @@ mod tests {
         normalize_doi, normalize_issn, normalize_source_title, openalex_short_source_id,
         redact_url, semantic_scholar_worker_interval, semantic_scholar_worker_offset,
         value_pool_from_text, FixtureScholarlyTransport, LiveScholarlyConfig, ScholarlyClient,
-        ScholarlyFixtureData, SourceError,
+        ScholarlyFixtureData, SourceError, CROSSREF_ROWS,
     };
 
     #[test]
@@ -1651,14 +1742,15 @@ mod tests {
             .expect("title source lookup should succeed")
             .expect("title source should match");
         let works = client
-            .fetch_openalex_works_by_source(
+            .fetch_openalex_works_by_source_page(
                 source["id"].as_str().expect("source id should exist"),
                 Some("2026-01-01"),
+                None,
             )
             .expect("source works should load");
         let transport = client.into_transport();
 
-        assert_eq!(works[0]["id"], "https://openalex.org/W42");
+        assert_eq!(works.items[0]["id"], "https://openalex.org/W42");
         assert_eq!(
             transport.source_lookup_titles(),
             &["Journal of Testing".to_string()]
@@ -1681,7 +1773,7 @@ mod tests {
         let mut client = ScholarlyClient::new(transport, true);
 
         let error = client
-            .fetch_journal_works("1234-5678", Some("2026-01-01"))
+            .fetch_journal_works_page("1234-5678", Some("2026-01-01"), None)
             .expect_err("Crossref fixture failure should fail loud");
 
         assert!(matches!(
@@ -1717,10 +1809,10 @@ mod tests {
         let mut client = ScholarlyClient::new(transport, true);
 
         let works = client
-            .fetch_journal_works("1234-5678", None)
+            .fetch_journal_works_page("1234-5678", None, None)
             .expect("Crossref fixture success should resolve");
 
-        assert_eq!(works[0]["DOI"], "10.1/success");
+        assert_eq!(works.items[0]["DOI"], "10.1/success");
         assert_eq!(client.attempts()[0].status_code, Some(200));
         assert!(client.attempts()[0].did_succeed);
         assert_eq!(normalize_issn("1234-567X"), Some("1234567X".to_string()));
@@ -1739,6 +1831,32 @@ mod tests {
             "https://api.test/path?api_key=SECRET&x-api-key=SECRET&mail=me"
         );
         assert_eq!(redact_url("https://api.test/path"), "https://api.test/path");
+    }
+
+    #[test]
+    fn crossref_pages_follow_cursors_and_attempts_can_be_drained() {
+        let first_page = (0..CROSSREF_ROWS)
+            .map(|index| json!({"DOI": format!("10.1/{index}")}))
+            .collect::<Vec<_>>();
+        let transport = FixtureScholarlyTransport::new(ScholarlyFixtureData {
+            crossref_work_pages: vec![first_page, vec![json!({"DOI": "10.1/final"})]],
+            ..ScholarlyFixtureData::default()
+        });
+        let mut client = ScholarlyClient::new(transport, true);
+
+        let first = client
+            .fetch_journal_works_page("1234-5678", None, None)
+            .expect("first page should load");
+        assert_eq!(first.items.len(), CROSSREF_ROWS);
+        assert_eq!(first.next_cursor.as_deref(), Some("fixture-page-1"));
+        assert_eq!(client.drain_attempts().len(), 1);
+        assert!(client.attempts().is_empty());
+
+        let second = client
+            .fetch_journal_works_page("1234-5678", None, first.next_cursor.as_deref())
+            .expect("second page should load");
+        assert_eq!(second.items, vec![json!({"DOI": "10.1/final"})]);
+        assert_eq!(second.next_cursor, None);
     }
 
     #[test]

@@ -15,7 +15,7 @@ use rusqlite::Connection;
 use serde::Serialize;
 use serde_json::Value;
 
-use crate::manifest::{build_change_manifest, write_change_manifest};
+use crate::changes::{write_change_manifest_from_events, ChangeWriteError};
 use crate::schema::{
     apply_article_changes, get_completed_years, get_journal_issue_ids_with_articles,
     is_journal_complete, mark_article_listing_ready, mark_journal_done, mark_year_done,
@@ -26,7 +26,7 @@ use crate::stats::{IndexRunStats, PathCountIncrements};
 use crate::transforms::{
     build_cnki_article_record, build_cnki_issue_record, build_cnki_journal_record,
     build_journal_id, build_meta_record, journal_title_from_row, split_article_records_by_authors,
-    ArticleRecord, CsvRow, IssueRecord,
+    CsvRow, IssueRecord,
 };
 
 /// CNKI fixture index run configuration.
@@ -65,8 +65,8 @@ pub struct CnkiIndexOutcome {
     pub db_path: String,
     /// Optional manifest path.
     pub manifest_path: Option<String>,
-    /// Written article ids.
-    pub written_article_ids: Vec<i64>,
+    /// Written article count.
+    pub written_article_count: i64,
     /// Source attempt count.
     pub source_attempt_count: usize,
 }
@@ -144,6 +144,17 @@ impl From<CnkiSourceError> for CnkiIndexError {
     }
 }
 
+impl From<ChangeWriteError> for CnkiIndexError {
+    /// Convert streamed manifest errors into index errors.
+    fn from(error: ChangeWriteError) -> Self {
+        match error {
+            ChangeWriteError::Sqlite(error) => Self::Sqlite(error),
+            ChangeWriteError::Io(error) => Self::Io(error),
+            ChangeWriteError::Json(error) => Self::Json(error),
+        }
+    }
+}
+
 /// Run the CNKI fixture index pipeline.
 ///
 /// # Arguments
@@ -182,7 +193,12 @@ pub fn run_cnki_fixture_index(
         csv_file.clone(),
         config.timestamp.clone(),
     );
-    let mut all_written_articles = Vec::new();
+    let mut written_article_count = 0;
+    let mut source_attempt_count = 0;
+    let change_event_context = config
+        .manifest_path
+        .as_ref()
+        .map(|_| ChangeEventContext::new(&config.run_id, "fixture-0", &config.timestamp, false));
 
     for row in rows {
         let journal_id = build_journal_id(&row).ok_or_else(|| {
@@ -199,27 +215,33 @@ pub fn run_cnki_fixture_index(
             journal_title.clone(),
             config.timestamp.clone(),
         );
-        let attempt_start = client.attempts().len();
-        let result = process_cnki_row(
-            &connection,
-            &mut client,
-            &row,
-            &csv_file,
-            journal_id,
-            config,
-            None,
-        );
-        let attempts = client.attempts()[attempt_start..].to_vec();
-        stats.record_source_attempts_for_source(
-            "cnki",
-            &attempts,
-            Some(journal_id),
-            &journal_title,
-        );
+        let result = {
+            let mut attempt_sink = |attempts: &[SourceAttempt]| {
+                source_attempt_count += attempts.len();
+                stats.record_source_attempts_for_source(
+                    "cnki",
+                    attempts,
+                    Some(journal_id),
+                    &journal_title,
+                );
+            };
+            process_cnki_row(
+                &connection,
+                &mut client,
+                &row,
+                CnkiProcessContext {
+                    csv_file: &csv_file,
+                    journal_id,
+                    config,
+                    change_event_context: change_event_context.as_ref(),
+                    attempt_sink: &mut attempt_sink,
+                },
+            )
+        };
         match result {
             Ok(ProcessOutcome {
                 status,
-                written_articles,
+                written_article_count: journal_written_article_count,
                 issues_count,
                 article_summaries_count,
                 article_details_count,
@@ -231,13 +253,13 @@ pub fn run_cnki_fixture_index(
                         issues_count,
                         article_summaries_count,
                         article_details_count,
-                        articles_written_count: written_articles.len() as i64,
+                        articles_written_count: journal_written_article_count,
                         articles_deleted_no_authors_count: deleted_article_count,
                         ..PathCountIncrements::default()
                     },
                 );
                 stats.finish_path(&path_key, &status, config.timestamp.clone(), None);
-                all_written_articles.extend(written_articles);
+                written_article_count += journal_written_article_count;
             }
             Err(error) => {
                 stats.finish_path(
@@ -255,15 +277,14 @@ pub fn run_cnki_fixture_index(
 
     stats.finish("succeeded", config.timestamp.clone(), None);
     persist_index_run_stats(&connection, &stats)?;
-    all_written_articles.sort_by_key(|article| article.article_id);
     let manifest_path = if let Some(path) = &config.manifest_path {
-        let manifest = build_change_manifest(
+        write_change_manifest_from_events(
+            &connection,
             &db_name,
             &config.run_id,
             &config.timestamp,
-            &all_written_articles,
-        );
-        write_change_manifest(&manifest, path)?;
+            path,
+        )?;
         Some(path.display().to_string())
     } else {
         None
@@ -276,22 +297,28 @@ pub fn run_cnki_fixture_index(
         run_id: config.run_id.clone(),
         db_path: config.output_db_path.display().to_string(),
         manifest_path,
-        written_article_ids: all_written_articles
-            .iter()
-            .map(|article| article.article_id)
-            .collect(),
-        source_attempt_count: client.attempts().len(),
+        written_article_count,
+        source_attempt_count,
     })
 }
 
 #[derive(Debug)]
 pub(crate) struct ProcessOutcome {
     pub(crate) status: String,
-    pub(crate) written_articles: Vec<ArticleRecord>,
+    pub(crate) written_article_count: i64,
     pub(crate) issues_count: i64,
     pub(crate) article_summaries_count: i64,
     pub(crate) article_details_count: i64,
     pub(crate) deleted_article_count: i64,
+}
+
+/// Per-journal CNKI processing context.
+pub(crate) struct CnkiProcessContext<'a> {
+    pub(crate) csv_file: &'a str,
+    pub(crate) journal_id: i64,
+    pub(crate) config: &'a CnkiIndexConfig,
+    pub(crate) change_event_context: Option<&'a ChangeEventContext>,
+    pub(crate) attempt_sink: &'a mut dyn FnMut(&[SourceAttempt]),
 }
 
 #[derive(Debug, Clone)]
@@ -323,24 +350,30 @@ pub(crate) fn process_cnki_row<T>(
     connection: &Connection,
     client: &mut CnkiClient<T>,
     row: &CsvRow,
-    csv_file: &str,
-    journal_id: i64,
-    config: &CnkiIndexConfig,
-    change_event_context: Option<&ChangeEventContext>,
+    context: CnkiProcessContext<'_>,
 ) -> Result<ProcessOutcome, CnkiIndexError>
 where
     T: CnkiTransport + Clone + Send + 'static,
 {
+    let CnkiProcessContext {
+        csv_file,
+        journal_id,
+        config,
+        change_event_context,
+        attempt_sink,
+    } = context;
     if config.resume && !config.update && is_journal_complete(connection, journal_id)? {
         return Ok(ProcessOutcome::resumed());
     }
 
-    let details = client.resolve_journal(row)?.ok_or_else(|| {
-        CnkiIndexError::InvalidJournal(format!(
-            "No CNKI details for journal: {}",
-            journal_title_from_row(row)
-        ))
-    })?;
+    let details =
+        capture_cnki_attempts(client, attempt_sink, |client| client.resolve_journal(row))?
+            .ok_or_else(|| {
+                CnkiIndexError::InvalidJournal(format!(
+                    "No CNKI details for journal: {}",
+                    journal_title_from_row(row)
+                ))
+            })?;
     let journal_record = build_cnki_journal_record(journal_id, row, Some(&details));
     let meta_record = build_meta_record(journal_id, csv_file, row);
     let journal_title = journal_record
@@ -355,7 +388,8 @@ where
         ))
     })?;
 
-    let issues = client.year_issues(&details)?;
+    let issues =
+        capture_cnki_attempts(client, attempt_sink, |client| client.year_issues(&details))?;
     if issues.is_empty() {
         return Err(CnkiIndexError::InvalidJournal(format!(
             "No CNKI publication years for journal {journal_code}"
@@ -421,7 +455,7 @@ where
         .copied()
         .collect::<Vec<_>>();
 
-    let mut written_articles = Vec::new();
+    let mut written_article_count = 0;
     let mut article_summaries_count = 0;
     let mut article_details_count = 0;
     let mut deleted_article_count = 0;
@@ -441,7 +475,9 @@ where
             let mut batch_records = Vec::new();
             let mut detail_tasks = Vec::new();
             for (issue_id, issue) in batch {
-                let summaries = client.issue_articles(&details, issue)?;
+                let summaries = capture_cnki_attempts(client, attempt_sink, |client| {
+                    client.issue_articles(&details, issue)
+                })?;
                 article_summaries_count += summaries.len() as i64;
                 for summary in summaries {
                     let Some(article_url) = json_text(summary.get("article_url")) else {
@@ -457,8 +493,9 @@ where
                     });
                 }
             }
-            let detail_results =
-                fetch_cnki_article_details(client, detail_tasks, config.worker_count.max(1))?;
+            let detail_results = capture_cnki_index_attempts(client, attempt_sink, |client| {
+                fetch_cnki_article_details(client, detail_tasks, config.worker_count.max(1))
+            })?;
             article_details_count += detail_results.len() as i64;
             for result in detail_results {
                 if let Some(record) = build_cnki_article_record(
@@ -501,7 +538,7 @@ where
                 Ok::<(), CnkiIndexError>(())
             })?;
             deleted_article_count += deleted_article_ids.len() as i64;
-            written_articles.extend(batch_records);
+            written_article_count += batch_records.len() as i64;
         }
     }
 
@@ -514,7 +551,7 @@ where
 
     Ok(ProcessOutcome {
         status: "succeeded".to_string(),
-        written_articles,
+        written_article_count,
         issues_count: issues.len() as i64,
         article_summaries_count,
         article_details_count,
@@ -535,11 +572,11 @@ where
         let mut handles = Vec::new();
         for task in chunk.iter().cloned() {
             let mut worker_client = client.clone();
-            let attempt_start = worker_client.attempts().len();
+            let _ = worker_client.drain_attempts();
             handles.push(thread::spawn(move || {
                 let result =
                     worker_client.article_detail(&task.article_url, task.platform_id.as_deref());
-                let attempts = worker_client.attempts()[attempt_start..].to_vec();
+                let attempts = worker_client.drain_attempts();
                 CnkiArticleDetailWorkerOutput {
                     task,
                     result,
@@ -553,15 +590,15 @@ where
             let output = handle.join().map_err(|_| {
                 CnkiIndexError::Worker("CNKI article detail worker panicked".to_string())
             })?;
-            client.append_attempts(output.attempts.clone());
-            worker_outputs.push(output);
+            client.append_attempts(output.attempts);
+            worker_outputs.push((output.task, output.result));
         }
-        for output in worker_outputs {
-            let detail = output.result?;
+        for (task, result) in worker_outputs {
+            let detail = result?;
             results.push(CnkiArticleDetailResult {
-                order: output.task.order,
-                issue_id: output.task.issue_id,
-                summary: output.task.summary,
+                order: task.order,
+                issue_id: task.issue_id,
+                summary: task.summary,
                 detail,
             });
         }
@@ -574,13 +611,41 @@ impl ProcessOutcome {
     fn resumed() -> Self {
         Self {
             status: "resumed".to_string(),
-            written_articles: Vec::new(),
+            written_article_count: 0,
             issues_count: 0,
             article_summaries_count: 0,
             article_details_count: 0,
             deleted_article_count: 0,
         }
     }
+}
+
+fn capture_cnki_attempts<T, R>(
+    client: &mut CnkiClient<T>,
+    attempt_sink: &mut dyn FnMut(&[SourceAttempt]),
+    operation: impl FnOnce(&mut CnkiClient<T>) -> Result<R, CnkiSourceError>,
+) -> Result<R, CnkiSourceError>
+where
+    T: CnkiTransport,
+{
+    let result = operation(client);
+    let attempts = client.drain_attempts();
+    attempt_sink(&attempts);
+    result
+}
+
+fn capture_cnki_index_attempts<T, R>(
+    client: &mut CnkiClient<T>,
+    attempt_sink: &mut dyn FnMut(&[SourceAttempt]),
+    operation: impl FnOnce(&mut CnkiClient<T>) -> Result<R, CnkiIndexError>,
+) -> Result<R, CnkiIndexError>
+where
+    T: CnkiTransport,
+{
+    let result = operation(client);
+    let attempts = client.drain_attempts();
+    attempt_sink(&attempts);
+    result
 }
 
 /// Select issues from the newest issue through the latest indexed issue.
@@ -688,6 +753,7 @@ mod tests {
 
     use crate::cnki::{
         process_cnki_row, run_cnki_fixture_index, select_recent_update_issue_ids, CnkiIndexConfig,
+        CnkiProcessContext,
     };
     use crate::schema::{init_index_db, mark_journal_done};
     use crate::transforms::CsvRow;
@@ -737,15 +803,18 @@ mod tests {
             &connection,
             &mut client,
             &row,
-            "journals.csv",
-            journal_id,
-            &config,
-            None,
+            CnkiProcessContext {
+                csv_file: "journals.csv",
+                journal_id,
+                config: &config,
+                change_event_context: None,
+                attempt_sink: &mut |_| {},
+            },
         )
         .expect("completed journal should resume");
 
         assert_eq!(outcome.status, "resumed");
-        assert!(outcome.written_articles.is_empty());
+        assert_eq!(outcome.written_article_count, 0);
         assert_eq!(client.attempts().len(), 0);
     }
 
@@ -774,23 +843,26 @@ mod tests {
             worker_count: 2,
         };
 
+        let mut captured_attempts = Vec::new();
         let outcome = process_cnki_row(
             &connection,
             &mut client,
             &row,
-            "journals.csv",
-            99,
-            &config,
-            None,
+            CnkiProcessContext {
+                csv_file: "journals.csv",
+                journal_id: 99,
+                config: &config,
+                change_event_context: None,
+                attempt_sink: &mut |attempts| captured_attempts.extend_from_slice(attempts),
+            },
         )
         .expect("concurrent detail processing should succeed");
 
         assert_eq!(outcome.article_details_count, 2);
-        assert_eq!(outcome.written_articles.len(), 2);
+        assert_eq!(outcome.written_article_count, 2);
         assert!(state.max_active.load(Ordering::SeqCst) >= 2);
         assert_eq!(
-            client
-                .attempts()
+            captured_attempts
                 .iter()
                 .filter(|attempt| attempt.endpoint == "article_detail")
                 .count(),
@@ -828,6 +900,7 @@ mod tests {
 
         assert_eq!(outcome.status, "succeeded");
         assert!(manifest_path.exists());
+        assert_eq!(outcome.written_article_count, 1);
         let connection = Connection::open(db_path).expect("db should open");
         init_index_db(&connection).expect("schema should initialize");
         let (listing_status, listing_updated_at): (String, String) = connection
@@ -975,6 +1048,10 @@ mod tests {
 
         fn attempts(&self) -> &[SourceAttempt] {
             &self.attempts
+        }
+
+        fn drain_attempts(&mut self) -> Vec<SourceAttempt> {
+            std::mem::take(&mut self.attempts)
         }
 
         fn append_attempts(&mut self, attempts: Vec<SourceAttempt>) {

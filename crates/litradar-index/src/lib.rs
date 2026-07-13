@@ -1,5 +1,6 @@
 //! Rust scholarly index migration workflow.
 
+pub mod changes;
 pub mod cnki;
 pub mod live;
 pub mod manifest;

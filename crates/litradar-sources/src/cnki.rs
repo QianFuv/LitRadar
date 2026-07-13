@@ -183,6 +183,13 @@ pub trait CnkiTransport {
     /// Captured source attempts.
     fn attempts(&self) -> &[SourceAttempt];
 
+    /// Remove and return captured source attempts.
+    ///
+    /// # Returns
+    ///
+    /// Captured attempts, leaving the transport buffer empty.
+    fn drain_attempts(&mut self) -> Vec<SourceAttempt>;
+
     /// Append attempts captured by cloned worker transports.
     ///
     /// # Arguments
@@ -275,6 +282,11 @@ impl CnkiTransport for FixtureCnkiTransport {
     /// Return captured source attempts.
     fn attempts(&self) -> &[SourceAttempt] {
         &self.attempts
+    }
+
+    /// Drain captured fixture attempts.
+    fn drain_attempts(&mut self) -> Vec<SourceAttempt> {
+        std::mem::take(&mut self.attempts)
     }
 
     /// Append attempts captured by cloned worker transports.
@@ -631,6 +643,11 @@ impl CnkiTransport for LiveCnkiTransport {
         &self.attempts
     }
 
+    /// Drain captured live attempts.
+    fn drain_attempts(&mut self) -> Vec<SourceAttempt> {
+        std::mem::take(&mut self.attempts)
+    }
+
     /// Append attempts captured by cloned worker transports.
     fn append_attempts(&mut self, attempts: Vec<SourceAttempt>) {
         self.attempts.extend(attempts);
@@ -732,6 +749,15 @@ where
     /// Captured source attempts.
     pub fn attempts(&self) -> &[SourceAttempt] {
         self.transport.attempts()
+    }
+
+    /// Remove and return captured source attempts.
+    ///
+    /// # Returns
+    ///
+    /// Captured attempts, leaving the client buffer empty.
+    pub fn drain_attempts(&mut self) -> Vec<SourceAttempt> {
+        self.transport.drain_attempts()
     }
 
     /// Append attempts captured by cloned worker clients.

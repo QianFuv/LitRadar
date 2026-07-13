@@ -11,7 +11,8 @@ pub use cnki::{
 pub use scholarly::{
     normalize_doi, FixtureScholarlyTransport, LiveScholarlyConfig, LiveScholarlyTransport,
     ScholarlyClient, ScholarlyFixtureData, ScholarlyRequest, ScholarlyRequestKind,
-    ScholarlyTransport, SourceAttempt, SourceError, SEMANTIC_SCHOLAR_BATCH_SIZE,
+    ScholarlyTransport, ScholarlyWorksPage, SourceAttempt, SourceError,
+    SEMANTIC_SCHOLAR_BATCH_SIZE,
 };
 pub use zjlib_cnki::{
     FixtureZjlibCnkiMode, FixtureZjlibCnkiTransport, LiveZjlibCnkiConfig, LiveZjlibCnkiTransport,
