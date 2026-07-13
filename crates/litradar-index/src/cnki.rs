@@ -17,10 +17,10 @@ use serde_json::Value;
 
 use crate::manifest::{build_change_manifest, write_change_manifest};
 use crate::schema::{
-    delete_articles, get_completed_years, get_journal_issue_ids_with_articles, is_journal_complete,
-    mark_article_listing_ready, mark_journal_done, mark_year_done, open_index_db,
-    optimize_index_db, persist_index_run_stats, refresh_article_listing_for_articles,
-    upsert_article_search, upsert_articles, upsert_issues, upsert_journal, upsert_meta,
+    apply_article_changes, get_completed_years, get_journal_issue_ids_with_articles,
+    is_journal_complete, mark_article_listing_ready, mark_journal_done, mark_year_done,
+    open_index_db, optimize_index_db, persist_index_run_stats, upsert_issues, upsert_journal,
+    upsert_meta, with_immediate_index_transaction, ChangeEventContext,
 };
 use crate::stats::{IndexRunStats, PathCountIncrements};
 use crate::transforms::{
@@ -207,6 +207,7 @@ pub fn run_cnki_fixture_index(
             &csv_file,
             journal_id,
             config,
+            None,
         );
         let attempts = client.attempts()[attempt_start..].to_vec();
         stats.record_source_attempts_for_source(
@@ -325,6 +326,7 @@ pub(crate) fn process_cnki_row<T>(
     csv_file: &str,
     journal_id: i64,
     config: &CnkiIndexConfig,
+    change_event_context: Option<&ChangeEventContext>,
 ) -> Result<ProcessOutcome, CnkiIndexError>
 where
     T: CnkiTransport + Clone + Send + 'static,
@@ -352,9 +354,6 @@ where
             journal_title_from_row(row)
         ))
     })?;
-
-    upsert_journal(connection, &journal_record)?;
-    upsert_meta(connection, &meta_record)?;
 
     let issues = client.year_issues(&details)?;
     if issues.is_empty() {
@@ -437,10 +436,8 @@ where
             issue_records.retain(|record| selected.contains(&record.issue_id));
             issue_pairs.retain(|(issue_id, _)| selected.contains(issue_id));
         }
-        if !issue_records.is_empty() {
-            upsert_issues(connection, &issue_records)?;
-        }
-        for batch in issue_pairs.chunks(batch_size) {
+        let batch_count = issue_pairs.len().div_ceil(batch_size);
+        for (batch_index, batch) in issue_pairs.chunks(batch_size).enumerate() {
             let mut batch_records = Vec::new();
             let mut detail_tasks = Vec::new();
             for (issue_id, issue) in batch {
@@ -475,27 +472,45 @@ where
             }
             let (batch_records, deleted_article_ids) =
                 split_article_records_by_authors(batch_records);
-            deleted_article_count += deleted_article_ids.len() as i64;
-            if !deleted_article_ids.is_empty() {
-                delete_articles(connection, &deleted_article_ids)?;
-            }
-            if !batch_records.is_empty() {
-                upsert_articles(connection, &batch_records)?;
-                upsert_article_search(connection, &batch_records, &journal_title)?;
-                refresh_article_listing_for_articles(
-                    connection,
-                    &batch_records
-                        .iter()
-                        .map(|record| record.article_id)
-                        .collect::<Vec<_>>(),
+            let batch_issue_ids = batch
+                .iter()
+                .map(|(issue_id, _)| *issue_id)
+                .collect::<BTreeSet<_>>();
+            let batch_issue_records = issue_records
+                .iter()
+                .filter(|record| batch_issue_ids.contains(&record.issue_id))
+                .cloned()
+                .collect::<Vec<_>>();
+            let is_last_batch = batch_index + 1 == batch_count;
+            with_immediate_index_transaction(connection, |transaction| {
+                upsert_journal(transaction, &journal_record)?;
+                upsert_meta(transaction, &meta_record)?;
+                if !batch_issue_records.is_empty() {
+                    upsert_issues(transaction, &batch_issue_records)?;
+                }
+                apply_article_changes(
+                    transaction,
+                    &batch_records,
+                    &deleted_article_ids,
+                    &journal_title,
+                    change_event_context,
                 )?;
-                written_articles.extend(batch_records);
-            }
+                if is_last_batch {
+                    mark_year_done(transaction, journal_id, year, &config.timestamp)?;
+                }
+                Ok::<(), CnkiIndexError>(())
+            })?;
+            deleted_article_count += deleted_article_ids.len() as i64;
+            written_articles.extend(batch_records);
         }
-        mark_year_done(connection, journal_id, year, &config.timestamp)?;
     }
 
-    mark_journal_done(connection, journal_id, &config.timestamp)?;
+    with_immediate_index_transaction(connection, |transaction| {
+        upsert_journal(transaction, &journal_record)?;
+        upsert_meta(transaction, &meta_record)?;
+        mark_journal_done(transaction, journal_id, &config.timestamp)?;
+        Ok::<(), CnkiIndexError>(())
+    })?;
 
     Ok(ProcessOutcome {
         status: "succeeded".to_string(),
@@ -725,6 +740,7 @@ mod tests {
             "journals.csv",
             journal_id,
             &config,
+            None,
         )
         .expect("completed journal should resume");
 
@@ -758,8 +774,16 @@ mod tests {
             worker_count: 2,
         };
 
-        let outcome = process_cnki_row(&connection, &mut client, &row, "journals.csv", 99, &config)
-            .expect("concurrent detail processing should succeed");
+        let outcome = process_cnki_row(
+            &connection,
+            &mut client,
+            &row,
+            "journals.csv",
+            99,
+            &config,
+            None,
+        )
+        .expect("concurrent detail processing should succeed");
 
         assert_eq!(outcome.article_details_count, 2);
         assert_eq!(outcome.written_articles.len(), 2);

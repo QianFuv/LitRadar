@@ -1,15 +1,51 @@
 //! SQLite schema and writer helpers for Rust scholarly indexing.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use rusqlite::{params, params_from_iter, Connection, LoadExtensionGuard, OptionalExtension};
+use rusqlite::{
+    params, params_from_iter, Connection, LoadExtensionGuard, OptionalExtension, Transaction,
+    TransactionBehavior,
+};
 
 use crate::stats::IndexRunStats;
 use crate::transforms::{ArticleRecord, IssueRecord, JournalRecord, MetaRecord};
 
 const INDEX_BUSY_TIMEOUT_SECONDS: u64 = 30;
+
+/// Context attached to normalized index change events.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ChangeEventContext {
+    run_id: String,
+    worker_id: String,
+    created_at: String,
+    is_backfill: bool,
+}
+
+impl ChangeEventContext {
+    /// Build a change-event context for one indexing worker.
+    pub(crate) fn new(
+        run_id: impl Into<String>,
+        worker_id: impl Into<String>,
+        created_at: impl Into<String>,
+        is_backfill: bool,
+    ) -> Self {
+        Self {
+            run_id: run_id.into(),
+            worker_id: worker_id.into(),
+            created_at: created_at.into(),
+            is_backfill,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ArticleMembership {
+    membership_type: &'static str,
+    journal_id: i64,
+    issue_id: Option<i64>,
+}
 
 /// Open and initialize an index SQLite database.
 ///
@@ -241,6 +277,24 @@ fn init_index_db_with_simple_tokenizer_path(
             FOREIGN KEY (run_id) REFERENCES index_runs(run_id)
                 ON DELETE CASCADE
         );
+
+        CREATE TABLE IF NOT EXISTS index_change_events (
+            event_id INTEGER PRIMARY KEY,
+            run_id TEXT NOT NULL,
+            worker_id TEXT NOT NULL DEFAULT '',
+            article_id INTEGER NOT NULL,
+            event_type TEXT NOT NULL CHECK (event_type IN ('add', 'remove')),
+            membership_type TEXT NOT NULL
+                CHECK (membership_type IN ('issue', 'inpress')),
+            journal_id INTEGER NOT NULL,
+            issue_id INTEGER,
+            is_backfill INTEGER NOT NULL DEFAULT 0 CHECK (is_backfill IN (0, 1)),
+            created_at TEXT NOT NULL,
+            CHECK (
+                (membership_type = 'issue' AND issue_id IS NOT NULL)
+                OR (membership_type = 'inpress' AND issue_id IS NULL)
+            )
+        );
         ",
     )?;
     create_article_search(connection)?;
@@ -324,6 +378,20 @@ fn create_runtime_indexes(connection: &Connection) -> rusqlite::Result<()> {
 
         CREATE INDEX IF NOT EXISTS idx_index_api_call_stats_run
             ON index_api_call_stats(run_id);
+
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_index_change_events_identity
+            ON index_change_events(
+                run_id, article_id, event_type, membership_type, journal_id,
+                COALESCE(issue_id, -1)
+            );
+        CREATE INDEX IF NOT EXISTS idx_index_change_events_run_order
+            ON index_change_events(run_id, event_id);
+        CREATE INDEX IF NOT EXISTS idx_index_change_events_run_membership
+            ON index_change_events(
+                run_id, membership_type, journal_id, issue_id, event_id
+            );
+        CREATE INDEX IF NOT EXISTS idx_index_change_events_run_article
+            ON index_change_events(run_id, article_id, event_id);
         ",
     )
 }
@@ -469,6 +537,22 @@ fn simple_tokenizer_path_from_root(root: &Path) -> Option<PathBuf> {
     } else {
         None
     }
+}
+
+/// Execute one index write unit in an immediate SQLite transaction.
+pub(crate) fn with_immediate_index_transaction<T, E, F>(
+    connection: &Connection,
+    operation: F,
+) -> Result<T, E>
+where
+    E: From<rusqlite::Error>,
+    F: FnOnce(&Transaction<'_>) -> Result<T, E>,
+{
+    let transaction =
+        Transaction::new_unchecked(connection, TransactionBehavior::Immediate).map_err(E::from)?;
+    let value = operation(&transaction)?;
+    transaction.commit().map_err(E::from)?;
+    Ok(value)
 }
 
 /// Insert or update a journal record.
@@ -681,6 +765,165 @@ pub fn upsert_articles(connection: &Connection, records: &[ArticleRecord]) -> ru
             record.full_text_file,
         ])?;
     }
+    Ok(())
+}
+
+/// Apply article, FTS, listing, deletion, and change-event writes together.
+pub(crate) fn apply_article_changes(
+    connection: &Connection,
+    records: &[ArticleRecord],
+    deleted_article_ids: &[i64],
+    journal_title: &str,
+    change_event_context: Option<&ChangeEventContext>,
+) -> rusqlite::Result<()> {
+    let mut affected_article_ids = records
+        .iter()
+        .map(|record| record.article_id)
+        .chain(deleted_article_ids.iter().copied())
+        .collect::<BTreeSet<_>>();
+    let before_memberships = if change_event_context.is_some() {
+        collect_article_memberships(connection, &affected_article_ids)?
+    } else {
+        BTreeMap::new()
+    };
+
+    if !deleted_article_ids.is_empty() {
+        delete_articles(connection, deleted_article_ids)?;
+    }
+    if !records.is_empty() {
+        upsert_articles(connection, records)?;
+        upsert_article_search(connection, records, journal_title)?;
+        refresh_article_listing_for_articles(
+            connection,
+            &records
+                .iter()
+                .map(|record| record.article_id)
+                .collect::<Vec<_>>(),
+        )?;
+    }
+
+    let Some(context) = change_event_context else {
+        return Ok(());
+    };
+    let after_memberships = records
+        .iter()
+        .filter_map(|record| {
+            article_membership(record.journal_id, record.issue_id, record.in_press)
+                .map(|membership| (record.article_id, membership))
+        })
+        .collect::<BTreeMap<_, _>>();
+    affected_article_ids.extend(before_memberships.keys().copied());
+    affected_article_ids.extend(after_memberships.keys().copied());
+    for article_id in affected_article_ids {
+        let before = before_memberships.get(&article_id);
+        let after = after_memberships.get(&article_id);
+        if before == after {
+            continue;
+        }
+        if let Some(membership) = before {
+            record_membership_event(connection, context, article_id, "remove", membership)?;
+        }
+        if let Some(membership) = after {
+            record_membership_event(connection, context, article_id, "add", membership)?;
+        }
+    }
+    Ok(())
+}
+
+fn collect_article_memberships(
+    connection: &Connection,
+    article_ids: &BTreeSet<i64>,
+) -> rusqlite::Result<BTreeMap<i64, ArticleMembership>> {
+    let mut statement = connection
+        .prepare("SELECT journal_id, issue_id, in_press FROM articles WHERE article_id = ?1")?;
+    let mut memberships = BTreeMap::new();
+    for article_id in article_ids {
+        let fields = statement
+            .query_row([article_id], |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, Option<i64>>(1)?,
+                    row.get::<_, Option<i64>>(2)?,
+                ))
+            })
+            .optional()?;
+        if let Some((journal_id, issue_id, in_press)) = fields {
+            if let Some(membership) = article_membership(journal_id, issue_id, in_press) {
+                memberships.insert(*article_id, membership);
+            }
+        }
+    }
+    Ok(memberships)
+}
+
+fn article_membership(
+    journal_id: i64,
+    issue_id: Option<i64>,
+    in_press: Option<i64>,
+) -> Option<ArticleMembership> {
+    if let Some(issue_id) = issue_id {
+        return Some(ArticleMembership {
+            membership_type: "issue",
+            journal_id,
+            issue_id: Some(issue_id),
+        });
+    }
+    (in_press == Some(1)).then_some(ArticleMembership {
+        membership_type: "inpress",
+        journal_id,
+        issue_id: None,
+    })
+}
+
+fn record_membership_event(
+    connection: &Connection,
+    context: &ChangeEventContext,
+    article_id: i64,
+    event_type: &str,
+    membership: &ArticleMembership,
+) -> rusqlite::Result<()> {
+    let inverse_event_type = if event_type == "add" { "remove" } else { "add" };
+    let deleted_inverse = connection.execute(
+        "
+        DELETE FROM index_change_events
+        WHERE run_id = ?1
+          AND article_id = ?2
+          AND event_type = ?3
+          AND membership_type = ?4
+          AND journal_id = ?5
+          AND issue_id IS ?6
+        ",
+        params![
+            context.run_id,
+            article_id,
+            inverse_event_type,
+            membership.membership_type,
+            membership.journal_id,
+            membership.issue_id,
+        ],
+    )?;
+    if deleted_inverse > 0 {
+        return Ok(());
+    }
+    connection.execute(
+        "
+        INSERT OR IGNORE INTO index_change_events (
+            run_id, worker_id, article_id, event_type, membership_type,
+            journal_id, issue_id, is_backfill, created_at
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+        ",
+        params![
+            context.run_id,
+            context.worker_id,
+            article_id,
+            event_type,
+            membership.membership_type,
+            membership.journal_id,
+            membership.issue_id,
+            context.is_backfill as i64,
+            context.created_at,
+        ],
+    )?;
     Ok(())
 }
 
@@ -1113,10 +1356,11 @@ mod tests {
     use crate::transforms::{ArticleRecord, JournalRecord, MetaRecord};
 
     use super::{
-        init_index_db, init_index_db_with_simple_tokenizer_path, mark_article_listing_ready,
-        open_index_db, persist_index_run_stats, refresh_article_listing_for_articles,
-        simple_tokenizer_path_from_root, upsert_article_search, upsert_articles, upsert_journal,
-        upsert_meta,
+        apply_article_changes, init_index_db, init_index_db_with_simple_tokenizer_path,
+        mark_article_listing_ready, mark_journal_done, open_index_db, persist_index_run_stats,
+        refresh_article_listing_for_articles, simple_tokenizer_path_from_root,
+        upsert_article_search, upsert_articles, upsert_journal, upsert_meta,
+        with_immediate_index_transaction, ChangeEventContext,
     };
 
     const RUNTIME_INDEXES: &[&str] = &[
@@ -1152,6 +1396,10 @@ mod tests {
         "idx_journals_issn",
         "idx_journals_library_id",
         "idx_journals_scimago_rank",
+        "idx_index_change_events_identity",
+        "idx_index_change_events_run_article",
+        "idx_index_change_events_run_membership",
+        "idx_index_change_events_run_order",
     ];
 
     #[test]
@@ -1346,6 +1594,96 @@ mod tests {
     }
 
     #[test]
+    fn article_batch_rolls_back_when_fts_write_fails() {
+        assert_article_batch_failure_rolls_back(
+            "
+            DROP TABLE article_search;
+            CREATE TABLE article_search (
+                rowid INTEGER PRIMARY KEY,
+                article_id INTEGER,
+                title TEXT CHECK (title <> 'Atomic Article'),
+                abstract TEXT,
+                doi TEXT,
+                authors TEXT,
+                journal_title TEXT
+            );
+            ",
+        );
+    }
+
+    #[test]
+    fn article_batch_rolls_back_when_listing_write_fails() {
+        assert_article_batch_failure_rolls_back(
+            "
+            CREATE TRIGGER fail_listing_insert
+            BEFORE INSERT ON article_listing
+            BEGIN
+                SELECT RAISE(ABORT, 'forced listing failure');
+            END;
+            ",
+        );
+    }
+
+    #[test]
+    fn article_batch_rolls_back_when_event_write_fails() {
+        assert_article_batch_failure_rolls_back(
+            "
+            CREATE TRIGGER fail_event_insert
+            BEFORE INSERT ON index_change_events
+            BEGIN
+                SELECT RAISE(ABORT, 'forced event failure');
+            END;
+            ",
+        );
+    }
+
+    #[test]
+    fn article_batch_commits_projections_state_and_normalized_events() {
+        let connection = Connection::open_in_memory().expect("in-memory db should open");
+        init_index_db(&connection).expect("schema should initialize");
+        let context =
+            ChangeEventContext::new("run-atomic", "worker-0", "2026-07-13T00:00:00Z", false);
+        let article = atomic_article_record();
+
+        with_immediate_index_transaction(&connection, |transaction| {
+            upsert_journal(transaction, &atomic_journal_record())?;
+            upsert_meta(transaction, &atomic_meta_record())?;
+            apply_article_changes(
+                transaction,
+                std::slice::from_ref(&article),
+                &[],
+                "Atomic Journal",
+                Some(&context),
+            )?;
+            mark_journal_done(transaction, 41, "2026-07-13T00:00:00Z")?;
+            Ok::<(), rusqlite::Error>(())
+        })
+        .expect("atomic article batch should commit");
+
+        assert_atomic_counts(&connection, (1, 1, 1, 1, 1, 1));
+        let event_type: String = connection
+            .query_row("SELECT event_type FROM index_change_events", [], |row| {
+                row.get(0)
+            })
+            .expect("change event should load");
+        assert_eq!(event_type, "add");
+
+        with_immediate_index_transaction(&connection, |transaction| {
+            apply_article_changes(
+                transaction,
+                &[],
+                &[article.article_id],
+                "Atomic Journal",
+                Some(&context),
+            )?;
+            Ok::<(), rusqlite::Error>(())
+        })
+        .expect("inverse article batch should commit");
+
+        assert_atomic_counts(&connection, (1, 0, 0, 0, 0, 1));
+    }
+
+    #[test]
     fn persists_index_run_path_and_api_stats() {
         let connection = Connection::open_in_memory().expect("in-memory db should open");
         init_index_db(&connection).expect("schema should initialize");
@@ -1436,6 +1774,111 @@ mod tests {
             .expect("indexes should query");
         rows.collect::<Result<BTreeSet<_>, _>>()
             .expect("indexes should collect")
+    }
+
+    fn assert_article_batch_failure_rolls_back(failpoint_sql: &str) {
+        let connection = Connection::open_in_memory().expect("in-memory db should open");
+        init_index_db(&connection).expect("schema should initialize");
+        connection
+            .execute_batch(failpoint_sql)
+            .expect("failpoint should install");
+        let context =
+            ChangeEventContext::new("run-failure", "worker-0", "2026-07-13T00:00:00Z", false);
+        let article = atomic_article_record();
+
+        with_immediate_index_transaction(&connection, |transaction| {
+            upsert_journal(transaction, &atomic_journal_record())?;
+            upsert_meta(transaction, &atomic_meta_record())?;
+            apply_article_changes(
+                transaction,
+                &[article],
+                &[],
+                "Atomic Journal",
+                Some(&context),
+            )?;
+            mark_journal_done(transaction, 41, "2026-07-13T00:00:00Z")?;
+            Ok::<(), rusqlite::Error>(())
+        })
+        .expect_err("forced projection failure should abort the batch");
+
+        assert_atomic_counts(&connection, (0, 0, 0, 0, 0, 0));
+    }
+
+    fn assert_atomic_counts(connection: &Connection, expected: (i64, i64, i64, i64, i64, i64)) {
+        let counts = (
+            table_count(connection, "journals"),
+            table_count(connection, "articles"),
+            table_count(connection, "article_search"),
+            table_count(connection, "article_listing"),
+            table_count(connection, "index_change_events"),
+            table_count(connection, "journal_state"),
+        );
+        assert_eq!(counts, expected);
+    }
+
+    fn table_count(connection: &Connection, table_name: &str) -> i64 {
+        connection
+            .query_row(&format!("SELECT COUNT(*) FROM {table_name}"), [], |row| {
+                row.get(0)
+            })
+            .expect("table count should query")
+    }
+
+    fn atomic_journal_record() -> JournalRecord {
+        JournalRecord {
+            journal_id: 41,
+            library_id: "scholarly".into(),
+            platform_journal_id: Some("atomic".into()),
+            title: Some("Atomic Journal".into()),
+            issn: Some("1234-5678".into()),
+            eissn: None,
+            scimago_rank: None,
+            cover_url: None,
+            available: Some(1),
+            toc_data_approved_and_live: None,
+            has_articles: Some(1),
+        }
+    }
+
+    fn atomic_meta_record() -> MetaRecord {
+        MetaRecord {
+            journal_id: 41,
+            source_csv: "journals.csv".into(),
+            area: Some("testing".into()),
+            csv_title: Some("Atomic Journal".into()),
+            csv_issn: Some("1234-5678".into()),
+            csv_library: Some("scholarly".into()),
+            resolved_source: None,
+            resolved_source_id: None,
+            resolved_title: None,
+            resolved_issn: None,
+            resolved_eissn: None,
+        }
+    }
+
+    fn atomic_article_record() -> ArticleRecord {
+        ArticleRecord {
+            article_id: 4100,
+            journal_id: 41,
+            issue_id: None,
+            title: Some("Atomic Article".into()),
+            date: Some("2026-07-13".into()),
+            authors: Some("Atomic Author".into()),
+            start_page: None,
+            end_page: None,
+            abstract_text: Some("Atomic Abstract".into()),
+            doi: Some("10.4100/atomic".into()),
+            pmid: None,
+            permalink: None,
+            suppressed: Some(0),
+            in_press: Some(1),
+            open_access: Some(1),
+            platform_id: Some("atomic-article".into()),
+            retraction_doi: None,
+            within_library_holdings: Some(0),
+            content_location: None,
+            full_text_file: None,
+        }
     }
 
     fn workspace_simple_tokenizer_path() -> Option<PathBuf> {

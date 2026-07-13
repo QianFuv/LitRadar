@@ -20,8 +20,8 @@ use crate::manifest::{
     build_change_manifest_from_snapshots, collect_article_snapshot, write_change_manifest,
 };
 use crate::schema::{
-    mark_article_listing_ready, mark_journal_done, mark_year_done, open_index_db,
-    optimize_index_db, persist_index_run_stats,
+    mark_article_listing_ready, open_index_db, optimize_index_db, persist_index_run_stats,
+    ChangeEventContext,
 };
 use crate::scholarly::{process_scholarly_row, ScholarlyIndexError};
 use crate::stats::{ApiCallStats, IndexRunStats, PathCountIncrements, PathStats};
@@ -120,6 +120,7 @@ struct LiveJournalContext<'a> {
     journal_id: i64,
     timestamp: &'a str,
     cnki_config: &'a CnkiIndexConfig,
+    change_event_context: Option<&'a ChangeEventContext>,
 }
 
 struct LiveJournalRowsContext<'a> {
@@ -676,6 +677,14 @@ fn run_live_journal_rows_locally(
         worker_count: context.config.worker_count.max(1),
     };
     let mut all_written_articles = Vec::new();
+    let change_event_context = context.config.update.then(|| {
+        ChangeEventContext::new(
+            context.run_id,
+            format!("worker-{}", context.worker_id),
+            context.timestamp,
+            false,
+        )
+    });
 
     for row in context.rows {
         let source = source_from_row(row);
@@ -712,6 +721,7 @@ fn run_live_journal_rows_locally(
                 journal_id,
                 timestamp: context.timestamp,
                 cnki_config: &cnki_config,
+                change_event_context: change_event_context.as_ref(),
             },
         ) {
             Ok(outcome) => {
@@ -916,6 +926,7 @@ where
         journal_id,
         timestamp,
         cnki_config,
+        change_event_context,
     } = context;
 
     match source_from_row(row).as_str() {
@@ -928,32 +939,23 @@ where
                 csv_file,
                 journal_id,
                 timestamp,
+                change_event_context,
             );
             let attempts = scholarly_client.attempts()[attempt_start..].to_vec();
             match result {
-                Ok(outcome) => {
-                    for year in outcome.years {
-                        mark_year_done(connection, journal_id, year, timestamp).map_err(
-                            |error| journal_failure(SCHOLARLY_SOURCE, attempts.clone(), error),
-                        )?;
-                    }
-                    mark_journal_done(connection, journal_id, timestamp).map_err(|error| {
-                        journal_failure(SCHOLARLY_SOURCE, attempts.clone(), error)
-                    })?;
-                    Ok(LiveJournalOutcome {
-                        source: SCHOLARLY_SOURCE.to_string(),
-                        status: "succeeded".to_string(),
-                        counts: PathCountIncrements {
-                            works_count: outcome.works_count,
-                            issues_count: outcome.issues_count,
-                            articles_written_count: outcome.written_articles.len() as i64,
-                            articles_deleted_no_authors_count: outcome.deleted_article_count,
-                            ..PathCountIncrements::default()
-                        },
-                        attempts,
-                        written_articles: outcome.written_articles,
-                    })
-                }
+                Ok(outcome) => Ok(LiveJournalOutcome {
+                    source: SCHOLARLY_SOURCE.to_string(),
+                    status: "succeeded".to_string(),
+                    counts: PathCountIncrements {
+                        works_count: outcome.works_count,
+                        issues_count: outcome.issues_count,
+                        articles_written_count: outcome.written_articles.len() as i64,
+                        articles_deleted_no_authors_count: outcome.deleted_article_count,
+                        ..PathCountIncrements::default()
+                    },
+                    attempts,
+                    written_articles: outcome.written_articles,
+                }),
                 Err(error) => Err(journal_failure(SCHOLARLY_SOURCE, attempts, error)),
             }
         }
@@ -966,6 +968,7 @@ where
                 csv_file,
                 journal_id,
                 cnki_config,
+                change_event_context,
             );
             let attempts = cnki_client.attempts()[attempt_start..].to_vec();
             match result {

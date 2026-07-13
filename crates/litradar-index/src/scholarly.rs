@@ -16,9 +16,9 @@ use serde_json::Value;
 
 use crate::manifest::{build_change_manifest, write_change_manifest};
 use crate::schema::{
-    delete_articles, mark_article_listing_ready, mark_journal_done, mark_year_done, open_index_db,
-    optimize_index_db, persist_index_run_stats, refresh_article_listing_for_articles,
-    upsert_article_search, upsert_articles, upsert_issues, upsert_journal, upsert_meta,
+    apply_article_changes, mark_article_listing_ready, mark_journal_done, mark_year_done,
+    open_index_db, optimize_index_db, persist_index_run_stats, upsert_issues, upsert_journal,
+    upsert_meta, with_immediate_index_transaction, ChangeEventContext,
 };
 use crate::stats::{IndexRunStats, PathCountIncrements};
 use crate::transforms::{
@@ -197,6 +197,7 @@ pub fn run_scholarly_fixture_index(
             &csv_file,
             journal_id,
             &config.timestamp,
+            None,
         );
         let attempts = client.attempts()[attempt_start..].to_vec();
         stats.record_source_attempts(&attempts, Some(journal_id), &journal_title);
@@ -206,7 +207,6 @@ pub fn run_scholarly_fixture_index(
                 works_count,
                 issues_count,
                 deleted_article_count,
-                years,
             }) => {
                 stats.record_path_counts(
                     &path_key,
@@ -218,10 +218,6 @@ pub fn run_scholarly_fixture_index(
                         ..PathCountIncrements::default()
                     },
                 );
-                for year in years {
-                    mark_year_done(&connection, journal_id, year, &config.timestamp)?;
-                }
-                mark_journal_done(&connection, journal_id, &config.timestamp)?;
                 stats.finish_path(&path_key, "succeeded", config.timestamp.clone(), None);
                 all_written_articles.extend(written_articles);
             }
@@ -276,7 +272,6 @@ pub(crate) struct ProcessOutcome {
     pub(crate) works_count: i64,
     pub(crate) issues_count: i64,
     pub(crate) deleted_article_count: i64,
-    pub(crate) years: BTreeSet<i64>,
 }
 
 /// Process one Scholarly CSV row into an index database.
@@ -287,6 +282,7 @@ pub(crate) fn process_scholarly_row<T>(
     csv_file: &str,
     journal_id: i64,
     timestamp: &str,
+    change_event_context: Option<&ChangeEventContext>,
 ) -> Result<ProcessOutcome, ScholarlyIndexError>
 where
     T: ScholarlyTransport,
@@ -379,9 +375,6 @@ where
         .or_else(|| row.get("title").cloned())
         .unwrap_or_default();
 
-    upsert_journal(connection, &journal_record)?;
-    upsert_meta(connection, &meta_record)?;
-
     let dois = doi_values_from_works(&works);
     let openalex_by_doi = if fallback_openalex_by_doi.is_empty() && !dois.is_empty() {
         client.fetch_openalex_by_dois(&dois, 100)?
@@ -427,31 +420,31 @@ where
     }
 
     let issue_records = issue_records_by_id.into_values().collect::<Vec<_>>();
-    if !issue_records.is_empty() {
-        upsert_issues(connection, &issue_records)?;
-    }
     let (article_records, deleted_article_ids) = split_article_records_by_authors(article_records);
-    if !deleted_article_ids.is_empty() {
-        delete_articles(connection, &deleted_article_ids)?;
-    }
-    if !article_records.is_empty() {
-        upsert_articles(connection, &article_records)?;
-        upsert_article_search(connection, &article_records, &journal_title)?;
-        refresh_article_listing_for_articles(
-            connection,
-            &article_records
-                .iter()
-                .map(|record| record.article_id)
-                .collect::<Vec<_>>(),
+    with_immediate_index_transaction(connection, |transaction| {
+        upsert_journal(transaction, &journal_record)?;
+        upsert_meta(transaction, &meta_record)?;
+        if !issue_records.is_empty() {
+            upsert_issues(transaction, &issue_records)?;
+        }
+        apply_article_changes(
+            transaction,
+            &article_records,
+            &deleted_article_ids,
+            &journal_title,
+            change_event_context,
         )?;
-    }
-    let _ = timestamp;
+        for year in &years {
+            mark_year_done(transaction, journal_id, *year, timestamp)?;
+        }
+        mark_journal_done(transaction, journal_id, timestamp)?;
+        Ok::<(), ScholarlyIndexError>(())
+    })?;
 
     Ok(ProcessOutcome {
         works_count: works.len() as i64,
         issues_count: issue_records.len() as i64,
         deleted_article_count: deleted_article_ids.len() as i64,
-        years,
         written_articles: article_records,
     })
 }
