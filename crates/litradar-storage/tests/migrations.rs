@@ -5,7 +5,7 @@ use std::path::Path;
 
 use litradar_storage::{
     count_users, get_journal, migrate_auth_database, migrate_index_database, migrate_storage,
-    MigrationError, StorageConfig, AUTH_SCHEMA_VERSION, INDEX_SCHEMA_VERSION,
+    try_load_extension, MigrationError, StorageConfig, AUTH_SCHEMA_VERSION, INDEX_SCHEMA_VERSION,
 };
 use rusqlite::Connection;
 use tempfile::tempdir;
@@ -423,7 +423,224 @@ fn empty_index_database_migration_creates_current_schema() {
     assert!(table_exists(&path, "journals"));
     assert!(table_exists(&path, "articles"));
     assert!(table_exists(&path, "article_search"));
+    assert!(table_exists(&path, "index_change_events"));
     assert!(table_columns(&path, "journals").contains(&"platform_journal_id".to_string()));
+    assert!(index_exists(&path, "idx_index_change_events_identity"));
+    assert!(index_exists(
+        &path,
+        "idx_index_change_events_run_membership"
+    ));
+}
+
+#[test]
+fn version_one_chinese_schema_repairs_columns_and_missing_projections() {
+    let temp_dir = tempdir().expect("temp directory should be created");
+    let path = temp_dir.path().join("chinese-index.sqlite");
+    migrate_index_database(&path, None).expect("current index database should migrate");
+    let connection = Connection::open(&path).expect("index database should open");
+    load_workspace_tokenizer(&connection);
+    connection
+        .execute_batch(
+            "
+            INSERT INTO journals (
+                journal_id, library_id, platform_journal_id, title, issn,
+                available, has_articles
+            ) VALUES (10, 'cnki', 'CJFQ:TEST', '测试期刊', '1234-5678', 1, 1);
+            INSERT INTO journal_meta (
+                journal_id, source_csv, area, csv_title, csv_issn, csv_library
+            ) VALUES (10, 'chinese_journals.csv', 'Medicine', '测试期刊',
+                      '1234-5678', 'cnki');
+            INSERT INTO issues (
+                issue_id, journal_id, publication_year, title, volume, number,
+                date, is_valid_issue, suppressed, embargoed, within_subscription
+            ) VALUES (100, 10, 2026, '2026-01', '1', '1', '2026-01-01',
+                      1, 0, 0, 1);
+            INSERT INTO articles (
+                article_id, journal_id, issue_id, title, date, authors, abstract,
+                doi, pmid, suppressed, in_press, open_access,
+                within_library_holdings
+            ) VALUES
+                (1000, 10, 100, '投影修复文章', '2026-01-02', 'Author One',
+                 'Abstract One', '10.1000/one', '1', 0, 0, 1, 1),
+                (1001, 10, NULL, '在编文章', '2026-01-03', 'Author Two',
+                 'Abstract Two', '10.1000/two', '2', 0, 1, 0, 0);
+            DROP TABLE index_change_events;
+            ALTER TABLE journal_meta DROP COLUMN resolved_source;
+            ALTER TABLE journal_meta DROP COLUMN resolved_source_id;
+            ALTER TABLE journal_meta DROP COLUMN resolved_title;
+            ALTER TABLE journal_meta DROP COLUMN resolved_issn;
+            ALTER TABLE journal_meta DROP COLUMN resolved_eissn;
+            PRAGMA user_version = 1;
+            ",
+        )
+        .expect("version one Chinese fixture should be created");
+    drop(connection);
+
+    migrate_index_database(&path, None).expect("version one Chinese database should migrate");
+
+    assert_eq!(user_version(&path), INDEX_SCHEMA_VERSION);
+    let columns = table_columns(&path, "journal_meta");
+    for column in [
+        "resolved_source",
+        "resolved_source_id",
+        "resolved_title",
+        "resolved_issn",
+        "resolved_eissn",
+    ] {
+        assert!(columns.contains(&column.to_string()), "missing {column}");
+    }
+    assert!(table_exists(&path, "index_change_events"));
+    assert!(index_exists(&path, "idx_index_change_events_run_order"));
+    assert_eq!(projection_counts(&path), (2, 2, 2));
+
+    let connection = Connection::open(&path).expect("repaired database should open");
+    load_workspace_tokenizer(&connection);
+    let search_row: (i64, String, String) = connection
+        .query_row(
+            "SELECT article_id, title, journal_title
+             FROM article_search WHERE rowid = 1000",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .expect("repaired search row should load");
+    let listing_row: (Option<i64>, Option<String>) = connection
+        .query_row(
+            "SELECT publication_year, area FROM article_listing WHERE article_id = 1000",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .expect("repaired listing row should load");
+    assert_eq!(
+        search_row,
+        (1000, "投影修复文章".to_string(), "测试期刊".to_string())
+    );
+    assert_eq!(listing_row, (Some(2026), Some("Medicine".to_string())));
+}
+
+#[test]
+fn version_one_scholarly_schema_preserves_complete_projections() {
+    let temp_dir = tempdir().expect("temp directory should be created");
+    let path = temp_dir.path().join("scholarly-index.sqlite");
+    migrate_index_database(&path, None).expect("current index database should migrate");
+    let connection = Connection::open(&path).expect("index database should open");
+    load_workspace_tokenizer(&connection);
+    connection
+        .execute_batch(
+            "
+            INSERT INTO journals (
+                journal_id, library_id, platform_journal_id, title
+            ) VALUES (20, 'scholarly', '1234-5678', 'Complete Journal');
+            INSERT INTO journal_meta (
+                journal_id, source_csv, area, csv_title, csv_issn, csv_library,
+                resolved_source, resolved_source_id, resolved_title,
+                resolved_issn, resolved_eissn
+            ) VALUES (20, 'english_journals.csv', 'Science', 'Complete Journal',
+                      '1234-5678', 'scholarly', 'crossref', '1234-5678',
+                      'Complete Journal', '1234-5678', NULL);
+            INSERT INTO articles (
+                article_id, journal_id, title, date, authors, abstract, doi,
+                suppressed, in_press, open_access, within_library_holdings
+            ) VALUES (2000, 20, 'Complete Article', '2026-02-01', 'Author',
+                      'Abstract', '10.2000/complete', 0, 1, 1, 0);
+            INSERT INTO article_listing (
+                article_id, journal_id, issue_id, publication_year, date,
+                open_access, in_press, suppressed, within_library_holdings,
+                doi, pmid, area
+            ) VALUES (2000, 20, NULL, NULL, '2026-02-01', 1, 1, 0, 0,
+                      '10.2000/complete', NULL, 'Science');
+            INSERT INTO article_search (
+                rowid, article_id, title, abstract, doi, authors, journal_title
+            ) VALUES (2000, 2000, 'Complete Article', 'Abstract',
+                      '10.2000/complete', 'Author', 'Complete Journal');
+            DROP TABLE index_change_events;
+            PRAGMA user_version = 1;
+            ",
+        )
+        .expect("version one scholarly fixture should be created");
+    drop(connection);
+
+    migrate_index_database(&path, None).expect("version one scholarly database should migrate");
+
+    assert_eq!(user_version(&path), INDEX_SCHEMA_VERSION);
+    assert_eq!(projection_counts(&path), (1, 1, 1));
+    assert!(table_exists(&path, "index_change_events"));
+}
+
+#[test]
+fn projection_repair_crosses_the_bounded_batch_boundary() {
+    let temp_dir = tempdir().expect("temp directory should be created");
+    let path = temp_dir.path().join("batched-projection-index.sqlite");
+    migrate_index_database(&path, None).expect("current index database should migrate");
+    let connection = Connection::open(&path).expect("index database should open");
+    load_workspace_tokenizer(&connection);
+    connection
+        .execute_batch(
+            "
+            INSERT INTO journals (journal_id, library_id, title)
+            VALUES (40, 'scholarly', 'Batched Journal');
+            INSERT INTO journal_meta (journal_id, source_csv, area)
+            VALUES (40, 'english_journals.csv', 'Science');
+            WITH RECURSIVE article_ids(article_id) AS (
+                SELECT 1
+                UNION ALL
+                SELECT article_id + 1 FROM article_ids WHERE article_id < 1001
+            )
+            INSERT INTO articles (article_id, journal_id, title, in_press)
+            SELECT article_id, 40, 'Batched Article ' || article_id, 1
+            FROM article_ids;
+            DROP TABLE index_change_events;
+            PRAGMA user_version = 1;
+            ",
+        )
+        .expect("large version one fixture should be created");
+    drop(connection);
+
+    migrate_index_database(&path, None).expect("batched projections should migrate");
+
+    assert_eq!(projection_counts(&path), (1001, 1001, 1001));
+}
+
+#[test]
+fn version_two_failure_rolls_back_schema_and_preserves_articles() {
+    let temp_dir = tempdir().expect("temp directory should be created");
+    let path = temp_dir.path().join("broken-version-one-index.sqlite");
+    migrate_index_database(&path, None).expect("current index database should migrate");
+    let connection = Connection::open(&path).expect("index database should open");
+    load_workspace_tokenizer(&connection);
+    connection
+        .execute_batch(
+            "
+            INSERT INTO journals (journal_id, library_id, title)
+            VALUES (30, 'scholarly', 'Preserved Journal');
+            INSERT INTO journal_meta (journal_id, source_csv)
+            VALUES (30, 'english_journals.csv');
+            INSERT INTO articles (article_id, journal_id, title)
+            VALUES (3000, 30, 'Preserved Article');
+            DROP TABLE index_change_events;
+            DROP TABLE article_listing;
+            CREATE TABLE article_listing (article_id INTEGER PRIMARY KEY);
+            PRAGMA user_version = 1;
+            ",
+        )
+        .expect("broken version one fixture should be created");
+    drop(connection);
+
+    let error = migrate_index_database(&path, None)
+        .expect_err("invalid version one projections should fail migration");
+
+    assert!(error.to_string().contains("article_listing.journal_id"));
+    assert_eq!(user_version(&path), 1);
+    assert!(!table_exists(&path, "index_change_events"));
+    assert!(!table_columns(&path, "article_listing").contains(&"journal_id".to_string()));
+    let connection = Connection::open(&path).expect("rolled back index should open");
+    let article_title: String = connection
+        .query_row(
+            "SELECT title FROM articles WHERE article_id = 3000",
+            [],
+            |row| row.get(0),
+        )
+        .expect("original article should remain");
+    assert_eq!(article_title, "Preserved Article");
 }
 
 #[test]
@@ -721,4 +938,31 @@ fn table_columns(path: &Path, table_name: &str) -> Vec<String> {
         .expect("table columns should query");
     rows.collect::<Result<Vec<_>, _>>()
         .expect("table columns should collect")
+}
+
+fn load_workspace_tokenizer(connection: &Connection) {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let project_root = manifest_dir
+        .ancestors()
+        .nth(2)
+        .expect("workspace root should resolve");
+    let tokenizer_path = StorageConfig::from_project_root(project_root)
+        .simple_tokenizer_path()
+        .expect("workspace tokenizer should exist");
+    try_load_extension(connection, Some(&tokenizer_path)).expect("workspace tokenizer should load");
+}
+
+fn projection_counts(path: &Path) -> (i64, i64, i64) {
+    let connection = Connection::open(path).expect("database should open for projection counts");
+    load_workspace_tokenizer(&connection);
+    let articles = connection
+        .query_row("SELECT COUNT(*) FROM articles", [], |row| row.get(0))
+        .expect("article count should load");
+    let search = connection
+        .query_row("SELECT COUNT(*) FROM article_search", [], |row| row.get(0))
+        .expect("search count should load");
+    let listing = connection
+        .query_row("SELECT COUNT(*) FROM article_listing", [], |row| row.get(0))
+        .expect("listing count should load");
+    (articles, search, listing)
 }

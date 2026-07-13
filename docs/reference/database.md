@@ -18,7 +18,7 @@ LitRadar 使用多个 SQLite 文件和两个状态目录。本页说明当前逻
 | 数据库      | `PRAGMA user_version` |
 | ----------- | --------------------: |
 | 认证/业务库 |                     5 |
-| 索引库      |                     1 |
+| 索引库      |                     2 |
 
 连接设置：
 
@@ -29,7 +29,7 @@ LitRadar 使用多个 SQLite 文件和两个状态目录。本页说明当前逻
 | `synchronous`  | `NORMAL` |
 | busy timeout   | 30 秒    |
 
-迁移按版本使用独立 `BEGIN IMMEDIATE` 事务，并在同一事务末尾更新 `user_version`。数据库版本高于当前二进制时，在业务写入前拒绝；不要手工降低版本。
+迁移按版本使用独立 `BEGIN IMMEDIATE` 事务，并在同一事务末尾更新 `user_version`。索引 v2 会补齐旧版 `journal_meta` resolved 字段，建立变更事件表，验证投影所依赖的列，并以 1000 行 keyset 批次补回缺失的 `article_search`/`article_listing` 行；文章主表不会因投影修复而删除。数据库版本高于当前二进制时，在业务写入前拒绝；不要手工降低版本。
 
 `litradar serve` 在迁移和验证后才绑定端口并进入调度循环。`litradar index` 结束后再次把本次新建的库纳入版本检查。普通 repository 连接不执行 DDL。
 
@@ -50,6 +50,7 @@ index_runs (1) ---- (N) index_path_stats
           +---- (N) index_api_call_stats
 
 journal_state / journal_year_state / listing_state
+index_change_events
 ```
 
 日期和运行时间大多使用 ISO-8601 或上游原始日期的 `TEXT`。
@@ -130,7 +131,7 @@ FTS5 虚表字段：
 - `authors`
 - `journal_title`
 
-建表时若成功加载平台 `simple` 扩展，则使用 `tokenize='simple'`；否则使用默认 FTS5 tokenizer。`CREATE VIRTUAL TABLE IF NOT EXISTS` 不会重建已有 FTS 表，切换 tokenizer 需要显式重建索引。
+新建索引必须先加载平台 `simple` 扩展，并使用 `tokenize='simple'`。已有声明 `simple` 的 FTS 表会在迁移或写入前执行只读 MATCH 探测；扩展路径或 ABI 错误直接终止且不会静默回退。历史上已经使用默认 tokenizer 的 FTS 表保持原定义，`CREATE VIRTUAL TABLE IF NOT EXISTS` 不会隐式重建它。
 
 ### 恢复状态
 
@@ -149,6 +150,18 @@ FTS5 虚表字段：
 | `index_api_call_stats` | source endpoint | logical calls、attempts、状态码、重试、延迟、错误样本 |
 
 错误样本和输出只用于受控诊断，不应写入秘密。
+
+### `index_change_events`
+
+索引 v2 的磁盘变更账本按 `run_id` 保存标准化的文章 membership 事件：
+
+- `event_type` 只允许 `add` 或 `remove`
+- `membership_type` 只允许 `issue` 或 `inpress`
+- issue 事件必须带 `issue_id`，in-press 事件必须为空
+- `worker_id` 标识可选的并行写入者，`is_backfill` 区分回填事件
+- 唯一索引按 run、文章、事件、membership 和期刊/issue 去重
+
+运行顺序、membership 和文章查询均有独立索引。该表是生成外部 changes JSON 的内部持久账本；成功清单发布后的清理由索引协调器负责。
 
 ## 认证与业务数据库
 
