@@ -179,6 +179,16 @@ litradar index --secret-key-file PATH
 
 命令结果保持原有顶层 `status`、`message` 和 `csvs` 字段，并新增不含密钥的 `effective_concurrency`，记录本次实际使用的 `workers`、`processes` 和 `issue_batch`。每个 CSV 结果使用定长的 `written_article_count`；旧的 `written_article_ids` 列表不再返回。内部索引工作进程同样只返回计数，避免结果大小随文章数量增长。
 
+### 实时恢复与增量同步
+
+每个非空 CSV 的实时索引或更新在对应索引库中取得 `index_run_lease`。父运行先以 `running` 持久化，后台每 30 秒续期，租约有效期为 300 秒。同一数据库存在未过期所有者时，新命令会在调用上游或启动 worker 前失败；不要并发重试或手工删除租约。正常错误会写入 `failed` 并释放租约。进程被强制终止时，确认旧进程确实消失，等待租约过期后重跑；下一次命令会把旧父运行标为 `interrupted` 并继续。
+
+`--update` 会在取得租约的同一事务中接管所有旧运行尚未发布的变更事件。worker、上游或清单失败都保留这些事件；只有 changes JSON 已落盘且最终数据库事务成功后才清理。文件发布和 SQLite 提交之间的崩溃可能让同一净变更再次出现，因此该接口保持至少一次投递，消费者必须按既有身份去重。非更新索引不会接管或删除待发布事件。
+
+scholarly 更新不会因为默认 `--resume` 而跳过已完成期刊，而是从上次可信完成时间向前重叠 30 天（`30-day` overlap）。Crossref 请求使用 `from-update-date`，OpenAlex fallback 使用 `from_created_date`；每一页使用相同起始日期。过滤结果为空时保留已有期刊元数据和文章，只在完整页序列成功后推进完成时间。缺少已完成水位、水位无效或位于未来，以及普通非更新索引，都退回完整历史扫描；中断重试仍从旧水位开始。
+
+CNKI 对 HTTP 2xx 正文解码失败使用既有的三次上限和 1/2 秒退避：失败尝试会写入 `index_api_call_stats`，后续成功会标记为 retry。非 2xx 状态在正文解码前处理。连续三次解码失败或持久上游错误会让命令非零退出并保留更新事件；错误样本不保存响应正文、查询密钥或原始解码器详情。
+
 示例：
 
 ```bash

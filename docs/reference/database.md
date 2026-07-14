@@ -18,7 +18,7 @@ LitRadar 使用多个 SQLite 文件和两个状态目录。本页说明当前逻
 | 数据库      | `PRAGMA user_version` |
 | ----------- | --------------------: |
 | 认证/业务库 |                     5 |
-| 索引库      |                     2 |
+| 索引库      |                     3 |
 
 连接设置：
 
@@ -29,7 +29,7 @@ LitRadar 使用多个 SQLite 文件和两个状态目录。本页说明当前逻
 | `synchronous`  | `NORMAL` |
 | busy timeout   | 30 秒    |
 
-迁移按版本使用独立 `BEGIN IMMEDIATE` 事务，并在同一事务末尾更新 `user_version`。索引 v2 会补齐旧版 `journal_meta` resolved 字段，建立变更事件表，验证投影所依赖的列，并以 1000 行 keyset 批次补回缺失的 `article_search`/`article_listing` 行；文章主表不会因投影修复而删除。数据库版本高于当前二进制时，在业务写入前拒绝；不要手工降低版本。
+迁移按版本使用独立 `BEGIN IMMEDIATE` 事务，并在同一事务末尾更新 `user_version`。索引 v2 会补齐旧版 `journal_meta` resolved 字段，建立变更事件表，验证投影所依赖的列，并以 1000 行 keyset 批次补回缺失的 `article_search`/`article_listing` 行；文章主表不会因投影修复而删除。索引 v3 新增单行运行租约 `index_run_lease`，迁移不会改写现有运行统计或待发布事件。数据库版本高于当前二进制时，在业务写入前拒绝；不要手工降低版本。
 
 `litradar serve` 在迁移和验证后才绑定端口并进入调度循环。`litradar index` 结束后再次把本次新建的库纳入版本检查。普通 repository 连接不执行 DDL。
 
@@ -51,6 +51,7 @@ index_runs (1) ---- (N) index_path_stats
 
 journal_state / journal_year_state / listing_state
 index_change_events
+index_run_lease (最多一行的运行所有权记录)
 ```
 
 日期和运行时间大多使用 ISO-8601 或上游原始日期的 `TEXT`。
@@ -141,6 +142,10 @@ FTS5 虚表字段：
 | `journal_year_state` | 某期刊/年份是否完成 |
 | `journal_state`      | 某期刊整体是否完成  |
 
+实时 `--update` 不会把 `journal_state.updated_at` 当作无重叠的精确游标。只有该期刊状态为 `done`、时间可解析且不晚于当前运行时，才取其 UTC 日期并向前重叠 30 天：Crossref 使用 `from-update-date`，OpenAlex fallback 使用 `from_created_date`。缺失、无效或未来时间以及非更新索引都不带日期过滤器，执行完整历史扫描。
+
+增量窗口的每一页复用同一个起始日期。空窗口不会覆盖已有 `journals`/`journal_meta` 或删除文章；所有页面成功后才更新完成时间。中断或失败不会推进旧水位，重试会从同一个 30 天重叠窗口重新读取并依靠幂等写入收敛。
+
 ### 索引运行统计
 
 | 表                     | 粒度            | 关键内容                                              |
@@ -149,11 +154,21 @@ FTS5 虚表字段：
 | `index_path_stats`     | 一个期刊路径    | source/path、works/issues/details/writes、错误        |
 | `index_api_call_stats` | source endpoint | logical calls、attempts、状态码、重试、延迟、错误样本 |
 
-错误样本和输出只用于受控诊断，不应写入秘密。
+实时运行先写入 `running` 父行，再启动期刊 worker。正常完成为 `succeeded`，可控错误为 `failed`；进程失联后由下一次运行回收过期租约时，仍为 `running` 的旧父行改为 `interrupted`。错误样本和输出只用于受控诊断，不应写入秘密。
+
+### `index_run_lease`
+
+索引 v3 用固定 `id=1` 的单行表阻止同一索引数据库被多个实时索引/更新进程并发写入：
+
+- `run_id`：当前 `index_runs` 所有者；该表不使用外键，便于恢复旧运行。
+- `heartbeat_at`、`expires_at`：Unix 秒；后台线程每 30 秒续期到未来 300 秒。
+- 正常成功或失败只由匹配 `run_id` 的所有者删除租约；无活动写入时表为空。
+
+取得租约、创建 `running` 父行、回收过期所有者以及更新模式下接管待发布事件都在同一个 `BEGIN IMMEDIATE` 事务中。未过期租约会在任何上游请求或 worker 启动前拒绝新运行；过期租约由下一次运行替换，并把旧父行标为 `interrupted`。每个实时写事务和最终清单发布都会再次校验所有权，因此失去租约的旧进程不能继续提交。
 
 ### `index_change_events`
 
-索引 v2 的磁盘变更账本按 `run_id` 保存标准化的文章 membership 事件：
+索引 v2 引入的磁盘变更账本按 `run_id` 保存标准化的文章 membership 事件：
 
 - `event_type` 只允许 `add` 或 `remove`
 - `membership_type` 只允许 `issue` 或 `inpress`
@@ -161,7 +176,9 @@ FTS5 虚表字段：
 - `worker_id` 标识可选的并行写入者，`is_backfill` 区分回填事件
 - 唯一索引按 run、文章、事件、membership 和期刊/issue 去重
 
-运行顺序、membership 和文章查询均有独立索引。该表是生成外部 changes JSON 的内部持久账本；成功清单发布后的清理由索引协调器负责。
+运行顺序、membership 和文章查询均有独立索引。该表是生成外部 changes JSON 的内部持久账本。新的实时 `--update` 会按 `event_id` 以最多 1000 行的批次把所有旧运行待发布事件接管到当前 `run_id`，并应用既有的反向事件抵消和唯一键去重；普通索引不会接管或删除它们。
+
+worker、上游或清单错误会保留当前事件，供下一次更新再次接管。成功路径先原子替换 changes JSON，再在同一最终数据库事务中清理当前事件并完成父行；文件系统重命名与 SQLite 提交之间发生崩溃时允许再次发布，因此该边界是至少一次而不是至多一次。消费者必须继续按清单身份去重，运维人员不得手工把待发布事件改为已发布或直接删除。
 
 ## 认证与业务数据库
 

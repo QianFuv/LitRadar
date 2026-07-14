@@ -126,6 +126,22 @@ docker compose run --rm litradar index \
 
 配置 scholarly key 后可把文件替换为 `english_journals.csv` 或 `ccf_computer_journals.csv`。已有索引库也可直接放入宿主机 `data/index/`。
 
+### 6. 中断恢复和更新
+
+每个索引数据库通过 schema v3 的 `index_run_lease` 串行化实时索引与更新。租约每 30 秒续期并在最后一次成功心跳 300 秒后过期。普通上游、worker 或清单错误会记录 `failed`、保留待发布事件并立即释放租约；容器或 Docker daemon 被强制终止时，旧父运行暂时保持 `running`，下一次命令回收过期租约后将其标为 `interrupted`。
+
+恢复时按以下顺序操作：
+
+1. 确认旧容器、计划任务子进程和 `litradar-memory-*` 画像容器已经停止；不要通过删除 `index_run_lease` 绕过所有权检查。
+2. 停止常驻服务并完成离线、已验证的当前数据备份。部署密钥必须继续留在 Compose secret 中，不得复制到备份或日志。
+3. 普通失败可立即重跑同一命令；硬终止必须等到旧租约过期。未过期时的明确所有者错误表示旧运行仍受保护，不是可忽略的重试提示。
+4. 需要恢复 changes JSON 时必须重跑 `--update`。新更新会事务性接管所有旧运行的待发布事件；普通非更新索引会保留而不会发布它们。
+5. 成功后确认命令退出 0、changes JSON 可解析、数据库中没有活动租约，再启动服务并检查 `/health/live`、`/health/ready` 和 `/`。
+
+scholarly 更新使用上次可信完成时间向前 30 天的重叠窗口，Crossref/OpenAlex 分别使用 `from-update-date` 和 `from_created_date`；缺失或不可信水位执行完整扫描。空窗口保留已有数据。CNKI 的 2xx 正文解码失败会在现有三次上限内记录并重试；持续失败仍应作为上游/工作流失败处理，不能因为当时内存较低就算作验收通过。
+
+Windows bind mount 上大型 `simple` tokenizer 索引的内置备份 CLI 验证路径仍是独立后续修复项。当前此类恢复快照若采用停机原始复制，必须比较精确文件集、大小、SHA-256 和复制前后源元数据，并在最终镜像内加载 tokenizer 后逐库运行只读完整性、外键和投影计数检查；任一检查失败都不能开始迁移或更新。这一临时流程不改变[备份与恢复](backup.md)中的通用备份边界。
+
 ## 数据和秘密
 
 | 宿主机路径               | 容器路径                        | 说明                                |
@@ -211,19 +227,9 @@ docker compose config --quiet
 
 ### 场景命令
 
-五分钟预热后采集十分钟 warm idle 和轻流量：
+真实数据只在停机备份验证完成后画像。最终验收顺序为默认恢复索引、CCF 更新、中国期刊更新、英文学术更新、同 cgroup 计划任务子进程，最后是预热后的日常服务。`DurationSeconds` 是保护性超时；作业提前完成时立即结束，超时则以退出码 124 失败。
 
-```powershell
-pwsh ./scripts/profile_docker_memory.ps1 `
-  -Scenario warm-idle `
-  -DataPath ./data `
-  -WarmupSeconds 300 `
-  -DurationSeconds 600 `
-  -TrafficPath /health/live,/health/ready,/ `
-  -ExpectedMemoryLimitMiB 160
-```
-
-一次索引或更新；`DurationSeconds` 是保护性超时，作业提前完成时立即结束：
+默认恢复索引不带 `--update`，用于证明已完成期刊可跳过且旧待发布事件不会被非更新运行接管：
 
 ```powershell
 pwsh ./scripts/profile_docker_memory.ps1 `
@@ -232,10 +238,40 @@ pwsh ./scripts/profile_docker_memory.ps1 `
   -DurationSeconds 14400 `
   -Command @(
     'index',
-    '--secret-key-file', '/run/secrets/litradar_key',
-    '--file', 'chinese_journals.csv'
+    '--secret-key-file', '/run/secrets/litradar_key'
   ) `
-  -ExpectedMemoryLimitMiB 160
+  -ExpectedMemoryLimitMiB 160 `
+  -OutputPath ./output/memory/final-resume-index.json
+```
+
+先运行需要恢复待发布事件的 CCF 更新，再分别运行中国期刊和英文学术更新：
+
+```powershell
+pwsh ./scripts/profile_docker_memory.ps1 `
+  -Scenario update `
+  -DataPath ./data `
+  -DurationSeconds 14400 `
+  -Command @(
+    'index',
+    '--secret-key-file', '/run/secrets/litradar_key',
+    '--file', 'ccf_computer_journals.csv',
+    '--update'
+  ) `
+  -ExpectedMemoryLimitMiB 160 `
+  -OutputPath ./output/memory/final-update-ccf.json
+
+pwsh ./scripts/profile_docker_memory.ps1 `
+  -Scenario update `
+  -DataPath ./data `
+  -DurationSeconds 14400 `
+  -Command @(
+    'index',
+    '--secret-key-file', '/run/secrets/litradar_key',
+    '--file', 'chinese_journals.csv',
+    '--update'
+  ) `
+  -ExpectedMemoryLimitMiB 160 `
+  -OutputPath ./output/memory/final-update-chinese.json
 
 pwsh ./scripts/profile_docker_memory.ps1 `
   -Scenario update `
@@ -247,7 +283,8 @@ pwsh ./scripts/profile_docker_memory.ps1 `
     '--file', 'english_journals.csv',
     '--update'
   ) `
-  -ExpectedMemoryLimitMiB 160
+  -ExpectedMemoryLimitMiB 160 `
+  -OutputPath ./output/memory/final-update-english.json
 ```
 
 常驻服务和同 cgroup 子任务的合并画像：
@@ -263,10 +300,26 @@ pwsh ./scripts/profile_docker_memory.ps1 `
     '--file', 'ccf_computer_journals.csv',
     '--update'
   ) `
-  -ExpectedMemoryLimitMiB 160
+  -ExpectedMemoryLimitMiB 160 `
+  -OutputPath ./output/memory/final-scheduled-child.json
 ```
 
-脚本成功返回 0，任何预算、swap、事件、流量或命令失败返回 1。可用极小的显式阈值验证门禁确实失败：
+五分钟预热后采集十分钟日常服务和轻流量；路径必须包含 `/health/live`、`/health/ready` 和 `/`：
+
+```powershell
+pwsh ./scripts/profile_docker_memory.ps1 `
+  -Scenario warm-idle `
+  -DataPath ./data `
+  -WarmupSeconds 300 `
+  -DurationSeconds 600 `
+  -TrafficPath /health/live,/health/ready,/ `
+  -ExpectedMemoryLimitMiB 160 `
+  -OutputPath ./output/memory/final-warm-idle.json
+```
+
+每份 JSON 只记录 `CommandProvided`，不保存命令参数或密钥值。验收要求 `Gate.Passed=true`，并同时满足：作业 working-set p95 不超过 100 MiB、采样峰值不超过 120 MiB；日常服务分别不超过 20 MiB 和 24 MiB；退出码为 0；swap、OOM、`memory.events.max` 增量和 full PSI `avg10` 都为 0。任一条件失败都不能用其他较低指标抵消。
+
+如果 `Gate.Failures` 只有非零/124 退出码或上游错误，这是来源或工作流失败，当前样本不能作为内存验收；先处理来源问题再完整重跑。如果命令退出 0 但 p95、峰值、swap、OOM、max event 或 PSI 失败，这是内存门禁失败。脚本对两类情况都返回 1。可用极小的显式阈值验证门禁确实失败：
 
 ```powershell
 pwsh ./scripts/profile_docker_memory.ps1 `
