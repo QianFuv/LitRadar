@@ -23,10 +23,29 @@ const SEMANTIC_SCHOLAR_FIELDS: &str = "externalIds,url,isOpenAccess,openAccessPd
 const OPENALEX_SOURCE_FIELDS: &str = "id,display_name,issn_l,issn,works_count";
 const OPENALEX_WORK_FIELDS: &str = "id,doi,title,display_name,publication_year,publication_date,language,cited_by_count,is_retracted,primary_location,locations,open_access,best_oa_location,authorships,ids,biblio,abstract_inverted_index,topics,primary_topic,funders,awards";
 const DEFAULT_USER_AGENT: &str = "LitRadar/0.1 (mailto:litradar@example.invalid)";
-const CROSSREF_ROWS: usize = 250;
+const CROSSREF_ROWS: usize = 225;
 const OPENALEX_SOURCE_WORK_ROWS: usize = 200;
 const DEFAULT_MAX_RETRIES: usize = 2;
 const RETRY_STATUS_CODES: [u16; 5] = [429, 500, 502, 503, 504];
+
+fn crossref_journal_filter(from_sync_date: Option<&str>) -> String {
+    let mut filters = vec!["type:journal-article".to_string()];
+    if let Some(value) = from_sync_date.filter(|value| !value.trim().is_empty()) {
+        filters.push(format!("from-update-date:{value}"));
+    }
+    filters.join(",")
+}
+
+fn openalex_source_work_filter(source_id: &str, from_sync_date: Option<&str>) -> String {
+    let mut filters = vec![
+        format!("primary_location.source.id:{source_id}"),
+        "type:article".to_string(),
+    ];
+    if let Some(value) = from_sync_date.filter(|value| !value.trim().is_empty()) {
+        filters.push(format!("from_created_date:{value}"));
+    }
+    filters.join(",")
+}
 
 /// One source transport attempt captured for index statistics.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -80,8 +99,8 @@ pub enum ScholarlyRequestKind {
     CrossrefJournalWorks {
         /// ISSN lookup candidate.
         issn: String,
-        /// Optional lower publication-date filter.
-        from_pub_date: Option<String>,
+        /// Optional lower synchronization-date filter.
+        from_sync_date: Option<String>,
         /// Cursor returned by the previous page.
         cursor: Option<String>,
     },
@@ -99,8 +118,8 @@ pub enum ScholarlyRequestKind {
     OpenAlexWorksBySource {
         /// OpenAlex source id or URL.
         source_id: String,
-        /// Optional lower publication-date filter.
-        from_pub_date: Option<String>,
+        /// Optional lower synchronization-date filter.
+        from_sync_date: Option<String>,
         /// Cursor returned by the previous page.
         cursor: Option<String>,
     },
@@ -247,6 +266,7 @@ pub struct FixtureScholarlyTransport {
     openalex_doi_batches: Vec<Vec<String>>,
     source_lookup_issns: Vec<String>,
     source_lookup_titles: Vec<String>,
+    journal_work_requests: Vec<(String, Option<String>)>,
     source_work_requests: Vec<(String, Option<String>)>,
 }
 
@@ -269,6 +289,7 @@ impl FixtureScholarlyTransport {
             openalex_doi_batches: Vec::new(),
             source_lookup_issns: Vec::new(),
             source_lookup_titles: Vec::new(),
+            journal_work_requests: Vec::new(),
             source_work_requests: Vec::new(),
         }
     }
@@ -307,6 +328,15 @@ impl FixtureScholarlyTransport {
     /// Captured title candidates.
     pub fn source_lookup_titles(&self) -> &[String] {
         &self.source_lookup_titles
+    }
+
+    /// Return captured Crossref journal work requests.
+    ///
+    /// # Returns
+    ///
+    /// Captured ISSN and synchronization-date pairs.
+    pub fn journal_work_requests(&self) -> &[(String, Option<String>)] {
+        &self.journal_work_requests
     }
 
     /// Return captured OpenAlex source work requests.
@@ -533,17 +563,16 @@ impl LiveScholarlyTransport {
     fn crossref_journal_works(
         &mut self,
         issn: &str,
-        from_pub_date: Option<&str>,
+        from_sync_date: Option<&str>,
         cursor: Option<&str>,
     ) -> Result<Value, SourceError> {
-        let mut filters = vec!["type:journal-article".to_string()];
-        if let Some(value) = from_pub_date.filter(|value| !value.trim().is_empty()) {
-            filters.push(format!("from-pub-date:{value}"));
-        }
         let mut query = vec![
             ("rows".to_string(), CROSSREF_ROWS.to_string()),
             ("cursor".to_string(), cursor.unwrap_or("*").to_string()),
-            ("filter".to_string(), filters.join(",")),
+            (
+                "filter".to_string(),
+                crossref_journal_filter(from_sync_date),
+            ),
             ("sort".to_string(), "published".to_string()),
             ("order".to_string(), "asc".to_string()),
         ];
@@ -603,21 +632,17 @@ impl LiveScholarlyTransport {
     fn openalex_works_by_source(
         &mut self,
         source_id: &str,
-        from_pub_date: Option<&str>,
+        from_sync_date: Option<&str>,
         cursor: Option<&str>,
     ) -> Result<Value, SourceError> {
         let Some(source_key) = openalex_short_source_id(source_id) else {
             return Ok(json!({ "results": [] }));
         };
-        let mut filters = vec![
-            format!("primary_location.source.id:{source_key}"),
-            "type:article".to_string(),
-        ];
-        if let Some(value) = from_pub_date.filter(|value| !value.trim().is_empty()) {
-            filters.push(format!("from_publication_date:{value}"));
-        }
         let mut query = vec![
-            ("filter".to_string(), filters.join(",")),
+            (
+                "filter".to_string(),
+                openalex_source_work_filter(&source_key, from_sync_date),
+            ),
             (
                 "per-page".to_string(),
                 OPENALEX_SOURCE_WORK_ROWS.to_string(),
@@ -864,7 +889,13 @@ impl ScholarlyTransport for FixtureScholarlyTransport {
     /// Execute one scholarly fixture request.
     fn request(&mut self, request: ScholarlyRequest) -> Result<Value, SourceError> {
         match &request.kind {
-            ScholarlyRequestKind::CrossrefJournalWorks { cursor, .. } => {
+            ScholarlyRequestKind::CrossrefJournalWorks {
+                issn,
+                from_sync_date,
+                cursor,
+            } => {
+                self.journal_work_requests
+                    .push((issn.clone(), from_sync_date.clone()));
                 let status_code = self.data.crossref_status.unwrap_or(200);
                 if status_code != 200 {
                     return Err(self.http_error(
@@ -915,11 +946,11 @@ impl ScholarlyTransport for FixtureScholarlyTransport {
             }
             ScholarlyRequestKind::OpenAlexWorksBySource {
                 source_id,
-                from_pub_date,
+                from_sync_date,
                 cursor,
             } => {
                 self.source_work_requests
-                    .push((source_id.clone(), from_pub_date.clone()));
+                    .push((source_id.clone(), from_sync_date.clone()));
                 self.record_attempt(&request, Some(200), true, None);
                 let page_index = fixture_page_index(cursor.as_deref());
                 let (items, next_cursor) = fixture_page(
@@ -981,9 +1012,9 @@ impl ScholarlyTransport for LiveScholarlyTransport {
         match request.kind {
             ScholarlyRequestKind::CrossrefJournalWorks {
                 issn,
-                from_pub_date,
+                from_sync_date,
                 cursor,
-            } => self.crossref_journal_works(&issn, from_pub_date.as_deref(), cursor.as_deref()),
+            } => self.crossref_journal_works(&issn, from_sync_date.as_deref(), cursor.as_deref()),
             ScholarlyRequestKind::OpenAlexSourceByIssn { issn } => {
                 self.openalex_source_by_issn(&issn)
             }
@@ -992,11 +1023,11 @@ impl ScholarlyTransport for LiveScholarlyTransport {
             }
             ScholarlyRequestKind::OpenAlexWorksBySource {
                 source_id,
-                from_pub_date,
+                from_sync_date,
                 cursor,
             } => self.openalex_works_by_source(
                 &source_id,
-                from_pub_date.as_deref(),
+                from_sync_date.as_deref(),
                 cursor.as_deref(),
             ),
             ScholarlyRequestKind::OpenAlexWorksByDoi { dois } => self.openalex_works_by_doi(&dois),
@@ -1075,7 +1106,7 @@ where
     /// # Arguments
     ///
     /// * `issn` - ISSN lookup candidate.
-    /// * `from_pub_date` - Optional lower publication-date filter.
+    /// * `from_sync_date` - Optional lower synchronization-date filter.
     /// * `cursor` - Cursor returned by the previous page.
     ///
     /// # Returns
@@ -1084,7 +1115,7 @@ where
     pub fn fetch_journal_works_page(
         &mut self,
         issn: &str,
-        from_pub_date: Option<&str>,
+        from_sync_date: Option<&str>,
         cursor: Option<&str>,
     ) -> Result<ScholarlyWorksPage, SourceError> {
         let url = format!("https://api.crossref.org/journals/{issn}/works");
@@ -1095,7 +1126,7 @@ where
             url,
             kind: ScholarlyRequestKind::CrossrefJournalWorks {
                 issn: issn.to_string(),
-                from_pub_date: from_pub_date.map(str::to_string),
+                from_sync_date: from_sync_date.map(str::to_string),
                 cursor: cursor.map(str::to_string),
             },
         })?;
@@ -1181,7 +1212,7 @@ where
     /// # Arguments
     ///
     /// * `source_id` - OpenAlex source id or URL.
-    /// * `from_pub_date` - Optional lower publication-date filter.
+    /// * `from_sync_date` - Optional lower synchronization-date filter.
     /// * `cursor` - Cursor returned by the previous page.
     ///
     /// # Returns
@@ -1190,7 +1221,7 @@ where
     pub fn fetch_openalex_works_by_source_page(
         &mut self,
         source_id: &str,
-        from_pub_date: Option<&str>,
+        from_sync_date: Option<&str>,
         cursor: Option<&str>,
     ) -> Result<ScholarlyWorksPage, SourceError> {
         let payload = self.transport.request(ScholarlyRequest {
@@ -1200,7 +1231,7 @@ where
             url: format!("https://api.openalex.org/works?filter=primary_location.source.id:{source_id}&api_key=SECRET"),
             kind: ScholarlyRequestKind::OpenAlexWorksBySource {
                 source_id: source_id.to_string(),
-                from_pub_date: from_pub_date.map(str::to_string),
+                from_sync_date: from_sync_date.map(str::to_string),
                 cursor: cursor.map(str::to_string),
             },
         })?;
@@ -1515,10 +1546,11 @@ mod tests {
     use serde_json::json;
 
     use super::{
-        normalize_doi, normalize_issn, normalize_source_title, openalex_short_source_id,
-        redact_url, semantic_scholar_worker_interval, semantic_scholar_worker_offset,
-        value_pool_from_text, FixtureScholarlyTransport, LiveScholarlyConfig, ScholarlyClient,
-        ScholarlyFixtureData, SourceError, CROSSREF_ROWS,
+        crossref_journal_filter, normalize_doi, normalize_issn, normalize_source_title,
+        openalex_short_source_id, openalex_source_work_filter, redact_url,
+        semantic_scholar_worker_interval, semantic_scholar_worker_offset, value_pool_from_text,
+        FixtureScholarlyTransport, LiveScholarlyConfig, ScholarlyClient, ScholarlyFixtureData,
+        SourceError, CROSSREF_ROWS,
     };
 
     #[test]
@@ -1879,7 +1911,24 @@ mod tests {
 
     #[test]
     fn crossref_page_rows_stay_within_live_memory_budget() {
-        assert_eq!(CROSSREF_ROWS, 250);
+        assert_eq!(CROSSREF_ROWS, 225);
+    }
+
+    #[test]
+    fn provider_filters_map_one_synchronization_date() {
+        assert_eq!(
+            crossref_journal_filter(Some("2026-01-02")),
+            "type:journal-article,from-update-date:2026-01-02"
+        );
+        assert_eq!(
+            openalex_source_work_filter("S42", Some("2026-01-02")),
+            "primary_location.source.id:S42,type:article,from_created_date:2026-01-02"
+        );
+        assert_eq!(crossref_journal_filter(None), "type:journal-article");
+        assert_eq!(
+            openalex_source_work_filter("S42", None),
+            "primary_location.source.id:S42,type:article"
+        );
     }
 
     #[test]

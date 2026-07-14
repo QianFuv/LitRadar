@@ -16,10 +16,10 @@ use serde_json::Value;
 
 use crate::changes::{write_change_manifest_from_events, ChangeWriteError};
 use crate::schema::{
-    apply_article_changes, is_journal_complete, mark_article_listing_ready, mark_journal_done,
-    mark_year_done, open_index_db, optimize_index_db, persist_index_run_stats, upsert_issues,
-    upsert_journal, upsert_meta, with_immediate_index_transaction, ChangeEventContext,
-    IndexRunLeaseContext,
+    apply_article_changes, get_journal_synchronization_date, is_journal_complete,
+    mark_article_listing_ready, mark_journal_done, mark_year_done, open_index_db,
+    optimize_index_db, persist_index_run_stats, upsert_issues, upsert_journal, upsert_meta,
+    with_immediate_index_transaction, ChangeEventContext, IndexRunLeaseContext,
 };
 use crate::stats::{IndexRunStats, PathCountIncrements};
 use crate::transforms::{
@@ -337,6 +337,12 @@ where
     if should_resume && is_journal_complete(connection, journal_id)? {
         return Ok(ProcessOutcome::resumed());
     }
+    let is_live_synchronization = change_event_context.is_some() && lease_context.is_some();
+    let synchronization_date = if is_live_synchronization {
+        get_journal_synchronization_date(connection, journal_id, timestamp)?
+    } else {
+        None
+    };
     let issn_candidates = candidate_issns_from_row(row);
     if issn_candidates.is_empty() {
         return Err(ScholarlyIndexError::InvalidJournal(format!(
@@ -351,7 +357,7 @@ where
     let mut crossref_page = None;
     for candidate in &issn_candidates {
         match capture_scholarly_attempts(client, attempt_sink, |client| {
-            client.fetch_journal_works_page(candidate, None, None)
+            client.fetch_journal_works_page(candidate, synchronization_date.as_deref(), None)
         }) {
             Ok(candidate_page) => {
                 issn = candidate.clone();
@@ -405,6 +411,7 @@ where
             client,
             first_page,
             &issn,
+            synchronization_date.as_deref(),
             &mut journal_record,
             &meta_record,
             &journal_title,
@@ -432,6 +439,7 @@ where
             client,
             &source_id,
             &source_issns,
+            synchronization_date.as_deref(),
             &mut journal_record,
             &meta_record,
             &journal_title,
@@ -441,7 +449,7 @@ where
             &mut totals,
             &mut years,
         )?;
-        if totals.works_count == 0 {
+        if totals.works_count == 0 && synchronization_date.is_none() {
             return Err(ScholarlyIndexError::InvalidJournal(format!(
                 "OpenAlex fallback returned no usable works: {}",
                 journal_title_from_row(row)
@@ -449,15 +457,19 @@ where
         }
     }
 
-    journal_record.has_articles = Some(i64::from(totals.works_count > 0));
+    if synchronization_date.is_none() {
+        journal_record.has_articles = Some(i64::from(totals.works_count > 0));
+    }
     with_immediate_index_transaction(connection, |transaction| {
         if let Some(lease_context) = lease_context {
             lease_context
                 .assert_owner(transaction)
                 .map_err(|error| ScholarlyIndexError::Lease(error.to_string()))?;
         }
-        upsert_journal(transaction, &journal_record)?;
-        upsert_meta(transaction, &meta_record)?;
+        if synchronization_date.is_none() {
+            upsert_journal(transaction, &journal_record)?;
+            upsert_meta(transaction, &meta_record)?;
+        }
         for year in &years {
             mark_year_done(transaction, journal_id, *year, timestamp)?;
         }
@@ -487,6 +499,7 @@ fn process_crossref_pages<T>(
     client: &mut ScholarlyClient<T>,
     mut page: ScholarlyWorksPage,
     issn: &str,
+    synchronization_date: Option<&str>,
     journal_record: &mut JournalRecord,
     meta_record: &MetaRecord,
     journal_title: &str,
@@ -510,6 +523,7 @@ where
             journal_title,
             change_event_context,
             lease_context,
+            synchronization_date.is_none(),
             attempt_sink,
             totals,
             years,
@@ -518,7 +532,7 @@ where
             break;
         };
         let next_page = capture_scholarly_attempts(client, attempt_sink, |client| {
-            client.fetch_journal_works_page(issn, None, Some(&cursor))
+            client.fetch_journal_works_page(issn, synchronization_date, Some(&cursor))
         })?;
         page = next_page;
     }
@@ -531,6 +545,7 @@ fn process_openalex_pages<T>(
     client: &mut ScholarlyClient<T>,
     source_id: &str,
     source_issns: &[String],
+    synchronization_date: Option<&str>,
     journal_record: &mut JournalRecord,
     meta_record: &MetaRecord,
     journal_title: &str,
@@ -546,7 +561,11 @@ where
     let mut cursor = None;
     loop {
         let page = capture_scholarly_attempts(client, attempt_sink, |client| {
-            client.fetch_openalex_works_by_source_page(source_id, None, cursor.as_deref())
+            client.fetch_openalex_works_by_source_page(
+                source_id,
+                synchronization_date,
+                cursor.as_deref(),
+            )
         })?;
         for raw_batch in page.items.chunks(SCHOLARLY_WRITE_BATCH_SIZE) {
             let works = raw_batch
@@ -563,6 +582,7 @@ where
                 journal_title,
                 change_event_context,
                 lease_context,
+                synchronization_date.is_none(),
                 attempt_sink,
                 totals,
                 years,
@@ -591,6 +611,7 @@ fn process_scholarly_work_page<T>(
     journal_title: &str,
     change_event_context: Option<&ChangeEventContext>,
     lease_context: Option<&IndexRunLeaseContext>,
+    should_write_journal_metadata: bool,
     attempt_sink: &mut dyn FnMut(&[SourceAttempt]),
     totals: &mut ScholarlyWriteTotals,
     years: &mut BTreeSet<i64>,
@@ -658,8 +679,10 @@ where
                     .assert_owner(transaction)
                     .map_err(|error| ScholarlyIndexError::Lease(error.to_string()))?;
             }
-            upsert_journal(transaction, journal_record)?;
-            upsert_meta(transaction, meta_record)?;
+            if should_write_journal_metadata {
+                upsert_journal(transaction, journal_record)?;
+                upsert_meta(transaction, meta_record)?;
+            }
             if !issue_records.is_empty() {
                 upsert_issues(transaction, &issue_records)?;
             }
@@ -795,8 +818,8 @@ mod tests {
     use tempfile::tempdir;
 
     use crate::schema::{
-        begin_index_run, init_index_db, mark_journal_done, IndexRunLeaseContext,
-        IndexRunStartRequest,
+        begin_index_run, init_index_db, mark_journal_done, ChangeEventContext,
+        IndexRunLeaseContext, IndexRunStartRequest,
     };
     use crate::transforms::CsvRow;
 
@@ -889,6 +912,15 @@ mod tests {
             ]
         );
         assert!(client.attempts().is_empty());
+        let transport = client.into_transport();
+        assert_eq!(
+            transport.journal_work_requests(),
+            &[
+                ("1234-5678".to_string(), None),
+                ("1234-5678".to_string(), None),
+                ("1234-5678".to_string(), None),
+            ]
+        );
         let article_count: i64 = connection
             .query_row("SELECT COUNT(*) FROM articles", [], |row| row.get(0))
             .expect("article count should query");
@@ -939,6 +971,290 @@ mod tests {
             .expect("article count should load");
         assert!(matches!(error, ScholarlyIndexError::Lease(_)));
         assert_eq!(article_count, 0);
+    }
+
+    #[test]
+    fn incremental_crossref_uses_one_checkpoint_and_preserves_metadata() {
+        let connection = Connection::open_in_memory().expect("in-memory db should open");
+        init_index_db(&connection).expect("schema should initialize");
+        seed_scholarly_journal(&connection, 45, "Existing Crossref Title");
+        mark_journal_done(&connection, 45, "2026-07-13T00:00:00Z")
+            .expect("prior checkpoint should be written");
+        let (lease_context, change_event_context) =
+            live_synchronization_context(&connection, "run-crossref-sync", "2026-07-14T00:00:00Z");
+        let fixture = ScholarlyFixtureData {
+            crossref_work_pages: vec![
+                vec![crossref_work("10.1/new-first", "New First", "10")],
+                vec![crossref_work("10.1/new-second", "New Second", "20")],
+            ],
+            ..ScholarlyFixtureData::default()
+        };
+        let mut client = ScholarlyClient::new(FixtureScholarlyTransport::new(fixture), true);
+
+        let outcome = process_scholarly_row(
+            &connection,
+            &mut client,
+            &scholarly_row(),
+            ScholarlyProcessContext {
+                csv_file: "journals.csv",
+                journal_id: 45,
+                timestamp: "2026-07-14T00:00:00Z",
+                change_event_context: Some(&change_event_context),
+                lease_context: Some(&lease_context),
+                should_resume: false,
+                attempt_sink: &mut |_| {},
+            },
+        )
+        .expect("incremental Crossref pages should succeed");
+
+        let transport = client.into_transport();
+        let (title, source_csv, checkpoint): (String, String, String) = connection
+            .query_row(
+                "
+                SELECT j.title, m.source_csv, s.updated_at
+                FROM journals j
+                JOIN journal_meta m ON m.journal_id = j.journal_id
+                JOIN journal_state s ON s.journal_id = j.journal_id
+                WHERE j.journal_id = 45
+                ",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .expect("preserved metadata should load");
+        assert_eq!(outcome.works_count, 2);
+        assert_eq!(title, "Existing Crossref Title");
+        assert_eq!(source_csv, "existing.csv");
+        assert_eq!(checkpoint, "2026-07-14T00:00:00Z");
+        assert_eq!(
+            transport.journal_work_requests(),
+            &[
+                ("1234-5678".to_string(), Some("2026-06-13".to_string())),
+                ("1234-5678".to_string(), Some("2026-06-13".to_string())),
+            ]
+        );
+    }
+
+    #[test]
+    fn empty_incremental_openalex_pages_preserve_existing_journal() {
+        let connection = Connection::open_in_memory().expect("in-memory db should open");
+        init_index_db(&connection).expect("schema should initialize");
+        seed_scholarly_journal(&connection, 46, "Existing OpenAlex Title");
+        mark_journal_done(&connection, 46, "1783900800")
+            .expect("prior checkpoint should be written");
+        let (lease_context, change_event_context) =
+            live_synchronization_context(&connection, "run-openalex-sync", "1783987200");
+        let fixture = ScholarlyFixtureData {
+            crossref_status: Some(404),
+            openalex_source_by_issns: Some(json!({
+                "id": "https://openalex.org/S46",
+                "display_name": "Existing OpenAlex Title",
+                "issn_l": "1234-5678",
+                "issn": ["1234-5678"]
+            })),
+            openalex_source_work_pages: vec![Vec::new(), Vec::new()],
+            ..ScholarlyFixtureData::default()
+        };
+        let mut client = ScholarlyClient::new(FixtureScholarlyTransport::new(fixture), true);
+
+        let outcome = process_scholarly_row(
+            &connection,
+            &mut client,
+            &scholarly_row(),
+            ScholarlyProcessContext {
+                csv_file: "journals.csv",
+                journal_id: 46,
+                timestamp: "1783987200",
+                change_event_context: Some(&change_event_context),
+                lease_context: Some(&lease_context),
+                should_resume: false,
+                attempt_sink: &mut |_| {},
+            },
+        )
+        .expect("empty incremental OpenAlex pages should succeed");
+
+        let transport = client.into_transport();
+        let (title, checkpoint): (String, String) = connection
+            .query_row(
+                "
+                SELECT j.title, s.updated_at
+                FROM journals j
+                JOIN journal_state s ON s.journal_id = j.journal_id
+                WHERE j.journal_id = 46
+                ",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .expect("preserved journal should load");
+        assert_eq!(outcome.works_count, 0);
+        assert_eq!(title, "Existing OpenAlex Title");
+        assert_eq!(checkpoint, "1783987200");
+        assert_eq!(
+            transport.source_work_requests(),
+            &[
+                (
+                    "https://openalex.org/S46".to_string(),
+                    Some("2026-06-13".to_string())
+                ),
+                (
+                    "https://openalex.org/S46".to_string(),
+                    Some("2026-06-13".to_string())
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn empty_incremental_crossref_page_preserves_existing_journal() {
+        let connection = Connection::open_in_memory().expect("in-memory db should open");
+        init_index_db(&connection).expect("schema should initialize");
+        seed_scholarly_journal(&connection, 49, "Existing Empty Title");
+        mark_journal_done(&connection, 49, "2026-07-13T00:00:00Z")
+            .expect("prior checkpoint should be written");
+        let (lease_context, change_event_context) =
+            live_synchronization_context(&connection, "run-empty-crossref", "2026-07-14T00:00:00Z");
+        let mut client = ScholarlyClient::new(
+            FixtureScholarlyTransport::new(ScholarlyFixtureData::default()),
+            true,
+        );
+
+        let outcome = process_scholarly_row(
+            &connection,
+            &mut client,
+            &scholarly_row(),
+            ScholarlyProcessContext {
+                csv_file: "journals.csv",
+                journal_id: 49,
+                timestamp: "2026-07-14T00:00:00Z",
+                change_event_context: Some(&change_event_context),
+                lease_context: Some(&lease_context),
+                should_resume: false,
+                attempt_sink: &mut |_| {},
+            },
+        )
+        .expect("empty incremental Crossref page should succeed");
+
+        let transport = client.into_transport();
+        let title: String = connection
+            .query_row(
+                "SELECT title FROM journals WHERE journal_id = 49",
+                [],
+                |row| row.get(0),
+            )
+            .expect("preserved title should load");
+        assert_eq!(outcome.works_count, 0);
+        assert_eq!(title, "Existing Empty Title");
+        assert_eq!(
+            transport.journal_work_requests(),
+            &[("1234-5678".to_string(), Some("2026-06-13".to_string()))]
+        );
+    }
+
+    #[test]
+    fn fixture_manifest_context_does_not_enable_incremental_filter() {
+        let connection = Connection::open_in_memory().expect("in-memory db should open");
+        init_index_db(&connection).expect("schema should initialize");
+        seed_scholarly_journal(&connection, 47, "Existing Fixture Title");
+        mark_journal_done(&connection, 47, "2026-07-13T00:00:00Z")
+            .expect("prior checkpoint should be written");
+        let change_event_context =
+            ChangeEventContext::new("fixture-run", "fixture-0", "2026-07-14T00:00:00Z", false);
+        let fixture = ScholarlyFixtureData {
+            crossref_work_pages: vec![vec![crossref_work("10.1/fixture", "Fixture Article", "30")]],
+            ..ScholarlyFixtureData::default()
+        };
+        let mut client = ScholarlyClient::new(FixtureScholarlyTransport::new(fixture), true);
+
+        process_scholarly_row(
+            &connection,
+            &mut client,
+            &scholarly_row(),
+            ScholarlyProcessContext {
+                csv_file: "journals.csv",
+                journal_id: 47,
+                timestamp: "2026-07-14T00:00:00Z",
+                change_event_context: Some(&change_event_context),
+                lease_context: None,
+                should_resume: false,
+                attempt_sink: &mut |_| {},
+            },
+        )
+        .expect("fixture manifest run should remain a full scan");
+
+        let transport = client.into_transport();
+        assert_eq!(
+            transport.journal_work_requests(),
+            &[("1234-5678".to_string(), None)]
+        );
+    }
+
+    #[test]
+    fn failed_incremental_journal_reuses_prior_checkpoint_on_retry() {
+        let connection = Connection::open_in_memory().expect("in-memory db should open");
+        init_index_db(&connection).expect("schema should initialize");
+        seed_scholarly_journal(&connection, 48, "Retry Journal");
+        mark_journal_done(&connection, 48, "2026-07-13T00:00:00Z")
+            .expect("prior checkpoint should be written");
+        let (lease_context, change_event_context) =
+            live_synchronization_context(&connection, "run-retry-sync", "2026-07-14T00:00:00Z");
+        let failed_fixture = ScholarlyFixtureData {
+            crossref_work_pages: vec![vec![crossref_work("10.1/retry", "Retry Article", "40")]],
+            semantic_scholar_status: Some(503),
+            ..ScholarlyFixtureData::default()
+        };
+        let mut failed_client =
+            ScholarlyClient::new(FixtureScholarlyTransport::new(failed_fixture), true);
+
+        process_scholarly_row(
+            &connection,
+            &mut failed_client,
+            &scholarly_row(),
+            ScholarlyProcessContext {
+                csv_file: "journals.csv",
+                journal_id: 48,
+                timestamp: "2026-07-14T00:00:00Z",
+                change_event_context: Some(&change_event_context),
+                lease_context: Some(&lease_context),
+                should_resume: false,
+                attempt_sink: &mut |_| {},
+            },
+        )
+        .expect_err("failed incremental enrichment should not advance the checkpoint");
+        let failed_checkpoint: String = connection
+            .query_row(
+                "SELECT updated_at FROM journal_state WHERE journal_id = 48",
+                [],
+                |row| row.get(0),
+            )
+            .expect("failed checkpoint should load");
+        assert_eq!(failed_checkpoint, "2026-07-13T00:00:00Z");
+
+        let retry_fixture = ScholarlyFixtureData {
+            crossref_work_pages: vec![vec![crossref_work("10.1/retry", "Retry Article", "40")]],
+            ..ScholarlyFixtureData::default()
+        };
+        let mut retry_client =
+            ScholarlyClient::new(FixtureScholarlyTransport::new(retry_fixture), true);
+        process_scholarly_row(
+            &connection,
+            &mut retry_client,
+            &scholarly_row(),
+            ScholarlyProcessContext {
+                csv_file: "journals.csv",
+                journal_id: 48,
+                timestamp: "2026-07-14T00:00:00Z",
+                change_event_context: Some(&change_event_context),
+                lease_context: Some(&lease_context),
+                should_resume: false,
+                attempt_sink: &mut |_| {},
+            },
+        )
+        .expect("retry should replay the prior overlapped window");
+
+        let transport = retry_client.into_transport();
+        assert_eq!(
+            transport.journal_work_requests(),
+            &[(("1234-5678").to_string(), Some("2026-06-13".to_string()))]
+        );
     }
 
     #[test]
@@ -1023,6 +1339,50 @@ mod tests {
             ("issn".to_string(), "1234-5678".to_string()),
             ("id".to_string(), "paged-journal".to_string()),
         ])
+    }
+
+    fn seed_scholarly_journal(connection: &Connection, journal_id: i64, title: &str) {
+        connection
+            .execute(
+                "
+                INSERT INTO journals (journal_id, library_id, title, issn, has_articles)
+                VALUES (?1, 'scholarly', ?2, '1234-5678', 1)
+                ",
+                rusqlite::params![journal_id, title],
+            )
+            .expect("existing journal should insert");
+        connection
+            .execute(
+                "
+                INSERT INTO journal_meta (journal_id, source_csv, csv_title)
+                VALUES (?1, 'existing.csv', ?2)
+                ",
+                rusqlite::params![journal_id, title],
+            )
+            .expect("existing journal metadata should insert");
+    }
+
+    fn live_synchronization_context(
+        connection: &Connection,
+        run_id: &str,
+        timestamp: &str,
+    ) -> (IndexRunLeaseContext, ChangeEventContext) {
+        begin_index_run(
+            connection,
+            &IndexRunStartRequest {
+                run_id,
+                csv_file: "journals.csv",
+                started_at: timestamp,
+                total_journals: 1,
+                now_epoch_seconds: 4_000_000_000,
+                should_adopt_events: false,
+            },
+        )
+        .expect("live synchronization run should start");
+        (
+            IndexRunLeaseContext::new(run_id),
+            ChangeEventContext::new(run_id, "worker-0", timestamp, false),
+        )
     }
 
     fn crossref_work(doi: &str, title: &str, page: &str) -> serde_json::Value {

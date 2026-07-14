@@ -1577,6 +1577,55 @@ pub fn is_journal_complete(connection: &Connection, journal_id: i64) -> rusqlite
     }
 }
 
+/// Return the overlapped synchronization date for a completed journal.
+///
+/// # Arguments
+///
+/// * `connection` - Open SQLite connection.
+/// * `journal_id` - Journal id.
+/// * `current_timestamp` - Current run timestamp as Unix seconds or SQLite-compatible ISO text.
+///
+/// # Returns
+///
+/// Prior completion date minus 30 days, or `None` for missing, invalid, or future state.
+pub(crate) fn get_journal_synchronization_date(
+    connection: &Connection,
+    journal_id: i64,
+    current_timestamp: &str,
+) -> rusqlite::Result<Option<String>> {
+    connection
+        .query_row(
+            "
+            WITH normalized AS (
+                SELECT
+                    status,
+                    CASE
+                        WHEN trim(updated_at) <> ''
+                            AND trim(updated_at) NOT GLOB '*[^0-9]*'
+                        THEN datetime(CAST(trim(updated_at) AS INTEGER), 'unixepoch')
+                        ELSE datetime(updated_at)
+                    END AS checkpoint_at,
+                    CASE
+                        WHEN trim(?2) <> '' AND trim(?2) NOT GLOB '*[^0-9]*'
+                        THEN datetime(CAST(trim(?2) AS INTEGER), 'unixepoch')
+                        ELSE datetime(?2)
+                    END AS current_at
+                FROM journal_state
+                WHERE journal_id = ?1
+            )
+            SELECT date(checkpoint_at, '-30 days')
+            FROM normalized
+            WHERE status = 'done'
+                AND checkpoint_at IS NOT NULL
+                AND current_at IS NOT NULL
+                AND checkpoint_at <= current_at
+            ",
+            params![journal_id, current_timestamp],
+            |row| row.get(0),
+        )
+        .optional()
+}
+
 /// Mark one journal year as indexed.
 ///
 /// # Arguments
@@ -1807,12 +1856,12 @@ mod tests {
 
     use super::{
         apply_article_changes, assert_index_run_lease_owner, begin_index_run,
-        heartbeat_index_run_lease, init_index_db, init_index_db_with_simple_tokenizer_path,
-        mark_article_listing_ready, mark_journal_done, open_index_db, persist_index_run_stats,
-        refresh_article_listing_for_articles, release_index_run_lease,
-        simple_tokenizer_path_from_root, upsert_article_search, upsert_articles, upsert_journal,
-        upsert_meta, with_immediate_index_transaction, ChangeEventContext, IndexRunLeaseError,
-        IndexRunStartRequest,
+        get_journal_synchronization_date, heartbeat_index_run_lease, init_index_db,
+        init_index_db_with_simple_tokenizer_path, mark_article_listing_ready, mark_journal_done,
+        open_index_db, persist_index_run_stats, refresh_article_listing_for_articles,
+        release_index_run_lease, simple_tokenizer_path_from_root, upsert_article_search,
+        upsert_articles, upsert_journal, upsert_meta, with_immediate_index_transaction,
+        ChangeEventContext, IndexRunLeaseError, IndexRunStartRequest,
     };
 
     const RUNTIME_INDEXES: &[&str] = &[
@@ -1863,6 +1912,50 @@ mod tests {
             .expect("busy timeout should be readable");
 
         assert_eq!(busy_timeout_ms, 30_000);
+    }
+
+    #[test]
+    fn scholarly_journal_synchronization_date_accepts_trusted_unix_and_iso_checkpoints() {
+        let connection = Connection::open_in_memory().expect("in-memory db should open");
+        init_index_db(&connection).expect("schema should initialize");
+        mark_journal_done(&connection, 1, "1783900800").expect("Unix checkpoint should be written");
+        mark_journal_done(&connection, 2, "2026-07-13T12:00:00Z")
+            .expect("ISO checkpoint should be written");
+        mark_journal_done(&connection, 3, "not-a-timestamp")
+            .expect("malformed checkpoint should be written");
+        mark_journal_done(&connection, 4, "2026-07-15T00:00:00Z")
+            .expect("future checkpoint should be written");
+
+        assert_eq!(
+            get_journal_synchronization_date(&connection, 1, "1783987200")
+                .expect("Unix checkpoint should query"),
+            Some("2026-06-13".to_string())
+        );
+        assert_eq!(
+            get_journal_synchronization_date(&connection, 2, "2026-07-14T00:00:00Z")
+                .expect("ISO checkpoint should query"),
+            Some("2026-06-13".to_string())
+        );
+        assert_eq!(
+            get_journal_synchronization_date(&connection, 3, "2026-07-14T00:00:00Z")
+                .expect("malformed checkpoint should fall back"),
+            None
+        );
+        assert_eq!(
+            get_journal_synchronization_date(&connection, 4, "2026-07-14T00:00:00Z")
+                .expect("future checkpoint should fall back"),
+            None
+        );
+        assert_eq!(
+            get_journal_synchronization_date(&connection, 1, "invalid-current")
+                .expect("invalid current timestamp should fall back"),
+            None
+        );
+        assert_eq!(
+            get_journal_synchronization_date(&connection, 99, "2026-07-14T00:00:00Z")
+                .expect("missing checkpoint should fall back"),
+            None
+        );
     }
 
     #[test]
