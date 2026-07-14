@@ -429,9 +429,6 @@ impl LiveCnkiTransport {
             match self.client.execute(request) {
                 Ok(response) => {
                     let status_code = response.status().as_u16();
-                    let text = response
-                        .text()
-                        .map_err(|error| CnkiSourceError::Request(error.to_string()))?;
                     if !(200..300).contains(&status_code) {
                         let message = format!("CNKI request failed with HTTP {status_code}");
                         self.record_attempt(LiveCnkiAttempt {
@@ -447,10 +444,28 @@ impl LiveCnkiTransport {
                             thread::sleep(Duration::from_secs((attempt + 1) as u64));
                             continue;
                         }
-                        return Err(CnkiSourceError::Request(format!(
-                            "{message}: {request_url}"
-                        )));
+                        return Err(CnkiSourceError::Request(message));
                     }
+                    let text = match response.text() {
+                        Ok(text) => text,
+                        Err(_) => {
+                            let message = "CNKI response body decoding failed".to_string();
+                            self.record_attempt(LiveCnkiAttempt {
+                                endpoint,
+                                method,
+                                url: &request_url,
+                                status_code: Some(status_code),
+                                did_succeed: false,
+                                did_retry: attempt > 0,
+                                error: Some(message.clone()),
+                            });
+                            if attempt + 1 < CNKI_REQUEST_ATTEMPTS {
+                                thread::sleep(Duration::from_secs((attempt + 1) as u64));
+                                continue;
+                            }
+                            return Err(CnkiSourceError::Request(message));
+                        }
+                    };
                     match checked_text(&text, &request_url) {
                         Ok(()) => {
                             self.record_attempt(LiveCnkiAttempt {
@@ -1403,6 +1418,11 @@ fn fixture_url(endpoint: &str, key: Option<&str>) -> String {
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+    use std::sync::mpsc::{self, Sender};
+    use std::thread::{self, JoinHandle};
+    use std::time::Duration;
 
     use serde_json::{json, Value};
 
@@ -1410,7 +1430,7 @@ mod tests {
         absolute_url, checked_text, decode_html, journal_detail_matches, parse_article_detail,
         parse_issue_articles, parse_journal_detail, parse_journal_search_results,
         parse_year_issues, with_cnki_chinese_language, CnkiClient, CnkiFixtureData,
-        CnkiSourceError, FixtureCnkiTransport,
+        CnkiSourceError, FixtureCnkiTransport, LiveCnkiConfig, LiveCnkiTransport,
     };
 
     #[test]
@@ -1577,6 +1597,93 @@ mod tests {
     }
 
     #[test]
+    fn live_cnki_retries_a_2xx_decode_failure_then_records_success() {
+        let server = TestHttpServer::start(vec![malformed_gzip_response(200), ok_response()]);
+        let request_url = format!("{}?api_key=decode-secret", server.url());
+        let mut transport = live_cnki_transport();
+
+        let text = transport
+            .get_text(&request_url, None, "decode_test")
+            .expect("second response should recover from decoding failure");
+        let served_count = server.finish();
+
+        assert_eq!(text, "ok");
+        assert_eq!(served_count, 2);
+        assert_eq!(transport.attempts.len(), 2);
+        assert_eq!(transport.attempts[0].status_code, Some(200));
+        assert!(!transport.attempts[0].did_succeed);
+        assert!(!transport.attempts[0].did_retry);
+        assert!(transport.attempts[1].did_succeed);
+        assert!(transport.attempts[1].did_retry);
+        assert_decode_errors_are_safe(&transport);
+    }
+
+    #[test]
+    fn live_cnki_stops_after_three_recorded_2xx_decode_failures() {
+        let server = TestHttpServer::start(vec![
+            malformed_gzip_response(200),
+            malformed_gzip_response(200),
+            malformed_gzip_response(200),
+        ]);
+        let request_url = format!("{}?api_key=persistent-secret", server.url());
+        let mut transport = live_cnki_transport();
+
+        let error = transport
+            .get_text(&request_url, None, "decode_test")
+            .expect_err("three decoding failures should fail loud");
+        let served_count = server.finish();
+
+        assert_eq!(served_count, 3);
+        assert_eq!(transport.attempts.len(), 3);
+        assert!(transport
+            .attempts
+            .iter()
+            .all(|attempt| attempt.status_code == Some(200) && !attempt.did_succeed));
+        assert_eq!(
+            transport
+                .attempts
+                .iter()
+                .map(|attempt| attempt.did_retry)
+                .collect::<Vec<_>>(),
+            [false, true, true]
+        );
+        assert!(error.to_string().contains("response body decoding failed"));
+        assert!(!error.to_string().contains("persistent-secret"));
+        assert_decode_errors_are_safe(&transport);
+    }
+
+    #[test]
+    fn live_cnki_checks_non_success_status_before_decoding_body() {
+        let server = TestHttpServer::start(vec![
+            malformed_gzip_response(503),
+            ok_response(),
+            ok_response(),
+        ]);
+        let mut transport = live_cnki_transport();
+
+        let result = transport.get_text(server.url(), None, "status_test");
+        let served_count = server.finish();
+        assert!(
+            result.is_ok(),
+            "HTTP retry should recover: {result:?}; attempts: {:?}",
+            transport.attempts
+        );
+        let text = result.expect("checked successful HTTP retry should contain text");
+
+        assert_eq!(text, "ok");
+        assert!(served_count >= 2);
+        assert_eq!(transport.attempts[0].status_code, Some(503));
+        assert!(transport.attempts[0]
+            .error
+            .as_deref()
+            .is_some_and(|error| error.contains("HTTP 503")));
+        assert!(transport
+            .attempts
+            .last()
+            .is_some_and(|attempt| attempt.did_succeed));
+    }
+
+    #[test]
     fn issue_article_parser_returns_empty_for_missing_rows() {
         let articles = parse_issue_articles(
             "<dt class=\"tit\">Articles</dt>",
@@ -1704,5 +1811,128 @@ mod tests {
 
     fn cnki_row() -> BTreeMap<String, String> {
         BTreeMap::from([("title".to_string(), "CNKI Test Journal".to_string())])
+    }
+
+    fn live_cnki_transport() -> LiveCnkiTransport {
+        LiveCnkiTransport::new(LiveCnkiConfig { timeout_seconds: 2 })
+            .expect("live CNKI test transport should build")
+    }
+
+    fn assert_decode_errors_are_safe(transport: &LiveCnkiTransport) {
+        for attempt in transport
+            .attempts
+            .iter()
+            .filter(|attempt| !attempt.did_succeed)
+        {
+            let error = attempt
+                .error
+                .as_deref()
+                .expect("failure should have an error");
+            assert!(error.contains("response body decoding failed"));
+            assert!(!error.contains("secret"));
+            assert!(!error.contains("not-gzip"));
+        }
+    }
+
+    fn malformed_gzip_response(status_code: u16) -> String {
+        let reason = if status_code == 200 {
+            "OK"
+        } else {
+            "Service Unavailable"
+        };
+        format!(
+            "HTTP/1.1 {status_code} {reason}\r\nContent-Encoding: gzip\r\nContent-Length: 8\r\nConnection: close\r\n\r\nnot-gzip"
+        )
+    }
+
+    fn ok_response() -> String {
+        "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok".to_string()
+    }
+
+    struct TestHttpServer {
+        url: String,
+        stop_sender: Sender<()>,
+        handle: Option<JoinHandle<usize>>,
+    }
+
+    impl TestHttpServer {
+        fn start(responses: Vec<String>) -> Self {
+            let listener = TcpListener::bind("127.0.0.1:0").expect("test server should bind");
+            listener
+                .set_nonblocking(true)
+                .expect("test server should be nonblocking");
+            let address = listener
+                .local_addr()
+                .expect("test server address should load");
+            let (stop_sender, stop_receiver) = mpsc::channel();
+            let handle = thread::spawn(move || {
+                let mut responses = responses.into_iter();
+                let mut served_count = 0;
+                loop {
+                    if stop_receiver.try_recv().is_ok() {
+                        return served_count;
+                    }
+                    match listener.accept() {
+                        Ok((mut stream, _)) => {
+                            stream
+                                .set_read_timeout(Some(Duration::from_secs(1)))
+                                .expect("test stream timeout should set");
+                            let mut request = [0_u8; 4096];
+                            let _ = stream.read(&mut request);
+                            let Some(response) = responses.next() else {
+                                return served_count;
+                            };
+                            if response.contains("Content-Encoding: gzip") {
+                                let (headers, body) = response
+                                    .split_once("\r\n\r\n")
+                                    .expect("test response should contain headers");
+                                stream
+                                    .write_all(format!("{headers}\r\n\r\n").as_bytes())
+                                    .expect("test response headers should write");
+                                stream.flush().expect("test response headers should flush");
+                                thread::sleep(Duration::from_millis(100));
+                                let _ = stream.write_all(body.as_bytes());
+                            } else {
+                                stream
+                                    .write_all(response.as_bytes())
+                                    .expect("test response should write");
+                            }
+                            served_count += 1;
+                        }
+                        Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                            thread::sleep(Duration::from_millis(5));
+                        }
+                        Err(error) => panic!("test server accept failed: {error}"),
+                    }
+                }
+            });
+            Self {
+                url: format!("http://{address}/body"),
+                stop_sender,
+                handle: Some(handle),
+            }
+        }
+
+        fn url(&self) -> &str {
+            &self.url
+        }
+
+        fn finish(mut self) -> usize {
+            let _ = self.stop_sender.send(());
+            self.handle
+                .take()
+                .expect("test server thread should exist")
+                .join()
+                .expect("test server thread should finish")
+        }
+    }
+
+    impl Drop for TestHttpServer {
+        fn drop(&mut self) {
+            let _ = self.stop_sender.send(());
+            if let Some(handle) = self.handle.take() {
+                let _ = handle.join();
+            }
+        }
     }
 }
