@@ -462,12 +462,16 @@ try {
             0L
         }
         $workingSetBytes = [Math]::Max(0L, $snapshot.CurrentBytes - $inactiveFileBytes)
-        $processRssBytes = [long](
-            $snapshot.Processes | Measure-Object -Property RssBytes -Sum
-        ).Sum
-        $threadCount = [int](
-            $snapshot.Processes | Measure-Object -Property ThreadCount -Sum
-        ).Sum
+        $processRssBytes = 0L
+        $threadCount = 0
+        if ($snapshot.Processes.Count -gt 0) {
+            $processRssBytes = [long](
+                $snapshot.Processes | Measure-Object -Property RssBytes -Sum
+            ).Sum
+            $threadCount = [int](
+                $snapshot.Processes | Measure-Object -Property ThreadCount -Sum
+            ).Sum
+        }
         foreach ($processEntry in $snapshot.Processes) {
             $key = "$($processEntry.Pid):$($processEntry.Command)"
             if (-not $processPeaks.ContainsKey($key) -or
