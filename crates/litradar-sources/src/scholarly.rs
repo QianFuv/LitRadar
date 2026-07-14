@@ -23,7 +23,7 @@ const SEMANTIC_SCHOLAR_FIELDS: &str = "externalIds,url,isOpenAccess,openAccessPd
 const OPENALEX_SOURCE_FIELDS: &str = "id,display_name,issn_l,issn,works_count";
 const OPENALEX_WORK_FIELDS: &str = "id,doi,title,display_name,publication_year,publication_date,language,cited_by_count,is_retracted,primary_location,locations,open_access,best_oa_location,authorships,ids,biblio,abstract_inverted_index,topics,primary_topic,funders,awards";
 const DEFAULT_USER_AGENT: &str = "LitRadar/0.1 (mailto:litradar@example.invalid)";
-const CROSSREF_ROWS: usize = 1000;
+const CROSSREF_ROWS: usize = 250;
 const OPENALEX_SOURCE_WORK_ROWS: usize = 200;
 const DEFAULT_MAX_RETRIES: usize = 2;
 const RETRY_STATUS_CODES: [u16; 5] = [429, 500, 502, 503, 504];
@@ -242,6 +242,7 @@ pub trait ScholarlyTransport {
 pub struct FixtureScholarlyTransport {
     data: ScholarlyFixtureData,
     attempts: Vec<SourceAttempt>,
+    crossref_page_index: usize,
     semantic_scholar_batches: Vec<Vec<String>>,
     openalex_doi_batches: Vec<Vec<String>>,
     source_lookup_issns: Vec<String>,
@@ -263,6 +264,7 @@ impl FixtureScholarlyTransport {
         Self {
             data,
             attempts: Vec::new(),
+            crossref_page_index: 0,
             semantic_scholar_batches: Vec::new(),
             openalex_doi_batches: Vec::new(),
             source_lookup_issns: Vec::new(),
@@ -872,12 +874,16 @@ impl ScholarlyTransport for FixtureScholarlyTransport {
                     ));
                 }
                 self.record_attempt(&request, Some(200), true, None);
-                let page_index = fixture_page_index(cursor.as_deref());
+                if cursor.is_none() {
+                    self.crossref_page_index = 0;
+                }
                 let (items, next_cursor) = fixture_page(
                     &self.data.crossref_work_pages,
                     &self.data.crossref_works,
-                    page_index,
+                    self.crossref_page_index,
                 );
+                self.crossref_page_index += 1;
+                let next_cursor = next_cursor.map(|_| "stateful-crossref-cursor".to_string());
                 Ok(json!({
                     "message": {
                         "items": items,
@@ -1838,8 +1844,11 @@ mod tests {
         let first_page = (0..CROSSREF_ROWS)
             .map(|index| json!({"DOI": format!("10.1/{index}")}))
             .collect::<Vec<_>>();
+        let second_page = (CROSSREF_ROWS..(CROSSREF_ROWS * 2))
+            .map(|index| json!({"DOI": format!("10.1/{index}")}))
+            .collect::<Vec<_>>();
         let transport = FixtureScholarlyTransport::new(ScholarlyFixtureData {
-            crossref_work_pages: vec![first_page, vec![json!({"DOI": "10.1/final"})]],
+            crossref_work_pages: vec![first_page, second_page, vec![json!({"DOI": "10.1/final"})]],
             ..ScholarlyFixtureData::default()
         });
         let mut client = ScholarlyClient::new(transport, true);
@@ -1848,15 +1857,29 @@ mod tests {
             .fetch_journal_works_page("1234-5678", None, None)
             .expect("first page should load");
         assert_eq!(first.items.len(), CROSSREF_ROWS);
-        assert_eq!(first.next_cursor.as_deref(), Some("fixture-page-1"));
+        assert_eq!(
+            first.next_cursor.as_deref(),
+            Some("stateful-crossref-cursor")
+        );
         assert_eq!(client.drain_attempts().len(), 1);
         assert!(client.attempts().is_empty());
 
         let second = client
             .fetch_journal_works_page("1234-5678", None, first.next_cursor.as_deref())
             .expect("second page should load");
-        assert_eq!(second.items, vec![json!({"DOI": "10.1/final"})]);
-        assert_eq!(second.next_cursor, None);
+        assert_eq!(second.items.len(), CROSSREF_ROWS);
+        assert_eq!(second.next_cursor, first.next_cursor);
+
+        let third = client
+            .fetch_journal_works_page("1234-5678", None, second.next_cursor.as_deref())
+            .expect("third page should load");
+        assert_eq!(third.items, vec![json!({"DOI": "10.1/final"})]);
+        assert_eq!(third.next_cursor, None);
+    }
+
+    #[test]
+    fn crossref_page_rows_stay_within_live_memory_budget() {
+        assert_eq!(CROSSREF_ROWS, 250);
     }
 
     #[test]

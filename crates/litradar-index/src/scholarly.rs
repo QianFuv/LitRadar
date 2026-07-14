@@ -503,11 +503,6 @@ where
         let next_page = capture_scholarly_attempts(client, attempt_sink, |client| {
             client.fetch_journal_works_page(issn, None, Some(&cursor))
         })?;
-        if next_page.next_cursor.as_deref() == Some(cursor.as_str()) {
-            return Err(ScholarlyIndexError::InvalidJournal(
-                "Crossref returned a repeated cursor".to_string(),
-            ));
-        }
         page = next_page;
     }
     Ok(())
@@ -815,13 +810,14 @@ mod tests {
     }
 
     #[test]
-    fn multi_page_works_are_enriched_and_committed_before_next_page() {
+    fn stateful_crossref_cursor_pages_are_enriched_and_committed_in_order() {
         let connection = Connection::open_in_memory().expect("in-memory db should open");
         init_index_db(&connection).expect("schema should initialize");
         let fixture = ScholarlyFixtureData {
             crossref_work_pages: vec![
                 vec![crossref_work("10.1/first", "First Article", "1")],
                 vec![crossref_work("10.1/second", "Second Article", "2")],
+                vec![crossref_work("10.1/third", "Third Article", "3")],
             ],
             ..ScholarlyFixtureData::default()
         };
@@ -843,14 +839,17 @@ mod tests {
         )
         .expect("multi-page journal should succeed");
 
-        assert_eq!(outcome.works_count, 2);
-        assert_eq!(outcome.written_article_count, 2);
+        assert_eq!(outcome.works_count, 3);
+        assert_eq!(outcome.written_article_count, 3);
         assert_eq!(
             attempts
                 .iter()
                 .map(|attempt| attempt.endpoint.as_str())
                 .collect::<Vec<_>>(),
             vec![
+                "journal_works",
+                "works",
+                "paper_batch",
                 "journal_works",
                 "works",
                 "paper_batch",
@@ -863,7 +862,7 @@ mod tests {
         let article_count: i64 = connection
             .query_row("SELECT COUNT(*) FROM articles", [], |row| row.get(0))
             .expect("article count should query");
-        assert_eq!(article_count, 2);
+        assert_eq!(article_count, 3);
     }
 
     #[test]
