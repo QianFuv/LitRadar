@@ -1233,6 +1233,7 @@ fn run_live_csv_index_with_runtime(
         },
     )?;
     let lease_context = IndexRunLeaseContext::new(&run_id);
+    lease_context.refresh_after_acquisition(&connection)?;
     let mut heartbeat =
         match LiveIndexLeaseHeartbeat::start(db_path, lease_context.clone(), heartbeat_interval) {
             Ok(heartbeat) => heartbeat,
@@ -1794,6 +1795,42 @@ mod tests {
             .borrow()
             .iter()
             .all(|request| request.lease_run_id.as_deref() == Some(outcome.run_id.as_str())));
+    }
+
+    #[test]
+    fn live_update_refreshes_lease_after_acquisition_exceeds_expiry() {
+        let root = tempdir().expect("temp root should be created");
+        let (csv_path, db_path) = write_parallel_live_csv(root.path());
+        insert_pending_event(&db_path, "run-pending", 202);
+        let mut config = live_config(root.path());
+        config.update = true;
+        let launcher = RecordingWorkerLauncher::default();
+        let expired_acquisition_time = LiveRunTime {
+            epoch_seconds: 0,
+            epoch_nanoseconds: 1,
+        };
+
+        let outcome = run_live_csv_index_with_runtime(
+            &config,
+            &csv_path,
+            &db_path,
+            &launcher,
+            expired_acquisition_time,
+            Duration::from_secs(60),
+        )
+        .expect("exact owner should refresh after long event adoption");
+
+        let connection = Connection::open(&db_path).expect("index database should open");
+        let parent_status: String = connection
+            .query_row(
+                "SELECT status FROM index_runs WHERE run_id = ?1",
+                [&outcome.run_id],
+                |row| row.get(0),
+            )
+            .expect("refreshed parent should load");
+        assert_eq!(parent_status, "succeeded");
+        assert_eq!(table_count(&connection, "index_change_events"), 0);
+        assert_eq!(table_count(&connection, "index_run_lease"), 0);
     }
 
     #[test]

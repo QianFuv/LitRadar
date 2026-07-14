@@ -68,6 +68,18 @@ impl IndexRunLeaseContext {
         heartbeat_index_run_lease(connection, &self.run_id, current_epoch_seconds()?)
     }
 
+    /// Refresh this exact owner after its acquisition transaction commits.
+    pub(crate) fn refresh_after_acquisition(
+        &self,
+        connection: &Connection,
+    ) -> Result<(), IndexRunLeaseError> {
+        refresh_index_run_lease_after_acquisition(
+            connection,
+            &self.run_id,
+            current_epoch_seconds()?,
+        )
+    }
+
     /// Assert that this run still owns an unexpired lease.
     pub(crate) fn assert_owner(&self, connection: &Connection) -> Result<(), IndexRunLeaseError> {
         assert_index_run_lease_owner(connection, &self.run_id, current_epoch_seconds()?)
@@ -828,6 +840,39 @@ pub(crate) fn heartbeat_index_run_lease(
         UPDATE index_run_lease
         SET heartbeat_at = ?2, expires_at = ?3
         WHERE id = 1 AND run_id = ?1 AND expires_at > ?2
+        ",
+        params![run_id, now_epoch_seconds, lease_expiry(now_epoch_seconds)],
+    )?;
+    if updated == 1 {
+        Ok(())
+    } else {
+        Err(IndexRunLeaseError::OwnershipLost {
+            run_id: run_id.to_string(),
+        })
+    }
+}
+
+/// Refresh the exact run owner after an atomic acquisition transaction.
+///
+/// # Arguments
+///
+/// * `connection` - Open SQLite connection.
+/// * `run_id` - Exact run identifier installed by the acquisition transaction.
+/// * `now_epoch_seconds` - Current Unix timestamp in seconds after acquisition commits.
+///
+/// # Returns
+///
+/// Empty result when the exact owner was refreshed, including after initial expiry.
+pub(crate) fn refresh_index_run_lease_after_acquisition(
+    connection: &Connection,
+    run_id: &str,
+    now_epoch_seconds: i64,
+) -> Result<(), IndexRunLeaseError> {
+    let updated = connection.execute(
+        "
+        UPDATE index_run_lease
+        SET heartbeat_at = ?2, expires_at = ?3
+        WHERE id = 1 AND run_id = ?1
         ",
         params![run_id, now_epoch_seconds, lease_expiry(now_epoch_seconds)],
     )?;
@@ -1859,9 +1904,10 @@ mod tests {
         get_journal_synchronization_date, heartbeat_index_run_lease, init_index_db,
         init_index_db_with_simple_tokenizer_path, mark_article_listing_ready, mark_journal_done,
         open_index_db, persist_index_run_stats, refresh_article_listing_for_articles,
-        release_index_run_lease, simple_tokenizer_path_from_root, upsert_article_search,
-        upsert_articles, upsert_journal, upsert_meta, with_immediate_index_transaction,
-        ChangeEventContext, IndexRunLeaseError, IndexRunStartRequest,
+        refresh_index_run_lease_after_acquisition, release_index_run_lease,
+        simple_tokenizer_path_from_root, upsert_article_search, upsert_articles, upsert_journal,
+        upsert_meta, with_immediate_index_transaction, ChangeEventContext, IndexRunLeaseError,
+        IndexRunStartRequest,
     };
 
     const RUNTIME_INDEXES: &[&str] = &[
@@ -2316,6 +2362,41 @@ mod tests {
         assert!(release_index_run_lease(&connection, "run-owner")
             .expect("current owner release should execute"));
         assert_eq!(table_count(&connection, "index_run_lease"), 0);
+    }
+
+    #[test]
+    fn post_acquisition_refresh_requires_exact_owner_after_expiry() {
+        let connection = Connection::open_in_memory().expect("in-memory db should open");
+        init_index_db(&connection).expect("schema should initialize");
+        begin_index_run(
+            &connection,
+            &index_run_start_request("run-owner", "2026-07-14T00:00:00Z", 100, false),
+        )
+        .expect("owner should acquire the lease");
+
+        refresh_index_run_lease_after_acquisition(&connection, "run-owner", 450)
+            .expect("exact owner should refresh after initial expiry");
+        let lease: (String, i64, i64) = connection
+            .query_row(
+                "SELECT run_id, heartbeat_at, expires_at FROM index_run_lease WHERE id = 1",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .expect("refreshed lease should load");
+        assert_eq!(lease, ("run-owner".to_string(), 450, 750));
+
+        let wrong_owner = refresh_index_run_lease_after_acquisition(&connection, "run-other", 500)
+            .expect_err("different owner must not refresh the lease");
+        assert!(matches!(
+            wrong_owner,
+            IndexRunLeaseError::OwnershipLost { ref run_id } if run_id == "run-other"
+        ));
+        assert_index_run_lease_owner(&connection, "run-owner", 749)
+            .expect("refreshed owner should remain fenced by the new expiry");
+        assert!(matches!(
+            assert_index_run_lease_owner(&connection, "run-owner", 750),
+            Err(IndexRunLeaseError::OwnershipLost { .. })
+        ));
     }
 
     #[test]
