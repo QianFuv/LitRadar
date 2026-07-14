@@ -424,12 +424,132 @@ fn empty_index_database_migration_creates_current_schema() {
     assert!(table_exists(&path, "articles"));
     assert!(table_exists(&path, "article_search"));
     assert!(table_exists(&path, "index_change_events"));
+    assert!(table_exists(&path, "index_run_lease"));
+    assert_eq!(
+        table_columns(&path, "index_run_lease"),
+        ["id", "run_id", "heartbeat_at", "expires_at"]
+    );
     assert!(table_columns(&path, "journals").contains(&"platform_journal_id".to_string()));
     assert!(index_exists(&path, "idx_index_change_events_identity"));
     assert!(index_exists(
         &path,
         "idx_index_change_events_run_membership"
     ));
+}
+
+#[test]
+fn version_two_index_migration_preserves_rows_and_adds_run_lease() {
+    let temp_dir = tempdir().expect("temp directory should be created");
+    let path = temp_dir.path().join("version-two-index.sqlite");
+    migrate_index_database(&path, None).expect("current index database should migrate");
+    let connection = Connection::open(&path).expect("index database should open");
+    load_workspace_tokenizer(&connection);
+    connection
+        .execute_batch(
+            "
+            INSERT INTO journals (journal_id, library_id, title)
+            VALUES (60, 'scholarly', 'Preserved Journal');
+            INSERT INTO articles (
+                article_id, journal_id, title, date, authors, in_press
+            ) VALUES (
+                6000, 60, 'Preserved Article', '2026-07-01',
+                'Preserved Author', 1
+            );
+            INSERT INTO article_listing (
+                article_id, journal_id, date, in_press
+            ) VALUES (6000, 60, '2026-07-01', 1);
+            INSERT INTO article_search (
+                rowid, article_id, title, abstract, doi, authors, journal_title
+            ) VALUES (
+                6000, 6000, 'Preserved Article', '', '',
+                'Preserved Author', 'Preserved Journal'
+            );
+            INSERT INTO index_change_events (
+                run_id, worker_id, article_id, event_type, membership_type,
+                journal_id, issue_id, is_backfill, created_at
+            ) VALUES (
+                'interrupted-run', 'worker-2', 6000, 'add', 'inpress',
+                60, NULL, 1, '2026-07-01T00:00:00Z'
+            );
+            DROP TABLE IF EXISTS index_run_lease;
+            PRAGMA user_version = 2;
+            ",
+        )
+        .expect("version two fixture should be created");
+    drop(connection);
+
+    migrate_index_database(&path, None).expect("version two database should migrate");
+
+    assert_eq!(user_version(&path), INDEX_SCHEMA_VERSION);
+    assert!(table_exists(&path, "index_run_lease"));
+    assert_eq!(projection_counts(&path), (1, 1, 1));
+    let event: (String, String, i64, String, i64) = Connection::open(&path)
+        .expect("migrated index database should open")
+        .query_row(
+            "SELECT run_id, worker_id, article_id, created_at, is_backfill
+             FROM index_change_events",
+            [],
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                ))
+            },
+        )
+        .expect("preserved event should load");
+    assert_eq!(
+        event,
+        (
+            "interrupted-run".to_string(),
+            "worker-2".to_string(),
+            6000,
+            "2026-07-01T00:00:00Z".to_string(),
+            1,
+        )
+    );
+}
+
+#[test]
+fn version_three_failure_preserves_version_two_data() {
+    let temp_dir = tempdir().expect("temp directory should be created");
+    let path = temp_dir.path().join("broken-version-two-index.sqlite");
+    migrate_index_database(&path, None).expect("current index database should migrate");
+    let connection = Connection::open(&path).expect("index database should open");
+    connection
+        .execute_batch(
+            "
+            INSERT INTO journals (journal_id, library_id, title)
+            VALUES (70, 'scholarly', 'Rollback Journal');
+            INSERT INTO articles (article_id, journal_id, title)
+            VALUES (7000, 70, 'Rollback Article');
+            DROP TABLE IF EXISTS index_run_lease;
+            CREATE TABLE index_run_lease (
+                id INTEGER PRIMARY KEY CHECK (id = 1)
+            );
+            PRAGMA user_version = 2;
+            ",
+        )
+        .expect("broken version two fixture should be created");
+    drop(connection);
+
+    let error = migrate_index_database(&path, None)
+        .expect_err("invalid version two lease schema should fail migration");
+
+    assert!(error.to_string().contains("index_run_lease.run_id"));
+    assert_eq!(user_version(&path), 2);
+    assert_eq!(table_columns(&path, "index_run_lease"), ["id"]);
+    let article_title: String = Connection::open(&path)
+        .expect("rolled back index database should open")
+        .query_row(
+            "SELECT title FROM articles WHERE article_id = 7000",
+            [],
+            |row| row.get(0),
+        )
+        .expect("preserved article should load");
+    assert_eq!(article_title, "Rollback Article");
 }
 
 #[test]

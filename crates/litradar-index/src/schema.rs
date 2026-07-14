@@ -1,6 +1,8 @@
 //! SQLite schema and writer helpers for Rust scholarly indexing.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::error::Error;
+use std::fmt;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -13,6 +15,8 @@ use crate::stats::IndexRunStats;
 use crate::transforms::{ArticleRecord, IssueRecord, JournalRecord, MetaRecord};
 
 const INDEX_BUSY_TIMEOUT_SECONDS: u64 = 30;
+const INDEX_RUN_LEASE_DURATION_SECONDS: i64 = 300;
+const PENDING_EVENT_ADOPTION_BATCH_SIZE: i64 = 1_000;
 
 /// Context attached to normalized index change events.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -38,6 +42,100 @@ impl ChangeEventContext {
             is_backfill,
         }
     }
+}
+
+/// Parameters required to acquire one live index database lease.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct IndexRunStartRequest<'a> {
+    /// Unique run identifier.
+    pub(crate) run_id: &'a str,
+    /// Source CSV filename.
+    pub(crate) csv_file: &'a str,
+    /// Human-readable run start timestamp.
+    pub(crate) started_at: &'a str,
+    /// Expected journal count.
+    pub(crate) total_journals: i64,
+    /// Current Unix timestamp in seconds.
+    pub(crate) now_epoch_seconds: i64,
+    /// Whether pending events should be adopted by this run.
+    pub(crate) should_adopt_events: bool,
+}
+
+/// Recovery details returned after a live index run acquires its lease.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct IndexRunStartOutcome {
+    /// Previous lease owner reclaimed by this run.
+    pub(crate) interrupted_run_id: Option<String>,
+    /// Source event rows replayed under the new run identifier.
+    pub(crate) adopted_event_count: usize,
+}
+
+/// Errors returned by durable live index lease operations.
+#[derive(Debug)]
+pub(crate) enum IndexRunLeaseError {
+    /// A different run still owns an unexpired lease.
+    ActiveLease {
+        /// Current owner run identifier.
+        run_id: String,
+        /// Current lease expiry as Unix seconds.
+        expires_at: i64,
+    },
+    /// The requested run no longer owns an unexpired lease.
+    OwnershipLost {
+        /// Run identifier that failed the ownership check.
+        run_id: String,
+    },
+    /// SQLite returned an error.
+    Sqlite(rusqlite::Error),
+}
+
+impl fmt::Display for IndexRunLeaseError {
+    /// Format a lease error without database contents.
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::ActiveLease { run_id, expires_at } => write!(
+                formatter,
+                "index database is owned by active run {run_id} until {expires_at}"
+            ),
+            Self::OwnershipLost { run_id } => {
+                write!(
+                    formatter,
+                    "index run {run_id} no longer owns the database lease"
+                )
+            }
+            Self::Sqlite(error) => write!(formatter, "{error}"),
+        }
+    }
+}
+
+impl Error for IndexRunLeaseError {
+    /// Return the underlying SQLite error when present.
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::Sqlite(error) => Some(error),
+            Self::ActiveLease { .. } | Self::OwnershipLost { .. } => None,
+        }
+    }
+}
+
+impl From<rusqlite::Error> for IndexRunLeaseError {
+    /// Convert SQLite errors into lease errors.
+    fn from(error: rusqlite::Error) -> Self {
+        Self::Sqlite(error)
+    }
+}
+
+#[derive(Debug)]
+struct PendingChangeEvent {
+    event_id: i64,
+    worker_id: String,
+    article_id: i64,
+    event_type: String,
+    membership_type: String,
+    journal_id: i64,
+    issue_id: Option<i64>,
+    is_backfill: bool,
+    created_at: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -232,6 +330,15 @@ fn init_index_db_with_simple_tokenizer_path(
             failed_journals INTEGER NOT NULL,
             resumed_journals INTEGER NOT NULL,
             error_summary TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS index_run_lease (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            run_id TEXT NOT NULL,
+            heartbeat_at INTEGER NOT NULL,
+            expires_at INTEGER NOT NULL,
+            FOREIGN KEY (run_id) REFERENCES index_runs(run_id)
+                ON DELETE CASCADE
         );
 
         CREATE TABLE IF NOT EXISTS index_path_stats (
@@ -553,6 +660,306 @@ where
     let value = operation(&transaction)?;
     transaction.commit().map_err(E::from)?;
     Ok(value)
+}
+
+/// Acquire a durable live index run lease and create its running parent row.
+///
+/// # Arguments
+///
+/// * `connection` - Open SQLite connection.
+/// * `request` - Run identity, timing, expected work, and recovery policy.
+///
+/// # Returns
+///
+/// Reclaimed run identity and adopted source event count.
+#[cfg_attr(
+    not(test),
+    allow(dead_code, reason = "integrated by the approved T2 task")
+)]
+pub(crate) fn begin_index_run(
+    connection: &Connection,
+    request: &IndexRunStartRequest<'_>,
+) -> Result<IndexRunStartOutcome, IndexRunLeaseError> {
+    with_immediate_index_transaction(connection, |transaction| {
+        let existing_lease = transaction
+            .query_row(
+                "SELECT run_id, expires_at FROM index_run_lease WHERE id = 1",
+                [],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)),
+            )
+            .optional()?;
+        if let Some((run_id, expires_at)) = &existing_lease {
+            if *expires_at > request.now_epoch_seconds {
+                return Err(IndexRunLeaseError::ActiveLease {
+                    run_id: run_id.clone(),
+                    expires_at: *expires_at,
+                });
+            }
+        }
+
+        let interrupted_run_id = existing_lease.map(|(run_id, _)| run_id);
+        if let Some(run_id) = &interrupted_run_id {
+            transaction.execute(
+                "
+                UPDATE index_runs
+                SET finished_at = ?2,
+                    status = 'interrupted',
+                    error_summary = COALESCE(
+                        error_summary,
+                        'run lease expired and was reclaimed'
+                    )
+                WHERE run_id = ?1 AND status = 'running'
+                ",
+                params![run_id, request.started_at],
+            )?;
+        }
+
+        transaction.execute(
+            "
+            INSERT INTO index_runs (
+                run_id, csv_file, started_at, finished_at, status,
+                total_journals, succeeded_journals, failed_journals,
+                resumed_journals, error_summary
+            ) VALUES (?1, ?2, ?3, NULL, 'running', ?4, 0, 0, 0, NULL)
+            ",
+            params![
+                request.run_id,
+                request.csv_file,
+                request.started_at,
+                request.total_journals,
+            ],
+        )?;
+        transaction.execute(
+            "
+            INSERT INTO index_run_lease (id, run_id, heartbeat_at, expires_at)
+            VALUES (1, ?1, ?2, ?3)
+            ON CONFLICT(id) DO UPDATE SET
+                run_id = excluded.run_id,
+                heartbeat_at = excluded.heartbeat_at,
+                expires_at = excluded.expires_at
+            ",
+            params![
+                request.run_id,
+                request.now_epoch_seconds,
+                lease_expiry(request.now_epoch_seconds),
+            ],
+        )?;
+        let adopted_event_count = if request.should_adopt_events {
+            adopt_pending_change_events(transaction, request.run_id)?
+        } else {
+            0
+        };
+
+        Ok(IndexRunStartOutcome {
+            interrupted_run_id,
+            adopted_event_count,
+        })
+    })
+}
+
+/// Renew one live index run lease when it remains current and unexpired.
+///
+/// # Arguments
+///
+/// * `connection` - Open SQLite connection.
+/// * `run_id` - Expected current run identifier.
+/// * `now_epoch_seconds` - Current Unix timestamp in seconds.
+///
+/// # Returns
+///
+/// Empty result when the lease was renewed.
+#[cfg_attr(
+    not(test),
+    allow(dead_code, reason = "integrated by the approved T2 task")
+)]
+pub(crate) fn heartbeat_index_run_lease(
+    connection: &Connection,
+    run_id: &str,
+    now_epoch_seconds: i64,
+) -> Result<(), IndexRunLeaseError> {
+    let updated = connection.execute(
+        "
+        UPDATE index_run_lease
+        SET heartbeat_at = ?2, expires_at = ?3
+        WHERE id = 1 AND run_id = ?1 AND expires_at > ?2
+        ",
+        params![run_id, now_epoch_seconds, lease_expiry(now_epoch_seconds)],
+    )?;
+    if updated == 1 {
+        Ok(())
+    } else {
+        Err(IndexRunLeaseError::OwnershipLost {
+            run_id: run_id.to_string(),
+        })
+    }
+}
+
+/// Assert that one live index run owns an unexpired lease.
+///
+/// # Arguments
+///
+/// * `connection` - Open SQLite connection or write transaction.
+/// * `run_id` - Expected current run identifier.
+/// * `now_epoch_seconds` - Current Unix timestamp in seconds.
+///
+/// # Returns
+///
+/// Empty result when the exact run owns an unexpired lease.
+#[cfg_attr(
+    not(test),
+    allow(dead_code, reason = "integrated by the approved T2 task")
+)]
+pub(crate) fn assert_index_run_lease_owner(
+    connection: &Connection,
+    run_id: &str,
+    now_epoch_seconds: i64,
+) -> Result<(), IndexRunLeaseError> {
+    let is_owner = connection.query_row(
+        "
+        SELECT EXISTS(
+            SELECT 1 FROM index_run_lease
+            WHERE id = 1 AND run_id = ?1 AND expires_at > ?2
+        )
+        ",
+        params![run_id, now_epoch_seconds],
+        |row| row.get::<_, bool>(0),
+    )?;
+    if is_owner {
+        Ok(())
+    } else {
+        Err(IndexRunLeaseError::OwnershipLost {
+            run_id: run_id.to_string(),
+        })
+    }
+}
+
+/// Release one live index lease only when its run identifier matches.
+///
+/// # Arguments
+///
+/// * `connection` - Open SQLite connection.
+/// * `run_id` - Expected current run identifier.
+///
+/// # Returns
+///
+/// Whether the exact owner's lease row was deleted.
+#[cfg_attr(
+    not(test),
+    allow(dead_code, reason = "integrated by the approved T2 task")
+)]
+pub(crate) fn release_index_run_lease(
+    connection: &Connection,
+    run_id: &str,
+) -> rusqlite::Result<bool> {
+    Ok(connection.execute(
+        "DELETE FROM index_run_lease WHERE id = 1 AND run_id = ?1",
+        [run_id],
+    )? == 1)
+}
+
+fn lease_expiry(now_epoch_seconds: i64) -> i64 {
+    now_epoch_seconds.saturating_add(INDEX_RUN_LEASE_DURATION_SECONDS)
+}
+
+fn adopt_pending_change_events(
+    connection: &Connection,
+    current_run_id: &str,
+) -> rusqlite::Result<usize> {
+    let mut last_event_id = None;
+    let mut adopted_event_count = 0;
+    loop {
+        let events = pending_change_event_batch(connection, current_run_id, last_event_id)?;
+        let Some(next_last_event_id) = events.last().map(|event| event.event_id) else {
+            return Ok(adopted_event_count);
+        };
+        for event in events {
+            let deleted = connection.execute(
+                "DELETE FROM index_change_events WHERE event_id = ?1 AND run_id <> ?2",
+                params![event.event_id, current_run_id],
+            )?;
+            if deleted != 1 {
+                return Err(rusqlite::Error::QueryReturnedNoRows);
+            }
+            replay_pending_change_event(connection, current_run_id, event)?;
+            adopted_event_count += 1;
+        }
+        last_event_id = Some(next_last_event_id);
+    }
+}
+
+fn pending_change_event_batch(
+    connection: &Connection,
+    current_run_id: &str,
+    last_event_id: Option<i64>,
+) -> rusqlite::Result<Vec<PendingChangeEvent>> {
+    let mut statement = connection.prepare(
+        "
+        SELECT
+            event_id, worker_id, article_id, event_type, membership_type,
+            journal_id, issue_id, is_backfill, created_at
+        FROM index_change_events
+        WHERE run_id <> ?1 AND (?2 IS NULL OR event_id > ?2)
+        ORDER BY event_id
+        LIMIT ?3
+        ",
+    )?;
+    let rows = statement.query_map(
+        params![
+            current_run_id,
+            last_event_id,
+            PENDING_EVENT_ADOPTION_BATCH_SIZE
+        ],
+        |row| {
+            Ok(PendingChangeEvent {
+                event_id: row.get(0)?,
+                worker_id: row.get(1)?,
+                article_id: row.get(2)?,
+                event_type: row.get(3)?,
+                membership_type: row.get(4)?,
+                journal_id: row.get(5)?,
+                issue_id: row.get(6)?,
+                is_backfill: row.get::<_, i64>(7)? == 1,
+                created_at: row.get(8)?,
+            })
+        },
+    )?;
+    rows.collect()
+}
+
+fn replay_pending_change_event(
+    connection: &Connection,
+    current_run_id: &str,
+    event: PendingChangeEvent,
+) -> rusqlite::Result<()> {
+    let membership_type = match (event.membership_type.as_str(), event.issue_id) {
+        ("issue", Some(issue_id)) => ArticleMembership {
+            membership_type: "issue",
+            journal_id: event.journal_id,
+            issue_id: Some(issue_id),
+        },
+        ("inpress", None) => ArticleMembership {
+            membership_type: "inpress",
+            journal_id: event.journal_id,
+            issue_id: None,
+        },
+        _ => return Err(rusqlite::Error::InvalidQuery),
+    };
+    if !matches!(event.event_type.as_str(), "add" | "remove") {
+        return Err(rusqlite::Error::InvalidQuery);
+    }
+    let context = ChangeEventContext::new(
+        current_run_id,
+        event.worker_id,
+        event.created_at,
+        event.is_backfill,
+    );
+    record_membership_event(
+        connection,
+        &context,
+        event.article_id,
+        &event.event_type,
+        &membership_type,
+    )
 }
 
 /// Insert or update a journal record.
@@ -1356,11 +1763,13 @@ mod tests {
     use crate::transforms::{ArticleRecord, JournalRecord, MetaRecord};
 
     use super::{
-        apply_article_changes, init_index_db, init_index_db_with_simple_tokenizer_path,
+        apply_article_changes, assert_index_run_lease_owner, begin_index_run,
+        heartbeat_index_run_lease, init_index_db, init_index_db_with_simple_tokenizer_path,
         mark_article_listing_ready, mark_journal_done, open_index_db, persist_index_run_stats,
-        refresh_article_listing_for_articles, simple_tokenizer_path_from_root,
-        upsert_article_search, upsert_articles, upsert_journal, upsert_meta,
-        with_immediate_index_transaction, ChangeEventContext,
+        refresh_article_listing_for_articles, release_index_run_lease,
+        simple_tokenizer_path_from_root, upsert_article_search, upsert_articles, upsert_journal,
+        upsert_meta, with_immediate_index_transaction, ChangeEventContext, IndexRunLeaseError,
+        IndexRunStartRequest,
     };
 
     const RUNTIME_INDEXES: &[&str] = &[
@@ -1435,6 +1844,13 @@ mod tests {
         assert!(listing_state_sql.contains("CHECK (id = 1)"));
         assert!(listing_state_sql.contains("status TEXT NOT NULL"));
         assert!(listing_state_sql.contains("updated_at TEXT"));
+        assert_eq!(
+            table_columns(&connection, "index_run_lease"),
+            ["id", "run_id", "heartbeat_at", "expires_at"]
+        );
+        let lease_sql = object_sql(&connection, "index_run_lease");
+        assert!(lease_sql.contains("CHECK (id = 1)"));
+        assert!(lease_sql.contains("REFERENCES index_runs(run_id)"));
         assert_eq!(
             table_columns(&connection, "article_search"),
             [
@@ -1515,6 +1931,300 @@ mod tests {
         assert_eq!(row_count, 1);
         assert_eq!(status, "ready");
         assert_eq!(updated_at, "2026-07-05T12:01:00Z");
+    }
+
+    #[test]
+    fn active_run_lease_rejects_contender_without_mutating_state() {
+        let connection = Connection::open_in_memory().expect("in-memory db should open");
+        init_index_db(&connection).expect("schema should initialize");
+        insert_pending_event(
+            &connection,
+            "pending-run",
+            "pending-worker",
+            100,
+            "add",
+            "inpress",
+            10,
+            None,
+            false,
+            "2026-07-14T00:00:00Z",
+        );
+
+        let outcome = begin_index_run(
+            &connection,
+            &index_run_start_request("run-active", "2026-07-14T00:01:00Z", 100, false),
+        )
+        .expect("first run should acquire the lease");
+        assert_eq!(outcome.interrupted_run_id, None);
+        assert_eq!(outcome.adopted_event_count, 0);
+
+        let error = begin_index_run(
+            &connection,
+            &index_run_start_request("run-contender", "2026-07-14T00:01:01Z", 101, true),
+        )
+        .expect_err("fresh lease should reject a contender");
+        assert!(matches!(
+            error,
+            IndexRunLeaseError::ActiveLease {
+                ref run_id,
+                expires_at: 400
+            } if run_id == "run-active"
+        ));
+
+        let parent: (String, i64) = connection
+            .query_row(
+                "SELECT status, total_journals FROM index_runs WHERE run_id = 'run-active'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .expect("active parent should load");
+        let parent_count = table_count(&connection, "index_runs");
+        let pending_run_id: String = connection
+            .query_row("SELECT run_id FROM index_change_events", [], |row| {
+                row.get(0)
+            })
+            .expect("pending event should remain");
+        assert_eq!(parent, ("running".to_string(), 2));
+        assert_eq!(parent_count, 1);
+        assert_eq!(pending_run_id, "pending-run");
+    }
+
+    #[test]
+    fn expired_run_is_interrupted_and_pending_events_are_normalized() {
+        let connection = Connection::open_in_memory().expect("in-memory db should open");
+        init_index_db(&connection).expect("schema should initialize");
+        begin_index_run(
+            &connection,
+            &index_run_start_request("run-old", "2026-07-14T00:00:00Z", 100, false),
+        )
+        .expect("old run should acquire the lease");
+        insert_pending_event(
+            &connection,
+            "run-old",
+            "worker-a",
+            101,
+            "add",
+            "issue",
+            11,
+            Some(111),
+            false,
+            "2026-07-14T00:00:01Z",
+        );
+        insert_pending_event(
+            &connection,
+            "run-other",
+            "worker-a",
+            101,
+            "remove",
+            "issue",
+            11,
+            Some(111),
+            false,
+            "2026-07-14T00:00:02Z",
+        );
+        insert_pending_event(
+            &connection,
+            "run-other",
+            "worker-b",
+            202,
+            "add",
+            "inpress",
+            22,
+            None,
+            true,
+            "2026-07-14T00:00:03Z",
+        );
+        insert_pending_event(
+            &connection,
+            "run-third",
+            "worker-c",
+            202,
+            "add",
+            "inpress",
+            22,
+            None,
+            false,
+            "2026-07-14T00:00:04Z",
+        );
+
+        let outcome = begin_index_run(
+            &connection,
+            &index_run_start_request("run-new", "2026-07-14T00:05:00Z", 400, true),
+        )
+        .expect("expired run should be reclaimed");
+
+        assert_eq!(outcome.interrupted_run_id.as_deref(), Some("run-old"));
+        assert_eq!(outcome.adopted_event_count, 4);
+        let old_parent: (String, Option<String>) = connection
+            .query_row(
+                "SELECT status, finished_at FROM index_runs WHERE run_id = 'run-old'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .expect("interrupted parent should load");
+        assert_eq!(
+            old_parent,
+            (
+                "interrupted".to_string(),
+                Some("2026-07-14T00:05:00Z".to_string())
+            )
+        );
+        let event: (String, String, i64, String, String, i64) = connection
+            .query_row(
+                "SELECT run_id, worker_id, article_id, event_type, created_at, is_backfill
+                 FROM index_change_events",
+                [],
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                        row.get(5)?,
+                    ))
+                },
+            )
+            .expect("normalized event should load");
+        assert_eq!(
+            event,
+            (
+                "run-new".to_string(),
+                "worker-b".to_string(),
+                202,
+                "add".to_string(),
+                "2026-07-14T00:00:03Z".to_string(),
+                1,
+            )
+        );
+    }
+
+    #[test]
+    fn event_adoption_crosses_the_bounded_batch_boundary() {
+        let connection = Connection::open_in_memory().expect("in-memory db should open");
+        init_index_db(&connection).expect("schema should initialize");
+        connection
+            .execute_batch(
+                "
+                WITH RECURSIVE event_rows(article_id) AS (
+                    SELECT 1
+                    UNION ALL
+                    SELECT article_id + 1 FROM event_rows WHERE article_id < 1001
+                )
+                INSERT INTO index_change_events (
+                    run_id, worker_id, article_id, event_type, membership_type,
+                    journal_id, issue_id, is_backfill, created_at
+                )
+                SELECT
+                    'run-batch-old', 'worker-batch', article_id, 'add',
+                    'inpress', 33, NULL, 0, '2026-07-14T00:00:00Z'
+                FROM event_rows;
+                ",
+            )
+            .expect("batched pending events should insert");
+
+        let outcome = begin_index_run(
+            &connection,
+            &index_run_start_request("run-batch-new", "2026-07-14T00:01:00Z", 100, true),
+        )
+        .expect("pending events should be adopted");
+
+        let current_count: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM index_change_events WHERE run_id = 'run-batch-new'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("adopted event count should load");
+        assert_eq!(outcome.adopted_event_count, 1001);
+        assert_eq!(current_count, 1001);
+        assert_eq!(table_count(&connection, "index_change_events"), 1001);
+    }
+
+    #[test]
+    fn run_lease_heartbeat_fencing_and_release_require_exact_owner() {
+        let connection = Connection::open_in_memory().expect("in-memory db should open");
+        init_index_db(&connection).expect("schema should initialize");
+        begin_index_run(
+            &connection,
+            &index_run_start_request("run-owner", "2026-07-14T00:00:00Z", 100, false),
+        )
+        .expect("owner should acquire the lease");
+
+        assert_index_run_lease_owner(&connection, "run-owner", 399)
+            .expect("unexpired owner should pass fencing");
+        let wrong_owner = assert_index_run_lease_owner(&connection, "run-other", 101)
+            .expect_err("different run should fail fencing");
+        assert!(matches!(
+            wrong_owner,
+            IndexRunLeaseError::OwnershipLost { ref run_id } if run_id == "run-other"
+        ));
+        heartbeat_index_run_lease(&connection, "run-owner", 150)
+            .expect("current owner should renew the lease");
+        let lease: (i64, i64) = connection
+            .query_row(
+                "SELECT heartbeat_at, expires_at FROM index_run_lease WHERE id = 1",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .expect("renewed lease should load");
+        assert_eq!(lease, (150, 450));
+        assert_index_run_lease_owner(&connection, "run-owner", 449)
+            .expect("renewed owner should pass fencing");
+        assert!(matches!(
+            assert_index_run_lease_owner(&connection, "run-owner", 450),
+            Err(IndexRunLeaseError::OwnershipLost { .. })
+        ));
+        assert!(!release_index_run_lease(&connection, "run-other")
+            .expect("wrong owner release should execute"));
+        assert!(release_index_run_lease(&connection, "run-owner")
+            .expect("current owner release should execute"));
+        assert_eq!(table_count(&connection, "index_run_lease"), 0);
+    }
+
+    #[test]
+    fn event_adoption_failure_rolls_back_parent_lease_and_source_events() {
+        let connection = Connection::open_in_memory().expect("in-memory db should open");
+        init_index_db(&connection).expect("schema should initialize");
+        insert_pending_event(
+            &connection,
+            "run-pending",
+            "worker-pending",
+            303,
+            "add",
+            "inpress",
+            33,
+            None,
+            false,
+            "2026-07-14T00:00:00Z",
+        );
+        connection
+            .execute_batch(
+                "
+                CREATE TRIGGER fail_event_adoption
+                BEFORE DELETE ON index_change_events
+                BEGIN
+                    SELECT RAISE(ABORT, 'forced adoption failure');
+                END;
+                ",
+            )
+            .expect("adoption failpoint should install");
+
+        let error = begin_index_run(
+            &connection,
+            &index_run_start_request("run-rollback", "2026-07-14T00:01:00Z", 100, true),
+        )
+        .expect_err("event adoption failure should abort the transaction");
+
+        assert!(matches!(error, IndexRunLeaseError::Sqlite(_)));
+        assert_eq!(table_count(&connection, "index_runs"), 0);
+        assert_eq!(table_count(&connection, "index_run_lease"), 0);
+        let pending_run_id: String = connection
+            .query_row("SELECT run_id FROM index_change_events", [], |row| {
+                row.get(0)
+            })
+            .expect("source event should remain");
+        assert_eq!(pending_run_id, "run-pending");
     }
 
     #[test]
@@ -1879,6 +2589,58 @@ mod tests {
             content_location: None,
             full_text_file: None,
         }
+    }
+
+    fn index_run_start_request<'a>(
+        run_id: &'a str,
+        started_at: &'a str,
+        now_epoch_seconds: i64,
+        should_adopt_events: bool,
+    ) -> IndexRunStartRequest<'a> {
+        IndexRunStartRequest {
+            run_id,
+            csv_file: "journals.csv",
+            started_at,
+            total_journals: 2,
+            now_epoch_seconds,
+            should_adopt_events,
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn insert_pending_event(
+        connection: &Connection,
+        run_id: &str,
+        worker_id: &str,
+        article_id: i64,
+        event_type: &str,
+        membership_type: &str,
+        journal_id: i64,
+        issue_id: Option<i64>,
+        is_backfill: bool,
+        created_at: &str,
+    ) {
+        connection
+            .execute(
+                "
+                INSERT INTO index_change_events (
+                    run_id, worker_id, article_id, event_type, membership_type,
+                    journal_id, issue_id, is_backfill, created_at
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+                ",
+                rusqlite::params![
+                    run_id,
+                    worker_id,
+                    article_id,
+                    event_type,
+                    membership_type,
+                    journal_id,
+                    issue_id,
+                    is_backfill as i64,
+                    created_at,
+                ],
+            )
+            .expect("pending event should insert");
     }
 
     fn workspace_simple_tokenizer_path() -> Option<PathBuf> {

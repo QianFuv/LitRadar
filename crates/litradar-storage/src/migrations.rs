@@ -16,7 +16,7 @@ use crate::{try_load_extension, DatabaseResolutionError, StorageConfig};
 pub const AUTH_SCHEMA_VERSION: i64 = 5;
 
 /// Current index database schema version.
-pub const INDEX_SCHEMA_VERSION: i64 = 2;
+pub const INDEX_SCHEMA_VERSION: i64 = 3;
 
 const AUTH_DATABASE: &str = "auth";
 const INDEX_DATABASE: &str = "index";
@@ -199,6 +199,7 @@ pub fn migrate_index_database(
         match next_version {
             1 => apply_index_version_one(&transaction)?,
             2 => apply_index_version_two(&transaction)?,
+            3 => apply_index_version_three(&transaction)?,
             _ => unreachable!("index migration version should be implemented"),
         }
         transaction.pragma_update(None, "user_version", next_version)?;
@@ -479,6 +480,19 @@ fn apply_index_version_two(transaction: &Transaction<'_>) -> rusqlite::Result<()
     transaction.execute_batch(INDEX_CHANGE_EVENTS_SQL)?;
     validate_required_index_columns(transaction)?;
     reconcile_missing_article_projections(transaction)
+}
+
+fn apply_index_version_three(transaction: &Transaction<'_>) -> rusqlite::Result<()> {
+    transaction.execute_batch(INDEX_RUN_LEASE_SQL)?;
+    let columns = table_columns(transaction, "index_run_lease")?;
+    for required_column in ["id", "run_id", "heartbeat_at", "expires_at"] {
+        if !columns.iter().any(|existing| existing == required_column) {
+            return Err(rusqlite::Error::InvalidColumnName(format!(
+                "index_run_lease.{required_column}"
+            )));
+        }
+    }
+    Ok(())
 }
 
 fn validate_required_index_columns(connection: &Connection) -> rusqlite::Result<()> {
@@ -1146,6 +1160,16 @@ const INDEX_CHANGE_EVENTS_SQL: &str = "
         );
     CREATE INDEX IF NOT EXISTS idx_index_change_events_run_article
         ON index_change_events(run_id, article_id, event_id);
+";
+
+const INDEX_RUN_LEASE_SQL: &str = "
+    CREATE TABLE IF NOT EXISTS index_run_lease (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        run_id TEXT NOT NULL,
+        heartbeat_at INTEGER NOT NULL,
+        expires_at INTEGER NOT NULL,
+        FOREIGN KEY (run_id) REFERENCES index_runs(run_id) ON DELETE CASCADE
+    );
 ";
 
 const INDEX_INDEXES_SQL: &str = "
