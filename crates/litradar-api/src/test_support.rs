@@ -439,9 +439,9 @@ fn create_fixture_index_database(path: &Path) {
             );
 
             INSERT INTO article_search (
-                article_id, title, abstract, doi, authors, journal_title
+                rowid, article_id, title, abstract, doi, authors, journal_title
             ) VALUES (
-                9001, 'Fixture Article',
+                9001, 9001, 'Fixture Article',
                 'Fixture abstract for route and storage tests.',
                 '10.1234/fixture', 'Ada Lovelace; Grace Hopper',
                 'Fixture Journal'
