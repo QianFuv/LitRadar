@@ -14,7 +14,7 @@ use litradar_sources::{
     LiveScholarlyConfig, LiveScholarlyTransport, ScholarlyClient, ScholarlyTransport,
     SourceAttempt, SourceError,
 };
-use rusqlite::Connection;
+use rusqlite::{Connection, ErrorCode};
 use serde::{Deserialize, Serialize};
 
 use crate::changes::{write_change_manifest_from_events, ChangeWriteError};
@@ -531,10 +531,25 @@ fn run_live_index_heartbeat(
             Err(_) => return,
         };
         if let Err(error) = heartbeat_result {
+            if is_retryable_heartbeat_contention(&error) {
+                continue;
+            }
             current_state.error = Some(error.to_string());
             wakeup.notify_all();
             return;
         }
+    }
+}
+
+fn is_retryable_heartbeat_contention(error: &IndexRunLeaseError) -> bool {
+    match error {
+        IndexRunLeaseError::Sqlite(error) => matches!(
+            error.sqlite_error_code(),
+            Some(ErrorCode::DatabaseBusy) | Some(ErrorCode::DatabaseLocked)
+        ),
+        IndexRunLeaseError::ActiveLease { .. }
+        | IndexRunLeaseError::OwnershipLost { .. }
+        | IndexRunLeaseError::Clock(_) => false,
     }
 }
 
@@ -1579,22 +1594,26 @@ mod tests {
     use std::cell::RefCell;
     use std::fs;
     use std::path::{Path, PathBuf};
+    use std::sync::{Arc, Condvar, Mutex};
     use std::thread;
-    use std::time::Duration;
+    use std::time::{Duration, Instant};
 
     use litradar_sources::LiveScholarlyConfig;
     use rusqlite::Connection;
     use tempfile::tempdir;
 
     use super::{
-        csv_paths, live_worker_command, parse_csv_line, read_csv_rows,
-        run_live_csv_index_with_runtime, run_live_index, run_live_journal_rows_in_worker_processes,
-        run_notify_command_for_manifest, validate_required_source_config, validate_sources,
-        LiveIndexConfig, LiveIndexError, LiveIndexWorkerRequest, LiveIndexWorkerResponse,
+        csv_paths, live_worker_command, open_live_index_connection, parse_csv_line, read_csv_rows,
+        run_live_csv_index_with_runtime, run_live_index, run_live_index_heartbeat,
+        run_live_journal_rows_in_worker_processes, run_notify_command_for_manifest,
+        validate_required_source_config, validate_sources, LiveIndexConfig, LiveIndexError,
+        LiveIndexHeartbeatState, LiveIndexWorkerRequest, LiveIndexWorkerResponse,
         LiveIndexWorkerStats, LiveJournalRowsContext, LiveRunTime, LiveWorkerLauncher,
         ProcessLiveWorkerLauncher,
     };
-    use crate::schema::{begin_index_run, init_index_db, IndexRunStartRequest};
+    use crate::schema::{
+        begin_index_run, init_index_db, IndexRunLeaseContext, IndexRunStartRequest,
+    };
     use crate::stats::IndexRunStats;
     use crate::transforms::{build_journal_id, journal_title_from_row, source_from_row, CsvRow};
 
@@ -2060,6 +2079,80 @@ mod tests {
             .path()
             .join("data/push_state/journals.changes.json")
             .exists());
+    }
+
+    #[test]
+    fn heartbeat_retries_transient_database_lock_until_writer_releases() {
+        let root = tempdir().expect("temp root should be created");
+        let db_path = root.path().join("journals.sqlite");
+        let connection = open_test_index(&db_path);
+        let acquired_at = LiveRunTime::now().epoch_seconds - 1;
+        let started_at = acquired_at.to_string();
+        begin_index_run(
+            &connection,
+            &IndexRunStartRequest {
+                run_id: "run-heartbeat-lock",
+                csv_file: "journals.csv",
+                started_at: &started_at,
+                total_journals: 1,
+                now_epoch_seconds: acquired_at,
+                should_adopt_events: false,
+            },
+        )
+        .expect("heartbeat fixture run should start");
+        let heartbeat_connection =
+            open_live_index_connection(&db_path).expect("heartbeat connection should open");
+        heartbeat_connection
+            .busy_timeout(Duration::from_millis(1))
+            .expect("heartbeat busy timeout should be configurable");
+        connection
+            .execute_batch("BEGIN IMMEDIATE")
+            .expect("writer lock should be acquired");
+        let state = Arc::new((
+            Mutex::new(LiveIndexHeartbeatState::default()),
+            Condvar::new(),
+        ));
+        let thread_state = Arc::clone(&state);
+        let handle = thread::spawn(move || {
+            run_live_index_heartbeat(
+                heartbeat_connection,
+                IndexRunLeaseContext::new("run-heartbeat-lock"),
+                Duration::from_millis(1),
+                thread_state,
+            );
+        });
+
+        thread::sleep(Duration::from_millis(100));
+        let error_while_locked = state
+            .0
+            .lock()
+            .expect("heartbeat state should lock")
+            .error
+            .clone();
+        connection
+            .execute_batch("ROLLBACK")
+            .expect("writer lock should be released");
+        let deadline = Instant::now() + Duration::from_secs(1);
+        let mut heartbeat_at = acquired_at;
+        while heartbeat_at <= acquired_at && Instant::now() < deadline {
+            heartbeat_at = connection
+                .query_row(
+                    "SELECT heartbeat_at FROM index_run_lease WHERE id = 1",
+                    [],
+                    |row| row.get(0),
+                )
+                .expect("lease heartbeat should load");
+            thread::sleep(Duration::from_millis(5));
+        }
+        {
+            let mut current_state = state.0.lock().expect("heartbeat state should lock");
+            current_state.should_stop = true;
+            state.1.notify_all();
+        }
+        handle.join().expect("heartbeat thread should stop");
+
+        assert_eq!(error_while_locked, None);
+        assert!(heartbeat_at > acquired_at);
     }
 
     #[test]
