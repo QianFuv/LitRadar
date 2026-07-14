@@ -19,6 +19,7 @@ use crate::schema::{
     apply_article_changes, is_journal_complete, mark_article_listing_ready, mark_journal_done,
     mark_year_done, open_index_db, optimize_index_db, persist_index_run_stats, upsert_issues,
     upsert_journal, upsert_meta, with_immediate_index_transaction, ChangeEventContext,
+    IndexRunLeaseContext,
 };
 use crate::stats::{IndexRunStats, PathCountIncrements};
 use crate::transforms::{
@@ -81,6 +82,8 @@ pub enum ScholarlyIndexError {
     Source(SourceError),
     /// Journal row is invalid.
     InvalidJournal(String),
+    /// Live run lease ownership was lost.
+    Lease(String),
 }
 
 impl fmt::Display for ScholarlyIndexError {
@@ -92,6 +95,7 @@ impl fmt::Display for ScholarlyIndexError {
             Self::Sqlite(error) => write!(formatter, "{error}"),
             Self::Source(error) => write!(formatter, "{error}"),
             Self::InvalidJournal(message) => formatter.write_str(message),
+            Self::Lease(message) => formatter.write_str(message),
         }
     }
 }
@@ -105,6 +109,7 @@ impl Error for ScholarlyIndexError {
             Self::Sqlite(error) => Some(error),
             Self::Source(error) => Some(error),
             Self::InvalidJournal(_) => None,
+            Self::Lease(_) => None,
         }
     }
 }
@@ -222,6 +227,7 @@ pub fn run_scholarly_fixture_index(
                     journal_id,
                     timestamp: &config.timestamp,
                     change_event_context: change_event_context.as_ref(),
+                    lease_context: None,
                     should_resume: false,
                     attempt_sink: &mut attempt_sink,
                 },
@@ -304,6 +310,7 @@ pub(crate) struct ScholarlyProcessContext<'a> {
     pub(crate) journal_id: i64,
     pub(crate) timestamp: &'a str,
     pub(crate) change_event_context: Option<&'a ChangeEventContext>,
+    pub(crate) lease_context: Option<&'a IndexRunLeaseContext>,
     pub(crate) should_resume: bool,
     pub(crate) attempt_sink: &'a mut dyn FnMut(&[SourceAttempt]),
 }
@@ -323,6 +330,7 @@ where
         journal_id,
         timestamp,
         change_event_context,
+        lease_context,
         should_resume,
         attempt_sink,
     } = context;
@@ -401,6 +409,7 @@ where
             &meta_record,
             &journal_title,
             change_event_context,
+            lease_context,
             attempt_sink,
             &mut totals,
             &mut years,
@@ -427,6 +436,7 @@ where
             &meta_record,
             &journal_title,
             change_event_context,
+            lease_context,
             attempt_sink,
             &mut totals,
             &mut years,
@@ -441,6 +451,11 @@ where
 
     journal_record.has_articles = Some(i64::from(totals.works_count > 0));
     with_immediate_index_transaction(connection, |transaction| {
+        if let Some(lease_context) = lease_context {
+            lease_context
+                .assert_owner(transaction)
+                .map_err(|error| ScholarlyIndexError::Lease(error.to_string()))?;
+        }
         upsert_journal(transaction, &journal_record)?;
         upsert_meta(transaction, &meta_record)?;
         for year in &years {
@@ -476,6 +491,7 @@ fn process_crossref_pages<T>(
     meta_record: &MetaRecord,
     journal_title: &str,
     change_event_context: Option<&ChangeEventContext>,
+    lease_context: Option<&IndexRunLeaseContext>,
     attempt_sink: &mut dyn FnMut(&[SourceAttempt]),
     totals: &mut ScholarlyWriteTotals,
     years: &mut BTreeSet<i64>,
@@ -493,6 +509,7 @@ where
             meta_record,
             journal_title,
             change_event_context,
+            lease_context,
             attempt_sink,
             totals,
             years,
@@ -518,6 +535,7 @@ fn process_openalex_pages<T>(
     meta_record: &MetaRecord,
     journal_title: &str,
     change_event_context: Option<&ChangeEventContext>,
+    lease_context: Option<&IndexRunLeaseContext>,
     attempt_sink: &mut dyn FnMut(&[SourceAttempt]),
     totals: &mut ScholarlyWriteTotals,
     years: &mut BTreeSet<i64>,
@@ -544,6 +562,7 @@ where
                 meta_record,
                 journal_title,
                 change_event_context,
+                lease_context,
                 attempt_sink,
                 totals,
                 years,
@@ -571,6 +590,7 @@ fn process_scholarly_work_page<T>(
     meta_record: &MetaRecord,
     journal_title: &str,
     change_event_context: Option<&ChangeEventContext>,
+    lease_context: Option<&IndexRunLeaseContext>,
     attempt_sink: &mut dyn FnMut(&[SourceAttempt]),
     totals: &mut ScholarlyWriteTotals,
     years: &mut BTreeSet<i64>,
@@ -633,6 +653,11 @@ where
         let (article_records, deleted_article_ids) =
             split_article_records_by_authors(article_records);
         with_immediate_index_transaction(connection, |transaction| {
+            if let Some(lease_context) = lease_context {
+                lease_context
+                    .assert_owner(transaction)
+                    .map_err(|error| ScholarlyIndexError::Lease(error.to_string()))?;
+            }
             upsert_journal(transaction, journal_record)?;
             upsert_meta(transaction, meta_record)?;
             if !issue_records.is_empty() {
@@ -769,12 +794,15 @@ mod tests {
     use serde_json::json;
     use tempfile::tempdir;
 
-    use crate::schema::{init_index_db, mark_journal_done};
+    use crate::schema::{
+        begin_index_run, init_index_db, mark_journal_done, IndexRunLeaseContext,
+        IndexRunStartRequest,
+    };
     use crate::transforms::CsvRow;
 
     use super::{
         process_scholarly_row, run_scholarly_fixture_index, ScholarlyIndexConfig,
-        ScholarlyProcessContext,
+        ScholarlyIndexError, ScholarlyProcessContext,
     };
 
     #[test]
@@ -798,6 +826,7 @@ mod tests {
                 journal_id: 42,
                 timestamp: "2026-07-13T00:00:00Z",
                 change_event_context: None,
+                lease_context: None,
                 should_resume: true,
                 attempt_sink: &mut |_| {},
             },
@@ -833,6 +862,7 @@ mod tests {
                 journal_id: 43,
                 timestamp: "2026-07-13T00:00:00Z",
                 change_event_context: None,
+                lease_context: None,
                 should_resume: false,
                 attempt_sink: &mut |batch| attempts.extend_from_slice(batch),
             },
@@ -863,6 +893,52 @@ mod tests {
             .query_row("SELECT COUNT(*) FROM articles", [], |row| row.get(0))
             .expect("article count should query");
         assert_eq!(article_count, 3);
+    }
+
+    #[test]
+    fn stale_live_worker_cannot_commit_scholarly_batches() {
+        let connection = Connection::open_in_memory().expect("in-memory db should open");
+        init_index_db(&connection).expect("schema should initialize");
+        begin_index_run(
+            &connection,
+            &IndexRunStartRequest {
+                run_id: "run-owner",
+                csv_file: "journals.csv",
+                started_at: "4000000000",
+                total_journals: 1,
+                now_epoch_seconds: 4_000_000_000,
+                should_adopt_events: false,
+            },
+        )
+        .expect("owner run should start");
+        let stale_lease = IndexRunLeaseContext::new("run-stale");
+        let fixture = ScholarlyFixtureData {
+            crossref_work_pages: vec![vec![crossref_work("10.1/fenced", "Fenced Article", "1")]],
+            ..ScholarlyFixtureData::default()
+        };
+        let mut client = ScholarlyClient::new(FixtureScholarlyTransport::new(fixture), true);
+
+        let error = process_scholarly_row(
+            &connection,
+            &mut client,
+            &scholarly_row(),
+            ScholarlyProcessContext {
+                csv_file: "journals.csv",
+                journal_id: 44,
+                timestamp: "4000000000",
+                change_event_context: None,
+                lease_context: Some(&stale_lease),
+                should_resume: false,
+                attempt_sink: &mut |_| {},
+            },
+        )
+        .expect_err("stale worker should fail before its first commit");
+
+        let article_count: i64 = connection
+            .query_row("SELECT COUNT(*) FROM articles", [], |row| row.get(0))
+            .expect("article count should load");
+        assert!(matches!(error, ScholarlyIndexError::Lease(_)));
+        assert_eq!(article_count, 0);
     }
 
     #[test]

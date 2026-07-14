@@ -4,7 +4,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fmt;
 use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use rusqlite::{
     params, params_from_iter, Connection, LoadExtensionGuard, OptionalExtension, Transaction,
@@ -40,6 +40,47 @@ impl ChangeEventContext {
             worker_id: worker_id.into(),
             created_at: created_at.into(),
             is_backfill,
+        }
+    }
+}
+
+/// Ownership token passed through live index write paths.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct IndexRunLeaseContext {
+    run_id: String,
+}
+
+impl IndexRunLeaseContext {
+    /// Build a lease context for one live run.
+    pub(crate) fn new(run_id: impl Into<String>) -> Self {
+        Self {
+            run_id: run_id.into(),
+        }
+    }
+
+    /// Return the owned run identifier.
+    pub(crate) fn run_id(&self) -> &str {
+        &self.run_id
+    }
+
+    /// Renew this run's lease using the current system time.
+    pub(crate) fn heartbeat(&self, connection: &Connection) -> Result<(), IndexRunLeaseError> {
+        heartbeat_index_run_lease(connection, &self.run_id, current_epoch_seconds()?)
+    }
+
+    /// Assert that this run still owns an unexpired lease.
+    pub(crate) fn assert_owner(&self, connection: &Connection) -> Result<(), IndexRunLeaseError> {
+        assert_index_run_lease_owner(connection, &self.run_id, current_epoch_seconds()?)
+    }
+
+    /// Release this run's lease and reject a mismatched owner.
+    pub(crate) fn release(&self, connection: &Connection) -> Result<(), IndexRunLeaseError> {
+        if release_index_run_lease(connection, &self.run_id)? {
+            Ok(())
+        } else {
+            Err(IndexRunLeaseError::OwnershipLost {
+                run_id: self.run_id.clone(),
+            })
         }
     }
 }
@@ -87,6 +128,8 @@ pub(crate) enum IndexRunLeaseError {
     },
     /// SQLite returned an error.
     Sqlite(rusqlite::Error),
+    /// The system clock could not produce a Unix timestamp.
+    Clock(std::time::SystemTimeError),
 }
 
 impl fmt::Display for IndexRunLeaseError {
@@ -104,6 +147,9 @@ impl fmt::Display for IndexRunLeaseError {
                 )
             }
             Self::Sqlite(error) => write!(formatter, "{error}"),
+            Self::Clock(error) => {
+                write!(formatter, "system clock is before the Unix epoch: {error}")
+            }
         }
     }
 }
@@ -113,6 +159,7 @@ impl Error for IndexRunLeaseError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             Self::Sqlite(error) => Some(error),
+            Self::Clock(error) => Some(error),
             Self::ActiveLease { .. } | Self::OwnershipLost { .. } => None,
         }
     }
@@ -122,6 +169,13 @@ impl From<rusqlite::Error> for IndexRunLeaseError {
     /// Convert SQLite errors into lease errors.
     fn from(error: rusqlite::Error) -> Self {
         Self::Sqlite(error)
+    }
+}
+
+impl From<std::time::SystemTimeError> for IndexRunLeaseError {
+    /// Convert system clock errors into lease errors.
+    fn from(error: std::time::SystemTimeError) -> Self {
+        Self::Clock(error)
     }
 }
 
@@ -672,10 +726,6 @@ where
 /// # Returns
 ///
 /// Reclaimed run identity and adopted source event count.
-#[cfg_attr(
-    not(test),
-    allow(dead_code, reason = "integrated by the approved T2 task")
-)]
 pub(crate) fn begin_index_run(
     connection: &Connection,
     request: &IndexRunStartRequest<'_>,
@@ -768,10 +818,6 @@ pub(crate) fn begin_index_run(
 /// # Returns
 ///
 /// Empty result when the lease was renewed.
-#[cfg_attr(
-    not(test),
-    allow(dead_code, reason = "integrated by the approved T2 task")
-)]
 pub(crate) fn heartbeat_index_run_lease(
     connection: &Connection,
     run_id: &str,
@@ -805,10 +851,6 @@ pub(crate) fn heartbeat_index_run_lease(
 /// # Returns
 ///
 /// Empty result when the exact run owns an unexpired lease.
-#[cfg_attr(
-    not(test),
-    allow(dead_code, reason = "integrated by the approved T2 task")
-)]
 pub(crate) fn assert_index_run_lease_owner(
     connection: &Connection,
     run_id: &str,
@@ -843,10 +885,6 @@ pub(crate) fn assert_index_run_lease_owner(
 /// # Returns
 ///
 /// Whether the exact owner's lease row was deleted.
-#[cfg_attr(
-    not(test),
-    allow(dead_code, reason = "integrated by the approved T2 task")
-)]
 pub(crate) fn release_index_run_lease(
     connection: &Connection,
     run_id: &str,
@@ -859,6 +897,11 @@ pub(crate) fn release_index_run_lease(
 
 fn lease_expiry(now_epoch_seconds: i64) -> i64 {
     now_epoch_seconds.saturating_add(INDEX_RUN_LEASE_DURATION_SECONDS)
+}
+
+fn current_epoch_seconds() -> Result<i64, IndexRunLeaseError> {
+    let seconds = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
+    Ok(i64::try_from(seconds).unwrap_or(i64::MAX))
 }
 
 fn adopt_pending_change_events(

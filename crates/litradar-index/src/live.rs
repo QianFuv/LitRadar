@@ -5,7 +5,9 @@ use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::sync::{Arc, Condvar, Mutex};
+use std::thread::{self, JoinHandle};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use litradar_sources::{
     CnkiClient, CnkiSourceError, CnkiTransport, LiveCnkiConfig, LiveCnkiTransport,
@@ -18,8 +20,9 @@ use serde::{Deserialize, Serialize};
 use crate::changes::{write_change_manifest_from_events, ChangeWriteError};
 use crate::cnki::{process_cnki_row, CnkiIndexConfig, CnkiIndexError, CnkiProcessContext};
 use crate::schema::{
-    mark_article_listing_ready, open_index_db, optimize_index_db, persist_index_run_stats,
-    ChangeEventContext,
+    begin_index_run, mark_article_listing_ready, open_index_db, optimize_index_db,
+    persist_index_run_stats, with_immediate_index_transaction, ChangeEventContext,
+    IndexRunLeaseContext, IndexRunLeaseError, IndexRunStartRequest,
 };
 use crate::scholarly::{process_scholarly_row, ScholarlyIndexError, ScholarlyProcessContext};
 use crate::stats::{ApiCallStats, IndexRunStats, PathCountIncrements, PathStats};
@@ -27,6 +30,7 @@ use crate::transforms::{build_journal_id, journal_title_from_row, source_from_ro
 
 const SCHOLARLY_SOURCE: &str = "scholarly";
 const CNKI_SOURCE: &str = "cnki";
+const LIVE_INDEX_HEARTBEAT_INTERVAL_SECONDS: u64 = 30;
 
 /// Live index run configuration.
 #[derive(Debug, Clone)]
@@ -112,6 +116,7 @@ struct LiveJournalContext<'a> {
     timestamp: &'a str,
     cnki_config: &'a CnkiIndexConfig,
     change_event_context: Option<&'a ChangeEventContext>,
+    lease_context: Option<&'a IndexRunLeaseContext>,
 }
 
 struct LiveJournalRowsContext<'a> {
@@ -121,6 +126,7 @@ struct LiveJournalRowsContext<'a> {
     csv_file: &'a str,
     run_id: &'a str,
     timestamp: &'a str,
+    lease_context: Option<IndexRunLeaseContext>,
     worker_id: usize,
     process_count: usize,
     config: &'a LiveIndexConfig,
@@ -147,6 +153,7 @@ struct LiveIndexWorkerRequest {
     csv_file: String,
     run_id: String,
     timestamp: String,
+    lease_run_id: Option<String>,
     worker_id: usize,
     process_count: usize,
     worker_count: usize,
@@ -198,7 +205,44 @@ struct ProcessLiveWorkerLauncher {
 struct SpawnedLiveWorker {
     worker_id: usize,
     request_path: PathBuf,
-    child: Child,
+    child: Option<Child>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct LiveRunTime {
+    epoch_seconds: i64,
+    epoch_nanoseconds: u128,
+}
+
+impl LiveRunTime {
+    fn now() -> Self {
+        let duration = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default();
+        Self {
+            epoch_seconds: i64::try_from(duration.as_secs()).unwrap_or(i64::MAX),
+            epoch_nanoseconds: duration.as_nanos(),
+        }
+    }
+
+    fn timestamp(self) -> String {
+        self.epoch_seconds.to_string()
+    }
+
+    fn run_id(self, stem: &str) -> String {
+        format!("{stem}-{}", self.epoch_nanoseconds)
+    }
+}
+
+#[derive(Debug, Default)]
+struct LiveIndexHeartbeatState {
+    should_stop: bool,
+    error: Option<String>,
+}
+
+struct LiveIndexLeaseHeartbeat {
+    state: Arc<(Mutex<LiveIndexHeartbeatState>, Condvar)>,
+    handle: Option<JoinHandle<()>>,
 }
 
 /// Live index workflow errors.
@@ -228,6 +272,8 @@ pub enum LiveIndexError {
     Worker(String),
     /// Notify handoff failed.
     Notify(String),
+    /// Durable run lease acquisition, heartbeat, or ownership failed.
+    Lease(String),
 }
 
 impl fmt::Display for LiveIndexError {
@@ -246,6 +292,7 @@ impl fmt::Display for LiveIndexError {
             Self::InvalidConfig(message) => formatter.write_str(message),
             Self::Worker(message) => formatter.write_str(message),
             Self::Notify(message) => formatter.write_str(message),
+            Self::Lease(message) => formatter.write_str(message),
         }
     }
 }
@@ -265,7 +312,8 @@ impl Error for LiveIndexError {
             | Self::MissingConfig(_)
             | Self::InvalidConfig(_)
             | Self::Worker(_)
-            | Self::Notify(_) => None,
+            | Self::Notify(_)
+            | Self::Lease(_) => None,
         }
     }
 }
@@ -281,6 +329,13 @@ impl From<rusqlite::Error> for LiveIndexError {
     /// Convert SQLite errors into live index errors.
     fn from(error: rusqlite::Error) -> Self {
         Self::Sqlite(error)
+    }
+}
+
+impl From<IndexRunLeaseError> for LiveIndexError {
+    /// Convert durable lease failures into live index errors.
+    fn from(error: IndexRunLeaseError) -> Self {
+        Self::Lease(error.to_string())
     }
 }
 
@@ -375,6 +430,114 @@ impl ProcessLiveWorkerLauncher {
     }
 }
 
+impl LiveIndexLeaseHeartbeat {
+    fn start(
+        db_path: &Path,
+        lease_context: IndexRunLeaseContext,
+        interval: Duration,
+    ) -> Result<Self, LiveIndexError> {
+        let connection = open_live_index_connection(db_path)?;
+        let state = Arc::new((
+            Mutex::new(LiveIndexHeartbeatState::default()),
+            Condvar::new(),
+        ));
+        let thread_state = Arc::clone(&state);
+        let handle = thread::Builder::new()
+            .name("litradar-index-heartbeat".to_string())
+            .spawn(move || {
+                run_live_index_heartbeat(connection, lease_context, interval, thread_state)
+            })?;
+        Ok(Self {
+            state,
+            handle: Some(handle),
+        })
+    }
+
+    fn check(&self) -> Result<(), LiveIndexError> {
+        let state =
+            self.state.0.lock().map_err(|_| {
+                LiveIndexError::Lease("heartbeat state lock was poisoned".to_string())
+            })?;
+        if let Some(error) = &state.error {
+            Err(LiveIndexError::Lease(error.clone()))
+        } else {
+            Ok(())
+        }
+    }
+
+    fn stop_and_check(&mut self) -> Result<(), LiveIndexError> {
+        {
+            let mut state = self.state.0.lock().map_err(|_| {
+                LiveIndexError::Lease("heartbeat state lock was poisoned".to_string())
+            })?;
+            state.should_stop = true;
+            self.state.1.notify_all();
+        }
+        if let Some(handle) = self.handle.take() {
+            handle
+                .join()
+                .map_err(|_| LiveIndexError::Lease("heartbeat thread panicked".to_string()))?;
+        }
+        self.check()
+    }
+}
+
+impl Drop for LiveIndexLeaseHeartbeat {
+    fn drop(&mut self) {
+        let _ = self.stop_and_check();
+    }
+}
+
+impl Drop for SpawnedLiveWorker {
+    fn drop(&mut self) {
+        if let Some(mut child) = self.child.take() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+        let _ = fs::remove_file(&self.request_path);
+    }
+}
+
+fn run_live_index_heartbeat(
+    connection: Connection,
+    lease_context: IndexRunLeaseContext,
+    interval: Duration,
+    state: Arc<(Mutex<LiveIndexHeartbeatState>, Condvar)>,
+) {
+    let (state_lock, wakeup) = &*state;
+    let mut current_state = match state_lock.lock() {
+        Ok(current_state) => current_state,
+        Err(_) => return,
+    };
+    loop {
+        if current_state.should_stop {
+            return;
+        }
+        let wait_result = wakeup.wait_timeout(current_state, interval);
+        let Ok((next_state, timeout)) = wait_result else {
+            return;
+        };
+        current_state = next_state;
+        if current_state.should_stop {
+            return;
+        }
+        if !timeout.timed_out() {
+            continue;
+        }
+        drop(current_state);
+        let heartbeat_result = lease_context.heartbeat(&connection);
+        current_state = match state_lock.lock() {
+            Ok(current_state) => current_state,
+            Err(_) => return,
+        };
+        if let Err(error) = heartbeat_result {
+            current_state.error = Some(error.to_string());
+            wakeup.notify_all();
+            return;
+        }
+    }
+}
+
 impl LiveWorkerLauncher for ProcessLiveWorkerLauncher {
     fn run_workers(
         &self,
@@ -383,30 +546,35 @@ impl LiveWorkerLauncher for ProcessLiveWorkerLauncher {
         let mut spawned_workers = Vec::new();
         for request in &requests {
             let request_path = write_live_worker_request_file(request)?;
-            let child = live_worker_command(&self.command_path, &request_path)
-                .spawn()
-                .map_err(|error| {
-                    LiveIndexError::Worker(format!(
+            let child = match live_worker_command(&self.command_path, &request_path).spawn() {
+                Ok(child) => child,
+                Err(error) => {
+                    let _ = fs::remove_file(&request_path);
+                    return Err(LiveIndexError::Worker(format!(
                         "failed to spawn live index worker {}: {error}",
                         request.worker_id
-                    ))
-                })?;
+                    )));
+                }
+            };
             spawned_workers.push(SpawnedLiveWorker {
                 worker_id: request.worker_id,
                 request_path,
-                child,
+                child: Some(child),
             });
         }
 
         let mut responses = Vec::new();
-        for spawned_worker in spawned_workers {
-            let output = spawned_worker.child.wait_with_output().map_err(|error| {
+        for mut spawned_worker in spawned_workers {
+            let child = spawned_worker
+                .child
+                .take()
+                .expect("spawned worker should retain its child");
+            let output = child.wait_with_output().map_err(|error| {
                 LiveIndexError::Worker(format!(
                     "failed to wait for live index worker {}: {error}",
                     spawned_worker.worker_id
                 ))
             })?;
-            let _ = fs::remove_file(&spawned_worker.request_path);
             if !output.status.success() {
                 let stderr = String::from_utf8_lossy(&output.stderr);
                 return Err(LiveIndexError::Worker(format!(
@@ -515,6 +683,10 @@ fn run_live_index_worker(
     request: LiveIndexWorkerRequest,
 ) -> Result<LiveIndexWorkerResponse, LiveIndexError> {
     let connection = open_live_index_connection(&request.db_path)?;
+    let lease_context = request
+        .lease_run_id
+        .as_deref()
+        .map(IndexRunLeaseContext::new);
     let config = LiveIndexConfig {
         application_executable: PathBuf::new(),
         project_root: request.project_root.clone(),
@@ -537,6 +709,7 @@ fn run_live_index_worker(
         csv_file: &request.csv_file,
         run_id: &request.run_id,
         timestamp: &request.timestamp,
+        lease_context,
         worker_id: request.worker_id,
         process_count: request.process_count,
         config: &config,
@@ -574,7 +747,11 @@ fn write_live_worker_request_file(
     request: &LiveIndexWorkerRequest,
 ) -> Result<PathBuf, LiveIndexError> {
     let request_path = live_worker_request_path(request.worker_id);
-    fs::write(&request_path, serde_json::to_vec(request)?)?;
+    let payload = serde_json::to_vec(request)?;
+    if let Err(error) = fs::write(&request_path, payload) {
+        let _ = fs::remove_file(&request_path);
+        return Err(error.into());
+    }
     Ok(request_path)
 }
 
@@ -718,6 +895,7 @@ fn run_live_journal_rows_locally(
                     timestamp: context.timestamp,
                     cnki_config: &cnki_config,
                     change_event_context: change_event_context.as_ref(),
+                    lease_context: context.lease_context.as_ref(),
                 },
                 &mut attempt_sink,
             )
@@ -862,6 +1040,10 @@ fn build_live_worker_requests(context: &LiveJournalRowsContext<'_>) -> Vec<LiveI
                 csv_file: context.csv_file.to_string(),
                 run_id: context.run_id.to_string(),
                 timestamp: context.timestamp.to_string(),
+                lease_run_id: context
+                    .lease_context
+                    .as_ref()
+                    .map(|lease_context| lease_context.run_id().to_string()),
                 worker_id,
                 process_count: context.config.process_count,
                 worker_count: context.config.worker_count,
@@ -903,6 +1085,7 @@ where
         timestamp,
         cnki_config,
         change_event_context,
+        lease_context,
     } = context;
 
     match source_from_row(row).as_str() {
@@ -916,6 +1099,7 @@ where
                     journal_id,
                     timestamp,
                     change_event_context,
+                    lease_context,
                     should_resume: cnki_config.resume && !cnki_config.update,
                     attempt_sink,
                 },
@@ -944,6 +1128,7 @@ where
                     journal_id,
                     config: cnki_config,
                     change_event_context,
+                    lease_context,
                     attempt_sink,
                 },
             );
@@ -974,6 +1159,25 @@ fn run_live_csv_index(
     csv_path: &Path,
     db_path: &Path,
 ) -> Result<LiveCsvIndexOutcome, LiveIndexError> {
+    let launcher = ProcessLiveWorkerLauncher::new(config.application_executable.clone());
+    run_live_csv_index_with_runtime(
+        config,
+        csv_path,
+        db_path,
+        &launcher,
+        LiveRunTime::now(),
+        Duration::from_secs(LIVE_INDEX_HEARTBEAT_INTERVAL_SECONDS),
+    )
+}
+
+fn run_live_csv_index_with_runtime(
+    config: &LiveIndexConfig,
+    csv_path: &Path,
+    db_path: &Path,
+    launcher: &dyn LiveWorkerLauncher,
+    run_time: LiveRunTime,
+    heartbeat_interval: Duration,
+) -> Result<LiveCsvIndexOutcome, LiveIndexError> {
     let rows = read_csv_rows(csv_path)?;
     if rows.is_empty() {
         return Ok(LiveCsvIndexOutcome {
@@ -990,7 +1194,12 @@ fn run_live_csv_index(
     }
     validate_sources(&rows)?;
     validate_required_source_config(&rows, &config.scholarly_config)?;
-    let timestamp = default_timestamp();
+    if config.notify && !config.update {
+        return Err(LiveIndexError::Notify(
+            "--notify requires an update manifest".to_string(),
+        ));
+    }
+    let timestamp = run_time.timestamp();
     let csv_file = csv_path
         .file_name()
         .and_then(|value| value.to_str())
@@ -1001,18 +1210,45 @@ fn run_live_csv_index(
         .and_then(|value| value.to_str())
         .unwrap_or("index.sqlite")
         .to_string();
-    let run_id = format!(
-        "{}-{timestamp}",
-        csv_path
-            .file_stem()
-            .and_then(|value| value.to_str())
-            .unwrap_or("index")
-    );
+    let stem = csv_path
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .unwrap_or("index");
+    let run_id = run_time.run_id(stem);
+    let expected_journal_count = i64::try_from(rows.len()).unwrap_or(i64::MAX);
 
     if let Some(parent) = db_path.parent() {
         fs::create_dir_all(parent)?;
     }
     let connection = open_live_index_connection(db_path)?;
+    begin_index_run(
+        &connection,
+        &IndexRunStartRequest {
+            run_id: &run_id,
+            csv_file: &csv_file,
+            started_at: &timestamp,
+            total_journals: expected_journal_count,
+            now_epoch_seconds: run_time.epoch_seconds,
+            should_adopt_events: config.update,
+        },
+    )?;
+    let lease_context = IndexRunLeaseContext::new(&run_id);
+    let mut heartbeat =
+        match LiveIndexLeaseHeartbeat::start(db_path, lease_context.clone(), heartbeat_interval) {
+            Ok(heartbeat) => heartbeat,
+            Err(error) => {
+                let stats = IndexRunStats::new(run_id.clone(), csv_file.clone(), timestamp.clone());
+                return Err(finalize_failed_live_run(
+                    &connection,
+                    &lease_context,
+                    None,
+                    stats,
+                    expected_journal_count,
+                    &timestamp,
+                    error,
+                ));
+            }
+        };
     let journal_context = LiveJournalRowsContext {
         rows: &rows,
         csv_path,
@@ -1020,13 +1256,13 @@ fn run_live_csv_index(
         csv_file: &csv_file,
         run_id: &run_id,
         timestamp: &timestamp,
+        lease_context: Some(lease_context.clone()),
         worker_id: 0,
         process_count: 1,
         config,
     };
     let journal_rows_outcome = if config.process_count > 1 && rows.len() > 1 {
-        let launcher = ProcessLiveWorkerLauncher::new(config.application_executable.clone());
-        run_live_journal_rows_in_worker_processes(&journal_context, &launcher)
+        run_live_journal_rows_in_worker_processes(&journal_context, launcher)
     } else {
         run_live_journal_rows_locally(&connection, &journal_context)
     };
@@ -1034,14 +1270,35 @@ fn run_live_csv_index(
         Ok(outcome) => outcome,
         Err(failure) => {
             let failure = *failure;
-            persist_index_run_stats(&connection, &failure.partial.stats)?;
-            return Err(failure.error);
+            return Err(finalize_failed_live_run(
+                &connection,
+                &lease_context,
+                Some(&mut heartbeat),
+                failure.partial.stats,
+                expected_journal_count,
+                &timestamp,
+                failure.error,
+            ));
         }
     };
-    persist_index_run_stats(&connection, &journal_rows_outcome.stats)?;
-    let mut manifest_path = None;
-    if config.update {
-        let path = config
+    if let Err(error) = heartbeat.check().and_then(|_| {
+        lease_context
+            .assert_owner(&connection)
+            .map_err(LiveIndexError::from)
+    }) {
+        return Err(finalize_failed_live_run(
+            &connection,
+            &lease_context,
+            Some(&mut heartbeat),
+            journal_rows_outcome.stats,
+            expected_journal_count,
+            &timestamp,
+            error,
+        ));
+    }
+
+    let manifest_path = config.update.then(|| {
+        config
             .project_root
             .join("data")
             .join("push_state")
@@ -1051,22 +1308,47 @@ fn run_live_csv_index(
                     .file_stem()
                     .and_then(|value| value.to_str())
                     .unwrap_or("index")
-            ));
-        write_change_manifest_from_events(&connection, &db_name, &run_id, &timestamp, &path)?;
-        manifest_path = Some(path);
+            ))
+    });
+    heartbeat.stop_and_check()?;
+    let mut final_stats = journal_rows_outcome.stats;
+    final_stats.total_journals = expected_journal_count;
+    let manifest_publication = manifest_path
+        .as_deref()
+        .map(|path| LiveManifestPublication {
+            db_name: &db_name,
+            run_id: &run_id,
+            generated_at: &timestamp,
+            path,
+        });
+    if let Err(error) = persist_owned_live_run(
+        &connection,
+        &lease_context,
+        &final_stats,
+        Some(&timestamp),
+        manifest_publication,
+    ) {
+        return Err(finalize_failed_live_run(
+            &connection,
+            &lease_context,
+            Some(&mut heartbeat),
+            final_stats,
+            expected_journal_count,
+            &timestamp,
+            error,
+        ));
     }
     let notify_exit_code = if config.notify {
-        let Some(path) = manifest_path.as_ref() else {
-            return Err(LiveIndexError::Notify(
-                "--notify requires an update manifest".to_string(),
-            ));
-        };
-        Some(run_notify_for_manifest(config, &db_name, path)?)
+        Some(run_notify_for_manifest(
+            config,
+            &db_name,
+            manifest_path
+                .as_deref()
+                .expect("validated notify configuration should have a manifest"),
+        )?)
     } else {
         None
     };
-    mark_article_listing_ready(&connection, &timestamp)?;
-    optimize_index_db(&connection)?;
 
     Ok(LiveCsvIndexOutcome {
         csv_path: csv_path.display().to_string(),
@@ -1079,6 +1361,67 @@ fn run_live_csv_index(
         manifest_path: manifest_path.map(|path| path.display().to_string()),
         notify_exit_code,
     })
+}
+
+struct LiveManifestPublication<'a> {
+    db_name: &'a str,
+    run_id: &'a str,
+    generated_at: &'a str,
+    path: &'a Path,
+}
+
+fn persist_owned_live_run(
+    connection: &Connection,
+    lease_context: &IndexRunLeaseContext,
+    stats: &IndexRunStats,
+    publication_timestamp: Option<&str>,
+    manifest: Option<LiveManifestPublication<'_>>,
+) -> Result<(), LiveIndexError> {
+    with_immediate_index_transaction(connection, |transaction| {
+        lease_context.assert_owner(transaction)?;
+        if let Some(timestamp) = publication_timestamp {
+            mark_article_listing_ready(transaction, timestamp)?;
+            optimize_index_db(transaction)?;
+        }
+        if let Some(manifest) = manifest {
+            write_change_manifest_from_events(
+                transaction,
+                manifest.db_name,
+                manifest.run_id,
+                manifest.generated_at,
+                manifest.path,
+            )?;
+        }
+        persist_index_run_stats(transaction, stats)?;
+        lease_context.release(transaction)?;
+        Ok::<(), LiveIndexError>(())
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn finalize_failed_live_run(
+    connection: &Connection,
+    lease_context: &IndexRunLeaseContext,
+    heartbeat: Option<&mut LiveIndexLeaseHeartbeat>,
+    mut stats: IndexRunStats,
+    expected_journal_count: i64,
+    timestamp: &str,
+    error: LiveIndexError,
+) -> LiveIndexError {
+    if let Some(heartbeat) = heartbeat {
+        if let Err(heartbeat_error) = heartbeat.stop_and_check() {
+            return heartbeat_error;
+        }
+    }
+    if matches!(&error, LiveIndexError::Lease(_)) {
+        return error;
+    }
+    stats.total_journals = expected_journal_count;
+    stats.finish("failed", timestamp.to_string(), Some(error.to_string()));
+    match persist_owned_live_run(connection, lease_context, &stats, None, None) {
+        Ok(()) => error,
+        Err(finalize_error) => finalize_error,
+    }
 }
 
 fn csv_paths(meta_dir: &Path, file: Option<&str>) -> Result<Vec<PathBuf>, LiveIndexError> {
@@ -1230,29 +1573,27 @@ fn run_notify_command_for_manifest(
     Ok(status.code().unwrap_or(1))
 }
 
-fn default_timestamp() -> String {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_secs().to_string())
-        .unwrap_or_else(|_| "0".to_string())
-}
-
 #[cfg(test)]
 mod tests {
     use std::cell::RefCell;
     use std::fs;
     use std::path::{Path, PathBuf};
+    use std::thread;
+    use std::time::Duration;
 
     use litradar_sources::LiveScholarlyConfig;
+    use rusqlite::Connection;
     use tempfile::tempdir;
 
     use super::{
-        csv_paths, live_worker_command, parse_csv_line, read_csv_rows, run_live_index,
-        run_live_journal_rows_in_worker_processes, run_notify_command_for_manifest,
-        validate_required_source_config, validate_sources, LiveIndexConfig, LiveIndexError,
-        LiveIndexWorkerRequest, LiveIndexWorkerResponse, LiveIndexWorkerStats,
-        LiveJournalRowsContext, LiveWorkerLauncher,
+        csv_paths, live_worker_command, parse_csv_line, read_csv_rows,
+        run_live_csv_index_with_runtime, run_live_index, run_live_journal_rows_in_worker_processes,
+        run_notify_command_for_manifest, validate_required_source_config, validate_sources,
+        LiveIndexConfig, LiveIndexError, LiveIndexWorkerRequest, LiveIndexWorkerResponse,
+        LiveIndexWorkerStats, LiveJournalRowsContext, LiveRunTime, LiveWorkerLauncher,
+        ProcessLiveWorkerLauncher,
     };
+    use crate::schema::{begin_index_run, init_index_db, IndexRunStartRequest};
     use crate::stats::IndexRunStats;
     use crate::transforms::{build_journal_id, journal_title_from_row, source_from_row, CsvRow};
 
@@ -1397,6 +1738,309 @@ mod tests {
     }
 
     #[test]
+    fn live_update_adopts_publishes_and_cleans_pending_events() {
+        let root = tempdir().expect("temp root should be created");
+        let (csv_path, db_path) = write_parallel_live_csv(root.path());
+        insert_pending_event(&db_path, "run-pending", 101);
+        let mut config = live_config(root.path());
+        config.update = true;
+        let launcher = RecordingWorkerLauncher::default();
+
+        let outcome = run_live_csv_index_with_runtime(
+            &config,
+            &csv_path,
+            &db_path,
+            &launcher,
+            test_run_time(),
+            Duration::from_secs(60),
+        )
+        .expect("update should publish adopted events");
+
+        let expected_run_id = test_run_time().run_id("journals");
+        let connection = Connection::open(&db_path).expect("index database should open");
+        let parent_status: String = connection
+            .query_row(
+                "SELECT status FROM index_runs WHERE run_id = ?1",
+                [&expected_run_id],
+                |row| row.get(0),
+            )
+            .expect("successful parent should load");
+        let event_count: i64 = connection
+            .query_row("SELECT COUNT(*) FROM index_change_events", [], |row| {
+                row.get(0)
+            })
+            .expect("event count should load");
+        let lease_count: i64 = connection
+            .query_row("SELECT COUNT(*) FROM index_run_lease", [], |row| row.get(0))
+            .expect("lease count should load");
+        let manifest_path = root
+            .path()
+            .join("data")
+            .join("push_state")
+            .join("journals.changes.json");
+        let manifest: serde_json::Value = serde_json::from_str(
+            &fs::read_to_string(&manifest_path).expect("manifest should read"),
+        )
+        .expect("manifest should parse");
+
+        assert_eq!(outcome.run_id, expected_run_id);
+        assert_eq!(parent_status, "succeeded");
+        assert_eq!(event_count, 0);
+        assert_eq!(lease_count, 0);
+        assert_eq!(manifest["run_id"], outcome.run_id);
+        assert_eq!(manifest["notifiable_article_ids"], serde_json::json!([101]));
+        assert!(launcher
+            .requests
+            .borrow()
+            .iter()
+            .all(|request| request.lease_run_id.as_deref() == Some(outcome.run_id.as_str())));
+    }
+
+    #[test]
+    fn stale_parent_is_interrupted_before_workers_and_non_update_preserves_events() {
+        let root = tempdir().expect("temp root should be created");
+        let (csv_path, db_path) = write_parallel_live_csv(root.path());
+        let connection = open_test_index(&db_path);
+        begin_index_run(
+            &connection,
+            &IndexRunStartRequest {
+                run_id: "run-stale",
+                csv_file: "journals.csv",
+                started_at: "3999999700",
+                total_journals: 2,
+                now_epoch_seconds: test_run_time().epoch_seconds - 300,
+                should_adopt_events: false,
+            },
+        )
+        .expect("stale run should start");
+        drop(connection);
+        insert_pending_event(&db_path, "run-stale", 202);
+        let launcher = RecordingWorkerLauncher {
+            should_observe_parent: true,
+            ..RecordingWorkerLauncher::default()
+        };
+        let config = live_config(root.path());
+
+        run_live_csv_index_with_runtime(
+            &config,
+            &csv_path,
+            &db_path,
+            &launcher,
+            test_run_time(),
+            Duration::from_secs(60),
+        )
+        .expect("stale run should be recovered");
+
+        let expected_run_id = test_run_time().run_id("journals");
+        assert_eq!(
+            launcher.observed_parent.borrow().as_ref(),
+            Some(&(expected_run_id.clone(), "running".to_string(), 2))
+        );
+        let connection = Connection::open(&db_path).expect("index database should open");
+        let stale_status: String = connection
+            .query_row(
+                "SELECT status FROM index_runs WHERE run_id = 'run-stale'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("stale parent should load");
+        let pending_run_id: String = connection
+            .query_row("SELECT run_id FROM index_change_events", [], |row| {
+                row.get(0)
+            })
+            .expect("pending event should remain");
+        assert_eq!(stale_status, "interrupted");
+        assert_eq!(pending_run_id, "run-stale");
+    }
+
+    #[test]
+    fn active_lease_rejects_before_worker_launch() {
+        let root = tempdir().expect("temp root should be created");
+        let (csv_path, db_path) = write_parallel_live_csv(root.path());
+        let connection = open_test_index(&db_path);
+        begin_index_run(
+            &connection,
+            &IndexRunStartRequest {
+                run_id: "run-active",
+                csv_file: "journals.csv",
+                started_at: "4000000000",
+                total_journals: 2,
+                now_epoch_seconds: test_run_time().epoch_seconds,
+                should_adopt_events: false,
+            },
+        )
+        .expect("active run should start");
+        drop(connection);
+        let launcher = RecordingWorkerLauncher::default();
+        let later_time = LiveRunTime {
+            epoch_seconds: test_run_time().epoch_seconds + 1,
+            epoch_nanoseconds: test_run_time().epoch_nanoseconds + 1,
+        };
+
+        let error = run_live_csv_index_with_runtime(
+            &live_config(root.path()),
+            &csv_path,
+            &db_path,
+            &launcher,
+            later_time,
+            Duration::from_secs(60),
+        )
+        .expect_err("active lease should reject another run");
+
+        assert!(matches!(error, LiveIndexError::Lease(_)));
+        assert!(launcher.requests.borrow().is_empty());
+    }
+
+    #[test]
+    fn worker_failure_persists_failed_parent_and_retains_adopted_events() {
+        let root = tempdir().expect("temp root should be created");
+        let (csv_path, db_path) = write_parallel_live_csv(root.path());
+        insert_pending_event(&db_path, "run-pending", 303);
+        let mut config = live_config(root.path());
+        config.update = true;
+        let launcher = RecordingWorkerLauncher {
+            failed_worker_id: Some(1),
+            ..RecordingWorkerLauncher::default()
+        };
+
+        let error = run_live_csv_index_with_runtime(
+            &config,
+            &csv_path,
+            &db_path,
+            &launcher,
+            test_run_time(),
+            Duration::from_secs(60),
+        )
+        .expect_err("worker failure should fail the live run");
+
+        let expected_run_id = test_run_time().run_id("journals");
+        let connection = Connection::open(&db_path).expect("index database should open");
+        let parent_status: String = connection
+            .query_row(
+                "SELECT status FROM index_runs WHERE run_id = ?1",
+                [&expected_run_id],
+                |row| row.get(0),
+            )
+            .expect("failed parent should load");
+        let event_run_id: String = connection
+            .query_row("SELECT run_id FROM index_change_events", [], |row| {
+                row.get(0)
+            })
+            .expect("adopted event should remain");
+        assert!(matches!(error, LiveIndexError::Worker(_)));
+        assert_eq!(parent_status, "failed");
+        assert_eq!(event_run_id, expected_run_id);
+        assert_eq!(table_count(&connection, "index_run_lease"), 0);
+    }
+
+    #[test]
+    fn manifest_failure_persists_failed_parent_and_retains_adopted_events() {
+        let root = tempdir().expect("temp root should be created");
+        let (csv_path, db_path) = write_parallel_live_csv(root.path());
+        insert_pending_event(&db_path, "run-pending", 304);
+        fs::write(
+            root.path().join("data").join("push_state"),
+            "not a directory",
+        )
+        .expect("manifest parent blocker should be written");
+        let mut config = live_config(root.path());
+        config.update = true;
+        let launcher = RecordingWorkerLauncher::default();
+
+        let error = run_live_csv_index_with_runtime(
+            &config,
+            &csv_path,
+            &db_path,
+            &launcher,
+            test_run_time(),
+            Duration::from_secs(60),
+        )
+        .expect_err("manifest failure should fail the live run");
+
+        let expected_run_id = test_run_time().run_id("journals");
+        let connection = Connection::open(&db_path).expect("index database should open");
+        let parent_status: String = connection
+            .query_row(
+                "SELECT status FROM index_runs WHERE run_id = ?1",
+                [&expected_run_id],
+                |row| row.get(0),
+            )
+            .expect("failed parent should load");
+        let event_run_id: String = connection
+            .query_row("SELECT run_id FROM index_change_events", [], |row| {
+                row.get(0)
+            })
+            .expect("adopted event should remain");
+        assert!(matches!(error, LiveIndexError::Io(_)));
+        assert_eq!(parent_status, "failed");
+        assert_eq!(event_run_id, expected_run_id);
+        assert_eq!(table_count(&connection, "index_run_lease"), 0);
+        assert_eq!(table_count(&connection, "listing_state"), 0);
+    }
+
+    #[test]
+    fn heartbeat_ownership_loss_prevents_success_publication() {
+        let root = tempdir().expect("temp root should be created");
+        let (csv_path, db_path) = write_parallel_live_csv(root.path());
+        insert_pending_event(&db_path, "run-pending", 404);
+        let mut config = live_config(root.path());
+        config.update = true;
+        let launcher = RecordingWorkerLauncher {
+            should_steal_lease: true,
+            ..RecordingWorkerLauncher::default()
+        };
+
+        let error = run_live_csv_index_with_runtime(
+            &config,
+            &csv_path,
+            &db_path,
+            &launcher,
+            test_run_time(),
+            Duration::from_millis(1),
+        )
+        .expect_err("ownership loss should prevent publication");
+
+        let expected_run_id = test_run_time().run_id("journals");
+        let connection = Connection::open(&db_path).expect("index database should open");
+        let current_status: String = connection
+            .query_row(
+                "SELECT status FROM index_runs WHERE run_id = ?1",
+                [&expected_run_id],
+                |row| row.get(0),
+            )
+            .expect("orphaned parent should remain visible");
+        let lease_run_id: String = connection
+            .query_row(
+                "SELECT run_id FROM index_run_lease WHERE id = 1",
+                [],
+                |row| row.get(0),
+            )
+            .expect("takeover lease should load");
+        assert!(matches!(error, LiveIndexError::Lease(_)));
+        assert_eq!(current_status, "running");
+        assert_eq!(lease_run_id, "run-takeover");
+        assert!(!root
+            .path()
+            .join("data/push_state/journals.changes.json")
+            .exists());
+    }
+
+    #[test]
+    fn run_id_uses_nanoseconds_within_the_same_second() {
+        let first = LiveRunTime {
+            epoch_seconds: 10,
+            epoch_nanoseconds: 10_000_000_001,
+        };
+        let second = LiveRunTime {
+            epoch_seconds: 10,
+            epoch_nanoseconds: 10_000_000_002,
+        };
+
+        assert_eq!(first.timestamp(), "10");
+        assert_ne!(first.run_id("journals"), second.run_id("journals"));
+    }
+
+    #[test]
     fn parallel_worker_requests_partition_rows_and_merge_parent_summary() {
         let root = tempdir().expect("temp root should be created");
         let rows = vec![
@@ -1487,6 +2131,25 @@ mod tests {
         assert_eq!(failure.partial.stats.status, "failed");
         assert_eq!(failure.partial.stats.total_journals, 2);
         assert_eq!(failure.partial.stats.failed_journals, 1);
+    }
+
+    #[test]
+    fn worker_spawn_failure_removes_request_file() {
+        let root = tempdir().expect("temp root should be created");
+        let rows = vec![worker_row("a", "Journal A")];
+        let mut config = live_config(root.path());
+        config.process_count = 1;
+        let csv_path = root.path().join("journals.csv");
+        let db_path = root.path().join("journals.sqlite");
+        let context = worker_rows_context(&csv_path, &db_path, &config, &rows);
+        let launcher = ProcessLiveWorkerLauncher::new(root.path().join("missing-worker"));
+        let before = live_worker_request_paths();
+
+        let failure = run_live_journal_rows_in_worker_processes(&context, &launcher)
+            .expect_err("missing worker executable should fail");
+
+        assert!(matches!(failure.error, LiveIndexError::Worker(_)));
+        assert_eq!(live_worker_request_paths(), before);
     }
 
     #[test]
@@ -1634,6 +2297,9 @@ mod tests {
     struct RecordingWorkerLauncher {
         requests: RefCell<Vec<LiveIndexWorkerRequest>>,
         failed_worker_id: Option<usize>,
+        should_observe_parent: bool,
+        observed_parent: RefCell<Option<(String, String, i64)>>,
+        should_steal_lease: bool,
     }
 
     impl LiveWorkerLauncher for RecordingWorkerLauncher {
@@ -1642,6 +2308,53 @@ mod tests {
             requests: Vec<LiveIndexWorkerRequest>,
         ) -> Result<Vec<LiveIndexWorkerResponse>, LiveIndexError> {
             self.requests.replace(requests.clone());
+            if self.should_observe_parent {
+                let request = requests
+                    .first()
+                    .expect("observed worker requests should not be empty");
+                let connection = open_test_index(&request.db_path);
+                let parent = connection
+                    .query_row(
+                        "SELECT run_id, status, total_journals FROM index_runs WHERE run_id = ?1",
+                        [request.run_id.as_str()],
+                        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                    )
+                    .expect("running parent should be visible before workers launch");
+                self.observed_parent.replace(Some(parent));
+            }
+            if self.should_steal_lease {
+                let request = requests
+                    .first()
+                    .expect("lease-stealing worker requests should not be empty");
+                let connection = open_test_index(&request.db_path);
+                connection
+                    .execute(
+                        "
+                        INSERT INTO index_runs (
+                            run_id, csv_file, started_at, finished_at, status,
+                            total_journals, succeeded_journals, failed_journals,
+                            resumed_journals, error_summary
+                        ) VALUES (
+                            'run-takeover', 'journals.csv', '4000000001', NULL,
+                            'running', 0, 0, 0, 0, NULL
+                        )
+                        ",
+                        [],
+                    )
+                    .expect("takeover parent should insert");
+                connection
+                    .execute(
+                        "
+                        UPDATE index_run_lease
+                        SET run_id = 'run-takeover', heartbeat_at = 4000000001,
+                            expires_at = 4000000301
+                        WHERE id = 1
+                        ",
+                        [],
+                    )
+                    .expect("lease should move to takeover run");
+                thread::sleep(Duration::from_millis(20));
+            }
             Ok(requests
                 .iter()
                 .map(|request| {
@@ -1704,10 +2417,62 @@ mod tests {
             csv_file: "journals.csv",
             run_id: "run-test",
             timestamp: "2026-07-05T00:00:00Z",
+            lease_context: None,
             worker_id: 0,
             process_count: config.process_count,
             config,
         }
+    }
+
+    fn test_run_time() -> LiveRunTime {
+        LiveRunTime {
+            epoch_seconds: 4_000_000_000,
+            epoch_nanoseconds: 4_000_000_000_000_000_123,
+        }
+    }
+
+    fn write_parallel_live_csv(root: &Path) -> (PathBuf, PathBuf) {
+        let csv_path = root.join("data").join("meta").join("journals.csv");
+        let db_path = root.join("data").join("index").join("journals.sqlite");
+        fs::create_dir_all(csv_path.parent().expect("CSV should have a parent"))
+            .expect("metadata directory should be created");
+        fs::create_dir_all(db_path.parent().expect("database should have a parent"))
+            .expect("index directory should be created");
+        fs::write(
+            &csv_path,
+            "source,id,title,issn\nscholarly,a,Journal A,1234-5678\nscholarly,b,Journal B,2345-6789\n",
+        )
+        .expect("parallel live CSV should be written");
+        (csv_path, db_path)
+    }
+
+    fn open_test_index(db_path: &Path) -> Connection {
+        let connection = Connection::open(db_path).expect("index database should open");
+        init_index_db(&connection).expect("index schema should initialize");
+        connection
+    }
+
+    fn insert_pending_event(db_path: &Path, run_id: &str, article_id: i64) {
+        let connection = open_test_index(db_path);
+        connection
+            .execute(
+                "
+                INSERT INTO index_change_events (
+                    run_id, worker_id, article_id, event_type, membership_type,
+                    journal_id, issue_id, is_backfill, created_at
+                ) VALUES (?1, 'worker-old', ?2, 'add', 'inpress', 1, NULL, 0, '3999999000')
+                ",
+                rusqlite::params![run_id, article_id],
+            )
+            .expect("pending event should insert");
+    }
+
+    fn table_count(connection: &Connection, table_name: &str) -> i64 {
+        connection
+            .query_row(&format!("SELECT COUNT(*) FROM {table_name}"), [], |row| {
+                row.get(0)
+            })
+            .expect("table count should load")
     }
 
     fn worker_row(id: &str, title: &str) -> CsvRow {
@@ -1722,6 +2487,23 @@ mod tests {
         rows.iter()
             .map(|row| row.get("title").map(String::as_str).unwrap_or(""))
             .collect()
+    }
+
+    fn live_worker_request_paths() -> Vec<PathBuf> {
+        let prefix = format!("litradar-live-worker-{}-", std::process::id());
+        let mut paths = fs::read_dir(std::env::temp_dir())
+            .expect("temporary directory should be readable")
+            .filter_map(Result::ok)
+            .filter_map(|entry| {
+                entry
+                    .file_name()
+                    .to_str()
+                    .filter(|name| name.starts_with(&prefix) && name.ends_with(".json"))
+                    .map(|_| entry.path())
+            })
+            .collect::<Vec<_>>();
+        paths.sort();
+        paths
     }
 
     #[cfg(windows)]

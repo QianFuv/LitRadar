@@ -20,7 +20,7 @@ use crate::schema::{
     apply_article_changes, get_completed_years, get_journal_issue_ids_with_articles,
     is_journal_complete, mark_article_listing_ready, mark_journal_done, mark_year_done,
     open_index_db, optimize_index_db, persist_index_run_stats, upsert_issues, upsert_journal,
-    upsert_meta, with_immediate_index_transaction, ChangeEventContext,
+    upsert_meta, with_immediate_index_transaction, ChangeEventContext, IndexRunLeaseContext,
 };
 use crate::stats::{IndexRunStats, PathCountIncrements};
 use crate::transforms::{
@@ -86,6 +86,8 @@ pub enum CnkiIndexError {
     Worker(String),
     /// Journal row is invalid.
     InvalidJournal(String),
+    /// Live run lease ownership was lost.
+    Lease(String),
 }
 
 impl fmt::Display for CnkiIndexError {
@@ -98,6 +100,7 @@ impl fmt::Display for CnkiIndexError {
             Self::Source(error) => write!(formatter, "{error}"),
             Self::Worker(message) => formatter.write_str(message),
             Self::InvalidJournal(message) => formatter.write_str(message),
+            Self::Lease(message) => formatter.write_str(message),
         }
     }
 }
@@ -112,6 +115,7 @@ impl Error for CnkiIndexError {
             Self::Source(error) => Some(error),
             Self::Worker(_) => None,
             Self::InvalidJournal(_) => None,
+            Self::Lease(_) => None,
         }
     }
 }
@@ -234,6 +238,7 @@ pub fn run_cnki_fixture_index(
                     journal_id,
                     config,
                     change_event_context: change_event_context.as_ref(),
+                    lease_context: None,
                     attempt_sink: &mut attempt_sink,
                 },
             )
@@ -318,6 +323,7 @@ pub(crate) struct CnkiProcessContext<'a> {
     pub(crate) journal_id: i64,
     pub(crate) config: &'a CnkiIndexConfig,
     pub(crate) change_event_context: Option<&'a ChangeEventContext>,
+    pub(crate) lease_context: Option<&'a IndexRunLeaseContext>,
     pub(crate) attempt_sink: &'a mut dyn FnMut(&[SourceAttempt]),
 }
 
@@ -360,6 +366,7 @@ where
         journal_id,
         config,
         change_event_context,
+        lease_context,
         attempt_sink,
     } = context;
     if config.resume && !config.update && is_journal_complete(connection, journal_id)? {
@@ -520,6 +527,11 @@ where
                 .collect::<Vec<_>>();
             let is_last_batch = batch_index + 1 == batch_count;
             with_immediate_index_transaction(connection, |transaction| {
+                if let Some(lease_context) = lease_context {
+                    lease_context
+                        .assert_owner(transaction)
+                        .map_err(|error| CnkiIndexError::Lease(error.to_string()))?;
+                }
                 upsert_journal(transaction, &journal_record)?;
                 upsert_meta(transaction, &meta_record)?;
                 if !batch_issue_records.is_empty() {
@@ -543,6 +555,11 @@ where
     }
 
     with_immediate_index_transaction(connection, |transaction| {
+        if let Some(lease_context) = lease_context {
+            lease_context
+                .assert_owner(transaction)
+                .map_err(|error| CnkiIndexError::Lease(error.to_string()))?;
+        }
         upsert_journal(transaction, &journal_record)?;
         upsert_meta(transaction, &meta_record)?;
         mark_journal_done(transaction, journal_id, &config.timestamp)?;
@@ -753,9 +770,12 @@ mod tests {
 
     use crate::cnki::{
         process_cnki_row, run_cnki_fixture_index, select_recent_update_issue_ids, CnkiIndexConfig,
-        CnkiProcessContext,
+        CnkiIndexError, CnkiProcessContext,
     };
-    use crate::schema::{init_index_db, mark_journal_done};
+    use crate::schema::{
+        begin_index_run, init_index_db, mark_journal_done, IndexRunLeaseContext,
+        IndexRunStartRequest,
+    };
     use crate::transforms::CsvRow;
 
     #[test]
@@ -808,6 +828,7 @@ mod tests {
                 journal_id,
                 config: &config,
                 change_event_context: None,
+                lease_context: None,
                 attempt_sink: &mut |_| {},
             },
         )
@@ -853,6 +874,7 @@ mod tests {
                 journal_id: 99,
                 config: &config,
                 change_event_context: None,
+                lease_context: None,
                 attempt_sink: &mut |attempts| captured_attempts.extend_from_slice(attempts),
             },
         )
@@ -868,6 +890,66 @@ mod tests {
                 .count(),
             2
         );
+    }
+
+    #[test]
+    fn stale_live_worker_cannot_commit_cnki_batches() {
+        let connection = Connection::open_in_memory().expect("in-memory db should open");
+        init_index_db(&connection).expect("schema should initialize");
+        begin_index_run(
+            &connection,
+            &IndexRunStartRequest {
+                run_id: "run-owner",
+                csv_file: "journals.csv",
+                started_at: "4000000000",
+                total_journals: 1,
+                now_epoch_seconds: 4_000_000_000,
+                should_adopt_events: false,
+            },
+        )
+        .expect("owner run should start");
+        let stale_lease = IndexRunLeaseContext::new("run-stale");
+        let state = Arc::new(InstrumentedCnkiState::default());
+        let mut client = CnkiClient::new(InstrumentedCnkiTransport::new(state));
+        let row = CsvRow::from([
+            ("source".to_string(), "cnki".to_string()),
+            ("title".to_string(), "Fenced CNKI".to_string()),
+            ("issn".to_string(), "1234-5678".to_string()),
+            ("id".to_string(), "Fenced CNKI".to_string()),
+        ]);
+        let config = CnkiIndexConfig {
+            csv_path: PathBuf::new(),
+            fixture_path: PathBuf::new(),
+            output_db_path: PathBuf::new(),
+            manifest_path: None,
+            run_id: "run-stale".to_string(),
+            timestamp: "4000000000".to_string(),
+            resume: false,
+            update: false,
+            issue_batch_size: 1,
+            worker_count: 1,
+        };
+
+        let error = process_cnki_row(
+            &connection,
+            &mut client,
+            &row,
+            CnkiProcessContext {
+                csv_file: "journals.csv",
+                journal_id: 100,
+                config: &config,
+                change_event_context: None,
+                lease_context: Some(&stale_lease),
+                attempt_sink: &mut |_| {},
+            },
+        )
+        .expect_err("stale worker should fail before its first commit");
+
+        let article_count: i64 = connection
+            .query_row("SELECT COUNT(*) FROM articles", [], |row| row.get(0))
+            .expect("article count should load");
+        assert!(matches!(error, CnkiIndexError::Lease(_)));
+        assert_eq!(article_count, 0);
     }
 
     #[test]
