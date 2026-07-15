@@ -607,11 +607,22 @@ where
             let output = handle.join().map_err(|_| {
                 CnkiIndexError::Worker("CNKI article detail worker panicked".to_string())
             })?;
+            let should_retry_serially = matches!(&output.result, Err(CnkiSourceError::Request(_)))
+                && output
+                    .attempts
+                    .last()
+                    .is_some_and(|attempt| !attempt.did_succeed && attempt.status_code.is_none());
             client.append_attempts(output.attempts);
-            worker_outputs.push((output.task, output.result));
+            worker_outputs.push((output.task, output.result, should_retry_serially));
         }
-        for (task, result) in worker_outputs {
-            let detail = result?;
+        for (task, result, should_retry_serially) in worker_outputs {
+            let detail = match result {
+                Ok(detail) => detail,
+                Err(_) if should_retry_serially => {
+                    client.article_detail(&task.article_url, task.platform_id.as_deref())?
+                }
+                Err(error) => return Err(error.into()),
+            };
             results.push(CnkiArticleDetailResult {
                 order: task.order,
                 issue_id: task.issue_id,
@@ -769,8 +780,9 @@ mod tests {
     use tempfile::tempdir;
 
     use crate::cnki::{
-        process_cnki_row, run_cnki_fixture_index, select_recent_update_issue_ids, CnkiIndexConfig,
-        CnkiIndexError, CnkiProcessContext,
+        fetch_cnki_article_details, process_cnki_row, run_cnki_fixture_index,
+        select_recent_update_issue_ids, CnkiArticleDetailTask, CnkiIndexConfig, CnkiIndexError,
+        CnkiProcessContext,
     };
     use crate::schema::{
         begin_index_run, init_index_db, mark_journal_done, IndexRunLeaseContext,
@@ -890,6 +902,81 @@ mod tests {
                 .count(),
             2
         );
+    }
+
+    #[test]
+    fn article_details_retry_transport_failures_serially() {
+        let state = Arc::new(InstrumentedCnkiState {
+            fail_first_detail_calls: 1,
+            ..InstrumentedCnkiState::default()
+        });
+        let mut client = CnkiClient::new(InstrumentedCnkiTransport::new(state.clone()));
+
+        let results = fetch_cnki_article_details(&mut client, article_detail_tasks(), 2)
+            .expect("transport failure should recover serially");
+
+        assert_eq!(
+            results
+                .iter()
+                .map(|result| result.order)
+                .collect::<Vec<_>>(),
+            vec![0, 1]
+        );
+        assert_eq!(state.detail_calls.load(Ordering::SeqCst), 3);
+        assert!(state.max_active.load(Ordering::SeqCst) >= 2);
+        assert_eq!(
+            client
+                .attempts()
+                .iter()
+                .filter(|attempt| !attempt.did_succeed)
+                .count(),
+            1
+        );
+        assert_eq!(
+            client
+                .attempts()
+                .iter()
+                .filter(|attempt| attempt.did_succeed)
+                .count(),
+            2
+        );
+    }
+
+    #[test]
+    fn article_details_do_not_retry_failures_with_http_status() {
+        let state = Arc::new(InstrumentedCnkiState {
+            fail_first_detail_calls: 1,
+            failed_detail_status_code: Some(503),
+            ..InstrumentedCnkiState::default()
+        });
+        let mut client = CnkiClient::new(InstrumentedCnkiTransport::new(state.clone()));
+
+        let error = fetch_cnki_article_details(&mut client, article_detail_tasks(), 2)
+            .expect_err("HTTP failure should remain fatal");
+
+        assert!(matches!(error, CnkiIndexError::Source(_)));
+        assert_eq!(state.detail_calls.load(Ordering::SeqCst), 2);
+        assert_eq!(client.attempts().len(), 2);
+    }
+
+    #[test]
+    fn article_details_fail_when_serial_transport_retry_fails() {
+        let state = Arc::new(InstrumentedCnkiState {
+            fail_first_detail_calls: usize::MAX,
+            ..InstrumentedCnkiState::default()
+        });
+        let mut client = CnkiClient::new(InstrumentedCnkiTransport::new(state.clone()));
+
+        let error = fetch_cnki_article_details(&mut client, article_detail_tasks(), 2)
+            .expect_err("persistent transport failure should remain fatal");
+
+        assert!(matches!(error, CnkiIndexError::Source(_)));
+        assert_eq!(state.detail_calls.load(Ordering::SeqCst), 3);
+        assert_eq!(client.attempts().len(), 3);
+        assert!(client
+            .attempts()
+            .iter()
+            .all(|attempt| !attempt.did_succeed && attempt.status_code.is_none()));
     }
 
     #[test]
@@ -1027,6 +1114,9 @@ mod tests {
     struct InstrumentedCnkiState {
         active: AtomicUsize,
         max_active: AtomicUsize,
+        detail_calls: AtomicUsize,
+        fail_first_detail_calls: usize,
+        failed_detail_status_code: Option<u16>,
     }
 
     #[derive(Debug, Clone)]
@@ -1044,6 +1134,17 @@ mod tests {
         }
 
         fn record_attempt(&mut self, endpoint: &str, key: Option<&str>) {
+            self.record_attempt_outcome(endpoint, key, Some(200), true, None);
+        }
+
+        fn record_attempt_outcome(
+            &mut self,
+            endpoint: &str,
+            key: Option<&str>,
+            status_code: Option<u16>,
+            did_succeed: bool,
+            error: Option<String>,
+        ) {
             self.attempts.push(SourceAttempt {
                 service: "cnki".to_string(),
                 endpoint: endpoint.to_string(),
@@ -1053,10 +1154,10 @@ mod tests {
                     "POST".to_string()
                 },
                 url: format!("https://example.test/{}", key.unwrap_or(endpoint)),
-                status_code: Some(200),
-                did_succeed: true,
+                status_code,
+                did_succeed,
                 did_retry: false,
-                error: None,
+                error,
             });
         }
     }
@@ -1115,10 +1216,22 @@ mod tests {
             article_url: &str,
             platform_id: Option<&str>,
         ) -> Result<Value, CnkiSourceError> {
+            let detail_call = self.state.detail_calls.fetch_add(1, Ordering::SeqCst);
             let active = self.state.active.fetch_add(1, Ordering::SeqCst) + 1;
             self.state.max_active.fetch_max(active, Ordering::SeqCst);
             thread::sleep(Duration::from_millis(50));
             self.state.active.fetch_sub(1, Ordering::SeqCst);
+            if detail_call < self.state.fail_first_detail_calls {
+                let message = "simulated article detail failure".to_string();
+                self.record_attempt_outcome(
+                    "article_detail",
+                    platform_id,
+                    self.state.failed_detail_status_code,
+                    false,
+                    Some(message.clone()),
+                );
+                return Err(CnkiSourceError::Request(message));
+            }
             self.record_attempt("article_detail", platform_id);
             Ok(json!({
                 "platform_id": platform_id.unwrap_or(article_url),
@@ -1139,5 +1252,19 @@ mod tests {
         fn append_attempts(&mut self, attempts: Vec<SourceAttempt>) {
             self.attempts.extend(attempts);
         }
+    }
+
+    fn article_detail_tasks() -> Vec<CnkiArticleDetailTask> {
+        ["ARTICLE-A", "ARTICLE-B"]
+            .into_iter()
+            .enumerate()
+            .map(|(order, platform_id)| CnkiArticleDetailTask {
+                order,
+                issue_id: 1,
+                summary: json!({"platform_id": platform_id}),
+                article_url: format!("https://example.test/{platform_id}"),
+                platform_id: Some(platform_id.to_string()),
+            })
+            .collect()
     }
 }
