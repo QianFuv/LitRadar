@@ -17,7 +17,8 @@ const BASE_URL: &str = "https://oversea.cnki.net";
 const DEFAULT_PCODE: &str = "CJFD,CCJD";
 const CNKI_CHINESE_LANGUAGE: &str = "CHS";
 const JOURNAL_PRODUCT_CODE: &str = "BOJHD70J";
-const CNKI_REQUEST_ATTEMPTS: usize = 3;
+const CNKI_RESPONSE_ATTEMPTS: usize = 3;
+const CNKI_TRANSPORT_ATTEMPTS: usize = 5;
 const DEFAULT_USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
 const DEFAULT_ACCEPT_LANGUAGE: &str = "zh-CN,zh;q=0.9,en;q=0.5";
 
@@ -411,7 +412,10 @@ impl LiveCnkiTransport {
         referer: Option<&str>,
         endpoint: &str,
     ) -> Result<String, CnkiSourceError> {
-        for attempt in 0..CNKI_REQUEST_ATTEMPTS {
+        let mut response_failure_count = 0;
+        let mut transport_failure_count = 0;
+        loop {
+            let did_retry = response_failure_count + transport_failure_count > 0;
             let mut builder = match method {
                 "POST" => self.client.post(url).form(data),
                 _ => self.client.get(url),
@@ -431,17 +435,18 @@ impl LiveCnkiTransport {
                     let status_code = response.status().as_u16();
                     if !(200..300).contains(&status_code) {
                         let message = format!("CNKI request failed with HTTP {status_code}");
+                        response_failure_count += 1;
                         self.record_attempt(LiveCnkiAttempt {
                             endpoint,
                             method,
                             url: &request_url,
                             status_code: Some(status_code),
                             did_succeed: false,
-                            did_retry: attempt > 0,
+                            did_retry,
                             error: Some(message.clone()),
                         });
-                        if attempt + 1 < CNKI_REQUEST_ATTEMPTS {
-                            thread::sleep(Duration::from_secs((attempt + 1) as u64));
+                        if response_failure_count < CNKI_RESPONSE_ATTEMPTS {
+                            thread::sleep(Duration::from_secs(response_failure_count as u64));
                             continue;
                         }
                         return Err(CnkiSourceError::Request(message));
@@ -450,17 +455,18 @@ impl LiveCnkiTransport {
                         Ok(text) => text,
                         Err(_) => {
                             let message = "CNKI response body decoding failed".to_string();
+                            response_failure_count += 1;
                             self.record_attempt(LiveCnkiAttempt {
                                 endpoint,
                                 method,
                                 url: &request_url,
                                 status_code: Some(status_code),
                                 did_succeed: false,
-                                did_retry: attempt > 0,
+                                did_retry,
                                 error: Some(message.clone()),
                             });
-                            if attempt + 1 < CNKI_REQUEST_ATTEMPTS {
-                                thread::sleep(Duration::from_secs((attempt + 1) as u64));
+                            if response_failure_count < CNKI_RESPONSE_ATTEMPTS {
+                                thread::sleep(Duration::from_secs(response_failure_count as u64));
                                 continue;
                             }
                             return Err(CnkiSourceError::Request(message));
@@ -474,23 +480,24 @@ impl LiveCnkiTransport {
                                 url: &request_url,
                                 status_code: Some(status_code),
                                 did_succeed: true,
-                                did_retry: attempt > 0,
+                                did_retry,
                                 error: None,
                             });
                             return Ok(text);
                         }
                         Err(error) => {
+                            response_failure_count += 1;
                             self.record_attempt(LiveCnkiAttempt {
                                 endpoint,
                                 method,
                                 url: &request_url,
                                 status_code: Some(status_code),
                                 did_succeed: false,
-                                did_retry: attempt > 0,
+                                did_retry,
                                 error: Some(error.to_string()),
                             });
-                            if attempt + 1 < CNKI_REQUEST_ATTEMPTS {
-                                thread::sleep(Duration::from_secs((attempt + 1) as u64));
+                            if response_failure_count < CNKI_RESPONSE_ATTEMPTS {
+                                thread::sleep(Duration::from_secs(response_failure_count as u64));
                                 continue;
                             }
                             return Err(error);
@@ -498,26 +505,24 @@ impl LiveCnkiTransport {
                     }
                 }
                 Err(error) => {
+                    transport_failure_count += 1;
                     self.record_attempt(LiveCnkiAttempt {
                         endpoint,
                         method,
                         url,
                         status_code: None,
                         did_succeed: false,
-                        did_retry: attempt > 0,
+                        did_retry,
                         error: Some(error.to_string()),
                     });
-                    if attempt + 1 < CNKI_REQUEST_ATTEMPTS {
-                        thread::sleep(Duration::from_secs((attempt + 1) as u64));
+                    if transport_failure_count < CNKI_TRANSPORT_ATTEMPTS {
+                        thread::sleep(Duration::from_secs(transport_failure_count as u64));
                         continue;
                     }
                     return Err(CnkiSourceError::Request(error.to_string()));
                 }
             }
         }
-        Err(CnkiSourceError::Request(
-            "CNKI request retry loop exhausted".to_string(),
-        ))
     }
 
     fn record_attempt(&mut self, attempt: LiveCnkiAttempt<'_>) {
@@ -1594,6 +1599,78 @@ mod tests {
             .expect_err("verification page should fail");
 
         assert!(error.to_string().contains("verification required"));
+    }
+
+    #[test]
+    fn live_cnki_extends_transport_retries_beyond_response_failures() {
+        let server = TestHttpServer::start(vec![
+            String::new(),
+            String::new(),
+            String::new(),
+            ok_response(),
+        ]);
+        let mut transport = live_cnki_transport();
+
+        let result = transport.get_text(server.url(), None, "transport_test");
+        let served_count = server.finish();
+        assert!(
+            result.is_ok(),
+            "fourth response should recover after three transport failures: {result:?}; attempts: {:?}",
+            transport.attempts
+        );
+        let text = result.expect("successful transport retry should contain text");
+
+        assert_eq!(text, "ok");
+        assert_eq!(served_count, 4);
+        assert_eq!(transport.attempts.len(), 4);
+        assert!(transport.attempts[..3]
+            .iter()
+            .all(|attempt| { attempt.status_code.is_none() && !attempt.did_succeed }));
+        assert_eq!(
+            transport
+                .attempts
+                .iter()
+                .map(|attempt| attempt.did_retry)
+                .collect::<Vec<_>>(),
+            [false, true, true, true]
+        );
+        assert!(transport
+            .attempts
+            .last()
+            .is_some_and(|attempt| attempt.status_code == Some(200) && attempt.did_succeed));
+    }
+
+    #[test]
+    fn live_cnki_stops_after_five_transport_failures() {
+        let server = TestHttpServer::start(vec![
+            String::new(),
+            String::new(),
+            String::new(),
+            String::new(),
+            String::new(),
+        ]);
+        let mut transport = live_cnki_transport();
+
+        let error = transport
+            .get_text(server.url(), None, "transport_test")
+            .expect_err("five transport failures should fail loud");
+        let served_count = server.finish();
+
+        assert_eq!(served_count, 5);
+        assert_eq!(transport.attempts.len(), 5);
+        assert!(transport
+            .attempts
+            .iter()
+            .all(|attempt| { attempt.status_code.is_none() && !attempt.did_succeed }));
+        assert_eq!(
+            transport
+                .attempts
+                .iter()
+                .map(|attempt| attempt.did_retry)
+                .collect::<Vec<_>>(),
+            [false, true, true, true, true]
+        );
+        assert!(!error.to_string().is_empty());
     }
 
     #[test]
