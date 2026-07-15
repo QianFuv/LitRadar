@@ -47,6 +47,43 @@ fn openalex_source_work_filter(source_id: &str, from_sync_date: Option<&str>) ->
     filters.join(",")
 }
 
+fn is_openalex_created_date_plan_error(error: &SourceError) -> bool {
+    let SourceError::HttpStatus {
+        service,
+        endpoint,
+        status_code: 429,
+        body,
+    } = error
+    else {
+        return false;
+    };
+    service == OPENALEX_SOURCE
+        && endpoint == "source_works"
+        && body.get("error").and_then(Value::as_str) == Some("Plan upgrade required")
+        && body
+            .get("message")
+            .and_then(Value::as_str)
+            .is_some_and(|message| message.contains("from_created_date"))
+}
+
+fn openalex_source_works_request(
+    source_id: &str,
+    from_sync_date: Option<&str>,
+    cursor: Option<&str>,
+) -> ScholarlyRequest {
+    ScholarlyRequest {
+        service: OPENALEX_SOURCE.to_string(),
+        endpoint: "source_works".to_string(),
+        method: "GET".to_string(),
+        url: format!("https://api.openalex.org/works?filter=primary_location.source.id:{source_id}&api_key=SECRET"),
+        kind: ScholarlyRequestKind::OpenAlexWorksBySource {
+            source_id: source_id.to_string(),
+            from_sync_date: from_sync_date.map(str::to_string),
+            cursor: cursor.map(str::to_string),
+        },
+    }
+}
+
 /// One source transport attempt captured for index statistics.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct SourceAttempt {
@@ -159,6 +196,12 @@ pub struct ScholarlyFixtureData {
     /// Optional OpenAlex source-work pages used by bounded pagination tests.
     #[serde(default)]
     pub openalex_source_work_pages: Vec<Vec<Value>>,
+    /// Whether dated OpenAlex source-work requests require a paid plan.
+    #[serde(default)]
+    pub openalex_source_works_plan_restricted: bool,
+    /// Optional OpenAlex source-work status code.
+    #[serde(default)]
+    pub openalex_source_works_status: Option<u16>,
     /// OpenAlex works returned by DOI enrichment.
     #[serde(default)]
     pub openalex_by_doi: BTreeMap<String, Value>,
@@ -951,6 +994,24 @@ impl ScholarlyTransport for FixtureScholarlyTransport {
             } => {
                 self.source_work_requests
                     .push((source_id.clone(), from_sync_date.clone()));
+                if from_sync_date.is_some() && self.data.openalex_source_works_plan_restricted {
+                    return Err(self.http_error(
+                        &request,
+                        429,
+                        json!({
+                            "error": "Plan upgrade required",
+                            "message": "The from_created_date filter requires a Premium plan."
+                        }),
+                    ));
+                }
+                let status_code = self.data.openalex_source_works_status.unwrap_or(200);
+                if status_code != 200 {
+                    return Err(self.http_error(
+                        &request,
+                        status_code,
+                        json!({"error": "fixture OpenAlex source works failure"}),
+                    ));
+                }
                 self.record_attempt(&request, Some(200), true, None);
                 let page_index = fixture_page_index(cursor.as_deref());
                 let (items, next_cursor) = fixture_page(
@@ -1078,6 +1139,7 @@ fn fixture_page(
 pub struct ScholarlyClient<T> {
     transport: T,
     has_semantic_scholar_key: bool,
+    is_openalex_created_date_filter_unavailable: bool,
 }
 
 impl<T> ScholarlyClient<T>
@@ -1098,6 +1160,7 @@ where
         Self {
             transport,
             has_semantic_scholar_key,
+            is_openalex_created_date_filter_unavailable: false,
         }
     }
 
@@ -1224,17 +1287,22 @@ where
         from_sync_date: Option<&str>,
         cursor: Option<&str>,
     ) -> Result<ScholarlyWorksPage, SourceError> {
-        let payload = self.transport.request(ScholarlyRequest {
-            service: OPENALEX_SOURCE.to_string(),
-            endpoint: "source_works".to_string(),
-            method: "GET".to_string(),
-            url: format!("https://api.openalex.org/works?filter=primary_location.source.id:{source_id}&api_key=SECRET"),
-            kind: ScholarlyRequestKind::OpenAlexWorksBySource {
-                source_id: source_id.to_string(),
-                from_sync_date: from_sync_date.map(str::to_string),
-                cursor: cursor.map(str::to_string),
-            },
-        })?;
+        let effective_sync_date = if self.is_openalex_created_date_filter_unavailable {
+            None
+        } else {
+            from_sync_date
+        };
+        let request = openalex_source_works_request(source_id, effective_sync_date, cursor);
+        let payload = match self.transport.request(request) {
+            Err(error)
+                if effective_sync_date.is_some() && is_openalex_created_date_plan_error(&error) =>
+            {
+                self.is_openalex_created_date_filter_unavailable = true;
+                self.transport
+                    .request(openalex_source_works_request(source_id, None, cursor))?
+            }
+            result => result?,
+        };
         let items = json_array(&payload, "results");
         let next_cursor = payload
             .get("meta")
@@ -1550,7 +1618,7 @@ mod tests {
         openalex_short_source_id, openalex_source_work_filter, redact_url,
         semantic_scholar_worker_interval, semantic_scholar_worker_offset, value_pool_from_text,
         FixtureScholarlyTransport, LiveScholarlyConfig, ScholarlyClient, ScholarlyFixtureData,
-        SourceError, CROSSREF_ROWS,
+        ScholarlyTransport, SourceError, CROSSREF_ROWS,
     };
 
     #[test]
@@ -1800,6 +1868,103 @@ mod tests {
                 Some("2026-01-01".to_string())
             )]
         );
+    }
+
+    #[test]
+    fn openalex_plan_error_falls_back_to_full_source_pages() {
+        let transport = FixtureScholarlyTransport::new(ScholarlyFixtureData {
+            openalex_source_work_pages: vec![
+                vec![json!({"id": "https://openalex.org/W42"})],
+                vec![json!({"id": "https://openalex.org/W43"})],
+            ],
+            openalex_source_works_plan_restricted: true,
+            ..ScholarlyFixtureData::default()
+        });
+        let mut client = ScholarlyClient::new(transport, true);
+
+        let first_page = client
+            .fetch_openalex_works_by_source_page("S42", Some("2026-01-01"), None)
+            .expect("paid filter error should fall back to a full source page");
+        let second_page = client
+            .fetch_openalex_works_by_source_page(
+                "S42",
+                Some("2026-01-01"),
+                first_page.next_cursor.as_deref(),
+            )
+            .expect("later pages should retain the full source fallback");
+        let transport = client.into_transport();
+
+        assert_eq!(first_page.items[0]["id"], "https://openalex.org/W42");
+        assert_eq!(second_page.items[0]["id"], "https://openalex.org/W43");
+        assert_eq!(
+            transport.source_work_requests(),
+            &[
+                ("S42".to_string(), Some("2026-01-01".to_string())),
+                ("S42".to_string(), None),
+                ("S42".to_string(), None),
+            ]
+        );
+        assert_eq!(
+            transport
+                .attempts()
+                .iter()
+                .map(|attempt| (attempt.status_code, attempt.did_succeed))
+                .collect::<Vec<_>>(),
+            vec![(Some(429), false), (Some(200), true), (Some(200), true)]
+        );
+        assert!(transport
+            .attempts()
+            .iter()
+            .all(|attempt| !attempt.url.contains("2026-01-01")));
+    }
+
+    #[test]
+    fn openalex_unrelated_rate_limit_remains_fatal() {
+        let transport = FixtureScholarlyTransport::new(ScholarlyFixtureData {
+            openalex_source_works_status: Some(429),
+            ..ScholarlyFixtureData::default()
+        });
+        let mut client = ScholarlyClient::new(transport, true);
+
+        let error = client
+            .fetch_openalex_works_by_source_page("S42", Some("2026-01-01"), None)
+            .expect_err("ordinary rate limiting should remain fatal");
+        let transport = client.into_transport();
+
+        assert!(matches!(
+            error,
+            SourceError::HttpStatus {
+                status_code: 429,
+                ..
+            }
+        ));
+        assert_eq!(
+            transport.source_work_requests(),
+            &[("S42".to_string(), Some("2026-01-01".to_string()))]
+        );
+        assert_eq!(transport.attempts().len(), 1);
+    }
+
+    #[test]
+    fn openalex_undated_source_page_uses_one_request() {
+        let transport = FixtureScholarlyTransport::new(ScholarlyFixtureData {
+            openalex_source_works: vec![json!({"id": "https://openalex.org/W42"})],
+            openalex_source_works_plan_restricted: true,
+            ..ScholarlyFixtureData::default()
+        });
+        let mut client = ScholarlyClient::new(transport, true);
+
+        client
+            .fetch_openalex_works_by_source_page("S42", None, None)
+            .expect("full source page should not need a fallback");
+        let transport = client.into_transport();
+
+        assert_eq!(
+            transport.source_work_requests(),
+            &[("S42".to_string(), None)]
+        );
+        assert_eq!(transport.attempts().len(), 1);
+        assert!(transport.attempts()[0].did_succeed);
     }
 
     #[test]
