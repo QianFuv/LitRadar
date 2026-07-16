@@ -189,6 +189,11 @@
   contain-intrinsic-size: auto 72px;
 }
 
+.search-input::-webkit-search-cancel-button {
+  display: none;
+  appearance: none;
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

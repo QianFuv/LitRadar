@@ -4,8 +4,8 @@ import { useQueryState, parseAsString } from 'nuqs';
 import { Input } from '@/components/ui/input';
 import { Search, X, Clock, HelpCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
-import { useState, useEffect } from 'react';
+import { Popover, PopoverAnchor, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from 'react';
 import {
   readLocalStorageValue,
   removeLocalStorageValue,
@@ -16,6 +16,7 @@ import { cn } from '@/lib/utils';
 const SEARCH_HISTORY_KEY = 'litradar:v1:search_history';
 const LEGACY_SEARCH_HISTORY_KEY = 'search_history';
 const MAX_HISTORY_ITEMS = 10;
+const SEARCH_HISTORY_LISTBOX_ID = 'search-history-listbox';
 
 /**
  * Parse and validate serialized search history.
@@ -105,11 +106,24 @@ function clearSearchHistory(): void {
   removeSearchHistory();
 }
 
-export function SearchBar({ className }: { className?: string }) {
-  const [q, setQ] = useQueryState('q', parseAsString.withDefault(''));
+type SearchBarProps = {
+  className?: string;
+  queryParam?: string;
+};
+
+/**
+ * Render a submitted search query with a separate draft and keyboard history picker.
+ *
+ * @param props - Optional class name and URL query parameter override.
+ * @returns Search form and syntax-help popover.
+ */
+export function SearchBar({ className, queryParam = 'q' }: SearchBarProps) {
+  const [q, setQ] = useQueryState(queryParam, parseAsString.withDefault(''));
   const [inputValue, setInputValue] = useState(q);
   const [searchHistory, setSearchHistory] = useState<string[]>([]);
   const [showHistory, setShowHistory] = useState(false);
+  const [activeHistoryIndex, setActiveHistoryIndex] = useState(-1);
+  const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     setSearchHistory(getSearchHistory());
@@ -119,48 +133,134 @@ export function SearchBar({ className }: { className?: string }) {
     setInputValue(q);
   }, [q]);
 
+  /**
+   * Close the history popup and clear its active descendant.
+   */
+  const closeHistory = () => {
+    setShowHistory(false);
+    setActiveHistoryIndex(-1);
+  };
+
+  /**
+   * Commit a supplied query or the current draft, including an empty value.
+   *
+   * @param query - Optional explicit history value.
+   */
   const handleSearch = (query?: string) => {
-    const searchQuery = query || inputValue;
-    if (searchQuery.trim()) {
-      setQ(searchQuery);
+    const searchQuery = (query ?? inputValue).trim();
+    setInputValue(searchQuery);
+    void setQ(searchQuery || null);
+    if (searchQuery) {
       saveSearchHistory(searchQuery);
       setSearchHistory(getSearchHistory());
-      setShowHistory(false);
+    }
+    closeHistory();
+  };
+
+  /**
+   * Submit the current search draft.
+   *
+   * @param event - Search form submission event.
+   */
+  const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    handleSearch();
+  };
+
+  /**
+   * Navigate, apply, or dismiss search history from the input.
+   *
+   * @param event - Search input keyboard event.
+   */
+  const handleKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
+    if (event.key === 'ArrowDown' && searchHistory.length > 0) {
+      event.preventDefault();
+      setShowHistory(true);
+      setActiveHistoryIndex((current) =>
+        current < 0 ? 0 : Math.min(current + 1, searchHistory.length - 1),
+      );
+      return;
+    }
+    if (event.key === 'ArrowUp' && searchHistory.length > 0) {
+      event.preventDefault();
+      setShowHistory(true);
+      setActiveHistoryIndex((current) =>
+        current < 0 ? searchHistory.length - 1 : Math.max(current - 1, 0),
+      );
+      return;
+    }
+    if (event.key === 'Enter' && showHistory && activeHistoryIndex >= 0) {
+      event.preventDefault();
+      handleSearch(searchHistory[activeHistoryIndex]);
+      return;
+    }
+    if (event.key === 'Escape' && showHistory) {
+      event.preventDefault();
+      closeHistory();
+      inputRef.current?.focus();
     }
   };
 
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter') {
-      handleSearch();
-    }
-  };
-
+  /**
+   * Clear persisted search history and retain focus in the search input.
+   */
   const handleClearHistory = () => {
     clearSearchHistory();
     setSearchHistory([]);
+    closeHistory();
+    inputRef.current?.focus();
   };
 
+  /**
+   * Apply one clicked history entry.
+   *
+   * @param query - Selected history entry.
+   */
   const handleHistoryItemClick = (query: string) => {
-    setInputValue(query);
     handleSearch(query);
   };
 
   return (
-    <div className={cn('flex w-full min-w-0 items-center gap-2', className)}>
+    <form
+      role="search"
+      className={cn('flex w-full min-w-0 items-center gap-2', className)}
+      onSubmit={handleSubmit}
+    >
       <div className="relative min-w-0 flex-1">
-        <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-slate-500" />
-        <Popover open={showHistory} onOpenChange={setShowHistory}>
-          <PopoverTrigger asChild>
+        <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+        <Popover
+          open={showHistory}
+          onOpenChange={(isOpen) => {
+            setShowHistory(isOpen);
+            if (!isOpen) {
+              setActiveHistoryIndex(-1);
+            }
+          }}
+        >
+          <PopoverAnchor asChild>
             <Input
+              ref={inputRef}
               type="search"
+              role="combobox"
               aria-label="搜索文章"
+              aria-autocomplete="list"
+              aria-controls={searchHistory.length > 0 ? SEARCH_HISTORY_LISTBOX_ID : undefined}
+              aria-expanded={showHistory}
+              aria-activedescendant={
+                activeHistoryIndex >= 0
+                  ? `${SEARCH_HISTORY_LISTBOX_ID}-option-${activeHistoryIndex}`
+                  : undefined
+              }
               name="article_search"
               autoComplete="off"
               spellCheck={false}
               placeholder="搜索文章…"
-              className="pl-9 pr-9"
+              className="search-input pl-9 pr-9"
               value={inputValue}
-              onChange={(e) => setInputValue(e.target.value)}
+              onChange={(event) => {
+                setInputValue(event.target.value);
+                setActiveHistoryIndex(-1);
+              }}
               onKeyDown={handleKeyDown}
               onClick={() => {
                 if (searchHistory.length > 0 && !showHistory) {
@@ -168,7 +268,7 @@ export function SearchBar({ className }: { className?: string }) {
                 }
               }}
             />
-          </PopoverTrigger>
+          </PopoverAnchor>
           {searchHistory.length > 0 && (
             <PopoverContent
               className="w-[var(--radix-popover-trigger-width)] p-0"
@@ -182,6 +282,7 @@ export function SearchBar({ className }: { className?: string }) {
                     最近搜索
                   </span>
                   <Button
+                    type="button"
                     variant="ghost"
                     size="sm"
                     className="h-6 text-xs"
@@ -190,11 +291,24 @@ export function SearchBar({ className }: { className?: string }) {
                     清空
                   </Button>
                 </div>
-                <div className="space-y-1">
+                <div
+                  id={SEARCH_HISTORY_LISTBOX_ID}
+                  role="listbox"
+                  aria-label="最近搜索"
+                  className="space-y-1"
+                >
                   {searchHistory.map((query, index) => (
                     <button
-                      key={index}
-                      className="w-full text-left px-2 py-1.5 text-sm rounded hover:bg-accent transition-colors flex items-center justify-between group"
+                      key={query}
+                      id={`${SEARCH_HISTORY_LISTBOX_ID}-option-${index}`}
+                      type="button"
+                      role="option"
+                      aria-selected={activeHistoryIndex === index}
+                      className={cn(
+                        'group flex w-full items-center justify-between rounded px-2 py-1.5 text-left text-sm transition-colors hover:bg-accent',
+                        activeHistoryIndex === index && 'bg-accent',
+                      )}
+                      onMouseMove={() => setActiveHistoryIndex(index)}
                       onClick={() => handleHistoryItemClick(query)}
                     >
                       <span className="truncate">{query}</span>
@@ -209,24 +323,31 @@ export function SearchBar({ className }: { className?: string }) {
         {inputValue && (
           <button
             type="button"
-            aria-label="清空搜索"
+            aria-label="清空搜索输入"
             onClick={() => {
               setInputValue('');
-              setQ('');
+              setActiveHistoryIndex(-1);
+              inputRef.current?.focus();
             }}
-            className="absolute right-2.5 top-2.5 text-slate-500 hover:text-slate-700 dark:hover:text-slate-300 transition-colors"
+            className="absolute right-2.5 top-2.5 text-muted-foreground transition-colors hover:text-foreground"
           >
             <X className="h-4 w-4" />
           </button>
         )}
       </div>
 
-      <Button className="px-3 sm:px-4" onClick={() => handleSearch()}>
+      <Button type="submit" className="px-3 sm:px-4">
         搜索
       </Button>
       <Popover>
         <PopoverTrigger asChild>
-          <Button variant="outline" size="icon" aria-label="搜索语法帮助" title="搜索语法帮助">
+          <Button
+            type="button"
+            variant="outline"
+            size="icon"
+            aria-label="搜索语法帮助"
+            title="搜索语法帮助"
+          >
             <HelpCircle className="h-4 w-4" />
           </Button>
         </PopoverTrigger>
@@ -280,6 +401,6 @@ export function SearchBar({ className }: { className?: string }) {
           </div>
         </PopoverContent>
       </Popover>
-    </div>
+    </form>
   );
 }

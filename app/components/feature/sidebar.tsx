@@ -3,6 +3,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { useQueryState, parseAsString, parseAsArrayOf } from 'nuqs';
 import Image from 'next/image';
+import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { useTheme } from 'next-themes';
 import { getAreas, getYears, getJournalOptions, getDatabases } from '@/lib/api';
@@ -23,6 +24,16 @@ import {
 } from '@/components/ui/select';
 import { Database, Moon, Sun } from 'lucide-react';
 import { getAreaDisplayName } from '@/lib/area-labels';
+import {
+  buildMonthKey,
+  buildMonthRange,
+  buildRecentMonthRange,
+  buildYearOptions,
+  formatMonthLabel,
+  getYearBounds,
+  MONTH_OPTIONS,
+  resolveMonthRangeForYears,
+} from '@/lib/article-filters';
 import { cn } from '@/lib/utils';
 import {
   reconcileSelectedDatabase,
@@ -32,11 +43,6 @@ import {
 } from '@/lib/selected-database';
 import { useEffect, useMemo, useState } from 'react';
 
-const MONTH_VALUES = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12] as const;
-const MONTH_OPTIONS = MONTH_VALUES.map((month) => String(month).padStart(2, '0'));
-const MONTH_KEY_PATTERN = /^\d{4}-(0[1-9]|1[0-2])$/;
-const MONTH_RANGE_SEPARATOR = '..';
-
 interface DateSegmentSelectProps {
   ariaLabel: string;
   value: string;
@@ -44,120 +50,6 @@ interface DateSegmentSelectProps {
   triggerClassName?: string;
   contentClassName?: string;
   onChange: (value: string) => void;
-}
-
-/**
- * Build a stable YYYY-MM key for query state and date conversion.
- *
- * @param year - Four digit year.
- * @param month - One-based month number.
- * @returns Month key.
- */
-function buildMonthKey(year: number, month: number): string {
-  return `${year}-${String(month).padStart(2, '0')}`;
-}
-
-/**
- * Check whether a query value is a supported YYYY-MM month key.
- *
- * @param value - Query value to inspect.
- * @returns True when the value can be used as a month key.
- */
-function isMonthKey(value: string | null): value is string {
-  return typeof value === 'string' && MONTH_KEY_PATTERN.test(value);
-}
-
-/**
- * Return the year component from a month key.
- *
- * @param value - Month key.
- * @param fallback - Year to use when parsing fails.
- * @returns Parsed year or fallback.
- */
-function monthKeyYear(value: string, fallback: number): number {
-  const year = Number(value.slice(0, 4));
-  return Number.isFinite(year) ? year : fallback;
-}
-
-/**
- * Normalize a month key into the available year range.
- *
- * @param value - Raw month key.
- * @param minYear - Earliest available year.
- * @param maxYear - Latest available year.
- * @returns Clamped month key or null when invalid.
- */
-function normalizeMonthKey(value: string | null, minYear: number, maxYear: number): string | null {
-  if (!isMonthKey(value)) {
-    return null;
-  }
-  const year = monthKeyYear(value, minYear);
-  if (year < minYear) {
-    return buildMonthKey(minYear, 1);
-  }
-  if (year > maxYear) {
-    return buildMonthKey(maxYear, 12);
-  }
-  return value;
-}
-
-/**
- * Parse the compact month range query value.
- *
- * @param value - Raw query value in YYYY-MM..YYYY-MM format.
- * @param minYear - Earliest available year.
- * @param maxYear - Latest available year.
- * @param defaultStartMonth - Default start month.
- * @param defaultEndMonth - Default end month.
- * @returns Ordered start and end month keys.
- */
-function parseMonthRange(
-  value: string | null,
-  minYear: number,
-  maxYear: number,
-  defaultStartMonth: string,
-  defaultEndMonth: string,
-): [string, string] {
-  const [rawStartMonth = '', rawEndMonth = ''] = (value ?? '').split(MONTH_RANGE_SEPARATOR);
-  const startMonth = normalizeMonthKey(rawStartMonth, minYear, maxYear) ?? defaultStartMonth;
-  const endMonth = normalizeMonthKey(rawEndMonth, minYear, maxYear) ?? defaultEndMonth;
-  return startMonth <= endMonth ? [startMonth, endMonth] : [endMonth, startMonth];
-}
-
-/**
- * Build the compact month range query value.
- *
- * @param startMonth - Start month key.
- * @param endMonth - End month key.
- * @returns Query value in YYYY-MM..YYYY-MM format.
- */
-function buildMonthRange(startMonth: string, endMonth: string): string {
-  return `${startMonth}${MONTH_RANGE_SEPARATOR}${endMonth}`;
-}
-
-/**
- * Format a month key for the Chinese filter UI.
- *
- * @param value - Month key.
- * @returns Human-readable year-month label.
- */
-function formatMonthLabel(value: string): string {
-  return `${value.slice(0, 4)}年${value.slice(5, 7)}月`;
-}
-
-/**
- * Build descending year option labels for the date range filter.
- *
- * @param minYear - Earliest available year.
- * @param maxYear - Latest available year.
- * @returns Descending year labels.
- */
-function buildYearOptions(minYear: number, maxYear: number): string[] {
-  const result: string[] = [];
-  for (let year = maxYear; year >= minYear; year -= 1) {
-    result.push(String(year));
-  }
-  return result;
 }
 
 /**
@@ -218,6 +110,12 @@ function DateSegmentSelect({
   );
 }
 
+/**
+ * Render database selection, article filters, and theme controls.
+ *
+ * @param props - Optional layout class names.
+ * @returns Sidebar filter UI.
+ */
 export function Sidebar({ className }: { className?: string }) {
   const { theme, setTheme } = useTheme();
   const { user } = useAuth();
@@ -288,31 +186,15 @@ export function Sidebar({ className }: { className?: string }) {
     setMonthRange(null);
   };
 
-  const yearBounds = useMemo(() => {
-    if (!yearData || yearData.length === 0) {
-      return { max: new Date().getFullYear(), min: 1900 };
-    }
-    let min = yearData[0].year;
-    let max = yearData[0].year;
-    for (const item of yearData) {
-      min = Math.min(min, item.year);
-      max = Math.max(max, item.year);
-    }
-    return { max, min };
-  }, [yearData]);
-  const minYearAvailable = yearBounds.min;
-  const maxYearAvailable = yearBounds.max;
-
-  const defaultStartMonth = buildMonthKey(minYearAvailable, 1);
-  const defaultEndMonth = buildMonthKey(maxYearAvailable, 12);
-  const [selectedStartMonth, selectedEndMonth] = parseMonthRange(
-    monthRange,
-    minYearAvailable,
-    maxYearAvailable,
-    defaultStartMonth,
-    defaultEndMonth,
-  );
-  const yearOptions = buildYearOptions(minYearAvailable, maxYearAvailable);
+  const yearBounds = useMemo(() => getYearBounds(yearData ?? []), [yearData]);
+  const defaultStartMonth = yearBounds ? buildMonthKey(yearBounds.min, 1) : null;
+  const defaultEndMonth = yearBounds ? buildMonthKey(yearBounds.max, 12) : null;
+  const selectedMonthRange = yearBounds
+    ? resolveMonthRangeForYears(monthRange, yearBounds.min, yearBounds.max)
+    : null;
+  const selectedStartMonth = selectedMonthRange?.[0] ?? '';
+  const selectedEndMonth = selectedMonthRange?.[1] ?? '';
+  const yearOptions = yearBounds ? buildYearOptions(yearBounds) : [];
   const selectedStartYearValue = selectedStartMonth.slice(0, 4);
   const selectedStartMonthValue = selectedStartMonth.slice(5, 7);
   const selectedEndYearValue = selectedEndMonth.slice(0, 4);
@@ -337,13 +219,27 @@ export function Sidebar({ className }: { className?: string }) {
   };
 
   const handleMonthRangeCommit = (startMonth: string, endMonth: string) => {
-    const orderedStartMonth = startMonth <= endMonth ? startMonth : endMonth;
-    const orderedEndMonth = startMonth <= endMonth ? endMonth : startMonth;
+    if (!yearBounds || !defaultStartMonth || !defaultEndMonth) {
+      return;
+    }
+    const [orderedStartMonth, orderedEndMonth] = resolveMonthRangeForYears(
+      buildMonthRange(startMonth, endMonth),
+      yearBounds.min,
+      yearBounds.max,
+    );
     setMonthRange(
       orderedStartMonth === defaultStartMonth && orderedEndMonth === defaultEndMonth
         ? null
         : buildMonthRange(orderedStartMonth, orderedEndMonth),
     );
+  };
+
+  const handleRecentMonthRange = (yearCount: number) => {
+    if (!yearBounds) {
+      return;
+    }
+    const [startMonth, endMonth] = buildRecentMonthRange(yearCount, yearBounds.min, yearBounds.max);
+    setMonthRange(buildMonthRange(startMonth, endMonth));
   };
 
   const [journalSearch, setJournalSearch] = useState('');
@@ -402,20 +298,22 @@ export function Sidebar({ className }: { className?: string }) {
               <Button
                 variant="ghost"
                 size="icon"
-                onClick={handleClearFilters}
-                aria-label="清空全部筛选"
-                title="清空全部筛选"
                 className="h-20 w-20"
+                aria-label="首页"
+                title="首页"
+                asChild
               >
-                <Image
-                  src="https://cdn.sa.net/2026/01/29/6uRXpHqQfC89kF7.png"
-                  alt="首页"
-                  width={64}
-                  height={64}
-                  loading="eager"
-                  fetchPriority="high"
-                  className="h-16 w-16 object-contain"
-                />
+                <Link href="/">
+                  <Image
+                    src="https://cdn.sa.net/2026/01/29/6uRXpHqQfC89kF7.png"
+                    alt=""
+                    width={64}
+                    height={64}
+                    loading="eager"
+                    fetchPriority="high"
+                    className="h-16 w-16 object-contain"
+                  />
+                </Link>
               </Button>
             </div>
             <div className="space-y-2 self-center">
@@ -443,6 +341,15 @@ export function Sidebar({ className }: { className?: string }) {
               </div>
             </div>
           </div>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="w-full"
+            onClick={handleClearFilters}
+          >
+            重置筛选
+          </Button>
         </div>
 
         <div className="space-y-4">
@@ -586,55 +493,72 @@ export function Sidebar({ className }: { className?: string }) {
               清空
             </Button>
           </div>
-          {loadingYears ? (
+          {!user || loadingYears ? (
             <Skeleton className="h-8 w-full" />
+          ) : !yearBounds ? (
+            <p className="text-sm text-muted-foreground">暂无可用发表年份</p>
           ) : (
-            <div
-              className="grid grid-cols-[minmax(0,1fr)_minmax(0,0.78fr)_auto_minmax(0,1fr)_minmax(0,0.78fr)] items-end gap-1"
-              title={`${formatMonthLabel(selectedStartMonth)} - ${formatMonthLabel(selectedEndMonth)}`}
-            >
-              <DateSegmentSelect
-                ariaLabel="起始年份"
-                value={selectedStartYearValue}
-                options={yearOptions}
-                triggerClassName="w-full"
-                contentClassName="w-[4.75rem]"
-                onChange={(value) =>
-                  handleMonthRangeCommit(`${value}-${selectedStartMonthValue}`, selectedEndMonth)
-                }
-              />
-              <DateSegmentSelect
-                ariaLabel="起始月份"
-                value={selectedStartMonthValue}
-                options={MONTH_OPTIONS}
-                triggerClassName="w-full"
-                contentClassName="w-16"
-                onChange={(value) =>
-                  handleMonthRangeCommit(`${selectedStartYearValue}-${value}`, selectedEndMonth)
-                }
-              />
-              <span className="text-center text-sm text-muted-foreground">-</span>
-              <DateSegmentSelect
-                ariaLabel="结束年份"
-                value={selectedEndYearValue}
-                options={yearOptions}
-                triggerClassName="w-full"
-                contentClassName="w-[4.75rem]"
-                onChange={(value) =>
-                  handleMonthRangeCommit(selectedStartMonth, `${value}-${selectedEndMonthValue}`)
-                }
-              />
-              <DateSegmentSelect
-                ariaLabel="结束月份"
-                value={selectedEndMonthValue}
-                options={MONTH_OPTIONS}
-                triggerClassName="w-full"
-                contentClassName="w-16"
-                onChange={(value) =>
-                  handleMonthRangeCommit(selectedStartMonth, `${selectedEndYearValue}-${value}`)
-                }
-              />
-            </div>
+            <>
+              <div
+                className="grid grid-cols-[minmax(0,1fr)_minmax(0,0.78fr)_auto_minmax(0,1fr)_minmax(0,0.78fr)] items-end gap-1"
+                title={`${formatMonthLabel(selectedStartMonth)} - ${formatMonthLabel(selectedEndMonth)}`}
+              >
+                <DateSegmentSelect
+                  ariaLabel="起始年份"
+                  value={selectedStartYearValue}
+                  options={yearOptions}
+                  triggerClassName="w-full"
+                  contentClassName="w-[4.75rem]"
+                  onChange={(value) =>
+                    handleMonthRangeCommit(`${value}-${selectedStartMonthValue}`, selectedEndMonth)
+                  }
+                />
+                <DateSegmentSelect
+                  ariaLabel="起始月份"
+                  value={selectedStartMonthValue}
+                  options={MONTH_OPTIONS}
+                  triggerClassName="w-full"
+                  contentClassName="w-16"
+                  onChange={(value) =>
+                    handleMonthRangeCommit(`${selectedStartYearValue}-${value}`, selectedEndMonth)
+                  }
+                />
+                <span className="text-center text-sm text-muted-foreground">-</span>
+                <DateSegmentSelect
+                  ariaLabel="结束年份"
+                  value={selectedEndYearValue}
+                  options={yearOptions}
+                  triggerClassName="w-full"
+                  contentClassName="w-[4.75rem]"
+                  onChange={(value) =>
+                    handleMonthRangeCommit(selectedStartMonth, `${value}-${selectedEndMonthValue}`)
+                  }
+                />
+                <DateSegmentSelect
+                  ariaLabel="结束月份"
+                  value={selectedEndMonthValue}
+                  options={MONTH_OPTIONS}
+                  triggerClassName="w-full"
+                  contentClassName="w-16"
+                  onChange={(value) =>
+                    handleMonthRangeCommit(selectedStartMonth, `${selectedEndYearValue}-${value}`)
+                  }
+                />
+              </div>
+              <div className="grid grid-cols-3 gap-2">
+                {[1, 3, 5].map((yearCount) => (
+                  <Button
+                    key={yearCount}
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => handleRecentMonthRange(yearCount)}
+                  >
+                    近 {yearCount} 年
+                  </Button>
+                ))}
+              </div>
+            </>
           )}
         </div>
       </div>

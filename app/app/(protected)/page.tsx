@@ -1,6 +1,7 @@
 'use client';
 
 import { Sidebar } from '@/components/feature/sidebar';
+import { ActiveFilterChips } from '@/components/feature/active-filter-chips';
 import { SearchBar } from '@/components/feature/search-bar';
 import { ResultsList } from '@/components/feature/results-list';
 import { WeeklyUpdatesFab } from '@/components/feature/weekly-updates-fab';
@@ -17,6 +18,11 @@ import {
 import { Menu } from 'lucide-react';
 import { useState } from 'react';
 
+/**
+ * Render the article search workspace with responsive filters and results.
+ *
+ * @returns Protected homepage search UI.
+ */
 export default function Home() {
   const [isFilterOpen, setIsFilterOpen] = useState(false);
 
@@ -48,9 +54,10 @@ export default function Home() {
             <SearchBar className="min-w-0 flex-1 md:mx-auto md:max-w-4xl" />
           </div>
         </div>
-        <div id="results-scroll-container" className="flex-1 overflow-y-auto p-6 scroll-smooth">
+        <div id="results-scroll-container" className="flex-1 overflow-y-auto p-6">
           <div className="max-w-4xl mx-auto w-full space-y-4">
             <AnnouncementsDialog />
+            <ActiveFilterChips />
             <ResultsList />
           </div>
         </div>

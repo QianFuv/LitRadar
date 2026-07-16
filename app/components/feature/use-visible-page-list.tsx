@@ -12,6 +12,12 @@ type UseVisiblePageListOptions = {
   scrollContainerId?: string;
 };
 
+/**
+ * Reveal loaded pages incrementally and coordinate prefetch/load-more sentinels.
+ *
+ * @param options - List identity, pagination state, fetch callback, and scroll container.
+ * @returns Visible page count and intersection-observer refs.
+ */
 export function useVisiblePageList({
   listKey,
   loadedPages,
@@ -31,11 +37,11 @@ export function useVisiblePageList({
     const scrollContainer = scrollContainerId ? document.getElementById(scrollContainerId) : null;
 
     if (scrollContainer) {
-      scrollContainer.scrollTo({ top: 0 });
+      scrollContainer.scrollTo({ behavior: 'auto', top: 0 });
       return;
     }
 
-    window.scrollTo({ top: 0 });
+    window.scrollTo({ behavior: 'auto', top: 0 });
   }, [listKey, scrollContainerId]);
 
   const handlePrefetchChange = useCallback(

@@ -10,55 +10,10 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { useCallback, useMemo } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { useAuth } from '@/lib/auth-context';
+import { getMonthRangeDateBounds } from '@/lib/article-filters';
 import { createFtsHighlightPattern, parseFtsHighlightTerms } from '@/lib/fts-highlight';
 import { useSelectedDatabase } from '@/lib/selected-database';
 import { useFavoriteChecks } from '@/components/feature/use-favorite-checks';
-
-const MONTH_KEY_PATTERN = /^\d{4}-(0[1-9]|1[0-2])$/;
-const MONTH_RANGE_SEPARATOR = '..';
-
-/**
- * Parse the compact month range query value.
- *
- * @param value - Raw query value in YYYY-MM..YYYY-MM format.
- * @returns Ordered start and end month keys, or null when invalid.
- */
-function parseMonthRange(value: string | null): [string, string] | null {
-  const [startMonth = '', endMonth = ''] = (value ?? '').split(MONTH_RANGE_SEPARATOR);
-  if (!MONTH_KEY_PATTERN.test(startMonth) || !MONTH_KEY_PATTERN.test(endMonth)) {
-    return null;
-  }
-  return startMonth <= endMonth ? [startMonth, endMonth] : [endMonth, startMonth];
-}
-
-/**
- * Convert a YYYY-MM query value into the first day of that month.
- *
- * @param value - Month query value.
- * @returns ISO date string or null when invalid.
- */
-function monthKeyToDateFrom(value: string | null): string | null {
-  if (!value || !MONTH_KEY_PATTERN.test(value)) {
-    return null;
-  }
-  return `${value}-01`;
-}
-
-/**
- * Convert a YYYY-MM query value into the last day of that month.
- *
- * @param value - Month query value.
- * @returns ISO date string or null when invalid.
- */
-function monthKeyToDateTo(value: string | null): string | null {
-  if (!value || !MONTH_KEY_PATTERN.test(value)) {
-    return null;
-  }
-  const year = Number(value.slice(0, 4));
-  const month = Number(value.slice(5, 7));
-  const lastDay = new Date(year, month, 0).getDate();
-  return `${value}-${String(lastDay).padStart(2, '0')}`;
-}
 
 /**
  * Resolve the cursor for the next article page.
@@ -70,6 +25,11 @@ export function getNextArticlePageParam(lastPage: ArticlePage): string | undefin
   return lastPage.page.next_cursor ?? undefined;
 }
 
+/**
+ * Fetch and render the filtered, progressively visible article result list.
+ *
+ * @returns Search result summary, article cards, and pagination sentinels.
+ */
 export function ResultsList() {
   const { user } = useAuth();
 
@@ -91,11 +51,11 @@ export function ResultsList() {
     journalIds.forEach((id) => params.append('journal_id', id));
   }
 
-  const parsedMonthRange = parseMonthRange(monthRange);
-  const dateFrom = parsedMonthRange ? monthKeyToDateFrom(parsedMonthRange[0]) : null;
-  const dateTo = parsedMonthRange ? monthKeyToDateTo(parsedMonthRange[1]) : null;
-  if (dateFrom) params.set('date_from', dateFrom);
-  if (dateTo) params.set('date_to', dateTo);
+  const dateBounds = getMonthRangeDateBounds(monthRange);
+  if (dateBounds) {
+    params.set('date_from', dateBounds.dateFrom);
+    params.set('date_to', dateBounds.dateTo);
+  }
   const paramsString = params.toString();
   const currentDb = useSelectedDatabase();
 
