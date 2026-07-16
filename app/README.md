@@ -75,6 +75,8 @@ pnpm dev
 
 除 `/login` 外，页面都位于 `app/(protected)/`，布局会通过 `AuthProvider` 恢复当前用户并把未登录访问重定向到 `/login?next=...`。`/admin` 还在页面层检查 `is_admin`。
 
+认证完成后，所有受保护页面右下角都会显示全局用户菜单，可直接访问首页、收藏、追踪、每周更新和账号设置；管理员还会看到管理面板入口。菜单同时提供跟随系统、浅色和深色三种主题偏好，并通过 Radix Dropdown Menu 处理键盘导航、Escape、点击外部关闭和焦点归还。菜单位置与页面底部留白会考虑设备安全区。
+
 ## 目录职责
 
 ```text
@@ -88,7 +90,7 @@ app/
 ├── components/
 │   ├── admin/             管理后台功能卡片
 │   ├── favorites/         收藏页视图与 view model
-│   ├── feature/           检索、文章详情、侧栏和周报入口
+│   ├── feature/           检索、文章详情、侧栏和全局用户菜单
 │   ├── settings/          个人设置功能
 │   ├── tracking/          追踪页视图与 view model
 │   └── ui/                Radix/CVA 基础组件
@@ -115,13 +117,15 @@ app/
 | 登录用户             | `AuthProvider` + `GET /api/auth/me`           |
 | 当前数据库           | `localStorage: litradar:v1:selected_database` |
 | 搜索历史             | `localStorage: litradar:v1:search_history`    |
-| 主题                 | next-themes 的 `class` 属性                   |
+| 主题                 | next-themes 的 `class` 属性与系统偏好         |
 
 浏览器 API 请求默认 `credentials: include`，登录令牌只存在后端设置的 `litradar_session` HttpOnly Cookie 中。设置页创建的 Bearer 访问令牌用于外部客户端，不作为前端登录态存入 Web Storage。
 
 升级前的浏览器命名空间不会被读取、复制或清理。升级后用户需要重新登录，数据库选择和搜索历史会在新命名空间中重新建立。
 
 Web Storage helper 会容忍 SSR、隐私模式和 quota 错误；调用方不应假定写入必然成功。
+
+站点图标和侧栏标识使用 `public/litradar-logo.png` 本地静态资源，不依赖第三方图片域名。
 
 ## API 契约
 

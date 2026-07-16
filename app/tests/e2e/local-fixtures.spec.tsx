@@ -122,6 +122,88 @@ async function completesFixtureTrackingPush(page: Page): Promise<void> {
 }
 
 /**
+ * Verify protected navigation, theme persistence, dismiss behavior, and mobile safe-area spacing.
+ *
+ * @param page - Playwright browser page.
+ */
+async function verifiesUserMenuNavigationAndTheme(page: Page): Promise<void> {
+  const hydrationDiagnostics: string[] = [];
+
+  page.on('console', (message) => {
+    const text = message.text();
+    if (message.type() === 'error' && /hydration|did not match|server rendered html/i.test(text)) {
+      hydrationDiagnostics.push(text);
+    }
+  });
+  page.on('pageerror', (error) => {
+    if (/hydration|did not match|server rendered html/i.test(error.message)) {
+      hydrationDiagnostics.push(error.message);
+    }
+  });
+
+  await page.setViewportSize({ width: 360, height: 800 });
+  await page.route('**/api/**', serveTrackingApi);
+  await page.goto('/tracking');
+  await page.evaluate(() => {
+    document.documentElement.style.setProperty('--safe-area-inset-bottom', '32px');
+  });
+
+  const trigger = page.getByRole('button', { name: '打开用户菜单' });
+  await expect(trigger).toBeVisible();
+  await trigger.click();
+  await expect(page.getByRole('menuitem', { name: '文献追踪' })).toHaveAttribute(
+    'aria-current',
+    'page',
+  );
+  await expect(page.getByRole('menuitem', { name: '管理面板' })).toHaveCount(0);
+
+  await page.getByRole('menuitemradio', { name: '深色' }).click();
+  await expect.poll(() => page.evaluate(() => window.localStorage.getItem('theme'))).toBe('dark');
+  await expect(page.locator('html')).toHaveClass(/dark/);
+
+  await trigger.click();
+  await page.getByRole('menuitemradio', { name: '跟随系统' }).click();
+  await expect.poll(() => page.evaluate(() => window.localStorage.getItem('theme'))).toBe('system');
+
+  await trigger.click();
+  await page.mouse.click(8, 8);
+  await expect(page.getByRole('menu')).toHaveCount(0);
+  await expect(trigger).toBeFocused();
+
+  await trigger.click();
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('menu')).toHaveCount(0);
+  await expect(trigger).toBeFocused();
+
+  const mainPaddingBottom = await page
+    .locator('#main-content')
+    .evaluate((element) => Number.parseFloat(window.getComputedStyle(element).paddingBottom));
+  const triggerBox = await trigger.boundingBox();
+  expect(mainPaddingBottom).toBeGreaterThanOrEqual(128);
+  expect(triggerBox).not.toBeNull();
+  expect(triggerBox?.y ?? 800).toBeLessThan(752);
+
+  const lastInteractive = page.locator('#main-content button:not([disabled])').last();
+  await lastInteractive.scrollIntoViewIfNeeded();
+  const lastInteractiveBox = await lastInteractive.boundingBox();
+  const updatedTriggerBox = await trigger.boundingBox();
+  expect(lastInteractiveBox).not.toBeNull();
+  expect(updatedTriggerBox).not.toBeNull();
+  const doesOverlap =
+    (lastInteractiveBox?.x ?? 0) < (updatedTriggerBox?.x ?? 0) + (updatedTriggerBox?.width ?? 0) &&
+    (lastInteractiveBox?.x ?? 0) + (lastInteractiveBox?.width ?? 0) > (updatedTriggerBox?.x ?? 0) &&
+    (lastInteractiveBox?.y ?? 0) < (updatedTriggerBox?.y ?? 0) + (updatedTriggerBox?.height ?? 0) &&
+    (lastInteractiveBox?.y ?? 0) + (lastInteractiveBox?.height ?? 0) > (updatedTriggerBox?.y ?? 0);
+  expect(doesOverlap).toBe(false);
+
+  await trigger.click();
+  await page.getByRole('menuitem', { name: '账号设置' }).click();
+  await expect(page).toHaveURL(/\/settings$/);
+  await expect(page.getByRole('heading', { name: '账号设置' })).toBeVisible();
+  expect(hydrationDiagnostics).toEqual([]);
+}
+
+/**
  * Run the bootstrap-boundary browser test.
  *
  * @param fixtures - Playwright page fixture.
@@ -139,5 +221,15 @@ async function fixtureTrackingTest({ page }: { page: Page }): Promise<void> {
   await completesFixtureTrackingPush(page);
 }
 
+/**
+ * Run the authenticated user-menu browser test.
+ *
+ * @param fixtures - Playwright page fixture.
+ */
+async function userMenuNavigationTest({ page }: { page: Page }): Promise<void> {
+  await verifiesUserMenuNavigationAndTheme(page);
+}
+
 test('shows the local administrator bootstrap boundary', bootstrapBoundaryTest);
 test('completes an authenticated tracking push with local fixtures', fixtureTrackingTest);
+test('supports accessible navigation and theme selection', userMenuNavigationTest);

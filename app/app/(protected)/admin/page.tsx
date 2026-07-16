@@ -34,7 +34,14 @@ export default function AdminPage() {
   }
 
   return (
-    <main id="main-content" className="mx-auto max-w-5xl space-y-4 p-4 sm:space-y-6 sm:p-6">
+    <main
+      id="main-content"
+      className="mx-auto max-w-5xl space-y-4 p-4 sm:space-y-6 sm:p-6"
+      style={{
+        paddingBottom:
+          'calc(6rem + var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px)))',
+      }}
+    >
       <div className="flex items-start gap-2 sm:gap-3">
         <Button variant="ghost" size="icon" aria-label="返回首页" asChild>
           <Link href="/">

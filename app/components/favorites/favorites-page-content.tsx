@@ -96,7 +96,14 @@ export function FavoritesPageContent({ userId }: { userId: number }) {
   const [favoriteToRemove, setFavoriteToRemove] = useState<FavoriteArticleItem | null>(null);
 
   return (
-    <main id="main-content" className="max-w-5xl mx-auto p-6 space-y-6">
+    <main
+      id="main-content"
+      className="max-w-5xl mx-auto p-6 space-y-6"
+      style={{
+        paddingBottom:
+          'calc(6rem + var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px)))',
+      }}
+    >
       <div className="flex items-center gap-3">
         <Button variant="ghost" size="icon" aria-label="返回首页" asChild>
           <Link href="/">

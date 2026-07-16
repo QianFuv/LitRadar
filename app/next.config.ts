@@ -51,15 +51,6 @@ const NEXT_CONFIG: NextConfig = {
   allowedDevOrigins: ['127.0.0.1'],
   images: {
     unoptimized: true,
-    remotePatterns: [
-      {
-        protocol: 'https',
-        hostname: 'cdn.sa.net',
-        port: '',
-        pathname: '/**',
-        search: '',
-      },
-    ],
   },
 };
 

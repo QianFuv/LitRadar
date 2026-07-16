@@ -10,7 +10,7 @@ export default function Providers({ children }: { children: React.ReactNode }) {
   const [queryClient] = useState(() => new QueryClient());
 
   return (
-    <ThemeProvider attribute="class" defaultTheme="dark" enableSystem={false}>
+    <ThemeProvider attribute="class" defaultTheme="system" enableSystem>
       <NuqsAdapter>
         <QueryClientProvider client={queryClient}>
           <AuthProvider>{children}</AuthProvider>

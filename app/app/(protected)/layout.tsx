@@ -2,6 +2,7 @@
 
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { Suspense, useEffect } from 'react';
+import { UserMenu } from '@/components/feature/user-menu';
 import { useAuth } from '@/lib/auth-context';
 
 /**
@@ -11,7 +12,7 @@ import { useAuth } from '@/lib/auth-context';
  */
 function ProtectedLayoutFallback() {
   return (
-    <main id="main-content" className="flex h-screen items-center justify-center">
+    <main id="main-content" className="flex h-dvh items-center justify-center">
       <div role="status" className="animate-pulse text-muted-foreground">
         加载中…
       </div>
@@ -45,7 +46,12 @@ function ProtectedLayoutContent({ children }: { children: React.ReactNode }) {
 
   if (!user) return null;
 
-  return <>{children}</>;
+  return (
+    <>
+      {children}
+      <UserMenu />
+    </>
+  );
 }
 
 /**

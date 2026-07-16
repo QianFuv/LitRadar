@@ -5,7 +5,6 @@ import { useQueryState, parseAsString, parseAsArrayOf } from 'nuqs';
 import Image from 'next/image';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import { useTheme } from 'next-themes';
 import { getAreas, getYears, getJournalOptions, getDatabases } from '@/lib/api';
 import { useAuth } from '@/lib/auth-context';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -22,7 +21,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { Database, Moon, Sun } from 'lucide-react';
+import { Database } from 'lucide-react';
 import { getAreaDisplayName } from '@/lib/area-labels';
 import {
   buildMonthKey,
@@ -117,7 +116,6 @@ function DateSegmentSelect({
  * @returns Sidebar filter UI.
  */
 export function Sidebar({ className }: { className?: string }) {
-  const { theme, setTheme } = useTheme();
   const { user } = useAuth();
   const router = useRouter();
   const pathname = usePathname();
@@ -305,7 +303,7 @@ export function Sidebar({ className }: { className?: string }) {
               >
                 <Link href="/">
                   <Image
-                    src="https://cdn.sa.net/2026/01/29/6uRXpHqQfC89kF7.png"
+                    src="/litradar-logo.png"
                     alt=""
                     width={64}
                     height={64}
@@ -561,19 +559,6 @@ export function Sidebar({ className }: { className?: string }) {
             </>
           )}
         </div>
-      </div>
-
-      <div className="flex-shrink-0 p-4 border-t bg-background space-y-1">
-        <Button
-          variant="ghost"
-          size="sm"
-          className="w-full justify-start gap-2"
-          onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
-        >
-          <Sun className="h-4 w-4 rotate-0 scale-100 transition-transform dark:-rotate-90 dark:scale-0" />
-          <Moon className="absolute h-4 w-4 rotate-90 scale-0 transition-transform dark:rotate-0 dark:scale-100" />
-          <span>切换主题</span>
-        </Button>
       </div>
     </aside>
   );

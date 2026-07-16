@@ -17,7 +17,7 @@ export const metadata: Metadata = {
   title: 'LitRadar | QianFuv',
   description: 'LitRadar by QianFuv',
   icons: {
-    icon: 'https://cdn.sa.net/2026/01/29/6uRXpHqQfC89kF7.png',
+    icon: '/litradar-logo.png',
   },
 };
 
@@ -36,9 +36,6 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="zh-CN" suppressHydrationWarning>
-      <head>
-        <link rel="preconnect" href="https://cdn.sa.net" />
-      </head>
       <body className={`${geistSans.variable} ${geistMono.variable} antialiased`}>
         <a href="#main-content" className="skip-link">
           跳到主要内容

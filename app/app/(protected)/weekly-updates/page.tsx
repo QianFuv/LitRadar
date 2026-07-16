@@ -419,7 +419,7 @@ export default function WeeklyUpdatesPage() {
   };
 
   return (
-    <main id="main-content" className="h-screen bg-background text-foreground">
+    <main id="main-content" className="h-dvh bg-background text-foreground">
       <div className="mx-auto flex h-full w-full max-w-[1400px] flex-col px-4 py-4 sm:px-6">
         <div className="mb-4 flex items-center justify-between gap-3">
           <div className="space-y-1">
@@ -538,6 +538,10 @@ export default function WeeklyUpdatesPage() {
                 <CardContent
                   id="weekly-articles-scroll-container"
                   className="h-[calc(100%-88px)] space-y-3 overflow-y-auto"
+                  style={{
+                    paddingBottom:
+                      'calc(6rem + var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px)))',
+                  }}
                 >
                   {!selectedJournal && (
                     <div className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">

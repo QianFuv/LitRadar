@@ -4,7 +4,6 @@ import { Sidebar } from '@/components/feature/sidebar';
 import { ActiveFilterChips } from '@/components/feature/active-filter-chips';
 import { SearchBar } from '@/components/feature/search-bar';
 import { ResultsList } from '@/components/feature/results-list';
-import { WeeklyUpdatesFab } from '@/components/feature/weekly-updates-fab';
 import { AnnouncementsDialog } from '@/components/announcements-dialog';
 import { Button } from '@/components/ui/button';
 import {
@@ -27,8 +26,8 @@ export default function Home() {
   const [isFilterOpen, setIsFilterOpen] = useState(false);
 
   return (
-    <div className="flex h-screen w-full bg-background text-foreground">
-      <Sidebar className="hidden md:flex flex-shrink-0 h-screen" />
+    <div className="flex h-dvh w-full bg-background text-foreground">
+      <Sidebar className="hidden h-dvh flex-shrink-0 md:flex" />
       <main id="main-content" className="flex-1 flex flex-col h-full overflow-hidden">
         <div className="sticky top-0 z-30 border-b bg-background/95 p-3 backdrop-blur sm:p-6">
           <div className="flex min-w-0 items-center gap-2 sm:gap-3">
@@ -54,14 +53,20 @@ export default function Home() {
             <SearchBar className="min-w-0 flex-1 md:mx-auto md:max-w-4xl" />
           </div>
         </div>
-        <div id="results-scroll-container" className="flex-1 overflow-y-auto p-6">
+        <div
+          id="results-scroll-container"
+          className="flex-1 overflow-y-auto p-6"
+          style={{
+            paddingBottom:
+              'calc(6rem + var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px)))',
+          }}
+        >
           <div className="max-w-4xl mx-auto w-full space-y-4">
             <AnnouncementsDialog />
             <ActiveFilterChips />
             <ResultsList />
           </div>
         </div>
-        <WeeklyUpdatesFab />
       </main>
     </div>
   );
