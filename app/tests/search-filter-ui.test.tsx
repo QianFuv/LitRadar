@@ -223,6 +223,8 @@ async function resetsVisibleFilterChips(): Promise<void> {
  */
 async function rendersUnavailableYearState(): Promise<void> {
   setSelectedDatabase('fixture.sqlite');
+  const onUrlUpdate = vi.fn();
+  const user = userEvent.setup();
   server.use(
     http.get('http://localhost/api/auth/me', currentUserResponse),
     http.get('http://localhost/api/meta/databases', () => HttpResponse.json(['fixture.sqlite'])),
@@ -233,7 +235,11 @@ async function rendersUnavailableYearState(): Promise<void> {
   renderWithQuery(
     <ThemeProvider attribute="class">
       <AuthProvider>
-        <NuqsTestingAdapter hasMemory>
+        <NuqsTestingAdapter
+          searchParams="?q=systems&area=Information%20Systems&journal_id=journal-1&month_range=2024-01..2024-12"
+          hasMemory
+          onUrlUpdate={onUrlUpdate}
+        >
           <Sidebar />
         </NuqsTestingAdapter>
       </AuthProvider>
@@ -243,7 +249,19 @@ async function rendersUnavailableYearState(): Promise<void> {
   expect(await screen.findByText('暂无可用发表年份')).toBeInTheDocument();
   expect(screen.queryByLabelText('起始年份')).not.toBeInTheDocument();
   expect(screen.getByRole('link', { name: '首页' })).toBeInTheDocument();
-  expect(screen.getByRole('button', { name: '重置筛选' })).toBeInTheDocument();
+  const resetButtons = screen.getAllByRole('button', { name: '重置筛选' });
+  const publicationTimeHeading = screen.getByRole('heading', { name: '发表时间' });
+  expect(resetButtons).toHaveLength(1);
+  expect(
+    publicationTimeHeading.compareDocumentPosition(resetButtons[0]) &
+      Node.DOCUMENT_POSITION_FOLLOWING,
+  ).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+
+  await user.click(resetButtons[0]);
+  await waitFor(() => expect(onUrlUpdate).toHaveBeenCalled());
+  const lastUpdate = onUrlUpdate.mock.calls.at(-1)?.[0];
+  expect(lastUpdate?.searchParams.toString()).toBe('');
+  expect(readSelectedDatabase()).toBe('fixture.sqlite');
 }
 
 /**
