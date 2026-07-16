@@ -22,6 +22,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { useCallback, useMemo } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { useAuth } from '@/lib/auth-context';
+import { createFtsHighlightPattern, parseFtsHighlightTerms } from '@/lib/fts-highlight';
 
 const MONTH_KEY_PATTERN = /^\d{4}-(0[1-9]|1[0-2])$/;
 const MONTH_RANGE_SEPARATOR = '..';
@@ -171,53 +172,12 @@ export function ResultsList() {
   const isFavoriteStatePending =
     missingFavoriteArticleIds.length > 0 && isMissingFavoriteStatePending;
 
-  const highlightTerms = useMemo(() => {
-    if (!q) return [];
-    const isCjk = (value: string) => /[\u4e00-\u9fff]/.test(value);
-    const meetsLength = (value: string) => (isCjk(value) ? value.length >= 2 : value.length > 2);
-    const terms: string[] = [];
-    const phraseRegex = /"([^"]+)"/g;
-    let match = phraseRegex.exec(q);
-    while (match) {
-      const phrase = match[1].trim();
-      if (meetsLength(phrase)) {
-        terms.push(phrase);
-      }
-      match = phraseRegex.exec(q);
-    }
+  const highlightTerms = useMemo(() => parseFtsHighlightTerms(q), [q]);
 
-    const stripped = q.replace(phraseRegex, ' ');
-    const tokens = stripped.split(/\s+/).filter(Boolean);
-    for (const token of tokens) {
-      const upper = token.toUpperCase();
-      if (upper === 'AND' || upper === 'OR' || upper === 'NOT' || upper === 'NEAR') {
-        continue;
-      }
-      let cleaned = token.replace(/[()]/g, '');
-      if (!cleaned) {
-        continue;
-      }
-      if ((cleaned.includes('{') || cleaned.includes('}')) && !cleaned.includes(':')) {
-        continue;
-      }
-      const colonIndex = cleaned.indexOf(':');
-      if (colonIndex >= 0) {
-        cleaned = cleaned.slice(colonIndex + 1);
-      }
-      cleaned = cleaned.replace(/\*+$/, '');
-      if (meetsLength(cleaned)) {
-        terms.push(cleaned);
-      }
-    }
-
-    return Array.from(new Set(terms));
-  }, [q]);
-
-  const highlightPattern = useMemo(() => {
-    if (highlightTerms.length === 0) return null;
-    const escaped = highlightTerms.map((term) => term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
-    return new RegExp(`(${escaped.join('|')})`, 'gi');
-  }, [highlightTerms]);
+  const highlightPattern = useMemo(
+    () => createFtsHighlightPattern(highlightTerms),
+    [highlightTerms],
+  );
 
   const highlightText = useCallback(
     (text: string | null | undefined) => {
