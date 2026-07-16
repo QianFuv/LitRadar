@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 use litradar_sources::{
     normalize_doi, FixtureScholarlyTransport, ScholarlyClient, ScholarlyFixtureData,
     ScholarlyTransport, ScholarlyWorksPage, SourceAttempt, SourceError,
+    SEMANTIC_SCHOLAR_BATCH_SIZE,
 };
 use rusqlite::Connection;
 use serde::Serialize;
@@ -567,27 +568,26 @@ where
                 cursor.as_deref(),
             )
         })?;
-        for raw_batch in page.items.chunks(SCHOLARLY_WRITE_BATCH_SIZE) {
-            let works = raw_batch
-                .iter()
-                .filter_map(|work| build_openalex_crossref_work(work, source_issns))
-                .collect::<Vec<_>>();
-            update_scholarly_journal_from_page(journal_record, &works);
-            process_scholarly_work_page(
-                connection,
-                client,
-                &works,
-                journal_record,
-                meta_record,
-                journal_title,
-                change_event_context,
-                lease_context,
-                synchronization_date.is_none(),
-                attempt_sink,
-                totals,
-                years,
-            )?;
-        }
+        let works = page
+            .items
+            .iter()
+            .filter_map(|work| build_openalex_crossref_work(work, source_issns))
+            .collect::<Vec<_>>();
+        update_scholarly_journal_from_page(journal_record, &works);
+        process_scholarly_work_page(
+            connection,
+            client,
+            &works,
+            journal_record,
+            meta_record,
+            journal_title,
+            change_event_context,
+            lease_context,
+            synchronization_date.is_none(),
+            attempt_sink,
+            totals,
+            years,
+        )?;
         let Some(next_cursor) = page.next_cursor else {
             break;
         };
@@ -619,6 +619,8 @@ fn process_scholarly_work_page<T>(
 where
     T: ScholarlyTransport,
 {
+    let page_dois = doi_values_from_works(works);
+    let mut semantic_scholar_by_doi = None;
     for batch in works.chunks(SCHOLARLY_WRITE_BATCH_SIZE) {
         let dois = doi_values_from_works(batch);
         let openalex_by_doi = if dois.is_empty()
@@ -632,13 +634,18 @@ where
                 client.fetch_openalex_by_dois(&dois, SCHOLARLY_WRITE_BATCH_SIZE)
             })?
         };
-        let semantic_scholar_by_doi = if dois.is_empty() {
-            BTreeMap::new()
-        } else {
-            capture_scholarly_attempts(client, attempt_sink, |client| {
-                client.fetch_semantic_scholar_by_dois(&dois, SCHOLARLY_WRITE_BATCH_SIZE)
-            })?
-        };
+        if semantic_scholar_by_doi.is_none() {
+            semantic_scholar_by_doi = Some(if page_dois.is_empty() {
+                BTreeMap::new()
+            } else {
+                capture_scholarly_attempts(client, attempt_sink, |client| {
+                    client.fetch_semantic_scholar_by_dois(&page_dois, SEMANTIC_SCHOLAR_BATCH_SIZE)
+                })?
+            });
+        }
+        let semantic_scholar_by_doi = semantic_scholar_by_doi
+            .as_ref()
+            .expect("non-empty work page should initialize enrichment");
         let mut issue_records_by_id = BTreeMap::<i64, IssueRecord>::new();
         let mut article_records = Vec::new();
         for work in batch {
@@ -808,6 +815,7 @@ fn parse_csv_line(line: &str) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
     use std::fs;
 
     use litradar_sources::{
@@ -925,6 +933,141 @@ mod tests {
             .query_row("SELECT COUNT(*) FROM articles", [], |row| row.get(0))
             .expect("article count should query");
         assert_eq!(article_count, 3);
+    }
+
+    #[test]
+    fn crossref_page_batches_semantic_scholar_once() {
+        let connection = Connection::open_in_memory().expect("in-memory db should open");
+        init_index_db(&connection).expect("schema should initialize");
+        let works = (0..225)
+            .map(|index| {
+                crossref_work(
+                    &format!("10.1/crossref-{index}"),
+                    &format!("Crossref Article {index}"),
+                    &index.to_string(),
+                )
+            })
+            .collect::<Vec<_>>();
+        let fixture = ScholarlyFixtureData {
+            crossref_work_pages: vec![works],
+            semantic_scholar_by_doi: BTreeMap::from([(
+                "10.1/crossref-224".to_string(),
+                json!({
+                    "externalIds": {"DOI": "10.1/crossref-224"},
+                    "abstract": "Last batch abstract."
+                }),
+            )]),
+            ..ScholarlyFixtureData::default()
+        };
+        let mut client = ScholarlyClient::new(FixtureScholarlyTransport::new(fixture), true);
+
+        let outcome = process_scholarly_row(
+            &connection,
+            &mut client,
+            &scholarly_row(),
+            ScholarlyProcessContext {
+                csv_file: "journals.csv",
+                journal_id: 50,
+                timestamp: "2026-07-16T00:00:00Z",
+                change_event_context: None,
+                lease_context: None,
+                should_resume: false,
+                attempt_sink: &mut |_| {},
+            },
+        )
+        .expect("bounded Crossref page should succeed");
+
+        let transport = client.into_transport();
+        assert_eq!(outcome.works_count, 225);
+        assert_eq!(outcome.written_article_count, 225);
+        assert_eq!(
+            transport
+                .semantic_scholar_batches()
+                .iter()
+                .map(Vec::len)
+                .collect::<Vec<_>>(),
+            vec![225]
+        );
+        assert_eq!(
+            transport
+                .openalex_doi_batches()
+                .iter()
+                .map(Vec::len)
+                .collect::<Vec<_>>(),
+            vec![100, 100, 25]
+        );
+        let last_abstract: String = connection
+            .query_row(
+                "SELECT abstract FROM articles WHERE doi = '10.1/crossref-224'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("last write batch should reuse page enrichment");
+        assert_eq!(last_abstract, "Last batch abstract.");
+    }
+
+    #[test]
+    fn openalex_page_batches_semantic_scholar_once() {
+        let connection = Connection::open_in_memory().expect("in-memory db should open");
+        init_index_db(&connection).expect("schema should initialize");
+        let works = (0..200).map(openalex_work).collect::<Vec<_>>();
+        let fixture = ScholarlyFixtureData {
+            crossref_status: Some(404),
+            openalex_source_by_issns: Some(json!({
+                "id": "https://openalex.org/S50",
+                "display_name": "Paged Journal",
+                "issn_l": "1234-5678",
+                "issn": ["1234-5678"]
+            })),
+            openalex_source_work_pages: vec![works],
+            semantic_scholar_by_doi: BTreeMap::from([(
+                "10.1/openalex-199".to_string(),
+                json!({
+                    "externalIds": {"DOI": "10.1/openalex-199"},
+                    "abstract": "Fallback last batch abstract."
+                }),
+            )]),
+            ..ScholarlyFixtureData::default()
+        };
+        let mut client = ScholarlyClient::new(FixtureScholarlyTransport::new(fixture), true);
+
+        let outcome = process_scholarly_row(
+            &connection,
+            &mut client,
+            &scholarly_row(),
+            ScholarlyProcessContext {
+                csv_file: "journals.csv",
+                journal_id: 51,
+                timestamp: "2026-07-16T00:00:00Z",
+                change_event_context: None,
+                lease_context: None,
+                should_resume: false,
+                attempt_sink: &mut |_| {},
+            },
+        )
+        .expect("bounded OpenAlex fallback page should succeed");
+
+        let transport = client.into_transport();
+        assert_eq!(outcome.works_count, 200);
+        assert_eq!(outcome.written_article_count, 200);
+        assert_eq!(transport.source_work_requests().len(), 1);
+        assert_eq!(
+            transport
+                .semantic_scholar_batches()
+                .iter()
+                .map(Vec::len)
+                .collect::<Vec<_>>(),
+            vec![200]
+        );
+        assert!(transport.openalex_doi_batches().is_empty());
+        let last_abstract: String = connection
+            .query_row(
+                "SELECT abstract FROM articles WHERE doi = '10.1/openalex-199'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("fallback last write batch should reuse page enrichment");
+        assert_eq!(last_abstract, "Fallback last batch abstract.");
     }
 
     #[test]
@@ -1395,6 +1538,23 @@ mod tests {
             "issue": "1",
             "page": page,
             "ISSN": ["1234-5678"]
+        })
+    }
+
+    fn openalex_work(index: usize) -> serde_json::Value {
+        json!({
+            "id": format!("https://openalex.org/W{index}"),
+            "doi": format!("https://doi.org/10.1/openalex-{index}"),
+            "title": format!("OpenAlex Article {index}"),
+            "publication_date": "2026-07-16",
+            "biblio": {
+                "volume": "1",
+                "issue": "1",
+                "first_page": index.to_string(),
+                "last_page": index.to_string()
+            },
+            "authorships": [{"author": {"display_name": "Test Author"}}],
+            "open_access": {"is_oa": false}
         })
     }
 }
