@@ -30,6 +30,46 @@ fn empty_auth_database_migration_creates_current_schema() {
     assert!(table_exists(&path, "scheduled_task_runs"));
     assert!(table_exists(&path, "scheduler_workers"));
     assert!(table_exists(&path, "service_heartbeats"));
+    assert!(table_exists(&path, "managed_meta_catalogs"));
+}
+
+#[test]
+fn managed_meta_migration_preserves_version_five_rows() {
+    let temp_dir = tempdir().expect("temp directory should be created");
+    let path = temp_dir.path().join("version-five-auth.sqlite");
+    migrate_auth_database(&path).expect("current auth database should migrate");
+    let connection = Connection::open(&path).expect("auth database should open");
+    connection
+        .execute_batch(
+            "
+            INSERT INTO users (
+                id, username, password_hash, salt, is_admin, created_at, updated_at
+            ) VALUES (
+                71, 'version-five-user', 'preserved-hash', 'preserved-salt', 1,
+                10.0, 11.0
+            );
+            DROP TABLE managed_meta_catalogs;
+            PRAGMA user_version = 5;
+            ",
+        )
+        .expect("version five fixture should be created");
+    drop(connection);
+
+    migrate_auth_database(&path).expect("version five database should migrate");
+
+    let connection = Connection::open(&path).expect("migrated database should open");
+    let username: String = connection
+        .query_row("SELECT username FROM users WHERE id = 71", [], |row| {
+            row.get(0)
+        })
+        .expect("existing user should remain");
+    assert_eq!(username, "version-five-user");
+    assert_eq!(user_version(&path), AUTH_SCHEMA_VERSION);
+    assert!(table_exists(&path, "managed_meta_catalogs"));
+    assert_eq!(
+        table_columns(&path, "managed_meta_catalogs"),
+        ["filename", "bundle_version", "applied_sha256"]
+    );
 }
 
 #[test]
@@ -40,7 +80,8 @@ fn service_heartbeat_migration_preserves_version_three_scheduler_rows() {
     let connection = Connection::open(&path).expect("auth database should open");
     connection
         .execute_batch(
-            "DROP TABLE service_heartbeats;
+            "DROP TABLE managed_meta_catalogs;
+             DROP TABLE service_heartbeats;
              PRAGMA user_version = 3;
              INSERT INTO scheduler_workers (worker_id, started_at, heartbeat_at)
              VALUES ('worker-v3', 10, 20);",

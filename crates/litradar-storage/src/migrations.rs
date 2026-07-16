@@ -13,7 +13,7 @@ use rusqlite::{
 use crate::{try_load_extension, DatabaseResolutionError, StorageConfig};
 
 /// Current auth and business database schema version.
-pub const AUTH_SCHEMA_VERSION: i64 = 5;
+pub const AUTH_SCHEMA_VERSION: i64 = 6;
 
 /// Current index database schema version.
 pub const INDEX_SCHEMA_VERSION: i64 = 3;
@@ -153,6 +153,7 @@ pub fn migrate_auth_database(path: impl AsRef<Path>) -> Result<(), MigrationErro
             3 => apply_auth_version_three(&transaction)?,
             4 => apply_auth_version_four(&transaction)?,
             5 => apply_auth_version_five(&transaction)?,
+            6 => apply_auth_version_six(&transaction)?,
             _ => unreachable!("auth migration version should be implemented"),
         }
         transaction.pragma_update(None, "user_version", next_version)?;
@@ -431,6 +432,18 @@ fn apply_auth_version_five(transaction: &Transaction<'_>) -> rusqlite::Result<()
             ON scheduled_task_runs(task_id, scheduled_for DESC);
         CREATE INDEX idx_scheduled_task_runs_status
             ON scheduled_task_runs(status, claim_expires_at);
+        ",
+    )
+}
+
+fn apply_auth_version_six(transaction: &Transaction<'_>) -> rusqlite::Result<()> {
+    transaction.execute_batch(
+        "
+        CREATE TABLE managed_meta_catalogs (
+            filename       TEXT PRIMARY KEY,
+            bundle_version INTEGER NOT NULL CHECK (bundle_version > 0),
+            applied_sha256 TEXT NOT NULL CHECK (length(applied_sha256) = 64)
+        );
         ",
     )
 }

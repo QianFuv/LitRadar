@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 pub struct StorageConfig {
     project_root: PathBuf,
     index_dir: PathBuf,
+    meta_dir: PathBuf,
     auth_db_path: PathBuf,
 }
 
@@ -27,6 +28,7 @@ impl StorageConfig {
         let project_root = project_root.into();
         Self {
             index_dir: project_root.join("data").join("index"),
+            meta_dir: project_root.join("data").join("meta"),
             auth_db_path: project_root.join("data").join("auth.sqlite"),
             project_root,
         }
@@ -48,6 +50,15 @@ impl StorageConfig {
     /// Index database directory path.
     pub fn index_dir(&self) -> &Path {
         &self.index_dir
+    }
+
+    /// Return the configured persistent metadata catalog directory.
+    ///
+    /// # Returns
+    ///
+    /// Metadata catalog directory path.
+    pub fn meta_dir(&self) -> &Path {
+        &self.meta_dir
     }
 
     /// Return the configured auth database path.

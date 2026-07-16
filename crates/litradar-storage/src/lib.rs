@@ -7,6 +7,7 @@ pub mod business;
 pub mod cnki;
 pub mod config;
 pub mod index;
+pub mod meta;
 pub mod migrations;
 pub mod secrets;
 pub mod sqlite;
@@ -57,6 +58,10 @@ pub use index::{
     list_index_database_names, list_issues, list_journal_options, list_journals, list_sources,
     list_years, ArticleFulltextTarget, ArticleListParams, CnkiFulltextTarget, IndexRepositoryError,
     IssueListParams, JournalListParams,
+};
+pub use meta::{
+    prepare_managed_meta, ManagedMetaAction, ManagedMetaCatalogReport, ManagedMetaError,
+    ManagedMetaPreparationReport,
 };
 pub use migrations::{
     migrate_auth_database, migrate_existing_index_databases, migrate_index_database,
