@@ -1,19 +1,8 @@
 'use client';
 
-import {
-  useInfiniteQuery,
-  useQuery,
-  useQueryClient,
-  type InfiniteData,
-} from '@tanstack/react-query';
+import { useInfiniteQuery, type InfiniteData } from '@tanstack/react-query';
 import { useQueryState, parseAsString, parseAsArrayOf } from 'nuqs';
-import {
-  checkFavoritesBatch,
-  getArticles,
-  type ArticleId,
-  type ArticlePage,
-  type FavoriteCheck,
-} from '@/lib/api';
+import { getArticles, type ArticlePage } from '@/lib/api';
 import { ArticleDialogCard } from '@/components/feature/article-dialog-card';
 import { useVisiblePageList } from '@/components/feature/use-visible-page-list';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
@@ -23,6 +12,7 @@ import { useSearchParams } from 'next/navigation';
 import { useAuth } from '@/lib/auth-context';
 import { createFtsHighlightPattern, parseFtsHighlightTerms } from '@/lib/fts-highlight';
 import { useSelectedDatabase } from '@/lib/selected-database';
+import { useFavoriteChecks } from '@/components/feature/use-favorite-checks';
 
 const MONTH_KEY_PATTERN = /^\d{4}-(0[1-9]|1[0-2])$/;
 const MONTH_RANGE_SEPARATOR = '..';
@@ -82,7 +72,6 @@ export function getNextArticlePageParam(lastPage: ArticlePage): string | undefin
 
 export function ResultsList() {
   const { user } = useAuth();
-  const queryClient = useQueryClient();
 
   const [q] = useQueryState('q', parseAsString);
   const [areas] = useQueryState('area', parseAsArrayOf(parseAsString));
@@ -139,38 +128,11 @@ export function ResultsList() {
   const visiblePageCount = Math.min(visiblePages, loadedPages);
   const visibleArticles = pages.slice(0, visiblePageCount).flatMap((page) => page.items);
   const visibleArticleIds = visibleArticles.map((article) => article.article_id);
-  const favoriteBatchBaseKey = useMemo(
-    () => ['fav-check-batch', user?.id, currentDb] as const,
-    [currentDb, user?.id],
+  const { favoriteChecksByArticle, isFavoriteStatePending } = useFavoriteChecks(
+    visibleArticleIds,
+    currentDb,
+    user?.id,
   );
-  const cachedFavoriteChecksByArticle = queryClient
-    .getQueriesData<Record<ArticleId, FavoriteCheck[]>>({
-      queryKey: favoriteBatchBaseKey,
-    })
-    .reduce<Record<ArticleId, FavoriteCheck[]>>((merged, [, checks]) => {
-      if (!checks) {
-        return merged;
-      }
-      return { ...merged, ...checks };
-    }, {});
-  const missingFavoriteArticleIds = visibleArticleIds.filter(
-    (articleId) => !(articleId in cachedFavoriteChecksByArticle),
-  );
-  const missingFavoriteArticleIdsKey = missingFavoriteArticleIds.join(',');
-
-  const { data: fetchedFavoriteChecksByArticle = {}, isPending: isMissingFavoriteStatePending } =
-    useQuery({
-      queryKey: [...favoriteBatchBaseKey, 'missing', missingFavoriteArticleIdsKey],
-      queryFn: () => checkFavoritesBatch(missingFavoriteArticleIds, currentDb),
-      enabled: !!user && missingFavoriteArticleIds.length > 0,
-      staleTime: 5 * 60 * 1000,
-    });
-  const favoriteChecksByArticle = useMemo(
-    () => ({ ...cachedFavoriteChecksByArticle, ...fetchedFavoriteChecksByArticle }),
-    [cachedFavoriteChecksByArticle, fetchedFavoriteChecksByArticle],
-  );
-  const isFavoriteStatePending =
-    missingFavoriteArticleIds.length > 0 && isMissingFavoriteStatePending;
 
   const highlightTerms = useMemo(() => parseFtsHighlightTerms(q), [q]);
 

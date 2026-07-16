@@ -3,12 +3,11 @@
 import Link from 'next/link';
 import { useMemo } from 'react';
 import { useSearchParams } from 'next/navigation';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
 import { ArrowLeft, CalendarDays, Database, FileText, Menu } from 'lucide-react';
 import { parseAsString, useQueryState } from 'nuqs';
 
 import {
-  checkFavoritesBatch,
   getArticles,
   getDatabases,
   getWeeklyUpdates,
@@ -17,7 +16,6 @@ import {
   type WeeklyDatabaseUpdate,
   type WeeklyJournalUpdate,
   type JournalId,
-  type FavoriteCheck,
 } from '@/lib/api';
 import { useAuth } from '@/lib/auth-context';
 import { ArticleDialogCard } from '@/components/feature/article-dialog-card';
@@ -43,6 +41,7 @@ import {
 } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
 import { cn } from '@/lib/utils';
+import { useFavoriteChecks } from '@/components/feature/use-favorite-checks';
 
 const DATE_FORMATTER = new Intl.DateTimeFormat('zh-CN', {
   year: 'numeric',
@@ -187,7 +186,6 @@ function JournalPanel({
 
 export default function WeeklyUpdatesPage() {
   const { user } = useAuth();
-  const queryClient = useQueryClient();
   const searchParams = useSearchParams();
   const searchQuery = (searchParams.get('q') || '').trim();
   const [selectedDb, setSelectedDb] = useQueryState('db', parseAsString.withDefault(''));
@@ -324,38 +322,11 @@ export default function WeeklyUpdatesPage() {
   );
   const renderedArticleIds = renderedArticles.map((article) => article.article_id);
   const prefetchIndex = Math.max(0, renderedArticles.length - WEEKLY_PREFETCH_THRESHOLD);
-  const favoriteBatchBaseKey = useMemo(
-    () => ['fav-check-batch', user?.id, effectiveSelectedDb] as const,
-    [effectiveSelectedDb, user?.id],
+  const { favoriteChecksByArticle, isFavoriteStatePending } = useFavoriteChecks(
+    renderedArticleIds,
+    effectiveSelectedDb,
+    user?.id,
   );
-  const cachedFavoriteChecksByArticle = queryClient
-    .getQueriesData<Record<string, FavoriteCheck[]>>({
-      queryKey: favoriteBatchBaseKey,
-    })
-    .reduce<Record<string, FavoriteCheck[]>>((merged, [, checks]) => {
-      if (!checks) {
-        return merged;
-      }
-      return { ...merged, ...checks };
-    }, {});
-  const missingFavoriteArticleIds = renderedArticleIds.filter(
-    (articleId) => !(articleId in cachedFavoriteChecksByArticle),
-  );
-  const missingFavoriteArticleIdsKey = missingFavoriteArticleIds.join(',');
-
-  const { data: fetchedFavoriteChecksByArticle = {}, isPending: isMissingFavoriteStatePending } =
-    useQuery({
-      queryKey: [...favoriteBatchBaseKey, 'missing', missingFavoriteArticleIdsKey],
-      queryFn: () => checkFavoritesBatch(missingFavoriteArticleIds, effectiveSelectedDb),
-      enabled: !!user && !!effectiveSelectedDb && missingFavoriteArticleIds.length > 0,
-      staleTime: 5 * 60 * 1000,
-    });
-  const favoriteChecksByArticle = useMemo(
-    () => ({ ...cachedFavoriteChecksByArticle, ...fetchedFavoriteChecksByArticle }),
-    [cachedFavoriteChecksByArticle, fetchedFavoriteChecksByArticle],
-  );
-  const isFavoriteStatePending =
-    missingFavoriteArticleIds.length > 0 && isMissingFavoriteStatePending;
 
   const totalDatabases = weeklyData?.databases.length ?? 0;
   const totalArticles = useMemo(() => {
