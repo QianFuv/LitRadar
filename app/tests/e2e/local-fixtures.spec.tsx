@@ -99,12 +99,36 @@ async function serveTrackingApi(route: Route): Promise<void> {
 async function showsBootstrapBoundary(page: Page): Promise<void> {
   await page.route('**/api/**', serveBootstrapApi);
   await page.goto('/login');
+
+  const usernameInput = page.getByLabel('用户名');
+  const passwordInput = page.getByLabel('密码', { exact: true });
+  await expect(usernameInput).toBeFocused();
+  await passwordInput.fill('browser-password');
+  await page.getByRole('button', { name: '显示密码' }).click();
+  await expect(passwordInput).toHaveAttribute('type', 'text');
+  await expect(passwordInput).toHaveValue('browser-password');
+
   await page.getByRole('button', { name: '注册' }).last().click();
 
   await expect(page.getByRole('status')).toContainText('系统管理员尚未完成本机初始化');
-  await expect(page.getByLabel('密码')).toHaveAttribute('minlength', '12');
+  await expect(passwordInput).toHaveAttribute('minlength', '12');
+  await expect(passwordInput).toHaveAttribute('autocomplete', 'new-password');
   await expect(page.getByLabel('邀请码')).toBeVisible();
   await expect(page.getByRole('button', { name: '注册' }).first()).toBeDisabled();
+}
+
+/**
+ * Verify an authenticated login visit redirects without exposing the editable form.
+ *
+ * @param page - Playwright browser page.
+ */
+async function redirectsAuthenticatedLogin(page: Page): Promise<void> {
+  await page.route('**/api/**', serveTrackingApi);
+  await page.goto('/login?next=/tracking');
+
+  await expect(page).toHaveURL(/\/tracking$/);
+  await expect(page.getByRole('heading', { name: '文献追踪', exact: true })).toBeVisible();
+  await expect(page.getByLabel('用户名')).toHaveCount(0);
 }
 
 /**
@@ -213,6 +237,15 @@ async function bootstrapBoundaryTest({ page }: { page: Page }): Promise<void> {
 }
 
 /**
+ * Run the authenticated login redirect browser test.
+ *
+ * @param fixtures - Playwright page fixture.
+ */
+async function authenticatedLoginRedirectTest({ page }: { page: Page }): Promise<void> {
+  await redirectsAuthenticatedLogin(page);
+}
+
+/**
  * Run the authenticated tracking browser test.
  *
  * @param fixtures - Playwright page fixture.
@@ -231,5 +264,9 @@ async function userMenuNavigationTest({ page }: { page: Page }): Promise<void> {
 }
 
 test('shows the local administrator bootstrap boundary', bootstrapBoundaryTest);
+test(
+  'redirects an authenticated login visit without showing the form',
+  authenticatedLoginRedirectTest,
+);
 test('completes an authenticated tracking push with local fixtures', fixtureTrackingTest);
 test('supports accessible navigation and theme selection', userMenuNavigationTest);

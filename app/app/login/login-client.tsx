@@ -1,5 +1,6 @@
 'use client';
 
+import { Eye, EyeOff } from 'lucide-react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useEffect, useState, type FormEvent } from 'react';
 import { Button } from '@/components/ui/button';
@@ -7,6 +8,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { getInviteRequirement } from '@/lib/api';
+import { getAuthErrorMessage, type AuthFormMode } from '@/lib/auth-error';
 import { useAuth } from '@/lib/auth-context';
 
 /**
@@ -17,7 +19,7 @@ import { useAuth } from '@/lib/auth-context';
 export default function LoginClient() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const { login, register } = useAuth();
+  const { loading, login, register, user } = useAuth();
   const nextParam = searchParams.get('next') || '';
   const nextPath = nextParam.startsWith('/') && !nextParam.startsWith('//') ? nextParam : '/';
 
@@ -26,18 +28,34 @@ export default function LoginClient() {
   const [inviteCode, setInviteCode] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [mode, setMode] = useState<'login' | 'register'>('login');
+  const [isPasswordVisible, setIsPasswordVisible] = useState(false);
+  const [mode, setMode] = useState<AuthFormMode>('login');
   const [inviteRequired, setInviteRequired] = useState(true);
   const [bootstrapRequired, setBootstrapRequired] = useState(false);
 
   useEffect(() => {
+    if (!loading && user) {
+      router.replace(nextPath);
+    }
+  }, [loading, nextPath, router, user]);
+
+  useEffect(() => {
+    if (loading || user) {
+      return;
+    }
+    let didCancel = false;
     getInviteRequirement()
       .then((data) => {
-        setInviteRequired(data.required);
-        setBootstrapRequired(data.bootstrap_required);
+        if (!didCancel) {
+          setInviteRequired(data.required);
+          setBootstrapRequired(data.bootstrap_required);
+        }
       })
       .catch(() => {});
-  }, []);
+    return () => {
+      didCancel = true;
+    };
+  }, [loading, user]);
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -52,11 +70,24 @@ export default function LoginClient() {
       }
       router.replace(nextPath);
     } catch (err) {
-      setError(err instanceof Error ? err.message : '操作失败，请重试');
+      setError(getAuthErrorMessage(err, mode));
     } finally {
       setIsSubmitting(false);
     }
   };
+
+  if (loading || user) {
+    return (
+      <main
+        id="main-content"
+        className="flex min-h-dvh items-center justify-center bg-background px-6"
+      >
+        <div role="status" className="text-sm text-muted-foreground">
+          正在检查登录状态…
+        </div>
+      </main>
+    );
+  }
 
   return (
     <main
@@ -84,6 +115,7 @@ export default function LoginClient() {
                 type="text"
                 value={username}
                 autoComplete="username"
+                autoFocus
                 spellCheck={false}
                 onChange={(event) => setUsername(event.target.value)}
                 placeholder="3-32位字母数字下划线"
@@ -94,19 +126,37 @@ export default function LoginClient() {
             </div>
             <div className="space-y-2">
               <Label htmlFor="password">密码</Label>
-              <Input
-                id="password"
-                name="password"
-                type="password"
-                value={password}
-                autoComplete={mode === 'register' ? 'new-password' : 'current-password'}
-                onChange={(event) => setPassword(event.target.value)}
-                placeholder={mode === 'register' ? '至少12位' : '输入当前密码'}
-                minLength={mode === 'register' ? 12 : undefined}
-                aria-invalid={Boolean(error)}
-                aria-describedby={error ? 'login-error' : undefined}
-                required
-              />
+              <div className="relative">
+                <Input
+                  id="password"
+                  name="password"
+                  type={isPasswordVisible ? 'text' : 'password'}
+                  value={password}
+                  autoComplete={mode === 'register' ? 'new-password' : 'current-password'}
+                  onChange={(event) => setPassword(event.target.value)}
+                  placeholder={mode === 'register' ? '至少12位' : '输入当前密码'}
+                  minLength={mode === 'register' ? 12 : undefined}
+                  className="pr-10"
+                  aria-invalid={Boolean(error)}
+                  aria-describedby={error ? 'login-error' : undefined}
+                  required
+                />
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="absolute inset-y-0 right-0 h-full rounded-l-none text-muted-foreground hover:text-foreground"
+                  aria-label={isPasswordVisible ? '隐藏密码' : '显示密码'}
+                  aria-pressed={isPasswordVisible}
+                  onClick={() => setIsPasswordVisible((current) => !current)}
+                >
+                  {isPasswordVisible ? (
+                    <EyeOff className="h-4 w-4" aria-hidden="true" />
+                  ) : (
+                    <Eye className="h-4 w-4" aria-hidden="true" />
+                  )}
+                </Button>
+              </div>
             </div>
             {mode === 'register' && inviteRequired && (
               <div className="space-y-2">
