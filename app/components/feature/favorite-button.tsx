@@ -10,7 +10,6 @@ import {
   addFavorite,
   removeFavorite,
   getFolders,
-  getCurrentDatabase,
   type ArticleId,
   type FavoriteCheck,
 } from '@/lib/api';
@@ -24,12 +23,12 @@ export function FavoriteButton({
   initialFolderIds = [],
 }: {
   articleId: ArticleId;
-  dbName?: string;
+  dbName: string;
   initialFolderIds?: number[];
 }) {
   const { user } = useAuth();
   const queryClient = useQueryClient();
-  const db = dbName || getCurrentDatabase();
+  const db = dbName;
   const [open, setOpen] = useState(false);
   const queryKey = ['fav-check', articleId, db] as const;
   const initialFolderIdsValue = Array.from(new Set(initialFolderIds)).sort((a, b) => a - b);

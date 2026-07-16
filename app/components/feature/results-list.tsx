@@ -10,7 +10,6 @@ import { useQueryState, parseAsString, parseAsArrayOf } from 'nuqs';
 import {
   checkFavoritesBatch,
   getArticles,
-  getCurrentDatabase,
   type ArticleId,
   type ArticlePage,
   type FavoriteCheck,
@@ -23,6 +22,7 @@ import { useCallback, useMemo } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { useAuth } from '@/lib/auth-context';
 import { createFtsHighlightPattern, parseFtsHighlightTerms } from '@/lib/fts-highlight';
+import { useSelectedDatabase } from '@/lib/selected-database';
 
 const MONTH_KEY_PATTERN = /^\d{4}-(0[1-9]|1[0-2])$/;
 const MONTH_RANGE_SEPARATOR = '..';
@@ -108,7 +108,7 @@ export function ResultsList() {
   if (dateFrom) params.set('date_from', dateFrom);
   if (dateTo) params.set('date_to', dateTo);
   const paramsString = params.toString();
-  const currentDb = getCurrentDatabase();
+  const currentDb = useSelectedDatabase();
 
   const { data, isLoading, isError, error, fetchNextPage, hasNextPage, isFetchingNextPage } =
     useInfiniteQuery<

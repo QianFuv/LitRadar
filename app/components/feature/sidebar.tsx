@@ -5,14 +5,7 @@ import { useQueryState, parseAsString, parseAsArrayOf } from 'nuqs';
 import Image from 'next/image';
 import { usePathname, useRouter } from 'next/navigation';
 import { useTheme } from 'next-themes';
-import {
-  getAreas,
-  getYears,
-  getJournalOptions,
-  getCurrentDatabase,
-  getDatabases,
-  setDatabase,
-} from '@/lib/api';
+import { getAreas, getYears, getJournalOptions, getDatabases } from '@/lib/api';
 import { useAuth } from '@/lib/auth-context';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Label } from '@/components/ui/label';
@@ -31,6 +24,12 @@ import {
 import { Database, Moon, Sun } from 'lucide-react';
 import { getAreaDisplayName } from '@/lib/area-labels';
 import { cn } from '@/lib/utils';
+import {
+  reconcileSelectedDatabase,
+  resolveAvailableSelectedDatabase,
+  setSelectedDatabase,
+  useSelectedDatabase,
+} from '@/lib/selected-database';
 import { useEffect, useMemo, useState } from 'react';
 
 const MONTH_VALUES = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12] as const;
@@ -225,7 +224,7 @@ export function Sidebar({ className }: { className?: string }) {
   const router = useRouter();
   const pathname = usePathname();
 
-  const [selectedDb, setSelectedDb] = useState(getCurrentDatabase());
+  const selectedDb = useSelectedDatabase();
   const [, setQ] = useQueryState('q', parseAsString);
   const [areas, setAreas] = useQueryState('area', parseAsArrayOf(parseAsString).withDefault([]));
   const [journalIds, setJournalIds] = useQueryState(
@@ -239,22 +238,11 @@ export function Sidebar({ className }: { className?: string }) {
     queryFn: () => getDatabases(),
     enabled: !!user,
   });
-  const activeDb =
-    databases && databases.length > 0
-      ? databases.includes(selectedDb)
-        ? selectedDb
-        : databases[0]
-      : selectedDb;
+  const activeDb = resolveAvailableSelectedDatabase(selectedDb, databases ?? []);
 
   useEffect(() => {
-    if (!databases || databases.length === 0) {
-      return;
-    }
-    if (activeDb === getCurrentDatabase()) {
-      return;
-    }
-    setDatabase(activeDb);
-  }, [activeDb, databases]);
+    reconcileSelectedDatabase(selectedDb, databases ?? []);
+  }, [databases, selectedDb]);
 
   const { data: areaOptions, isLoading: loadingAreas } = useQuery({
     queryKey: ['meta', 'areas', activeDb],
@@ -275,8 +263,7 @@ export function Sidebar({ className }: { className?: string }) {
   });
 
   const handleDatabaseChange = (dbName: string) => {
-    setDatabase(dbName);
-    setSelectedDb(dbName);
+    setSelectedDatabase(dbName);
     setQ(null);
     setAreas([]);
     setJournalIds([]);

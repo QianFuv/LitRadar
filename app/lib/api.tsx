@@ -25,7 +25,6 @@ export {
   SELECTED_DATABASE_KEY,
   buildApiUrl,
   buildDatabaseUrl,
-  getCurrentDatabase,
   readSelectedDatabase,
   resolveApiBase,
   setDatabase,

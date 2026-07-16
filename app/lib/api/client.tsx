@@ -106,15 +106,6 @@ export function setDatabase(dbName: string): void {
 }
 
 /**
- * Read the active database for restored pre-desktop UI modules.
- *
- * @returns Selected database name.
- */
-export function getCurrentDatabase(): string {
-  return readSelectedDatabase();
-}
-
-/**
  * Build an absolute URL from a backend path.
  *
  * @param path - API path.
