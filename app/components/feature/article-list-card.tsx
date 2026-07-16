@@ -3,7 +3,14 @@
 import { type ReactNode } from 'react';
 
 import { Badge } from '@/components/ui/badge';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardFooter,
+  CardHeader,
+  CardTitle,
+} from '@/components/ui/card';
 import { cn } from '@/lib/utils';
 
 type ArticleListCardProps = {
@@ -15,6 +22,7 @@ type ArticleListCardProps = {
   preview?: ReactNode;
   openAccess?: number | boolean | null;
   inPress?: number | boolean | null;
+  action?: ReactNode;
   className?: string;
 };
 
@@ -28,6 +36,12 @@ function isEnabledFlag(value: number | boolean | string | null | undefined): boo
   return value === true || value === 1 || value === '1';
 }
 
+/**
+ * Check whether the preview prop contains visible content.
+ *
+ * @param preview - Preview node supplied by the article list.
+ * @returns True when the card should render its preview section.
+ */
 function hasPreviewContent(preview: ReactNode): boolean {
   if (preview === null || preview === undefined || preview === false) {
     return false;
@@ -38,6 +52,12 @@ function hasPreviewContent(preview: ReactNode): boolean {
   return true;
 }
 
+/**
+ * Render article metadata, selectable title/preview content, and an optional action.
+ *
+ * @param props - Article list card content.
+ * @returns Article list card.
+ */
 export function ArticleListCard({
   title,
   journalTitle,
@@ -47,6 +67,7 @@ export function ArticleListCard({
   preview,
   openAccess,
   inPress,
+  action,
   className,
 }: ArticleListCardProps) {
   const hasPreview = hasPreviewContent(preview);
@@ -57,7 +78,7 @@ export function ArticleListCard({
   return (
     <Card
       className={cn(
-        '[content-visibility:auto] [contain-intrinsic-size:0_220px] transition-[background-color,box-shadow] duration-200 hover:bg-accent dark:hover:bg-[#1a1a1a] hover:shadow-[0px_0px_0px_1px_rgba(0,0,0,0.1),0px_4px_12px_rgba(0,0,0,0.08)] dark:hover:shadow-[0px_0px_0px_1px_rgba(255,255,255,0.3),0px_4px_12px_rgba(255,255,255,0.05)]',
+        'group [content-visibility:auto] [contain-intrinsic-size:0_220px] transition-[background-color,box-shadow] duration-200 hover:bg-accent dark:hover:bg-[#1a1a1a] hover:shadow-[0px_0px_0px_1px_rgba(0,0,0,0.1),0px_4px_12px_rgba(0,0,0,0.08)] dark:hover:shadow-[0px_0px_0px_1px_rgba(255,255,255,0.3),0px_4px_12px_rgba(255,255,255,0.05)]',
         className,
       )}
     >
@@ -102,6 +123,7 @@ export function ArticleListCard({
           </div>
         </CardContent>
       )}
+      {action && <CardFooter className="justify-end">{action}</CardFooter>}
     </Card>
   );
 }

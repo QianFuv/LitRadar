@@ -10,9 +10,8 @@ import {
   getCnkiSession,
   getFullTextUrlForDatabase,
   type ArticleAccessResponse,
-  type ArticleId,
+  type Article,
   type CnkiSessionStatus,
-  type JournalId,
 } from '@/lib/api';
 import { FavoriteButton } from '@/components/feature/favorite-button';
 import { Button } from '@/components/ui/button';
@@ -23,22 +22,14 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { copyTextToClipboard } from '@/lib/clipboard';
+import {
+  generateArticleCitation,
+  getDoiUrl,
+  getSafeHttpUrl,
+  type ArticleCitationFormat,
+} from '@/lib/citation';
 
-type ArticleDetailDialogArticle = {
-  article_id: ArticleId;
-  journal_id?: JournalId | null;
-  title?: string | null;
-  date?: string | null;
-  authors?: string | null;
-  abstract?: string | null;
-  doi?: string | null;
-  platform_id?: string | null;
-  permalink?: string | null;
-  journal_title?: string | null;
-  volume?: string | null;
-  number?: string | null;
-  full_text_file?: string | null;
-};
+type ArticleDetailDialogArticle = Article;
 
 type ArticleDetailDialogContentProps = {
   article: ArticleDetailDialogArticle;
@@ -55,11 +46,20 @@ type ArticleAccessQuerySnapshot = {
   };
 };
 
+type ArticleCopyTarget = 'title' | 'info' | 'gb-t-7714' | 'bibtex' | 'doi' | 'permalink';
+
 const ARTICLE_ACCESS_STALE_TIME_MS = 5 * 60 * 1000;
 const CNKI_SESSION_STALE_TIME_MS = 60 * 1000;
 const CNKI_SESSION_EXPIRY_REFRESH_WINDOW_SECONDS = 10 * 60;
 
+/**
+ * Build the existing plain-text article information summary.
+ *
+ * @param article - Article record.
+ * @returns Multi-line article information.
+ */
 function buildArticleInfoText(article: ArticleDetailDialogArticle): string {
+  const doiUrl = getDoiUrl(article.doi);
   return [
     `标题：${article.title || '暂无'}`,
     `作者：${article.authors || '暂无'}`,
@@ -68,12 +68,19 @@ function buildArticleInfoText(article: ArticleDetailDialogArticle): string {
     article.volume && `卷号：${article.volume}`,
     article.number && `期号：${article.number}`,
     article.doi && `DOI: ${article.doi}`,
-    article.doi && `链接：https://doi.org/${article.doi}`,
+    doiUrl && `DOI 链接：${doiUrl}`,
+    article.permalink && `永久链接：${article.permalink}`,
   ]
     .filter(Boolean)
     .join('\n');
 }
 
+/**
+ * Build the concise dialog description from journal metadata.
+ *
+ * @param article - Article record.
+ * @returns Human-readable journal/date description.
+ */
 function buildArticleDescription(article: ArticleDetailDialogArticle): string {
   const parts = [
     article.journal_title || (article.journal_id ? `期刊 ${article.journal_id}` : ''),
@@ -166,6 +173,12 @@ function shouldUseLiveArticleAccessRefresh(
   return isUnavailableArticleAccess(query.state.data as ArticleAccessResponse | undefined);
 }
 
+/**
+ * Render article metadata, citations, links, access actions, and favorite controls.
+ *
+ * @param props - Article detail dialog configuration.
+ * @returns Article detail dialog content.
+ */
 export function ArticleDetailDialogContent({
   article,
   dbName,
@@ -173,7 +186,7 @@ export function ArticleDetailDialogContent({
   isFavoriteStatePending = false,
   extraActions,
 }: ArticleDetailDialogContentProps) {
-  const [copyStatus, setCopyStatus] = useState<'title' | 'info' | null>(null);
+  const [copyStatus, setCopyStatus] = useState<ArticleCopyTarget | null>(null);
   const [copyFeedback, setCopyFeedback] = useState<{
     message: string;
     tone: 'error' | 'success';
@@ -210,7 +223,14 @@ export function ArticleDetailDialogContent({
       shouldUseLiveArticleAccessRefresh(query, shouldRefreshAccessForSession) ? 'always' : true,
   });
 
-  const handleCopy = async (text: string, status: 'title' | 'info', successMessage: string) => {
+  /**
+   * Copy one article value and publish accessible feedback.
+   *
+   * @param text - Text to copy.
+   * @param status - Copy action identifier.
+   * @param successMessage - Success feedback.
+   */
+  const handleCopy = async (text: string, status: ArticleCopyTarget, successMessage: string) => {
     try {
       await copyTextToClipboard(text);
       setCopyStatus(status);
@@ -225,12 +245,34 @@ export function ArticleDetailDialogContent({
     }, 3000);
   };
 
+  /** Copy the article title. */
   const handleCopyTitle = async () => {
     await handleCopy(article.title || '', 'title', '文章标题已复制。');
   };
 
+  /** Copy the plain-text article information summary. */
   const handleCopyArticleInfo = async () => {
     await handleCopy(buildArticleInfoText(article), 'info', '文章信息已复制。');
+  };
+
+  /**
+   * Copy one generated citation format.
+   *
+   * @param format - Single-article citation format.
+   */
+  const handleCopyCitation = async (format: ArticleCitationFormat) => {
+    const label = format === 'gb-t-7714' ? 'GB/T 7714' : 'BibTeX';
+    await handleCopy(generateArticleCitation(article, format), format, `${label} 引用已复制。`);
+  };
+
+  /** Copy the raw DOI field. */
+  const handleCopyDoi = async () => {
+    await handleCopy(article.doi || '', 'doi', 'DOI 已复制。');
+  };
+
+  /** Copy the raw permalink field. */
+  const handleCopyPermalink = async () => {
+    await handleCopy(article.permalink || '', 'permalink', '永久链接已复制。');
   };
 
   const detailAction = access?.detail;
@@ -240,11 +282,13 @@ export function ArticleDetailDialogContent({
     : null;
   const isAccessLoading = isAccessQueryEnabled && (isAccessPending || isAccessFetching);
   const canShowAccessActions = !isAccessFetching && !isAccessError;
+  const doiUrl = getDoiUrl(article.doi);
+  const permalinkUrl = getSafeHttpUrl(article.permalink);
 
   return (
-    <DialogContent className="w-[calc(100%-2rem)] max-w-[calc(100%-2rem)] md:max-w-4xl max-h-[90vh] overflow-y-auto [&>button]:hidden">
+    <DialogContent className="max-h-[90dvh] w-[calc(100%-2rem)] max-w-[calc(100%-2rem)] overflow-y-auto md:max-w-4xl">
       <DialogHeader>
-        <DialogTitle className="text-xl leading-snug">
+        <DialogTitle className="pr-8 text-xl leading-snug">
           {article.title || '未命名文章'}
           <Button
             variant="ghost"
@@ -287,6 +331,68 @@ export function ArticleDetailDialogContent({
           <p className="text-sm text-muted-foreground leading-relaxed text-justify">
             {article.abstract || '暂无摘要。'}
           </p>
+        </div>
+
+        <div>
+          <h3 className="mb-2 text-sm font-semibold text-foreground/80">引用与链接</h3>
+          <div className="flex flex-wrap gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => void handleCopyCitation('gb-t-7714')}
+            >
+              {copyStatus === 'gb-t-7714' ? (
+                <Check className="mr-2 h-4 w-4 text-green-600" />
+              ) : (
+                <Copy className="mr-2 h-4 w-4" />
+              )}
+              复制 GB/T 7714
+            </Button>
+            <Button variant="outline" size="sm" onClick={() => void handleCopyCitation('bibtex')}>
+              {copyStatus === 'bibtex' ? (
+                <Check className="mr-2 h-4 w-4 text-green-600" />
+              ) : (
+                <Copy className="mr-2 h-4 w-4" />
+              )}
+              复制 BibTeX
+            </Button>
+            {article.doi && (
+              <Button variant="outline" size="sm" onClick={() => void handleCopyDoi()}>
+                {copyStatus === 'doi' ? (
+                  <Check className="mr-2 h-4 w-4 text-green-600" />
+                ) : (
+                  <Copy className="mr-2 h-4 w-4" />
+                )}
+                复制 DOI
+              </Button>
+            )}
+            {doiUrl && (
+              <Button asChild variant="outline" size="sm">
+                <a href={doiUrl} target="_blank" rel="noreferrer">
+                  <ExternalLink className="mr-2 h-4 w-4" />
+                  打开 DOI
+                </a>
+              </Button>
+            )}
+            {article.permalink && (
+              <Button variant="outline" size="sm" onClick={() => void handleCopyPermalink()}>
+                {copyStatus === 'permalink' ? (
+                  <Check className="mr-2 h-4 w-4 text-green-600" />
+                ) : (
+                  <Copy className="mr-2 h-4 w-4" />
+                )}
+                复制永久链接
+              </Button>
+            )}
+            {permalinkUrl && (
+              <Button asChild variant="outline" size="sm">
+                <a href={permalinkUrl} target="_blank" rel="noreferrer">
+                  <ExternalLink className="mr-2 h-4 w-4" />
+                  打开永久链接
+                </a>
+              </Button>
+            )}
+          </div>
         </div>
 
         <div className="pt-4 border-t">

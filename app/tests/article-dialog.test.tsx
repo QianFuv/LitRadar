@@ -1,0 +1,184 @@
+/**
+ * Article card selection, dialog accessibility, citation, and safe-link coverage.
+ */
+
+import { screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { http, HttpResponse } from 'msw';
+import { describe, expect, test, vi } from 'vitest';
+
+import { ArticleDialogCard } from '@/components/feature/article-dialog-card';
+import type { Article } from '@/lib/api';
+import { AuthProvider } from '@/lib/auth-context';
+import { generateArticleCitation } from '@/lib/citation';
+import { server } from '@/tests/mocks/server';
+import { renderWithQuery } from '@/tests/render';
+
+const SAFE_ARTICLE: Article = {
+  article_id: 'article-1',
+  title: 'Selectable title',
+  abstract: 'Selectable abstract text',
+  authors: 'Ada Lovelace',
+  journal_title: 'Journal of Tests',
+  date: '2024-05-17',
+  doi: '10.1000/example',
+  permalink: 'https://example.com/articles/1',
+};
+
+/**
+ * Return an authenticated test user.
+ *
+ * @returns Current-user response.
+ */
+function currentUserResponse(): Response {
+  return HttpResponse.json({ id: 21, username: 'article_user', is_admin: false });
+}
+
+/**
+ * Return an inactive but valid CNKI session snapshot.
+ *
+ * @returns CNKI session response.
+ */
+function cnkiSessionResponse(): Response {
+  return HttpResponse.json({
+    configured: false,
+    status: 'empty',
+    has_bff_user_token: false,
+    expires_at: null,
+    seconds_remaining: null,
+    cookie_names: [],
+    updated_at: null,
+    last_used_at: null,
+  });
+}
+
+/**
+ * Return article access actions that do not add unrelated links to the dialog.
+ *
+ * @returns Article access response.
+ */
+function articleAccessResponse(): Response {
+  return HttpResponse.json({
+    detail: {
+      available: false,
+      label: '查看详情',
+      requires_login: false,
+      message: null,
+    },
+    fulltext: {
+      available: false,
+      label: '获取全文',
+      requires_login: false,
+      message: null,
+    },
+  });
+}
+
+/**
+ * Register API handlers required while the real article dialog is mounted.
+ */
+function registerArticleDialogHandlers(): void {
+  server.use(
+    http.get('http://localhost/api/auth/me', currentUserResponse),
+    http.get('http://localhost/api/cnki/session', cnkiSessionResponse),
+    http.get('http://localhost/api/articles/:articleId/access', articleAccessResponse),
+  );
+}
+
+/**
+ * Render one production article card inside authentication and query providers.
+ *
+ * @param article - Article fixture to render.
+ */
+function renderArticleCard(article: Article): void {
+  renderWithQuery(
+    <AuthProvider>
+      <ArticleDialogCard article={article} dbName="fixture.sqlite" />
+    </AuthProvider>,
+  );
+}
+
+/**
+ * Verify card text remains selectable and the named trigger opens an accessible dialog.
+ */
+async function opensAndClosesAccessibleDialog(): Promise<void> {
+  registerArticleDialogHandlers();
+  const user = userEvent.setup();
+  renderArticleCard(SAFE_ARTICLE);
+
+  expect(screen.getByText('Selectable title').closest('button')).toBeNull();
+  expect(screen.getByText('Selectable abstract text').closest('button')).toBeNull();
+
+  await user.click(screen.getByRole('button', { name: '查看详情' }));
+  expect(await screen.findByRole('dialog')).toBeInTheDocument();
+  await user.click(screen.getByRole('button', { name: '关闭' }));
+  await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+
+  await user.click(screen.getByRole('button', { name: '查看详情' }));
+  expect(await screen.findByRole('dialog')).toBeInTheDocument();
+  await user.keyboard('{Escape}');
+  await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+}
+
+/**
+ * Verify citation and source-link actions copy text and expose safe external destinations.
+ */
+async function copiesCitationsAndLinks(): Promise<void> {
+  registerArticleDialogHandlers();
+  const user = userEvent.setup();
+  const writeText = vi.fn().mockResolvedValue(undefined);
+  Object.defineProperty(navigator, 'clipboard', {
+    configurable: true,
+    value: { writeText },
+  });
+  renderArticleCard(SAFE_ARTICLE);
+
+  await user.click(screen.getByRole('button', { name: '查看详情' }));
+  expect(await screen.findByRole('dialog')).toBeInTheDocument();
+
+  const doiLink = screen.getByRole('link', { name: '打开 DOI' });
+  expect(doiLink).toHaveAttribute('href', 'https://doi.org/10.1000/example');
+  expect(doiLink).toHaveAttribute('target', '_blank');
+  const permalink = screen.getByRole('link', { name: '打开永久链接' });
+  expect(permalink).toHaveAttribute('href', 'https://example.com/articles/1');
+  expect(permalink).toHaveAttribute('rel', 'noreferrer');
+
+  await user.click(screen.getByRole('button', { name: '复制 GB/T 7714' }));
+  expect(writeText).toHaveBeenLastCalledWith(generateArticleCitation(SAFE_ARTICLE, 'gb-t-7714'));
+  await user.click(screen.getByRole('button', { name: '复制 BibTeX' }));
+  expect(writeText).toHaveBeenLastCalledWith(generateArticleCitation(SAFE_ARTICLE, 'bibtex'));
+  await user.click(screen.getByRole('button', { name: '复制 DOI' }));
+  expect(writeText).toHaveBeenLastCalledWith('10.1000/example');
+  await user.click(screen.getByRole('button', { name: '复制永久链接' }));
+  expect(writeText).toHaveBeenLastCalledWith('https://example.com/articles/1');
+}
+
+/**
+ * Verify unsafe schemes remain copyable text but never become clickable links.
+ */
+async function rejectsUnsafeLinks(): Promise<void> {
+  registerArticleDialogHandlers();
+  const user = userEvent.setup();
+  renderArticleCard({
+    ...SAFE_ARTICLE,
+    article_id: 'unsafe-article',
+    doi: 'javascript:alert(1)',
+    permalink: 'data:text/html,unsafe',
+  });
+
+  await user.click(screen.getByRole('button', { name: '查看详情' }));
+  expect(await screen.findByRole('dialog')).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: '复制 DOI' })).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: '复制永久链接' })).toBeInTheDocument();
+  expect(screen.queryByRole('link', { name: '打开 DOI' })).not.toBeInTheDocument();
+  expect(screen.queryByRole('link', { name: '打开永久链接' })).not.toBeInTheDocument();
+}
+
+describe('article dialog workflow', () => {
+  test(
+    'keeps card text selectable and supports named open and close controls',
+    opensAndClosesAccessibleDialog,
+  );
+  test('copies citations and exposes safe DOI and permalink links', copiesCitationsAndLinks);
+  test('does not link unsafe DOI or permalink schemes', rejectsUnsafeLinks);
+});

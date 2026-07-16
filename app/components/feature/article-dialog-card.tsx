@@ -4,30 +4,13 @@ import { useState, type ReactNode } from 'react';
 
 import { ArticleDetailDialogContent } from '@/components/feature/article-detail-dialog-content';
 import { ArticleListCard } from '@/components/feature/article-list-card';
+import { Button } from '@/components/ui/button';
 import { Dialog, DialogTrigger } from '@/components/ui/dialog';
-import { type JournalId } from '@/lib/api';
+import { type Article } from '@/lib/api';
 import { cn } from '@/lib/utils';
 
-type ArticleDialogCardArticle = {
-  article_id: string;
-  journal_id?: JournalId | null;
-  title?: string | null;
-  date?: string | null;
-  authors?: string | null;
-  abstract?: string | null;
-  doi?: string | null;
-  platform_id?: string | null;
-  permalink?: string | null;
-  full_text_file?: string | null;
-  journal_title?: string | null;
-  volume?: string | null;
-  number?: string | null;
-  open_access?: number | boolean | null;
-  in_press?: number | boolean | null;
-};
-
 type ArticleDialogCardProps = {
-  article: ArticleDialogCardArticle;
+  article: Article;
   dbName: string;
   title?: ReactNode;
   preview?: ReactNode;
@@ -39,6 +22,12 @@ type ArticleDialogCardProps = {
   className?: string;
 };
 
+/**
+ * Render a selectable article card with an explicit detail-dialog trigger.
+ *
+ * @param props - Article card and dialog configuration.
+ * @returns Article card and lazily mounted detail dialog.
+ */
 export function ArticleDialogCard({
   article,
   dbName,
@@ -59,26 +48,24 @@ export function ArticleDialogCard({
     <Dialog open={open} onOpenChange={setOpen}>
       <div className={cn('flex items-start gap-3', className)}>
         {leading && <div className="pt-4">{leading}</div>}
-        <DialogTrigger asChild>
-          <button
-            ref={triggerRef}
-            type="button"
-            className={cn(
-              'block flex-1 cursor-pointer appearance-none border-0 bg-transparent p-0 text-left group outline-none focus-visible:ring-ring/50 focus-visible:ring-[3px]',
-            )}
-          >
-            <ArticleListCard
-              title={resolvedTitle}
-              journalTitle={article.journal_title}
-              volume={article.volume}
-              number={article.number}
-              date={article.date}
-              preview={resolvedPreview}
-              openAccess={article.open_access}
-              inPress={article.in_press}
-            />
-          </button>
-        </DialogTrigger>
+        <ArticleListCard
+          className="min-w-0 flex-1"
+          title={resolvedTitle}
+          journalTitle={article.journal_title}
+          volume={article.volume}
+          number={article.number}
+          date={article.date}
+          preview={resolvedPreview}
+          openAccess={article.open_access}
+          inPress={article.in_press}
+          action={
+            <DialogTrigger asChild>
+              <Button ref={triggerRef} type="button" variant="outline" size="sm">
+                查看详情
+              </Button>
+            </DialogTrigger>
+          }
+        />
       </div>
       {open && (
         <ArticleDetailDialogContent
