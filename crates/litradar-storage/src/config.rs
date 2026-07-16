@@ -34,6 +34,20 @@ impl StorageConfig {
         }
     }
 
+    /// Override the auth database path while retaining project-derived data directories.
+    ///
+    /// # Arguments
+    ///
+    /// * `auth_db_path` - Explicit auth database selected by a command caller.
+    ///
+    /// # Returns
+    ///
+    /// Storage configuration using the explicit auth database path.
+    pub fn with_auth_db_path(mut self, auth_db_path: impl Into<PathBuf>) -> Self {
+        self.auth_db_path = auth_db_path.into();
+        self
+    }
+
     /// Return the configured project root.
     ///
     /// # Returns
@@ -217,6 +231,25 @@ mod tests {
     use tempfile::tempdir;
 
     use super::{DatabaseResolutionError, StorageConfig};
+
+    #[test]
+    fn explicit_auth_database_keeps_project_data_directories() {
+        let config =
+            StorageConfig::from_project_root("project-root").with_auth_db_path("state/auth.sqlite");
+
+        assert_eq!(
+            config.auth_db_path(),
+            std::path::Path::new("state/auth.sqlite")
+        );
+        assert_eq!(
+            config.meta_dir(),
+            std::path::Path::new("project-root/data/meta")
+        );
+        assert_eq!(
+            config.index_dir(),
+            std::path::Path::new("project-root/data/index")
+        );
+    }
 
     #[test]
     fn resolves_single_database_when_name_is_omitted() {

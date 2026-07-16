@@ -10,6 +10,7 @@ use litradar_storage::StorageConfig;
 const DEFAULT_HOST: &str = "127.0.0.1";
 const DEFAULT_PORT: u16 = 8000;
 const DEFAULT_SCHEDULER_INTERVAL_SECONDS: u64 = 30;
+const BUNDLED_META_DIR_ENV: &str = "LITRADAR_BUNDLED_META_DIR";
 
 /// Parsed configuration for the unified long-running service.
 #[derive(Debug, Clone)]
@@ -36,8 +37,20 @@ impl ServeConfig {
     ///
     /// Validated service configuration.
     pub(crate) fn from_args(
+        args: Vec<String>,
+        application_executable: PathBuf,
+    ) -> Result<Self, Box<dyn Error>> {
+        Self::from_args_with_bundled_meta_dir(
+            args,
+            application_executable,
+            std::env::var_os(BUNDLED_META_DIR_ENV).map(PathBuf::from),
+        )
+    }
+
+    fn from_args_with_bundled_meta_dir(
         mut args: Vec<String>,
         application_executable: PathBuf,
+        bundled_meta_dir: Option<PathBuf>,
     ) -> Result<Self, Box<dyn Error>> {
         let host =
             extract_string_option(&mut args, "--host")?.unwrap_or_else(|| DEFAULT_HOST.to_string());
@@ -73,6 +86,7 @@ impl ServeConfig {
 
         let storage_config = StorageConfig::from_project_root(&project_root);
         let mut api_config = ApiConfig::new(project_root, host, port, secret_key_file);
+        api_config.bundled_meta_dir = bundled_meta_dir;
         api_config.are_secure_cookies_required = are_secure_cookies_required;
         Ok(Self {
             api_config,
@@ -161,5 +175,25 @@ mod tests {
         .expect_err("zero interval should fail");
 
         assert!(error.to_string().contains("must be greater than zero"));
+    }
+
+    #[test]
+    fn carries_injected_packaged_bundle_without_mutating_process_environment() {
+        let config = ServeConfig::from_args_with_bundled_meta_dir(
+            vec![
+                "--project-root".to_string(),
+                "fixture-root".to_string(),
+                "--secret-key-file".to_string(),
+                "secret.key".to_string(),
+            ],
+            PathBuf::from("litradar"),
+            Some(PathBuf::from("immutable/meta")),
+        )
+        .expect("serve configuration should carry the bundle path");
+
+        assert_eq!(
+            config.api_config.bundled_meta_dir,
+            Some(PathBuf::from("immutable/meta"))
+        );
     }
 }

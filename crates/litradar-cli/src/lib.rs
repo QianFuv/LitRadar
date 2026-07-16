@@ -15,7 +15,7 @@ use litradar_storage::{
     create_backup, migrate_auth_database, migrate_database_secrets,
     migrate_existing_index_databases, migrate_index_database, restore_backup,
     rotate_database_secrets, verify_backup, verify_database_secrets, BackupCreateOptions,
-    BackupRestoreOptions, SecretCodec, StorageConfig,
+    BackupRestoreOptions, ManagedMetaPreparationReport, SecretCodec, StorageConfig,
 };
 use litradar_worker::delivery::{
     run_recommendation_delivery, DeliveryMode, DeliveryWorkflow, RecommendationRunConfig,
@@ -26,6 +26,7 @@ use serde_json::json;
 const DEFAULT_INDEX_WORKER_COUNT: usize = 8;
 const DEFAULT_INDEX_PROCESS_COUNT: usize = 1;
 const DEFAULT_INDEX_ISSUE_BATCH_SIZE: usize = 8;
+const BUNDLED_META_DIR_ENV: &str = "LITRADAR_BUNDLED_META_DIR";
 
 /// Run the unified application's local `admin` maintenance command.
 ///
@@ -238,6 +239,18 @@ pub fn run_index_command(
     args: Vec<String>,
     application_executable: impl AsRef<Path>,
 ) -> Result<(), Box<dyn Error>> {
+    run_index_command_with_bundled_meta_dir(
+        args,
+        application_executable.as_ref(),
+        std::env::var_os(BUNDLED_META_DIR_ENV).map(PathBuf::from),
+    )
+}
+
+fn run_index_command_with_bundled_meta_dir(
+    args: Vec<String>,
+    application_executable: &Path,
+    bundled_meta_dir: Option<PathBuf>,
+) -> Result<(), Box<dyn Error>> {
     let mut args = args;
     if has_help(&args) {
         println!("{}", index_usage());
@@ -259,6 +272,9 @@ pub fn run_index_command(
     }
     let secret_key_file = required_secret_key_file(secret_key_file)?;
     migrate_command_databases(&project_root, &auth_db_path)?;
+    let storage_config =
+        StorageConfig::from_project_root(&project_root).with_auth_db_path(auth_db_path.clone());
+    prepare_index_managed_meta(&storage_config, bundled_meta_dir.as_deref())?;
     let secret_codec = SecretCodec::load(&secret_key_file)?;
     verify_database_secrets(&auth_db_path, &secret_codec)?;
     let scholarly_config =
@@ -269,7 +285,7 @@ pub fn run_index_command(
         "issue_batch": options.issue_batch_size,
     });
     let outcome = run_live_index(&LiveIndexConfig {
-        application_executable: application_executable.as_ref().to_path_buf(),
+        application_executable: application_executable.to_path_buf(),
         project_root: project_root.clone(),
         secret_key_file: secret_key_file.clone(),
         file: options.file,
@@ -290,6 +306,25 @@ pub fn run_index_command(
         serialize_index_outcome(&outcome, effective_concurrency)?
     );
     Ok(())
+}
+
+fn prepare_index_managed_meta(
+    storage_config: &StorageConfig,
+    bundled_meta_dir: Option<&Path>,
+) -> Result<Option<ManagedMetaPreparationReport>, Box<dyn Error>> {
+    let Some(bundled_meta_dir) = bundled_meta_dir else {
+        return Ok(None);
+    };
+    let report = litradar_storage::prepare_managed_meta(storage_config, bundled_meta_dir)?;
+    eprintln!(
+        "{}",
+        serde_json::to_string(&json!({
+            "component": "managed_meta",
+            "context": "index_startup",
+            "report": report,
+        }))?
+    );
+    Ok(Some(report))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -865,9 +900,11 @@ mod tests {
     use super::{
         admin_usage, default_delivery_state_dir, delivery_usage, extract_auth_db_path,
         extract_bool_pair, extract_string_option, extract_usize_option, index_usage,
-        normalize_db_name, parse_index_options, resolve_delivery_targets, resolve_project_path,
-        run_admin_command_with_reader, run_index_command, run_notify_command, run_push_command,
-        run_scheduler_command, scheduler_usage, serialize_index_outcome,
+        migrate_command_databases, normalize_db_name, parse_index_options,
+        prepare_index_managed_meta, resolve_delivery_targets, resolve_project_path,
+        run_admin_command_with_reader, run_index_command, run_index_command_with_bundled_meta_dir,
+        run_notify_command, run_push_command, run_scheduler_command, scheduler_usage,
+        serialize_index_outcome,
     };
     use litradar_index::LiveIndexOutcome;
     use litradar_worker::delivery::DeliveryWorkflow;
@@ -1191,6 +1228,74 @@ mod tests {
         assert_eq!(payload["effective_concurrency"]["processes"], 2);
         assert_eq!(payload["effective_concurrency"]["issue_batch"], 3);
         assert!(payload.get("secret_key_file").is_none());
+    }
+
+    #[test]
+    fn configured_index_preparation_uses_the_explicit_auth_database() {
+        let root = temp_root("litradar-cli-managed-meta");
+        let project_root = root.path().join("project");
+        let auth_db_path = root.path().join("state/custom-auth.sqlite");
+        let bundle_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data/meta");
+        migrate_command_databases(&project_root, &auth_db_path)
+            .expect("command databases should migrate");
+        let storage_config = litradar_storage::StorageConfig::from_project_root(&project_root)
+            .with_auth_db_path(&auth_db_path);
+
+        let report = prepare_index_managed_meta(&storage_config, Some(&bundle_dir))
+            .expect("configured bundle should prepare")
+            .expect("configured preparation should return a report");
+
+        assert_eq!(report.catalogs.len(), 3);
+        assert!(storage_config
+            .meta_dir()
+            .join("ccf_computer_journals.csv")
+            .is_file());
+        let state_count: i64 = litradar_storage::open_sqlite_connection(&auth_db_path)
+            .expect("explicit auth database should open")
+            .query_row("SELECT COUNT(*) FROM managed_meta_catalogs", [], |row| {
+                row.get(0)
+            })
+            .expect("managed state should load");
+        assert_eq!(state_count, 3);
+        assert!(!project_root.join("data/auth.sqlite").exists());
+    }
+
+    #[test]
+    fn unset_index_bundle_keeps_local_metadata_behavior() {
+        let root = temp_root("litradar-cli-unset-managed-meta");
+        let storage_config = litradar_storage::StorageConfig::from_project_root(root.path());
+        litradar_storage::migrate_auth_database(storage_config.auth_db_path())
+            .expect("auth database should migrate");
+
+        let report = prepare_index_managed_meta(&storage_config, None)
+            .expect("unset bundle should be a no-op");
+
+        assert!(report.is_none());
+        assert!(!storage_config.meta_dir().exists());
+    }
+
+    #[test]
+    fn internal_index_worker_short_circuits_before_bundle_preparation() {
+        let root = temp_root("litradar-cli-internal-worker-meta");
+        let error = run_index_command_with_bundled_meta_dir(
+            vec![
+                "--live-worker-request".to_string(),
+                root.path()
+                    .join("missing-request.json")
+                    .to_string_lossy()
+                    .into_owned(),
+                "unexpected".to_string(),
+            ],
+            Path::new("litradar"),
+            Some(root.path().join("missing-bundle")),
+        )
+        .expect_err("worker argument validation should run before preparation");
+
+        assert_eq!(
+            error.to_string(),
+            "unexpected index worker arguments: unexpected"
+        );
+        assert!(!root.path().join("data").exists());
     }
 
     #[test]

@@ -14,6 +14,8 @@ const DEFAULT_MCP_HOSTS: [&str; 3] = ["localhost", "127.0.0.1", "::1"];
 pub struct ApiConfig {
     /// Project or deployment root used to resolve data paths.
     pub project_root: PathBuf,
+    /// Optional immutable metadata bundle supplied by a packaged runtime.
+    pub bundled_meta_dir: Option<PathBuf>,
     /// Hostname or IP address to bind.
     pub host: String,
     /// TCP port to bind.
@@ -48,6 +50,7 @@ impl ApiConfig {
     pub fn new(project_root: PathBuf, host: String, port: u16, secret_key_file: PathBuf) -> Self {
         Self {
             project_root,
+            bundled_meta_dir: None,
             host,
             port,
             secret_key_file,
@@ -377,6 +380,7 @@ mod tests {
         );
 
         assert_eq!(config.project_root, project_root);
+        assert_eq!(config.bundled_meta_dir, None);
         assert_eq!(config.host, "127.0.0.1");
         assert_eq!(config.port, 8000);
         assert_eq!(config.bind_address(), "127.0.0.1:8000");

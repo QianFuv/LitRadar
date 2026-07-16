@@ -26,7 +26,8 @@ use axum::response::{IntoResponse, Response};
 use axum::Router;
 use config::ApiConfig;
 use litradar_auth::SESSION_COOKIE_NAME;
-use litradar_storage::{ServiceKind, StorageConfig};
+use litradar_storage::{ManagedMetaPreparationReport, ServiceKind, StorageConfig};
+use serde_json::json;
 use state::{ApiState, BlockingTaskError};
 use tokio::net::TcpListener;
 use tower::util::BoxCloneSyncService;
@@ -190,6 +191,10 @@ fn try_build_router_with_state(
     let web_root = config.project_root.join("web");
     let storage_config = StorageConfig::from_project_root(config.project_root.clone());
     litradar_storage::migrate_storage(&storage_config)?;
+    if let Some(bundle_dir) = config.bundled_meta_dir.as_deref() {
+        let report = litradar_storage::prepare_managed_meta(&storage_config, bundle_dir)?;
+        emit_managed_meta_diagnostic("api_startup", &report)?;
+    }
     let secret_codec = litradar_storage::SecretCodec::load(&config.secret_key_file)?;
     litradar_storage::verify_database_secrets(storage_config.auth_db_path(), &secret_codec)?;
     let runtime_settings =
@@ -222,6 +227,21 @@ fn try_build_router_with_state(
         )
         .with_state(state.clone());
     Ok((router, state))
+}
+
+fn emit_managed_meta_diagnostic(
+    context: &str,
+    report: &ManagedMetaPreparationReport,
+) -> Result<(), serde_json::Error> {
+    eprintln!(
+        "{}",
+        serde_json::to_string(&json!({
+            "component": "managed_meta",
+            "context": context,
+            "report": report,
+        }))?
+    );
+    Ok(())
 }
 
 fn static_frontend_service(
@@ -1030,6 +1050,61 @@ mod tests {
 
         assert_eq!(auth_version, litradar_storage::AUTH_SCHEMA_VERSION);
         assert_eq!(index_version, litradar_storage::INDEX_SCHEMA_VERSION);
+        assert!(!storage_config.meta_dir().exists());
+    }
+
+    #[test]
+    fn router_startup_prepares_an_explicit_immutable_bundle() {
+        let temp_dir = tempfile::tempdir().expect("temporary project should be created");
+        let storage_config = litradar_storage::StorageConfig::from_project_root(temp_dir.path());
+        let secret_key_file = temp_dir.path().join("secret.key");
+        fs::write(&secret_key_file, [6_u8; 32]).expect("secret key should write");
+        let mut config = ApiConfig::new(
+            temp_dir.path().to_path_buf(),
+            "127.0.0.1".to_string(),
+            0,
+            secret_key_file,
+        );
+        let bundle_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data/meta");
+        config.bundled_meta_dir = Some(bundle_dir.clone());
+
+        let _router = try_build_router(config).expect("packaged startup should prepare metadata");
+
+        for filename in [
+            "ccf_computer_journals.csv",
+            "chinese_journals.csv",
+            "english_journals.csv",
+        ] {
+            assert_eq!(
+                fs::read(storage_config.meta_dir().join(filename))
+                    .expect("persistent catalog should read"),
+                fs::read(bundle_dir.join(filename)).expect("bundled catalog should read")
+            );
+        }
+        let state_count: i64 = Connection::open(storage_config.auth_db_path())
+            .expect("auth database should open")
+            .query_row("SELECT COUNT(*) FROM managed_meta_catalogs", [], |row| {
+                row.get(0)
+            })
+            .expect("managed catalog state should load");
+        assert_eq!(state_count, 3);
+    }
+
+    #[test]
+    fn router_startup_rejects_a_configured_missing_bundle_before_secret_load() {
+        let temp_dir = tempfile::tempdir().expect("temporary project should be created");
+        let mut config = ApiConfig::new(
+            temp_dir.path().to_path_buf(),
+            "127.0.0.1".to_string(),
+            0,
+            temp_dir.path().join("missing-secret.key"),
+        );
+        config.bundled_meta_dir = Some(temp_dir.path().join("missing-bundle"));
+
+        let error = try_build_router(config).expect_err("missing bundle should fail startup");
+
+        assert!(error.to_string().contains("missing bundled file"));
+        assert!(!error.to_string().contains("secret key"));
     }
 
     #[test]

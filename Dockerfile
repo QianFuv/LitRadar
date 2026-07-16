@@ -58,10 +58,11 @@ RUN apt-get update \
 COPY --from=rust-build /app/target/release/litradar /usr/local/bin/litradar
 
 COPY --chown=litradar:litradar libs/simple-linux libs/simple-linux
-COPY --chown=litradar:litradar data/meta data/meta
+COPY data/meta /usr/share/litradar/meta
 COPY --chown=litradar:litradar --from=frontend-build /app/out web
 
-ENV HOME=/tmp
+ENV HOME=/tmp \
+    LITRADAR_BUNDLED_META_DIR=/usr/share/litradar/meta
 
 USER litradar
 
