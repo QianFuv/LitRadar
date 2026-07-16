@@ -13,6 +13,7 @@ import {
 } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import {
   Dialog,
   DialogContent,
@@ -66,6 +67,7 @@ export function AnnouncementsCard() {
   const queryClient = useQueryClient();
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingAnnouncement, setEditingAnnouncement] = useState<AnnouncementInfo | null>(null);
+  const [announcementToDelete, setAnnouncementToDelete] = useState<AnnouncementInfo | null>(null);
   const [form, setForm] = useState<AnnouncementFormState>(DEFAULT_FORM);
 
   const {
@@ -106,10 +108,11 @@ export function AnnouncementsCard() {
 
   const deleteMutation = useMutation({
     mutationFn: (announcementId: number) => adminDeleteAnnouncement(announcementId),
-    onSuccess: () => {
+    onSuccess: (_data, announcementId) => {
       queryClient.invalidateQueries({ queryKey: ['admin-announcements'] });
       queryClient.invalidateQueries({ queryKey: ['announcements'] });
       queryClient.invalidateQueries({ queryKey: ['admin-stats'] });
+      setAnnouncementToDelete((current) => (current?.id === announcementId ? null : current));
     },
   });
 
@@ -305,10 +308,10 @@ export function AnnouncementsCard() {
                       size="icon"
                       className="text-destructive hover:text-destructive"
                       aria-label={`删除公告 ${announcement.title}`}
+                      disabled={deleteMutation.isPending}
                       onClick={() => {
-                        if (window.confirm(`确认删除公告“${announcement.title}”？`)) {
-                          deleteMutation.mutate(announcement.id);
-                        }
+                        deleteMutation.reset();
+                        setAnnouncementToDelete(announcement);
                       }}
                     >
                       <Trash2 className="h-4 w-4" />
@@ -319,6 +322,25 @@ export function AnnouncementsCard() {
             ))}
           </div>
         )}
+        <ConfirmDialog
+          open={announcementToDelete !== null}
+          onOpenChange={(nextOpen) => {
+            if (!nextOpen && !deleteMutation.isPending) {
+              setAnnouncementToDelete(null);
+            }
+          }}
+          title="删除公告？"
+          description={`确认删除公告“${announcementToDelete?.title ?? ''}”？`}
+          actionLabel="确认删除"
+          pendingLabel="删除中…"
+          isPending={deleteMutation.isPending}
+          error={deleteMutation.error instanceof Error ? deleteMutation.error.message : null}
+          onConfirm={() => {
+            if (announcementToDelete) {
+              deleteMutation.mutate(announcementToDelete.id);
+            }
+          }}
+        />
       </CardContent>
     </Card>
   );

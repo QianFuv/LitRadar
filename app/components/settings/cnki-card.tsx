@@ -16,6 +16,7 @@ import {
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import type {
   SettingsCopyFeedback,
   SettingsCopyScope,
@@ -177,6 +178,7 @@ export function CnkiSettingsCard({
   const queryClient = useQueryClient();
   const [cnkiLogin, setCnkiLogin] = useState<CnkiLoginStartResponse | null>(null);
   const [cnkiMessage, setCnkiMessage] = useState<CnkiMessageState | null>(null);
+  const [isClearConfirmOpen, setIsClearConfirmOpen] = useState(false);
   const cnkiSessionQueryKey = ['cnki-session', userId] as const;
   const currentCnkiSessionQueryKey = ['cnki-session', 'current'] as const;
   const {
@@ -222,6 +224,7 @@ export function CnkiSettingsCard({
   const clearCnkiSessionMut = useMutation({
     mutationFn: () => clearCnkiSession(),
     onSuccess: (data) => {
+      setIsClearConfirmOpen(false);
       setCnkiLogin(null);
       setCnkiMessage({ text: '登录状态已清除', tone: 'success' });
       queryClient.setQueryData(cnkiSessionQueryKey, data);
@@ -376,9 +379,9 @@ export function CnkiSettingsCard({
               size="sm"
               className="text-destructive"
               onClick={() => {
-                if (window.confirm('确认清除 CNKI 登录状态？')) {
-                  clearCnkiSessionMut.mutate();
-                }
+                clearCnkiSessionMut.reset();
+                setCnkiMessage(null);
+                setIsClearConfirmOpen(true);
               }}
               disabled={clearCnkiSessionMut.isPending}
             >
@@ -387,6 +390,21 @@ export function CnkiSettingsCard({
             </Button>
           )}
         </div>
+        <ConfirmDialog
+          open={isClearConfirmOpen}
+          onOpenChange={(nextOpen) => {
+            if (!clearCnkiSessionMut.isPending) {
+              setIsClearConfirmOpen(nextOpen);
+            }
+          }}
+          title="清除 CNKI 登录状态？"
+          description="确认清除当前 CNKI 登录状态？之后需要重新扫码才能访问受保护全文。"
+          actionLabel="确认清除"
+          pendingLabel="清除中…"
+          isPending={clearCnkiSessionMut.isPending}
+          error={clearCnkiSessionMut.isError ? (cnkiMessage?.text ?? '清除知网登录状态失败') : null}
+          onConfirm={() => clearCnkiSessionMut.mutate()}
+        />
       </CardContent>
     </Card>
   );

@@ -5,8 +5,10 @@
 import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
-import { describe, expect, test, vi } from 'vitest';
+import { describe, expect, test } from 'vitest';
 
+import { AnnouncementsCard } from '@/components/admin/announcements-card';
+import { AdminInviteCodesCard } from '@/components/admin/invite-codes-card';
 import { ScheduledTasksCard } from '@/components/admin/scheduled-tasks-card';
 import { server } from '@/tests/mocks/server';
 import { renderWithQuery } from '@/tests/render';
@@ -149,7 +151,6 @@ async function updatesAndDeletesTask(): Promise<void> {
   isTaskEnabled = true;
   isTaskDeleted = false;
   taskPatch = null;
-  vi.spyOn(window, 'confirm').mockReturnValue(true);
   server.use(
     http.get('http://localhost/api/admin/scheduled-tasks', scheduledTaskListResponse),
     http.get('http://localhost/api/admin/scheduler/status', schedulerStatusResponse),
@@ -170,6 +171,11 @@ async function updatesAndDeletesTask(): Promise<void> {
   ).toBeInTheDocument();
 
   await user.click(screen.getByRole('button', { name: '删除定时任务 Weekly index' }));
+  expect(isTaskDeleted).toBe(false);
+  expect(screen.getByRole('alertdialog', { name: '删除定时任务？' })).toHaveTextContent(
+    'Weekly index',
+  );
+  await user.click(screen.getByRole('button', { name: '确认删除' }));
   expect(await screen.findByText('暂无定时任务')).toBeInTheDocument();
   expect(isTaskDeleted).toBe(true);
 }
@@ -262,6 +268,81 @@ async function replacesLegacyScheduledTask(): Promise<void> {
   );
 }
 
+/**
+ * Verify administrator deletion dialogs retain the selected record identity.
+ */
+async function confirmsAdministratorDeletionTargets(): Promise<void> {
+  const deletedInviteIds: number[] = [];
+  const deletedAnnouncementIds: number[] = [];
+  server.use(
+    http.get('http://localhost/api/admin/invite-codes', () =>
+      HttpResponse.json(
+        deletedInviteIds.length
+          ? []
+          : [
+              {
+                id: 41,
+                code: 'INVITE-41',
+                created_by: 1,
+                created_by_name: 'admin',
+                used_by: null,
+                used_by_name: null,
+                used_at: null,
+                created_at: 1,
+              },
+            ],
+      ),
+    ),
+    http.delete('http://localhost/api/admin/invite-codes/41', () => {
+      deletedInviteIds.push(41);
+      return HttpResponse.json({ ok: true });
+    }),
+    http.get('http://localhost/api/admin/announcements', () =>
+      HttpResponse.json(
+        deletedAnnouncementIds.length
+          ? []
+          : [
+              {
+                id: 51,
+                title: 'Maintenance',
+                message: 'Tonight',
+                priority: 'normal',
+                enabled: true,
+                created_at: 1,
+                updated_at: 1,
+              },
+            ],
+      ),
+    ),
+    http.delete('http://localhost/api/admin/announcements/51', () => {
+      deletedAnnouncementIds.push(51);
+      return HttpResponse.json({ ok: true });
+    }),
+  );
+  const user = userEvent.setup();
+  renderWithQuery(
+    <>
+      <AdminInviteCodesCard isEnabled />
+      <AnnouncementsCard />
+    </>,
+  );
+
+  const inviteDeleteButtons = await screen.findAllByRole('button', {
+    name: '删除邀请码 INVITE-41',
+  });
+  await user.click(inviteDeleteButtons[0]);
+  expect(deletedInviteIds).toEqual([]);
+  expect(screen.getByRole('alertdialog', { name: '删除邀请码？' })).toHaveTextContent('INVITE-41');
+  await user.click(screen.getByRole('button', { name: '确认删除' }));
+  await waitFor(() => expect(deletedInviteIds).toEqual([41]));
+
+  await user.click(await screen.findByRole('button', { name: '删除公告 Maintenance' }));
+  expect(deletedAnnouncementIds).toEqual([]);
+  expect(screen.getByRole('alertdialog', { name: '删除公告？' })).toHaveTextContent('Maintenance');
+  await user.click(screen.getByRole('button', { name: '确认删除' }));
+  await waitFor(() => expect(deletedAnnouncementIds).toEqual([51]));
+}
+
 describe('administrator mutation flow', () => {
   test('updates and deletes a scheduled task', updatesAndDeletesTask);
   test(
@@ -269,4 +350,8 @@ describe('administrator mutation flow', () => {
     createsTypedScheduledTask,
   );
   test('keeps legacy commands read-only until typed replacement', replacesLegacyScheduledTask);
+  test(
+    'confirms selected invite-code and announcement deletions',
+    confirmsAdministratorDeletionTargets,
+  );
 });

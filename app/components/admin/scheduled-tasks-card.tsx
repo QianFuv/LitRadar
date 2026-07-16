@@ -16,6 +16,7 @@ import {
 } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import {
   Dialog,
   DialogContent,
@@ -278,6 +279,7 @@ export function ScheduledTasksCard() {
   const queryClient = useQueryClient();
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingTask, setEditingTask] = useState<ScheduledTaskInfo | null>(null);
+  const [taskToDelete, setTaskToDelete] = useState<ScheduledTaskInfo | null>(null);
   const [form, setForm] = useState<TaskFormState>(DEFAULT_FORM);
   const [jobPreset, setJobPreset] = useState<JobPresetId>(DEFAULT_PRESET);
 
@@ -338,10 +340,11 @@ export function ScheduledTasksCard() {
 
   const deleteMutation = useMutation({
     mutationFn: (taskId: number) => adminDeleteScheduledTask(taskId),
-    onSuccess: () => {
+    onSuccess: (_data, taskId) => {
       queryClient.invalidateQueries({ queryKey: ['admin-scheduled-tasks'] });
       queryClient.invalidateQueries({ queryKey: ['admin-stats'] });
       queryClient.invalidateQueries({ queryKey: ['admin-scheduler-status'] });
+      setTaskToDelete((current) => (current?.id === taskId ? null : current));
     },
   });
 
@@ -726,10 +729,10 @@ export function ScheduledTasksCard() {
                       size="icon"
                       className="text-destructive hover:text-destructive"
                       aria-label={`删除定时任务 ${task.name}`}
+                      disabled={deleteMutation.isPending}
                       onClick={() => {
-                        if (window.confirm(`确认删除定时任务“${task.name}”？`)) {
-                          deleteMutation.mutate(task.id);
-                        }
+                        deleteMutation.reset();
+                        setTaskToDelete(task);
                       }}
                     >
                       <Trash2 className="h-4 w-4" />
@@ -763,6 +766,25 @@ export function ScheduledTasksCard() {
             )}
           </div>
         )}
+        <ConfirmDialog
+          open={taskToDelete !== null}
+          onOpenChange={(nextOpen) => {
+            if (!nextOpen && !deleteMutation.isPending) {
+              setTaskToDelete(null);
+            }
+          }}
+          title="删除定时任务？"
+          description={`确认删除定时任务“${taskToDelete?.name ?? ''}”？`}
+          actionLabel="确认删除"
+          pendingLabel="删除中…"
+          isPending={deleteMutation.isPending}
+          error={deleteMutation.error instanceof Error ? deleteMutation.error.message : null}
+          onConfirm={() => {
+            if (taskToDelete) {
+              deleteMutation.mutate(taskToDelete.id);
+            }
+          }}
+        />
       </CardContent>
     </Card>
   );

@@ -4,10 +4,11 @@ import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Copy, Key, Plus, Trash2 } from 'lucide-react';
 
-import { createAccessToken, getAccessTokens, revokeAccessToken } from '@/lib/api';
+import { createAccessToken, getAccessTokens, revokeAccessToken, type AccessToken } from '@/lib/api';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import {
   Dialog,
   DialogContent,
@@ -65,6 +66,7 @@ export function AccessTokensCard({
   const [tokenName, setTokenName] = useState('');
   const [tokenTtl, setTokenTtl] = useState(TTL_OPTIONS[0].value);
   const [newTokenValue, setNewTokenValue] = useState<string | null>(null);
+  const [tokenToRevoke, setTokenToRevoke] = useState<AccessToken | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
   const tokenNameCodePointCount = Array.from(tokenName).length;
   const tokenNameError =
@@ -87,7 +89,10 @@ export function AccessTokensCard({
   const creationError = tokenNameError ?? createTokenMut.error?.message ?? null;
   const revokeMut = useMutation({
     mutationFn: (id: number) => revokeAccessToken(id),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['access-tokens'] }),
+    onSuccess: (_data, tokenId) => {
+      queryClient.invalidateQueries({ queryKey: ['access-tokens'] });
+      setTokenToRevoke((current) => (current?.id === tokenId ? null : current));
+    },
   });
 
   return (
@@ -227,10 +232,10 @@ export function AccessTokensCard({
                   size="icon"
                   className="h-7 w-7 self-end text-destructive sm:self-auto"
                   aria-label={`撤销访问令牌 ${t.name || t.id}`}
+                  disabled={revokeMut.isPending}
                   onClick={() => {
-                    if (window.confirm(`确认撤销访问令牌“${t.name || t.id}”？`)) {
-                      revokeMut.mutate(t.id);
-                    }
+                    revokeMut.reset();
+                    setTokenToRevoke(t);
                   }}
                 >
                   <Trash2 className="h-3.5 w-3.5" />
@@ -239,6 +244,25 @@ export function AccessTokensCard({
             ))}
           </div>
         )}
+        <ConfirmDialog
+          open={tokenToRevoke !== null}
+          onOpenChange={(nextOpen) => {
+            if (!nextOpen && !revokeMut.isPending) {
+              setTokenToRevoke(null);
+            }
+          }}
+          title="撤销访问令牌？"
+          description={`确认撤销访问令牌“${tokenToRevoke?.name || tokenToRevoke?.id || ''}”？撤销后使用该令牌的客户端将立即失去访问权限。`}
+          actionLabel="确认撤销"
+          pendingLabel="撤销中…"
+          isPending={revokeMut.isPending}
+          error={revokeMut.error instanceof Error ? revokeMut.error.message : null}
+          onConfirm={() => {
+            if (tokenToRevoke) {
+              revokeMut.mutate(tokenToRevoke.id);
+            }
+          }}
+        />
       </CardContent>
     </Card>
   );

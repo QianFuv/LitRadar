@@ -1,9 +1,10 @@
 'use client';
 
+import { useState } from 'react';
 import Link from 'next/link';
 import { ArrowLeft, Download, FolderPlus, Pencil, Radar, Star, Trash2 } from 'lucide-react';
 
-import { getExportUrl, type CitationFormat } from '@/lib/api';
+import { getExportUrl, type CitationFormat, type FavoriteArticleItem } from '@/lib/api';
 import { ArticleDialogCard } from '@/components/feature/article-dialog-card';
 import {
   getFavoriteSelectionKey,
@@ -13,6 +14,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { Checkbox } from '@/components/ui/checkbox';
+import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import {
   Dialog,
   DialogContent,
@@ -43,8 +45,10 @@ export function FavoritesPageContent({ userId }: { userId: number }) {
     activeFolderId,
     allLoadedSelected,
     batchFeedback,
+    bulkRemoveTarget,
     bulkMoveMut,
     bulkRemoveMut,
+    confirmBulkRemove,
     createMut,
     deleteMut,
     dialogOpen,
@@ -83,10 +87,13 @@ export function FavoritesPageContent({ userId }: { userId: number }) {
     setExportFormat,
     setMoveTargetFolderId,
     setNewFolderName,
+    setBulkRemoveTarget,
     toggleFavoriteSelection,
     trackMut,
     visiblePageCount,
   } = useFavoritesPage(userId);
+  const [folderToDelete, setFolderToDelete] = useState<{ id: number; name: string } | null>(null);
+  const [favoriteToRemove, setFavoriteToRemove] = useState<FavoriteArticleItem | null>(null);
 
   return (
     <main id="main-content" className="max-w-5xl mx-auto p-6 space-y-6">
@@ -228,11 +235,11 @@ export function FavoritesPageContent({ userId }: { userId: number }) {
                       size="icon"
                       className="h-6 w-6 text-destructive"
                       aria-label={`删除收藏夹 ${folder.name}`}
+                      disabled={deleteMut.isPending}
                       onClick={(e) => {
                         e.stopPropagation();
-                        if (window.confirm(`确认删除收藏夹“${folder.name}”？`)) {
-                          deleteMut.mutate(folder.id);
-                        }
+                        deleteMut.reset();
+                        setFolderToDelete({ id: folder.id, name: folder.name });
                       }}
                     >
                       <Trash2 className="h-3 w-3" />
@@ -435,11 +442,11 @@ export function FavoritesPageContent({ userId }: { userId: number }) {
                             variant="outline"
                             size="sm"
                             className="text-destructive border-destructive/30"
+                            disabled={removeMut.isPending}
                             onClick={(e) => {
                               e.stopPropagation();
-                              if (window.confirm('确认移除这篇收藏文章？')) {
-                                removeMut.mutate(fav);
-                              }
+                              removeMut.reset();
+                              setFavoriteToRemove(fav);
                             }}
                           >
                             <Trash2 className="mr-2 h-4 w-4" />
@@ -463,6 +470,73 @@ export function FavoritesPageContent({ userId }: { userId: number }) {
           )}
         </div>
       </div>
+      <ConfirmDialog
+        open={folderToDelete !== null}
+        onOpenChange={(nextOpen) => {
+          if (!nextOpen && !deleteMut.isPending) {
+            setFolderToDelete(null);
+          }
+        }}
+        title="删除收藏夹？"
+        description={`确认删除收藏夹“${folderToDelete?.name ?? ''}”？收藏夹内的收藏关系也会被删除。`}
+        actionLabel="确认删除"
+        pendingLabel="删除中…"
+        isPending={deleteMut.isPending}
+        error={deleteMut.error instanceof Error ? deleteMut.error.message : null}
+        onConfirm={() => {
+          if (folderToDelete) {
+            deleteMut.mutate(folderToDelete.id, {
+              onSuccess: (_data, deletedFolderId) => {
+                setFolderToDelete((current) => (current?.id === deletedFolderId ? null : current));
+              },
+            });
+          }
+        }}
+      />
+      <ConfirmDialog
+        open={favoriteToRemove !== null}
+        onOpenChange={(nextOpen) => {
+          if (!nextOpen && !removeMut.isPending) {
+            setFavoriteToRemove(null);
+          }
+        }}
+        title="移除收藏？"
+        description={`确认从当前收藏夹移除“${favoriteToRemove?.title || favoriteToRemove?.article_id || ''}”？`}
+        actionLabel="确认移除"
+        pendingLabel="移除中…"
+        isPending={removeMut.isPending}
+        error={removeMut.error instanceof Error ? removeMut.error.message : null}
+        onConfirm={() => {
+          if (favoriteToRemove) {
+            removeMut.mutate(favoriteToRemove, {
+              onSuccess: (_data, removedFavorite) => {
+                setFavoriteToRemove((current) =>
+                  current?.folder_id === removedFavorite.folder_id &&
+                  current.article_id === removedFavorite.article_id &&
+                  current.db_name === removedFavorite.db_name
+                    ? null
+                    : current,
+                );
+              },
+            });
+          }
+        }}
+      />
+      <ConfirmDialog
+        open={bulkRemoveTarget !== null}
+        onOpenChange={(nextOpen) => {
+          if (!nextOpen && !bulkRemoveMut.isPending) {
+            setBulkRemoveTarget(null);
+          }
+        }}
+        title="移除所选收藏？"
+        description={`确认从当前收藏夹移除 ${bulkRemoveTarget?.length ?? 0} 篇文章？`}
+        actionLabel="确认移除"
+        pendingLabel="移除中…"
+        isPending={bulkRemoveMut.isPending}
+        error={bulkRemoveMut.error instanceof Error ? bulkRemoveMut.error.message : null}
+        onConfirm={confirmBulkRemove}
+      />
     </main>
   );
 }

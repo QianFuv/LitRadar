@@ -5,11 +5,19 @@
 import { screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
-import { describe, expect, test } from 'vitest';
+import { describe, expect, test, vi } from 'vitest';
 
 import { TrackingPageContent } from '@/components/tracking/tracking-page-content';
 import { server } from '@/tests/mocks/server';
 import { renderWithQuery } from '@/tests/render';
+
+const navigationMocks = vi.hoisted(() => ({
+  push: vi.fn(),
+}));
+
+vi.mock('next/navigation', () => ({
+  useRouter: () => ({ push: navigationMocks.push }),
+}));
 
 let statusRequestCount = 0;
 
@@ -159,7 +167,36 @@ async function displaysCapacityErrorWithoutPolling(): Promise<void> {
   expect(statusRequestCount).toBe(0);
 }
 
+/**
+ * Verify unsaved tracking settings block navigation until explicitly confirmed.
+ */
+async function confirmsUnsavedNavigation(): Promise<void> {
+  server.use(
+    http.get('http://localhost/api/tracking/status', trackingStatusResponse),
+    http.get('http://localhost/api/meta/databases', databasesResponse),
+    http.get('http://localhost/api/favorites/folders', foldersResponse),
+    http.get('http://localhost/api/tracking/notification-settings', notificationSettingsResponse),
+  );
+  const user = userEvent.setup();
+  renderWithQuery(<TrackingPageContent userId={33} />);
+
+  await user.click(await screen.findByRole('switch', { name: '启用推荐' }));
+  const homeLink = screen.getByRole('link', { name: '返回首页' });
+  await user.click(homeLink);
+
+  expect(navigationMocks.push).not.toHaveBeenCalled();
+  expect(screen.getByRole('alertdialog', { name: '离开未保存的配置？' })).toBeInTheDocument();
+  await user.click(screen.getByRole('button', { name: '取消' }));
+  expect(homeLink).toHaveFocus();
+  expect(navigationMocks.push).not.toHaveBeenCalled();
+
+  await user.click(homeLink);
+  await user.click(screen.getByRole('button', { name: '确认离开' }));
+  expect(navigationMocks.push).toHaveBeenCalledWith('/');
+}
+
 describe('tracking polling flow', () => {
   test('polls a running push until completion', pollsUntilCompleted, 10_000);
   test('shows a capacity error without polling', displaysCapacityErrorWithoutPolling);
+  test('confirms navigation away from unsaved settings', confirmsUnsavedNavigation);
 });

@@ -2,18 +2,48 @@
  * Favorite cache update coverage using the production button and API client.
  */
 
+import type { ReactNode } from 'react';
 import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
-import { describe, expect, test } from 'vitest';
+import { NuqsTestingAdapter } from 'nuqs/adapters/testing';
+import { describe, expect, test, vi } from 'vitest';
 
 import { FavoriteButton } from '@/components/feature/favorite-button';
+import { FavoritesPageContent } from '@/components/favorites/favorites-page-content';
 import { AuthProvider } from '@/lib/auth-context';
-import type { FavoriteCheck } from '@/lib/api';
+import type { FavoriteArticleItem, FavoriteCheck } from '@/lib/api';
 import { server } from '@/tests/mocks/server';
 import { renderWithQuery } from '@/tests/render';
 
+vi.mock('@/components/feature/use-visible-page-list', () => ({
+  useVisiblePageList: () => ({
+    loadMoreRef: () => undefined,
+    prefetchRef: () => undefined,
+    visiblePages: 1,
+  }),
+}));
+
+vi.mock('@/components/feature/article-dialog-card', () => ({
+  ArticleDialogCard: ({
+    article,
+    extraActions,
+    leading,
+  }: {
+    article: FavoriteArticleItem;
+    extraActions?: ReactNode;
+    leading?: ReactNode;
+  }) => (
+    <div>
+      {leading}
+      <span>{article.title}</span>
+      {extraActions}
+    </div>
+  ),
+}));
+
 let favoriteRequestBody: unknown = null;
+let removeRequestCount = 0;
 
 /**
  * Return an authenticated fixture user.
@@ -42,6 +72,64 @@ function foldersResponse(): Response {
  */
 function emptyFavoriteResponse(): Response {
   return HttpResponse.json([]);
+}
+
+/**
+ * Return one existing favorite folder membership.
+ *
+ * @returns Populated favorite check response.
+ */
+function existingFavoriteResponse(): Response {
+  return HttpResponse.json([{ folder_id: 3, folder_name: 'Reading' }]);
+}
+
+/**
+ * Record a confirmed favorite removal.
+ *
+ * @param context - MSW request context.
+ * @returns Successful removal response.
+ */
+function removeFavoriteResponse(context: { request: Request }): Response {
+  const requestUrl = new URL(context.request.url);
+  expect(requestUrl.searchParams.get('db_name')).toBe('fixture.sqlite');
+  removeRequestCount += 1;
+  return HttpResponse.json({ ok: true });
+}
+
+/**
+ * Build a loaded favorite article fixture.
+ *
+ * @param id - Favorite row identifier.
+ * @returns Favorite article record.
+ */
+function favoriteArticleFixture(id: number): FavoriteArticleItem {
+  return {
+    id,
+    folder_id: 3,
+    article_id: `article-${id}`,
+    db_name: 'fixture.sqlite',
+    note: '',
+    created_at: 2,
+    title: `Article ${id}`,
+    authors: 'Researcher',
+    abstract: `Abstract ${id}`,
+  };
+}
+
+/**
+ * Render the favorites page with a stable selected folder.
+ *
+ * @returns Rendered query utilities.
+ */
+function renderFavoritesPage(): ReturnType<typeof renderWithQuery> {
+  server.use(http.get('http://localhost/api/auth/me', currentUserResponse));
+  return renderWithQuery(
+    <AuthProvider>
+      <NuqsTestingAdapter searchParams="?folder=3">
+        <FavoritesPageContent userId={21} />
+      </NuqsTestingAdapter>
+    </AuthProvider>,
+  );
 }
 
 /**
@@ -96,6 +184,173 @@ async function updatesFavoriteCache(): Promise<void> {
   });
 }
 
+/**
+ * Verify removal preserves its target until the user confirms it.
+ */
+async function confirmsFavoriteRemoval(): Promise<void> {
+  removeRequestCount = 0;
+  server.use(
+    http.get('http://localhost/api/auth/me', currentUserResponse),
+    http.get('http://localhost/api/favorites/folders', foldersResponse),
+    http.get('http://localhost/api/favorites/check', existingFavoriteResponse),
+    http.delete(
+      'http://localhost/api/favorites/folders/3/articles/article-1',
+      removeFavoriteResponse,
+    ),
+  );
+  const user = userEvent.setup();
+  renderWithQuery(
+    <AuthProvider>
+      <FavoriteButton articleId="article-1" dbName="fixture.sqlite" initialFolderIds={[3]} />
+    </AuthProvider>,
+  );
+
+  await user.click(await screen.findByRole('button', { name: '已收藏' }));
+  const folderButton = await screen.findByRole('button', { name: 'Reading' });
+  await user.click(folderButton);
+  expect(removeRequestCount).toBe(0);
+  expect(screen.getByRole('alertdialog', { name: '移除收藏？' })).toHaveTextContent('Reading');
+
+  await user.click(screen.getByRole('button', { name: '取消' }));
+  expect(removeRequestCount).toBe(0);
+  const favoriteTrigger = screen.getByRole('button', { name: '已收藏' });
+  await waitFor(() => expect(favoriteTrigger).toHaveFocus());
+
+  await user.click(favoriteTrigger);
+  await user.click(await screen.findByRole('button', { name: 'Reading' }));
+  await user.click(screen.getByRole('button', { name: '确认移除' }));
+  await waitFor(() => expect(removeRequestCount).toBe(1));
+  expect(await screen.findByRole('button', { name: '收藏' })).toBeInTheDocument();
+}
+
+/**
+ * Verify a folder is deleted only after its identity is confirmed.
+ */
+async function confirmsFolderDeletion(): Promise<void> {
+  let isFolderDeleted = false;
+  let deleteRequestCount = 0;
+  server.use(
+    http.get('http://localhost/api/favorites/folders', () =>
+      HttpResponse.json(
+        isFolderDeleted
+          ? []
+          : [{ id: 3, name: 'Reading', is_tracking: false, article_count: 1, created_at: 1 }],
+      ),
+    ),
+    http.get('http://localhost/api/favorites/folders/3/articles', () =>
+      HttpResponse.json([favoriteArticleFixture(1)]),
+    ),
+    http.delete('http://localhost/api/favorites/folders/3', () => {
+      deleteRequestCount += 1;
+      isFolderDeleted = true;
+      return HttpResponse.json({ ok: true });
+    }),
+  );
+  const user = userEvent.setup();
+  renderFavoritesPage();
+
+  await user.click(await screen.findByRole('button', { name: '删除收藏夹 Reading' }));
+  expect(deleteRequestCount).toBe(0);
+  expect(screen.getByRole('alertdialog', { name: '删除收藏夹？' })).toHaveTextContent('Reading');
+  await user.click(screen.getByRole('button', { name: '确认删除' }));
+
+  await waitFor(() => expect(deleteRequestCount).toBe(1));
+  expect(await screen.findByText('暂无收藏夹，点击 + 创建')).toBeInTheDocument();
+}
+
+/**
+ * Verify a single loaded article remains until removal is confirmed.
+ */
+async function confirmsSingleFavoriteRemoval(): Promise<void> {
+  let articles = [favoriteArticleFixture(1)];
+  let removeCount = 0;
+  server.use(
+    http.get('http://localhost/api/favorites/folders', () =>
+      HttpResponse.json([
+        {
+          id: 3,
+          name: 'Reading',
+          is_tracking: false,
+          article_count: articles.length,
+          created_at: 1,
+        },
+      ]),
+    ),
+    http.get('http://localhost/api/favorites/folders/3/articles', () =>
+      HttpResponse.json(articles),
+    ),
+    http.delete('http://localhost/api/favorites/folders/3/articles/article-1', () => {
+      removeCount += 1;
+      articles = [];
+      return HttpResponse.json({ ok: true });
+    }),
+  );
+  const user = userEvent.setup();
+  renderFavoritesPage();
+
+  await user.click(await screen.findByRole('button', { name: '移除收藏' }));
+  expect(removeCount).toBe(0);
+  expect(screen.getByRole('alertdialog', { name: '移除收藏？' })).toHaveTextContent('Article 1');
+  await user.click(screen.getByRole('button', { name: '确认移除' }));
+
+  await waitFor(() => expect(removeCount).toBe(1));
+  expect(await screen.findByText('此收藏夹为空')).toBeInTheDocument();
+}
+
+/**
+ * Verify bulk removal snapshots and submits the selected article identities.
+ */
+async function confirmsBulkFavoriteRemoval(): Promise<void> {
+  let articles = [favoriteArticleFixture(1), favoriteArticleFixture(2)];
+  let requestBody: unknown = null;
+  server.use(
+    http.get('http://localhost/api/favorites/folders', () =>
+      HttpResponse.json([
+        {
+          id: 3,
+          name: 'Reading',
+          is_tracking: false,
+          article_count: articles.length,
+          created_at: 1,
+        },
+      ]),
+    ),
+    http.get('http://localhost/api/favorites/folders/3/articles', () =>
+      HttpResponse.json(articles),
+    ),
+    http.post(
+      'http://localhost/api/favorites/folders/3/articles/bulk-remove',
+      async ({ request }) => {
+        requestBody = await request.json();
+        articles = [];
+        return HttpResponse.json({ count: 2 });
+      },
+    ),
+  );
+  const user = userEvent.setup();
+  renderFavoritesPage();
+
+  await user.click(await screen.findByRole('checkbox', { name: '选择当前已加载文章' }));
+  await user.click(screen.getByRole('button', { name: '删除所选' }));
+  expect(requestBody).toBeNull();
+  expect(screen.getByRole('alertdialog', { name: '移除所选收藏？' })).toHaveTextContent('2 篇');
+  await user.click(screen.getByRole('button', { name: '确认移除' }));
+
+  await waitFor(() =>
+    expect(requestBody).toEqual({
+      articles: [
+        { article_id: 'article-1', db_name: 'fixture.sqlite' },
+        { article_id: 'article-2', db_name: 'fixture.sqlite' },
+      ],
+    }),
+  );
+  expect(await screen.findByText('此收藏夹为空')).toBeInTheDocument();
+}
+
 describe('favorite mutation flow', () => {
   test('updates visible state and cached folder membership', updatesFavoriteCache);
+  test('confirms a removal before mutating folder membership', confirmsFavoriteRemoval);
+  test('confirms folder deletion before mutation', confirmsFolderDeletion);
+  test('confirms one favorite removal before mutation', confirmsSingleFavoriteRemoval);
+  test('confirms bulk favorite removal with a target snapshot', confirmsBulkFavoriteRemoval);
 });

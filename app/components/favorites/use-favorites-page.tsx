@@ -22,6 +22,14 @@ import {
 } from '@/lib/api';
 import { useVisiblePageList } from '@/components/feature/use-visible-page-list';
 
+/**
+ * Build a stable identity for one favorite row in selection state.
+ *
+ * @param folderId - Owning folder identifier.
+ * @param articleId - Article identifier.
+ * @param dbName - Source database name.
+ * @returns Stable selection key.
+ */
 export function getFavoriteSelectionKey(
   folderId: number,
   articleId: ArticleId,
@@ -30,6 +38,12 @@ export function getFavoriteSelectionKey(
   return `${folderId}:${articleId}:${dbName}`;
 }
 
+/**
+ * Reduce a loaded favorite to the identity required by bulk mutation endpoints.
+ *
+ * @param favorite - Loaded favorite article.
+ * @returns Bulk mutation article reference.
+ */
 function toFavoriteArticleRef(favorite: FavoriteArticleItem): FavoriteArticleRef {
   return {
     article_id: favorite.article_id,
@@ -52,6 +66,7 @@ export function useFavoritesPage(userId: number) {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [exportFormat, setExportFormat] = useState<CitationFormat>('bibtex');
   const [selectedArticleKeys, setSelectedArticleKeys] = useState<string[]>([]);
+  const [bulkRemoveTarget, setBulkRemoveTarget] = useState<FavoriteArticleRef[] | null>(null);
   const [moveTargetFolderId, setMoveTargetFolderId] = useState<string>('');
   const [batchFeedback, setBatchFeedback] = useState<{
     tone: 'success' | 'error';
@@ -173,6 +188,7 @@ export function useFavoritesPage(userId: number) {
   const bulkRemoveMut = useMutation({
     mutationFn: (articles: FavoriteArticleRef[]) => bulkRemoveFavorites(activeFolderId!, articles),
     onSuccess: (count) => {
+      setBulkRemoveTarget(null);
       setSelectedArticleKeys([]);
       setBatchFeedback({
         tone: 'success',
@@ -249,14 +265,25 @@ export function useFavoritesPage(userId: number) {
     setBatchFeedback(null);
   };
 
+  /**
+   * Snapshot the current selection and open its confirmation dialog.
+   */
   const handleBulkRemove = () => {
     if (selectedFavorites.length === 0) {
       return;
     }
-    if (!window.confirm(`确认从当前收藏夹移除 ${selectedFavorites.length} 篇文章？`)) {
-      return;
+    bulkRemoveMut.reset();
+    setBatchFeedback(null);
+    setBulkRemoveTarget(selectedFavorites.map(toFavoriteArticleRef));
+  };
+
+  /**
+   * Submit the previously confirmed bulk-removal snapshot.
+   */
+  const confirmBulkRemove = () => {
+    if (bulkRemoveTarget?.length) {
+      bulkRemoveMut.mutate(bulkRemoveTarget);
     }
-    bulkRemoveMut.mutate(selectedFavorites.map(toFavoriteArticleRef));
   };
 
   const handleBulkMove = () => {
@@ -278,8 +305,10 @@ export function useFavoritesPage(userId: number) {
     activeFolderId,
     allLoadedSelected,
     batchFeedback,
+    bulkRemoveTarget,
     bulkMoveMut,
     bulkRemoveMut,
+    confirmBulkRemove,
     createMut,
     deleteMut,
     dialogOpen,
@@ -318,6 +347,7 @@ export function useFavoritesPage(userId: number) {
     setExportFormat,
     setMoveTargetFolderId,
     setNewFolderName,
+    setBulkRemoveTarget,
     toggleFavoriteSelection,
     trackMut,
     visiblePageCount,

@@ -4,11 +4,17 @@ import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Copy, Plus, Ticket, Trash2 } from 'lucide-react';
 
-import { adminCreateInviteCode, adminDeleteInviteCode, adminGetInviteCodes } from '@/lib/api';
+import {
+  adminCreateInviteCode,
+  adminDeleteInviteCode,
+  adminGetInviteCodes,
+  type AdminInviteCode,
+} from '@/lib/api';
 import { copyTextToClipboard } from '@/lib/clipboard';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 
 /**
  * Format a Unix timestamp for administrator tables.
@@ -38,6 +44,7 @@ export function AdminInviteCodesCard({ isEnabled }: { isEnabled: boolean }) {
     message: string;
     tone: 'error' | 'success';
   } | null>(null);
+  const [inviteCodeToDelete, setInviteCodeToDelete] = useState<AdminInviteCode | null>(null);
   const { data: inviteCodes = [] } = useQuery({
     queryKey: ['admin-invite-codes'],
     queryFn: () => adminGetInviteCodes(),
@@ -52,9 +59,10 @@ export function AdminInviteCodesCard({ isEnabled }: { isEnabled: boolean }) {
   });
   const deleteCodeMut = useMutation({
     mutationFn: (codeId: number) => adminDeleteInviteCode(codeId),
-    onSuccess: () => {
+    onSuccess: (_data, codeId) => {
       queryClient.invalidateQueries({ queryKey: ['admin-invite-codes'] });
       queryClient.invalidateQueries({ queryKey: ['admin-stats'] });
+      setInviteCodeToDelete((current) => (current?.id === codeId ? null : current));
     },
   });
   const handleCopyInviteCode = async (code: string) => {
@@ -146,9 +154,8 @@ export function AdminInviteCodesCard({ isEnabled }: { isEnabled: boolean }) {
                       className="w-full"
                       disabled={deleteCodeMut.isPending}
                       onClick={() => {
-                        if (window.confirm(`确认删除邀请码 ${ic.code}？`)) {
-                          deleteCodeMut.mutate(ic.id);
-                        }
+                        deleteCodeMut.reset();
+                        setInviteCodeToDelete(ic);
                       }}
                     >
                       <Trash2 className="h-4 w-4" />
@@ -220,9 +227,8 @@ export function AdminInviteCodesCard({ isEnabled }: { isEnabled: boolean }) {
                         aria-label={`删除邀请码 ${ic.code}`}
                         disabled={deleteCodeMut.isPending}
                         onClick={() => {
-                          if (window.confirm(`确认删除邀请码 ${ic.code}？`)) {
-                            deleteCodeMut.mutate(ic.id);
-                          }
+                          deleteCodeMut.reset();
+                          setInviteCodeToDelete(ic);
                         }}
                       >
                         <Trash2 className="h-4 w-4" />
@@ -241,6 +247,25 @@ export function AdminInviteCodesCard({ isEnabled }: { isEnabled: boolean }) {
             </tbody>
           </table>
         </div>
+        <ConfirmDialog
+          open={inviteCodeToDelete !== null}
+          onOpenChange={(nextOpen) => {
+            if (!nextOpen && !deleteCodeMut.isPending) {
+              setInviteCodeToDelete(null);
+            }
+          }}
+          title="删除邀请码？"
+          description={`确认删除邀请码 ${inviteCodeToDelete?.code ?? ''}？`}
+          actionLabel="确认删除"
+          pendingLabel="删除中…"
+          isPending={deleteCodeMut.isPending}
+          error={deleteCodeMut.error instanceof Error ? deleteCodeMut.error.message : null}
+          onConfirm={() => {
+            if (inviteCodeToDelete) {
+              deleteCodeMut.mutate(inviteCodeToDelete.id);
+            }
+          }}
+        />
       </CardContent>
     </Card>
   );

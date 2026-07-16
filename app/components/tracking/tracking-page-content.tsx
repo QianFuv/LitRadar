@@ -1,6 +1,8 @@
 'use client';
 
+import { useState } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { ArrowLeft, Download, FolderPlus, Plus, Radar, Save, X } from 'lucide-react';
 
 import { useTrackingPage } from '@/components/tracking/use-tracking-page';
@@ -8,6 +10,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Checkbox } from '@/components/ui/checkbox';
+import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import {
@@ -26,6 +29,8 @@ import { Switch } from '@/components/ui/switch';
  * @returns Tracking configuration and manual-push UI.
  */
 export function TrackingPageContent({ userId }: { userId: number }) {
+  const router = useRouter();
+  const [isLeaveConfirmOpen, setIsLeaveConfirmOpen] = useState(false);
   const {
     addDirection,
     addKeyword,
@@ -85,8 +90,9 @@ export function TrackingPageContent({ userId }: { userId: number }) {
           <Link
             href="/"
             onClick={(event) => {
-              if (hasUnsavedSettings && !window.confirm('当前推荐配置尚未保存，确认离开？')) {
+              if (hasUnsavedSettings) {
                 event.preventDefault();
+                setIsLeaveConfirmOpen(true);
               }
             }}
           >
@@ -853,6 +859,17 @@ export function TrackingPageContent({ userId }: { userId: number }) {
           <p>7. 在「我的收藏」中查看追踪到的文章</p>
         </CardContent>
       </Card>
+      <ConfirmDialog
+        open={isLeaveConfirmOpen}
+        onOpenChange={setIsLeaveConfirmOpen}
+        title="离开未保存的配置？"
+        description="当前推荐配置尚未保存，确认离开？未保存的更改将会丢失。"
+        actionLabel="确认离开"
+        onConfirm={() => {
+          setIsLeaveConfirmOpen(false);
+          router.push('/');
+        }}
+      />
     </main>
   );
 }

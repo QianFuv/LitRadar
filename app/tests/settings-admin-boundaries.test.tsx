@@ -83,6 +83,96 @@ async function rendersSettingsCards(): Promise<void> {
 }
 
 /**
+ * Verify access-token revocation starts only after confirmation.
+ */
+async function confirmsAccessTokenRevocation(): Promise<void> {
+  let isRevoked = false;
+  let revokeRequestCount = 0;
+  server.use(
+    http.get('http://localhost/api/auth/tokens', () =>
+      HttpResponse.json(
+        isRevoked
+          ? []
+          : [
+              {
+                id: 9,
+                name: 'automation',
+                expires_at: 2_000_000_000,
+                created_at: 1_900_000_000,
+              },
+            ],
+      ),
+    ),
+    http.delete('http://localhost/api/auth/tokens/9', () => {
+      revokeRequestCount += 1;
+      isRevoked = true;
+      return HttpResponse.json({ ok: true });
+    }),
+  );
+  const user = userEvent.setup();
+  renderWithQuery(<AccessTokensCard copyFeedback={null} handleCopy={ignoreCopy} />);
+
+  const revokeButton = await screen.findByRole('button', {
+    name: '撤销访问令牌 automation',
+  });
+  await user.click(revokeButton);
+  expect(revokeRequestCount).toBe(0);
+  expect(screen.getByRole('alertdialog', { name: '撤销访问令牌？' })).toHaveTextContent(
+    'automation',
+  );
+
+  await user.click(screen.getByRole('button', { name: '确认撤销' }));
+  await waitFor(() => expect(revokeRequestCount).toBe(1));
+  expect(await screen.findByText('暂无访问令牌')).toBeInTheDocument();
+}
+
+/**
+ * Verify clearing a CNKI session starts only after confirmation.
+ */
+async function confirmsCnkiSessionClear(): Promise<void> {
+  let isCleared = false;
+  let clearRequestCount = 0;
+  server.use(
+    http.get('http://localhost/api/cnki/session', () =>
+      HttpResponse.json({
+        configured: !isCleared,
+        status: isCleared ? 'empty' : 'active',
+        has_bff_user_token: !isCleared,
+        expires_at: isCleared ? null : 2_000_000_000,
+        seconds_remaining: isCleared ? null : 3600,
+        cookie_names: isCleared ? [] : ['session'],
+        updated_at: 1_900_000_000,
+        last_used_at: null,
+      }),
+    ),
+    http.delete('http://localhost/api/cnki/session', () => {
+      clearRequestCount += 1;
+      isCleared = true;
+      return HttpResponse.json({
+        configured: false,
+        status: 'empty',
+        has_bff_user_token: false,
+        expires_at: null,
+        seconds_remaining: null,
+        cookie_names: [],
+        updated_at: null,
+        last_used_at: null,
+      });
+    }),
+  );
+  const user = userEvent.setup();
+  renderWithQuery(<CnkiSettingsCard userId={1} copyFeedback={null} handleCopy={ignoreCopy} />);
+
+  await user.click(await screen.findByRole('button', { name: '清除' }));
+  expect(clearRequestCount).toBe(0);
+  expect(screen.getByRole('alertdialog', { name: '清除 CNKI 登录状态？' })).toBeInTheDocument();
+
+  await user.click(screen.getByRole('button', { name: '确认清除' }));
+  await waitFor(() => expect(clearRequestCount).toBe(1));
+  expect(await screen.findByText('登录状态已清除')).toBeInTheDocument();
+}
+
+/**
  * Render the access-token card with an empty initial list.
  *
  * @param createHandler - MSW handler for access-token creation.
@@ -253,6 +343,8 @@ async function reportsSharedCopyScope(): Promise<void> {
 describe('settings and administrator feature boundaries', () => {
   test('renders administrator user and invite cards', rendersAdministratorCards);
   test('renders account, CNKI, invite, and token cards', rendersSettingsCards);
+  test('confirms access-token revocation before mutation', confirmsAccessTokenRevocation);
+  test('confirms CNKI session clearing before mutation', confirmsCnkiSessionClear);
   test(
     'creates a token at the raw Unicode code-point boundary',
     createsAccessTokenAtRawCodePointBoundary,
