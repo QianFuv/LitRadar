@@ -2,7 +2,6 @@
 
 import Link from 'next/link';
 import { useMemo } from 'react';
-import { useSearchParams } from 'next/navigation';
 import { useQuery } from '@tanstack/react-query';
 import { ArrowLeft, CalendarDays, Database, FileText, Menu } from 'lucide-react';
 import { parseAsString, useQueryState } from 'nuqs';
@@ -11,7 +10,6 @@ import {
   getArticles,
   getDatabases,
   getWeeklyUpdates,
-  setDatabase,
   type WeeklyArticle,
   type WeeklyDatabaseUpdate,
   type WeeklyJournalUpdate,
@@ -51,6 +49,15 @@ const DATE_FORMATTER = new Intl.DateTimeFormat('zh-CN', {
 });
 const WEEKLY_VISIBLE_PAGE_SIZE = 25;
 const WEEKLY_PREFETCH_THRESHOLD = 25;
+const WEEKLY_SEARCH_PAGE_SIZE = 200;
+
+type WeeklySearchOptions = {
+  database: string;
+  journalId: JournalId;
+  query: string;
+  windowEnd: string;
+  windowStart: string;
+};
 
 function formatDate(value?: string): string {
   if (!value) {
@@ -109,6 +116,74 @@ function chunkArticles(articles: WeeklyArticle[], size: number): WeeklyArticle[]
     pages.push(articles.slice(index, index + size));
   }
   return pages;
+}
+
+/**
+ * Convert a weekly ISO timestamp into an inclusive article date filter.
+ *
+ * @param value - Weekly window timestamp.
+ * @returns UTC calendar date.
+ */
+function normalizeWeeklyWindowDate(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    throw new Error('每周更新时间窗口无效');
+  }
+  return date.toISOString().slice(0, 10);
+}
+
+/**
+ * Fetch every article-search cursor page for one weekly journal window.
+ *
+ * @param options - Database, journal, query, and weekly window filters.
+ * @returns All search result articles after complete pagination.
+ */
+async function searchWeeklyArticles(options: WeeklySearchOptions): Promise<WeeklyArticle[]> {
+  const params = new URLSearchParams();
+  params.append('journal_id', String(options.journalId));
+  params.set('q', options.query);
+  params.set('limit', String(WEEKLY_SEARCH_PAGE_SIZE));
+  params.set('date_from', normalizeWeeklyWindowDate(options.windowStart));
+  params.set('date_to', normalizeWeeklyWindowDate(options.windowEnd));
+
+  const articles: WeeklyArticle[] = [];
+  const seenCursors = new Set<string>();
+  let cursor: string | null = null;
+
+  while (true) {
+    const page = await getArticles(params, cursor, false, options.database);
+    articles.push(...page.items);
+    const nextCursor = page.page.next_cursor?.trim() || null;
+    if (!nextCursor) {
+      if (page.page.has_more) {
+        throw new Error('全文检索分页缺少下一页游标');
+      }
+      return articles;
+    }
+    if (seenCursors.has(nextCursor)) {
+      throw new Error('全文检索分页游标重复');
+    }
+    seenCursors.add(nextCursor);
+    cursor = nextCursor;
+  }
+}
+
+/**
+ * Intersect search results with weekly articles while retaining weekly payload order.
+ *
+ * @param weeklyArticles - Ordered weekly payload articles.
+ * @param searchedArticles - Fully paginated article search results.
+ * @returns Matching weekly articles in weekly payload order.
+ */
+function filterWeeklyArticlesBySearchMatches(
+  weeklyArticles: WeeklyArticle[],
+  searchedArticles: WeeklyArticle[],
+): WeeklyArticle[] {
+  const matchedArticleIds = new Set<string>();
+  for (const article of searchedArticles) {
+    matchedArticleIds.add(article.article_id);
+  }
+  return weeklyArticles.filter((article) => matchedArticleIds.has(article.article_id));
 }
 
 type JournalPanelProps = {
@@ -186,8 +261,8 @@ function JournalPanel({
 
 export default function WeeklyUpdatesPage() {
   const { user } = useAuth();
-  const searchParams = useSearchParams();
-  const searchQuery = (searchParams.get('q') || '').trim();
+  const [weeklyQuery] = useQueryState('weekly_q', parseAsString.withDefault(''));
+  const searchQuery = weeklyQuery.trim();
   const [selectedDb, setSelectedDb] = useQueryState('db', parseAsString.withDefault(''));
   const [selectedJournalId, setSelectedJournalId] = useQueryState('journal', parseAsString);
 
@@ -264,20 +339,34 @@ export default function WeeklyUpdatesPage() {
     isError: searchError,
     error: searchErrorData,
   } = useQuery({
-    queryKey: ['weekly-search', effectiveSelectedDb, effectiveSelectedJournalId, searchQuery],
+    queryKey: [
+      'weekly-search',
+      effectiveSelectedDb,
+      effectiveSelectedJournalId,
+      searchQuery,
+      weeklyData?.window_start ?? '',
+      weeklyData?.window_end ?? '',
+    ],
     queryFn: async () => {
-      if (!searchQuery || !effectiveSelectedDb || effectiveSelectedJournalId === null) {
+      if (
+        !searchQuery ||
+        !effectiveSelectedDb ||
+        effectiveSelectedJournalId === null ||
+        !weeklyData
+      ) {
         return [];
       }
-      const params = new URLSearchParams();
-      params.set('db', effectiveSelectedDb);
-      params.append('journal_id', String(effectiveSelectedJournalId));
-      params.set('q', searchQuery);
-      params.set('limit', '200');
-      const page = await getArticles(params, null, false, effectiveSelectedDb);
-      return page.items;
+      return searchWeeklyArticles({
+        database: effectiveSelectedDb,
+        journalId: effectiveSelectedJournalId,
+        query: searchQuery,
+        windowEnd: weeklyData.window_end,
+        windowStart: weeklyData.window_start,
+      });
     },
-    enabled: Boolean(searchQuery && effectiveSelectedDb && effectiveSelectedJournalId !== null),
+    enabled: Boolean(
+      searchQuery && effectiveSelectedDb && effectiveSelectedJournalId !== null && weeklyData,
+    ),
     staleTime: 60 * 1000,
   });
 
@@ -290,19 +379,7 @@ export default function WeeklyUpdatesPage() {
       return [];
     }
 
-    const weeklyById = new Map<string, WeeklyArticle>();
-    for (const article of weeklyArticles) {
-      weeklyById.set(article.article_id, article);
-    }
-
-    const matched: WeeklyArticle[] = [];
-    for (const article of searchedArticles) {
-      const weeklyArticle = weeklyById.get(article.article_id);
-      if (weeklyArticle) {
-        matched.push(weeklyArticle);
-      }
-    }
-    return matched;
+    return filterWeeklyArticlesBySearchMatches(weeklyArticles, searchedArticles);
   }, [searchedArticles, searchQuery, selectedJournal]);
 
   const articlePages = useMemo(
@@ -338,7 +415,6 @@ export default function WeeklyUpdatesPage() {
 
   const handleDatabaseChange = (value: string) => {
     void setSelectedDb(value);
-    setDatabase(value);
     void setSelectedJournalId(null);
   };
 
@@ -427,7 +503,7 @@ export default function WeeklyUpdatesPage() {
                   {totalArticles} 篇新文章
                 </Badge>
               </div>
-              <SearchBar className="w-full max-w-none" />
+              <SearchBar className="w-full max-w-none" queryParam="weekly_q" />
             </div>
 
             <div className="grid min-h-0 flex-1 grid-cols-1 gap-4 lg:grid-cols-[340px_1fr]">
@@ -450,7 +526,11 @@ export default function WeeklyUpdatesPage() {
                   <CardDescription>
                     {selectedJournal
                       ? searchQuery
-                        ? `匹配到 ${filteredArticles.length} 篇本周文章`
+                        ? loadingSearch
+                          ? '正在检索本周文章…'
+                          : searchError
+                            ? '全文检索失败'
+                            : `匹配到 ${filteredArticles.length} 篇本周文章`
                         : `本周新增 ${selectedJournal.new_article_count} 篇文章`
                       : '请选择左侧期刊'}
                   </CardDescription>
@@ -481,13 +561,16 @@ export default function WeeklyUpdatesPage() {
                     </div>
                   )}
 
-                  {selectedJournal && !loadingSearch && filteredArticles.length === 0 && (
-                    <div className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">
-                      {searchQuery
-                        ? '该期刊中没有匹配全文检索条件的本周文章。'
-                        : '该期刊暂无文章。'}
-                    </div>
-                  )}
+                  {selectedJournal &&
+                    !loadingSearch &&
+                    !searchError &&
+                    filteredArticles.length === 0 && (
+                      <div className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">
+                        {searchQuery
+                          ? '该期刊中没有匹配全文检索条件的本周文章。'
+                          : '该期刊暂无文章。'}
+                      </div>
+                    )}
 
                   {renderedArticles.map((article, index) => (
                     <ArticleDialogCard

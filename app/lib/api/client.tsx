@@ -97,15 +97,6 @@ export function storeSelectedDatabase(dbName: string): void {
 }
 
 /**
- * Store the active database for restored pre-desktop UI modules.
- *
- * @param dbName - Database file name.
- */
-export function setDatabase(dbName: string): void {
-  storeSelectedDatabase(dbName);
-}
-
-/**
  * Build an absolute URL from a backend path.
  *
  * @param path - API path.

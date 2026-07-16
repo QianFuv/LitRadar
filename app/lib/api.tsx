@@ -27,7 +27,6 @@ export {
   buildDatabaseUrl,
   readSelectedDatabase,
   resolveApiBase,
-  setDatabase,
   storeSelectedDatabase,
   type ApiErrorInfo,
 } from '@/lib/api/client';
