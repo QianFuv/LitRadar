@@ -61,7 +61,7 @@ export default function LoginClient() {
   return (
     <main
       id="main-content"
-      className="min-h-screen flex items-center justify-center bg-background px-6"
+      className="flex min-h-dvh items-center justify-center bg-background px-6"
     >
       <Card className="w-full max-w-md">
         <CardHeader>

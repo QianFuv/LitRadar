@@ -78,15 +78,13 @@ export function ArticleListCard({
   return (
     <Card
       className={cn(
-        'group [content-visibility:auto] [contain-intrinsic-size:0_220px] transition-[background-color,box-shadow] duration-200 hover:bg-accent dark:hover:bg-[#1a1a1a] hover:shadow-[0px_0px_0px_1px_rgba(0,0,0,0.1),0px_4px_12px_rgba(0,0,0,0.08)] dark:hover:shadow-[0px_0px_0px_1px_rgba(255,255,255,0.3),0px_4px_12px_rgba(255,255,255,0.05)]',
+        'content-visibility-card transition-[background-color,box-shadow] duration-200 hover:bg-accent hover:shadow-md',
         className,
       )}
     >
       <CardHeader>
         <div className="flex justify-between items-start gap-4">
-          <CardTitle className="text-lg text-slate-900 dark:text-slate-100 group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors">
-            {title}
-          </CardTitle>
+          <CardTitle className="text-lg text-foreground">{title}</CardTitle>
           {hasBadges && (
             <div className="flex gap-2 shrink-0">
               {isOpenAccess && (
@@ -118,7 +116,7 @@ export function ArticleListCard({
       </CardHeader>
       {hasPreview && (
         <CardContent>
-          <div className="text-sm text-slate-600 dark:text-slate-400 line-clamp-3 leading-relaxed">
+          <div className="line-clamp-3 text-sm leading-relaxed text-muted-foreground">
             {preview}
           </div>
         </CardContent>

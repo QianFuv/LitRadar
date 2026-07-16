@@ -434,7 +434,7 @@ export function FavoritesPageContent({ userId }: { userId: number }) {
                         article={fav}
                         dbName={fav.db_name}
                         initialFolderIds={[fav.folder_id]}
-                        className="[content-visibility:auto] [contain-intrinsic-size:0_220px]"
+                        className="content-visibility-card"
                         leading={
                           <Checkbox
                             checked={isSelected}

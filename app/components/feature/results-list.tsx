@@ -157,7 +157,7 @@ export function ResultsList() {
   }
 
   if (visibleArticles.length === 0) {
-    return <div className="text-center p-8 text-slate-500">未找到文章。</div>;
+    return <div className="p-8 text-center text-muted-foreground">未找到文章。</div>;
   }
 
   const total = data?.pages[0]?.page.total ?? null;
@@ -165,7 +165,7 @@ export function ResultsList() {
   return (
     <div className="space-y-4">
       {includeTotal && typeof total === 'number' && (
-        <div className="text-sm text-slate-500">共找到 {total} 条结果</div>
+        <div className="text-sm text-muted-foreground">共找到 {total} 条结果</div>
       )}
       {visibleArticles.map((article, index) => (
         <ArticleDialogCard

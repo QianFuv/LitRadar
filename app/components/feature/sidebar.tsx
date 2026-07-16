@@ -79,7 +79,7 @@ function DateSegmentSelect({
           size="sm"
           aria-label={ariaLabel}
           title={`${ariaLabel}：${value}`}
-          className={cn('h-8 px-2 text-sm', triggerClassName)}
+          className={cn('h-8 px-2 text-sm focus-visible:ring-sidebar-ring/50', triggerClassName)}
         >
           {value}
         </Button>
@@ -287,7 +287,10 @@ export function Sidebar({ className }: { className?: string }) {
 
   return (
     <aside
-      className={cn('w-[19.2rem] min-w-0 flex flex-col h-full border-r bg-background', className)}
+      className={cn(
+        'flex h-full w-80 min-w-0 flex-col border-r border-sidebar-border bg-sidebar text-sidebar-foreground',
+        className,
+      )}
     >
       <div className="flex-1 space-y-8 p-6 overflow-y-auto">
         <div className="space-y-4">
@@ -296,7 +299,7 @@ export function Sidebar({ className }: { className?: string }) {
               <Button
                 variant="ghost"
                 size="icon"
-                className="h-20 w-20"
+                className="h-20 w-20 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:ring-sidebar-ring/50"
                 aria-label="首页"
                 title="首页"
                 asChild
@@ -315,7 +318,7 @@ export function Sidebar({ className }: { className?: string }) {
               </Button>
             </div>
             <div className="space-y-2 self-center">
-              <div className="flex items-center gap-2 text-sm font-semibold text-foreground w-full">
+              <div className="flex w-full items-center gap-2 text-sm font-semibold text-sidebar-foreground">
                 <Database className="h-4 w-4" />
                 <span>数据库</span>
               </div>
@@ -324,7 +327,7 @@ export function Sidebar({ className }: { className?: string }) {
                   <Skeleton className="h-9 w-full" />
                 ) : (
                   <Select value={activeDb} onValueChange={handleDatabaseChange}>
-                    <SelectTrigger size="sm" className="w-full">
+                    <SelectTrigger size="sm" className="w-full bg-sidebar">
                       <SelectValue placeholder="选择数据库" />
                     </SelectTrigger>
                     <SelectContent>
@@ -341,9 +344,9 @@ export function Sidebar({ className }: { className?: string }) {
           </div>
           <Button
             type="button"
-            variant="outline"
+            variant="default"
             size="sm"
-            className="w-full"
+            className="w-full bg-sidebar-primary text-sidebar-primary-foreground hover:bg-sidebar-primary/90 focus-visible:ring-sidebar-ring/50"
             onClick={handleClearFilters}
           >
             重置筛选
@@ -352,12 +355,12 @@ export function Sidebar({ className }: { className?: string }) {
 
         <div className="space-y-4">
           <div className="flex items-center justify-between">
-            <h3 className="font-semibold text-sm text-foreground">期刊筛选</h3>
+            <h3 className="text-sm font-semibold text-sidebar-foreground">期刊筛选</h3>
             <Button
               variant="ghost"
               size="sm"
               onClick={handleClearJournalFilters}
-              className="h-6 px-2 text-xs"
+              className="h-6 px-2 text-xs hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:ring-sidebar-ring/50"
               title="清空期刊筛选"
             >
               清空
@@ -380,11 +383,11 @@ export function Sidebar({ className }: { className?: string }) {
                   return (
                     <div
                       key={opt.value}
-                      className="flex min-w-0 items-start gap-2 [content-visibility:auto] [contain-intrinsic-size:0_32px]"
+                      className="content-visibility-filter-row flex min-w-0 items-start gap-2"
                     >
                       <Checkbox
                         id={`area-${opt.value}`}
-                        className="mt-0.5 shrink-0"
+                        className="mt-0.5 shrink-0 data-[state=checked]:border-sidebar-primary data-[state=checked]:bg-sidebar-primary data-[state=checked]:text-sidebar-primary-foreground focus-visible:ring-sidebar-ring/50"
                         checked={areas.includes(opt.value)}
                         onCheckedChange={(checked: boolean | 'indeterminate') =>
                           handleAreaChange(opt.value, checked as boolean)
@@ -417,7 +420,7 @@ export function Sidebar({ className }: { className?: string }) {
                   <Button
                     variant="outline"
                     size="sm"
-                    className="w-full justify-between"
+                    className="w-full justify-between bg-sidebar hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:ring-sidebar-ring/50"
                     title={journalSummary}
                   >
                     <span className="truncate">{journalSummary}</span>
@@ -447,11 +450,11 @@ export function Sidebar({ className }: { className?: string }) {
                         return (
                           <div
                             key={id}
-                            className="flex min-w-0 items-start gap-2 [content-visibility:auto] [contain-intrinsic-size:0_32px]"
+                            className="content-visibility-filter-row flex min-w-0 items-start gap-2"
                           >
                             <Checkbox
                               id={`journal-${id}`}
-                              className="mt-0.5 shrink-0"
+                              className="mt-0.5 shrink-0 data-[state=checked]:border-sidebar-primary data-[state=checked]:bg-sidebar-primary data-[state=checked]:text-sidebar-primary-foreground focus-visible:ring-sidebar-ring/50"
                               checked={journalIds.includes(id)}
                               onCheckedChange={(checked: boolean | 'indeterminate') =>
                                 handleJournalChange(id, checked as boolean)
@@ -480,12 +483,12 @@ export function Sidebar({ className }: { className?: string }) {
 
         <div className="space-y-4">
           <div className="flex items-center justify-between">
-            <h3 className="font-semibold text-sm text-foreground">发表时间</h3>
+            <h3 className="text-sm font-semibold text-sidebar-foreground">发表时间</h3>
             <Button
               variant="ghost"
               size="sm"
               onClick={handleClearTimeFilters}
-              className="h-6 px-2 text-xs"
+              className="h-6 px-2 text-xs hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:ring-sidebar-ring/50"
               title="清空时间筛选"
             >
               清空
@@ -550,6 +553,7 @@ export function Sidebar({ className }: { className?: string }) {
                     type="button"
                     variant="outline"
                     size="sm"
+                    className="bg-sidebar hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:ring-sidebar-ring/50"
                     onClick={() => handleRecentMonthRange(yearCount)}
                   >
                     近 {yearCount} 年

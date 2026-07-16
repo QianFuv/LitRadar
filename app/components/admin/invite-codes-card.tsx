@@ -112,7 +112,7 @@ export function AdminInviteCodesCard({ isEnabled }: { isEnabled: boolean }) {
             <div className="rounded-lg border p-4 text-sm text-muted-foreground">暂无邀请码</div>
           ) : (
             inviteCodes.map((ic) => (
-              <div key={ic.id} className="content-visibility-auto rounded-lg border p-4">
+              <div key={ic.id} className="content-visibility-card rounded-lg border p-4">
                 <div className="space-y-3">
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0 space-y-1">
@@ -193,7 +193,7 @@ export function AdminInviteCodesCard({ isEnabled }: { isEnabled: boolean }) {
             </thead>
             <tbody>
               {inviteCodes.map((ic) => (
-                <tr key={ic.id} className="content-visibility-auto border-b last:border-0">
+                <tr key={ic.id} className="content-visibility-table-row border-b last:border-0">
                   <td className="px-3 py-2 font-mono text-xs">
                     <span className="flex items-center gap-1">
                       {ic.code.slice(0, 8)}…

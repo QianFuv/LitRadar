@@ -17,15 +17,12 @@
   --color-sidebar-primary: var(--sidebar-primary);
   --color-sidebar-foreground: var(--sidebar-foreground);
   --color-sidebar: var(--sidebar);
-  --color-chart-5: var(--chart-5);
-  --color-chart-4: var(--chart-4);
-  --color-chart-3: var(--chart-3);
-  --color-chart-2: var(--chart-2);
-  --color-chart-1: var(--chart-1);
   --color-ring: var(--ring);
   --color-input: var(--input);
   --color-border: var(--border);
   --color-destructive: var(--destructive);
+  --color-info-foreground: var(--info-foreground);
+  --color-info: var(--info);
   --color-accent-foreground: var(--accent-foreground);
   --color-accent: var(--accent);
   --color-muted-foreground: var(--muted-foreground);
@@ -66,14 +63,11 @@
   --accent: #fafafa;
   --accent-foreground: #171717;
   --destructive: #ff5b4f;
+  --info: #ebf5ff;
+  --info-foreground: #0068d6;
   --border: #ebebeb;
   --input: #ebebeb;
   --ring: hsla(212, 100%, 48%, 1);
-  --chart-1: oklch(0.646 0.222 41.116);
-  --chart-2: oklch(0.6 0.118 184.704);
-  --chart-3: oklch(0.398 0.07 227.392);
-  --chart-4: oklch(0.828 0.189 84.429);
-  --chart-5: oklch(0.769 0.188 70.08);
   --sidebar: #ffffff;
   --sidebar-foreground: #171717;
   --sidebar-primary: #171717;
@@ -107,14 +101,11 @@
   --accent: #111111;
   --accent-foreground: #ededed;
   --destructive: #ff5b4f;
+  --info: #00152b;
+  --info-foreground: #ebf5ff;
   --border: #333333;
   --input: #333333;
   --ring: hsla(212, 100%, 48%, 1);
-  --chart-1: oklch(0.488 0.243 264.376);
-  --chart-2: oklch(0.696 0.17 162.48);
-  --chart-3: oklch(0.769 0.188 70.08);
-  --chart-4: oklch(0.627 0.265 303.9);
-  --chart-5: oklch(0.645 0.246 16.439);
   --sidebar: #000000;
   --sidebar-foreground: #ededed;
   --sidebar-primary: #0070f3;
@@ -184,9 +175,24 @@
   box-shadow: var(--shadow-vercel-card);
 }
 
-.content-visibility-auto {
+.content-visibility-card {
   content-visibility: auto;
-  contain-intrinsic-size: auto 72px;
+  contain-intrinsic-size: 0 220px;
+}
+
+.content-visibility-row {
+  content-visibility: auto;
+  contain-intrinsic-size: 0 40px;
+}
+
+.content-visibility-table-row {
+  content-visibility: auto;
+  contain-intrinsic-size: 0 48px;
+}
+
+.content-visibility-filter-row {
+  content-visibility: auto;
+  contain-intrinsic-size: 0 32px;
 }
 
 .search-input::-webkit-search-cancel-button {

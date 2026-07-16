@@ -188,7 +188,6 @@ function filterWeeklyArticlesBySearchMatches(
 
 type JournalPanelProps = {
   className?: string;
-  contentClassName?: string;
   availableDatabases: string[];
   effectiveSelectedDb: string;
   journals: WeeklyJournalUpdate[];
@@ -199,7 +198,6 @@ type JournalPanelProps = {
 
 function JournalPanel({
   className,
-  contentClassName,
   availableDatabases,
   effectiveSelectedDb,
   journals,
@@ -208,8 +206,8 @@ function JournalPanel({
   onSelectJournal,
 }: JournalPanelProps) {
   return (
-    <Card className={cn('min-h-0 overflow-hidden', className)}>
-      <CardHeader className="space-y-3 pb-3">
+    <Card className={cn('flex min-h-0 flex-col overflow-hidden', className)}>
+      <CardHeader className="shrink-0 space-y-3 pb-3">
         <CardTitle className="text-base">期刊</CardTitle>
         <div className="space-y-1.5">
           <span className="text-xs font-medium text-muted-foreground">数据库</span>
@@ -227,7 +225,7 @@ function JournalPanel({
           </Select>
         </div>
       </CardHeader>
-      <CardContent className={cn('space-y-2 overflow-y-auto', contentClassName)}>
+      <CardContent className="min-h-0 flex-1 space-y-2 overflow-y-auto">
         {journals.length === 0 && (
           <div className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">
             当前时间窗口内没有新增期刊。
@@ -420,7 +418,7 @@ export default function WeeklyUpdatesPage() {
 
   return (
     <main id="main-content" className="h-dvh bg-background text-foreground">
-      <div className="mx-auto flex h-full w-full max-w-[1400px] flex-col px-4 py-4 sm:px-6">
+      <div className="mx-auto flex h-full w-full max-w-6xl flex-col px-4 py-4 sm:px-6">
         <div className="mb-4 flex items-center justify-between gap-3">
           <div className="space-y-1">
             <div className="flex items-center gap-2 text-sm text-muted-foreground">
@@ -435,7 +433,7 @@ export default function WeeklyUpdatesPage() {
                     <Menu className="h-5 w-5" />
                   </Button>
                 </DialogTrigger>
-                <DialogContent className="left-0 top-0 h-full w-80 max-w-[calc(100vw-2rem)] translate-x-0 translate-y-0 gap-0 overflow-hidden rounded-none p-0 lg:hidden">
+                <DialogContent className="left-0 top-0 h-dvh w-80 max-w-[calc(100vw-2rem)] translate-x-0 translate-y-0 gap-0 overflow-hidden rounded-none p-0 lg:hidden">
                   <DialogHeader className="sr-only">
                     <DialogTitle>期刊筛选</DialogTitle>
                     <DialogDescription>选择数据库和期刊以查看每周更新。</DialogDescription>
@@ -443,7 +441,6 @@ export default function WeeklyUpdatesPage() {
                   <div className="relative h-full w-full">
                     <JournalPanel
                       className="h-full rounded-none border-0 pt-8"
-                      contentClassName="h-[calc(100%-140px)]"
                       availableDatabases={availableDatabases}
                       effectiveSelectedDb={effectiveSelectedDb}
                       journals={journals}
@@ -492,8 +489,8 @@ export default function WeeklyUpdatesPage() {
 
         {!loadingWeekly && !weeklyError && weeklyData && (
           <>
-            <div className="mb-4 grid grid-cols-1 gap-3 lg:grid-cols-[340px_1fr]">
-              <div className="flex flex-wrap gap-2">
+            <div className="mb-4 flex flex-col gap-3 lg:flex-row">
+              <div className="flex w-full flex-wrap gap-2 lg:w-80 lg:shrink-0">
                 <Badge variant="secondary" className="gap-1">
                   <Database className="h-3.5 w-3.5" />
                   {totalDatabases} 个数据库
@@ -503,13 +500,12 @@ export default function WeeklyUpdatesPage() {
                   {totalArticles} 篇新文章
                 </Badge>
               </div>
-              <SearchBar className="w-full max-w-none" queryParam="weekly_q" />
+              <SearchBar className="w-full max-w-none lg:min-w-0 lg:flex-1" queryParam="weekly_q" />
             </div>
 
-            <div className="grid min-h-0 flex-1 grid-cols-1 gap-4 lg:grid-cols-[340px_1fr]">
+            <div className="flex min-h-0 flex-1 gap-4">
               <JournalPanel
-                className="hidden lg:flex lg:flex-col"
-                contentClassName="h-[calc(100%-140px)]"
+                className="hidden w-80 shrink-0 lg:flex"
                 availableDatabases={availableDatabases}
                 effectiveSelectedDb={effectiveSelectedDb}
                 journals={journals}
@@ -518,8 +514,8 @@ export default function WeeklyUpdatesPage() {
                 onSelectJournal={(journalId) => void setSelectedJournalId(journalId)}
               />
 
-              <Card className="min-h-0 overflow-hidden">
-                <CardHeader className="pb-3">
+              <Card className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+                <CardHeader className="shrink-0 pb-3">
                   <CardTitle className="text-base">
                     {selectedJournal ? getJournalLabel(selectedJournal) : '文章'}
                   </CardTitle>
@@ -537,7 +533,7 @@ export default function WeeklyUpdatesPage() {
                 </CardHeader>
                 <CardContent
                   id="weekly-articles-scroll-container"
-                  className="h-[calc(100%-88px)] space-y-3 overflow-y-auto"
+                  className="min-h-0 flex-1 space-y-3 overflow-y-auto"
                   style={{
                     paddingBottom:
                       'calc(6rem + var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px)))',

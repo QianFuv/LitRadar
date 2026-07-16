@@ -415,7 +415,7 @@ export function TrackingPageContent({ userId }: { userId: number }) {
                         return (
                           <label
                             key={dbName}
-                            className="flex items-start gap-3 rounded-md border px-3 py-2 text-sm [content-visibility:auto] [contain-intrinsic-size:0_40px]"
+                            className="content-visibility-row flex items-start gap-3 rounded-md border px-3 py-2 text-sm"
                           >
                             <Checkbox
                               checked={checked}
