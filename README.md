@@ -59,6 +59,8 @@ docker compose up -d --remove-orphans
 
 需要从当前源码构建时，改用 `docker compose up -d --build --remove-orphans`。
 
+镜像把官方期刊目录作为不可变 bundle 放在 `/usr/share/litradar/meta`，持久副本位于挂载卷的 `/app/data/meta`。Docker bind mount 和 Kubernetes PVC 都不会把镜像目录与挂载目录合并；`serve` 和普通 `index` 会在数据库迁移后自动准备持久副本，因此不需要手工首次复制。空卷会获得官方文件，已知旧版官方文件会升级，内容相同的当前文件会被接管；同名自定义文件和清单之外的文件会保留，并在 stderr 诊断中说明。完整生命周期、镜像回滚限制和退役文件清理要求见 [Docker 部署](docs/operations/docker.md)。
+
 ### 3. 初始化首个管理员
 
 公开注册不能创建首个管理员。请从安全输入或密码管理器向 stdin 提供密码：
@@ -74,7 +76,7 @@ printf '%s\n' "$ADMIN_PASSWORD" |
 
 ### 4. 准备索引
 
-仓库自带 `data/meta/*.csv`。CNKI 元数据索引不需要 scholarly API key，可先验证完整链路：
+发布镜像自带上述官方 bundle，并在命令开始时同步到持久的 `data/meta/*.csv`。CNKI 元数据索引不需要 scholarly API key，可先验证完整链路：
 
 ```bash
 docker compose run --rm litradar index \

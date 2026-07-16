@@ -11,9 +11,10 @@ LitRadar 不使用单一 `.env` 作为配置中心。不同配置来源服务于
 | `notification_settings`             | 单个用户          | AI、PushPlus、偏好、投递方式                  |
 | 前端环境变量                        | 前端构建/本地开发 | 浏览器 API 地址、开发 rewrite 目标            |
 | 部署密钥文件                        | 一个部署          | 认证和解密数据库秘密值                        |
+| `LITRADAR_BUNDLED_META_DIR`         | 发布镜像打包      | 不可变官方 Meta bundle 的内部路径             |
 | `RUST_LOG`                          | 一个 Rust 进程    | tracing 过滤                                  |
 
-后端不从环境变量读取 scholarly、AI、PushPlus、CORS、MCP、Cookie 或代理凭据。
+后端不从环境变量读取 scholarly、AI、PushPlus、CORS、MCP、Cookie 或代理凭据。`LITRADAR_BUNDLED_META_DIR` 只连接镜像资产与启动准备，不承载这些业务设置。
 
 ## 部署密钥文件
 
@@ -29,6 +30,14 @@ LitRadar 不使用单一 `.env` 作为配置中心。不同配置来源服务于
 - `litradar admin secrets migrate/verify`
 
 `litradar admin bootstrap`、`litradar admin backup` 和 `litradar openapi` 不需要密钥。生成、轮换和恢复要求见[安全说明](../operations/security.md)。
+
+## 官方 Meta 打包路径
+
+发布 Docker 镜像设置 `LITRADAR_BUNDLED_META_DIR=/usr/share/litradar/meta`。该只读目录含 `bundle-manifest.json` 和官方 CSV；持久副本始终位于 `<project-root>/data/meta`。这是 Dockerfile 与应用之间的打包契约，不是 `runtime_settings`、秘密、普通运维覆盖项或 CLI 参数。不要把它指向持久目录。
+
+设置该变量后，`serve` 和普通 `index` 会在认证库迁移后验证整个 bundle，再按 manifest hash 创建、接管或升级官方文件。自定义的同名文件和 manifest 外文件保持不变；报告以结构化 JSON 写入 stderr。bundle 缺失、格式/hash 非法、持久目标不是普通目录/文件或检测到版本降级时，命令在后续工作前失败。
+
+本地构建默认不设置该变量，因此不执行受管准备，也不会要求 `/usr/share/litradar/meta` 存在。此时缺失或空的 `<project-root>/data/meta` 继续沿用索引命令原有的无输入行为。
 
 ## 全局运行设置
 
@@ -101,17 +110,20 @@ key/mailto 池按逗号、分号或换行拆分，去除空项并按首次出现
 
 1. CLI 解析 `host`、`port`、`project-root`、调度间隔、密钥文件和 Secure Cookie 启动门。
 2. 迁移 `auth.sqlite` 和索引库。
-3. 用密钥验证数据库秘密。
-4. 加载全局运行设置。
-5. 应用 CORS、MCP 和 Cookie 策略。
-6. 若启用 `--require-secure-cookies` 但设置仍为 `false`，拒绝启动。
-7. 绑定监听端口并并发启动 HTTP 与立即执行的调度 tick。
+3. 若配置了官方 Meta 打包路径，准备持久 Meta 目录。
+4. 用密钥验证数据库秘密。
+5. 加载全局运行设置。
+6. 应用 CORS、MCP 和 Cookie 策略。
+7. 若启用 `--require-secure-cookies` 但设置仍为 `false`，拒绝启动。
+8. 绑定监听端口并并发启动 HTTP 与立即执行的调度 tick。
 
 默认调度间隔为 30 秒，可用 `--scheduler-interval-seconds N` 覆盖；N 必须大于 0。任一组件意外失败都会使整个 `serve` 调用失败。
 
 ## 索引进程
 
 `litradar index` 的一次运行参数由 CLI 决定；scholarly transport 的 key/mailto 从全局运行设置读取：
+
+普通索引先迁移认证库和现有索引库，再执行可选的官方 Meta 准备，然后验证部署密钥、读取运行设置并进入逐 CSV 预检。内部索引 worker 不重复准备。准备只管理 manifest 声明的持久文件，不绕过或替代期刊身份与数据库投影预检。
 
 - OpenAlex key：请求 `/sources` 和 `/works`
 - Semantic Scholar key：`x-api-key` 请求头
@@ -157,3 +169,5 @@ RUST_LOG=error cargo run --bin litradar -- serve \
 | `libs/simple-*`          | 平台 `simple` 扩展     |
 
 `simple` 扩展只按项目根下的内置平台路径发现，不接受环境变量覆盖。
+
+`/usr/share/litradar/meta` 不在 `project-root` 下，只是发布镜像中的官方只读 bundle；`data/meta` 才是需要备份和恢复的运行时目录。
