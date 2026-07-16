@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use rusqlite::backup::Backup;
-use rusqlite::{params, Connection, OpenFlags};
+use rusqlite::{params, Connection, OpenFlags, TransactionBehavior};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tempfile::Builder;
@@ -18,7 +18,7 @@ use crate::migrations::{AUTH_SCHEMA_VERSION, INDEX_SCHEMA_VERSION};
 use crate::{open_sqlite_connection, DatabaseResolutionError, StorageConfig};
 
 /// Current on-disk backup manifest format version.
-pub const BACKUP_FORMAT_VERSION: u32 = 1;
+pub const BACKUP_FORMAT_VERSION: u32 = 2;
 
 /// Maximum heartbeat age that prevents an offline restore.
 pub const ACTIVE_HEARTBEAT_MAX_AGE_SECONDS: f64 = 90.0;
@@ -26,6 +26,7 @@ pub const ACTIVE_HEARTBEAT_MAX_AGE_SECONDS: f64 = 90.0;
 const BACKUP_FORMAT_NAME: &str = "litradar-backup";
 const MANIFEST_FILENAME: &str = "manifest.json";
 const AUTH_BACKUP_PATH: &str = "auth.sqlite";
+const META_BACKUP_DIR: &str = "meta";
 const INDEX_BACKUP_DIR: &str = "index";
 const PUSH_STATE_DIRS: [&str; 2] = ["push_state", "folder_push_state"];
 const BACKUP_PAGES_PER_STEP: i32 = 128;
@@ -52,6 +53,9 @@ impl ServiceKind {
 /// Optional data groups included in one backup.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BackupSelection {
+    /// Whether the complete persistent metadata file tree was included.
+    #[serde(default)]
+    pub metadata: bool,
     /// Whether all discovered index databases were included.
     pub index_databases: bool,
     /// Whether notification and folder delivery state files were included.
@@ -64,6 +68,8 @@ pub struct BackupSelection {
 pub enum BackupComponentKind {
     /// Auth and business SQLite database.
     AuthDatabase,
+    /// One persistent metadata catalog or operator-managed companion file.
+    Metadata,
     /// One journal index SQLite database.
     IndexDatabase,
     /// One notification or folder-delivery state file.
@@ -134,6 +140,8 @@ pub struct BackupRestoreReport {
     pub restored_files: usize,
     /// Number of SQLite databases restored.
     pub restored_databases: usize,
+    /// Whether the persistent metadata directory was replaced from the backup.
+    pub restored_metadata: bool,
     /// Whether the index directory was replaced from the backup.
     pub restored_index_databases: bool,
     /// Whether both push-state directories were replaced from the backup.
@@ -359,6 +367,24 @@ pub fn has_recent_service_heartbeat(
 ///
 /// Written and verified manifest.
 pub fn create_backup(options: &BackupCreateOptions) -> Result<BackupManifest, BackupError> {
+    let mut hook = NoopBackupCreateHook;
+    create_backup_with_hook(options, &mut hook)
+}
+
+trait BackupCreateHook {
+    fn after_metadata_copy(&mut self, _source: &Path) -> Result<(), BackupError> {
+        Ok(())
+    }
+}
+
+struct NoopBackupCreateHook;
+
+impl BackupCreateHook for NoopBackupCreateHook {}
+
+fn create_backup_with_hook(
+    options: &BackupCreateOptions,
+    hook: &mut impl BackupCreateHook,
+) -> Result<BackupManifest, BackupError> {
     if options.output_dir.exists() {
         return Err(BackupError::InvalidInput(
             "output directory already exists".to_string(),
@@ -377,13 +403,25 @@ pub fn create_backup(options: &BackupCreateOptions) -> Result<BackupManifest, Ba
         .tempdir_in(output_parent)?;
     let mut components = Vec::new();
 
-    let auth_destination = staging.path().join(AUTH_BACKUP_PATH);
-    backup_sqlite_database(&options.auth_db_path, &auth_destination)?;
-    components.push(database_component(
-        BackupComponentKind::AuthDatabase,
-        AUTH_BACKUP_PATH,
-        &auth_destination,
-    )?);
+    {
+        let mut auth_connection = open_sqlite_connection(&options.auth_db_path)?;
+        let auth_transaction =
+            auth_connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let auth_destination = staging.path().join(AUTH_BACKUP_PATH);
+        backup_sqlite_database(&options.auth_db_path, &auth_destination)?;
+        components.push(database_component(
+            BackupComponentKind::AuthDatabase,
+            AUTH_BACKUP_PATH,
+            &auth_destination,
+        )?);
+        copy_metadata_directory(
+            options.storage_config.meta_dir(),
+            staging.path(),
+            &mut components,
+            hook,
+        )?;
+        auth_transaction.rollback()?;
+    }
 
     if options.include_index_databases {
         let index_destination = staging.path().join(INDEX_BACKUP_DIR);
@@ -420,6 +458,7 @@ pub fn create_backup(options: &BackupCreateOptions) -> Result<BackupManifest, Ba
         version: BACKUP_FORMAT_VERSION,
         created_at: unix_time_seconds()?,
         selection: BackupSelection {
+            metadata: true,
             index_databases: options.include_index_databases,
             push_state: options.include_push_state,
         },
@@ -504,6 +543,25 @@ fn restore_backup_at(
     options: &BackupRestoreOptions,
     current_time: f64,
 ) -> Result<BackupRestoreReport, BackupError> {
+    let mut hook = NoopRestoreHook;
+    restore_backup_at_with_hook(options, current_time, &mut hook)
+}
+
+trait RestoreHook {
+    fn after_replacements(&mut self, _options: &BackupRestoreOptions) -> Result<(), BackupError> {
+        Ok(())
+    }
+}
+
+struct NoopRestoreHook;
+
+impl RestoreHook for NoopRestoreHook {}
+
+fn restore_backup_at_with_hook(
+    options: &BackupRestoreOptions,
+    current_time: f64,
+    hook: &mut impl RestoreHook,
+) -> Result<BackupRestoreReport, BackupError> {
     let manifest = verify_backup(&options.backup_dir)?;
     if has_recent_service_heartbeat(
         &options.auth_db_path,
@@ -539,6 +597,22 @@ fn restore_backup_at(
             auth_workspace
                 .path()
                 .join(format!("rollback-auth.sqlite{suffix}")),
+        ));
+    }
+
+    if manifest.selection.metadata {
+        let staged_meta = data_workspace.path().join("staged-meta");
+        copy_selected_group(
+            &options.backup_dir,
+            &manifest,
+            BackupComponentKind::Metadata,
+            META_BACKUP_DIR,
+            &staged_meta,
+        )?;
+        replacements.push(Replacement::new(
+            options.storage_config.meta_dir().to_path_buf(),
+            Some(staged_meta),
+            data_workspace.path().join("rollback-meta"),
         ));
     }
 
@@ -584,7 +658,10 @@ fn restore_backup_at(
         return Err(BackupError::ActiveTarget);
     }
     apply_replacements(&mut replacements)?;
-    if let Err(error) = validate_restored_components(options, &manifest) {
+    let validation = hook
+        .after_replacements(options)
+        .and_then(|()| validate_restored_components(options, &manifest));
+    if let Err(error) = validation {
         rollback_replacements(&mut replacements)?;
         return Err(error);
     }
@@ -601,6 +678,7 @@ fn restore_backup_at(
                 )
             })
             .count(),
+        restored_metadata: manifest.selection.metadata,
         restored_index_databases: manifest.selection.index_databases,
         restored_push_state: manifest.selection.push_state,
     })
@@ -612,11 +690,18 @@ fn validate_manifest_header(manifest: &BackupManifest) -> Result<(), BackupError
             "manifest format identifier is unknown".to_string(),
         ));
     }
-    if manifest.version != BACKUP_FORMAT_VERSION {
+    if !(1..=BACKUP_FORMAT_VERSION).contains(&manifest.version) {
         return Err(BackupError::Unsupported(format!(
             "manifest version {} is not supported",
             manifest.version
         )));
+    }
+    if (manifest.version == 1 && manifest.selection.metadata)
+        || (manifest.version == BACKUP_FORMAT_VERSION && !manifest.selection.metadata)
+    {
+        return Err(BackupError::InvalidManifest(
+            "metadata selection does not match the manifest version".to_string(),
+        ));
     }
     if !manifest.created_at.is_finite() || manifest.created_at < 0.0 {
         return Err(BackupError::InvalidManifest(
@@ -642,6 +727,18 @@ fn validate_component_layout(
             if portable != AUTH_BACKUP_PATH || component.schema_version.is_none() {
                 return Err(BackupError::InvalidManifest(
                     "auth database component layout is invalid".to_string(),
+                ));
+            }
+        }
+        BackupComponentKind::Metadata => {
+            let first = portable.split('/').next().unwrap_or_default();
+            if !selection.metadata
+                || first != META_BACKUP_DIR
+                || component.schema_version.is_some()
+                || portable == first
+            {
+                return Err(BackupError::InvalidManifest(
+                    "metadata component layout is invalid".to_string(),
                 ));
             }
         }
@@ -704,7 +801,9 @@ fn validate_component_file(
         let supported_version = match component.kind {
             BackupComponentKind::AuthDatabase => AUTH_SCHEMA_VERSION,
             BackupComponentKind::IndexDatabase => INDEX_SCHEMA_VERSION,
-            BackupComponentKind::PushState => unreachable!("database kind was checked"),
+            BackupComponentKind::Metadata | BackupComponentKind::PushState => {
+                unreachable!("database kind was checked")
+            }
         };
         if expected_version < 0 || expected_version > supported_version {
             return Err(BackupError::Unsupported(format!(
@@ -727,6 +826,9 @@ fn validate_backup_outside_targets(
 ) -> Result<(), BackupError> {
     let backup = fs::canonicalize(&options.backup_dir)?;
     let mut targets = vec![options.auth_db_path.clone()];
+    if selection.metadata {
+        targets.push(options.storage_config.meta_dir().to_path_buf());
+    }
     if selection.index_databases {
         targets.push(options.storage_config.index_dir().to_path_buf());
     }
@@ -763,6 +865,9 @@ fn validate_backup_output_outside_sources(
         .ok_or_else(|| BackupError::InvalidInput("output directory name is invalid".to_string()))?;
     let output = output_parent.join(output_name);
     let mut source_directories = Vec::new();
+    if options.storage_config.meta_dir().exists() {
+        source_directories.push(fs::canonicalize(options.storage_config.meta_dir())?);
+    }
     if options.include_index_databases && options.storage_config.index_dir().exists() {
         source_directories.push(fs::canonicalize(options.storage_config.index_dir())?);
     }
@@ -932,20 +1037,60 @@ fn collect_snapshot_files(
     Ok(())
 }
 
+fn copy_metadata_directory(
+    source: &Path,
+    staging_root: &Path,
+    components: &mut Vec<BackupComponent>,
+    hook: &mut impl BackupCreateHook,
+) -> Result<(), BackupError> {
+    copy_regular_directory(
+        source,
+        staging_root,
+        META_BACKUP_DIR,
+        BackupComponentKind::Metadata,
+        "metadata",
+        |source| hook.after_metadata_copy(source),
+        components,
+    )
+}
+
 fn copy_state_directory(
     source: &Path,
     staging_root: &Path,
     manifest_directory: &str,
     components: &mut Vec<BackupComponent>,
 ) -> Result<(), BackupError> {
+    copy_regular_directory(
+        source,
+        staging_root,
+        manifest_directory,
+        BackupComponentKind::PushState,
+        "push-state",
+        |_| Ok(()),
+        components,
+    )
+}
+
+fn copy_regular_directory<AfterCopy>(
+    source: &Path,
+    staging_root: &Path,
+    manifest_directory: &str,
+    kind: BackupComponentKind,
+    group_name: &str,
+    after_copy: AfterCopy,
+    components: &mut Vec<BackupComponent>,
+) -> Result<(), BackupError>
+where
+    AfterCopy: FnOnce(&Path) -> Result<(), BackupError>,
+{
     let before = snapshot_directory(source)?;
     let destination_root = staging_root.join(manifest_directory);
     fs::create_dir_all(&destination_root)?;
     for snapshot in &before {
         if is_key_file(&snapshot.relative_path) {
-            return Err(BackupError::InvalidInput(
-                "push-state directories contain a forbidden key file".to_string(),
-            ));
+            return Err(BackupError::InvalidInput(format!(
+                "{group_name} directory contains a forbidden key file"
+            )));
         }
         let source_path = source.join(&snapshot.relative_path);
         let destination = destination_root.join(&snapshot.relative_path);
@@ -956,19 +1101,20 @@ fn copy_state_directory(
         if fs::metadata(&destination)?.len() != snapshot.size
             || sha256_file(&destination)? != snapshot.sha256
         {
-            return Err(BackupError::Integrity(
-                "push-state copy changed while it was written".to_string(),
-            ));
+            return Err(BackupError::Integrity(format!(
+                "{group_name} copy changed while it was written"
+            )));
         }
     }
+    after_copy(source)?;
     if snapshot_directory(source)? != before {
-        return Err(BackupError::Integrity(
-            "push-state files changed during backup".to_string(),
-        ));
+        return Err(BackupError::Integrity(format!(
+            "{group_name} files changed during backup"
+        )));
     }
     for snapshot in before {
         components.push(BackupComponent {
-            kind: BackupComponentKind::PushState,
+            kind,
             path: format!(
                 "{manifest_directory}/{}",
                 portable_path(&snapshot.relative_path)
@@ -1020,7 +1166,9 @@ fn validate_restored_components(
         let relative = parse_manifest_path(&component.path)?;
         let target = match component.kind {
             BackupComponentKind::AuthDatabase => options.auth_db_path.clone(),
-            BackupComponentKind::IndexDatabase | BackupComponentKind::PushState => options
+            BackupComponentKind::Metadata
+            | BackupComponentKind::IndexDatabase
+            | BackupComponentKind::PushState => options
                 .storage_config
                 .project_root()
                 .join("data")
@@ -1231,14 +1379,39 @@ mod tests {
     use tempfile::{tempdir, TempDir};
 
     use super::{
-        apply_replacements, create_backup, delete_service_heartbeat, has_recent_service_heartbeat,
-        parse_manifest_path, record_service_heartbeat, restore_backup_at, verify_backup,
-        BackupComponentKind, BackupCreateOptions, BackupError, BackupRestoreOptions, Replacement,
-        ServiceKind,
+        apply_replacements, create_backup, create_backup_with_hook, delete_service_heartbeat,
+        has_recent_service_heartbeat, parse_manifest_path, record_service_heartbeat,
+        restore_backup_at, restore_backup_at_with_hook, snapshot_directory, verify_backup,
+        BackupComponentKind, BackupCreateHook, BackupCreateOptions, BackupError,
+        BackupRestoreOptions, Replacement, RestoreHook, ServiceKind, BACKUP_FORMAT_VERSION,
     };
     use crate::{
         migrate_auth_database, migrate_index_database, open_sqlite_connection, StorageConfig,
     };
+
+    struct MutateMetadataAfterCopy;
+
+    impl BackupCreateHook for MutateMetadataAfterCopy {
+        fn after_metadata_copy(&mut self, source: &Path) -> Result<(), BackupError> {
+            fs::write(source.join("catalog.csv"), b"changed,during-backup\n")?;
+            Ok(())
+        }
+    }
+
+    struct CorruptRestoredMetadata;
+
+    impl RestoreHook for CorruptRestoredMetadata {
+        fn after_replacements(
+            &mut self,
+            options: &BackupRestoreOptions,
+        ) -> Result<(), BackupError> {
+            fs::write(
+                options.storage_config.meta_dir().join("catalog.csv"),
+                b"corrupt,after-replacement\n",
+            )?;
+            Ok(())
+        }
+    }
 
     #[test]
     fn manifest_paths_accept_only_portable_normal_segments() {
@@ -1263,7 +1436,18 @@ mod tests {
     fn online_backup_round_trip_preserves_wal_rows_and_optional_data() {
         let fixture = BackupFixture::new("round-trip");
         let source_connection = fixture.open_auth_probe("source-row");
+        source_connection
+            .execute(
+                "INSERT INTO managed_meta_catalogs
+                    (filename, bundle_version, applied_sha256)
+                 VALUES ('catalog.csv', 7, ?1)",
+                ["a".repeat(64)],
+            )
+            .expect("managed metadata state should write");
         let index_path = fixture.create_index_probe("journal-row");
+        fixture.write_metadata("catalog.csv", b"name,value\nsource,catalog\n");
+        fixture.write_metadata("manual.bak", b"operator backup bytes");
+        fixture.write_metadata("nested/notes.txt", b"nested metadata companion");
         fixture.write_push_state("push_state", "alpha.json", "{\"value\":1}");
         fixture.write_push_state("folder_push_state", "beta.json", "{\"value\":2}");
         let secret_dir = fixture.source_root.join("secrets");
@@ -1276,12 +1460,27 @@ mod tests {
         let verified = verify_backup(&fixture.backup_dir).expect("backup should verify");
 
         assert_eq!(manifest, verified);
+        assert_eq!(manifest.version, BACKUP_FORMAT_VERSION);
+        assert!(manifest.selection.metadata);
         assert_eq!(query_probe_count(&fixture.auth_db_path), 1);
         assert_eq!(query_probe_count(&index_path), 1);
         assert!(manifest
             .components
             .iter()
             .any(|component| component.kind == BackupComponentKind::IndexDatabase));
+        assert_eq!(
+            manifest
+                .components
+                .iter()
+                .filter(|component| component.kind == BackupComponentKind::Metadata)
+                .map(|component| component.path.as_str())
+                .collect::<Vec<_>>(),
+            [
+                "meta/catalog.csv",
+                "meta/manual.bak",
+                "meta/nested/notes.txt"
+            ]
+        );
         assert!(!fixture.backup_dir.join("litradar.key").exists());
         assert!(!fixture.backup_dir.join("secrets").exists());
 
@@ -1301,6 +1500,9 @@ mod tests {
         )
         .expect("stale push-state directory should exist");
         fs::write(&stale_push_state, "stale").expect("stale push state should write");
+        fs::create_dir_all(restore_config.meta_dir()).expect("stale meta directory should exist");
+        fs::write(restore_config.meta_dir().join("stale.csv"), b"stale")
+            .expect("stale metadata should write");
         let report = restore_backup_at(
             &BackupRestoreOptions {
                 auth_db_path: restore_config.auth_db_path().to_path_buf(),
@@ -1312,10 +1514,28 @@ mod tests {
         .expect("verified backup should restore");
 
         assert_eq!(report.restored_databases, 2);
+        assert!(report.restored_metadata);
         assert!(report.restored_index_databases);
         assert!(report.restored_push_state);
         assert!(!restore_config.index_dir().join("stale.sqlite").exists());
         assert!(!stale_push_state.exists());
+        assert!(!restore_config.meta_dir().join("stale.csv").exists());
+        assert_eq!(
+            snapshot_directory(restore_config.meta_dir())
+                .expect("restored metadata should snapshot"),
+            snapshot_directory(fixture.source_config.meta_dir())
+                .expect("source metadata should snapshot")
+        );
+        let managed_state: (i64, String) = Connection::open(restore_config.auth_db_path())
+            .expect("restored auth database should open")
+            .query_row(
+                "SELECT bundle_version, applied_sha256
+                 FROM managed_meta_catalogs WHERE filename = 'catalog.csv'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .expect("restored managed metadata state should load");
+        assert_eq!(managed_state, (7, "a".repeat(64)));
         assert_eq!(
             query_probe_value(restore_config.auth_db_path()),
             "source-row"
@@ -1341,6 +1561,7 @@ mod tests {
     fn omitted_optional_groups_leave_target_directories_unchanged() {
         let source = BackupFixture::new("auth-only");
         source.open_auth_probe("backup-row");
+        source.write_metadata("source.csv", b"source,metadata\n");
         create_backup(&source.create_options(false, false))
             .expect("auth-only backup should complete");
 
@@ -1356,6 +1577,9 @@ mod tests {
         fs::create_dir_all(kept_state.parent().expect("state should have a parent"))
             .expect("target state should exist");
         fs::write(&kept_state, "keep-state").expect("target state should write");
+        fs::create_dir_all(target_config.meta_dir()).expect("target meta should exist");
+        let stale_meta = target_config.meta_dir().join("keep.csv");
+        fs::write(&stale_meta, b"stale metadata").expect("target meta should write");
 
         let report = restore_backup_at(
             &BackupRestoreOptions {
@@ -1369,6 +1593,7 @@ mod tests {
 
         assert!(!report.restored_index_databases);
         assert!(!report.restored_push_state);
+        assert!(report.restored_metadata);
         assert_eq!(
             fs::read_to_string(kept_index).expect("kept index should read"),
             "keep-index"
@@ -1377,6 +1602,294 @@ mod tests {
             fs::read_to_string(kept_state).expect("kept state should read"),
             "keep-state"
         );
+        assert!(!stale_meta.exists());
+        assert_eq!(
+            fs::read(target_config.meta_dir().join("source.csv"))
+                .expect("restored metadata should read"),
+            b"source,metadata\n"
+        );
+    }
+
+    #[test]
+    fn version_one_backup_restores_auth_without_touching_target_metadata() {
+        let source = BackupFixture::new("version-one");
+        source.open_auth_probe("version-one-auth");
+        source.write_metadata("source.csv", b"source,metadata\n");
+        create_backup(&source.create_options(false, false))
+            .expect("version two fixture should be created");
+        convert_backup_to_version_one(&source.backup_dir);
+
+        let manifest =
+            verify_backup(&source.backup_dir).expect("converted version one backup should verify");
+        assert_eq!(manifest.version, 1);
+        assert!(!manifest.selection.metadata);
+        assert!(manifest
+            .components
+            .iter()
+            .all(|component| component.kind != BackupComponentKind::Metadata));
+
+        let target_root = source.root.path().join("version-one-target");
+        let target_config = StorageConfig::from_project_root(&target_root);
+        fs::create_dir_all(target_config.meta_dir()).expect("target metadata should exist");
+        let kept_metadata = target_config.meta_dir().join("operator.csv");
+        fs::write(&kept_metadata, b"operator,metadata\n").expect("target metadata should write");
+
+        let report = restore_backup_at(
+            &BackupRestoreOptions {
+                storage_config: target_config.clone(),
+                auth_db_path: target_config.auth_db_path().to_path_buf(),
+                backup_dir: source.backup_dir.clone(),
+            },
+            10_000.0,
+        )
+        .expect("version one backup should restore");
+
+        assert!(!report.restored_metadata);
+        assert_eq!(
+            fs::read(&kept_metadata).expect("target metadata should remain"),
+            b"operator,metadata\n"
+        );
+        assert_eq!(
+            query_probe_value(target_config.auth_db_path()),
+            "version-one-auth"
+        );
+    }
+
+    #[test]
+    fn metadata_verification_rejects_changed_missing_extra_and_unsafe_layouts() {
+        let changed = BackupFixture::new("metadata-changed");
+        changed.open_auth_probe("row");
+        changed.write_metadata("catalog.csv", b"original\n");
+        create_backup(&changed.create_options(false, false))
+            .expect("metadata backup should complete");
+        fs::write(changed.backup_dir.join("meta/catalog.csv"), b"changed\n")
+            .expect("backed-up metadata should change");
+        assert!(matches!(
+            verify_backup(&changed.backup_dir),
+            Err(BackupError::Integrity(_))
+        ));
+
+        let missing = BackupFixture::new("metadata-missing");
+        missing.open_auth_probe("row");
+        missing.write_metadata("catalog.csv", b"original\n");
+        create_backup(&missing.create_options(false, false))
+            .expect("metadata backup should complete");
+        fs::remove_file(missing.backup_dir.join("meta/catalog.csv"))
+            .expect("backed-up metadata should be removed");
+        assert!(matches!(
+            verify_backup(&missing.backup_dir),
+            Err(BackupError::Integrity(_))
+        ));
+
+        let extra = BackupFixture::new("metadata-extra");
+        extra.open_auth_probe("row");
+        extra.write_metadata("catalog.csv", b"original\n");
+        create_backup(&extra.create_options(false, false))
+            .expect("metadata backup should complete");
+        fs::write(extra.backup_dir.join("meta/extra.csv"), b"unlisted\n")
+            .expect("unlisted metadata should be written");
+        assert!(matches!(
+            verify_backup(&extra.backup_dir),
+            Err(BackupError::Integrity(_))
+        ));
+
+        let non_file = BackupFixture::new("metadata-directory");
+        non_file.open_auth_probe("row");
+        non_file.write_metadata("catalog.csv", b"original\n");
+        create_backup(&non_file.create_options(false, false))
+            .expect("metadata backup should complete");
+        fs::remove_file(non_file.backup_dir.join("meta/catalog.csv"))
+            .expect("metadata file should be removed");
+        fs::create_dir(non_file.backup_dir.join("meta/catalog.csv"))
+            .expect("non-file metadata component should be created");
+        assert!(matches!(
+            verify_backup(&non_file.backup_dir),
+            Err(BackupError::Integrity(_))
+        ));
+
+        let traversal = BackupFixture::new("metadata-traversal");
+        traversal.open_auth_probe("row");
+        traversal.write_metadata("catalog.csv", b"original\n");
+        create_backup(&traversal.create_options(false, false))
+            .expect("metadata backup should complete");
+        update_metadata_component(&traversal.backup_dir, |component| {
+            component["path"] = serde_json::json!("meta/../escape.csv");
+        });
+        assert!(matches!(
+            verify_backup(&traversal.backup_dir),
+            Err(BackupError::InvalidManifest(_))
+        ));
+
+        let schema = BackupFixture::new("metadata-schema");
+        schema.open_auth_probe("row");
+        schema.write_metadata("catalog.csv", b"original\n");
+        create_backup(&schema.create_options(false, false))
+            .expect("metadata backup should complete");
+        update_metadata_component(&schema.backup_dir, |component| {
+            component["schema_version"] = serde_json::json!(1);
+        });
+        assert!(matches!(
+            verify_backup(&schema.backup_dir),
+            Err(BackupError::InvalidManifest(_))
+        ));
+
+        let secret_layout = BackupFixture::new("metadata-secret-layout");
+        secret_layout.open_auth_probe("row");
+        secret_layout.write_metadata("catalog.csv", b"original\n");
+        create_backup(&secret_layout.create_options(false, false))
+            .expect("metadata backup should complete");
+        fs::rename(
+            secret_layout.backup_dir.join("meta/catalog.csv"),
+            secret_layout.backup_dir.join("meta/operator.pem"),
+        )
+        .expect("metadata component should be renamed");
+        update_metadata_component(&secret_layout.backup_dir, |component| {
+            component["path"] = serde_json::json!("meta/operator.pem");
+        });
+        assert!(matches!(
+            verify_backup(&secret_layout.backup_dir),
+            Err(BackupError::InvalidManifest(_))
+        ));
+    }
+
+    #[test]
+    fn metadata_creation_rejects_secret_files_and_nested_output() {
+        let secret = BackupFixture::new("metadata-secret");
+        secret.open_auth_probe("row");
+        secret.write_metadata("operator.pem", b"secret material");
+        assert!(matches!(
+            create_backup(&secret.create_options(false, false)),
+            Err(BackupError::InvalidInput(_))
+        ));
+
+        let nested = BackupFixture::new("metadata-nested-output");
+        nested.open_auth_probe("row");
+        nested.write_metadata("catalog.csv", b"catalog\n");
+        let mut options = nested.create_options(false, false);
+        options.output_dir = nested.source_config.meta_dir().join("backup");
+        assert!(matches!(
+            create_backup(&options),
+            Err(BackupError::InvalidInput(_))
+        ));
+    }
+
+    #[test]
+    fn metadata_drift_rejects_the_online_backup() {
+        let fixture = BackupFixture::new("metadata-drift");
+        fixture.open_auth_probe("row");
+        fixture.write_metadata("catalog.csv", b"before\n");
+        let mut hook = MutateMetadataAfterCopy;
+
+        let error = create_backup_with_hook(&fixture.create_options(false, false), &mut hook)
+            .expect_err("metadata drift should reject the backup");
+
+        assert!(matches!(error, BackupError::Integrity(_)));
+        assert!(!fixture.backup_dir.exists());
+    }
+
+    #[test]
+    fn failed_post_restore_validation_rolls_back_auth_and_metadata() {
+        let source = BackupFixture::new("restore-rollback");
+        source.open_auth_probe("backup-auth");
+        source.write_metadata("catalog.csv", b"backup,metadata\n");
+        create_backup(&source.create_options(false, false))
+            .expect("metadata backup should complete");
+
+        let target_root = source.root.path().join("restore-rollback-target");
+        let target_config = StorageConfig::from_project_root(&target_root);
+        migrate_auth_database(target_config.auth_db_path())
+            .expect("target auth database should migrate");
+        write_probe(target_config.auth_db_path(), "target-auth");
+        fs::create_dir_all(target_config.meta_dir()).expect("target metadata should exist");
+        fs::write(
+            target_config.meta_dir().join("target.csv"),
+            b"target,metadata\n",
+        )
+        .expect("target metadata should write");
+        let before_metadata =
+            snapshot_directory(target_config.meta_dir()).expect("target metadata should snapshot");
+        let options = BackupRestoreOptions {
+            storage_config: target_config.clone(),
+            auth_db_path: target_config.auth_db_path().to_path_buf(),
+            backup_dir: source.backup_dir.clone(),
+        };
+        let mut hook = CorruptRestoredMetadata;
+
+        let error = restore_backup_at_with_hook(&options, 10_000.0, &mut hook)
+            .expect_err("post-restore corruption should fail validation");
+
+        assert!(matches!(error, BackupError::Integrity(_)));
+        assert_eq!(
+            query_probe_value(target_config.auth_db_path()),
+            "target-auth"
+        );
+        assert_eq!(
+            snapshot_directory(target_config.meta_dir())
+                .expect("rolled-back metadata should snapshot"),
+            before_metadata
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn metadata_creation_rejects_symbolic_links_and_special_files() {
+        use std::os::unix::fs::symlink;
+        use std::os::unix::net::UnixListener;
+
+        let symlink_fixture = BackupFixture::new("metadata-symlink");
+        symlink_fixture.open_auth_probe("row");
+        symlink_fixture.write_metadata("target.csv", b"target\n");
+        symlink(
+            symlink_fixture.source_config.meta_dir().join("target.csv"),
+            symlink_fixture.source_config.meta_dir().join("link.csv"),
+        )
+        .expect("metadata symlink should be created");
+        assert!(matches!(
+            create_backup(&symlink_fixture.create_options(false, false)),
+            Err(BackupError::Integrity(_))
+        ));
+
+        let special_fixture = BackupFixture::new("metadata-special");
+        special_fixture.open_auth_probe("row");
+        fs::create_dir_all(special_fixture.source_config.meta_dir())
+            .expect("metadata directory should exist");
+        let _socket = UnixListener::bind(special_fixture.source_config.meta_dir().join("socket"))
+            .expect("metadata socket should be created");
+        assert!(matches!(
+            create_backup(&special_fixture.create_options(false, false)),
+            Err(BackupError::Integrity(_))
+        ));
+
+        let verify_symlink = BackupFixture::new("metadata-verify-symlink");
+        verify_symlink.open_auth_probe("row");
+        verify_symlink.write_metadata("catalog.csv", b"catalog\n");
+        create_backup(&verify_symlink.create_options(false, false))
+            .expect("metadata backup should complete");
+        fs::remove_file(verify_symlink.backup_dir.join("meta/catalog.csv"))
+            .expect("metadata component should be removed");
+        symlink(
+            verify_symlink.backup_dir.join("auth.sqlite"),
+            verify_symlink.backup_dir.join("meta/catalog.csv"),
+        )
+        .expect("backup symlink should be created");
+        assert!(matches!(
+            verify_backup(&verify_symlink.backup_dir),
+            Err(BackupError::Integrity(_))
+        ));
+
+        let verify_special = BackupFixture::new("metadata-verify-special");
+        verify_special.open_auth_probe("row");
+        verify_special.write_metadata("catalog.csv", b"catalog\n");
+        create_backup(&verify_special.create_options(false, false))
+            .expect("metadata backup should complete");
+        fs::remove_file(verify_special.backup_dir.join("meta/catalog.csv"))
+            .expect("metadata component should be removed");
+        let _backup_socket = UnixListener::bind(verify_special.backup_dir.join("meta/catalog.csv"))
+            .expect("backup socket should be created");
+        assert!(matches!(
+            verify_backup(&verify_special.backup_dir),
+            Err(BackupError::Integrity(_))
+        ));
     }
 
     #[test]
@@ -1647,6 +2160,13 @@ mod tests {
             fs::write(path, value).expect("state fixture should write");
         }
 
+        fn write_metadata(&self, filename: &str, value: &[u8]) {
+            let path = self.source_config.meta_dir().join(filename);
+            fs::create_dir_all(path.parent().expect("metadata path should have a parent"))
+                .expect("metadata directory should exist");
+            fs::write(path, value).expect("metadata fixture should write");
+        }
+
         fn create_options(
             &self,
             include_index_databases: bool,
@@ -1660,6 +2180,48 @@ mod tests {
                 include_push_state,
             }
         }
+    }
+
+    fn convert_backup_to_version_one(backup_dir: &Path) {
+        let manifest_path = backup_dir.join("manifest.json");
+        let mut manifest: serde_json::Value =
+            serde_json::from_slice(&fs::read(&manifest_path).expect("manifest should read"))
+                .expect("manifest should parse");
+        manifest["version"] = serde_json::json!(1);
+        manifest["selection"]
+            .as_object_mut()
+            .expect("selection should be an object")
+            .remove("metadata");
+        manifest["components"]
+            .as_array_mut()
+            .expect("components should be an array")
+            .retain(|component| component["kind"] != "metadata");
+        let meta_dir = backup_dir.join("meta");
+        if meta_dir.exists() {
+            fs::remove_dir_all(meta_dir).expect("version two metadata should be removed");
+        }
+        write_json_manifest(&manifest_path, &manifest);
+    }
+
+    fn update_metadata_component(backup_dir: &Path, update: impl FnOnce(&mut serde_json::Value)) {
+        let manifest_path = backup_dir.join("manifest.json");
+        let mut manifest: serde_json::Value =
+            serde_json::from_slice(&fs::read(&manifest_path).expect("manifest should read"))
+                .expect("manifest should parse");
+        let component = manifest["components"]
+            .as_array_mut()
+            .expect("components should be an array")
+            .iter_mut()
+            .find(|component| component["kind"] == "metadata")
+            .expect("metadata component should exist");
+        update(component);
+        write_json_manifest(&manifest_path, &manifest);
+    }
+
+    fn write_json_manifest(path: &Path, manifest: &serde_json::Value) {
+        let mut bytes = serde_json::to_vec_pretty(manifest).expect("manifest should encode");
+        bytes.push(b'\n');
+        fs::write(path, bytes).expect("manifest should update");
     }
 
     fn write_probe(path: &Path, value: &str) {
