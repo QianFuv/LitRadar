@@ -179,6 +179,20 @@ litradar index --secret-key-file PATH
 
 命令结果保持原有顶层 `status`、`message` 和 `csvs` 字段，并新增不含密钥的 `effective_concurrency`，记录本次实际使用的 `workers`、`processes` 和 `issue_batch`。每个 CSV 结果使用定长的 `written_article_count`；旧的 `written_article_ids` 列表不再返回。内部索引工作进程同样只返回计数，避免结果大小随文章数量增长。
 
+### Meta 期刊预检
+
+每个非空 CSV 在索引或更新前都经过 Meta 期刊预检。显式传入 `--file` 时只检查该文件；未传入时仍按文件名顺序逐个检查和处理，不把不同目录之间重复出现的同一期刊视为冲突。
+
+预检顺序如下：
+
+1. 在创建数据库运行记录前检查 `source`，并确认本文件内每行都能生成唯一稳定期刊 ID。重复项会在错误中同时列出两条期刊标题和身份值；系统不会模糊猜测并自动改写 CSV。
+2. 取得该索引库的运行租约并启动心跳后，在一个立即事务中补齐缺失的中性 `journals` 行，并同步 `journal_meta` 的 `source_csv`、`area`、`csv_title`、`csv_issn` 和 `csv_library`。
+3. 事务内逐行复验 journal 与上述 CSV 字段。全部匹配并提交后，才会构造本地数据源客户端或启动多进程 worker。
+
+已有 `journals` 行及 `journal_meta.resolved_*` 上游解析字段不会被预检覆盖；缺失 journal 的可用性、文章存在性、排名和电子 ISSN 等 provider 字段保持 `NULL`，等待正常索引解析。输入身份错误在运行记录创建前失败；数据库同步或复验错误会回滚整个目录变更，把已创建的父运行标记为 `failed`，释放本方租约，并保持 worker 启动数为零。之后发生的错误才属于正常上游索引阶段。
+
+该预检是 rate-limit neutral：它只读取 CSV 和本地 SQLite，不额外探测 Crossref、OpenAlex、Semantic Scholar 或 CNKI，因此不能保证上游在随后请求时仍然可用。需要修正歧义身份时，应先审查并更新 `data/meta/*.csv`，再重跑索引。内嵌调度任务最终调用同一个 `litradar index` 路径，自动执行相同预检。
+
 ### 实时恢复与增量同步
 
 每个非空 CSV 的实时索引或更新在对应索引库中取得 `index_run_lease`。父运行先以 `running` 持久化，后台每 30 秒续期，租约有效期为 300 秒。同一数据库存在未过期所有者时，新命令会在调用上游或启动 worker 前失败；不要并发重试或手工删除租约。正常错误会写入 `failed` 并释放租约。进程被强制终止时，确认旧进程确实消失，等待租约过期后重跑；下一次命令会把旧父运行标为 `interrupted` 并继续。
