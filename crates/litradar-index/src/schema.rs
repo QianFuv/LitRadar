@@ -1144,6 +1144,117 @@ pub fn upsert_meta(connection: &Connection, record: &MetaRecord) -> rusqlite::Re
     Ok(())
 }
 
+/// Synchronize one CSV-owned journal catalog entry without overwriting provider data.
+///
+/// # Arguments
+///
+/// * `connection` - Open SQLite connection or transaction.
+/// * `journal` - Neutral journal shell used only when the journal is missing.
+/// * `metadata` - CSV-owned metadata projection to insert or refresh.
+///
+/// # Returns
+///
+/// Number of inserted or updated rows across `journals` and `journal_meta`.
+pub(crate) fn sync_journal_catalog_entry(
+    connection: &Connection,
+    journal: &JournalRecord,
+    metadata: &MetaRecord,
+) -> rusqlite::Result<usize> {
+    let journal_change_count = connection.execute(
+        "
+        INSERT INTO journals (
+            journal_id, library_id, platform_journal_id, title, issn, eissn,
+            scimago_rank, cover_url, available, toc_data_approved_and_live,
+            has_articles
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+        ON CONFLICT(journal_id) DO NOTHING
+        ",
+        params![
+            journal.journal_id,
+            journal.library_id,
+            journal.platform_journal_id,
+            journal.title,
+            journal.issn,
+            journal.eissn,
+            journal.scimago_rank,
+            journal.cover_url,
+            journal.available,
+            journal.toc_data_approved_and_live,
+            journal.has_articles,
+        ],
+    )?;
+    let metadata_change_count = connection.execute(
+        "
+        INSERT INTO journal_meta (
+            journal_id, source_csv, area, csv_title, csv_issn, csv_library,
+            resolved_source, resolved_source_id, resolved_title, resolved_issn,
+            resolved_eissn
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, NULL, NULL, NULL, NULL, NULL)
+        ON CONFLICT(journal_id) DO UPDATE SET
+            source_csv = excluded.source_csv,
+            area = excluded.area,
+            csv_title = excluded.csv_title,
+            csv_issn = excluded.csv_issn,
+            csv_library = excluded.csv_library
+        WHERE journal_meta.source_csv IS NOT excluded.source_csv
+           OR journal_meta.area IS NOT excluded.area
+           OR journal_meta.csv_title IS NOT excluded.csv_title
+           OR journal_meta.csv_issn IS NOT excluded.csv_issn
+           OR journal_meta.csv_library IS NOT excluded.csv_library
+        ",
+        params![
+            metadata.journal_id,
+            metadata.source_csv,
+            metadata.area,
+            metadata.csv_title,
+            metadata.csv_issn,
+            metadata.csv_library,
+        ],
+    )?;
+    Ok(journal_change_count + metadata_change_count)
+}
+
+/// Check that one journal and its CSV-owned metadata projection are current.
+///
+/// # Arguments
+///
+/// * `connection` - Open SQLite connection or transaction.
+/// * `metadata` - Expected CSV-owned metadata projection.
+///
+/// # Returns
+///
+/// Whether the journal exists and every CSV-owned metadata field matches.
+pub(crate) fn journal_catalog_entry_is_current(
+    connection: &Connection,
+    metadata: &MetaRecord,
+) -> rusqlite::Result<bool> {
+    connection.query_row(
+        "
+        SELECT EXISTS (
+            SELECT 1
+            FROM journals AS journal
+            INNER JOIN journal_meta AS metadata
+                ON metadata.journal_id = journal.journal_id
+            WHERE journal.journal_id = ?1
+              AND metadata.source_csv = ?2
+              AND metadata.area IS ?3
+              AND metadata.csv_title IS ?4
+              AND metadata.csv_issn IS ?5
+              AND metadata.csv_library IS ?6
+        )
+        ",
+        params![
+            metadata.journal_id,
+            metadata.source_csv,
+            metadata.area,
+            metadata.csv_title,
+            metadata.csv_issn,
+            metadata.csv_library,
+        ],
+        |row| row.get::<_, i64>(0).map(|value| value == 1),
+    )
+}
+
 /// Insert or update issue records.
 ///
 /// # Arguments
@@ -1902,11 +2013,12 @@ mod tests {
     use super::{
         apply_article_changes, assert_index_run_lease_owner, begin_index_run,
         get_journal_synchronization_date, heartbeat_index_run_lease, init_index_db,
-        init_index_db_with_simple_tokenizer_path, mark_article_listing_ready, mark_journal_done,
-        open_index_db, persist_index_run_stats, refresh_article_listing_for_articles,
-        refresh_index_run_lease_after_acquisition, release_index_run_lease,
-        simple_tokenizer_path_from_root, upsert_article_search, upsert_articles, upsert_journal,
-        upsert_meta, with_immediate_index_transaction, ChangeEventContext, IndexRunLeaseError,
+        init_index_db_with_simple_tokenizer_path, journal_catalog_entry_is_current,
+        mark_article_listing_ready, mark_journal_done, open_index_db, persist_index_run_stats,
+        refresh_article_listing_for_articles, refresh_index_run_lease_after_acquisition,
+        release_index_run_lease, simple_tokenizer_path_from_root, sync_journal_catalog_entry,
+        upsert_article_search, upsert_articles, upsert_journal, upsert_meta,
+        with_immediate_index_transaction, ChangeEventContext, IndexRunLeaseError,
         IndexRunStartRequest,
     };
 
@@ -1948,6 +2060,140 @@ mod tests {
         "idx_index_change_events_run_membership",
         "idx_index_change_events_run_order",
     ];
+
+    #[test]
+    fn catalog_sync_inserts_neutral_journal_and_csv_metadata() {
+        let connection = Connection::open_in_memory().expect("in-memory db should open");
+        init_index_db(&connection).expect("schema should initialize");
+        let journal = catalog_journal_record();
+        let metadata = catalog_meta_record();
+
+        let change_count = sync_journal_catalog_entry(&connection, &journal, &metadata)
+            .expect("missing catalog entry should synchronize");
+
+        let stored_journal: (
+            String,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            Option<i64>,
+        ) = connection
+            .query_row(
+                "SELECT library_id, platform_journal_id, title, issn, available FROM journals WHERE journal_id = 51",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
+            )
+            .expect("neutral journal should load");
+        assert_eq!(change_count, 2);
+        assert_eq!(
+            stored_journal,
+            (
+                "scholarly".to_string(),
+                Some("1234-5678".to_string()),
+                Some("Catalog Journal".to_string()),
+                Some("1234-5678".to_string()),
+                None,
+            )
+        );
+        assert!(journal_catalog_entry_is_current(&connection, &metadata)
+            .expect("catalog metadata should verify"));
+    }
+
+    #[test]
+    fn catalog_sync_refreshes_csv_fields_and_preserves_provider_fields() {
+        let connection = Connection::open_in_memory().expect("in-memory db should open");
+        init_index_db(&connection).expect("schema should initialize");
+        let provider_journal = JournalRecord {
+            journal_id: 51,
+            library_id: "provider-library".to_string(),
+            platform_journal_id: Some("provider-id".to_string()),
+            title: Some("Provider Title".to_string()),
+            issn: Some("1111-1111".to_string()),
+            eissn: Some("2222-2222".to_string()),
+            scimago_rank: Some(4.5),
+            cover_url: Some("https://example.test/cover".to_string()),
+            available: Some(1),
+            toc_data_approved_and_live: Some(1),
+            has_articles: Some(1),
+        };
+        upsert_journal(&connection, &provider_journal).expect("provider journal should insert");
+        upsert_meta(
+            &connection,
+            &MetaRecord {
+                journal_id: 51,
+                source_csv: "old.csv".to_string(),
+                area: Some("old area".to_string()),
+                csv_title: Some("Old CSV Title".to_string()),
+                csv_issn: Some("0000-0000".to_string()),
+                csv_library: Some("old-library".to_string()),
+                resolved_source: Some("openalex".to_string()),
+                resolved_source_id: Some("S123".to_string()),
+                resolved_title: Some("Resolved Title".to_string()),
+                resolved_issn: Some("1111-1111".to_string()),
+                resolved_eissn: Some("2222-2222".to_string()),
+            },
+        )
+        .expect("old metadata should insert");
+        let metadata = catalog_meta_record();
+
+        let change_count =
+            sync_journal_catalog_entry(&connection, &catalog_journal_record(), &metadata)
+                .expect("stale catalog fields should synchronize");
+
+        let stored_journal: (String, Option<String>, Option<String>, Option<i64>) = connection
+            .query_row(
+                "SELECT library_id, platform_journal_id, eissn, available FROM journals WHERE journal_id = 51",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .expect("provider journal should load");
+        let resolved_fields: [Option<String>; 5] = connection
+            .query_row(
+                "SELECT resolved_source, resolved_source_id, resolved_title, resolved_issn, resolved_eissn FROM journal_meta WHERE journal_id = 51",
+                [],
+                |row| Ok([row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?]),
+            )
+            .expect("resolved metadata should load");
+        assert_eq!(change_count, 1);
+        assert_eq!(
+            stored_journal,
+            (
+                "provider-library".to_string(),
+                Some("provider-id".to_string()),
+                Some("2222-2222".to_string()),
+                Some(1),
+            )
+        );
+        assert_eq!(
+            resolved_fields,
+            [
+                Some("openalex".to_string()),
+                Some("S123".to_string()),
+                Some("Resolved Title".to_string()),
+                Some("1111-1111".to_string()),
+                Some("2222-2222".to_string()),
+            ]
+        );
+        assert!(journal_catalog_entry_is_current(&connection, &metadata)
+            .expect("refreshed catalog metadata should verify"));
+    }
+
+    #[test]
+    fn catalog_sync_is_a_noop_when_csv_fields_are_current() {
+        let connection = Connection::open_in_memory().expect("in-memory db should open");
+        init_index_db(&connection).expect("schema should initialize");
+        let journal = catalog_journal_record();
+        let metadata = catalog_meta_record();
+        sync_journal_catalog_entry(&connection, &journal, &metadata)
+            .expect("first catalog sync should succeed");
+
+        let change_count = sync_journal_catalog_entry(&connection, &journal, &metadata)
+            .expect("current catalog sync should succeed");
+
+        assert_eq!(change_count, 0);
+        assert_eq!(table_count(&connection, "journals"), 1);
+        assert_eq!(table_count(&connection, "journal_meta"), 1);
+    }
 
     #[test]
     fn open_index_db_sets_busy_timeout() {
@@ -2764,6 +3010,38 @@ mod tests {
             available: Some(1),
             toc_data_approved_and_live: None,
             has_articles: Some(1),
+        }
+    }
+
+    fn catalog_journal_record() -> JournalRecord {
+        JournalRecord {
+            journal_id: 51,
+            library_id: "scholarly".to_string(),
+            platform_journal_id: Some("1234-5678".to_string()),
+            title: Some("Catalog Journal".to_string()),
+            issn: Some("1234-5678".to_string()),
+            eissn: None,
+            scimago_rank: None,
+            cover_url: None,
+            available: None,
+            toc_data_approved_and_live: None,
+            has_articles: None,
+        }
+    }
+
+    fn catalog_meta_record() -> MetaRecord {
+        MetaRecord {
+            journal_id: 51,
+            source_csv: "journals.csv".to_string(),
+            area: Some("catalog area".to_string()),
+            csv_title: Some("Catalog Journal".to_string()),
+            csv_issn: Some("1234-5678".to_string()),
+            csv_library: Some("scholarly".to_string()),
+            resolved_source: None,
+            resolved_source_id: None,
+            resolved_title: None,
+            resolved_issn: None,
+            resolved_eissn: None,
         }
     }
 

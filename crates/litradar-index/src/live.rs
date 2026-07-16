@@ -1,5 +1,6 @@
 //! Live CSV index orchestration for the unified application.
 
+use std::collections::BTreeMap;
 use std::error::Error;
 use std::fmt;
 use std::fs;
@@ -20,13 +21,17 @@ use serde::{Deserialize, Serialize};
 use crate::changes::{write_change_manifest_from_events, ChangeWriteError};
 use crate::cnki::{process_cnki_row, CnkiIndexConfig, CnkiIndexError, CnkiProcessContext};
 use crate::schema::{
-    begin_index_run, mark_article_listing_ready, open_index_db, optimize_index_db,
-    persist_index_run_stats, with_immediate_index_transaction, ChangeEventContext,
-    IndexRunLeaseContext, IndexRunLeaseError, IndexRunStartRequest,
+    begin_index_run, journal_catalog_entry_is_current, mark_article_listing_ready, open_index_db,
+    optimize_index_db, persist_index_run_stats, sync_journal_catalog_entry,
+    with_immediate_index_transaction, ChangeEventContext, IndexRunLeaseContext, IndexRunLeaseError,
+    IndexRunStartRequest,
 };
 use crate::scholarly::{process_scholarly_row, ScholarlyIndexError, ScholarlyProcessContext};
 use crate::stats::{ApiCallStats, IndexRunStats, PathCountIncrements, PathStats};
-use crate::transforms::{build_journal_id, journal_title_from_row, source_from_row, CsvRow};
+use crate::transforms::{
+    build_journal_id, build_meta_record, journal_title_from_row, source_from_row, CsvRow,
+    JournalRecord,
+};
 
 const SCHOLARLY_SOURCE: &str = "scholarly";
 const CNKI_SOURCE: &str = "cnki";
@@ -1208,6 +1213,7 @@ fn run_live_csv_index_with_runtime(
         });
     }
     validate_sources(&rows)?;
+    validate_unique_journal_identities(&rows)?;
     validate_required_source_config(&rows, &config.scholarly_config)?;
     if config.notify && !config.update {
         return Err(LiveIndexError::Notify(
@@ -1265,6 +1271,18 @@ fn run_live_csv_index_with_runtime(
                 ));
             }
         };
+    if let Err(error) = preflight_live_meta_catalog(&connection, &lease_context, &rows, &csv_file) {
+        let stats = IndexRunStats::new(run_id.clone(), csv_file.clone(), timestamp.clone());
+        return Err(finalize_failed_live_run(
+            &connection,
+            &lease_context,
+            Some(&mut heartbeat),
+            stats,
+            expected_journal_count,
+            &timestamp,
+            error,
+        ));
+    }
     let journal_context = LiveJournalRowsContext {
         rows: &rows,
         csv_path,
@@ -1524,6 +1542,98 @@ fn validate_sources(rows: &[CsvRow]) -> Result<(), LiveIndexError> {
     Ok(())
 }
 
+fn validate_unique_journal_identities(rows: &[CsvRow]) -> Result<(), LiveIndexError> {
+    let mut identities = BTreeMap::new();
+    for row in rows {
+        let title = journal_title_from_row(row);
+        let identity = journal_identity_from_row(row).ok_or_else(|| {
+            LiveIndexError::InvalidConfig(format!(
+                "Journal metadata row has no id, ISSN, or title: {title}"
+            ))
+        })?;
+        let journal_id = build_journal_id(row).ok_or_else(|| {
+            LiveIndexError::InvalidConfig(format!(
+                "Journal metadata row has no stable identity: {title}"
+            ))
+        })?;
+        if let Some((existing_title, existing_identity)) =
+            identities.insert(journal_id, (title.clone(), identity.clone()))
+        {
+            return Err(LiveIndexError::InvalidConfig(format!(
+                "Duplicate journal identity {journal_id} for {existing_title} ({existing_identity}) and {title} ({identity})"
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn preflight_live_meta_catalog(
+    connection: &Connection,
+    lease_context: &IndexRunLeaseContext,
+    rows: &[CsvRow],
+    csv_file: &str,
+) -> Result<(), LiveIndexError> {
+    with_immediate_index_transaction(connection, |transaction| {
+        lease_context.assert_owner(transaction)?;
+        for row in rows {
+            let journal_id = build_journal_id(row).ok_or_else(|| {
+                LiveIndexError::InvalidConfig(format!(
+                    "Journal metadata row has no stable identity: {}",
+                    journal_title_from_row(row)
+                ))
+            })?;
+            let journal = build_neutral_catalog_journal(journal_id, row);
+            let metadata = build_meta_record(journal_id, csv_file, row);
+            sync_journal_catalog_entry(transaction, &journal, &metadata)?;
+        }
+        for row in rows {
+            let journal_id = build_journal_id(row).ok_or_else(|| {
+                LiveIndexError::InvalidConfig(format!(
+                    "Journal metadata row has no stable identity: {}",
+                    journal_title_from_row(row)
+                ))
+            })?;
+            let metadata = build_meta_record(journal_id, csv_file, row);
+            if !journal_catalog_entry_is_current(transaction, &metadata)? {
+                return Err(LiveIndexError::InvalidConfig(format!(
+                    "Journal metadata preflight verification failed for {}",
+                    journal_title_from_row(row)
+                )));
+            }
+        }
+        Ok::<(), LiveIndexError>(())
+    })
+}
+
+fn build_neutral_catalog_journal(journal_id: i64, row: &CsvRow) -> JournalRecord {
+    JournalRecord {
+        journal_id,
+        library_id: source_from_row(row),
+        platform_journal_id: optional_csv_value(row, "id"),
+        title: optional_csv_value(row, "title"),
+        issn: optional_csv_value(row, "issn"),
+        eissn: None,
+        scimago_rank: None,
+        cover_url: None,
+        available: None,
+        toc_data_approved_and_live: None,
+        has_articles: None,
+    }
+}
+
+fn journal_identity_from_row(row: &CsvRow) -> Option<String> {
+    ["id", "issn", "title"]
+        .into_iter()
+        .find_map(|key| optional_csv_value(row, key))
+}
+
+fn optional_csv_value(row: &CsvRow, key: &str) -> Option<String> {
+    row.get(key).and_then(|value| {
+        let trimmed = value.trim();
+        (!trimmed.is_empty()).then(|| trimmed.to_string())
+    })
+}
+
 fn validate_required_source_config(
     rows: &[CsvRow],
     config: &LiveScholarlyConfig,
@@ -1606,16 +1716,19 @@ mod tests {
         csv_paths, live_worker_command, open_live_index_connection, parse_csv_line, read_csv_rows,
         run_live_csv_index_with_runtime, run_live_index, run_live_index_heartbeat,
         run_live_journal_rows_in_worker_processes, run_notify_command_for_manifest,
-        validate_required_source_config, validate_sources, LiveIndexConfig, LiveIndexError,
-        LiveIndexHeartbeatState, LiveIndexWorkerRequest, LiveIndexWorkerResponse,
-        LiveIndexWorkerStats, LiveJournalRowsContext, LiveRunTime, LiveWorkerLauncher,
-        ProcessLiveWorkerLauncher,
+        validate_required_source_config, validate_sources, validate_unique_journal_identities,
+        LiveIndexConfig, LiveIndexError, LiveIndexHeartbeatState, LiveIndexWorkerRequest,
+        LiveIndexWorkerResponse, LiveIndexWorkerStats, LiveJournalRowsContext, LiveRunTime,
+        LiveWorkerLauncher, ProcessLiveWorkerLauncher,
     };
     use crate::schema::{
-        begin_index_run, init_index_db, IndexRunLeaseContext, IndexRunStartRequest,
+        begin_index_run, init_index_db, journal_catalog_entry_is_current, IndexRunLeaseContext,
+        IndexRunStartRequest,
     };
     use crate::stats::IndexRunStats;
-    use crate::transforms::{build_journal_id, journal_title_from_row, source_from_row, CsvRow};
+    use crate::transforms::{
+        build_journal_id, build_meta_record, journal_title_from_row, source_from_row, CsvRow,
+    };
 
     #[test]
     fn csv_parser_handles_quotes() {
@@ -1637,6 +1750,140 @@ mod tests {
         ]);
 
         assert!(validate_sources(&[row]).is_err());
+    }
+
+    #[test]
+    fn journal_identity_validation_names_both_conflicting_rows() {
+        let rows = vec![
+            worker_row("same-id", "First Journal"),
+            worker_row("same-id", "Second Journal"),
+        ];
+
+        let error = validate_unique_journal_identities(&rows)
+            .expect_err("duplicate stable identities should fail");
+
+        assert!(matches!(
+            error,
+            LiveIndexError::InvalidConfig(message)
+                if message.contains("First Journal")
+                    && message.contains("Second Journal")
+                    && message.contains("same-id")
+        ));
+    }
+
+    #[test]
+    fn duplicate_identity_rejects_before_database_or_worker_side_effects() {
+        let root = tempdir().expect("temp root should be created");
+        let csv_path = root.path().join("data").join("meta").join("journals.csv");
+        let db_path = root
+            .path()
+            .join("data")
+            .join("index")
+            .join("journals.sqlite");
+        fs::create_dir_all(csv_path.parent().expect("CSV should have a parent"))
+            .expect("metadata directory should be created");
+        fs::write(
+            &csv_path,
+            "source,id,title,issn\nscholarly,same-id,First Journal,1234-5678\nscholarly,same-id,Second Journal,2345-6789\n",
+        )
+        .expect("duplicate CSV should be written");
+        let launcher = RecordingWorkerLauncher::default();
+
+        let error = run_live_csv_index_with_runtime(
+            &live_config(root.path()),
+            &csv_path,
+            &db_path,
+            &launcher,
+            test_run_time(),
+            Duration::from_secs(60),
+        )
+        .expect_err("duplicate identities should reject the live run");
+
+        assert!(matches!(error, LiveIndexError::InvalidConfig(_)));
+        assert!(!db_path.exists());
+        assert!(launcher.requests.borrow().is_empty());
+    }
+
+    #[test]
+    fn metadata_preflight_is_current_before_workers_launch() {
+        let root = tempdir().expect("temp root should be created");
+        let (csv_path, db_path) = write_parallel_live_csv(root.path());
+        let launcher = RecordingWorkerLauncher {
+            should_observe_catalog: true,
+            ..RecordingWorkerLauncher::default()
+        };
+
+        run_live_csv_index_with_runtime(
+            &live_config(root.path()),
+            &csv_path,
+            &db_path,
+            &launcher,
+            test_run_time(),
+            Duration::from_secs(60),
+        )
+        .expect("preflighted run should succeed");
+
+        assert_eq!(*launcher.observed_catalog_is_current.borrow(), Some(true));
+        let connection = open_test_index(&db_path);
+        assert_eq!(table_count(&connection, "journals"), 2);
+        assert_eq!(table_count(&connection, "journal_meta"), 2);
+        let provider_flag_count: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM journals WHERE available IS NOT NULL OR toc_data_approved_and_live IS NOT NULL OR has_articles IS NOT NULL",
+                [],
+                |row| row.get(0),
+            )
+            .expect("provider flags should query");
+        assert_eq!(provider_flag_count, 0);
+    }
+
+    #[test]
+    fn metadata_preflight_verification_failure_rolls_back_and_launches_no_worker() {
+        let root = tempdir().expect("temp root should be created");
+        let (csv_path, db_path) = write_parallel_live_csv(root.path());
+        let connection = open_test_index(&db_path);
+        connection
+            .execute_batch(
+                "
+                CREATE TRIGGER discard_preflight_metadata
+                AFTER INSERT ON journal_meta
+                BEGIN
+                    DELETE FROM journal_meta WHERE journal_id = NEW.journal_id;
+                END;
+                ",
+            )
+            .expect("preflight verification failpoint should install");
+        drop(connection);
+        let launcher = RecordingWorkerLauncher::default();
+
+        let error = run_live_csv_index_with_runtime(
+            &live_config(root.path()),
+            &csv_path,
+            &db_path,
+            &launcher,
+            test_run_time(),
+            Duration::from_secs(60),
+        )
+        .expect_err("discarded metadata should fail preflight verification");
+
+        let connection = open_test_index(&db_path);
+        let parent_status: String = connection
+            .query_row(
+                "SELECT status FROM index_runs WHERE run_id = ?1",
+                [test_run_time().run_id("journals")],
+                |row| row.get(0),
+            )
+            .expect("failed parent should load");
+        assert!(matches!(
+            error,
+            LiveIndexError::InvalidConfig(message)
+                if message.contains("preflight verification") && message.contains("Journal A")
+        ));
+        assert!(launcher.requests.borrow().is_empty());
+        assert_eq!(parent_status, "failed");
+        assert_eq!(table_count(&connection, "journals"), 0);
+        assert_eq!(table_count(&connection, "journal_meta"), 0);
+        assert_eq!(table_count(&connection, "index_run_lease"), 0);
     }
 
     #[test]
@@ -2429,6 +2676,8 @@ mod tests {
         failed_worker_id: Option<usize>,
         should_observe_parent: bool,
         observed_parent: RefCell<Option<(String, String, i64)>>,
+        should_observe_catalog: bool,
+        observed_catalog_is_current: RefCell<Option<bool>>,
         should_steal_lease: bool,
     }
 
@@ -2451,6 +2700,20 @@ mod tests {
                     )
                     .expect("running parent should be visible before workers launch");
                 self.observed_parent.replace(Some(parent));
+            }
+            if self.should_observe_catalog {
+                let request = requests
+                    .first()
+                    .expect("observed worker requests should not be empty");
+                let connection = open_test_index(&request.db_path);
+                let is_current = requests.iter().flat_map(|item| &item.rows).all(|row| {
+                    let journal_id = build_journal_id(row)
+                        .expect("worker metadata row should have a stable identity");
+                    let metadata = build_meta_record(journal_id, &request.csv_file, row);
+                    journal_catalog_entry_is_current(&connection, &metadata)
+                        .expect("worker-visible metadata should verify")
+                });
+                self.observed_catalog_is_current.replace(Some(is_current));
             }
             if self.should_steal_lease {
                 let request = requests
