@@ -1,3 +1,7 @@
+/**
+ * Root application document, metadata, fonts, and providers.
+ */
+
 import type { Metadata, Viewport } from 'next';
 import { Geist, Geist_Mono } from 'next/font/google';
 import Providers from './providers';
@@ -14,8 +18,11 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: 'LitRadar | QianFuv',
-  description: 'LitRadar by QianFuv',
+  title: {
+    default: 'LitRadar | QianFuv',
+    template: '%s | LitRadar',
+  },
+  description: '检索、收藏并追踪学术文献。',
   icons: {
     icon: '/litradar-logo.png',
   },
@@ -29,6 +36,12 @@ export const viewport: Viewport = {
   ],
 };
 
+/**
+ * Render the application document, providers, and skip navigation link.
+ *
+ * @param props - Root layout children.
+ * @returns Application document.
+ */
 export default function RootLayout({
   children,
 }: Readonly<{

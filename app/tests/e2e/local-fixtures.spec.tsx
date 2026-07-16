@@ -132,6 +132,21 @@ async function redirectsAuthenticatedLogin(page: Page): Promise<void> {
 }
 
 /**
+ * Verify an unknown route renders the exported custom not-found page.
+ *
+ * @param page - Playwright browser page.
+ */
+async function showsCustomNotFoundPage(page: Page): Promise<void> {
+  await page.route('**/api/**', serveBootstrapApi);
+  const response = await page.goto('/missing-browser-fixture');
+
+  expect(response?.status()).toBe(404);
+  await expect(page).toHaveTitle('页面未找到 | LitRadar');
+  await expect(page.getByRole('heading', { name: '页面未找到' })).toBeVisible();
+  await expect(page.getByRole('link', { name: '返回首页' })).toHaveAttribute('href', '/');
+}
+
+/**
  * Verify an authenticated tracking flow can complete with local API fixtures.
  *
  * @param page - Playwright browser page.
@@ -246,6 +261,15 @@ async function authenticatedLoginRedirectTest({ page }: { page: Page }): Promise
 }
 
 /**
+ * Run the custom not-found browser test.
+ *
+ * @param fixtures - Playwright page fixture.
+ */
+async function customNotFoundTest({ page }: { page: Page }): Promise<void> {
+  await showsCustomNotFoundPage(page);
+}
+
+/**
  * Run the authenticated tracking browser test.
  *
  * @param fixtures - Playwright page fixture.
@@ -268,5 +292,6 @@ test(
   'redirects an authenticated login visit without showing the form',
   authenticatedLoginRedirectTest,
 );
+test('renders the custom not-found page for an unknown route', customNotFoundTest);
 test('completes an authenticated tracking push with local fixtures', fixtureTrackingTest);
 test('supports accessible navigation and theme selection', userMenuNavigationTest);

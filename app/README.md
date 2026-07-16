@@ -75,6 +75,8 @@ pnpm dev
 
 除 `/login` 外，页面都位于 `app/(protected)/`，布局会通过 `AuthProvider` 恢复当前用户并把未登录访问重定向到 `/login?next=...`。`/admin` 还在页面层检查 `is_admin`。
 
+根布局提供统一标题模板，各页面通过服务端 page/layout 导出独立标题和描述。未知路由使用可静态导出的自定义 404 页面；普通路由错误提供重试和首页入口，根布局失败时由不依赖 Providers 的独立全局错误文档兜底。
+
 认证完成后，所有受保护页面右下角都会显示全局用户菜单，可直接访问首页、收藏、追踪、每周更新和账号设置；管理员还会看到管理面板入口。菜单同时提供跟随系统、浅色和深色三种主题偏好，并通过 Radix Dropdown Menu 处理键盘导航、Escape、点击外部关闭和焦点归还。菜单位置与页面底部留白会考虑设备安全区。
 
 ## 目录职责
@@ -85,6 +87,9 @@ app/
 │   ├── (protected)/       认证后的 App Router 页面
 │   ├── login/             公开登录/注册页面
 │   ├── globals.css        Tailwind、主题 token、字体和全局无障碍规则
+│   ├── error.tsx          常规路由错误边界与重试入口
+│   ├── global-error.tsx   根布局失败时的独立错误文档
+│   ├── not-found.tsx      静态导出的自定义 404 页面
 │   ├── layout.tsx         元数据、字体变量、skip link 和根 Provider
 │   └── providers.tsx      Theme、nuqs、React Query 与认证上下文
 ├── components/
