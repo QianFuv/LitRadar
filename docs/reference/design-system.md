@@ -45,22 +45,25 @@ ThemeProvider 使用 `attribute="class"`、`defaultTheme="system"` 和 `enableSy
 
 ### 核心颜色
 
-| Token                                  | Light                     | Dark                  | 用途              |
-| -------------------------------------- | ------------------------- | --------------------- | ----------------- |
-| `--background`                         | `#ffffff`                 | `#000000`             | 页面背景          |
-| `--foreground`                         | `#171717`                 | `#ededed`             | 主文字            |
-| `--card` / `--popover`                 | `#ffffff`                 | `#000000`             | 浮层与卡片        |
-| `--primary`                            | `#171717`                 | `#ededed`             | 主操作            |
-| `--primary-foreground`                 | `#ffffff`                 | `#000000`             | 主操作文字        |
-| `--secondary` / `--muted` / `--accent` | `#fafafa`                 | `#111111`             | 次级和 hover 表面 |
-| `--muted-foreground`                   | `#666666`                 | `#888888`             | 辅助文字          |
-| `--destructive`                        | `#ff5b4f`                 | `#ff5b4f`             | 破坏性操作        |
-| `--info` / `--info-foreground`         | `#ebf5ff` / `#0068d6`     | `#00152b` / `#ebf5ff` | 信息 Badge        |
-| `--border` / `--input`                 | `#ebebeb`                 | `#333333`             | 边框和输入轮廓    |
-| `--ring`                               | `hsla(212, 100%, 48%, 1)` | 相同                  | 键盘焦点          |
-| `--sidebar-primary`                    | `#171717`                 | `#0070f3`             | 侧栏主状态        |
+| Token                                  | Light                 | Dark                  | 用途                   |
+| -------------------------------------- | --------------------- | --------------------- | ---------------------- |
+| `--background`                         | `#ffffff`             | `#000000`             | 页面背景               |
+| `--foreground`                         | `#171717`             | `#ededed`             | 主文字                 |
+| `--card` / `--popover`                 | `#ffffff`             | `#000000`             | 浮层与卡片             |
+| `--primary`                            | `#171717`             | `#ededed`             | 主操作                 |
+| `--primary-foreground`                 | `#ffffff`             | `#000000`             | 主操作文字             |
+| `--secondary` / `--muted` / `--accent` | `#fafafa`             | `#111111`             | 次级和 hover 表面      |
+| `--muted-foreground`                   | `#666666`             | `#888888`             | 辅助文字               |
+| `--destructive`                        | `#ff5b4f`             | `#ff5b4f`             | 破坏性操作             |
+| `--info` / `--info-foreground`         | `#ebf5ff` / `#0068d6` | `#00152b` / `#ebf5ff` | 信息 Badge             |
+| `--border` / `--input`                 | `#ebebeb`             | `#333333`             | 边框和输入轮廓         |
+| `--ring` / `--sidebar-ring`            | `#171717`             | `#ededed`             | 普通键盘焦点           |
+| `--sidebar-primary`                    | `#171717`             | `#ededed`             | 侧栏选中状态与重置按钮 |
+| `--sidebar-primary-foreground`         | `#ffffff`             | `#000000`             | 侧栏主状态文字         |
 
-侧栏的 background、foreground、primary、accent、border 和 ring 使用独立语义 token；滚动条也有 light/dark token。当前没有图表组件，因此不保留未使用的 chart token。新增颜色时应先判断它是否属于跨页面语义，再决定加入 token；单一局部状态色应留在场景内并提供深色对应。
+默认 UI chrome 包括页面/浮层表面、结构文字、边框、普通焦点环、默认或选中控件和导航状态；这些值在 light/dark 下都必须是黑、白或中性灰。侧栏的 background、foreground、primary、accent、border 和 ring 使用独立语义 token，暗色 `--sidebar-primary` 与前景组合保证“重置筛选”为近白底黑字；滚动条也使用灰阶 light/dark token。
+
+色相只用于有明确业务含义的状态：蓝色用于信息和搜索命中，红色用于错误与危险操作，黄/琥珀用于收藏和警告，绿色用于成功。每个状态还必须有文字、图标、边框差异或 ARIA role，颜色不能成为唯一信号。`litradar-logo.png` 及账号头像属于位图内容资产，不受 chrome 灰阶约束。当前没有图表组件，因此不保留未使用的 chart token；新增颜色时必须先归入上述语义边界。
 
 ## 圆角
 

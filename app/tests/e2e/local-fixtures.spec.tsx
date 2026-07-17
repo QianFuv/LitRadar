@@ -2,7 +2,9 @@
  * Browser flows backed exclusively by Playwright route fixtures.
  */
 
-import { expect, test, type Page, type Route } from '@playwright/test';
+import { expect, test, type Locator, type Page, type Route } from '@playwright/test';
+
+type ChromeColorProperty = 'backgroundColor' | 'borderColor' | 'color';
 
 /**
  * Fulfill one route with a JSON response.
@@ -26,6 +28,89 @@ async function fulfillJson(route: Route, payload: unknown, status = 200): Promis
  */
 async function hideDevelopmentIndicator(page: Page): Promise<void> {
   await page.addStyleTag({ content: 'nextjs-portal { display: none !important; }' });
+}
+
+/**
+ * Parse the visible RGB channels from a computed CSS color.
+ *
+ * @param value - Computed color in hex or rgb/rgba notation.
+ * @param context - Assertion context for failures.
+ * @returns Red, green, and blue channel values.
+ */
+function parseColorChannels(value: string, context: string): readonly [number, number, number] {
+  const hexMatch = /^#([0-9a-f]{6})$/i.exec(value.trim());
+  if (hexMatch) {
+    return [
+      Number.parseInt(hexMatch[1].slice(0, 2), 16),
+      Number.parseInt(hexMatch[1].slice(2, 4), 16),
+      Number.parseInt(hexMatch[1].slice(4, 6), 16),
+    ];
+  }
+
+  const rgbMatch = /^rgba?\(\s*([\d.]+)(?:,\s*|\s+)([\d.]+)(?:,\s*|\s+)([\d.]+)/i.exec(
+    value.trim(),
+  );
+  if (rgbMatch) {
+    return [Number(rgbMatch[1]), Number(rgbMatch[2]), Number(rgbMatch[3])];
+  }
+
+  throw new Error(`${context} is not a supported computed color: ${value}`);
+}
+
+/**
+ * Assert that one computed color has no hue.
+ *
+ * @param value - Computed CSS color.
+ * @param context - Assertion context for failures.
+ */
+function expectColorToBeGrayscale(value: string, context: string): void {
+  const oklabMatch = /^oklab\(\s*[\d.]+\s+(-?[\d.]+)\s+(-?[\d.]+)(?:\s*\/[^)]+)?\)$/i.exec(
+    value.trim(),
+  );
+  if (oklabMatch) {
+    expect(Math.abs(Number(oklabMatch[1]))).toBeLessThan(0.001);
+    expect(Math.abs(Number(oklabMatch[2]))).toBeLessThan(0.001);
+    return;
+  }
+
+  const channels = parseColorChannels(value, context);
+  expect(new Set(channels).size).toBe(1);
+}
+
+/**
+ * Assert selected computed chrome colors are grayscale for one element.
+ *
+ * @param locator - Element whose computed styles are inspected.
+ * @param properties - Computed color properties to inspect.
+ */
+async function expectElementChromeToBeGrayscale(
+  locator: Locator,
+  properties: readonly ChromeColorProperty[],
+): Promise<void> {
+  const values = await locator.evaluate((element, colorProperties) => {
+    const styles = window.getComputedStyle(element);
+    return colorProperties.map((property) => styles[property]);
+  }, properties);
+
+  for (const [index, value] of values.entries()) {
+    expectColorToBeGrayscale(value, properties[index]);
+  }
+}
+
+/**
+ * Assert global focus-ring tokens are grayscale in the active theme.
+ *
+ * @param page - Playwright browser page.
+ */
+async function expectThemeChromeTokensToBeGrayscale(page: Page): Promise<void> {
+  const values = await page.locator('html').evaluate((element) => {
+    const styles = window.getComputedStyle(element);
+    return ['--ring', '--sidebar-ring'].map((token) => styles.getPropertyValue(token).trim());
+  });
+
+  for (const value of values) {
+    expectColorToBeGrayscale(value, 'focus ring token');
+  }
 }
 
 /**
@@ -290,13 +375,12 @@ async function verifiesUserMenuNavigationAndTheme(page: Page): Promise<void> {
   await page.setViewportSize({ width: 1600, height: 1000 });
   await page.goto('/?q=graph');
   await hideDevelopmentIndicator(page);
+  await expect(page.locator('html')).toHaveClass(/dark/);
 
   const pageNavigation = page.getByRole('navigation', { name: '页面导航' });
+  const currentNavigationLink = pageNavigation.getByRole('link', { name: '文献检索' });
   await expect(pageNavigation.getByRole('link')).toHaveCount(3);
-  await expect(pageNavigation.getByRole('link', { name: '文献检索' })).toHaveAttribute(
-    'aria-current',
-    'page',
-  );
+  await expect(currentNavigationLink).toHaveAttribute('aria-current', 'page');
   await expect(pageNavigation.getByRole('link', { name: '我的收藏' })).toHaveAttribute(
     'title',
     '我的收藏',
@@ -307,7 +391,20 @@ async function verifiesUserMenuNavigationAndTheme(page: Page): Promise<void> {
   );
 
   const trigger = page.getByRole('button', { name: '打开账号菜单：browser_user' });
+  const resetButton = page.getByRole('complementary').getByRole('button', { name: '重置筛选' });
   await expect(trigger).toContainText('browser_user');
+  await expectElementChromeToBeGrayscale(currentNavigationLink, [
+    'backgroundColor',
+    'borderColor',
+    'color',
+  ]);
+  await expectElementChromeToBeGrayscale(trigger, ['backgroundColor', 'borderColor', 'color']);
+  await expectElementChromeToBeGrayscale(resetButton, ['backgroundColor', 'color']);
+  await expectThemeChromeTokensToBeGrayscale(page);
+  await expect(resetButton).toHaveCSS('background-color', 'rgb(237, 237, 237)');
+  await expect(resetButton).toHaveCSS('color', 'rgb(0, 0, 0)');
+  await page.screenshot({ path: '../output/ui/default-chrome-dark.png', fullPage: true });
+
   await trigger.click();
   await expect(page.getByRole('menuitem', { name: '打开设置中心' })).toHaveAttribute(
     'href',
@@ -315,6 +412,11 @@ async function verifiesUserMenuNavigationAndTheme(page: Page): Promise<void> {
   );
   await expect(page.getByRole('menuitem', { name: '管理面板' })).toHaveCount(0);
   await expect(page.getByRole('menuitem', { name: '我的收藏' })).toHaveCount(0);
+  await expectElementChromeToBeGrayscale(page.getByRole('menu'), [
+    'backgroundColor',
+    'borderColor',
+    'color',
+  ]);
   await page.screenshot({
     path: '../output/ui/navigation-account-desktop.png',
     fullPage: true,
@@ -335,6 +437,11 @@ async function verifiesUserMenuNavigationAndTheme(page: Page): Promise<void> {
   await expect(page).toHaveURL('/?q=graph&settings=general');
   const settingsDialog = page.getByRole('dialog', { name: '设置中心' });
   await expect(settingsDialog).toBeVisible();
+  await expectElementChromeToBeGrayscale(settingsDialog, [
+    'backgroundColor',
+    'borderColor',
+    'color',
+  ]);
   await settingsDialog.getByRole('button', { name: '关闭' }).click();
   await expect(page).toHaveURL('/?q=graph');
   await expect(trigger).toBeFocused();
@@ -348,6 +455,27 @@ async function verifiesUserMenuNavigationAndTheme(page: Page): Promise<void> {
   await page.keyboard.press('Escape');
   await expect(page.getByRole('menu')).toHaveCount(0);
   await expect(trigger).toBeFocused();
+
+  await trigger.click();
+  await page.getByRole('menuitem', { name: '外观主题' }).hover();
+  await page.getByRole('menuitemradio', { name: '浅色' }).click();
+  await expect.poll(() => page.evaluate(() => window.localStorage.getItem('theme'))).toBe('light');
+  await expect(page.locator('html')).not.toHaveClass(/dark/);
+  await expectElementChromeToBeGrayscale(currentNavigationLink, [
+    'backgroundColor',
+    'borderColor',
+    'color',
+  ]);
+  await expectElementChromeToBeGrayscale(trigger, ['backgroundColor', 'borderColor', 'color']);
+  await expectElementChromeToBeGrayscale(resetButton, ['backgroundColor', 'color']);
+  await expectThemeChromeTokensToBeGrayscale(page);
+  await page.screenshot({ path: '../output/ui/default-chrome-light.png', fullPage: true });
+
+  await trigger.click();
+  await page.getByRole('menuitem', { name: '外观主题' }).hover();
+  await page.getByRole('menuitemradio', { name: '跟随系统' }).click();
+  await expect.poll(() => page.evaluate(() => window.localStorage.getItem('theme'))).toBe('system');
+  await expect(page.locator('html')).toHaveClass(/dark/);
 
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto('/?q=graph');

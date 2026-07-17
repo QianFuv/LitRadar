@@ -271,6 +271,7 @@ async function rendersUnavailableYearState(): Promise<void> {
   const resetButtons = screen.getAllByRole('button', { name: '重置筛选' });
   const publicationTimeHeading = screen.getByRole('heading', { name: '发表时间' });
   expect(resetButtons).toHaveLength(1);
+  expect(resetButtons[0]).toHaveClass('bg-sidebar-primary', 'text-sidebar-primary-foreground');
   expect(
     publicationTimeHeading.compareDocumentPosition(resetButtons[0]) &
       Node.DOCUMENT_POSITION_FOLLOWING,
