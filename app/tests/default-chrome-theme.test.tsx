@@ -39,6 +39,8 @@ const DEFAULT_CHROME_TOKENS = [
 ] as const;
 
 const DEFAULT_CHROME_COMPONENTS = [
+  'components/feature/workspace-shell.tsx',
+  'components/feature/search-workspace-view.tsx',
   'components/feature/sidebar.tsx',
   'components/feature/sidebar-navigation.tsx',
   'components/feature/user-menu.tsx',
