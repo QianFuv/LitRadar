@@ -1,5 +1,7 @@
 //! End-to-end recommendation delivery orchestration.
 
+use std::time::Instant;
+
 use super::candidates::*;
 use super::folder::*;
 use super::manifests::*;
@@ -67,6 +69,29 @@ pub fn run_recommendation_delivery_for_user(
 ///
 /// Aggregated manual push result across selected change manifests.
 pub fn run_manual_weekly_push(
+    config: &ManualWeeklyPushConfig,
+) -> Result<ManualWeeklyPushOutcome, DeliveryError> {
+    let started_at = Instant::now();
+    let manual_span = tracing::info_span!(
+        "delivery.manual",
+        component = "delivery",
+        workflow = "manual_weekly_push",
+        mode = "execute",
+        user_id = config.user_id.value(),
+    );
+    manual_span.in_scope(|| {
+        tracing::info!(
+            event = "delivery.manual.started",
+            component = "delivery",
+            outcome = "started",
+        );
+        let result = run_manual_weekly_push_inner(config);
+        emit_manual_delivery_terminal(&result, started_at);
+        result
+    })
+}
+
+fn run_manual_weekly_push_inner(
     config: &ManualWeeklyPushConfig,
 ) -> Result<ManualWeeklyPushOutcome, DeliveryError> {
     let settings = litradar_storage::get_notification_settings(
@@ -173,6 +198,40 @@ fn run_recommendation_delivery_with_services(
 }
 
 fn run_recommendation_delivery_with_services_for_user(
+    config: &RecommendationRunConfig,
+    subscriber_user_id: Option<UserId>,
+    ai_selector: &mut impl DeliveryAiSelector,
+    pushplus_sender: &mut impl DeliveryPushPlusSender,
+) -> Result<RecommendationRunOutcome, DeliveryError> {
+    let started_at = Instant::now();
+    let workflow_span = tracing::info_span!(
+        "delivery.workflow",
+        component = "delivery",
+        workflow = delivery_workflow_kind(config.workflow),
+        mode = delivery_mode_kind(config.mode),
+        user_id = tracing::field::Empty,
+    );
+    if let Some(user_id) = subscriber_user_id {
+        workflow_span.record("user_id", user_id.value());
+    }
+    workflow_span.in_scope(|| {
+        tracing::info!(
+            event = "delivery.workflow.started",
+            component = "delivery",
+            outcome = "started",
+        );
+        let result = execute_recommendation_delivery_with_services_for_user(
+            config,
+            subscriber_user_id,
+            ai_selector,
+            pushplus_sender,
+        );
+        emit_delivery_workflow_terminal(&result, started_at);
+        result
+    })
+}
+
+fn execute_recommendation_delivery_with_services_for_user(
     config: &RecommendationRunConfig,
     subscriber_user_id: Option<UserId>,
     ai_selector: &mut impl DeliveryAiSelector,
@@ -435,6 +494,150 @@ fn filtered_subscribers(
         })
         .collect())
 }
+
+fn emit_delivery_workflow_terminal(
+    result: &Result<RecommendationRunOutcome, DeliveryError>,
+    started_at: Instant,
+) {
+    match result {
+        Ok(outcome) => {
+            let subscriber_count = outcome.subscribers.len();
+            let selected_count = outcome
+                .subscribers
+                .iter()
+                .map(|subscriber| subscriber.selected_article_ids.len())
+                .sum::<usize>();
+            let folder_synced_count = outcome
+                .subscribers
+                .iter()
+                .map(|subscriber| subscriber.folder_synced_count)
+                .sum::<usize>();
+            let message_count = outcome
+                .subscribers
+                .iter()
+                .filter(|subscriber| subscriber.message_id.is_some())
+                .count();
+            let failed_subscriber_count = outcome
+                .subscribers
+                .iter()
+                .filter(|subscriber| subscriber.status == "error")
+                .count();
+            if outcome.status == "failed" {
+                tracing::warn!(
+                    event = "delivery.workflow.failed",
+                    component = "delivery",
+                    outcome = "failure",
+                    status = "failed",
+                    candidate_count = outcome.candidate_article_ids.len(),
+                    subscriber_count,
+                    selected_count,
+                    folder_synced_count,
+                    message_count,
+                    failed_subscriber_count,
+                    duration_ms = elapsed_millis(started_at),
+                );
+            } else {
+                tracing::info!(
+                    event = "delivery.workflow.completed",
+                    component = "delivery",
+                    outcome = "success",
+                    status = delivery_status_kind(&outcome.status),
+                    candidate_count = outcome.candidate_article_ids.len(),
+                    subscriber_count,
+                    selected_count,
+                    folder_synced_count,
+                    message_count,
+                    failed_subscriber_count,
+                    duration_ms = elapsed_millis(started_at),
+                );
+            }
+        }
+        Err(error) => tracing::warn!(
+            event = "delivery.workflow.failed",
+            component = "delivery",
+            outcome = "failure",
+            status = "error",
+            error_kind = delivery_error_kind(error),
+            duration_ms = elapsed_millis(started_at),
+        ),
+    }
+}
+
+fn emit_manual_delivery_terminal(
+    result: &Result<ManualWeeklyPushOutcome, DeliveryError>,
+    started_at: Instant,
+) {
+    match result {
+        Ok(outcome) if outcome.status == "failed" => tracing::warn!(
+            event = "delivery.manual.failed",
+            component = "delivery",
+            outcome = "failure",
+            status = "failed",
+            selected_count = outcome.selected,
+            delivered_count = outcome.pushed,
+            candidate_count = outcome.total_candidates.unwrap_or(0),
+            duration_ms = elapsed_millis(started_at),
+        ),
+        Ok(outcome) => tracing::info!(
+            event = "delivery.manual.completed",
+            component = "delivery",
+            outcome = "success",
+            status = delivery_status_kind(&outcome.status),
+            selected_count = outcome.selected,
+            delivered_count = outcome.pushed,
+            candidate_count = outcome.total_candidates.unwrap_or(0),
+            duration_ms = elapsed_millis(started_at),
+        ),
+        Err(error) => tracing::warn!(
+            event = "delivery.manual.failed",
+            component = "delivery",
+            outcome = "failure",
+            status = "error",
+            error_kind = delivery_error_kind(error),
+            duration_ms = elapsed_millis(started_at),
+        ),
+    }
+}
+
+fn delivery_error_kind(error: &DeliveryError) -> &'static str {
+    match error {
+        DeliveryError::Index(_) => "index_storage",
+        DeliveryError::Business(_) => "business_storage",
+        DeliveryError::Recommendation(_) => "recommendation",
+        DeliveryError::Ai(_) => "ai",
+        DeliveryError::PushPlus(_) => "pushplus",
+        DeliveryError::Manual(_) => "manual_validation",
+    }
+}
+
+fn delivery_workflow_kind(workflow: DeliveryWorkflow) -> &'static str {
+    match workflow {
+        DeliveryWorkflow::Notify => "notify",
+        DeliveryWorkflow::Push => "push",
+    }
+}
+
+fn delivery_mode_kind(mode: DeliveryMode) -> &'static str {
+    match mode {
+        DeliveryMode::DryRun => "dry_run",
+        DeliveryMode::Execute => "execute",
+    }
+}
+
+fn delivery_status_kind(status: &str) -> &'static str {
+    match status {
+        "completed" => "completed",
+        "idle" => "idle",
+        "skipped" => "skipped",
+        "failed" => "failed",
+        _ => "unknown",
+    }
+}
+
+fn elapsed_millis(started_at: Instant) -> u64 {
+    started_at.elapsed().as_millis().min(u128::from(u64::MAX)) as u64
+}
+
 fn manual_outcome(
     status: &str,
     message: &str,
@@ -718,6 +921,7 @@ mod tests {
     use tempfile::{tempdir, TempDir};
 
     use super::*;
+    use crate::ai::test_support::CapturedLogs;
     use crate::delivery::candidates::{
         AiSelectionOutcome, DeliveryAiSelectionRequest, DeliveryAiSelector,
     };
@@ -791,6 +995,49 @@ mod tests {
             .expect("content should be planned")
             .contains("AI summary"));
         assert_eq!(favorite_count(&fixture.auth_db_path), 0);
+    }
+
+    #[test]
+    fn delivery_aggregate_events_omit_user_article_and_message_content() {
+        let sentinel = "delivery-preference-article-message-sentinel";
+        let mut settings = notification_settings("pushplus", true, vec![]);
+        settings.keywords = vec![sentinel.to_string()];
+        settings.directions = vec![sentinel.to_string()];
+        settings.pushplus_token = Some(Some(sentinel.to_string()));
+        settings.ai_api_key = Some(Some(sentinel.to_string()));
+        settings.ai_system_prompt = sentinel.to_string();
+        let fixture = DeliveryFixture::new(settings);
+        let logs = CapturedLogs::default();
+
+        let (outcome, pushplus_sender) = logs
+            .capture(|| {
+                run_fixture_delivery(
+                    &fixture.config(DeliveryWorkflow::Notify, DeliveryMode::DryRun, None, None),
+                    vec![selection_outcome(&[101], sentinel)],
+                    Vec::new(),
+                )
+            })
+            .expect("dry-run delivery should complete");
+
+        assert_eq!(outcome.status, "completed");
+        assert!(pushplus_sender.messages.is_empty());
+        let events = logs.events();
+        let completed = events
+            .iter()
+            .find(|event| event["event"] == "delivery.workflow.completed")
+            .expect("delivery aggregate should be logged");
+        assert_eq!(completed["candidate_count"], 2);
+        assert_eq!(completed["subscriber_count"], 1);
+        assert_eq!(completed["selected_count"], 1);
+        assert_eq!(completed["span"]["workflow"], "notify");
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| event["event"] == "delivery.workflow.completed")
+                .count(),
+            1
+        );
+        assert!(!logs.text().contains(sentinel));
     }
 
     #[test]

@@ -3,7 +3,7 @@
 use std::error::Error;
 use std::fmt;
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use litradar_domain::{
     ArticleCandidateInfo, NotificationSubscriberInfo, RankedSelectionInfo, SelectionResultInfo,
@@ -99,6 +99,16 @@ pub struct AiHttpResponse {
     pub status_code: u16,
     /// JSON response body.
     pub body: Value,
+}
+
+struct AiCompletionResponse {
+    status_code: u16,
+    payload: Value,
+}
+
+struct ResponseFormatVariant {
+    kind: &'static str,
+    value: Option<Value>,
 }
 
 /// Transport boundary for OpenAI-compatible HTTP calls.
@@ -395,21 +405,107 @@ impl<T: AiTransport> AiCompletionClient<T> {
         messages: Vec<Value>,
         payload_kind: AiPayloadKind,
     ) -> Result<Value, AiClientError> {
+        let started_at = Instant::now();
+        let operation = ai_payload_kind(payload_kind);
+        let completion_span = tracing::info_span!(
+            "ai.completion",
+            component = "delivery",
+            provider = "openai_compatible",
+            endpoint = "chat_completions",
+            operation,
+        );
+        completion_span.in_scope(|| {
+            tracing::info!(
+                event = "ai.completion.started",
+                component = "delivery",
+                outcome = "started",
+            );
+            let result = self.create_completion_attempts(
+                config,
+                schema_name,
+                schema,
+                messages,
+                payload_kind,
+            );
+            match &result {
+                Ok(_) => tracing::info!(
+                    event = "ai.completion.completed",
+                    component = "delivery",
+                    outcome = "success",
+                    duration_ms = elapsed_millis(started_at),
+                ),
+                Err(error) => tracing::warn!(
+                    event = "ai.completion.failed",
+                    component = "delivery",
+                    outcome = "failure",
+                    error_kind = ai_error_kind(error),
+                    duration_ms = elapsed_millis(started_at),
+                ),
+            }
+            result
+        })
+    }
+
+    fn create_completion_attempts(
+        &mut self,
+        config: &AiRuntimeConfig,
+        schema_name: &str,
+        schema: Value,
+        messages: Vec<Value>,
+        payload_kind: AiPayloadKind,
+    ) -> Result<Value, AiClientError> {
         let mut last_error = AiClientError::InvalidResponse("AI request was not attempted".into());
-        for response_format in response_format_variants(schema_name, &schema) {
+        let response_formats = response_format_variants(schema_name, &schema);
+        for (format_index, response_format) in response_formats.iter().enumerate() {
+            if format_index > 0 {
+                tracing::warn!(
+                    event = "ai.response_format.fallback",
+                    component = "delivery",
+                    outcome = "fallback",
+                    from_format = response_formats[format_index - 1].kind,
+                    to_format = response_format.kind,
+                );
+            }
             for attempt in 0..=self.retry_attempts {
-                let body =
-                    completion_body(config, self.temperature, &messages, response_format.clone());
+                let body = completion_body(
+                    config,
+                    self.temperature,
+                    &messages,
+                    response_format.value.clone(),
+                );
                 let request = AiHttpRequest {
                     url: chat_completions_url(&config.base_url),
                     headers: ai_headers(&config.api_key),
                     body,
                 };
+                let attempt_started_at = Instant::now();
                 match self.send_completion(request, payload_kind) {
-                    Ok(payload) => return Ok(payload),
+                    Ok(response) => {
+                        tracing::info!(
+                            event = "ai.request.completed",
+                            component = "delivery",
+                            outcome = "success",
+                            response_format = response_format.kind,
+                            attempt = attempt + 1,
+                            http_status = response.status_code,
+                            duration_ms = elapsed_millis(attempt_started_at),
+                        );
+                        return Ok(response.payload);
+                    }
                     Err(error) => {
+                        let will_retry = attempt < self.retry_attempts;
+                        let will_fallback =
+                            !will_retry && format_index + 1 < response_formats.len();
+                        emit_ai_request_failure(
+                            &error,
+                            response_format.kind,
+                            attempt + 1,
+                            will_retry,
+                            will_fallback,
+                            attempt_started_at,
+                        );
                         last_error = error;
-                        if attempt < self.retry_attempts {
+                        if will_retry {
                             (self.sleep)(retry_backoff_delay(attempt));
                         }
                     }
@@ -425,7 +521,7 @@ impl<T: AiTransport> AiCompletionClient<T> {
         &mut self,
         request: AiHttpRequest,
         payload_kind: AiPayloadKind,
-    ) -> Result<Value, AiClientError> {
+    ) -> Result<AiCompletionResponse, AiClientError> {
         let response = self.transport.post_json(request)?;
         if !(200..300).contains(&response.status_code) {
             return Err(AiClientError::HttpStatus {
@@ -433,8 +529,12 @@ impl<T: AiTransport> AiCompletionClient<T> {
                 body: response.body,
             });
         }
-        extract_response_payload(&response.body, payload_kind)
-            .map_err(|error| AiClientError::InvalidResponse(error.to_string()))
+        let payload = extract_response_payload(&response.body, payload_kind)
+            .map_err(|error| AiClientError::InvalidResponse(error.to_string()))?;
+        Ok(AiCompletionResponse {
+            status_code: response.status_code,
+            payload,
+        })
     }
 }
 
@@ -507,19 +607,83 @@ fn completion_body(
     body
 }
 
-fn response_format_variants(schema_name: &str, schema: &Value) -> Vec<Option<Value>> {
+fn response_format_variants(schema_name: &str, schema: &Value) -> Vec<ResponseFormatVariant> {
     vec![
-        Some(json!({
-            "type": "json_schema",
-            "json_schema": {
-                "name": schema_name,
-                "strict": true,
-                "schema": schema
-            }
-        })),
-        Some(json!({ "type": "json_object" })),
-        None,
+        ResponseFormatVariant {
+            kind: "json_schema",
+            value: Some(json!({
+                "type": "json_schema",
+                "json_schema": {
+                    "name": schema_name,
+                    "strict": true,
+                    "schema": schema
+                }
+            })),
+        },
+        ResponseFormatVariant {
+            kind: "json_object",
+            value: Some(json!({ "type": "json_object" })),
+        },
+        ResponseFormatVariant {
+            kind: "plain_json",
+            value: None,
+        },
     ]
+}
+
+fn emit_ai_request_failure(
+    error: &AiClientError,
+    response_format: &str,
+    attempt: usize,
+    will_retry: bool,
+    will_fallback: bool,
+    started_at: Instant,
+) {
+    let duration_ms = elapsed_millis(started_at);
+    match error {
+        AiClientError::HttpStatus { status_code, .. } => tracing::warn!(
+            event = "ai.request.failed",
+            component = "delivery",
+            outcome = "failure",
+            response_format,
+            attempt,
+            error_kind = "http_status",
+            http_status = status_code,
+            will_retry,
+            will_fallback,
+            duration_ms,
+        ),
+        _ => tracing::warn!(
+            event = "ai.request.failed",
+            component = "delivery",
+            outcome = "failure",
+            response_format,
+            attempt,
+            error_kind = ai_error_kind(error),
+            will_retry,
+            will_fallback,
+            duration_ms,
+        ),
+    }
+}
+
+fn ai_error_kind(error: &AiClientError) -> &'static str {
+    match error {
+        AiClientError::Transport(_) => "transport",
+        AiClientError::HttpStatus { .. } => "http_status",
+        AiClientError::InvalidResponse(_) => "invalid_response",
+    }
+}
+
+fn ai_payload_kind(payload_kind: AiPayloadKind) -> &'static str {
+    match payload_kind {
+        AiPayloadKind::Selection => "selection",
+        AiPayloadKind::Summary => "summary",
+    }
+}
+
+fn elapsed_millis(started_at: Instant) -> u64 {
+    started_at.elapsed().as_millis().min(u128::from(u64::MAX)) as u64
 }
 
 fn chat_completions_url(base_url: &str) -> String {
@@ -597,7 +761,150 @@ fn json_f64(value: Option<&Value>) -> Option<f64> {
 }
 
 #[cfg(test)]
+/// Shared structured-log capture helpers for worker module tests.
+pub(crate) mod test_support {
+    use std::io::{self, Write};
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::sync::{Arc, Mutex, Once, OnceLock};
+
+    use serde_json::Value;
+    use tracing_subscriber::fmt::MakeWriter;
+
+    static CAPTURE_LOCK: Mutex<()> = Mutex::new(());
+    static CAPTURE_BYTES: OnceLock<Arc<Mutex<Vec<u8>>>> = OnceLock::new();
+    static CAPTURE_SUBSCRIBER: Once = Once::new();
+    static NEXT_CAPTURE_ID: AtomicU64 = AtomicU64::new(1);
+
+    /// Thread-safe byte buffer used as a tracing test writer.
+    #[derive(Clone)]
+    pub(crate) struct CapturedLogs {
+        bytes: Arc<Mutex<Vec<u8>>>,
+        capture_id: u64,
+    }
+
+    impl Default for CapturedLogs {
+        fn default() -> Self {
+            let bytes = Arc::clone(CAPTURE_BYTES.get_or_init(|| Arc::new(Mutex::new(Vec::new()))));
+            CAPTURE_SUBSCRIBER.call_once(|| {
+                let subscriber = tracing_subscriber::fmt()
+                    .with_ansi(false)
+                    .with_max_level(tracing::Level::TRACE)
+                    .with_writer(CapturedSink {
+                        bytes: Arc::clone(&bytes),
+                    })
+                    .json()
+                    .flatten_event(true)
+                    .with_current_span(true)
+                    .finish();
+                tracing::subscriber::set_global_default(subscriber)
+                    .expect("worker tests should install one global tracing subscriber");
+            });
+            Self {
+                bytes,
+                capture_id: NEXT_CAPTURE_ID.fetch_add(1, Ordering::Relaxed),
+            }
+        }
+    }
+
+    impl CapturedLogs {
+        /// Run an operation inside a uniquely identifiable capture span.
+        ///
+        /// # Arguments
+        ///
+        /// * `operation` - Operation whose structured events should be captured.
+        ///
+        /// # Returns
+        ///
+        /// Operation result after synchronous event capture.
+        pub(crate) fn capture<T>(&self, operation: impl FnOnce() -> T) -> T {
+            let _capture_guard = CAPTURE_LOCK
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let capture_span = tracing::info_span!(
+                "test.capture",
+                component = "test",
+                capture_id = self.capture_id,
+            );
+            capture_span.in_scope(operation)
+        }
+
+        /// Return all captured bytes as UTF-8 text.
+        ///
+        /// # Returns
+        ///
+        /// Captured JSON Lines text.
+        pub(crate) fn text(&self) -> String {
+            self.events()
+                .into_iter()
+                .map(|event| serde_json::to_string(&event).expect("event should serialize"))
+                .collect::<Vec<_>>()
+                .join("\n")
+        }
+
+        /// Parse captured JSON Lines into event values.
+        ///
+        /// # Returns
+        ///
+        /// Parsed event objects in emission order.
+        pub(crate) fn events(&self) -> Vec<Value> {
+            let text = String::from_utf8(
+                self.bytes
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .clone(),
+            )
+            .expect("captured logs should be UTF-8");
+            text.lines()
+                .filter(|line| !line.is_empty())
+                .map(|line| serde_json::from_str(line).expect("captured log should be JSON"))
+                .filter(|event: &Value| {
+                    event["spans"].as_array().is_some_and(|spans| {
+                        spans
+                            .iter()
+                            .any(|span| span["capture_id"].as_u64() == Some(self.capture_id))
+                    })
+                })
+                .collect()
+        }
+    }
+
+    #[derive(Clone)]
+    struct CapturedSink {
+        bytes: Arc<Mutex<Vec<u8>>>,
+    }
+
+    struct CapturedWriter {
+        bytes: Arc<Mutex<Vec<u8>>>,
+    }
+
+    impl Write for CapturedWriter {
+        fn write(&mut self, buffer: &[u8]) -> io::Result<usize> {
+            self.bytes
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .extend_from_slice(buffer);
+            Ok(buffer.len())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl<'writer> MakeWriter<'writer> for CapturedSink {
+        type Writer = CapturedWriter;
+
+        fn make_writer(&'writer self) -> Self::Writer {
+            CapturedWriter {
+                bytes: Arc::clone(&self.bytes),
+            }
+        }
+    }
+}
+
+#[cfg(test)]
 mod tests {
+    use super::test_support::CapturedLogs;
     use super::*;
 
     #[derive(Debug, Default)]
@@ -743,6 +1050,63 @@ mod tests {
             client.transport().requests[1].body["response_format"]["type"],
             "json_schema"
         );
+    }
+
+    #[test]
+    fn ai_attempt_events_are_correlated_and_omit_request_and_response_material() {
+        let sentinel = "ai-key-prompt-response-sentinel";
+        let responses = (0..3)
+            .map(|_| {
+                Err(AiClientError::HttpStatus {
+                    status_code: 503,
+                    body: json!({"error": sentinel}),
+                })
+            })
+            .collect::<Vec<_>>();
+        let mut config = ai_config();
+        config.base_url = format!("https://{sentinel}.example/v1");
+        config.api_key = sentinel.to_string();
+        config.system_prompt = sentinel.to_string();
+        let mut subscriber = subscriber();
+        subscriber.name = sentinel.to_string();
+        subscriber.keywords = vec![sentinel.to_string()];
+        let mut article = candidate(104);
+        article.title = sentinel.to_string();
+        article.abstract_text = sentinel.to_string();
+        let logs = CapturedLogs::default();
+        let mut client =
+            AiCompletionClient::new(FixtureAiTransport::new(responses), 0, 0.2).with_sleep(|_| {});
+
+        let error = logs
+            .capture(|| client.select_articles(&config, &subscriber, &defaults(), &[article]))
+            .expect_err("all response format attempts should fail");
+
+        assert!(error.to_string().contains(sentinel));
+        let events = logs.events();
+        let attempts = events
+            .iter()
+            .filter(|event| event["event"] == "ai.request.failed")
+            .collect::<Vec<_>>();
+        assert_eq!(attempts.len(), 3);
+        assert_eq!(attempts[0]["response_format"], "json_schema");
+        assert_eq!(attempts[0]["attempt"], 1);
+        assert_eq!(attempts[0]["http_status"], 503);
+        assert_eq!(attempts[0]["span"]["operation"], "selection");
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| event["event"] == "ai.response_format.fallback")
+                .count(),
+            2
+        );
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| event["event"] == "ai.completion.failed")
+                .count(),
+            1
+        );
+        assert!(!logs.text().contains(sentinel));
     }
 
     #[test]

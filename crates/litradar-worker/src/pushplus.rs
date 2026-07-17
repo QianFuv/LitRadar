@@ -3,7 +3,7 @@
 use std::error::Error;
 use std::fmt;
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use reqwest::blocking::Client;
 use serde_json::{json, Value};
@@ -122,6 +122,11 @@ pub struct PushPlusHttpResponse {
     pub status_code: u16,
     /// JSON response body.
     pub body: Value,
+}
+
+struct PushPlusSendResponse {
+    message_id: String,
+    status_code: u16,
 }
 
 /// Transport boundary for PushPlus HTTP calls.
@@ -247,6 +252,40 @@ impl<T: PushPlusTransport> PushPlusClient<T> {
     ///
     /// PushPlus message id.
     pub fn send(&mut self, message: &PushPlusMessage) -> Result<String, PushPlusError> {
+        let started_at = Instant::now();
+        let send_span = tracing::info_span!(
+            "pushplus.delivery",
+            component = "delivery",
+            provider = "pushplus",
+            endpoint = "send",
+        );
+        send_span.in_scope(|| {
+            tracing::info!(
+                event = "pushplus.delivery.started",
+                component = "delivery",
+                outcome = "started",
+            );
+            let result = self.send_attempts(message);
+            match &result {
+                Ok(_) => tracing::info!(
+                    event = "pushplus.delivery.completed",
+                    component = "delivery",
+                    outcome = "success",
+                    duration_ms = elapsed_millis(started_at),
+                ),
+                Err(error) => tracing::warn!(
+                    event = "pushplus.delivery.failed",
+                    component = "delivery",
+                    outcome = "failure",
+                    error_kind = pushplus_error_kind(error),
+                    duration_ms = elapsed_millis(started_at),
+                ),
+            }
+            result
+        })
+    }
+
+    fn send_attempts(&mut self, message: &PushPlusMessage) -> Result<String, PushPlusError> {
         let mut last_error =
             PushPlusError::InvalidResponse("PushPlus request was not attempted".into());
         for attempt in 0..=self.retry_attempts {
@@ -254,8 +293,19 @@ impl<T: PushPlusTransport> PushPlusClient<T> {
                 url: PUSHPLUS_ENDPOINT.to_string(),
                 body: pushplus_body(message),
             };
+            let attempt_started_at = Instant::now();
             match self.send_once(request) {
-                Ok(message_id) => return Ok(message_id),
+                Ok(response) => {
+                    tracing::info!(
+                        event = "pushplus.request.completed",
+                        component = "delivery",
+                        outcome = "success",
+                        attempt = attempt + 1,
+                        http_status = response.status_code,
+                        duration_ms = elapsed_millis(attempt_started_at),
+                    );
+                    return Ok(response.message_id);
+                }
                 Err(error) => {
                     let can_retry = attempt < self.retry_attempts;
                     let should_retry = can_retry
@@ -265,6 +315,12 @@ impl<T: PushPlusTransport> PushPlusClient<T> {
                             }
                             _ => true,
                         };
+                    emit_pushplus_request_failure(
+                        &error,
+                        attempt + 1,
+                        should_retry,
+                        attempt_started_at,
+                    );
                     last_error = error;
                     if should_retry {
                         (self.sleep)(retry_backoff_delay(attempt));
@@ -283,7 +339,10 @@ impl<T: PushPlusTransport> PushPlusClient<T> {
         )))
     }
 
-    fn send_once(&mut self, request: PushPlusHttpRequest) -> Result<String, PushPlusError> {
+    fn send_once(
+        &mut self,
+        request: PushPlusHttpRequest,
+    ) -> Result<PushPlusSendResponse, PushPlusError> {
         let response = self.transport.post_json(request)?;
         if !(200..300).contains(&response.status_code) {
             return Err(PushPlusError::HttpStatus {
@@ -303,7 +362,10 @@ impl<T: PushPlusTransport> PushPlusClient<T> {
                 .to_string();
             return Err(PushPlusError::Api { code, message });
         }
-        Ok(object.get("data").map(json_string).unwrap_or_default())
+        Ok(PushPlusSendResponse {
+            message_id: object.get("data").map(json_string).unwrap_or_default(),
+            status_code: response.status_code,
+        })
     }
 }
 
@@ -379,8 +441,53 @@ fn json_string(value: &Value) -> String {
     })
 }
 
+fn emit_pushplus_request_failure(
+    error: &PushPlusError,
+    attempt: usize,
+    will_retry: bool,
+    started_at: Instant,
+) {
+    let duration_ms = elapsed_millis(started_at);
+    match error {
+        PushPlusError::HttpStatus { status_code, .. } => tracing::warn!(
+            event = "pushplus.request.failed",
+            component = "delivery",
+            outcome = "failure",
+            attempt,
+            error_kind = "http_status",
+            http_status = status_code,
+            will_retry,
+            duration_ms,
+        ),
+        _ => tracing::warn!(
+            event = "pushplus.request.failed",
+            component = "delivery",
+            outcome = "failure",
+            attempt,
+            error_kind = pushplus_error_kind(error),
+            will_retry,
+            duration_ms,
+        ),
+    }
+}
+
+fn pushplus_error_kind(error: &PushPlusError) -> &'static str {
+    match error {
+        PushPlusError::Transport(_) => "transport",
+        PushPlusError::HttpStatus { .. } => "http_status",
+        PushPlusError::Api { .. } => "api_error",
+        PushPlusError::InvalidResponse(_) => "invalid_response",
+    }
+}
+
+fn elapsed_millis(started_at: Instant) -> u64 {
+    started_at.elapsed().as_millis().min(u128::from(u64::MAX)) as u64
+}
+
 #[cfg(test)]
 mod tests {
+    use crate::ai::test_support::CapturedLogs;
+
     use super::*;
 
     #[derive(Debug, Default)]
@@ -463,6 +570,53 @@ mod tests {
 
         assert_eq!(message_id, "msg-2");
         assert_eq!(client.transport().requests.len(), 2);
+    }
+
+    #[test]
+    fn pushplus_attempt_events_omit_token_message_and_response_material() {
+        let sentinel = "pushplus-token-message-response-sentinel";
+        let responses = vec![
+            Ok(PushPlusHttpResponse {
+                status_code: 503,
+                body: json!({"error": sentinel}),
+            }),
+            ok_response(json!({
+                "code": 200,
+                "data": sentinel
+            })),
+        ];
+        let mut message = message();
+        message.token = sentinel.to_string();
+        message.title = sentinel.to_string();
+        message.content = sentinel.to_string();
+        let logs = CapturedLogs::default();
+        let mut client =
+            PushPlusClient::new(FixturePushPlusTransport::new(responses), 1).with_sleep(|_| {});
+
+        let message_id = logs
+            .capture(|| client.send(&message))
+            .expect("PushPlus retry should succeed");
+
+        assert_eq!(message_id, sentinel);
+        let events = logs.events();
+        let failed = events
+            .iter()
+            .find(|event| event["event"] == "pushplus.request.failed")
+            .expect("failed attempt should be logged");
+        assert_eq!(failed["attempt"], 1);
+        assert_eq!(failed["http_status"], 503);
+        assert_eq!(failed["will_retry"], true);
+        assert_eq!(failed["span"]["endpoint"], "send");
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| event["event"] == "pushplus.delivery.completed")
+                .count(),
+            1,
+            "{}",
+            logs.text()
+        );
+        assert!(!logs.text().contains(sentinel));
     }
 
     #[test]

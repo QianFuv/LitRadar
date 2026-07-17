@@ -24,6 +24,7 @@ const PROCESS_POLL_INTERVAL: Duration = Duration::from_millis(25);
 const PROCESS_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5);
 const MAX_CAPTURE_BYTES: usize = 2_048;
 const MAX_OUTPUT_SUMMARY_CHARS: usize = 4_096;
+const PARENT_RUN_ID_ENV: &str = "LITRADAR_PARENT_RUN_ID";
 
 /// Maximum age of a healthy persisted worker heartbeat.
 pub const SCHEDULER_HEALTH_WINDOW_SECONDS: f64 = 90.0;
@@ -70,6 +71,8 @@ pub enum SchedulerError {
     InvalidJob(String),
     /// A scheduler execution thread failed unexpectedly.
     ExecutionThread,
+    /// The durable run lease could not be renewed or finalized by its owner.
+    HeartbeatLost,
 }
 
 impl fmt::Display for SchedulerError {
@@ -80,6 +83,7 @@ impl fmt::Display for SchedulerError {
             Self::InvalidCron(message) => formatter.write_str(message),
             Self::InvalidJob(message) => formatter.write_str(message),
             Self::ExecutionThread => formatter.write_str("Scheduler execution thread failed"),
+            Self::HeartbeatLost => formatter.write_str("Scheduled run heartbeat was lost"),
         }
     }
 }
@@ -89,7 +93,10 @@ impl Error for SchedulerError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             Self::Storage(error) => Some(error),
-            Self::InvalidCron(_) | Self::InvalidJob(_) | Self::ExecutionThread => None,
+            Self::InvalidCron(_)
+            | Self::InvalidJob(_)
+            | Self::ExecutionThread
+            | Self::HeartbeatLost => None,
         }
     }
 }
@@ -215,11 +222,44 @@ struct ProcessExecution {
     output_summary: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ScheduledRunContext {
+    worker_id: String,
+    task_id: i64,
+    run_id: String,
+    job_id: String,
+}
+
+impl ScheduledRunContext {
+    fn for_claim(claim: &ScheduledRunClaim) -> Self {
+        Self {
+            worker_id: claim.worker_id.clone(),
+            task_id: claim.task.id,
+            run_id: claim.run_id.to_string(),
+            job_id: format!("scheduled-task-{}", claim.task.id),
+        }
+    }
+
+    fn for_manual_run(task_id: i64) -> Self {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system time should be after Unix epoch")
+            .as_nanos();
+        Self {
+            worker_id: "manual".to_string(),
+            task_id,
+            run_id: format!("manual-{task_id}-{nanos}"),
+            job_id: format!("scheduled-task-{task_id}"),
+        }
+    }
+}
+
 trait ScheduledJobRunner {
     fn run(
         &mut self,
         auth_db_path: &Path,
         task: &ScheduledTaskInfo,
+        context: &ScheduledRunContext,
         on_heartbeat: &mut dyn FnMut(),
     ) -> ProcessExecution;
 }
@@ -230,11 +270,21 @@ struct ProcessScheduledJobRunner {
     secret_key_file: PathBuf,
 }
 
+struct ScheduledJobExecutionContext<'context> {
+    auth_db_path: &'context Path,
+    application_executable: &'context Path,
+    secret_key_file: &'context Path,
+    timeout_seconds: u64,
+    run: &'context ScheduledRunContext,
+    cancellation: &'context SchedulerCancellation,
+}
+
 impl ScheduledJobRunner for ProcessScheduledJobRunner {
     fn run(
         &mut self,
         auth_db_path: &Path,
         task: &ScheduledTaskInfo,
+        context: &ScheduledRunContext,
         on_heartbeat: &mut dyn FnMut(),
     ) -> ProcessExecution {
         task.job.as_ref().map_or_else(
@@ -244,12 +294,15 @@ impl ScheduledJobRunner for ProcessScheduledJobRunner {
             },
             |job| {
                 execute_scheduled_job(
-                    auth_db_path,
-                    &self.application_executable,
-                    &self.secret_key_file,
+                    ScheduledJobExecutionContext {
+                        auth_db_path,
+                        application_executable: &self.application_executable,
+                        secret_key_file: &self.secret_key_file,
+                        timeout_seconds: task.timeout_seconds,
+                        run: context,
+                        cancellation: &self.cancellation,
+                    },
                     job,
-                    task.timeout_seconds,
-                    &self.cancellation,
                     on_heartbeat,
                 )
             },
@@ -401,7 +454,8 @@ fn run_task_now_with_runner(
     };
     validate_task(&task)?;
     let ran_at = current_unix_time();
-    let execution = runner.run(auth_db_path, &task, &mut || {});
+    let context = ScheduledRunContext::for_manual_run(task.id);
+    let execution = runner.run(auth_db_path, &task, &context, &mut || {});
     litradar_storage::record_scheduled_task_run(auth_db_path, task.id, &execution.status, ran_at)?;
     Ok(RunTaskOutcome {
         found: true,
@@ -433,33 +487,42 @@ pub fn run_due_scheduler_once(
     let auth_db_path = auth_db_path.as_ref().to_path_buf();
     let application_executable = application_executable.as_ref().to_path_buf();
     let secret_key_file = secret_key_file.as_ref().to_path_buf();
-    let (mut result, claims) =
-        prepare_scheduler_tick(&auth_db_path, worker_id, current_unix_time())?;
-    let executed = thread::scope(|scope| -> Result<Vec<_>, SchedulerError> {
-        let handles = claims
-            .into_iter()
-            .map(|claim| {
-                let auth_db_path = auth_db_path.clone();
-                let application_executable = application_executable.clone();
-                let cancellation = cancellation.clone();
-                let secret_key_file = secret_key_file.clone();
-                scope.spawn(move || {
-                    let mut runner = ProcessScheduledJobRunner {
-                        application_executable,
-                        cancellation,
-                        secret_key_file,
-                    };
-                    execute_scheduled_claim(&auth_db_path, claim, &mut runner)
+    let tick_span = tracing::info_span!("scheduler.tick", component = "scheduler", worker_id,);
+    tick_span.in_scope(|| {
+        let (mut result, claims) =
+            prepare_scheduler_tick(&auth_db_path, worker_id, current_unix_time())?;
+        let executed = thread::scope(|scope| -> Result<Vec<_>, SchedulerError> {
+            let handles = claims
+                .into_iter()
+                .map(|claim| {
+                    let auth_db_path = auth_db_path.clone();
+                    let application_executable = application_executable.clone();
+                    let cancellation = cancellation.clone();
+                    let secret_key_file = secret_key_file.clone();
+                    let span = tracing::Span::current();
+                    let subscriber = tracing::dispatcher::get_default(Clone::clone);
+                    scope.spawn(move || {
+                        tracing::dispatcher::with_default(&subscriber, || {
+                            span.in_scope(|| {
+                                let mut runner = ProcessScheduledJobRunner {
+                                    application_executable,
+                                    cancellation,
+                                    secret_key_file,
+                                };
+                                execute_scheduled_claim(&auth_db_path, claim, &mut runner)
+                            })
+                        })
+                    })
                 })
-            })
-            .collect::<Vec<_>>();
-        handles
-            .into_iter()
-            .map(|handle| handle.join().map_err(|_| SchedulerError::ExecutionThread)?)
-            .collect()
-    })?;
-    result.executed = executed;
-    Ok(result)
+                .collect::<Vec<_>>();
+            handles
+                .into_iter()
+                .map(|handle| handle.join().map_err(|_| SchedulerError::ExecutionThread)?)
+                .collect()
+        })?;
+        result.executed = executed;
+        Ok(result)
+    })
 }
 
 #[cfg(test)]
@@ -469,13 +532,16 @@ fn run_due_scheduler_once_at_with_runner(
     now: f64,
     runner: &mut impl ScheduledJobRunner,
 ) -> Result<SchedulerExecutionResult, SchedulerError> {
-    let (mut result, claims) = prepare_scheduler_tick(auth_db_path, worker_id, now)?;
-    for claim in claims {
-        result
-            .executed
-            .push(execute_scheduled_claim(auth_db_path, claim, runner)?);
-    }
-    Ok(result)
+    let tick_span = tracing::info_span!("scheduler.tick", component = "scheduler", worker_id,);
+    tick_span.in_scope(|| {
+        let (mut result, claims) = prepare_scheduler_tick(auth_db_path, worker_id, now)?;
+        for claim in claims {
+            result
+                .executed
+                .push(execute_scheduled_claim(auth_db_path, claim, runner)?);
+        }
+        Ok(result)
+    })
 }
 
 fn prepare_scheduler_tick(
@@ -531,6 +597,33 @@ fn prepare_scheduler_tick(
         RUN_LEASE_SECONDS,
     )?;
     let claimed = claims.len();
+    let skipped_count = skipped.len();
+
+    if due == 0 && queued == 0 && claimed == 0 && skipped_count == 0 {
+        tracing::debug!(
+            event = "scheduler.tick.prepared",
+            component = "scheduler",
+            outcome = "success",
+            jobs,
+            skipped = skipped_count,
+            due,
+            already_executed,
+            queued,
+            claimed,
+        );
+    } else {
+        tracing::info!(
+            event = "scheduler.tick.prepared",
+            component = "scheduler",
+            outcome = "success",
+            jobs,
+            skipped = skipped_count,
+            due,
+            already_executed,
+            queued,
+            claimed,
+        );
+    }
 
     Ok((
         SchedulerExecutionResult {
@@ -556,52 +649,141 @@ fn execute_scheduled_claim(
     claim: ScheduledRunClaim,
     runner: &mut impl ScheduledJobRunner,
 ) -> Result<ScheduledTaskExecution, SchedulerError> {
+    let context = ScheduledRunContext::for_claim(&claim);
+    let claim_span = tracing::info_span!(
+        "scheduler.claim",
+        component = "scheduler",
+        worker_id = %context.worker_id,
+        task_id = context.task_id,
+        run_id = %context.run_id,
+        job_id = %context.job_id,
+    );
+    claim_span.in_scope(|| execute_scheduled_claim_in_span(auth_db_path, claim, context, runner))
+}
+
+fn execute_scheduled_claim_in_span(
+    auth_db_path: &Path,
+    claim: ScheduledRunClaim,
+    context: ScheduledRunContext,
+    runner: &mut impl ScheduledJobRunner,
+) -> Result<ScheduledTaskExecution, SchedulerError> {
+    let elapsed_started_at = Instant::now();
     let started_at = current_unix_time();
-    if !litradar_storage::start_scheduled_run(
+    tracing::info!(
+        event = "scheduler.claim.started",
+        component = "scheduler",
+        outcome = "started",
+    );
+    let did_start = match litradar_storage::start_scheduled_run(
         auth_db_path,
         claim.run_id,
         &claim.worker_id,
         started_at,
         RUN_LEASE_SECONDS,
-    )? {
+    ) {
+        Ok(did_start) => did_start,
+        Err(error) => {
+            emit_scheduler_claim_failure(elapsed_started_at, "storage_error");
+            return Err(error.into());
+        }
+    };
+    if !did_start {
+        tracing::warn!(
+            event = "scheduler.claim.completed",
+            component = "scheduler",
+            outcome = "skipped",
+            status = "unknown",
+            reason = "claim_unavailable",
+            duration_ms = elapsed_millis(elapsed_started_at),
+        );
         return Ok(ScheduledTaskExecution {
             task_id: claim.task.id,
-            job_id: format!("scheduled-task-{}", claim.task.id),
+            job_id: context.job_id,
             name: claim.task.name,
             status: "unknown".to_string(),
         });
     }
     let mut heartbeat_error = None;
-    let mut on_heartbeat = || {
-        if heartbeat_error.is_none() {
-            heartbeat_error = litradar_storage::heartbeat_scheduled_run(
-                auth_db_path,
-                claim.run_id,
-                &claim.worker_id,
-                current_unix_time(),
-                RUN_LEASE_SECONDS,
-            )
-            .err();
-        }
+    let mut is_heartbeat_lost = false;
+    let execution = {
+        let mut on_heartbeat = || {
+            if heartbeat_error.is_none() && !is_heartbeat_lost {
+                match litradar_storage::heartbeat_scheduled_run(
+                    auth_db_path,
+                    claim.run_id,
+                    &claim.worker_id,
+                    current_unix_time(),
+                    RUN_LEASE_SECONDS,
+                ) {
+                    Ok(true) => {}
+                    Ok(false) => is_heartbeat_lost = true,
+                    Err(error) => heartbeat_error = Some(error),
+                }
+            }
+        };
+        runner.run(auth_db_path, &claim.task, &context, &mut on_heartbeat)
     };
-    let execution = runner.run(auth_db_path, &claim.task, &mut on_heartbeat);
     let finished_at = current_unix_time();
-    litradar_storage::finish_scheduled_run(
+    let did_finish = match litradar_storage::finish_scheduled_run(
         auth_db_path,
         &claim,
         &execution.status,
         &execution.output_summary,
         finished_at,
-    )?;
+    ) {
+        Ok(did_finish) => did_finish,
+        Err(error) => {
+            emit_scheduler_claim_failure(elapsed_started_at, "storage_error");
+            return Err(error.into());
+        }
+    };
     if let Some(error) = heartbeat_error {
+        emit_scheduler_claim_failure(elapsed_started_at, "heartbeat_error");
         return Err(error.into());
     }
+    if is_heartbeat_lost || !did_finish {
+        emit_scheduler_claim_failure(elapsed_started_at, "heartbeat_lost");
+        return Err(SchedulerError::HeartbeatLost);
+    }
+    emit_scheduler_claim_terminal(&execution, elapsed_started_at);
     Ok(ScheduledTaskExecution {
         task_id: claim.task.id,
-        job_id: format!("scheduled-task-{}", claim.task.id),
+        job_id: context.job_id,
         name: claim.task.name,
         status: execution.status,
     })
+}
+
+fn emit_scheduler_claim_terminal(execution: &ProcessExecution, started_at: Instant) {
+    if execution.status == "success" {
+        tracing::info!(
+            event = "scheduler.claim.completed",
+            component = "scheduler",
+            outcome = "success",
+            status = "success",
+            duration_ms = elapsed_millis(started_at),
+        );
+    } else {
+        tracing::warn!(
+            event = "scheduler.claim.failed",
+            component = "scheduler",
+            outcome = "failure",
+            status = execution.status,
+            error_kind = scheduler_status_error_kind(&execution.status),
+            duration_ms = elapsed_millis(started_at),
+        );
+    }
+}
+
+fn emit_scheduler_claim_failure(started_at: Instant, error_kind: &'static str) {
+    tracing::error!(
+        event = "scheduler.claim.failed",
+        component = "scheduler",
+        outcome = "failure",
+        status = "error",
+        error_kind,
+        duration_ms = elapsed_millis(started_at),
+    );
 }
 
 fn scheduled_job(task: &ScheduledTaskInfo) -> ScheduledJob {
@@ -672,39 +854,75 @@ fn scheduled_slots(
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ScheduledProcess {
+    command: &'static str,
     executable: OsString,
     arguments: Vec<OsString>,
 }
 
 fn execute_scheduled_job(
-    auth_db_path: &Path,
-    application_executable: &Path,
-    secret_key_file: &Path,
+    context: ScheduledJobExecutionContext<'_>,
     job: &ScheduledJobSpec,
-    timeout_seconds: u64,
-    cancellation: &SchedulerCancellation,
     on_heartbeat: &mut dyn FnMut(),
 ) -> ProcessExecution {
-    let processes =
-        match scheduled_processes(auth_db_path, application_executable, secret_key_file, job) {
-            Ok(processes) => processes,
-            Err(error) => {
-                return ProcessExecution {
-                    status: "error".to_string(),
-                    output_summary: error.to_string(),
-                };
-            }
-        };
-    let deadline = Instant::now() + Duration::from_secs(timeout_seconds);
+    let started_at = Instant::now();
+    let run_span = tracing::info_span!(
+        "scheduler.run",
+        component = "scheduler",
+        worker_id = %context.run.worker_id,
+        task_id = context.run.task_id,
+        run_id = %context.run.run_id,
+        job_id = %context.run.job_id,
+        job_kind = scheduled_job_kind(job),
+    );
+    run_span.in_scope(|| {
+        tracing::info!(
+            event = "scheduler.run.started",
+            component = "scheduler",
+            outcome = "started",
+        );
+        let execution = execute_scheduled_job_in_span(&context, job, on_heartbeat);
+        emit_scheduler_run_terminal(&execution, started_at);
+        execution
+    })
+}
+
+fn execute_scheduled_job_in_span(
+    context: &ScheduledJobExecutionContext<'_>,
+    job: &ScheduledJobSpec,
+    on_heartbeat: &mut dyn FnMut(),
+) -> ProcessExecution {
+    let processes = match scheduled_processes(
+        context.auth_db_path,
+        context.application_executable,
+        context.secret_key_file,
+        job,
+    ) {
+        Ok(processes) => processes,
+        Err(_) => {
+            return ProcessExecution {
+                status: "error".to_string(),
+                output_summary: "scheduler: invalid job".to_string(),
+            };
+        }
+    };
+    let deadline = Instant::now() + Duration::from_secs(context.timeout_seconds);
     let mut summaries = Vec::new();
-    for process in processes {
-        if cancellation.is_cancelled() {
+    for (process_index, process) in processes.into_iter().enumerate() {
+        if context.cancellation.is_cancelled() {
+            summaries.push("scheduler: cancelled".to_string());
             return ProcessExecution {
                 status: "cancelled".to_string(),
                 output_summary: bounded_output_summary(&summaries.join("\n")),
             };
         }
-        let execution = execute_scheduled_process(process, deadline, cancellation, on_heartbeat);
+        let execution = execute_scheduled_process(
+            process,
+            process_index + 1,
+            deadline,
+            context.run,
+            context.cancellation,
+            on_heartbeat,
+        );
         if !execution.output_summary.is_empty() {
             summaries.push(execution.output_summary);
         }
@@ -723,59 +941,90 @@ fn execute_scheduled_job(
 
 fn execute_scheduled_process(
     process: ScheduledProcess,
+    process_number: usize,
     deadline: Instant,
+    context: &ScheduledRunContext,
     cancellation: &SchedulerCancellation,
     on_heartbeat: &mut dyn FnMut(),
 ) -> ProcessExecution {
-    let executable = process.executable.to_string_lossy().into_owned();
+    let child_span = tracing::info_span!(
+        "scheduler.child",
+        component = "scheduler",
+        worker_id = %context.worker_id,
+        task_id = context.task_id,
+        run_id = %context.run_id,
+        job_id = %context.job_id,
+        command = process.command,
+        process_number,
+    );
+    child_span.in_scope(|| {
+        execute_scheduled_process_in_span(process, deadline, context, cancellation, on_heartbeat)
+    })
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ProcessTerminal {
+    Success,
+    Cancelled,
+    TimedOut,
+    SpawnFailed,
+    ExitFailed(Option<i32>),
+    WaitFailed,
+}
+
+fn execute_scheduled_process_in_span(
+    process: ScheduledProcess,
+    deadline: Instant,
+    context: &ScheduledRunContext,
+    cancellation: &SchedulerCancellation,
+    on_heartbeat: &mut dyn FnMut(),
+) -> ProcessExecution {
+    let started_at = Instant::now();
+    tracing::info!(
+        event = "scheduler.child.started",
+        component = "scheduler",
+        outcome = "started",
+    );
     if cancellation.is_cancelled() {
-        return ProcessExecution {
-            status: "cancelled".to_string(),
-            output_summary: format!("{executable}: cancelled before start"),
-        };
+        let terminal = ProcessTerminal::Cancelled;
+        emit_process_terminal(terminal, started_at);
+        return process_execution(terminal, process.command, Vec::new());
     }
     let mut command = Command::new(&process.executable);
     command
         .args(process.arguments)
+        .env(PARENT_RUN_ID_ENV, &context.run_id)
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
+        .stderr(Stdio::inherit());
     let mut child = match command.spawn() {
         Ok(child) => child,
-        Err(error) => {
-            return ProcessExecution {
-                status: "error".to_string(),
-                output_summary: format!("{executable}: {error}"),
-            };
+        Err(_) => {
+            let terminal = ProcessTerminal::SpawnFailed;
+            emit_process_terminal(terminal, started_at);
+            return process_execution(terminal, process.command, Vec::new());
         }
     };
     let stdout_reader = child.stdout.take().map(spawn_bounded_reader);
-    let stderr_reader = child.stderr.take().map(spawn_bounded_reader);
     let mut last_heartbeat = Instant::now();
-    let (status, detail) = loop {
+    let terminal = loop {
         if cancellation.is_cancelled() {
             let _ = child.kill();
             let _ = child.wait();
-            break ("cancelled", format!("{executable}: cancelled"));
+            break ProcessTerminal::Cancelled;
         }
         match child.try_wait() {
-            Ok(Some(status)) if status.success() => break ("success", String::new()),
-            Ok(Some(status)) => {
-                let detail = status.code().map_or_else(
-                    || format!("{executable}: process failed"),
-                    |code| format!("{executable}: exit code {code}"),
-                );
-                break ("failed", detail);
-            }
+            Ok(Some(status)) if status.success() => break ProcessTerminal::Success,
+            Ok(Some(status)) => break ProcessTerminal::ExitFailed(status.code()),
             Ok(None) if Instant::now() >= deadline => {
                 let _ = child.kill();
                 let _ = child.wait();
-                break ("timed_out", format!("{executable}: timed out"));
+                break ProcessTerminal::TimedOut;
             }
             Ok(None) => {}
-            Err(error) => {
+            Err(_) => {
                 let _ = child.kill();
                 let _ = child.wait();
-                break ("error", format!("{executable}: {error}"));
+                break ProcessTerminal::WaitFailed;
             }
         }
         if last_heartbeat.elapsed() >= PROCESS_HEARTBEAT_INTERVAL {
@@ -785,13 +1034,88 @@ fn execute_scheduled_process(
         thread::sleep(PROCESS_POLL_INTERVAL);
     };
     let stdout = join_bounded_reader(stdout_reader);
-    let stderr = join_bounded_reader(stderr_reader);
-    let mut summary = detail;
+    emit_process_terminal(terminal, started_at);
+    process_execution(terminal, process.command, stdout)
+}
+
+fn process_execution(
+    terminal: ProcessTerminal,
+    command: &str,
+    stdout: Vec<u8>,
+) -> ProcessExecution {
+    let status = match terminal {
+        ProcessTerminal::Success => "success",
+        ProcessTerminal::Cancelled => "cancelled",
+        ProcessTerminal::TimedOut => "timed_out",
+        ProcessTerminal::SpawnFailed | ProcessTerminal::WaitFailed => "error",
+        ProcessTerminal::ExitFailed(_) => "failed",
+    };
+    let mut summary = match terminal {
+        ProcessTerminal::Success => String::new(),
+        ProcessTerminal::Cancelled => format!("{command}: cancelled"),
+        ProcessTerminal::TimedOut => format!("{command}: timed out"),
+        ProcessTerminal::SpawnFailed => format!("{command}: spawn failed"),
+        ProcessTerminal::ExitFailed(Some(exit_code)) => {
+            format!("{command}: exit code {exit_code}")
+        }
+        ProcessTerminal::ExitFailed(None) => format!("{command}: process failed"),
+        ProcessTerminal::WaitFailed => format!("{command}: wait failed"),
+    };
     append_captured_output(&mut summary, "stdout", &stdout);
-    append_captured_output(&mut summary, "stderr", &stderr);
     ProcessExecution {
         status: status.to_string(),
         output_summary: bounded_output_summary(&summary),
+    }
+}
+
+fn emit_process_terminal(terminal: ProcessTerminal, started_at: Instant) {
+    let duration_ms = elapsed_millis(started_at);
+    match terminal {
+        ProcessTerminal::Success => tracing::info!(
+            event = "scheduler.child.completed",
+            component = "scheduler",
+            outcome = "success",
+            status = "success",
+            duration_ms,
+        ),
+        ProcessTerminal::ExitFailed(Some(exit_code)) => tracing::warn!(
+            event = "scheduler.child.failed",
+            component = "scheduler",
+            outcome = "failure",
+            status = "failed",
+            error_kind = "nonzero_exit",
+            exit_code,
+            duration_ms,
+        ),
+        terminal => tracing::warn!(
+            event = "scheduler.child.failed",
+            component = "scheduler",
+            outcome = "failure",
+            status = process_terminal_status(terminal),
+            error_kind = process_terminal_error_kind(terminal),
+            duration_ms,
+        ),
+    }
+}
+
+fn process_terminal_status(terminal: ProcessTerminal) -> &'static str {
+    match terminal {
+        ProcessTerminal::Success => "success",
+        ProcessTerminal::Cancelled => "cancelled",
+        ProcessTerminal::TimedOut => "timed_out",
+        ProcessTerminal::SpawnFailed | ProcessTerminal::WaitFailed => "error",
+        ProcessTerminal::ExitFailed(_) => "failed",
+    }
+}
+
+fn process_terminal_error_kind(terminal: ProcessTerminal) -> &'static str {
+    match terminal {
+        ProcessTerminal::Success => "none",
+        ProcessTerminal::Cancelled => "cancelled",
+        ProcessTerminal::TimedOut => "timeout",
+        ProcessTerminal::SpawnFailed => "spawn_failed",
+        ProcessTerminal::ExitFailed(_) => "nonzero_exit",
+        ProcessTerminal::WaitFailed => "wait_failed",
     }
 }
 
@@ -834,6 +1158,49 @@ fn bounded_output_summary(summary: &str) -> String {
     summary.chars().take(MAX_OUTPUT_SUMMARY_CHARS).collect()
 }
 
+fn emit_scheduler_run_terminal(execution: &ProcessExecution, started_at: Instant) {
+    if execution.status == "success" {
+        tracing::info!(
+            event = "scheduler.run.completed",
+            component = "scheduler",
+            outcome = "success",
+            status = "success",
+            duration_ms = elapsed_millis(started_at),
+        );
+    } else {
+        tracing::warn!(
+            event = "scheduler.run.failed",
+            component = "scheduler",
+            outcome = "failure",
+            status = execution.status,
+            error_kind = scheduler_status_error_kind(&execution.status),
+            duration_ms = elapsed_millis(started_at),
+        );
+    }
+}
+
+fn scheduler_status_error_kind(status: &str) -> &'static str {
+    match status {
+        "cancelled" => "cancelled",
+        "timed_out" => "timeout",
+        "failed" => "child_failed",
+        "error" => "execution_error",
+        _ => "unknown",
+    }
+}
+
+fn scheduled_job_kind(job: &ScheduledJobSpec) -> &'static str {
+    match job {
+        ScheduledJobSpec::Index(_) => "index",
+        ScheduledJobSpec::Notify(_) => "notify",
+        ScheduledJobSpec::Push(_) => "push",
+    }
+}
+
+fn elapsed_millis(started_at: Instant) -> u64 {
+    started_at.elapsed().as_millis().min(u128::from(u64::MAX)) as u64
+}
+
 fn scheduled_processes(
     auth_db_path: &Path,
     application_executable: &Path,
@@ -852,6 +1219,7 @@ fn scheduled_processes(
                 arguments.push(metadata_file.into());
             }
             processes.push(ScheduledProcess {
+                command: "index",
                 executable: application_executable.as_os_str().to_owned(),
                 arguments,
             });
@@ -930,6 +1298,7 @@ fn delivery_process(
         arguments.push(max_candidates.to_string().into());
     }
     ScheduledProcess {
+        command: subcommand,
         executable: application_executable.as_os_str().to_owned(),
         arguments,
     }
@@ -1157,6 +1526,7 @@ pub fn scheduler_worker_id() -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeSet;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{Arc, Barrier};
 
@@ -1167,6 +1537,7 @@ mod tests {
     use tempfile::tempdir;
 
     use super::*;
+    use crate::ai::test_support::CapturedLogs;
 
     #[test]
     fn scheduler_loads_enabled_jobs_and_skips_invalid_cron() {
@@ -1373,6 +1744,160 @@ mod tests {
     }
 
     #[test]
+    fn scheduler_claim_events_keep_worker_task_run_and_job_context() {
+        let temp_dir = tempdir().expect("temp dir should be created");
+        let auth_db_path = temp_dir.path().join("auth.sqlite");
+        initialize_auth_database(&auth_db_path).expect("auth database should initialize");
+        let task = create_index_task(&auth_db_path, "correlated", "* * * * *", true);
+        let now = unix_seconds(2026, 7, 6, 10, 30, 0) as f64;
+        set_task_created_at(&auth_db_path, now - 3_600.0);
+        litradar_storage::record_scheduler_check(&auth_db_path, now - 60.0)
+            .expect("scheduler cursor should be set");
+        let mut runner = FixtureRunner::new(["success"]);
+        let logs = CapturedLogs::default();
+
+        let result = logs
+            .capture(|| {
+                run_due_scheduler_once_at_with_runner(
+                    &auth_db_path,
+                    "worker-correlation",
+                    now,
+                    &mut runner,
+                )
+            })
+            .expect("scheduler tick should complete");
+
+        assert_eq!(result.executed.len(), 1);
+        let events = logs.events();
+        let started = events
+            .iter()
+            .find(|event| event["event"] == "scheduler.claim.started")
+            .expect("claim start should be logged");
+        let completed = events
+            .iter()
+            .find(|event| event["event"] == "scheduler.claim.completed")
+            .expect("claim completion should be logged");
+        for event in [started, completed] {
+            assert_eq!(event["span"]["worker_id"], "worker-correlation");
+            assert_eq!(event["span"]["task_id"], task.id);
+            assert_eq!(
+                event["span"]["job_id"],
+                format!("scheduled-task-{}", task.id)
+            );
+            assert!(!event["span"]["run_id"]
+                .as_str()
+                .expect("run id should be a string")
+                .is_empty());
+        }
+    }
+
+    #[test]
+    fn scheduler_threaded_claims_preserve_context_across_concurrent_children() {
+        let temp_dir = tempdir().expect("temp dir should be created");
+        let auth_db_path = temp_dir.path().join("auth.sqlite");
+        initialize_auth_database(&auth_db_path).expect("auth database should initialize");
+        let first = create_index_task(&auth_db_path, "thread-a", "* * * * *", true);
+        let second = create_index_task(&auth_db_path, "thread-b", "* * * * *", true);
+        let now = current_unix_time();
+        set_task_created_at(&auth_db_path, now - 3_600.0);
+        litradar_storage::record_scheduler_check(&auth_db_path, now - 60.0)
+            .expect("scheduler cursor should be set");
+        let executable = std::env::current_exe().expect("test executable should resolve");
+        let logs = CapturedLogs::default();
+
+        let result = logs
+            .capture(|| {
+                run_due_scheduler_once(
+                    &auth_db_path,
+                    executable,
+                    temp_dir.path().join("unused-secret.key"),
+                    "worker-threaded",
+                    SchedulerCancellation::new(),
+                )
+            })
+            .expect("threaded scheduler tick should complete");
+
+        assert_eq!(result.executed.len(), 2);
+        let events = logs.events();
+        let claims = events
+            .iter()
+            .filter(|event| event["event"] == "scheduler.claim.started")
+            .collect::<Vec<_>>();
+        let children = events
+            .iter()
+            .filter(|event| event["event"] == "scheduler.child.failed")
+            .collect::<Vec<_>>();
+        assert_eq!(claims.len(), 2);
+        assert_eq!(children.len(), 2);
+        let task_ids = claims
+            .iter()
+            .map(|event| {
+                event["span"]["task_id"]
+                    .as_i64()
+                    .expect("task id should exist")
+            })
+            .collect::<BTreeSet<_>>();
+        assert_eq!(task_ids, BTreeSet::from([first.id, second.id]));
+        let run_ids = claims
+            .iter()
+            .map(|event| {
+                event["span"]["run_id"]
+                    .as_str()
+                    .expect("run id should exist")
+                    .to_string()
+            })
+            .collect::<BTreeSet<_>>();
+        assert_eq!(run_ids.len(), 2);
+        for child in children {
+            assert_eq!(child["span"]["worker_id"], "worker-threaded");
+            assert!(task_ids.contains(
+                &child["span"]["task_id"]
+                    .as_i64()
+                    .expect("child task id should exist")
+            ));
+            assert!(run_ids.contains(
+                child["span"]["run_id"]
+                    .as_str()
+                    .expect("child run id should exist")
+            ));
+        }
+    }
+
+    #[test]
+    fn scheduler_heartbeat_loss_emits_one_classified_claim_terminal() {
+        let temp_dir = tempdir().expect("temp dir should be created");
+        let auth_db_path = temp_dir.path().join("auth.sqlite");
+        initialize_auth_database(&auth_db_path).expect("auth database should initialize");
+        create_index_task(&auth_db_path, "heartbeat-loss", "* * * * *", true);
+        let now = unix_seconds(2026, 7, 6, 10, 30, 0) as f64;
+        set_task_created_at(&auth_db_path, now - 3_600.0);
+        litradar_storage::record_scheduler_check(&auth_db_path, now - 60.0)
+            .expect("scheduler cursor should be set");
+        let logs = CapturedLogs::default();
+        let mut runner = HeartbeatLossRunner;
+
+        let error = logs
+            .capture(|| {
+                run_due_scheduler_once_at_with_runner(
+                    &auth_db_path,
+                    "worker-heartbeat-loss",
+                    now,
+                    &mut runner,
+                )
+            })
+            .expect_err("lost heartbeat should fail the claim");
+
+        assert!(matches!(error, SchedulerError::HeartbeatLost));
+        let failed = logs
+            .events()
+            .into_iter()
+            .filter(|event| event["event"] == "scheduler.claim.failed")
+            .collect::<Vec<_>>();
+        assert_eq!(failed.len(), 1);
+        assert_eq!(failed[0]["error_kind"], "heartbeat_lost");
+    }
+
+    #[test]
     fn concurrent_fixture_workers_execute_one_side_effect_per_slot() {
         let temp_dir = tempdir().expect("temp dir should be created");
         let auth_db_path = temp_dir.path().join("auth.sqlite");
@@ -1490,6 +2015,7 @@ mod tests {
     fn scheduler_process_timeout_terminates_child_and_bounds_output() {
         let executable = std::env::current_exe().expect("test executable should resolve");
         let process = ScheduledProcess {
+            command: "test-timeout",
             executable: executable.into_os_string(),
             arguments: vec![
                 "--ignored".into(),
@@ -1498,17 +2024,24 @@ mod tests {
                 "--nocapture".into(),
             ],
         };
-        let started = Instant::now();
+        let logs = CapturedLogs::default();
 
-        let result = execute_scheduled_process(
-            process,
-            Instant::now() + Duration::from_millis(150),
-            &SchedulerCancellation::new(),
-            &mut || {},
-        );
+        let (result, process_elapsed) = logs.capture(|| {
+            let started_at = Instant::now();
+            let result = execute_scheduled_process(
+                process,
+                1,
+                Instant::now() + Duration::from_millis(150),
+                &test_run_context(),
+                &SchedulerCancellation::new(),
+                &mut || {},
+            );
+            (result, started_at.elapsed())
+        });
 
         assert_eq!(result.status, "timed_out");
-        assert!(started.elapsed() < Duration::from_secs(2));
+        assert!(process_elapsed < Duration::from_secs(2));
+        assert_single_child_failure(&logs, "timeout");
         assert_eq!(
             bounded_output_summary(&"x".repeat(MAX_OUTPUT_SUMMARY_CHARS * 2))
                 .chars()
@@ -1521,6 +2054,7 @@ mod tests {
     fn scheduler_cancellation_terminates_and_waits_for_active_child() {
         let executable = std::env::current_exe().expect("test executable should resolve");
         let process = ScheduledProcess {
+            command: "test-cancellation",
             executable: executable.into_os_string(),
             arguments: vec![
                 "--ignored".into(),
@@ -1529,33 +2063,158 @@ mod tests {
                 "--nocapture".into(),
             ],
         };
-        let cancellation = SchedulerCancellation::new();
-        let cancellation_request = cancellation.clone();
-        let cancel_thread = thread::spawn(move || {
-            thread::sleep(Duration::from_millis(150));
-            cancellation_request.cancel();
-        });
-        let started = Instant::now();
+        let logs = CapturedLogs::default();
 
-        let result = execute_scheduled_process(
-            process,
-            Instant::now() + Duration::from_secs(5),
-            &cancellation,
-            &mut || {},
-        );
-        cancel_thread
-            .join()
-            .expect("cancellation request should complete");
+        let (result, process_elapsed) = logs.capture(|| {
+            let cancellation = SchedulerCancellation::new();
+            let cancellation_request = cancellation.clone();
+            let cancel_thread = thread::spawn(move || {
+                thread::sleep(Duration::from_millis(150));
+                cancellation_request.cancel();
+            });
+            let started_at = Instant::now();
+            let result = execute_scheduled_process(
+                process,
+                1,
+                Instant::now() + Duration::from_secs(5),
+                &test_run_context(),
+                &cancellation,
+                &mut || {},
+            );
+            let process_elapsed = started_at.elapsed();
+            cancel_thread
+                .join()
+                .expect("cancellation request should complete");
+            (result, process_elapsed)
+        });
 
         assert_eq!(result.status, "cancelled");
         assert!(result.output_summary.contains("cancelled"));
-        assert!(started.elapsed() < Duration::from_secs(2));
+        assert!(process_elapsed < Duration::from_secs(2));
+        assert_single_child_failure(&logs, "cancelled");
+    }
+
+    #[test]
+    fn scheduler_child_inherits_stderr_and_receives_parent_run_context() {
+        let executable = std::env::current_exe().expect("test executable should resolve");
+        let process = ScheduledProcess {
+            command: "test-output",
+            executable: executable.into_os_string(),
+            arguments: vec![
+                "--ignored".into(),
+                "--exact".into(),
+                "scheduler::tests::scheduler_output_child_fixture".into(),
+                "--nocapture".into(),
+            ],
+        };
+        let logs = CapturedLogs::default();
+
+        let result = logs.capture(|| {
+            execute_scheduled_process(
+                process,
+                1,
+                Instant::now() + Duration::from_secs(5),
+                &test_run_context(),
+                &SchedulerCancellation::new(),
+                &mut || {},
+            )
+        });
+
+        assert_eq!(result.status, "success");
+        assert!(result.output_summary.contains("parent_run_id=run-test"));
+        assert!(!result
+            .output_summary
+            .contains("scheduler-child-stderr-sentinel"));
+        let completed = logs
+            .events()
+            .into_iter()
+            .find(|event| event["event"] == "scheduler.child.completed")
+            .expect("child completion should be logged");
+        assert_eq!(completed["span"]["worker_id"], "worker-test");
+        assert_eq!(completed["span"]["task_id"], 1);
+        assert_eq!(completed["span"]["run_id"], "run-test");
+        assert_eq!(completed["span"]["job_id"], "scheduled-task-1");
+    }
+
+    #[test]
+    fn scheduler_spawn_failure_is_single_and_does_not_log_executable_path() {
+        let sentinel = "missing-scheduler-executable-path-sentinel.exe";
+        let process = ScheduledProcess {
+            command: "test-spawn",
+            executable: OsString::from(sentinel),
+            arguments: Vec::new(),
+        };
+        let logs = CapturedLogs::default();
+
+        let result = logs.capture(|| {
+            execute_scheduled_process(
+                process,
+                1,
+                Instant::now() + Duration::from_secs(1),
+                &test_run_context(),
+                &SchedulerCancellation::new(),
+                &mut || {},
+            )
+        });
+
+        assert_eq!(result.status, "error");
+        assert_eq!(result.output_summary, "test-spawn: spawn failed");
+        assert_single_child_failure(&logs, "spawn_failed");
+        assert!(!logs.text().contains(sentinel));
+    }
+
+    #[test]
+    fn scheduler_nonzero_exit_is_single_and_classified() {
+        let executable = std::env::current_exe().expect("test executable should resolve");
+        let process = ScheduledProcess {
+            command: "test-exit",
+            executable: executable.into_os_string(),
+            arguments: vec![
+                "--ignored".into(),
+                "--exact".into(),
+                "scheduler::tests::scheduler_nonzero_child_fixture".into(),
+                "--nocapture".into(),
+            ],
+        };
+        let logs = CapturedLogs::default();
+
+        let result = logs.capture(|| {
+            execute_scheduled_process(
+                process,
+                1,
+                Instant::now() + Duration::from_secs(5),
+                &test_run_context(),
+                &SchedulerCancellation::new(),
+                &mut || {},
+            )
+        });
+
+        assert_eq!(result.status, "failed");
+        assert!(result.output_summary.contains("exit code 7"));
+        let failed = assert_single_child_failure(&logs, "nonzero_exit");
+        assert_eq!(failed["exit_code"], 7);
     }
 
     #[test]
     #[ignore = "helper process for scheduler timeout coverage"]
     fn scheduler_timeout_child_fixture() {
         thread::sleep(Duration::from_secs(5));
+    }
+
+    #[test]
+    #[ignore = "helper process for scheduler output boundary coverage"]
+    fn scheduler_output_child_fixture() {
+        println!(
+            "parent_run_id={}",
+            std::env::var(PARENT_RUN_ID_ENV).unwrap_or_default()
+        );
+        eprintln!("scheduler-child-stderr-sentinel");
+    }
+
+    #[test]
+    #[ignore = "helper process for scheduler nonzero exit coverage"]
+    fn scheduler_nonzero_child_fixture() {
+        std::process::exit(7);
     }
 
     #[test]
@@ -1686,6 +2345,7 @@ mod tests {
             &mut self,
             _auth_db_path: &Path,
             task: &ScheduledTaskInfo,
+            _context: &ScheduledRunContext,
             on_heartbeat: &mut dyn FnMut(),
         ) -> ProcessExecution {
             self.jobs
@@ -1707,6 +2367,7 @@ mod tests {
             &mut self,
             _auth_db_path: &Path,
             _task: &ScheduledTaskInfo,
+            _context: &ScheduledRunContext,
             on_heartbeat: &mut dyn FnMut(),
         ) -> ProcessExecution {
             self.side_effects.fetch_add(1, Ordering::SeqCst);
@@ -1718,12 +2379,59 @@ mod tests {
         }
     }
 
+    struct HeartbeatLossRunner;
+
+    impl ScheduledJobRunner for HeartbeatLossRunner {
+        fn run(
+            &mut self,
+            auth_db_path: &Path,
+            task: &ScheduledTaskInfo,
+            _context: &ScheduledRunContext,
+            on_heartbeat: &mut dyn FnMut(),
+        ) -> ProcessExecution {
+            let connection = litradar_storage::open_sqlite_connection(auth_db_path)
+                .expect("scheduler database should open");
+            connection
+                .execute(
+                    "UPDATE scheduled_task_runs SET status = 'failed' \
+                     WHERE task_id = ?1 AND status = 'running'",
+                    [task.id],
+                )
+                .expect("running claim should be invalidated");
+            on_heartbeat();
+            ProcessExecution {
+                status: "success".to_string(),
+                output_summary: String::new(),
+            }
+        }
+    }
+
     fn index_job() -> ScheduledJobSpec {
         ScheduledJobSpec::Index(litradar_domain::ScheduledIndexJob {
             metadata_file: None,
             notify: false,
             push: false,
         })
+    }
+
+    fn test_run_context() -> ScheduledRunContext {
+        ScheduledRunContext {
+            worker_id: "worker-test".to_string(),
+            task_id: 1,
+            run_id: "run-test".to_string(),
+            job_id: "scheduled-task-1".to_string(),
+        }
+    }
+
+    fn assert_single_child_failure(logs: &CapturedLogs, error_kind: &str) -> serde_json::Value {
+        let failed = logs
+            .events()
+            .into_iter()
+            .filter(|event| event["event"] == "scheduler.child.failed")
+            .collect::<Vec<_>>();
+        assert_eq!(failed.len(), 1);
+        assert_eq!(failed[0]["error_kind"], error_kind);
+        failed.into_iter().next().expect("failure should exist")
     }
 
     fn scheduled_task_fixture(cron: &str, timezone: &str) -> ScheduledTaskInfo {
