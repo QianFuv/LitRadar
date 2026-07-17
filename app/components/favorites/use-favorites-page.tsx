@@ -123,6 +123,7 @@ export function useFavoritesPage(userId: number) {
     hasNextPage,
     isFetchingNextPage,
     onFetchNextPage: () => void fetchNextPage(),
+    scrollContainerId: 'results-scroll-container',
   });
   const visiblePageCount = Math.min(visiblePages, loadedPages);
   const favorites = favoritePages.slice(0, visiblePageCount).flat();

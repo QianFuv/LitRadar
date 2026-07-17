@@ -1,11 +1,12 @@
 'use client';
 
 import { useState } from 'react';
-import Link from 'next/link';
-import { ArrowLeft, Download, FolderPlus, Pencil, Radar, Star, Trash2 } from 'lucide-react';
+import { Download, FolderPlus, Pencil, Radar, Star, Trash2 } from 'lucide-react';
 
 import { getExportUrl, type CitationFormat, type FavoriteArticleItem } from '@/lib/api';
 import { ArticleDialogCard } from '@/components/feature/article-dialog-card';
+import { WorkspaceSidebar } from '@/components/feature/sidebar';
+import { WorkspaceShell } from '@/components/feature/workspace-shell';
 import {
   getFavoriteSelectionKey,
   useFavoritesPage,
@@ -21,7 +22,6 @@ import {
   DialogDescription,
   DialogHeader,
   DialogTitle,
-  DialogTrigger,
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import {
@@ -96,169 +96,148 @@ export function FavoritesPageContent({ userId }: { userId: number }) {
   const [favoriteToRemove, setFavoriteToRemove] = useState<FavoriteArticleItem | null>(null);
 
   return (
-    <main
-      id="main-content"
-      className="max-w-5xl mx-auto p-6 space-y-6"
-      style={{
-        paddingBottom:
-          'calc(6rem + var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px)))',
-      }}
-    >
-      <div className="flex items-center gap-3">
-        <Button variant="ghost" size="icon" aria-label="返回首页" asChild>
-          <Link href="/">
-            <ArrowLeft className="h-5 w-5" />
-          </Link>
-        </Button>
-        <h1 className="text-2xl font-bold">我的收藏</h1>
-      </div>
-
-      <div className="grid md:grid-cols-[280px_1fr] gap-6">
-        {/* Folder list */}
-        <div className="space-y-3">
-          <div className="flex items-center justify-between">
-            <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">
-              收藏夹
-            </h2>
-            <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-              <DialogTrigger asChild>
-                <Button variant="outline" size="icon" className="h-7 w-7" aria-label="新建收藏夹">
-                  <FolderPlus className="h-4 w-4" />
-                </Button>
-              </DialogTrigger>
-              <DialogContent>
-                <DialogHeader>
-                  <DialogTitle>新建收藏夹</DialogTitle>
-                  <DialogDescription>输入收藏夹名称</DialogDescription>
-                </DialogHeader>
-                <form
-                  onSubmit={(e) => {
-                    e.preventDefault();
-                    if (newFolderName.trim()) createMut.mutate(newFolderName.trim());
-                  }}
-                  className="space-y-4"
-                >
-                  <Input
-                    aria-label="收藏夹名称"
-                    name="favorite_folder_name"
-                    autoComplete="off"
-                    value={newFolderName}
-                    onChange={(e) => setNewFolderName(e.target.value)}
-                    placeholder="收藏夹名称"
-                  />
-                  <Button type="submit" disabled={createMut.isPending}>
-                    创建
+    <>
+      <WorkspaceShell
+        sidebar={
+          <WorkspaceSidebar
+            headerContent={
+              <div className="space-y-3 border-t border-sidebar-border pt-4">
+                <div className="flex items-center justify-between">
+                  <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">
+                    收藏夹
+                  </h2>
+                  <Button
+                    variant="outline"
+                    size="icon"
+                    className="h-7 w-7"
+                    aria-label="新建收藏夹"
+                    onClick={() => setDialogOpen(true)}
+                  >
+                    <FolderPlus className="h-4 w-4" />
                   </Button>
-                </form>
-              </DialogContent>
-            </Dialog>
-          </div>
-
-          {isLoading ? (
-            <div role="status" className="text-sm text-muted-foreground">
-              加载中…
-            </div>
-          ) : folders.length === 0 ? (
-            <div className="text-sm text-muted-foreground">暂无收藏夹，点击 + 创建</div>
-          ) : (
-            <div className="space-y-1">
-              {folders.map((folder) => (
-                <div
-                  key={folder.id}
-                  className={cn(
-                    'flex items-center gap-2 rounded-md px-3 py-2 text-sm transition-colors',
-                    activeFolderId === folder.id
-                      ? 'bg-accent text-accent-foreground'
-                      : 'hover:bg-accent/50',
-                  )}
-                >
-                  {editingId === folder.id ? (
-                    <form
-                      className="flex-1 flex gap-1"
-                      onSubmit={(e) => {
-                        e.preventDefault();
-                        if (editName.trim()) {
-                          renameMut.mutate({ id: folder.id, name: editName.trim() });
-                        }
-                      }}
-                      onClick={(e) => e.stopPropagation()}
-                    >
-                      <Input
-                        ref={editInputRef}
-                        aria-label={`重命名收藏夹 ${folder.name}`}
-                        name="favorite_folder_rename"
-                        autoComplete="off"
-                        value={editName}
-                        onChange={(e) => setEditName(e.target.value)}
-                        className="h-6 text-sm"
-                      />
-                    </form>
-                  ) : (
-                    <button
-                      type="button"
-                      className="flex min-w-0 flex-1 items-center gap-2 text-left outline-none focus-visible:ring-ring/50 focus-visible:ring-[3px]"
-                      aria-pressed={activeFolderId === folder.id}
-                      onClick={() => handleSelectFolder(folder.id)}
-                    >
-                      <Star className="h-4 w-4 shrink-0" />
-                      <span className="truncate flex-1">{folder.name}</span>
-                      {folder.is_tracking && (
-                        <Badge variant="secondary" className="text-[10px] px-1.5">
-                          追踪
-                        </Badge>
-                      )}
-                      <span className="text-xs text-muted-foreground">{folder.article_count}</span>
-                    </button>
-                  )}
-                  <div className="flex gap-0.5">
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-6 w-6"
-                      title="设为追踪文件夹"
-                      aria-label={`设 ${folder.name} 为追踪文件夹`}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        trackMut.mutate(folder.id);
-                      }}
-                    >
-                      <Radar className="h-3 w-3" />
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-6 w-6"
-                      aria-label={`重命名收藏夹 ${folder.name}`}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setEditingId(folder.id);
-                        setEditName(folder.name);
-                      }}
-                    >
-                      <Pencil className="h-3 w-3" />
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-6 w-6 text-destructive"
-                      aria-label={`删除收藏夹 ${folder.name}`}
-                      disabled={deleteMut.isPending}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        deleteMut.reset();
-                        setFolderToDelete({ id: folder.id, name: folder.name });
-                      }}
-                    >
-                      <Trash2 className="h-3 w-3" />
-                    </Button>
-                  </div>
                 </div>
-              ))}
-            </div>
-          )}
-        </div>
 
-        {/* Article list */}
+                {isLoading ? (
+                  <div role="status" className="text-sm text-muted-foreground">
+                    加载中…
+                  </div>
+                ) : folders.length === 0 ? (
+                  <div className="text-sm text-muted-foreground">暂无收藏夹，点击 + 创建</div>
+                ) : (
+                  <div className="space-y-1">
+                    {folders.map((folder) => (
+                      <div
+                        key={folder.id}
+                        className={cn(
+                          'flex items-center gap-2 rounded-md px-3 py-2 text-sm transition-colors',
+                          activeFolderId === folder.id
+                            ? 'bg-accent text-accent-foreground'
+                            : 'hover:bg-accent/50',
+                        )}
+                      >
+                        {editingId === folder.id ? (
+                          <form
+                            className="flex-1 flex gap-1"
+                            onSubmit={(event) => {
+                              event.preventDefault();
+                              if (editName.trim()) {
+                                renameMut.mutate({ id: folder.id, name: editName.trim() });
+                              }
+                            }}
+                            onClick={(event) => event.stopPropagation()}
+                          >
+                            <Input
+                              ref={editInputRef}
+                              aria-label={`重命名收藏夹 ${folder.name}`}
+                              name="favorite_folder_rename"
+                              autoComplete="off"
+                              value={editName}
+                              onChange={(event) => setEditName(event.target.value)}
+                              className="h-6 text-sm"
+                            />
+                          </form>
+                        ) : (
+                          <button
+                            type="button"
+                            className="flex min-w-0 flex-1 items-center gap-2 text-left outline-none focus-visible:ring-ring/50 focus-visible:ring-[3px]"
+                            aria-pressed={activeFolderId === folder.id}
+                            onClick={() => handleSelectFolder(folder.id)}
+                          >
+                            <Star className="h-4 w-4 shrink-0" />
+                            <span className="truncate flex-1">{folder.name}</span>
+                            {folder.is_tracking && (
+                              <Badge variant="secondary" className="text-[10px] px-1.5">
+                                追踪
+                              </Badge>
+                            )}
+                            <span className="text-xs text-muted-foreground">
+                              {folder.article_count}
+                            </span>
+                          </button>
+                        )}
+                        <div className="flex gap-0.5">
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-6 w-6"
+                            title="设为追踪文件夹"
+                            aria-label={`设 ${folder.name} 为追踪文件夹`}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              trackMut.mutate(folder.id);
+                            }}
+                          >
+                            <Radar className="h-3 w-3" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-6 w-6"
+                            aria-label={`重命名收藏夹 ${folder.name}`}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              setEditingId(folder.id);
+                              setEditName(folder.name);
+                            }}
+                          >
+                            <Pencil className="h-3 w-3" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-6 w-6 text-destructive"
+                            aria-label={`删除收藏夹 ${folder.name}`}
+                            disabled={deleteMut.isPending}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              deleteMut.reset();
+                              setFolderToDelete({ id: folder.id, name: folder.name });
+                            }}
+                          >
+                            <Trash2 className="h-3 w-3" />
+                          </Button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            }
+          />
+        }
+        sidebarOpenLabel="打开收藏夹"
+        sidebarDialogTitle="收藏夹"
+        sidebarDialogDescription="选择和管理收藏夹。"
+        toolbar={
+          <div className="flex min-w-0 flex-1 items-center gap-3 md:mx-auto md:max-w-4xl">
+            <Star className="size-5 shrink-0" aria-hidden="true" />
+            <div className="min-w-0">
+              <p className="text-xs text-muted-foreground">文献管理</p>
+              <h1 className="truncate text-xl font-semibold tracking-tight">我的收藏</h1>
+            </div>
+          </div>
+        }
+      >
         <div>
           {!selectedFolder ? (
             <div className="flex items-center justify-center h-40 text-muted-foreground">
@@ -476,7 +455,34 @@ export function FavoritesPageContent({ userId }: { userId: number }) {
             </div>
           )}
         </div>
-      </div>
+      </WorkspaceShell>
+      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>新建收藏夹</DialogTitle>
+            <DialogDescription>输入收藏夹名称</DialogDescription>
+          </DialogHeader>
+          <form
+            onSubmit={(event) => {
+              event.preventDefault();
+              if (newFolderName.trim()) createMut.mutate(newFolderName.trim());
+            }}
+            className="space-y-4"
+          >
+            <Input
+              aria-label="收藏夹名称"
+              name="favorite_folder_name"
+              autoComplete="off"
+              value={newFolderName}
+              onChange={(event) => setNewFolderName(event.target.value)}
+              placeholder="收藏夹名称"
+            />
+            <Button type="submit" disabled={createMut.isPending}>
+              创建
+            </Button>
+          </form>
+        </DialogContent>
+      </Dialog>
       <ConfirmDialog
         open={folderToDelete !== null}
         onOpenChange={(nextOpen) => {
@@ -544,6 +550,6 @@ export function FavoritesPageContent({ userId }: { userId: number }) {
         error={bulkRemoveMut.error instanceof Error ? bulkRemoveMut.error.message : null}
         onConfirm={confirmBulkRemove}
       />
-    </main>
+    </>
   );
 }

@@ -5,7 +5,7 @@
 import { screen } from '@testing-library/react';
 import { http, HttpResponse } from 'msw';
 import { NuqsTestingAdapter } from 'nuqs/adapters/testing';
-import { describe, expect, test } from 'vitest';
+import { describe, expect, test, vi } from 'vitest';
 
 import { AdminOverviewCard } from '@/components/admin/overview-card';
 import { FavoritesPageContent } from '@/components/favorites/favorites-page-content';
@@ -13,6 +13,18 @@ import { getFavoriteSelectionKey } from '@/components/favorites/use-favorites-pa
 import { AccessTokensCard } from '@/components/settings/access-tokens-card';
 import { server } from '@/tests/mocks/server';
 import { renderWithQuery } from '@/tests/render';
+
+vi.mock('next/navigation', () => ({
+  usePathname: () => '/favorites',
+}));
+
+vi.mock('@/components/feature/use-visible-page-list', () => ({
+  useVisiblePageList: () => ({
+    loadMoreRef: () => undefined,
+    prefetchRef: () => undefined,
+    visiblePages: 1,
+  }),
+}));
 
 /**
  * Ignore copy actions in a component that does not expose a token value.

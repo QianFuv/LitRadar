@@ -3,7 +3,7 @@
  */
 
 import type { ReactNode } from 'react';
-import { screen, waitFor } from '@testing-library/react';
+import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
 import { NuqsTestingAdapter } from 'nuqs/adapters/testing';
@@ -16,12 +16,20 @@ import type { FavoriteArticleItem, FavoriteCheck } from '@/lib/api';
 import { server } from '@/tests/mocks/server';
 import { renderWithQuery } from '@/tests/render';
 
-vi.mock('@/components/feature/use-visible-page-list', () => ({
-  useVisiblePageList: () => ({
+const favoriteFlowMocks = vi.hoisted(() => ({
+  useVisiblePageList: vi.fn(() => ({
     loadMoreRef: () => undefined,
     prefetchRef: () => undefined,
     visiblePages: 1,
-  }),
+  })),
+}));
+
+vi.mock('next/navigation', () => ({
+  usePathname: () => '/favorites',
+}));
+
+vi.mock('@/components/feature/use-visible-page-list', () => ({
+  useVisiblePageList: favoriteFlowMocks.useVisiblePageList,
 }));
 
 vi.mock('@/components/feature/article-dialog-card', () => ({
@@ -148,6 +156,33 @@ async function addFavoriteResponse(context: { request: Request }): Promise<Respo
     note: '',
     created_at: 2,
   });
+}
+
+/**
+ * Verify favorites uses the shared sidebar, main landmark, and inner scroll container.
+ */
+async function rendersFavoritesWorkspace(): Promise<void> {
+  favoriteFlowMocks.useVisiblePageList.mockClear();
+  const user = userEvent.setup();
+  server.use(
+    http.get('http://localhost/api/favorites/folders', foldersResponse),
+    http.get('http://localhost/api/favorites/folders/3/articles', () => HttpResponse.json([])),
+  );
+
+  renderFavoritesPage();
+
+  expect(await screen.findByRole('heading', { name: '我的收藏' })).toBeInTheDocument();
+  expect(screen.getByRole('complementary')).toBeInTheDocument();
+  expect(screen.getByRole('main')).toHaveAttribute('id', 'main-content');
+  expect(document.getElementById('results-scroll-container')).toBeInTheDocument();
+  expect(favoriteFlowMocks.useVisiblePageList).toHaveBeenCalledWith(
+    expect.objectContaining({ scrollContainerId: 'results-scroll-container' }),
+  );
+
+  await user.click(screen.getByRole('button', { name: '打开收藏夹' }));
+  const mobileSidebar = screen.getByRole('dialog', { name: '收藏夹' });
+  await user.click(within(mobileSidebar).getByRole('button', { name: '新建收藏夹' }));
+  expect(screen.getAllByRole('dialog', { name: '新建收藏夹' })).toHaveLength(1);
 }
 
 /**
@@ -348,6 +383,7 @@ async function confirmsBulkFavoriteRemoval(): Promise<void> {
 }
 
 describe('favorite mutation flow', () => {
+  test('renders favorites in the shared workspace', rendersFavoritesWorkspace);
   test('updates visible state and cached folder membership', updatesFavoriteCache);
   test('confirms a removal before mutating folder membership', confirmsFavoriteRemoval);
   test('confirms folder deletion before mutation', confirmsFolderDeletion);
