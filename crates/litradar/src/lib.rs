@@ -6,8 +6,10 @@ mod runtime;
 
 use std::error::Error;
 use std::path::Path;
+use std::time::Instant;
 
 const SERVICE_RUNTIME_WORKER_THREADS: usize = 2;
+const PARENT_RUN_ID_ENV: &str = "LITRADAR_PARENT_RUN_ID";
 
 /// Run the application command selected by process arguments.
 ///
@@ -20,7 +22,67 @@ const SERVICE_RUNTIME_WORKER_THREADS: usize = 2;
 /// Result indicating whether the selected command completed successfully.
 pub fn run(args: Vec<String>) -> Result<(), Box<dyn Error>> {
     let application_executable = std::env::current_exe()?;
-    run_with_executable(args, &application_executable)
+    let command = command_name(&args);
+    let parent_run_id = parent_run_id();
+    let process_span = tracing::info_span!(
+        "process",
+        component = "runtime",
+        command,
+        version = env!("CARGO_PKG_VERSION"),
+        process_id = std::process::id(),
+        parent_run_id = tracing::field::Empty,
+    );
+    if let Some(parent_run_id) = parent_run_id.as_deref() {
+        process_span.record("parent_run_id", parent_run_id);
+    }
+    process_span.in_scope(|| {
+        let started_at = Instant::now();
+        tracing::info!(event = "process.started", component = "runtime");
+        let result = run_with_executable(args, &application_executable);
+        let duration_ms = started_at.elapsed().as_millis();
+        match &result {
+            Ok(()) => tracing::info!(
+                event = "process.completed",
+                component = "runtime",
+                outcome = "success",
+                duration_ms,
+            ),
+            Err(_) => tracing::error!(
+                event = "process.failed",
+                component = "runtime",
+                outcome = "failure",
+                error_kind = "command_failed",
+                duration_ms,
+            ),
+        }
+        result
+    })
+}
+
+fn command_name(args: &[String]) -> &'static str {
+    match args.first().map(String::as_str) {
+        None | Some("--help" | "-h") => "help",
+        Some("serve") => "serve",
+        Some("admin") => "admin",
+        Some("index") => "index",
+        Some("notify") => "notify",
+        Some("push") => "push",
+        Some("scheduler") => "scheduler",
+        Some("openapi") => "openapi",
+        Some(_) => "unknown",
+    }
+}
+
+fn parent_run_id() -> Option<String> {
+    std::env::var_os(PARENT_RUN_ID_ENV)
+        .and_then(|value| value.into_string().ok())
+        .filter(|value| {
+            !value.is_empty()
+                && value.len() <= 128
+                && value
+                    .chars()
+                    .all(|character| character.is_ascii_alphanumeric() || "-_.".contains(character))
+        })
 }
 
 fn run_with_executable(

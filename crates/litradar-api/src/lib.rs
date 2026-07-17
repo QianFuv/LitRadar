@@ -2,7 +2,6 @@
 
 pub mod config;
 mod mcp;
-mod observability;
 mod openapi;
 mod response;
 pub mod routes;
@@ -81,8 +80,6 @@ impl PreparedApiService {
     ///
     /// Prepared service ready for coordinated execution.
     pub async fn prepare(config: ApiConfig) -> Result<Self, Box<dyn Error>> {
-        observability::init_tracing();
-
         let bind_address = config.bind_address();
         let (router, state) = try_build_router_with_state(config)?;
         let listener = TcpListener::bind(&bind_address).await?;
