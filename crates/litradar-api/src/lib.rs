@@ -26,8 +26,9 @@ use axum::response::{IntoResponse, Response};
 use axum::Router;
 use config::ApiConfig;
 use litradar_auth::SESSION_COOKIE_NAME;
-use litradar_storage::{ManagedMetaPreparationReport, ServiceKind, StorageConfig};
-use serde_json::json;
+use litradar_storage::{
+    ManagedMetaAction, ManagedMetaPreparationReport, ServiceKind, StorageConfig,
+};
 use state::{ApiState, BlockingTaskError};
 use tokio::net::TcpListener;
 use tower::util::BoxCloneSyncService;
@@ -83,7 +84,17 @@ impl PreparedApiService {
         let (router, state) = try_build_router_with_state(config)?;
         let listener = TcpListener::bind(&bind_address).await?;
         let instance_id = api_instance_id()?;
-        println!("litradar listening on {}", listener.local_addr()?);
+        let local_address = listener.local_addr()?;
+        tracing::info!(
+            event = "service.listener.ready",
+            component = "api",
+            address_family = if local_address.is_ipv4() {
+                "ipv4"
+            } else {
+                "ipv6"
+            },
+            port = local_address.port(),
+        );
 
         Ok(Self {
             listener,
@@ -189,7 +200,7 @@ fn try_build_router_with_state(
     litradar_storage::migrate_storage(&storage_config)?;
     if let Some(bundle_dir) = config.bundled_meta_dir.as_deref() {
         let report = litradar_storage::prepare_managed_meta(&storage_config, bundle_dir)?;
-        emit_managed_meta_diagnostic("api_startup", &report)?;
+        emit_managed_meta_diagnostic("api_startup", &report);
     }
     let secret_codec = litradar_storage::SecretCodec::load(&config.secret_key_file)?;
     litradar_storage::verify_database_secrets(storage_config.auth_db_path(), &secret_codec)?;
@@ -214,19 +225,44 @@ fn try_build_router_with_state(
     Ok((router, state))
 }
 
-fn emit_managed_meta_diagnostic(
-    context: &str,
-    report: &ManagedMetaPreparationReport,
-) -> Result<(), serde_json::Error> {
-    eprintln!(
-        "{}",
-        serde_json::to_string(&json!({
-            "component": "managed_meta",
-            "context": context,
-            "report": report,
-        }))?
+fn emit_managed_meta_diagnostic(context: &str, report: &ManagedMetaPreparationReport) {
+    let created = report
+        .catalogs
+        .iter()
+        .filter(|catalog| catalog.action == ManagedMetaAction::Created)
+        .count();
+    let adopted = report
+        .catalogs
+        .iter()
+        .filter(|catalog| catalog.action == ManagedMetaAction::Adopted)
+        .count();
+    let updated = report
+        .catalogs
+        .iter()
+        .filter(|catalog| catalog.action == ManagedMetaAction::Updated)
+        .count();
+    let customized = report
+        .catalogs
+        .iter()
+        .filter(|catalog| catalog.action == ManagedMetaAction::Customized)
+        .count();
+    let unchanged = report
+        .catalogs
+        .iter()
+        .filter(|catalog| catalog.action == ManagedMetaAction::Unchanged)
+        .count();
+    tracing::info!(
+        event = "storage.managed_meta.prepared",
+        component = "storage",
+        context,
+        bundle_version = report.bundle_version,
+        catalog_count = report.catalogs.len(),
+        created,
+        adopted,
+        updated,
+        customized,
+        unchanged,
     );
-    Ok(())
 }
 
 fn static_frontend_service(

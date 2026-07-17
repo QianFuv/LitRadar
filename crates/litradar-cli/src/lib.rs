@@ -4,6 +4,7 @@ use std::error::Error;
 use std::fs;
 use std::io::BufRead;
 use std::path::{Path, PathBuf};
+use std::time::Instant;
 
 use litradar_auth::AuthService;
 use litradar_domain::{DELIVERY_RETRY_ATTEMPTS_MAX, DELIVERY_RETRY_ATTEMPTS_MIN};
@@ -15,7 +16,8 @@ use litradar_storage::{
     create_backup, migrate_auth_database, migrate_database_secrets,
     migrate_existing_index_databases, migrate_index_database, restore_backup,
     rotate_database_secrets, verify_backup, verify_database_secrets, BackupCreateOptions,
-    BackupRestoreOptions, ManagedMetaPreparationReport, SecretCodec, StorageConfig,
+    BackupRestoreOptions, ManagedMetaAction, ManagedMetaPreparationReport, SecretCodec,
+    StorageConfig,
 };
 use litradar_worker::delivery::{
     run_recommendation_delivery, DeliveryMode, DeliveryWorkflow, RecommendationRunConfig,
@@ -28,6 +30,45 @@ const DEFAULT_INDEX_PROCESS_COUNT: usize = 1;
 const DEFAULT_INDEX_ISSUE_BATCH_SIZE: usize = 8;
 const BUNDLED_META_DIR_ENV: &str = "LITRADAR_BUNDLED_META_DIR";
 
+fn run_cli_command(
+    command: &'static str,
+    operation: impl FnOnce() -> Result<(), Box<dyn Error>>,
+) -> Result<(), Box<dyn Error>> {
+    let span = tracing::info_span!("cli.command", component = "cli", command);
+    span.in_scope(|| {
+        let started_at = Instant::now();
+        tracing::info!(event = "cli.command.started", component = "cli", command,);
+        let result = operation();
+        let duration_ms = started_at.elapsed().as_millis().min(u128::from(u64::MAX)) as u64;
+        match &result {
+            Ok(()) => tracing::info!(
+                event = "cli.command.completed",
+                component = "cli",
+                command,
+                outcome = "success",
+                duration_ms,
+            ),
+            Err(_) => tracing::error!(
+                event = "cli.command.failed",
+                component = "cli",
+                command,
+                outcome = "failure",
+                error_kind = "command_failed",
+                duration_ms,
+            ),
+        }
+        result
+    })
+}
+
+fn print_help(help: &str) {
+    println!("{help}");
+}
+
+fn print_result(result: &str) {
+    println!("{result}");
+}
+
 /// Run the unified application's local `admin` maintenance command.
 ///
 /// # Arguments
@@ -38,13 +79,17 @@ const BUNDLED_META_DIR_ENV: &str = "LITRADAR_BUNDLED_META_DIR";
 ///
 /// Result indicating whether the command completed successfully.
 pub fn run_admin_command(args: Vec<String>) -> Result<(), Box<dyn Error>> {
+    run_cli_command("admin", move || run_admin_command_inner(args))
+}
+
+fn run_admin_command_inner(args: Vec<String>) -> Result<(), Box<dyn Error>> {
     if has_help(&args) {
-        println!("{}", admin_usage());
+        print_help(&admin_usage());
         return Ok(());
     }
     let stdin = std::io::stdin();
     let payload = run_admin_command_with_reader(args, stdin.lock())?;
-    println!("{}", serde_json::to_string(&payload)?);
+    print_result(&serde_json::to_string(&payload)?);
     Ok(())
 }
 
@@ -239,11 +284,14 @@ pub fn run_index_command(
     args: Vec<String>,
     application_executable: impl AsRef<Path>,
 ) -> Result<(), Box<dyn Error>> {
-    run_index_command_with_bundled_meta_dir(
-        args,
-        application_executable.as_ref(),
-        std::env::var_os(BUNDLED_META_DIR_ENV).map(PathBuf::from),
-    )
+    let application_executable = application_executable.as_ref().to_path_buf();
+    run_cli_command("index", move || {
+        run_index_command_with_bundled_meta_dir(
+            args,
+            &application_executable,
+            std::env::var_os(BUNDLED_META_DIR_ENV).map(PathBuf::from),
+        )
+    })
 }
 
 fn run_index_command_with_bundled_meta_dir(
@@ -253,14 +301,14 @@ fn run_index_command_with_bundled_meta_dir(
 ) -> Result<(), Box<dyn Error>> {
     let mut args = args;
     if has_help(&args) {
-        println!("{}", index_usage());
+        print_help(&index_usage());
         return Ok(());
     }
     if let Some(request_path) = extract_path_option(&mut args, "--live-worker-request")? {
         if !args.is_empty() {
             return Err(format!("unexpected index worker arguments: {}", args.join(" ")).into());
         }
-        println!("{}", run_live_index_worker_from_file_path(request_path)?);
+        print_result(&run_live_index_worker_from_file_path(request_path)?);
         return Ok(());
     }
     let project_root = extract_project_root(&mut args)?;
@@ -301,10 +349,7 @@ fn run_index_command_with_bundled_meta_dir(
     });
     migrate_existing_index_databases(&StorageConfig::from_project_root(&project_root))?;
     let outcome = outcome?;
-    println!(
-        "{}",
-        serialize_index_outcome(&outcome, effective_concurrency)?
-    );
+    print_result(&serialize_index_outcome(&outcome, effective_concurrency)?);
     Ok(())
 }
 
@@ -316,13 +361,42 @@ fn prepare_index_managed_meta(
         return Ok(None);
     };
     let report = litradar_storage::prepare_managed_meta(storage_config, bundled_meta_dir)?;
-    eprintln!(
-        "{}",
-        serde_json::to_string(&json!({
-            "component": "managed_meta",
-            "context": "index_startup",
-            "report": report,
-        }))?
+    let created = report
+        .catalogs
+        .iter()
+        .filter(|catalog| catalog.action == ManagedMetaAction::Created)
+        .count();
+    let adopted = report
+        .catalogs
+        .iter()
+        .filter(|catalog| catalog.action == ManagedMetaAction::Adopted)
+        .count();
+    let updated = report
+        .catalogs
+        .iter()
+        .filter(|catalog| catalog.action == ManagedMetaAction::Updated)
+        .count();
+    let customized = report
+        .catalogs
+        .iter()
+        .filter(|catalog| catalog.action == ManagedMetaAction::Customized)
+        .count();
+    let unchanged = report
+        .catalogs
+        .iter()
+        .filter(|catalog| catalog.action == ManagedMetaAction::Unchanged)
+        .count();
+    tracing::info!(
+        event = "storage.managed_meta.prepared",
+        component = "storage",
+        context = "index_startup",
+        bundle_version = report.bundle_version,
+        catalog_count = report.catalogs.len(),
+        created,
+        adopted,
+        updated,
+        customized,
+        unchanged,
     );
     Ok(Some(report))
 }
@@ -424,11 +498,21 @@ pub fn run_push_command(args: Vec<String>) -> Result<(), Box<dyn Error>> {
 ///
 /// Result indicating whether the command completed successfully.
 pub fn run_scheduler_command(
-    mut args: Vec<String>,
+    args: Vec<String>,
     application_executable: impl AsRef<Path>,
 ) -> Result<(), Box<dyn Error>> {
+    let application_executable = application_executable.as_ref().to_path_buf();
+    run_cli_command("scheduler", move || {
+        run_scheduler_command_inner(args, &application_executable)
+    })
+}
+
+fn run_scheduler_command_inner(
+    mut args: Vec<String>,
+    application_executable: &Path,
+) -> Result<(), Box<dyn Error>> {
     if has_help(&args) {
-        println!("{}", scheduler_usage());
+        print_help(&scheduler_usage());
         return Ok(());
     }
     let project_root = extract_project_root(&mut args)?;
@@ -460,7 +544,7 @@ pub fn run_scheduler_command(
                 task_id,
                 mode,
             )?;
-            println!("{}", serde_json::to_string(&outcome)?);
+            print_result(&serde_json::to_string(&outcome)?);
             Ok(())
         }
     }
@@ -473,10 +557,21 @@ enum SchedulerAction {
 
 fn run_delivery_command(
     workflow: DeliveryWorkflow,
+    args: Vec<String>,
+) -> Result<(), Box<dyn Error>> {
+    let command = match workflow {
+        DeliveryWorkflow::Notify => "notify",
+        DeliveryWorkflow::Push => "push",
+    };
+    run_cli_command(command, move || run_delivery_command_inner(workflow, args))
+}
+
+fn run_delivery_command_inner(
+    workflow: DeliveryWorkflow,
     mut args: Vec<String>,
 ) -> Result<(), Box<dyn Error>> {
     if has_help(&args) {
-        println!("{}", delivery_usage(workflow));
+        print_help(&delivery_usage(workflow));
         return Ok(());
     }
     let command_name = match workflow {
@@ -559,13 +654,13 @@ fn run_delivery_command(
         "status": if outcomes.iter().all(|outcome| outcome.status == "idle") { "idle" } else { "completed" },
         "databases": outcomes,
     });
-    println!("{}", serde_json::to_string(&payload)?);
+    print_result(&serde_json::to_string(&payload)?);
     Ok(())
 }
 
 fn print_scheduler_load(auth_db_path: &Path) -> Result<(), Box<dyn Error>> {
     let result = load_scheduler_jobs(auth_db_path)?;
-    println!("{}", serde_json::to_string(&result)?);
+    print_result(&serde_json::to_string(&result)?);
     Ok(())
 }
 

@@ -11,6 +11,7 @@ litradar-index = { path = "../litradar-index" }
 litradar-storage = { path = "../litradar-storage" }
 litradar-worker = { path = "../litradar-worker" }
 serde_json.workspace = true
+tracing.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

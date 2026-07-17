@@ -1125,6 +1125,7 @@ dependencies = [
  "litradar-worker",
  "serde_json",
  "tempfile",
+ "tracing",
 ]
 
 [[package]]
