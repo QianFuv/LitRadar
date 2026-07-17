@@ -1,6 +1,6 @@
 //! Admin route handlers for auth database business state.
 
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use axum::extract::{Path, State};
 use axum::http::HeaderMap;
@@ -21,6 +21,60 @@ use crate::state::ApiState;
 
 type AnnouncementPayload<'a> = (Option<&'a str>, Option<&'a str>, Option<String>);
 type ScheduledTaskPayload<'a> = (Option<&'a str>, Option<&'a str>, Option<&'a str>);
+
+struct AdminAudit {
+    action: &'static str,
+    actor_id: i64,
+    target_id: i64,
+    started_at: Instant,
+    is_terminal: bool,
+}
+
+impl AdminAudit {
+    fn new(action: &'static str, actor_id: i64, target_id: i64) -> Self {
+        Self {
+            action,
+            actor_id,
+            target_id,
+            started_at: Instant::now(),
+            is_terminal: false,
+        }
+    }
+
+    fn set_target_id(&mut self, target_id: i64) {
+        self.target_id = target_id;
+    }
+
+    fn completed(&mut self) {
+        tracing::info!(
+            event = "security.admin.completed",
+            component = "security",
+            action = self.action,
+            outcome = "completed",
+            actor_id = self.actor_id,
+            target_id = self.target_id,
+            duration_ms = self.started_at.elapsed().as_millis() as u64,
+        );
+        self.is_terminal = true;
+    }
+}
+
+impl Drop for AdminAudit {
+    fn drop(&mut self) {
+        if !self.is_terminal {
+            tracing::warn!(
+                event = "security.admin.rejected",
+                component = "security",
+                action = self.action,
+                outcome = "rejected",
+                actor_id = self.actor_id,
+                target_id = self.target_id,
+                reason = "operation_failed",
+                duration_ms = self.started_at.elapsed().as_millis() as u64,
+            );
+        }
+    }
+}
 
 /// List all users with admin dashboard counts.
 #[utoipa::path(
@@ -59,6 +113,7 @@ pub(crate) async fn set_admin(
     Json(body): Json<AdminSetAdmin>,
 ) -> Result<Json<OkResponse>, ApiError> {
     let (admin, _) = require_admin_user(&state, &headers).await?;
+    let mut audit = AdminAudit::new("user_admin_update", admin.id.0, user_id);
     let target_id = UserId(user_id);
     if target_id == admin.id && !body.is_admin {
         return Err(ApiError::bad_request("Cannot revoke own admin status"));
@@ -71,6 +126,7 @@ pub(crate) async fn set_admin(
     if !did_update {
         return Err(ApiError::not_found("User not found"));
     }
+    audit.completed();
     Ok(Json(OkResponse { ok: true }))
 }
 
@@ -90,7 +146,8 @@ pub(crate) async fn reset_password(
     Path(user_id): Path<i64>,
     Json(body): Json<AdminResetPassword>,
 ) -> Result<Json<OkResponse>, ApiError> {
-    require_admin_user(&state, &headers).await?;
+    let (admin, _) = require_admin_user(&state, &headers).await?;
+    let mut audit = AdminAudit::new("user_password_reset", admin.id.0, user_id);
     if !is_valid_new_password(&body.new_password) {
         return Err(ApiError::bad_request(format!(
             "Password must be at least {MIN_PASSWORD_LENGTH} characters"
@@ -105,6 +162,7 @@ pub(crate) async fn reset_password(
     if !did_reset {
         return Err(ApiError::not_found("User not found"));
     }
+    audit.completed();
     Ok(Json(OkResponse { ok: true }))
 }
 
@@ -123,6 +181,7 @@ pub(crate) async fn delete_user(
     Path(user_id): Path<i64>,
 ) -> Result<Json<OkResponse>, ApiError> {
     let (admin, _) = require_admin_user(&state, &headers).await?;
+    let mut audit = AdminAudit::new("user_delete", admin.id.0, user_id);
     let target_id = UserId(user_id);
     if target_id == admin.id {
         return Err(ApiError::bad_request("Cannot delete yourself"));
@@ -134,6 +193,7 @@ pub(crate) async fn delete_user(
     if !did_delete {
         return Err(ApiError::not_found("User not found"));
     }
+    audit.completed();
     Ok(Json(OkResponse { ok: true }))
 }
 
@@ -169,11 +229,14 @@ pub(crate) async fn create_invite_code(
     State(state): State<ApiState>,
     headers: HeaderMap,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    require_admin_user(&state, &headers).await?;
+    let (admin, _) = require_admin_user(&state, &headers).await?;
+    let mut audit = AdminAudit::new("invite_create", admin.id.0, 0);
     let code = run_business(&state, move |storage| {
         litradar_storage::admin_create_invite_code(storage.auth_db_path())
     })
     .await?;
+    audit.set_target_id(code.id);
+    audit.completed();
     Ok(Json(serde_json::json!({
         "id": code.id,
         "code": code.code,
@@ -195,7 +258,8 @@ pub(crate) async fn delete_invite_code(
     headers: HeaderMap,
     Path(code_id): Path<i64>,
 ) -> Result<Json<OkResponse>, ApiError> {
-    require_admin_user(&state, &headers).await?;
+    let (admin, _) = require_admin_user(&state, &headers).await?;
+    let mut audit = AdminAudit::new("invite_delete", admin.id.0, code_id);
     let did_delete = run_business(&state, move |storage| {
         litradar_storage::delete_invite_code(storage.auth_db_path(), code_id)
     })
@@ -203,6 +267,7 @@ pub(crate) async fn delete_invite_code(
     if !did_delete {
         return Err(ApiError::not_found("Code not found or already used"));
     }
+    audit.completed();
     Ok(Json(OkResponse { ok: true }))
 }
 
@@ -260,7 +325,8 @@ pub(crate) async fn create_scheduled_task(
     headers: HeaderMap,
     Json(body): Json<ScheduledTaskCreate>,
 ) -> Result<Json<ScheduledTaskInfo>, ApiError> {
-    require_admin_user(&state, &headers).await?;
+    let (admin, _) = require_admin_user(&state, &headers).await?;
+    let mut audit = AdminAudit::new("scheduled_task_create", admin.id.0, 0);
     let (name, cron, timezone) = validate_scheduled_task_payload(
         Some(&body.name),
         Some(&body.cron),
@@ -290,6 +356,8 @@ pub(crate) async fn create_scheduled_task(
         )
     })
     .await?;
+    audit.set_target_id(task.id);
+    audit.completed();
     Ok(Json(task))
 }
 
@@ -309,7 +377,8 @@ pub(crate) async fn update_scheduled_task(
     Path(task_id): Path<i64>,
     Json(body): Json<ScheduledTaskUpdate>,
 ) -> Result<Json<ScheduledTaskInfo>, ApiError> {
-    require_admin_user(&state, &headers).await?;
+    let (admin, _) = require_admin_user(&state, &headers).await?;
+    let mut audit = AdminAudit::new("scheduled_task_update", admin.id.0, task_id);
     let (name, cron, timezone) = validate_scheduled_task_payload(
         body.name.as_deref(),
         body.cron.as_deref(),
@@ -343,6 +412,7 @@ pub(crate) async fn update_scheduled_task(
     let Some(task) = task else {
         return Err(ApiError::not_found("Scheduled task not found"));
     };
+    audit.completed();
     Ok(Json(task))
 }
 
@@ -360,7 +430,8 @@ pub(crate) async fn delete_scheduled_task(
     headers: HeaderMap,
     Path(task_id): Path<i64>,
 ) -> Result<Json<OkResponse>, ApiError> {
-    require_admin_user(&state, &headers).await?;
+    let (admin, _) = require_admin_user(&state, &headers).await?;
+    let mut audit = AdminAudit::new("scheduled_task_delete", admin.id.0, task_id);
     let did_delete = run_business(&state, move |storage| {
         litradar_storage::delete_scheduled_task(storage.auth_db_path(), task_id)
     })
@@ -368,6 +439,7 @@ pub(crate) async fn delete_scheduled_task(
     if !did_delete {
         return Err(ApiError::not_found("Scheduled task not found"));
     }
+    audit.completed();
     Ok(Json(OkResponse { ok: true }))
 }
 
@@ -432,7 +504,8 @@ pub(crate) async fn update_runtime_settings(
     headers: HeaderMap,
     Json(body): Json<RuntimeSettingsUpdate>,
 ) -> Result<Json<Vec<RuntimeSettingInfo>>, ApiError> {
-    require_admin_user(&state, &headers).await?;
+    let (admin, _) = require_admin_user(&state, &headers).await?;
+    let mut audit = AdminAudit::new("runtime_settings_update", admin.id.0, 0);
     validate_runtime_origin_settings_update(&body)
         .map_err(|error| ApiError::bad_request(error.to_string()))?;
     let values = body.values;
@@ -447,6 +520,7 @@ pub(crate) async fn update_runtime_settings(
         )
     })
     .await?;
+    audit.completed();
     Ok(Json(settings))
 }
 
@@ -484,7 +558,8 @@ pub(crate) async fn create_announcement(
     headers: HeaderMap,
     Json(body): Json<AnnouncementCreate>,
 ) -> Result<Json<AnnouncementInfo>, ApiError> {
-    require_admin_user(&state, &headers).await?;
+    let (admin, _) = require_admin_user(&state, &headers).await?;
+    let mut audit = AdminAudit::new("announcement_create", admin.id.0, 0);
     let (title, message, priority) = validate_announcement_payload(
         Some(&body.title),
         Some(&body.message),
@@ -504,6 +579,8 @@ pub(crate) async fn create_announcement(
         )
     })
     .await?;
+    audit.set_target_id(announcement.id);
+    audit.completed();
     Ok(Json(announcement))
 }
 
@@ -523,7 +600,8 @@ pub(crate) async fn update_announcement(
     Path(announcement_id): Path<i64>,
     Json(body): Json<AnnouncementUpdate>,
 ) -> Result<Json<AnnouncementInfo>, ApiError> {
-    require_admin_user(&state, &headers).await?;
+    let (admin, _) = require_admin_user(&state, &headers).await?;
+    let mut audit = AdminAudit::new("announcement_update", admin.id.0, announcement_id);
     let (title, message, priority) = validate_announcement_payload(
         body.title.as_deref(),
         body.message.as_deref(),
@@ -546,6 +624,7 @@ pub(crate) async fn update_announcement(
     let Some(announcement) = announcement else {
         return Err(ApiError::not_found("Announcement not found"));
     };
+    audit.completed();
     Ok(Json(announcement))
 }
 
@@ -563,7 +642,8 @@ pub(crate) async fn delete_announcement(
     headers: HeaderMap,
     Path(announcement_id): Path<i64>,
 ) -> Result<Json<OkResponse>, ApiError> {
-    require_admin_user(&state, &headers).await?;
+    let (admin, _) = require_admin_user(&state, &headers).await?;
+    let mut audit = AdminAudit::new("announcement_delete", admin.id.0, announcement_id);
     let did_delete = run_business(&state, move |storage| {
         litradar_storage::delete_announcement(storage.auth_db_path(), announcement_id)
     })
@@ -571,6 +651,7 @@ pub(crate) async fn delete_announcement(
     if !did_delete {
         return Err(ApiError::not_found("Announcement not found"));
     }
+    audit.completed();
     Ok(Json(OkResponse { ok: true }))
 }
 
@@ -669,4 +750,106 @@ fn current_unix_time() -> f64 {
         .duration_since(UNIX_EPOCH)
         .expect("system time should be after Unix epoch")
         .as_secs_f64()
+}
+
+#[cfg(test)]
+mod tests {
+    use axum::http::{Method, StatusCode};
+    use serde_json::json;
+
+    use crate::state::tracing_test_support::CapturedLogs;
+    use crate::test_support::{json_request, TestBackend};
+
+    #[tokio::test]
+    async fn admin_write_events_include_safe_ids_without_request_content() {
+        const TITLE_SENTINEL: &str = "announcement-title-sentinel-never-log";
+        const MESSAGE_SENTINEL: &str = "announcement-message-sentinel-never-log";
+        const REJECTED_SENTINEL: &str = "rejected-message-sentinel-never-log";
+
+        let backend = TestBackend::new();
+        let admin = backend.authenticated_user("audit_admin", true);
+        let authorization = admin.authorization_header();
+        let router = backend.router();
+
+        let create_logs = CapturedLogs::default();
+        let create_response = create_logs
+            .capture_async(json_request(
+                &router,
+                Method::POST,
+                "/api/admin/announcements",
+                Some(&authorization),
+                None,
+                Some(json!({
+                    "title": TITLE_SENTINEL,
+                    "message": MESSAGE_SENTINEL,
+                    "priority": "high",
+                    "enabled": true,
+                })),
+            ))
+            .await;
+        assert_eq!(create_response.status, StatusCode::OK);
+        let create_event = create_logs
+            .events()
+            .into_iter()
+            .find(|event| {
+                event["event"] == "security.admin.completed"
+                    && event["action"] == "announcement_create"
+            })
+            .expect("announcement creation event should be captured");
+        assert_eq!(create_event["actor_id"], admin.user_id().0);
+        assert_eq!(create_event["target_id"], create_response.payload["id"]);
+        assert!(create_event["spans"].as_array().is_some_and(|spans| {
+            spans
+                .iter()
+                .any(|span| span["request_id"].as_str().is_some())
+        }));
+        let create_text = create_logs.text();
+        assert!(!create_text.contains(TITLE_SENTINEL));
+        assert!(!create_text.contains(MESSAGE_SENTINEL));
+        assert!(!create_text.contains(&authorization));
+
+        let rejected_logs = CapturedLogs::default();
+        let rejected_response = rejected_logs
+            .capture_async(json_request(
+                &router,
+                Method::PUT,
+                "/api/admin/announcements/999999",
+                Some(&authorization),
+                None,
+                Some(json!({
+                    "message": REJECTED_SENTINEL,
+                })),
+            ))
+            .await;
+        assert_eq!(rejected_response.status, StatusCode::NOT_FOUND);
+        let rejected_event = rejected_logs
+            .events()
+            .into_iter()
+            .find(|event| {
+                event["event"] == "security.admin.rejected"
+                    && event["action"] == "announcement_update"
+            })
+            .expect("announcement rejection event should be captured");
+        assert_eq!(rejected_event["actor_id"], admin.user_id().0);
+        assert_eq!(rejected_event["target_id"], 999999);
+        assert!(!rejected_logs.text().contains(REJECTED_SENTINEL));
+
+        let read_logs = CapturedLogs::default();
+        let list_response = read_logs
+            .capture_async(json_request(
+                &router,
+                Method::GET,
+                "/api/admin/announcements",
+                Some(&authorization),
+                None,
+                None,
+            ))
+            .await;
+        assert_eq!(list_response.status, StatusCode::OK);
+        assert!(!read_logs.events().iter().any(|event| {
+            event["event"]
+                .as_str()
+                .is_some_and(|name| name.starts_with("security.admin."))
+        }));
+    }
 }

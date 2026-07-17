@@ -6,7 +6,7 @@ use std::fmt;
 use std::fs::{self, File};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use rusqlite::backup::Backup;
 use rusqlite::{params, Connection, OpenFlags, TransactionBehavior};
@@ -367,8 +367,39 @@ pub fn has_recent_service_heartbeat(
 ///
 /// Written and verified manifest.
 pub fn create_backup(options: &BackupCreateOptions) -> Result<BackupManifest, BackupError> {
+    let started_at = Instant::now();
+    tracing::info!(
+        event = "storage.backup.started",
+        component = "storage",
+        operation = "create",
+        format_version = BACKUP_FORMAT_VERSION,
+    );
     let mut hook = NoopBackupCreateHook;
-    create_backup_with_hook(options, &mut hook)
+    match create_backup_with_hook(options, &mut hook) {
+        Ok(manifest) => {
+            tracing::info!(
+                event = "storage.backup.completed",
+                component = "storage",
+                operation = "create",
+                format_version = manifest.version,
+                file_count = manifest.components.len() + 1,
+                database_count = backup_manifest_database_count(&manifest),
+                duration_ms = started_at.elapsed().as_millis() as u64,
+            );
+            Ok(manifest)
+        }
+        Err(error) => {
+            tracing::warn!(
+                event = "storage.backup.failed",
+                component = "storage",
+                operation = "create",
+                format_version = BACKUP_FORMAT_VERSION,
+                duration_ms = started_at.elapsed().as_millis() as u64,
+                error_kind = backup_error_kind(&error),
+            );
+            Err(error)
+        }
+    }
 }
 
 trait BackupCreateHook {
@@ -480,7 +511,41 @@ fn create_backup_with_hook(
 ///
 /// Parsed manifest after every integrity check succeeds.
 pub fn verify_backup(backup_dir: impl AsRef<Path>) -> Result<BackupManifest, BackupError> {
-    let backup_dir = backup_dir.as_ref();
+    let started_at = Instant::now();
+    tracing::info!(
+        event = "storage.backup.started",
+        component = "storage",
+        operation = "verify",
+        format_version = BACKUP_FORMAT_VERSION,
+    );
+    match verify_backup_inner(backup_dir.as_ref()) {
+        Ok(manifest) => {
+            tracing::info!(
+                event = "storage.backup.completed",
+                component = "storage",
+                operation = "verify",
+                format_version = manifest.version,
+                file_count = manifest.components.len() + 1,
+                database_count = backup_manifest_database_count(&manifest),
+                duration_ms = started_at.elapsed().as_millis() as u64,
+            );
+            Ok(manifest)
+        }
+        Err(error) => {
+            tracing::warn!(
+                event = "storage.backup.failed",
+                component = "storage",
+                operation = "verify",
+                format_version = BACKUP_FORMAT_VERSION,
+                duration_ms = started_at.elapsed().as_millis() as u64,
+                error_kind = backup_error_kind(&error),
+            );
+            Err(error)
+        }
+    }
+}
+
+fn verify_backup_inner(backup_dir: &Path) -> Result<BackupManifest, BackupError> {
     if !backup_dir.is_dir() {
         return Err(BackupError::InvalidInput(
             "backup directory does not exist".to_string(),
@@ -536,7 +601,40 @@ pub fn verify_backup(backup_dir: impl AsRef<Path>) -> Result<BackupManifest, Bac
 ///
 /// Restore summary after target validation succeeds.
 pub fn restore_backup(options: &BackupRestoreOptions) -> Result<BackupRestoreReport, BackupError> {
-    restore_backup_at(options, unix_time_seconds()?)
+    let started_at = Instant::now();
+    tracing::info!(
+        event = "storage.backup.started",
+        component = "storage",
+        operation = "restore",
+        format_version = BACKUP_FORMAT_VERSION,
+    );
+    let result =
+        unix_time_seconds().and_then(|current_time| restore_backup_at(options, current_time));
+    match result {
+        Ok(report) => {
+            tracing::info!(
+                event = "storage.backup.completed",
+                component = "storage",
+                operation = "restore",
+                format_version = BACKUP_FORMAT_VERSION,
+                file_count = report.restored_files,
+                database_count = report.restored_databases,
+                duration_ms = started_at.elapsed().as_millis() as u64,
+            );
+            Ok(report)
+        }
+        Err(error) => {
+            tracing::warn!(
+                event = "storage.backup.failed",
+                component = "storage",
+                operation = "restore",
+                format_version = BACKUP_FORMAT_VERSION,
+                duration_ms = started_at.elapsed().as_millis() as u64,
+                error_kind = backup_error_kind(&error),
+            );
+            Err(error)
+        }
+    }
 }
 
 fn restore_backup_at(
@@ -682,6 +780,34 @@ fn restore_backup_at_with_hook(
         restored_index_databases: manifest.selection.index_databases,
         restored_push_state: manifest.selection.push_state,
     })
+}
+
+fn backup_manifest_database_count(manifest: &BackupManifest) -> usize {
+    manifest
+        .components
+        .iter()
+        .filter(|component| {
+            matches!(
+                component.kind,
+                BackupComponentKind::AuthDatabase | BackupComponentKind::IndexDatabase
+            )
+        })
+        .count()
+}
+
+fn backup_error_kind(error: &BackupError) -> &'static str {
+    match error {
+        BackupError::Io(_) => "io",
+        BackupError::Sqlite(_) => "sqlite",
+        BackupError::Json(_) => "json",
+        BackupError::DatabaseResolution(_) => "database_resolution",
+        BackupError::InvalidInput(_) => "invalid_input",
+        BackupError::InvalidManifest(_) => "invalid_manifest",
+        BackupError::Unsupported(_) => "unsupported",
+        BackupError::Integrity(_) => "integrity",
+        BackupError::ActiveTarget => "active_target",
+        BackupError::Rollback(_) => "rollback",
+    }
 }
 
 fn validate_manifest_header(manifest: &BackupManifest) -> Result<(), BackupError> {
@@ -1378,11 +1504,13 @@ mod tests {
     use rusqlite::Connection;
     use tempfile::{tempdir, TempDir};
 
+    use crate::migrations::test_support::CapturedLogs;
+
     use super::{
         apply_replacements, create_backup, create_backup_with_hook, delete_service_heartbeat,
         has_recent_service_heartbeat, parse_manifest_path, record_service_heartbeat,
-        restore_backup_at, restore_backup_at_with_hook, snapshot_directory, verify_backup,
-        BackupComponentKind, BackupCreateHook, BackupCreateOptions, BackupError,
+        restore_backup, restore_backup_at, restore_backup_at_with_hook, snapshot_directory,
+        verify_backup, BackupComponentKind, BackupCreateHook, BackupCreateOptions, BackupError,
         BackupRestoreOptions, Replacement, RestoreHook, ServiceKind, BACKUP_FORMAT_VERSION,
     };
     use crate::{
@@ -1430,6 +1558,80 @@ mod tests {
         ] {
             assert!(parse_manifest_path(value).is_err(), "{value} should fail");
         }
+    }
+
+    #[test]
+    fn backup_events_report_aggregates_without_paths_hashes_or_content() {
+        const PATH_SENTINEL: &str = "backup-path-sentinel-never-log";
+        const CONTENT_SENTINEL: &str = "backup-content-sentinel-never-log";
+
+        let fixture = BackupFixture::new(PATH_SENTINEL);
+        fixture.write_metadata("private.txt", CONTENT_SENTINEL.as_bytes());
+        let create_logs = CapturedLogs::default();
+        let manifest = create_logs
+            .capture(|| create_backup(&fixture.create_options(false, false)))
+            .expect("backup should be created");
+        let create_events = create_logs.events();
+        let created = create_events
+            .iter()
+            .find(|event| {
+                event["event"] == "storage.backup.completed" && event["operation"] == "create"
+            })
+            .expect("backup creation completion should be captured");
+        assert_eq!(created["format_version"], BACKUP_FORMAT_VERSION);
+        assert_eq!(created["file_count"], manifest.components.len() + 1);
+        assert_eq!(created["database_count"], 1);
+        let create_text = create_logs.text();
+        assert!(!create_text.contains(PATH_SENTINEL));
+        assert!(!create_text.contains(CONTENT_SENTINEL));
+        for component in &manifest.components {
+            assert!(!create_text.contains(&component.sha256));
+        }
+
+        let restore_root = fixture.root.path().join(format!("restore-{PATH_SENTINEL}"));
+        let restore_config = StorageConfig::from_project_root(&restore_root);
+        let restore_options = BackupRestoreOptions {
+            auth_db_path: restore_config.auth_db_path().to_path_buf(),
+            storage_config: restore_config,
+            backup_dir: fixture.backup_dir.clone(),
+        };
+        let restore_logs = CapturedLogs::default();
+        let report = restore_logs
+            .capture(|| restore_backup(&restore_options))
+            .expect("backup should restore");
+        let restore_events = restore_logs.events();
+        let restored = restore_events
+            .iter()
+            .find(|event| {
+                event["event"] == "storage.backup.completed" && event["operation"] == "restore"
+            })
+            .expect("backup restore completion should be captured");
+        assert_eq!(restored["file_count"], report.restored_files);
+        assert_eq!(restored["database_count"], report.restored_databases);
+        assert!(!restore_logs.text().contains(PATH_SENTINEL));
+        assert!(!restore_logs.text().contains(CONTENT_SENTINEL));
+
+        fs::write(
+            fixture.backup_dir.join("meta").join("private.txt"),
+            format!("{CONTENT_SENTINEL}-corrupted"),
+        )
+        .expect("backup component should be corrupted");
+        let failure_logs = CapturedLogs::default();
+        let verification = failure_logs.capture(|| verify_backup(&fixture.backup_dir));
+        assert!(
+            matches!(verification, Err(BackupError::Integrity(_))),
+            "unexpected verification result: {verification:?}"
+        );
+        let failure_events = failure_logs.events();
+        let failed = failure_events
+            .iter()
+            .find(|event| {
+                event["event"] == "storage.backup.failed" && event["operation"] == "verify"
+            })
+            .expect("backup verification failure should be captured");
+        assert_eq!(failed["error_kind"], "integrity");
+        assert!(!failure_logs.text().contains(PATH_SENTINEL));
+        assert!(!failure_logs.text().contains(CONTENT_SENTINEL));
     }
 
     #[test]

@@ -1,5 +1,7 @@
 //! Authentication route handlers.
 
+use std::time::Instant;
+
 use axum::extract::{Path, State};
 use axum::http::header::{AUTHORIZATION, COOKIE, SET_COOKIE};
 use axum::http::{HeaderMap, HeaderValue};
@@ -20,6 +22,92 @@ use crate::response::ApiError;
 use crate::state::{ApiState, AuthAttemptKind};
 
 const AUTH_RATE_LIMIT_DETAIL: &str = "Too many authentication attempts; try again later";
+
+struct AuthAudit {
+    action: &'static str,
+    actor_id: i64,
+    target_id: i64,
+    started_at: Instant,
+    is_terminal: bool,
+}
+
+impl AuthAudit {
+    fn new(action: &'static str) -> Self {
+        Self {
+            action,
+            actor_id: 0,
+            target_id: 0,
+            started_at: Instant::now(),
+            is_terminal: false,
+        }
+    }
+
+    fn set_actor_id(&mut self, actor_id: i64) {
+        self.actor_id = actor_id;
+    }
+
+    fn set_target_id(&mut self, target_id: i64) {
+        self.target_id = target_id;
+    }
+
+    fn completed(&mut self) {
+        tracing::info!(
+            event = "security.auth.completed",
+            component = "security",
+            action = self.action,
+            outcome = "completed",
+            actor_id = self.actor_id,
+            target_id = self.target_id,
+            duration_ms = self.started_at.elapsed().as_millis() as u64,
+        );
+        self.is_terminal = true;
+    }
+
+    fn rejected(&mut self, reason: &'static str) {
+        tracing::warn!(
+            event = "security.auth.rejected",
+            component = "security",
+            action = self.action,
+            outcome = "rejected",
+            actor_id = self.actor_id,
+            target_id = self.target_id,
+            reason,
+            duration_ms = self.started_at.elapsed().as_millis() as u64,
+        );
+        self.is_terminal = true;
+    }
+
+    fn rate_limited(&mut self, retry_after_seconds: u64) {
+        tracing::warn!(
+            event = "security.auth.rate_limited",
+            component = "security",
+            action = self.action,
+            outcome = "rate_limited",
+            actor_id = self.actor_id,
+            target_id = self.target_id,
+            retry_after_seconds,
+            duration_ms = self.started_at.elapsed().as_millis() as u64,
+        );
+        self.is_terminal = true;
+    }
+}
+
+impl Drop for AuthAudit {
+    fn drop(&mut self) {
+        if !self.is_terminal {
+            tracing::warn!(
+                event = "security.auth.rejected",
+                component = "security",
+                action = self.action,
+                outcome = "rejected",
+                actor_id = self.actor_id,
+                target_id = self.target_id,
+                reason = "operation_failed",
+                duration_ms = self.started_at.elapsed().as_millis() as u64,
+            );
+        }
+    }
+}
 
 /// Register a new user account.
 ///
@@ -45,24 +133,44 @@ pub(crate) async fn register(
     State(state): State<ApiState>,
     Json(body): Json<RegisterRequest>,
 ) -> Result<Json<UserResponse>, ApiError> {
+    let mut audit = AuthAudit::new("register");
     let username = body.username.trim().to_string();
     if !is_valid_username(&username) {
+        audit.rejected("validation_failed");
         return Err(ApiError::bad_request(
             "Username must be 3-32 alphanumeric or underscore characters",
         ));
     }
     if !is_valid_new_password(&body.password) {
+        audit.rejected("validation_failed");
         return Err(ApiError::bad_request(password_policy_message()));
     }
-    check_auth_rate_limit(&state, AuthAttemptKind::Register, &username)?;
+    if let Err(retry_after_seconds) =
+        check_auth_rate_limit(&state, AuthAttemptKind::Register, &username)
+    {
+        audit.rate_limited(retry_after_seconds);
+        return Err(ApiError::too_many_requests(
+            AUTH_RATE_LIMIT_DETAIL,
+            retry_after_seconds,
+        ));
+    }
     let password = body.password;
     let invite_code = (!body.invite_code.is_empty()).then_some(body.invite_code);
     let auth_username = username.clone();
-    let user = run_auth(&state, move |service| {
+    let user = match run_auth(&state, move |service| {
         service.register(&auth_username, &password, invite_code.as_deref())
     })
-    .await?;
+    .await
+    {
+        Ok(user) => user,
+        Err(error) => {
+            audit.rejected("registration_failed");
+            return Err(error);
+        }
+    };
     state.clear_auth_attempts(&username);
+    audit.set_actor_id(user.id.0);
+    audit.completed();
     Ok(Json(user))
 }
 
@@ -90,15 +198,32 @@ pub(crate) async fn login(
     State(state): State<ApiState>,
     Json(body): Json<LoginRequest>,
 ) -> Result<Response, ApiError> {
+    let mut audit = AuthAudit::new("login");
     let username = body.username.trim().to_string();
-    check_auth_rate_limit(&state, AuthAttemptKind::Login, &username)?;
+    if let Err(retry_after_seconds) =
+        check_auth_rate_limit(&state, AuthAttemptKind::Login, &username)
+    {
+        audit.rate_limited(retry_after_seconds);
+        return Err(ApiError::too_many_requests(
+            AUTH_RATE_LIMIT_DETAIL,
+            retry_after_seconds,
+        ));
+    }
     let password = body.password;
     let auth_username = username.clone();
-    let session = run_auth(&state, move |service| {
+    let session = match run_auth(&state, move |service| {
         service.login(&auth_username, &password)
     })
-    .await?;
+    .await
+    {
+        Ok(session) => session,
+        Err(error) => {
+            audit.rejected("authentication_failed");
+            return Err(error);
+        }
+    };
     state.clear_auth_attempts(&username);
+    audit.set_actor_id(session.user.id.0);
     let payload = LoginResponse {
         user: session.user,
         expires_at: session.expires_at,
@@ -113,6 +238,7 @@ pub(crate) async fn login(
         ))
         .map_err(|_| ApiError::internal_server_error())?,
     );
+    audit.completed();
     Ok(response)
 }
 
@@ -165,10 +291,13 @@ pub(crate) async fn change_password(
     headers: HeaderMap,
     Json(body): Json<ChangePasswordRequest>,
 ) -> Result<Json<OkResponse>, ApiError> {
+    let mut audit = AuthAudit::new("password_change");
     if !is_valid_new_password(&body.new_password) {
+        audit.rejected("validation_failed");
         return Err(ApiError::bad_request(password_policy_message()));
     }
     let (user, _) = require_current_user(&state, &headers).await?;
+    audit.set_actor_id(user.id.0);
     let old_password = body.old_password;
     let new_password = body.new_password;
     let did_change = run_auth(&state, move |service| {
@@ -176,8 +305,10 @@ pub(crate) async fn change_password(
     })
     .await?;
     if !did_change {
+        audit.rejected("authentication_failed");
         return Err(ApiError::bad_request("Old password is incorrect"));
     }
+    audit.completed();
     Ok(Json(OkResponse { ok: true }))
 }
 
@@ -202,7 +333,9 @@ pub(crate) async fn logout(
     State(state): State<ApiState>,
     headers: HeaderMap,
 ) -> Result<Response, ApiError> {
+    let mut audit = AuthAudit::new("logout");
     let (user, token) = require_current_user(&state, &headers).await?;
+    audit.set_actor_id(user.id.0);
     let token_to_revoke = token.clone();
     run_auth(&state, move |service| {
         service.revoke_access_token_value(&token_to_revoke)
@@ -220,6 +353,7 @@ pub(crate) async fn logout(
         ))
         .map_err(|_| ApiError::internal_server_error())?,
     );
+    audit.completed();
     Ok(response)
 }
 
@@ -259,13 +393,17 @@ pub(crate) async fn create_token(
     headers: HeaderMap,
     Json(body): Json<TokenCreateRequest>,
 ) -> Result<Json<TokenCreateResponse>, ApiError> {
+    let mut audit = AuthAudit::new("token_create");
     let (user, _) = require_current_user(&state, &headers).await?;
+    audit.set_actor_id(user.id.0);
     let name = body.name;
     let ttl = body.ttl;
     let token = run_auth(&state, move |service| {
         service.create_access_token(user.id, &name, ttl)
     })
     .await?;
+    audit.set_target_id(token.id);
+    audit.completed();
     Ok(Json(token))
 }
 
@@ -319,14 +457,19 @@ pub(crate) async fn delete_token(
     headers: HeaderMap,
     Path(token_id): Path<i64>,
 ) -> Result<Json<OkResponse>, ApiError> {
+    let mut audit = AuthAudit::new("token_revoke");
     let (user, _) = require_current_user(&state, &headers).await?;
+    audit.set_actor_id(user.id.0);
+    audit.set_target_id(token_id);
     let did_delete = run_auth(&state, move |service| {
         service.revoke_access_token(user.id, token_id)
     })
     .await?;
     if !did_delete {
+        audit.rejected("not_found");
         return Err(ApiError::not_found("Token not found"));
     }
+    audit.completed();
     Ok(Json(OkResponse { ok: true }))
 }
 
@@ -351,8 +494,12 @@ pub(crate) async fn generate_invite_code(
     State(state): State<ApiState>,
     headers: HeaderMap,
 ) -> Result<Json<InviteCodeResponse>, ApiError> {
+    let mut audit = AuthAudit::new("invite_create");
     let (user, _) = require_current_user(&state, &headers).await?;
+    audit.set_actor_id(user.id.0);
     let invite = run_auth(&state, move |service| service.create_invite_code(user.id)).await?;
+    audit.set_target_id(invite.id);
+    audit.completed();
     Ok(Json(invite))
 }
 
@@ -525,10 +672,8 @@ fn check_auth_rate_limit(
     state: &ApiState,
     kind: AuthAttemptKind,
     username: &str,
-) -> Result<(), ApiError> {
-    state
-        .check_auth_attempt(kind, username)
-        .map_err(|retry_after| ApiError::too_many_requests(AUTH_RATE_LIMIT_DETAIL, retry_after))
+) -> Result<(), u64> {
+    state.check_auth_attempt(kind, username)
 }
 
 fn password_policy_message() -> String {
@@ -558,5 +703,163 @@ pub(crate) fn map_auth_error(error: AuthServiceError) -> ApiError {
             ApiError::conflict(error.to_string())
         }
         AuthServiceError::Repository(_) => ApiError::internal_server_error(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use axum::http::{Method, StatusCode};
+    use litradar_auth::{AuthService, ACCESS_TOKEN_DEFAULT_TTL};
+    use serde_json::json;
+
+    use crate::state::tracing_test_support::CapturedLogs;
+    use crate::test_support::{json_request, TestBackend};
+
+    #[tokio::test]
+    async fn auth_events_distinguish_outcomes_without_credentials_or_names() {
+        const USERNAME_SENTINEL: &str = "audit_user_sentinel";
+        const PASSWORD_SENTINEL: &str = "credential-sentinel-never-log";
+        const TOKEN_NAME_SENTINEL: &str = "token-name-sentinel-never-log";
+
+        let backend = TestBackend::new();
+        let service = AuthService::new(backend.auth_db_path());
+        let user = service
+            .bootstrap_admin(USERNAME_SENTINEL, PASSWORD_SENTINEL)
+            .expect("audit user should bootstrap");
+        let authorization_token = service
+            .create_access_token(user.id, "test-authorization", ACCESS_TOKEN_DEFAULT_TTL)
+            .expect("authorization token should be created")
+            .token;
+        let authorization = format!("Bearer {authorization_token}");
+        let router = backend.router();
+
+        let success_logs = CapturedLogs::default();
+        let success = success_logs
+            .capture_async(json_request(
+                &router,
+                Method::POST,
+                "/api/auth/login",
+                None,
+                None,
+                Some(json!({
+                    "username": USERNAME_SENTINEL,
+                    "password": PASSWORD_SENTINEL,
+                })),
+            ))
+            .await;
+        assert_eq!(success.status, StatusCode::OK);
+        let success_event = success_logs
+            .events()
+            .into_iter()
+            .find(|event| event["event"] == "security.auth.completed" && event["action"] == "login")
+            .expect("login completion event should be captured");
+        assert_eq!(success_event["actor_id"], user.id.0);
+        assert!(success_event["spans"].as_array().is_some_and(|spans| {
+            spans
+                .iter()
+                .any(|span| span["request_id"].as_str().is_some())
+        }));
+        let success_text = success_logs.text();
+        assert!(!success_text.contains(USERNAME_SENTINEL));
+        assert!(!success_text.contains(PASSWORD_SENTINEL));
+
+        let failure_logs = CapturedLogs::default();
+        let statuses = failure_logs
+            .capture_async(async {
+                let mut statuses = Vec::new();
+                for _ in 0..6 {
+                    let response = json_request(
+                        &router,
+                        Method::POST,
+                        "/api/auth/login",
+                        None,
+                        None,
+                        Some(json!({
+                            "username": USERNAME_SENTINEL,
+                            "password": "wrong-credential-sentinel-never-log",
+                        })),
+                    )
+                    .await;
+                    statuses.push(response.status);
+                }
+                statuses
+            })
+            .await;
+        assert_eq!(statuses[..5], [StatusCode::UNAUTHORIZED; 5]);
+        assert_eq!(statuses[5], StatusCode::TOO_MANY_REQUESTS);
+        let failure_events = failure_logs.events();
+        assert_eq!(
+            failure_events
+                .iter()
+                .filter(|event| {
+                    event["event"] == "security.auth.rejected"
+                        && event["action"] == "login"
+                        && event["reason"] == "authentication_failed"
+                })
+                .count(),
+            5
+        );
+        assert_eq!(
+            failure_events
+                .iter()
+                .filter(|event| {
+                    event["event"] == "security.auth.rate_limited" && event["action"] == "login"
+                })
+                .count(),
+            1
+        );
+        let failure_text = failure_logs.text();
+        assert!(!failure_text.contains(USERNAME_SENTINEL));
+        assert!(!failure_text.contains("wrong-credential-sentinel-never-log"));
+
+        let token_logs = CapturedLogs::default();
+        let token_response = token_logs
+            .capture_async(json_request(
+                &router,
+                Method::POST,
+                "/api/auth/tokens",
+                Some(&authorization),
+                None,
+                Some(json!({
+                    "name": TOKEN_NAME_SENTINEL,
+                    "ttl": 3600,
+                })),
+            ))
+            .await;
+        assert_eq!(token_response.status, StatusCode::OK);
+        let created_token = token_response.payload["token"]
+            .as_str()
+            .expect("created token should be returned");
+        let token_event = token_logs
+            .events()
+            .into_iter()
+            .find(|event| {
+                event["event"] == "security.auth.completed" && event["action"] == "token_create"
+            })
+            .expect("token creation event should be captured");
+        assert_eq!(token_event["actor_id"], user.id.0);
+        assert_eq!(token_event["target_id"], token_response.payload["id"]);
+        let token_text = token_logs.text();
+        assert!(!token_text.contains(TOKEN_NAME_SENTINEL));
+        assert!(!token_text.contains(&authorization_token));
+        assert!(!token_text.contains(created_token));
+
+        let read_logs = CapturedLogs::default();
+        let me = read_logs
+            .capture_async(json_request(
+                &router,
+                Method::GET,
+                "/api/auth/me",
+                Some(&authorization),
+                None,
+                None,
+            ))
+            .await;
+        assert_eq!(me.status, StatusCode::OK);
+        assert!(!read_logs.events().iter().any(|event| {
+            event["event"]
+                .as_str()
+                .is_some_and(|name| name.starts_with("security.auth."))
+        }));
     }
 }

@@ -4,7 +4,7 @@ use std::error::Error;
 use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use rusqlite::{
     params, params_from_iter, Connection, OptionalExtension, Transaction, TransactionBehavior,
@@ -22,6 +22,12 @@ const AUTH_DATABASE: &str = "auth";
 const INDEX_DATABASE: &str = "index";
 const BUSY_TIMEOUT_SECONDS: u64 = 30;
 const PROJECTION_RECONCILE_BATCH_SIZE: i64 = 1_000;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct MigrationSummary {
+    from_version: i64,
+    to_version: i64,
+}
 
 /// Errors returned while discovering or migrating SQLite databases.
 #[derive(Debug)]
@@ -119,10 +125,58 @@ pub fn migrate_storage(config: &StorageConfig) -> Result<(), MigrationError> {
 ///
 /// Empty result after all discovered index databases reach the current version.
 pub fn migrate_existing_index_databases(config: &StorageConfig) -> Result<(), MigrationError> {
+    let started_at = Instant::now();
+    tracing::info!(
+        event = "storage.migration.batch.started",
+        component = "storage",
+        database_kind = INDEX_DATABASE,
+        target_version = INDEX_SCHEMA_VERSION,
+    );
     let tokenizer_path = config.simple_tokenizer_path();
-    for path in config.list_index_databases()? {
-        migrate_index_database(path, tokenizer_path.as_deref())?;
+    let paths = match config.list_index_databases() {
+        Ok(paths) => paths,
+        Err(error) => {
+            let error = MigrationError::from(error);
+            tracing::warn!(
+                event = "storage.migration.batch.failed",
+                component = "storage",
+                database_kind = INDEX_DATABASE,
+                target_version = INDEX_SCHEMA_VERSION,
+                discovered_count = 0,
+                completed_count = 0,
+                duration_ms = started_at.elapsed().as_millis() as u64,
+                error_kind = migration_error_kind(&error),
+            );
+            return Err(error);
+        }
+    };
+    let discovered_count = paths.len();
+    let mut completed_count = 0_usize;
+    for path in paths {
+        if let Err(error) = migrate_index_database(path, tokenizer_path.as_deref()) {
+            tracing::warn!(
+                event = "storage.migration.batch.failed",
+                component = "storage",
+                database_kind = INDEX_DATABASE,
+                target_version = INDEX_SCHEMA_VERSION,
+                discovered_count,
+                completed_count,
+                duration_ms = started_at.elapsed().as_millis() as u64,
+                error_kind = migration_error_kind(&error),
+            );
+            return Err(error);
+        }
+        completed_count += 1;
     }
+    tracing::info!(
+        event = "storage.migration.batch.completed",
+        component = "storage",
+        database_kind = INDEX_DATABASE,
+        target_version = INDEX_SCHEMA_VERSION,
+        discovered_count,
+        completed_count,
+        duration_ms = started_at.elapsed().as_millis() as u64,
+    );
     Ok(())
 }
 
@@ -136,11 +190,21 @@ pub fn migrate_existing_index_databases(config: &StorageConfig) -> Result<(), Mi
 ///
 /// Empty result after all pending migrations commit.
 pub fn migrate_auth_database(path: impl AsRef<Path>) -> Result<(), MigrationError> {
-    let connection = open_migration_connection(path.as_ref())?;
+    run_database_migration(AUTH_DATABASE, AUTH_SCHEMA_VERSION, || {
+        migrate_auth_database_inner(path.as_ref())
+    })
+}
+
+fn migrate_auth_database_inner(path: &Path) -> Result<MigrationSummary, MigrationError> {
+    let connection = open_migration_connection(path)?;
     let mut version = schema_version(&connection)?;
+    let from_version = version;
     reject_newer_version(AUTH_DATABASE, version, AUTH_SCHEMA_VERSION)?;
     if version == AUTH_SCHEMA_VERSION {
-        return Ok(());
+        return Ok(MigrationSummary {
+            from_version,
+            to_version: version,
+        });
     }
     configure_writable_connection(&connection)?;
 
@@ -160,7 +224,10 @@ pub fn migrate_auth_database(path: impl AsRef<Path>) -> Result<(), MigrationErro
         transaction.commit()?;
         version = next_version;
     }
-    Ok(())
+    Ok(MigrationSummary {
+        from_version,
+        to_version: version,
+    })
 }
 
 /// Migrate one index database to the current schema version.
@@ -177,8 +244,18 @@ pub fn migrate_index_database(
     path: impl AsRef<Path>,
     simple_tokenizer_path: Option<&Path>,
 ) -> Result<(), MigrationError> {
-    let connection = open_migration_connection(path.as_ref())?;
+    run_database_migration(INDEX_DATABASE, INDEX_SCHEMA_VERSION, || {
+        migrate_index_database_inner(path.as_ref(), simple_tokenizer_path)
+    })
+}
+
+fn migrate_index_database_inner(
+    path: &Path,
+    simple_tokenizer_path: Option<&Path>,
+) -> Result<MigrationSummary, MigrationError> {
+    let connection = open_migration_connection(path)?;
     let mut version = schema_version(&connection)?;
+    let from_version = version;
     reject_newer_version(INDEX_DATABASE, version, INDEX_SCHEMA_VERSION)?;
     let existing_simple_tokenizer = article_search_uses_simple_tokenizer(&connection)?;
     if existing_simple_tokenizer != Some(false) {
@@ -190,7 +267,10 @@ pub fn migrate_index_database(
         }
     }
     if version == INDEX_SCHEMA_VERSION {
-        return Ok(());
+        return Ok(MigrationSummary {
+            from_version,
+            to_version: version,
+        });
     }
     configure_writable_connection(&connection)?;
 
@@ -207,7 +287,72 @@ pub fn migrate_index_database(
         transaction.commit()?;
         version = next_version;
     }
-    Ok(())
+    Ok(MigrationSummary {
+        from_version,
+        to_version: version,
+    })
+}
+
+fn run_database_migration<Migrate>(
+    database_kind: &'static str,
+    target_version: i64,
+    migrate: Migrate,
+) -> Result<(), MigrationError>
+where
+    Migrate: FnOnce() -> Result<MigrationSummary, MigrationError>,
+{
+    let started_at = Instant::now();
+    tracing::info!(
+        event = "storage.migration.started",
+        component = "storage",
+        database_kind,
+        target_version,
+    );
+    match migrate() {
+        Ok(summary) => {
+            tracing::info!(
+                event = "storage.migration.completed",
+                component = "storage",
+                database_kind,
+                target_version,
+                from_version = summary.from_version,
+                to_version = summary.to_version,
+                applied_count = summary.to_version.saturating_sub(summary.from_version),
+                duration_ms = started_at.elapsed().as_millis() as u64,
+            );
+            Ok(())
+        }
+        Err(error) => {
+            tracing::warn!(
+                event = "storage.migration.failed",
+                component = "storage",
+                database_kind,
+                target_version,
+                database_version = migration_error_database_version(&error),
+                duration_ms = started_at.elapsed().as_millis() as u64,
+                error_kind = migration_error_kind(&error),
+            );
+            Err(error)
+        }
+    }
+}
+
+fn migration_error_kind(error: &MigrationError) -> &'static str {
+    match error {
+        MigrationError::Io(_) => "io",
+        MigrationError::Sqlite(_) => "sqlite",
+        MigrationError::DatabaseResolution(_) => "database_resolution",
+        MigrationError::UnsupportedSchemaVersion { .. } => "unsupported_schema_version",
+    }
+}
+
+fn migration_error_database_version(error: &MigrationError) -> i64 {
+    match error {
+        MigrationError::UnsupportedSchemaVersion { found, .. } => *found,
+        MigrationError::Io(_)
+        | MigrationError::Sqlite(_)
+        | MigrationError::DatabaseResolution(_) => -1,
+    }
 }
 
 fn open_migration_connection(path: &Path) -> Result<Connection, MigrationError> {
@@ -1220,3 +1365,205 @@ const INDEX_INDEXES_SQL: &str = "
     CREATE INDEX IF NOT EXISTS idx_article_listing_issue ON article_listing(issue_id);
     CREATE INDEX IF NOT EXISTS idx_index_api_call_stats_run ON index_api_call_stats(run_id);
 ";
+
+#[cfg(test)]
+/// Shared structured-log capture helpers for storage module tests.
+pub(crate) mod test_support {
+    use std::io::{self, Write};
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::sync::{Arc, Mutex, Once, OnceLock};
+
+    use serde_json::Value;
+    use tracing_subscriber::fmt::MakeWriter;
+
+    static CAPTURE_LOCK: Mutex<()> = Mutex::new(());
+    static CAPTURE_BYTES: OnceLock<Arc<Mutex<Vec<u8>>>> = OnceLock::new();
+    static CAPTURE_SUBSCRIBER: Once = Once::new();
+    static NEXT_CAPTURE_ID: AtomicU64 = AtomicU64::new(1);
+
+    /// Thread-safe byte buffer used as a tracing test writer.
+    #[derive(Clone)]
+    pub(crate) struct CapturedLogs {
+        bytes: Arc<Mutex<Vec<u8>>>,
+        capture_id: u64,
+    }
+
+    impl Default for CapturedLogs {
+        fn default() -> Self {
+            let bytes = Arc::clone(CAPTURE_BYTES.get_or_init(|| Arc::new(Mutex::new(Vec::new()))));
+            CAPTURE_SUBSCRIBER.call_once(|| {
+                let subscriber = tracing_subscriber::fmt()
+                    .with_ansi(false)
+                    .with_max_level(tracing::Level::TRACE)
+                    .with_writer(CapturedSink {
+                        bytes: Arc::clone(&bytes),
+                    })
+                    .json()
+                    .flatten_event(true)
+                    .with_current_span(true)
+                    .finish();
+                tracing::subscriber::set_global_default(subscriber)
+                    .expect("storage tests should install one global tracing subscriber");
+            });
+            Self {
+                bytes,
+                capture_id: NEXT_CAPTURE_ID.fetch_add(1, Ordering::Relaxed),
+            }
+        }
+    }
+
+    impl CapturedLogs {
+        /// Run an operation inside a uniquely identifiable capture span.
+        ///
+        /// # Arguments
+        ///
+        /// * `operation` - Operation whose structured events should be captured.
+        ///
+        /// # Returns
+        ///
+        /// Operation result after synchronous event capture.
+        pub(crate) fn capture<T>(&self, operation: impl FnOnce() -> T) -> T {
+            let _capture_guard = CAPTURE_LOCK
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let capture_span = tracing::info_span!(
+                "test.capture",
+                component = "test",
+                capture_id = self.capture_id,
+            );
+            capture_span.in_scope(operation)
+        }
+
+        /// Return all captured bytes as UTF-8 text.
+        ///
+        /// # Returns
+        ///
+        /// Captured JSON Lines text.
+        pub(crate) fn text(&self) -> String {
+            self.events()
+                .into_iter()
+                .map(|event| serde_json::to_string(&event).expect("event should serialize"))
+                .collect::<Vec<_>>()
+                .join("\n")
+        }
+
+        /// Parse captured JSON Lines into event values.
+        ///
+        /// # Returns
+        ///
+        /// Parsed event objects in emission order.
+        pub(crate) fn events(&self) -> Vec<Value> {
+            let text = String::from_utf8(
+                self.bytes
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .clone(),
+            )
+            .expect("captured logs should be UTF-8");
+            text.lines()
+                .filter(|line| !line.is_empty())
+                .map(|line| serde_json::from_str(line).expect("captured log should be JSON"))
+                .filter(|event: &Value| {
+                    event["spans"].as_array().is_some_and(|spans| {
+                        spans
+                            .iter()
+                            .any(|span| span["capture_id"].as_u64() == Some(self.capture_id))
+                    })
+                })
+                .collect()
+        }
+    }
+
+    #[derive(Clone)]
+    struct CapturedSink {
+        bytes: Arc<Mutex<Vec<u8>>>,
+    }
+
+    struct CapturedWriter {
+        bytes: Arc<Mutex<Vec<u8>>>,
+    }
+
+    impl Write for CapturedWriter {
+        fn write(&mut self, buffer: &[u8]) -> io::Result<usize> {
+            self.bytes
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .extend_from_slice(buffer);
+            Ok(buffer.len())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl<'writer> MakeWriter<'writer> for CapturedSink {
+        type Writer = CapturedWriter;
+
+        fn make_writer(&'writer self) -> Self::Writer {
+            CapturedWriter {
+                bytes: Arc::clone(&self.bytes),
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use rusqlite::Connection;
+    use tempfile::tempdir;
+
+    use super::test_support::CapturedLogs;
+    use super::{migrate_auth_database, MigrationError, AUTH_SCHEMA_VERSION};
+
+    #[test]
+    fn migration_events_report_versions_without_database_paths() {
+        const PATH_SENTINEL: &str = "migration-path-sentinel-never-log";
+
+        let root = tempdir().expect("temporary root should be created");
+        let success_path = root.path().join(PATH_SENTINEL).join("auth.sqlite");
+        let success_logs = CapturedLogs::default();
+        success_logs
+            .capture(|| migrate_auth_database(&success_path))
+            .expect("auth migration should complete");
+
+        let success_events = success_logs.events();
+        let completed = success_events
+            .iter()
+            .find(|event| event["event"] == "storage.migration.completed")
+            .expect("migration completion event should be captured");
+        assert_eq!(completed["database_kind"], "auth");
+        assert_eq!(completed["target_version"], AUTH_SCHEMA_VERSION);
+        assert_eq!(completed["from_version"], 0);
+        assert_eq!(completed["to_version"], AUTH_SCHEMA_VERSION);
+        assert_eq!(completed["applied_count"], AUTH_SCHEMA_VERSION);
+        assert!(!success_logs.text().contains(PATH_SENTINEL));
+
+        let unsupported_path = root.path().join(PATH_SENTINEL).join("newer.sqlite");
+        let connection =
+            Connection::open(&unsupported_path).expect("unsupported-version fixture should open");
+        connection
+            .pragma_update(None, "user_version", AUTH_SCHEMA_VERSION + 1)
+            .expect("unsupported version should write");
+        drop(connection);
+        let failure_logs = CapturedLogs::default();
+        let error = failure_logs
+            .capture(|| migrate_auth_database(&unsupported_path))
+            .expect_err("newer auth schema should be rejected");
+        assert!(matches!(
+            error,
+            MigrationError::UnsupportedSchemaVersion { .. }
+        ));
+
+        let failure_events = failure_logs.events();
+        let failed = failure_events
+            .iter()
+            .find(|event| event["event"] == "storage.migration.failed")
+            .expect("migration failure event should be captured");
+        assert_eq!(failed["database_kind"], "auth");
+        assert_eq!(failed["target_version"], AUTH_SCHEMA_VERSION);
+        assert_eq!(failed["database_version"], AUTH_SCHEMA_VERSION + 1);
+        assert_eq!(failed["error_kind"], "unsupported_schema_version");
+        assert!(!failure_logs.text().contains(PATH_SENTINEL));
+    }
+}

@@ -461,6 +461,154 @@ fn current_unix_seconds() -> u64 {
 }
 
 #[cfg(test)]
+/// Shared structured-log capture helpers for API module tests.
+pub(crate) mod tracing_test_support {
+    use std::future::Future;
+    use std::io::{self, Write};
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::sync::{Arc, Mutex, Once, OnceLock};
+
+    use serde_json::Value;
+    use tracing::Instrument;
+    use tracing_subscriber::fmt::MakeWriter;
+
+    static CAPTURE_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+    static CAPTURE_BYTES: OnceLock<Arc<Mutex<Vec<u8>>>> = OnceLock::new();
+    static CAPTURE_SUBSCRIBER: Once = Once::new();
+    static NEXT_CAPTURE_ID: AtomicU64 = AtomicU64::new(1);
+
+    /// Thread-safe byte buffer used as a tracing test writer.
+    #[derive(Clone)]
+    pub(crate) struct CapturedLogs {
+        bytes: Arc<Mutex<Vec<u8>>>,
+        capture_id: u64,
+    }
+
+    impl Default for CapturedLogs {
+        fn default() -> Self {
+            let bytes = Arc::clone(CAPTURE_BYTES.get_or_init(|| Arc::new(Mutex::new(Vec::new()))));
+            CAPTURE_SUBSCRIBER.call_once(|| {
+                let subscriber = tracing_subscriber::fmt()
+                    .with_ansi(false)
+                    .with_max_level(tracing::Level::TRACE)
+                    .with_writer(CapturedSink {
+                        bytes: Arc::clone(&bytes),
+                    })
+                    .json()
+                    .flatten_event(true)
+                    .with_current_span(true)
+                    .finish();
+                tracing::subscriber::set_global_default(subscriber)
+                    .expect("API tests should install one global tracing subscriber");
+            });
+            Self {
+                bytes,
+                capture_id: NEXT_CAPTURE_ID.fetch_add(1, Ordering::Relaxed),
+            }
+        }
+    }
+
+    impl CapturedLogs {
+        /// Run an asynchronous operation inside a uniquely identifiable capture span.
+        ///
+        /// # Arguments
+        ///
+        /// * `future` - Future whose structured events should be captured.
+        ///
+        /// # Returns
+        ///
+        /// Future output after structured event capture.
+        pub(crate) async fn capture_async<CapturedFuture>(
+            &self,
+            future: CapturedFuture,
+        ) -> CapturedFuture::Output
+        where
+            CapturedFuture: Future,
+        {
+            let _capture_guard = CAPTURE_LOCK.lock().await;
+            let capture_span = tracing::info_span!(
+                "test.capture",
+                component = "test",
+                capture_id = self.capture_id,
+            );
+            future.instrument(capture_span).await
+        }
+
+        /// Return all captured bytes as UTF-8 text.
+        ///
+        /// # Returns
+        ///
+        /// Captured JSON Lines text.
+        pub(crate) fn text(&self) -> String {
+            self.events()
+                .into_iter()
+                .map(|event| serde_json::to_string(&event).expect("event should serialize"))
+                .collect::<Vec<_>>()
+                .join("\n")
+        }
+
+        /// Parse captured JSON Lines into event values.
+        ///
+        /// # Returns
+        ///
+        /// Parsed event objects in emission order.
+        pub(crate) fn events(&self) -> Vec<Value> {
+            let text = String::from_utf8(
+                self.bytes
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .clone(),
+            )
+            .expect("captured logs should be UTF-8");
+            text.lines()
+                .filter(|line| !line.is_empty())
+                .map(|line| serde_json::from_str(line).expect("captured log should be JSON"))
+                .filter(|event: &Value| {
+                    event["spans"].as_array().is_some_and(|spans| {
+                        spans
+                            .iter()
+                            .any(|span| span["capture_id"].as_u64() == Some(self.capture_id))
+                    })
+                })
+                .collect()
+        }
+    }
+
+    #[derive(Clone)]
+    struct CapturedSink {
+        bytes: Arc<Mutex<Vec<u8>>>,
+    }
+
+    struct CapturedWriter {
+        bytes: Arc<Mutex<Vec<u8>>>,
+    }
+
+    impl Write for CapturedWriter {
+        fn write(&mut self, buffer: &[u8]) -> io::Result<usize> {
+            self.bytes
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .extend_from_slice(buffer);
+            Ok(buffer.len())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl<'writer> MakeWriter<'writer> for CapturedSink {
+        type Writer = CapturedWriter;
+
+        fn make_writer(&'writer self) -> Self::Writer {
+            CapturedWriter {
+                bytes: Arc::clone(&self.bytes),
+            }
+        }
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;
@@ -470,7 +618,9 @@ mod tests {
     use axum::http::{Request, StatusCode};
     use litradar_storage::{SecretCodec, StorageConfig};
     use tower::ServiceExt;
+    use tracing::Instrument;
 
+    use super::tracing_test_support::CapturedLogs;
     use super::{
         ApiState, AuthAttemptKind, AuthRateLimitConfig, AuthRateLimiter, BlockingExecutor,
         BlockingTaskError,
@@ -621,6 +771,48 @@ mod tests {
             state.run_blocking(|| "unused").await,
             Err(BlockingTaskError::Closed)
         );
+    }
+
+    #[tokio::test]
+    async fn blocking_work_preserves_request_span_for_security_events() {
+        let state = ApiState::new_with_blocking_limits(
+            StorageConfig::from_project_root("blocking-security-test-root"),
+            SecretCodec::from_key([1_u8; 32]),
+            false,
+            1,
+            Duration::from_secs(1),
+        );
+        let logs = CapturedLogs::default();
+
+        logs.capture_async(async {
+            let request_span = tracing::info_span!(
+                "http.request",
+                component = "http",
+                request_id = "request-security-blocking",
+            );
+            async {
+                state
+                    .run_blocking(|| {
+                        tracing::info!(event = "security.blocking.test", component = "security",);
+                    })
+                    .await
+                    .expect("blocking security work should complete");
+            }
+            .instrument(request_span)
+            .await;
+        })
+        .await;
+
+        let event = logs
+            .events()
+            .into_iter()
+            .find(|event| event["event"] == "security.blocking.test")
+            .expect("blocking security event should be captured");
+        assert!(event["spans"].as_array().is_some_and(|spans| {
+            spans
+                .iter()
+                .any(|span| span["request_id"] == "request-security-blocking")
+        }));
     }
 
     #[test]
