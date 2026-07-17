@@ -9,11 +9,23 @@ import userEvent from '@testing-library/user-event';
 import { http, HttpResponse, type HttpResponseResolver } from 'msw';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 
-import WeeklyUpdatesPage from '@/app/(protected)/weekly-updates/page';
+import { WeeklyUpdatesView } from '@/components/weekly/weekly-updates-view';
 import { SELECTED_DATABASE_KEY, readSelectedDatabase } from '@/lib/api';
 import type { WeeklyUpdatesResponse } from '@/lib/api';
 import { server } from '@/tests/mocks/server';
 import { renderWithQuery } from '@/tests/render';
+
+const weeklyViewMocks = vi.hoisted(() => ({
+  useVisiblePageList: vi.fn(({ loadedPages }: { loadedPages: number }) => ({
+    visiblePages: loadedPages,
+    prefetchRef: vi.fn(),
+    loadMoreRef: vi.fn(),
+  })),
+}));
+
+vi.mock('next/navigation', () => ({
+  usePathname: () => '/weekly-updates',
+}));
 
 vi.mock('@/lib/auth-context', () => ({
   useAuth: () => ({ user: { id: 31, username: 'weekly_user', is_admin: false } }),
@@ -35,11 +47,7 @@ vi.mock('@/components/feature/use-favorite-checks', () => ({
 }));
 
 vi.mock('@/components/feature/use-visible-page-list', () => ({
-  useVisiblePageList: ({ loadedPages }: { loadedPages: number }) => ({
-    visiblePages: loadedPages,
-    prefetchRef: vi.fn(),
-    loadMoreRef: vi.fn(),
-  }),
+  useVisiblePageList: weeklyViewMocks.useVisiblePageList,
 }));
 
 const WEEKLY_UPDATES_FIXTURE: WeeklyUpdatesResponse = {
@@ -135,7 +143,7 @@ function installEmptySearchHandler(): void {
 function renderWeeklyPage(searchParams: string): void {
   renderWithQuery(
     <NuqsTestingAdapter searchParams={searchParams} hasMemory>
-      <WeeklyUpdatesPage />
+      <WeeklyUpdatesView />
       <QueryProbe parameter="db" testId="weekly-db" />
     </NuqsTestingAdapter>,
   );
@@ -162,6 +170,12 @@ async function ignoresHomepageQuery(): Promise<void> {
   expect(await screen.findByText('Weekly first')).toBeInTheDocument();
   expect(screen.getByRole('combobox', { name: '搜索文章' })).toHaveValue('');
   expect(articleRequestUrls).toHaveLength(0);
+  expect(screen.getByRole('complementary')).toBeInTheDocument();
+  expect(screen.getByRole('main')).toHaveAttribute('id', 'main-content');
+  expect(document.getElementById('results-scroll-container')).toBeInTheDocument();
+  expect(weeklyViewMocks.useVisiblePageList).toHaveBeenCalledWith(
+    expect.objectContaining({ scrollContainerId: 'results-scroll-container' }),
+  );
 }
 
 /**
@@ -285,6 +299,7 @@ async function rejectsLaterPageFailure(): Promise<void> {
 
 beforeEach(() => {
   articleRequestUrls.length = 0;
+  weeklyViewMocks.useVisiblePageList.mockClear();
   Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {
     configurable: true,
     value: vi.fn(),
