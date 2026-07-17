@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 use std::error::Error;
 use std::fmt;
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use reqwest::blocking::Client;
 use reqwest::redirect::Policy;
@@ -314,9 +314,13 @@ struct LiveCnkiAttempt<'a> {
     endpoint: &'a str,
     method: &'a str,
     url: &'a str,
+    attempt: usize,
     status_code: Option<u16>,
     did_succeed: bool,
     did_retry: bool,
+    will_retry: bool,
+    error_kind: &'static str,
+    duration_ms: u64,
     error: Option<String>,
 }
 
@@ -416,6 +420,8 @@ impl LiveCnkiTransport {
         let mut transport_failure_count = 0;
         loop {
             let did_retry = response_failure_count + transport_failure_count > 0;
+            let attempt = response_failure_count + transport_failure_count + 1;
+            let started_at = Instant::now();
             let mut builder = match method {
                 "POST" => self.client.post(url).form(data),
                 _ => self.client.get(url),
@@ -436,16 +442,21 @@ impl LiveCnkiTransport {
                     if !(200..300).contains(&status_code) {
                         let message = format!("CNKI request failed with HTTP {status_code}");
                         response_failure_count += 1;
+                        let will_retry = response_failure_count < CNKI_RESPONSE_ATTEMPTS;
                         self.record_attempt(LiveCnkiAttempt {
                             endpoint,
                             method,
                             url: &request_url,
+                            attempt,
                             status_code: Some(status_code),
                             did_succeed: false,
                             did_retry,
+                            will_retry,
+                            error_kind: "http_status",
+                            duration_ms: elapsed_millis(started_at),
                             error: Some(message.clone()),
                         });
-                        if response_failure_count < CNKI_RESPONSE_ATTEMPTS {
+                        if will_retry {
                             thread::sleep(Duration::from_secs(response_failure_count as u64));
                             continue;
                         }
@@ -456,16 +467,21 @@ impl LiveCnkiTransport {
                         Err(_) => {
                             let message = "CNKI response body decoding failed".to_string();
                             response_failure_count += 1;
+                            let will_retry = response_failure_count < CNKI_RESPONSE_ATTEMPTS;
                             self.record_attempt(LiveCnkiAttempt {
                                 endpoint,
                                 method,
                                 url: &request_url,
+                                attempt,
                                 status_code: Some(status_code),
                                 did_succeed: false,
                                 did_retry,
+                                will_retry,
+                                error_kind: "response_body",
+                                duration_ms: elapsed_millis(started_at),
                                 error: Some(message.clone()),
                             });
-                            if response_failure_count < CNKI_RESPONSE_ATTEMPTS {
+                            if will_retry {
                                 thread::sleep(Duration::from_secs(response_failure_count as u64));
                                 continue;
                             }
@@ -478,25 +494,34 @@ impl LiveCnkiTransport {
                                 endpoint,
                                 method,
                                 url: &request_url,
+                                attempt,
                                 status_code: Some(status_code),
                                 did_succeed: true,
                                 did_retry,
+                                will_retry: false,
+                                error_kind: "none",
+                                duration_ms: elapsed_millis(started_at),
                                 error: None,
                             });
                             return Ok(text);
                         }
                         Err(error) => {
                             response_failure_count += 1;
+                            let will_retry = response_failure_count < CNKI_RESPONSE_ATTEMPTS;
                             self.record_attempt(LiveCnkiAttempt {
                                 endpoint,
                                 method,
                                 url: &request_url,
+                                attempt,
                                 status_code: Some(status_code),
                                 did_succeed: false,
                                 did_retry,
+                                will_retry,
+                                error_kind: "invalid_response",
+                                duration_ms: elapsed_millis(started_at),
                                 error: Some(error.to_string()),
                             });
-                            if response_failure_count < CNKI_RESPONSE_ATTEMPTS {
+                            if will_retry {
                                 thread::sleep(Duration::from_secs(response_failure_count as u64));
                                 continue;
                             }
@@ -506,16 +531,21 @@ impl LiveCnkiTransport {
                 }
                 Err(error) => {
                     transport_failure_count += 1;
+                    let will_retry = transport_failure_count < CNKI_TRANSPORT_ATTEMPTS;
                     self.record_attempt(LiveCnkiAttempt {
                         endpoint,
                         method,
                         url,
+                        attempt,
                         status_code: None,
                         did_succeed: false,
                         did_retry,
+                        will_retry,
+                        error_kind: "transport",
+                        duration_ms: elapsed_millis(started_at),
                         error: Some(error.to_string()),
                     });
-                    if transport_failure_count < CNKI_TRANSPORT_ATTEMPTS {
+                    if will_retry {
                         thread::sleep(Duration::from_secs(transport_failure_count as u64));
                         continue;
                     }
@@ -526,6 +556,23 @@ impl LiveCnkiTransport {
     }
 
     fn record_attempt(&mut self, attempt: LiveCnkiAttempt<'_>) {
+        if !attempt.did_succeed {
+            tracing::warn!(
+                event = "source.request.failed",
+                component = "source",
+                provider = "cnki",
+                endpoint = attempt.endpoint,
+                method = attempt.method,
+                attempt = attempt.attempt,
+                outcome = "failure",
+                error_kind = attempt.error_kind,
+                http_status = attempt.status_code.unwrap_or(0),
+                has_http_status = attempt.status_code.is_some(),
+                is_retry = attempt.did_retry,
+                will_retry = attempt.will_retry,
+                duration_ms = attempt.duration_ms,
+            );
+        }
         self.attempts.push(SourceAttempt {
             service: "cnki".to_string(),
             endpoint: attempt.endpoint.to_string(),
@@ -948,6 +995,10 @@ pub fn checked_text(text: &str, url: &str) -> Result<(), CnkiSourceError> {
         )));
     }
     Ok(())
+}
+
+fn elapsed_millis(started_at: Instant) -> u64 {
+    started_at.elapsed().as_millis().min(u128::from(u64::MAX)) as u64
 }
 
 fn cnki_journal_search_state(field_name: &str, value: &str, operator: &str) -> Value {
@@ -1431,12 +1482,56 @@ mod tests {
 
     use serde_json::{json, Value};
 
+    use crate::scholarly::test_support::CapturedLogs;
+
     use super::{
         absolute_url, checked_text, decode_html, journal_detail_matches, parse_article_detail,
         parse_issue_articles, parse_journal_detail, parse_journal_search_results,
         parse_year_issues, with_cnki_chinese_language, CnkiClient, CnkiFixtureData,
-        CnkiSourceError, FixtureCnkiTransport, LiveCnkiConfig, LiveCnkiTransport,
+        CnkiSourceError, FixtureCnkiTransport, LiveCnkiAttempt, LiveCnkiConfig, LiveCnkiTransport,
     };
+
+    #[test]
+    fn cnki_attempt_events_keep_worker_context_and_omit_request_material() {
+        let sentinel = "cnki-url-cookie-body-sentinel";
+        let mut transport = live_cnki_transport();
+        let logs = CapturedLogs::default();
+
+        tracing::subscriber::with_default(logs.subscriber(), || {
+            let span = tracing::info_span!(
+                "index.worker",
+                run_id = "run-cnki-correlation",
+                worker_id = 4,
+            );
+            span.in_scope(|| {
+                transport.record_attempt(LiveCnkiAttempt {
+                    endpoint: "article_detail",
+                    method: "GET",
+                    url: sentinel,
+                    attempt: 2,
+                    status_code: Some(503),
+                    did_succeed: false,
+                    did_retry: true,
+                    will_retry: true,
+                    error_kind: "http_status",
+                    duration_ms: 17,
+                    error: Some(sentinel.to_string()),
+                });
+            });
+        });
+
+        let events = logs.events();
+        assert_eq!(events.len(), 1);
+        let failed = &events[0];
+        assert_eq!(failed["event"], "source.request.failed");
+        assert_eq!(failed["provider"], "cnki");
+        assert_eq!(failed["endpoint"], "article_detail");
+        assert_eq!(failed["attempt"], 2);
+        assert_eq!(failed["duration_ms"], 17);
+        assert_eq!(failed["span"]["run_id"], "run-cnki-correlation");
+        assert_eq!(failed["span"]["worker_id"], 4);
+        assert!(!logs.text().contains(sentinel));
+    }
 
     #[test]
     fn parses_cnki_journal_issue_and_article_html() {

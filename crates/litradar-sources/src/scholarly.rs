@@ -567,9 +567,13 @@ struct LiveAttempt<'a> {
     endpoint: &'a str,
     method: &'a str,
     url: &'a str,
+    attempt: usize,
     status_code: Option<u16>,
     did_succeed: bool,
     did_retry: bool,
+    will_retry: bool,
+    error_kind: &'static str,
+    duration_ms: u64,
     error: Option<String>,
 }
 
@@ -818,6 +822,8 @@ impl LiveScholarlyTransport {
 
     fn request_json(&mut self, live_request: JsonRequest<'_>) -> Result<Value, SourceError> {
         for attempt in 0..=DEFAULT_MAX_RETRIES {
+            let started_at = Instant::now();
+            let attempt_number = attempt + 1;
             let mut builder = match live_request.method {
                 "POST" => self.client.post(live_request.url),
                 _ => self.client.get(live_request.url),
@@ -838,30 +844,53 @@ impl LiveScholarlyTransport {
             match self.client.execute(request) {
                 Ok(response) => {
                     let status_code = response.status().as_u16();
-                    let text = response.text().map_err(|error| SourceError::Request {
-                        service: live_request.service.to_string(),
-                        endpoint: live_request.endpoint.to_string(),
-                        message: error.to_string(),
-                    })?;
+                    let text = match response.text() {
+                        Ok(text) => text,
+                        Err(error) => {
+                            self.record_attempt(LiveAttempt {
+                                service: live_request.service,
+                                endpoint: live_request.endpoint,
+                                method: live_request.method,
+                                url: &request_url,
+                                attempt: attempt_number,
+                                status_code: Some(status_code),
+                                did_succeed: false,
+                                did_retry: attempt > 0,
+                                will_retry: false,
+                                error_kind: "response_body",
+                                duration_ms: elapsed_millis(started_at),
+                                error: Some(error.to_string()),
+                            });
+                            return Err(SourceError::Request {
+                                service: live_request.service.to_string(),
+                                endpoint: live_request.endpoint.to_string(),
+                                message: error.to_string(),
+                            });
+                        }
+                    };
                     let payload = serde_json::from_str::<Value>(&text)
                         .unwrap_or_else(|_| json!({ "error": text }));
                     if !(200..300).contains(&status_code) {
+                        let will_retry = RETRY_STATUS_CODES.contains(&status_code)
+                            && attempt < DEFAULT_MAX_RETRIES;
                         self.record_attempt(LiveAttempt {
                             service: live_request.service,
                             endpoint: live_request.endpoint,
                             method: live_request.method,
                             url: &request_url,
+                            attempt: attempt_number,
                             status_code: Some(status_code),
                             did_succeed: false,
                             did_retry: attempt > 0,
+                            will_retry,
+                            error_kind: "http_status",
+                            duration_ms: elapsed_millis(started_at),
                             error: payload
                                 .get("error")
                                 .and_then(Value::as_str)
                                 .map(str::to_string),
                         });
-                        if RETRY_STATUS_CODES.contains(&status_code)
-                            && attempt < DEFAULT_MAX_RETRIES
-                        {
+                        if will_retry {
                             thread::sleep(Duration::from_secs((attempt + 1) as u64));
                             continue;
                         }
@@ -877,25 +906,34 @@ impl LiveScholarlyTransport {
                         endpoint: live_request.endpoint,
                         method: live_request.method,
                         url: &request_url,
+                        attempt: attempt_number,
                         status_code: Some(status_code),
                         did_succeed: true,
                         did_retry: attempt > 0,
+                        will_retry: false,
+                        error_kind: "none",
+                        duration_ms: elapsed_millis(started_at),
                         error: None,
                     });
                     return Ok(payload);
                 }
                 Err(error) => {
+                    let will_retry = attempt < DEFAULT_MAX_RETRIES;
                     self.record_attempt(LiveAttempt {
                         service: live_request.service,
                         endpoint: live_request.endpoint,
                         method: live_request.method,
                         url: &redact_url(live_request.url),
+                        attempt: attempt_number,
                         status_code: None,
                         did_succeed: false,
                         did_retry: attempt > 0,
+                        will_retry,
+                        error_kind: "transport",
+                        duration_ms: elapsed_millis(started_at),
                         error: Some(error.to_string()),
                     });
-                    if attempt < DEFAULT_MAX_RETRIES {
+                    if will_retry {
                         thread::sleep(Duration::from_secs((attempt + 1) as u64));
                         continue;
                     }
@@ -915,6 +953,23 @@ impl LiveScholarlyTransport {
     }
 
     fn record_attempt(&mut self, attempt: LiveAttempt<'_>) {
+        if !attempt.did_succeed {
+            tracing::warn!(
+                event = "source.request.failed",
+                component = "source",
+                provider = attempt.service,
+                endpoint = attempt.endpoint,
+                method = attempt.method,
+                attempt = attempt.attempt,
+                outcome = "failure",
+                error_kind = attempt.error_kind,
+                http_status = attempt.status_code.unwrap_or(0),
+                has_http_status = attempt.status_code.is_some(),
+                is_retry = attempt.did_retry,
+                will_retry = attempt.will_retry,
+                duration_ms = attempt.duration_ms,
+            );
+        }
         self.attempts.push(SourceAttempt {
             service: attempt.service.to_string(),
             endpoint: attempt.endpoint.to_string(),
@@ -1297,6 +1352,14 @@ where
             Err(error)
                 if effective_sync_date.is_some() && is_openalex_created_date_plan_error(&error) =>
             {
+                tracing::warn!(
+                    event = "source.fallback.activated",
+                    component = "source",
+                    provider = OPENALEX_SOURCE,
+                    endpoint = "source_works",
+                    reason = "plan_restriction",
+                    fallback = "full_source_pages",
+                );
                 self.is_openalex_created_date_filter_unavailable = true;
                 self.transport
                     .request(openalex_source_works_request(source_id, None, cursor))?
@@ -1606,20 +1669,222 @@ fn redact_url(url: &str) -> String {
     format!("{base}?{redacted}")
 }
 
+fn elapsed_millis(started_at: Instant) -> u64 {
+    started_at.elapsed().as_millis().min(u128::from(u64::MAX)) as u64
+}
+
+#[cfg(test)]
+/// Shared structured-log capture helpers for source module tests.
+pub(crate) mod test_support {
+    use std::io::{self, Write};
+    use std::sync::{Arc, Mutex};
+
+    use serde_json::Value;
+    use tracing_subscriber::fmt::MakeWriter;
+
+    /// Thread-safe byte buffer used as a tracing test writer.
+    #[derive(Clone, Default)]
+    pub(crate) struct CapturedLogs {
+        bytes: Arc<Mutex<Vec<u8>>>,
+    }
+
+    impl CapturedLogs {
+        /// Build a JSON tracing subscriber that records every level.
+        ///
+        /// # Returns
+        ///
+        /// Subscriber backed by this capture buffer.
+        pub(crate) fn subscriber(&self) -> impl tracing::Subscriber + Send + Sync {
+            tracing_subscriber::fmt()
+                .with_ansi(false)
+                .with_max_level(tracing::Level::TRACE)
+                .with_writer(self.clone())
+                .json()
+                .flatten_event(true)
+                .finish()
+        }
+
+        /// Return all captured bytes as UTF-8 text.
+        ///
+        /// # Returns
+        ///
+        /// Captured JSON Lines text.
+        pub(crate) fn text(&self) -> String {
+            String::from_utf8(
+                self.bytes
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .clone(),
+            )
+            .expect("captured logs should be UTF-8")
+        }
+
+        /// Parse captured JSON Lines into event values.
+        ///
+        /// # Returns
+        ///
+        /// Parsed event objects in emission order.
+        pub(crate) fn events(&self) -> Vec<Value> {
+            self.text()
+                .lines()
+                .filter(|line| !line.is_empty())
+                .map(|line| serde_json::from_str(line).expect("captured log should be JSON"))
+                .collect()
+        }
+    }
+
+    /// Writer handle sharing a captured byte buffer.
+    pub(crate) struct CapturedWriter {
+        bytes: Arc<Mutex<Vec<u8>>>,
+    }
+
+    impl Write for CapturedWriter {
+        fn write(&mut self, buffer: &[u8]) -> io::Result<usize> {
+            self.bytes
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .extend_from_slice(buffer);
+            Ok(buffer.len())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl<'writer> MakeWriter<'writer> for CapturedLogs {
+        type Writer = CapturedWriter;
+
+        fn make_writer(&'writer self) -> Self::Writer {
+            CapturedWriter {
+                bytes: Arc::clone(&self.bytes),
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+    use std::thread;
     use std::time::Duration;
 
     use serde_json::json;
+
+    use super::test_support::CapturedLogs;
 
     use super::{
         crossref_journal_filter, normalize_doi, normalize_issn, normalize_source_title,
         openalex_short_source_id, openalex_source_work_filter, redact_url,
         semantic_scholar_worker_interval, semantic_scholar_worker_offset, value_pool_from_text,
-        FixtureScholarlyTransport, LiveScholarlyConfig, ScholarlyClient, ScholarlyFixtureData,
-        ScholarlyTransport, SourceError, CROSSREF_ROWS,
+        FixtureScholarlyTransport, LiveScholarlyConfig, LiveScholarlyTransport, ScholarlyClient,
+        ScholarlyFixtureData, ScholarlyTransport, SourceError, CROSSREF_ROWS,
     };
+
+    #[test]
+    fn live_attempt_events_keep_worker_context_and_omit_request_material() {
+        let sentinel = "source-url-query-header-body-sentinel";
+        let listener = TcpListener::bind("127.0.0.1:0").expect("test listener should bind");
+        let address = listener.local_addr().expect("test address should resolve");
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("test request should connect");
+            let mut request = [0_u8; 8192];
+            let _ = stream.read(&mut request).expect("test request should read");
+            let body = format!(r#"{{"error":"{sentinel}"}}"#);
+            write!(
+                stream,
+                "HTTP/1.1 400 Bad Request\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            )
+            .expect("test response should write");
+        });
+        let config = LiveScholarlyConfig {
+            timeout_seconds: 2,
+            openalex_api_keys: vec![sentinel.to_string()],
+            semantic_scholar_api_keys: vec![sentinel.to_string()],
+            crossref_mailtos: vec![sentinel.to_string()],
+            semantic_scholar_worker_id: 7,
+            semantic_scholar_process_count: 8,
+            semantic_scholar_base_interval_ms: 0,
+        };
+        let mut transport =
+            LiveScholarlyTransport::new(config).expect("live transport should build");
+        let logs = CapturedLogs::default();
+        let url = format!("http://{address}/works?credential={sentinel}");
+        let body = json!({ "article_text": sentinel });
+
+        let error = tracing::subscriber::with_default(logs.subscriber(), || {
+            let span = tracing::info_span!(
+                "index.worker",
+                run_id = "run-source-correlation",
+                worker_id = 7,
+            );
+            span.in_scope(|| {
+                transport.post_json(
+                    "semantic_scholar",
+                    "privacy_test",
+                    &url,
+                    &[("query".to_string(), sentinel.to_string())],
+                    &body,
+                    Some(("x-api-key", sentinel.to_string())),
+                )
+            })
+        })
+        .expect_err("test request should return a non-retryable failure");
+        server.join().expect("test server should finish");
+
+        assert!(matches!(
+            error,
+            SourceError::HttpStatus {
+                status_code: 400,
+                ..
+            }
+        ));
+        let events = logs.events();
+        let failed = events
+            .iter()
+            .find(|event| event["event"] == "source.request.failed")
+            .expect("source failure should be logged");
+        assert_eq!(failed["provider"], "semantic_scholar");
+        assert_eq!(failed["endpoint"], "privacy_test");
+        assert_eq!(failed["attempt"], 1);
+        assert_eq!(failed["http_status"], 400);
+        assert_eq!(failed["will_retry"], false);
+        assert_eq!(failed["span"]["run_id"], "run-source-correlation");
+        assert_eq!(failed["span"]["worker_id"], 7);
+        let text = logs.text();
+        assert!(!text.contains(sentinel));
+        assert!(!text.contains(&url));
+    }
+
+    #[test]
+    fn openalex_fallback_event_is_symbolic_and_redacted() {
+        let sentinel = "source-fallback-sentinel";
+        let transport = FixtureScholarlyTransport::new(ScholarlyFixtureData {
+            openalex_source_work_pages: vec![vec![json!({"id": "W1"})]],
+            openalex_source_works_plan_restricted: true,
+            ..ScholarlyFixtureData::default()
+        });
+        let mut client = ScholarlyClient::new(transport, true);
+        let logs = CapturedLogs::default();
+
+        tracing::subscriber::with_default(logs.subscriber(), || {
+            client
+                .fetch_openalex_works_by_source_page(sentinel, Some("2026-01-01"), None)
+                .expect("plan restriction should activate fallback")
+        });
+
+        let fallback = logs
+            .events()
+            .into_iter()
+            .find(|event| event["event"] == "source.fallback.activated")
+            .expect("fallback should be logged");
+        assert_eq!(fallback["provider"], "openalex");
+        assert_eq!(fallback["fallback"], "full_source_pages");
+        assert!(!logs.text().contains(sentinel));
+    }
 
     #[test]
     fn value_pool_splits_runtime_config() {

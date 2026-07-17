@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread::{self, JoinHandle};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use litradar_sources::{
     CnkiClient, CnkiSourceError, CnkiTransport, LiveCnkiConfig, LiveCnkiTransport,
@@ -150,6 +150,16 @@ struct LiveJournalRowsFailure {
     error: LiveIndexError,
 }
 
+#[derive(Default)]
+struct SourceLogSummary {
+    attempts: i64,
+    successes: i64,
+    failures: i64,
+    retries: i64,
+    transport_errors: i64,
+    rate_limit_failures: i64,
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 struct LiveIndexWorkerRequest {
     project_root: PathBuf,
@@ -209,6 +219,8 @@ struct ProcessLiveWorkerLauncher {
 
 struct SpawnedLiveWorker {
     worker_id: usize,
+    run_id: String,
+    started_at: Instant,
     request_path: PathBuf,
     child: Option<Child>,
 }
@@ -390,6 +402,28 @@ impl From<ChangeWriteError> for LiveIndexError {
     }
 }
 
+fn live_index_error_kind(error: &LiveIndexError) -> &'static str {
+    match error {
+        LiveIndexError::Io(_) => "io",
+        LiveIndexError::Sqlite(_) => "sqlite",
+        LiveIndexError::Json(_) => "json",
+        LiveIndexError::Source(_) => "scholarly_source",
+        LiveIndexError::CnkiSource(_) => "cnki_source",
+        LiveIndexError::Scholarly(_) => "scholarly_index",
+        LiveIndexError::Cnki(_) => "cnki_index",
+        LiveIndexError::UnsupportedSource(_) => "unsupported_source",
+        LiveIndexError::MissingConfig(_) => "missing_config",
+        LiveIndexError::InvalidConfig(_) => "invalid_config",
+        LiveIndexError::Worker(_) => "worker",
+        LiveIndexError::Notify(_) => "notify",
+        LiveIndexError::Lease(_) => "lease",
+    }
+}
+
+fn elapsed_millis(started_at: Instant) -> u64 {
+    started_at.elapsed().as_millis().min(u128::from(u64::MAX)) as u64
+}
+
 impl From<IndexRunStats> for LiveIndexWorkerStats {
     fn from(stats: IndexRunStats) -> Self {
         Self {
@@ -566,18 +600,37 @@ impl LiveWorkerLauncher for ProcessLiveWorkerLauncher {
         let mut spawned_workers = Vec::new();
         for request in &requests {
             let request_path = write_live_worker_request_file(request)?;
+            let started_at = Instant::now();
             let child = match live_worker_command(&self.command_path, &request_path).spawn() {
                 Ok(child) => child,
                 Err(error) => {
                     let _ = fs::remove_file(&request_path);
+                    tracing::error!(
+                        event = "index.worker.process.failed",
+                        component = "index",
+                        run_id = %request.run_id,
+                        worker_id = request.worker_id,
+                        outcome = "failure",
+                        error_kind = "spawn_failed",
+                        duration_ms = elapsed_millis(started_at),
+                    );
                     return Err(LiveIndexError::Worker(format!(
                         "failed to spawn live index worker {}: {error}",
                         request.worker_id
                     )));
                 }
             };
+            tracing::info!(
+                event = "index.worker.process.started",
+                component = "index",
+                run_id = %request.run_id,
+                worker_id = request.worker_id,
+                row_count = request.rows.len(),
+            );
             spawned_workers.push(SpawnedLiveWorker {
                 worker_id: request.worker_id,
+                run_id: request.run_id.clone(),
+                started_at,
                 request_path,
                 child: Some(child),
             });
@@ -596,21 +649,60 @@ impl LiveWorkerLauncher for ProcessLiveWorkerLauncher {
                 ))
             })?;
             if !output.status.success() {
-                let stderr = String::from_utf8_lossy(&output.stderr);
+                tracing::error!(
+                    event = "index.worker.process.failed",
+                    component = "index",
+                    run_id = %spawned_worker.run_id,
+                    worker_id = spawned_worker.worker_id,
+                    outcome = "failure",
+                    error_kind = "exit_status",
+                    exit_code = output.status.code().unwrap_or(-1),
+                    duration_ms = elapsed_millis(spawned_worker.started_at),
+                );
                 return Err(LiveIndexError::Worker(format!(
-                    "live index worker {} exited with {}: {}",
-                    spawned_worker.worker_id,
-                    output.status,
-                    stderr.trim()
+                    "live index worker {} exited with {}",
+                    spawned_worker.worker_id, output.status
                 )));
             }
-            let response: LiveIndexWorkerResponse = serde_json::from_slice(&output.stdout)?;
+            let response: LiveIndexWorkerResponse = serde_json::from_slice(&output.stdout)
+                .map_err(|error| {
+                    tracing::error!(
+                        event = "index.worker.process.failed",
+                        component = "index",
+                        run_id = %spawned_worker.run_id,
+                        worker_id = spawned_worker.worker_id,
+                        outcome = "failure",
+                        error_kind = "invalid_response",
+                        duration_ms = elapsed_millis(spawned_worker.started_at),
+                    );
+                    LiveIndexError::Json(error)
+                })?;
             if response.worker_id != spawned_worker.worker_id {
+                tracing::error!(
+                    event = "index.worker.process.failed",
+                    component = "index",
+                    run_id = %spawned_worker.run_id,
+                    worker_id = spawned_worker.worker_id,
+                    outcome = "failure",
+                    error_kind = "worker_id_mismatch",
+                    duration_ms = elapsed_millis(spawned_worker.started_at),
+                );
                 return Err(LiveIndexError::Worker(format!(
                     "live index worker {} returned response for worker {}",
                     spawned_worker.worker_id, response.worker_id
                 )));
             }
+            tracing::info!(
+                event = "index.worker.process.completed",
+                component = "index",
+                run_id = %spawned_worker.run_id,
+                worker_id = spawned_worker.worker_id,
+                outcome = %response.status,
+                journal_count = response.stats.total_journals,
+                written_article_count = response.written_article_count,
+                source_attempt_count = response.source_attempt_count,
+                duration_ms = elapsed_millis(spawned_worker.started_at),
+            );
             responses.push(response);
         }
         responses.sort_by_key(|response| response.worker_id);
@@ -625,7 +717,7 @@ fn live_worker_command(application_executable: &Path, request_path: &Path) -> Co
         .arg("--live-worker-request")
         .arg(request_path)
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
+        .stderr(Stdio::inherit());
     command
 }
 
@@ -639,6 +731,47 @@ fn live_worker_command(application_executable: &Path, request_path: &Path) -> Co
 ///
 /// Live index outcome.
 pub fn run_live_index(config: &LiveIndexConfig) -> Result<LiveIndexOutcome, LiveIndexError> {
+    let started_at = Instant::now();
+    let span = tracing::info_span!("index.run", component = "index");
+    span.in_scope(|| {
+        tracing::info!(event = "index.run.started", component = "index");
+        let result = run_live_index_inner(config);
+        match &result {
+            Ok(outcome) => tracing::info!(
+                event = "index.run.completed",
+                component = "index",
+                outcome = %outcome.status,
+                csv_count = outcome.csvs.len(),
+                journal_count = outcome
+                    .csvs
+                    .iter()
+                    .map(|csv| csv.journal_count)
+                    .sum::<usize>(),
+                written_article_count = outcome
+                    .csvs
+                    .iter()
+                    .map(|csv| csv.written_article_count)
+                    .sum::<i64>(),
+                source_attempt_count = outcome
+                    .csvs
+                    .iter()
+                    .map(|csv| csv.source_attempt_count)
+                    .sum::<usize>(),
+                duration_ms = elapsed_millis(started_at),
+            ),
+            Err(error) => tracing::error!(
+                event = "index.run.failed",
+                component = "index",
+                outcome = "failure",
+                error_kind = live_index_error_kind(error),
+                duration_ms = elapsed_millis(started_at),
+            ),
+        }
+        result
+    })
+}
+
+fn run_live_index_inner(config: &LiveIndexConfig) -> Result<LiveIndexOutcome, LiveIndexError> {
     validate_live_concurrency_config(config)?;
 
     let meta_dir = config.project_root.join("data").join("meta");
@@ -815,6 +948,109 @@ fn run_live_journal_rows_locally(
     connection: &Connection,
     context: &LiveJournalRowsContext<'_>,
 ) -> Result<LiveJournalRowsOutcome, Box<LiveJournalRowsFailure>> {
+    let started_at = Instant::now();
+    let span = tracing::info_span!(
+        "index.worker",
+        component = "index",
+        run_id = %context.run_id,
+        worker_id = context.worker_id,
+    );
+    span.in_scope(|| {
+        tracing::info!(
+            event = "index.worker.started",
+            component = "index",
+            run_id = %context.run_id,
+            worker_id = context.worker_id,
+            row_count = context.rows.len(),
+        );
+        let result = run_live_journal_rows_locally_inner(connection, context);
+        match &result {
+            Ok(outcome) => {
+                emit_source_summaries(context.run_id, context.worker_id, &outcome.stats);
+                tracing::info!(
+                    event = "index.worker.completed",
+                    component = "index",
+                    run_id = %context.run_id,
+                    worker_id = context.worker_id,
+                    outcome = "success",
+                    journal_count = outcome.stats.total_journals,
+                    succeeded_journal_count = outcome.stats.succeeded_journals,
+                    resumed_journal_count = outcome.stats.resumed_journals,
+                    written_article_count = outcome.written_article_count,
+                    source_attempt_count = outcome.source_attempt_count,
+                    duration_ms = elapsed_millis(started_at),
+                );
+            }
+            Err(failure) => {
+                emit_source_summaries(context.run_id, context.worker_id, &failure.partial.stats);
+                tracing::error!(
+                    event = "index.worker.failed",
+                    component = "index",
+                    run_id = %context.run_id,
+                    worker_id = context.worker_id,
+                    outcome = "failure",
+                    error_kind = live_index_error_kind(&failure.error),
+                    journal_count = failure.partial.stats.total_journals,
+                    succeeded_journal_count = failure.partial.stats.succeeded_journals,
+                    failed_journal_count = failure.partial.stats.failed_journals,
+                    written_article_count = failure.partial.written_article_count,
+                    source_attempt_count = failure.partial.source_attempt_count,
+                    duration_ms = elapsed_millis(started_at),
+                );
+            }
+        }
+        result
+    })
+}
+
+fn emit_source_summaries(run_id: &str, worker_id: usize, stats: &IndexRunStats) {
+    let mut summaries = BTreeMap::new();
+    for api_stats in stats.api_stats.values() {
+        let key = (
+            api_stats.key.source.clone(),
+            api_stats.key.service.clone(),
+            api_stats.key.endpoint.clone(),
+            api_stats.key.method.clone(),
+        );
+        let summary = summaries
+            .entry(key)
+            .or_insert_with(SourceLogSummary::default);
+        summary.attempts += api_stats.attempts;
+        summary.successes += api_stats.successes;
+        summary.failures += api_stats.failures;
+        summary.retries += api_stats.retry_count;
+        summary.transport_errors += api_stats.transport_errors;
+        summary.rate_limit_failures += api_stats.rate_limit_failures;
+    }
+    for ((source, provider, endpoint, method), summary) in summaries {
+        tracing::info!(
+            event = "index.source.summary",
+            component = "index",
+            run_id,
+            worker_id,
+            source,
+            provider,
+            endpoint,
+            method,
+            outcome = if summary.failures == 0 {
+                "success"
+            } else {
+                "partial_failure"
+            },
+            attempt_count = summary.attempts,
+            success_count = summary.successes,
+            failure_count = summary.failures,
+            retry_count = summary.retries,
+            transport_error_count = summary.transport_errors,
+            rate_limit_failure_count = summary.rate_limit_failures,
+        );
+    }
+}
+
+fn run_live_journal_rows_locally_inner(
+    connection: &Connection,
+    context: &LiveJournalRowsContext<'_>,
+) -> Result<LiveJournalRowsOutcome, Box<LiveJournalRowsFailure>> {
     let mut stats = IndexRunStats::new(
         context.run_id.to_string(),
         context.csv_file.to_string(),
@@ -933,6 +1169,13 @@ fn run_live_journal_rows_locally(
             }
             Err(failure) => {
                 let LiveJournalFailure { error } = *failure;
+                tracing::warn!(
+                    event = "index.journal.failed",
+                    component = "index",
+                    source,
+                    outcome = "failure",
+                    error_kind = live_index_error_kind(&error),
+                );
                 stats.finish_path(
                     &path_key,
                     "failed",
@@ -1191,6 +1434,65 @@ fn run_live_csv_index(
 }
 
 fn run_live_csv_index_with_runtime(
+    config: &LiveIndexConfig,
+    csv_path: &Path,
+    db_path: &Path,
+    launcher: &dyn LiveWorkerLauncher,
+    run_time: LiveRunTime,
+    heartbeat_interval: Duration,
+) -> Result<LiveCsvIndexOutcome, LiveIndexError> {
+    let started_at = Instant::now();
+    let stem = csv_path
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .unwrap_or("index");
+    let run_id = run_time.run_id(stem);
+    let span = tracing::info_span!(
+        "index.csv",
+        component = "index",
+        run_id = %run_id,
+    );
+    span.in_scope(|| {
+        tracing::info!(
+            event = "index.csv.started",
+            component = "index",
+            run_id = %run_id,
+            process_count = config.process_count,
+        );
+        let result = run_live_csv_index_with_runtime_inner(
+            config,
+            csv_path,
+            db_path,
+            launcher,
+            run_time,
+            heartbeat_interval,
+        );
+        match &result {
+            Ok(outcome) => tracing::info!(
+                event = "index.csv.completed",
+                component = "index",
+                run_id = %run_id,
+                outcome = %outcome.status,
+                journal_count = outcome.journal_count,
+                written_article_count = outcome.written_article_count,
+                source_attempt_count = outcome.source_attempt_count,
+                has_manifest = outcome.manifest_path.is_some(),
+                duration_ms = elapsed_millis(started_at),
+            ),
+            Err(error) => tracing::error!(
+                event = "index.csv.failed",
+                component = "index",
+                run_id = %run_id,
+                outcome = "failure",
+                error_kind = live_index_error_kind(error),
+                duration_ms = elapsed_millis(started_at),
+            ),
+        }
+        result
+    })
+}
+
+fn run_live_csv_index_with_runtime_inner(
     config: &LiveIndexConfig,
     csv_path: &Path,
     db_path: &Path,
@@ -1703,19 +2005,23 @@ fn run_notify_command_for_manifest(
 mod tests {
     use std::cell::RefCell;
     use std::fs;
+    use std::io::{self, Write};
     use std::path::{Path, PathBuf};
     use std::sync::{Arc, Condvar, Mutex};
     use std::thread;
     use std::time::{Duration, Instant};
 
-    use litradar_sources::LiveScholarlyConfig;
+    use litradar_sources::{LiveScholarlyConfig, SourceAttempt};
     use rusqlite::Connection;
+    use serde_json::Value;
     use tempfile::tempdir;
+    use tracing_subscriber::fmt::MakeWriter;
 
     use super::{
-        csv_paths, live_worker_command, open_live_index_connection, parse_csv_line, read_csv_rows,
-        run_live_csv_index_with_runtime, run_live_index, run_live_index_heartbeat,
-        run_live_journal_rows_in_worker_processes, run_notify_command_for_manifest,
+        csv_paths, emit_source_summaries, live_worker_command, open_live_index_connection,
+        parse_csv_line, read_csv_rows, run_live_csv_index_with_runtime, run_live_index,
+        run_live_index_heartbeat, run_live_journal_rows_in_worker_processes,
+        run_live_journal_rows_locally, run_notify_command_for_manifest,
         validate_required_source_config, validate_sources, validate_unique_journal_identities,
         LiveIndexConfig, LiveIndexError, LiveIndexHeartbeatState, LiveIndexWorkerRequest,
         LiveIndexWorkerResponse, LiveIndexWorkerStats, LiveJournalRowsContext, LiveRunTime,
@@ -1729,6 +2035,137 @@ mod tests {
     use crate::transforms::{
         build_journal_id, build_meta_record, journal_title_from_row, source_from_row, CsvRow,
     };
+
+    #[derive(Clone, Default)]
+    struct CapturedLogs {
+        bytes: Arc<Mutex<Vec<u8>>>,
+    }
+
+    impl CapturedLogs {
+        fn subscriber(&self) -> impl tracing::Subscriber + Send + Sync {
+            tracing_subscriber::fmt()
+                .with_ansi(false)
+                .with_max_level(tracing::Level::TRACE)
+                .with_writer(self.clone())
+                .json()
+                .flatten_event(true)
+                .finish()
+        }
+
+        fn text(&self) -> String {
+            String::from_utf8(
+                self.bytes
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .clone(),
+            )
+            .expect("captured logs should be UTF-8")
+        }
+
+        fn events(&self) -> Vec<Value> {
+            self.text()
+                .lines()
+                .filter(|line| !line.is_empty())
+                .map(|line| serde_json::from_str(line).expect("captured log should be JSON"))
+                .collect()
+        }
+    }
+
+    struct CapturedWriter {
+        bytes: Arc<Mutex<Vec<u8>>>,
+    }
+
+    impl Write for CapturedWriter {
+        fn write(&mut self, buffer: &[u8]) -> io::Result<usize> {
+            self.bytes
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .extend_from_slice(buffer);
+            Ok(buffer.len())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl<'writer> MakeWriter<'writer> for CapturedLogs {
+        type Writer = CapturedWriter;
+
+        fn make_writer(&'writer self) -> Self::Writer {
+            CapturedWriter {
+                bytes: Arc::clone(&self.bytes),
+            }
+        }
+    }
+
+    #[test]
+    fn worker_events_correlate_without_emitting_paths_or_rows() {
+        let root = tempdir().expect("temp root should be created");
+        let csv_path = root.path().join("private-path-sentinel.csv");
+        let db_path = root.path().join("private-database-sentinel.sqlite");
+        let connection = open_test_index(&db_path);
+        let config = live_config(root.path());
+        let rows = Vec::new();
+        let context = worker_rows_context(&csv_path, &db_path, &config, &rows);
+        let logs = CapturedLogs::default();
+
+        tracing::subscriber::with_default(logs.subscriber(), || {
+            run_live_journal_rows_locally(&connection, &context)
+                .expect("empty worker should complete")
+        });
+
+        let events = logs.events();
+        let completed = events
+            .iter()
+            .find(|event| event["event"] == "index.worker.completed")
+            .expect("worker completion should be logged");
+        assert_eq!(completed["run_id"], "run-test");
+        assert_eq!(completed["worker_id"], 0);
+        assert_eq!(completed["journal_count"], 0);
+        let text = logs.text();
+        assert!(!text.contains("private-path-sentinel"));
+        assert!(!text.contains("private-database-sentinel"));
+    }
+
+    #[test]
+    fn source_successes_emit_one_redacted_endpoint_summary() {
+        let sentinel = "source-summary-url-journal-sentinel";
+        let mut stats = IndexRunStats::new(
+            "run-source-summary".to_string(),
+            "journals.csv".to_string(),
+            "1".to_string(),
+        );
+        stats.record_source_attempts_for_source(
+            "scholarly",
+            &[SourceAttempt {
+                service: "crossref".to_string(),
+                endpoint: "journal_works".to_string(),
+                method: "GET".to_string(),
+                url: format!("https://example.test/{sentinel}?key={sentinel}"),
+                status_code: Some(200),
+                did_succeed: true,
+                did_retry: false,
+                error: None,
+            }],
+            Some(42),
+            sentinel,
+        );
+        let logs = CapturedLogs::default();
+
+        tracing::subscriber::with_default(logs.subscriber(), || {
+            emit_source_summaries("run-source-summary", 2, &stats);
+        });
+
+        let events = logs.events();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0]["event"], "index.source.summary");
+        assert_eq!(events[0]["provider"], "crossref");
+        assert_eq!(events[0]["endpoint"], "journal_works");
+        assert_eq!(events[0]["success_count"], 1);
+        assert_eq!(events[0]["failure_count"], 0);
+        assert!(!logs.text().contains(sentinel));
+    }
 
     #[test]
     fn csv_parser_handles_quotes() {

@@ -70,6 +70,57 @@ impl fmt::Display for ZjlibCnkiError {
 
 impl Error for ZjlibCnkiError {}
 
+fn observe_zjlib_operation<T>(
+    endpoint: &'static str,
+    attempt: usize,
+    operation: impl FnOnce() -> Result<T, ZjlibCnkiError>,
+) -> Result<T, ZjlibCnkiError> {
+    let started_at = Instant::now();
+    let result = operation();
+    match &result {
+        Ok(_) => tracing::debug!(
+            event = "source.request.completed",
+            component = "source",
+            provider = "zjlib_cnki",
+            endpoint,
+            attempt,
+            outcome = "success",
+            http_status = 0,
+            has_http_status = false,
+            is_retry = attempt > 1,
+            will_retry = false,
+            duration_ms = elapsed_millis(started_at),
+        ),
+        Err(error) => tracing::warn!(
+            event = "source.request.failed",
+            component = "source",
+            provider = "zjlib_cnki",
+            endpoint,
+            attempt,
+            outcome = "failure",
+            error_kind = zjlib_error_kind(error),
+            http_status = 0,
+            has_http_status = false,
+            is_retry = attempt > 1,
+            will_retry = false,
+            duration_ms = elapsed_millis(started_at),
+        ),
+    }
+    result
+}
+
+fn zjlib_error_kind(error: &ZjlibCnkiError) -> &'static str {
+    match error {
+        ZjlibCnkiError::Request(_) => "request",
+        ZjlibCnkiError::Parse(_) => "parse",
+        ZjlibCnkiError::Timeout(_) => "timeout",
+    }
+}
+
+fn elapsed_millis(started_at: Instant) -> u64 {
+    started_at.elapsed().as_millis().min(u128::from(u64::MAX)) as u64
+}
+
 /// QR login challenge returned by Zhejiang Library.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ZjlibCnkiQrLogin {
@@ -473,7 +524,8 @@ where
     ///
     /// QR login challenge data.
     pub fn start_qr_login(&mut self) -> Result<ZjlibCnkiQrLogin, ZjlibCnkiError> {
-        let login = self.transport.start_qr_login()?;
+        let login =
+            observe_zjlib_operation("qr_login_start", 1, || self.transport.start_qr_login())?;
         self.qr_uuid = Some(login.uuid.clone());
         Ok(login)
     }
@@ -500,9 +552,10 @@ where
             .ok_or_else(|| {
                 ZjlibCnkiError::Request("No QR uuid available. Run start-login first.".to_string())
             })?;
-        let token = self
-            .transport
-            .poll_qr_login(qr_uuid, timeout_seconds, interval_seconds)?;
+        let token = observe_zjlib_operation("qr_login_poll", 1, || {
+            self.transport
+                .poll_qr_login(qr_uuid, timeout_seconds, interval_seconds)
+        })?;
         self.bff_user_token = Some(token.clone());
         self.transport.set_login_cookie(&token);
         Ok(token)
@@ -515,6 +568,12 @@ where
     /// Final proxied CNKI entry URL.
     pub fn warm_up_fulltext_session(&mut self) -> Result<String, ZjlibCnkiError> {
         if self.has_fresh_fulltext_session(None) {
+            tracing::debug!(
+                event = "source.session.reused",
+                component = "source",
+                provider = "zjlib_cnki",
+                endpoint = "fulltext_session",
+            );
             return Ok(self
                 .final_zyproxy_url
                 .clone()
@@ -522,7 +581,9 @@ where
         }
         let token = self.ensure_logged_in()?;
         self.transport.set_login_cookie(&token);
-        let final_url = self.transport.warm_up_fulltext_session(&token)?;
+        let final_url = observe_zjlib_operation("fulltext_session", 1, || {
+            self.transport.warm_up_fulltext_session(&token)
+        })?;
         self.fulltext_warmed_at = Some(current_unix_time());
         self.final_zyproxy_url = Some(final_url.clone());
         Ok(final_url)
@@ -573,24 +634,69 @@ where
         expected: &ZjlibCnkiArticleIdentity,
         result_limit: usize,
     ) -> Result<ZjlibCnkiDownloadedPdf, ZjlibCnkiError> {
-        let results = self.transport.search(&expected.title, result_limit)?;
+        let started_at = Instant::now();
+        let results = observe_zjlib_operation("fulltext_search", 1, || {
+            self.transport.search(&expected.title, result_limit)
+        })?;
         let mut errors = Vec::new();
-        for result in results {
-            let candidate = self.transport.inspect_result_metadata(&result)?;
+        for (candidate_index, result) in results.into_iter().enumerate() {
+            let attempt = candidate_index + 1;
+            let candidate = observe_zjlib_operation("fulltext_metadata", attempt, || {
+                self.transport.inspect_result_metadata(&result)
+            })?;
             if !does_article_metadata_match(expected, &candidate.identity) {
+                tracing::debug!(
+                    event = "source.fallback.activated",
+                    component = "source",
+                    provider = "zjlib_cnki",
+                    endpoint = "fulltext_match",
+                    reason = "metadata_mismatch",
+                    fallback = "next_candidate",
+                    attempt,
+                );
                 errors.push(format!("{}: metadata mismatch", result.index));
                 continue;
             }
             let Some(pdf_url) = candidate.pdf_url.as_deref() else {
+                tracing::debug!(
+                    event = "source.fallback.activated",
+                    component = "source",
+                    provider = "zjlib_cnki",
+                    endpoint = "fulltext_match",
+                    reason = "pdf_link_missing",
+                    fallback = "next_candidate",
+                    attempt,
+                );
                 errors.push(format!("{}: PDF link missing", result.index));
                 continue;
             };
-            return self.transport.download_pdf(
-                pdf_url,
-                Some(&candidate.identity.title),
-                Some(&candidate.detail_url),
+            let download = observe_zjlib_operation("fulltext_download", attempt, || {
+                self.transport.download_pdf(
+                    pdf_url,
+                    Some(&candidate.identity.title),
+                    Some(&candidate.detail_url),
+                )
+            })?;
+            tracing::info!(
+                event = "source.fulltext.completed",
+                component = "source",
+                provider = "zjlib_cnki",
+                outcome = "success",
+                inspected_candidate_count = attempt,
+                byte_count = download.content.len(),
+                duration_ms = elapsed_millis(started_at),
             );
+            return Ok(download);
         }
+        tracing::warn!(
+            event = "source.fulltext.failed",
+            component = "source",
+            provider = "zjlib_cnki",
+            outcome = "failure",
+            error_kind = "no_exact_match",
+            inspected_candidate_count = errors.len(),
+            duration_ms = elapsed_millis(started_at),
+        );
         let detail = if errors.is_empty() {
             "no search results".to_string()
         } else {
@@ -672,17 +778,64 @@ where
     Pause: FnMut(Duration),
 {
     for attempt_index in 0..ZYPROXY_LOGIN_ATTEMPTS {
-        match attempt()? {
-            ZyproxyEntryOutcome::Ready(final_url) => return Ok(final_url),
-            ZyproxyEntryOutcome::Retry if attempt_index + 1 < ZYPROXY_LOGIN_ATTEMPTS => {
-                pause(Duration::from_millis(
-                    ZYPROXY_RETRY_DELAY_MILLIS * (attempt_index as u64 + 1),
-                ));
+        let attempt_number = attempt_index + 1;
+        let started_at = Instant::now();
+        match attempt() {
+            Ok(ZyproxyEntryOutcome::Ready(final_url)) => return Ok(final_url),
+            Ok(ZyproxyEntryOutcome::Retry) if attempt_number < ZYPROXY_LOGIN_ATTEMPTS => {
+                let delay_ms = ZYPROXY_RETRY_DELAY_MILLIS * attempt_number as u64;
+                tracing::warn!(
+                    event = "source.request.failed",
+                    component = "source",
+                    provider = "zjlib_cnki",
+                    endpoint = "zyproxy_login",
+                    attempt = attempt_number,
+                    outcome = "failure",
+                    error_kind = "session_not_ready",
+                    http_status = 0,
+                    has_http_status = false,
+                    is_retry = attempt_index > 0,
+                    will_retry = true,
+                    retry_delay_ms = delay_ms,
+                    duration_ms = elapsed_millis(started_at),
+                );
+                pause(Duration::from_millis(delay_ms));
             }
-            ZyproxyEntryOutcome::Retry => {
+            Ok(ZyproxyEntryOutcome::Retry) => {
+                tracing::warn!(
+                    event = "source.request.failed",
+                    component = "source",
+                    provider = "zjlib_cnki",
+                    endpoint = "zyproxy_login",
+                    attempt = attempt_number,
+                    outcome = "failure",
+                    error_kind = "session_not_ready",
+                    http_status = 0,
+                    has_http_status = false,
+                    is_retry = attempt_index > 0,
+                    will_retry = false,
+                    duration_ms = elapsed_millis(started_at),
+                );
                 return Err(ZjlibCnkiError::Request(format!(
                     "zyproxy session was not accepted after {ZYPROXY_LOGIN_ATTEMPTS} login attempts."
                 )));
+            }
+            Err(error) => {
+                tracing::warn!(
+                    event = "source.request.failed",
+                    component = "source",
+                    provider = "zjlib_cnki",
+                    endpoint = "zyproxy_login",
+                    attempt = attempt_number,
+                    outcome = "failure",
+                    error_kind = zjlib_error_kind(&error),
+                    http_status = 0,
+                    has_http_status = false,
+                    is_retry = attempt_index > 0,
+                    will_retry = false,
+                    duration_ms = elapsed_millis(started_at),
+                );
+                return Err(error);
             }
         }
     }
@@ -2477,6 +2630,8 @@ mod tests {
     use reqwest::redirect::Policy;
     use reqwest::Url;
 
+    use crate::scholarly::test_support::CapturedLogs;
+
     use super::{
         extract_anchor_title, extract_pdf_download_url, extract_share_cookie_sync,
         extract_window_location, request_error, retry_zyproxy_login, search_handler_form_fields,
@@ -2485,6 +2640,43 @@ mod tests {
         ZhejiangLibraryCnkiClient, ZjlibCnkiArticleIdentity, ZjlibCnkiCookie, ZjlibCnkiError,
         ZyproxyEntryOutcome, ZyproxyRedirectAction, ZYPROXY_REDIRECT_HOPS,
     };
+
+    #[test]
+    fn fulltext_events_keep_context_and_omit_article_material() {
+        let sentinel = "fulltext-title-author-cookie-url-sentinel";
+        let mut client = warmed_fixture_client(FixtureZjlibCnkiMode::FulltextMismatch);
+        let expected = ZjlibCnkiArticleIdentity {
+            title: sentinel.to_string(),
+            authors: sentinel.to_string(),
+            journal_title: sentinel.to_string(),
+        };
+        let logs = CapturedLogs::default();
+
+        let error = tracing::subscriber::with_default(logs.subscriber(), || {
+            let span = tracing::info_span!(
+                "index.worker",
+                run_id = "run-fulltext-correlation",
+                worker_id = 6,
+            );
+            span.in_scope(|| client.download_matching_pdf(&expected, 10))
+        })
+        .expect_err("mismatching fixture should fail");
+
+        assert!(matches!(error, ZjlibCnkiError::Request(_)));
+        let events = logs.events();
+        let failed = events
+            .iter()
+            .find(|event| event["event"] == "source.fulltext.failed")
+            .expect("fulltext failure should be logged");
+        assert_eq!(failed["provider"], "zjlib_cnki");
+        assert_eq!(failed["error_kind"], "no_exact_match");
+        assert_eq!(failed["span"]["run_id"], "run-fulltext-correlation");
+        assert_eq!(failed["span"]["worker_id"], 6);
+        assert!(events
+            .iter()
+            .any(|event| event["event"] == "source.fallback.activated"));
+        assert!(!logs.text().contains(sentinel));
+    }
 
     #[test]
     fn zyproxy_redirects_follow_normal_transition_and_retry_expected_loop() {

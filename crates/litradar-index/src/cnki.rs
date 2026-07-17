@@ -590,15 +590,21 @@ where
         for task in chunk.iter().cloned() {
             let mut worker_client = client.clone();
             let _ = worker_client.drain_attempts();
+            let span = tracing::Span::current();
+            let subscriber = tracing::dispatcher::get_default(Clone::clone);
             handles.push(thread::spawn(move || {
-                let result =
-                    worker_client.article_detail(&task.article_url, task.platform_id.as_deref());
-                let attempts = worker_client.drain_attempts();
-                CnkiArticleDetailWorkerOutput {
-                    task,
-                    result,
-                    attempts,
-                }
+                tracing::dispatcher::with_default(&subscriber, || {
+                    span.in_scope(|| {
+                        let result = worker_client
+                            .article_detail(&task.article_url, task.platform_id.as_deref());
+                        let attempts = worker_client.drain_attempts();
+                        CnkiArticleDetailWorkerOutput {
+                            task,
+                            result,
+                            attempts,
+                        }
+                    })
+                })
             }));
         }
 
