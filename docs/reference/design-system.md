@@ -148,6 +148,12 @@ Card 使用 card token、`rounded-lg`、`shadow-vercel-card`、24px 外层纵向
 
 文献追踪与通知分类在两者之间切换时复用同一个 tracking view model 和草稿；保存/取消栏 sticky 在内容滚动区底部。关闭设置、浏览器返回或离开追踪分类组时，如果草稿未保存，必须先显示独立 `ConfirmDialog`。文章详情中的数据源入口必须先关闭文章 Dialog，再打开 `settings=data-sources`，不允许叠加两个 modal。Dialog 关闭后把焦点归还给仍在文档中的发起控件。
 
+### 页面导航与账号菜单
+
+首页侧栏顶部使用紧凑的品牌栏，品牌栏下方是一行三列的图标导航：`Search` 对应文献检索、`Star` 对应我的收藏、`CalendarDays` 对应每周更新。图标入口必须同时提供 `aria-label`、`title`、`sr-only` 文本和 `aria-current="page"` 当前页语义；桌面侧栏与移动端筛选 Dialog 复用同一导航组件。
+
+所有受保护页面右下角使用带圆形头像、用户名和展开提示的账号 pill。账号菜单只承载四类账号级动作：打开聚合设置中心、在子菜单中选择 system/light/dark 主题、向管理员显示管理面板入口，以及使用 destructive 语义退出登录。页面级导航不应在账号菜单中重复；设置链接必须保留当前 pathname 和现有 query。菜单复用 Radix Dropdown Menu 的键盘导航、Escape、点击外部关闭与焦点归还行为，并避开设备 safe area。退出登录的红色属于明确的危险操作语义，不受普通 UI chrome 的中性色约束。
+
 ## 布局与响应式
 
 项目使用组件内的 Tailwind mobile-first breakpoint，没有单独维护一套自定义 breakpoint 表。
@@ -162,7 +168,7 @@ Card 使用 card token、`rounded-lg`、`shadow-vercel-card`、24px 外层纵向
 - 表单按钮和选择器通常在移动端占满宽度，`sm` 后恢复行内布局。
 - Dialog 默认适应窄屏；首页筛选器在移动端覆盖左侧并在 `md` 隐藏。
 - 全视口 shell 使用 `h-dvh` / `min-h-dvh`，避免移动浏览器工具栏遮挡。
-- 浮动用户菜单使用设备安全区定位；页面或内部滚动区预留对应底部净空。
+- 浮动账号 pill 使用设备安全区定位；页面或内部滚动区预留对应底部净空。
 - 长列表使用独立滚动容器、Intersection Observer 和命名的 `content-visibility-card`、`content-visibility-row`、`content-visibility-table-row`、`content-visibility-filter-row` 类。每个类都编码匹配内容类型的 intrinsic block size，业务组件不重复任意 CSS 声明。
 - 固定头部与滚动正文使用 `flex`、`min-h-0` 和 `flex-1` 分配高度，不使用依赖头部像素值的 `calc(100% - …)`。
 

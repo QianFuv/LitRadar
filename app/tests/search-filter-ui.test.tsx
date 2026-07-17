@@ -5,7 +5,7 @@
 import { useQueryState, parseAsString } from 'nuqs';
 import { NuqsTestingAdapter } from 'nuqs/adapters/testing';
 import { ThemeProvider } from 'next-themes';
-import { renderHook, screen, waitFor } from '@testing-library/react';
+import { renderHook, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
 import type { ReactNode } from 'react';
@@ -248,7 +248,26 @@ async function rendersUnavailableYearState(): Promise<void> {
 
   expect(await screen.findByText('暂无可用发表年份')).toBeInTheDocument();
   expect(screen.queryByLabelText('起始年份')).not.toBeInTheDocument();
-  expect(screen.getByRole('link', { name: '首页' })).toBeInTheDocument();
+  expect(screen.getByRole('link', { name: 'LitRadar 首页' })).toBeInTheDocument();
+  const pageNavigation = screen.getByRole('navigation', { name: '页面导航' });
+  const pageLinks = within(pageNavigation).getAllByRole('link');
+  expect(pageLinks).toHaveLength(3);
+  expect(within(pageNavigation).getByRole('link', { name: '文献检索' })).toMatchObject({
+    title: '文献检索',
+  });
+  expect(within(pageNavigation).getByRole('link', { name: '文献检索' })).toHaveAttribute(
+    'aria-current',
+    'page',
+  );
+  expect(within(pageNavigation).getByRole('link', { name: '我的收藏' })).toHaveAttribute(
+    'href',
+    '/favorites',
+  );
+  expect(within(pageNavigation).getByRole('link', { name: '每周更新' })).toHaveAttribute(
+    'href',
+    '/weekly-updates',
+  );
+  expect(pageNavigation.querySelectorAll('.sr-only')).toHaveLength(3);
   const resetButtons = screen.getAllByRole('button', { name: '重置筛选' });
   const publicationTimeHeading = screen.getByRole('heading', { name: '发表时间' });
   expect(resetButtons).toHaveLength(1);

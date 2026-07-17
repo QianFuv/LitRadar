@@ -7,6 +7,7 @@ import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { getAreas, getYears, getJournalOptions, getDatabases } from '@/lib/api';
 import { useAuth } from '@/lib/auth-context';
+import { SidebarNavigation } from '@/components/feature/sidebar-navigation';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -292,55 +293,52 @@ export function Sidebar({ className }: { className?: string }) {
         className,
       )}
     >
-      <div className="flex-1 space-y-8 p-6 overflow-y-auto">
+      <div className="flex-1 space-y-8 overflow-y-auto p-6">
         <div className="space-y-4">
-          <div className="grid grid-cols-2 items-center gap-4">
-            <div className="flex items-center justify-center">
-              <Button
-                variant="ghost"
-                size="icon"
-                className="h-20 w-20 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:ring-sidebar-ring/50"
-                aria-label="首页"
-                title="首页"
-                asChild
-              >
-                <Link href="/">
-                  <Image
-                    src="/litradar-logo.png"
-                    alt=""
-                    width={64}
-                    height={64}
-                    loading="eager"
-                    fetchPriority="high"
-                    className="h-16 w-16 object-contain"
-                  />
-                </Link>
-              </Button>
+          <Button
+            variant="ghost"
+            className="h-12 w-full justify-start gap-3 px-1 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:ring-sidebar-ring/50"
+            aria-label="LitRadar 首页"
+            title="LitRadar 首页"
+            asChild
+          >
+            <Link href="/">
+              <Image
+                src="/litradar-logo.png"
+                alt=""
+                width={44}
+                height={44}
+                loading="eager"
+                fetchPriority="high"
+                className="size-11 rounded-md object-cover"
+              />
+              <span className="text-lg font-semibold">LitRadar</span>
+            </Link>
+          </Button>
+
+          <SidebarNavigation />
+
+          <div className="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-3 border-t border-sidebar-border pt-4">
+            <div className="flex items-center gap-2 text-sm font-semibold text-sidebar-foreground">
+              <Database className="size-4" />
+              <span>数据库</span>
             </div>
-            <div className="space-y-2 self-center">
-              <div className="flex w-full items-center gap-2 text-sm font-semibold text-sidebar-foreground">
-                <Database className="h-4 w-4" />
-                <span>数据库</span>
-              </div>
-              <div className="w-full">
-                {loadingDatabases ? (
-                  <Skeleton className="h-9 w-full" />
-                ) : (
-                  <Select value={activeDb} onValueChange={handleDatabaseChange}>
-                    <SelectTrigger size="sm" className="w-full bg-sidebar">
-                      <SelectValue placeholder="选择数据库" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {databases?.map((dbName) => (
-                        <SelectItem key={dbName} value={dbName}>
-                          {dbName.replace('.sqlite', '')}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                )}
-              </div>
-            </div>
+            {loadingDatabases ? (
+              <Skeleton className="h-9 w-full" />
+            ) : (
+              <Select value={activeDb} onValueChange={handleDatabaseChange}>
+                <SelectTrigger size="sm" className="w-full bg-sidebar">
+                  <SelectValue placeholder="选择数据库" />
+                </SelectTrigger>
+                <SelectContent>
+                  {databases?.map((dbName) => (
+                    <SelectItem key={dbName} value={dbName}>
+                      {dbName.replace('.sqlite', '')}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
           </div>
         </div>
 

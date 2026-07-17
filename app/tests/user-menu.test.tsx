@@ -3,7 +3,7 @@
  */
 
 import type { ReactNode } from 'react';
-import { render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 
@@ -26,14 +26,16 @@ const userMenuMocks = vi.hoisted(() => ({
       is_admin: false,
     } as MockUser | null,
   },
-  pathname: '/tracking',
+  pathname: '/favorites',
   providerProps: vi.fn(),
+  searchParams: new URLSearchParams('q=graph'),
   setTheme: vi.fn(),
   theme: 'system',
 }));
 
 vi.mock('next/navigation', () => ({
   usePathname: () => userMenuMocks.pathname,
+  useSearchParams: () => userMenuMocks.searchParams,
 }));
 
 vi.mock('@/lib/auth-context', () => ({
@@ -66,7 +68,8 @@ function resetUserMenuMocks(): void {
     username: 'menu_user',
     is_admin: false,
   };
-  userMenuMocks.pathname = '/tracking';
+  userMenuMocks.pathname = '/favorites';
+  userMenuMocks.searchParams = new URLSearchParams('q=graph');
   userMenuMocks.theme = 'system';
 }
 
@@ -76,33 +79,32 @@ function resetUserMenuMocks(): void {
 function hidesMenuWithoutAuthenticatedUser(): void {
   userMenuMocks.auth.loading = true;
   render(<UserMenu />);
-  expect(screen.queryByRole('button', { name: '打开用户菜单' })).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: /打开账号菜单/ })).not.toBeInTheDocument();
 
   userMenuMocks.auth.loading = false;
   userMenuMocks.auth.user = null;
   render(<UserMenu />);
-  expect(screen.queryByRole('button', { name: '打开用户菜单' })).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: /打开账号菜单/ })).not.toBeInTheDocument();
 }
 
 /**
- * Verify protected destinations, current-page state, admin gating, and logout.
+ * Verify account actions, query preservation, admin gating, and logout.
  */
-async function exposesAuthenticatedNavigation(): Promise<void> {
+async function exposesAccountActions(): Promise<void> {
   const user = userEvent.setup();
   const { rerender } = render(<UserMenu />);
+  const trigger = screen.getByRole('button', { name: '打开账号菜单：menu_user' });
 
-  await user.click(screen.getByRole('button', { name: '打开用户菜单' }));
-  expect(screen.getByRole('menuitem', { name: '首页' })).toHaveAttribute('href', '/');
-  expect(screen.getByRole('menuitem', { name: '我的收藏' })).toHaveAttribute('href', '/favorites');
-  expect(screen.getByRole('menuitem', { name: '文献追踪' })).toHaveAttribute(
-    'aria-current',
-    'page',
-  );
-  expect(screen.getByRole('menuitem', { name: '每周更新' })).toHaveAttribute(
+  expect(trigger).toHaveTextContent('menu_user');
+  await user.click(trigger);
+  expect(screen.getByRole('menuitem', { name: '打开设置中心' })).toHaveAttribute(
     'href',
-    '/weekly-updates',
+    '/favorites?q=graph&settings=general',
   );
-  expect(screen.getByRole('menuitem', { name: '账号设置' })).toHaveAttribute('href', '/settings');
+  expect(screen.getByRole('menuitem', { name: '外观主题' })).toBeInTheDocument();
+  expect(screen.queryByRole('menuitem', { name: '文献检索' })).not.toBeInTheDocument();
+  expect(screen.queryByRole('menuitem', { name: '我的收藏' })).not.toBeInTheDocument();
+  expect(screen.queryByRole('menuitem', { name: '每周更新' })).not.toBeInTheDocument();
   expect(screen.queryByRole('menuitem', { name: '管理面板' })).not.toBeInTheDocument();
 
   await user.click(screen.getByRole('menuitem', { name: '退出登录' }));
@@ -114,7 +116,7 @@ async function exposesAuthenticatedNavigation(): Promise<void> {
     is_admin: true,
   };
   rerender(<UserMenu />);
-  await user.click(screen.getByRole('button', { name: '打开用户菜单' }));
+  await user.click(screen.getByRole('button', { name: '打开账号菜单：admin_user' }));
   expect(screen.getByRole('menuitem', { name: '管理面板' })).toHaveAttribute('href', '/admin');
 }
 
@@ -124,7 +126,7 @@ async function exposesAuthenticatedNavigation(): Promise<void> {
 async function restoresTriggerFocusAfterEscape(): Promise<void> {
   const user = userEvent.setup();
   render(<UserMenu />);
-  const trigger = screen.getByRole('button', { name: '打开用户菜单' });
+  const trigger = screen.getByRole('button', { name: /打开账号菜单/ });
 
   await user.click(trigger);
   expect(screen.getByRole('menu')).toBeInTheDocument();
@@ -140,18 +142,21 @@ async function restoresTriggerFocusAfterEscape(): Promise<void> {
 async function selectsThemePreferences(): Promise<void> {
   const user = userEvent.setup();
   render(<UserMenu />);
-  const trigger = screen.getByRole('button', { name: '打开用户菜单' });
+  const trigger = screen.getByRole('button', { name: /打开账号菜单/ });
 
   await user.click(trigger);
-  await user.click(await screen.findByRole('menuitemradio', { name: '深色' }));
+  await user.hover(screen.getByRole('menuitem', { name: '外观主题' }));
+  fireEvent.click(await screen.findByRole('menuitemradio', { name: '深色' }));
   expect(userMenuMocks.setTheme).toHaveBeenLastCalledWith('dark');
 
   await user.click(trigger);
-  await user.click(await screen.findByRole('menuitemradio', { name: '浅色' }));
+  await user.hover(screen.getByRole('menuitem', { name: '外观主题' }));
+  fireEvent.click(await screen.findByRole('menuitemradio', { name: '浅色' }));
   expect(userMenuMocks.setTheme).toHaveBeenLastCalledWith('light');
 
   await user.click(trigger);
-  await user.click(await screen.findByRole('menuitemradio', { name: '跟随系统' }));
+  await user.hover(screen.getByRole('menuitem', { name: '外观主题' }));
+  fireEvent.click(await screen.findByRole('menuitemradio', { name: '跟随系统' }));
   expect(userMenuMocks.setTheme).toHaveBeenLastCalledWith('system');
 }
 
@@ -178,7 +183,7 @@ beforeEach(resetUserMenuMocks);
 
 describe('UserMenu', () => {
   test('stays hidden before authentication completes', hidesMenuWithoutAuthenticatedUser);
-  test('exposes authenticated navigation and admin gating', exposesAuthenticatedNavigation);
+  test('exposes account actions and admin gating', exposesAccountActions);
   test('restores trigger focus after Escape', restoresTriggerFocusAfterEscape);
   test('selects system, light, and dark themes', selectsThemePreferences);
   test('configures system theme as the application default', configuresSystemThemeProvider);

@@ -71,6 +71,21 @@ async function serveTrackingApi(route: Route): Promise<void> {
     await fulfillJson(route, ['fixture.sqlite']);
     return;
   }
+  if (pathname === '/api/meta/areas' || pathname === '/api/meta/journals') {
+    await fulfillJson(route, []);
+    return;
+  }
+  if (pathname === '/api/years') {
+    await fulfillJson(route, []);
+    return;
+  }
+  if (pathname === '/api/articles') {
+    await fulfillJson(route, {
+      items: [],
+      page: { total: 0, limit: 20, offset: 0, next_cursor: null, has_more: false },
+    });
+    return;
+  }
   if (pathname === '/api/favorites/folders') {
     await fulfillJson(route, [
       { id: 4, name: 'Tracking', is_tracking: true, article_count: 0, created_at: 1 },
@@ -251,7 +266,7 @@ async function verifiesAggregatedSettingsCenter(page: Page): Promise<void> {
 }
 
 /**
- * Verify protected navigation, theme persistence, dismiss behavior, and mobile safe-area spacing.
+ * Verify compact navigation, account actions, theme persistence, focus, and safe-area spacing.
  *
  * @param page - Playwright browser page.
  */
@@ -270,29 +285,59 @@ async function verifiesUserMenuNavigationAndTheme(page: Page): Promise<void> {
     }
   });
 
-  await page.setViewportSize({ width: 360, height: 800 });
   await page.route('**/api/**', serveTrackingApi);
-  await page.goto('/favorites');
-  await page.evaluate(() => {
-    document.documentElement.style.setProperty('--safe-area-inset-bottom', '32px');
-  });
+  await page.emulateMedia({ colorScheme: 'dark' });
+  await page.setViewportSize({ width: 1600, height: 1000 });
+  await page.goto('/?q=graph');
+  await hideDevelopmentIndicator(page);
 
-  const trigger = page.getByRole('button', { name: '打开用户菜单' });
-  await expect(trigger).toBeVisible();
-  await trigger.click();
-  await expect(page.getByRole('menuitem', { name: '我的收藏' })).toHaveAttribute(
+  const pageNavigation = page.getByRole('navigation', { name: '页面导航' });
+  await expect(pageNavigation.getByRole('link')).toHaveCount(3);
+  await expect(pageNavigation.getByRole('link', { name: '文献检索' })).toHaveAttribute(
     'aria-current',
     'page',
   );
-  await expect(page.getByRole('menuitem', { name: '管理面板' })).toHaveCount(0);
+  await expect(pageNavigation.getByRole('link', { name: '我的收藏' })).toHaveAttribute(
+    'title',
+    '我的收藏',
+  );
+  await expect(pageNavigation.getByRole('link', { name: '每周更新' })).toHaveAttribute(
+    'href',
+    '/weekly-updates',
+  );
 
+  const trigger = page.getByRole('button', { name: '打开账号菜单：browser_user' });
+  await expect(trigger).toContainText('browser_user');
+  await trigger.click();
+  await expect(page.getByRole('menuitem', { name: '打开设置中心' })).toHaveAttribute(
+    'href',
+    '/?q=graph&settings=general',
+  );
+  await expect(page.getByRole('menuitem', { name: '管理面板' })).toHaveCount(0);
+  await expect(page.getByRole('menuitem', { name: '我的收藏' })).toHaveCount(0);
+  await page.screenshot({
+    path: '../output/ui/navigation-account-desktop.png',
+    fullPage: true,
+  });
+
+  await page.getByRole('menuitem', { name: '外观主题' }).hover();
   await page.getByRole('menuitemradio', { name: '深色' }).click();
   await expect.poll(() => page.evaluate(() => window.localStorage.getItem('theme'))).toBe('dark');
   await expect(page.locator('html')).toHaveClass(/dark/);
 
   await trigger.click();
+  await page.getByRole('menuitem', { name: '外观主题' }).hover();
   await page.getByRole('menuitemradio', { name: '跟随系统' }).click();
   await expect.poll(() => page.evaluate(() => window.localStorage.getItem('theme'))).toBe('system');
+
+  await trigger.click();
+  await page.getByRole('menuitem', { name: '打开设置中心' }).click();
+  await expect(page).toHaveURL('/?q=graph&settings=general');
+  const settingsDialog = page.getByRole('dialog', { name: '设置中心' });
+  await expect(settingsDialog).toBeVisible();
+  await settingsDialog.getByRole('button', { name: '关闭' }).click();
+  await expect(page).toHaveURL('/?q=graph');
+  await expect(trigger).toBeFocused();
 
   await trigger.click();
   await page.mouse.click(8, 8);
@@ -304,18 +349,37 @@ async function verifiesUserMenuNavigationAndTheme(page: Page): Promise<void> {
   await expect(page.getByRole('menu')).toHaveCount(0);
   await expect(trigger).toBeFocused();
 
-  const mainPaddingBottom = await page
-    .locator('#main-content')
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/?q=graph');
+  await hideDevelopmentIndicator(page);
+  await page.evaluate(() => {
+    document.documentElement.style.setProperty('--safe-area-inset-bottom', '32px');
+  });
+
+  await page.getByRole('button', { name: '打开筛选器' }).click();
+  const filterDialog = page.getByRole('dialog', { name: '筛选器' });
+  const mobileNavigation = filterDialog.getByRole('navigation', { name: '页面导航' });
+  await expect(mobileNavigation.getByRole('link')).toHaveCount(3);
+  await expect(mobileNavigation.getByRole('link', { name: '文献检索' })).toHaveAttribute(
+    'aria-current',
+    'page',
+  );
+  await page.screenshot({ path: '../output/ui/navigation-mobile.png', fullPage: true });
+  await filterDialog.getByRole('button', { name: '关闭' }).click();
+
+  const mobileTrigger = page.getByRole('button', { name: '打开账号菜单：browser_user' });
+  const resultsPaddingBottom = await page
+    .locator('#results-scroll-container')
     .evaluate((element) => Number.parseFloat(window.getComputedStyle(element).paddingBottom));
-  const triggerBox = await trigger.boundingBox();
-  expect(mainPaddingBottom).toBeGreaterThanOrEqual(128);
+  const triggerBox = await mobileTrigger.boundingBox();
+  expect(resultsPaddingBottom).toBeGreaterThanOrEqual(128);
   expect(triggerBox).not.toBeNull();
-  expect(triggerBox?.y ?? 800).toBeLessThan(752);
+  expect((triggerBox?.y ?? 844) + (triggerBox?.height ?? 0)).toBeLessThanOrEqual(796);
 
   const lastInteractive = page.locator('#main-content button:not([disabled])').last();
   await lastInteractive.scrollIntoViewIfNeeded();
   const lastInteractiveBox = await lastInteractive.boundingBox();
-  const updatedTriggerBox = await trigger.boundingBox();
+  const updatedTriggerBox = await mobileTrigger.boundingBox();
   expect(lastInteractiveBox).not.toBeNull();
   expect(updatedTriggerBox).not.toBeNull();
   const doesOverlap =

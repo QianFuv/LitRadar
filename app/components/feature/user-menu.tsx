@@ -1,39 +1,32 @@
 'use client';
 
 /**
- * Accessible authenticated navigation and theme menu.
+ * Accessible account controls, settings entry, theme preferences, and logout.
  */
 
 import * as DropdownMenuPrimitive from '@radix-ui/react-dropdown-menu';
 import {
-  CalendarDays,
   Check,
-  Home,
+  ChevronRight,
+  ChevronUp,
   LogOut,
   Monitor,
   Moon,
-  Radar,
-  Settings,
+  Settings2,
   Shield,
-  Star,
   Sun,
-  UserRound,
   type LucideIcon,
 } from 'lucide-react';
 import { useTheme } from 'next-themes';
+import Image from 'next/image';
 import Link from 'next/link';
-import { usePathname } from 'next/navigation';
+import { usePathname, useSearchParams } from 'next/navigation';
 import { useSyncExternalStore, type CSSProperties } from 'react';
 
 import { Button } from '@/components/ui/button';
 import { useAuth } from '@/lib/auth-context';
+import { buildSettingsCenterHref } from '@/lib/settings-center';
 import { cn } from '@/lib/utils';
-
-type NavigationItem = {
-  href: string;
-  icon: LucideIcon;
-  label: string;
-};
 
 type ThemePreference = 'system' | 'light' | 'dark';
 
@@ -41,20 +34,6 @@ type ThemeItem = {
   icon: LucideIcon;
   label: string;
   value: ThemePreference;
-};
-
-const NAVIGATION_ITEMS: readonly NavigationItem[] = [
-  { href: '/', icon: Home, label: '首页' },
-  { href: '/favorites', icon: Star, label: '我的收藏' },
-  { href: '/tracking', icon: Radar, label: '文献追踪' },
-  { href: '/weekly-updates', icon: CalendarDays, label: '每周更新' },
-  { href: '/settings', icon: Settings, label: '账号设置' },
-];
-
-const ADMIN_NAVIGATION_ITEM: NavigationItem = {
-  href: '/admin',
-  icon: Shield,
-  label: '管理面板',
 };
 
 const THEME_ITEMS: readonly ThemeItem[] = [
@@ -66,24 +45,13 @@ const THEME_ITEMS: readonly ThemeItem[] = [
 const MENU_ITEM_CLASS =
   "focus:bg-accent focus:text-accent-foreground [&_svg:not([class*='text-'])]:text-muted-foreground relative flex w-full cursor-default items-center gap-2 rounded-sm px-2 py-1.5 text-sm outline-hidden select-none data-[disabled]:pointer-events-none data-[disabled]:opacity-50 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4";
 
+const MENU_CONTENT_CLASS =
+  'bg-popover text-popover-foreground data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 z-50 origin-(--radix-dropdown-menu-content-transform-origin) rounded-md border p-1 shadow-md outline-hidden';
+
 const USER_MENU_POSITION_STYLE: CSSProperties = {
   bottom: 'calc(1rem + var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px)))',
   right: 'calc(1rem + env(safe-area-inset-right, 0px))',
 };
-
-/**
- * Determine whether a navigation item represents the current route.
- *
- * @param pathname - Current application pathname.
- * @param href - Navigation destination.
- * @returns Whether the destination is current.
- */
-function isCurrentRoute(pathname: string, href: string): boolean {
-  if (href === '/') {
-    return pathname === href;
-  }
-  return pathname === href || pathname.startsWith(`${href}/`);
-}
 
 /**
  * Subscribe to the immutable client-environment signal.
@@ -113,13 +81,14 @@ function getServerEnvironmentSnapshot(): boolean {
 }
 
 /**
- * Render the authenticated global navigation and theme menu.
+ * Render the authenticated account trigger and account-only menu.
  *
- * @returns User menu or null while authentication is unresolved.
+ * @returns Account menu or null while authentication is unresolved.
  */
 export function UserMenu() {
   const { user, loading, logout } = useAuth();
   const pathname = usePathname();
+  const searchParams = useSearchParams();
   const { setTheme, theme } = useTheme();
   const isMounted = useSyncExternalStore(
     subscribeToClientEnvironment,
@@ -131,10 +100,11 @@ export function UserMenu() {
     return null;
   }
 
-  const navigationItems = user.is_admin
-    ? [...NAVIGATION_ITEMS, ADMIN_NAVIGATION_ITEM]
-    : NAVIGATION_ITEMS;
   const selectedTheme = isMounted ? (theme ?? 'system') : 'system';
+  const selectedThemeLabel =
+    THEME_ITEMS.find((item) => item.value === selectedTheme)?.label ?? '跟随系统';
+  const settingsHref = buildSettingsCenterHref(pathname, searchParams, 'general');
+  const isAdminRoute = pathname === '/admin' || pathname.startsWith('/admin/');
 
   /**
    * Clear the authenticated session after the menu selection closes.
@@ -158,74 +128,123 @@ export function UserMenu() {
         <DropdownMenuPrimitive.Trigger asChild>
           <Button
             type="button"
-            size="icon-lg"
-            className="size-11 rounded-full shadow-lg"
-            aria-label="打开用户菜单"
+            variant="outline"
+            className="h-12 max-w-[min(15rem,calc(100vw-2rem))] gap-2 rounded-full bg-popover px-2.5 text-popover-foreground shadow-lg hover:bg-accent hover:text-accent-foreground"
+            aria-label={`打开账号菜单：${user.username}`}
           >
-            <UserRound className="size-5" />
+            <Image
+              src="/litradar-logo.png"
+              alt=""
+              width={32}
+              height={32}
+              className="size-8 shrink-0 rounded-full object-cover"
+            />
+            <span className="min-w-0 truncate text-sm font-medium">{user.username}</span>
+            <ChevronUp className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
           </Button>
         </DropdownMenuPrimitive.Trigger>
+
         <DropdownMenuPrimitive.Portal>
           <DropdownMenuPrimitive.Content
-            aria-label="用户菜单"
+            aria-label="账号菜单"
             align="end"
             side="top"
             sideOffset={8}
-            className="bg-popover text-popover-foreground data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[side=top]:slide-in-from-bottom-2 z-50 min-w-52 origin-(--radix-dropdown-menu-content-transform-origin) rounded-md border p-1 shadow-md outline-hidden"
+            className={cn(MENU_CONTENT_CLASS, 'w-60')}
           >
-            <DropdownMenuPrimitive.Label className="px-2 py-1.5 text-xs text-muted-foreground">
-              {user.username}
+            <DropdownMenuPrimitive.Label className="flex items-center gap-3 px-2 py-2">
+              <Image
+                src="/litradar-logo.png"
+                alt=""
+                width={36}
+                height={36}
+                className="size-9 shrink-0 rounded-full object-cover"
+              />
+              <span className="min-w-0">
+                <span className="block truncate text-sm font-semibold">{user.username}</span>
+                <span className="block text-xs font-normal text-muted-foreground">
+                  {user.is_admin ? '管理员' : '普通用户'}
+                </span>
+              </span>
             </DropdownMenuPrimitive.Label>
-            <DropdownMenuPrimitive.Separator className="bg-border -mx-1 my-1 h-px" />
-            {navigationItems.map((item) => {
-              const Icon = item.icon;
-              const isCurrent = isCurrentRoute(pathname, item.href);
 
-              return (
-                <DropdownMenuPrimitive.Item key={item.href} asChild>
-                  <Link
-                    href={item.href}
-                    aria-current={isCurrent ? 'page' : undefined}
-                    className={cn(MENU_ITEM_CLASS, isCurrent && 'bg-accent')}
-                  >
-                    <Icon />
-                    <span>{item.label}</span>
-                  </Link>
-                </DropdownMenuPrimitive.Item>
-              );
-            })}
-            <DropdownMenuPrimitive.Separator className="bg-border -mx-1 my-1 h-px" />
-            <DropdownMenuPrimitive.Label className="px-2 py-1.5 text-xs text-muted-foreground">
-              主题
-            </DropdownMenuPrimitive.Label>
-            {isMounted ? (
-              <DropdownMenuPrimitive.RadioGroup
-                aria-label="主题"
-                value={selectedTheme}
-                onValueChange={handleThemeChange}
+            <DropdownMenuPrimitive.Separator className="-mx-1 my-1 h-px bg-border" />
+
+            <DropdownMenuPrimitive.Item asChild>
+              <Link href={settingsHref} className={MENU_ITEM_CLASS}>
+                <Settings2 />
+                <span>打开设置中心</span>
+              </Link>
+            </DropdownMenuPrimitive.Item>
+
+            <DropdownMenuPrimitive.Sub>
+              <DropdownMenuPrimitive.SubTrigger
+                aria-label="外观主题"
+                className={cn(MENU_ITEM_CLASS, 'data-[state=open]:bg-accent')}
               >
-                {THEME_ITEMS.map((item) => {
-                  const Icon = item.icon;
-
-                  return (
-                    <DropdownMenuPrimitive.RadioItem
-                      key={item.value}
-                      value={item.value}
-                      className={cn(MENU_ITEM_CLASS, 'pr-8')}
+                <Monitor />
+                <span>外观主题</span>
+                <span className="ml-auto text-xs text-muted-foreground">{selectedThemeLabel}</span>
+                <ChevronRight className="size-4" />
+              </DropdownMenuPrimitive.SubTrigger>
+              <DropdownMenuPrimitive.Portal>
+                <DropdownMenuPrimitive.SubContent
+                  alignOffset={-4}
+                  sideOffset={6}
+                  className={cn(MENU_CONTENT_CLASS, 'min-w-40')}
+                >
+                  {isMounted ? (
+                    <DropdownMenuPrimitive.RadioGroup
+                      aria-label="主题"
+                      value={selectedTheme}
+                      onValueChange={handleThemeChange}
                     >
-                      <Icon />
-                      <span>{item.label}</span>
-                      <DropdownMenuPrimitive.ItemIndicator className="absolute right-2 flex size-4 items-center justify-center">
-                        <Check className="size-4" />
-                      </DropdownMenuPrimitive.ItemIndicator>
-                    </DropdownMenuPrimitive.RadioItem>
-                  );
-                })}
-              </DropdownMenuPrimitive.RadioGroup>
-            ) : null}
-            <DropdownMenuPrimitive.Separator className="bg-border -mx-1 my-1 h-px" />
-            <DropdownMenuPrimitive.Item className={MENU_ITEM_CLASS} onSelect={handleLogout}>
-              <LogOut />
+                      {THEME_ITEMS.map((item) => {
+                        const Icon = item.icon;
+
+                        return (
+                          <DropdownMenuPrimitive.RadioItem
+                            key={item.value}
+                            value={item.value}
+                            className={cn(MENU_ITEM_CLASS, 'pr-8')}
+                          >
+                            <Icon />
+                            <span>{item.label}</span>
+                            <DropdownMenuPrimitive.ItemIndicator className="absolute right-2 flex size-4 items-center justify-center">
+                              <Check className="size-4" />
+                            </DropdownMenuPrimitive.ItemIndicator>
+                          </DropdownMenuPrimitive.RadioItem>
+                        );
+                      })}
+                    </DropdownMenuPrimitive.RadioGroup>
+                  ) : null}
+                </DropdownMenuPrimitive.SubContent>
+              </DropdownMenuPrimitive.Portal>
+            </DropdownMenuPrimitive.Sub>
+
+            {user.is_admin && (
+              <DropdownMenuPrimitive.Item asChild>
+                <Link
+                  href="/admin"
+                  aria-current={isAdminRoute ? 'page' : undefined}
+                  className={cn(MENU_ITEM_CLASS, isAdminRoute && 'bg-accent')}
+                >
+                  <Shield />
+                  <span>管理面板</span>
+                </Link>
+              </DropdownMenuPrimitive.Item>
+            )}
+
+            <DropdownMenuPrimitive.Separator className="-mx-1 my-1 h-px bg-border" />
+
+            <DropdownMenuPrimitive.Item
+              className={cn(
+                MENU_ITEM_CLASS,
+                'text-destructive focus:bg-destructive/10 focus:text-destructive',
+              )}
+              onSelect={handleLogout}
+            >
+              <LogOut className="text-destructive" />
               <span>退出登录</span>
             </DropdownMenuPrimitive.Item>
           </DropdownMenuPrimitive.Content>
