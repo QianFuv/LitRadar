@@ -12,6 +12,9 @@ export const SETTINGS_SECTION_IDS = [
   'tokens',
 ] as const;
 
+/** One-shot marker used to return Dialog focus to a transient menu's persistent trigger. */
+export const SETTINGS_CENTER_RETURN_FOCUS_ATTRIBUTE = 'data-settings-center-return-focus';
+
 /** One navigable category in the aggregated settings center. */
 export type SettingsSectionId = (typeof SETTINGS_SECTION_IDS)[number];
 

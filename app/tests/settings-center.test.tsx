@@ -11,6 +11,7 @@ import { SettingsCenterDialog } from '@/components/settings/settings-center-dial
 import {
   buildSettingsCenterHref,
   parseSettingsSection,
+  SETTINGS_CENTER_RETURN_FOCUS_ATTRIBUTE,
   SETTINGS_SECTION_IDS,
 } from '@/lib/settings-center';
 import { renderWithQuery } from '@/tests/render';
@@ -115,6 +116,36 @@ async function opensAndNavigatesSettingsDialog(): Promise<void> {
   });
 }
 
+/** Verify closing settings returns focus to a menu trigger after its menu portal unmounts. */
+async function restoresFocusToTransientMenuTrigger(): Promise<void> {
+  const user = userEvent.setup();
+  const menuTrigger = document.createElement('button');
+  const menu = document.createElement('div');
+  const menuItem = document.createElement('a');
+  menuTrigger.textContent = '账号菜单';
+  menuTrigger.setAttribute('aria-controls', 'settings-source-menu');
+  menuTrigger.setAttribute('aria-expanded', 'true');
+  menuTrigger.setAttribute(SETTINGS_CENTER_RETURN_FOCUS_ATTRIBUTE, '');
+  menu.id = 'settings-source-menu';
+  menu.setAttribute('role', 'menu');
+  menuItem.href = '/favorites?q=graph&settings=general';
+  menuItem.textContent = '打开设置中心';
+  menuItem.setAttribute('role', 'menuitem');
+  menu.tabIndex = -1;
+  menu.append(menuItem);
+  document.body.append(menuTrigger, menu);
+  menuItem.focus();
+
+  renderWithQuery(<SettingsCenterDialog />);
+  expect(await screen.findByRole('dialog', { name: '设置中心' })).toBeInTheDocument();
+  expect(menuTrigger).not.toHaveAttribute(SETTINGS_CENTER_RETURN_FOCUS_ATTRIBUTE);
+  menu.remove();
+
+  await user.click(screen.getByRole('button', { name: '关闭' }));
+  await waitFor(() => expect(menuTrigger).toHaveFocus());
+  menuTrigger.remove();
+}
+
 /** Verify an unknown query value is removed without opening an empty dialog. */
 async function normalizesUnknownSettingsSection(): Promise<void> {
   navigationMocks.searchParams = new URLSearchParams('q=graph&settings=unknown');
@@ -165,6 +196,10 @@ beforeEach(() => {
 describe('settings center', () => {
   test('preserves unrelated query state for every settings section', preservesSettingsQueryState);
   test('opens and navigates the query-driven dialog', opensAndNavigatesSettingsDialog);
+  test(
+    'restores focus to a menu trigger after its portal unmounts',
+    restoresFocusToTransientMenuTrigger,
+  );
   test('normalizes an unknown settings section', normalizesUnknownSettingsSection);
   test('guards unsaved cross-category navigation', guardsUnsavedCrossCategoryNavigation);
 });

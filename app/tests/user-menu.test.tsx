@@ -9,6 +9,7 @@ import { beforeEach, describe, expect, test, vi } from 'vitest';
 
 import Providers from '@/app/providers';
 import { UserMenu } from '@/components/feature/user-menu';
+import { SETTINGS_CENTER_RETURN_FOCUS_ATTRIBUTE } from '@/lib/settings-center';
 
 type MockUser = {
   id: number;
@@ -71,6 +72,15 @@ function resetUserMenuMocks(): void {
   userMenuMocks.pathname = '/favorites';
   userMenuMocks.searchParams = new URLSearchParams('q=graph');
   userMenuMocks.theme = 'system';
+}
+
+/**
+ * Prevent jsdom from attempting document navigation during link interaction tests.
+ *
+ * @param event - Native anchor click event.
+ */
+function preventNavigation(event: Event): void {
+  event.preventDefault();
 }
 
 /**
@@ -137,6 +147,25 @@ async function restoresTriggerFocusAfterEscape(): Promise<void> {
 }
 
 /**
+ * Verify only an unmodified current-tab settings selection marks the persistent trigger.
+ */
+async function marksCurrentTabSettingsInitiator(): Promise<void> {
+  const user = userEvent.setup();
+  render(<UserMenu />);
+  const trigger = screen.getByRole('button', { name: /打开账号菜单/ });
+
+  await user.click(trigger);
+  const modifiedSettingsLink = screen.getByRole('menuitem', { name: '打开设置中心' });
+  modifiedSettingsLink.addEventListener('click', preventNavigation);
+  fireEvent.click(modifiedSettingsLink, { ctrlKey: true });
+  expect(trigger).not.toHaveAttribute(SETTINGS_CENTER_RETURN_FOCUS_ATTRIBUTE);
+
+  fireEvent.click(modifiedSettingsLink);
+  expect(trigger).toHaveAttribute(SETTINGS_CENTER_RETURN_FOCUS_ATTRIBUTE);
+  trigger.removeAttribute(SETTINGS_CENTER_RETURN_FOCUS_ATTRIBUTE);
+}
+
+/**
  * Verify all supported theme choices call next-themes with stable values.
  */
 async function selectsThemePreferences(): Promise<void> {
@@ -185,6 +214,10 @@ describe('UserMenu', () => {
   test('stays hidden before authentication completes', hidesMenuWithoutAuthenticatedUser);
   test('exposes account actions and admin gating', exposesAccountActions);
   test('restores trigger focus after Escape', restoresTriggerFocusAfterEscape);
+  test(
+    'marks only current-tab settings navigation for focus return',
+    marksCurrentTabSettingsInitiator,
+  );
   test('selects system, light, and dark themes', selectsThemePreferences);
   test('configures system theme as the application default', configuresSystemThemeProvider);
 });

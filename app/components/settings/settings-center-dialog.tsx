@@ -34,6 +34,7 @@ import {
   buildSettingsCenterHref,
   isTrackingSettingsSection,
   parseSettingsSection,
+  SETTINGS_CENTER_RETURN_FOCUS_ATTRIBUTE,
   type SettingsSectionId,
 } from '@/lib/settings-center';
 import { cn } from '@/lib/utils';
@@ -141,6 +142,35 @@ const SETTINGS_SECTIONS: readonly SettingsSectionDefinition[] = [
  */
 function getSettingsSectionDefinition(section: SettingsSectionId): SettingsSectionDefinition {
   return SETTINGS_SECTIONS.find((item) => item.id === section) ?? SETTINGS_SECTIONS[0];
+}
+
+/**
+ * Resolve a stable focus target when settings opens from a transient menu item.
+ *
+ * @param activeElement - Element focused immediately before Dialog auto-focus, if any.
+ * @returns A marked trigger, controlling menu trigger, active element, or null.
+ */
+function resolveReturnFocusTarget(activeElement: HTMLElement | null): HTMLElement | null {
+  const markedTarget = document.querySelector<HTMLElement>(
+    `[${SETTINGS_CENTER_RETURN_FOCUS_ATTRIBUTE}]`,
+  );
+  markedTarget?.removeAttribute(SETTINGS_CENTER_RETURN_FOCUS_ATTRIBUTE);
+  if (markedTarget?.isConnected) {
+    return markedTarget;
+  }
+  if (!activeElement) {
+    return null;
+  }
+
+  const menu = activeElement.closest<HTMLElement>('[role="menu"]');
+  if (!menu?.id) {
+    return activeElement;
+  }
+
+  const menuTrigger = Array.from(document.querySelectorAll<HTMLElement>('[aria-controls]')).find(
+    (element) => element.getAttribute('aria-controls') === menu.id,
+  );
+  return menuTrigger ?? activeElement;
 }
 
 /**
@@ -424,12 +454,13 @@ function SettingsCenterSession({
           aria-busy={isRestoringUrl || undefined}
           className="flex h-dvh w-screen max-w-none translate-x-[-50%] translate-y-[-50%] gap-0 overflow-hidden rounded-none border-0 p-0 shadow-none [&>[data-slot=dialog-close]]:top-5 [&>[data-slot=dialog-close]]:right-5 [&>[data-slot=dialog-close]]:flex [&>[data-slot=dialog-close]]:size-10 [&>[data-slot=dialog-close]]:items-center [&>[data-slot=dialog-close]]:justify-center [&>[data-slot=dialog-close]]:rounded-md [&>[data-slot=dialog-close]]:border [&>[data-slot=dialog-close]]:bg-background [&>[data-slot=dialog-close]]:opacity-100 [&>[data-slot=dialog-close]]:hover:bg-accent md:h-[min(90dvh,52rem)] md:w-[min(calc(100vw-2rem),72rem)] md:max-w-6xl md:rounded-lg md:border md:shadow-lg md:[&>[data-slot=dialog-close]]:right-auto md:[&>[data-slot=dialog-close]]:left-5"
           onOpenAutoFocus={() => {
-            if (
-              !returnFocusRef.current &&
-              document.activeElement instanceof HTMLElement &&
-              document.activeElement !== document.body
-            ) {
-              returnFocusRef.current = document.activeElement;
+            if (!returnFocusRef.current) {
+              const activeElement =
+                document.activeElement instanceof HTMLElement &&
+                document.activeElement !== document.body
+                  ? document.activeElement
+                  : null;
+              returnFocusRef.current = resolveReturnFocusTarget(activeElement);
             }
           }}
           onCloseAutoFocus={(event) => {

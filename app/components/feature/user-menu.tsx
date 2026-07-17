@@ -21,11 +21,14 @@ import { useTheme } from 'next-themes';
 import Image from 'next/image';
 import Link from 'next/link';
 import { usePathname, useSearchParams } from 'next/navigation';
-import { useSyncExternalStore, type CSSProperties } from 'react';
+import { useRef, useSyncExternalStore, type CSSProperties, type MouseEvent } from 'react';
 
 import { Button } from '@/components/ui/button';
 import { useAuth } from '@/lib/auth-context';
-import { buildSettingsCenterHref } from '@/lib/settings-center';
+import {
+  buildSettingsCenterHref,
+  SETTINGS_CENTER_RETURN_FOCUS_ATTRIBUTE,
+} from '@/lib/settings-center';
 import { cn } from '@/lib/utils';
 
 type ThemePreference = 'system' | 'light' | 'dark';
@@ -90,6 +93,7 @@ export function UserMenu() {
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const { setTheme, theme } = useTheme();
+  const accountTriggerRef = useRef<HTMLButtonElement>(null);
   const isMounted = useSyncExternalStore(
     subscribeToClientEnvironment,
     getClientEnvironmentSnapshot,
@@ -114,6 +118,18 @@ export function UserMenu() {
   }
 
   /**
+   * Mark the persistent account trigger before current-tab settings navigation.
+   *
+   * @param event - Settings-link click event.
+   */
+  function handleSettingsOpen(event: MouseEvent<HTMLAnchorElement>): void {
+    if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) {
+      return;
+    }
+    accountTriggerRef.current?.setAttribute(SETTINGS_CENTER_RETURN_FOCUS_ATTRIBUTE, '');
+  }
+
+  /**
    * Persist the selected application theme.
    *
    * @param value - Selected next-themes preference.
@@ -127,6 +143,7 @@ export function UserMenu() {
       <DropdownMenuPrimitive.Root>
         <DropdownMenuPrimitive.Trigger asChild>
           <Button
+            ref={accountTriggerRef}
             type="button"
             variant="outline"
             className="h-12 max-w-[min(15rem,calc(100vw-2rem))] gap-2 rounded-full bg-popover px-2.5 text-popover-foreground shadow-lg hover:bg-accent hover:text-accent-foreground"
@@ -171,7 +188,7 @@ export function UserMenu() {
             <DropdownMenuPrimitive.Separator className="-mx-1 my-1 h-px bg-border" />
 
             <DropdownMenuPrimitive.Item asChild>
-              <Link href={settingsHref} className={MENU_ITEM_CLASS}>
+              <Link href={settingsHref} className={MENU_ITEM_CLASS} onClick={handleSettingsOpen}>
                 <Settings2 />
                 <span>打开设置中心</span>
               </Link>
