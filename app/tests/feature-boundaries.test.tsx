@@ -14,10 +14,6 @@ import { AccessTokensCard } from '@/components/settings/access-tokens-card';
 import { server } from '@/tests/mocks/server';
 import { renderWithQuery } from '@/tests/render';
 
-vi.mock('next/navigation', () => ({
-  usePathname: () => '/favorites',
-}));
-
 vi.mock('@/components/feature/use-visible-page-list', () => ({
   useVisiblePageList: () => ({
     loadMoreRef: () => undefined,

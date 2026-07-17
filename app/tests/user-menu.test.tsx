@@ -27,9 +27,9 @@ const userMenuMocks = vi.hoisted(() => ({
       is_admin: false,
     } as MockUser | null,
   },
-  pathname: '/favorites',
+  pathname: '/',
   providerProps: vi.fn(),
-  searchParams: new URLSearchParams('q=graph'),
+  searchParams: new URLSearchParams('view=favorites&folder=4'),
   setTheme: vi.fn(),
   theme: 'system',
 }));
@@ -69,8 +69,8 @@ function resetUserMenuMocks(): void {
     username: 'menu_user',
     is_admin: false,
   };
-  userMenuMocks.pathname = '/favorites';
-  userMenuMocks.searchParams = new URLSearchParams('q=graph');
+  userMenuMocks.pathname = '/';
+  userMenuMocks.searchParams = new URLSearchParams('view=favorites&folder=4');
   userMenuMocks.theme = 'system';
 }
 
@@ -109,7 +109,7 @@ async function exposesAccountActions(): Promise<void> {
   await user.click(trigger);
   expect(screen.getByRole('menuitem', { name: '打开设置中心' })).toHaveAttribute(
     'href',
-    '/favorites?q=graph&settings=general',
+    '/?view=favorites&folder=4&settings=general',
   );
   expect(screen.getByRole('menuitem', { name: '外观主题' })).toBeInTheDocument();
   expect(screen.queryByRole('menuitem', { name: '文献检索' })).not.toBeInTheDocument();

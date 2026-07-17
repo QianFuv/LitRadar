@@ -15,8 +15,6 @@ vi.mock('next/font/google', () => ({
 import { metadata as rootMetadata } from '@/app/layout';
 import { metadata as loginMetadata } from '@/app/login/page';
 import { metadata as adminMetadata } from '@/app/(protected)/admin/layout';
-import { metadata as favoritesMetadata } from '@/app/(protected)/favorites/layout';
-import { metadata as weeklyMetadata } from '@/app/(protected)/weekly-updates/layout';
 import RouteError from '@/app/error';
 import GlobalError from '@/app/global-error';
 import NotFound, { metadata as notFoundMetadata } from '@/app/not-found';
@@ -37,14 +35,6 @@ function exposesRouteMetadata(): void {
   expect(adminMetadata).toMatchObject({
     title: '管理面板',
     description: '管理 LitRadar 用户、邀请码、运行设置、计划任务和公告。',
-  });
-  expect(favoritesMetadata).toMatchObject({
-    title: '我的收藏',
-    description: '整理、移动和导出已收藏的文献。',
-  });
-  expect(weeklyMetadata).toMatchObject({
-    title: '每周更新',
-    description: '按数据库和期刊浏览每周新增文献。',
   });
   expect(notFoundMetadata).toMatchObject({
     title: '页面未找到',

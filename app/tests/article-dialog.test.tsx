@@ -15,8 +15,8 @@ import { server } from '@/tests/mocks/server';
 import { renderWithQuery } from '@/tests/render';
 
 const navigationMocks = vi.hoisted(() => ({
-  pathname: '/favorites',
-  searchParams: new URLSearchParams('q=graph&folder=4'),
+  pathname: '/',
+  searchParams: new URLSearchParams('view=favorites&folder=4'),
 }));
 
 vi.mock('next/navigation', () => ({
@@ -228,7 +228,7 @@ async function opensDataSourceSettingsWithoutDialogStacking(): Promise<void> {
 
   await user.click(screen.getByRole('button', { name: '查看详情' }));
   const settingsLink = await screen.findByRole('link', { name: '去设置登录' });
-  expect(settingsLink).toHaveAttribute('href', '/favorites?q=graph&folder=4&settings=data-sources');
+  expect(settingsLink).toHaveAttribute('href', '/?view=favorites&folder=4&settings=data-sources');
   window.addEventListener('click', preventDocumentNavigation, { once: true });
 
   await user.click(settingsLink);

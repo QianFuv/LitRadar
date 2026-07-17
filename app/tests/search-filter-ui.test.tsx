@@ -261,11 +261,11 @@ async function rendersUnavailableYearState(): Promise<void> {
   );
   expect(within(pageNavigation).getByRole('link', { name: '我的收藏' })).toHaveAttribute(
     'href',
-    '/favorites',
+    '/?view=favorites',
   );
   expect(within(pageNavigation).getByRole('link', { name: '每周更新' })).toHaveAttribute(
     'href',
-    '/weekly-updates',
+    '/?view=weekly-updates',
   );
   expect(pageNavigation.querySelectorAll('.sr-only')).toHaveLength(3);
   const resetButtons = screen.getAllByRole('button', { name: '重置筛选' });

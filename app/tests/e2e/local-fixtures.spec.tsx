@@ -164,6 +164,50 @@ async function serveTrackingApi(route: Route): Promise<void> {
     await fulfillJson(route, []);
     return;
   }
+  if (pathname === '/api/weekly-updates') {
+    await fulfillJson(route, {
+      generated_at: '2026-07-17T09:00:00Z',
+      window_start: '2026-07-10T00:00:00Z',
+      window_end: '2026-07-17T23:59:59Z',
+      databases: [
+        {
+          db_name: 'fixture.sqlite',
+          generated_at: '2026-07-17T09:00:00Z',
+          new_article_count: 2,
+          journals: [
+            {
+              journal_id: 'fixture-journal',
+              journal_title: 'Journal of Reproducible Literature',
+              new_article_count: 2,
+              articles: [
+                {
+                  article_id: 'weekly-fixture-1',
+                  journal_id: 'fixture-journal',
+                  journal_title: 'Journal of Reproducible Literature',
+                  title: 'Reliable Evidence Synthesis for Living Reviews',
+                  authors: 'Lin Chen; Maya Patel',
+                  date: '2026-07-16',
+                  abstract:
+                    'A fixture article demonstrating the shared weekly workspace and article detail surface.',
+                },
+                {
+                  article_id: 'weekly-fixture-2',
+                  journal_id: 'fixture-journal',
+                  journal_title: 'Journal of Reproducible Literature',
+                  title: 'Transparent Search Strategies in Rapid Reviews',
+                  authors: 'Noah Williams; Rui Zhang',
+                  date: '2026-07-14',
+                  abstract:
+                    'A second fixture article used to verify stable ordering and responsive layout.',
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    });
+    return;
+  }
   if (pathname === '/api/articles') {
     await fulfillJson(route, {
       items: [],
@@ -173,12 +217,35 @@ async function serveTrackingApi(route: Route): Promise<void> {
   }
   if (pathname === '/api/favorites/folders') {
     await fulfillJson(route, [
-      { id: 4, name: 'Tracking', is_tracking: true, article_count: 0, created_at: 1 },
+      { id: 4, name: 'Tracking', is_tracking: true, article_count: 1, created_at: 1 },
     ]);
     return;
   }
   if (pathname === '/api/favorites/folders/4/articles') {
-    await fulfillJson(route, []);
+    await fulfillJson(route, [
+      {
+        id: 1,
+        folder_id: 4,
+        article_id: 'favorite-fixture-1',
+        db_name: 'fixture.sqlite',
+        note: '',
+        created_at: 1,
+        journal_id: 'fixture-journal',
+        journal_title: 'Journal of Reproducible Literature',
+        title: 'A Unified Workspace for Literature Monitoring',
+        authors: 'Jia Liu; Alex Morgan',
+        date: '2026-07-15',
+        abstract:
+          'A browser fixture illustrating folder management, citation export, and shared article presentation.',
+      },
+    ]);
+    return;
+  }
+  if (pathname === '/api/favorites/check/batch' && request.method() === 'POST') {
+    await fulfillJson(route, [
+      { article_id: 'weekly-fixture-1', folders: [{ folder_id: 4, folder_name: 'Tracking' }] },
+      { article_id: 'weekly-fixture-2', folders: [] },
+    ]);
     return;
   }
   if (pathname === '/api/auth/invite-code') {
@@ -241,9 +308,9 @@ async function showsBootstrapBoundary(page: Page): Promise<void> {
  */
 async function redirectsAuthenticatedLogin(page: Page): Promise<void> {
   await page.route('**/api/**', serveTrackingApi);
-  await page.goto('/login?next=%2Ffavorites%3Fsettings%3Dtracking');
+  await page.goto('/login?next=%2F%3Fview%3Dfavorites%26settings%3Dtracking');
 
-  await expect(page).toHaveURL(/\/favorites\?settings=tracking$/);
+  await expect(page).toHaveURL(/\/\?view=favorites&settings=tracking$/);
   await expect(page.getByRole('dialog', { name: '设置中心' })).toBeVisible();
   await expect(page.getByRole('heading', { name: '文献追踪', exact: true })).toBeVisible();
   await expect(page.getByLabel('用户名')).toHaveCount(0);
@@ -256,12 +323,18 @@ async function redirectsAuthenticatedLogin(page: Page): Promise<void> {
  */
 async function showsCustomNotFoundPage(page: Page): Promise<void> {
   await page.route('**/api/**', serveBootstrapApi);
-  const response = await page.goto('/missing-browser-fixture');
+  for (const missingPath of [
+    '/missing-browser-fixture',
+    '/favorites',
+    '/weekly-updates',
+  ] as const) {
+    const response = await page.goto(missingPath);
 
-  expect(response?.status()).toBe(404);
-  await expect(page).toHaveTitle('页面未找到 | LitRadar');
-  await expect(page.getByRole('heading', { name: '页面未找到' })).toBeVisible();
-  await expect(page.getByRole('link', { name: '返回首页' })).toHaveAttribute('href', '/');
+    expect(response?.status()).toBe(404);
+    await expect(page).toHaveTitle('页面未找到 | LitRadar');
+    await expect(page.getByRole('heading', { name: '页面未找到' })).toBeVisible();
+    await expect(page.getByRole('link', { name: '返回首页' })).toHaveAttribute('href', '/');
+  }
 }
 
 /**
@@ -271,7 +344,7 @@ async function showsCustomNotFoundPage(page: Page): Promise<void> {
  */
 async function completesFixtureTrackingPush(page: Page): Promise<void> {
   await page.route('**/api/**', serveTrackingApi);
-  await page.goto('/favorites?settings=notifications');
+  await page.goto('/?view=favorites&settings=notifications');
 
   await expect(page.getByRole('dialog', { name: '设置中心' })).toBeVisible();
   await expect(page.getByRole('heading', { name: '通知与推送', exact: true })).toBeVisible();
@@ -288,11 +361,11 @@ async function verifiesAggregatedSettingsCenter(page: Page): Promise<void> {
   await page.route('**/api/**', serveTrackingApi);
   await page.emulateMedia({ colorScheme: 'dark' });
   await page.setViewportSize({ width: 1600, height: 1000 });
-  await page.goto('/favorites?q=graph');
+  await page.goto('/?view=favorites&folder=4');
   const settingsInitiator = page.getByRole('button', { name: '新建收藏夹' });
   await settingsInitiator.focus();
   await page.evaluate(() => {
-    window.history.pushState(null, '', '/favorites?q=graph&settings=general');
+    window.history.pushState(null, '', '/?view=favorites&folder=4&settings=general');
   });
 
   const settingsDialog = page.getByRole('dialog', { name: '设置中心' });
@@ -307,27 +380,27 @@ async function verifiesAggregatedSettingsCenter(page: Page): Promise<void> {
 
   const desktopCategories = settingsDialog.locator('aside');
   await desktopCategories.getByRole('button', { name: '文献追踪' }).click();
-  await expect(page).toHaveURL('/favorites?q=graph&settings=tracking');
+  await expect(page).toHaveURL('/?view=favorites&folder=4&settings=tracking');
   await page.getByRole('switch', { name: '启用推荐' }).click();
 
   await page.goBack();
   await expect(page.getByRole('alertdialog', { name: '放弃未保存的配置？' })).toBeVisible();
   await page.getByRole('button', { name: '继续编辑' }).click();
-  await expect(page).toHaveURL('/favorites?q=graph&settings=tracking');
+  await expect(page).toHaveURL('/?view=favorites&folder=4&settings=tracking');
   await expect(page.getByRole('switch', { name: '启用推荐' })).not.toBeChecked();
 
   await desktopCategories.getByRole('button', { name: '账号与安全' }).click();
   await page.getByRole('button', { name: '放弃更改' }).click();
-  await expect(page).toHaveURL('/favorites?q=graph&settings=account');
+  await expect(page).toHaveURL('/?view=favorites&folder=4&settings=account');
   await expect(page.getByRole('heading', { name: '账号与安全', exact: true })).toBeVisible();
 
   await settingsDialog.getByRole('button', { name: '关闭' }).click();
-  await expect(page).toHaveURL('/favorites?q=graph');
+  await expect(page).toHaveURL('/?view=favorites&folder=4');
   await expect(settingsDialog).toHaveCount(0);
   await expect(settingsInitiator).toBeFocused();
 
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.goto('/favorites?settings=general');
+  await page.goto('/?view=favorites&folder=4&settings=general');
   const mobileDialog = page.getByRole('dialog', { name: '设置中心' });
   await expect(mobileDialog).toBeVisible();
   await hideDevelopmentIndicator(page);
@@ -348,6 +421,92 @@ async function verifiesAggregatedSettingsCenter(page: Page): Promise<void> {
   const mobileTokensButton = mobileCategories.getByRole('button', { name: '访问令牌' });
   await mobileTokensButton.scrollIntoViewIfNeeded();
   await expect(mobileTokensButton).toBeInViewport();
+}
+
+/**
+ * Verify the three root workspaces support direct links, history, canonical switches, and mobile drawers.
+ *
+ * @param page - Playwright browser page.
+ */
+async function verifiesUnifiedRootWorkspaces(page: Page): Promise<void> {
+  await page.route('**/api/**', serveTrackingApi);
+  await page.emulateMedia({ colorScheme: 'dark' });
+  await page.setViewportSize({ width: 1600, height: 1000 });
+  await page.goto('/?view=favorites');
+  await hideDevelopmentIndicator(page);
+
+  const desktopNavigation = page.getByRole('navigation', { name: '页面导航' });
+  await expect(page.getByRole('heading', { name: '我的收藏', exact: true })).toBeVisible();
+  await expect(page.getByText('A Unified Workspace for Literature Monitoring')).toBeVisible();
+  await expect(desktopNavigation.getByRole('link', { name: '我的收藏' })).toHaveAttribute(
+    'aria-current',
+    'page',
+  );
+  await page.screenshot({
+    path: '../output/ui/workspace-favorites-desktop.png',
+    fullPage: true,
+  });
+
+  await page.reload();
+  await hideDevelopmentIndicator(page);
+  await expect(page.getByRole('heading', { name: '我的收藏', exact: true })).toBeVisible();
+  await desktopNavigation.getByRole('link', { name: '每周更新' }).click();
+  await expect(page).toHaveURL('/?view=weekly-updates');
+  await expect(page.getByRole('heading', { name: /期刊每周更新/ })).toBeVisible();
+  await expect(page.getByText('Reliable Evidence Synthesis for Living Reviews')).toBeVisible();
+  await expect(desktopNavigation.getByRole('link', { name: '每周更新' })).toHaveAttribute(
+    'aria-current',
+    'page',
+  );
+  await page.screenshot({
+    path: '../output/ui/workspace-weekly-desktop.png',
+    fullPage: true,
+  });
+
+  await page.goto('/?view=favorites&folder=4');
+  await desktopNavigation.getByRole('link', { name: '每周更新' }).click();
+  await expect(page).toHaveURL('/?view=weekly-updates');
+  await page.goBack();
+  await expect(page).toHaveURL('/?view=favorites&folder=4');
+  await expect(page.getByRole('heading', { name: '我的收藏', exact: true })).toBeVisible();
+
+  await page.goto('/?view=unsupported');
+  await expect(page.getByRole('combobox', { name: '搜索文章' })).toBeVisible();
+  await expect(desktopNavigation.getByRole('link', { name: '文献检索' })).toHaveAttribute(
+    'aria-current',
+    'page',
+  );
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/?view=favorites&folder=4');
+  await hideDevelopmentIndicator(page);
+  await page.getByRole('button', { name: '打开收藏夹' }).click();
+  const favoritesDialog = page.getByRole('dialog', { name: '收藏夹' });
+  const favoritesMobileNavigation = favoritesDialog.getByRole('navigation', {
+    name: '页面导航',
+  });
+  await expect(favoritesMobileNavigation.getByRole('link', { name: '我的收藏' })).toHaveAttribute(
+    'aria-current',
+    'page',
+  );
+  await page.screenshot({
+    path: '../output/ui/workspace-favorites-mobile.png',
+    fullPage: true,
+  });
+
+  await favoritesMobileNavigation.getByRole('link', { name: '每周更新' }).click();
+  await expect(page).toHaveURL('/?view=weekly-updates');
+  await expect(page.getByRole('heading', { name: /期刊每周更新/ })).toBeVisible();
+  await page.getByRole('button', { name: '打开期刊筛选' }).click();
+  const weeklyDialog = page.getByRole('dialog', { name: '期刊筛选' });
+  await expect(weeklyDialog.getByRole('link', { name: '每周更新' })).toHaveAttribute(
+    'aria-current',
+    'page',
+  );
+  await page.screenshot({
+    path: '../output/ui/workspace-weekly-mobile.png',
+    fullPage: true,
+  });
 }
 
 /**
@@ -387,7 +546,7 @@ async function verifiesUserMenuNavigationAndTheme(page: Page): Promise<void> {
   );
   await expect(pageNavigation.getByRole('link', { name: '每周更新' })).toHaveAttribute(
     'href',
-    '/weekly-updates',
+    '/?view=weekly-updates',
   );
 
   const trigger = page.getByRole('button', { name: '打开账号菜单：browser_user' });
@@ -566,6 +725,15 @@ async function aggregatedSettingsCenterTest({ page }: { page: Page }): Promise<v
 }
 
 /**
+ * Run the unified root-workspace browser test.
+ *
+ * @param fixtures - Playwright page fixture.
+ */
+async function unifiedRootWorkspacesTest({ page }: { page: Page }): Promise<void> {
+  await verifiesUnifiedRootWorkspaces(page);
+}
+
+/**
  * Run the authenticated user-menu browser test.
  *
  * @param fixtures - Playwright page fixture.
@@ -585,4 +753,5 @@ test(
   'supports the aggregated settings center across desktop and mobile',
   aggregatedSettingsCenterTest,
 );
+test('supports three deep-linkable root workspaces', unifiedRootWorkspacesTest);
 test('supports accessible navigation and theme selection', userMenuNavigationTest);

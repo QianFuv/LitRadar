@@ -23,10 +23,6 @@ const weeklyViewMocks = vi.hoisted(() => ({
   })),
 }));
 
-vi.mock('next/navigation', () => ({
-  usePathname: () => '/weekly-updates',
-}));
-
 vi.mock('@/lib/auth-context', () => ({
   useAuth: () => ({ user: { id: 31, username: 'weekly_user', is_admin: false } }),
 }));

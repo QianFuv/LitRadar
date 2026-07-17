@@ -63,22 +63,24 @@ pnpm dev
 
 ## 路由
 
-| 路由                  | 访问边界 | 页面职责                                      |
-| --------------------- | -------- | --------------------------------------------- |
-| `/login`              | 公开     | 登录、注册和邀请码状态                        |
-| `/`                   | 已登录   | 数据库/领域/期刊/日期筛选、FTS 搜索与文章列表 |
-| `/weekly-updates`     | 已登录   | 按数据库和期刊浏览本周变化                    |
-| `/favorites`          | 已登录   | 文件夹、收藏、批量操作与引文导出              |
-| `?settings=<section>` | 已登录   | 在当前受保护页面上打开聚合设置中心            |
-| `/admin`              | 管理员   | 用户、邀请码、统计、运行配置、计划任务与公告  |
+| 路由                    | 访问边界 | 页面职责                                      |
+| ----------------------- | -------- | --------------------------------------------- |
+| `/login`                | 公开     | 登录、注册和邀请码状态                        |
+| `/`                     | 已登录   | 数据库/领域/期刊/日期筛选、FTS 搜索与文章列表 |
+| `/?view=favorites`      | 已登录   | 文件夹、收藏、批量操作与引文导出              |
+| `/?view=weekly-updates` | 已登录   | 按数据库和期刊浏览本周变化                    |
+| `?settings=<section>`   | 已登录   | 在当前受保护工作区上打开聚合设置中心          |
+| `/admin`                | 管理员   | 用户、邀请码、统计、运行配置、计划任务与公告  |
 
 除 `/login` 外，页面都位于 `app/(protected)/`，布局会通过 `AuthProvider` 恢复当前用户并把未登录访问重定向到 `/login?next=...`。`/admin` 还在页面层检查 `is_admin`。
 
-设置中心由受保护布局全局挂载，合法分类为 `general`、`tracking`、`notifications`、`data-sources`、`account` 和 `tokens`。打开、切换与关闭设置只修改当前 URL 的 `settings` 参数，其他检索或页面状态保持不变；未知分类会被移除。`/settings` 和 `/tracking` 不再是页面路由，也不提供兼容跳转。
+根路由通过 `view` 参数切换检索、收藏和每周更新工作区。省略 `view` 或传入未知值时显示检索；三个固定图标入口分别使用 `/`、`/?view=favorites` 和 `/?view=weekly-updates`，因此可直接访问、刷新并使用浏览器前进/后退。切换固定入口会清除上一工作区的私有参数；收藏继续使用 `folder`，周报继续使用 `db`、`journal` 和 `weekly_q`。`/favorites` 与 `/weekly-updates` 已直接删除，访问时返回普通 404，不提供重定向或兼容页面。
 
-根布局提供统一标题模板，各页面通过服务端 page/layout 导出独立标题和描述。未知路由使用可静态导出的自定义 404 页面；普通路由错误提供重试和首页入口，根布局失败时由不依赖 Providers 的独立全局错误文档兜底。
+设置中心由受保护布局全局挂载，合法分类为 `general`、`tracking`、`notifications`、`data-sources`、`account` 和 `tokens`。打开、切换与关闭设置只修改当前 URL 的 `settings` 参数，其他工作区状态保持不变；未知分类会被移除。`/settings` 和 `/tracking` 不再是页面路由，也不提供兼容跳转。
 
-首页侧栏顶部使用紧凑品牌栏，并把文献检索、我的收藏和每周更新收敛为一行三列的图标导航。每个图标入口都提供可访问名称、悬停提示和当前页面语义；移动端筛选 Dialog 复用同一组件。
+根布局提供统一标题模板；三个 query 工作区共用根页面的通用标题和描述，登录与管理页面保留各自 metadata。未知路由使用可静态导出的自定义 404 页面；普通路由错误提供重试和首页入口，根布局失败时由不依赖 Providers 的独立全局错误文档兜底。
+
+三个工作区复用同一套桌面固定侧栏、移动抽屉、sticky 工具栏、内部文章滚动区和安全区留白。侧栏顶部使用紧凑品牌栏，并把文献检索、我的收藏和每周更新收敛为一行三列的图标导航；下方内容随当前工作区显示检索筛选、收藏夹管理或数据库/期刊选择。每个图标入口都提供可访问名称、悬停提示和当前页面语义。
 
 认证完成后，所有受保护页面右下角都会显示带头像、用户名和展开提示的账号按钮。账号菜单只承载设置中心、外观主题、条件显示的管理面板入口和退出登录，不再重复页面导航；设置入口保留当前查询参数。主题选择支持跟随系统、浅色和深色，并通过 Radix Dropdown Menu 处理键盘导航、Escape、点击外部关闭和焦点归还。账号按钮位置与页面底部留白会考虑设备安全区。设置中心使用 Radix Dialog：桌面为双栏弹窗，移动端为全屏单列，文献追踪和通知分类共享同一份未保存草稿，并在关闭或离开追踪分类组前要求确认。
 
@@ -100,9 +102,10 @@ app/
 ├── components/
 │   ├── admin/             管理后台功能卡片
 │   ├── favorites/         收藏页视图与 view model
-│   ├── feature/           检索、文章详情、侧栏和全局用户菜单
+│   ├── feature/           共享工作区、检索、文章详情、侧栏和全局用户菜单
 │   ├── settings/          聚合设置中心、分类内容与设置组件
 │   ├── tracking/          追踪设置内容与共享 view model
+│   ├── weekly/            每周更新工作区视图与查询编排
 │   └── ui/                Radix/CVA 基础组件
 ├── lib/
 │   ├── api/               按 auth/index/favorites/tracking/admin 拆分的 facade
@@ -120,14 +123,14 @@ app/
 
 ## 客户端状态
 
-| 状态                 | 所有者                                        |
-| -------------------- | --------------------------------------------- |
-| 后端查询与 mutation  | TanStack Query                                |
-| 搜索、筛选和周报选择 | nuqs URL query state                          |
-| 登录用户             | `AuthProvider` + `GET /api/auth/me`           |
-| 当前数据库           | `localStorage: litradar:v1:selected_database` |
-| 搜索历史             | `localStorage: litradar:v1:search_history`    |
-| 主题                 | next-themes 的 `class` 属性与系统偏好         |
+| 状态                   | 所有者                                        |
+| ---------------------- | --------------------------------------------- |
+| 后端查询与 mutation    | TanStack Query                                |
+| 工作区、搜索和筛选选择 | nuqs URL query state                          |
+| 登录用户               | `AuthProvider` + `GET /api/auth/me`           |
+| 当前数据库             | `localStorage: litradar:v1:selected_database` |
+| 搜索历史               | `localStorage: litradar:v1:search_history`    |
+| 主题                   | next-themes 的 `class` 属性与系统偏好         |
 
 浏览器 API 请求默认 `credentials: include`，登录令牌只存在后端设置的 `litradar_session` HttpOnly Cookie 中。设置中心创建的 Bearer 访问令牌用于外部客户端，不作为前端登录态存入 Web Storage。
 

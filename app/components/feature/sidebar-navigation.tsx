@@ -6,54 +6,45 @@
 
 import { CalendarDays, Search, Star, type LucideIcon } from 'lucide-react';
 import Link from 'next/link';
-import { usePathname } from 'next/navigation';
+import { useQueryState } from 'nuqs';
 
 import { cn } from '@/lib/utils';
+import {
+  getWorkspaceViewHref,
+  WORKSPACE_VIEW_PARSER,
+  type WorkspaceView,
+} from '@/lib/workspace-view';
 
 type SidebarNavigationItem = {
-  href: string;
   icon: LucideIcon;
   label: string;
+  view: WorkspaceView;
 };
 
 const SIDEBAR_NAVIGATION_ITEMS: readonly SidebarNavigationItem[] = [
-  { href: '/', icon: Search, label: '文献检索' },
-  { href: '/favorites', icon: Star, label: '我的收藏' },
-  { href: '/weekly-updates', icon: CalendarDays, label: '每周更新' },
+  { view: 'search', icon: Search, label: '文献检索' },
+  { view: 'favorites', icon: Star, label: '我的收藏' },
+  { view: 'weekly-updates', icon: CalendarDays, label: '每周更新' },
 ];
 
 /**
- * Determine whether one sidebar destination represents the current route.
- *
- * @param pathname - Current application pathname.
- * @param href - Sidebar navigation destination.
- * @returns Whether the destination is current.
- */
-function isCurrentRoute(pathname: string, href: string): boolean {
-  if (href === '/') {
-    return pathname === href;
-  }
-  return pathname === href || pathname.startsWith(`${href}/`);
-}
-
-/**
- * Render the three primary page destinations as equal-width icon links.
+ * Render the three root-workspace views as equal-width icon links.
  *
  * @returns Accessible compact sidebar navigation.
  */
 export function SidebarNavigation() {
-  const pathname = usePathname();
+  const [view] = useQueryState('view', WORKSPACE_VIEW_PARSER);
 
   return (
     <nav aria-label="页面导航" data-slot="sidebar-navigation" className="grid grid-cols-3 gap-2">
       {SIDEBAR_NAVIGATION_ITEMS.map((item) => {
         const Icon = item.icon;
-        const isCurrent = isCurrentRoute(pathname, item.href);
+        const isCurrent = item.view === view;
 
         return (
           <Link
-            key={item.href}
-            href={item.href}
+            key={item.view}
+            href={getWorkspaceViewHref(item.view)}
             aria-label={item.label}
             aria-current={isCurrent ? 'page' : undefined}
             title={item.label}

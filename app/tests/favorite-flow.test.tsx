@@ -24,10 +24,6 @@ const favoriteFlowMocks = vi.hoisted(() => ({
   })),
 }));
 
-vi.mock('next/navigation', () => ({
-  usePathname: () => '/favorites',
-}));
-
 vi.mock('@/components/feature/use-visible-page-list', () => ({
   useVisiblePageList: favoriteFlowMocks.useVisiblePageList,
 }));

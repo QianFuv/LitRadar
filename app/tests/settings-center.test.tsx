@@ -18,12 +18,12 @@ import { renderWithQuery } from '@/tests/render';
 import { server } from '@/tests/mocks/server';
 
 const navigationMocks = vi.hoisted(() => ({
-  pathname: '/favorites',
+  pathname: '/',
   router: {
     push: vi.fn(),
     replace: vi.fn(),
   },
-  searchParams: new URLSearchParams('q=graph&settings=general'),
+  searchParams: new URLSearchParams('view=favorites&folder=4&settings=general'),
 }));
 
 const themeMocks = vi.hoisted(() => ({
@@ -80,18 +80,18 @@ function preservesSettingsQueryState(): void {
   expect(parseSettingsSection(null)).toBeNull();
   expect(
     buildSettingsCenterHref(
-      '/favorites',
-      new URLSearchParams('q=graph&folder=4&settings=general'),
+      '/',
+      new URLSearchParams('view=favorites&folder=4&settings=general'),
       'tokens',
     ),
-  ).toBe('/favorites?q=graph&folder=4&settings=tokens');
+  ).toBe('/?view=favorites&folder=4&settings=tokens');
   expect(
     buildSettingsCenterHref(
-      '/favorites',
-      new URLSearchParams('q=graph&folder=4&settings=general'),
+      '/',
+      new URLSearchParams('view=favorites&folder=4&settings=general'),
       null,
     ),
-  ).toBe('/favorites?q=graph&folder=4');
+  ).toBe('/?view=favorites&folder=4');
 }
 
 /** Verify the query opens the named dialog and category navigation updates only its key. */
@@ -105,13 +105,13 @@ async function opensAndNavigatesSettingsDialog(): Promise<void> {
 
   await user.click(screen.getAllByRole('button', { name: '通知与推送' })[0]);
   expect(navigationMocks.router.replace).toHaveBeenCalledWith(
-    '/favorites?q=graph&settings=notifications',
+    '/?view=favorites&folder=4&settings=notifications',
     { scroll: false },
   );
 
   navigationMocks.router.replace.mockClear();
   await user.click(screen.getByRole('button', { name: '关闭' }));
-  expect(navigationMocks.router.replace).toHaveBeenCalledWith('/favorites?q=graph', {
+  expect(navigationMocks.router.replace).toHaveBeenCalledWith('/?view=favorites&folder=4', {
     scroll: false,
   });
 }
@@ -128,7 +128,7 @@ async function restoresFocusToTransientMenuTrigger(): Promise<void> {
   menuTrigger.setAttribute(SETTINGS_CENTER_RETURN_FOCUS_ATTRIBUTE, '');
   menu.id = 'settings-source-menu';
   menu.setAttribute('role', 'menu');
-  menuItem.href = '/favorites?q=graph&settings=general';
+  menuItem.href = '/?view=favorites&folder=4&settings=general';
   menuItem.textContent = '打开设置中心';
   menuItem.setAttribute('role', 'menuitem');
   menu.tabIndex = -1;
@@ -148,11 +148,11 @@ async function restoresFocusToTransientMenuTrigger(): Promise<void> {
 
 /** Verify an unknown query value is removed without opening an empty dialog. */
 async function normalizesUnknownSettingsSection(): Promise<void> {
-  navigationMocks.searchParams = new URLSearchParams('q=graph&settings=unknown');
+  navigationMocks.searchParams = new URLSearchParams('view=favorites&folder=4&settings=unknown');
   renderWithQuery(<SettingsCenterDialog />);
 
   await waitFor(() =>
-    expect(navigationMocks.router.replace).toHaveBeenCalledWith('/favorites?q=graph', {
+    expect(navigationMocks.router.replace).toHaveBeenCalledWith('/?view=favorites&folder=4', {
       scroll: false,
     }),
   );
@@ -162,7 +162,7 @@ async function normalizesUnknownSettingsSection(): Promise<void> {
 /** Verify an unsaved recommendation draft blocks a cross-category transition until discarded. */
 async function guardsUnsavedCrossCategoryNavigation(): Promise<void> {
   installTrackingHandlers();
-  navigationMocks.searchParams = new URLSearchParams('q=graph&settings=tracking');
+  navigationMocks.searchParams = new URLSearchParams('view=favorites&folder=4&settings=tracking');
   const user = userEvent.setup();
   renderWithQuery(<SettingsCenterDialog />);
 
@@ -179,14 +179,14 @@ async function guardsUnsavedCrossCategoryNavigation(): Promise<void> {
   await user.click(screen.getAllByRole('button', { name: '账号与安全' })[0]);
   fireEvent.click(screen.getByRole('button', { name: '放弃更改' }));
   expect(navigationMocks.router.replace).toHaveBeenCalledWith(
-    '/favorites?q=graph&settings=account',
+    '/?view=favorites&folder=4&settings=account',
     { scroll: false },
   );
 }
 
 beforeEach(() => {
-  navigationMocks.pathname = '/favorites';
-  navigationMocks.searchParams = new URLSearchParams('q=graph&settings=general');
+  navigationMocks.pathname = '/';
+  navigationMocks.searchParams = new URLSearchParams('view=favorites&folder=4&settings=general');
   navigationMocks.router.push.mockReset();
   navigationMocks.router.replace.mockReset();
   themeMocks.setTheme.mockReset();
