@@ -47,7 +47,7 @@ async function rendersAdministratorCards(): Promise<void> {
 }
 
 /**
- * Verify extracted settings cards retain their independent query boundaries.
+ * Verify aggregated settings sections retain independent query boundaries and flat containers.
  */
 async function rendersSettingsCards(): Promise<void> {
   server.use(
@@ -80,6 +80,8 @@ async function rendersSettingsCards(): Promise<void> {
   expect(await screen.findByText('未配置')).toBeInTheDocument();
   expect(screen.getByRole('button', { name: '生成邀请码' })).toBeInTheDocument();
   expect(await screen.findByText('暂无访问令牌')).toBeInTheDocument();
+  expect(document.querySelectorAll('[data-slot="settings-section"]')).toHaveLength(4);
+  expect(document.querySelector('[data-slot="card"]')).toBeNull();
 }
 
 /**
@@ -342,7 +344,7 @@ async function reportsSharedCopyScope(): Promise<void> {
 
 describe('settings and administrator feature boundaries', () => {
   test('renders administrator user and invite cards', rendersAdministratorCards);
-  test('renders account, CNKI, invite, and token cards', rendersSettingsCards);
+  test('renders flat account, CNKI, invite, and token sections', rendersSettingsCards);
   test('confirms access-token revocation before mutation', confirmsAccessTokenRevocation);
   test('confirms CNKI session clearing before mutation', confirmsCnkiSessionClear);
   test(

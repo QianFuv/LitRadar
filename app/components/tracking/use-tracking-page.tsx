@@ -264,6 +264,16 @@ export function useTrackingPage(userId: number) {
       setTimeout(() => setSettingsSaved(false), 2000);
     },
   });
+  const resetSaveSettingsMutation = saveSettingsMut.reset;
+
+  /** Restore the recommendation draft to the latest stored query value. */
+  const discardSettings = useCallback((): void => {
+    setDraftSettings(null);
+    setKeywordInput('');
+    setDirectionInput('');
+    setSettingsSaved(false);
+    resetSaveSettingsMutation();
+  }, [resetSaveSettingsMutation]);
 
   /** Add the trimmed keyword draft when it is new. */
   function addKeyword() {
@@ -324,6 +334,7 @@ export function useTrackingPage(userId: number) {
       setTrackingMutation: setTrackMut,
       trackingFolder,
     },
+    discardSettings,
     hasUnsavedSettings,
     manualPush: {
       description: manualPushDescription,

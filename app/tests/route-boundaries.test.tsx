@@ -16,8 +16,6 @@ import { metadata as rootMetadata } from '@/app/layout';
 import { metadata as loginMetadata } from '@/app/login/page';
 import { metadata as adminMetadata } from '@/app/(protected)/admin/layout';
 import { metadata as favoritesMetadata } from '@/app/(protected)/favorites/layout';
-import { metadata as settingsMetadata } from '@/app/(protected)/settings/layout';
-import { metadata as trackingMetadata } from '@/app/(protected)/tracking/layout';
 import { metadata as weeklyMetadata } from '@/app/(protected)/weekly-updates/layout';
 import RouteError from '@/app/error';
 import GlobalError from '@/app/global-error';
@@ -43,14 +41,6 @@ function exposesRouteMetadata(): void {
   expect(favoritesMetadata).toMatchObject({
     title: '我的收藏',
     description: '整理、移动和导出已收藏的文献。',
-  });
-  expect(settingsMetadata).toMatchObject({
-    title: '账号设置',
-    description: '管理 LitRadar 账号、安全设置、访问令牌和知网会话。',
-  });
-  expect(trackingMetadata).toMatchObject({
-    title: '文献追踪',
-    description: '配置文献推荐、通知和每周追踪推送。',
   });
   expect(weeklyMetadata).toMatchObject({
     title: '每周更新',

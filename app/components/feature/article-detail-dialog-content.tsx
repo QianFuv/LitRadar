@@ -3,6 +3,7 @@
 import { useState, type ReactNode } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import Link from 'next/link';
+import { usePathname, useSearchParams } from 'next/navigation';
 import { Check, Copy, ExternalLink, FileDown, Loader2, Settings } from 'lucide-react';
 
 import {
@@ -16,6 +17,7 @@ import {
 import { FavoriteButton } from '@/components/feature/favorite-button';
 import { Button } from '@/components/ui/button';
 import {
+  DialogClose,
   DialogContent,
   DialogDescription,
   DialogHeader,
@@ -28,6 +30,7 @@ import {
   getSafeHttpUrl,
   type ArticleCitationFormat,
 } from '@/lib/citation';
+import { buildSettingsCenterHref } from '@/lib/settings-center';
 
 type ArticleDetailDialogArticle = Article;
 
@@ -186,6 +189,8 @@ export function ArticleDetailDialogContent({
   isFavoriteStatePending = false,
   extraActions,
 }: ArticleDetailDialogContentProps) {
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
   const [copyStatus, setCopyStatus] = useState<ArticleCopyTarget | null>(null);
   const [copyFeedback, setCopyFeedback] = useState<{
     message: string;
@@ -284,6 +289,7 @@ export function ArticleDetailDialogContent({
   const canShowAccessActions = !isAccessFetching && !isAccessError;
   const doiUrl = getDoiUrl(article.doi);
   const permalinkUrl = getSafeHttpUrl(article.permalink);
+  const dataSourceSettingsHref = buildSettingsCenterHref(pathname, searchParams, 'data-sources');
 
   return (
     <DialogContent className="max-h-[90dvh] w-[calc(100%-2rem)] max-w-[calc(100%-2rem)] overflow-y-auto md:max-w-4xl">
@@ -444,12 +450,14 @@ export function ArticleDetailDialogContent({
               </Button>
             )}
             {canShowAccessActions && fulltextAction?.requires_login && (
-              <Button asChild variant="outline" size="sm">
-                <Link href="/settings">
-                  <Settings className="mr-2 h-4 w-4" />
-                  去设置登录
-                </Link>
-              </Button>
+              <DialogClose asChild>
+                <Button asChild variant="outline" size="sm">
+                  <Link href={dataSourceSettingsHref}>
+                    <Settings className="mr-2 h-4 w-4" />
+                    去设置登录
+                  </Link>
+                </Button>
+              </DialogClose>
             )}
             {isFavoriteStatePending ? (
               <Button variant="outline" size="sm" disabled>

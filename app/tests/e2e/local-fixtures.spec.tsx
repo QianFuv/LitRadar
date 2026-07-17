@@ -20,6 +20,15 @@ async function fulfillJson(route: Route, payload: unknown, status = 200): Promis
 }
 
 /**
+ * Hide the Next.js development indicator from visual evidence screenshots.
+ *
+ * @param page - Playwright browser page.
+ */
+async function hideDevelopmentIndicator(page: Page): Promise<void> {
+  await page.addStyleTag({ content: 'nextjs-portal { display: none !important; }' });
+}
+
+/**
  * Serve unauthenticated bootstrap-state API fixtures.
  *
  * @param route - Intercepted API route.
@@ -66,6 +75,14 @@ async function serveTrackingApi(route: Route): Promise<void> {
     await fulfillJson(route, [
       { id: 4, name: 'Tracking', is_tracking: true, article_count: 0, created_at: 1 },
     ]);
+    return;
+  }
+  if (pathname === '/api/favorites/folders/4/articles') {
+    await fulfillJson(route, []);
+    return;
+  }
+  if (pathname === '/api/auth/invite-code') {
+    await fulfillJson(route, null);
     return;
   }
   if (pathname === '/api/tracking/notification-settings') {
@@ -124,9 +141,10 @@ async function showsBootstrapBoundary(page: Page): Promise<void> {
  */
 async function redirectsAuthenticatedLogin(page: Page): Promise<void> {
   await page.route('**/api/**', serveTrackingApi);
-  await page.goto('/login?next=/tracking');
+  await page.goto('/login?next=%2Ffavorites%3Fsettings%3Dtracking');
 
-  await expect(page).toHaveURL(/\/tracking$/);
+  await expect(page).toHaveURL(/\/favorites\?settings=tracking$/);
+  await expect(page.getByRole('dialog', { name: '设置中心' })).toBeVisible();
   await expect(page.getByRole('heading', { name: '文献追踪', exact: true })).toBeVisible();
   await expect(page.getByLabel('用户名')).toHaveCount(0);
 }
@@ -153,11 +171,83 @@ async function showsCustomNotFoundPage(page: Page): Promise<void> {
  */
 async function completesFixtureTrackingPush(page: Page): Promise<void> {
   await page.route('**/api/**', serveTrackingApi);
-  await page.goto('/tracking');
+  await page.goto('/favorites?settings=notifications');
 
-  await expect(page.getByRole('heading', { name: '文献追踪', exact: true })).toBeVisible();
+  await expect(page.getByRole('dialog', { name: '设置中心' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: '通知与推送', exact: true })).toBeVisible();
   await page.getByRole('button', { name: '推送到追踪文件夹' }).click();
   await expect(page.getByRole('status')).toContainText('本地 fixture 推送完成');
+}
+
+/**
+ * Verify desktop and mobile settings layouts, guarded history, and query preservation.
+ *
+ * @param page - Playwright browser page.
+ */
+async function verifiesAggregatedSettingsCenter(page: Page): Promise<void> {
+  await page.route('**/api/**', serveTrackingApi);
+  await page.emulateMedia({ colorScheme: 'dark' });
+  await page.setViewportSize({ width: 1600, height: 1000 });
+  await page.goto('/favorites?q=graph');
+  const settingsInitiator = page.getByRole('button', { name: '新建收藏夹' });
+  await settingsInitiator.focus();
+  await page.evaluate(() => {
+    window.history.pushState(null, '', '/favorites?q=graph&settings=general');
+  });
+
+  const settingsDialog = page.getByRole('dialog', { name: '设置中心' });
+  await expect(settingsDialog).toBeVisible();
+  await hideDevelopmentIndicator(page);
+  await expect(page.getByRole('heading', { name: '常规', exact: true })).toBeVisible();
+  await expect(settingsDialog).toHaveCSS('max-width', '1152px');
+  await page.screenshot({
+    path: '../output/ui/settings-center-desktop.png',
+    fullPage: true,
+  });
+
+  const desktopCategories = settingsDialog.locator('aside');
+  await desktopCategories.getByRole('button', { name: '文献追踪' }).click();
+  await expect(page).toHaveURL('/favorites?q=graph&settings=tracking');
+  await page.getByRole('switch', { name: '启用推荐' }).click();
+
+  await page.goBack();
+  await expect(page.getByRole('alertdialog', { name: '放弃未保存的配置？' })).toBeVisible();
+  await page.getByRole('button', { name: '继续编辑' }).click();
+  await expect(page).toHaveURL('/favorites?q=graph&settings=tracking');
+  await expect(page.getByRole('switch', { name: '启用推荐' })).not.toBeChecked();
+
+  await desktopCategories.getByRole('button', { name: '账号与安全' }).click();
+  await page.getByRole('button', { name: '放弃更改' }).click();
+  await expect(page).toHaveURL('/favorites?q=graph&settings=account');
+  await expect(page.getByRole('heading', { name: '账号与安全', exact: true })).toBeVisible();
+
+  await settingsDialog.getByRole('button', { name: '关闭' }).click();
+  await expect(page).toHaveURL('/favorites?q=graph');
+  await expect(settingsDialog).toHaveCount(0);
+  await expect(settingsInitiator).toBeFocused();
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/favorites?settings=general');
+  const mobileDialog = page.getByRole('dialog', { name: '设置中心' });
+  await expect(mobileDialog).toBeVisible();
+  await hideDevelopmentIndicator(page);
+  const mobileBox = await mobileDialog.boundingBox();
+  expect(mobileBox).not.toBeNull();
+  expect(mobileBox?.width).toBe(390);
+  expect(mobileBox?.height).toBe(844);
+  const mobileCategories = mobileDialog
+    .locator('header')
+    .getByRole('navigation', { name: '设置分类' });
+  expect(
+    await mobileCategories.evaluate((element) => element.scrollWidth > element.clientWidth),
+  ).toBe(true);
+  await page.screenshot({
+    path: '../output/ui/settings-center-mobile.png',
+    fullPage: true,
+  });
+  const mobileTokensButton = mobileCategories.getByRole('button', { name: '访问令牌' });
+  await mobileTokensButton.scrollIntoViewIfNeeded();
+  await expect(mobileTokensButton).toBeInViewport();
 }
 
 /**
@@ -182,7 +272,7 @@ async function verifiesUserMenuNavigationAndTheme(page: Page): Promise<void> {
 
   await page.setViewportSize({ width: 360, height: 800 });
   await page.route('**/api/**', serveTrackingApi);
-  await page.goto('/tracking');
+  await page.goto('/favorites');
   await page.evaluate(() => {
     document.documentElement.style.setProperty('--safe-area-inset-bottom', '32px');
   });
@@ -190,7 +280,7 @@ async function verifiesUserMenuNavigationAndTheme(page: Page): Promise<void> {
   const trigger = page.getByRole('button', { name: '打开用户菜单' });
   await expect(trigger).toBeVisible();
   await trigger.click();
-  await expect(page.getByRole('menuitem', { name: '文献追踪' })).toHaveAttribute(
+  await expect(page.getByRole('menuitem', { name: '我的收藏' })).toHaveAttribute(
     'aria-current',
     'page',
   );
@@ -235,10 +325,6 @@ async function verifiesUserMenuNavigationAndTheme(page: Page): Promise<void> {
     (lastInteractiveBox?.y ?? 0) + (lastInteractiveBox?.height ?? 0) > (updatedTriggerBox?.y ?? 0);
   expect(doesOverlap).toBe(false);
 
-  await trigger.click();
-  await page.getByRole('menuitem', { name: '账号设置' }).click();
-  await expect(page).toHaveURL(/\/settings$/);
-  await expect(page.getByRole('heading', { name: '账号设置' })).toBeVisible();
   expect(hydrationDiagnostics).toEqual([]);
 }
 
@@ -279,6 +365,15 @@ async function fixtureTrackingTest({ page }: { page: Page }): Promise<void> {
 }
 
 /**
+ * Run the aggregated settings-center browser test.
+ *
+ * @param fixtures - Playwright page fixture.
+ */
+async function aggregatedSettingsCenterTest({ page }: { page: Page }): Promise<void> {
+  await verifiesAggregatedSettingsCenter(page);
+}
+
+/**
  * Run the authenticated user-menu browser test.
  *
  * @param fixtures - Playwright page fixture.
@@ -294,4 +389,8 @@ test(
 );
 test('renders the custom not-found page for an unknown route', customNotFoundTest);
 test('completes an authenticated tracking push with local fixtures', fixtureTrackingTest);
+test(
+  'supports the aggregated settings center across desktop and mobile',
+  aggregatedSettingsCenterTest,
+);
 test('supports accessible navigation and theme selection', userMenuNavigationTest);

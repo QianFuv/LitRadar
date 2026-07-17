@@ -5,19 +5,11 @@
 import { screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
-import { describe, expect, test, vi } from 'vitest';
+import { describe, expect, test } from 'vitest';
 
-import { TrackingPageContent } from '@/components/tracking/tracking-page-content';
+import { TrackingSettingsContent } from '@/components/tracking/tracking-settings-content';
 import { server } from '@/tests/mocks/server';
 import { renderWithQuery } from '@/tests/render';
-
-const navigationMocks = vi.hoisted(() => ({
-  push: vi.fn(),
-}));
-
-vi.mock('next/navigation', () => ({
-  useRouter: () => ({ push: navigationMocks.push }),
-}));
 
 let statusRequestCount = 0;
 
@@ -135,7 +127,7 @@ async function pollsUntilCompleted(): Promise<void> {
   );
   const user = userEvent.setup();
 
-  renderWithQuery(<TrackingPageContent userId={31} />);
+  renderWithQuery(<TrackingSettingsContent userId={31} section="notifications" />);
 
   await user.click(await screen.findByRole('button', { name: '推送到追踪文件夹' }));
   expect(await screen.findByText('任务执行中')).toBeInTheDocument();
@@ -160,7 +152,7 @@ async function displaysCapacityErrorWithoutPolling(): Promise<void> {
   );
   const user = userEvent.setup();
 
-  renderWithQuery(<TrackingPageContent userId={32} />);
+  renderWithQuery(<TrackingSettingsContent userId={32} section="notifications" />);
 
   await user.click(await screen.findByRole('button', { name: '推送到追踪文件夹' }));
   expect(await screen.findByText('Service temporarily unavailable')).toBeInTheDocument();
@@ -168,9 +160,9 @@ async function displaysCapacityErrorWithoutPolling(): Promise<void> {
 }
 
 /**
- * Verify unsaved tracking settings block navigation until explicitly confirmed.
+ * Verify the shared footer restores an unsaved tracking draft explicitly.
  */
-async function confirmsUnsavedNavigation(): Promise<void> {
+async function discardsUnsavedSettings(): Promise<void> {
   server.use(
     http.get('http://localhost/api/tracking/status', trackingStatusResponse),
     http.get('http://localhost/api/meta/databases', databasesResponse),
@@ -178,25 +170,22 @@ async function confirmsUnsavedNavigation(): Promise<void> {
     http.get('http://localhost/api/tracking/notification-settings', notificationSettingsResponse),
   );
   const user = userEvent.setup();
-  renderWithQuery(<TrackingPageContent userId={33} />);
+  renderWithQuery(<TrackingSettingsContent userId={33} section="tracking" />);
 
-  await user.click(await screen.findByRole('switch', { name: '启用推荐' }));
-  const homeLink = screen.getByRole('link', { name: '返回首页' });
-  await user.click(homeLink);
+  const recommendationSwitch = await screen.findByRole('switch', { name: '启用推荐' });
+  await user.click(recommendationSwitch);
+  expect(recommendationSwitch).not.toBeChecked();
 
-  expect(navigationMocks.push).not.toHaveBeenCalled();
-  expect(screen.getByRole('alertdialog', { name: '离开未保存的配置？' })).toBeInTheDocument();
-  await user.click(screen.getByRole('button', { name: '取消' }));
-  expect(homeLink).toHaveFocus();
-  expect(navigationMocks.push).not.toHaveBeenCalled();
+  const discardButton = screen.getByRole('button', { name: '取消更改' });
+  expect(discardButton).toBeEnabled();
+  await user.click(discardButton);
 
-  await user.click(homeLink);
-  await user.click(screen.getByRole('button', { name: '确认离开' }));
-  expect(navigationMocks.push).toHaveBeenCalledWith('/');
+  expect(screen.getByRole('switch', { name: '启用推荐' })).toBeChecked();
+  expect(discardButton).toBeDisabled();
 }
 
 describe('tracking polling flow', () => {
   test('polls a running push until completion', pollsUntilCompleted, 10_000);
   test('shows a capacity error without polling', displaysCapacityErrorWithoutPolling);
-  test('confirms navigation away from unsaved settings', confirmsUnsavedNavigation);
+  test('discards an unsaved settings draft', discardsUnsavedSettings);
 });

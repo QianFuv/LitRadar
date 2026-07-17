@@ -13,9 +13,15 @@ import {
   type CnkiLoginStartResponse,
   type CnkiSessionStatus,
 } from '@/lib/api';
+import {
+  SettingsSection,
+  SettingsSectionContent,
+  SettingsSectionDescription,
+  SettingsSectionHeader,
+  SettingsSectionTitle,
+} from '@/components/settings/settings-section';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import type {
   SettingsCopyFeedback,
@@ -237,22 +243,22 @@ export function CnkiSettingsCard({
   });
 
   return (
-    <Card>
-      <CardHeader>
+    <SettingsSection>
+      <SettingsSectionHeader>
         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div>
-            <CardTitle className="flex items-center gap-2">
+            <SettingsSectionTitle className="flex items-center gap-2">
               <ShieldCheck className="h-5 w-5" />
               浙江图书馆 CNKI
-            </CardTitle>
-            <CardDescription>用于中文数据库文章全文获取</CardDescription>
+            </SettingsSectionTitle>
+            <SettingsSectionDescription>用于中文数据库文章全文获取</SettingsSectionDescription>
           </div>
           <Badge variant={getCnkiStatusVariant(cnkiSession)}>
             {isCnkiSessionLoading ? '检查中' : getCnkiStatusLabel(cnkiSession)}
           </Badge>
         </div>
-      </CardHeader>
-      <CardContent className="space-y-4">
+      </SettingsSectionHeader>
+      <SettingsSectionContent className="space-y-4">
         <div className="grid gap-3 text-sm sm:grid-cols-2">
           <div className="space-y-1">
             <div className="text-xs text-muted-foreground">有效期</div>
@@ -405,7 +411,7 @@ export function CnkiSettingsCard({
           error={clearCnkiSessionMut.isError ? (cnkiMessage?.text ?? '清除知网登录状态失败') : null}
           onConfirm={() => clearCnkiSessionMut.mutate()}
         />
-      </CardContent>
-    </Card>
+      </SettingsSectionContent>
+    </SettingsSection>
   );
 }

@@ -6,10 +6,16 @@
 
 import { FolderPlus } from 'lucide-react';
 
+import {
+  SettingsSection,
+  SettingsSectionContent,
+  SettingsSectionDescription,
+  SettingsSectionHeader,
+  SettingsSectionTitle,
+} from '@/components/settings/settings-section';
 import type { TrackingPageViewModel } from '@/components/tracking/use-tracking-page';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import {
   Select,
@@ -31,12 +37,14 @@ type TrackingFolderCardProps = {
  */
 export function TrackingFolderCard({ model }: TrackingFolderCardProps) {
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>追踪文件夹</CardTitle>
-        <CardDescription>设置追踪文件夹后，每周推送的新文章将自动收藏到该文件夹中</CardDescription>
-      </CardHeader>
-      <CardContent className="space-y-4">
+    <SettingsSection>
+      <SettingsSectionHeader>
+        <SettingsSectionTitle>追踪文件夹</SettingsSectionTitle>
+        <SettingsSectionDescription>
+          设置追踪文件夹后，每周推送的新文章将自动收藏到该文件夹中
+        </SettingsSectionDescription>
+      </SettingsSectionHeader>
+      <SettingsSectionContent className="space-y-4">
         {model.trackingFolder ? (
           <div className="flex items-center gap-2">
             <Badge variant="secondary" className="text-sm">
@@ -89,7 +97,7 @@ export function TrackingFolderCard({ model }: TrackingFolderCardProps) {
             创建并设为追踪
           </Button>
         </div>
-      </CardContent>
-    </Card>
+      </SettingsSectionContent>
+    </SettingsSection>
   );
 }

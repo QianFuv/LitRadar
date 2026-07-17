@@ -1,4 +1,9 @@
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import {
+  SettingsSection,
+  SettingsSectionContent,
+  SettingsSectionHeader,
+  SettingsSectionTitle,
+} from '@/components/settings/settings-section';
 
 /**
  * Render immutable account identity information.
@@ -8,15 +13,15 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
  */
 export function AccountCard({ username }: { username: string }) {
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>账号信息</CardTitle>
-      </CardHeader>
-      <CardContent>
+    <SettingsSection>
+      <SettingsSectionHeader>
+        <SettingsSectionTitle>账号信息</SettingsSectionTitle>
+      </SettingsSectionHeader>
+      <SettingsSectionContent>
         <div className="text-sm">
           用户名: <span className="font-medium">{username}</span>
         </div>
-      </CardContent>
-    </Card>
+      </SettingsSectionContent>
+    </SettingsSection>
   );
 }

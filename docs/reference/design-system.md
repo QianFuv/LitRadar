@@ -124,7 +124,7 @@ Badge 默认全圆角，支持 `default`、`secondary`、`destructive`、`outlin
 
 ### Card
 
-Card 使用 card token、`rounded-lg`、`shadow-vercel-card`、24px 外层纵向 padding 和统一 header/content/footer 结构。业务组件可以调整间距、hover 背景或 shadow，但应复用 Card 的语义结构。
+Card 使用 card token、`rounded-lg`、`shadow-vercel-card`、24px 外层纵向 padding 和统一 header/content/footer 结构。业务组件可以调整间距、hover 背景或 shadow，但应复用 Card 的语义结构。聚合设置中心是明确例外：内部使用 `SettingsSection` 的无阴影分隔行，避免在大 Dialog 中继续嵌套整组 Card elevation。
 
 ### 表单和浮层
 
@@ -140,6 +140,14 @@ Card 使用 card token、`rounded-lg`、`shadow-vercel-card`、24px 外层纵向
 
 复杂表单应组合现有 primitive，不要重新实现键盘导航、焦点管理或 portal 行为。
 
+### 聚合设置中心
+
+所有已认证页面都从当前 pathname 的 `settings` query 打开全局设置 Dialog。稳定分类为 `general`、`tracking`、`notifications`、`data-sources`、`account` 和 `tokens`；分类切换使用 replace 语义，只改这一参数，关闭时移除参数，未知值直接规范化移除。`/settings` 与 `/tracking` 不是页面路由。
+
+桌面 `md` 及以上使用受 `90dvh` 和 1rem viewport margin 限制的大型双栏 Dialog：左侧约 240px 分类栏，右侧为固定标题和独立滚动内容。移动端使用 `h-dvh`、`w-screen` 的全屏单列布局，分类导航置于顶部并允许水平滚动，底部操作栏避开 safe area。
+
+文献追踪与通知分类在两者之间切换时复用同一个 tracking view model 和草稿；保存/取消栏 sticky 在内容滚动区底部。关闭设置、浏览器返回或离开追踪分类组时，如果草稿未保存，必须先显示独立 `ConfirmDialog`。文章详情中的数据源入口必须先关闭文章 Dialog，再打开 `settings=data-sources`，不允许叠加两个 modal。Dialog 关闭后把焦点归还给仍在文档中的发起控件。
+
 ## 布局与响应式
 
 项目使用组件内的 Tailwind mobile-first breakpoint，没有单独维护一套自定义 breakpoint 表。
@@ -148,7 +156,7 @@ Card 使用 card token、`rounded-lg`、`shadow-vercel-card`、24px 外层纵向
 
 - 首页使用动态 viewport 高度；桌面在 `md` 显示 `w-80` 固定侧栏，移动端改为左侧 Dialog 筛选器。
 - 首页搜索头 sticky，搜索与结果正文限制为 `max-w-4xl`。
-- 设置和追踪页使用 `max-w-3xl`，管理和收藏使用 `max-w-5xl`，周报使用 `max-w-6xl`。
+- 聚合设置中心按上面的响应式 Dialog 规则布局；管理和收藏使用 `max-w-5xl`，周报使用 `max-w-6xl`。
 - 页面 padding 常从 `p-4` / 紧凑间距过渡到 `sm:p-6`。
 - 收藏页在 `md` 从单列变成 `280px + 1fr`。
 - 表单按钮和选择器通常在移动端占满宽度，`sm` 后恢复行内布局。

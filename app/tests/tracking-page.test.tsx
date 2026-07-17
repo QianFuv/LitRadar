@@ -5,19 +5,11 @@
 import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
-import { beforeEach, describe, expect, test, vi } from 'vitest';
+import { beforeEach, describe, expect, test } from 'vitest';
 
-import { TrackingPageContent } from '@/components/tracking/tracking-page-content';
+import { TrackingSettingsContent } from '@/components/tracking/tracking-settings-content';
 import { server } from '@/tests/mocks/server';
 import { renderWithQuery } from '@/tests/render';
-
-const navigationMocks = vi.hoisted(() => ({
-  push: vi.fn(),
-}));
-
-vi.mock('next/navigation', () => ({
-  useRouter: () => ({ push: navigationMocks.push }),
-}));
 
 const NOTIFICATION_SETTINGS_FIXTURE = {
   id: 5,
@@ -133,10 +125,9 @@ function installTrackingPageHandlers(): void {
  */
 async function rendersSectionsWithSharedTextareas(): Promise<void> {
   installTrackingPageHandlers();
-  renderWithQuery(<TrackingPageContent userId={51} />);
+  const { rerender } = renderWithQuery(<TrackingSettingsContent userId={51} section="tracking" />);
 
   expect(await screen.findByRole('heading', { name: '追踪文件夹' })).toBeInTheDocument();
-  expect(screen.getByRole('heading', { name: '手动推送' })).toBeInTheDocument();
   expect(screen.getByRole('heading', { name: 'AI 推荐配置' })).toBeInTheDocument();
   expect(screen.getByRole('heading', { name: '文献追踪说明' })).toBeInTheDocument();
 
@@ -146,6 +137,10 @@ async function rendersSectionsWithSharedTextareas(): Promise<void> {
   expect(primaryPrompt).toHaveClass('shadow-vercel-ring');
   expect(backupPrompt).toHaveAttribute('data-slot', 'textarea');
   expect(backupPrompt).toHaveClass('shadow-vercel-ring');
+
+  rerender(<TrackingSettingsContent userId={51} section="notifications" />);
+  expect(screen.getByRole('heading', { name: '通知与推送' })).toBeInTheDocument();
+  expect(screen.getByRole('heading', { name: '手动推送' })).toBeInTheDocument();
 }
 
 /**
@@ -154,7 +149,7 @@ async function rendersSectionsWithSharedTextareas(): Promise<void> {
 async function savesDatabaseAndSecretSemantics(): Promise<void> {
   installTrackingPageHandlers();
   const user = userEvent.setup();
-  renderWithQuery(<TrackingPageContent userId={51} />);
+  renderWithQuery(<TrackingSettingsContent userId={51} section="tracking" />);
 
   const betaDatabase = await screen.findByRole('checkbox', { name: 'beta.sqlite' });
   await user.click(betaDatabase);
@@ -162,7 +157,7 @@ async function savesDatabaseAndSecretSemantics(): Promise<void> {
   await user.clear(primaryPrompt);
   await user.type(primaryPrompt, 'Updated primary prompt');
   await user.click(screen.getAllByRole('button', { name: '清除密钥' })[0]);
-  await user.click(screen.getByRole('button', { name: '保存配置' }));
+  await user.click(screen.getByRole('button', { name: '保存更改' }));
 
   await waitFor(() => expect(savedSettingsPayload).not.toBeNull());
   expect(savedSettingsPayload?.selected_databases).toEqual(['alpha.sqlite']);
@@ -172,11 +167,30 @@ async function savesDatabaseAndSecretSemantics(): Promise<void> {
   expect(savedSettingsPayload).not.toHaveProperty('pushplus_token');
 }
 
+/** Verify tracking and notification categories retain one unsaved draft instance. */
+async function preservesDraftAcrossCategories(): Promise<void> {
+  installTrackingPageHandlers();
+  const user = userEvent.setup();
+  const { rerender } = renderWithQuery(<TrackingSettingsContent userId={51} section="tracking" />);
+
+  const recommendationSwitch = await screen.findByRole('switch', { name: '启用推荐' });
+  await user.click(recommendationSwitch);
+  expect(recommendationSwitch).not.toBeChecked();
+  expect(screen.getByRole('button', { name: '取消更改' })).toBeEnabled();
+
+  rerender(<TrackingSettingsContent userId={51} section="notifications" />);
+  expect(screen.getByRole('button', { name: '取消更改' })).toBeEnabled();
+
+  rerender(<TrackingSettingsContent userId={51} section="tracking" />);
+  expect(screen.getByRole('switch', { name: '启用推荐' })).not.toBeChecked();
+}
+
 beforeEach(() => {
   savedSettingsPayload = null;
 });
 
-describe('TrackingPageContent', () => {
+describe('TrackingSettingsContent', () => {
   test('renders named sections with shared textareas', rendersSectionsWithSharedTextareas);
   test('preserves database and secret update semantics', savesDatabaseAndSecretSemantics);
+  test('preserves one draft across tracking categories', preservesDraftAcrossCategories);
 });

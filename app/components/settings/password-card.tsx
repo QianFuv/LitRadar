@@ -5,8 +5,13 @@ import { useMutation } from '@tanstack/react-query';
 
 import { changePassword } from '@/lib/api';
 import { useAuth } from '@/lib/auth-context';
+import {
+  SettingsSection,
+  SettingsSectionContent,
+  SettingsSectionHeader,
+  SettingsSectionTitle,
+} from '@/components/settings/settings-section';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 
@@ -30,11 +35,11 @@ export function PasswordCard() {
   });
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>修改密码</CardTitle>
-      </CardHeader>
-      <CardContent>
+    <SettingsSection>
+      <SettingsSectionHeader>
+        <SettingsSectionTitle>修改密码</SettingsSectionTitle>
+      </SettingsSectionHeader>
+      <SettingsSectionContent>
         <form
           onSubmit={(e) => {
             e.preventDefault();
@@ -83,7 +88,7 @@ export function PasswordCard() {
             修改密码
           </Button>
         </form>
-      </CardContent>
-    </Card>
+      </SettingsSectionContent>
+    </SettingsSection>
   );
 }

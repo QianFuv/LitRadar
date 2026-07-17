@@ -4,8 +4,14 @@ import { useMutation, useQuery } from '@tanstack/react-query';
 import { Copy, Ticket } from 'lucide-react';
 
 import { generateInviteCode, getInviteCode } from '@/lib/api';
+import {
+  SettingsSection,
+  SettingsSectionContent,
+  SettingsSectionDescription,
+  SettingsSectionHeader,
+  SettingsSectionTitle,
+} from '@/components/settings/settings-section';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import type {
   SettingsCopyFeedback,
   SettingsCopyScope,
@@ -35,19 +41,21 @@ export function InviteCodeCard({
   });
 
   return (
-    <Card>
-      <CardHeader>
+    <SettingsSection>
+      <SettingsSectionHeader>
         <div className="flex items-center justify-between">
           <div>
-            <CardTitle className="flex items-center gap-2">
+            <SettingsSectionTitle className="flex items-center gap-2">
               <Ticket className="h-5 w-5" />
               邀请码
-            </CardTitle>
-            <CardDescription>每个用户可以生成一个邀请码，供他人注册使用</CardDescription>
+            </SettingsSectionTitle>
+            <SettingsSectionDescription>
+              每个用户可以生成一个邀请码，供他人注册使用
+            </SettingsSectionDescription>
           </div>
         </div>
-      </CardHeader>
-      <CardContent>
+      </SettingsSectionHeader>
+      <SettingsSectionContent>
         {inviteCodeData ? (
           <div className="space-y-3">
             <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
@@ -92,7 +100,7 @@ export function InviteCodeCard({
               : '生成失败'}
           </p>
         )}
-      </CardContent>
-    </Card>
+      </SettingsSectionContent>
+    </SettingsSection>
   );
 }

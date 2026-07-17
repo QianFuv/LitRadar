@@ -5,9 +5,15 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Copy, Key, Plus, Trash2 } from 'lucide-react';
 
 import { createAccessToken, getAccessTokens, revokeAccessToken, type AccessToken } from '@/lib/api';
+import {
+  SettingsSection,
+  SettingsSectionContent,
+  SettingsSectionDescription,
+  SettingsSectionHeader,
+  SettingsSectionTitle,
+} from '@/components/settings/settings-section';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import {
   Dialog,
@@ -96,12 +102,14 @@ export function AccessTokensCard({
   });
 
   return (
-    <Card>
-      <CardHeader>
+    <SettingsSection>
+      <SettingsSectionHeader>
         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div>
-            <CardTitle>访问令牌</CardTitle>
-            <CardDescription>创建访问令牌，用于接口访问或第三方集成</CardDescription>
+            <SettingsSectionTitle>访问令牌</SettingsSectionTitle>
+            <SettingsSectionDescription>
+              创建访问令牌，用于接口访问或第三方集成
+            </SettingsSectionDescription>
           </div>
           <Dialog
             open={dialogOpen}
@@ -209,8 +217,8 @@ export function AccessTokensCard({
             </DialogContent>
           </Dialog>
         </div>
-      </CardHeader>
-      <CardContent>
+      </SettingsSectionHeader>
+      <SettingsSectionContent>
         {tokens.length === 0 ? (
           <p className="text-sm text-muted-foreground">暂无访问令牌</p>
         ) : (
@@ -263,7 +271,7 @@ export function AccessTokensCard({
             }
           }}
         />
-      </CardContent>
-    </Card>
+      </SettingsSectionContent>
+    </SettingsSection>
   );
 }

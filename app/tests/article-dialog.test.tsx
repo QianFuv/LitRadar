@@ -14,6 +14,27 @@ import { generateArticleCitation } from '@/lib/citation';
 import { server } from '@/tests/mocks/server';
 import { renderWithQuery } from '@/tests/render';
 
+const navigationMocks = vi.hoisted(() => ({
+  pathname: '/favorites',
+  searchParams: new URLSearchParams('q=graph&folder=4'),
+}));
+
+vi.mock('next/navigation', () => ({
+  usePathname: () => navigationMocks.pathname,
+  useSearchParams: () => navigationMocks.searchParams,
+}));
+
+/**
+ * Prevent jsdom from attempting document navigation after React handlers finish.
+ *
+ * @param event - Bubbling browser click event.
+ */
+function preventDocumentNavigation(event: MouseEvent): void {
+  if (event.target instanceof HTMLAnchorElement) {
+    event.preventDefault();
+  }
+}
+
 const SAFE_ARTICLE: Article = {
   article_id: 'article-1',
   title: 'Selectable title',
@@ -70,6 +91,28 @@ function articleAccessResponse(): Response {
       label: '获取全文',
       requires_login: false,
       message: null,
+    },
+  });
+}
+
+/**
+ * Return article access that requires the user to configure CNKI.
+ *
+ * @returns Login-required article access response.
+ */
+function articleLoginRequiredResponse(): Response {
+  return HttpResponse.json({
+    detail: {
+      available: false,
+      label: '查看详情',
+      requires_login: false,
+      message: null,
+    },
+    fulltext: {
+      available: false,
+      label: '获取全文',
+      requires_login: true,
+      message: '需要登录',
     },
   });
 }
@@ -174,6 +217,24 @@ async function rejectsUnsafeLinks(): Promise<void> {
   expect(screen.queryByRole('link', { name: '打开永久链接' })).not.toBeInTheDocument();
 }
 
+/** Verify the CNKI setup action preserves route state and closes article details first. */
+async function opensDataSourceSettingsWithoutDialogStacking(): Promise<void> {
+  registerArticleDialogHandlers();
+  server.use(
+    http.get('http://localhost/api/articles/:articleId/access', articleLoginRequiredResponse),
+  );
+  const user = userEvent.setup();
+  renderArticleCard(SAFE_ARTICLE);
+
+  await user.click(screen.getByRole('button', { name: '查看详情' }));
+  const settingsLink = await screen.findByRole('link', { name: '去设置登录' });
+  expect(settingsLink).toHaveAttribute('href', '/favorites?q=graph&folder=4&settings=data-sources');
+  window.addEventListener('click', preventDocumentNavigation, { once: true });
+
+  await user.click(settingsLink);
+  await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+}
+
 describe('article dialog workflow', () => {
   test(
     'keeps card text selectable and supports named open and close controls',
@@ -181,4 +242,8 @@ describe('article dialog workflow', () => {
   );
   test('copies citations and exposes safe DOI and permalink links', copiesCitationsAndLinks);
   test('does not link unsafe DOI or permalink schemes', rejectsUnsafeLinks);
+  test(
+    'opens data-source settings without stacking dialogs',
+    opensDataSourceSettingsWithoutDialogStacking,
+  );
 });

@@ -6,9 +6,15 @@
 
 import { Download } from 'lucide-react';
 
+import {
+  SettingsSection,
+  SettingsSectionContent,
+  SettingsSectionDescription,
+  SettingsSectionHeader,
+  SettingsSectionTitle,
+} from '@/components/settings/settings-section';
 import type { TrackingPageViewModel } from '@/components/tracking/use-tracking-page';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 
 type ManualPushCardProps = {
   model: TrackingPageViewModel['manualPush'];
@@ -22,12 +28,12 @@ type ManualPushCardProps = {
  */
 export function ManualPushCard({ model }: ManualPushCardProps) {
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>手动推送</CardTitle>
-        <CardDescription>{model.description}</CardDescription>
-      </CardHeader>
-      <CardContent className="space-y-4">
+    <SettingsSection>
+      <SettingsSectionHeader>
+        <SettingsSectionTitle>手动推送</SettingsSectionTitle>
+        <SettingsSectionDescription>{model.description}</SettingsSectionDescription>
+      </SettingsSectionHeader>
+      <SettingsSectionContent className="space-y-4">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="text-sm text-muted-foreground">
             可推送文章: {model.weeklyArticlesAvailable ?? '…'} 篇
@@ -53,7 +59,7 @@ export function ManualPushCard({ model }: ManualPushCardProps) {
             {model.result}
           </div>
         )}
-      </CardContent>
-    </Card>
+      </SettingsSectionContent>
+    </SettingsSection>
   );
 }
