@@ -58,14 +58,18 @@ cargo run --bin litradar -- serve \
 - OpenAPI：`http://localhost:8000/openapi.json`
 - MCP：`http://localhost:8000/mcp`
 
-请求日志默认包含 method、path、status 和 latency。使用标准 `RUST_LOG` 过滤 tracing，例如：
+服务端默认把 JSON Lines 写入 stderr；请求终态使用匹配 route、status、outcome、duration 和服务器生成的 request ID，不记录 query。成功健康检查和静态流量被抑制。本地阅读可改为 compact，并用 LitRadar 专用 filter 临时增加目标级别：
 
 ```bash
-RUST_LOG=litradar_api=debug,tower_http=debug cargo run --bin litradar -- serve \
+LITRADAR_LOG_FORMAT=compact \
+LITRADAR_LOG_FILTER='warn,litradar=debug,litradar_api=debug' \
+cargo run --bin litradar -- serve \
   --host 127.0.0.1 \
   --port 8001 \
   --secret-key-file secrets/litradar.key
 ```
+
+PowerShell 需要先设置 `$env:LITRADAR_LOG_FORMAT = "compact"` 和 `$env:LITRADAR_LOG_FILTER = "warn,litradar=debug,litradar_api=debug"`，运行后用 `Remove-Item Env:LITRADAR_LOG_FORMAT, Env:LITRADAR_LOG_FILTER` 清理。配置、实际终端样式和隐私边界见[日志运维](../operations/logging.md)。
 
 ### 首个管理员
 
@@ -225,6 +229,14 @@ docker compose build
 ```
 
 根 Dockerfile 必须成功导出前端并把 `out/` 复制到最终 Debian 层。最终镜像只复制 release `litradar`，必须没有其他应用可执行文件、Node.js/standalone 运行时并保持非 root；根 Compose 只能声明一个 `litradar` 服务。只读根文件系统、tmpfs、显式数据卷、空 capability 集合、`no-new-privileges`、健康检查和重启策略都是部署契约。
+
+日志或请求路径变更还应使用隔离 fixture 运行 off/on 门禁：
+
+```powershell
+pwsh ./scripts/profile_logging.ps1 -DataPath ./output/logging-fixture -Rounds 3 -RequestCount 300 -Concurrency 4
+```
+
+脚本验证 JSON schema、请求事件完整性、零丢失、p95 延迟差，并复用 Docker warm-idle 内存画像。它会迁移和写入传入目录，不能指向正在运行的真实数据。
 
 ## 测试边界
 

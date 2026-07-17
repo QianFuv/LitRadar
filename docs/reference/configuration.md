@@ -12,7 +12,8 @@ LitRadar 不使用单一 `.env` 作为配置中心。不同配置来源服务于
 | 前端环境变量                        | 前端构建/本地开发 | 浏览器 API 地址、开发 rewrite 目标            |
 | 部署密钥文件                        | 一个部署          | 认证和解密数据库秘密值                        |
 | `LITRADAR_BUNDLED_META_DIR`         | 发布镜像打包      | 不可变官方 Meta bundle 的内部路径             |
-| `RUST_LOG`                          | 一个 Rust 进程    | tracing 过滤                                  |
+| `LITRADAR_LOG_FORMAT`               | 一个 Rust 进程    | `json` 或 `compact` 日志格式                  |
+| `LITRADAR_LOG_FILTER`               | 一个 Rust 进程    | 严格的 tracing filter                         |
 
 后端不从环境变量读取 scholarly、AI、PushPlus、CORS、MCP、Cookie 或代理凭据。`LITRADAR_BUNDLED_META_DIR` 只连接镜像资产与启动准备，不承载这些业务设置。
 
@@ -35,7 +36,7 @@ LitRadar 不使用单一 `.env` 作为配置中心。不同配置来源服务于
 
 发布 Docker 镜像设置 `LITRADAR_BUNDLED_META_DIR=/usr/share/litradar/meta`。该只读目录含 `bundle-manifest.json` 和官方 CSV；持久副本始终位于 `<project-root>/data/meta`。这是 Dockerfile 与应用之间的打包契约，不是 `runtime_settings`、秘密、普通运维覆盖项或 CLI 参数。不要把它指向持久目录。
 
-设置该变量后，`serve` 和普通 `index` 会在认证库迁移后验证整个 bundle，再按 manifest hash 创建、接管或升级官方文件。自定义的同名文件和 manifest 外文件保持不变；报告以结构化 JSON 写入 stderr。bundle 缺失、格式/hash 非法、持久目标不是普通目录/文件或检测到版本降级时，命令在后续工作前失败。
+设置该变量后，`serve` 和普通 `index` 会在认证库迁移后验证整个 bundle，再按 manifest hash 创建、接管或升级官方文件。自定义的同名文件和 manifest 外文件保持不变；结果产生 `storage.managed_meta.prepared` 事件。bundle 缺失、格式/hash 非法、持久目标不是普通目录/文件或检测到版本降级时，命令在后续工作前失败。
 
 本地构建默认不设置该变量，因此不执行受管准备，也不会要求 `/usr/share/litradar/meta` 存在。此时缺失或空的 `<project-root>/data/meta` 继续沿用索引命令原有的无输入行为。
 
@@ -146,14 +147,17 @@ AI 和 PushPlus 是用户级设置，不是全局运行设置。每个用户在 
 
 标准本地开发不设置 `NEXT_PUBLIC_API_URL`：浏览器只访问 Next.js 8000，Rust 内部监听 8001。生产执行静态导出并由 Rust 8000 直接提供，既没有前端运行时环境变量，也不使用 `INTERNAL_API_URL` 或 standalone 监听配置。浏览器跨源直连时，必须在构建前设置 `NEXT_PUBLIC_API_URL`，并让后端 `cors_allowed_origins` 包含前端 Origin。
 
-## `RUST_LOG`
+## 日志变量
 
-`RUST_LOG` 是 tracing-subscriber 的标准过滤器，不承载业务配置：
+`LITRADAR_LOG_FORMAT` 默认 `json`，只接受精确值 `json` 或 `compact`。生产和机器解析使用 JSON Lines；本地交互终端可显式选择 compact。
 
-```bash
-RUST_LOG=error cargo run --bin litradar -- serve \
-  --secret-key-file secrets/litradar.key
+`LITRADAR_LOG_FILTER` 使用 tracing `EnvFilter` 语法。默认值为：
+
+```text
+warn,litradar=info,litradar_api=info,litradar_cli=info,litradar_index=info,litradar_sources=info,litradar_storage=info,litradar_worker=info
 ```
+
+`off` 完全关闭服务端事件。无效 Unicode、无效 filter 或其他 format 值会让进程在业务工作前失败，不会回退或读取旧的通用 Rust 日志变量。完整事件、级别、关联和丢失语义见[日志运维](../operations/logging.md)。
 
 ## 路径默认值
 

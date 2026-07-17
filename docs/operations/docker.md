@@ -35,6 +35,7 @@ Compose 项目名固定为 `litradar`，并且只声明一个同名服务。HTTP
 | 运行用户   | `litradar`，UID/GID `10001:10001`                                                                  |
 | 健康检查   | `GET /health/ready` 后再请求根 Web 文档 `GET /`                                                    |
 | 内存上限   | 160 MiB，覆盖服务进程及同 cgroup 的计划任务子进程                                                  |
+| 日志       | `local` 驱动；每容器五个 10 MiB 文件，启用压缩                                                     |
 
 `litradar serve` 在绑定端口前依次完成数据库迁移、持久 Meta 准备、密钥验证、运行设置加载和 HTTP 准备，然后立即执行第一个调度 tick。默认每 30 秒再次检查计划任务。调度任务通过同一 `/usr/local/bin/litradar` 启动短生命周期的 `index`、`notify` 或 `push` 子进程；这些子进程不是 Compose 服务。
 
@@ -154,7 +155,7 @@ Windows bind mount 上大型 `simple` tokenizer 索引的内置备份 CLI 验证
 
 Docker bind mount 和 Kubernetes PVC 会遮蔽挂载点中的镜像层内容，不会执行目录合并。LitRadar 因此把官方源与持久副本分开：Dockerfile 设置 `LITRADAR_BUNDLED_META_DIR=/usr/share/litradar/meta`，应用在数据库迁移后把清单允许的更新同步到 `/app/data/meta`。该环境变量是镜像打包契约，不是日常运行配置或秘密；不要把它改指向可写的持久目录。
 
-`serve` 和普通 `index` 都会在读取期刊目录前执行一次准备。调度器启动的普通索引子进程也经过这个入口；多进程索引的内部 worker 不重复执行。准备结果使用 `component=managed_meta` 的单行 JSON 写入 stderr，索引 stdout JSON 保持不变。
+`serve` 和普通 `index` 都会在读取期刊目录前执行一次准备。调度器启动的普通索引子进程也经过这个入口；多进程索引的内部 worker 不重复执行。准备结果产生 `event=storage.managed_meta.prepared component=storage` 的聚合事件，索引 stdout JSON 保持不变。
 
 | 卷中状态                     | 启动结果                                   |
 | ---------------------------- | ------------------------------------------ |
@@ -209,6 +210,17 @@ docker compose ps
 除 `/app/data` 外没有持久写路径。`/app/web` 随镜像只读提供，运行时不生成 Next.js cache。不要通过 root 容器、开放整个宿主机目录或挂载 Docker socket 解决权限问题。
 
 `160m` 由 Compose 渲染为 167,772,160 字节的 cgroup v2 `memory.max`。该限制同时适用于 `docker compose up` 和 `docker compose run`；内嵌调度启动的子进程与 `serve` 共享同一个限制。它是高于 120 MiB 作业峰值门禁的失控保护，不是可用内存目标。触发硬上限可能直接终止作业，因此不能用它替代画像和低内存默认值。自行使用 `docker run` 时必须显式提供等价的 `--memory 160m`。
+
+## 日志收集与轮转
+
+应用默认把 JSON Lines 写入 `stderr`，不在 `/app` 创建日志文件。Compose 使用 Docker `local` 驱动并设置 `max-size=10m`、`max-file=5`、`compress=true`；每个容器在压缩影响之前最多约 50 MiB 驱动日志，同时保持 `read_only: true` 和唯一数据写卷不变。
+
+```bash
+docker compose logs --since 30m --timestamps litradar
+docker compose logs --no-log-prefix litradar | jq -c 'select(.level == "ERROR")'
+```
+
+删除容器会连同其驱动日志一起删除；需要跨轮转或跨容器保留的事故证据必须在窗口内导出。不要直接读取 Docker 内部 driver 文件。事件 schema、request/run ID 关联、丢失语义、浏览器本地范围和事故流程见[日志运维](logging.md)。
 
 ## 内存画像与门禁
 
@@ -421,14 +433,14 @@ MCP 端点内置于统一应用的 `/mcp`，不需要单独服务：
 
 ### Web 可访问但没有检索结果
 
-1. 运行 `docker compose logs litradar`。
+1. 运行 `docker compose logs --since 30m litradar`，按 `index.*`、`source.*` 和 `error_kind` 查询。
 2. 确认宿主机 `data/index/*.sqlite` 存在。
 3. 确认 bind mount 权限。
 4. 按 CLI 参考运行单个 CSV 索引。
 
 ### readiness 返回 503
 
-1. 运行 `docker compose logs litradar`，查找调度 tick 或密钥验证错误。
+1. 运行 `docker compose logs --since 30m litradar`，查找 `scheduler.tick.*`、`service.component.failed` 或安全错误分类。
 2. 确认应用可以写入同一个 `data/auth.sqlite`。
 3. 确认没有长时间阻塞的任务；调度心跳健康窗口为 90 秒。
 4. 用 `docker compose run --rm litradar scheduler validate --secret-key-file /run/secrets/litradar_key` 验证已保存任务。

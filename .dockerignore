@@ -12,6 +12,8 @@ app/coverage/
 app/test-results/
 app/playwright-report/
 app/*.tsbuildinfo
+target/
+output/
 data/index/
 data/push_state/
 litradar.egg-info/

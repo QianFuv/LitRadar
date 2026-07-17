@@ -12,6 +12,12 @@ services:
       - litradar_key
     restart: unless-stopped
     mem_limit: 160m
+    logging:
+      driver: local
+      options:
+        max-size: 10m
+        max-file: "5"
+        compress: "true"
     read_only: true
     tmpfs:
       - /tmp:rw,noexec,nosuid,size=64m

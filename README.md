@@ -59,7 +59,7 @@ docker compose up -d --remove-orphans
 
 需要从当前源码构建时，改用 `docker compose up -d --build --remove-orphans`。
 
-镜像把官方期刊目录作为不可变 bundle 放在 `/usr/share/litradar/meta`，持久副本位于挂载卷的 `/app/data/meta`。Docker bind mount 和 Kubernetes PVC 都不会把镜像目录与挂载目录合并；`serve` 和普通 `index` 会在数据库迁移后自动准备持久副本，因此不需要手工首次复制。空卷会获得官方文件，已知旧版官方文件会升级，内容相同的当前文件会被接管；同名自定义文件和清单之外的文件会保留，并在 stderr 诊断中说明。完整生命周期、镜像回滚限制和退役文件清理要求见 [Docker 部署](docs/operations/docker.md)。
+镜像把官方期刊目录作为不可变 bundle 放在 `/usr/share/litradar/meta`，持久副本位于挂载卷的 `/app/data/meta`。Docker bind mount 和 Kubernetes PVC 都不会把镜像目录与挂载目录合并；`serve` 和普通 `index` 会在数据库迁移后自动准备持久副本，因此不需要手工首次复制。空卷会获得官方文件，已知旧版官方文件会升级，内容相同的当前文件会被接管；同名自定义文件和清单之外的文件会保留，并产生汇总的 `storage.managed_meta.prepared` 事件。完整生命周期、镜像回滚限制和退役文件清理要求见 [Docker 部署](docs/operations/docker.md)。
 
 ### 3. 初始化首个管理员
 
@@ -110,6 +110,7 @@ docker compose run --rm litradar index \
 - 理解系统：[系统架构](docs/architecture.md)
 - 参与开发：[开发指南](docs/guides/development.md)
 - 部署与运维：[Docker 部署](docs/operations/docker.md)
+- 日志与排障：[日志运维](docs/operations/logging.md)
 - 调用接口：[API 参考](docs/reference/api.md)
 - 查询命令：[CLI 参考](docs/reference/cli.md)
 - 理解存储：[数据库参考](docs/reference/database.md)

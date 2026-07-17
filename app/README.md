@@ -6,6 +6,7 @@
 - REST 契约与认证方式见[API 参考](../docs/reference/api.md)。
 - 环境变量的系统级语义见[运行配置](../docs/reference/configuration.md)。
 - UI token 与组件约定见[设计系统](../docs/reference/design-system.md)。
+- 服务端和浏览器日志契约见[日志运维](../docs/operations/logging.md)。
 
 ## 工具链
 
@@ -113,7 +114,8 @@ app/
 │   ├── api.tsx            API facade 的公共导出
 │   ├── api-contract.tsx   安全敏感响应的运行时校验
 │   ├── auth-context.tsx   Cookie 会话恢复与认证操作
-│   └── browser-storage.tsx
+│   ├── browser-storage.tsx
+│   └── client-logger.tsx  浏览器本地、隐私受限的错误事件
 └── tests/
     ├── *.test.tsx         Vitest/jsdom/MSW 测试
     └── e2e/               Playwright 本地 fixture 流程
@@ -139,6 +141,12 @@ app/
 Web Storage helper 会容忍 SSR、隐私模式和 quota 错误；调用方不应假定写入必然成功。
 
 站点图标和侧栏标识使用 `public/litradar-logo.png` 本地静态资源，不依赖第三方图片域名。
+
+## 浏览器错误日志
+
+route/global Error Boundary、`window.error` 和 `unhandledrejection` 共用 `client-logger.tsx`。它只向当前浏览器的 `console.error` 写一个冻结对象：`timestamp`、`level=error`、`event=client.error`、`component=browser`、`source`、不含 query 的 route pathname、`error_kind`，以及可选安全 `digest`/`request_id`。
+
+记录器不枚举原 Error，不写 message、stack、promise reason、请求/响应 body、token、query 或 Web Storage，也不发起 fetch/beacon。对象身份用于去重，Providers 在 React Strict Mode 下确定性安装和移除全局 listener。非 2xx API 响应的 `X-Request-Id` 保存在 `ApiError.requestId`；错误边界可以把它作为安全关联 ID 输出，运维人员再按同一 ID 查询服务端日志。完整示例与事故流程见[日志运维](../docs/operations/logging.md)。
 
 ## API 契约
 

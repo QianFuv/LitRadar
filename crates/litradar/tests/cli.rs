@@ -253,6 +253,10 @@ fn direct_output_macros_match_the_explicit_source_allowlist() {
             [0, 0, 0, 3],
         ),
         ("crates/litradar/src/openapi.rs".to_string(), [1, 1, 0, 0]),
+        (
+            "crates/litradar-worker/src/scheduler.rs".to_string(),
+            [0, 1, 0, 1],
+        ),
     ]);
     assert_eq!(observed, expected);
 }

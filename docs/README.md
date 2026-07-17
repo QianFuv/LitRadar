@@ -9,6 +9,7 @@
 | 了解组件、数据流和持久化边界 | [系统架构](architecture.md)         |
 | 搭建本地开发环境             | [开发指南](guides/development.md)   |
 | 使用 Docker Compose 部署     | [Docker 部署](operations/docker.md) |
+| 查询和排查结构化日志         | [日志运维](operations/logging.md)   |
 | 查找 Rust 命令和参数         | [CLI 参考](reference/cli.md)        |
 | 查找 REST API 或 MCP 行为    | [API 参考](reference/api.md)        |
 | 理解数据库和状态文件         | [数据库参考](reference/database.md) |
@@ -23,6 +24,7 @@
 ## 运维
 
 - [Docker 部署](operations/docker.md)：镜像、Compose、权限、健康检查、生产边界和故障排查
+- [日志运维](operations/logging.md)：事件契约、级别、关联、保留、查询、隐私和事故处理
 - [安全说明](operations/security.md)：部署密钥、凭据加密、管理员初始化、密码、限流和网络暴露
 - [备份与恢复](operations/backup.md)：创建、验证、离线恢复、回滚和失败处理
 
@@ -66,6 +68,7 @@
 | REST schema        | `app/lib/generated/openapi.json`                                                                | OpenAPI；[API 参考](reference/api.md)补充语义 |
 | SQLite schema      | `crates/litradar-storage/src/migrations.rs`、`crates/litradar-index/src/schema.rs`              | [数据库参考](reference/database.md)           |
 | Docker 行为        | `Dockerfile`、`docker-compose.yml`                                                              | [Docker 部署](operations/docker.md)           |
+| 结构化日志         | `crates/litradar/src/observability.rs`、各组件 tracing 事件、`app/lib/client-logger.tsx`        | [日志运维](operations/logging.md)             |
 | 前端结构           | `app/package.json`、`app/app/`、`app/lib/`、`app/components/`                                   | [前端包说明](../app/README.md)                |
 | UI token 与组件    | `app/app/globals.css`、`app/components/ui/`                                                     | [前端设计系统](reference/design-system.md)    |
 

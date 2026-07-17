@@ -24,6 +24,14 @@ wc -c secrets/litradar.key
 
 `litradar serve`、`litradar index`、`litradar notify`、`litradar push` 和 `litradar scheduler` 都要求 `--secret-key-file`。`litradar admin secrets` 使用相应 key 参数；`litradar admin bootstrap` 和 `litradar admin backup` 不需要密钥。
 
+## 日志数据边界
+
+所有日志级别都禁止密码、部署密钥、Cookie、Bearer token、邀请码、访问令牌、第三方 API key、PushPlus token、认证头、用户名/邮箱、请求或响应 body、URL query、文章/公告/AI 内容、会话 JSON、密文、hash 和完整文件路径。`DEBUG` 或 `TRACE` 不放宽该边界。
+
+允许记录匹配路由、method/status、耗时、计数、工作流阶段、有限 outcome/error kind、provider 名、安全内部数值 ID、服务器 UUID 和调度 run ID。HTTP 请求 ID 由服务器覆盖生成；日志不信任客户端提供的 ID。浏览器记录器只把 allowlist 对象写入本地控制台，不上传 message、stack、promise reason、query、body、token 或 Web Storage。
+
+新增事件或字段必须用唯一 sentinel 覆盖成功与失败路径，验证服务端 JSON、调度子进程 stderr 和浏览器对象都不含秘密或内容。若事故日志发现禁止字段，应立即停止扩大采集、限制证据访问、轮换受影响凭据并按[日志运维](logging.md)的流程处理；不能只依赖后续轮转删除泄漏。
+
 ## 数据库凭据加密
 
 以下非空字段使用 `litradarenc:v1:` XChaCha20-Poly1305 认证信封：
