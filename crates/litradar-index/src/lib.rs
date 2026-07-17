@@ -2,6 +2,7 @@
 
 pub mod changes;
 pub mod cnki;
+pub mod identity;
 pub mod live;
 pub mod manifest;
 pub mod schema;

@@ -784,7 +784,7 @@ mod tests {
             .collect::<Vec<_>>();
         tracked_filenames.sort();
 
-        assert_eq!(bundle.version, 1);
+        assert_eq!(bundle.version, 2);
         assert_eq!(manifest_filenames, tracked_filenames);
         let ccf = bundle
             .catalogs
@@ -794,6 +794,25 @@ mod tests {
         assert!(ccf
             .legacy_sha256
             .contains("015927e3a57bdc3d99f82348f5af7079475579aa8d282005cfd70fd8113b12ed"));
+        assert!(ccf
+            .legacy_sha256
+            .contains("550bb218f0d71be5e08486ee4a8ebcf1cdefebf076ac222a3583b857fe15e5a9"));
+        let chinese = bundle
+            .catalogs
+            .iter()
+            .find(|catalog| catalog.filename == "chinese_journals.csv")
+            .expect("Chinese catalog should be declared");
+        assert!(chinese
+            .legacy_sha256
+            .contains("d51d55dd23fd9db71db5be7d7df73e955df6480e7821d90429d3e21f3a3b0807"));
+        let english = bundle
+            .catalogs
+            .iter()
+            .find(|catalog| catalog.filename == "english_journals.csv")
+            .expect("English catalog should be declared");
+        assert!(english
+            .legacy_sha256
+            .contains("9c99d4c65dffbf1a026c15d1c8684a3b6520bbf601dba8344d71ded20846195d"));
     }
 
     #[test]

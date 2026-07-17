@@ -7,6 +7,7 @@ pub mod cnki;
 pub mod health;
 pub mod ids;
 pub mod index;
+pub mod index_contract;
 pub mod recommend;
 pub mod response;
 
@@ -45,6 +46,13 @@ pub use index::{
     ArticleAccessAction, ArticleAccessResponse, ArticlePage, ArticleRecord, IssuePage, IssueRecord,
     JournalOption, JournalPage, JournalRecord, PageMeta, ValueCount, WeeklyArticleRecord,
     WeeklyDatabaseUpdate, WeeklyJournalUpdate, WeeklyUpdatesResponse, YearSummary,
+};
+pub use index_contract::{
+    normalize_bibliographic_label, normalize_bibliographic_text, normalize_contract_doi,
+    normalize_contract_issn, normalize_contract_pmid, normalize_contract_text,
+    ArticleAccessContext, ArticleAuthorDraft, ArticleDraft, ArticleFullTextDocument,
+    ArticleFullTextResolution, ArticleLocator, ArticleRedirect, IssueDraft, JournalCatalogEntry,
+    JournalDraft, JournalRankings, ProviderBatch, ProviderCapabilityKind, INDEX_CONTRACT_VERSION,
 };
 pub use recommend::{
     ArticleCandidateInfo, ManualWeeklyPushStatus, NotificationSubscriberInfo, RankedSelectionInfo,

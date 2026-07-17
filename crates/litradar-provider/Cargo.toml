@@ -1,0 +1,8 @@
+[package]
+name = "litradar-provider"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+litradar-domain = { path = "../litradar-domain" }

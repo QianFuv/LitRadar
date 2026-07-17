@@ -6,6 +6,7 @@ rust-version.workspace = true
 
 [dependencies]
 litradar-domain = { path = "../litradar-domain" }
+litradar-provider = { path = "../litradar-provider" }
 litradar-sources = { path = "../litradar-sources" }
 rusqlite.workspace = true
 serde.workspace = true

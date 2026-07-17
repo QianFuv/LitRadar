@@ -1,13 +1,230 @@
 //! Python-compatible transformations for scholarly index records.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::error::Error;
+use std::fmt;
 
-use litradar_domain::stable_sqlite_id;
+use litradar_domain::{
+    normalize_contract_issn, normalize_contract_text, stable_sqlite_id, JournalCatalogEntry,
+    JournalRankings,
+};
+use litradar_provider::conformance::validate_catalog_entry;
 use litradar_sources::normalize_doi;
 use serde_json::{json, Map, Value};
 
 /// Normalized CSV journal row.
 pub type CsvRow = BTreeMap<String, String>;
+
+/// Exact ordered column contract for maintained catalog CSV version 2.
+pub const CATALOG_CSV_V2_COLUMNS: [&str; 15] = [
+    "catalog_id",
+    "title",
+    "issn",
+    "eissn",
+    "all_issns",
+    "title_aliases",
+    "area",
+    "utd_rank",
+    "utd_rating",
+    "abs_rank",
+    "abs_rating",
+    "fms_rank",
+    "fms_rating",
+    "fmscn_rank",
+    "fmscn_rating",
+];
+
+/// Canonical catalog parsing or validation failure.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CatalogContractError {
+    message: String,
+}
+
+impl CatalogContractError {
+    fn new(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+        }
+    }
+}
+
+impl fmt::Display for CatalogContractError {
+    /// Format the catalog validation diagnostic.
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(&self.message)
+    }
+}
+
+impl Error for CatalogContractError {}
+
+/// Build one canonical journal catalog entry from a version 2 CSV row.
+///
+/// # Arguments
+///
+/// * `csv_row` - CSV row keyed by its exact version 2 headers.
+///
+/// # Returns
+///
+/// Normalized canonical catalog entry or a validation failure.
+pub fn build_catalog_entry(csv_row: &CsvRow) -> Result<JournalCatalogEntry, CatalogContractError> {
+    validate_catalog_columns(csv_row)?;
+    let catalog_id = required_catalog_id(csv_row)?;
+    let title = required_catalog_text(csv_row, "title")?;
+    let issn = optional_catalog_issn(csv_row, "issn")?;
+    let eissn = optional_catalog_issn(csv_row, "eissn")?;
+    let all_issns = catalog_issn_list(csv_row, "all_issns")?;
+    let title_aliases = catalog_text_list(csv_row, "title_aliases")?;
+    let entry = JournalCatalogEntry {
+        catalog_id,
+        title,
+        issn,
+        eissn,
+        all_issns,
+        title_aliases,
+        area: optional_catalog_text(csv_row, "area"),
+        rankings: JournalRankings {
+            utd_rank: optional_catalog_text(csv_row, "utd_rank"),
+            utd_rating: optional_catalog_text(csv_row, "utd_rating"),
+            abs_rank: optional_catalog_text(csv_row, "abs_rank"),
+            abs_rating: optional_catalog_text(csv_row, "abs_rating"),
+            fms_rank: optional_catalog_text(csv_row, "fms_rank"),
+            fms_rating: optional_catalog_text(csv_row, "fms_rating"),
+            fmscn_rank: optional_catalog_text(csv_row, "fmscn_rank"),
+            fmscn_rating: optional_catalog_text(csv_row, "fmscn_rating"),
+        },
+    };
+    validate_catalog_entry(&entry).map_err(|error| CatalogContractError::new(error.to_string()))?;
+    Ok(entry)
+}
+
+/// Validate and normalize all rows in one maintained catalog.
+///
+/// # Arguments
+///
+/// * `rows` - Version 2 CSV rows.
+///
+/// # Returns
+///
+/// Canonical entries with unique immutable catalog identifiers.
+pub fn build_catalog_entries(
+    rows: &[CsvRow],
+) -> Result<Vec<JournalCatalogEntry>, CatalogContractError> {
+    if rows.is_empty() {
+        return Err(CatalogContractError::new(
+            "canonical catalog must contain at least one journal",
+        ));
+    }
+    let mut catalog_ids = BTreeSet::new();
+    rows.iter()
+        .enumerate()
+        .map(|(index, row)| {
+            let entry = build_catalog_entry(row).map_err(|error| {
+                CatalogContractError::new(format!("catalog row {}: {error}", index + 2))
+            })?;
+            if !catalog_ids.insert(entry.catalog_id.clone()) {
+                return Err(CatalogContractError::new(format!(
+                    "catalog row {} duplicates catalog_id {}",
+                    index + 2,
+                    entry.catalog_id
+                )));
+            }
+            Ok(entry)
+        })
+        .collect()
+}
+
+fn validate_catalog_columns(csv_row: &CsvRow) -> Result<(), CatalogContractError> {
+    let expected = CATALOG_CSV_V2_COLUMNS
+        .iter()
+        .map(|column| (*column).to_string())
+        .collect::<BTreeSet<_>>();
+    let actual = csv_row.keys().cloned().collect::<BTreeSet<_>>();
+    if actual != expected {
+        let missing = expected.difference(&actual).cloned().collect::<Vec<_>>();
+        let unexpected = actual.difference(&expected).cloned().collect::<Vec<_>>();
+        return Err(CatalogContractError::new(format!(
+            "catalog row must use exact v2 columns; missing={missing:?}, unexpected={unexpected:?}"
+        )));
+    }
+    Ok(())
+}
+
+fn required_catalog_id(csv_row: &CsvRow) -> Result<String, CatalogContractError> {
+    let raw = csv_row
+        .get("catalog_id")
+        .expect("validated catalog row contains catalog_id");
+    let normalized = normalize_contract_text(raw)
+        .ok_or_else(|| CatalogContractError::new("catalog_id must not be blank"))?;
+    if normalized != *raw {
+        return Err(CatalogContractError::new(
+            "catalog_id must already use canonical trimmed form",
+        ));
+    }
+    Ok(normalized)
+}
+
+fn required_catalog_text(csv_row: &CsvRow, field: &str) -> Result<String, CatalogContractError> {
+    optional_catalog_text(csv_row, field)
+        .ok_or_else(|| CatalogContractError::new(format!("{field} must not be blank")))
+}
+
+fn optional_catalog_text(csv_row: &CsvRow, field: &str) -> Option<String> {
+    csv_row
+        .get(field)
+        .and_then(|value| normalize_contract_text(value))
+}
+
+fn optional_catalog_issn(
+    csv_row: &CsvRow,
+    field: &str,
+) -> Result<Option<String>, CatalogContractError> {
+    let Some(value) = optional_catalog_text(csv_row, field) else {
+        return Ok(None);
+    };
+    normalize_contract_issn(&value)
+        .map(Some)
+        .ok_or_else(|| CatalogContractError::new(format!("{field} contains an invalid ISSN")))
+}
+
+fn catalog_issn_list(csv_row: &CsvRow, field: &str) -> Result<Vec<String>, CatalogContractError> {
+    let mut values = Vec::new();
+    for value in csv_row
+        .get(field)
+        .expect("validated catalog row contains ISSN list")
+        .split(';')
+    {
+        let Some(value) = normalize_contract_text(value) else {
+            continue;
+        };
+        let issn = normalize_contract_issn(&value).ok_or_else(|| {
+            CatalogContractError::new(format!("{field} contains an invalid ISSN"))
+        })?;
+        if !values.contains(&issn) {
+            values.push(issn);
+        }
+    }
+    Ok(values)
+}
+
+fn catalog_text_list(csv_row: &CsvRow, field: &str) -> Result<Vec<String>, CatalogContractError> {
+    let mut values = Vec::new();
+    for value in csv_row
+        .get(field)
+        .expect("validated catalog row contains text list")
+        .split(';')
+    {
+        let Some(value) = normalize_contract_text(value) else {
+            continue;
+        };
+        if values.contains(&value) {
+            return Err(CatalogContractError::new(format!(
+                "{field} contains a duplicate value"
+            )));
+        }
+        values.push(value);
+    }
+    Ok(values)
+}
 
 /// Journal table record.
 #[derive(Debug, Clone, PartialEq)]
@@ -1049,13 +1266,147 @@ fn decode_basic_html_entities(value: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+
     use serde_json::json;
 
     use super::{
-        build_cnki_article_record, build_cnki_issue_record, build_cnki_journal_record,
-        build_scholarly_article_record, build_scholarly_issue_record, crossref_publication_date,
-        CsvRow,
+        build_catalog_entries, build_catalog_entry, build_cnki_article_record,
+        build_cnki_issue_record, build_cnki_journal_record, build_scholarly_article_record,
+        build_scholarly_issue_record, crossref_publication_date, CsvRow, CATALOG_CSV_V2_COLUMNS,
     };
+
+    fn catalog_row() -> CsvRow {
+        CsvRow::from([
+            ("catalog_id".to_string(), "issn-1234-5679".to_string()),
+            ("title".to_string(), "Canonical Journal".to_string()),
+            ("issn".to_string(), "12345679".to_string()),
+            ("eissn".to_string(), String::new()),
+            ("all_issns".to_string(), "1234-5679".to_string()),
+            (
+                "title_aliases".to_string(),
+                "Canonical J.; Journal Canonical".to_string(),
+            ),
+            ("area".to_string(), "Systems".to_string()),
+            ("utd_rank".to_string(), String::new()),
+            ("utd_rating".to_string(), String::new()),
+            ("abs_rank".to_string(), String::new()),
+            ("abs_rating".to_string(), String::new()),
+            ("fms_rank".to_string(), String::new()),
+            ("fms_rating".to_string(), String::new()),
+            ("fmscn_rank".to_string(), String::new()),
+            ("fmscn_rating".to_string(), String::new()),
+        ])
+    }
+
+    fn parse_catalog_fixture(text: &str) -> Vec<CsvRow> {
+        let mut lines = text.lines();
+        let headers = parse_csv_test_line(lines.next().expect("catalog fixture header"));
+        lines
+            .filter(|line| !line.trim().is_empty())
+            .map(|line| {
+                let values = parse_csv_test_line(line);
+                headers
+                    .iter()
+                    .enumerate()
+                    .map(|(index, header)| {
+                        (
+                            header.clone(),
+                            values.get(index).cloned().unwrap_or_default(),
+                        )
+                    })
+                    .collect::<BTreeMap<_, _>>()
+            })
+            .collect()
+    }
+
+    fn parse_csv_test_line(line: &str) -> Vec<String> {
+        let mut values = Vec::new();
+        let mut current = String::new();
+        let mut characters = line.chars().peekable();
+        let mut is_quoted = false;
+        while let Some(character) = characters.next() {
+            match character {
+                '"' if is_quoted && characters.peek() == Some(&'"') => {
+                    current.push('"');
+                    characters.next();
+                }
+                '"' => is_quoted = !is_quoted,
+                ',' if !is_quoted => {
+                    values.push(current.clone());
+                    current.clear();
+                }
+                _ => current.push(character),
+            }
+        }
+        values.push(current);
+        values
+    }
+
+    #[test]
+    fn canonical_catalog_parser_normalizes_and_rejects_forbidden_columns() {
+        let entry = build_catalog_entry(&catalog_row()).expect("canonical row should pass");
+        assert_eq!(entry.issn.as_deref(), Some("1234-5679"));
+        assert_eq!(entry.title_aliases.len(), 2);
+
+        let mut forbidden = catalog_row();
+        forbidden.insert("source".to_string(), "cnki".to_string());
+        assert!(build_catalog_entry(&forbidden)
+            .expect_err("provider column should fail")
+            .to_string()
+            .contains("source"));
+
+        let mut forbidden = catalog_row();
+        forbidden.insert("detail_url".to_string(), "https://example.test".to_string());
+        assert!(build_catalog_entry(&forbidden)
+            .expect_err("URL column should fail")
+            .to_string()
+            .contains("detail_url"));
+    }
+
+    #[test]
+    fn canonical_catalog_parser_rejects_invalid_and_duplicate_ids() {
+        let mut invalid_issn = catalog_row();
+        invalid_issn.insert("issn".to_string(), "1234-5678".to_string());
+        assert!(build_catalog_entry(&invalid_issn).is_err());
+
+        let mut blank_id = catalog_row();
+        blank_id.insert("catalog_id".to_string(), String::new());
+        assert!(build_catalog_entry(&blank_id).is_err());
+
+        let rows = vec![catalog_row(), catalog_row()];
+        assert!(build_catalog_entries(&rows)
+            .expect_err("duplicate immutable ID should fail")
+            .to_string()
+            .contains("duplicates"));
+    }
+
+    #[test]
+    fn maintained_catalogs_use_v2_and_contain_all_959_entries() {
+        let fixtures = [
+            (
+                include_str!("../../../data/meta/ccf_computer_journals.csv"),
+                291,
+            ),
+            (include_str!("../../../data/meta/chinese_journals.csv"), 94),
+            (include_str!("../../../data/meta/english_journals.csv"), 574),
+        ];
+        let mut total = 0;
+        for (fixture, expected) in fixtures {
+            let header = parse_csv_test_line(fixture.lines().next().expect("catalog header"));
+            assert_eq!(header, CATALOG_CSV_V2_COLUMNS);
+            let rows = parse_catalog_fixture(fixture);
+            assert_eq!(rows.len(), expected);
+            assert_eq!(
+                build_catalog_entries(&rows)
+                    .expect("catalog should pass")
+                    .len(),
+                expected
+            );
+            total += expected;
+        }
+        assert_eq!(total, 959);
+    }
 
     #[test]
     fn scholarly_issue_ids_use_python_compatible_prefix() {

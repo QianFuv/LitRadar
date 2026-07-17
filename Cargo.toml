@@ -6,6 +6,7 @@ members = [
     "crates/litradar-cli",
     "crates/litradar-domain",
     "crates/litradar-index",
+    "crates/litradar-provider",
     "crates/litradar-recommend",
     "crates/litradar-sources",
     "crates/litradar-storage",
@@ -38,6 +39,7 @@ tower-http = { version = "0.7.0", features = ["cors", "fs", "request-id", "trace
 tracing = "0.1.44"
 tracing-appender = "0.2.4"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter", "fmt", "json"] }
+unicode-normalization = "0.1.25"
 utoipa = "5.5.0"
 utoipa-swagger-ui = { version = "9.0.2", features = ["axum"] }
 zeroize = "1.9.0"
