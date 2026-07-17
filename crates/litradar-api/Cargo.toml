@@ -24,3 +24,4 @@ utoipa-swagger-ui.workspace = true
 [dev-dependencies]
 rusqlite.workspace = true
 tempfile.workspace = true
+tracing-subscriber.workspace = true

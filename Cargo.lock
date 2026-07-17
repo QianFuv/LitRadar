@@ -1095,6 +1095,7 @@ dependencies = [
  "tower",
  "tower-http 0.7.0",
  "tracing",
+ "tracing-subscriber",
  "utoipa",
  "utoipa-swagger-ui",
 ]
@@ -2264,6 +2265,7 @@ dependencies = [
  "tower-layer",
  "tower-service",
  "tracing",
+ "uuid",
 ]
 
 [[package]]

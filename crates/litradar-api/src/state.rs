@@ -125,7 +125,11 @@ impl ApiState {
         Work: FnOnce() -> Output + Send + 'static,
         Output: Send + 'static,
     {
-        self.blocking_executor.run(work).await
+        let span = tracing::Span::current();
+        let subscriber = tracing::dispatcher::get_default(Clone::clone);
+        self.blocking_executor
+            .run(move || tracing::dispatcher::with_default(&subscriber, || span.in_scope(work)))
+            .await
     }
 
     /// Run synchronous work with an operation-specific total deadline.
@@ -147,7 +151,13 @@ impl ApiState {
         Work: FnOnce() -> Output + Send + 'static,
         Output: Send + 'static,
     {
-        self.blocking_executor.run_with_timeout(timeout, work).await
+        let span = tracing::Span::current();
+        let subscriber = tracing::dispatcher::get_default(Clone::clone);
+        self.blocking_executor
+            .run_with_timeout(timeout, move || {
+                tracing::dispatcher::with_default(&subscriber, || span.in_scope(work))
+            })
+            .await
     }
 
     /// Run detached background work behind the concurrency limit without a request deadline.
@@ -167,7 +177,13 @@ impl ApiState {
         Work: FnOnce() -> Output + Send + 'static,
         Output: Send + 'static,
     {
-        self.blocking_executor.run_without_timeout(work).await
+        let span = tracing::Span::current();
+        let subscriber = tracing::dispatcher::get_default(Clone::clone);
+        self.blocking_executor
+            .run_without_timeout(move || {
+                tracing::dispatcher::with_default(&subscriber, || span.in_scope(work))
+            })
+            .await
     }
 
     /// Stop accepting queued blocking work during server shutdown.

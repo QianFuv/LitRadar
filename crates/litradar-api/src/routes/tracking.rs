@@ -17,6 +17,7 @@ use litradar_storage::StorageConfig;
 use litradar_worker::delivery::{
     run_manual_weekly_push, ManualWeeklyPushConfig, ManualWeeklyPushOutcome,
 };
+use tracing::instrument::{Instrument, WithSubscriber};
 
 use crate::response::ApiError;
 use crate::routes::auth::require_current_user;
@@ -430,42 +431,48 @@ fn spawn_manual_push_job(
     started_at: f64,
     config: ManualWeeklyPushConfig,
 ) {
-    tokio::spawn(async move {
-        let finished = state
-            .run_background_blocking(move || {
-                delay_manual_push_for_tests();
-                run_manual_weekly_push(&config)
-            })
-            .await;
-        let finished_at = current_epoch_seconds();
-        let status = match finished {
-            Ok(Ok(outcome)) => {
-                let outcome_status = outcome.status.clone();
-                let outcome_message = outcome.message.clone();
-                manual_push_status(
+    let span = tracing::Span::current();
+    let subscriber = tracing::dispatcher::get_default(Clone::clone);
+    tokio::spawn(
+        async move {
+            let finished = state
+                .run_background_blocking(move || {
+                    delay_manual_push_for_tests();
+                    run_manual_weekly_push(&config)
+                })
+                .await;
+            let finished_at = current_epoch_seconds();
+            let status = match finished {
+                Ok(Ok(outcome)) => {
+                    let outcome_status = outcome.status.clone();
+                    let outcome_message = outcome.message.clone();
+                    manual_push_status(
+                        Some(job_id.clone()),
+                        &outcome_status,
+                        &outcome_message,
+                        Some(started_at),
+                        Some(finished_at),
+                        outcome,
+                    )
+                }
+                Ok(Err(error)) => failed_manual_push_status(
                     Some(job_id.clone()),
-                    &outcome_status,
-                    &outcome_message,
-                    Some(started_at),
-                    Some(finished_at),
-                    outcome,
-                )
-            }
-            Ok(Err(error)) => failed_manual_push_status(
-                Some(job_id.clone()),
-                started_at,
-                finished_at,
-                &format!("Manual push failed: {error}"),
-            ),
-            Err(error) => failed_manual_push_status(
-                Some(job_id.clone()),
-                started_at,
-                finished_at,
-                &format!("Manual push failed: {error}"),
-            ),
-        };
-        update_manual_push_status_if_current(key, &job_id, status);
-    });
+                    started_at,
+                    finished_at,
+                    &format!("Manual push failed: {error}"),
+                ),
+                Err(error) => failed_manual_push_status(
+                    Some(job_id.clone()),
+                    started_at,
+                    finished_at,
+                    &format!("Manual push failed: {error}"),
+                ),
+            };
+            update_manual_push_status_if_current(key, &job_id, status);
+        }
+        .instrument(span)
+        .with_subscriber(subscriber),
+    );
 }
 
 async fn run_storage<Output, StorageError, Work>(

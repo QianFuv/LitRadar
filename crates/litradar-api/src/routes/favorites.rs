@@ -813,7 +813,9 @@ mod tests {
                 assert_eq!(actual_status, axum::http::StatusCode::BAD_REQUEST);
                 assert_eq!(actual_detail, detail);
             }
-            ApiError::JsonDetail { .. } | ApiError::TooManyRequests { .. } => {
+            ApiError::JsonDetail { .. }
+            | ApiError::TooManyRequests { .. }
+            | ApiError::Unexpected { .. } => {
                 panic!("expected HTTP error")
             }
         }
@@ -825,7 +827,9 @@ mod tests {
                 detail: actual_detail,
                 ..
             } => assert_eq!(actual_detail, detail),
-            ApiError::JsonDetail { .. } | ApiError::TooManyRequests { .. } => {
+            ApiError::JsonDetail { .. }
+            | ApiError::TooManyRequests { .. }
+            | ApiError::Unexpected { .. } => {
                 panic!("expected HTTP error")
             }
         }

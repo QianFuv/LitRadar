@@ -1106,6 +1106,10 @@ mod tests {
                 assert_eq!(actual_status, status);
                 assert_eq!(actual_detail, detail);
             }
+            ApiError::Unexpected { .. } => {
+                assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+                assert_eq!(detail, "Internal Server Error");
+            }
             ApiError::JsonDetail { .. } | ApiError::TooManyRequests { .. } => {
                 panic!("expected HTTP error")
             }

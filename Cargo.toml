@@ -34,7 +34,7 @@ subtle = "2.6.1"
 tempfile = "3.27.0"
 tokio = { version = "1.52.3", features = ["macros", "net", "rt-multi-thread", "signal", "sync", "time"] }
 tower = { version = "0.5.3", features = ["util"] }
-tower-http = { version = "0.7.0", features = ["cors", "fs", "trace"] }
+tower-http = { version = "0.7.0", features = ["cors", "fs", "request-id", "trace"] }
 tracing = "0.1.44"
 tracing-appender = "0.2.4"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter", "fmt", "json"] }

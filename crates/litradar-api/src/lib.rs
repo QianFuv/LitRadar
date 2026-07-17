@@ -1,6 +1,7 @@
 //! Rust API server and static frontend host.
 
 pub mod config;
+mod http_observability;
 mod mcp;
 mod openapi;
 mod response;
@@ -33,8 +34,6 @@ use tower::util::BoxCloneSyncService;
 use tower::{service_fn, ServiceExt};
 use tower_http::cors::{AllowHeaders, AllowMethods, AllowOrigin, CorsLayer};
 use tower_http::services::{ServeDir, ServeFile};
-use tower_http::trace::{DefaultOnResponse, TraceLayer};
-use tracing::Level;
 
 /// API route prefix preserved from the Python backend.
 pub const API_PREFIX: &str = "/api";
@@ -210,19 +209,8 @@ fn try_build_router_with_state(
         .nest(API_PREFIX, routes::public_routes())
         .fallback_service(static_frontend_service(web_root))
         .layer(from_fn(cache_control_middleware))
-        .layer(cors_layer(&config))
-        .layer(
-            TraceLayer::new_for_http()
-                .make_span_with(|request: &Request| {
-                    tracing::info_span!(
-                        "http_request",
-                        method = %request.method(),
-                        path = %request.uri().path()
-                    )
-                })
-                .on_response(DefaultOnResponse::new().level(Level::INFO)),
-        )
-        .with_state(state.clone());
+        .layer(cors_layer(&config));
+    let router = http_observability::instrument_router(router).with_state(state.clone());
     Ok((router, state))
 }
 
@@ -301,7 +289,8 @@ pub fn cors_layer(config: &ApiConfig) -> CorsLayer {
     let layer = CorsLayer::new()
         .allow_credentials(true)
         .allow_headers(AllowHeaders::mirror_request())
-        .allow_methods(AllowMethods::mirror_request());
+        .allow_methods(AllowMethods::mirror_request())
+        .expose_headers([http_observability::X_REQUEST_ID]);
 
     if config.cors_allowed_origins.is_empty() {
         layer

@@ -1,5 +1,8 @@
 //! HTTP response mapping helpers.
 
+use std::panic::Location;
+use std::path::Path;
+
 use axum::http::header::RETRY_AFTER;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
@@ -7,6 +10,8 @@ use axum::Json;
 use litradar_domain::ErrorEnvelope;
 
 use crate::state::BlockingTaskError;
+
+const MAX_ERROR_SUMMARY_CHARACTERS: usize = 512;
 
 /// API handler error mapped into FastAPI-compatible envelopes where possible.
 #[derive(Debug)]
@@ -22,6 +27,9 @@ pub(crate) enum ApiError {
     TooManyRequests {
         detail: String,
         retry_after_seconds: u64,
+    },
+    Unexpected {
+        cause: InternalErrorCause,
     },
 }
 
@@ -43,6 +51,14 @@ impl IntoResponse for ApiError {
                 Json(ErrorEnvelope::new(detail)),
             )
                 .into_response(),
+            Self::Unexpected { cause } => {
+                cause.log();
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ErrorEnvelope::new("Internal Server Error")),
+                )
+                    .into_response()
+            }
         }
     }
 }
@@ -97,11 +113,13 @@ impl ApiError {
     }
 
     /// Build an internal server error.
+    #[track_caller]
     pub(crate) fn internal_server_error() -> Self {
-        Self::Http {
-            status: StatusCode::INTERNAL_SERVER_ERROR,
-            detail: "Internal Server Error".to_string(),
-        }
+        Self::unexpected(
+            "unexpected_internal_failure",
+            "internal operation failed",
+            Location::caller(),
+        )
     }
 
     /// Build a service-unavailable error without exposing executor details.
@@ -116,13 +134,98 @@ impl ApiError {
     pub(crate) fn json_detail(status: StatusCode, detail: serde_json::Value) -> Self {
         Self::JsonDetail { status, detail }
     }
+
+    fn unexpected(
+        error_kind: &'static str,
+        error_summary: &'static str,
+        location: &'static Location<'static>,
+    ) -> Self {
+        Self::Unexpected {
+            cause: InternalErrorCause::new(error_kind, error_summary, location),
+        }
+    }
 }
 
 impl From<BlockingTaskError> for ApiError {
     fn from(error: BlockingTaskError) -> Self {
         match error {
             BlockingTaskError::Closed | BlockingTaskError::TimedOut => Self::service_unavailable(),
-            BlockingTaskError::Join => Self::internal_server_error(),
+            BlockingTaskError::Join => Self::unexpected(
+                "blocking_task_join_failed",
+                "blocking task failed to join",
+                Location::caller(),
+            ),
         }
+    }
+}
+
+/// Private safe metadata retained for an unexpected HTTP failure.
+#[derive(Debug)]
+pub(crate) struct InternalErrorCause {
+    error_kind: &'static str,
+    error_summary: String,
+    source_file: String,
+    source_line: u32,
+}
+
+impl InternalErrorCause {
+    fn new(
+        error_kind: &'static str,
+        error_summary: &'static str,
+        location: &'static Location<'static>,
+    ) -> Self {
+        Self {
+            error_kind,
+            error_summary: sanitize_error_summary(error_summary),
+            source_file: Path::new(location.file())
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("unknown")
+                .to_string(),
+            source_line: location.line(),
+        }
+    }
+
+    fn log(&self) {
+        tracing::error!(
+            event = "http.request.error",
+            component = "http",
+            error_kind = self.error_kind,
+            error_summary = %self.error_summary,
+            error_source = %self.source_file,
+            error_line = self.source_line,
+        );
+    }
+}
+
+fn sanitize_error_summary(value: &str) -> String {
+    value
+        .chars()
+        .map(|character| {
+            if character.is_control() {
+                ' '
+            } else {
+                character
+            }
+        })
+        .take(MAX_ERROR_SUMMARY_CHARACTERS)
+        .collect::<String>()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{sanitize_error_summary, MAX_ERROR_SUMMARY_CHARACTERS};
+
+    #[test]
+    fn internal_error_summary_is_single_line_and_bounded() {
+        let summary = format!("safe\nsummary {}", "x".repeat(600));
+        let sanitized = sanitize_error_summary(&summary);
+
+        assert!(!sanitized.contains('\n'));
+        assert!(sanitized.chars().count() <= MAX_ERROR_SUMMARY_CHARACTERS);
+        assert!(sanitized.starts_with("safe summary"));
     }
 }
