@@ -9,6 +9,95 @@ use std::path::{Path, PathBuf};
 use rusqlite::{params, Connection};
 use serde::Serialize;
 
+/// One provider-neutral canonical content outbox event.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ContentChangeEvent {
+    /// Monotonic content database event identifier.
+    pub event_id: i64,
+    /// Core-owned content revision label.
+    pub content_revision: String,
+    /// Immutable article identifier.
+    pub article_id: i64,
+    /// Canonical change kind, `upsert` or `remove`.
+    pub change_kind: String,
+    /// Immutable journal identifier.
+    pub journal_id: i64,
+    /// Canonical issue membership when present.
+    pub issue_id: Option<i64>,
+    /// Whether the event refers to in-press membership.
+    pub in_press: bool,
+    /// Safe event creation timestamp.
+    pub created_at: String,
+}
+
+/// Read a bounded page of provider-neutral content outbox events.
+///
+/// # Arguments
+///
+/// * `connection` - Open content database connection.
+/// * `after_event_id` - Exclusive event cursor.
+/// * `limit` - Positive maximum page size.
+///
+/// # Returns
+///
+/// Events in monotonic identifier order.
+pub fn list_content_change_events(
+    connection: &Connection,
+    after_event_id: i64,
+    limit: usize,
+) -> rusqlite::Result<Vec<ContentChangeEvent>> {
+    if limit == 0 || limit > 10_000 {
+        return Err(rusqlite::Error::InvalidParameterName(
+            "content change limit must be between 1 and 10000".to_string(),
+        ));
+    }
+    let mut statement = connection.prepare(
+        "SELECT
+             event_id, content_revision, article_id, change_kind, journal_id,
+             issue_id, in_press, created_at
+         FROM article_change_events
+         WHERE event_id > ?1
+         ORDER BY event_id
+         LIMIT ?2",
+    )?;
+    let limit = i64::try_from(limit).expect("bounded content change limit fits i64");
+    let events = statement
+        .query_map(params![after_event_id, limit], |row| {
+            Ok(ContentChangeEvent {
+                event_id: row.get(0)?,
+                content_revision: row.get(1)?,
+                article_id: row.get(2)?,
+                change_kind: row.get(3)?,
+                journal_id: row.get(4)?,
+                issue_id: row.get(5)?,
+                in_press: row.get::<_, i64>(6)? != 0,
+                created_at: row.get(7)?,
+            })
+        })?
+        .collect();
+    events
+}
+
+/// Acknowledge provider-neutral content events through one inclusive cursor.
+///
+/// # Arguments
+///
+/// * `connection` - Open content database connection.
+/// * `through_event_id` - Inclusive event identifier to remove after publication.
+///
+/// # Returns
+///
+/// Number of acknowledged outbox rows.
+pub fn acknowledge_content_change_events(
+    connection: &Connection,
+    through_event_id: i64,
+) -> rusqlite::Result<usize> {
+    connection.execute(
+        "DELETE FROM article_change_events WHERE event_id <= ?1",
+        [through_event_id],
+    )
+}
+
 /// Errors returned while streaming a change manifest.
 #[derive(Debug)]
 pub enum ChangeWriteError {
@@ -481,7 +570,52 @@ mod tests {
     };
     use crate::transforms::ArticleRecord;
 
-    use super::write_change_manifest_from_events;
+    use super::{
+        acknowledge_content_change_events, list_content_change_events,
+        write_change_manifest_from_events,
+    };
+
+    #[test]
+    fn pages_and_acknowledges_provider_neutral_content_events() {
+        let connection = Connection::open_in_memory().expect("content database should open");
+        connection
+            .execute_batch(
+                "CREATE TABLE article_change_events (
+                     event_id INTEGER PRIMARY KEY,
+                     content_revision TEXT NOT NULL,
+                     article_id INTEGER NOT NULL,
+                     change_kind TEXT NOT NULL,
+                     journal_id INTEGER NOT NULL,
+                     issue_id INTEGER,
+                     in_press INTEGER NOT NULL,
+                     created_at TEXT NOT NULL
+                 );
+                 INSERT INTO article_change_events VALUES
+                     (1, 'revision-a', 10, 'upsert', 100, 1000, 0, 'first'),
+                     (2, 'revision-b', 11, 'remove', 100, NULL, 1, 'second');",
+            )
+            .expect("content event fixture should initialize");
+
+        let events = list_content_change_events(&connection, 0, 1)
+            .expect("first content event page should load");
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].content_revision, "revision-a");
+        assert_eq!(events[0].issue_id, Some(1000));
+        assert!(!events[0].in_press);
+        assert!(list_content_change_events(&connection, 0, 0).is_err());
+        assert!(list_content_change_events(&connection, 0, 10_001).is_err());
+
+        assert_eq!(
+            acknowledge_content_change_events(&connection, events[0].event_id)
+                .expect("first content event should acknowledge"),
+            1
+        );
+        let remaining = list_content_change_events(&connection, events[0].event_id, 10)
+            .expect("remaining content events should load");
+        assert_eq!(remaining.len(), 1);
+        assert_eq!(remaining[0].change_kind, "remove");
+        assert!(remaining[0].in_press);
+    }
 
     #[test]
     fn streams_snapshot_compatible_manifest_and_cleans_published_events() {

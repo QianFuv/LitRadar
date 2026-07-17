@@ -1,27 +1,25 @@
 //! Ordered, transactional migrations for auth and index SQLite databases.
 
+use std::collections::BTreeSet;
 use std::error::Error;
 use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-use rusqlite::{
-    params, params_from_iter, Connection, OptionalExtension, Transaction, TransactionBehavior,
-};
+use rusqlite::{Connection, OpenFlags, Transaction, TransactionBehavior};
 
-use crate::{try_load_extension, DatabaseResolutionError, StorageConfig};
+use crate::{DatabaseResolutionError, StorageConfig};
 
 /// Current auth and business database schema version.
 pub const AUTH_SCHEMA_VERSION: i64 = 6;
 
 /// Current index database schema version.
-pub const INDEX_SCHEMA_VERSION: i64 = 3;
+pub const INDEX_SCHEMA_VERSION: i64 = 4;
 
 const AUTH_DATABASE: &str = "auth";
 const INDEX_DATABASE: &str = "index";
 const BUSY_TIMEOUT_SECONDS: u64 = 30;
-const PROJECTION_RECONCILE_BATCH_SIZE: i64 = 1_000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct MigrationSummary {
@@ -47,6 +45,15 @@ pub enum MigrationError {
         /// Highest version supported by this binary.
         supported: i64,
     },
+    /// A legacy or non-empty unversioned index must be rebuilt explicitly.
+    IndexRebuildRequired {
+        /// Exact legacy index path that was inspected read-only.
+        path: PathBuf,
+        /// Existing SQLite user version.
+        found: i64,
+        /// Provider-neutral content version required by this binary.
+        required: i64,
+    },
 }
 
 impl fmt::Display for MigrationError {
@@ -64,6 +71,15 @@ impl fmt::Display for MigrationError {
                 formatter,
                 "unsupported {database} database schema version {found}; this binary supports up to {supported}"
             ),
+            Self::IndexRebuildRequired {
+                path,
+                found,
+                required,
+            } => write!(
+                formatter,
+                "index database {} uses legacy schema version {found}; move or delete that exact file and rebuild it as content schema v{required}",
+                path.display()
+            ),
         }
     }
 }
@@ -75,7 +91,7 @@ impl Error for MigrationError {
             Self::Io(error) => Some(error),
             Self::Sqlite(error) => Some(error),
             Self::DatabaseResolution(error) => Some(error),
-            Self::UnsupportedSchemaVersion { .. } => None,
+            Self::UnsupportedSchemaVersion { .. } | Self::IndexRebuildRequired { .. } => None,
         }
     }
 }
@@ -251,45 +267,40 @@ pub fn migrate_index_database(
 
 fn migrate_index_database_inner(
     path: &Path,
-    simple_tokenizer_path: Option<&Path>,
+    _simple_tokenizer_path: Option<&Path>,
 ) -> Result<MigrationSummary, MigrationError> {
-    let connection = open_migration_connection(path)?;
-    let mut version = schema_version(&connection)?;
-    let from_version = version;
-    reject_newer_version(INDEX_DATABASE, version, INDEX_SCHEMA_VERSION)?;
-    let existing_simple_tokenizer = article_search_uses_simple_tokenizer(&connection)?;
-    if existing_simple_tokenizer != Some(false) {
-        let resolved_path = resolve_simple_tokenizer_path(simple_tokenizer_path)
-            .ok_or_else(missing_simple_tokenizer_error)?;
-        try_load_extension(&connection, Some(&resolved_path))?;
-        if existing_simple_tokenizer == Some(true) {
-            probe_article_search(&connection)?;
+    let inspection = inspect_existing_index_database(path)?;
+    if let Some((version, object_count)) = inspection {
+        reject_newer_version(INDEX_DATABASE, version, INDEX_SCHEMA_VERSION)?;
+        if version == INDEX_SCHEMA_VERSION {
+            let connection = open_read_only_index_connection(path)?;
+            validate_index_v4_schema(&connection)?;
+            return Ok(MigrationSummary {
+                from_version: version,
+                to_version: version,
+            });
+        }
+        if version != 0 || object_count != 0 {
+            return Err(MigrationError::IndexRebuildRequired {
+                path: path.to_path_buf(),
+                found: version,
+                required: INDEX_SCHEMA_VERSION,
+            });
         }
     }
-    if version == INDEX_SCHEMA_VERSION {
-        return Ok(MigrationSummary {
-            from_version,
-            to_version: version,
-        });
-    }
-    configure_writable_connection(&connection)?;
 
-    while version < INDEX_SCHEMA_VERSION {
-        let next_version = version + 1;
-        let transaction = Transaction::new_unchecked(&connection, TransactionBehavior::Immediate)?;
-        match next_version {
-            1 => apply_index_version_one(&transaction)?,
-            2 => apply_index_version_two(&transaction)?,
-            3 => apply_index_version_three(&transaction)?,
-            _ => unreachable!("index migration version should be implemented"),
-        }
-        transaction.pragma_update(None, "user_version", next_version)?;
-        transaction.commit()?;
-        version = next_version;
-    }
+    let connection = open_migration_connection(path)?;
+    let version = schema_version(&connection)?;
+    let from_version = version;
+    configure_writable_connection(&connection)?;
+    let transaction = Transaction::new_unchecked(&connection, TransactionBehavior::Immediate)?;
+    transaction.execute_batch(INDEX_CONTENT_TABLES_SQL)?;
+    transaction.pragma_update(None, "user_version", INDEX_SCHEMA_VERSION)?;
+    transaction.commit()?;
+    validate_index_v4_schema(&connection)?;
     Ok(MigrationSummary {
         from_version,
-        to_version: version,
+        to_version: INDEX_SCHEMA_VERSION,
     })
 }
 
@@ -343,12 +354,14 @@ fn migration_error_kind(error: &MigrationError) -> &'static str {
         MigrationError::Sqlite(_) => "sqlite",
         MigrationError::DatabaseResolution(_) => "database_resolution",
         MigrationError::UnsupportedSchemaVersion { .. } => "unsupported_schema_version",
+        MigrationError::IndexRebuildRequired { .. } => "index_rebuild_required",
     }
 }
 
 fn migration_error_database_version(error: &MigrationError) -> i64 {
     match error {
-        MigrationError::UnsupportedSchemaVersion { found, .. } => *found,
+        MigrationError::UnsupportedSchemaVersion { found, .. }
+        | MigrationError::IndexRebuildRequired { found, .. } => *found,
         MigrationError::Io(_)
         | MigrationError::Sqlite(_)
         | MigrationError::DatabaseResolution(_) => -1,
@@ -365,6 +378,190 @@ fn open_migration_connection(path: &Path) -> Result<Connection, MigrationError> 
     let connection = Connection::open(path)?;
     connection.busy_timeout(Duration::from_secs(BUSY_TIMEOUT_SECONDS))?;
     Ok(connection)
+}
+
+fn inspect_existing_index_database(path: &Path) -> Result<Option<(i64, i64)>, MigrationError> {
+    if !path.exists() || fs::metadata(path)?.len() == 0 {
+        return Ok(None);
+    }
+    let connection = open_read_only_index_connection(path)?;
+    let version = schema_version(&connection)?;
+    let object_count = connection.query_row(
+        "SELECT COUNT(*) FROM sqlite_schema WHERE name NOT LIKE 'sqlite_%'",
+        [],
+        |row| row.get::<_, i64>(0),
+    )?;
+    Ok(Some((version, object_count)))
+}
+
+fn open_read_only_index_connection(path: &Path) -> Result<Connection, MigrationError> {
+    let connection = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+    connection.busy_timeout(Duration::from_secs(BUSY_TIMEOUT_SECONDS))?;
+    Ok(connection)
+}
+
+fn validate_index_v4_schema(connection: &Connection) -> Result<(), MigrationError> {
+    let expected = [
+        "article_change_events",
+        "article_identity_keys",
+        "article_listing",
+        "article_search",
+        "articles",
+        "issues",
+        "journals",
+    ]
+    .into_iter()
+    .map(str::to_string)
+    .collect::<BTreeSet<_>>();
+    let mut statement = connection.prepare(
+        "SELECT name
+         FROM sqlite_schema
+         WHERE type = 'table'
+           AND name NOT LIKE 'sqlite_%'
+           AND name NOT LIKE 'article_search_%'
+         ORDER BY name",
+    )?;
+    let actual = statement
+        .query_map([], |row| row.get::<_, String>(0))?
+        .collect::<rusqlite::Result<BTreeSet<_>>>()?;
+    if actual != expected {
+        return Err(MigrationError::Sqlite(rusqlite::Error::InvalidQuery));
+    }
+    let expected_columns: &[(&str, &[&str])] = &[
+        (
+            "journals",
+            &[
+                "journal_id",
+                "catalog_id",
+                "title",
+                "title_aliases_json",
+                "issns_json",
+                "issn",
+                "eissn",
+                "area",
+                "utd_rank",
+                "utd_rating",
+                "abs_rank",
+                "abs_rating",
+                "fms_rank",
+                "fms_rating",
+                "fmscn_rank",
+                "fmscn_rating",
+            ],
+        ),
+        (
+            "issues",
+            &[
+                "issue_id",
+                "journal_id",
+                "publication_year",
+                "title",
+                "volume",
+                "number",
+                "date",
+            ],
+        ),
+        (
+            "articles",
+            &[
+                "article_id",
+                "journal_id",
+                "issue_id",
+                "title",
+                "publication_year",
+                "date",
+                "authors_json",
+                "start_page",
+                "end_page",
+                "abstract_text",
+                "doi",
+                "pmid",
+                "open_access",
+                "in_press",
+                "retraction_doi",
+            ],
+        ),
+        (
+            "article_identity_keys",
+            &["identity_kind", "identity_value", "article_id"],
+        ),
+        (
+            "article_listing",
+            &[
+                "article_id",
+                "journal_id",
+                "issue_id",
+                "publication_year",
+                "date",
+                "open_access",
+                "in_press",
+                "doi",
+                "pmid",
+                "area",
+            ],
+        ),
+        (
+            "article_search",
+            &[
+                "article_id",
+                "title",
+                "abstract_text",
+                "doi",
+                "pmid",
+                "authors",
+                "journal_title",
+            ],
+        ),
+        (
+            "article_change_events",
+            &[
+                "event_id",
+                "content_revision",
+                "article_id",
+                "change_kind",
+                "journal_id",
+                "issue_id",
+                "in_press",
+                "created_at",
+            ],
+        ),
+    ];
+    for (table_name, expected) in expected_columns {
+        if table_columns(connection, table_name)? != *expected {
+            return Err(MigrationError::Sqlite(rusqlite::Error::InvalidQuery));
+        }
+    }
+    let expected_indexes = [
+        "idx_article_change_events_order",
+        "idx_article_change_events_revision",
+        "idx_article_identity_keys_article",
+        "idx_article_listing_date_id",
+        "idx_article_listing_issue",
+        "idx_article_listing_journal_date_id",
+        "idx_articles_date_id",
+        "idx_articles_doi",
+        "idx_articles_issue",
+        "idx_articles_journal",
+        "idx_articles_pmid",
+        "idx_issues_journal_year",
+        "idx_journals_eissn",
+        "idx_journals_issn",
+    ]
+    .into_iter()
+    .map(str::to_string)
+    .collect::<BTreeSet<_>>();
+    let mut statement = connection.prepare(
+        "SELECT name FROM sqlite_schema
+         WHERE type = 'index' AND name NOT LIKE 'sqlite_%'
+         ORDER BY name",
+    )?;
+    let actual_indexes = statement
+        .query_map([], |row| row.get::<_, String>(0))?
+        .collect::<rusqlite::Result<BTreeSet<_>>>()?;
+    if actual_indexes != expected_indexes {
+        return Err(MigrationError::Sqlite(rusqlite::Error::InvalidQuery));
+    }
+    Ok(())
 }
 
 fn configure_writable_connection(connection: &Connection) -> rusqlite::Result<()> {
@@ -593,360 +790,11 @@ fn apply_auth_version_six(transaction: &Transaction<'_>) -> rusqlite::Result<()>
     )
 }
 
-fn apply_index_version_one(transaction: &Transaction<'_>) -> rusqlite::Result<()> {
-    transaction.execute_batch(INDEX_TABLES_SQL)?;
-    let journal_columns = table_columns(transaction, "journals")?;
-    if !journal_columns
-        .iter()
-        .any(|column| column == "platform_journal_id")
-    {
-        transaction.execute(
-            "ALTER TABLE journals ADD COLUMN platform_journal_id TEXT",
-            [],
-        )?;
-    }
-
-    transaction.execute_batch(
-        "
-        CREATE VIRTUAL TABLE IF NOT EXISTS article_search
-        USING fts5(
-            article_id UNINDEXED,
-            title,
-            abstract,
-            doi,
-            authors,
-            journal_title,
-            tokenize = 'simple'
-        );
-        ",
-    )?;
-    probe_article_search(transaction)?;
-    transaction.execute_batch(INDEX_INDEXES_SQL)
-}
-
-fn apply_index_version_two(transaction: &Transaction<'_>) -> rusqlite::Result<()> {
-    let journal_meta_columns = table_columns(transaction, "journal_meta")?;
-    for (column, statement) in JOURNAL_META_COLUMN_MIGRATIONS {
-        if !journal_meta_columns
-            .iter()
-            .any(|existing| existing == column)
-        {
-            transaction.execute(statement, [])?;
-        }
-    }
-
-    transaction.execute_batch(INDEX_CHANGE_EVENTS_SQL)?;
-    validate_required_index_columns(transaction)?;
-    reconcile_missing_article_projections(transaction)
-}
-
-fn apply_index_version_three(transaction: &Transaction<'_>) -> rusqlite::Result<()> {
-    transaction.execute_batch(INDEX_RUN_LEASE_SQL)?;
-    let columns = table_columns(transaction, "index_run_lease")?;
-    for required_column in ["id", "run_id", "heartbeat_at", "expires_at"] {
-        if !columns.iter().any(|existing| existing == required_column) {
-            return Err(rusqlite::Error::InvalidColumnName(format!(
-                "index_run_lease.{required_column}"
-            )));
-        }
-    }
-    Ok(())
-}
-
-fn validate_required_index_columns(connection: &Connection) -> rusqlite::Result<()> {
-    for (table, required_columns) in REQUIRED_INDEX_COLUMNS {
-        let existing_columns = table_columns(connection, table)?;
-        for required_column in *required_columns {
-            if !existing_columns
-                .iter()
-                .any(|existing| existing == required_column)
-            {
-                return Err(rusqlite::Error::InvalidColumnName(format!(
-                    "{table}.{required_column}"
-                )));
-            }
-        }
-    }
-    Ok(())
-}
-
-fn reconcile_missing_article_projections(transaction: &Transaction<'_>) -> rusqlite::Result<()> {
-    let mut last_article_id = None;
-    loop {
-        let article_ids = missing_projection_article_ids(transaction, last_article_id)?;
-        let Some(next_last_article_id) = article_ids.last().copied() else {
-            return Ok(());
-        };
-        reconcile_article_listing(transaction, &article_ids)?;
-        reconcile_article_search(transaction, &article_ids)?;
-        last_article_id = Some(next_last_article_id);
-    }
-}
-
-fn missing_projection_article_ids(
-    connection: &Connection,
-    last_article_id: Option<i64>,
-) -> rusqlite::Result<Vec<i64>> {
-    let mut statement = connection.prepare(
-        "
-        SELECT a.article_id
-        FROM articles a
-        LEFT JOIN article_listing l ON l.article_id = a.article_id
-        LEFT JOIN article_search s ON s.rowid = a.article_id
-        WHERE (?1 IS NULL OR a.article_id > ?1)
-          AND (l.article_id IS NULL OR s.rowid IS NULL)
-        ORDER BY a.article_id
-        LIMIT ?2
-        ",
-    )?;
-    let rows = statement.query_map(
-        params![last_article_id, PROJECTION_RECONCILE_BATCH_SIZE],
-        |row| row.get::<_, i64>(0),
-    )?;
-    rows.collect()
-}
-
-fn reconcile_article_listing(connection: &Connection, article_ids: &[i64]) -> rusqlite::Result<()> {
-    let placeholders = std::iter::repeat_n("?", article_ids.len())
-        .collect::<Vec<_>>()
-        .join(", ");
-    let sql = format!(
-        "
-        INSERT INTO article_listing (
-            article_id, journal_id, issue_id, publication_year, date, open_access,
-            in_press, suppressed, within_library_holdings, doi, pmid, area
-        )
-        SELECT
-            a.article_id,
-            a.journal_id,
-            a.issue_id,
-            i.publication_year,
-            a.date,
-            a.open_access,
-            a.in_press,
-            a.suppressed,
-            a.within_library_holdings,
-            a.doi,
-            a.pmid,
-            m.area
-        FROM articles a
-        LEFT JOIN issues i ON i.issue_id = a.issue_id
-        LEFT JOIN journal_meta m ON m.journal_id = a.journal_id
-        WHERE a.article_id IN ({placeholders})
-          AND NOT EXISTS (
-              SELECT 1 FROM article_listing l WHERE l.article_id = a.article_id
-          )
-        "
-    );
-    connection.execute(&sql, params_from_iter(article_ids.iter()))?;
-    Ok(())
-}
-
-fn reconcile_article_search(connection: &Connection, article_ids: &[i64]) -> rusqlite::Result<()> {
-    let placeholders = std::iter::repeat_n("?", article_ids.len())
-        .collect::<Vec<_>>()
-        .join(", ");
-    let sql = format!(
-        "
-        INSERT INTO article_search (
-            rowid, article_id, title, abstract, doi, authors, journal_title
-        )
-        SELECT
-            a.article_id,
-            a.article_id,
-            COALESCE(a.title, ''),
-            COALESCE(a.abstract, ''),
-            COALESCE(a.doi, ''),
-            COALESCE(a.authors, ''),
-            COALESCE(j.title, '')
-        FROM articles a
-        LEFT JOIN journals j ON j.journal_id = a.journal_id
-        WHERE a.article_id IN ({placeholders})
-          AND NOT EXISTS (
-              SELECT 1 FROM article_search s WHERE s.rowid = a.article_id
-          )
-        "
-    );
-    connection.execute(&sql, params_from_iter(article_ids.iter()))?;
-    Ok(())
-}
-
-fn article_search_uses_simple_tokenizer(connection: &Connection) -> rusqlite::Result<Option<bool>> {
-    let sql = connection
-        .query_row(
-            "SELECT sql FROM sqlite_schema WHERE type = 'table' AND name = 'article_search'",
-            [],
-            |row| row.get::<_, String>(0),
-        )
-        .optional()?;
-    Ok(sql.map(|value| {
-        let compact = value
-            .to_ascii_lowercase()
-            .chars()
-            .filter(|character| !character.is_whitespace())
-            .collect::<String>();
-        compact.contains("tokenize='simple'")
-            || compact.contains("tokenize=\"simple\"")
-            || compact.contains("tokenize=simple")
-    }))
-}
-
-fn probe_article_search(connection: &Connection) -> rusqlite::Result<()> {
-    connection
-        .query_row(
-            "SELECT rowid FROM article_search WHERE article_search MATCH ?1 LIMIT 1",
-            ["litradartokenizerprobe"],
-            |row| row.get::<_, i64>(0),
-        )
-        .optional()?;
-    Ok(())
-}
-
-fn resolve_simple_tokenizer_path(configured_path: Option<&Path>) -> Option<PathBuf> {
-    configured_path.map(Path::to_path_buf).or_else(|| {
-        let current_dir = std::env::current_dir().ok()?;
-        current_dir.ancestors().find_map(|root| {
-            StorageConfig::from_project_root(root)
-                .simple_tokenizer_path()
-                .filter(|path| path.exists())
-        })
-    })
-}
-
-fn missing_simple_tokenizer_error() -> rusqlite::Error {
-    rusqlite::Error::InvalidPath(expected_simple_tokenizer_path())
-}
-
-fn expected_simple_tokenizer_path() -> PathBuf {
-    let libs_dir = PathBuf::from("libs");
-    if cfg!(windows) {
-        libs_dir
-            .join("simple-windows")
-            .join("libsimple-windows-x64")
-            .join("simple.dll")
-    } else if cfg!(target_os = "linux") {
-        libs_dir
-            .join("simple-linux")
-            .join("libsimple-linux-ubuntu-latest")
-            .join("libsimple.so")
-    } else {
-        libs_dir.join("simple-tokenizer-extension")
-    }
-}
-
 fn table_columns(connection: &Connection, table_name: &str) -> rusqlite::Result<Vec<String>> {
     let mut statement = connection.prepare(&format!("PRAGMA table_info({table_name})"))?;
     let rows = statement.query_map([], |row| row.get::<_, String>(1))?;
     rows.collect()
 }
-
-const JOURNAL_META_COLUMN_MIGRATIONS: &[(&str, &str)] = &[
-    (
-        "resolved_source",
-        "ALTER TABLE journal_meta ADD COLUMN resolved_source TEXT",
-    ),
-    (
-        "resolved_source_id",
-        "ALTER TABLE journal_meta ADD COLUMN resolved_source_id TEXT",
-    ),
-    (
-        "resolved_title",
-        "ALTER TABLE journal_meta ADD COLUMN resolved_title TEXT",
-    ),
-    (
-        "resolved_issn",
-        "ALTER TABLE journal_meta ADD COLUMN resolved_issn TEXT",
-    ),
-    (
-        "resolved_eissn",
-        "ALTER TABLE journal_meta ADD COLUMN resolved_eissn TEXT",
-    ),
-];
-
-const REQUIRED_INDEX_COLUMNS: &[(&str, &[&str])] = &[
-    (
-        "journals",
-        &["journal_id", "library_id", "platform_journal_id", "title"],
-    ),
-    (
-        "journal_meta",
-        &[
-            "journal_id",
-            "source_csv",
-            "area",
-            "csv_title",
-            "csv_issn",
-            "csv_library",
-            "resolved_source",
-            "resolved_source_id",
-            "resolved_title",
-            "resolved_issn",
-            "resolved_eissn",
-        ],
-    ),
-    ("issues", &["issue_id", "journal_id", "publication_year"]),
-    (
-        "articles",
-        &[
-            "article_id",
-            "journal_id",
-            "issue_id",
-            "title",
-            "date",
-            "authors",
-            "abstract",
-            "doi",
-            "pmid",
-            "suppressed",
-            "in_press",
-            "open_access",
-            "within_library_holdings",
-        ],
-    ),
-    (
-        "article_listing",
-        &[
-            "article_id",
-            "journal_id",
-            "issue_id",
-            "publication_year",
-            "date",
-            "open_access",
-            "in_press",
-            "suppressed",
-            "within_library_holdings",
-            "doi",
-            "pmid",
-            "area",
-        ],
-    ),
-    (
-        "article_search",
-        &[
-            "article_id",
-            "title",
-            "abstract",
-            "doi",
-            "authors",
-            "journal_title",
-        ],
-    ),
-    (
-        "index_change_events",
-        &[
-            "event_id",
-            "run_id",
-            "worker_id",
-            "article_id",
-            "event_type",
-            "membership_type",
-            "journal_id",
-            "issue_id",
-            "is_backfill",
-            "created_at",
-        ],
-    ),
-];
 
 const NOTIFICATION_COLUMN_MIGRATIONS: &[(&str, &str)] = &[
     (
@@ -1123,37 +971,27 @@ const AUTH_INDEXES_SQL: &str = "
     CREATE INDEX IF NOT EXISTS idx_announcements_enabled ON announcements(enabled);
 ";
 
-const INDEX_TABLES_SQL: &str = "
-    CREATE TABLE IF NOT EXISTS journals (
+const INDEX_CONTENT_TABLES_SQL: &str = "
+    CREATE TABLE journals (
         journal_id INTEGER PRIMARY KEY,
-        library_id TEXT NOT NULL,
-        platform_journal_id TEXT,
-        title TEXT,
+        catalog_id TEXT NOT NULL UNIQUE,
+        title TEXT NOT NULL,
+        title_aliases_json TEXT NOT NULL,
+        issns_json TEXT NOT NULL,
         issn TEXT,
         eissn TEXT,
-        scimago_rank REAL,
-        cover_url TEXT,
-        available INTEGER,
-        toc_data_approved_and_live INTEGER,
-        has_articles INTEGER
-    );
-
-    CREATE TABLE IF NOT EXISTS journal_meta (
-        journal_id INTEGER PRIMARY KEY,
-        source_csv TEXT NOT NULL,
         area TEXT,
-        csv_title TEXT,
-        csv_issn TEXT,
-        csv_library TEXT,
-        resolved_source TEXT,
-        resolved_source_id TEXT,
-        resolved_title TEXT,
-        resolved_issn TEXT,
-        resolved_eissn TEXT,
-        FOREIGN KEY (journal_id) REFERENCES journals(journal_id) ON DELETE CASCADE
+        utd_rank TEXT,
+        utd_rating TEXT,
+        abs_rank TEXT,
+        abs_rating TEXT,
+        fms_rank TEXT,
+        fms_rating TEXT,
+        fmscn_rank TEXT,
+        fmscn_rating TEXT
     );
 
-    CREATE TABLE IF NOT EXISTS issues (
+    CREATE TABLE issues (
         issue_id INTEGER PRIMARY KEY,
         journal_id INTEGER NOT NULL,
         publication_year INTEGER,
@@ -1161,39 +999,38 @@ const INDEX_TABLES_SQL: &str = "
         volume TEXT,
         number TEXT,
         date TEXT,
-        is_valid_issue INTEGER,
-        suppressed INTEGER,
-        embargoed INTEGER,
-        within_subscription INTEGER,
         FOREIGN KEY (journal_id) REFERENCES journals(journal_id) ON DELETE CASCADE
     );
 
-    CREATE TABLE IF NOT EXISTS articles (
+    CREATE TABLE articles (
         article_id INTEGER PRIMARY KEY,
         journal_id INTEGER NOT NULL,
         issue_id INTEGER,
-        title TEXT,
+        title TEXT NOT NULL,
+        publication_year INTEGER,
         date TEXT,
-        authors TEXT,
+        authors_json TEXT NOT NULL,
         start_page TEXT,
         end_page TEXT,
-        abstract TEXT,
+        abstract_text TEXT,
         doi TEXT,
         pmid TEXT,
-        permalink TEXT,
-        suppressed INTEGER,
-        in_press INTEGER,
         open_access INTEGER,
-        platform_id TEXT,
+        in_press INTEGER,
         retraction_doi TEXT,
-        within_library_holdings INTEGER,
-        content_location TEXT,
-        full_text_file TEXT,
         FOREIGN KEY (journal_id) REFERENCES journals(journal_id) ON DELETE CASCADE,
         FOREIGN KEY (issue_id) REFERENCES issues(issue_id) ON DELETE SET NULL
     );
 
-    CREATE TABLE IF NOT EXISTS article_listing (
+    CREATE TABLE article_identity_keys (
+        identity_kind TEXT NOT NULL CHECK (identity_kind IN ('doi', 'pmid', 'bibliographic')),
+        identity_value TEXT NOT NULL,
+        article_id INTEGER NOT NULL,
+        PRIMARY KEY (identity_kind, identity_value),
+        FOREIGN KEY (article_id) REFERENCES articles(article_id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE article_listing (
         article_id INTEGER PRIMARY KEY,
         journal_id INTEGER NOT NULL,
         issue_id INTEGER,
@@ -1201,169 +1038,56 @@ const INDEX_TABLES_SQL: &str = "
         date TEXT,
         open_access INTEGER,
         in_press INTEGER,
-        suppressed INTEGER,
-        within_library_holdings INTEGER,
         doi TEXT,
         pmid TEXT,
         area TEXT,
+        FOREIGN KEY (article_id) REFERENCES articles(article_id) ON DELETE CASCADE,
         FOREIGN KEY (journal_id) REFERENCES journals(journal_id) ON DELETE CASCADE,
         FOREIGN KEY (issue_id) REFERENCES issues(issue_id) ON DELETE SET NULL
     );
 
-    CREATE TABLE IF NOT EXISTS listing_state (
-        id INTEGER PRIMARY KEY CHECK (id = 1),
-        status TEXT NOT NULL,
-        updated_at TEXT
+    CREATE VIRTUAL TABLE article_search
+    USING fts5(
+        article_id UNINDEXED,
+        title,
+        abstract_text,
+        doi,
+        pmid,
+        authors,
+        journal_title,
+        tokenize = 'unicode61 remove_diacritics 2'
     );
 
-    CREATE TABLE IF NOT EXISTS journal_year_state (
-        journal_id INTEGER NOT NULL,
-        year INTEGER NOT NULL,
-        status TEXT NOT NULL,
-        updated_at TEXT NOT NULL,
-        PRIMARY KEY (journal_id, year)
-    );
-
-    CREATE TABLE IF NOT EXISTS journal_state (
-        journal_id INTEGER PRIMARY KEY,
-        status TEXT NOT NULL,
-        updated_at TEXT NOT NULL
-    );
-
-    CREATE TABLE IF NOT EXISTS index_runs (
-        run_id TEXT PRIMARY KEY,
-        csv_file TEXT NOT NULL,
-        started_at TEXT NOT NULL,
-        finished_at TEXT,
-        status TEXT NOT NULL,
-        total_journals INTEGER NOT NULL,
-        succeeded_journals INTEGER NOT NULL,
-        failed_journals INTEGER NOT NULL,
-        resumed_journals INTEGER NOT NULL,
-        error_summary TEXT
-    );
-
-    CREATE TABLE IF NOT EXISTS index_path_stats (
-        run_id TEXT NOT NULL,
-        source TEXT NOT NULL,
-        path TEXT NOT NULL,
-        journal_id INTEGER,
-        journal_title TEXT,
-        status TEXT NOT NULL,
-        started_at TEXT NOT NULL,
-        finished_at TEXT,
-        works_count INTEGER NOT NULL,
-        issues_count INTEGER NOT NULL,
-        article_summaries_count INTEGER NOT NULL,
-        article_details_count INTEGER NOT NULL,
-        articles_written_count INTEGER NOT NULL,
-        articles_deleted_no_authors_count INTEGER NOT NULL,
-        error_type TEXT,
-        error_message TEXT,
-        FOREIGN KEY (run_id) REFERENCES index_runs(run_id) ON DELETE CASCADE
-    );
-
-    CREATE TABLE IF NOT EXISTS index_api_call_stats (
-        run_id TEXT NOT NULL,
-        source TEXT NOT NULL,
-        service TEXT NOT NULL,
-        endpoint TEXT NOT NULL,
-        method TEXT NOT NULL,
-        url_path TEXT NOT NULL,
-        journal_id INTEGER,
-        journal_title TEXT,
-        logical_calls INTEGER NOT NULL,
-        attempts INTEGER NOT NULL,
-        successes INTEGER NOT NULL,
-        failures INTEGER NOT NULL,
-        retry_count INTEGER NOT NULL,
-        status_codes_json TEXT NOT NULL,
-        transport_errors INTEGER NOT NULL,
-        rate_limit_failures INTEGER NOT NULL,
-        total_latency_ms INTEGER NOT NULL,
-        error_samples_json TEXT NOT NULL,
-        FOREIGN KEY (run_id) REFERENCES index_runs(run_id) ON DELETE CASCADE
-    );
-";
-
-const INDEX_CHANGE_EVENTS_SQL: &str = "
-    CREATE TABLE IF NOT EXISTS index_change_events (
+    CREATE TABLE article_change_events (
         event_id INTEGER PRIMARY KEY,
-        run_id TEXT NOT NULL,
-        worker_id TEXT NOT NULL DEFAULT '',
+        content_revision TEXT NOT NULL,
         article_id INTEGER NOT NULL,
-        event_type TEXT NOT NULL CHECK (event_type IN ('add', 'remove')),
-        membership_type TEXT NOT NULL
-            CHECK (membership_type IN ('issue', 'inpress')),
+        change_kind TEXT NOT NULL CHECK (change_kind IN ('upsert', 'remove')),
         journal_id INTEGER NOT NULL,
         issue_id INTEGER,
-        is_backfill INTEGER NOT NULL DEFAULT 0 CHECK (is_backfill IN (0, 1)),
-        created_at TEXT NOT NULL,
-        CHECK (
-            (membership_type = 'issue' AND issue_id IS NOT NULL)
-            OR (membership_type = 'inpress' AND issue_id IS NULL)
-        )
+        in_press INTEGER NOT NULL CHECK (in_press IN (0, 1)),
+        created_at TEXT NOT NULL
     );
 
-    CREATE UNIQUE INDEX IF NOT EXISTS idx_index_change_events_identity
-        ON index_change_events(
-            run_id, article_id, event_type, membership_type, journal_id,
-            COALESCE(issue_id, -1)
+    CREATE INDEX idx_journals_issn ON journals(issn);
+    CREATE INDEX idx_journals_eissn ON journals(eissn);
+    CREATE INDEX idx_issues_journal_year ON issues(journal_id, publication_year);
+    CREATE INDEX idx_articles_journal ON articles(journal_id);
+    CREATE INDEX idx_articles_issue ON articles(issue_id);
+    CREATE INDEX idx_articles_date_id ON articles(date, article_id);
+    CREATE INDEX idx_articles_doi ON articles(doi);
+    CREATE INDEX idx_articles_pmid ON articles(pmid);
+    CREATE INDEX idx_article_identity_keys_article ON article_identity_keys(article_id);
+    CREATE INDEX idx_article_listing_date_id ON article_listing(date, article_id);
+    CREATE INDEX idx_article_listing_journal_date_id
+        ON article_listing(journal_id, date, article_id);
+    CREATE INDEX idx_article_listing_issue ON article_listing(issue_id);
+    CREATE UNIQUE INDEX idx_article_change_events_revision
+        ON article_change_events(
+            content_revision, article_id, change_kind, journal_id,
+            COALESCE(issue_id, -1), in_press
         );
-    CREATE INDEX IF NOT EXISTS idx_index_change_events_run_order
-        ON index_change_events(run_id, event_id);
-    CREATE INDEX IF NOT EXISTS idx_index_change_events_run_membership
-        ON index_change_events(
-            run_id, membership_type, journal_id, issue_id, event_id
-        );
-    CREATE INDEX IF NOT EXISTS idx_index_change_events_run_article
-        ON index_change_events(run_id, article_id, event_id);
-";
-
-const INDEX_RUN_LEASE_SQL: &str = "
-    CREATE TABLE IF NOT EXISTS index_run_lease (
-        id INTEGER PRIMARY KEY CHECK (id = 1),
-        run_id TEXT NOT NULL,
-        heartbeat_at INTEGER NOT NULL,
-        expires_at INTEGER NOT NULL,
-        FOREIGN KEY (run_id) REFERENCES index_runs(run_id) ON DELETE CASCADE
-    );
-";
-
-const INDEX_INDEXES_SQL: &str = "
-    CREATE INDEX IF NOT EXISTS idx_journals_issn ON journals(issn);
-    CREATE INDEX IF NOT EXISTS idx_journals_library_id ON journals(library_id);
-    CREATE INDEX IF NOT EXISTS idx_journals_available ON journals(available);
-    CREATE INDEX IF NOT EXISTS idx_journals_has_articles ON journals(has_articles);
-    CREATE INDEX IF NOT EXISTS idx_journals_scimago_rank ON journals(scimago_rank);
-    CREATE INDEX IF NOT EXISTS idx_journal_meta_area ON journal_meta(area);
-    CREATE INDEX IF NOT EXISTS idx_journal_meta_area_journal ON journal_meta(area, journal_id);
-    CREATE INDEX IF NOT EXISTS idx_issues_journal_year ON issues(journal_id, publication_year);
-    CREATE INDEX IF NOT EXISTS idx_issues_publication_year ON issues(publication_year);
-    CREATE INDEX IF NOT EXISTS idx_articles_journal ON articles(journal_id);
-    CREATE INDEX IF NOT EXISTS idx_articles_issue ON articles(issue_id);
-    CREATE INDEX IF NOT EXISTS idx_articles_date ON articles(date);
-    CREATE INDEX IF NOT EXISTS idx_articles_date_id ON articles(date, article_id);
-    CREATE INDEX IF NOT EXISTS idx_articles_journal_date_id ON articles(journal_id, date, article_id);
-    CREATE INDEX IF NOT EXISTS idx_articles_issue_date_id ON articles(issue_id, date, article_id);
-    CREATE INDEX IF NOT EXISTS idx_articles_open_access ON articles(open_access);
-    CREATE INDEX IF NOT EXISTS idx_articles_open_access_date_id ON articles(open_access, date, article_id);
-    CREATE INDEX IF NOT EXISTS idx_articles_in_press ON articles(in_press);
-    CREATE INDEX IF NOT EXISTS idx_articles_in_press_date_id ON articles(in_press, date, article_id);
-    CREATE INDEX IF NOT EXISTS idx_articles_suppressed ON articles(suppressed);
-    CREATE INDEX IF NOT EXISTS idx_articles_suppressed_date_id ON articles(suppressed, date, article_id);
-    CREATE INDEX IF NOT EXISTS idx_articles_within_holdings ON articles(within_library_holdings);
-    CREATE INDEX IF NOT EXISTS idx_articles_within_holdings_date_id ON articles(within_library_holdings, date, article_id);
-    CREATE INDEX IF NOT EXISTS idx_articles_doi ON articles(doi);
-    CREATE INDEX IF NOT EXISTS idx_articles_pmid ON articles(pmid);
-    CREATE INDEX IF NOT EXISTS idx_article_listing_date_id ON article_listing(date, article_id);
-    CREATE INDEX IF NOT EXISTS idx_article_listing_area ON article_listing(area);
-    CREATE INDEX IF NOT EXISTS idx_article_listing_area_date_id ON article_listing(area, date, article_id);
-    CREATE INDEX IF NOT EXISTS idx_article_listing_publication_year ON article_listing(publication_year);
-    CREATE INDEX IF NOT EXISTS idx_article_listing_journal ON article_listing(journal_id);
-    CREATE INDEX IF NOT EXISTS idx_article_listing_journal_date_id ON article_listing(journal_id, date, article_id);
-    CREATE INDEX IF NOT EXISTS idx_article_listing_issue ON article_listing(issue_id);
-    CREATE INDEX IF NOT EXISTS idx_index_api_call_stats_run ON index_api_call_stats(run_id);
+    CREATE INDEX idx_article_change_events_order ON article_change_events(event_id);
 ";
 
 #[cfg(test)]

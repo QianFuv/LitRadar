@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 pub struct StorageConfig {
     project_root: PathBuf,
     index_dir: PathBuf,
+    index_control_dir: PathBuf,
     meta_dir: PathBuf,
     auth_db_path: PathBuf,
 }
@@ -28,6 +29,7 @@ impl StorageConfig {
         let project_root = project_root.into();
         Self {
             index_dir: project_root.join("data").join("index"),
+            index_control_dir: project_root.join("data").join("index-control"),
             meta_dir: project_root.join("data").join("meta"),
             auth_db_path: project_root.join("data").join("auth.sqlite"),
             project_root,
@@ -64,6 +66,15 @@ impl StorageConfig {
     /// Index database directory path.
     pub fn index_dir(&self) -> &Path {
         &self.index_dir
+    }
+
+    /// Return the disposable index control database directory.
+    ///
+    /// # Returns
+    ///
+    /// Control directory that is never exposed as an index database directory.
+    pub fn index_control_dir(&self) -> &Path {
+        &self.index_control_dir
     }
 
     /// Return the configured persistent metadata catalog directory.
@@ -249,6 +260,10 @@ mod tests {
             config.index_dir(),
             std::path::Path::new("project-root/data/index")
         );
+        assert_eq!(
+            config.index_control_dir(),
+            std::path::Path::new("project-root/data/index-control")
+        );
     }
 
     #[test]
@@ -264,6 +279,26 @@ mod tests {
             .expect("single database should resolve");
 
         assert_eq!(resolved, expected_path);
+    }
+
+    #[test]
+    fn disposable_control_databases_are_not_listed_as_content_indexes() {
+        let temp_dir = tempdir().expect("temp dir should be created");
+        let config = StorageConfig::from_project_root(temp_dir.path());
+        std::fs::create_dir_all(config.index_dir()).expect("index dir should exist");
+        std::fs::create_dir_all(config.index_control_dir()).expect("control dir should exist");
+        let content = config.index_dir().join("catalog.sqlite");
+        let control = config.index_control_dir().join("catalog.sqlite");
+        File::create(&content).expect("content database should create");
+        File::create(&control).expect("control database should create");
+
+        assert_eq!(
+            config
+                .list_index_databases()
+                .expect("content databases should list"),
+            vec![content]
+        );
+        assert_ne!(control.parent(), Some(config.index_dir()));
     }
 
     #[test]

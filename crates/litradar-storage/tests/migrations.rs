@@ -5,7 +5,7 @@ use std::path::Path;
 
 use litradar_storage::{
     count_users, get_journal, migrate_auth_database, migrate_index_database, migrate_storage,
-    try_load_extension, MigrationError, StorageConfig, AUTH_SCHEMA_VERSION, INDEX_SCHEMA_VERSION,
+    MigrationError, StorageConfig, AUTH_SCHEMA_VERSION, INDEX_SCHEMA_VERSION,
 };
 use rusqlite::Connection;
 use tempfile::tempdir;
@@ -454,398 +454,139 @@ fn legacy_auth_database_migration_preserves_rows_and_adds_columns() {
 }
 
 #[test]
-fn empty_index_database_migration_creates_current_schema() {
+fn empty_index_database_migration_creates_exact_provider_neutral_schema() {
     let temp_dir = tempdir().expect("temp directory should be created");
     let path = temp_dir.path().join("index.sqlite");
 
-    migrate_index_database(&path, None).expect("empty index database should migrate");
+    migrate_index_database(&path, Some(Path::new("missing-tokenizer")))
+        .expect("empty index database should migrate without a tokenizer extension");
 
     assert_eq!(user_version(&path), INDEX_SCHEMA_VERSION);
-    assert!(table_exists(&path, "journals"));
-    assert!(table_exists(&path, "articles"));
-    assert!(table_exists(&path, "article_search"));
-    assert!(table_exists(&path, "index_change_events"));
-    assert!(table_exists(&path, "index_run_lease"));
     assert_eq!(
-        table_columns(&path, "index_run_lease"),
-        ["id", "run_id", "heartbeat_at", "expires_at"]
+        content_table_names(&path),
+        [
+            "article_change_events",
+            "article_identity_keys",
+            "article_listing",
+            "article_search",
+            "articles",
+            "issues",
+            "journals",
+        ]
     );
-    assert!(table_columns(&path, "journals").contains(&"platform_journal_id".to_string()));
-    assert!(index_exists(&path, "idx_index_change_events_identity"));
-    assert!(index_exists(
-        &path,
-        "idx_index_change_events_run_membership"
-    ));
-}
-
-#[test]
-fn version_two_index_migration_preserves_rows_and_adds_run_lease() {
-    let temp_dir = tempdir().expect("temp directory should be created");
-    let path = temp_dir.path().join("version-two-index.sqlite");
-    migrate_index_database(&path, None).expect("current index database should migrate");
-    let connection = Connection::open(&path).expect("index database should open");
-    load_workspace_tokenizer(&connection);
-    connection
-        .execute_batch(
-            "
-            INSERT INTO journals (journal_id, library_id, title)
-            VALUES (60, 'scholarly', 'Preserved Journal');
-            INSERT INTO articles (
-                article_id, journal_id, title, date, authors, in_press
-            ) VALUES (
-                6000, 60, 'Preserved Article', '2026-07-01',
-                'Preserved Author', 1
-            );
-            INSERT INTO article_listing (
-                article_id, journal_id, date, in_press
-            ) VALUES (6000, 60, '2026-07-01', 1);
-            INSERT INTO article_search (
-                rowid, article_id, title, abstract, doi, authors, journal_title
-            ) VALUES (
-                6000, 6000, 'Preserved Article', '', '',
-                'Preserved Author', 'Preserved Journal'
-            );
-            INSERT INTO index_change_events (
-                run_id, worker_id, article_id, event_type, membership_type,
-                journal_id, issue_id, is_backfill, created_at
-            ) VALUES (
-                'interrupted-run', 'worker-2', 6000, 'add', 'inpress',
-                60, NULL, 1, '2026-07-01T00:00:00Z'
-            );
-            DROP TABLE IF EXISTS index_run_lease;
-            PRAGMA user_version = 2;
-            ",
-        )
-        .expect("version two fixture should be created");
-    drop(connection);
-
-    migrate_index_database(&path, None).expect("version two database should migrate");
-
-    assert_eq!(user_version(&path), INDEX_SCHEMA_VERSION);
-    assert!(table_exists(&path, "index_run_lease"));
-    assert_eq!(projection_counts(&path), (1, 1, 1));
-    let event: (String, String, i64, String, i64) = Connection::open(&path)
-        .expect("migrated index database should open")
-        .query_row(
-            "SELECT run_id, worker_id, article_id, created_at, is_backfill
-             FROM index_change_events",
-            [],
-            |row| {
-                Ok((
-                    row.get(0)?,
-                    row.get(1)?,
-                    row.get(2)?,
-                    row.get(3)?,
-                    row.get(4)?,
-                ))
-            },
-        )
-        .expect("preserved event should load");
     assert_eq!(
-        event,
-        (
-            "interrupted-run".to_string(),
-            "worker-2".to_string(),
-            6000,
-            "2026-07-01T00:00:00Z".to_string(),
-            1,
-        )
+        table_columns(&path, "journals"),
+        [
+            "journal_id",
+            "catalog_id",
+            "title",
+            "title_aliases_json",
+            "issns_json",
+            "issn",
+            "eissn",
+            "area",
+            "utd_rank",
+            "utd_rating",
+            "abs_rank",
+            "abs_rating",
+            "fms_rank",
+            "fms_rating",
+            "fmscn_rank",
+            "fmscn_rating",
+        ]
     );
-}
+    assert_eq!(
+        table_columns(&path, "articles"),
+        [
+            "article_id",
+            "journal_id",
+            "issue_id",
+            "title",
+            "publication_year",
+            "date",
+            "authors_json",
+            "start_page",
+            "end_page",
+            "abstract_text",
+            "doi",
+            "pmid",
+            "open_access",
+            "in_press",
+            "retraction_doi",
+        ]
+    );
+    assert!(index_exists(&path, "idx_article_identity_keys_article"));
+    assert!(index_exists(&path, "idx_article_change_events_revision"));
 
-#[test]
-fn version_three_failure_preserves_version_two_data() {
-    let temp_dir = tempdir().expect("temp directory should be created");
-    let path = temp_dir.path().join("broken-version-two-index.sqlite");
-    migrate_index_database(&path, None).expect("current index database should migrate");
-    let connection = Connection::open(&path).expect("index database should open");
-    connection
-        .execute_batch(
-            "
-            INSERT INTO journals (journal_id, library_id, title)
-            VALUES (70, 'scholarly', 'Rollback Journal');
-            INSERT INTO articles (article_id, journal_id, title)
-            VALUES (7000, 70, 'Rollback Article');
-            DROP TABLE IF EXISTS index_run_lease;
-            CREATE TABLE index_run_lease (
-                id INTEGER PRIMARY KEY CHECK (id = 1)
-            );
-            PRAGMA user_version = 2;
-            ",
-        )
-        .expect("broken version two fixture should be created");
-    drop(connection);
-
-    let error = migrate_index_database(&path, None)
-        .expect_err("invalid version two lease schema should fail migration");
-
-    assert!(error.to_string().contains("index_run_lease.run_id"));
-    assert_eq!(user_version(&path), 2);
-    assert_eq!(table_columns(&path, "index_run_lease"), ["id"]);
-    let article_title: String = Connection::open(&path)
-        .expect("rolled back index database should open")
-        .query_row(
-            "SELECT title FROM articles WHERE article_id = 7000",
-            [],
-            |row| row.get(0),
-        )
-        .expect("preserved article should load");
-    assert_eq!(article_title, "Rollback Article");
-}
-
-#[test]
-fn version_one_chinese_schema_repairs_columns_and_missing_projections() {
-    let temp_dir = tempdir().expect("temp directory should be created");
-    let path = temp_dir.path().join("chinese-index.sqlite");
-    migrate_index_database(&path, None).expect("current index database should migrate");
-    let connection = Connection::open(&path).expect("index database should open");
-    load_workspace_tokenizer(&connection);
-    connection
-        .execute_batch(
-            "
-            INSERT INTO journals (
-                journal_id, library_id, platform_journal_id, title, issn,
-                available, has_articles
-            ) VALUES (10, 'cnki', 'CJFQ:TEST', '测试期刊', '1234-5678', 1, 1);
-            INSERT INTO journal_meta (
-                journal_id, source_csv, area, csv_title, csv_issn, csv_library
-            ) VALUES (10, 'chinese_journals.csv', 'Medicine', '测试期刊',
-                      '1234-5678', 'cnki');
-            INSERT INTO issues (
-                issue_id, journal_id, publication_year, title, volume, number,
-                date, is_valid_issue, suppressed, embargoed, within_subscription
-            ) VALUES (100, 10, 2026, '2026-01', '1', '1', '2026-01-01',
-                      1, 0, 0, 1);
-            INSERT INTO articles (
-                article_id, journal_id, issue_id, title, date, authors, abstract,
-                doi, pmid, suppressed, in_press, open_access,
-                within_library_holdings
-            ) VALUES
-                (1000, 10, 100, '投影修复文章', '2026-01-02', 'Author One',
-                 'Abstract One', '10.1000/one', '1', 0, 0, 1, 1),
-                (1001, 10, NULL, '在编文章', '2026-01-03', 'Author Two',
-                 'Abstract Two', '10.1000/two', '2', 0, 1, 0, 0);
-            DROP TABLE index_change_events;
-            ALTER TABLE journal_meta DROP COLUMN resolved_source;
-            ALTER TABLE journal_meta DROP COLUMN resolved_source_id;
-            ALTER TABLE journal_meta DROP COLUMN resolved_title;
-            ALTER TABLE journal_meta DROP COLUMN resolved_issn;
-            ALTER TABLE journal_meta DROP COLUMN resolved_eissn;
-            PRAGMA user_version = 1;
-            ",
-        )
-        .expect("version one Chinese fixture should be created");
-    drop(connection);
-
-    migrate_index_database(&path, None).expect("version one Chinese database should migrate");
-
-    assert_eq!(user_version(&path), INDEX_SCHEMA_VERSION);
-    let columns = table_columns(&path, "journal_meta");
-    for column in [
-        "resolved_source",
-        "resolved_source_id",
-        "resolved_title",
-        "resolved_issn",
-        "resolved_eissn",
+    let schema = sqlite_schema_sql(&path);
+    for forbidden in [
+        "provider",
+        "source_csv",
+        "library_id",
+        "platform_id",
+        "url",
+        "permalink",
+        "content_location",
+        "full_text",
+        "checkpoint",
+        "lease",
+        "index_runs",
+        "stats",
     ] {
-        assert!(columns.contains(&column.to_string()), "missing {column}");
+        assert!(!schema.contains(forbidden), "found {forbidden}");
     }
-    assert!(table_exists(&path, "index_change_events"));
-    assert!(index_exists(&path, "idx_index_change_events_run_order"));
-    assert_eq!(projection_counts(&path), (2, 2, 2));
+}
 
-    let connection = Connection::open(&path).expect("repaired database should open");
-    load_workspace_tokenizer(&connection);
-    let search_row: (i64, String, String) = connection
-        .query_row(
-            "SELECT article_id, title, journal_title
-             FROM article_search WHERE rowid = 1000",
-            [],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-        )
-        .expect("repaired search row should load");
-    let listing_row: (Option<i64>, Option<String>) = connection
-        .query_row(
-            "SELECT publication_year, area FROM article_listing WHERE article_id = 1000",
-            [],
-            |row| Ok((row.get(0)?, row.get(1)?)),
-        )
-        .expect("repaired listing row should load");
+#[test]
+fn legacy_index_versions_require_rebuild_without_modifying_files() {
+    let temp_dir = tempdir().expect("temp directory should be created");
+
+    for version in 0..INDEX_SCHEMA_VERSION {
+        let path = temp_dir.path().join(format!("legacy-v{version}.sqlite"));
+        create_nonempty_index_database(&path, version);
+        let before = fs::read(&path).expect("legacy bytes should read");
+
+        let error = migrate_index_database(&path, None)
+            .expect_err("legacy index database should require a rebuild");
+
+        match error {
+            MigrationError::IndexRebuildRequired {
+                path: error_path,
+                found,
+                required,
+            } => {
+                assert_eq!(error_path, path);
+                assert_eq!(found, version);
+                assert_eq!(required, INDEX_SCHEMA_VERSION);
+            }
+            other => panic!("unexpected migration error: {other}"),
+        }
+        assert_eq!(
+            fs::read(&path).expect("legacy bytes should remain readable"),
+            before,
+            "version {version} changed"
+        );
+    }
+}
+
+#[test]
+fn malformed_current_index_schema_is_rejected_without_modifying_files() {
+    let temp_dir = tempdir().expect("temp directory should be created");
+    let path = temp_dir.path().join("malformed-current.sqlite");
+    migrate_index_database(&path, None).expect("current index database should initialize");
+    let connection = Connection::open(&path).expect("current index database should open");
+    connection
+        .execute("ALTER TABLE articles ADD COLUMN provider TEXT", [])
+        .expect("forbidden fixture column should be added");
+    drop(connection);
+    let before = fs::read(&path).expect("malformed current bytes should read");
+
+    migrate_index_database(&path, None).expect_err("malformed current schema should be rejected");
+
     assert_eq!(
-        search_row,
-        (1000, "投影修复文章".to_string(), "测试期刊".to_string())
+        fs::read(&path).expect("malformed current bytes should remain readable"),
+        before
     );
-    assert_eq!(listing_row, (Some(2026), Some("Medicine".to_string())));
-}
-
-#[test]
-fn version_one_scholarly_schema_preserves_complete_projections() {
-    let temp_dir = tempdir().expect("temp directory should be created");
-    let path = temp_dir.path().join("scholarly-index.sqlite");
-    migrate_index_database(&path, None).expect("current index database should migrate");
-    let connection = Connection::open(&path).expect("index database should open");
-    load_workspace_tokenizer(&connection);
-    connection
-        .execute_batch(
-            "
-            INSERT INTO journals (
-                journal_id, library_id, platform_journal_id, title
-            ) VALUES (20, 'scholarly', '1234-5678', 'Complete Journal');
-            INSERT INTO journal_meta (
-                journal_id, source_csv, area, csv_title, csv_issn, csv_library,
-                resolved_source, resolved_source_id, resolved_title,
-                resolved_issn, resolved_eissn
-            ) VALUES (20, 'english_journals.csv', 'Science', 'Complete Journal',
-                      '1234-5678', 'scholarly', 'crossref', '1234-5678',
-                      'Complete Journal', '1234-5678', NULL);
-            INSERT INTO articles (
-                article_id, journal_id, title, date, authors, abstract, doi,
-                suppressed, in_press, open_access, within_library_holdings
-            ) VALUES (2000, 20, 'Complete Article', '2026-02-01', 'Author',
-                      'Abstract', '10.2000/complete', 0, 1, 1, 0);
-            INSERT INTO article_listing (
-                article_id, journal_id, issue_id, publication_year, date,
-                open_access, in_press, suppressed, within_library_holdings,
-                doi, pmid, area
-            ) VALUES (2000, 20, NULL, NULL, '2026-02-01', 1, 1, 0, 0,
-                      '10.2000/complete', NULL, 'Science');
-            INSERT INTO article_search (
-                rowid, article_id, title, abstract, doi, authors, journal_title
-            ) VALUES (2000, 2000, 'Complete Article', 'Abstract',
-                      '10.2000/complete', 'Author', 'Complete Journal');
-            DROP TABLE index_change_events;
-            PRAGMA user_version = 1;
-            ",
-        )
-        .expect("version one scholarly fixture should be created");
-    drop(connection);
-
-    migrate_index_database(&path, None).expect("version one scholarly database should migrate");
-
-    assert_eq!(user_version(&path), INDEX_SCHEMA_VERSION);
-    assert_eq!(projection_counts(&path), (1, 1, 1));
-    assert!(table_exists(&path, "index_change_events"));
-}
-
-#[test]
-fn projection_repair_crosses_the_bounded_batch_boundary() {
-    let temp_dir = tempdir().expect("temp directory should be created");
-    let path = temp_dir.path().join("batched-projection-index.sqlite");
-    migrate_index_database(&path, None).expect("current index database should migrate");
-    let connection = Connection::open(&path).expect("index database should open");
-    load_workspace_tokenizer(&connection);
-    connection
-        .execute_batch(
-            "
-            INSERT INTO journals (journal_id, library_id, title)
-            VALUES (40, 'scholarly', 'Batched Journal');
-            INSERT INTO journal_meta (journal_id, source_csv, area)
-            VALUES (40, 'english_journals.csv', 'Science');
-            WITH RECURSIVE article_ids(article_id) AS (
-                SELECT 1
-                UNION ALL
-                SELECT article_id + 1 FROM article_ids WHERE article_id < 1001
-            )
-            INSERT INTO articles (article_id, journal_id, title, in_press)
-            SELECT article_id, 40, 'Batched Article ' || article_id, 1
-            FROM article_ids;
-            DROP TABLE index_change_events;
-            PRAGMA user_version = 1;
-            ",
-        )
-        .expect("large version one fixture should be created");
-    drop(connection);
-
-    migrate_index_database(&path, None).expect("batched projections should migrate");
-
-    assert_eq!(projection_counts(&path), (1001, 1001, 1001));
-}
-
-#[test]
-fn version_two_failure_rolls_back_schema_and_preserves_articles() {
-    let temp_dir = tempdir().expect("temp directory should be created");
-    let path = temp_dir.path().join("broken-version-one-index.sqlite");
-    migrate_index_database(&path, None).expect("current index database should migrate");
-    let connection = Connection::open(&path).expect("index database should open");
-    load_workspace_tokenizer(&connection);
-    connection
-        .execute_batch(
-            "
-            INSERT INTO journals (journal_id, library_id, title)
-            VALUES (30, 'scholarly', 'Preserved Journal');
-            INSERT INTO journal_meta (journal_id, source_csv)
-            VALUES (30, 'english_journals.csv');
-            INSERT INTO articles (article_id, journal_id, title)
-            VALUES (3000, 30, 'Preserved Article');
-            DROP TABLE index_change_events;
-            DROP TABLE article_listing;
-            CREATE TABLE article_listing (article_id INTEGER PRIMARY KEY);
-            PRAGMA user_version = 1;
-            ",
-        )
-        .expect("broken version one fixture should be created");
-    drop(connection);
-
-    let error = migrate_index_database(&path, None)
-        .expect_err("invalid version one projections should fail migration");
-
-    assert!(error.to_string().contains("article_listing.journal_id"));
-    assert_eq!(user_version(&path), 1);
-    assert!(!table_exists(&path, "index_change_events"));
-    assert!(!table_columns(&path, "article_listing").contains(&"journal_id".to_string()));
-    let connection = Connection::open(&path).expect("rolled back index should open");
-    let article_title: String = connection
-        .query_row(
-            "SELECT title FROM articles WHERE article_id = 3000",
-            [],
-            |row| row.get(0),
-        )
-        .expect("original article should remain");
-    assert_eq!(article_title, "Preserved Article");
-}
-
-#[test]
-fn legacy_index_database_migration_preserves_rows_and_adds_platform_id() {
-    let temp_dir = tempdir().expect("temp directory should be created");
-    let path = temp_dir.path().join("legacy-index.sqlite");
-    let connection = Connection::open(&path).expect("legacy index database should open");
-    connection
-        .execute_batch(
-            "
-            CREATE TABLE journals (
-                journal_id INTEGER PRIMARY KEY,
-                library_id TEXT NOT NULL,
-                title TEXT,
-                issn TEXT,
-                eissn TEXT,
-                scimago_rank REAL,
-                cover_url TEXT,
-                available INTEGER,
-                toc_data_approved_and_live INTEGER,
-                has_articles INTEGER
-            );
-            INSERT INTO journals
-                (journal_id, library_id, title, issn, available, has_articles)
-            VALUES
-                (42, 'scholarly', 'Legacy Journal', '1234-5678', 1, 1);
-            ",
-        )
-        .expect("legacy index schema should be created");
-    drop(connection);
-
-    migrate_index_database(&path, None).expect("legacy index database should migrate");
-
-    let connection = Connection::open(&path).expect("migrated index database should open");
-    let journal: (String, Option<String>) = connection
-        .query_row(
-            "SELECT title, platform_journal_id FROM journals WHERE journal_id = 42",
-            [],
-            |row| Ok((row.get(0)?, row.get(1)?)),
-        )
-        .expect("legacy journal should remain");
-
-    assert_eq!(journal, ("Legacy Journal".to_string(), None));
-    assert_eq!(user_version(&path), INDEX_SCHEMA_VERSION);
 }
 
 #[test]
@@ -912,36 +653,29 @@ fn failed_auth_migration_rolls_back_schema_changes() {
 }
 
 #[test]
-fn failed_index_migration_rolls_back_schema_changes() {
+fn storage_migration_rejects_legacy_index_without_modifying_it() {
     let temp_dir = tempdir().expect("temp directory should be created");
-    let path = temp_dir.path().join("broken-index.sqlite");
-    let connection = Connection::open(&path).expect("broken index database should open");
-    connection
-        .execute_batch(
-            "
-            CREATE TABLE journals (
-                journal_id INTEGER PRIMARY KEY,
-                library_id TEXT NOT NULL,
-                title TEXT,
-                issn TEXT,
-                eissn TEXT,
-                scimago_rank REAL,
-                cover_url TEXT,
-                available INTEGER,
-                toc_data_approved_and_live INTEGER,
-                has_articles INTEGER
-            );
-            CREATE TABLE articles (article_id INTEGER PRIMARY KEY);
-            ",
-        )
-        .expect("broken index fixture should be created");
-    drop(connection);
+    let config = StorageConfig::from_project_root(temp_dir.path());
+    fs::create_dir_all(config.index_dir()).expect("index directory should be created");
+    let index_path = config.index_dir().join("legacy.sqlite");
+    create_nonempty_index_database(&index_path, 3);
+    let before = fs::read(&index_path).expect("legacy bytes should read");
 
-    migrate_index_database(&path, None).expect_err("invalid legacy index schema should fail");
+    let error = migrate_storage(&config).expect_err("legacy index should stop storage migration");
 
-    assert_eq!(user_version(&path), 0);
-    assert!(!table_columns(&path, "journals").contains(&"platform_journal_id".to_string()));
-    assert!(!table_exists(&path, "issues"));
+    assert!(matches!(
+        error,
+        MigrationError::IndexRebuildRequired {
+            path,
+            found: 3,
+            required: INDEX_SCHEMA_VERSION,
+        } if path == index_path
+    ));
+    assert_eq!(
+        fs::read(&index_path).expect("legacy bytes should remain readable"),
+        before
+    );
+    assert_eq!(user_version(config.auth_db_path()), AUTH_SCHEMA_VERSION);
 }
 
 #[test]
@@ -1101,29 +835,47 @@ fn table_columns(path: &Path, table_name: &str) -> Vec<String> {
         .expect("table columns should collect")
 }
 
-fn load_workspace_tokenizer(connection: &Connection) {
-    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let project_root = manifest_dir
-        .ancestors()
-        .nth(2)
-        .expect("workspace root should resolve");
-    let tokenizer_path = StorageConfig::from_project_root(project_root)
-        .simple_tokenizer_path()
-        .expect("workspace tokenizer should exist");
-    try_load_extension(connection, Some(&tokenizer_path)).expect("workspace tokenizer should load");
+fn content_table_names(path: &Path) -> Vec<String> {
+    let connection = Connection::open(path).expect("database should open for table inventory");
+    let mut statement = connection
+        .prepare(
+            "SELECT name FROM sqlite_schema
+             WHERE type = 'table' AND name NOT LIKE 'sqlite_%'
+               AND name NOT LIKE 'article_search_%'
+             ORDER BY name",
+        )
+        .expect("table inventory should prepare");
+    let rows = statement
+        .query_map([], |row| row.get(0))
+        .expect("table inventory should query");
+    rows.collect::<Result<Vec<_>, _>>()
+        .expect("table inventory should collect")
 }
 
-fn projection_counts(path: &Path) -> (i64, i64, i64) {
-    let connection = Connection::open(path).expect("database should open for projection counts");
-    load_workspace_tokenizer(&connection);
-    let articles = connection
-        .query_row("SELECT COUNT(*) FROM articles", [], |row| row.get(0))
-        .expect("article count should load");
-    let search = connection
-        .query_row("SELECT COUNT(*) FROM article_search", [], |row| row.get(0))
-        .expect("search count should load");
-    let listing = connection
-        .query_row("SELECT COUNT(*) FROM article_listing", [], |row| row.get(0))
-        .expect("listing count should load");
-    (articles, search, listing)
+fn sqlite_schema_sql(path: &Path) -> String {
+    Connection::open(path)
+        .expect("database should open for schema SQL")
+        .query_row(
+            "SELECT group_concat(sql, '\n') FROM sqlite_schema WHERE sql IS NOT NULL",
+            [],
+            |row| row.get::<_, String>(0),
+        )
+        .expect("schema SQL should load")
+        .to_ascii_lowercase()
+}
+
+fn create_nonempty_index_database(path: &Path, version: i64) {
+    let connection = Connection::open(path).expect("legacy index database should open");
+    connection
+        .execute_batch(
+            "CREATE TABLE legacy_articles (
+                 article_id INTEGER PRIMARY KEY,
+                 provider TEXT NOT NULL
+             );
+             INSERT INTO legacy_articles (article_id, provider) VALUES (1, 'fixture');",
+        )
+        .expect("legacy index fixture should initialize");
+    connection
+        .pragma_update(None, "user_version", version)
+        .expect("legacy index version should be set");
 }

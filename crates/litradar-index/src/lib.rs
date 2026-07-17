@@ -2,6 +2,7 @@
 
 pub mod changes;
 pub mod cnki;
+pub mod control;
 pub mod identity;
 pub mod live;
 pub mod manifest;

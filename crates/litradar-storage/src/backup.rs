@@ -1647,6 +1647,14 @@ mod tests {
             )
             .expect("managed metadata state should write");
         let index_path = fixture.create_index_probe("journal-row");
+        fs::create_dir_all(fixture.source_config.index_control_dir())
+            .expect("control directory should be created");
+        let control_path = fixture
+            .source_config
+            .index_control_dir()
+            .join("provider.sqlite");
+        fs::write(&control_path, b"disposable provider checkpoint")
+            .expect("control fixture should be written");
         fixture.write_metadata("catalog.csv", b"name,value\nsource,catalog\n");
         fixture.write_metadata("manual.bak", b"operator backup bytes");
         fixture.write_metadata("nested/notes.txt", b"nested metadata companion");
@@ -1670,6 +1678,15 @@ mod tests {
             .components
             .iter()
             .any(|component| component.kind == BackupComponentKind::IndexDatabase));
+        assert!(manifest
+            .components
+            .iter()
+            .all(|component| !component.path.contains("index-control")));
+        assert_eq!(
+            fs::read(&control_path).expect("source control fixture should remain readable"),
+            b"disposable provider checkpoint"
+        );
+        assert!(!fixture.backup_dir.join("index-control").exists());
         assert_eq!(
             manifest
                 .components

@@ -11,12 +11,143 @@ use rusqlite::{
     TransactionBehavior,
 };
 
+use litradar_domain::{
+    ArticleAuthorDraft, ArticleDraft, IssueDraft, JournalCatalogEntry, ProviderBatch,
+};
+use litradar_provider::conformance::{validate_provider_batch, ContractViolation};
+
+use crate::identity::{
+    article_identity_keys, issue_id_from_draft, journal_id_from_catalog_id, merge_article_drafts,
+    resolve_article_identity, ArticleIdentityError, ArticleIdentityKey, ArticleMergeError,
+};
 use crate::stats::IndexRunStats;
 use crate::transforms::{ArticleRecord, IssueRecord, JournalRecord, MetaRecord};
 
 const INDEX_BUSY_TIMEOUT_SECONDS: u64 = 30;
 const INDEX_RUN_LEASE_DURATION_SECONDS: i64 = 300;
 const PENDING_EVENT_ADOPTION_BATCH_SIZE: i64 = 1_000;
+
+/// Current provider-neutral content database schema version.
+pub const CONTENT_SCHEMA_VERSION: i64 = 4;
+
+const CONTENT_TABLES_SQL: &str = "
+    CREATE TABLE journals (
+        journal_id INTEGER PRIMARY KEY,
+        catalog_id TEXT NOT NULL UNIQUE,
+        title TEXT NOT NULL,
+        title_aliases_json TEXT NOT NULL,
+        issns_json TEXT NOT NULL,
+        issn TEXT,
+        eissn TEXT,
+        area TEXT,
+        utd_rank TEXT,
+        utd_rating TEXT,
+        abs_rank TEXT,
+        abs_rating TEXT,
+        fms_rank TEXT,
+        fms_rating TEXT,
+        fmscn_rank TEXT,
+        fmscn_rating TEXT
+    );
+
+    CREATE TABLE issues (
+        issue_id INTEGER PRIMARY KEY,
+        journal_id INTEGER NOT NULL,
+        publication_year INTEGER,
+        title TEXT,
+        volume TEXT,
+        number TEXT,
+        date TEXT,
+        FOREIGN KEY (journal_id) REFERENCES journals(journal_id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE articles (
+        article_id INTEGER PRIMARY KEY,
+        journal_id INTEGER NOT NULL,
+        issue_id INTEGER,
+        title TEXT NOT NULL,
+        publication_year INTEGER,
+        date TEXT,
+        authors_json TEXT NOT NULL,
+        start_page TEXT,
+        end_page TEXT,
+        abstract_text TEXT,
+        doi TEXT,
+        pmid TEXT,
+        open_access INTEGER,
+        in_press INTEGER,
+        retraction_doi TEXT,
+        FOREIGN KEY (journal_id) REFERENCES journals(journal_id) ON DELETE CASCADE,
+        FOREIGN KEY (issue_id) REFERENCES issues(issue_id) ON DELETE SET NULL
+    );
+
+    CREATE TABLE article_identity_keys (
+        identity_kind TEXT NOT NULL CHECK (identity_kind IN ('doi', 'pmid', 'bibliographic')),
+        identity_value TEXT NOT NULL,
+        article_id INTEGER NOT NULL,
+        PRIMARY KEY (identity_kind, identity_value),
+        FOREIGN KEY (article_id) REFERENCES articles(article_id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE article_listing (
+        article_id INTEGER PRIMARY KEY,
+        journal_id INTEGER NOT NULL,
+        issue_id INTEGER,
+        publication_year INTEGER,
+        date TEXT,
+        open_access INTEGER,
+        in_press INTEGER,
+        doi TEXT,
+        pmid TEXT,
+        area TEXT,
+        FOREIGN KEY (article_id) REFERENCES articles(article_id) ON DELETE CASCADE,
+        FOREIGN KEY (journal_id) REFERENCES journals(journal_id) ON DELETE CASCADE,
+        FOREIGN KEY (issue_id) REFERENCES issues(issue_id) ON DELETE SET NULL
+    );
+
+    CREATE VIRTUAL TABLE article_search
+    USING fts5(
+        article_id UNINDEXED,
+        title,
+        abstract_text,
+        doi,
+        pmid,
+        authors,
+        journal_title,
+        tokenize = 'unicode61 remove_diacritics 2'
+    );
+
+    CREATE TABLE article_change_events (
+        event_id INTEGER PRIMARY KEY,
+        content_revision TEXT NOT NULL,
+        article_id INTEGER NOT NULL,
+        change_kind TEXT NOT NULL CHECK (change_kind IN ('upsert', 'remove')),
+        journal_id INTEGER NOT NULL,
+        issue_id INTEGER,
+        in_press INTEGER NOT NULL CHECK (in_press IN (0, 1)),
+        created_at TEXT NOT NULL
+    );
+
+    CREATE INDEX idx_journals_issn ON journals(issn);
+    CREATE INDEX idx_journals_eissn ON journals(eissn);
+    CREATE INDEX idx_issues_journal_year ON issues(journal_id, publication_year);
+    CREATE INDEX idx_articles_journal ON articles(journal_id);
+    CREATE INDEX idx_articles_issue ON articles(issue_id);
+    CREATE INDEX idx_articles_date_id ON articles(date, article_id);
+    CREATE INDEX idx_articles_doi ON articles(doi);
+    CREATE INDEX idx_articles_pmid ON articles(pmid);
+    CREATE INDEX idx_article_identity_keys_article ON article_identity_keys(article_id);
+    CREATE INDEX idx_article_listing_date_id ON article_listing(date, article_id);
+    CREATE INDEX idx_article_listing_journal_date_id
+        ON article_listing(journal_id, date, article_id);
+    CREATE INDEX idx_article_listing_issue ON article_listing(issue_id);
+    CREATE UNIQUE INDEX idx_article_change_events_revision
+        ON article_change_events(
+            content_revision, article_id, change_kind, journal_id,
+            COALESCE(issue_id, -1), in_press
+        );
+    CREATE INDEX idx_article_change_events_order ON article_change_events(event_id);
+";
 
 /// Context attached to normalized index change events.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -209,6 +340,916 @@ struct ArticleMembership {
     membership_type: &'static str,
     journal_id: i64,
     issue_id: Option<i64>,
+}
+
+/// Provider-neutral content database initialization or write failure.
+#[derive(Debug)]
+pub enum ContentDatabaseError {
+    /// SQLite returned an error.
+    Sqlite(rusqlite::Error),
+    /// JSON encoding or decoding of an explicit canonical array failed.
+    Json(serde_json::Error),
+    /// A provider response violated the canonical contract.
+    Contract(ContractViolation),
+    /// Canonical aliases were missing or conflicted.
+    Identity(ArticleIdentityError),
+    /// Canonical article values could not be merged safely.
+    Merge(ArticleMergeError),
+    /// A legacy or unknown schema must be rebuilt instead of migrated.
+    RebuildRequired {
+        /// Existing SQLite user version.
+        found_version: i64,
+    },
+    /// A current-version database does not match the exact content schema.
+    InvalidCurrentSchema(String),
+    /// A deterministic SQLite ID collided with an unrelated existing article.
+    ArticleIdCollision {
+        /// Colliding internal article identifier.
+        article_id: i64,
+    },
+}
+
+impl fmt::Display for ContentDatabaseError {
+    /// Format a content database failure without provider payloads or paths.
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Sqlite(error) => write!(formatter, "{error}"),
+            Self::Json(error) => write!(formatter, "{error}"),
+            Self::Contract(error) => write!(formatter, "{error}"),
+            Self::Identity(error) => write!(formatter, "{error}"),
+            Self::Merge(error) => write!(formatter, "{error}"),
+            Self::RebuildRequired { found_version } => write!(
+                formatter,
+                "index schema version {found_version} requires an explicit rebuild for content schema v{CONTENT_SCHEMA_VERSION}"
+            ),
+            Self::InvalidCurrentSchema(message) => {
+                write!(formatter, "invalid content schema v{CONTENT_SCHEMA_VERSION}: {message}")
+            }
+            Self::ArticleIdCollision { article_id } => {
+                write!(formatter, "canonical article ID collision for {article_id}")
+            }
+        }
+    }
+}
+
+impl Error for ContentDatabaseError {
+    /// Return the underlying failure when present.
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::Sqlite(error) => Some(error),
+            Self::Json(error) => Some(error),
+            Self::Contract(error) => Some(error),
+            Self::Identity(error) => Some(error),
+            Self::Merge(error) => Some(error),
+            Self::RebuildRequired { .. }
+            | Self::InvalidCurrentSchema(_)
+            | Self::ArticleIdCollision { .. } => None,
+        }
+    }
+}
+
+impl From<rusqlite::Error> for ContentDatabaseError {
+    /// Convert SQLite failures into content database errors.
+    fn from(error: rusqlite::Error) -> Self {
+        Self::Sqlite(error)
+    }
+}
+
+impl From<serde_json::Error> for ContentDatabaseError {
+    /// Convert canonical JSON failures into content database errors.
+    fn from(error: serde_json::Error) -> Self {
+        Self::Json(error)
+    }
+}
+
+impl From<ContractViolation> for ContentDatabaseError {
+    /// Convert provider contract failures into content database errors.
+    fn from(error: ContractViolation) -> Self {
+        Self::Contract(error)
+    }
+}
+
+impl From<ArticleIdentityError> for ContentDatabaseError {
+    /// Convert identity failures into content database errors.
+    fn from(error: ArticleIdentityError) -> Self {
+        Self::Identity(error)
+    }
+}
+
+impl From<ArticleMergeError> for ContentDatabaseError {
+    /// Convert merge failures into content database errors.
+    fn from(error: ArticleMergeError) -> Self {
+        Self::Merge(error)
+    }
+}
+
+/// Aggregate result of one atomic canonical content write.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ContentWriteOutcome {
+    /// Canonical article drafts examined.
+    pub articles_seen: usize,
+    /// New or durably changed article rows.
+    pub articles_changed: usize,
+    /// New immutable identity aliases attached.
+    pub identity_aliases_added: usize,
+    /// Provider-neutral outbox events emitted.
+    pub change_events_emitted: usize,
+}
+
+/// Open and validate a provider-neutral content database.
+///
+/// # Arguments
+///
+/// * `path` - Content database path derived only from the catalog filename.
+///
+/// # Returns
+///
+/// Initialized v4 connection or an explicit rebuild-required failure.
+pub fn open_content_db(path: impl AsRef<Path>) -> Result<Connection, ContentDatabaseError> {
+    let connection = Connection::open(path)?;
+    connection.busy_timeout(Duration::from_secs(INDEX_BUSY_TIMEOUT_SECONDS))?;
+    init_content_db(&connection)?;
+    Ok(connection)
+}
+
+/// Initialize an empty content database or validate an existing v4 database.
+///
+/// # Arguments
+///
+/// * `connection` - Open SQLite connection.
+///
+/// # Returns
+///
+/// Success only for an empty database or an exact current schema.
+pub fn init_content_db(connection: &Connection) -> Result<(), ContentDatabaseError> {
+    let version = connection.query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))?;
+    let object_count = content_schema_object_count(connection)?;
+    if version == CONTENT_SCHEMA_VERSION {
+        return validate_current_content_schema(connection);
+    }
+    if version != 0 || object_count != 0 {
+        return Err(ContentDatabaseError::RebuildRequired {
+            found_version: version,
+        });
+    }
+
+    connection.execute_batch(
+        "PRAGMA foreign_keys = ON;
+         PRAGMA journal_mode = WAL;
+         PRAGMA synchronous = NORMAL;",
+    )?;
+    let transaction = Transaction::new_unchecked(connection, TransactionBehavior::Immediate)?;
+    transaction.execute_batch(CONTENT_TABLES_SQL)?;
+    transaction.pragma_update(None, "user_version", CONTENT_SCHEMA_VERSION)?;
+    transaction.commit()?;
+    validate_current_content_schema(connection)
+}
+
+/// Atomically validate, identify, merge, project, and enqueue one canonical batch.
+///
+/// # Arguments
+///
+/// * `connection` - Open provider-neutral content database.
+/// * `catalog` - LitRadar-owned maintained journal entry.
+/// * `batch` - Canonical provider response.
+/// * `content_revision` - Core-owned idempotency label for emitted outbox rows.
+/// * `created_at` - Safe content change timestamp.
+///
+/// # Returns
+///
+/// Deterministic write counts after one immediate transaction commits.
+pub fn write_content_batch(
+    connection: &Connection,
+    catalog: &JournalCatalogEntry,
+    batch: &ProviderBatch,
+    content_revision: &str,
+    created_at: &str,
+) -> Result<ContentWriteOutcome, ContentDatabaseError> {
+    validate_provider_batch(catalog, batch)?;
+    if content_revision.is_empty() || content_revision != content_revision.trim() {
+        return Err(ContentDatabaseError::InvalidCurrentSchema(
+            "content revision must be non-empty and trimmed".to_string(),
+        ));
+    }
+    let transaction = Transaction::new_unchecked(connection, TransactionBehavior::Immediate)?;
+    let journal_id = upsert_canonical_journal(&transaction, catalog)?;
+    for issue in &batch.issues {
+        upsert_canonical_issue(&transaction, journal_id, issue)?;
+    }
+
+    let mut outcome = ContentWriteOutcome {
+        articles_seen: batch.articles.len(),
+        ..ContentWriteOutcome::default()
+    };
+    for article in &batch.articles {
+        write_canonical_article(
+            &transaction,
+            catalog,
+            journal_id,
+            article,
+            content_revision,
+            created_at,
+            &mut outcome,
+        )?;
+    }
+    refresh_journal_projections(&transaction, journal_id, catalog)?;
+    transaction.commit()?;
+    Ok(outcome)
+}
+
+fn content_schema_object_count(connection: &Connection) -> rusqlite::Result<i64> {
+    connection.query_row(
+        "SELECT COUNT(*) FROM sqlite_schema WHERE name NOT LIKE 'sqlite_%'",
+        [],
+        |row| row.get(0),
+    )
+}
+
+fn validate_current_content_schema(connection: &Connection) -> Result<(), ContentDatabaseError> {
+    let expected = [
+        "article_change_events",
+        "article_identity_keys",
+        "article_listing",
+        "article_search",
+        "articles",
+        "issues",
+        "journals",
+    ]
+    .into_iter()
+    .map(str::to_string)
+    .collect::<BTreeSet<_>>();
+    let mut statement = connection.prepare(
+        "SELECT name
+         FROM sqlite_schema
+         WHERE type = 'table'
+           AND name NOT LIKE 'sqlite_%'
+           AND name NOT LIKE 'article_search_%'
+         ORDER BY name",
+    )?;
+    let actual = statement
+        .query_map([], |row| row.get::<_, String>(0))?
+        .collect::<rusqlite::Result<BTreeSet<_>>>()?;
+    if actual != expected {
+        return Err(ContentDatabaseError::InvalidCurrentSchema(format!(
+            "table inventory mismatch: {actual:?}"
+        )));
+    }
+    let expected_columns: &[(&str, &[&str])] = &[
+        (
+            "journals",
+            &[
+                "journal_id",
+                "catalog_id",
+                "title",
+                "title_aliases_json",
+                "issns_json",
+                "issn",
+                "eissn",
+                "area",
+                "utd_rank",
+                "utd_rating",
+                "abs_rank",
+                "abs_rating",
+                "fms_rank",
+                "fms_rating",
+                "fmscn_rank",
+                "fmscn_rating",
+            ],
+        ),
+        (
+            "issues",
+            &[
+                "issue_id",
+                "journal_id",
+                "publication_year",
+                "title",
+                "volume",
+                "number",
+                "date",
+            ],
+        ),
+        (
+            "articles",
+            &[
+                "article_id",
+                "journal_id",
+                "issue_id",
+                "title",
+                "publication_year",
+                "date",
+                "authors_json",
+                "start_page",
+                "end_page",
+                "abstract_text",
+                "doi",
+                "pmid",
+                "open_access",
+                "in_press",
+                "retraction_doi",
+            ],
+        ),
+        (
+            "article_identity_keys",
+            &["identity_kind", "identity_value", "article_id"],
+        ),
+        (
+            "article_listing",
+            &[
+                "article_id",
+                "journal_id",
+                "issue_id",
+                "publication_year",
+                "date",
+                "open_access",
+                "in_press",
+                "doi",
+                "pmid",
+                "area",
+            ],
+        ),
+        (
+            "article_search",
+            &[
+                "article_id",
+                "title",
+                "abstract_text",
+                "doi",
+                "pmid",
+                "authors",
+                "journal_title",
+            ],
+        ),
+        (
+            "article_change_events",
+            &[
+                "event_id",
+                "content_revision",
+                "article_id",
+                "change_kind",
+                "journal_id",
+                "issue_id",
+                "in_press",
+                "created_at",
+            ],
+        ),
+    ];
+    for (table_name, expected) in expected_columns {
+        let mut statement = connection.prepare(&format!("PRAGMA table_info({table_name})"))?;
+        let actual = statement
+            .query_map([], |row| row.get::<_, String>(1))?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        if actual != *expected {
+            return Err(ContentDatabaseError::InvalidCurrentSchema(format!(
+                "column inventory mismatch for {table_name}: {actual:?}"
+            )));
+        }
+    }
+    let expected_indexes = [
+        "idx_article_change_events_order",
+        "idx_article_change_events_revision",
+        "idx_article_identity_keys_article",
+        "idx_article_listing_date_id",
+        "idx_article_listing_issue",
+        "idx_article_listing_journal_date_id",
+        "idx_articles_date_id",
+        "idx_articles_doi",
+        "idx_articles_issue",
+        "idx_articles_journal",
+        "idx_articles_pmid",
+        "idx_issues_journal_year",
+        "idx_journals_eissn",
+        "idx_journals_issn",
+    ]
+    .into_iter()
+    .map(str::to_string)
+    .collect::<BTreeSet<_>>();
+    let mut statement = connection.prepare(
+        "SELECT name FROM sqlite_schema
+         WHERE type = 'index' AND name NOT LIKE 'sqlite_%'
+         ORDER BY name",
+    )?;
+    let actual_indexes = statement
+        .query_map([], |row| row.get::<_, String>(0))?
+        .collect::<rusqlite::Result<BTreeSet<_>>>()?;
+    if actual_indexes != expected_indexes {
+        return Err(ContentDatabaseError::InvalidCurrentSchema(format!(
+            "index inventory mismatch: {actual_indexes:?}"
+        )));
+    }
+    for forbidden in [
+        "provider",
+        "source",
+        "platform",
+        "url",
+        "permalink",
+        "content_location",
+        "full_text",
+        "checkpoint",
+        "lease",
+        "run_id",
+        "statistics",
+        "stats",
+    ] {
+        let count = connection.query_row(
+            "SELECT COUNT(*)
+             FROM pragma_table_list() AS tables
+             JOIN pragma_table_xinfo(tables.name) AS columns
+             WHERE tables.schema = 'main'
+               AND tables.name NOT LIKE 'article_search_%'
+               AND lower(columns.name) LIKE '%' || ?1 || '%'",
+            [forbidden],
+            |row| row.get::<_, i64>(0),
+        )?;
+        if count != 0 {
+            return Err(ContentDatabaseError::InvalidCurrentSchema(format!(
+                "forbidden column fragment {forbidden}"
+            )));
+        }
+    }
+    connection.execute_batch("PRAGMA foreign_keys = ON;")?;
+    Ok(())
+}
+
+fn upsert_canonical_journal(
+    connection: &Connection,
+    catalog: &JournalCatalogEntry,
+) -> Result<i64, ContentDatabaseError> {
+    let journal_id = journal_id_from_catalog_id(&catalog.catalog_id);
+    let title_aliases_json = serde_json::to_string(&catalog.title_aliases)?;
+    let issns_json = serde_json::to_string(&catalog.all_issns)?;
+    connection.execute(
+        "INSERT INTO journals (
+             journal_id, catalog_id, title, title_aliases_json, issns_json, issn, eissn, area,
+             utd_rank, utd_rating, abs_rank, abs_rating, fms_rank, fms_rating,
+             fmscn_rank, fmscn_rating
+         ) VALUES (
+             ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16
+         )
+         ON CONFLICT(journal_id) DO UPDATE SET
+             catalog_id = excluded.catalog_id,
+             title = excluded.title,
+             title_aliases_json = excluded.title_aliases_json,
+             issns_json = excluded.issns_json,
+             issn = excluded.issn,
+             eissn = excluded.eissn,
+             area = excluded.area,
+             utd_rank = excluded.utd_rank,
+             utd_rating = excluded.utd_rating,
+             abs_rank = excluded.abs_rank,
+             abs_rating = excluded.abs_rating,
+             fms_rank = excluded.fms_rank,
+             fms_rating = excluded.fms_rating,
+             fmscn_rank = excluded.fmscn_rank,
+             fmscn_rating = excluded.fmscn_rating",
+        params![
+            journal_id,
+            catalog.catalog_id,
+            catalog.title,
+            title_aliases_json,
+            issns_json,
+            catalog.issn,
+            catalog.eissn,
+            catalog.area,
+            catalog.rankings.utd_rank,
+            catalog.rankings.utd_rating,
+            catalog.rankings.abs_rank,
+            catalog.rankings.abs_rating,
+            catalog.rankings.fms_rank,
+            catalog.rankings.fms_rating,
+            catalog.rankings.fmscn_rank,
+            catalog.rankings.fmscn_rating,
+        ],
+    )?;
+    Ok(journal_id)
+}
+
+fn upsert_canonical_issue(
+    connection: &Connection,
+    journal_id: i64,
+    issue: &IssueDraft,
+) -> Result<Option<i64>, ContentDatabaseError> {
+    let Some(issue_id) = issue_id_from_draft(journal_id, issue) else {
+        return Ok(None);
+    };
+    connection.execute(
+        "INSERT INTO issues (
+             issue_id, journal_id, publication_year, title, volume, number, date
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+         ON CONFLICT(issue_id) DO UPDATE SET
+             publication_year = CASE
+                 WHEN issues.publication_year IS NULL THEN excluded.publication_year
+                 WHEN excluded.publication_year IS NULL THEN issues.publication_year
+                 ELSE MIN(issues.publication_year, excluded.publication_year)
+             END,
+             title = CASE
+                 WHEN issues.title IS NULL THEN excluded.title
+                 WHEN excluded.title IS NULL THEN issues.title
+                 WHEN length(excluded.title) > length(issues.title) THEN excluded.title
+                 WHEN length(excluded.title) < length(issues.title) THEN issues.title
+                 ELSE MIN(issues.title, excluded.title)
+             END,
+             volume = CASE
+                 WHEN issues.volume IS NULL THEN excluded.volume
+                 WHEN excluded.volume IS NULL THEN issues.volume
+                 ELSE MIN(issues.volume, excluded.volume)
+             END,
+             number = CASE
+                 WHEN issues.number IS NULL THEN excluded.number
+                 WHEN excluded.number IS NULL THEN issues.number
+                 ELSE MIN(issues.number, excluded.number)
+             END,
+             date = CASE
+                 WHEN issues.date IS NULL THEN excluded.date
+                 WHEN excluded.date IS NULL THEN issues.date
+                 WHEN length(excluded.date) > length(issues.date) THEN excluded.date
+                 WHEN length(excluded.date) < length(issues.date) THEN issues.date
+                 ELSE MIN(issues.date, excluded.date)
+             END",
+        params![
+            issue_id,
+            journal_id,
+            issue.publication_year,
+            issue.title,
+            issue.volume,
+            issue.number,
+            issue.date,
+        ],
+    )?;
+    Ok(Some(issue_id))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn write_canonical_article(
+    connection: &Connection,
+    catalog: &JournalCatalogEntry,
+    journal_id: i64,
+    article: &ArticleDraft,
+    content_revision: &str,
+    created_at: &str,
+    outcome: &mut ContentWriteOutcome,
+) -> Result<(), ContentDatabaseError> {
+    let incoming_keys = article_identity_keys(article);
+    let existing_aliases = load_existing_identity_aliases(connection, &incoming_keys)?;
+    let resolution = resolve_article_identity(article, &existing_aliases)?;
+    let existing = load_canonical_article(connection, resolution.article_id)?;
+    if !resolution.is_existing && existing.is_some() {
+        return Err(ContentDatabaseError::ArticleIdCollision {
+            article_id: resolution.article_id,
+        });
+    }
+    let merged = if let Some((existing, _)) = &existing {
+        merge_article_drafts(existing, article)?
+    } else {
+        article.clone()
+    };
+    let issue = IssueDraft {
+        catalog_id: merged.catalog_id.clone(),
+        publication_year: merged.publication_year,
+        title: merged.issue_title.clone(),
+        volume: merged.volume.clone(),
+        number: merged.issue_number.clone(),
+        date: merged.date.clone(),
+    };
+    let issue_id = upsert_canonical_issue(connection, journal_id, &issue)?;
+    let previous_issue_id = existing.as_ref().and_then(|(_, issue_id)| *issue_id);
+    let has_changed = existing
+        .as_ref()
+        .map(|(value, previous_issue_id)| value != &merged || *previous_issue_id != issue_id)
+        .unwrap_or(true);
+
+    if has_changed {
+        upsert_canonical_article(
+            connection,
+            resolution.article_id,
+            journal_id,
+            issue_id,
+            &merged,
+        )?;
+        refresh_article_projection(
+            connection,
+            resolution.article_id,
+            journal_id,
+            issue_id,
+            catalog,
+            &merged,
+        )?;
+        if existing.is_some()
+            && (previous_issue_id != issue_id
+                || existing
+                    .as_ref()
+                    .is_some_and(|(value, _)| value.in_press != merged.in_press))
+        {
+            outcome.change_events_emitted += record_content_change_event(
+                connection,
+                content_revision,
+                resolution.article_id,
+                "remove",
+                journal_id,
+                previous_issue_id,
+                existing
+                    .as_ref()
+                    .and_then(|(value, _)| value.in_press)
+                    .unwrap_or(false),
+                created_at,
+            )?;
+        }
+        outcome.change_events_emitted += record_content_change_event(
+            connection,
+            content_revision,
+            resolution.article_id,
+            "upsert",
+            journal_id,
+            issue_id,
+            merged.in_press.unwrap_or(false),
+            created_at,
+        )?;
+        outcome.articles_changed += 1;
+    }
+
+    for key in article_identity_keys(&merged) {
+        outcome.identity_aliases_added += connection.execute(
+            "INSERT INTO article_identity_keys (identity_kind, identity_value, article_id)
+             VALUES (?1, ?2, ?3)
+             ON CONFLICT(identity_kind, identity_value) DO NOTHING",
+            params![key.kind.as_str(), key.value, resolution.article_id],
+        )?;
+        let owner = connection.query_row(
+            "SELECT article_id FROM article_identity_keys
+             WHERE identity_kind = ?1 AND identity_value = ?2",
+            params![key.kind.as_str(), key.value],
+            |row| row.get::<_, i64>(0),
+        )?;
+        if owner != resolution.article_id {
+            return Err(ContentDatabaseError::Identity(
+                ArticleIdentityError::ConflictingAliases {
+                    article_ids: vec![owner, resolution.article_id],
+                },
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn load_existing_identity_aliases(
+    connection: &Connection,
+    keys: &[ArticleIdentityKey],
+) -> Result<BTreeMap<ArticleIdentityKey, i64>, ContentDatabaseError> {
+    let mut aliases = BTreeMap::new();
+    for key in keys {
+        let article_id = connection
+            .query_row(
+                "SELECT article_id FROM article_identity_keys
+                 WHERE identity_kind = ?1 AND identity_value = ?2",
+                params![key.kind.as_str(), key.value],
+                |row| row.get::<_, i64>(0),
+            )
+            .optional()?;
+        if let Some(article_id) = article_id {
+            aliases.insert(key.clone(), article_id);
+        }
+    }
+    Ok(aliases)
+}
+
+fn load_canonical_article(
+    connection: &Connection,
+    article_id: i64,
+) -> Result<Option<(ArticleDraft, Option<i64>)>, ContentDatabaseError> {
+    let row = connection
+        .query_row(
+            "SELECT
+                 j.catalog_id, a.title, a.publication_year, a.date, i.title, i.volume, i.number,
+                 a.authors_json, a.start_page, a.end_page, a.abstract_text, a.doi, a.pmid,
+                 a.open_access, a.in_press, a.retraction_doi, a.issue_id
+             FROM articles AS a
+             JOIN journals AS j ON j.journal_id = a.journal_id
+             LEFT JOIN issues AS i ON i.issue_id = a.issue_id
+             WHERE a.article_id = ?1",
+            [article_id],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, Option<i64>>(2)?,
+                    row.get::<_, Option<String>>(3)?,
+                    row.get::<_, Option<String>>(4)?,
+                    row.get::<_, Option<String>>(5)?,
+                    row.get::<_, Option<String>>(6)?,
+                    row.get::<_, String>(7)?,
+                    row.get::<_, Option<String>>(8)?,
+                    row.get::<_, Option<String>>(9)?,
+                    row.get::<_, Option<String>>(10)?,
+                    row.get::<_, Option<String>>(11)?,
+                    row.get::<_, Option<String>>(12)?,
+                    row.get::<_, Option<i64>>(13)?,
+                    row.get::<_, Option<i64>>(14)?,
+                    row.get::<_, Option<String>>(15)?,
+                    row.get::<_, Option<i64>>(16)?,
+                ))
+            },
+        )
+        .optional()?;
+    row.map(
+        |(
+            catalog_id,
+            title,
+            publication_year,
+            date,
+            issue_title,
+            volume,
+            issue_number,
+            authors_json,
+            start_page,
+            end_page,
+            abstract_text,
+            doi,
+            pmid,
+            open_access,
+            in_press,
+            retraction_doi,
+            issue_id,
+        )| {
+            Ok((
+                ArticleDraft {
+                    catalog_id,
+                    title,
+                    publication_year,
+                    date,
+                    issue_title,
+                    volume,
+                    issue_number,
+                    authors: serde_json::from_str::<Vec<ArticleAuthorDraft>>(&authors_json)?,
+                    start_page,
+                    end_page,
+                    abstract_text,
+                    doi,
+                    pmid,
+                    open_access: open_access.map(|value| value != 0),
+                    in_press: in_press.map(|value| value != 0),
+                    retraction_doi,
+                },
+                issue_id,
+            ))
+        },
+    )
+    .transpose()
+}
+
+fn upsert_canonical_article(
+    connection: &Connection,
+    article_id: i64,
+    journal_id: i64,
+    issue_id: Option<i64>,
+    article: &ArticleDraft,
+) -> Result<(), ContentDatabaseError> {
+    let authors_json = serde_json::to_string(&article.authors)?;
+    connection.execute(
+        "INSERT INTO articles (
+             article_id, journal_id, issue_id, title, publication_year, date, authors_json,
+             start_page, end_page, abstract_text, doi, pmid, open_access, in_press,
+             retraction_doi
+         ) VALUES (
+             ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15
+         )
+         ON CONFLICT(article_id) DO UPDATE SET
+             journal_id = excluded.journal_id,
+             issue_id = excluded.issue_id,
+             title = excluded.title,
+             publication_year = excluded.publication_year,
+             date = excluded.date,
+             authors_json = excluded.authors_json,
+             start_page = excluded.start_page,
+             end_page = excluded.end_page,
+             abstract_text = excluded.abstract_text,
+             doi = excluded.doi,
+             pmid = excluded.pmid,
+             open_access = excluded.open_access,
+             in_press = excluded.in_press,
+             retraction_doi = excluded.retraction_doi",
+        params![
+            article_id,
+            journal_id,
+            issue_id,
+            article.title,
+            article.publication_year,
+            article.date,
+            authors_json,
+            article.start_page,
+            article.end_page,
+            article.abstract_text,
+            article.doi,
+            article.pmid,
+            article.open_access.map(i64::from),
+            article.in_press.map(i64::from),
+            article.retraction_doi,
+        ],
+    )?;
+    Ok(())
+}
+
+fn refresh_article_projection(
+    connection: &Connection,
+    article_id: i64,
+    journal_id: i64,
+    issue_id: Option<i64>,
+    catalog: &JournalCatalogEntry,
+    article: &ArticleDraft,
+) -> Result<(), ContentDatabaseError> {
+    connection.execute(
+        "INSERT INTO article_listing (
+             article_id, journal_id, issue_id, publication_year, date, open_access,
+             in_press, doi, pmid, area
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+         ON CONFLICT(article_id) DO UPDATE SET
+             journal_id = excluded.journal_id,
+             issue_id = excluded.issue_id,
+             publication_year = excluded.publication_year,
+             date = excluded.date,
+             open_access = excluded.open_access,
+             in_press = excluded.in_press,
+             doi = excluded.doi,
+             pmid = excluded.pmid,
+             area = excluded.area",
+        params![
+            article_id,
+            journal_id,
+            issue_id,
+            article.publication_year,
+            article.date,
+            article.open_access.map(i64::from),
+            article.in_press.map(i64::from),
+            article.doi,
+            article.pmid,
+            catalog.area,
+        ],
+    )?;
+    connection.execute("DELETE FROM article_search WHERE rowid = ?1", [article_id])?;
+    let authors = article
+        .authors
+        .iter()
+        .map(|author| author.display_name.as_str())
+        .collect::<Vec<_>>()
+        .join("; ");
+    connection.execute(
+        "INSERT INTO article_search (
+             rowid, article_id, title, abstract_text, doi, pmid, authors, journal_title
+         ) VALUES (?1, ?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        params![
+            article_id,
+            article.title,
+            article.abstract_text.as_deref().unwrap_or_default(),
+            article.doi.as_deref().unwrap_or_default(),
+            article.pmid.as_deref().unwrap_or_default(),
+            authors,
+            catalog.title,
+        ],
+    )?;
+    Ok(())
+}
+
+fn refresh_journal_projections(
+    connection: &Connection,
+    journal_id: i64,
+    catalog: &JournalCatalogEntry,
+) -> Result<(), ContentDatabaseError> {
+    connection.execute(
+        "UPDATE article_listing SET area = ?1 WHERE journal_id = ?2",
+        params![catalog.area, journal_id],
+    )?;
+    connection.execute(
+        "UPDATE article_search SET journal_title = ?1 WHERE article_id IN (
+             SELECT article_id FROM articles WHERE journal_id = ?2
+         )",
+        params![catalog.title, journal_id],
+    )?;
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn record_content_change_event(
+    connection: &Connection,
+    content_revision: &str,
+    article_id: i64,
+    change_kind: &str,
+    journal_id: i64,
+    issue_id: Option<i64>,
+    in_press: bool,
+    created_at: &str,
+) -> Result<usize, ContentDatabaseError> {
+    Ok(connection.execute(
+        "INSERT OR IGNORE INTO article_change_events (
+             content_revision, article_id, change_kind, journal_id, issue_id, in_press, created_at
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        params![
+            content_revision,
+            article_id,
+            change_kind,
+            journal_id,
+            issue_id,
+            i64::from(in_press),
+            created_at,
+        ],
+    )?)
 }
 
 /// Open and initialize an index SQLite database.
@@ -2003,6 +3044,9 @@ mod tests {
     use std::collections::BTreeSet;
     use std::path::{Path, PathBuf};
 
+    use litradar_domain::{
+        ArticleDraft, IssueDraft, JournalCatalogEntry, JournalDraft, JournalRankings, ProviderBatch,
+    };
     use litradar_sources::SourceAttempt;
     use rusqlite::Connection;
     use tempfile::NamedTempFile;
@@ -2012,14 +3056,14 @@ mod tests {
 
     use super::{
         apply_article_changes, assert_index_run_lease_owner, begin_index_run,
-        get_journal_synchronization_date, heartbeat_index_run_lease, init_index_db,
-        init_index_db_with_simple_tokenizer_path, journal_catalog_entry_is_current,
+        get_journal_synchronization_date, heartbeat_index_run_lease, init_content_db,
+        init_index_db, init_index_db_with_simple_tokenizer_path, journal_catalog_entry_is_current,
         mark_article_listing_ready, mark_journal_done, open_index_db, persist_index_run_stats,
         refresh_article_listing_for_articles, refresh_index_run_lease_after_acquisition,
         release_index_run_lease, simple_tokenizer_path_from_root, sync_journal_catalog_entry,
         upsert_article_search, upsert_articles, upsert_journal, upsert_meta,
-        with_immediate_index_transaction, ChangeEventContext, IndexRunLeaseError,
-        IndexRunStartRequest,
+        with_immediate_index_transaction, write_content_batch, ChangeEventContext,
+        ContentDatabaseError, IndexRunLeaseError, IndexRunStartRequest, CONTENT_SCHEMA_VERSION,
     };
 
     const RUNTIME_INDEXES: &[&str] = &[
@@ -2060,6 +3104,262 @@ mod tests {
         "idx_index_change_events_run_membership",
         "idx_index_change_events_run_order",
     ];
+
+    #[test]
+    fn content_v4_schema_has_exact_provider_neutral_inventory() {
+        let connection = Connection::open_in_memory().expect("content database should open");
+        init_content_db(&connection).expect("content schema should initialize");
+        let version = connection
+            .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
+            .expect("content version should load");
+        assert_eq!(version, CONTENT_SCHEMA_VERSION);
+
+        let tables = connection
+            .prepare(
+                "SELECT name FROM sqlite_schema
+                 WHERE type = 'table' AND name NOT LIKE 'sqlite_%'
+                   AND name NOT LIKE 'article_search_%'
+                 ORDER BY name",
+            )
+            .expect("schema query should prepare")
+            .query_map([], |row| row.get::<_, String>(0))
+            .expect("schema query should run")
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .expect("schema rows should load");
+        assert_eq!(
+            tables,
+            [
+                "article_change_events",
+                "article_identity_keys",
+                "article_listing",
+                "article_search",
+                "articles",
+                "issues",
+                "journals",
+            ]
+        );
+
+        let schema = connection
+            .query_row(
+                "SELECT group_concat(sql, '\n') FROM sqlite_schema WHERE sql IS NOT NULL",
+                [],
+                |row| row.get::<_, String>(0),
+            )
+            .expect("schema SQL should load")
+            .to_ascii_lowercase();
+        for forbidden in [
+            "library_id",
+            "platform_id",
+            "source_csv",
+            "cover_url",
+            "permalink",
+            "content_location",
+            "full_text_file",
+            "checkpoint",
+            "lease",
+            "index_runs",
+            "stats",
+        ] {
+            assert!(!schema.contains(forbidden), "found {forbidden}");
+        }
+    }
+
+    #[test]
+    fn content_v4_rejects_extra_provider_columns_without_rewriting_schema() {
+        let connection = Connection::open_in_memory().expect("content database should open");
+        init_content_db(&connection).expect("content schema should initialize");
+        connection
+            .execute("ALTER TABLE articles ADD COLUMN provider TEXT", [])
+            .expect("forbidden fixture column should be added");
+
+        let error = init_content_db(&connection).expect_err("malformed v4 schema should fail");
+
+        assert!(matches!(
+            error,
+            ContentDatabaseError::InvalidCurrentSchema(_)
+        ));
+        assert_eq!(
+            table_columns(&connection, "articles")
+                .last()
+                .map(String::as_str),
+            Some("provider")
+        );
+    }
+
+    #[test]
+    fn canonical_content_write_replays_without_duplicate_rows_or_events() {
+        let connection = Connection::open_in_memory().expect("content database should open");
+        init_content_db(&connection).expect("content schema should initialize");
+        let catalog = canonical_catalog();
+        let initial_batch = canonical_batch(None);
+
+        let first = write_content_batch(
+            &connection,
+            &catalog,
+            &initial_batch,
+            "revision-a",
+            "2026-07-18T00:00:00Z",
+        )
+        .expect("first content batch should commit");
+        let replay = write_content_batch(
+            &connection,
+            &catalog,
+            &initial_batch,
+            "revision-a",
+            "2026-07-18T00:00:00Z",
+        )
+        .expect("identical replay should commit");
+        assert_eq!(first.articles_changed, 1);
+        assert_eq!(first.change_events_emitted, 1);
+        assert_eq!(replay.articles_changed, 0);
+        assert_eq!(replay.identity_aliases_added, 0);
+        assert_eq!(replay.change_events_emitted, 0);
+
+        let enriched = canonical_batch(Some("10.1000/canonical"));
+        let enrichment = write_content_batch(
+            &connection,
+            &catalog,
+            &enriched,
+            "revision-b",
+            "2026-07-18T00:01:00Z",
+        )
+        .expect("later DOI should enrich the existing article");
+        assert_eq!(enrichment.articles_changed, 1);
+        assert_eq!(enrichment.identity_aliases_added, 1);
+        assert_eq!(table_count(&connection, "journals"), 1);
+        assert_eq!(table_count(&connection, "issues"), 1);
+        assert_eq!(table_count(&connection, "articles"), 1);
+        assert_eq!(table_count(&connection, "article_identity_keys"), 2);
+        assert_eq!(table_count(&connection, "article_listing"), 1);
+        assert_eq!(table_count(&connection, "article_search"), 1);
+        assert_eq!(table_count(&connection, "article_change_events"), 2);
+        let doi = connection
+            .query_row("SELECT doi FROM articles", [], |row| {
+                row.get::<_, String>(0)
+            })
+            .expect("enriched DOI should load");
+        assert_eq!(doi, "10.1000/canonical");
+    }
+
+    #[test]
+    fn content_failure_rolls_back_rows_projections_aliases_and_outbox() {
+        let connection = Connection::open_in_memory().expect("content database should open");
+        init_content_db(&connection).expect("content schema should initialize");
+        connection
+            .execute_batch(
+                "CREATE TRIGGER fail_content_outbox
+                 BEFORE INSERT ON article_change_events
+                 BEGIN
+                     SELECT RAISE(ABORT, 'injected outbox failure');
+                 END;",
+            )
+            .expect("failure trigger should create");
+
+        let error = write_content_batch(
+            &connection,
+            &canonical_catalog(),
+            &canonical_batch(Some("10.1000/canonical")),
+            "revision-fail",
+            "2026-07-18T00:00:00Z",
+        )
+        .expect_err("outbox failure should abort the content transaction");
+        assert!(matches!(error, ContentDatabaseError::Sqlite(_)));
+        for table in [
+            "journals",
+            "issues",
+            "articles",
+            "article_identity_keys",
+            "article_listing",
+            "article_search",
+            "article_change_events",
+        ] {
+            assert_eq!(table_count(&connection, table), 0, "table {table}");
+        }
+    }
+
+    #[test]
+    fn nonempty_unversioned_content_database_requires_rebuild_without_mutation() {
+        let connection = Connection::open_in_memory().expect("legacy database should open");
+        connection
+            .execute_batch(
+                "CREATE TABLE legacy_articles (article_id INTEGER PRIMARY KEY);
+                 INSERT INTO legacy_articles (article_id) VALUES (7);",
+            )
+            .expect("legacy schema should create");
+
+        assert!(matches!(
+            init_content_db(&connection),
+            Err(ContentDatabaseError::RebuildRequired { found_version: 0 })
+        ));
+        assert_eq!(table_count(&connection, "legacy_articles"), 1);
+        assert_eq!(
+            connection
+                .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
+                .expect("legacy version should load"),
+            0
+        );
+    }
+
+    fn canonical_catalog() -> JournalCatalogEntry {
+        JournalCatalogEntry {
+            catalog_id: "issn-1234-5679".to_string(),
+            title: "Canonical Journal".to_string(),
+            issn: Some("1234-5679".to_string()),
+            eissn: None,
+            all_issns: vec!["1234-5679".to_string()],
+            title_aliases: Vec::new(),
+            area: Some("Systems".to_string()),
+            rankings: JournalRankings::default(),
+        }
+    }
+
+    fn canonical_batch(doi: Option<&str>) -> ProviderBatch {
+        ProviderBatch {
+            catalog_id: "issn-1234-5679".to_string(),
+            journal: JournalDraft {
+                catalog_id: "issn-1234-5679".to_string(),
+                observed_title: Some("Canonical Journal".to_string()),
+                observed_issns: vec!["1234-5679".to_string()],
+                observed_title_aliases: Vec::new(),
+            },
+            issues: vec![IssueDraft {
+                catalog_id: "issn-1234-5679".to_string(),
+                publication_year: Some(2026),
+                title: None,
+                volume: Some("1".to_string()),
+                number: Some("2".to_string()),
+                date: Some("2026-07".to_string()),
+            }],
+            articles: vec![ArticleDraft {
+                catalog_id: "issn-1234-5679".to_string(),
+                title: "Canonical Article".to_string(),
+                publication_year: Some(2026),
+                date: Some("2026-07-18".to_string()),
+                issue_title: None,
+                volume: Some("1".to_string()),
+                issue_number: Some("2".to_string()),
+                authors: Vec::new(),
+                start_page: Some("1".to_string()),
+                end_page: Some("8".to_string()),
+                abstract_text: Some("Canonical abstract".to_string()),
+                doi: doi.map(str::to_string),
+                pmid: None,
+                open_access: Some(true),
+                in_press: Some(false),
+                retraction_doi: None,
+            }],
+            is_complete: true,
+            next_checkpoint: None,
+        }
+    }
+
+    fn table_count(connection: &Connection, table: &str) -> i64 {
+        connection
+            .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| {
+                row.get(0)
+            })
+            .expect("table count should load")
+    }
 
     #[test]
     fn catalog_sync_inserts_neutral_journal_and_csv_metadata() {
@@ -2987,14 +4287,6 @@ mod tests {
             table_count(connection, "journal_state"),
         );
         assert_eq!(counts, expected);
-    }
-
-    fn table_count(connection: &Connection, table_name: &str) -> i64 {
-        connection
-            .query_row(&format!("SELECT COUNT(*) FROM {table_name}"), [], |row| {
-                row.get(0)
-            })
-            .expect("table count should query")
     }
 
     fn atomic_journal_record() -> JournalRecord {
