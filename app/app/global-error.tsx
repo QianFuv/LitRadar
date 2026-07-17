@@ -6,6 +6,8 @@
 
 import { useEffect, type CSSProperties } from 'react';
 
+import { reportClientError } from '@/lib/client-logger';
+
 type GlobalErrorProps = {
   error: Error & { digest?: string };
   reset: () => void;
@@ -65,12 +67,15 @@ const GLOBAL_SECONDARY_BUTTON_STYLE: CSSProperties = {
  * @returns Self-contained global failure document.
  */
 export default function GlobalError({ error, reset }: GlobalErrorProps) {
-  useEffect(() => {
-    console.error('LitRadar global error', {
-      digest: error.digest,
-      name: error.name,
-    });
-  }, [error]);
+  useEffect(
+    /**
+     * Emit the global-boundary terminal event once for this error object.
+     */
+    function reportGlobalError(): void {
+      reportClientError('global_boundary', error, { digest: error.digest });
+    },
+    [error],
+  );
 
   return (
     <html lang="zh-CN">

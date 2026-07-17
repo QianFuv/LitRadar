@@ -58,10 +58,16 @@ async function resetsRouteErrors(): Promise<void> {
   await user.click(screen.getByRole('button', { name: '重试' }));
 
   expect(reset).toHaveBeenCalledOnce();
-  expect(report).toHaveBeenCalledWith('LitRadar route error', {
+  expect(report).toHaveBeenCalledOnce();
+  expect(report.mock.calls[0][0]).toMatchObject({
+    component: 'browser',
     digest: 'route-digest',
-    name: 'Error',
+    error_kind: 'error',
+    event: 'client.error',
+    route: '/',
+    source: 'route_boundary',
   });
+  expect(JSON.stringify(report.mock.calls[0][0])).not.toContain('sensitive route detail');
 }
 
 /**

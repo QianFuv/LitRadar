@@ -21,6 +21,7 @@ export interface ApiErrorInfo {
 export class ApiError extends Error {
   readonly code: string | null;
   readonly phase: string | null;
+  readonly requestId: string | null;
   readonly status: number;
 
   /**
@@ -30,13 +31,21 @@ export class ApiError extends Error {
    * @param status - HTTP status code.
    * @param code - Stable backend error code.
    * @param phase - Backend workflow phase that failed.
+   * @param requestId - Server-generated request identifier exposed by CORS.
    */
-  constructor(message: string, status: number, code: string | null, phase: string | null) {
+  constructor(
+    message: string,
+    status: number,
+    code: string | null,
+    phase: string | null,
+    requestId: string | null = null,
+  ) {
     super(message);
     this.name = 'ApiError';
     this.status = status;
     this.code = code;
     this.phase = phase;
+    this.requestId = requestId;
     Object.setPrototypeOf(this, ApiError.prototype);
   }
 }
@@ -46,6 +55,7 @@ export const SELECTED_DATABASE_KEY = 'litradar:v1:selected_database';
 const LEGACY_SELECTED_DATABASE_KEY = 'selected_database';
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || '';
+const REQUEST_ID_HEADER = 'X-Request-Id';
 
 /**
  * Resolve the backend base URL for client or server-side rendering.
@@ -179,7 +189,13 @@ async function parseJson<T>(
   }
   const payload = await response.json().catch(() => null);
   const errorInfo = extractErrorInfo(payload, fallback);
-  throw new ApiError(errorInfo.message, response.status, errorInfo.code, errorInfo.phase);
+  throw new ApiError(
+    errorInfo.message,
+    response.status,
+    errorInfo.code,
+    errorInfo.phase,
+    response.headers.get(REQUEST_ID_HEADER),
+  );
 }
 
 /**

@@ -9,6 +9,7 @@ import { useEffect } from 'react';
 
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { reportClientError } from '@/lib/client-logger';
 
 type RouteErrorProps = {
   error: Error & { digest?: string };
@@ -22,12 +23,15 @@ type RouteErrorProps = {
  * @returns Accessible route failure UI.
  */
 export default function RouteError({ error, reset }: RouteErrorProps) {
-  useEffect(() => {
-    console.error('LitRadar route error', {
-      digest: error.digest,
-      name: error.name,
-    });
-  }, [error]);
+  useEffect(
+    /**
+     * Emit the route-boundary terminal event once for this error object.
+     */
+    function reportRouteError(): void {
+      reportClientError('route_boundary', error, { digest: error.digest });
+    },
+    [error],
+  );
 
   return (
     <main id="main-content" className="flex min-h-dvh items-center justify-center p-6">

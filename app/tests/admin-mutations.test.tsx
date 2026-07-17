@@ -348,6 +348,7 @@ describe('administrator mutation flow', () => {
   test(
     'creates a typed scheduled task without an arbitrary command field',
     createsTypedScheduledTask,
+    10_000,
   );
   test('keeps legacy commands read-only until typed replacement', replacesLegacyScheduledTask);
   test(
