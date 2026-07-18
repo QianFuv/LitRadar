@@ -15,7 +15,8 @@ use litradar_provider::{
 };
 use litradar_sources::{
     cnki_index_registration, scholarly_index_registration, LiveCnkiConfig, LiveCnkiTransport,
-    LiveScholarlyConfig, LiveScholarlyTransport, CNKI_PROVIDER_NAME, SCHOLARLY_PROVIDER_NAME,
+    LiveScholarlyConfig, LiveScholarlyTransport, CNKI_PROVIDER_NAME,
+    OPENALEX_MAX_WORKERS_PER_PROCESS, SCHOLARLY_PROVIDER_NAME,
 };
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
@@ -48,7 +49,7 @@ pub struct LiveIndexConfig {
     pub secret_key_file: PathBuf,
     /// Optional canonical CSV filename under `data/meta`.
     pub file: Option<String>,
-    /// Number of source detail workers reserved for provider implementations.
+    /// Number of bounded source workers, including OpenAlex DOI enrichment requests.
     pub worker_count: usize,
     /// Number of journal worker processes.
     pub process_count: usize,
@@ -265,6 +266,7 @@ struct LiveIndexWorkerRequest {
     timestamp: String,
     worker_id: usize,
     process_count: usize,
+    source_worker_count: usize,
     timeout_seconds: u64,
     resume: bool,
     update: bool,
@@ -438,6 +440,16 @@ fn validate_live_config(config: &LiveIndexConfig) -> Result<(), LiveIndexError> 
             "worker_count must be greater than zero".to_string(),
         ));
     }
+    if config.worker_count > OPENALEX_MAX_WORKERS_PER_PROCESS
+        && config
+            .index_provider_routes
+            .values()
+            .any(|provider| provider == SCHOLARLY_PROVIDER_NAME)
+    {
+        return Err(LiveIndexError::InvalidConfig(format!(
+            "worker_count must be at most {OPENALEX_MAX_WORKERS_PER_PROCESS} for scholarly indexing"
+        )));
+    }
     if config.process_count == 0 {
         return Err(LiveIndexError::InvalidConfig(
             "process_count must be greater than zero".to_string(),
@@ -565,6 +577,7 @@ fn run_catalog(
             timestamp: timestamp.clone(),
             worker_id: 0,
             process_count: 1,
+            source_worker_count: config.worker_count,
             timeout_seconds: config.timeout_seconds,
             resume: config.resume,
             update: config.update,
@@ -674,6 +687,7 @@ fn build_worker_requests(
             timestamp: timestamp.to_string(),
             worker_id,
             process_count,
+            source_worker_count: config.worker_count,
             timeout_seconds: config.timeout_seconds,
             resume: config.resume,
             update: config.update,
@@ -804,6 +818,7 @@ fn run_worker_request(request: &LiveIndexWorkerRequest) -> Result<IndexRunMetric
             .scholarly_config
             .clone()
             .with_worker_context(request.worker_id, request.process_count),
+        request.source_worker_count,
         request.timeout_seconds,
     )?;
     let provider = registration.index_content().cloned().ok_or_else(|| {
@@ -825,12 +840,17 @@ fn run_worker_request(request: &LiveIndexWorkerRequest) -> Result<IndexRunMetric
 fn build_index_registration(
     provider_name: &str,
     scholarly_config: LiveScholarlyConfig,
+    source_worker_count: usize,
     timeout_seconds: u64,
 ) -> Result<ProviderRegistration, LiveIndexError> {
     match provider_name {
         SCHOLARLY_PROVIDER_NAME => {
             let has_semantic_scholar_key = scholarly_config.has_semantic_scholar_key();
-            let transport = LiveScholarlyTransport::new(scholarly_config).map_err(|_| {
+            let transport = LiveScholarlyTransport::new_with_openalex_workers(
+                scholarly_config,
+                source_worker_count,
+            )
+            .map_err(|_| {
                 LiveIndexError::ProviderSetup(
                     "scholarly indexing provider could not initialize".to_string(),
                 )
@@ -1031,7 +1051,8 @@ mod tests {
 
     use super::{
         build_worker_requests, index_entries_with_provider, run_live_index_worker_from_file_path,
-        LeaseHeartbeat, LiveIndexConfig, LiveIndexWorkerRequest, LiveRunTime,
+        validate_live_config, LeaseHeartbeat, LiveIndexConfig, LiveIndexError,
+        LiveIndexWorkerRequest, LiveRunTime, OPENALEX_MAX_WORKERS_PER_PROCESS,
     };
     use crate::control::{
         acquire_lease, open_control_db, read_checkpoint, release_lease, CheckpointScope,
@@ -1131,6 +1152,7 @@ mod tests {
             timestamp: "2026-07-18T00:00:00Z".to_string(),
             worker_id: 0,
             process_count: 1,
+            source_worker_count: 1,
             timeout_seconds: 10,
             resume: true,
             update: false,
@@ -1293,6 +1315,16 @@ mod tests {
             &entries,
         );
         assert_eq!(requests.len(), 3);
+        assert!(requests
+            .iter()
+            .all(|request| request.source_worker_count == 2));
+        let mut excessive_workers = config.clone();
+        excessive_workers.worker_count = OPENALEX_MAX_WORKERS_PER_PROCESS + 1;
+        assert!(matches!(
+            validate_live_config(&excessive_workers),
+            Err(LiveIndexError::InvalidConfig(message))
+                if message == "worker_count must be at most 6 for scholarly indexing"
+        ));
         let ids = requests
             .iter()
             .flat_map(|request| request.entries.iter())

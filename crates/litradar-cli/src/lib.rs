@@ -26,7 +26,7 @@ use litradar_worker::delivery::{
 use litradar_worker::scheduler::{load_scheduler_jobs, run_task_now, SchedulerMode};
 use serde_json::json;
 
-const DEFAULT_INDEX_WORKER_COUNT: usize = 8;
+const DEFAULT_INDEX_WORKER_COUNT: usize = 6;
 const DEFAULT_INDEX_PROCESS_COUNT: usize = 1;
 const DEFAULT_INDEX_ISSUE_BATCH_SIZE: usize = 8;
 const BUNDLED_META_DIR_ENV: &str = "LITRADAR_BUNDLED_META_DIR";
@@ -1023,7 +1023,7 @@ mod tests {
         assert!(index.contains("--notify-dry-run"));
         let index_payload: serde_json::Value =
             serde_json::from_str(&index).expect("index usage should be JSON");
-        assert_eq!(index_payload["defaults"]["workers"], 8);
+        assert_eq!(index_payload["defaults"]["workers"], 6);
         assert_eq!(index_payload["defaults"]["processes"], 1);
         assert_eq!(index_payload["defaults"]["issue_batch"], 8);
         assert!(notify.contains("notify --secret-key-file PATH"));
@@ -1299,7 +1299,7 @@ mod tests {
         let mut default_args = Vec::new();
         let defaults =
             parse_index_options(&mut default_args).expect("default index options should parse");
-        assert_eq!(defaults.worker_count, 8);
+        assert_eq!(defaults.worker_count, 6);
         assert_eq!(defaults.process_count, 1);
         assert_eq!(defaults.issue_batch_size, 8);
     }

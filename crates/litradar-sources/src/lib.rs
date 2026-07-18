@@ -19,7 +19,7 @@ pub use scholarly::{
     normalize_doi, FixtureScholarlyTransport, LiveScholarlyConfig, LiveScholarlyTransport,
     ScholarlyClient, ScholarlyFixtureData, ScholarlyRequest, ScholarlyRequestKind,
     ScholarlyTransport, ScholarlyWorksPage, SourceAttempt, SourceError,
-    SEMANTIC_SCHOLAR_BATCH_SIZE,
+    OPENALEX_MAX_WORKERS_PER_PROCESS, SEMANTIC_SCHOLAR_BATCH_SIZE,
 };
 pub use zjlib_cnki::{
     FixtureZjlibCnkiMode, FixtureZjlibCnkiTransport, LiveZjlibCnkiConfig, LiveZjlibCnkiTransport,
