@@ -153,27 +153,29 @@ litradar index --secret-key-file PATH
     [--notify-dry-run | --no-notify-dry-run]
 ```
 
-| 参数                                       | 默认值   | 含义                                 |
-| ------------------------------------------ | -------- | ------------------------------------ |
-| `--secret-key-file PATH`                   | 必填     | 解密索引运行配置                     |
-| `--file FILE`、`-f FILE`                   | 全部 CSV | 只处理 `data/meta/` 下的一个文件     |
-| `--workers N`、`-w N`                      | `8`      | 每个期刊子进程内的 CNKI 文章详情并发 |
-| `--processes N`                            | `1`      | 单个 CSV 的期刊子进程数              |
-| `--issue-batch N`                          | `8`      | 每轮合并的 CNKI issue 数             |
-| `--timeout N`                              | `20`     | 上游 HTTP 超时秒数                   |
-| `--resume` / `--no-resume`                 | 开启     | 是否跳过已完成期刊/年份              |
-| `--update` / `--no-update`                 | 关闭     | 是否生成增量变更清单                 |
-| `--notify` / `--no-notify`                 | 关闭     | 更新成功后启动 `litradar notify`     |
-| `--notify-dry-run` / `--no-notify-dry-run` | 关闭     | 下游 notify 是否 dry-run             |
+| 参数                                       | 默认值   | 含义                                                         |
+| ------------------------------------------ | -------- | ------------------------------------------------------------ |
+| `--secret-key-file PATH`                   | 必填     | 解密索引运行配置                                             |
+| `--file FILE`、`-f FILE`                   | 全部 CSV | 只处理 `data/meta/` 下的一个文件                             |
+| `--workers N`、`-w N`                      | `6`      | 每个期刊子进程内的 CNKI 文章详情和 OpenAlex DOI 增强并发上限 |
+| `--processes N`                            | `1`      | 单个 CSV 的独立期刊子进程数                                  |
+| `--issue-batch N`                          | `8`      | 每轮合并的 CNKI issue 数                                     |
+| `--timeout N`                              | `20`     | 上游 HTTP 超时秒数                                           |
+| `--resume` / `--no-resume`                 | 开启     | 是否跳过已完成期刊/年份                                      |
+| `--update` / `--no-update`                 | 关闭     | 是否生成增量变更清单                                         |
+| `--notify` / `--no-notify`                 | 关闭     | 更新成功后启动 `litradar notify`                             |
+| `--notify-dry-run` / `--no-notify-dry-run` | 关闭     | 下游 notify 是否 dry-run                                     |
 
 约束：
 
 - `workers`、`processes`、`issue-batch` 必须至少为 1。
+- 只要选中的目录路由到 Scholarly，`workers` 最多为 6，`processes` 最多为 3；超限会在上游请求前失败。CNKI 路由不受这两个 Scholarly 上限约束。
 - `--notify` 必须和 `--update` 同时使用。
 - 单独传 `--notify-dry-run` 不会启动 notify；它只修改 `--notify` handoff 的模式。
-- `--workers` 不扩大 scholarly 请求并发；Semantic Scholar 按 `processes` 做进程感知错峰。
+- Scholarly 中的 `--workers` 只扩大每个进程的 OpenAlex DOI 子批并发；`6 × 3` 因此最多同时执行 18 个这类子批请求。OpenAlex key 调度器会根据剩余额度、在途请求、冷却和认证状态选择健康 key，而不是按固定顺序简单轮转。
+- Crossref 和 Semantic Scholar 不使用 `--workers` 扩大并发。本机各期刊子进程依据共同调度 epoch 错开每一次请求尝试（包括重试）：Crossref 的全局相位间隔为 110 ms，Semantic Scholar 为 1.1 s；增加 `--processes` 不会缩短这两个全局间隔，也不保证上游吞吐提升。
 - 多个 CSV 仍逐个处理。
-- `8/1/8` 是约 100 MiB 索引内存目标下的默认并发。显式提高任一并发参数仍受支持，但可能超过该预算。
+- `6/1/8` 是约 100 MiB 索引内存目标下的默认并发。在上述 Provider 约束内显式提高并发仍受支持，但可能超过该预算。
 
 索引多进程也通过当前可执行路径启动 `litradar index` 的内部工作请求；不依赖另一个程序名。同步 CLI 命令不创建 Tokio 工作线程池，只有 `serve` 使用固定为 2 个工作线程的小型异步运行时。
 

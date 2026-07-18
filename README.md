@@ -85,7 +85,7 @@ docker compose run --rm litradar index \
   --update
 ```
 
-索引默认使用 `--processes 1 --workers 8 --issue-batch 8`，以控制容器峰值内存。可以显式覆盖这些参数，但更高并发不再保证约 100 MiB 的索引内存目标。`admin`、`index`、`notify`、`push`、`scheduler` 和 `openapi` 是同步短生命周期命令，不会创建 Tokio 工作线程池；只有常驻的 `serve` 使用小型异步运行时。
+索引默认使用 `--processes 1 --workers 6 --issue-batch 8`，以控制容器峰值内存。`--workers` 限制每个期刊子进程的 CNKI 文章详情工作和 OpenAlex DOI 增强并发；Scholarly 索引最多接受 6 个 worker。`--processes` 启动相互独立的期刊子进程；Scholarly 索引最多接受 3 个进程，并让 Crossref 和 Semantic Scholar 的每次请求尝试（包括重试）按共同调度 epoch 错峰。可以在 Provider 约束内显式覆盖这些参数，但这不保证上游吞吐提升，也不再保证约 100 MiB 的索引内存目标。`admin`、`index`、`notify`、`push`、`scheduler` 和 `openapi` 是同步短生命周期命令，不会创建 Tokio 工作线程池；只有常驻的 `serve` 使用小型异步运行时。
 
 索引 `english_journals.csv` 或 `ccf_computer_journals.csv` 前，先登录管理后台，在“运行配置”中填写 OpenAlex 和 Semantic Scholar API key。所有命令和参数见 [CLI 参考](docs/reference/cli.md)，配置来源与默认值见[运行配置参考](docs/reference/configuration.md)。
 
