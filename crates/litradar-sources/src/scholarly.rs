@@ -6,7 +6,7 @@ use std::fmt;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use reqwest::blocking::Client;
+use reqwest::{blocking::Client, Url};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
@@ -24,9 +24,94 @@ const OPENALEX_SOURCE_FIELDS: &str = "id,display_name,issn_l,issn,works_count";
 const OPENALEX_WORK_FIELDS: &str = "id,doi,title,display_name,publication_year,publication_date,language,cited_by_count,is_retracted,primary_location,locations,open_access,best_oa_location,authorships,ids,biblio,abstract_inverted_index,topics,primary_topic,funders,awards";
 const DEFAULT_USER_AGENT: &str = "LitRadar/0.1 (mailto:litradar@example.invalid)";
 const CROSSREF_ROWS: usize = 225;
+const OPENALEX_DOI_FILTER_MAX_VALUES: usize = 100;
+const OPENALEX_DOI_REQUEST_URL_BUDGET: usize = 1_900;
 const OPENALEX_SOURCE_WORK_ROWS: usize = 200;
 const DEFAULT_MAX_RETRIES: usize = 2;
 const RETRY_STATUS_CODES: [u16; 5] = [429, 500, 502, 503, 504];
+
+fn openalex_doi_query(
+    dois: &[String],
+    api_key: Option<&str>,
+    mailto: Option<&str>,
+) -> Vec<(String, String)> {
+    let mut query = vec![
+        ("filter".to_string(), format!("doi:{}", dois.join("|"))),
+        ("per-page".to_string(), dois.len().max(1).to_string()),
+        ("select".to_string(), OPENALEX_WORK_FIELDS.to_string()),
+    ];
+    if let Some(api_key) = api_key {
+        query.push(("api_key".to_string(), api_key.to_string()));
+    }
+    if let Some(mailto) = mailto {
+        query.push(("mailto".to_string(), mailto.to_string()));
+    }
+    query
+}
+
+fn openalex_doi_request_url(
+    dois: &[String],
+    api_key: Option<&str>,
+    mailto: Option<&str>,
+) -> Result<Url, SourceError> {
+    let mut url = Url::parse(&format!("{OPENALEX_BASE_URL}/works")).map_err(|_| {
+        SourceError::Configuration(
+            "OpenAlex DOI enrichment URL configuration is invalid.".to_string(),
+        )
+    })?;
+    {
+        let mut query_pairs = url.query_pairs_mut();
+        for (name, value) in openalex_doi_query(dois, api_key, mailto) {
+            query_pairs.append_pair(&name, &value);
+        }
+    }
+    Ok(url)
+}
+
+fn partition_openalex_doi_batches(
+    dois: &[String],
+    requested_batch_size: usize,
+    url_budget: usize,
+    api_key: Option<&str>,
+    mailto: Option<&str>,
+) -> Result<Vec<Vec<String>>, SourceError> {
+    let maximum_batch_size = requested_batch_size.clamp(1, OPENALEX_DOI_FILTER_MAX_VALUES);
+    let mut batches = Vec::new();
+    let mut current = Vec::new();
+    for doi in dois {
+        let mut candidate = current.clone();
+        candidate.push(doi.clone());
+        let does_candidate_fit = candidate.len() <= maximum_batch_size
+            && openalex_doi_request_url(&candidate, api_key, mailto)?
+                .as_str()
+                .len()
+                <= url_budget;
+        if does_candidate_fit {
+            current = candidate;
+            continue;
+        }
+        if current.is_empty() {
+            return Err(SourceError::Configuration(
+                "One OpenAlex DOI enrichment value exceeds the request URL budget.".to_string(),
+            ));
+        }
+        batches.push(std::mem::take(&mut current));
+        current.push(doi.clone());
+        if openalex_doi_request_url(&current, api_key, mailto)?
+            .as_str()
+            .len()
+            > url_budget
+        {
+            return Err(SourceError::Configuration(
+                "One OpenAlex DOI enrichment value exceeds the request URL budget.".to_string(),
+            ));
+        }
+    }
+    if !current.is_empty() {
+        batches.push(current);
+    }
+    Ok(batches)
+}
 
 fn crossref_journal_filter(from_sync_date: Option<&str>) -> String {
     let mut filters = vec!["type:journal-article".to_string()];
@@ -273,6 +358,30 @@ impl Error for SourceError {}
 
 /// Scholarly source transport abstraction.
 pub trait ScholarlyTransport {
+    /// Partition normalized OpenAlex DOI values into transport-safe batches.
+    ///
+    /// # Arguments
+    ///
+    /// * `dois` - Unique normalized DOI values.
+    /// * `requested_batch_size` - Requested maximum values per batch.
+    ///
+    /// # Returns
+    ///
+    /// Ordered DOI batches that fit the OpenAlex request contract.
+    fn prepare_openalex_doi_batches(
+        &self,
+        dois: &[String],
+        requested_batch_size: usize,
+    ) -> Result<Vec<Vec<String>>, SourceError> {
+        partition_openalex_doi_batches(
+            dois,
+            requested_batch_size,
+            OPENALEX_DOI_REQUEST_URL_BUDGET,
+            None,
+            None,
+        )
+    }
+
     /// Execute one scholarly request.
     ///
     /// # Arguments
@@ -719,17 +828,18 @@ impl LiveScholarlyTransport {
     }
 
     fn openalex_works_by_doi(&mut self, dois: &[String]) -> Result<Value, SourceError> {
-        let filter_value = dois
-            .iter()
-            .map(|doi| format!("https://doi.org/{doi}"))
-            .collect::<Vec<_>>()
-            .join("|");
-        let mut query = vec![
-            ("filter".to_string(), format!("doi:{filter_value}")),
-            ("per-page".to_string(), dois.len().max(1).to_string()),
-            ("select".to_string(), OPENALEX_WORK_FIELDS.to_string()),
-        ];
-        self.append_openalex_config(&mut query);
+        let api_key = self.config.openalex_api_keys.first().map(String::as_str);
+        let mailto = self.config.crossref_mailtos.first().map(String::as_str);
+        let query = openalex_doi_query(dois, api_key, mailto);
+        if openalex_doi_request_url(dois, api_key, mailto)?
+            .as_str()
+            .len()
+            > OPENALEX_DOI_REQUEST_URL_BUDGET
+        {
+            return Err(SourceError::Configuration(
+                "OpenAlex DOI enrichment request exceeds the URL budget.".to_string(),
+            ));
+        }
         self.get_json(
             OPENALEX_SOURCE,
             "works",
@@ -1123,6 +1233,33 @@ impl ScholarlyTransport for FixtureScholarlyTransport {
 }
 
 impl ScholarlyTransport for LiveScholarlyTransport {
+    /// Partition OpenAlex DOI values using the longest configured credentials.
+    fn prepare_openalex_doi_batches(
+        &self,
+        dois: &[String],
+        requested_batch_size: usize,
+    ) -> Result<Vec<Vec<String>>, SourceError> {
+        let api_key = self
+            .config
+            .openalex_api_keys
+            .iter()
+            .max_by_key(|value| value.len())
+            .map(String::as_str);
+        let mailto = self
+            .config
+            .crossref_mailtos
+            .iter()
+            .max_by_key(|value| value.len())
+            .map(String::as_str);
+        partition_openalex_doi_batches(
+            dois,
+            requested_batch_size,
+            OPENALEX_DOI_REQUEST_URL_BUDGET,
+            api_key,
+            mailto,
+        )
+    }
+
     /// Execute one live Scholarly source request.
     fn request(&mut self, request: ScholarlyRequest) -> Result<Value, SourceError> {
         match request.kind {
@@ -1392,13 +1529,15 @@ where
     ) -> Result<BTreeMap<String, Value>, SourceError> {
         let normalized = unique_normalized_dois(dois);
         let mut results = BTreeMap::new();
-        for batch in normalized.chunks(batch_size.max(1)) {
-            let batch = batch.to_vec();
+        let batches = self
+            .transport
+            .prepare_openalex_doi_batches(&normalized, batch_size)?;
+        for batch in batches {
             let payload = self.transport.request(ScholarlyRequest {
                 service: OPENALEX_SOURCE.to_string(),
                 endpoint: "works".to_string(),
                 method: "GET".to_string(),
-                url: "https://api.openalex.org/works?filter=doi:https://doi.org/example&api_key=SECRET".to_string(),
+                url: "https://api.openalex.org/works?filter=doi:example&api_key=SECRET".to_string(),
                 kind: ScholarlyRequestKind::OpenAlexWorksByDoi {
                     dois: batch.clone(),
                 },
@@ -1777,10 +1916,12 @@ mod tests {
 
     use super::{
         crossref_journal_filter, normalize_doi, normalize_issn, normalize_source_title,
-        openalex_short_source_id, openalex_source_work_filter, redact_url,
+        openalex_doi_query, openalex_doi_request_url, openalex_short_source_id,
+        openalex_source_work_filter, partition_openalex_doi_batches, redact_url,
         semantic_scholar_worker_interval, semantic_scholar_worker_offset, value_pool_from_text,
         FixtureScholarlyTransport, LiveScholarlyConfig, LiveScholarlyTransport, ScholarlyClient,
         ScholarlyFixtureData, ScholarlyTransport, SourceError, CROSSREF_ROWS,
+        OPENALEX_DOI_FILTER_MAX_VALUES, OPENALEX_DOI_REQUEST_URL_BUDGET,
     };
 
     #[test]
@@ -2094,6 +2235,132 @@ mod tests {
             transport.openalex_doi_batches(),
             &[vec!["10.1/a".to_string()], vec!["10.1/b".to_string()]]
         );
+    }
+
+    #[test]
+    fn openalex_doi_batches_fit_the_encoded_url_budget_without_losing_values() {
+        let dois = (0..225)
+            .map(|index| {
+                format!(
+                    "10.1234/{index:03}-{}",
+                    "x".repeat(12 + usize::try_from(index % 7).expect("remainder should fit"))
+                )
+            })
+            .collect::<Vec<_>>();
+        let api_key = "k".repeat(32);
+        let mailto = "load-test@example.invalid";
+
+        let batches = partition_openalex_doi_batches(
+            &dois,
+            OPENALEX_DOI_FILTER_MAX_VALUES,
+            OPENALEX_DOI_REQUEST_URL_BUDGET,
+            Some(&api_key),
+            Some(mailto),
+        )
+        .expect("representative DOI values should partition");
+
+        assert_eq!(batches.len(), 5);
+        assert_eq!(batches.iter().flatten().cloned().collect::<Vec<_>>(), dois);
+        for batch in &batches {
+            assert!(batch.len() <= OPENALEX_DOI_FILTER_MAX_VALUES);
+            let url = openalex_doi_request_url(batch, Some(&api_key), Some(mailto))
+                .expect("batch URL should build");
+            assert!(url.as_str().len() <= OPENALEX_DOI_REQUEST_URL_BUDGET);
+        }
+    }
+
+    #[test]
+    fn openalex_doi_batches_enforce_the_value_count_ceiling() {
+        let dois = (0..205)
+            .map(|index| format!("d{index}"))
+            .collect::<Vec<_>>();
+
+        let batches = partition_openalex_doi_batches(
+            &dois,
+            usize::MAX,
+            OPENALEX_DOI_REQUEST_URL_BUDGET,
+            None,
+            None,
+        )
+        .expect("short DOI values should partition");
+
+        assert_eq!(
+            batches.iter().map(Vec::len).collect::<Vec<_>>(),
+            vec![100, 100, 5]
+        );
+    }
+
+    #[test]
+    fn openalex_doi_batches_fail_redacted_when_one_value_cannot_fit() {
+        let oversized_doi = format!("10.1234/{}", "sensitive".repeat(300));
+
+        let error = partition_openalex_doi_batches(
+            std::slice::from_ref(&oversized_doi),
+            OPENALEX_DOI_FILTER_MAX_VALUES,
+            OPENALEX_DOI_REQUEST_URL_BUDGET,
+            None,
+            None,
+        )
+        .expect_err("one oversized DOI should fail before transport");
+
+        assert!(matches!(error, SourceError::Configuration(_)));
+        assert!(!error.to_string().contains(&oversized_doi));
+    }
+
+    #[test]
+    fn live_openalex_batch_planning_uses_the_longest_configured_credentials() {
+        let long_key = "long-key".repeat(24);
+        let long_mailto = format!("{}@example.invalid", "m".repeat(96));
+        let config = LiveScholarlyConfig {
+            timeout_seconds: 2,
+            openalex_api_keys: vec!["short".to_string(), long_key.clone()],
+            semantic_scholar_api_keys: Vec::new(),
+            crossref_mailtos: vec!["a@b.test".to_string(), long_mailto.clone()],
+            semantic_scholar_worker_id: 0,
+            semantic_scholar_process_count: 1,
+            semantic_scholar_base_interval_ms: 1_000,
+        };
+        let transport =
+            LiveScholarlyTransport::new(config).expect("live transport should initialize");
+        let dois = (0..225)
+            .map(|index| format!("10.1234/{index:03}-identifier"))
+            .collect::<Vec<_>>();
+
+        let batches = transport
+            .prepare_openalex_doi_batches(&dois, usize::MAX)
+            .expect("live DOI batches should plan");
+
+        for batch in batches {
+            let url = openalex_doi_request_url(
+                &batch,
+                Some(long_key.as_str()),
+                Some(long_mailto.as_str()),
+            )
+            .expect("worst-case batch URL should build");
+            assert!(url.as_str().len() <= OPENALEX_DOI_REQUEST_URL_BUDGET);
+        }
+    }
+
+    #[test]
+    fn openalex_doi_request_uses_bare_filter_values() {
+        let dois = ["10.1/a".to_string(), "10.1/b".to_string()];
+        let api_key = "key-value";
+        let mailto = "contact@example.invalid";
+        let url = openalex_doi_request_url(&dois, Some(api_key), Some(mailto))
+            .expect("DOI request URL should build");
+        let filter = url
+            .query_pairs()
+            .find_map(|(name, value)| (name == "filter").then(|| value.into_owned()))
+            .expect("filter query should exist");
+        let request = reqwest::blocking::Client::new()
+            .get(format!("{}/works", super::OPENALEX_BASE_URL))
+            .query(&openalex_doi_query(&dois, Some(api_key), Some(mailto)))
+            .build()
+            .expect("live-equivalent request should build");
+
+        assert_eq!(filter, "doi:10.1/a|10.1/b");
+        assert!(!filter.contains("https://doi.org/"));
+        assert_eq!(request.url(), &url);
     }
 
     #[test]
