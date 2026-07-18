@@ -1475,8 +1475,8 @@ fn fixture_url(endpoint: &str, key: Option<&str>) -> String {
 mod tests {
     use std::collections::BTreeMap;
     use std::io::{Read, Write};
-    use std::net::TcpListener;
-    use std::sync::mpsc::{self, Sender};
+    use std::net::{TcpListener, TcpStream};
+    use std::sync::mpsc::{self, Receiver, Sender};
     use std::thread::{self, JoinHandle};
     use std::time::Duration;
 
@@ -1490,6 +1490,8 @@ mod tests {
         parse_year_issues, with_cnki_chinese_language, CnkiClient, CnkiFixtureData,
         CnkiSourceError, FixtureCnkiTransport, LiveCnkiAttempt, LiveCnkiConfig, LiveCnkiTransport,
     };
+
+    const TEST_SERVER_EVENT_TIMEOUT: Duration = Duration::from_secs(3);
 
     #[test]
     fn cnki_attempt_events_keep_worker_context_and_omit_request_material() {
@@ -1710,7 +1712,7 @@ mod tests {
         let served_count = server.finish();
         assert!(
             result.is_ok(),
-            "fourth response should recover after three transport failures: {result:?}; attempts: {:?}",
+            "fourth response should recover after three transport failures: {result:?}; served: {served_count}; attempts: {:?}",
             transport.attempts
         );
         let text = result.expect("successful transport retry should contain text");
@@ -1774,10 +1776,14 @@ mod tests {
         let request_url = format!("{}?api_key=decode-secret", server.url());
         let mut transport = live_cnki_transport();
 
-        let text = transport
-            .get_text(&request_url, None, "decode_test")
-            .expect("second response should recover from decoding failure");
+        let result = transport.get_text(&request_url, None, "decode_test");
         let served_count = server.finish();
+        assert!(
+            result.is_ok(),
+            "second response should recover from decoding failure: {result:?}; served: {served_count}; attempts: {:?}",
+            transport.attempts
+        );
+        let text = result.expect("successful decode retry should contain text");
 
         assert_eq!(text, "ok");
         assert_eq!(served_count, 2);
@@ -1826,11 +1832,7 @@ mod tests {
 
     #[test]
     fn live_cnki_checks_non_success_status_before_decoding_body() {
-        let server = TestHttpServer::start(vec![
-            malformed_gzip_response(503),
-            ok_response(),
-            ok_response(),
-        ]);
+        let server = TestHttpServer::start(vec![malformed_gzip_response(503), ok_response()]);
         let mut transport = live_cnki_transport();
 
         let result = transport.get_text(server.url(), None, "status_test");
@@ -1843,7 +1845,7 @@ mod tests {
         let text = result.expect("checked successful HTTP retry should contain text");
 
         assert_eq!(text, "ok");
-        assert!(served_count >= 2);
+        assert_eq!(served_count, 2);
         assert_eq!(transport.attempts[0].status_code, Some(503));
         assert!(transport.attempts[0]
             .error
@@ -1986,7 +1988,7 @@ mod tests {
     }
 
     fn live_cnki_transport() -> LiveCnkiTransport {
-        LiveCnkiTransport::new(LiveCnkiConfig { timeout_seconds: 2 })
+        LiveCnkiTransport::new(LiveCnkiConfig { timeout_seconds: 5 })
             .expect("live CNKI test transport should build")
     }
 
@@ -2021,14 +2023,38 @@ mod tests {
         "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok".to_string()
     }
 
+    #[test]
+    fn test_http_server_finish_does_not_preempt_a_queued_response() {
+        let server = TestHttpServer::start_with_accept_delay(
+            vec![ok_response()],
+            Duration::from_millis(100),
+        );
+        let address = server
+            .url()
+            .strip_prefix("http://")
+            .and_then(|url| url.strip_suffix("/body"))
+            .expect("test server URL should expose its socket address");
+        let mut stream = TcpStream::connect(address).expect("queued test connection should open");
+        stream
+            .write_all(b"GET /body HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
+            .expect("queued test request should write");
+
+        assert_eq!(server.finish(), 1);
+    }
+
     struct TestHttpServer {
         url: String,
         stop_sender: Sender<()>,
+        completion_receiver: Receiver<usize>,
         handle: Option<JoinHandle<usize>>,
     }
 
     impl TestHttpServer {
         fn start(responses: Vec<String>) -> Self {
+            Self::start_with_accept_delay(responses, Duration::ZERO)
+        }
+
+        fn start_with_accept_delay(responses: Vec<String>, accept_delay: Duration) -> Self {
             let listener = TcpListener::bind("127.0.0.1:0").expect("test server should bind");
             listener
                 .set_nonblocking(true)
@@ -2037,9 +2063,20 @@ mod tests {
                 .local_addr()
                 .expect("test server address should load");
             let (stop_sender, stop_receiver) = mpsc::channel();
+            let (ready_sender, ready_receiver) = mpsc::channel();
+            let (completion_sender, completion_receiver) = mpsc::channel();
             let handle = thread::spawn(move || {
+                let planned_count = responses.len();
+                ready_sender
+                    .send(())
+                    .expect("test server readiness should signal");
+                thread::sleep(accept_delay);
                 let mut responses = responses.into_iter();
                 let mut served_count = 0;
+                if planned_count == 0 {
+                    let _ = completion_sender.send(0);
+                    return 0;
+                }
                 loop {
                     if stop_receiver.try_recv().is_ok() {
                         return served_count;
@@ -2047,10 +2084,14 @@ mod tests {
                     match listener.accept() {
                         Ok((mut stream, _)) => {
                             stream
-                                .set_read_timeout(Some(Duration::from_secs(1)))
+                                .set_nonblocking(false)
+                                .expect("test stream should be blocking");
+                            stream
+                                .set_read_timeout(Some(Duration::from_secs(2)))
                                 .expect("test stream timeout should set");
-                            let mut request = [0_u8; 4096];
-                            let _ = stream.read(&mut request);
+                            if !read_http_request(&mut stream) {
+                                continue;
+                            }
                             let Some(response) = responses.next() else {
                                 return served_count;
                             };
@@ -2062,14 +2103,21 @@ mod tests {
                                     .write_all(format!("{headers}\r\n\r\n").as_bytes())
                                     .expect("test response headers should write");
                                 stream.flush().expect("test response headers should flush");
-                                thread::sleep(Duration::from_millis(100));
+                                thread::sleep(Duration::from_millis(500));
                                 let _ = stream.write_all(body.as_bytes());
+                                let _ = stream.flush();
                             } else {
                                 stream
                                     .write_all(response.as_bytes())
                                     .expect("test response should write");
+                                stream.flush().expect("test response should flush");
                             }
                             served_count += 1;
+                            drop(stream);
+                            if served_count == planned_count {
+                                let _ = completion_sender.send(served_count);
+                                return served_count;
+                            }
                         }
                         Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
                             thread::sleep(Duration::from_millis(5));
@@ -2078,9 +2126,13 @@ mod tests {
                     }
                 }
             });
+            ready_receiver
+                .recv_timeout(TEST_SERVER_EVENT_TIMEOUT)
+                .expect("test server should signal readiness");
             Self {
                 url: format!("http://{address}/body"),
                 stop_sender,
+                completion_receiver,
                 handle: Some(handle),
             }
         }
@@ -2090,12 +2142,32 @@ mod tests {
         }
 
         fn finish(mut self) -> usize {
-            let _ = self.stop_sender.send(());
-            self.handle
+            let served_count = match self
+                .completion_receiver
+                .recv_timeout(TEST_SERVER_EVENT_TIMEOUT)
+            {
+                Ok(served_count) => served_count,
+                Err(error) => {
+                    let _ = self.stop_sender.send(());
+                    let joined_count = self
+                        .handle
+                        .take()
+                        .expect("test server thread should exist")
+                        .join()
+                        .expect("failed test server thread should stop");
+                    panic!(
+                        "test server did not complete its planned responses: {error}; served {joined_count}"
+                    );
+                }
+            };
+            let joined_count = self
+                .handle
                 .take()
                 .expect("test server thread should exist")
                 .join()
-                .expect("test server thread should finish")
+                .expect("test server thread should finish");
+            assert_eq!(joined_count, served_count);
+            served_count
         }
     }
 
@@ -2106,5 +2178,33 @@ mod tests {
                 let _ = handle.join();
             }
         }
+    }
+
+    fn read_http_request(stream: &mut TcpStream) -> bool {
+        const MAX_REQUEST_BYTES: usize = 16 * 1024;
+
+        let mut request = Vec::new();
+        let mut chunk = [0_u8; 1024];
+        while request.len() < MAX_REQUEST_BYTES {
+            match stream.read(&mut chunk) {
+                Ok(0) => return false,
+                Ok(read_count) => {
+                    request.extend_from_slice(&chunk[..read_count]);
+                    if request.windows(4).any(|window| window == b"\r\n\r\n") {
+                        return true;
+                    }
+                }
+                Err(error)
+                    if matches!(
+                        error.kind(),
+                        std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                    ) =>
+                {
+                    return false;
+                }
+                Err(error) => panic!("test request headers failed: {error}"),
+            }
+        }
+        panic!("test request headers exceeded {MAX_REQUEST_BYTES} bytes");
     }
 }
