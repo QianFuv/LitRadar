@@ -304,9 +304,39 @@ pub fn merge_article_drafts(
     left: &ArticleDraft,
     right: &ArticleDraft,
 ) -> Result<ArticleDraft, ArticleMergeError> {
+    merge_article_drafts_with_doi_policy(left, right, false)
+}
+
+/// Merge two drafts after canonical aliases resolve them to one immutable article.
+///
+/// # Arguments
+///
+/// * `left` - Existing canonical draft for the resolved article.
+/// * `right` - Incoming draft whose aliases resolved to the same article.
+///
+/// # Returns
+///
+/// Deterministic canonical content with one representative when resolved DOI aliases differ.
+pub(crate) fn merge_resolved_article_drafts(
+    left: &ArticleDraft,
+    right: &ArticleDraft,
+) -> Result<ArticleDraft, ArticleMergeError> {
+    merge_article_drafts_with_doi_policy(left, right, true)
+}
+
+fn merge_article_drafts_with_doi_policy(
+    left: &ArticleDraft,
+    right: &ArticleDraft,
+    can_merge_alternate_dois: bool,
+) -> Result<ArticleDraft, ArticleMergeError> {
     if left.catalog_id != right.catalog_id {
         return Err(ArticleMergeError::CatalogMismatch);
     }
+    let doi = if can_merge_alternate_dois {
+        canonical_optional_text(left.doi.as_ref(), right.doi.as_ref())
+    } else {
+        merge_identifier(left.doi.as_ref(), right.doi.as_ref(), "DOI")?
+    };
     Ok(ArticleDraft {
         catalog_id: left.catalog_id.clone(),
         title: richer_text(&left.title, &right.title),
@@ -325,7 +355,7 @@ pub fn merge_article_drafts(
             left.abstract_text.as_ref(),
             right.abstract_text.as_ref(),
         ),
-        doi: merge_identifier(left.doi.as_ref(), right.doi.as_ref(), "DOI")?,
+        doi,
         pmid: merge_identifier(left.pmid.as_ref(), right.pmid.as_ref(), "PMID")?,
         open_access: merge_true_wins(left.open_access, right.open_access),
         in_press: merge_false_wins(left.in_press, right.in_press),
@@ -483,8 +513,8 @@ mod tests {
 
     use super::{
         article_identity_keys, issue_id_from_draft, journal_id_from_catalog_id,
-        merge_article_drafts, new_article_id, normalize_doi, resolve_article_identity,
-        ArticleIdentityError, ArticleIdentityKind, ArticleMergeError,
+        merge_article_drafts, merge_resolved_article_drafts, new_article_id, normalize_doi,
+        resolve_article_identity, ArticleIdentityError, ArticleIdentityKind, ArticleMergeError,
     };
 
     fn article(title: &str, doi: Option<&str>) -> ArticleDraft {
@@ -650,6 +680,35 @@ mod tests {
         assert_eq!(
             merge_article_drafts(&left, &other_catalog),
             Err(ArticleMergeError::CatalogMismatch)
+        );
+    }
+
+    #[test]
+    fn resolved_merge_selects_one_doi_and_keeps_other_identifier_conflicts() {
+        let left = article("Canonical Article", Some("10.1000/z-alias"));
+        let right = article("Canonical Article", Some("10.1000/a-alias"));
+        let merged = merge_resolved_article_drafts(&left, &right)
+            .expect("resolved alternate DOI values should merge");
+        assert_eq!(merged.doi.as_deref(), Some("10.1000/a-alias"));
+
+        let mut left_pmid = left.clone();
+        left_pmid.pmid = Some("123".to_string());
+        let mut right_pmid = right.clone();
+        right_pmid.pmid = Some("456".to_string());
+        assert_eq!(
+            merge_resolved_article_drafts(&left_pmid, &right_pmid),
+            Err(ArticleMergeError::ConflictingIdentifier { field: "PMID" })
+        );
+
+        let mut left_retraction = left;
+        left_retraction.retraction_doi = Some("10.1000/retraction-a".to_string());
+        let mut right_retraction = right;
+        right_retraction.retraction_doi = Some("10.1000/retraction-b".to_string());
+        assert_eq!(
+            merge_resolved_article_drafts(&left_retraction, &right_retraction),
+            Err(ArticleMergeError::ConflictingIdentifier {
+                field: "retraction DOI"
+            })
         );
     }
 }

@@ -109,7 +109,9 @@ ID 由 `litradar-index` 独占生成：
 - `issue_id` 来自 journal ID 加年份/卷/期；缺失时使用日期或标题 fallback；
 - 文章依次建立 DOI、PMID、bibliographic fingerprint 三类 alias；新 ID 使用最强可用 alias，已有任一 alias 命中时复用原 ID。
 
-bibliographic fingerprint 包含目录、规范题名、由 `publication_year` 或日期提取的年份、卷期和起始页。多个 alias 指向不同已有文章时明确报冲突，不猜测合并。系统不使用模糊题名、作者相似度、嵌入或在线查询做身份合并。
+bibliographic fingerprint 包含目录、规范题名、由 `publication_year` 或日期提取的年份、卷期和起始页。一个 draft 的 alias 只命中同一不可变文章时，不同 DOI 会作为该文章的多个 identity alias 保留；单值 `articles.doi` 使用规范 DOI 的字典序最小值，保证合并与重放不依赖到达顺序。PMID 和撤稿 DOI 仍禁止冲突。
+
+多个 alias 指向不同已有文章时明确报冲突，不猜测合并。系统不使用模糊题名、作者相似度、嵌入或在线查询做身份合并。
 
 跨 Provider 保持 ID 的保证以共享规范 alias 为限。新 Provider 若无法提供任何与旧内容共享的 DOI、PMID 或 bibliographic fingerprint，系统会把它视为新文章；这不是兼容迁移机制。
 

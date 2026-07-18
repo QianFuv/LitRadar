@@ -14,8 +14,9 @@ use litradar_domain::{
 use litradar_provider::conformance::{validate_provider_batch, ContractViolation};
 
 use crate::identity::{
-    article_identity_keys, issue_id_from_draft, journal_id_from_catalog_id, merge_article_drafts,
-    resolve_article_identity, ArticleIdentityError, ArticleIdentityKey, ArticleMergeError,
+    article_identity_keys, issue_id_from_draft, journal_id_from_catalog_id,
+    merge_resolved_article_drafts, resolve_article_identity, ArticleIdentityError,
+    ArticleIdentityKey, ArticleMergeError,
 };
 const INDEX_BUSY_TIMEOUT_SECONDS: u64 = 30;
 
@@ -711,7 +712,7 @@ fn write_canonical_article(
         });
     }
     let merged = if let Some((existing, _)) = &existing {
-        merge_article_drafts(existing, article)?
+        merge_resolved_article_drafts(existing, article)?
     } else {
         article.clone()
     };
@@ -779,7 +780,11 @@ fn write_canonical_article(
         outcome.articles_changed += 1;
     }
 
-    for key in article_identity_keys(&merged) {
+    let identity_keys = incoming_keys
+        .into_iter()
+        .chain(article_identity_keys(&merged))
+        .collect::<BTreeSet<_>>();
+    for key in identity_keys {
         outcome.identity_aliases_added += connection.execute(
             "INSERT INTO article_identity_keys (identity_kind, identity_value, article_id)
              VALUES (?1, ?2, ?3)
@@ -1073,7 +1078,9 @@ mod tests {
     };
     use rusqlite::Connection;
 
-    use super::{init_content_db, write_content_batch, CONTENT_SCHEMA_VERSION};
+    use super::{
+        init_content_db, write_content_batch, ContentDatabaseError, CONTENT_SCHEMA_VERSION,
+    };
 
     fn catalog() -> JournalCatalogEntry {
         JournalCatalogEntry {
@@ -1213,6 +1220,164 @@ mod tests {
                 })
                 .expect("row count should read");
             assert_eq!(count, expected, "unexpected replay cardinality for {table}");
+        }
+    }
+
+    #[test]
+    fn canonical_batch_preserves_alternate_doi_aliases() {
+        let connection = Connection::open_in_memory().expect("database should open");
+        init_content_db(&connection).expect("content schema should initialize");
+        let mut alternate_doi_batch = batch();
+        let mut alternate_doi_article = alternate_doi_batch.articles[0].clone();
+        alternate_doi_article.doi = Some("10.1000/alternate".to_string());
+        alternate_doi_batch.articles.push(alternate_doi_article);
+
+        let outcome = write_content_batch(
+            &connection,
+            &catalog(),
+            &alternate_doi_batch,
+            "catalog:journal-1:page-alternate-doi",
+            "2026-07-18T00:00:00Z",
+        )
+        .expect("alternate DOI aliases should converge");
+
+        assert_eq!(outcome.articles_seen, 2);
+        let article_count = connection
+            .query_row("SELECT COUNT(*) FROM articles", [], |row| {
+                row.get::<_, i64>(0)
+            })
+            .expect("article count should read");
+        let doi_alias_count = connection
+            .query_row(
+                "SELECT COUNT(*) FROM article_identity_keys WHERE identity_kind = 'doi'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .expect("DOI alias count should read");
+        let doi_owner_count = connection
+            .query_row(
+                "SELECT COUNT(DISTINCT article_id) FROM article_identity_keys
+                 WHERE identity_kind = 'doi'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .expect("DOI alias owner count should read");
+        let canonical_doi = connection
+            .query_row("SELECT doi FROM articles", [], |row| {
+                row.get::<_, String>(0)
+            })
+            .expect("canonical DOI should read");
+
+        assert_eq!(article_count, 1);
+        assert_eq!(doi_alias_count, 2);
+        assert_eq!(doi_owner_count, 1);
+        assert_eq!(canonical_doi, "10.1000/alternate");
+
+        alternate_doi_batch.articles.reverse();
+        let replay = write_content_batch(
+            &connection,
+            &catalog(),
+            &alternate_doi_batch,
+            "catalog:journal-1:page-alternate-doi",
+            "2026-07-18T00:00:00Z",
+        )
+        .expect("reverse-order alternate DOI replay should converge");
+        assert_eq!(replay.articles_changed, 0);
+        assert_eq!(replay.identity_aliases_added, 0);
+        assert_eq!(replay.change_events_emitted, 0);
+        for (table, expected) in [
+            ("journals", 1),
+            ("issues", 1),
+            ("articles", 1),
+            ("article_identity_keys", 3),
+            ("article_listing", 1),
+            ("article_search", 1),
+            ("article_change_events", 1),
+        ] {
+            let count = connection
+                .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| {
+                    row.get::<_, i64>(0)
+                })
+                .expect("replay table count should read");
+            assert_eq!(count, expected, "unexpected alternate DOI {table} count");
+        }
+        let listing_doi = connection
+            .query_row("SELECT doi FROM article_listing", [], |row| {
+                row.get::<_, String>(0)
+            })
+            .expect("listing DOI should read");
+        let search_doi = connection
+            .query_row("SELECT doi FROM article_search", [], |row| {
+                row.get::<_, String>(0)
+            })
+            .expect("search DOI should read");
+        assert_eq!(listing_doi, canonical_doi);
+        assert_eq!(search_doi, canonical_doi);
+    }
+
+    #[test]
+    fn alternate_doi_merge_preserves_multiple_identity_conflict_guard() {
+        let connection = Connection::open_in_memory().expect("database should open");
+        init_content_db(&connection).expect("content schema should initialize");
+        let mut initial_batch = batch();
+        let mut other_article = initial_batch.articles[0].clone();
+        other_article.title = "Other Article".to_string();
+        other_article.start_page = Some("9".to_string());
+        other_article.doi = Some("10.1000/other".to_string());
+        initial_batch.articles.push(other_article.clone());
+        write_content_batch(
+            &connection,
+            &catalog(),
+            &initial_batch,
+            "catalog:journal-1:page-initial",
+            "2026-07-18T00:00:00Z",
+        )
+        .expect("separate canonical articles should write");
+
+        let before = [
+            "articles",
+            "article_identity_keys",
+            "article_listing",
+            "article_search",
+            "article_change_events",
+        ]
+        .into_iter()
+        .map(|table| {
+            let count = connection
+                .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| {
+                    row.get::<_, i64>(0)
+                })
+                .expect("pre-conflict table count should read");
+            (table, count)
+        })
+        .collect::<Vec<_>>();
+        let mut bridge_article = other_article;
+        bridge_article.doi = Some("10.1000/shared".to_string());
+        let mut bridge_batch = batch();
+        bridge_batch.articles = vec![bridge_article];
+
+        let error = write_content_batch(
+            &connection,
+            &catalog(),
+            &bridge_batch,
+            "catalog:journal-1:page-conflict",
+            "2026-07-18T00:00:00Z",
+        )
+        .expect_err("aliases owned by two articles should remain invalid");
+        assert!(matches!(
+            error,
+            ContentDatabaseError::Identity(
+                crate::identity::ArticleIdentityError::ConflictingAliases { .. }
+            )
+        ));
+
+        for (table, expected) in before {
+            let count = connection
+                .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| {
+                    row.get::<_, i64>(0)
+                })
+                .expect("post-conflict table count should read");
+            assert_eq!(count, expected, "conflict changed {table}");
         }
     }
 }

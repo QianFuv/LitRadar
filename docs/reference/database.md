@@ -99,7 +99,9 @@ article_change_events (transactional content outbox)
 - `pmid`；
 - `bibliographic`。
 
-每个 alias 指向一个不可变 `article_id`。写入新 batch 前，writer 同时查询所有 alias：零命中时按最强 alias 生成新 ID；一个 ID 命中时复用；多个 ID 命中时明确报冲突。
+每个 alias 指向一个不可变 `article_id`，同一文章可以拥有多个不同的 DOI alias。写入新 batch 前，writer 同时查询所有 alias：零命中时按最强 alias 生成新 ID；一个 ID 命中时复用；多个 ID 命中时明确报冲突。
+
+当同一已解析文章出现不同 DOI 时，writer 保存输入与合并结果的全部 DOI alias，并把规范 DOI 的字典序最小值写入单值 `articles.doi` 及其列表/FTS 投影。PMID 和撤稿 DOI 冲突仍会中止事务；已有 alias 不会删除、改绑或分配新的 article ID。
 
 ### `article_listing`
 
