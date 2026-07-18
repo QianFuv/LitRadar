@@ -1,167 +1,101 @@
-# CNKI 数据源
+# CNKI 与浙江图书馆 Provider
 
-本文档说明 `source=cnki` 的元数据索引链路，以及它与用户级机构全文链路之间的边界。
+CNKI 元数据索引、CNKI 详情/摘要页和浙江图书馆全文是三个独立运行时边界。它们共享[规范文章契约](../index-provider-contract.md)，不通过索引 provenance 或持久 URL 互相绑定。
 
-CNKI overseas 页面和内部接口不是本项目控制的稳定公共契约。下述内容以 2026-07-11 的代码实现为准；上游页面结构变化时，应以 fixture 与解析测试确认兼容性。
+CNKI overseas 页面和内部接口不是 LitRadar 控制的稳定公共 API。上游页面变化应通过 fixture 和 parser 测试确认，不能通过在内容库新增 transport 字段规避。
 
-## 两条独立链路
+## 能力声明
 
-| 链路       | 作用                                               | 凭据边界                                         |
-| ---------- | -------------------------------------------------- | ------------------------------------------------ |
-| 元数据索引 | 抓取期刊、期次、文章题名、作者、摘要、DOI 与详情页 | 直连 CNKI overseas，不使用用户的浙江图书馆会话   |
-| 全文获取   | 用户打开单篇文章时解析机构访问能力并下载匹配 PDF   | 使用当前 LitRadar 用户自己的浙江图书馆 CNKI 会话 |
+| 注册/实现                                     | 能力                                               | 凭据                                                  |
+| --------------------------------------------- | -------------------------------------------------- | ----------------------------------------------------- |
+| `cnki_index_registration`                     | `IndexContentProvider`                             | 直连 CNKI overseas；不使用用户会话                    |
+| `cnki_access_registration` / API live adapter | `ArticleDetailProvider`、`ArticleAbstractProvider` | 每次动作在线精确定位；不使用 ZJLib 会话               |
+| `zjlib_cnki` API registration                 | `ArticleFullTextProvider`                          | 只读取当前 LitRadar 用户已有的 active ZJLib CNKI 会话 |
 
-索引器不会把受权限控制的 HTML 阅读、CAJ 或 PDF 入口当作公开全文 URL。
+三个能力可以独立排序、启用或替换。中文目录以后切换到其他索引 Provider 时，CNKI 在线详情或 ZJLib 全文仍可继续作为运行时候选。
 
-## 期刊解析顺序
+## 元数据索引流程
 
-每一行 CSV 先按题名查找，再按 ISSN fallback：
+Provider 接收 LitRadar 维护的 `JournalCatalogEntry`，按题名优先、ISSN fallback 定位期刊：
 
-1. 若 `title` 非空，使用“刊名（曾用刊名）”搜索。
-2. 逐个打开候选详情页，并同时核对解析出的题名与 ISSN。
-3. 题名路径没有匹配时，若 `issn` 非空，再执行 ISSN 精确搜索。
-4. 两条路径都没有可信匹配时，该期刊解析失败。
+1. 用维护标题搜索“刊名（曾用刊名）”。
+2. 打开候选详情页，同时核对规范题名/别名和 ISSN。
+3. 题名路径无可信匹配时，以维护 ISSN 精确搜索。
+4. 从匹配详情页读取 `pykm`、`pCode` 和年期树。
+5. 分页读取每期文章列表，并在当前 Provider 调用内打开文章详情。
+6. 映射为 `JournalDraft`、`IssueDraft`、`ArticleDraft`，丢弃所有 transport handle 和 URL。
 
-这与旧版“ISSN 优先”的描述不同；题名优先是当前实现。
+基础站点为 `https://oversea.cnki.net`。当前私有请求路径包括 journal 搜索、详情、year list、papers 和 article abstract 页面；这些路径不是内容契约。
 
-## 页面与接口流程
+## 规范字段映射
 
-基础站点：`https://oversea.cnki.net`
+| 规范字段                    | CNKI 页面来源/规则                            |
+| --------------------------- | --------------------------------------------- |
+| journal observation         | 详情页标题、别名和 ISSN，仅用于验证维护目录项 |
+| issue                       | 年期树的年份、卷、期、显示标题和日期          |
+| `title`                     | 文章列表/详情规范文本                         |
+| `authors`                   | 只保留有序 display name                       |
+| `abstract_text`             | 详情页摘要文本                                |
+| `publication_year` / `date` | 年期和在线公开日期                            |
+| volume/issue/pages          | 年期树、列表和详情页                          |
+| `doi`                       | 规范为小写 DOI 标识符，不保存 URL             |
+| `open_access`               | 未知；列表的“免费/Free”不等同于规范 OA 结论   |
 
-| 步骤     | 请求                                   | 结果                                 |
-| -------- | -------------------------------------- | ------------------------------------ |
-| 期刊搜索 | `POST /knavi/journals/searchbaseinfo`  | 候选 `/knavi/detail?...` 链接        |
-| 期刊详情 | `GET /knavi/detail?...`                | `pykm`、`pCode`、`time` 与期刊元数据 |
-| 年份期次 | `POST /knavi/journals/{pykm}/yearList` | 年期树                               |
-| 期内文章 | `POST /knavi/journals/{pykm}/papers`   | 文章摘要页链接与列表字段             |
-| 文章详情 | `GET /kcms2/article/abstract?...`      | 摘要、DOI、日期、页码与详情链接      |
+CNKI filename、`pykm`、`pCode`、数据库代码、详情路径、search URL、Cookie 和原始 HTML 只存在于私有 client/adapter 内。内容库没有 `platform_id`、`content_location`、`permalink` 或 `full_text_file`。
 
-所有页面请求明确使用中文语言参数或请求头。
+## Provider checkpoint
 
-### 期刊搜索
+CNKI 索引 adapter 可以把分页/年期进度编码为 opaque checkpoint。LitRadar 只把该文本保存在 `data/index-control/<catalog>.sqlite` 的 CNKI namespace，并在下一次 `fetch` 原样传回。
 
-请求表单中的关键值：
+Provider 不能把 checkpoint 嵌入 `ArticleDraft`。控制库删除或更换 Provider 后从头读取，内容 writer 依靠规范 identity alias 幂等复用已有 ID。
 
-| 字段                      | 题名搜索         | ISSN 搜索  |
-| ------------------------- | ---------------- | ---------- |
-| `searchType`              | `刊名(曾用刊名)` | `ISSN`     |
-| 查询字段                  | `TI`             | `SN`       |
-| 运算符                    | `%`              | `=`        |
-| `pageindex` / `pagecount` | `1` / `21`       | `1` / `21` |
-| `switchdata`              | `search`         | `search`   |
+## 在线详情和摘要页
 
-响应是 HTML 片段，不是 JSON。解析器提取候选详情链接后仍会访问详情页验证，不会仅凭搜索结果顺序选第一项。
+详情或摘要动作不会读取持久链接。每次请求都使用 `ArticleLocator` 的维护期刊题名/ISSN、文章题名、年份、卷期、页码、作者和 DOI 执行在线定位：
 
-### 期刊详情与目录
+1. 精确定位期刊；
+2. 读取相关年期和文章候选；
+3. 打开候选详情并核对规范文章身份；
+4. 只把本次匹配的 CNKI HTTPS 目的地返回给 API。
 
-详情页的隐藏字段决定后续目录请求：
+注册 allowlist 为 `oversea.cnki.net`、`kns.cnki.net` 和 `www.cnki.net`。API 会再次执行统一 HTTPS/host 校验，返回 `Cache-Control: private, no-store` 的 307；目的地不写入内容、控制或认证库。
 
-| 字段                    | 用途                           |
-| ----------------------- | ------------------------------ |
-| `pykm`                  | 期刊路径标识                   |
-| `pCode`                 | 数据库产品代码                 |
-| `time`                  | `yearList` 请求所需页面 token  |
-| `shareChName` / `title` | 期刊名                         |
-| 页面文本                | ISSN、CN、影响因子等展示元数据 |
+## 浙江图书馆全文
 
-`yearList` 的年期树提供 `year`、`number`、`year_issue` 与显示标题；`year_issue` 原值会传给 `papers`。
+ZJLib 全文能力与 CNKI 索引 Provider 无关：
 
-### 文章列表与详情
+1. 用户在设置页完成浙江图书馆扫码登录；会话密文按用户保存在 `data/auth.sqlite.cnki_sessions`。
+2. `/access` 只检查本地 active 状态。若后续还有无需登录的全文 Provider，ZJLib 未登录不会阻断回退按钮。
+3. 用户调用 `/fulltext` 后，Provider 读取当前用户已有的 session snapshot。
+4. 客户端完成 BFF/Share SSO、Cookie 同步和代理预热，然后按文章题名搜索。
+5. 下载前规范化比较候选题名、作者和期刊；三项不匹配就拒绝 PDF。
+6. 匹配 PDF 必须非空、`application/pdf` 且不超过 32 MiB，随后以 no-store attachment 返回。
 
-`papers` 响应中的每条摘要记录包含：
+全文动作不会把更新后的 client Cookie 写回 session，不更新 `updated_at`/`last_used_at`，也不缓存 PDF 或新增文件。API 不返回 token、Cookie、代理 URL 或 transport 错误详情。
 
-- 摘要页 URL
-- CNKI filename / 平台标识
-- 题名
-- 作者
-- 页码
-- 页面显示的“免费 / Free”标记
+### 代理重定向安全
 
-文章详情页再解析：
+ZJLib 客户端手动处理已知的登录/代理主机跳转，只允许 HTTPS、允许主机、有限跳数和有效 `vpn358_sid` 成功门槛。已知双节点循环会有限重取登录地址；其他协议、主机、Location、循环或跳数异常明确失败。
 
-| 索引字段                         | 页面来源                           |
-| -------------------------------- | ---------------------------------- |
-| `platform_id`                    | `paramfilename` / `param-filename` |
-| `title`                          | `p.title-one`                      |
-| `authors`                        | `authorpart`                       |
-| `abstract`                       | `abstract_text`                    |
-| `doi`                            | DOI 信息行                         |
-| `date`                           | 在线公开时间                       |
-| `start_page` / `end_page`        | 页码信息行                         |
-| `content_location` / `permalink` | `openlink/detail` 详情 URL         |
-| `full_text_file`                 | 始终留空                           |
-| `open_access`                    | 始终未知                           |
+reqwest 错误在转换为业务错误前移除完整 URL。需要诊断的自定义地址也必须脱敏查询参数，避免 `enc`、用户标识或 Cookie 信息进入日志/API。
 
-列表中的“免费 / Free”只被解析为源页面信息，不会转换为 OA 结论。
+## 重试和可观测性
 
-## 全文访问边界
+单个 CNKI HTTP 操作最多三次，两次等待分别为 1 秒和 2 秒。传输失败、非 2xx、验证码或异常验证页会重试；持续失败使当前 Provider 操作明确失败，不写空内容冒充成功。
 
-CNKI 文章的详情页与机构全文是两种能力：
+请求尝试只汇总到结构化 `index.provider.attempts` 或文章访问 fallback 事件。内容库没有 API/path statistics 表，也不保存 URL、响应正文、查询参数或解码器样本。
 
-1. 用户在设置页启动浙江图书馆扫码登录。
-2. 登录状态保存在 `data/auth.sqlite` 的用户级 CNKI 会话中。
-3. 前端调用 `GET /api/articles/{article_id}/access`。
-4. 只有文章来源为 CNKI 且当前用户会话 active 时，后端才返回 `zjlib_cnki` 全文 provider。
-5. 用户触发全文动作后，后端按题名搜索候选。
-6. 后端读取候选详情，并标准化比较题名、作者和期刊名。
-7. 三项全部匹配时才返回 PDF；没有精确匹配时返回受控错误。
+当前没有代理池运行设置。`--workers` 和 `--issue-batch` 只控制 CNKI adapter 内的详情工作，`--processes` 控制同一目录的 journal worker；默认值和内存边界见[CLI 参考](../cli.md)。
 
-API 不会返回浙江图书馆 token 或 Cookie 值，也不会把一个用户的会话用于另一个用户。英文 scholarly 数据库和 CCF 数据库不走这条机构全文链路。
+## 维护测试
 
-### 机构会话预热与重定向边界
+修改 CNKI/ZJLib adapter 时至少覆盖：
 
-全文访问先完成浙江图书馆 BFF 与 Share SSO、Cookie 同步和用户信息请求，再从 `vpn358` 获取一次性的 zyproxy 登录地址。zyproxy 登录不会使用通用自动重定向，只会手动跟随以下两个 HTTPS 主机之间的跳转：
-
-- `login.elib.zyproxy.zjlib.cn`
-- `http-10--18--17--173.elib.zyproxy.zjlib.cn`
-
-只有代理主机返回 2xx，且 Cookie jar 中已经存在有效的 `vpn358_sid`，会话预热才算成功。如果 `login.elib.../index.php` 与代理 `/kns55/` 形成已知的双节点 302 循环，客户端会重新获取新的 `vpn358` 登录地址并重试；最多进行 3 次 zyproxy 登录尝试，重试前分别等待 200 毫秒和 400 毫秒，每次尝试最多跟随 4 跳。
-
-其他重定向不会进入重试：非 HTTPS 或非允许主机、缺失或非法 `Location`、自重定向、其他循环、超过跳转上限以及非 2xx/3xx 状态都会立即返回受控错误。reqwest 产生的错误在转换为业务错误前会移除完整 URL；必须显示 URL 的自定义诊断只保留脱敏后的地址，避免把 `enc`、用户标识或其他查询参数带入 API 响应和日志。
-
-## 元数据索引重试与阻断检测
-
-单个 CNKI HTTP 操作最多执行 3 次，两次等待分别为 1 秒和 2 秒。以下情况会重试：
-
-- 传输失败
-- 任意非 2xx 响应
-- 包含 captcha、`访问异常` 或 `安全验证`，且不像正常 CNKI 内容的 2xx 页面
-
-客户端不跟随 HTTP 重定向，因此 3xx 会作为非成功响应重试并最终失败。所有尝试都会记录端点、URL、状态码和重试状态；持续失败会使当前索引任务明确失败，不会静默写入空字段。
-
-当前没有代理池，也不读取代理配置。
-
-## 并发模型
-
-CLI 默认值：
-
-| 参数            | 默认值            | 作用                               |
-| --------------- | ----------------- | ---------------------------------- |
-| `--workers`     | `32`              | 每个期刊 worker 的文章详情并发上限 |
-| `--processes`   | `2`               | 同一 CSV 内的期刊 worker 进程数    |
-| `--issue-batch` | 与 `workers` 相同 | 每轮聚合多少期后抓取详情并写库     |
-
-CSV 文件之间串行。期刊搜索、目录与文章列表在单个 worker 内按流程执行；只有当前 issue batch 的文章详情会并发。因此瞬时详情请求上限近似为：
-
-```text
-workers × active journal workers
-```
-
-实际并发还受期刊行数、期次数与 batch 内文章数限制。增大 `issue-batch` 能让详情并发更充分，但也会扩大一次失败影响的重试范围。
-
-## 维护提示
-
-修改解析器时至少应保留以下测试边界：
-
-- 题名优先、ISSN fallback 与候选详情验证
-- `pykm` / `pCode` / `time` 隐藏字段
-- 年期树、文章列表和详情页字段解析
-- captcha / 验证页拒绝
-- `full_text_file` 为空且 `open_access` 未知
-- 全文候选的题名、作者、期刊三项匹配
-- 用户级会话隔离
-- zyproxy 正常跳转、已知双节点循环的有限重试与持续循环上限
-- zyproxy 主机、协议、跳数和 `vpn358_sid` 成功门槛
-- reqwest 错误 URL 脱敏，不暴露登录查询参数
-
-生产实现不依赖环境变量切换 fixture。确定性测试通过显式 fixture 或可注入传输运行。
+- 题名优先、ISSN fallback 和候选期刊验证；
+- `pykm`/`pCode`、年期树、文章列表与详情变体；
+- captcha/验证页、非 2xx 和 decode retry；
+- batch 中没有 filename、Provider、URL 或原始 HTML；
+- 在线详情/摘要每次重新解析且 host 受限；
+- ZJLib 用户隔离、题名/作者/期刊三项精确匹配和 32 MiB 上限；
+- 成功、无匹配和 fallback 后索引/control/auth 行与文件系统均不变；
+- zyproxy 协议、主机、跳数、循环和 URL 脱敏。

@@ -7,7 +7,7 @@ LitRadar 不使用单一 `.env` 作为配置中心。不同配置来源服务于
 | 来源                                | 范围              | 典型内容                                      |
 | ----------------------------------- | ----------------- | --------------------------------------------- |
 | CLI 参数                            | 一个子命令调用    | 路径、监听地址、调度间隔、并发、超时、dry-run |
-| `data/auth.sqlite.runtime_settings` | 后端全局          | scholarly key 池、CORS、MCP、Cookie           |
+| `data/auth.sqlite.runtime_settings` | 后端全局          | key 池、Provider 路由/顺序、CORS、MCP、Cookie |
 | `notification_settings`             | 单个用户          | AI、PushPlus、偏好、投递方式                  |
 | 前端环境变量                        | 前端构建/本地开发 | 浏览器 API 地址、开发 rewrite 目标            |
 | 部署密钥文件                        | 一个部署          | 认证和解密数据库秘密值                        |
@@ -38,25 +38,47 @@ LitRadar 不使用单一 `.env` 作为配置中心。不同配置来源服务于
 
 设置该变量后，`serve` 和普通 `index` 会在认证库迁移后验证整个 bundle，再按 manifest hash 创建、接管或升级官方文件。自定义的同名文件和 manifest 外文件保持不变；结果产生 `storage.managed_meta.prepared` 事件。bundle 缺失、格式/hash 非法、持久目标不是普通目录/文件或检测到版本降级时，命令在后续工作前失败。
 
-本地构建默认不设置该变量，因此不执行受管准备，也不会要求 `/usr/share/litradar/meta` 存在。此时缺失或空的 `<project-root>/data/meta` 继续沿用索引命令原有的无输入行为。
+本地构建默认不设置该变量，因此不执行受管准备，也不会要求 `/usr/share/litradar/meta` 存在。此时运维人员必须自行创建 `<project-root>/data/meta`；目录缺失时索引明确失败，目录存在但没有选中的 CSV 时返回 `skipped`。
 
 ## 全局运行设置
 
-管理员通过 `GET/PUT /api/admin/runtime-settings` 或前端管理页维护以下七项：
+管理员通过 `GET/PUT /api/admin/runtime-settings` 或前端管理页维护以下 11 项：
 
-| 字段                            | 默认值                    | 秘密 | 使用者                                        |
-| ------------------------------- | ------------------------- | ---: | --------------------------------------------- |
-| `openalex_api_key_pool`         | 空                        |   是 | scholarly 索引                                |
-| `semantic_scholar_api_key_pool` | 空                        |   是 | scholarly 索引                                |
-| `crossref_mailto_pool`          | 空                        |   否 | Crossref 联系邮箱；OpenAlex 请求也复用 mailto |
-| `cors_allowed_origins`          | 空                        |   否 | API credentialed CORS                         |
-| `mcp_allowed_hosts`             | `localhost,127.0.0.1,::1` |   否 | MCP Host 白名单                               |
-| `mcp_allowed_origins`           | 空                        |   否 | 浏览器 MCP Origin 白名单                      |
-| `secure_cookies`                | `false`                   |   否 | `litradar_session` 的 Secure 标志             |
+| 字段                              | 默认值                    | 秘密 | 使用者                                        |
+| --------------------------------- | ------------------------- | ---: | --------------------------------------------- |
+| `openalex_api_key_pool`           | 空                        |   是 | scholarly 索引                                |
+| `semantic_scholar_api_key_pool`   | 空                        |   是 | scholarly 索引                                |
+| `crossref_mailto_pool`            | 空                        |   否 | Crossref 联系邮箱；OpenAlex 请求也复用 mailto |
+| `cors_allowed_origins`            | 空                        |   否 | API credentialed CORS                         |
+| `mcp_allowed_hosts`               | `localhost,127.0.0.1,::1` |   否 | MCP Host 白名单                               |
+| `mcp_allowed_origins`             | 空                        |   否 | 浏览器 MCP Origin 白名单                      |
+| `secure_cookies`                  | `false`                   |   否 | `litradar_session` 的 Secure 标志             |
+| `index_provider_routes`           | 三个官方目录的默认映射    |   否 | 目录 stem 到索引 Provider 的 JSON object      |
+| `article_detail_provider_order`   | `scholarly,cnki`          |   否 | 在线详情页 Provider 优先级                    |
+| `article_abstract_provider_order` | `scholarly,cnki`          |   否 | 在线摘要页 Provider 优先级                    |
+| `article_fulltext_provider_order` | `zjlib_cnki`              |   否 | 在线全文 Provider 优先级                      |
 
-存在任意 `source=scholarly` 的 CSV 行时，`litradar index` 在开始前要求 OpenAlex 和 Semantic Scholar key 池都非空。Crossref mailto 建议生产配置，但代码不把它设为启动必填。
+默认 `index_provider_routes` 为：
+
+```json
+{
+  "ccf_computer_journals": "scholarly",
+  "chinese_journals": "cnki",
+  "english_journals": "scholarly"
+}
+```
+
+索引命令只根据目录 stem 选择 Provider。被路由到 `scholarly` 的目录开始前要求 OpenAlex 和 Semantic Scholar key 池都非空；CSV 本身不含 `source`。Crossref mailto 建议生产配置，但代码不把它设为启动必填。
 
 key/mailto 池按逗号、分号或换行拆分，去除空项并按首次出现顺序去重；当前实时客户端选择池中的第一个值发起请求。池设计保留多个值，但不表示每次请求都会轮转。
+
+### Provider 路由语法
+
+`index_provider_routes` 必须是非空 JSON object。key 是不含 `.csv` 的规范目录 stem，value 是已注册的索引 Provider 名称；二者只接受小写 ASCII 名称及内部的 `.`、`_`、`-`。保存时按 key 排序并压缩为规范 JSON。
+
+三个 `article_*_provider_order` 是逗号分隔的有序 Provider 名称。空字符串表示禁用该在线动作；空项、非法名称和重复项被拒绝。每个顺序独立于 `index_provider_routes`：切换中文索引 Provider 不会自动改变详情、摘要或全文链路。
+
+运行时只尝试已注册且声明相应 capability 的名称。Provider 的 HTTPS redirect host allowlist 属于代码注册信息，不是管理员配置，也不存入文章或数据库。完整契约见[索引与 Provider 契约](index-provider-contract.md)。
 
 ### Origin 语法
 
@@ -110,7 +132,7 @@ key/mailto 池按逗号、分号或换行拆分，去除空项并按首次出现
 优先级和启动顺序：
 
 1. CLI 解析 `host`、`port`、`project-root`、调度间隔、密钥文件和 Secure Cookie 启动门。
-2. 迁移 `auth.sqlite` 和索引库。
+2. 迁移 `auth.sqlite`，并验证现有索引库是精确 v4；旧库要求显式重建。
 3. 若配置了官方 Meta 打包路径，准备持久 Meta 目录。
 4. 用密钥验证数据库秘密。
 5. 加载全局运行设置。
@@ -124,7 +146,7 @@ key/mailto 池按逗号、分号或换行拆分，去除空项并按首次出现
 
 `litradar index` 的一次运行参数由 CLI 决定；scholarly transport 的 key/mailto 从全局运行设置读取：
 
-普通索引先迁移认证库和现有索引库，再执行可选的官方 Meta 准备，然后验证部署密钥、读取运行设置并进入逐 CSV 预检。内部索引 worker 不重复准备。准备只管理 manifest 声明的持久文件，不绕过或替代期刊身份与数据库投影预检。
+普通索引先迁移认证库并验证现有内容库，再执行可选的官方 Meta 准备，然后验证部署密钥、读取运行设置、校验规范目录，并按 `index_provider_routes` 构造 Provider。内部索引 worker 不重复准备。准备只管理 manifest 声明的持久文件，不替代目录契约校验。
 
 - OpenAlex key：请求 `/sources` 和 `/works`
 - Semantic Scholar key：`x-api-key` 请求头
@@ -163,14 +185,15 @@ warn,litradar=info,litradar_api=info,litradar_cli=info,litradar_index=info,litra
 
 以 `project-root` 为根：
 
-| 路径                     | 内容                   |
-| ------------------------ | ---------------------- |
-| `data/meta`              | 期刊 CSV               |
-| `data/index`             | 索引 SQLite            |
-| `data/auth.sqlite`       | 认证和业务库           |
-| `data/push_state`        | 变更清单和 notify 状态 |
-| `data/folder_push_state` | push 状态              |
-| `libs/simple-*`          | 平台 `simple` 扩展     |
+| 路径                     | 内容                                    |
+| ------------------------ | --------------------------------------- |
+| `data/meta`              | 期刊 CSV                                |
+| `data/index`             | 索引 SQLite                             |
+| `data/index-control`     | 可丢弃 Provider checkpoint/lease SQLite |
+| `data/auth.sqlite`       | 认证和业务库                            |
+| `data/push_state`        | 变更清单和 notify 状态                  |
+| `data/folder_push_state` | push 状态                               |
+| `libs/simple-*`          | 平台 `simple` 扩展                      |
 
 `simple` 扩展只按项目根下的内置平台路径发现，不接受环境变量覆盖。
 

@@ -134,7 +134,7 @@ litradar admin backup restore
     [--auth-db PATH]
 ```
 
-备份命令不接收部署密钥。清单格式名固定为 `litradar-backup`；新备份使用 version 2，并始终包含认证库和完整 `data/meta` 普通文件树。`--include-indexes` 和 `--include-push-state` 只选择额外组，后者同时选择 `data/push_state` 和 `data/folder_push_state`。验证和恢复仍接受 version 1；v1 恢复不会修改目标 Meta 目录。精确替换和离线门禁见[备份与恢复](../operations/backup.md)。
+备份命令不接收部署密钥。清单格式名固定为 `litradar-backup`；新备份使用 version 2，并始终包含认证库和完整 `data/meta` 普通文件树。`--include-indexes` 只选择 `data/index` 下的 v4 内容库，明确排除可重建的 `data/index-control`；`--include-push-state` 同时选择 `data/push_state` 和 `data/folder_push_state`。验证和恢复仍接受 version 1；v1 恢复不会修改目标 Meta 目录。精确替换和离线门禁见[备份与恢复](../operations/backup.md)。
 
 ## `index`
 
@@ -155,7 +155,7 @@ litradar index --secret-key-file PATH
 
 | 参数                                       | 默认值   | 含义                                 |
 | ------------------------------------------ | -------- | ------------------------------------ |
-| `--secret-key-file PATH`                   | 必填     | 解密 scholarly 运行配置              |
+| `--secret-key-file PATH`                   | 必填     | 解密索引运行配置                     |
 | `--file FILE`、`-f FILE`                   | 全部 CSV | 只处理 `data/meta/` 下的一个文件     |
 | `--workers N`、`-w N`                      | `8`      | 每个期刊子进程内的 CNKI 文章详情并发 |
 | `--processes N`                            | `1`      | 单个 CSV 的期刊子进程数              |
@@ -179,31 +179,33 @@ litradar index --secret-key-file PATH
 
 命令结果保持原有顶层 `status`、`message` 和 `csvs` 字段，并新增不含密钥的 `effective_concurrency`，记录本次实际使用的 `workers`、`processes` 和 `issue_batch`。每个 CSV 结果使用定长的 `written_article_count`；旧的 `written_article_ids` 列表不再返回。内部索引工作进程同样只返回计数，避免结果大小随文章数量增长。
 
-发布镜像设置 `LITRADAR_BUNDLED_META_DIR=/usr/share/litradar/meta`。普通 `index` 在数据库迁移后、读取密钥和运行设置前准备持久的 `<project-root>/data/meta`，再进入下述期刊预检；内部多进程 worker 请求在准备分支之前返回，因此不会重复准备。准备结果产生 `storage.managed_meta.prepared` 聚合事件，不改变上述 stdout JSON。未设置该变量的本地运行不执行受管准备；缺失或空目录仍沿用原有无输入行为。该变量是发布打包契约，不是索引 CLI 选项。
+发布镜像设置 `LITRADAR_BUNDLED_META_DIR=/usr/share/litradar/meta`。普通 `index` 在认证库迁移后、读取密钥和运行设置前准备持久的 `<project-root>/data/meta`，再进入下述规范目录校验；内部多进程 worker 请求不会重复准备。准备结果产生 `storage.managed_meta.prepared` 聚合事件，不改变上述 stdout JSON。未设置该变量的本地运行不执行受管准备；目录缺失会明确失败，存在但没有选中 CSV 时返回 `skipped`。
 
-### Meta 期刊预检
+### 规范目录和 Provider 路由
 
-每个非空 CSV 在索引或更新前都经过 Meta 期刊预检。显式传入 `--file` 时只检查该文件；未传入时仍按文件名顺序逐个检查和处理，不把不同目录之间重复出现的同一期刊视为冲突。
+显式传入 `--file` 时只接受 `data/meta` 下一个不带目录组件的 `.csv` 文件名；未传入时按文件名顺序处理全部 CSV。每个文件 stem 稳定决定内容库和控制库：
 
-预检顺序如下：
+```text
+data/meta/<stem>.csv
+data/index/<stem>.sqlite
+data/index-control/<stem>.sqlite
+```
 
-1. 在创建数据库运行记录前检查 `source`，并确认本文件内每行都能生成唯一稳定期刊 ID。重复项会在错误中同时列出两条期刊标题和身份值；系统不会模糊猜测并自动改写 CSV。
-2. 取得该索引库的运行租约并启动心跳后，在一个立即事务中补齐缺失的中性 `journals` 行，并同步 `journal_meta` 的 `source_csv`、`area`、`csv_title`、`csv_issn` 和 `csv_library`。
-3. 事务内逐行复验 journal 与上述 CSV 字段。全部匹配并提交后，才会构造本地数据源客户端或启动多进程 worker。
+CSV 使用 LitRadar 维护的 `catalog_id,title,issn,eissn,all_issns,title_aliases,area,...rankings` 契约，没有 `source` 或上游 ID。解析器在网络请求前拒绝未知列、非法/重复 `catalog_id`、非法 ISSN、重复别名和不规范文本。
 
-已有 `journals` 行及 `journal_meta.resolved_*` 上游解析字段不会被预检覆盖；缺失 journal 的可用性、文章存在性、排名和电子 ISSN 等 provider 字段保持 `NULL`，等待正常索引解析。输入身份错误在运行记录创建前失败；数据库同步或复验错误会回滚整个目录变更，把已创建的父运行标记为 `failed`，释放本方租约，并保持 worker 启动数为零。之后发生的错误才属于正常上游索引阶段。
+`index_provider_routes` 从 `auth.sqlite.runtime_settings` 把 stem 映射到一个已注册 `IndexContentProvider`。缺少 route、Provider 未注册或没有索引 capability 都会在启动 worker 前失败。改变 route 不改目录或内容库身份；在线详情、摘要和全文顺序另行配置。
 
-该预检是 rate-limit neutral：它只读取 CSV 和本地 SQLite，不额外探测 Crossref、OpenAlex、Semantic Scholar 或 CNKI，因此不能保证上游在随后请求时仍然可用。需要修正歧义身份时，应先审查并更新 `data/meta/*.csv`，再重跑索引。内嵌调度任务最终调用同一个 `litradar index` 路径，自动执行相同预检。
+内容库必须是新建/空 v0 或精确 v4。非空 v0 及 v1–v3 会返回包含确切路径的 rebuild-required 错误；命令不自动删除、改名、迁移或降低 `user_version`。先备份，再移动或删除点名文件并重建。
 
 ### 实时恢复与增量同步
 
-每个非空 CSV 的实时索引或更新在对应索引库中取得 `index_run_lease`。父运行先以 `running` 持久化，后台每 30 秒续期，租约有效期为 300 秒。同一数据库存在未过期所有者时，新命令会在调用上游或启动 worker 前失败；不要并发重试或手工删除租约。正常错误会写入 `failed` 并释放租约。进程被强制终止时，确认旧进程确实消失，等待租约过期后重跑；下一次命令会把旧父运行标为 `interrupted` 并继续。
+每个目录/Provider 在 `data/index-control/<stem>.sqlite` 取得独立 lease。父进程每 30 秒续期到未来 300 秒；未过期所有者会在调用上游前阻止同一 namespace 的新命令。正常结束释放 lease；进程被强制终止时，确认旧进程已经消失并等待 lease 过期，或在维护窗口删除整个可丢弃控制库后重跑。
 
-`--update` 会在取得租约的同一事务中接管所有旧运行尚未发布的变更事件。worker、上游或清单失败都保留这些事件；只有 changes JSON 已落盘且最终数据库事务成功后才清理。文件发布和 SQLite 提交之间的崩溃可能让同一净变更再次出现，因此该接口保持至少一次投递，消费者必须按既有身份去重。非更新索引不会接管或删除待发布事件。
+Provider checkpoint 以目录、Provider 和 journal/year/listing scope 隔离。普通 `--resume` 可跳过已完成 journal 或从 opaque checkpoint 继续；`--update` 忽略完成 checkpoint 并重新扫描规范内容。切换 Provider 会使用新的 checkpoint namespace，不触碰内容库。
 
-scholarly 更新不会因为默认 `--resume` 而跳过已完成期刊，而是从上次可信完成时间向前重叠 30 天（`30-day` overlap）。Crossref 请求使用 `from-update-date`，OpenAlex fallback 使用 `from_created_date`；每一页使用相同起始日期。过滤结果为空时保留已有期刊元数据和文章，只在完整页序列成功后推进完成时间。缺少已完成水位、水位无效或位于未来，以及普通非更新索引，都退回完整历史扫描；中断重试仍从旧水位开始。
+每页先在内容库事务中写入规范 journal/issue/article、identity aliases、投影和 change outbox，再推进控制 checkpoint。内容成功而 checkpoint 失败时，重跑依靠 alias/upsert 去重。删除控制库会失去进度但不会复制文章或改变 ID。
 
-CNKI 对 HTTP 2xx 正文解码失败使用既有的三次上限和 1/2 秒退避：失败尝试会写入 `index_api_call_stats`，后续成功会标记为 retry。非 2xx 状态在正文解码前处理。连续三次解码失败或持久上游错误会让命令非零退出并保留更新事件；错误样本不保存响应正文、查询密钥或原始解码器详情。
+`--update` 从内容库的事务性 `article_change_events` 生成 Provider-neutral changes JSON。worker、上游或清单失败会保留 outbox；文件发布和 SQLite 清理之间是至少一次边界，消费者必须按规范文章身份去重。Provider 请求统计只在终态结构化日志中聚合，不写入内容库。
 
 示例：
 
