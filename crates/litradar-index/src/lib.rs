@@ -8,6 +8,9 @@ pub mod schema;
 pub mod stats;
 pub mod transforms;
 
+#[cfg(test)]
+mod sqlite_pressure;
+
 pub use litradar_sources::LiveScholarlyConfig;
 pub use live::{
     run_live_index, run_live_index_worker_from_file_path, LiveCsvIndexOutcome, LiveIndexConfig,
