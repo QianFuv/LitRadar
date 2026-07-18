@@ -1430,6 +1430,7 @@ mod tests {
         .expect_err("legacy index should require a deliberate rebuild");
         let message = error.to_string();
         let expected_path = legacy_path.display().to_string();
+        #[cfg(windows)]
         let expected_path = expected_path
             .strip_prefix(r"\\?\")
             .unwrap_or(&expected_path)
