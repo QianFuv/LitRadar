@@ -13,22 +13,6 @@ pub(super) fn open_index_connection(
     Ok(connection)
 }
 
-pub(super) fn is_article_listing_ready(connection: &Connection) -> bool {
-    let status = connection
-        .query_row("SELECT status FROM listing_state WHERE id = 1", [], |row| {
-            row.get::<_, String>(0)
-        })
-        .optional();
-    if !matches!(status, Ok(Some(value)) if value == "ready") {
-        return false;
-    }
-    connection
-        .query_row("SELECT 1 FROM article_listing LIMIT 1", [], |row| {
-            row.get::<_, i64>(0)
-        })
-        .is_ok()
-}
-
 pub(super) fn page_meta(
     total: Option<i64>,
     limit: i64,
@@ -244,10 +228,18 @@ pub(super) fn nonempty(value: Option<&str>) -> Option<&str> {
     value.map(str::trim).filter(|value| !value.is_empty())
 }
 
-pub(super) fn nonempty_owned(value: Option<String>) -> Option<String> {
-    value
-        .map(|item| item.trim().to_string())
-        .filter(|item| !item.is_empty())
+pub(super) fn json_string_vec_from_row(
+    row: &rusqlite::Row<'_>,
+    index: usize,
+) -> rusqlite::Result<Vec<String>> {
+    let payload = row.get::<_, String>(index)?;
+    serde_json::from_str(&payload).map_err(|error| {
+        rusqlite::Error::FromSqlConversionFailure(
+            index,
+            rusqlite::types::Type::Text,
+            Box::new(error),
+        )
+    })
 }
 
 pub(super) fn collect_rows<T>(

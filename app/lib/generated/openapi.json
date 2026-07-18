@@ -795,24 +795,6 @@
             }
           },
           {
-            "name": "suppressed",
-            "in": "query",
-            "description": "Suppressed filter.",
-            "required": false,
-            "schema": {
-              "type": "boolean"
-            }
-          },
-          {
-            "name": "within_library_holdings",
-            "in": "query",
-            "description": "Library holdings filter.",
-            "required": false,
-            "schema": {
-              "type": "boolean"
-            }
-          },
-          {
             "name": "date_from",
             "in": "query",
             "description": "Start date filter.",
@@ -976,6 +958,48 @@
         ]
       }
     },
+    "/api/articles/{article_id}/abstract": {
+      "get": {
+        "tags": ["index"],
+        "summary": "Resolve and redirect to an article abstract page online.",
+        "description": "# Arguments\n\n* `state` - Shared API state.\n* `headers` - Request headers.\n* `article_id` - Article identifier.\n* `query` - Database selector.\n\n# Returns\n\nNo-store temporary redirect.",
+        "operationId": "redirect_article_abstract",
+        "parameters": [
+          {
+            "name": "article_id",
+            "in": "path",
+            "description": "Article identifier.",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "db",
+            "in": "query",
+            "description": "Database name or filename under `data/index`.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "307": {
+            "description": "Temporary online abstract-page redirect."
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          },
+          {
+            "session_cookie": []
+          }
+        ]
+      }
+    },
     "/api/articles/{article_id}/access": {
       "get": {
         "tags": ["index"],
@@ -1013,6 +1037,48 @@
                 }
               }
             }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          },
+          {
+            "session_cookie": []
+          }
+        ]
+      }
+    },
+    "/api/articles/{article_id}/detail": {
+      "get": {
+        "tags": ["index"],
+        "summary": "Resolve and redirect to an article detail page online.",
+        "description": "# Arguments\n\n* `state` - Shared API state.\n* `headers` - Request headers.\n* `article_id` - Article identifier.\n* `query` - Database selector.\n\n# Returns\n\nNo-store temporary redirect.",
+        "operationId": "redirect_article_detail",
+        "parameters": [
+          {
+            "name": "article_id",
+            "in": "path",
+            "description": "Article identifier.",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "db",
+            "in": "query",
+            "description": "Database name or filename under `data/index`.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "307": {
+            "description": "Temporary online detail redirect."
           }
         },
         "security": [
@@ -2305,42 +2371,6 @@
             }
           },
           {
-            "name": "is_valid_issue",
-            "in": "query",
-            "description": "Valid issue filter.",
-            "required": false,
-            "schema": {
-              "type": "boolean"
-            }
-          },
-          {
-            "name": "suppressed",
-            "in": "query",
-            "description": "Suppressed filter.",
-            "required": false,
-            "schema": {
-              "type": "boolean"
-            }
-          },
-          {
-            "name": "embargoed",
-            "in": "query",
-            "description": "Embargoed filter.",
-            "required": false,
-            "schema": {
-              "type": "boolean"
-            }
-          },
-          {
-            "name": "within_subscription",
-            "in": "query",
-            "description": "Subscription filter.",
-            "required": false,
-            "schema": {
-              "type": "boolean"
-            }
-          },
-          {
             "name": "sort",
             "in": "query",
             "description": "Sort expression.",
@@ -2467,24 +2497,6 @@
             }
           },
           {
-            "name": "library_id",
-            "in": "query",
-            "description": "Library identifier filter.",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "available",
-            "in": "query",
-            "description": "Available filter.",
-            "required": false,
-            "schema": {
-              "type": "boolean"
-            }
-          },
-          {
             "name": "has_articles",
             "in": "query",
             "description": "Has-articles filter.",
@@ -2501,26 +2513,6 @@
             "schema": {
               "type": "integer",
               "format": "int64"
-            }
-          },
-          {
-            "name": "scimago_min",
-            "in": "query",
-            "description": "Minimum Scimago rank.",
-            "required": false,
-            "schema": {
-              "type": "number",
-              "format": "double"
-            }
-          },
-          {
-            "name": "scimago_max",
-            "in": "query",
-            "description": "Maximum Scimago rank.",
-            "required": false,
-            "schema": {
-              "type": "number",
-              "format": "double"
             }
           },
           {
@@ -2723,48 +2715,6 @@
                   "type": "array",
                   "items": {
                     "$ref": "#/components/schemas/JournalOption"
-                  }
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "bearer_auth": []
-          },
-          {
-            "session_cookie": []
-          }
-        ]
-      }
-    },
-    "/api/meta/sources": {
-      "get": {
-        "tags": ["index"],
-        "summary": "List metadata source counts.",
-        "description": "# Arguments\n\n* `state` - Shared API state.\n* `headers` - Request headers.\n* `query` - Database selector.\n\n# Returns\n\nSource counts.",
-        "operationId": "list_sources",
-        "parameters": [
-          {
-            "name": "db",
-            "in": "query",
-            "description": "Database name or filename under `data/index`.",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Metadata source counts.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/ValueCount"
                   }
                 }
               }
@@ -3316,25 +3266,21 @@
             "type": ["string", "null"],
             "description": "Optional message."
           },
-          "provider": {
-            "type": ["string", "null"],
-            "description": "Provider identifier."
-          },
           "requires_login": {
             "type": "boolean",
             "description": "Whether login is required."
-          },
-          "url": {
-            "type": ["string", "null"],
-            "description": "Action URL."
           }
         }
       },
       "ArticleAccessResponse": {
         "type": "object",
         "description": "Article access response.",
-        "required": ["detail", "fulltext"],
+        "required": ["detail", "abstract_page", "fulltext"],
         "properties": {
+          "abstract_page": {
+            "$ref": "#/components/schemas/ArticleAccessAction",
+            "description": "Abstract-page action."
+          },
           "detail": {
             "$ref": "#/components/schemas/ArticleAccessAction",
             "description": "Detail action."
@@ -3370,7 +3316,7 @@
       "ArticleRecord": {
         "type": "object",
         "description": "Article record.",
-        "required": ["article_id", "journal_id"],
+        "required": ["article_id", "journal_id", "title", "authors", "journal_title"],
         "properties": {
           "abstract": {
             "type": ["string", "null"],
@@ -3381,12 +3327,11 @@
             "description": "Article identifier."
           },
           "authors": {
-            "type": ["string", "null"],
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
             "description": "Authors text."
-          },
-          "content_location": {
-            "type": ["string", "null"],
-            "description": "Content location URL."
           },
           "date": {
             "type": ["string", "null"],
@@ -3400,13 +3345,8 @@
             "type": ["string", "null"],
             "description": "End page."
           },
-          "full_text_file": {
-            "type": ["string", "null"],
-            "description": "Full-text file URL."
-          },
           "in_press": {
-            "type": ["integer", "null"],
-            "format": "int64",
+            "type": ["boolean", "null"],
             "description": "In-press flag."
           },
           "issue_id": {
@@ -3419,7 +3359,7 @@
             "description": "Journal identifier."
           },
           "journal_title": {
-            "type": ["string", "null"],
+            "type": "string",
             "description": "Journal title."
           },
           "number": {
@@ -3427,21 +3367,17 @@
             "description": "Issue number."
           },
           "open_access": {
-            "type": ["integer", "null"],
-            "format": "int64",
+            "type": ["boolean", "null"],
             "description": "Open-access flag."
-          },
-          "permalink": {
-            "type": ["string", "null"],
-            "description": "Permalink."
-          },
-          "platform_id": {
-            "type": ["string", "null"],
-            "description": "Platform identifier."
           },
           "pmid": {
             "type": ["string", "null"],
             "description": "PubMed identifier."
+          },
+          "publication_year": {
+            "type": ["integer", "null"],
+            "format": "int64",
+            "description": "Publication year."
           },
           "retraction_doi": {
             "type": ["string", "null"],
@@ -3451,23 +3387,13 @@
             "type": ["string", "null"],
             "description": "Start page."
           },
-          "suppressed": {
-            "type": ["integer", "null"],
-            "format": "int64",
-            "description": "Suppressed flag."
-          },
           "title": {
-            "type": ["string", "null"],
+            "type": "string",
             "description": "Article title."
           },
           "volume": {
             "type": ["string", "null"],
             "description": "Issue volume."
-          },
-          "within_library_holdings": {
-            "type": ["integer", "null"],
-            "format": "int64",
-            "description": "Library holdings flag."
           }
         }
       },
@@ -3738,8 +3664,11 @@
             "description": "Article identifier."
           },
           "authors": {
-            "type": ["string", "null"],
-            "description": "Article authors text."
+            "type": ["array", "null"],
+            "items": {
+              "type": "string"
+            },
+            "description": "Ordered article author names."
           },
           "created_at": {
             "type": "number",
@@ -3767,18 +3696,13 @@
             "format": "int64",
             "description": "Folder row identifier."
           },
-          "full_text_file": {
-            "type": ["string", "null"],
-            "description": "Stored full-text file path."
-          },
           "id": {
             "type": "integer",
             "format": "int64",
             "description": "Favorite row identifier."
           },
           "in_press": {
-            "type": ["integer", "null"],
-            "format": "int64",
+            "type": ["boolean", "null"],
             "description": "In-press flag from the index database."
           },
           "issn": {
@@ -3814,17 +3738,13 @@
             "description": "Issue number."
           },
           "open_access": {
-            "type": ["integer", "null"],
-            "format": "int64",
+            "type": ["boolean", "null"],
             "description": "Open-access flag from the index database."
           },
-          "permalink": {
-            "type": ["string", "null"],
-            "description": "Source permalink."
-          },
-          "platform_id": {
-            "type": ["string", "null"],
-            "description": "Source platform identifier."
+          "publication_year": {
+            "type": ["integer", "null"],
+            "format": "int64",
+            "description": "Article publication year."
           },
           "title": {
             "type": ["string", "null"],
@@ -4196,16 +4116,6 @@
             "type": ["string", "null"],
             "description": "Issue date."
           },
-          "embargoed": {
-            "type": ["integer", "null"],
-            "format": "int64",
-            "description": "Embargoed flag."
-          },
-          "is_valid_issue": {
-            "type": ["integer", "null"],
-            "format": "int64",
-            "description": "Valid issue flag."
-          },
           "issue_id": {
             "type": "integer",
             "format": "int64",
@@ -4224,11 +4134,6 @@
             "format": "int64",
             "description": "Publication year."
           },
-          "suppressed": {
-            "type": ["integer", "null"],
-            "format": "int64",
-            "description": "Suppressed flag."
-          },
           "title": {
             "type": ["string", "null"],
             "description": "Issue title."
@@ -4236,11 +4141,6 @@
           "volume": {
             "type": ["string", "null"],
             "description": "Volume."
-          },
-          "within_subscription": {
-            "type": ["integer", "null"],
-            "format": "int64",
-            "description": "Subscription flag."
           }
         }
       },
@@ -4251,14 +4151,14 @@
       "JournalOption": {
         "type": "object",
         "description": "Journal option for selection lists.",
-        "required": ["journal_id"],
+        "required": ["journal_id", "title"],
         "properties": {
           "journal_id": {
             "$ref": "#/components/schemas/JournalId",
             "description": "Journal identifier."
           },
           "title": {
-            "type": ["string", "null"],
+            "type": "string",
             "description": "Journal title."
           }
         }
@@ -4283,76 +4183,82 @@
       },
       "JournalRecord": {
         "type": "object",
-        "description": "Journal record with optional CSV metadata.",
-        "required": ["journal_id", "library_id"],
+        "description": "Provider-neutral journal record.",
+        "required": ["journal_id", "catalog_id", "title", "title_aliases", "issns", "has_articles"],
         "properties": {
+          "abs_rank": {
+            "type": ["string", "null"],
+            "description": "ABS rank."
+          },
+          "abs_rating": {
+            "type": ["string", "null"],
+            "description": "ABS rating."
+          },
           "area": {
             "type": ["string", "null"],
             "description": "Journal area."
           },
-          "available": {
-            "type": ["integer", "null"],
-            "format": "int64",
-            "description": "Availability flag."
-          },
-          "cover_url": {
-            "type": ["string", "null"],
-            "description": "Cover image URL."
-          },
-          "csv_issn": {
-            "type": ["string", "null"],
-            "description": "CSV ISSN."
-          },
-          "csv_library": {
-            "type": ["string", "null"],
-            "description": "CSV library value."
-          },
-          "csv_title": {
-            "type": ["string", "null"],
-            "description": "CSV title."
+          "catalog_id": {
+            "type": "string",
+            "description": "Immutable maintained catalog identifier."
           },
           "eissn": {
             "type": ["string", "null"],
             "description": "Electronic ISSN."
           },
+          "fms_rank": {
+            "type": ["string", "null"],
+            "description": "FMS rank."
+          },
+          "fms_rating": {
+            "type": ["string", "null"],
+            "description": "FMS rating."
+          },
+          "fmscn_rank": {
+            "type": ["string", "null"],
+            "description": "FMS China rank."
+          },
+          "fmscn_rating": {
+            "type": ["string", "null"],
+            "description": "FMS China rating."
+          },
           "has_articles": {
-            "type": ["integer", "null"],
-            "format": "int64",
-            "description": "Whether articles exist."
+            "type": "boolean",
+            "description": "Whether the content database currently contains articles for the journal."
           },
           "issn": {
             "type": ["string", "null"],
             "description": "Print ISSN."
           },
+          "issns": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "All maintained ISSNs."
+          },
           "journal_id": {
             "$ref": "#/components/schemas/JournalId",
             "description": "Journal identifier."
           },
-          "library_id": {
-            "type": "string",
-            "description": "Source library identifier."
-          },
-          "platform_journal_id": {
-            "type": ["string", "null"],
-            "description": "Platform journal identifier."
-          },
-          "scimago_rank": {
-            "type": ["number", "null"],
-            "format": "double",
-            "description": "Scimago rank value."
-          },
-          "source_csv": {
-            "type": ["string", "null"],
-            "description": "Source CSV file."
-          },
           "title": {
-            "type": ["string", "null"],
+            "type": "string",
             "description": "Journal title."
           },
-          "toc_data_approved_and_live": {
-            "type": ["integer", "null"],
-            "format": "int64",
-            "description": "TOC live flag."
+          "title_aliases": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Maintained title aliases."
+          },
+          "utd_rank": {
+            "type": ["string", "null"],
+            "description": "UTD rank."
+          },
+          "utd_rating": {
+            "type": ["string", "null"],
+            "description": "UTD rating."
           }
         }
       },
@@ -5460,7 +5366,7 @@
       "WeeklyArticleRecord": {
         "type": "object",
         "description": "Weekly article record.",
-        "required": ["article_id", "journal_id"],
+        "required": ["article_id", "journal_id", "title", "authors", "journal_title"],
         "properties": {
           "abstract": {
             "type": ["string", "null"],
@@ -5471,7 +5377,10 @@
             "description": "Article identifier."
           },
           "authors": {
-            "type": ["string", "null"],
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
             "description": "Authors text."
           },
           "date": {
@@ -5482,13 +5391,8 @@
             "type": ["string", "null"],
             "description": "DOI."
           },
-          "full_text_file": {
-            "type": ["string", "null"],
-            "description": "Full-text file URL."
-          },
           "in_press": {
-            "type": ["integer", "null"],
-            "format": "int64",
+            "type": ["boolean", "null"],
             "description": "In-press flag."
           },
           "issue_id": {
@@ -5501,7 +5405,7 @@
             "description": "Journal identifier."
           },
           "journal_title": {
-            "type": ["string", "null"],
+            "type": "string",
             "description": "Journal title."
           },
           "number": {
@@ -5509,20 +5413,16 @@
             "description": "Issue number."
           },
           "open_access": {
-            "type": ["integer", "null"],
-            "format": "int64",
+            "type": ["boolean", "null"],
             "description": "Open-access flag."
           },
-          "permalink": {
-            "type": ["string", "null"],
-            "description": "Permalink."
-          },
-          "platform_id": {
-            "type": ["string", "null"],
-            "description": "Platform identifier."
+          "publication_year": {
+            "type": ["integer", "null"],
+            "format": "int64",
+            "description": "Publication year."
           },
           "title": {
-            "type": ["string", "null"],
+            "type": "string",
             "description": "Article title."
           },
           "volume": {

@@ -1,15 +1,18 @@
-//! Built-in canonical indexing provider adapters.
+//! Built-in canonical indexing and request-time article access provider adapters.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex};
 
 use litradar_domain::{
-    normalize_contract_doi, normalize_contract_pmid, normalize_contract_text, ArticleAuthorDraft,
-    ArticleDraft, IssueDraft, JournalCatalogEntry, JournalDraft, ProviderBatch,
+    normalize_bibliographic_label, normalize_bibliographic_text, normalize_contract_doi,
+    normalize_contract_pmid, normalize_contract_text, ArticleAccessContext, ArticleAuthorDraft,
+    ArticleDraft, ArticleLocator, ArticleRedirect, IssueDraft, JournalCatalogEntry, JournalDraft,
+    ProviderBatch,
 };
 use litradar_provider::{
-    IndexContentProvider, ProviderCapabilities, ProviderDescriptor, ProviderError,
-    ProviderErrorKind, ProviderImplementations, ProviderRegistration, ProviderRegistryError,
+    ArticleAbstractProvider, ArticleDetailProvider, IndexContentProvider, ProviderCapabilities,
+    ProviderDescriptor, ProviderError, ProviderErrorKind, ProviderImplementations,
+    ProviderRegistration, ProviderRegistryError,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -25,7 +28,100 @@ pub const SCHOLARLY_PROVIDER_NAME: &str = "scholarly";
 /// Stable runtime name for the built-in CNKI indexing provider.
 pub const CNKI_PROVIDER_NAME: &str = "cnki";
 
+/// Exact HTTPS hosts emitted by the Scholarly online access provider.
+pub const SCHOLARLY_REDIRECT_HOSTS: &[&str] = &["doi.org", "pubmed.ncbi.nlm.nih.gov"];
+
+/// Exact HTTPS hosts emitted by the CNKI online access provider.
+pub const CNKI_REDIRECT_HOSTS: &[&str] = &["oversea.cnki.net", "kns.cnki.net", "www.cnki.net"];
+
 const SCHOLARLY_ENRICHMENT_BATCH_SIZE: usize = 100;
+
+/// Stateless Scholarly access provider that derives live DOI or PubMed destinations.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ScholarlyArticleAccessProvider;
+
+impl ArticleDetailProvider for ScholarlyArticleAccessProvider {
+    fn resolve_detail(
+        &self,
+        article: &ArticleLocator,
+        _context: ArticleAccessContext,
+    ) -> Result<ArticleRedirect, ProviderError> {
+        scholarly_article_redirect(article)
+    }
+}
+
+impl ArticleAbstractProvider for ScholarlyArticleAccessProvider {
+    fn resolve_abstract(
+        &self,
+        article: &ArticleLocator,
+        _context: ArticleAccessContext,
+    ) -> Result<ArticleRedirect, ProviderError> {
+        scholarly_article_redirect(article)
+    }
+}
+
+/// CNKI access provider that locates an article from canonical metadata on every request.
+pub struct CnkiArticleAccessProvider<T> {
+    client: Mutex<CnkiClient<T>>,
+}
+
+impl<T> CnkiArticleAccessProvider<T>
+where
+    T: CnkiTransport,
+{
+    /// Build a request-time CNKI access provider.
+    ///
+    /// # Arguments
+    ///
+    /// * `transport` - CNKI source transport.
+    ///
+    /// # Returns
+    ///
+    /// Provider that retains upstream handles only inside one invocation.
+    pub fn new(transport: T) -> Self {
+        Self {
+            client: Mutex::new(CnkiClient::new(transport)),
+        }
+    }
+
+    fn resolve(&self, article: &ArticleLocator) -> Result<ArticleRedirect, ProviderError> {
+        let mut client = self.client.lock().map_err(|_| {
+            ProviderError::new(
+                ProviderErrorKind::Internal,
+                "CNKI access provider state is unavailable",
+            )
+        })?;
+        let result = resolve_cnki_article_redirect(&mut client, article);
+        emit_source_attempt_summary(CNKI_PROVIDER_NAME, &client.drain_attempts());
+        result
+    }
+}
+
+impl<T> ArticleDetailProvider for CnkiArticleAccessProvider<T>
+where
+    T: CnkiTransport + Send,
+{
+    fn resolve_detail(
+        &self,
+        article: &ArticleLocator,
+        _context: ArticleAccessContext,
+    ) -> Result<ArticleRedirect, ProviderError> {
+        self.resolve(article)
+    }
+}
+
+impl<T> ArticleAbstractProvider for CnkiArticleAccessProvider<T>
+where
+    T: CnkiTransport + Send,
+{
+    fn resolve_abstract(
+        &self,
+        article: &ArticleLocator,
+        _context: ArticleAccessContext,
+    ) -> Result<ArticleRedirect, ProviderError> {
+        self.resolve(article)
+    }
+}
 
 /// Canonical Scholarly indexing provider backed by one source transport.
 pub struct ScholarlyIndexProvider<T> {
@@ -157,6 +253,7 @@ where
                 index_content: true,
                 ..ProviderCapabilities::default()
             },
+            allowed_redirect_hosts: Vec::new(),
         },
         ProviderImplementations {
             index_content: Some(Arc::new(ScholarlyIndexProvider::new(
@@ -190,9 +287,75 @@ where
                 index_content: true,
                 ..ProviderCapabilities::default()
             },
+            allowed_redirect_hosts: Vec::new(),
         },
         ProviderImplementations {
             index_content: Some(Arc::new(CnkiIndexProvider::new(transport))),
+            ..ProviderImplementations::default()
+        },
+    )
+}
+
+/// Register Scholarly detail and abstract-page access capabilities.
+///
+/// # Returns
+///
+/// Access-only Scholarly registration.
+pub fn scholarly_access_registration() -> Result<ProviderRegistration, ProviderRegistryError> {
+    let provider = Arc::new(ScholarlyArticleAccessProvider);
+    ProviderRegistration::try_new(
+        ProviderDescriptor {
+            name: SCHOLARLY_PROVIDER_NAME.to_string(),
+            capabilities: ProviderCapabilities {
+                article_detail: true,
+                article_abstract: true,
+                ..ProviderCapabilities::default()
+            },
+            allowed_redirect_hosts: SCHOLARLY_REDIRECT_HOSTS
+                .iter()
+                .map(|host| (*host).to_string())
+                .collect(),
+        },
+        ProviderImplementations {
+            article_detail: Some(provider.clone()),
+            article_abstract: Some(provider),
+            ..ProviderImplementations::default()
+        },
+    )
+}
+
+/// Register CNKI detail and abstract-page access capabilities.
+///
+/// # Arguments
+///
+/// * `transport` - CNKI source transport used only for request-time resolution.
+///
+/// # Returns
+///
+/// Access-only CNKI registration.
+pub fn cnki_access_registration<T>(
+    transport: T,
+) -> Result<ProviderRegistration, ProviderRegistryError>
+where
+    T: CnkiTransport + Send + 'static,
+{
+    let provider = Arc::new(CnkiArticleAccessProvider::new(transport));
+    ProviderRegistration::try_new(
+        ProviderDescriptor {
+            name: CNKI_PROVIDER_NAME.to_string(),
+            capabilities: ProviderCapabilities {
+                article_detail: true,
+                article_abstract: true,
+                ..ProviderCapabilities::default()
+            },
+            allowed_redirect_hosts: CNKI_REDIRECT_HOSTS
+                .iter()
+                .map(|host| (*host).to_string())
+                .collect(),
+        },
+        ProviderImplementations {
+            article_detail: Some(provider.clone()),
+            article_abstract: Some(provider),
             ..ProviderImplementations::default()
         },
     )
@@ -907,6 +1070,130 @@ fn bool_value(value: Option<&Value>) -> Option<bool> {
     }
 }
 
+fn scholarly_article_redirect(article: &ArticleLocator) -> Result<ArticleRedirect, ProviderError> {
+    if let Some(doi) = article.doi.as_deref() {
+        return Ok(ArticleRedirect {
+            location: format!("https://doi.org/{}", encode_doi_path(doi)),
+        });
+    }
+    if let Some(pmid) = article.pmid.as_deref() {
+        return Ok(ArticleRedirect {
+            location: format!("https://pubmed.ncbi.nlm.nih.gov/{pmid}/"),
+        });
+    }
+    Err(ProviderError::new(
+        ProviderErrorKind::NotFound,
+        "scholarly provider requires a DOI or PubMed identifier",
+    ))
+}
+
+fn encode_doi_path(doi: &str) -> String {
+    let mut encoded = String::new();
+    for byte in doi.bytes() {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~' | b'/') {
+            encoded.push(char::from(byte));
+        } else {
+            encoded.push_str(&format!("%{byte:02X}"));
+        }
+    }
+    encoded
+}
+
+fn resolve_cnki_article_redirect<T>(
+    client: &mut CnkiClient<T>,
+    article: &ArticleLocator,
+) -> Result<ArticleRedirect, ProviderError>
+where
+    T: CnkiTransport,
+{
+    let row = BTreeMap::from([
+        ("title".to_string(), article.journal_title.clone()),
+        (
+            "issn".to_string(),
+            article.journal_issns.first().cloned().unwrap_or_default(),
+        ),
+    ]);
+    let journal = client
+        .resolve_journal(&row)
+        .map_err(map_cnki_error)?
+        .ok_or_else(|| {
+            ProviderError::new(
+                ProviderErrorKind::NotFound,
+                "CNKI provider could not resolve the journal",
+            )
+        })?;
+    let issue_payloads = client.year_issues(&journal).map_err(map_cnki_error)?;
+    for issue_payload in issue_payloads {
+        if !cnki_issue_matches_locator(&issue_payload, article) {
+            continue;
+        }
+        for summary in client
+            .issue_articles(&journal, &issue_payload)
+            .map_err(map_cnki_error)?
+        {
+            let Some(summary_title) = json_text(summary.get("title")) else {
+                continue;
+            };
+            if normalize_bibliographic_text(&summary_title)
+                != normalize_bibliographic_text(&article.title)
+            {
+                continue;
+            }
+            let Some(article_url) = json_text(summary.get("article_url")) else {
+                continue;
+            };
+            let platform_id = json_text(summary.get("platform_id"));
+            let detail = client
+                .article_detail(&article_url, platform_id.as_deref())
+                .map_err(map_cnki_error)?;
+            if !cnki_detail_matches_locator(&detail, article) {
+                continue;
+            }
+            let location = json_text(detail.get("permalink")).ok_or_else(|| {
+                ProviderError::new(
+                    ProviderErrorKind::InvalidResponse,
+                    "CNKI detail response omitted its request-time destination",
+                )
+            })?;
+            return Ok(ArticleRedirect { location });
+        }
+    }
+    Err(ProviderError::new(
+        ProviderErrorKind::NotFound,
+        "CNKI provider could not find an exact article match",
+    ))
+}
+
+fn cnki_issue_matches_locator(issue: &Value, article: &ArticleLocator) -> bool {
+    let issue_year = json_text(issue.get("year")).and_then(|value| value.parse().ok());
+    if article.publication_year.is_some() && issue_year != article.publication_year {
+        return false;
+    }
+    let issue_number = json_text(issue.get("number"));
+    if let (Some(expected), Some(observed)) =
+        (article.issue_number.as_deref(), issue_number.as_deref())
+    {
+        if normalize_bibliographic_label(expected) != normalize_bibliographic_label(observed) {
+            return false;
+        }
+    }
+    true
+}
+
+fn cnki_detail_matches_locator(detail: &Value, article: &ArticleLocator) -> bool {
+    let Some(title) = json_text(detail.get("title")) else {
+        return false;
+    };
+    if normalize_bibliographic_text(&title) != normalize_bibliographic_text(&article.title) {
+        return false;
+    }
+    let detail_doi = json_text(detail.get("doi")).and_then(|value| normalize_contract_doi(&value));
+    !matches!(
+        (article.doi.as_deref(), detail_doi.as_deref()),
+        (Some(expected), Some(observed)) if expected != observed
+    )
+}
+
 fn map_scholarly_error(error: SourceError) -> ProviderError {
     let kind = match error {
         SourceError::HttpStatus {
@@ -953,13 +1240,16 @@ fn emit_source_attempt_summary(provider: &str, attempts: &[SourceAttempt]) {
 mod tests {
     use std::collections::BTreeMap;
 
-    use litradar_domain::{JournalRankings, ProviderCapabilityKind};
+    use litradar_domain::{
+        ArticleAccessContext, ArticleId, ArticleLocator, JournalRankings, ProviderCapabilityKind,
+    };
     use litradar_provider::ProviderRegistry;
     use serde_json::json;
 
     use super::{
-        cnki_article_draft, cnki_index_registration, cnki_issue_draft, scholarly_article_draft,
-        scholarly_index_registration, CnkiIndexProvider, ScholarlyIndexProvider,
+        cnki_access_registration, cnki_article_draft, cnki_index_registration, cnki_issue_draft,
+        scholarly_access_registration, scholarly_article_draft, scholarly_index_registration,
+        CnkiIndexProvider, ScholarlyIndexProvider, CNKI_REDIRECT_HOSTS, SCHOLARLY_REDIRECT_HOSTS,
     };
     use crate::{
         CnkiFixtureData, FixtureCnkiTransport, FixtureScholarlyTransport, ScholarlyFixtureData,
@@ -975,6 +1265,25 @@ mod tests {
             title_aliases: Vec::new(),
             area: None,
             rankings: JournalRankings::default(),
+        }
+    }
+
+    fn article_locator(title: &str, journal_title: &str) -> ArticleLocator {
+        ArticleLocator {
+            article_id: ArticleId(1),
+            catalog_id: "issn-1234-5679".to_string(),
+            journal_title: journal_title.to_string(),
+            journal_issns: vec!["1234-5679".to_string()],
+            title: title.to_string(),
+            publication_year: Some(2026),
+            date: None,
+            authors: Vec::new(),
+            volume: None,
+            issue_number: Some("01".to_string()),
+            start_page: None,
+            end_page: None,
+            doi: None,
+            pmid: None,
         }
     }
 
@@ -1001,6 +1310,94 @@ mod tests {
         assert!(registry
             .providers_with(ProviderCapabilityKind::ArticleDetail)
             .is_empty());
+    }
+
+    #[test]
+    fn access_registrations_declare_only_optional_online_capabilities() {
+        let scholarly = scholarly_access_registration().expect("Scholarly access should register");
+        assert!(scholarly.index_content().is_none());
+        assert!(scholarly.article_full_text().is_none());
+        assert_eq!(
+            scholarly.descriptor().allowed_redirect_hosts,
+            SCHOLARLY_REDIRECT_HOSTS
+        );
+        let scholarly_redirect = scholarly
+            .article_detail()
+            .expect("detail capability should exist")
+            .resolve_detail(
+                &ArticleLocator {
+                    doi: Some("10.1000/article".to_string()),
+                    ..article_locator("Article", "Canonical Journal")
+                },
+                ArticleAccessContext::default(),
+            )
+            .expect("Scholarly detail should resolve online");
+        assert_eq!(
+            scholarly_redirect.location,
+            "https://doi.org/10.1000/article"
+        );
+        assert!(scholarly.article_abstract().is_some());
+
+        let fixture = CnkiFixtureData {
+            journal_detail_html: r#"
+                <html><head><title>CNKI Test Journal - 中国知网</title></head>
+                <body>
+                  <input id="pykm" value="TEST" />
+                  <input id="pCode" value="CJFD" />
+                  <input id="shareChName" value="CNKI Test Journal" />
+                  <input id="issn" value="1234-5679" />
+                </body></html>
+            "#
+            .to_string(),
+            year_issues_html:
+                r#"<div id="YearIssueTree"><a id="yq202601" value="202601">2026 No.01</a></div>"#
+                    .to_string(),
+            issue_articles_html: BTreeMap::from([(
+                "202601".to_string(),
+                r#"
+                <dt class="tit">Articles</dt>
+                <dd class="row">
+                  <a href="/kcms2/article/abstract?v=1&filename=CNKI202601001">CNKI article</a>
+                  <b name="encrypt" id="CNKI202601001"></b>
+                </dd>
+                "#
+                .to_string(),
+            )]),
+            article_detail_html: BTreeMap::from([(
+                "CNKI202601001".to_string(),
+                r#"
+                <html><head><title>CNKI article</title></head>
+                <body>
+                  <input id="paramfilename" value="CNKI202601001" />
+                  <input id="paramdbcode" value="CJFD" />
+                  <input id="paramdbname" value="CJFDLAST2026" />
+                  <p class="title-one">CNKI article</p>
+                </body></html>
+                "#
+                .to_string(),
+            )]),
+            fail_endpoint: None,
+        };
+        let cnki = cnki_access_registration(FixtureCnkiTransport::new(fixture))
+            .expect("CNKI access should register");
+        assert!(cnki.index_content().is_none());
+        assert!(cnki.article_full_text().is_none());
+        assert_eq!(
+            cnki.descriptor().allowed_redirect_hosts,
+            CNKI_REDIRECT_HOSTS
+        );
+        let cnki_redirect = cnki
+            .article_abstract()
+            .expect("abstract capability should exist")
+            .resolve_abstract(
+                &article_locator("CNKI article", "CNKI Test Journal"),
+                ArticleAccessContext::default(),
+            )
+            .expect("CNKI abstract should resolve online");
+        assert!(cnki_redirect
+            .location
+            .starts_with("https://oversea.cnki.net/"));
+        assert!(cnki.article_detail().is_some());
     }
 
     #[test]

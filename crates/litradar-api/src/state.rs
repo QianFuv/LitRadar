@@ -5,6 +5,7 @@ use std::fmt;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use litradar_provider::ProviderRegistry;
 use litradar_storage::{SecretCodec, StorageConfig};
 use tokio::sync::Semaphore;
 
@@ -18,13 +19,14 @@ const DEFAULT_BLOCKING_CONCURRENCY: usize = 8;
 const DEFAULT_BLOCKING_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// State shared by API route handlers.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct ApiState {
     storage_config: StorageConfig,
     secret_codec: SecretCodec,
     are_session_cookies_secure: bool,
     auth_rate_limiter: Arc<Mutex<AuthRateLimiter>>,
     blocking_executor: BlockingExecutor,
+    article_providers: Arc<ProviderRegistry>,
 }
 
 impl ApiState {
@@ -44,6 +46,11 @@ impl ApiState {
         secret_codec: SecretCodec,
         are_session_cookies_secure: bool,
     ) -> Self {
+        let article_providers = crate::article_access::build_article_provider_registry(
+            storage_config.clone(),
+            secret_codec.clone(),
+        )
+        .expect("built-in article provider registry should be valid");
         Self {
             storage_config,
             secret_codec,
@@ -55,6 +62,7 @@ impl ApiState {
                 DEFAULT_BLOCKING_CONCURRENCY,
                 DEFAULT_BLOCKING_TIMEOUT,
             ),
+            article_providers: Arc::new(article_providers),
         }
     }
 
@@ -79,6 +87,11 @@ impl ApiState {
         concurrency: usize,
         timeout: Duration,
     ) -> Self {
+        let article_providers = crate::article_access::build_article_provider_registry(
+            storage_config.clone(),
+            secret_codec.clone(),
+        )
+        .expect("built-in article provider registry should be valid");
         Self {
             storage_config,
             secret_codec,
@@ -87,7 +100,23 @@ impl ApiState {
                 AuthRateLimitConfig::default(),
             ))),
             blocking_executor: BlockingExecutor::new(concurrency, timeout),
+            article_providers: Arc::new(article_providers),
         }
+    }
+
+    /// Replace request-time article providers for focused capability tests.
+    ///
+    /// # Arguments
+    ///
+    /// * `article_providers` - Validated test registry.
+    ///
+    /// # Returns
+    ///
+    /// API state using the supplied registry.
+    #[cfg(test)]
+    pub(crate) fn with_article_providers(mut self, article_providers: ProviderRegistry) -> Self {
+        self.article_providers = Arc::new(article_providers);
+        self
     }
 
     /// Return storage configuration.
@@ -106,6 +135,15 @@ impl ApiState {
     /// Codec used for persisted integration credentials.
     pub fn secret_codec(&self) -> &SecretCodec {
         &self.secret_codec
+    }
+
+    /// Return the validated request-time article provider registry.
+    ///
+    /// # Returns
+    ///
+    /// Provider registry shared by all action handlers.
+    pub(crate) fn article_providers(&self) -> &ProviderRegistry {
+        &self.article_providers
     }
 
     /// Run synchronous work on Tokio's blocking pool behind the shared concurrency limit.
@@ -233,6 +271,21 @@ impl ApiState {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         limiter.clear_username(username);
+    }
+}
+
+impl fmt::Debug for ApiState {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("ApiState")
+            .field("storage_config", &self.storage_config)
+            .field("secret_codec", &"[REDACTED]")
+            .field(
+                "are_session_cookies_secure",
+                &self.are_session_cookies_secure,
+            )
+            .field("article_providers", &"[REGISTERED]")
+            .finish_non_exhaustive()
     }
 }
 

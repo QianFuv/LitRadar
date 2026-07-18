@@ -281,172 +281,59 @@ fn create_fixture_index_database(path: &Path) {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).expect("index db parent should be created");
     }
+    litradar_storage::migrate_index_database(path, None)
+        .expect("fixture index schema should migrate");
     let connection = Connection::open(path).expect("index db should open");
     connection
         .execute_batch(
-            "
+            r#"
             PRAGMA foreign_keys = ON;
 
-            CREATE TABLE journals (
-                journal_id INTEGER PRIMARY KEY,
-                library_id TEXT NOT NULL,
-                platform_journal_id TEXT,
-                title TEXT,
-                issn TEXT,
-                eissn TEXT,
-                scimago_rank REAL,
-                cover_url TEXT,
-                available INTEGER,
-                toc_data_approved_and_live INTEGER,
-                has_articles INTEGER
-            );
-
-            CREATE TABLE journal_meta (
-                journal_id INTEGER PRIMARY KEY,
-                source_csv TEXT NOT NULL,
-                area TEXT,
-                csv_title TEXT,
-                csv_issn TEXT,
-                csv_library TEXT,
-                resolved_source TEXT,
-                resolved_source_id TEXT,
-                resolved_title TEXT,
-                resolved_issn TEXT,
-                resolved_eissn TEXT,
-                FOREIGN KEY (journal_id) REFERENCES journals(journal_id)
-                    ON DELETE CASCADE
-            );
-
-            CREATE TABLE issues (
-                issue_id INTEGER PRIMARY KEY,
-                journal_id INTEGER NOT NULL,
-                publication_year INTEGER,
-                title TEXT,
-                volume TEXT,
-                number TEXT,
-                date TEXT,
-                is_valid_issue INTEGER,
-                suppressed INTEGER,
-                embargoed INTEGER,
-                within_subscription INTEGER,
-                FOREIGN KEY (journal_id) REFERENCES journals(journal_id)
-                    ON DELETE CASCADE
-            );
-
-            CREATE TABLE articles (
-                article_id INTEGER PRIMARY KEY,
-                journal_id INTEGER NOT NULL,
-                issue_id INTEGER,
-                title TEXT,
-                date TEXT,
-                authors TEXT,
-                start_page TEXT,
-                end_page TEXT,
-                abstract TEXT,
-                doi TEXT,
-                pmid TEXT,
-                permalink TEXT,
-                suppressed INTEGER,
-                in_press INTEGER,
-                open_access INTEGER,
-                platform_id TEXT,
-                retraction_doi TEXT,
-                within_library_holdings INTEGER,
-                content_location TEXT,
-                full_text_file TEXT,
-                FOREIGN KEY (journal_id) REFERENCES journals(journal_id)
-                    ON DELETE CASCADE,
-                FOREIGN KEY (issue_id) REFERENCES issues(issue_id)
-                    ON DELETE SET NULL
-            );
-
-            CREATE TABLE article_listing (
-                article_id INTEGER PRIMARY KEY,
-                journal_id INTEGER NOT NULL,
-                issue_id INTEGER,
-                publication_year INTEGER,
-                date TEXT,
-                open_access INTEGER,
-                in_press INTEGER,
-                suppressed INTEGER,
-                within_library_holdings INTEGER,
-                doi TEXT,
-                pmid TEXT,
-                area TEXT,
-                FOREIGN KEY (journal_id) REFERENCES journals(journal_id)
-                    ON DELETE CASCADE,
-                FOREIGN KEY (issue_id) REFERENCES issues(issue_id)
-                    ON DELETE SET NULL
-            );
-
-            CREATE VIRTUAL TABLE article_search
-            USING fts5(
-                article_id UNINDEXED,
-                title,
-                abstract,
-                doi,
-                authors,
-                journal_title
-            );
-
             INSERT INTO journals (
-                journal_id, library_id, platform_journal_id, title, issn, eissn,
-                scimago_rank, cover_url, available, toc_data_approved_and_live,
-                has_articles
+                journal_id, catalog_id, title, title_aliases_json, issns_json,
+                issn, eissn, area, utd_rank, utd_rating, abs_rank, abs_rating,
+                fms_rank, fms_rating, fmscn_rank, fmscn_rating
             ) VALUES (
-                101, 'scholarly', 'J-101', 'Fixture Journal', '1234-5678',
-                '8765-4321', 1.25, 'https://example.test/cover.png', 1, 1, 1
-            );
-
-            INSERT INTO journal_meta (
-                journal_id, source_csv, area, csv_title, csv_issn, csv_library,
-                resolved_source, resolved_source_id, resolved_title, resolved_issn,
-                resolved_eissn
-            ) VALUES (
-                101, 'fixture.csv', 'Medicine', 'Fixture Journal', '1234-5678',
-                'Library A', 'openalex', 'S101', 'Fixture Journal', '1234-5678',
-                '8765-4321'
+                101, 'fixture-journal', 'Fixture Journal', '["Fixture J."]',
+                '["1234-5679","2049-3630"]', '1234-5679', '2049-3630',
+                'Medicine', '1', 'A', NULL, NULL, NULL, NULL, NULL, NULL
             );
 
             INSERT INTO issues (
-                issue_id, journal_id, publication_year, title, volume, number, date,
-                is_valid_issue, suppressed, embargoed, within_subscription
+                issue_id, journal_id, publication_year, title, volume, number, date
             ) VALUES (
-                202401, 101, 2024, 'Volume 1 Issue 1', '1', '1', '2024-01-15',
-                1, 0, 0, 1
+                202401, 101, 2024, 'Volume 1 Issue 1', '1', '1', '2024-01-15'
             );
 
             INSERT INTO articles (
-                article_id, journal_id, issue_id, title, date, authors, start_page,
-                end_page, abstract, doi, pmid, permalink, suppressed, in_press,
-                open_access, platform_id, retraction_doi, within_library_holdings,
-                content_location, full_text_file
+                article_id, journal_id, issue_id, title, publication_year, date,
+                authors_json, start_page, end_page, abstract_text, doi, pmid,
+                open_access, in_press, retraction_doi
             ) VALUES (
-                9001, 101, 202401, 'Fixture Article', '2024-01-16',
-                'Ada Lovelace; Grace Hopper', '1', '9',
+                9001, 101, 202401, 'Fixture Article', 2024, '2024-01-16',
+                '["Ada Lovelace","Grace Hopper"]', '1', '9',
                 'Fixture abstract for route and storage tests.',
-                '10.1234/fixture', '123456', 'https://example.test/article',
-                0, 0, 1, 'P-9001', NULL, 1,
-                'https://example.test/content', 'https://example.test/fulltext.pdf'
+                '10.1234/fixture', '123456', 1, 0, NULL
             );
 
             INSERT INTO article_listing (
                 article_id, journal_id, issue_id, publication_year, date, open_access,
-                in_press, suppressed, within_library_holdings, doi, pmid, area
+                in_press, doi, pmid, area
             ) VALUES (
-                9001, 101, 202401, 2024, '2024-01-16', 1, 0, 0, 1,
+                9001, 101, 202401, 2024, '2024-01-16', 1, 0,
                 '10.1234/fixture', '123456', 'Medicine'
             );
 
             INSERT INTO article_search (
-                rowid, article_id, title, abstract, doi, authors, journal_title
+                rowid, article_id, title, abstract_text, doi, pmid, authors,
+                journal_title
             ) VALUES (
                 9001, 9001, 'Fixture Article',
                 'Fixture abstract for route and storage tests.',
-                '10.1234/fixture', 'Ada Lovelace; Grace Hopper',
+                '10.1234/fixture', '123456', 'Ada Lovelace Grace Hopper',
                 'Fixture Journal'
             );
-            ",
+            "#,
         )
         .expect("fixture index schema and data should be created");
 }

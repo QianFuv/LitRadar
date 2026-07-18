@@ -185,7 +185,7 @@ async function serveTrackingApi(route: Route): Promise<void> {
                   journal_id: 'fixture-journal',
                   journal_title: 'Journal of Reproducible Literature',
                   title: 'Reliable Evidence Synthesis for Living Reviews',
-                  authors: 'Lin Chen; Maya Patel',
+                  authors: ['Lin Chen', 'Maya Patel'],
                   date: '2026-07-16',
                   abstract:
                     'A fixture article demonstrating the shared weekly workspace and article detail surface.',
@@ -195,7 +195,7 @@ async function serveTrackingApi(route: Route): Promise<void> {
                   journal_id: 'fixture-journal',
                   journal_title: 'Journal of Reproducible Literature',
                   title: 'Transparent Search Strategies in Rapid Reviews',
-                  authors: 'Noah Williams; Rui Zhang',
+                  authors: ['Noah Williams', 'Rui Zhang'],
                   date: '2026-07-14',
                   abstract:
                     'A second fixture article used to verify stable ordering and responsive layout.',
@@ -233,7 +233,7 @@ async function serveTrackingApi(route: Route): Promise<void> {
         journal_id: 'fixture-journal',
         journal_title: 'Journal of Reproducible Literature',
         title: 'A Unified Workspace for Literature Monitoring',
-        authors: 'Jia Liu; Alex Morgan',
+        authors: ['Jia Liu', 'Alex Morgan'],
         date: '2026-07-15',
         abstract:
           'A browser fixture illustrating folder management, citation export, and shared article presentation.',

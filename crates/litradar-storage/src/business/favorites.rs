@@ -303,12 +303,11 @@ pub fn list_favorite_articles(
                 response.journal_id = article_metadata.journal_id;
                 response.issue_id = article_metadata.issue_id;
                 response.title = article_metadata.title.clone();
+                response.publication_year = article_metadata.publication_year;
                 response.date = article_metadata.date.clone();
                 response.authors = article_metadata.authors.clone();
                 response.abstract_text = article_metadata.abstract_text.clone();
                 response.doi = article_metadata.doi.clone();
-                response.platform_id = article_metadata.platform_id.clone();
-                response.permalink = article_metadata.permalink.clone();
                 response.journal_title = article_metadata.journal_title.clone();
                 response.open_access = article_metadata.open_access;
                 response.in_press = article_metadata.in_press;
@@ -316,7 +315,6 @@ pub fn list_favorite_articles(
                 response.number = article_metadata.number.clone();
                 response.issn = article_metadata.issn.clone();
                 response.eissn = article_metadata.eissn.clone();
-                response.full_text_file = article_metadata.full_text_file.clone();
             }
             response
         })
@@ -699,9 +697,9 @@ fn load_metadata_from_index(
     }
     let placeholders = repeat_placeholders(unique_ids.len(), 1);
     let sql = format!(
-        "SELECT a.article_id, a.journal_id, a.issue_id, a.title, a.date, a.authors, \
-         a.abstract, a.doi, a.platform_id, a.open_access, a.in_press, a.permalink, \
-         a.full_text_file, j.title AS journal_title, j.issn, j.eissn, i.volume, i.number \
+        "SELECT a.article_id, a.journal_id, a.issue_id, a.title, a.publication_year, \
+         a.date, a.authors_json, a.abstract_text, a.doi, a.open_access, a.in_press, \
+         j.title AS journal_title, j.issn, j.eissn, i.volume, i.number \
          FROM articles a LEFT JOIN issues i ON i.issue_id = a.issue_id \
          JOIN journals j ON j.journal_id = a.journal_id \
          WHERE a.article_id IN ({placeholders})"
@@ -728,25 +726,37 @@ fn load_metadata_from_index(
                     .map(litradar_domain::JournalId),
                 issue_id: row.get(2)?,
                 title: row.get(3)?,
-                date: row.get(4)?,
-                authors: row.get(5)?,
-                abstract_text: row.get(6)?,
-                doi: row.get(7)?,
-                platform_id: row.get(8)?,
-                open_access: row.get(9)?,
-                in_press: row.get(10)?,
-                permalink: row.get(11)?,
-                full_text_file: row.get(12)?,
-                journal_title: row.get(13)?,
-                issn: row.get(14)?,
-                eissn: row.get(15)?,
-                volume: row.get(16)?,
-                number: row.get(17)?,
+                publication_year: row.get(4)?,
+                date: row.get(5)?,
+                authors: Some(json_string_vec_from_business_row(row, 6)?),
+                abstract_text: row.get(7)?,
+                doi: row.get(8)?,
+                open_access: row.get::<_, Option<i64>>(9)?.map(|value| value != 0),
+                in_press: row.get::<_, Option<i64>>(10)?.map(|value| value != 0),
+                journal_title: row.get(11)?,
+                issn: row.get(12)?,
+                eissn: row.get(13)?,
+                volume: row.get(14)?,
+                number: row.get(15)?,
             },
         ))
     })?;
     collect_rows(rows)
         .map(|items: Vec<((String, i64), FavoriteArticleResponse)>| items.into_iter().collect())
+}
+
+fn json_string_vec_from_business_row(
+    row: &rusqlite::Row<'_>,
+    index: usize,
+) -> rusqlite::Result<Vec<String>> {
+    let payload = row.get::<_, String>(index)?;
+    serde_json::from_str(&payload).map_err(|error| {
+        rusqlite::Error::FromSqlConversionFailure(
+            index,
+            rusqlite::types::Type::Text,
+            Box::new(error),
+        )
+    })
 }
 
 fn ensure_folder_exists(

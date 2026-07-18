@@ -725,8 +725,7 @@ fn selection_candidate_payload(candidate: &ArticleCandidateInfo) -> Value {
         "date": candidate.date,
         "journal_title": candidate.journal_title,
         "open_access": candidate.open_access,
-        "in_press": candidate.in_press,
-        "within_library_holdings": candidate.within_library_holdings
+        "in_press": candidate.in_press
     })
 }
 
@@ -1226,11 +1225,8 @@ mod tests {
             date: Some("2026-07-01".to_string()),
             journal_title: "Journal".to_string(),
             doi: Some(format!("10.0000/{article_id}")),
-            full_text_file: None,
-            permalink: None,
             open_access: true,
             in_press: false,
-            within_library_holdings: true,
         }
     }
 }

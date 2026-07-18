@@ -115,7 +115,7 @@ function favoriteArticleFixture(id: number): FavoriteArticleItem {
     note: '',
     created_at: 2,
     title: `Article ${id}`,
-    authors: 'Researcher',
+    authors: ['Researcher'],
     abstract: `Abstract ${id}`,
   };
 }

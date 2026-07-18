@@ -1858,11 +1858,8 @@ mod tests {
             date: None,
             journal_title: "Journal".to_string(),
             doi: None,
-            full_text_file: None,
-            permalink: None,
             open_access: false,
             in_press: false,
-            within_library_holdings: true,
         }
     }
 }

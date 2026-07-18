@@ -102,25 +102,23 @@ pub struct FavoriteArticleResponse {
     pub issue_id: Option<i64>,
     /// Article title from the index database.
     pub title: Option<String>,
+    /// Article publication year.
+    pub publication_year: Option<i64>,
     /// Article publication date.
     pub date: Option<String>,
-    /// Article authors text.
-    pub authors: Option<String>,
+    /// Ordered article author names.
+    pub authors: Option<Vec<String>>,
     /// Article abstract text.
     #[serde(rename = "abstract")]
     pub abstract_text: Option<String>,
     /// Article DOI.
     pub doi: Option<String>,
-    /// Source platform identifier.
-    pub platform_id: Option<String>,
-    /// Source permalink.
-    pub permalink: Option<String>,
     /// Journal title.
     pub journal_title: Option<String>,
     /// Open-access flag from the index database.
-    pub open_access: Option<i64>,
+    pub open_access: Option<bool>,
     /// In-press flag from the index database.
-    pub in_press: Option<i64>,
+    pub in_press: Option<bool>,
     /// Issue volume.
     pub volume: Option<String>,
     /// Issue number.
@@ -129,8 +127,6 @@ pub struct FavoriteArticleResponse {
     pub issn: Option<String>,
     /// Journal electronic ISSN.
     pub eissn: Option<String>,
-    /// Stored full-text file path.
-    pub full_text_file: Option<String>,
 }
 
 impl From<FavoriteResponse> for FavoriteArticleResponse {
@@ -146,12 +142,11 @@ impl From<FavoriteResponse> for FavoriteArticleResponse {
             journal_id: None,
             issue_id: None,
             title: None,
+            publication_year: None,
             date: None,
             authors: None,
             abstract_text: None,
             doi: None,
-            platform_id: None,
-            permalink: None,
             journal_title: None,
             open_access: None,
             in_press: None,
@@ -159,7 +154,6 @@ impl From<FavoriteResponse> for FavoriteArticleResponse {
             number: None,
             issn: None,
             eissn: None,
-            full_text_file: None,
         }
     }
 }

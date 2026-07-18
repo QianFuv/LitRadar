@@ -1,32 +1,26 @@
 //! Index database read route handlers.
 
-#[cfg(test)]
-use std::sync::{Mutex, OnceLock};
-use std::time::Duration;
-
 use axum::extract::{Path, Query, RawQuery, State};
-use axum::http::header::{CONTENT_DISPOSITION, CONTENT_TYPE, LOCATION};
+use axum::http::header::{CACHE_CONTROL, CONTENT_DISPOSITION, CONTENT_TYPE, LOCATION};
 use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::Json;
-use litradar_sources::{
-    FixtureZjlibCnkiMode, FixtureZjlibCnkiTransport, LiveZjlibCnkiConfig, LiveZjlibCnkiTransport,
-    ZhejiangLibraryCnkiClient, ZjlibCnkiArticleIdentity, ZjlibCnkiDownloadedPdf, ZjlibCnkiError,
-};
+#[cfg(test)]
+use litradar_sources::FixtureZjlibCnkiMode;
 use litradar_storage::{
     ArticleListParams, DatabaseResolutionError, IndexRepositoryError, IssueListParams,
     JournalListParams, StorageConfig,
 };
 use serde::Deserialize;
-use serde_json::Value as JsonValue;
 use utoipa::IntoParams;
 
+use crate::article_access::{
+    article_access_response, resolve_article_full_text, resolve_article_redirect,
+    RedirectActionKind,
+};
 use crate::response::ApiError;
 use crate::routes::auth::require_current_user;
 use crate::state::ApiState;
-
-#[cfg(test)]
-static INDEX_ROUTE_FIXTURE_MODE: OnceLock<Mutex<Option<FixtureZjlibCnkiMode>>> = OnceLock::new();
 
 /// Query parameters that only select an index database.
 #[derive(Debug, Deserialize, IntoParams)]
@@ -44,18 +38,10 @@ pub(crate) struct JournalQuery {
     db: Option<String>,
     /// Area filter.
     area: Option<String>,
-    /// Library identifier filter.
-    library_id: Option<String>,
-    /// Available filter.
-    available: Option<bool>,
     /// Has-articles filter.
     has_articles: Option<bool>,
     /// Publication year filter.
     year: Option<i64>,
-    /// Minimum Scimago rank.
-    scimago_min: Option<f64>,
-    /// Maximum Scimago rank.
-    scimago_max: Option<f64>,
     /// Sort expression.
     sort: Option<String>,
     /// Page size.
@@ -74,14 +60,6 @@ pub(crate) struct IssueQuery {
     journal_id: Option<i64>,
     /// Publication year filter.
     year: Option<i64>,
-    /// Valid issue filter.
-    is_valid_issue: Option<bool>,
-    /// Suppressed filter.
-    suppressed: Option<bool>,
-    /// Embargoed filter.
-    embargoed: Option<bool>,
-    /// Subscription filter.
-    within_subscription: Option<bool>,
     /// Sort expression.
     sort: Option<String>,
     /// Page size.
@@ -185,39 +163,6 @@ pub(crate) async fn list_journal_options(
     Ok(Json(rows))
 }
 
-/// List metadata source counts.
-///
-/// # Arguments
-///
-/// * `state` - Shared API state.
-/// * `headers` - Request headers.
-/// * `query` - Database selector.
-///
-/// # Returns
-///
-/// Source counts.
-#[utoipa::path(
-    get,
-    path = "/api/meta/sources",
-    tag = "index",
-    params(DbQuery),
-    responses((status = 200, description = "Metadata source counts.", body = Vec<litradar_domain::ValueCount>)),
-    security(("bearer_auth" = []), ("session_cookie" = []))
-)]
-pub(crate) async fn list_sources(
-    State(state): State<ApiState>,
-    headers: HeaderMap,
-    Query(query): Query<DbQuery>,
-) -> Result<Json<Vec<litradar_domain::ValueCount>>, ApiError> {
-    require_current_user(&state, &headers).await?;
-    let db = query.db.and_then(nonempty_owned);
-    let rows = run_index(&state, move |storage| {
-        litradar_storage::list_sources(&storage, db.as_deref())
-    })
-    .await?;
-    Ok(Json(rows))
-}
-
 /// List publication year summaries.
 ///
 /// # Arguments
@@ -278,12 +223,8 @@ pub(crate) async fn list_journals(
     require_current_user(&state, &headers).await?;
     let params = JournalListParams {
         area: query.area,
-        library_id: query.library_id,
-        available: query.available,
         has_articles: query.has_articles,
         year: query.year,
-        scimago_min: query.scimago_min,
-        scimago_max: query.scimago_max,
         sort: query.sort,
         limit: query.limit.unwrap_or(50),
         offset: query.offset.unwrap_or(0),
@@ -362,10 +303,6 @@ pub(crate) async fn list_issues(
     let params = IssueListParams {
         journal_id: query.journal_id,
         year: query.year,
-        is_valid_issue: query.is_valid_issue,
-        suppressed: query.suppressed,
-        embargoed: query.embargoed,
-        within_subscription: query.within_subscription,
         sort: query.sort,
         limit: query.limit.unwrap_or(50),
         offset: query.offset.unwrap_or(0),
@@ -468,8 +405,6 @@ pub(crate) async fn get_weekly_updates(
         ("year" = Option<i64>, Query, description = "Publication year filter."),
         ("in_press" = Option<bool>, Query, description = "In-press filter."),
         ("open_access" = Option<bool>, Query, description = "Open-access filter."),
-        ("suppressed" = Option<bool>, Query, description = "Suppressed filter."),
-        ("within_library_holdings" = Option<bool>, Query, description = "Library holdings filter."),
         ("date_from" = Option<String>, Query, description = "Start date filter."),
         ("date_to" = Option<String>, Query, description = "End date filter."),
         ("doi" = Option<String>, Query, description = "DOI filter."),
@@ -567,18 +502,101 @@ pub(crate) async fn get_article_access(
 ) -> Result<Json<litradar_domain::ArticleAccessResponse>, ApiError> {
     let (user, _) = require_current_user(&state, &headers).await?;
     let db = query.db.and_then(nonempty_owned);
-    let secret_codec = state.secret_codec().clone();
-    let payload = run_index(&state, move |storage| {
-        litradar_storage::get_article_access(
-            &storage,
-            &secret_codec,
-            db.as_deref(),
-            article_id,
-            user.id,
-        )
+    run_index(&state, move |storage| {
+        litradar_storage::get_article_locator(&storage, db.as_deref(), article_id)
     })
     .await?;
+    let payload = article_access_response(&state, user.id).await?;
     Ok(Json(payload))
+}
+
+/// Resolve and redirect to an article detail page online.
+///
+/// # Arguments
+///
+/// * `state` - Shared API state.
+/// * `headers` - Request headers.
+/// * `article_id` - Article identifier.
+/// * `query` - Database selector.
+///
+/// # Returns
+///
+/// No-store temporary redirect.
+#[utoipa::path(
+    get,
+    path = "/api/articles/{article_id}/detail",
+    tag = "index",
+    params(("article_id" = i64, Path, description = "Article identifier."), DbQuery),
+    responses((status = 307, description = "Temporary online detail redirect.")),
+    security(("bearer_auth" = []), ("session_cookie" = []))
+)]
+pub(crate) async fn redirect_article_detail(
+    State(state): State<ApiState>,
+    headers: HeaderMap,
+    Path(article_id): Path<i64>,
+    Query(query): Query<DbQuery>,
+) -> Result<Response, ApiError> {
+    redirect_article_action(
+        state,
+        headers,
+        article_id,
+        query,
+        RedirectActionKind::Detail,
+    )
+    .await
+}
+
+/// Resolve and redirect to an article abstract page online.
+///
+/// # Arguments
+///
+/// * `state` - Shared API state.
+/// * `headers` - Request headers.
+/// * `article_id` - Article identifier.
+/// * `query` - Database selector.
+///
+/// # Returns
+///
+/// No-store temporary redirect.
+#[utoipa::path(
+    get,
+    path = "/api/articles/{article_id}/abstract",
+    tag = "index",
+    params(("article_id" = i64, Path, description = "Article identifier."), DbQuery),
+    responses((status = 307, description = "Temporary online abstract-page redirect.")),
+    security(("bearer_auth" = []), ("session_cookie" = []))
+)]
+pub(crate) async fn redirect_article_abstract(
+    State(state): State<ApiState>,
+    headers: HeaderMap,
+    Path(article_id): Path<i64>,
+    Query(query): Query<DbQuery>,
+) -> Result<Response, ApiError> {
+    redirect_article_action(
+        state,
+        headers,
+        article_id,
+        query,
+        RedirectActionKind::Abstract,
+    )
+    .await
+}
+
+async fn redirect_article_action(
+    state: ApiState,
+    headers: HeaderMap,
+    article_id: i64,
+    query: DbQuery,
+    kind: RedirectActionKind,
+) -> Result<Response, ApiError> {
+    let (user, _) = require_current_user(&state, &headers).await?;
+    let db = query.db.and_then(nonempty_owned);
+    let article = run_index(&state, move |storage| {
+        litradar_storage::get_article_locator(&storage, db.as_deref(), article_id)
+    })
+    .await?;
+    let redirect = resolve_article_redirect(&state, article, user.id, kind).await?;
+    no_store_redirect(&redirect.location)
 }
 
 /// Redirect to an article full-text target.
@@ -615,98 +633,34 @@ pub(crate) async fn redirect_article_fulltext(
 ) -> Result<Response, ApiError> {
     let (user, _) = require_current_user(&state, &headers).await?;
     let db = query.db.and_then(nonempty_owned);
-    let target_secret_codec = state.secret_codec().clone();
-    let target = run_index(&state, move |storage| {
-        litradar_storage::article_fulltext_target(
-            &storage,
-            &target_secret_codec,
-            db.as_deref(),
-            article_id,
-            user.id,
-        )
+    let article = run_index(&state, move |storage| {
+        litradar_storage::get_article_locator(&storage, db.as_deref(), article_id)
     })
     .await?;
-    match target {
-        litradar_storage::ArticleFulltextTarget::Redirect(url) => {
-            let location =
-                HeaderValue::from_str(&url).map_err(|_| ApiError::internal_server_error())?;
-            Ok((StatusCode::TEMPORARY_REDIRECT, [(LOCATION, location)]).into_response())
+    match resolve_article_full_text(&state, article, user.id).await? {
+        litradar_domain::ArticleFullTextResolution::Redirect(redirect) => {
+            no_store_redirect(&redirect.location)
         }
-        litradar_storage::ArticleFulltextTarget::Pdf {
-            filename,
-            content_type,
-            content,
-        } => {
-            let mut response = content.into_response();
+        litradar_domain::ArticleFullTextResolution::Document(document) => {
+            let mut response = document.bytes.into_response();
             response
                 .headers_mut()
-                .insert(CONTENT_TYPE, header_value(&content_type)?);
-            response.headers_mut().insert(
-                CONTENT_DISPOSITION,
-                header_value(&format!(
-                    "attachment; filename*=UTF-8''{}",
-                    percent_encode_filename(&filename)
-                ))?,
-            );
+                .insert(CONTENT_TYPE, header_value(&document.content_type)?);
+            if let Some(filename) = document.filename {
+                response.headers_mut().insert(
+                    CONTENT_DISPOSITION,
+                    header_value(&format!(
+                        "attachment; filename*=UTF-8''{}",
+                        percent_encode_filename(&filename)
+                    ))?,
+                );
+            }
+            response
+                .headers_mut()
+                .insert(CACHE_CONTROL, HeaderValue::from_static("private, no-store"));
             Ok(response)
         }
-        litradar_storage::ArticleFulltextTarget::Cnki(target) => {
-            let auth_db_path = state.storage_config().auth_db_path().to_path_buf();
-            let secret_codec = state.secret_codec().clone();
-            let user_id = user.id;
-            let qr_uuid = target.qr_uuid.clone();
-            let expected = ZjlibCnkiArticleIdentity {
-                title: target.title,
-                authors: target.authors,
-                journal_title: target.journal_title,
-            };
-            let session_data = target.session_data;
-            let fixture_mode = zjlib_fixture_mode();
-            let download_result = state
-                .run_blocking_with_timeout(Duration::from_secs(120), move || {
-                    download_zjlib_cnki_fulltext(fixture_mode, expected, session_data)
-                })
-                .await?;
-            let (downloaded, session_data) = download_result.map_err(map_zjlib_fulltext_error)?;
-            state
-                .run_blocking(move || {
-                    litradar_storage::upsert_cnki_session(
-                        &auth_db_path,
-                        &secret_codec,
-                        user_id,
-                        &session_data,
-                        "active",
-                        session_data
-                            .get("qr_uuid")
-                            .and_then(JsonValue::as_str)
-                            .or(Some(qr_uuid.as_str())),
-                    )?;
-                    litradar_storage::touch_cnki_session_used(&auth_db_path, user_id)
-                })
-                .await?
-                .map_err(|_| ApiError::internal_server_error())?;
-            Ok(pdf_response(downloaded)?)
-        }
     }
-}
-
-fn zjlib_fixture_mode() -> Option<FixtureZjlibCnkiMode> {
-    #[cfg(test)]
-    {
-        return index_route_fixture_mode()
-            .lock()
-            .expect("index route fixture mode lock should not be poisoned")
-            .clone();
-    }
-    #[cfg(not(test))]
-    {
-        None
-    }
-}
-
-#[cfg(test)]
-fn index_route_fixture_mode() -> &'static Mutex<Option<FixtureZjlibCnkiMode>> {
-    INDEX_ROUTE_FIXTURE_MODE.get_or_init(|| Mutex::new(None))
 }
 
 /// Set Zhejiang Library CNKI fixture transport mode for index route tests.
@@ -716,57 +670,18 @@ fn index_route_fixture_mode() -> &'static Mutex<Option<FixtureZjlibCnkiMode>> {
 /// * `mode` - Optional fixture transport mode.
 #[cfg(test)]
 pub(crate) fn set_fixture_mode_for_tests(mode: Option<FixtureZjlibCnkiMode>) {
-    *index_route_fixture_mode()
-        .lock()
-        .expect("index route fixture mode lock should not be poisoned") = mode;
+    crate::article_access::set_full_text_fixture_mode(mode);
 }
 
-fn download_zjlib_cnki_fulltext(
-    fixture_mode: Option<FixtureZjlibCnkiMode>,
-    expected: ZjlibCnkiArticleIdentity,
-    session_data: JsonValue,
-) -> Result<(ZjlibCnkiDownloadedPdf, JsonValue), ZjlibCnkiError> {
-    if let Some(mode) = fixture_mode {
-        let mut client = ZhejiangLibraryCnkiClient::from_state_data(
-            FixtureZjlibCnkiTransport::new(mode),
-            &session_data,
-        );
-        client.warm_up_fulltext_session()?;
-        let downloaded = client.download_matching_pdf(&expected, 10)?;
-        return Ok((downloaded, client.to_state_data()));
-    }
-    let transport = LiveZjlibCnkiTransport::new(LiveZjlibCnkiConfig::default())?;
-    let mut client = ZhejiangLibraryCnkiClient::from_state_data(transport, &session_data);
-    client.warm_up_fulltext_session()?;
-    let downloaded = client.download_matching_pdf(&expected, 10)?;
-    Ok((downloaded, client.to_state_data()))
-}
-
-fn map_zjlib_fulltext_error(error: ZjlibCnkiError) -> ApiError {
-    let message = error.to_string();
-    if message.contains("No exact CNKI full-text match") {
-        ApiError::not_found(message)
-    } else {
-        ApiError::Http {
-            status: StatusCode::BAD_GATEWAY,
-            detail: message,
-        }
-    }
-}
-
-fn pdf_response(downloaded: ZjlibCnkiDownloadedPdf) -> Result<Response, ApiError> {
-    let mut response = downloaded.content.into_response();
-    response
-        .headers_mut()
-        .insert(CONTENT_TYPE, header_value(&downloaded.content_type)?);
-    response.headers_mut().insert(
-        CONTENT_DISPOSITION,
-        header_value(&format!(
-            "attachment; filename*=UTF-8''{}",
-            percent_encode_filename(&downloaded.filename)
-        ))?,
-    );
-    Ok(response)
+fn no_store_redirect(location: &str) -> Result<Response, ApiError> {
+    Ok((
+        StatusCode::TEMPORARY_REDIRECT,
+        [
+            (LOCATION, header_value(location)?),
+            (CACHE_CONTROL, HeaderValue::from_static("private, no-store")),
+        ],
+    )
+        .into_response())
 }
 
 fn parse_article_query(
@@ -780,8 +695,6 @@ fn parse_article_query(
     params.year = parse_optional_i64(&pairs, "year")?;
     params.in_press = parse_optional_bool(&pairs, "in_press")?;
     params.open_access = parse_optional_bool(&pairs, "open_access")?;
-    params.suppressed = parse_optional_bool(&pairs, "suppressed")?;
-    params.within_library_holdings = parse_optional_bool(&pairs, "within_library_holdings")?;
     params.date_from = query_value(&pairs, "date_from");
     params.date_to = query_value(&pairs, "date_to");
     params.doi = query_value(&pairs, "doi");
@@ -936,8 +849,7 @@ fn map_index_error(error: IndexRepositoryError) -> ApiError {
         IndexRepositoryError::DatabaseResolution(DatabaseResolutionError::Io(_))
         | IndexRepositoryError::Sqlite(_)
         | IndexRepositoryError::Io(_)
-        | IndexRepositoryError::Json(_)
-        | IndexRepositoryError::Cnki(_) => ApiError::internal_server_error(),
+        | IndexRepositoryError::Json(_) => ApiError::internal_server_error(),
     }
 }
 
@@ -965,7 +877,7 @@ mod tests {
     #[test]
     fn parses_article_query_repeated_values_and_last_scalar_values() {
         let (db, params) = parse_article_query(Some(
-            "db=first.sqlite&db=fixture.sqlite&journal_id=1&journal_id=2&journal_id=&area=Medicine&area=Data+Science&issue_id=10&year=2026&in_press=yes&open_access=1&suppressed=no&within_library_holdings=off&date_from=2026-01-01&date_to=2026-02-01&doi=10.1000%2Fabc&pmid=PMID%2B42&q=genome+search&sort=date%3Aasc&limit=25&offset=5&cursor=2026-01-05%7C1001&include_total=false",
+            "db=first.sqlite&db=fixture.sqlite&journal_id=1&journal_id=2&journal_id=&area=Medicine&area=Data+Science&issue_id=10&year=2026&in_press=yes&open_access=1&date_from=2026-01-01&date_to=2026-02-01&doi=10.1000%2Fabc&pmid=PMID%2B42&q=genome+search&sort=date%3Aasc&limit=25&offset=5&cursor=2026-01-05%7C1001&include_total=false",
         ))
         .expect("query should parse");
 
@@ -976,8 +888,6 @@ mod tests {
         assert_eq!(params.year, Some(2026));
         assert_eq!(params.in_press, Some(true));
         assert_eq!(params.open_access, Some(true));
-        assert_eq!(params.suppressed, Some(false));
-        assert_eq!(params.within_library_holdings, Some(false));
         assert_eq!(params.date_from.as_deref(), Some("2026-01-01"));
         assert_eq!(params.date_to.as_deref(), Some("2026-02-01"));
         assert_eq!(params.doi.as_deref(), Some("10.1000/abc"));

@@ -97,9 +97,9 @@ fn fetch_weekly_articles(
             .map(SqlValue::Integer)
             .collect::<Vec<_>>();
         let mut statement = connection.prepare(&format!(
-            "SELECT a.article_id, a.journal_id, a.issue_id, a.title, a.date, a.authors, \
-             a.abstract, a.doi, a.platform_id, a.permalink, a.full_text_file, a.open_access, \
-             a.in_press, j.title AS journal_title, i.volume, i.number \
+            "SELECT a.article_id, a.journal_id, a.issue_id, a.title, a.publication_year, \
+             a.date, a.authors_json, a.abstract_text, a.doi, a.open_access, a.in_press, \
+             j.title AS journal_title, i.volume, i.number \
              FROM articles a LEFT JOIN issues i ON i.issue_id = a.issue_id \
              JOIN journals j ON j.journal_id = a.journal_id \
              WHERE a.article_id IN ({placeholders})"
@@ -132,7 +132,7 @@ fn group_weekly_articles_by_journal(
         .map(|(journal_id, articles)| {
             let journal_title = articles
                 .first()
-                .and_then(|article| article.journal_title.clone());
+                .map(|article| article.journal_title.clone());
             WeeklyJournalUpdate {
                 journal_id: JournalId(journal_id),
                 journal_title,
@@ -253,18 +253,16 @@ fn weekly_article_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<WeeklyAr
         journal_id: JournalId(row.get(1)?),
         issue_id: row.get(2)?,
         title: row.get(3)?,
-        date: row.get(4)?,
-        authors: row.get(5)?,
-        abstract_text: row.get(6)?,
-        doi: row.get(7)?,
-        platform_id: row.get(8)?,
-        permalink: row.get(9)?,
-        full_text_file: row.get(10)?,
-        open_access: row.get(11)?,
-        in_press: row.get(12)?,
-        journal_title: row.get(13)?,
-        volume: row.get(14)?,
-        number: row.get(15)?,
+        publication_year: row.get(4)?,
+        date: row.get(5)?,
+        authors: json_string_vec_from_row(row, 6)?,
+        abstract_text: row.get(7)?,
+        doi: row.get(8)?,
+        open_access: row.get::<_, Option<i64>>(9)?.map(|value| value != 0),
+        in_press: row.get::<_, Option<i64>>(10)?.map(|value| value != 0),
+        journal_title: row.get(11)?,
+        volume: row.get(12)?,
+        number: row.get(13)?,
     })
 }
 
@@ -474,7 +472,7 @@ mod tests {
         assert_eq!(database.journals[1].journal_id.value(), 2);
         assert_eq!(
             database.journals[1].journal_title.as_deref(),
-            Some("Beta CNKI")
+            Some("Beta Journal")
         );
         assert_eq!(database.journals[1].new_article_count, 1);
         assert_eq!(

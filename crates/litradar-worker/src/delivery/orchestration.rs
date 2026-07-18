@@ -1542,63 +1542,39 @@ mod tests {
     }
 
     fn create_index_database(path: &Path) {
+        litradar_storage::migrate_index_database(path, None)
+            .expect("index database should migrate");
         let connection =
             litradar_storage::open_sqlite_connection(path).expect("index database should open");
         connection
             .execute_batch(
-                "
-                CREATE TABLE journals (
-                    journal_id INTEGER PRIMARY KEY,
-                    title TEXT NOT NULL
+                r#"
+                INSERT INTO journals (
+                    journal_id, catalog_id, title, title_aliases_json, issns_json,
+                    issn, eissn, area, utd_rank, utd_rating, abs_rank, abs_rating,
+                    fms_rank, fms_rating, fmscn_rank, fmscn_rating
+                ) VALUES (
+                    1, 'fixture-journal', 'Fixture Journal', '[]',
+                    '["1234-5679"]', '1234-5679', NULL, 'Systems',
+                    NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL
                 );
-                CREATE TABLE articles (
-                    article_id INTEGER PRIMARY KEY,
-                    journal_id INTEGER NOT NULL,
-                    issue_id INTEGER,
-                    title TEXT NOT NULL,
-                    abstract TEXT,
-                    date TEXT,
-                    open_access INTEGER,
-                    in_press INTEGER,
-                    within_library_holdings INTEGER,
-                    doi TEXT,
-                    full_text_file TEXT,
-                    permalink TEXT,
-                    suppressed INTEGER
-                );
-                ",
+
+                INSERT INTO issues (
+                    issue_id, journal_id, publication_year, title, volume, number, date
+                ) VALUES (11, 1, 2026, 'Fixture Issue', '1', '1', '2026-07-01');
+
+                INSERT INTO articles (
+                    article_id, journal_id, issue_id, title, publication_year, date,
+                    authors_json, start_page, end_page, abstract_text, doi, pmid,
+                    open_access, in_press, retraction_doi
+                ) VALUES
+                    (101, 1, 11, 'Rust systems', 2026, '2026-07-01', '["Alice"]',
+                     NULL, NULL, 'rust systems', '10.0000/101', NULL, 1, 0, NULL),
+                    (102, 1, 11, 'Rust migration', 2026, '2026-07-01', '["Bob"]',
+                     NULL, NULL, 'rust migration', '10.0000/102', NULL, 1, 0, NULL);
+                "#,
             )
-            .expect("index schema should be created");
-        connection
-            .execute(
-                "INSERT INTO journals (journal_id, title) VALUES (?1, ?2)",
-                (1_i64, "Fixture Journal"),
-            )
-            .expect("journal should be inserted");
-        for (article_id, issue_id, title, abstract_text) in [
-            (101, Some(11), "Rust systems", "rust systems"),
-            (102, Some(11), "Rust migration", "rust migration"),
-            (103, None, "Suppressed Rust", "rust hidden"),
-        ] {
-            connection
-                .execute(
-                    "INSERT INTO articles (
-                    article_id, journal_id, issue_id, title, abstract, date, open_access,
-                    in_press, within_library_holdings, doi, full_text_file, permalink, suppressed
-                ) VALUES (?1, 1, ?2, ?3, ?4, '2026-07-01', 1, ?5, 1, ?6, '', ?7, ?8)",
-                    (
-                        article_id,
-                        issue_id,
-                        title,
-                        abstract_text,
-                        if issue_id.is_none() { 1_i64 } else { 0_i64 },
-                        format!("10.0000/{article_id}"),
-                        format!("https://example.test/{article_id}"),
-                        if article_id == 103 { 1_i64 } else { 0_i64 },
-                    ),
-                )
-                .expect("article should be inserted");
-        }
+            .expect("index fixture data should be created");
     }
 
     fn favorite_count(auth_db_path: &Path) -> i64 {

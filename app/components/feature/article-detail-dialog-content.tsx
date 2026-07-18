@@ -6,14 +6,7 @@ import Link from 'next/link';
 import { usePathname, useSearchParams } from 'next/navigation';
 import { Check, Copy, ExternalLink, FileDown, Loader2, Settings } from 'lucide-react';
 
-import {
-  getArticleAccess,
-  getCnkiSession,
-  getFullTextUrlForDatabase,
-  type ArticleAccessResponse,
-  type Article,
-  type CnkiSessionStatus,
-} from '@/lib/api';
+import { getArticleActionUrlForDatabase, getArticleAccess, type Article } from '@/lib/api';
 import { FavoriteButton } from '@/components/feature/favorite-button';
 import { Button } from '@/components/ui/button';
 import {
@@ -24,12 +17,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { copyTextToClipboard } from '@/lib/clipboard';
-import {
-  generateArticleCitation,
-  getDoiUrl,
-  getSafeHttpUrl,
-  type ArticleCitationFormat,
-} from '@/lib/citation';
+import { generateArticleCitation, getDoiUrl, type ArticleCitationFormat } from '@/lib/citation';
 import { buildSettingsCenterHref } from '@/lib/settings-center';
 
 type ArticleDetailDialogArticle = Article;
@@ -42,18 +30,7 @@ type ArticleDetailDialogContentProps = {
   extraActions?: ReactNode;
 };
 
-type ArticleAccessQuerySnapshot = {
-  state: {
-    data?: unknown;
-    error?: unknown;
-  };
-};
-
-type ArticleCopyTarget = 'title' | 'info' | 'gb-t-7714' | 'bibtex' | 'doi' | 'permalink';
-
-const ARTICLE_ACCESS_STALE_TIME_MS = 5 * 60 * 1000;
-const CNKI_SESSION_STALE_TIME_MS = 60 * 1000;
-const CNKI_SESSION_EXPIRY_REFRESH_WINDOW_SECONDS = 10 * 60;
+type ArticleCopyTarget = 'title' | 'info' | 'gb-t-7714' | 'bibtex' | 'doi';
 
 /**
  * Build the existing plain-text article information summary.
@@ -63,16 +40,16 @@ const CNKI_SESSION_EXPIRY_REFRESH_WINDOW_SECONDS = 10 * 60;
  */
 function buildArticleInfoText(article: ArticleDetailDialogArticle): string {
   const doiUrl = getDoiUrl(article.doi);
+  const authors = article.authors?.join('; ') ?? '';
   return [
     `标题：${article.title || '暂无'}`,
-    `作者：${article.authors || '暂无'}`,
+    `作者：${authors || '暂无'}`,
     `期刊：${article.journal_title || '暂无'}`,
     `日期：${article.date || '暂无'}`,
     article.volume && `卷号：${article.volume}`,
     article.number && `期号：${article.number}`,
     article.doi && `DOI: ${article.doi}`,
     doiUrl && `DOI 链接：${doiUrl}`,
-    article.permalink && `永久链接：${article.permalink}`,
   ]
     .filter(Boolean)
     .join('\n');
@@ -98,85 +75,6 @@ function buildArticleDescription(article: ArticleDetailDialogArticle): string {
 }
 
 /**
- * Check whether a CNKI session is close enough to expiry to avoid cached article access.
- *
- * @param session - Current safe CNKI session status.
- * @returns True when access checks should be refreshed aggressively.
- */
-function isCnkiSessionNearExpiry(session: CnkiSessionStatus): boolean {
-  if (typeof session.seconds_remaining === 'number') {
-    return session.seconds_remaining <= CNKI_SESSION_EXPIRY_REFRESH_WINDOW_SECONDS;
-  }
-  if (typeof session.expires_at === 'number') {
-    return session.expires_at - Date.now() / 1000 <= CNKI_SESSION_EXPIRY_REFRESH_WINDOW_SECONDS;
-  }
-  return false;
-}
-
-/**
- * Decide whether the CNKI session state requires live article access checks.
- *
- * @param session - Current safe CNKI session status.
- * @returns True when article access should be refreshed on each mount.
- */
-function shouldRefreshArticleAccessForCnkiSession(session?: CnkiSessionStatus): boolean {
-  if (!session) {
-    return true;
-  }
-  if (!session.configured || session.status !== 'active' || !session.has_bff_user_token) {
-    return true;
-  }
-  return isCnkiSessionNearExpiry(session);
-}
-
-/**
- * Build a cache key segment that separates article access by CNKI session generation.
- *
- * @param session - Current safe CNKI session status.
- * @returns Stable non-secret cache key segment.
- */
-function buildArticleAccessSessionKey(session?: CnkiSessionStatus): string {
-  if (!session) {
-    return 'session:unknown';
-  }
-  return [
-    'session',
-    session.status,
-    session.configured ? 'configured' : 'empty',
-    session.has_bff_user_token ? 'token' : 'no-token',
-    session.updated_at ?? 'updated-unknown',
-    session.expires_at ?? 'expiry-unknown',
-  ].join(':');
-}
-
-/**
- * Check whether an article access result indicates missing or unusable full-text access.
- *
- * @param access - Article access response.
- * @returns True when future mounts should use live refresh behavior.
- */
-function isUnavailableArticleAccess(access?: ArticleAccessResponse): boolean {
-  return access?.fulltext.requires_login === true;
-}
-
-/**
- * Decide whether cached article access data should be treated as live-only.
- *
- * @param query - Current article access query snapshot.
- * @param shouldRefreshForSession - Whether the CNKI session requires live refresh.
- * @returns True when this access query should refresh on mount.
- */
-function shouldUseLiveArticleAccessRefresh(
-  query: ArticleAccessQuerySnapshot,
-  shouldRefreshForSession: boolean,
-): boolean {
-  if (shouldRefreshForSession || query.state.error) {
-    return true;
-  }
-  return isUnavailableArticleAccess(query.state.data as ArticleAccessResponse | undefined);
-}
-
-/**
  * Render article metadata, citations, links, access actions, and favorite controls.
  *
  * @param props - Article detail dialog configuration.
@@ -197,13 +95,6 @@ export function ArticleDetailDialogContent({
     tone: 'error' | 'success';
   } | null>(null);
   const isAccessQueryEnabled = !!dbName && !!article.article_id;
-  const { data: cnkiSession } = useQuery({
-    queryKey: ['cnki-session', 'current'],
-    queryFn: () => getCnkiSession(),
-    enabled: isAccessQueryEnabled,
-    staleTime: CNKI_SESSION_STALE_TIME_MS,
-  });
-  const shouldRefreshAccessForSession = shouldRefreshArticleAccessForCnkiSession(cnkiSession);
   const {
     data: access,
     isPending: isAccessPending,
@@ -211,21 +102,11 @@ export function ArticleDetailDialogContent({
     isError: isAccessError,
     error: accessError,
   } = useQuery({
-    queryKey: [
-      'article-access',
-      dbName,
-      article.article_id,
-      buildArticleAccessSessionKey(cnkiSession),
-      shouldRefreshAccessForSession ? 'live' : 'cached',
-    ],
+    queryKey: ['article-access', dbName, article.article_id],
     queryFn: () => getArticleAccess(article.article_id, dbName),
     enabled: isAccessQueryEnabled,
-    staleTime: (query) =>
-      shouldUseLiveArticleAccessRefresh(query, shouldRefreshAccessForSession)
-        ? 0
-        : ARTICLE_ACCESS_STALE_TIME_MS,
-    refetchOnMount: (query) =>
-      shouldUseLiveArticleAccessRefresh(query, shouldRefreshAccessForSession) ? 'always' : true,
+    staleTime: 0,
+    refetchOnMount: 'always',
   });
 
   /**
@@ -275,20 +156,20 @@ export function ArticleDetailDialogContent({
     await handleCopy(article.doi || '', 'doi', 'DOI 已复制。');
   };
 
-  /** Copy the raw permalink field. */
-  const handleCopyPermalink = async () => {
-    await handleCopy(article.permalink || '', 'permalink', '永久链接已复制。');
-  };
-
   const detailAction = access?.detail;
+  const abstractAction = access?.abstract_page;
   const fulltextAction = access?.fulltext;
+  const detailUrl = detailAction?.available
+    ? getArticleActionUrlForDatabase(article.article_id, dbName, 'detail')
+    : null;
+  const abstractUrl = abstractAction?.available
+    ? getArticleActionUrlForDatabase(article.article_id, dbName, 'abstract')
+    : null;
   const fullTextUrl = fulltextAction?.available
-    ? getFullTextUrlForDatabase(article.article_id, dbName)
+    ? getArticleActionUrlForDatabase(article.article_id, dbName, 'fulltext')
     : null;
   const isAccessLoading = isAccessQueryEnabled && (isAccessPending || isAccessFetching);
   const canShowAccessActions = !isAccessFetching && !isAccessError;
-  const doiUrl = getDoiUrl(article.doi);
-  const permalinkUrl = getSafeHttpUrl(article.permalink);
   const dataSourceSettingsHref = buildSettingsCenterHref(pathname, searchParams, 'data-sources');
 
   return (
@@ -325,10 +206,10 @@ export function ArticleDetailDialogContent({
         )}
       </DialogHeader>
       <div className="space-y-6 py-4">
-        {article.authors && (
+        {article.authors && article.authors.length > 0 && (
           <div>
             <h3 className="font-semibold mb-2 text-sm text-foreground/80">作者</h3>
-            <p className="text-sm text-muted-foreground">{article.authors}</p>
+            <p className="text-sm text-muted-foreground">{article.authors.join('; ')}</p>
           </div>
         )}
 
@@ -372,32 +253,6 @@ export function ArticleDetailDialogContent({
                 复制 DOI
               </Button>
             )}
-            {doiUrl && (
-              <Button asChild variant="outline" size="sm">
-                <a href={doiUrl} target="_blank" rel="noreferrer">
-                  <ExternalLink className="mr-2 h-4 w-4" />
-                  打开 DOI
-                </a>
-              </Button>
-            )}
-            {article.permalink && (
-              <Button variant="outline" size="sm" onClick={() => void handleCopyPermalink()}>
-                {copyStatus === 'permalink' ? (
-                  <Check className="mr-2 h-4 w-4 text-green-600" />
-                ) : (
-                  <Copy className="mr-2 h-4 w-4" />
-                )}
-                复制永久链接
-              </Button>
-            )}
-            {permalinkUrl && (
-              <Button asChild variant="outline" size="sm">
-                <a href={permalinkUrl} target="_blank" rel="noreferrer">
-                  <ExternalLink className="mr-2 h-4 w-4" />
-                  打开永久链接
-                </a>
-              </Button>
-            )}
           </div>
         </div>
 
@@ -433,11 +288,19 @@ export function ArticleDetailDialogContent({
                 访问状态失败
               </Button>
             )}
-            {canShowAccessActions && detailAction?.available && detailAction.url && (
+            {canShowAccessActions && detailUrl && (
               <Button asChild variant="outline" size="sm">
-                <a href={detailAction.url} target="_blank" rel="noreferrer">
+                <a href={detailUrl} target="_blank" rel="noreferrer">
                   <ExternalLink className="mr-2 h-4 w-4" />
-                  {detailAction.label}
+                  {detailAction?.label ?? '查看详情'}
+                </a>
+              </Button>
+            )}
+            {canShowAccessActions && abstractUrl && (
+              <Button asChild variant="outline" size="sm">
+                <a href={abstractUrl} target="_blank" rel="noreferrer">
+                  <ExternalLink className="mr-2 h-4 w-4" />
+                  {abstractAction?.label ?? '查看摘要页'}
                 </a>
               </Button>
             )}

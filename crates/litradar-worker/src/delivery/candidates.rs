@@ -585,11 +585,8 @@ mod tests {
             date: Some("2026-07-01".to_string()),
             journal_title: "Fixture Journal".to_string(),
             doi: Some(format!("10.0000/{article_id}")),
-            full_text_file: None,
-            permalink: Some(format!("https://example.test/{article_id}")),
             open_access: true,
             in_press: false,
-            within_library_holdings: true,
         }
     }
 }

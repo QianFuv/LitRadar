@@ -14,14 +14,14 @@ import {
 
 const FULL_ARTICLE: Article = {
   article_id: 'article:1',
+  journal_id: 'journal:1',
   title: 'Computing & Society',
-  authors: 'Ada Lovelace; Alan Turing',
+  authors: ['Ada Lovelace', 'Alan Turing'],
   journal_title: 'Journal of Tests',
   date: '2024-05-17',
   volume: '12',
   number: '3',
   doi: 'https://doi.org/10.1000/example',
-  permalink: 'https://example.com/articles/1',
 };
 
 /**
@@ -69,7 +69,7 @@ function supportsDeclaredFormats(): void {
 }
 
 /**
- * Verify only absolute HTTP(S) destinations become clickable links.
+ * Verify DOI parsing and the underlying HTTP(S) URL validator.
  */
 function validatesExternalDestinations(): void {
   expect(getSafeHttpUrl('https://example.com/article')).toBe('https://example.com/article');
@@ -88,5 +88,5 @@ describe('single-article citations', () => {
   test('generates complete GB/T 7714 and BibTeX citations', generatesCompleteCitations);
   test('generates explicit sparse-record fallbacks', generatesSparseCitations);
   test('supports only the declared single-article formats', supportsDeclaredFormats);
-  test('validates DOI and permalink destinations', validatesExternalDestinations);
+  test('validates DOI and HTTP destinations', validatesExternalDestinations);
 });

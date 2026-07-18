@@ -19,18 +19,20 @@ export interface Article {
   journal_id?: JournalId | null;
   issue_id?: number | null;
   title?: string | null;
+  publication_year?: number | null;
   date?: string | null;
-  authors?: string | null;
+  authors?: string[] | null;
   abstract?: string | null;
   doi?: string | null;
-  platform_id?: string | null;
-  permalink?: string | null;
+  pmid?: string | null;
+  start_page?: string | null;
+  end_page?: string | null;
+  retraction_doi?: string | null;
   journal_title?: string | null;
-  open_access?: number | boolean | null;
-  in_press?: number | boolean | null;
+  open_access?: boolean | null;
+  in_press?: boolean | null;
   volume?: string | null;
   number?: string | null;
-  full_text_file?: string | null;
 }
 
 export interface ArticlePage {
@@ -41,14 +43,13 @@ export interface ArticlePage {
 export interface ArticleAccessAction {
   available: boolean;
   label: string;
-  provider?: string | null;
-  url?: string | null;
   requires_login: boolean;
   message?: string | null;
 }
 
 export interface ArticleAccessResponse {
   detail: ArticleAccessAction;
+  abstract_page: ArticleAccessAction;
   fulltext: ArticleAccessAction;
 }
 
@@ -123,20 +124,18 @@ export interface FavoriteArticleItem extends FavoriteItem {
   journal_id?: JournalId | null;
   issue_id?: number | null;
   title?: string | null;
+  publication_year?: number | null;
   date?: string | null;
-  authors?: string | null;
+  authors?: string[] | null;
   abstract?: string | null;
   doi?: string | null;
-  platform_id?: string | null;
-  permalink?: string | null;
   journal_title?: string | null;
-  open_access?: number | boolean | null;
-  in_press?: number | boolean | null;
+  open_access?: boolean | null;
+  in_press?: boolean | null;
   volume?: string | null;
   number?: string | null;
   issn?: string | null;
   eissn?: string | null;
-  full_text_file?: string | null;
 }
 
 export interface FavoriteCheck {

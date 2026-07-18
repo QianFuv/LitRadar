@@ -171,22 +171,6 @@ impl LitRadarMcp {
     }
 
     #[tool(
-        name = "list_sources",
-        description = "List metadata source values for the selected LitRadar database."
-    )]
-    async fn list_sources(
-        &self,
-        Parameters(input): Parameters<DatabaseInput>,
-    ) -> Result<CallToolResult, ErrorData> {
-        let db = match optional_text("db", input.db) {
-            Ok(value) => value,
-            Err(message) => return Ok(tool_error(message)),
-        };
-        self.run_index_tool(move |storage| litradar_storage::list_sources(&storage, db.as_deref()))
-            .await
-    }
-
-    #[tool(
         name = "list_journals",
         description = "List journals from the selected LitRadar database."
     )]
@@ -415,14 +399,10 @@ struct DatabaseInput {
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 struct ListJournalsInput {
     area: Option<String>,
-    available: Option<bool>,
     db: Option<String>,
     has_articles: Option<bool>,
-    library_id: Option<String>,
     limit: Option<i64>,
     offset: Option<i64>,
-    scimago_max: Option<f64>,
-    scimago_min: Option<f64>,
     sort: Option<String>,
     year: Option<i64>,
 }
@@ -451,8 +431,6 @@ struct SearchArticlesInput {
     pmid: Option<String>,
     q: Option<String>,
     sort: Option<String>,
-    suppressed: Option<bool>,
-    within_library_holdings: Option<bool>,
     year: Option<i64>,
 }
 
@@ -497,12 +475,8 @@ fn journal_list_params(
         optional_text("db", input.db)?,
         JournalListParams {
             area: optional_text("area", input.area)?,
-            library_id: optional_text("library_id", input.library_id)?,
-            available: input.available,
             has_articles: input.has_articles,
             year: optional_nonnegative_i64("year", input.year)?,
-            scimago_min: input.scimago_min,
-            scimago_max: input.scimago_max,
             sort: optional_text("sort", input.sort)?,
             limit: limit_or_default(input.limit)?,
             offset: offset_or_default(input.offset)?,
@@ -520,8 +494,6 @@ fn article_list_params(
     params.year = optional_nonnegative_i64("year", input.year)?;
     params.in_press = input.in_press;
     params.open_access = input.open_access;
-    params.suppressed = input.suppressed;
-    params.within_library_holdings = input.within_library_holdings;
     params.date_from = optional_text("date_from", input.date_from)?;
     params.date_to = optional_text("date_to", input.date_to)?;
     params.doi = optional_text("doi", input.doi)?;
@@ -572,8 +544,7 @@ fn index_tool_error_message(error: &IndexRepositoryError) -> String {
         IndexRepositoryError::DatabaseResolution(DatabaseResolutionError::Io(_))
         | IndexRepositoryError::Sqlite(_)
         | IndexRepositoryError::Io(_)
-        | IndexRepositoryError::Json(_)
-        | IndexRepositoryError::Cnki(_) => "Internal Server Error".to_string(),
+        | IndexRepositoryError::Json(_) => "Internal Server Error".to_string(),
         _ => error.to_string(),
     }
 }
@@ -811,7 +782,6 @@ mod tests {
             "list_areas",
             "list_years",
             "list_journal_options",
-            "list_sources",
             "list_journals",
             "get_journal",
             "search_articles",

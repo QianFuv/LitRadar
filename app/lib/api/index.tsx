@@ -145,31 +145,40 @@ export function getAnnouncements(): Promise<AnnouncementInfo[]> {
   );
 }
 
+/** Article action resolved online through a stable LitRadar route. */
+export type ArticleActionKind = 'detail' | 'abstract' | 'fulltext';
+
 /**
- * Build the full-text redirect URL for an article.
+ * Build an online article action URL for the selected database.
  *
  * @param articleId - Article id.
- * @returns Full-text URL.
+ * @param action - Online action kind.
+ * @returns Stable LitRadar action URL.
  */
-export function getFullTextUrl(articleId: ArticleId): string {
-  return getFullTextUrlForDatabase(articleId, readSelectedDatabase());
+export function getArticleActionUrl(articleId: ArticleId, action: ArticleActionKind): string {
+  return getArticleActionUrlForDatabase(articleId, readSelectedDatabase(), action);
 }
 
 /**
- * Build the full-text redirect URL for a specific database.
+ * Build an online article action URL for a specific database.
  *
  * @param articleId - Article id.
  * @param dbName - Database name.
- * @returns Full-text URL.
+ * @param action - Online action kind.
+ * @returns Stable LitRadar action URL.
  */
-export function getFullTextUrlForDatabase(articleId: ArticleId, dbName: string): string {
-  const url = new URL(`/api/articles/${articleId}/fulltext`, resolveApiBase());
+export function getArticleActionUrlForDatabase(
+  articleId: ArticleId,
+  dbName: string,
+  action: ArticleActionKind,
+): string {
+  const url = new URL(`/api/articles/${articleId}/${action}`, resolveApiBase());
   url.searchParams.set('db', dbName);
   return url.toString();
 }
 
 /**
- * Fetch article detail and full-text access capabilities.
+ * Fetch article detail, abstract-page, and full-text access capabilities.
  *
  * @param articleId - Article id.
  * @param dbName - Database name.

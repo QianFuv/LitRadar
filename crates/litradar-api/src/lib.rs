@@ -1,5 +1,6 @@
 //! Rust API server and static frontend host.
 
+mod article_access;
 pub mod config;
 mod http_observability;
 mod mcp;
@@ -485,7 +486,7 @@ fn current_unix_time() -> Result<f64, Box<dyn Error>> {
 mod tests {
     use std::collections::HashMap;
     use std::fs;
-    use std::path::Path;
+    use std::path::{Path, PathBuf};
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -516,6 +517,8 @@ mod tests {
     };
 
     static TEST_CONFIG_LOCK: AtomicBool = AtomicBool::new(false);
+
+    type CnkiSessionRowSnapshot = (String, String, String, Option<f64>, f64, f64, Option<f64>);
 
     const STATIC_FRONTEND_ROUTES: [(&str, &str); 7] = [
         ("/", "home"),
@@ -3718,6 +3721,8 @@ mod tests {
         let no_database =
             json_request(&app, Method::GET, "/api/years", Some(&auth), None, None).await;
         let index_database = backend.create_index_database("fixture.sqlite");
+        let index_bytes_before =
+            fs::read(&index_database.path).expect("fixture index should be readable");
         let databases = json_request(
             &app,
             Method::GET,
@@ -3741,15 +3746,6 @@ mod tests {
             &app,
             Method::GET,
             "/api/meta/journals?db=fixture.sqlite",
-            Some(&auth),
-            None,
-            None,
-        )
-        .await;
-        let sources = json_request(
-            &app,
-            Method::GET,
-            "/api/meta/sources?db=fixture",
             Some(&auth),
             None,
             None,
@@ -3845,12 +3841,12 @@ mod tests {
             None,
         )
         .await;
-        let fulltext_response = app
+        let detail_response = app
             .clone()
             .oneshot(
                 Request::builder()
                     .uri(format!(
-                        "/api/articles/{}/fulltext?db=fixture",
+                        "/api/articles/{}/detail?db=fixture",
                         index_database.article_id
                     ))
                     .header(AUTHORIZATION, &auth)
@@ -3859,14 +3855,52 @@ mod tests {
             )
             .await
             .expect("response should be returned");
-        let fulltext_status = fulltext_response.status();
-        let fulltext_location = fulltext_response
-            .headers()
-            .get("location")
+        let detail_status = detail_response.status();
+        let detail_headers = detail_response.headers().clone();
+        assert_eq!(detail_status, StatusCode::TEMPORARY_REDIRECT);
+        let detail_location = detail_headers
+            .get(LOCATION)
             .expect("location should exist")
             .to_str()
             .expect("location should be visible ASCII")
             .to_string();
+        let abstract_response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!(
+                        "/api/articles/{}/abstract?db=fixture",
+                        index_database.article_id
+                    ))
+                    .header(AUTHORIZATION, &auth)
+                    .body(Body::empty())
+                    .expect("request should build"),
+            )
+            .await
+            .expect("response should be returned");
+        let abstract_status = abstract_response.status();
+        let abstract_headers = abstract_response.headers().clone();
+        assert_eq!(abstract_status, StatusCode::TEMPORARY_REDIRECT);
+        let abstract_location = abstract_headers
+            .get(LOCATION)
+            .expect("location should exist")
+            .to_str()
+            .expect("location should be visible ASCII")
+            .to_string();
+        let fulltext = json_request(
+            &app,
+            Method::GET,
+            &format!(
+                "/api/articles/{}/fulltext?db=fixture",
+                index_database.article_id
+            ),
+            Some(&auth),
+            None,
+            None,
+        )
+        .await;
+        let index_bytes_after =
+            fs::read(&index_database.path).expect("fixture index should remain readable");
         backend.create_index_database("second.sqlite");
         let ambiguous =
             json_request(&app, Method::GET, "/api/years", Some(&auth), None, None).await;
@@ -3887,7 +3921,6 @@ mod tests {
         assert_eq!(years.payload[0]["year"], 2024);
         assert_eq!(areas.payload[0]["value"], "Medicine");
         assert_eq!(journal_options.payload[0]["title"], "Fixture Journal");
-        assert_eq!(sources.payload[0]["value"], "Library A");
         assert_eq!(journals.status, StatusCode::OK);
         assert_eq!(journals.payload["items"][0]["title"], "Fixture Journal");
         assert_eq!(journal.status, StatusCode::OK);
@@ -3914,9 +3947,33 @@ mod tests {
         assert_eq!(missing_article.status, StatusCode::NOT_FOUND);
         assert_eq!(access.status, StatusCode::OK);
         assert_eq!(access.payload["detail"]["available"], true);
-        assert_eq!(access.payload["fulltext"]["provider"], "stored_url");
-        assert_eq!(fulltext_status, StatusCode::TEMPORARY_REDIRECT);
-        assert_eq!(fulltext_location, "https://example.test/fulltext.pdf");
+        assert_eq!(access.payload["abstract_page"]["available"], true);
+        assert_eq!(access.payload["fulltext"]["available"], false);
+        assert_eq!(access.payload["fulltext"]["requires_login"], true);
+        assert!(access.payload["detail"].get("provider").is_none());
+        assert!(access.payload["detail"].get("url").is_none());
+        assert_eq!(detail_status, StatusCode::TEMPORARY_REDIRECT);
+        assert_eq!(detail_location, "https://doi.org/10.1234/fixture");
+        assert_eq!(
+            detail_headers
+                .get(CACHE_CONTROL)
+                .expect("cache-control should exist"),
+            AUTHENTICATED_CACHE_CONTROL
+        );
+        assert_eq!(abstract_status, StatusCode::TEMPORARY_REDIRECT);
+        assert_eq!(abstract_location, "https://doi.org/10.1234/fixture");
+        assert_eq!(
+            abstract_headers
+                .get(CACHE_CONTROL)
+                .expect("cache-control should exist"),
+            AUTHENTICATED_CACHE_CONTROL
+        );
+        assert_eq!(fulltext.status, StatusCode::PRECONDITION_REQUIRED);
+        assert_eq!(
+            fulltext.payload["detail"]["code"],
+            "article_access_authentication_required"
+        );
+        assert_eq!(index_bytes_after, index_bytes_before);
         assert_eq!(ambiguous.status, StatusCode::BAD_REQUEST);
         assert_eq!(missing_database.status, StatusCode::NOT_FOUND);
     }
@@ -3948,8 +4005,24 @@ mod tests {
             Some("qr-fulltext-fixture"),
         )
         .expect("CNKI session should upsert");
+        let session_before = litradar_storage::get_cnki_session_status(
+            backend.auth_db_path(),
+            backend.secret_codec(),
+            user.user_id(),
+        )
+        .expect("CNKI session status should load");
         let app = backend.router();
         let auth = user.authorization_header();
+        litradar_storage::get_article_locator(
+            backend.storage_config(),
+            Some("fixture"),
+            cnki_article_id,
+        )
+        .expect("article locator baseline should load");
+        let session_row_before = cnki_session_row_snapshot(backend.auth_db_path(), user.user_id());
+        let index_bytes_before =
+            fs::read(&index_database.path).expect("fixture index should be readable");
+        let project_files_before = project_file_paths(backend.project_root());
 
         let access = json_request(
             &app,
@@ -3978,16 +4051,10 @@ mod tests {
         let body = to_bytes(response.into_body(), usize::MAX)
             .await
             .expect("body should read");
-        let session_status = litradar_storage::get_cnki_session_status(
-            backend.auth_db_path(),
-            backend.secret_codec(),
-            user.user_id(),
-        )
-        .expect("CNKI session status should load");
-
         assert_eq!(access.status, StatusCode::OK);
         assert_eq!(access.payload["fulltext"]["available"], true);
-        assert_eq!(access.payload["fulltext"]["provider"], "zjlib_cnki");
+        assert!(access.payload["fulltext"].get("provider").is_none());
+        assert!(access.payload["fulltext"].get("url").is_none());
         assert_eq!(status, StatusCode::OK);
         assert_eq!(
             headers
@@ -4004,7 +4071,6 @@ mod tests {
             .expect("content disposition should be ASCII")
             .contains("Fixture%20CNKI%20Article.pdf"));
         assert!(body.starts_with(b"%PDF"));
-        assert!(session_status.last_used_at.is_some());
 
         route_config.set_index_fixture_mode(Some(FixtureZjlibCnkiMode::FulltextMismatch));
         let mismatch = json_request(
@@ -4016,12 +4082,27 @@ mod tests {
             None,
         )
         .await;
+        let session_status = litradar_storage::get_cnki_session_status(
+            backend.auth_db_path(),
+            backend.secret_codec(),
+            user.user_id(),
+        )
+        .expect("CNKI session status should load");
+        let session_row_after = cnki_session_row_snapshot(backend.auth_db_path(), user.user_id());
+        let index_bytes_after =
+            fs::read(&index_database.path).expect("fixture index should remain readable");
+        let project_files_after = project_file_paths(backend.project_root());
 
         assert_eq!(mismatch.status, StatusCode::NOT_FOUND);
-        assert!(mismatch.payload["detail"]
-            .as_str()
-            .expect("detail should be a string")
-            .contains("No exact CNKI full-text match found"));
+        assert_eq!(
+            mismatch.payload["detail"],
+            "Article full text is unavailable"
+        );
+        assert_eq!(session_status.updated_at, session_before.updated_at);
+        assert_eq!(session_status.last_used_at, session_before.last_used_at);
+        assert_eq!(session_row_after, session_row_before);
+        assert_eq!(index_bytes_after, index_bytes_before);
+        assert_eq!(project_files_after, project_files_before);
     }
 
     #[tokio::test]
@@ -4384,47 +4465,94 @@ mod tests {
         article_id
     }
 
+    fn cnki_session_row_snapshot(
+        auth_db_path: &Path,
+        user_id: litradar_domain::UserId,
+    ) -> CnkiSessionRowSnapshot {
+        Connection::open(auth_db_path)
+            .expect("auth database should open")
+            .query_row(
+                "SELECT session_json, qr_uuid, status, token_expires_at, created_at, \
+                 updated_at, last_used_at FROM cnki_sessions WHERE user_id = ?1",
+                [user_id.value()],
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                        row.get(5)?,
+                        row.get(6)?,
+                    ))
+                },
+            )
+            .expect("CNKI session row should exist")
+    }
+
+    fn project_file_paths(root: &Path) -> Vec<PathBuf> {
+        fn visit(root: &Path, directory: &Path, paths: &mut Vec<PathBuf>) {
+            for entry in fs::read_dir(directory).expect("project directory should be readable") {
+                let entry = entry.expect("project entry should be readable");
+                let path = entry.path();
+                if entry
+                    .file_type()
+                    .expect("project entry type should be readable")
+                    .is_dir()
+                {
+                    visit(root, &path, paths);
+                } else {
+                    paths.push(
+                        path.strip_prefix(root)
+                            .expect("project file should be below root")
+                            .to_path_buf(),
+                    );
+                }
+            }
+        }
+
+        let mut paths = Vec::new();
+        visit(root, root, &mut paths);
+        paths.sort();
+        paths
+    }
+
     fn insert_cnki_fulltext_article_at(path: &Path, article_id: i64) {
         let connection = Connection::open(path).expect("fixture index database should open");
         connection
             .execute_batch(
-                "
+                r#"
                 INSERT INTO journals (
-                    journal_id, library_id, platform_journal_id, title, issn, eissn,
-                    scimago_rank, cover_url, available, toc_data_approved_and_live,
-                    has_articles
+                    journal_id, catalog_id, title, title_aliases_json, issns_json,
+                    issn, eissn, area, utd_rank, utd_rating, abs_rank, abs_rating,
+                    fms_rank, fms_rating, fmscn_rank, fmscn_rating
                 ) VALUES (
-                    303, 'cnki', 'CNKI-303', 'Fixture CNKI Journal', '2233-4455',
-                    NULL, 2.5, NULL, 1, 1, 1
+                    303, 'fixture-cnki-journal', 'Fixture CNKI Journal', '[]',
+                    '["1234-5679"]', '1234-5679', NULL, 'Medicine',
+                    NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL
                 );
 
                 INSERT INTO issues (
-                    issue_id, journal_id, publication_year, title, volume, number, date,
-                    is_valid_issue, suppressed, embargoed, within_subscription
+                    issue_id, journal_id, publication_year, title, volume, number, date
                 ) VALUES (
-                    202402, 303, 2024, 'CNKI Fixture Issue', '2', '1', '2024-02-01',
-                    1, 0, 0, 0
+                    202402, 303, 2024, 'CNKI Fixture Issue', '2', '1', '2024-02-01'
                 );
-                ",
+                "#,
             )
             .expect("CNKI journal and issue should insert");
         connection
             .execute(
-                "
+                r#"
                 INSERT INTO articles (
-                    article_id, journal_id, issue_id, title, date, authors, start_page,
-                    end_page, abstract, doi, pmid, permalink, suppressed, in_press,
-                    open_access, platform_id, retraction_doi, within_library_holdings,
-                    content_location, full_text_file
+                    article_id, journal_id, issue_id, title, publication_year, date,
+                    authors_json, start_page, end_page, abstract_text, doi, pmid,
+                    open_access, in_press, retraction_doi
                 ) VALUES (
-                    ?1, 303, 202402, 'Fixture CNKI Article', '2024-02-02',
-                    'Ada Lovelace; Grace Hopper', '1', '8',
-                    'CNKI fulltext fixture abstract.', NULL, NULL,
-                    'https://oversea.cnki.net/kcms/detail/fulltext-fixture',
-                    0, 0, 0, 'CNKI-FULLTEXT', NULL, 0, 'remote',
-                    'https://o.oversea.cnki.net/barnew/download/order?id=fixture'
+                    ?1, 303, 202402, 'Fixture CNKI Article', 2024, '2024-02-02',
+                    '["Ada Lovelace","Grace Hopper"]', '1', '8',
+                    'CNKI fulltext fixture abstract.', NULL, NULL, 0, 0, NULL
                 )
-                ",
+                "#,
                 [article_id],
             )
             .expect("CNKI article should insert");

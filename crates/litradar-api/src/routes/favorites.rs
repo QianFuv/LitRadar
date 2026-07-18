@@ -586,6 +586,11 @@ fn to_bibtex(articles: &[FavoriteArticleResponse]) -> String {
         .iter()
         .enumerate()
         .map(|(index, article)| {
+            let authors = article
+                .authors
+                .as_ref()
+                .map(|values| values.join(" and "))
+                .unwrap_or_default();
             let key = article
                 .doi
                 .as_deref()
@@ -596,7 +601,7 @@ fn to_bibtex(articles: &[FavoriteArticleResponse]) -> String {
                 sanitize_citation_key(key),
                 index + 1,
                 article.title.as_deref().unwrap_or(""),
-                article.authors.as_deref().unwrap_or(""),
+                authors,
                 article.journal_title.as_deref().unwrap_or(""),
                 article.date.as_deref().unwrap_or(""),
                 article.doi.as_deref().unwrap_or("")
@@ -610,10 +615,15 @@ fn to_ris(articles: &[FavoriteArticleResponse]) -> String {
     articles
         .iter()
         .map(|article| {
+            let authors = article
+                .authors
+                .as_ref()
+                .map(|values| values.join("\nAU  - "))
+                .unwrap_or_default();
             format!(
                 "TY  - JOUR\nTI  - {}\nAU  - {}\nJO  - {}\nPY  - {}\nDO  - {}\nER  -",
                 article.title.as_deref().unwrap_or(""),
-                article.authors.as_deref().unwrap_or(""),
+                authors,
                 article.journal_title.as_deref().unwrap_or(""),
                 article.date.as_deref().unwrap_or(""),
                 article.doi.as_deref().unwrap_or("")
@@ -627,10 +637,21 @@ fn to_endnote(articles: &[FavoriteArticleResponse]) -> String {
     let records = articles
         .iter()
         .map(|article| {
+            let authors = article
+                .authors
+                .as_ref()
+                .map(|values| {
+                    values
+                        .iter()
+                        .map(|value| escape_xml(value))
+                        .collect::<Vec<_>>()
+                        .join("</author><author>")
+                })
+                .unwrap_or_default();
             format!(
                 "<record><titles><title>{}</title></titles><contributors><authors><author>{}</author></authors></contributors><dates><year>{}</year></dates><electronic-resource-num>{}</electronic-resource-num></record>",
                 escape_xml(article.title.as_deref().unwrap_or("")),
-                escape_xml(article.authors.as_deref().unwrap_or("")),
+                authors,
                 escape_xml(article.date.as_deref().unwrap_or("")),
                 escape_xml(article.doi.as_deref().unwrap_or(""))
             )
@@ -699,7 +720,7 @@ mod tests {
         let articles = vec![favorite_article(
             1,
             Some("A & B <Genome>".to_string()),
-            Some("Alice and Bob".to_string()),
+            Some(vec!["Alice".to_string(), "Bob".to_string()]),
             Some("Journal {One}".to_string()),
             Some("2026-01-05".to_string()),
             Some("10.1000/abc-def".to_string()),
@@ -724,7 +745,7 @@ mod tests {
             favorite_article(
                 1,
                 Some("Clinical Data".to_string()),
-                Some("Carol".to_string()),
+                Some(vec!["Carol".to_string()]),
                 Some("Alpha Journal".to_string()),
                 Some("2026".to_string()),
                 Some("10.1000/clinical".to_string()),
@@ -746,7 +767,7 @@ mod tests {
         let articles = vec![favorite_article(
             1,
             Some("A&B <Study> \"One\"".to_string()),
-            Some("Alice O'Neil".to_string()),
+            Some(vec!["Alice O'Neil".to_string()]),
             Some("Alpha Journal".to_string()),
             Some("2026".to_string()),
             Some("10.1000/a&b".to_string()),
@@ -772,7 +793,7 @@ mod tests {
     fn favorite_article(
         id: i64,
         title: Option<String>,
-        authors: Option<String>,
+        authors: Option<Vec<String>>,
         journal_title: Option<String>,
         date: Option<String>,
         doi: Option<String>,
@@ -787,12 +808,11 @@ mod tests {
             journal_id: Some(JournalId(1)),
             issue_id: Some(20),
             title,
+            publication_year: Some(2026),
             date,
             authors,
             abstract_text: None,
             doi,
-            platform_id: None,
-            permalink: None,
             journal_title,
             open_access: None,
             in_press: None,
@@ -800,7 +820,6 @@ mod tests {
             number: None,
             issn: None,
             eissn: None,
-            full_text_file: None,
         }
     }
 

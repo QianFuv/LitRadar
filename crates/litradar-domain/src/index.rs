@@ -5,41 +5,43 @@ use utoipa::ToSchema;
 
 use crate::{ArticleId, JournalId};
 
-/// Journal record with optional CSV metadata.
+/// Provider-neutral journal record.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct JournalRecord {
     /// Journal identifier.
     pub journal_id: JournalId,
-    /// Source library identifier.
-    pub library_id: String,
-    /// Platform journal identifier.
-    pub platform_journal_id: Option<String>,
+    /// Immutable maintained catalog identifier.
+    pub catalog_id: String,
     /// Journal title.
-    pub title: Option<String>,
+    pub title: String,
+    /// Maintained title aliases.
+    pub title_aliases: Vec<String>,
+    /// All maintained ISSNs.
+    pub issns: Vec<String>,
     /// Print ISSN.
     pub issn: Option<String>,
     /// Electronic ISSN.
     pub eissn: Option<String>,
-    /// Scimago rank value.
-    pub scimago_rank: Option<f64>,
-    /// Cover image URL.
-    pub cover_url: Option<String>,
-    /// Availability flag.
-    pub available: Option<i64>,
-    /// TOC live flag.
-    pub toc_data_approved_and_live: Option<i64>,
-    /// Whether articles exist.
-    pub has_articles: Option<i64>,
-    /// Source CSV file.
-    pub source_csv: Option<String>,
     /// Journal area.
     pub area: Option<String>,
-    /// CSV title.
-    pub csv_title: Option<String>,
-    /// CSV ISSN.
-    pub csv_issn: Option<String>,
-    /// CSV library value.
-    pub csv_library: Option<String>,
+    /// UTD rank.
+    pub utd_rank: Option<String>,
+    /// UTD rating.
+    pub utd_rating: Option<String>,
+    /// ABS rank.
+    pub abs_rank: Option<String>,
+    /// ABS rating.
+    pub abs_rating: Option<String>,
+    /// FMS rank.
+    pub fms_rank: Option<String>,
+    /// FMS rating.
+    pub fms_rating: Option<String>,
+    /// FMS China rank.
+    pub fmscn_rank: Option<String>,
+    /// FMS China rating.
+    pub fmscn_rating: Option<String>,
+    /// Whether the content database currently contains articles for the journal.
+    pub has_articles: bool,
 }
 
 /// Issue record.
@@ -59,14 +61,6 @@ pub struct IssueRecord {
     pub number: Option<String>,
     /// Issue date.
     pub date: Option<String>,
-    /// Valid issue flag.
-    pub is_valid_issue: Option<i64>,
-    /// Suppressed flag.
-    pub suppressed: Option<i64>,
-    /// Embargoed flag.
-    pub embargoed: Option<i64>,
-    /// Subscription flag.
-    pub within_subscription: Option<i64>,
 }
 
 /// Article record.
@@ -79,11 +73,13 @@ pub struct ArticleRecord {
     /// Issue identifier.
     pub issue_id: Option<i64>,
     /// Article title.
-    pub title: Option<String>,
+    pub title: String,
+    /// Publication year.
+    pub publication_year: Option<i64>,
     /// Article date.
     pub date: Option<String>,
     /// Authors text.
-    pub authors: Option<String>,
+    pub authors: Vec<String>,
     /// Start page.
     pub start_page: Option<String>,
     /// End page.
@@ -95,26 +91,14 @@ pub struct ArticleRecord {
     pub doi: Option<String>,
     /// PubMed identifier.
     pub pmid: Option<String>,
-    /// Permalink.
-    pub permalink: Option<String>,
-    /// Suppressed flag.
-    pub suppressed: Option<i64>,
     /// In-press flag.
-    pub in_press: Option<i64>,
+    pub in_press: Option<bool>,
     /// Open-access flag.
-    pub open_access: Option<i64>,
-    /// Platform identifier.
-    pub platform_id: Option<String>,
+    pub open_access: Option<bool>,
     /// Retraction DOI.
     pub retraction_doi: Option<String>,
-    /// Library holdings flag.
-    pub within_library_holdings: Option<i64>,
-    /// Content location URL.
-    pub content_location: Option<String>,
-    /// Full-text file URL.
-    pub full_text_file: Option<String>,
     /// Journal title.
-    pub journal_title: Option<String>,
+    pub journal_title: String,
     /// Issue volume.
     pub volume: Option<String>,
     /// Issue number.
@@ -170,10 +154,6 @@ pub struct ArticleAccessAction {
     pub available: bool,
     /// Display label.
     pub label: String,
-    /// Provider identifier.
-    pub provider: Option<String>,
-    /// Action URL.
-    pub url: Option<String>,
     /// Whether login is required.
     pub requires_login: bool,
     /// Optional message.
@@ -185,6 +165,8 @@ pub struct ArticleAccessAction {
 pub struct ArticleAccessResponse {
     /// Detail action.
     pub detail: ArticleAccessAction,
+    /// Abstract-page action.
+    pub abstract_page: ArticleAccessAction,
     /// Full-text action.
     pub fulltext: ArticleAccessAction,
 }
@@ -215,7 +197,7 @@ pub struct JournalOption {
     /// Journal identifier.
     pub journal_id: JournalId,
     /// Journal title.
-    pub title: Option<String>,
+    pub title: String,
 }
 
 /// Weekly article record.
@@ -228,28 +210,24 @@ pub struct WeeklyArticleRecord {
     /// Issue identifier.
     pub issue_id: Option<i64>,
     /// Article title.
-    pub title: Option<String>,
+    pub title: String,
+    /// Publication year.
+    pub publication_year: Option<i64>,
     /// Article date.
     pub date: Option<String>,
     /// Authors text.
-    pub authors: Option<String>,
+    pub authors: Vec<String>,
     /// Abstract text.
     #[serde(rename = "abstract")]
     pub abstract_text: Option<String>,
     /// DOI.
     pub doi: Option<String>,
-    /// Platform identifier.
-    pub platform_id: Option<String>,
-    /// Permalink.
-    pub permalink: Option<String>,
-    /// Full-text file URL.
-    pub full_text_file: Option<String>,
     /// Journal title.
-    pub journal_title: Option<String>,
+    pub journal_title: String,
     /// Open-access flag.
-    pub open_access: Option<i64>,
+    pub open_access: Option<bool>,
     /// In-press flag.
-    pub in_press: Option<i64>,
+    pub in_press: Option<bool>,
     /// Issue volume.
     pub volume: Option<String>,
     /// Issue number.

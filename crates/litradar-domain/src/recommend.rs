@@ -22,16 +22,10 @@ pub struct ArticleCandidateInfo {
     pub journal_title: String,
     /// DOI value.
     pub doi: Option<String>,
-    /// Stored full-text URL or path.
-    pub full_text_file: Option<String>,
-    /// External article permalink.
-    pub permalink: Option<String>,
     /// Whether the article is open access.
     pub open_access: bool,
     /// Whether the article is in press.
     pub in_press: bool,
-    /// Whether the article is inside library holdings.
-    pub within_library_holdings: bool,
 }
 
 /// Notification subscriber row with tracking-folder metadata.

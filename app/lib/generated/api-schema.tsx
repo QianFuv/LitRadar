@@ -314,6 +314,35 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  '/api/articles/{article_id}/abstract': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Resolve and redirect to an article abstract page online.
+     * @description # Arguments
+     *
+     *     * `state` - Shared API state.
+     *     * `headers` - Request headers.
+     *     * `article_id` - Article identifier.
+     *     * `query` - Database selector.
+     *
+     *     # Returns
+     *
+     *     No-store temporary redirect.
+     */
+    get: operations['redirect_article_abstract'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   '/api/articles/{article_id}/access': {
     parameters: {
       query?: never;
@@ -335,6 +364,35 @@ export interface paths {
      *     Article access response.
      */
     get: operations['get_article_access'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/articles/{article_id}/detail': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Resolve and redirect to an article detail page online.
+     * @description # Arguments
+     *
+     *     * `state` - Shared API state.
+     *     * `headers` - Request headers.
+     *     * `article_id` - Article identifier.
+     *     * `query` - Database selector.
+     *
+     *     # Returns
+     *
+     *     No-store temporary redirect.
+     */
+    get: operations['redirect_article_detail'];
     put?: never;
     post?: never;
     delete?: never;
@@ -1137,34 +1195,6 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
-  '/api/meta/sources': {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    /**
-     * List metadata source counts.
-     * @description # Arguments
-     *
-     *     * `state` - Shared API state.
-     *     * `headers` - Request headers.
-     *     * `query` - Database selector.
-     *
-     *     # Returns
-     *
-     *     Source counts.
-     */
-    get: operations['list_sources'];
-    put?: never;
-    post?: never;
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
   '/api/tracking/notification-settings': {
     parameters: {
       query?: never;
@@ -1473,15 +1503,13 @@ export interface components {
       label: string;
       /** @description Optional message. */
       message?: string | null;
-      /** @description Provider identifier. */
-      provider?: string | null;
       /** @description Whether login is required. */
       requires_login: boolean;
-      /** @description Action URL. */
-      url?: string | null;
     };
     /** @description Article access response. */
     ArticleAccessResponse: {
+      /** @description Abstract-page action. */
+      abstract_page: components['schemas']['ArticleAccessAction'];
       /** @description Detail action. */
       detail: components['schemas']['ArticleAccessAction'];
       /** @description Full-text action. */
@@ -1503,22 +1531,15 @@ export interface components {
       /** @description Article identifier. */
       article_id: components['schemas']['ArticleId'];
       /** @description Authors text. */
-      authors?: string | null;
-      /** @description Content location URL. */
-      content_location?: string | null;
+      authors: string[];
       /** @description Article date. */
       date?: string | null;
       /** @description DOI. */
       doi?: string | null;
       /** @description End page. */
       end_page?: string | null;
-      /** @description Full-text file URL. */
-      full_text_file?: string | null;
-      /**
-       * Format: int64
-       * @description In-press flag.
-       */
-      in_press?: number | null;
+      /** @description In-press flag. */
+      in_press?: boolean | null;
       /**
        * Format: int64
        * @description Issue identifier.
@@ -1527,38 +1548,26 @@ export interface components {
       /** @description Journal identifier. */
       journal_id: components['schemas']['JournalId'];
       /** @description Journal title. */
-      journal_title?: string | null;
+      journal_title: string;
       /** @description Issue number. */
       number?: string | null;
-      /**
-       * Format: int64
-       * @description Open-access flag.
-       */
-      open_access?: number | null;
-      /** @description Permalink. */
-      permalink?: string | null;
-      /** @description Platform identifier. */
-      platform_id?: string | null;
+      /** @description Open-access flag. */
+      open_access?: boolean | null;
       /** @description PubMed identifier. */
       pmid?: string | null;
+      /**
+       * Format: int64
+       * @description Publication year.
+       */
+      publication_year?: number | null;
       /** @description Retraction DOI. */
       retraction_doi?: string | null;
       /** @description Start page. */
       start_page?: string | null;
-      /**
-       * Format: int64
-       * @description Suppressed flag.
-       */
-      suppressed?: number | null;
       /** @description Article title. */
-      title?: string | null;
+      title: string;
       /** @description Issue volume. */
       volume?: string | null;
-      /**
-       * Format: int64
-       * @description Library holdings flag.
-       */
-      within_library_holdings?: number | null;
     };
     /** @description Auth database statistics payload. */
     AuthStats: {
@@ -1723,8 +1732,8 @@ export interface components {
       abstract?: string | null;
       /** @description Article identifier. */
       article_id: components['schemas']['ArticleId'];
-      /** @description Article authors text. */
-      authors?: string | null;
+      /** @description Ordered article author names. */
+      authors?: string[] | null;
       /**
        * Format: double
        * @description Favorite creation timestamp.
@@ -1743,18 +1752,13 @@ export interface components {
        * @description Folder row identifier.
        */
       folder_id: number;
-      /** @description Stored full-text file path. */
-      full_text_file?: string | null;
       /**
        * Format: int64
        * @description Favorite row identifier.
        */
       id: number;
-      /**
-       * Format: int64
-       * @description In-press flag from the index database.
-       */
-      in_press?: number | null;
+      /** @description In-press flag from the index database. */
+      in_press?: boolean | null;
       /** @description Journal ISSN. */
       issn?: string | null;
       /**
@@ -1769,15 +1773,13 @@ export interface components {
       note: string;
       /** @description Issue number. */
       number?: string | null;
+      /** @description Open-access flag from the index database. */
+      open_access?: boolean | null;
       /**
        * Format: int64
-       * @description Open-access flag from the index database.
+       * @description Article publication year.
        */
-      open_access?: number | null;
-      /** @description Source permalink. */
-      permalink?: string | null;
-      /** @description Source platform identifier. */
-      platform_id?: string | null;
+      publication_year?: number | null;
       /** @description Article title from the index database. */
       title?: string | null;
       /** @description Issue volume. */
@@ -1990,16 +1992,6 @@ export interface components {
       date?: string | null;
       /**
        * Format: int64
-       * @description Embargoed flag.
-       */
-      embargoed?: number | null;
-      /**
-       * Format: int64
-       * @description Valid issue flag.
-       */
-      is_valid_issue?: number | null;
-      /**
-       * Format: int64
        * @description Issue identifier.
        */
       issue_id: number;
@@ -2012,20 +2004,10 @@ export interface components {
        * @description Publication year.
        */
       publication_year?: number | null;
-      /**
-       * Format: int64
-       * @description Suppressed flag.
-       */
-      suppressed?: number | null;
       /** @description Issue title. */
       title?: string | null;
       /** @description Volume. */
       volume?: string | null;
-      /**
-       * Format: int64
-       * @description Subscription flag.
-       */
-      within_subscription?: number | null;
     };
     /** @description Journal identifier stored internally as a SQLite integer. */
     JournalId: string;
@@ -2034,7 +2016,7 @@ export interface components {
       /** @description Journal identifier. */
       journal_id: components['schemas']['JournalId'];
       /** @description Journal title. */
-      title?: string | null;
+      title: string;
     };
     /** @description Paginated journals response. */
     JournalPage: {
@@ -2043,52 +2025,42 @@ export interface components {
       /** @description Pagination metadata. */
       page: components['schemas']['PageMeta'];
     };
-    /** @description Journal record with optional CSV metadata. */
+    /** @description Provider-neutral journal record. */
     JournalRecord: {
+      /** @description ABS rank. */
+      abs_rank?: string | null;
+      /** @description ABS rating. */
+      abs_rating?: string | null;
       /** @description Journal area. */
       area?: string | null;
-      /**
-       * Format: int64
-       * @description Availability flag.
-       */
-      available?: number | null;
-      /** @description Cover image URL. */
-      cover_url?: string | null;
-      /** @description CSV ISSN. */
-      csv_issn?: string | null;
-      /** @description CSV library value. */
-      csv_library?: string | null;
-      /** @description CSV title. */
-      csv_title?: string | null;
+      /** @description Immutable maintained catalog identifier. */
+      catalog_id: string;
       /** @description Electronic ISSN. */
       eissn?: string | null;
-      /**
-       * Format: int64
-       * @description Whether articles exist.
-       */
-      has_articles?: number | null;
+      /** @description FMS rank. */
+      fms_rank?: string | null;
+      /** @description FMS rating. */
+      fms_rating?: string | null;
+      /** @description FMS China rank. */
+      fmscn_rank?: string | null;
+      /** @description FMS China rating. */
+      fmscn_rating?: string | null;
+      /** @description Whether the content database currently contains articles for the journal. */
+      has_articles: boolean;
       /** @description Print ISSN. */
       issn?: string | null;
+      /** @description All maintained ISSNs. */
+      issns: string[];
       /** @description Journal identifier. */
       journal_id: components['schemas']['JournalId'];
-      /** @description Source library identifier. */
-      library_id: string;
-      /** @description Platform journal identifier. */
-      platform_journal_id?: string | null;
-      /**
-       * Format: double
-       * @description Scimago rank value.
-       */
-      scimago_rank?: number | null;
-      /** @description Source CSV file. */
-      source_csv?: string | null;
       /** @description Journal title. */
-      title?: string | null;
-      /**
-       * Format: int64
-       * @description TOC live flag.
-       */
-      toc_data_approved_and_live?: number | null;
+      title: string;
+      /** @description Maintained title aliases. */
+      title_aliases: string[];
+      /** @description UTD rank. */
+      utd_rank?: string | null;
+      /** @description UTD rating. */
+      utd_rating?: string | null;
     };
     /** @description Login request. */
     LoginRequest: {
@@ -2656,18 +2628,13 @@ export interface components {
       /** @description Article identifier. */
       article_id: components['schemas']['ArticleId'];
       /** @description Authors text. */
-      authors?: string | null;
+      authors: string[];
       /** @description Article date. */
       date?: string | null;
       /** @description DOI. */
       doi?: string | null;
-      /** @description Full-text file URL. */
-      full_text_file?: string | null;
-      /**
-       * Format: int64
-       * @description In-press flag.
-       */
-      in_press?: number | null;
+      /** @description In-press flag. */
+      in_press?: boolean | null;
       /**
        * Format: int64
        * @description Issue identifier.
@@ -2676,20 +2643,18 @@ export interface components {
       /** @description Journal identifier. */
       journal_id: components['schemas']['JournalId'];
       /** @description Journal title. */
-      journal_title?: string | null;
+      journal_title: string;
       /** @description Issue number. */
       number?: string | null;
+      /** @description Open-access flag. */
+      open_access?: boolean | null;
       /**
        * Format: int64
-       * @description Open-access flag.
+       * @description Publication year.
        */
-      open_access?: number | null;
-      /** @description Permalink. */
-      permalink?: string | null;
-      /** @description Platform identifier. */
-      platform_id?: string | null;
+      publication_year?: number | null;
       /** @description Article title. */
-      title?: string | null;
+      title: string;
       /** @description Issue volume. */
       volume?: string | null;
     };
@@ -3242,10 +3207,6 @@ export interface operations {
         q?: string;
         /** @description Sort expression. */
         sort?: string;
-        /** @description Suppressed filter. */
-        suppressed?: boolean;
-        /** @description Library holdings filter. */
-        within_library_holdings?: boolean;
         /** @description Publication year filter. */
         year?: number;
       };
@@ -3292,6 +3253,30 @@ export interface operations {
       };
     };
   };
+  redirect_article_abstract: {
+    parameters: {
+      query?: {
+        /** @description Database name or filename under `data/index`. */
+        db?: string;
+      };
+      header?: never;
+      path: {
+        /** @description Article identifier. */
+        article_id: number;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Temporary online abstract-page redirect. */
+      307: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+    };
+  };
   get_article_access: {
     parameters: {
       query?: {
@@ -3315,6 +3300,30 @@ export interface operations {
         content: {
           'application/json': components['schemas']['ArticleAccessResponse'];
         };
+      };
+    };
+  };
+  redirect_article_detail: {
+    parameters: {
+      query?: {
+        /** @description Database name or filename under `data/index`. */
+        db?: string;
+      };
+      header?: never;
+      path: {
+        /** @description Article identifier. */
+        article_id: number;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Temporary online detail redirect. */
+      307: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
       };
     };
   };
@@ -4111,10 +4120,6 @@ export interface operations {
       query?: {
         /** @description Database name or filename under `data/index`. */
         db?: string;
-        /** @description Embargoed filter. */
-        embargoed?: boolean;
-        /** @description Valid issue filter. */
-        is_valid_issue?: boolean;
         /** @description Journal identifier filter. */
         journal_id?: number;
         /** @description Page size. */
@@ -4123,10 +4128,6 @@ export interface operations {
         offset?: number;
         /** @description Sort expression. */
         sort?: string;
-        /** @description Suppressed filter. */
-        suppressed?: boolean;
-        /** @description Subscription filter. */
-        within_subscription?: boolean;
         /** @description Publication year filter. */
         year?: number;
       };
@@ -4178,22 +4179,14 @@ export interface operations {
       query?: {
         /** @description Area filter. */
         area?: string;
-        /** @description Available filter. */
-        available?: boolean;
         /** @description Database name or filename under `data/index`. */
         db?: string;
         /** @description Has-articles filter. */
         has_articles?: boolean;
-        /** @description Library identifier filter. */
-        library_id?: string;
         /** @description Page size. */
         limit?: number;
         /** @description Offset row count. */
         offset?: number;
-        /** @description Maximum Scimago rank. */
-        scimago_max?: number;
-        /** @description Minimum Scimago rank. */
-        scimago_min?: number;
         /** @description Sort expression. */
         sort?: string;
         /** @description Publication year filter. */
@@ -4304,29 +4297,6 @@ export interface operations {
         };
         content: {
           'application/json': components['schemas']['JournalOption'][];
-        };
-      };
-    };
-  };
-  list_sources: {
-    parameters: {
-      query?: {
-        /** @description Database name or filename under `data/index`. */
-        db?: string;
-      };
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    requestBody?: never;
-    responses: {
-      /** @description Metadata source counts. */
-      200: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ValueCount'][];
         };
       };
     };

@@ -37,13 +37,13 @@ function preventDocumentNavigation(event: MouseEvent): void {
 
 const SAFE_ARTICLE: Article = {
   article_id: 'article-1',
+  journal_id: 'journal-1',
   title: 'Selectable title',
   abstract: 'Selectable abstract text',
-  authors: 'Ada Lovelace',
+  authors: ['Ada Lovelace'],
   journal_title: 'Journal of Tests',
   date: '2024-05-17',
   doi: '10.1000/example',
-  permalink: 'https://example.com/articles/1',
 };
 
 /**
@@ -56,38 +56,26 @@ function currentUserResponse(): Response {
 }
 
 /**
- * Return an inactive but valid CNKI session snapshot.
- *
- * @returns CNKI session response.
- */
-function cnkiSessionResponse(): Response {
-  return HttpResponse.json({
-    configured: false,
-    status: 'empty',
-    has_bff_user_token: false,
-    expires_at: null,
-    seconds_remaining: null,
-    cookie_names: [],
-    updated_at: null,
-    last_used_at: null,
-  });
-}
-
-/**
- * Return article access actions that do not add unrelated links to the dialog.
+ * Return all online article actions without exposing an upstream destination.
  *
  * @returns Article access response.
  */
 function articleAccessResponse(): Response {
   return HttpResponse.json({
     detail: {
-      available: false,
+      available: true,
       label: '查看详情',
       requires_login: false,
       message: null,
     },
+    abstract_page: {
+      available: true,
+      label: '查看摘要页',
+      requires_login: false,
+      message: null,
+    },
     fulltext: {
-      available: false,
+      available: true,
       label: '获取全文',
       requires_login: false,
       message: null,
@@ -103,8 +91,14 @@ function articleAccessResponse(): Response {
 function articleLoginRequiredResponse(): Response {
   return HttpResponse.json({
     detail: {
-      available: false,
+      available: true,
       label: '查看详情',
+      requires_login: false,
+      message: null,
+    },
+    abstract_page: {
+      available: true,
+      label: '查看摘要页',
       requires_login: false,
       message: null,
     },
@@ -123,7 +117,6 @@ function articleLoginRequiredResponse(): Response {
 function registerArticleDialogHandlers(): void {
   server.use(
     http.get('http://localhost/api/auth/me', currentUserResponse),
-    http.get('http://localhost/api/cnki/session', cnkiSessionResponse),
     http.get('http://localhost/api/articles/:articleId/access', articleAccessResponse),
   );
 }
@@ -164,9 +157,9 @@ async function opensAndClosesAccessibleDialog(): Promise<void> {
 }
 
 /**
- * Verify citation and source-link actions copy text and expose safe external destinations.
+ * Verify citations copy and all online actions use stable LitRadar routes.
  */
-async function copiesCitationsAndLinks(): Promise<void> {
+async function copiesCitationsAndUsesStableActionRoutes(): Promise<void> {
   registerArticleDialogHandlers();
   const user = userEvent.setup();
   const writeText = vi.fn().mockResolvedValue(undefined);
@@ -179,12 +172,25 @@ async function copiesCitationsAndLinks(): Promise<void> {
   await user.click(screen.getByRole('button', { name: '查看详情' }));
   expect(await screen.findByRole('dialog')).toBeInTheDocument();
 
-  const doiLink = screen.getByRole('link', { name: '打开 DOI' });
-  expect(doiLink).toHaveAttribute('href', 'https://doi.org/10.1000/example');
-  expect(doiLink).toHaveAttribute('target', '_blank');
-  const permalink = screen.getByRole('link', { name: '打开永久链接' });
-  expect(permalink).toHaveAttribute('href', 'https://example.com/articles/1');
-  expect(permalink).toHaveAttribute('rel', 'noreferrer');
+  const detailLink = await screen.findByRole('link', { name: '查看详情' });
+  expect(detailLink).toHaveAttribute(
+    'href',
+    'http://localhost/api/articles/article-1/detail?db=fixture.sqlite',
+  );
+  const abstractLink = screen.getByRole('link', { name: '查看摘要页' });
+  expect(abstractLink).toHaveAttribute(
+    'href',
+    'http://localhost/api/articles/article-1/abstract?db=fixture.sqlite',
+  );
+  const fulltextLink = screen.getByRole('link', { name: '获取全文' });
+  expect(fulltextLink).toHaveAttribute(
+    'href',
+    'http://localhost/api/articles/article-1/fulltext?db=fixture.sqlite',
+  );
+  for (const link of [detailLink, abstractLink, fulltextLink]) {
+    expect(link).toHaveAttribute('target', '_blank');
+    expect(link).toHaveAttribute('rel', 'noreferrer');
+  }
 
   await user.click(screen.getByRole('button', { name: '复制 GB/T 7714' }));
   expect(writeText).toHaveBeenLastCalledWith(generateArticleCitation(SAFE_ARTICLE, 'gb-t-7714'));
@@ -192,29 +198,26 @@ async function copiesCitationsAndLinks(): Promise<void> {
   expect(writeText).toHaveBeenLastCalledWith(generateArticleCitation(SAFE_ARTICLE, 'bibtex'));
   await user.click(screen.getByRole('button', { name: '复制 DOI' }));
   expect(writeText).toHaveBeenLastCalledWith('10.1000/example');
-  await user.click(screen.getByRole('button', { name: '复制永久链接' }));
-  expect(writeText).toHaveBeenLastCalledWith('https://example.com/articles/1');
 }
 
 /**
- * Verify unsafe schemes remain copyable text but never become clickable links.
+ * Verify a DOI remains copyable metadata and is never used as a direct action destination.
  */
-async function rejectsUnsafeLinks(): Promise<void> {
+async function doesNotExposeStoredOrDirectExternalLinks(): Promise<void> {
   registerArticleDialogHandlers();
   const user = userEvent.setup();
   renderArticleCard({
     ...SAFE_ARTICLE,
     article_id: 'unsafe-article',
     doi: 'javascript:alert(1)',
-    permalink: 'data:text/html,unsafe',
   });
 
   await user.click(screen.getByRole('button', { name: '查看详情' }));
   expect(await screen.findByRole('dialog')).toBeInTheDocument();
   expect(screen.getByRole('button', { name: '复制 DOI' })).toBeInTheDocument();
-  expect(screen.getByRole('button', { name: '复制永久链接' })).toBeInTheDocument();
   expect(screen.queryByRole('link', { name: '打开 DOI' })).not.toBeInTheDocument();
   expect(screen.queryByRole('link', { name: '打开永久链接' })).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: '复制永久链接' })).not.toBeInTheDocument();
 }
 
 /** Verify the CNKI setup action preserves route state and closes article details first. */
@@ -240,8 +243,11 @@ describe('article dialog workflow', () => {
     'keeps card text selectable and supports named open and close controls',
     opensAndClosesAccessibleDialog,
   );
-  test('copies citations and exposes safe DOI and permalink links', copiesCitationsAndLinks);
-  test('does not link unsafe DOI or permalink schemes', rejectsUnsafeLinks);
+  test(
+    'copies citations and uses stable online action routes',
+    copiesCitationsAndUsesStableActionRoutes,
+  );
+  test('does not expose stored or direct external links', doesNotExposeStoredOrDirectExternalLinks);
   test(
     'opens data-source settings without stacking dialogs',
     opensDataSourceSettingsWithoutDialogStacking,

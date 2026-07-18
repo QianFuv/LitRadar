@@ -3,6 +3,7 @@
 use std::collections::BTreeMap;
 use std::error::Error;
 use std::fmt;
+use std::io::Read;
 use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -27,6 +28,8 @@ const LIBRARY_REFER: &str = "http://10.18.17.173/kns55/";
 const WFWFID: &str = "2120";
 const BFF_ORG_ID: &str = "1916318653650423810";
 const DEFAULT_TIMEOUT_SECONDS: u64 = 30;
+/// Default maximum size accepted for one request-time full-text document.
+pub const DEFAULT_FULL_TEXT_MAXIMUM_BYTES: usize = 32 * 1024 * 1024;
 const TOKEN_EXPIRY_SKEW_SECONDS: i64 = 300;
 const FULLTEXT_WARM_UP_TTL_SECONDS: i64 = 60 * 60;
 const ZYPROXY_LOGIN_ATTEMPTS: usize = 3;
@@ -727,6 +730,8 @@ where
 pub struct LiveZjlibCnkiConfig {
     /// HTTP request timeout in seconds.
     pub timeout_seconds: u64,
+    /// Maximum full-text response bytes retained in memory.
+    pub maximum_document_bytes: usize,
 }
 
 impl Default for LiveZjlibCnkiConfig {
@@ -738,6 +743,7 @@ impl Default for LiveZjlibCnkiConfig {
     fn default() -> Self {
         Self {
             timeout_seconds: DEFAULT_TIMEOUT_SECONDS,
+            maximum_document_bytes: DEFAULT_FULL_TEXT_MAXIMUM_BYTES,
         }
     }
 }
@@ -947,6 +953,7 @@ pub struct LiveZjlibCnkiTransport {
     redirect_client: Client,
     no_redirect_client: Client,
     cookie_jar: Arc<Jar>,
+    maximum_document_bytes: usize,
     last_brief_url: Option<String>,
 }
 
@@ -989,6 +996,7 @@ impl LiveZjlibCnkiTransport {
             redirect_client,
             no_redirect_client,
             cookie_jar,
+            maximum_document_bytes: config.maximum_document_bytes.max(1),
             last_brief_url: None,
         })
     }
@@ -1425,7 +1433,23 @@ impl ZjlibCnkiTransport for LiveZjlibCnkiTransport {
             .and_then(|value| value.to_str().ok())
             .unwrap_or("application/pdf")
             .to_string();
-        let content = response.bytes().map_err(request_error)?.to_vec();
+        if response.content_length().is_some_and(|length| {
+            length > u64::try_from(self.maximum_document_bytes).unwrap_or(u64::MAX)
+        }) {
+            return Err(ZjlibCnkiError::Request(
+                "Download endpoint exceeded the configured document size limit.".to_string(),
+            ));
+        }
+        let mut content = Vec::new();
+        response
+            .take(self.maximum_document_bytes as u64 + 1)
+            .read_to_end(&mut content)
+            .map_err(|error| ZjlibCnkiError::Request(error.to_string()))?;
+        if content.len() > self.maximum_document_bytes {
+            return Err(ZjlibCnkiError::Request(
+                "Download endpoint exceeded the configured document size limit.".to_string(),
+            ));
+        }
         if !content_type.to_ascii_lowercase().contains("pdf") && !content.starts_with(b"%PDF") {
             return Err(ZjlibCnkiError::Request(format!(
                 "Download endpoint did not return PDF (content-type={content_type:?}, url={}).",

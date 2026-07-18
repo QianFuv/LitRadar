@@ -30,7 +30,6 @@ pub fn public_routes() -> Router<ApiState> {
             "/meta/journals",
             axum::routing::get(index::list_journal_options),
         )
-        .route("/meta/sources", axum::routing::get(index::list_sources))
         .route("/years", axum::routing::get(index::list_years))
         .route("/journals", axum::routing::get(index::list_journals))
         .route(
@@ -51,6 +50,14 @@ pub fn public_routes() -> Router<ApiState> {
         .route(
             "/articles/{article_id}/access",
             axum::routing::get(index::get_article_access),
+        )
+        .route(
+            "/articles/{article_id}/detail",
+            axum::routing::get(index::redirect_article_detail),
+        )
+        .route(
+            "/articles/{article_id}/abstract",
+            axum::routing::get(index::redirect_article_abstract),
         )
         .route(
             "/articles/{article_id}/fulltext",

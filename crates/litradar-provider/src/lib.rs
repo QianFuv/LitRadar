@@ -1,6 +1,6 @@
 //! Composable provider capabilities for indexing and live article access.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fmt;
 use std::sync::Arc;
@@ -194,6 +194,8 @@ pub struct ProviderDescriptor {
     pub name: String,
     /// Explicit capability declaration.
     pub capabilities: ProviderCapabilities,
+    /// Exact lowercase HTTPS hosts accepted for ephemeral redirects.
+    pub allowed_redirect_hosts: Vec<String>,
 }
 
 /// Concrete optional provider implementations supplied during registration.
@@ -242,6 +244,7 @@ impl ProviderRegistration {
         implementations: ProviderImplementations,
     ) -> Result<Self, ProviderRegistryError> {
         validate_provider_name(&descriptor.name)?;
+        validate_redirect_hosts(&descriptor)?;
         if descriptor.capabilities.is_empty() {
             return Err(ProviderRegistryError::NoCapabilities(
                 descriptor.name.clone(),
@@ -313,6 +316,12 @@ pub enum ProviderRegistryError {
     NoCapabilities(String),
     /// Descriptor claims do not match supplied implementations.
     CapabilityMismatch(String),
+    /// A redirect host does not use the canonical public-host format.
+    InvalidRedirectHost { provider: String, host: String },
+    /// A redirect host is listed more than once.
+    DuplicateRedirectHost { provider: String, host: String },
+    /// Redirect hosts were declared without an online capability.
+    RedirectHostsWithoutOnlineCapability(String),
     /// A provider name was registered more than once.
     DuplicateName(String),
 }
@@ -329,6 +338,24 @@ impl fmt::Display for ProviderRegistryError {
                 write!(
                     formatter,
                     "provider capability declaration mismatch: {name}"
+                )
+            }
+            Self::InvalidRedirectHost { provider, host } => {
+                write!(
+                    formatter,
+                    "invalid redirect host for provider {provider}: {host}"
+                )
+            }
+            Self::DuplicateRedirectHost { provider, host } => {
+                write!(
+                    formatter,
+                    "duplicate redirect host for provider {provider}: {host}"
+                )
+            }
+            Self::RedirectHostsWithoutOnlineCapability(name) => {
+                write!(
+                    formatter,
+                    "provider declares redirect hosts without an online capability: {name}"
                 )
             }
             Self::DuplicateName(name) => write!(formatter, "duplicate provider name: {name}"),
@@ -406,6 +433,52 @@ fn validate_provider_name(name: &str) -> Result<(), ProviderRegistryError> {
         })
     {
         return Err(ProviderRegistryError::InvalidName(name.to_string()));
+    }
+    Ok(())
+}
+
+fn validate_redirect_hosts(descriptor: &ProviderDescriptor) -> Result<(), ProviderRegistryError> {
+    let has_online_capability = descriptor.capabilities.article_detail
+        || descriptor.capabilities.article_abstract
+        || descriptor.capabilities.article_full_text;
+    if !has_online_capability && !descriptor.allowed_redirect_hosts.is_empty() {
+        return Err(ProviderRegistryError::RedirectHostsWithoutOnlineCapability(
+            descriptor.name.clone(),
+        ));
+    }
+
+    let mut unique_hosts = BTreeSet::new();
+    for host in &descriptor.allowed_redirect_hosts {
+        let is_valid = (1..=253).contains(&host.len())
+            && host.is_ascii()
+            && host == &host.to_ascii_lowercase()
+            && host.contains('.')
+            && host.split('.').all(|label| {
+                (1..=63).contains(&label.len())
+                    && label.bytes().all(|byte| {
+                        byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-'
+                    })
+                    && label
+                        .as_bytes()
+                        .first()
+                        .is_some_and(u8::is_ascii_alphanumeric)
+                    && label
+                        .as_bytes()
+                        .last()
+                        .is_some_and(u8::is_ascii_alphanumeric)
+            });
+        if !is_valid {
+            return Err(ProviderRegistryError::InvalidRedirectHost {
+                provider: descriptor.name.clone(),
+                host: host.clone(),
+            });
+        }
+        if !unique_hosts.insert(host) {
+            return Err(ProviderRegistryError::DuplicateRedirectHost {
+                provider: descriptor.name.clone(),
+                host: host.clone(),
+            });
+        }
     }
     Ok(())
 }
@@ -565,6 +638,14 @@ mod tests {
                 ProviderDescriptor {
                     name: name.to_string(),
                     capabilities,
+                    allowed_redirect_hosts: if capabilities.article_detail
+                        || capabilities.article_abstract
+                        || capabilities.article_full_text
+                    {
+                        vec!["example.com".to_string()]
+                    } else {
+                        Vec::new()
+                    },
                 },
                 implementations,
             )
@@ -581,6 +662,7 @@ mod tests {
                     article_detail: true,
                     ..ProviderCapabilities::default()
                 },
+                allowed_redirect_hosts: Vec::new(),
             },
             ProviderImplementations::default(),
         )
@@ -595,6 +677,7 @@ mod tests {
             ProviderDescriptor {
                 name: "empty-provider".to_string(),
                 capabilities: ProviderCapabilities::default(),
+                allowed_redirect_hosts: Vec::new(),
             },
             ProviderImplementations::default(),
         )
@@ -617,6 +700,7 @@ mod tests {
                     article_full_text: true,
                     ..ProviderCapabilities::default()
                 },
+                allowed_redirect_hosts: Vec::new(),
             },
             ProviderImplementations {
                 index_content: Some(provider.clone()),
@@ -645,6 +729,7 @@ mod tests {
                     index_content: true,
                     ..ProviderCapabilities::default()
                 },
+                allowed_redirect_hosts: Vec::new(),
             },
             ProviderImplementations {
                 index_content: Some(Arc::new(FakeProvider)),
@@ -657,6 +742,76 @@ mod tests {
                 .register(duplicate)
                 .expect_err("duplicate should fail"),
             ProviderRegistryError::DuplicateName("mixed-provider".to_string())
+        );
+    }
+
+    #[test]
+    fn validates_runtime_redirect_host_policy() {
+        for host in ["HTTPS://example.com", "example.com/path", "localhost"] {
+            let error = ProviderRegistration::try_new(
+                ProviderDescriptor {
+                    name: "invalid-host-provider".to_string(),
+                    capabilities: ProviderCapabilities {
+                        article_detail: true,
+                        ..ProviderCapabilities::default()
+                    },
+                    allowed_redirect_hosts: vec![host.to_string()],
+                },
+                ProviderImplementations {
+                    article_detail: Some(Arc::new(FakeProvider)),
+                    ..ProviderImplementations::default()
+                },
+            )
+            .err()
+            .expect("noncanonical redirect host should fail");
+            assert!(matches!(
+                error,
+                ProviderRegistryError::InvalidRedirectHost { .. }
+            ));
+        }
+
+        let duplicate = ProviderRegistration::try_new(
+            ProviderDescriptor {
+                name: "duplicate-host-provider".to_string(),
+                capabilities: ProviderCapabilities {
+                    article_detail: true,
+                    ..ProviderCapabilities::default()
+                },
+                allowed_redirect_hosts: vec!["example.com".to_string(), "example.com".to_string()],
+            },
+            ProviderImplementations {
+                article_detail: Some(Arc::new(FakeProvider)),
+                ..ProviderImplementations::default()
+            },
+        )
+        .err()
+        .expect("duplicate redirect host should fail");
+        assert!(matches!(
+            duplicate,
+            ProviderRegistryError::DuplicateRedirectHost { .. }
+        ));
+
+        let index_only = ProviderRegistration::try_new(
+            ProviderDescriptor {
+                name: "index-host-provider".to_string(),
+                capabilities: ProviderCapabilities {
+                    index_content: true,
+                    ..ProviderCapabilities::default()
+                },
+                allowed_redirect_hosts: vec!["example.com".to_string()],
+            },
+            ProviderImplementations {
+                index_content: Some(Arc::new(FakeProvider)),
+                ..ProviderImplementations::default()
+            },
+        )
+        .err()
+        .expect("index-only redirect policy should fail");
+        assert_eq!(
+            index_only,
+            ProviderRegistryError::RedirectHostsWithoutOnlineCapability(
+                "index-host-provider".to_string()
+            )
         );
     }
 }

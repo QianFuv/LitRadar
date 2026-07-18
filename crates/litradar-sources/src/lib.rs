@@ -10,8 +10,10 @@ pub use cnki::{
     LiveCnkiConfig, LiveCnkiTransport,
 };
 pub use providers::{
-    cnki_index_registration, scholarly_index_registration, CnkiIndexProvider,
-    ScholarlyIndexProvider, CNKI_PROVIDER_NAME, SCHOLARLY_PROVIDER_NAME,
+    cnki_access_registration, cnki_index_registration, scholarly_access_registration,
+    scholarly_index_registration, CnkiArticleAccessProvider, CnkiIndexProvider,
+    ScholarlyArticleAccessProvider, ScholarlyIndexProvider, CNKI_PROVIDER_NAME,
+    CNKI_REDIRECT_HOSTS, SCHOLARLY_PROVIDER_NAME, SCHOLARLY_REDIRECT_HOSTS,
 };
 pub use scholarly::{
     normalize_doi, FixtureScholarlyTransport, LiveScholarlyConfig, LiveScholarlyTransport,
@@ -23,5 +25,5 @@ pub use zjlib_cnki::{
     FixtureZjlibCnkiMode, FixtureZjlibCnkiTransport, LiveZjlibCnkiConfig, LiveZjlibCnkiTransport,
     ZhejiangLibraryCnkiClient, ZjlibCnkiArticleCandidate, ZjlibCnkiArticleIdentity,
     ZjlibCnkiCookie, ZjlibCnkiDownloadedPdf, ZjlibCnkiError, ZjlibCnkiQrLogin,
-    ZjlibCnkiSearchResult, ZjlibCnkiTransport,
+    ZjlibCnkiSearchResult, ZjlibCnkiTransport, DEFAULT_FULL_TEXT_MAXIMUM_BYTES,
 };

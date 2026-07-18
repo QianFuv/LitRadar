@@ -49,6 +49,36 @@ function extractPublicationYear(value: string | null | undefined, fallback: stri
 }
 
 /**
+ * Return canonical authors joined for one citation format.
+ *
+ * @param authors - Ordered author display names.
+ * @param separator - Citation-specific separator.
+ * @param fallback - Text used when no author is available.
+ * @returns Joined author text.
+ */
+function formatAuthors(
+  authors: string[] | null | undefined,
+  separator: string,
+  fallback: string,
+): string {
+  const values = authors?.map((author) => author.trim()).filter(Boolean) ?? [];
+  return values.length > 0 ? values.join(separator) : fallback;
+}
+
+/**
+ * Return the canonical publication year with a date fallback.
+ *
+ * @param article - Article record.
+ * @param fallback - Text used when no year is available.
+ * @returns Publication year text.
+ */
+function articlePublicationYear(article: Article, fallback: string): string {
+  return typeof article.publication_year === 'number'
+    ? String(article.publication_year)
+    : extractPublicationYear(article.date, fallback);
+}
+
+/**
  * Validate and normalize an absolute HTTP(S) URL.
  *
  * @param value - Candidate external URL.
@@ -172,10 +202,10 @@ function buildBibtexKey(articleId: string): string {
  * @returns Plain-text reference.
  */
 function generateGbT7714Citation(article: Article): string {
-  const authors = valueOrFallback(article.authors, '佚名');
+  const authors = formatAuthors(article.authors, '; ', '佚名');
   const title = valueOrFallback(article.title, '未命名文章');
   const journal = valueOrFallback(article.journal_title, '未知期刊');
-  const year = extractPublicationYear(article.date, '日期不详');
+  const year = articlePublicationYear(article, '日期不详');
   const volumeIssue = formatVolumeIssue(article);
   const publication = [journal, year, volumeIssue].filter(Boolean).join(', ');
   const doi = normalizeDoiValue(article.doi);
@@ -189,14 +219,12 @@ function generateGbT7714Citation(article: Article): string {
  * @returns BibTeX record.
  */
 function generateBibtexCitation(article: Article): string {
-  const authors = valueOrFallback(article.authors, 'Unknown author')
-    .split(/\s*;\s*/u)
-    .join(' and ');
+  const authors = formatAuthors(article.authors, ' and ', 'Unknown author');
   const fields: Array<[string, string]> = [
     ['author', authors],
     ['title', valueOrFallback(article.title, 'Untitled article')],
     ['journal', valueOrFallback(article.journal_title, 'Unknown journal')],
-    ['year', extractPublicationYear(article.date, 'n.d.')],
+    ['year', articlePublicationYear(article, 'n.d.')],
   ];
   if (article.volume?.trim()) {
     fields.push(['volume', article.volume.trim()]);
@@ -208,7 +236,7 @@ function generateBibtexCitation(article: Article): string {
   if (doi) {
     fields.push(['doi', doi]);
   }
-  const url = getDoiUrl(article.doi) ?? getSafeHttpUrl(article.permalink);
+  const url = getDoiUrl(article.doi);
   if (url) {
     fields.push(['url', url]);
   }
