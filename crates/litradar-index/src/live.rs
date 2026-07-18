@@ -3,11 +3,12 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fmt;
+use std::io::{BufReader, BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
-use std::sync::mpsc::{self, RecvTimeoutError, Sender};
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender, SyncSender};
 use std::thread::{self, JoinHandle};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use litradar_domain::{JournalCatalogEntry, ProviderBatch};
 use litradar_provider::{
@@ -34,12 +35,17 @@ use crate::schema::{
 };
 use crate::stats::IndexRunMetrics;
 use crate::transforms::{read_catalog_csv, CatalogContractError};
-use crate::writer_gate::{WriterGate, WriterGateError, WriterGateGuard};
+use crate::worker_protocol::{
+    read_message, write_message, ParentMessage, ProtocolError,
+    WorkerFailure as LiveIndexWorkerFailure, WorkerFailureClass as LiveIndexWorkerFailureClass,
+    WorkerJournalAssignment, WorkerMessage, WorkerOperation as LiveIndexWorkerOperation,
+    WorkerRequest as LiveIndexWorkerRequest, PROTOCOL_VERSION,
+};
 
 const LIVE_INDEX_HEARTBEAT_INTERVAL_SECONDS: u64 = 30;
 const MAX_PROVIDER_PAGES_PER_JOURNAL: usize = 100_000;
 const SCHOLARLY_MAX_PROCESS_COUNT: usize = 3;
-const WRITER_GATE_FAILURE_MESSAGE: &str = "writer gate operation failed";
+const WORKER_PROTOCOL_FAILURE_MESSAGE: &str = "worker protocol operation failed";
 
 /// Live index run configuration.
 #[derive(Debug, Clone)]
@@ -259,136 +265,44 @@ enum StoredCheckpoint {
     Complete,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
-struct LiveIndexWorkerRequest {
-    control_path: PathBuf,
-    content_path: PathBuf,
+#[derive(Debug, Clone)]
+struct DirectIndexRequest {
     catalog_name: String,
     provider_name: String,
     run_id: String,
     timestamp: String,
     worker_id: usize,
-    process_count: usize,
-    source_worker_count: usize,
-    schedule_epoch_unix_millis: u64,
-    timeout_seconds: u64,
     resume: bool,
     update: bool,
-    scholarly_config: LiveScholarlyConfig,
     entries: Vec<JournalCatalogEntry>,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
-struct LiveIndexWorkerResponse {
-    worker_id: usize,
-    status: String,
-    metrics: IndexRunMetrics,
-    failure: Option<LiveIndexWorkerFailure>,
+/// Parent-owned context required to commit worker batches.
+#[derive(Debug, Clone)]
+pub(crate) struct ParentWriterContext {
+    /// Stable maintained catalog stem.
+    pub(crate) catalog_name: String,
+    /// Stable registered indexing provider.
+    pub(crate) provider_name: String,
+    /// Core-owned run identifier.
+    pub(crate) run_id: String,
+    /// Safe content and checkpoint timestamp.
+    pub(crate) timestamp: String,
 }
 
-impl LiveIndexWorkerResponse {
-    /// Build one failed worker response from a typed internal error.
-    fn failed(worker_id: usize, error: &LiveIndexError) -> Self {
-        Self {
-            worker_id,
-            status: "failed".to_string(),
-            metrics: IndexRunMetrics::default(),
-            failure: Some(LiveIndexWorkerFailure::from_error(error)),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
-#[serde(rename_all = "snake_case")]
-enum LiveIndexWorkerFailureClass {
-    Io,
-    Json,
-    Catalog,
-    Sqlite,
-    Content,
-    Control,
-    Registry,
-    ProviderSetup,
-    Provider,
-    InvalidConfig,
-    Worker,
-    Notify,
-    Heartbeat,
-}
-
-impl LiveIndexWorkerFailureClass {
-    /// Return the fixed event value for this failure class.
-    fn as_str(self) -> &'static str {
-        match self {
-            Self::Io => "io",
-            Self::Json => "json",
-            Self::Catalog => "catalog",
-            Self::Sqlite => "sqlite",
-            Self::Content => "content",
-            Self::Control => "control",
-            Self::Registry => "registry",
-            Self::ProviderSetup => "provider_setup",
-            Self::Provider => "provider",
-            Self::InvalidConfig => "invalid_config",
-            Self::Worker => "worker",
-            Self::Notify => "notify",
-            Self::Heartbeat => "heartbeat",
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
-#[serde(rename_all = "snake_case")]
-enum LiveIndexWorkerOperation {
-    FileSystem,
-    WorkerJson,
-    CatalogRead,
-    ContentDatabaseOpen,
-    ContentCommit,
-    CheckpointCommit,
-    ControlDatabase,
-    Heartbeat,
-    ProviderRegistry,
-    ProviderSetup,
-    ProviderRequest,
-    Configuration,
-    WriterGate,
-    WorkerProcess,
-    WorkerResponse,
-    Notification,
-}
-
-impl LiveIndexWorkerOperation {
-    /// Return the fixed event value for this worker operation.
-    fn as_str(self) -> &'static str {
-        match self {
-            Self::FileSystem => "file_system",
-            Self::WorkerJson => "worker_json",
-            Self::CatalogRead => "catalog_read",
-            Self::ContentDatabaseOpen => "content_database_open",
-            Self::ContentCommit => "content_commit",
-            Self::CheckpointCommit => "checkpoint_commit",
-            Self::ControlDatabase => "control_database",
-            Self::Heartbeat => "heartbeat",
-            Self::ProviderRegistry => "provider_registry",
-            Self::ProviderSetup => "provider_setup",
-            Self::ProviderRequest => "provider_request",
-            Self::Configuration => "configuration",
-            Self::WriterGate => "writer_gate",
-            Self::WorkerProcess => "worker_process",
-            Self::WorkerResponse => "worker_response",
-            Self::Notification => "notification",
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
-struct LiveIndexWorkerFailure {
-    class: LiveIndexWorkerFailureClass,
-    operation: LiveIndexWorkerOperation,
-    sqlite_code: Option<String>,
-    sqlite_extended_code: Option<i32>,
-    is_busy_or_locked: bool,
+/// One safe parent writer observation emitted after a durable acknowledgement.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct WriterCommitObservation {
+    /// Worker whose batch committed.
+    pub(crate) worker_id: usize,
+    /// Monotonic worker sequence that committed.
+    pub(crate) sequence: u64,
+    /// Provider page index that committed.
+    pub(crate) page_index: usize,
+    /// Milliseconds from parent receipt through acknowledgement flush.
+    pub(crate) service_ms: u64,
+    /// Canonical articles observed in the committed batch.
+    pub(crate) articles_seen: usize,
 }
 
 impl LiveIndexWorkerFailure {
@@ -437,8 +351,8 @@ impl LiveIndexWorkerFailure {
             ),
             LiveIndexError::Worker(message) => Self::fixed(
                 LiveIndexWorkerFailureClass::Worker,
-                if message == WRITER_GATE_FAILURE_MESSAGE {
-                    LiveIndexWorkerOperation::WriterGate
+                if message == WORKER_PROTOCOL_FAILURE_MESSAGE {
+                    LiveIndexWorkerOperation::WorkerProtocol
                 } else {
                     LiveIndexWorkerOperation::WorkerProcess
                 },
@@ -452,14 +366,6 @@ impl LiveIndexWorkerFailure {
                 LiveIndexWorkerOperation::Heartbeat,
             ),
         }
-    }
-
-    /// Build a safe fallback for a failed response without a failure payload.
-    fn missing() -> Self {
-        Self::fixed(
-            LiveIndexWorkerFailureClass::Worker,
-            LiveIndexWorkerOperation::WorkerResponse,
-        )
     }
 
     /// Classify one content-domain failure at a fixed operation boundary.
@@ -507,17 +413,6 @@ impl LiveIndexWorkerFailure {
             _ => Self::fixed(LiveIndexWorkerFailureClass::Sqlite, operation),
         }
     }
-
-    /// Build one non-SQLite fixed failure classification.
-    fn fixed(class: LiveIndexWorkerFailureClass, operation: LiveIndexWorkerOperation) -> Self {
-        Self {
-            class,
-            operation,
-            sqlite_code: None,
-            sqlite_extended_code: None,
-            is_busy_or_locked: false,
-        }
-    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -560,29 +455,14 @@ impl LeaseHeartbeat {
         provider_name: String,
         run_id: String,
         interval: Duration,
-        writer_gate: Option<WriterGate>,
     ) -> Self {
         let (stop, receiver) = mpsc::channel();
         let handle = thread::spawn(move || {
-            let connection = {
-                let _guard = acquire_optional_writer_gate(
-                    writer_gate.as_ref(),
-                    "parent",
-                    "control_database_open",
-                )
-                .map_err(|_| WRITER_GATE_FAILURE_MESSAGE.to_string())?;
-                open_control_db(control_path).map_err(|error| error.to_string())?
-            };
+            let connection = open_control_db(control_path).map_err(|error| error.to_string())?;
             loop {
                 match receiver.recv_timeout(interval) {
                     Ok(()) | Err(RecvTimeoutError::Disconnected) => return Ok(()),
                     Err(RecvTimeoutError::Timeout) => {
-                        let _guard = acquire_optional_writer_gate(
-                            writer_gate.as_ref(),
-                            "parent",
-                            "heartbeat",
-                        )
-                        .map_err(|_| WRITER_GATE_FAILURE_MESSAGE.to_string())?;
                         heartbeat_lease(
                             &connection,
                             &catalog_name,
@@ -659,7 +539,7 @@ pub fn run_live_index(config: &LiveIndexConfig) -> Result<LiveIndexOutcome, Live
     })
 }
 
-/// Run one serialized journal-worker request and return its machine-readable response.
+/// Run one serialized fetch-worker request over the process standard streams.
 ///
 /// # Arguments
 ///
@@ -667,23 +547,23 @@ pub fn run_live_index(config: &LiveIndexConfig) -> Result<LiveIndexOutcome, Live
 ///
 /// # Returns
 ///
-/// One JSON response suitable for the worker subprocess stdout boundary.
+/// Success after a terminal protocol message is flushed.
 pub fn run_live_index_worker_from_file_path(
     request_path: impl AsRef<Path>,
-) -> Result<String, LiveIndexError> {
+) -> Result<(), LiveIndexError> {
+    let stdin = std::io::stdin();
+    let stdout = std::io::stdout();
+    run_live_index_worker_with_io(request_path.as_ref(), stdin.lock(), stdout.lock())
+}
+
+fn run_live_index_worker_with_io(
+    request_path: &Path,
+    mut reader: impl Read,
+    mut writer: impl Write,
+) -> Result<(), LiveIndexError> {
     let request: LiveIndexWorkerRequest =
         serde_json::from_str(&std::fs::read_to_string(request_path)?)?;
-    let worker_id = request.worker_id;
-    let response = match run_worker_request(&request) {
-        Ok(metrics) => LiveIndexWorkerResponse {
-            worker_id,
-            status: "succeeded".to_string(),
-            metrics,
-            failure: None,
-        },
-        Err(error) => LiveIndexWorkerResponse::failed(worker_id, &error),
-    };
-    Ok(serde_json::to_string(&response)?)
+    run_fetch_worker_stream(&request, &mut reader, &mut writer)
 }
 
 fn validate_live_config(config: &LiveIndexConfig) -> Result<(), LiveIndexError> {
@@ -793,24 +673,10 @@ fn run_catalog(
     let content_path = index_dir.join(format!("{catalog_name}.sqlite"));
     let control_path = control_dir.join(format!("{catalog_name}.sqlite"));
     let uses_worker_processes = config.process_count > 1 && entries.len() > 1;
-    let content =
-        open_content_db(&content_path).map_err(|source| LiveIndexError::ContentDatabase {
-            path: content_path.clone(),
-            source,
-        })?;
-    drop(content);
     let control = open_control_db(&control_path)?;
     let run_time = LiveRunTime::now();
     let run_id = run_time.run_id(&catalog_name);
     let timestamp = run_time.timestamp();
-    let parent_writer_gate = if uses_worker_processes {
-        Some(open_writer_gate(
-            &writer_gate_path(&control_path),
-            "parent",
-        )?)
-    } else {
-        None
-    };
     acquire_lease(
         &control,
         &catalog_name,
@@ -818,54 +684,74 @@ fn run_catalog(
         &run_id,
         run_time.epoch_seconds,
     )?;
-    let mut heartbeat = LeaseHeartbeat::start(
-        control_path.clone(),
-        catalog_name.clone(),
-        provider_name.clone(),
-        run_id.clone(),
-        Duration::from_secs(LIVE_INDEX_HEARTBEAT_INTERVAL_SECONDS),
-        parent_writer_gate,
-    );
-
-    let execution = if uses_worker_processes {
-        let requests = build_worker_requests(
+    let content = match open_content_db(&content_path) {
+        Ok(content) => content,
+        Err(source) => {
+            let _ = release_lease(&control, &catalog_name, &provider_name, &run_id);
+            return Err(LiveIndexError::ContentDatabase {
+                path: content_path,
+                source,
+            });
+        }
+    };
+    let writer_context = ParentWriterContext {
+        catalog_name: catalog_name.clone(),
+        provider_name: provider_name.clone(),
+        run_id: run_id.clone(),
+        timestamp: timestamp.clone(),
+    };
+    let (execution, heartbeat_result) = if uses_worker_processes {
+        let prepared = prepare_worker_requests(
             config,
-            &control_path,
-            &content_path,
-            &catalog_name,
-            &provider_name,
-            &run_id,
-            &timestamp,
+            &control,
+            &writer_context,
             run_time.epoch_milliseconds,
             &entries,
         );
-        run_worker_processes(config, requests)
+        let execution = prepared.and_then(|(requests, metrics)| {
+            run_worker_processes(
+                config,
+                &content,
+                &control,
+                &writer_context,
+                requests,
+                metrics,
+            )
+        });
+        (execution, Ok(()))
     } else {
-        let request = LiveIndexWorkerRequest {
-            control_path: control_path.clone(),
-            content_path: content_path.clone(),
+        let mut heartbeat = LeaseHeartbeat::start(
+            control_path.clone(),
+            catalog_name.clone(),
+            provider_name.clone(),
+            run_id.clone(),
+            Duration::from_secs(LIVE_INDEX_HEARTBEAT_INTERVAL_SECONDS),
+        );
+        let request = DirectIndexRequest {
             catalog_name: catalog_name.clone(),
             provider_name: provider_name.clone(),
             run_id: run_id.clone(),
             timestamp: timestamp.clone(),
             worker_id: 0,
-            process_count: 1,
-            source_worker_count: config.worker_count,
-            schedule_epoch_unix_millis: run_time.epoch_milliseconds,
-            timeout_seconds: config.timeout_seconds,
             resume: config.resume,
             update: config.update,
-            scholarly_config: config.scholarly_config.clone(),
             entries: entries.clone(),
         };
-        run_worker_request(&request)
+        let execution = run_direct_request(
+            config,
+            &content,
+            &control,
+            &request,
+            run_time.epoch_milliseconds,
+        );
+        let heartbeat_result = heartbeat.stop_and_check();
+        (execution, heartbeat_result)
     };
 
-    let heartbeat_result = heartbeat.stop_and_check();
-    let release_result = release_lease(&control, &catalog_name, &provider_name, &run_id);
     let metrics = match execution {
         Ok(metrics) => metrics,
         Err(error) => {
+            let _ = release_lease(&control, &catalog_name, &provider_name, &run_id);
             let mut failed = IndexRunMetrics {
                 journals_total: entries.len(),
                 journals_failed: entries.len(),
@@ -878,40 +764,43 @@ fn run_catalog(
             return Err(error);
         }
     };
-    heartbeat_result?;
-    release_result?;
-
-    let content =
-        open_content_db(&content_path).map_err(|source| LiveIndexError::ContentDatabase {
+    if let Err(error) = heartbeat_result {
+        let _ = release_lease(&control, &catalog_name, &provider_name, &run_id);
+        return Err(error);
+    }
+    let finalization = (|| -> Result<(String, Option<PathBuf>), LiveIndexError> {
+        optimize_content_db(&content).map_err(|source| LiveIndexError::ContentDatabase {
             path: content_path.clone(),
             source,
         })?;
-    optimize_content_db(&content).map_err(|source| LiveIndexError::ContentDatabase {
-        path: content_path.clone(),
-        source,
-    })?;
-    let db_name = content_path
-        .file_name()
-        .and_then(|value| value.to_str())
-        .unwrap_or("index.sqlite");
-    let manifest_path = config.update.then(|| {
-        config
-            .project_root
-            .join("data")
-            .join("push_state")
-            .join(format!("{catalog_name}.changes.json"))
-    });
-    if let Some(path) = manifest_path.as_deref() {
-        write_content_change_manifest(&content, db_name, &run_id, &timestamp, path)?;
-    } else {
-        discard_content_change_events(&content).map_err(|error| {
-            LiveIndexError::Worker(format!("content outbox acknowledgement failed: {error}"))
-        })?;
-    }
+        let db_name = content_path
+            .file_name()
+            .and_then(|value| value.to_str())
+            .unwrap_or("index.sqlite")
+            .to_string();
+        let manifest_path = config.update.then(|| {
+            config
+                .project_root
+                .join("data")
+                .join("push_state")
+                .join(format!("{catalog_name}.changes.json"))
+        });
+        if let Some(path) = manifest_path.as_deref() {
+            write_content_change_manifest(&content, &db_name, &run_id, &timestamp, path)?;
+        } else {
+            discard_content_change_events(&content).map_err(|error| {
+                LiveIndexError::Worker(format!("content outbox acknowledgement failed: {error}"))
+            })?;
+        }
+        Ok((db_name, manifest_path))
+    })();
+    let release_result = release_lease(&control, &catalog_name, &provider_name, &run_id);
+    let (db_name, manifest_path) = finalization?;
+    release_result?;
     let notify_exit_code = if config.notify {
         Some(run_notify_for_manifest(
             config,
-            db_name,
+            &db_name,
             manifest_path
                 .as_deref()
                 .expect("validated notify run has a manifest path"),
@@ -933,139 +822,115 @@ fn run_catalog(
     })
 }
 
-#[allow(clippy::too_many_arguments)]
-fn build_worker_requests(
+fn prepare_worker_requests(
     config: &LiveIndexConfig,
-    control_path: &Path,
-    content_path: &Path,
-    catalog_name: &str,
-    provider_name: &str,
-    run_id: &str,
-    timestamp: &str,
+    control: &Connection,
+    context: &ParentWriterContext,
     schedule_epoch_unix_millis: u64,
     entries: &[JournalCatalogEntry],
-) -> Vec<LiveIndexWorkerRequest> {
-    let process_count = config.process_count.min(entries.len()).max(1);
-    let mut partitions = vec![Vec::new(); process_count];
-    for (index, entry) in entries.iter().cloned().enumerate() {
-        partitions[index % process_count].push(entry);
+) -> Result<(Vec<LiveIndexWorkerRequest>, IndexRunMetrics), LiveIndexError> {
+    let mut metrics = IndexRunMetrics {
+        journals_total: entries.len(),
+        ..IndexRunMetrics::default()
+    };
+    let mut assignments = Vec::with_capacity(entries.len());
+    for (journal_ordinal, entry) in entries.iter().cloned().enumerate() {
+        let stored = if config.resume && !config.update {
+            let scope = CheckpointScope::Journal {
+                catalog_id: entry.catalog_id.clone(),
+            };
+            read_checkpoint(
+                control,
+                &context.catalog_name,
+                &context.provider_name,
+                &scope,
+            )?
+            .map(|value| decode_checkpoint(&value))
+            .transpose()?
+        } else {
+            None
+        };
+        match stored {
+            Some(StoredCheckpoint::Complete) => metrics.journals_resumed += 1,
+            Some(StoredCheckpoint::Provider { value }) => {
+                assignments.push(WorkerJournalAssignment {
+                    journal_ordinal,
+                    entry,
+                    initial_checkpoint: Some(value),
+                });
+            }
+            None => assignments.push(WorkerJournalAssignment {
+                journal_ordinal,
+                entry,
+                initial_checkpoint: None,
+            }),
+        }
     }
-    partitions
+    if assignments.is_empty() {
+        return Ok((Vec::new(), metrics));
+    }
+    let process_count = config.process_count.min(assignments.len()).max(1);
+    let mut partitions = vec![Vec::new(); process_count];
+    for (index, assignment) in assignments.into_iter().enumerate() {
+        partitions[index % process_count].push(assignment);
+    }
+    let requests = partitions
         .into_iter()
         .enumerate()
-        .map(|(worker_id, entries)| LiveIndexWorkerRequest {
-            control_path: control_path.to_path_buf(),
-            content_path: content_path.to_path_buf(),
-            catalog_name: catalog_name.to_string(),
-            provider_name: provider_name.to_string(),
-            run_id: run_id.to_string(),
-            timestamp: timestamp.to_string(),
+        .map(|(worker_id, assignments)| LiveIndexWorkerRequest {
+            protocol_version: PROTOCOL_VERSION,
+            catalog_name: context.catalog_name.clone(),
+            provider_name: context.provider_name.clone(),
+            run_id: context.run_id.clone(),
             worker_id,
             process_count,
             source_worker_count: config.worker_count,
             schedule_epoch_unix_millis,
             timeout_seconds: config.timeout_seconds,
-            resume: config.resume,
-            update: config.update,
             scholarly_config: config.scholarly_config.clone(),
-            entries,
+            assignments,
         })
-        .collect()
+        .collect();
+    Ok((requests, metrics))
 }
 
 fn run_worker_processes(
     config: &LiveIndexConfig,
+    content: &Connection,
+    control: &Connection,
+    context: &ParentWriterContext,
     requests: Vec<LiveIndexWorkerRequest>,
+    metrics: IndexRunMetrics,
 ) -> Result<IndexRunMetrics, LiveIndexError> {
     let request_dir = config
         .project_root
         .join("data")
         .join("index-control")
         .join("worker-requests");
-    std::fs::create_dir_all(&request_dir)?;
-    let mut children = Vec::with_capacity(requests.len());
-    for request in requests {
-        let request_path = request_dir.join(format!(
-            "{}-worker-{}.json",
-            request.run_id, request.worker_id
-        ));
-        let request_bytes = match serde_json::to_vec(&request) {
-            Ok(request_bytes) => request_bytes,
-            Err(error) => {
-                cancel_workers(&mut children, 0);
-                return Err(LiveIndexError::Json(error));
-            }
-        };
-        if let Err(error) = std::fs::write(&request_path, request_bytes) {
-            cancel_workers(&mut children, 0);
-            return Err(LiveIndexError::Io(error));
-        }
-        let child = match Command::new(&config.application_executable)
-            .arg("index")
-            .arg("--live-worker-request")
-            .arg(&request_path)
-            .stdout(Stdio::piped())
-            .stderr(Stdio::inherit())
-            .spawn()
-        {
-            Ok(child) => child,
-            Err(error) => {
-                let _ = std::fs::remove_file(&request_path);
-                cancel_workers(&mut children, 0);
-                return Err(LiveIndexError::Worker(format!(
-                    "worker {} could not start: {error}",
-                    request.worker_id
-                )));
-            }
-        };
-        children.push(SpawnedWorker {
-            worker_id: request.worker_id,
-            request_path,
-            child: Some(child),
-        });
-    }
-
-    let mut aggregate = IndexRunMetrics::default();
-    for index in 0..children.len() {
-        let child = children[index]
-            .child
-            .take()
-            .expect("spawned worker should own its process");
-        let output = child.wait_with_output().map_err(|error| {
-            cancel_workers(&mut children, index + 1);
-            LiveIndexError::Worker(format!(
-                "worker {} wait failed: {error}",
-                children[index].worker_id
-            ))
-        })?;
-        let _ = std::fs::remove_file(&children[index].request_path);
-        if !output.status.success() {
-            cancel_workers(&mut children, index + 1);
-            return Err(LiveIndexError::Worker(format!(
-                "worker {} exited with status {}",
-                children[index].worker_id, output.status
-            )));
-        }
-        let response: LiveIndexWorkerResponse =
-            serde_json::from_slice(&output.stdout).map_err(|error| {
-                cancel_workers(&mut children, index + 1);
-                LiveIndexError::Worker(format!(
-                    "worker {} returned invalid JSON: {error}",
-                    children[index].worker_id
-                ))
-            })?;
-        if response.status != "succeeded" {
-            let failure = response
-                .failure
-                .unwrap_or_else(LiveIndexWorkerFailure::missing);
-            emit_worker_failure(response.worker_id, &failure);
-            let error = worker_failure_error(response.worker_id, &failure);
-            cancel_workers(&mut children, index + 1);
-            return Err(error);
-        }
-        aggregate.merge(&response.metrics);
-    }
-    Ok(aggregate)
+    run_worker_processes_with_launcher(
+        &request_dir,
+        content,
+        control,
+        context,
+        requests,
+        metrics,
+        Duration::from_secs(LIVE_INDEX_HEARTBEAT_INTERVAL_SECONDS),
+        |request_path, worker_id| {
+            let child = Command::new(&config.application_executable)
+                .arg("index")
+                .arg("--live-worker-request")
+                .arg(request_path)
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::inherit())
+                .spawn()
+                .map_err(|_| {
+                    LiveIndexError::Worker(format!("worker process {worker_id} could not start"))
+                })?;
+            LaunchedWorkerProcess::from_child_stdio(child, worker_id)
+        },
+        |_| {},
+    )
 }
 
 /// Emit one failed worker event using only fixed classifications and typed SQLite codes.
@@ -1104,81 +969,656 @@ fn worker_failure_error(worker_id: usize, failure: &LiveIndexWorkerFailure) -> L
     ))
 }
 
-/// Derive the reusable writer sidecar from one disposable control database path.
-fn writer_gate_path(control_path: &Path) -> PathBuf {
-    control_path.with_extension("writer.lock")
-}
-
-/// Open one writer gate and emit only safe fixed fields on failure.
-fn open_writer_gate(path: &Path, worker_id: &str) -> Result<WriterGate, LiveIndexError> {
-    WriterGate::open(path).map_err(|error| {
-        emit_writer_gate_failure(worker_id, "open", &error);
-        LiveIndexError::Worker(WRITER_GATE_FAILURE_MESSAGE.to_string())
-    })
-}
-
-/// Acquire an optional multi-process writer gate and retain its guard for the caller.
-fn acquire_optional_writer_gate<'gate>(
-    writer_gate: Option<&'gate WriterGate>,
-    worker_id: &str,
-    operation: &'static str,
-) -> Result<Option<WriterGateGuard<'gate>>, LiveIndexError> {
-    let Some(writer_gate) = writer_gate else {
-        return Ok(None);
-    };
-    match writer_gate.acquire() {
-        Ok(guard) => {
-            tracing::debug!(
-                event = "index.writer_gate.acquired",
-                component = "index",
-                worker_id,
-                operation,
-                wait_ms = guard.waited_ms(),
-            );
-            Ok(Some(guard))
-        }
-        Err(error) => {
-            emit_writer_gate_failure(worker_id, operation, &error);
-            Err(LiveIndexError::Worker(
-                WRITER_GATE_FAILURE_MESSAGE.to_string(),
-            ))
-        }
-    }
-}
-
-/// Emit a writer-gate failure without a path or operating-system message.
-fn emit_writer_gate_failure(worker_id: &str, operation: &'static str, error: &WriterGateError) {
-    tracing::error!(
-        event = "index.writer_gate.failed",
-        component = "index",
-        worker_id,
-        operation,
-        error_kind = error.kind(),
-        io_kind = ?error.io_kind(),
-        is_timeout = error.is_timeout(),
-        has_wait_ms = error.waited_ms().is_some(),
-        wait_ms = error.waited_ms().unwrap_or_default(),
+fn protocol_failure(worker_id: usize) -> LiveIndexError {
+    let failure = LiveIndexWorkerFailure::fixed(
+        LiveIndexWorkerFailureClass::Worker,
+        LiveIndexWorkerOperation::WorkerProtocol,
     );
+    emit_worker_failure(worker_id, &failure);
+    worker_failure_error(worker_id, &failure)
+}
+
+fn process_failure(worker_id: usize) -> LiveIndexError {
+    let failure = LiveIndexWorkerFailure::fixed(
+        LiveIndexWorkerFailureClass::Worker,
+        LiveIndexWorkerOperation::WorkerProcess,
+    );
+    emit_worker_failure(worker_id, &failure);
+    worker_failure_error(worker_id, &failure)
+}
+
+enum WorkerReaderEvent {
+    Message {
+        worker_id: usize,
+        message: Box<WorkerMessage>,
+        received_at: Instant,
+    },
+    Ended {
+        worker_id: usize,
+    },
+    Invalid {
+        worker_id: usize,
+    },
 }
 
 struct SpawnedWorker {
     worker_id: usize,
     request_path: PathBuf,
     child: Option<Child>,
+    stdin: Option<BufWriter<Box<dyn Write + Send>>>,
+    reader: Option<JoinHandle<()>>,
 }
 
-fn cancel_workers(children: &mut [SpawnedWorker], start: usize) {
-    for worker in &mut children[start..] {
-        if let Some(child) = worker.child.as_mut() {
+/// Process handle and bidirectional protocol streams returned by a worker launcher.
+pub(crate) struct LaunchedWorkerProcess {
+    child: Child,
+    reader: Box<dyn Read + Send>,
+    writer: Box<dyn Write + Send>,
+}
+
+impl LaunchedWorkerProcess {
+    /// Take the standard input and output pipes from a production worker process.
+    ///
+    /// # Arguments
+    ///
+    /// * `child` - Spawned worker with piped standard input and output.
+    /// * `worker_id` - Stable worker identifier used for safe failure attribution.
+    ///
+    /// # Returns
+    ///
+    /// Process and protocol streams ready for supervision.
+    pub(crate) fn from_child_stdio(
+        mut child: Child,
+        worker_id: usize,
+    ) -> Result<Self, LiveIndexError> {
+        let Some(writer) = child.stdin.take() else {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(process_failure(worker_id));
+        };
+        let Some(reader) = child.stdout.take() else {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(process_failure(worker_id));
+        };
+        Ok(Self {
+            child,
+            reader: Box::new(reader),
+            writer: Box::new(writer),
+        })
+    }
+
+    /// Build a process-real test worker with explicit protocol streams.
+    ///
+    /// # Arguments
+    ///
+    /// * `child` - Spawned fixture process.
+    /// * `reader` - Child-to-parent protocol stream.
+    /// * `writer` - Parent-to-child acknowledgement stream.
+    ///
+    /// # Returns
+    ///
+    /// Process and protocol streams ready for production supervision logic.
+    #[cfg(test)]
+    pub(crate) fn from_test_streams(
+        child: Child,
+        reader: impl Read + Send + 'static,
+        writer: impl Write + Send + 'static,
+    ) -> Self {
+        Self {
+            child,
+            reader: Box::new(reader),
+            writer: Box::new(writer),
+        }
+    }
+}
+
+struct WorkerProgress {
+    assignments: Vec<WorkerJournalAssignment>,
+    assignment_position: usize,
+    next_page_index: usize,
+    next_sequence: u64,
+    terminal_received: bool,
+}
+
+impl WorkerProgress {
+    fn from_request(request: &LiveIndexWorkerRequest) -> Self {
+        Self {
+            assignments: request.assignments.clone(),
+            assignment_position: 0,
+            next_page_index: 0,
+            next_sequence: 0,
+            terminal_received: false,
+        }
+    }
+}
+
+/// Supervise fetch-only child processes through the parent-owned SQLite writer.
+///
+/// # Arguments
+///
+/// * `request_dir` - Disposable worker request directory.
+/// * `content` - Parent-owned content connection.
+/// * `control` - Parent-owned control connection.
+/// * `context` - Stable commit and lease context.
+/// * `requests` - Versioned worker assignments.
+/// * `metrics` - Aggregate metrics prepared from parent checkpoint reads.
+/// * `heartbeat_interval` - Lease renewal interval.
+/// * `launcher` - Production or test-only child process launcher.
+/// * `observer` - Safe post-ACK writer observation callback.
+///
+/// # Returns
+///
+/// Aggregate metrics after every worker stream and process completes.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn run_worker_processes_with_launcher<Launcher, Observer>(
+    request_dir: &Path,
+    content: &Connection,
+    control: &Connection,
+    context: &ParentWriterContext,
+    requests: Vec<LiveIndexWorkerRequest>,
+    metrics: IndexRunMetrics,
+    heartbeat_interval: Duration,
+    mut launcher: Launcher,
+    mut observer: Observer,
+) -> Result<IndexRunMetrics, LiveIndexError>
+where
+    Launcher: FnMut(&Path, usize) -> Result<LaunchedWorkerProcess, LiveIndexError>,
+    Observer: FnMut(WriterCommitObservation),
+{
+    if requests.is_empty() {
+        return Ok(metrics);
+    }
+    let expected_process_count = requests.len();
+    let mut journal_ordinals = BTreeSet::new();
+    for (worker_id, request) in requests.iter().enumerate() {
+        let has_invalid_assignment = request
+            .assignments
+            .iter()
+            .any(|assignment| !journal_ordinals.insert(assignment.journal_ordinal));
+        if request.protocol_version != PROTOCOL_VERSION
+            || request.worker_id != worker_id
+            || request.process_count != expected_process_count
+            || request.catalog_name != context.catalog_name
+            || request.provider_name != context.provider_name
+            || request.run_id != context.run_id
+            || request.assignments.is_empty()
+            || has_invalid_assignment
+        {
+            return Err(protocol_failure(worker_id));
+        }
+    }
+    std::fs::create_dir_all(request_dir)?;
+    let (sender, receiver) = mpsc::sync_channel(requests.len());
+    let mut children = Vec::with_capacity(requests.len());
+    let mut spawn_error = None;
+    for request in &requests {
+        let request_path = request_dir.join(format!(
+            "{}-worker-{}.json",
+            request.run_id, request.worker_id
+        ));
+        let request_bytes = match serde_json::to_vec(request) {
+            Ok(bytes) => bytes,
+            Err(error) => {
+                spawn_error = Some(LiveIndexError::Json(error));
+                break;
+            }
+        };
+        if let Err(error) = std::fs::write(&request_path, request_bytes) {
+            let _ = std::fs::remove_file(&request_path);
+            spawn_error = Some(LiveIndexError::Io(error));
+            break;
+        }
+        let launched = match launcher(&request_path, request.worker_id) {
+            Ok(launched) => launched,
+            Err(error) => {
+                let _ = std::fs::remove_file(&request_path);
+                spawn_error = Some(error);
+                break;
+            }
+        };
+        children.push(attach_worker_process(
+            launched,
+            request.worker_id,
+            request_path,
+            sender.clone(),
+        ));
+    }
+    drop(sender);
+    if let Some(error) = spawn_error {
+        drop(receiver);
+        stop_worker_processes(&mut children);
+        join_worker_readers(&mut children);
+        return Err(error);
+    }
+    let mut progress = requests
+        .iter()
+        .map(WorkerProgress::from_request)
+        .collect::<Vec<_>>();
+    let execution = supervise_worker_processes(
+        content,
+        control,
+        context,
+        &mut children,
+        &mut progress,
+        metrics,
+        heartbeat_interval,
+        &receiver,
+        &mut observer,
+    );
+    drop(receiver);
+    if execution.is_err() {
+        stop_worker_processes(&mut children);
+    }
+    join_worker_readers(&mut children);
+    execution
+}
+
+fn attach_worker_process(
+    launched: LaunchedWorkerProcess,
+    worker_id: usize,
+    request_path: PathBuf,
+    sender: SyncSender<WorkerReaderEvent>,
+) -> SpawnedWorker {
+    let LaunchedWorkerProcess {
+        child,
+        reader: stdout,
+        writer: stdin,
+    } = launched;
+    let reader = thread::spawn(move || {
+        read_worker_messages(worker_id, BufReader::new(stdout), sender);
+    });
+    SpawnedWorker {
+        worker_id,
+        request_path,
+        child: Some(child),
+        stdin: Some(BufWriter::new(stdin)),
+        reader: Some(reader),
+    }
+}
+
+fn read_worker_messages(
+    worker_id: usize,
+    mut reader: impl Read,
+    sender: SyncSender<WorkerReaderEvent>,
+) {
+    loop {
+        match read_message(&mut reader) {
+            Ok(message) => {
+                if sender
+                    .send(WorkerReaderEvent::Message {
+                        worker_id,
+                        message: Box::new(message),
+                        received_at: Instant::now(),
+                    })
+                    .is_err()
+                {
+                    return;
+                }
+            }
+            Err(ProtocolError::EndOfStream) => {
+                let _ = sender.send(WorkerReaderEvent::Ended { worker_id });
+                return;
+            }
+            Err(ProtocolError::Io(_) | ProtocolError::Json(_)) => {
+                let _ = sender.send(WorkerReaderEvent::Invalid { worker_id });
+                return;
+            }
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn supervise_worker_processes(
+    content: &Connection,
+    control: &Connection,
+    context: &ParentWriterContext,
+    children: &mut [SpawnedWorker],
+    progress: &mut [WorkerProgress],
+    mut metrics: IndexRunMetrics,
+    heartbeat_interval: Duration,
+    receiver: &Receiver<WorkerReaderEvent>,
+    observer: &mut impl FnMut(WriterCommitObservation),
+) -> Result<IndexRunMetrics, LiveIndexError> {
+    let mut remaining_workers = children.len();
+    let mut next_heartbeat = Instant::now() + heartbeat_interval;
+    while remaining_workers > 0 {
+        if Instant::now() >= next_heartbeat {
+            heartbeat_lease(
+                control,
+                &context.catalog_name,
+                &context.provider_name,
+                &context.run_id,
+                LiveRunTime::now().epoch_seconds,
+            )
+            .map_err(|error| LiveIndexError::Heartbeat(error.to_string()))?;
+            next_heartbeat = Instant::now() + heartbeat_interval;
+        }
+        let wait = next_heartbeat.saturating_duration_since(Instant::now());
+        match receiver.recv_timeout(wait) {
+            Ok(WorkerReaderEvent::Message {
+                worker_id,
+                message,
+                received_at,
+            }) => {
+                if let Some(observation) = handle_worker_message(
+                    content,
+                    control,
+                    context,
+                    children,
+                    progress,
+                    &mut metrics,
+                    worker_id,
+                    *message,
+                    received_at,
+                )? {
+                    observer(observation);
+                }
+            }
+            Ok(WorkerReaderEvent::Ended { worker_id }) => {
+                let Some(worker_progress) = progress.get(worker_id) else {
+                    return Err(protocol_failure(worker_id));
+                };
+                if !worker_progress.terminal_received {
+                    return Err(protocol_failure(worker_id));
+                }
+                finish_worker_process(children, worker_id)?;
+                remaining_workers -= 1;
+            }
+            Ok(WorkerReaderEvent::Invalid { worker_id }) => {
+                return Err(protocol_failure(worker_id));
+            }
+            Err(RecvTimeoutError::Timeout) => {}
+            Err(RecvTimeoutError::Disconnected) => {
+                return Err(protocol_failure(0));
+            }
+        }
+    }
+    Ok(metrics)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn handle_worker_message(
+    content: &Connection,
+    control: &Connection,
+    context: &ParentWriterContext,
+    children: &mut [SpawnedWorker],
+    progress: &mut [WorkerProgress],
+    metrics: &mut IndexRunMetrics,
+    pipe_worker_id: usize,
+    message: WorkerMessage,
+    received_at: Instant,
+) -> Result<Option<WriterCommitObservation>, LiveIndexError> {
+    let Some(worker_progress) = progress.get_mut(pipe_worker_id) else {
+        return Err(protocol_failure(pipe_worker_id));
+    };
+    if worker_progress.terminal_received {
+        return Err(protocol_failure(pipe_worker_id));
+    }
+    match message {
+        WorkerMessage::Batch {
+            protocol_version,
+            worker_id,
+            sequence,
+            journal_ordinal,
+            page_index,
+            batch,
+        } => {
+            if protocol_version != PROTOCOL_VERSION
+                || worker_id != pipe_worker_id
+                || sequence != worker_progress.next_sequence
+                || page_index != worker_progress.next_page_index
+                || page_index >= MAX_PROVIDER_PAGES_PER_JOURNAL
+            {
+                return Err(protocol_failure(pipe_worker_id));
+            }
+            let Some(assignment) = worker_progress
+                .assignments
+                .get(worker_progress.assignment_position)
+                .cloned()
+            else {
+                return Err(protocol_failure(pipe_worker_id));
+            };
+            if journal_ordinal != assignment.journal_ordinal
+                || batch.catalog_id != assignment.entry.catalog_id
+            {
+                return Err(protocol_failure(pipe_worker_id));
+            }
+            let stored_checkpoint = checkpoint_after_batch(&batch)?;
+            let is_complete = matches!(stored_checkpoint, StoredCheckpoint::Complete);
+            let encoded_checkpoint = serde_json::to_string(&stored_checkpoint)?;
+            let scope = CheckpointScope::Journal {
+                catalog_id: assignment.entry.catalog_id.clone(),
+            };
+            let content_revision = format!(
+                "{}:{}:{}",
+                context.run_id, assignment.entry.catalog_id, page_index
+            );
+            let outcome = commit_content_then_checkpoint(
+                control,
+                &context.catalog_name,
+                &context.provider_name,
+                &scope,
+                &encoded_checkpoint,
+                &context.timestamp,
+                || {
+                    write_content_batch(
+                        content,
+                        &assignment.entry,
+                        &batch,
+                        &content_revision,
+                        &context.timestamp,
+                    )
+                },
+            )
+            .map_err(|error| {
+                let error = LiveIndexError::Commit(error);
+                emit_worker_failure(pipe_worker_id, &LiveIndexWorkerFailure::from_error(&error));
+                error
+            })?;
+            metrics.record_write(outcome);
+            let commit_service_ms = duration_millis(received_at.elapsed());
+            tracing::debug!(
+                event = "index.writer.batch_committed",
+                component = "index",
+                worker_id = pipe_worker_id,
+                sequence,
+                journal_ordinal,
+                page_index,
+                is_complete,
+                service_ms = commit_service_ms,
+                articles_seen = outcome.articles_seen,
+                articles_changed = outcome.articles_changed,
+                identity_aliases_added = outcome.identity_aliases_added,
+                change_events_emitted = outcome.change_events_emitted,
+            );
+            let Some(worker) = children.get_mut(pipe_worker_id) else {
+                return Err(protocol_failure(pipe_worker_id));
+            };
+            let Some(stdin) = worker.stdin.as_mut() else {
+                return Err(protocol_failure(pipe_worker_id));
+            };
+            write_message(
+                stdin,
+                &ParentMessage::Committed {
+                    protocol_version: PROTOCOL_VERSION,
+                    worker_id: pipe_worker_id,
+                    sequence,
+                    journal_ordinal,
+                    page_index,
+                    is_complete,
+                },
+            )
+            .map_err(|_| protocol_failure(pipe_worker_id))?;
+            let observation = WriterCommitObservation {
+                worker_id: pipe_worker_id,
+                sequence,
+                page_index,
+                service_ms: duration_millis(received_at.elapsed()),
+                articles_seen: outcome.articles_seen,
+            };
+            worker_progress.next_sequence = worker_progress
+                .next_sequence
+                .checked_add(1)
+                .ok_or_else(|| protocol_failure(pipe_worker_id))?;
+            if is_complete {
+                worker_progress.assignment_position += 1;
+                worker_progress.next_page_index = 0;
+                metrics.journals_succeeded += 1;
+            } else {
+                worker_progress.next_page_index += 1;
+            }
+            return Ok(Some(observation));
+        }
+        WorkerMessage::Succeeded {
+            protocol_version,
+            worker_id,
+            sequence,
+        } => {
+            if protocol_version != PROTOCOL_VERSION
+                || worker_id != pipe_worker_id
+                || sequence != worker_progress.next_sequence
+                || worker_progress.assignment_position != worker_progress.assignments.len()
+            {
+                return Err(protocol_failure(pipe_worker_id));
+            }
+            worker_progress.terminal_received = true;
+        }
+        WorkerMessage::Failed {
+            protocol_version,
+            worker_id,
+            sequence,
+            failure,
+        } => {
+            if protocol_version != PROTOCOL_VERSION
+                || worker_id != pipe_worker_id
+                || sequence != worker_progress.next_sequence
+            {
+                return Err(protocol_failure(pipe_worker_id));
+            }
+            emit_worker_failure(pipe_worker_id, &failure);
+            return Err(worker_failure_error(pipe_worker_id, &failure));
+        }
+    }
+    Ok(None)
+}
+
+fn finish_worker_process(
+    children: &mut [SpawnedWorker],
+    worker_id: usize,
+) -> Result<(), LiveIndexError> {
+    let Some(worker) = children.get_mut(worker_id) else {
+        return Err(protocol_failure(worker_id));
+    };
+    if worker.worker_id != worker_id {
+        return Err(protocol_failure(worker_id));
+    }
+    worker.stdin = None;
+    let Some(mut child) = worker.child.take() else {
+        return Err(protocol_failure(worker_id));
+    };
+    let status = child.wait();
+    let _ = std::fs::remove_file(&worker.request_path);
+    let status = status.map_err(|_| process_failure(worker_id))?;
+    if !status.success() {
+        return Err(process_failure(worker_id));
+    }
+    Ok(())
+}
+
+fn stop_worker_processes(children: &mut [SpawnedWorker]) {
+    for worker in children {
+        worker.stdin = None;
+        if let Some(mut child) = worker.child.take() {
             let _ = child.kill();
             let _ = child.wait();
         }
-        worker.child = None;
         let _ = std::fs::remove_file(&worker.request_path);
     }
 }
 
-fn run_worker_request(request: &LiveIndexWorkerRequest) -> Result<IndexRunMetrics, LiveIndexError> {
+fn join_worker_readers(children: &mut [SpawnedWorker]) {
+    for worker in children {
+        if let Some(reader) = worker.reader.take() {
+            let _ = reader.join();
+        }
+    }
+}
+
+fn run_direct_request(
+    config: &LiveIndexConfig,
+    content: &Connection,
+    control: &Connection,
+    request: &DirectIndexRequest,
+    schedule_epoch_unix_millis: u64,
+) -> Result<IndexRunMetrics, LiveIndexError> {
+    let registration = build_index_registration(
+        &request.provider_name,
+        config
+            .scholarly_config
+            .clone()
+            .with_worker_context(request.worker_id, 1)
+            .with_schedule_epoch(schedule_epoch_unix_millis),
+        config.worker_count,
+        config.timeout_seconds,
+    )?;
+    let provider = registration.index_content().cloned().ok_or_else(|| {
+        LiveIndexError::InvalidConfig(format!(
+            "provider {} does not declare indexing capability",
+            request.provider_name
+        ))
+    })?;
+    index_entries_with_provider(content, control, provider.as_ref(), request)
+}
+
+fn run_fetch_worker_stream(
+    request: &LiveIndexWorkerRequest,
+    reader: &mut impl Read,
+    writer: &mut impl Write,
+) -> Result<(), LiveIndexError> {
+    let mut sequence = 0_u64;
+    let execution = fetch_worker_assignments(request, reader, writer, &mut sequence);
+    let message = match execution {
+        Ok(()) => WorkerMessage::Succeeded {
+            protocol_version: PROTOCOL_VERSION,
+            worker_id: request.worker_id,
+            sequence,
+        },
+        Err(error) => WorkerMessage::Failed {
+            protocol_version: PROTOCOL_VERSION,
+            worker_id: request.worker_id,
+            sequence,
+            failure: LiveIndexWorkerFailure::from_error(&error),
+        },
+    };
+    write_message(writer, &message)
+        .map_err(|_| LiveIndexError::Worker(WORKER_PROTOCOL_FAILURE_MESSAGE.to_string()))
+}
+
+fn fetch_worker_assignments(
+    request: &LiveIndexWorkerRequest,
+    reader: &mut impl Read,
+    writer: &mut impl Write,
+    sequence: &mut u64,
+) -> Result<(), LiveIndexError> {
+    if request.protocol_version != PROTOCOL_VERSION
+        || request.process_count == 0
+        || request.worker_id >= request.process_count
+    {
+        return Err(LiveIndexError::InvalidConfig(
+            "worker protocol request is invalid".to_string(),
+        ));
+    }
+    let unique_ordinals = request
+        .assignments
+        .iter()
+        .map(|assignment| assignment.journal_ordinal)
+        .collect::<BTreeSet<_>>();
+    if unique_ordinals.len() != request.assignments.len() {
+        return Err(LiveIndexError::InvalidConfig(
+            "worker journal assignments are invalid".to_string(),
+        ));
+    }
     let registration = build_index_registration(
         &request.provider_name,
         request
@@ -1195,34 +1635,88 @@ fn run_worker_request(request: &LiveIndexWorkerRequest) -> Result<IndexRunMetric
             request.provider_name
         ))
     })?;
-    let worker_id = request.worker_id.to_string();
-    let writer_gate = if request.process_count > 1 {
-        Some(open_writer_gate(
-            &writer_gate_path(&request.control_path),
-            &worker_id,
-        )?)
-    } else {
-        None
-    };
-    let (content, control) = {
-        let _guard =
-            acquire_optional_writer_gate(writer_gate.as_ref(), &worker_id, "database_open")?;
-        let content = open_content_db(&request.content_path).map_err(|source| {
-            LiveIndexError::ContentDatabase {
-                path: request.content_path.clone(),
-                source,
+    fetch_worker_assignments_with_provider(request, provider.as_ref(), reader, writer, sequence)
+}
+
+fn fetch_worker_assignments_with_provider(
+    request: &LiveIndexWorkerRequest,
+    provider: &dyn IndexContentProvider,
+    reader: &mut impl Read,
+    writer: &mut impl Write,
+    sequence: &mut u64,
+) -> Result<(), LiveIndexError> {
+    for assignment in &request.assignments {
+        let mut provider_checkpoint = assignment.initial_checkpoint.clone();
+        let mut seen_checkpoints = BTreeSet::new();
+        if let Some(value) = &provider_checkpoint {
+            seen_checkpoints.insert(value.clone());
+        }
+        for page_index in 0..MAX_PROVIDER_PAGES_PER_JOURNAL {
+            let batch = provider.fetch(&assignment.entry, provider_checkpoint.as_deref())?;
+            if batch.catalog_id != assignment.entry.catalog_id {
+                return Err(LiveIndexError::InvalidConfig(
+                    "provider batch catalog identity is invalid".to_string(),
+                ));
             }
-        })?;
-        let control = open_control_db(&request.control_path)?;
-        (content, control)
-    };
-    index_entries_with_provider(
-        &content,
-        &control,
-        provider.as_ref(),
-        request,
-        writer_gate.as_ref(),
-    )
+            let stored_checkpoint = checkpoint_after_batch(&batch)?;
+            let is_complete = matches!(stored_checkpoint, StoredCheckpoint::Complete);
+            write_message(
+                writer,
+                &WorkerMessage::Batch {
+                    protocol_version: PROTOCOL_VERSION,
+                    worker_id: request.worker_id,
+                    sequence: *sequence,
+                    journal_ordinal: assignment.journal_ordinal,
+                    page_index,
+                    batch,
+                },
+            )
+            .map_err(|_| LiveIndexError::Worker(WORKER_PROTOCOL_FAILURE_MESSAGE.to_string()))?;
+            let acknowledgement: ParentMessage = read_message(reader)
+                .map_err(|_| LiveIndexError::Worker(WORKER_PROTOCOL_FAILURE_MESSAGE.to_string()))?;
+            match acknowledgement {
+                ParentMessage::Committed {
+                    protocol_version,
+                    worker_id,
+                    sequence: acknowledged_sequence,
+                    journal_ordinal,
+                    page_index: acknowledged_page_index,
+                    is_complete: acknowledged_complete,
+                } if protocol_version == PROTOCOL_VERSION
+                    && worker_id == request.worker_id
+                    && acknowledged_sequence == *sequence
+                    && journal_ordinal == assignment.journal_ordinal
+                    && acknowledged_page_index == page_index
+                    && acknowledged_complete == is_complete => {}
+                ParentMessage::Committed { .. } => {
+                    return Err(LiveIndexError::Worker(
+                        WORKER_PROTOCOL_FAILURE_MESSAGE.to_string(),
+                    ));
+                }
+            }
+            *sequence = sequence.checked_add(1).ok_or_else(|| {
+                LiveIndexError::InvalidConfig("worker sequence limit exceeded".to_string())
+            })?;
+            if is_complete {
+                break;
+            }
+            let StoredCheckpoint::Provider { value } = stored_checkpoint else {
+                unreachable!("complete checkpoint returned above")
+            };
+            if !seen_checkpoints.insert(value.clone()) {
+                return Err(LiveIndexError::InvalidConfig(
+                    "index provider returned a repeated checkpoint".to_string(),
+                ));
+            }
+            provider_checkpoint = Some(value);
+            if page_index + 1 == MAX_PROVIDER_PAGES_PER_JOURNAL {
+                return Err(LiveIndexError::InvalidConfig(
+                    "provider page limit exceeded".to_string(),
+                ));
+            }
+        }
+    }
+    Ok(())
 }
 
 fn build_index_registration(
@@ -1267,16 +1761,13 @@ fn index_entries_with_provider(
     content: &Connection,
     control: &Connection,
     provider: &dyn IndexContentProvider,
-    request: &LiveIndexWorkerRequest,
-    writer_gate: Option<&WriterGate>,
+    request: &DirectIndexRequest,
 ) -> Result<IndexRunMetrics, LiveIndexError> {
     let mut metrics = IndexRunMetrics {
         journals_total: request.entries.len(),
         ..IndexRunMetrics::default()
     };
-    let worker_id = request.worker_id.to_string();
     for entry in &request.entries {
-        let _guard = acquire_optional_writer_gate(writer_gate, &worker_id, "journal_heartbeat")?;
         heartbeat_lease(
             control,
             &request.catalog_name,
@@ -1285,7 +1776,6 @@ fn index_entries_with_provider(
             LiveRunTime::now().epoch_seconds,
         )
         .map_err(|error| LiveIndexError::Heartbeat(error.to_string()))?;
-        drop(_guard);
         let scope = CheckpointScope::Journal {
             catalog_id: entry.catalog_id.clone(),
         };
@@ -1314,7 +1804,6 @@ fn index_entries_with_provider(
             seen_checkpoints.insert(value.clone());
         }
         for page_index in 0..MAX_PROVIDER_PAGES_PER_JOURNAL {
-            let _guard = acquire_optional_writer_gate(writer_gate, &worker_id, "page_heartbeat")?;
             heartbeat_lease(
                 control,
                 &request.catalog_name,
@@ -1323,36 +1812,28 @@ fn index_entries_with_provider(
                 LiveRunTime::now().epoch_seconds,
             )
             .map_err(|error| LiveIndexError::Heartbeat(error.to_string()))?;
-            drop(_guard);
             let batch = provider.fetch(entry, provider_checkpoint.as_deref())?;
             let stored_checkpoint = checkpoint_after_batch(&batch)?;
             let encoded_checkpoint = serde_json::to_string(&stored_checkpoint)?;
             let content_revision =
                 format!("{}:{}:{}", request.run_id, entry.catalog_id, page_index);
-            let outcome = {
-                let _guard = acquire_optional_writer_gate(
-                    writer_gate,
-                    &worker_id,
-                    "content_checkpoint_commit",
-                )?;
-                commit_content_then_checkpoint(
-                    control,
-                    &request.catalog_name,
-                    &request.provider_name,
-                    &scope,
-                    &encoded_checkpoint,
-                    &request.timestamp,
-                    || {
-                        write_content_batch(
-                            content,
-                            entry,
-                            &batch,
-                            &content_revision,
-                            &request.timestamp,
-                        )
-                    },
-                )?
-            };
+            let outcome = commit_content_then_checkpoint(
+                control,
+                &request.catalog_name,
+                &request.provider_name,
+                &scope,
+                &encoded_checkpoint,
+                &request.timestamp,
+                || {
+                    write_content_batch(
+                        content,
+                        entry,
+                        &batch,
+                        &content_revision,
+                        &request.timestamp,
+                    )
+                },
+            )?;
             metrics.record_write(outcome);
             if matches!(stored_checkpoint, StoredCheckpoint::Complete) {
                 metrics.journals_succeeded += 1;
@@ -1411,6 +1892,10 @@ fn checkpoint_after_batch(batch: &ProviderBatch) -> Result<StoredCheckpoint, Liv
     Ok(StoredCheckpoint::Provider { value })
 }
 
+fn duration_millis(duration: Duration) -> u64 {
+    duration.as_millis().try_into().unwrap_or(u64::MAX)
+}
+
 fn run_notify_for_manifest(
     config: &LiveIndexConfig,
     db_name: &str,
@@ -1442,34 +1927,41 @@ fn run_notify_for_manifest(
 #[cfg(test)]
 mod tests {
     use std::collections::{BTreeMap, BTreeSet};
-    use std::io::{self, Write};
-    use std::sync::{Arc, Mutex};
+    use std::io::{self, BufReader, Cursor, Write};
+    use std::net::{TcpListener, TcpStream};
+    use std::process::{Command, Stdio};
+    use std::sync::{mpsc, Arc, Mutex};
+    use std::thread;
     use std::time::Duration;
 
     use litradar_domain::{
         ArticleAuthorDraft, ArticleDraft, IssueDraft, JournalCatalogEntry, JournalDraft,
         JournalRankings, ProviderBatch,
     };
-    use litradar_provider::{IndexContentProvider, ProviderError, ProviderErrorKind};
+    use litradar_provider::{IndexContentProvider, ProviderError};
     use rusqlite::{Connection, ErrorCode};
     use tempfile::tempdir;
     use tracing_subscriber::fmt::MakeWriter;
 
     use super::{
-        acquire_optional_writer_gate, build_worker_requests, emit_worker_failure,
-        emit_writer_gate_failure, index_entries_with_provider, run_live_index,
-        run_live_index_worker_from_file_path, validate_live_config, worker_failure_error,
-        writer_gate_path, LeaseHeartbeat, LiveIndexConfig, LiveIndexError, LiveIndexWorkerFailure,
-        LiveIndexWorkerFailureClass, LiveIndexWorkerOperation, LiveIndexWorkerRequest,
-        LiveIndexWorkerResponse, LiveRunTime, OPENALEX_MAX_WORKERS_PER_PROCESS,
-        WRITER_GATE_FAILURE_MESSAGE,
+        emit_worker_failure, fetch_worker_assignments_with_provider, index_entries_with_provider,
+        prepare_worker_requests, run_live_index, run_live_index_worker_with_io,
+        run_worker_processes_with_launcher, validate_live_config, worker_failure_error,
+        DirectIndexRequest, LaunchedWorkerProcess, LeaseHeartbeat, LiveIndexConfig, LiveIndexError,
+        LiveIndexWorkerFailure, LiveIndexWorkerFailureClass, LiveIndexWorkerOperation,
+        LiveIndexWorkerRequest, LiveRunTime, ParentWriterContext, StoredCheckpoint,
+        OPENALEX_MAX_WORKERS_PER_PROCESS,
     };
     use crate::control::{
         acquire_lease, commit_content_then_checkpoint, open_control_db, read_checkpoint,
-        release_lease, CheckpointScope, ContentCheckpointCommitError,
+        release_lease, write_checkpoint, CheckpointScope, ContentCheckpointCommitError,
     };
     use crate::schema::{open_content_db, write_content_batch, ContentDatabaseError};
-    use crate::writer_gate::{WriterGate, WriterGateError};
+    use crate::stats::IndexRunMetrics;
+    use crate::worker_protocol::{
+        read_message, write_message, ParentMessage, WorkerJournalAssignment, WorkerMessage,
+        PROTOCOL_VERSION,
+    };
 
     #[derive(Clone, Default)]
     struct CapturedLogs {
@@ -1552,49 +2044,30 @@ mod tests {
         }
     }
 
-    struct WriterGateProbeProvider {
-        gate: WriterGate,
-        did_acquire_during_fetch: Mutex<bool>,
+    struct TwoPageProvider {
+        second_fetch: mpsc::Sender<()>,
     }
 
-    impl WriterGateProbeProvider {
-        fn new(gate: WriterGate) -> Self {
-            Self {
-                gate,
-                did_acquire_during_fetch: Mutex::new(false),
-            }
-        }
-
-        fn did_acquire_during_fetch(&self) -> bool {
-            *self
-                .did_acquire_during_fetch
-                .lock()
-                .expect("gate probe state should lock")
-        }
-    }
-
-    impl IndexContentProvider for WriterGateProbeProvider {
+    impl IndexContentProvider for TwoPageProvider {
         fn fetch(
             &self,
             catalog: &JournalCatalogEntry,
             checkpoint: Option<&str>,
         ) -> Result<ProviderBatch, ProviderError> {
-            assert!(checkpoint.is_none());
-            let guard = self
-                .gate
-                .acquire_with(Duration::from_millis(100), Duration::from_millis(5))
-                .map_err(|_| {
-                    ProviderError::new(
-                        ProviderErrorKind::Internal,
-                        "provider fetch observed a held writer gate",
-                    )
-                })?;
-            *self
-                .did_acquire_during_fetch
-                .lock()
-                .expect("gate probe state should lock") = true;
-            drop(guard);
-            Ok(canonical_batch(catalog))
+            let mut batch = canonical_batch(catalog);
+            match checkpoint {
+                None => {
+                    batch.is_complete = false;
+                    batch.next_checkpoint = Some("cursor-1".to_string());
+                }
+                Some("cursor-1") => {
+                    self.second_fetch
+                        .send(())
+                        .expect("second fetch observation should send");
+                }
+                Some(_) => panic!("unexpected provider checkpoint"),
+            }
+            Ok(batch)
         }
     }
 
@@ -1653,29 +2126,38 @@ mod tests {
         }
     }
 
-    fn worker_request(
-        root: &std::path::Path,
-        provider_name: &str,
-        run_id: &str,
-    ) -> LiveIndexWorkerRequest {
-        LiveIndexWorkerRequest {
-            control_path: root.join("control.sqlite"),
-            content_path: root.join("content.sqlite"),
+    fn direct_request(provider_name: &str, run_id: &str) -> DirectIndexRequest {
+        DirectIndexRequest {
             catalog_name: "chinese_journals".to_string(),
             provider_name: provider_name.to_string(),
             run_id: run_id.to_string(),
             timestamp: "2026-07-18T00:00:00Z".to_string(),
             worker_id: 0,
+            resume: true,
+            update: false,
+            entries: vec![catalog("journal-1")],
+        }
+    }
+
+    fn fetch_worker_request(provider_name: &str, run_id: &str) -> LiveIndexWorkerRequest {
+        LiveIndexWorkerRequest {
+            protocol_version: PROTOCOL_VERSION,
+            catalog_name: "chinese_journals".to_string(),
+            provider_name: provider_name.to_string(),
+            run_id: run_id.to_string(),
+            worker_id: 0,
             process_count: 1,
             source_worker_count: 1,
             schedule_epoch_unix_millis: 0,
             timeout_seconds: 10,
-            resume: true,
-            update: false,
             scholarly_config: litradar_sources::LiveScholarlyConfig::from_value_pools(
                 10, "", "", "",
             ),
-            entries: vec![catalog("journal-1")],
+            assignments: vec![WorkerJournalAssignment {
+                journal_ordinal: 0,
+                entry: catalog("journal-1"),
+                initial_checkpoint: None,
+            }],
         }
     }
 
@@ -1683,9 +2165,11 @@ mod tests {
     fn provider_switch_uses_new_checkpoint_namespace_and_same_content_ids() {
         let directory = tempdir().expect("temporary directory should create");
         let provider = StaticProvider::new();
-        let request_a = worker_request(directory.path(), "provider-a", "run-a");
-        let content = open_content_db(&request_a.content_path).expect("content should open");
-        let control = open_control_db(&request_a.control_path).expect("control should open");
+        let content_path = directory.path().join("content.sqlite");
+        let control_path = directory.path().join("control.sqlite");
+        let request_a = direct_request("provider-a", "run-a");
+        let content = open_content_db(&content_path).expect("content should open");
+        let control = open_control_db(&control_path).expect("control should open");
         let now = LiveRunTime::now().epoch_seconds;
         acquire_lease(
             &control,
@@ -1695,7 +2179,7 @@ mod tests {
             now,
         )
         .expect("provider A lease should acquire");
-        index_entries_with_provider(&content, &control, &provider, &request_a, None)
+        index_entries_with_provider(&content, &control, &provider, &request_a)
             .expect("provider A should index");
         let article_id = content
             .query_row("SELECT article_id FROM articles", [], |row| {
@@ -1710,7 +2194,7 @@ mod tests {
         )
         .expect("provider A lease should release");
 
-        let request_b = worker_request(directory.path(), "provider-b", "run-b");
+        let request_b = direct_request("provider-b", "run-b");
         acquire_lease(
             &control,
             &request_b.catalog_name,
@@ -1719,7 +2203,7 @@ mod tests {
             now,
         )
         .expect("provider B lease should acquire");
-        index_entries_with_provider(&content, &control, &provider, &request_b, None)
+        index_entries_with_provider(&content, &control, &provider, &request_b)
             .expect("provider B should index");
         let replayed_id = content
             .query_row("SELECT article_id FROM articles", [], |row| {
@@ -1753,9 +2237,11 @@ mod tests {
     fn deleting_control_state_replays_without_changing_content_cardinality() {
         let directory = tempdir().expect("temporary directory should create");
         let provider = StaticProvider::new();
-        let request = worker_request(directory.path(), "provider-a", "run-a");
-        let content = open_content_db(&request.content_path).expect("content should open");
-        let control = open_control_db(&request.control_path).expect("control should open");
+        let content_path = directory.path().join("content.sqlite");
+        let control_path = directory.path().join("control.sqlite");
+        let request = direct_request("provider-a", "run-a");
+        let content = open_content_db(&content_path).expect("content should open");
+        let control = open_control_db(&control_path).expect("control should open");
         let now = LiveRunTime::now().epoch_seconds;
         acquire_lease(
             &control,
@@ -1765,12 +2251,11 @@ mod tests {
             now,
         )
         .expect("lease should acquire");
-        index_entries_with_provider(&content, &control, &provider, &request, None)
+        index_entries_with_provider(&content, &control, &provider, &request)
             .expect("first run should index");
         drop(control);
-        std::fs::remove_file(&request.control_path).expect("control database should delete");
-        let replay_control =
-            open_control_db(&request.control_path).expect("control should recreate");
+        std::fs::remove_file(&control_path).expect("control database should delete");
+        let replay_control = open_control_db(&control_path).expect("control should recreate");
         let mut replay = request.clone();
         replay.run_id = "run-b".to_string();
         acquire_lease(
@@ -1781,9 +2266,8 @@ mod tests {
             now,
         )
         .expect("replay lease should acquire");
-        let metrics =
-            index_entries_with_provider(&content, &replay_control, &provider, &replay, None)
-                .expect("control-loss replay should succeed");
+        let metrics = index_entries_with_provider(&content, &replay_control, &provider, &replay)
+            .expect("control-loss replay should succeed");
         assert_eq!(metrics.articles_changed, 0);
         for table in ["journals", "issues", "articles", "article_change_events"] {
             let count = content
@@ -1821,18 +2305,21 @@ mod tests {
         let entries = (0..7)
             .map(|index| catalog(&format!("journal-{index}")))
             .collect::<Vec<_>>();
-        let requests = build_worker_requests(
-            &config,
-            std::path::Path::new("control.sqlite"),
-            std::path::Path::new("content.sqlite"),
-            "catalog",
-            "scholarly",
-            "run",
-            "time",
-            123_456,
-            &entries,
-        );
+        let directory = tempdir().expect("temporary control directory should create");
+        let control = open_control_db(directory.path().join("control.sqlite"))
+            .expect("control database should open");
+        let context = ParentWriterContext {
+            catalog_name: "catalog".to_string(),
+            provider_name: "scholarly".to_string(),
+            run_id: "run".to_string(),
+            timestamp: "time".to_string(),
+        };
+        let (requests, metrics) =
+            prepare_worker_requests(&config, &control, &context, 123_456, &entries)
+                .expect("worker requests should prepare");
         assert_eq!(requests.len(), 3);
+        assert_eq!(metrics.journals_total, entries.len());
+        assert_eq!(metrics.journals_resumed, 0);
         assert!(requests
             .iter()
             .all(|request| request.source_worker_count == 2));
@@ -1863,162 +2350,432 @@ mod tests {
         assert!(!directory.path().join("data").exists());
         let ids = requests
             .iter()
-            .flat_map(|request| request.entries.iter())
-            .map(|entry| entry.catalog_id.clone())
+            .flat_map(|request| request.assignments.iter())
+            .map(|assignment| assignment.entry.catalog_id.clone())
             .collect::<BTreeSet<_>>();
         assert_eq!(ids.len(), entries.len());
-        assert!(requests.iter().all(|request| !request.entries.is_empty()));
+        assert!(requests
+            .iter()
+            .all(|request| !request.assignments.is_empty()));
+        let request_json =
+            serde_json::to_string(&requests[0]).expect("worker request should serialize");
+        assert!(!request_json.contains("content_path"));
+        assert!(!request_json.contains("control_path"));
     }
 
     #[test]
-    fn worker_file_entrypoint_returns_one_json_value_on_stdout_boundary() {
-        let directory = tempdir().expect("temporary directory should create");
-        let mut request = worker_request(directory.path(), "scholarly", "run-worker");
-        request.entries.clear();
-        let request_path = directory.path().join("worker-request.json");
-        std::fs::write(
-            &request_path,
-            serde_json::to_vec(&request).expect("worker request should serialize"),
-        )
-        .expect("worker request should write");
-
-        let captured = CapturedLogs::default();
-        let response = tracing::subscriber::with_default(captured.subscriber(), || {
-            run_live_index_worker_from_file_path(&request_path)
-                .expect("worker entrypoint should return JSON")
-        });
-        let payload: serde_json::Value =
-            serde_json::from_str(&response).expect("worker response should be one JSON value");
-
-        assert_eq!(payload["worker_id"], 0);
-        assert_eq!(payload["status"], "succeeded");
-        assert_eq!(payload["metrics"]["journals_total"], 0);
-        assert!(payload["failure"].is_null());
-        assert!(payload.get("error").is_none());
-        assert_eq!(response.lines().count(), 1);
-        assert!(!writer_gate_path(&request.control_path).exists());
-        assert!(!captured.text().contains("index.writer_gate"));
-    }
-
-    #[test]
-    fn writer_gate_keeps_provider_fetch_outside_the_guarded_write_phase() {
-        let directory = tempdir().expect("temporary directory should create");
-        let mut request = worker_request(directory.path(), "provider-a", "run-gated");
-        request.process_count = 2;
-        let content = open_content_db(&request.content_path).expect("content should open");
-        let control = open_control_db(&request.control_path).expect("control should open");
-        acquire_lease(
+    fn single_writer_parent_preloads_complete_and_provider_checkpoints() {
+        let mut config = LiveIndexConfig {
+            application_executable: "litradar".into(),
+            project_root: ".".into(),
+            secret_key_file: "secret.key".into(),
+            file: None,
+            worker_count: 2,
+            process_count: 3,
+            issue_batch_size: 2,
+            timeout_seconds: 10,
+            resume: true,
+            update: false,
+            notify: false,
+            notify_dry_run: true,
+            scholarly_config: litradar_sources::LiveScholarlyConfig::from_value_pools(
+                10, "", "", "",
+            ),
+            index_provider_routes: BTreeMap::new(),
+        };
+        let entries = vec![catalog("complete"), catalog("resumable")];
+        let directory = tempdir().expect("temporary control directory should create");
+        config.project_root = directory.path().to_path_buf();
+        let control = open_control_db(directory.path().join("control.sqlite"))
+            .expect("control database should open");
+        let context = ParentWriterContext {
+            catalog_name: "catalog".to_string(),
+            provider_name: "provider".to_string(),
+            run_id: "run".to_string(),
+            timestamp: "2026-07-19T00:00:00Z".to_string(),
+        };
+        let complete_scope = CheckpointScope::Journal {
+            catalog_id: "complete".to_string(),
+        };
+        let resumable_scope = CheckpointScope::Journal {
+            catalog_id: "resumable".to_string(),
+        };
+        write_checkpoint(
             &control,
-            &request.catalog_name,
-            &request.provider_name,
-            &request.run_id,
-            LiveRunTime::now().epoch_seconds,
+            &context.catalog_name,
+            &context.provider_name,
+            &complete_scope,
+            &serde_json::to_string(&StoredCheckpoint::Complete)
+                .expect("complete checkpoint should serialize"),
+            &context.timestamp,
         )
-        .expect("lease should acquire");
-        let lock_path = writer_gate_path(&request.control_path);
-        let writer_gate = WriterGate::open(&lock_path).expect("worker gate should open");
-        let provider = WriterGateProbeProvider::new(
-            WriterGate::open(&lock_path).expect("provider probe gate should open"),
-        );
-        let captured = CapturedLogs::default();
+        .expect("complete checkpoint should write");
+        write_checkpoint(
+            &control,
+            &context.catalog_name,
+            &context.provider_name,
+            &resumable_scope,
+            &serde_json::to_string(&StoredCheckpoint::Provider {
+                value: "cursor-resume".to_string(),
+            })
+            .expect("provider checkpoint should serialize"),
+            &context.timestamp,
+        )
+        .expect("provider checkpoint should write");
 
-        let metrics = tracing::subscriber::with_default(captured.subscriber(), || {
-            index_entries_with_provider(&content, &control, &provider, &request, Some(&writer_gate))
-                .expect("gated index should succeed")
-        });
+        let (requests, metrics) = prepare_worker_requests(&config, &control, &context, 7, &entries)
+            .expect("parent should preload checkpoints");
 
-        assert!(provider.did_acquire_during_fetch());
-        assert_eq!(metrics.journals_succeeded, 1);
-        assert_eq!(metrics.articles_changed, 1);
-        let logs = captured.text();
-        assert!(logs.contains("index.writer_gate.acquired"));
-        assert!(logs.contains("journal_heartbeat"));
-        assert!(logs.contains("page_heartbeat"));
-        assert!(logs.contains("content_checkpoint_commit"));
-        assert!(!logs.contains("index.writer_gate.failed"));
-        let verifier = WriterGate::open(&lock_path).expect("verifier gate should open");
-        let guard = verifier
-            .acquire_with(Duration::from_millis(100), Duration::from_millis(5))
-            .expect("write gate should release after indexing");
-        drop(guard);
+        assert_eq!(metrics.journals_total, 2);
+        assert_eq!(metrics.journals_resumed, 1);
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0].assignments.len(), 1);
+        assert_eq!(requests[0].assignments[0].entry.catalog_id, "resumable");
         assert_eq!(
-            std::fs::metadata(lock_path)
-                .expect("writer sidecar should exist")
-                .len(),
+            requests[0].assignments[0].initial_checkpoint.as_deref(),
+            Some("cursor-resume")
+        );
+    }
+
+    #[test]
+    fn worker_protocol_rejects_duplicate_parent_assignments_before_launch() {
+        let directory = tempdir().expect("temporary writer directory should create");
+        let content = open_content_db(directory.path().join("content.sqlite"))
+            .expect("content database should open");
+        let control = open_control_db(directory.path().join("control.sqlite"))
+            .expect("control database should open");
+        let context = ParentWriterContext {
+            catalog_name: "chinese_journals".to_string(),
+            provider_name: "fixture".to_string(),
+            run_id: "run-duplicate".to_string(),
+            timestamp: "2026-07-19T00:00:00Z".to_string(),
+        };
+        let mut first = fetch_worker_request(&context.provider_name, &context.run_id);
+        first.process_count = 2;
+        let mut second = first.clone();
+        second.worker_id = 1;
+        let request_dir = directory.path().join("worker-requests");
+
+        let error = run_worker_processes_with_launcher(
+            &request_dir,
+            &content,
+            &control,
+            &context,
+            vec![first, second],
+            IndexRunMetrics::default(),
+            Duration::from_secs(1),
+            |_, _| panic!("invalid assignments must fail before process launch"),
+            |_| {},
+        )
+        .expect_err("duplicate journal assignments should fail closed");
+
+        assert!(matches!(error, LiveIndexError::Worker(_)));
+        assert!(!request_dir.exists());
+        assert_eq!(
+            content
+                .query_row("SELECT COUNT(*) FROM articles", [], |row| row
+                    .get::<_, i64>(0))
+                .expect("article count should read"),
             0
         );
     }
 
     #[test]
-    fn writer_gate_failure_events_and_worker_boundary_are_redacted() {
+    fn single_writer_worker_waits_for_durable_ack_before_next_fetch() {
+        let listener =
+            TcpListener::bind("127.0.0.1:0").expect("loopback protocol listener should bind");
+        let address = listener
+            .local_addr()
+            .expect("loopback protocol address should resolve");
+        let request = fetch_worker_request("fixture", "run-backpressure");
+        let worker_request = request.clone();
+        let (second_fetch_sender, second_fetch_receiver) = mpsc::channel();
+        let worker = thread::spawn(move || {
+            let stream =
+                TcpStream::connect(address).expect("worker protocol stream should connect");
+            let mut reader = BufReader::new(
+                stream
+                    .try_clone()
+                    .expect("worker protocol reader should clone"),
+            );
+            let mut writer = stream;
+            let provider = TwoPageProvider {
+                second_fetch: second_fetch_sender,
+            };
+            let mut sequence = 0;
+            fetch_worker_assignments_with_provider(
+                &worker_request,
+                &provider,
+                &mut reader,
+                &mut writer,
+                &mut sequence,
+            )
+            .map(|()| sequence)
+        });
+        let (stream, _) = listener
+            .accept()
+            .expect("parent protocol stream should accept");
+        let mut reader = BufReader::new(
+            stream
+                .try_clone()
+                .expect("parent protocol reader should clone"),
+        );
+        let mut writer = stream;
+
+        let first: WorkerMessage =
+            read_message(&mut reader).expect("first provider page should arrive");
+        assert!(second_fetch_receiver.try_recv().is_err());
+        let WorkerMessage::Batch {
+            sequence,
+            journal_ordinal,
+            page_index,
+            batch,
+            ..
+        } = first
+        else {
+            panic!("worker should emit a batch before waiting")
+        };
+        assert!(!batch.is_complete);
+        write_message(
+            &mut writer,
+            &ParentMessage::Committed {
+                protocol_version: PROTOCOL_VERSION,
+                worker_id: 0,
+                sequence,
+                journal_ordinal,
+                page_index,
+                is_complete: false,
+            },
+        )
+        .expect("first durable acknowledgement should send");
+        second_fetch_receiver
+            .recv_timeout(Duration::from_secs(1))
+            .expect("next fetch should start only after acknowledgement");
+
+        let second: WorkerMessage =
+            read_message(&mut reader).expect("second provider page should arrive");
+        let WorkerMessage::Batch {
+            sequence,
+            journal_ordinal,
+            page_index,
+            batch,
+            ..
+        } = second
+        else {
+            panic!("worker should emit the second batch")
+        };
+        assert!(batch.is_complete);
+        write_message(
+            &mut writer,
+            &ParentMessage::Committed {
+                protocol_version: PROTOCOL_VERSION,
+                worker_id: 0,
+                sequence,
+                journal_ordinal,
+                page_index,
+                is_complete: true,
+            },
+        )
+        .expect("final durable acknowledgement should send");
+
+        assert_eq!(
+            worker
+                .join()
+                .expect("worker protocol thread should join")
+                .expect("worker protocol should complete"),
+            2
+        );
+    }
+
+    #[test]
+    fn worker_protocol_stdio_transport_round_trips_one_message() {
+        let child = spawn_stdio_echo_process();
+        let launched = LaunchedWorkerProcess::from_child_stdio(child, 0)
+            .expect("stdio worker pipes should attach");
+        let LaunchedWorkerProcess {
+            mut child,
+            reader,
+            mut writer,
+        } = launched;
+        let message = ParentMessage::Committed {
+            protocol_version: PROTOCOL_VERSION,
+            worker_id: 0,
+            sequence: 4,
+            journal_ordinal: 2,
+            page_index: 3,
+            is_complete: true,
+        };
+
+        write_message(&mut writer, &message).expect("protocol message should write to child stdin");
+        drop(writer);
+        let actual: ParentMessage = read_message(&mut BufReader::new(reader))
+            .expect("protocol message should return from child stdout");
+        let status = child.wait().expect("stdio echo child should be reaped");
+
+        assert_eq!(actual, message);
+        assert!(status.success());
+    }
+
+    #[cfg(target_os = "windows")]
+    fn spawn_stdio_echo_process() -> std::process::Child {
+        Command::new("cmd")
+            .args(["/D", "/S", "/C", "more"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("Windows stdio echo child should start")
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    fn spawn_stdio_echo_process() -> std::process::Child {
+        Command::new("cat")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("stdio echo child should start")
+    }
+
+    #[test]
+    fn single_writer_worker_entrypoint_streams_terminal_without_database_paths() {
+        let directory = tempdir().expect("temporary directory should create");
+        let mut request = fetch_worker_request("scholarly", "run-worker");
+        request.assignments.clear();
+        let request_path = directory.path().join("worker-request.json");
+        let request_bytes = serde_json::to_vec(&request).expect("worker request should serialize");
+        let request_text =
+            String::from_utf8(request_bytes.clone()).expect("worker request should be UTF-8");
+        std::fs::write(&request_path, request_bytes).expect("worker request should write");
+
+        let captured = CapturedLogs::default();
+        let mut output = Vec::new();
+        tracing::subscriber::with_default(captured.subscriber(), || {
+            run_live_index_worker_with_io(&request_path, Cursor::new(Vec::<u8>::new()), &mut output)
+                .expect("worker entrypoint should stream terminal JSON")
+        });
+        let message: WorkerMessage = read_message(&mut Cursor::new(output))
+            .expect("terminal worker message should deserialize");
+
+        assert!(matches!(
+            message,
+            WorkerMessage::Succeeded {
+                protocol_version: PROTOCOL_VERSION,
+                worker_id: 0,
+                sequence: 0,
+            }
+        ));
+        assert!(!request_text.contains("content_path"));
+        assert!(!request_text.contains("control_path"));
+        assert!(!captured.text().contains("index.writer"));
+    }
+
+    #[test]
+    fn single_writer_fetch_worker_source_has_no_sqlite_authority() {
+        let source = include_str!("live.rs");
+        let entrypoint_start = source
+            .find("pub fn run_live_index_worker_from_file_path")
+            .expect("worker entrypoint should exist");
+        let entrypoint_end = source[entrypoint_start..]
+            .find("fn validate_live_config")
+            .map(|offset| entrypoint_start + offset)
+            .expect("worker entrypoint boundary should exist");
+        let fetch_start = source
+            .find("fn run_fetch_worker_stream")
+            .expect("fetch worker stream should exist");
+        let fetch_end = source[fetch_start..]
+            .find("fn build_index_registration")
+            .map(|offset| fetch_start + offset)
+            .expect("fetch worker boundary should exist");
+        let worker_source = format!(
+            "{}\n{}",
+            &source[entrypoint_start..entrypoint_end],
+            &source[fetch_start..fetch_end]
+        );
+
+        for forbidden in [
+            "open_content_db(",
+            "open_control_db(",
+            "write_content_batch(",
+            "commit_content_then_checkpoint(",
+            "heartbeat_lease(",
+            "write_checkpoint(",
+        ] {
+            assert!(
+                !worker_source.contains(forbidden),
+                "fetch worker retained forbidden persistence authority: {forbidden}"
+            );
+        }
+    }
+
+    #[test]
+    fn worker_protocol_failure_boundary_is_redacted() {
         let captured = CapturedLogs::default();
         let sensitive_sentinel = "C:\\private\\catalog.sqlite secret-key@example.invalid";
-        let error = WriterGateError::from_io(io::Error::other(sensitive_sentinel));
-        tracing::subscriber::with_default(captured.subscriber(), || {
-            emit_writer_gate_failure("2", "content_checkpoint_commit", &error);
-        });
-        let boundary_error = LiveIndexError::Worker(WRITER_GATE_FAILURE_MESSAGE.to_string());
-        let response = LiveIndexWorkerResponse::failed(2, &boundary_error);
+        let boundary_error =
+            LiveIndexError::Worker(super::WORKER_PROTOCOL_FAILURE_MESSAGE.to_string());
         let failure = LiveIndexWorkerFailure::from_error(&boundary_error);
+        let message = WorkerMessage::Failed {
+            protocol_version: PROTOCOL_VERSION,
+            worker_id: 2,
+            sequence: 0,
+            failure: failure.clone(),
+        };
+        tracing::subscriber::with_default(captured.subscriber(), || {
+            emit_worker_failure(2, &failure);
+        });
         let combined = format!(
-            "{}\n{}",
+            "{}\n{}\n{}",
             captured.text(),
-            serde_json::to_string(&response).expect("worker response should serialize")
+            serde_json::to_string(&message).expect("worker message should serialize"),
+            worker_failure_error(2, &failure)
         );
 
         assert_eq!(failure.class, LiveIndexWorkerFailureClass::Worker);
-        assert_eq!(failure.operation, LiveIndexWorkerOperation::WriterGate);
-        assert!(combined.contains("index.writer_gate.failed"));
-        assert!(combined.contains("\"error_kind\":\"io\""));
-        assert!(combined.contains("\"is_timeout\":false"));
+        assert_eq!(failure.operation, LiveIndexWorkerOperation::WorkerProtocol);
+        assert!(combined.contains("index.worker.failed"));
+        assert!(combined.contains("\"operation\":\"worker_protocol\""));
         assert!(!combined.contains(sensitive_sentinel));
     }
 
     #[test]
-    fn gated_checkpoint_failure_replays_committed_content_idempotently() {
+    fn single_writer_checkpoint_failure_replays_committed_content_idempotently() {
         let directory = tempdir().expect("temporary directory should create");
         let content_path = directory.path().join("content.sqlite");
         let control_path = directory.path().join("control.sqlite");
         let content = open_content_db(&content_path).expect("content should open");
         let control = open_control_db(&control_path).expect("control should open");
-        let gate =
-            WriterGate::open(&writer_gate_path(&control_path)).expect("writer gate should open");
-        let catalog = catalog("journal-gated-replay");
+        let catalog = catalog("journal-single-writer-replay");
         let batch = canonical_batch(&catalog);
         let scope = CheckpointScope::Journal {
             catalog_id: catalog.catalog_id.clone(),
         };
         control
             .execute_batch(
-                "CREATE TRIGGER fail_gated_checkpoint
+                "CREATE TRIGGER fail_single_writer_checkpoint
                  BEFORE INSERT ON provider_checkpoints
                  BEGIN SELECT RAISE(ABORT, 'forced checkpoint failure'); END;",
             )
             .expect("checkpoint failpoint should install");
 
-        let checkpoint_error = {
-            let _guard =
-                acquire_optional_writer_gate(Some(&gate), "0", "content_checkpoint_commit")
-                    .expect("writer gate should acquire");
-            commit_content_then_checkpoint(
-                &control,
-                "chinese_journals",
-                "provider-a",
-                &scope,
-                "complete",
-                "2026-07-18T00:00:00Z",
-                || {
-                    write_content_batch(
-                        &content,
-                        &catalog,
-                        &batch,
-                        "revision-gated",
-                        "2026-07-18T00:00:00Z",
-                    )
-                },
-            )
-            .expect_err("checkpoint failure should follow committed content")
-        };
+        let checkpoint_error = commit_content_then_checkpoint(
+            &control,
+            "chinese_journals",
+            "provider-a",
+            &scope,
+            "complete",
+            "2026-07-18T00:00:00Z",
+            || {
+                write_content_batch(
+                    &content,
+                    &catalog,
+                    &batch,
+                    "revision-single-writer",
+                    "2026-07-18T00:00:00Z",
+                )
+            },
+        )
+        .expect_err("checkpoint failure should follow committed content");
         assert!(matches!(
             checkpoint_error,
             ContentCheckpointCommitError::Control(_)
@@ -2036,32 +2793,27 @@ mod tests {
             None
         );
         control
-            .execute_batch("DROP TRIGGER fail_gated_checkpoint")
+            .execute_batch("DROP TRIGGER fail_single_writer_checkpoint")
             .expect("checkpoint failpoint should drop");
 
-        let replay = {
-            let _guard =
-                acquire_optional_writer_gate(Some(&gate), "0", "content_checkpoint_commit")
-                    .expect("writer gate should reacquire");
-            commit_content_then_checkpoint(
-                &control,
-                "chinese_journals",
-                "provider-a",
-                &scope,
-                "complete",
-                "2026-07-18T00:01:00Z",
-                || {
-                    write_content_batch(
-                        &content,
-                        &catalog,
-                        &batch,
-                        "revision-gated",
-                        "2026-07-18T00:00:00Z",
-                    )
-                },
-            )
-            .expect("gated replay should advance the checkpoint")
-        };
+        let replay = commit_content_then_checkpoint(
+            &control,
+            "chinese_journals",
+            "provider-a",
+            &scope,
+            "complete",
+            "2026-07-18T00:01:00Z",
+            || {
+                write_content_batch(
+                    &content,
+                    &catalog,
+                    &batch,
+                    "revision-single-writer",
+                    "2026-07-18T00:00:00Z",
+                )
+            },
+        )
+        .expect("single-writer replay should advance the checkpoint");
         assert_eq!(replay.articles_changed, 0);
         assert_eq!(replay.change_events_emitted, 0);
         assert_eq!(
@@ -2073,7 +2825,7 @@ mod tests {
     }
 
     #[test]
-    fn worker_failure_response_retains_structured_sqlite_codes() {
+    fn worker_failure_message_retains_structured_sqlite_codes() {
         let directory = tempdir().expect("temporary SQLite directory should create");
         let database_path = directory.path().join("busy.sqlite");
         let holder = Connection::open(&database_path).expect("holder connection should open");
@@ -2105,24 +2857,25 @@ mod tests {
             ContentDatabaseError::Sqlite(sqlite_error),
         ));
 
-        let response = LiveIndexWorkerResponse::failed(2, &error);
-        let failure = response
-            .failure
-            .as_ref()
-            .expect("failed worker response should retain one failure");
-        assert_eq!(response.status, "failed");
+        let failure = LiveIndexWorkerFailure::from_error(&error);
         assert_eq!(failure.class, LiveIndexWorkerFailureClass::Sqlite);
         assert_eq!(failure.operation, LiveIndexWorkerOperation::ContentCommit);
         assert_eq!(failure.sqlite_code.as_deref(), Some(expected.0.as_str()));
         assert_eq!(failure.sqlite_extended_code, Some(expected.1));
         assert!(failure.is_busy_or_locked);
-        let payload = serde_json::to_value(&response).expect("worker response should serialize");
+        let message = WorkerMessage::Failed {
+            protocol_version: PROTOCOL_VERSION,
+            worker_id: 2,
+            sequence: 0,
+            failure: failure.clone(),
+        };
+        let payload = serde_json::to_value(&message).expect("worker message should serialize");
         assert!(payload.get("error").is_none());
         assert_eq!(payload["failure"]["class"], "sqlite");
         assert_eq!(payload["failure"]["operation"], "content_commit");
         let captured = CapturedLogs::default();
         tracing::subscriber::with_default(captured.subscriber(), || {
-            emit_worker_failure(response.worker_id, failure);
+            emit_worker_failure(2, &failure);
         });
         let event: serde_json::Value = serde_json::from_str(
             captured
@@ -2154,19 +2907,21 @@ mod tests {
             "Bearer sentinel-token-value",
         ];
         let error = LiveIndexError::Worker(sentinels.join(" | "));
-        let response = LiveIndexWorkerResponse::failed(5, &error);
-        let failure = response
-            .failure
-            .as_ref()
-            .expect("failed worker response should retain one failure");
+        let failure = LiveIndexWorkerFailure::from_error(&error);
+        let message = WorkerMessage::Failed {
+            protocol_version: PROTOCOL_VERSION,
+            worker_id: 5,
+            sequence: 0,
+            failure: failure.clone(),
+        };
         let captured = CapturedLogs::default();
         tracing::subscriber::with_default(captured.subscriber(), || {
-            emit_worker_failure(response.worker_id, failure);
+            emit_worker_failure(5, &failure);
         });
-        let parent_error = worker_failure_error(response.worker_id, failure);
+        let parent_error = worker_failure_error(5, &failure);
         let combined = format!(
             "{}\n{}\n{parent_error}",
-            serde_json::to_string(&response).expect("worker response should serialize"),
+            serde_json::to_string(&message).expect("worker message should serialize"),
             captured.text()
         );
 
@@ -2202,17 +2957,14 @@ mod tests {
         let directory = tempdir().expect("temporary directory should create");
         let control_path = directory.path().join("control.sqlite");
         let control = open_control_db(&control_path).expect("control should open");
-        let writer_gate_path = writer_gate_path(&control_path);
-        let writer_gate = WriterGate::open(&writer_gate_path).expect("writer gate should open");
         let now = LiveRunTime::now().epoch_seconds;
         acquire_lease(&control, "catalog", "provider", "run", now).expect("lease should acquire");
         let mut heartbeat = LeaseHeartbeat::start(
-            control_path,
+            control_path.clone(),
             "catalog".to_string(),
             "provider".to_string(),
             "run".to_string(),
             Duration::from_millis(10),
-            Some(writer_gate),
         );
         std::thread::sleep(Duration::from_millis(35));
         heartbeat.stop_and_check().expect("heartbeat should stop");
@@ -2224,11 +2976,5 @@ mod tests {
             )
             .expect("heartbeat timestamp should read");
         assert!(heartbeat_at >= now);
-        assert_eq!(
-            std::fs::metadata(writer_gate_path)
-                .expect("writer sidecar should exist")
-                .len(),
-            0
-        );
     }
 }

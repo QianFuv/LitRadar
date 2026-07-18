@@ -309,7 +309,7 @@ fn run_index_command_with_bundled_meta_dir(
         if !args.is_empty() {
             return Err(format!("unexpected index worker arguments: {}", args.join(" ")).into());
         }
-        print_result(&run_live_index_worker_from_file_path(request_path)?);
+        run_live_index_worker_from_file_path(request_path)?;
         return Ok(());
     }
     let project_root = extract_project_root(&mut args)?;
