@@ -6,7 +6,7 @@ use std::fmt;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use reqwest::{blocking::Client, header::HeaderMap, Url};
 use serde::{Deserialize, Serialize};
@@ -28,6 +28,8 @@ const SEMANTIC_SCHOLAR_FIELDS: &str = "externalIds,url,isOpenAccess,openAccessPd
 const OPENALEX_SOURCE_FIELDS: &str = "id,display_name,issn_l,issn,works_count";
 const OPENALEX_WORK_FIELDS: &str = "id,doi,title,display_name,publication_year,publication_date,language,cited_by_count,is_retracted,primary_location,locations,open_access,best_oa_location,authorships,ids,biblio,abstract_inverted_index,topics,primary_topic,funders,awards";
 const DEFAULT_USER_AGENT: &str = "LitRadar/0.1 (mailto:litradar@example.invalid)";
+const CROSSREF_ATTEMPT_INTERVAL_MS: u64 = 110;
+const SEMANTIC_SCHOLAR_ATTEMPT_INTERVAL_MS: u64 = 1_100;
 const CROSSREF_ROWS: usize = 225;
 const OPENALEX_DOI_FILTER_MAX_VALUES: usize = 100;
 const OPENALEX_DOI_REQUEST_URL_BUDGET: usize = 1_900;
@@ -986,12 +988,14 @@ pub struct LiveScholarlyConfig {
     pub semantic_scholar_api_keys: Vec<String>,
     /// Crossref mailto candidates.
     pub crossref_mailtos: Vec<String>,
-    /// Current journal worker id for process-aware Semantic Scholar throttling.
+    /// Current journal worker id for process-aware provider scheduling.
     pub semantic_scholar_worker_id: usize,
-    /// Journal worker process count for process-aware Semantic Scholar throttling.
+    /// Journal worker process count for process-aware provider scheduling.
     pub semantic_scholar_process_count: usize,
     /// Base Semantic Scholar global interval in milliseconds.
     pub semantic_scholar_base_interval_ms: u64,
+    /// Common Unix scheduling epoch shared by journal worker processes.
+    pub schedule_epoch_unix_millis: u64,
 }
 
 impl fmt::Debug for LiveScholarlyConfig {
@@ -1037,11 +1041,12 @@ impl LiveScholarlyConfig {
             crossref_mailtos: value_pool_from_text(crossref_mailto_pool),
             semantic_scholar_worker_id: 0,
             semantic_scholar_process_count: 1,
-            semantic_scholar_base_interval_ms: 1_000,
+            semantic_scholar_base_interval_ms: SEMANTIC_SCHOLAR_ATTEMPT_INTERVAL_MS,
+            schedule_epoch_unix_millis: 0,
         }
     }
 
-    /// Return a config with Semantic Scholar worker throttle context.
+    /// Return a config with journal worker scheduling context.
     ///
     /// # Arguments
     ///
@@ -1057,6 +1062,20 @@ impl LiveScholarlyConfig {
         self
     }
 
+    /// Return a config anchored to one shared UTC scheduling epoch.
+    ///
+    /// # Arguments
+    ///
+    /// * `schedule_epoch_unix_millis` - Common Unix epoch in milliseconds.
+    ///
+    /// # Returns
+    ///
+    /// Updated live Scholarly configuration.
+    pub fn with_schedule_epoch(mut self, schedule_epoch_unix_millis: u64) -> Self {
+        self.schedule_epoch_unix_millis = schedule_epoch_unix_millis;
+        self
+    }
+
     /// Return whether Semantic Scholar enrichment can be authenticated.
     ///
     /// # Returns
@@ -1067,24 +1086,58 @@ impl LiveScholarlyConfig {
     }
 }
 
-fn semantic_scholar_worker_offset(config: &LiveScholarlyConfig) -> Duration {
-    let process_count = config.semantic_scholar_process_count.max(1);
-    let worker_id = config
-        .semantic_scholar_worker_id
-        .min(process_count.saturating_sub(1));
-    Duration::from_millis(
-        config
-            .semantic_scholar_base_interval_ms
-            .saturating_mul(worker_id as u64),
-    )
+#[derive(Debug, Clone)]
+struct ProviderAttemptSchedule {
+    next_slot_unix_millis: u64,
+    period_millis: u64,
 }
 
-fn semantic_scholar_worker_interval(config: &LiveScholarlyConfig) -> Duration {
-    Duration::from_millis(
-        config
-            .semantic_scholar_base_interval_ms
-            .saturating_mul(config.semantic_scholar_process_count.max(1) as u64),
-    )
+impl ProviderAttemptSchedule {
+    fn new(
+        epoch_unix_millis: u64,
+        worker_id: usize,
+        process_count: usize,
+        base_interval_millis: u64,
+    ) -> Self {
+        let process_count = process_count.max(1);
+        let worker_id = worker_id.min(process_count.saturating_sub(1));
+        Self {
+            next_slot_unix_millis: epoch_unix_millis
+                .saturating_add(base_interval_millis.saturating_mul(worker_id as u64)),
+            period_millis: base_interval_millis.saturating_mul(process_count as u64),
+        }
+    }
+
+    fn reserve_at(&mut self, now_unix_millis: u64) -> u64 {
+        if self.period_millis == 0 {
+            return now_unix_millis;
+        }
+        let mut slot = self.next_slot_unix_millis;
+        if slot < now_unix_millis {
+            let overdue_millis = now_unix_millis - slot;
+            let skipped_periods = overdue_millis / self.period_millis
+                + u64::from(!overdue_millis.is_multiple_of(self.period_millis));
+            slot = slot.saturating_add(skipped_periods.saturating_mul(self.period_millis));
+        }
+        self.next_slot_unix_millis = slot.saturating_add(self.period_millis);
+        slot
+    }
+
+    fn wait_for_next(&mut self) {
+        let now_unix_millis = unix_time_millis();
+        let slot_unix_millis = self.reserve_at(now_unix_millis);
+        let wait_millis = slot_unix_millis.saturating_sub(now_unix_millis);
+        if wait_millis > 0 {
+            thread::sleep(Duration::from_millis(wait_millis));
+        }
+    }
+}
+
+fn unix_time_millis() -> u64 {
+    let duration = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default();
+    u64::try_from(duration.as_millis()).unwrap_or(u64::MAX)
 }
 
 /// Blocking HTTP transport for live Scholarly sources.
@@ -1093,7 +1146,8 @@ pub struct LiveScholarlyTransport {
     client: Client,
     config: LiveScholarlyConfig,
     attempts: Vec<SourceAttempt>,
-    next_semantic_scholar_at: Option<Instant>,
+    crossref_attempt_schedule: ProviderAttemptSchedule,
+    semantic_scholar_attempt_schedule: ProviderAttemptSchedule,
     openalex_scheduler: Arc<OpenAlexScheduler>,
     openalex_worker_count: usize,
 }
@@ -1476,13 +1530,24 @@ impl LiveScholarlyTransport {
             config.openalex_api_keys.clone(),
             config.semantic_scholar_worker_id,
         ));
+        let crossref_attempt_schedule = ProviderAttemptSchedule::new(
+            config.schedule_epoch_unix_millis,
+            config.semantic_scholar_worker_id,
+            config.semantic_scholar_process_count,
+            CROSSREF_ATTEMPT_INTERVAL_MS,
+        );
+        let semantic_scholar_attempt_schedule = ProviderAttemptSchedule::new(
+            config.schedule_epoch_unix_millis,
+            config.semantic_scholar_worker_id,
+            config.semantic_scholar_process_count,
+            config.semantic_scholar_base_interval_ms,
+        );
         Ok(Self {
             client,
-            next_semantic_scholar_at: Some(
-                Instant::now() + semantic_scholar_worker_offset(&config),
-            ),
             config,
             attempts: Vec::new(),
+            crossref_attempt_schedule,
+            semantic_scholar_attempt_schedule,
             openalex_scheduler,
             openalex_worker_count: openalex_worker_count.clamp(1, OPENALEX_MAX_WORKERS_PER_PROCESS),
         })
@@ -1616,7 +1681,6 @@ impl LiveScholarlyTransport {
                 "Semantic Scholar API key is required for DOI enrichment.".to_string(),
             ));
         };
-        self.wait_for_semantic_scholar_slot();
         let query = vec![("fields".to_string(), SEMANTIC_SCHOLAR_FIELDS.to_string())];
         let body = json!({
             "ids": dois.iter().map(|doi| format!("DOI:{doi}")).collect::<Vec<_>>()
@@ -1631,18 +1695,12 @@ impl LiveScholarlyTransport {
         )
     }
 
-    fn wait_for_semantic_scholar_slot(&mut self) {
-        let interval = semantic_scholar_worker_interval(&self.config);
-        if interval.is_zero() {
-            return;
+    fn wait_for_provider_attempt(&mut self, service: &str) {
+        match service {
+            CROSSREF_SOURCE => self.crossref_attempt_schedule.wait_for_next(),
+            SEMANTIC_SCHOLAR_SOURCE => self.semantic_scholar_attempt_schedule.wait_for_next(),
+            _ => {}
         }
-        if let Some(next_at) = self.next_semantic_scholar_at {
-            let now = Instant::now();
-            if next_at > now {
-                thread::sleep(next_at - now);
-            }
-        }
-        self.next_semantic_scholar_at = Some(Instant::now() + interval);
     }
 
     fn append_openalex_mailto(&self, query: &mut Vec<(String, String)>) {
@@ -1771,7 +1829,6 @@ impl LiveScholarlyTransport {
 
     fn request_json(&mut self, live_request: JsonRequest<'_>) -> Result<Value, SourceError> {
         for attempt in 0..=DEFAULT_MAX_RETRIES {
-            let started_at = Instant::now();
             let attempt_number = attempt + 1;
             let mut builder = match live_request.method {
                 "POST" => self.client.post(live_request.url),
@@ -1790,6 +1847,8 @@ impl LiveScholarlyTransport {
                 message: error.to_string(),
             })?;
             let request_url = redact_url(request.url().as_ref());
+            self.wait_for_provider_attempt(live_request.service);
+            let started_at = Instant::now();
             match self.client.execute(request) {
                 Ok(response) => {
                     let status_code = response.status().as_u16();
@@ -2754,9 +2813,10 @@ mod tests {
     use std::io::{Read, Write};
     use std::net::TcpListener;
     use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::mpsc;
     use std::sync::Arc;
     use std::thread;
-    use std::time::Duration;
+    use std::time::{Duration, Instant};
 
     use serde_json::json;
 
@@ -2766,13 +2826,14 @@ mod tests {
         crossref_journal_filter, execute_openalex_batches, normalize_doi, normalize_issn,
         normalize_source_title, openalex_doi_query, openalex_doi_request_url,
         openalex_rate_headers, openalex_short_source_id, openalex_source_work_filter,
-        partition_openalex_doi_batches, redact_url, run_bounded_indexed,
-        semantic_scholar_worker_interval, semantic_scholar_worker_offset, value_pool_from_text,
-        FixtureScholarlyTransport, LiveScholarlyConfig, LiveScholarlyTransport,
-        OpenAlexHealthOutcome, OpenAlexRateHeaders, OpenAlexScheduleDecision, OpenAlexScheduler,
-        OpenAlexSchedulerState, ScholarlyClient, ScholarlyFixtureData, ScholarlyTransport,
-        SourceError, CROSSREF_ROWS, OPENALEX_DOI_FILTER_MAX_VALUES,
-        OPENALEX_DOI_REQUEST_URL_BUDGET, OPENALEX_KEY_START_INTERVAL,
+        partition_openalex_doi_batches, redact_url, run_bounded_indexed, unix_time_millis,
+        value_pool_from_text, FixtureScholarlyTransport, LiveScholarlyConfig,
+        LiveScholarlyTransport, OpenAlexHealthOutcome, OpenAlexRateHeaders,
+        OpenAlexScheduleDecision, OpenAlexScheduler, OpenAlexSchedulerState,
+        ProviderAttemptSchedule, ScholarlyClient, ScholarlyFixtureData, ScholarlyTransport,
+        SourceError, CROSSREF_ATTEMPT_INTERVAL_MS, CROSSREF_ROWS, CROSSREF_SOURCE,
+        OPENALEX_DOI_FILTER_MAX_VALUES, OPENALEX_DOI_REQUEST_URL_BUDGET,
+        OPENALEX_KEY_START_INTERVAL, SEMANTIC_SCHOLAR_ATTEMPT_INTERVAL_MS, SEMANTIC_SCHOLAR_SOURCE,
     };
 
     #[test]
@@ -2800,6 +2861,7 @@ mod tests {
             semantic_scholar_worker_id: 7,
             semantic_scholar_process_count: 8,
             semantic_scholar_base_interval_ms: 0,
+            schedule_epoch_unix_millis: 0,
         };
         let mut transport =
             LiveScholarlyTransport::new(config).expect("live transport should build");
@@ -2896,6 +2958,7 @@ mod tests {
             semantic_scholar_worker_id: 0,
             semantic_scholar_process_count: 1,
             semantic_scholar_base_interval_ms: 1,
+            schedule_epoch_unix_millis: 0,
         };
 
         let debug = format!("{config:?}");
@@ -2907,25 +2970,230 @@ mod tests {
     }
 
     #[test]
-    fn semantic_scholar_throttle_uses_worker_offset_and_process_interval() {
+    fn provider_attempt_schedule_interleaves_three_processes_from_one_epoch() {
+        let epoch_millis = 10_000;
+        let crossref_starts = (0..3)
+            .flat_map(|worker_id| {
+                let mut schedule = ProviderAttemptSchedule::new(
+                    epoch_millis,
+                    worker_id,
+                    3,
+                    CROSSREF_ATTEMPT_INTERVAL_MS,
+                );
+                (0..12)
+                    .map(|_| schedule.reserve_at(epoch_millis))
+                    .collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>();
+        let mut sorted_crossref_starts = crossref_starts;
+        sorted_crossref_starts.sort_unstable();
+        assert_eq!(
+            &sorted_crossref_starts[..6],
+            &[10_000, 10_110, 10_220, 10_330, 10_440, 10_550]
+        );
+        assert!(sorted_crossref_starts
+            .windows(2)
+            .all(|window| window[1] - window[0] >= CROSSREF_ATTEMPT_INTERVAL_MS));
+        assert!(sorted_crossref_starts.iter().all(|window_start| {
+            sorted_crossref_starts
+                .iter()
+                .filter(|start| **start >= *window_start && **start < window_start + 1_000)
+                .count()
+                <= 10
+        }));
+
+        let semantic_scholar_starts = (0..3)
+            .map(|worker_id| {
+                ProviderAttemptSchedule::new(
+                    epoch_millis,
+                    worker_id,
+                    3,
+                    SEMANTIC_SCHOLAR_ATTEMPT_INTERVAL_MS,
+                )
+                .reserve_at(epoch_millis)
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(semantic_scholar_starts, vec![10_000, 11_100, 12_200]);
+    }
+
+    #[test]
+    fn provider_attempt_schedule_skips_missed_slots_without_catch_up() {
+        let mut schedule =
+            ProviderAttemptSchedule::new(10_000, 1, 3, SEMANTIC_SCHOLAR_ATTEMPT_INTERVAL_MS);
+
+        assert_eq!(schedule.reserve_at(10_000), 11_100);
+        assert_eq!(schedule.reserve_at(20_000), 21_000);
+        assert_eq!(schedule.reserve_at(21_001), 24_300);
+    }
+
+    #[test]
+    fn provider_attempt_schedule_keeps_retry_attempts_in_the_worker_phase() {
+        let epoch_millis = 50_000;
+        let mut schedules = (0..3)
+            .map(|worker_id| {
+                ProviderAttemptSchedule::new(
+                    epoch_millis,
+                    worker_id,
+                    3,
+                    SEMANTIC_SCHOLAR_ATTEMPT_INTERVAL_MS,
+                )
+            })
+            .collect::<Vec<_>>();
+        let mut starts = Vec::new();
+        for schedule in &mut schedules {
+            starts.push(schedule.reserve_at(epoch_millis));
+            starts.push(schedule.reserve_at(epoch_millis + 250));
+        }
+        starts.sort_unstable();
+
+        assert!(starts
+            .windows(2)
+            .all(|window| { window[1] - window[0] >= SEMANTIC_SCHOLAR_ATTEMPT_INTERVAL_MS }));
+        assert_eq!(starts, vec![50_000, 51_100, 52_200, 53_300, 54_400, 55_500]);
+    }
+
+    #[test]
+    fn semantic_scholar_live_retries_reserve_every_attempt() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("test listener should bind");
+        let address = listener.local_addr().expect("test address should resolve");
+        let (started_sender, started_receiver) = mpsc::channel();
+        let server = thread::spawn(move || {
+            for (status, body) in [("503 Service Unavailable", "{}"), ("200 OK", "[]")] {
+                let (mut stream, _) = listener.accept().expect("test request should connect");
+                started_sender
+                    .send(Instant::now())
+                    .expect("attempt timestamp should send");
+                let mut request = [0_u8; 8_192];
+                let _ = stream.read(&mut request).expect("test request should read");
+                write!(
+                    stream,
+                    "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                )
+                .expect("test response should write");
+            }
+        });
         let config = LiveScholarlyConfig {
-            timeout_seconds: 1,
+            timeout_seconds: 3,
             openalex_api_keys: Vec::new(),
             semantic_scholar_api_keys: vec!["s2".to_string()],
             crossref_mailtos: Vec::new(),
-            semantic_scholar_worker_id: 2,
-            semantic_scholar_process_count: 4,
-            semantic_scholar_base_interval_ms: 25,
+            semantic_scholar_worker_id: 0,
+            semantic_scholar_process_count: 1,
+            semantic_scholar_base_interval_ms: SEMANTIC_SCHOLAR_ATTEMPT_INTERVAL_MS,
+            schedule_epoch_unix_millis: unix_time_millis().saturating_add(100),
         };
+        let mut transport =
+            LiveScholarlyTransport::new(config).expect("live transport should build");
 
-        assert_eq!(
-            semantic_scholar_worker_offset(&config),
-            Duration::from_millis(50)
-        );
-        assert_eq!(
-            semantic_scholar_worker_interval(&config),
-            Duration::from_millis(100)
-        );
+        let payload = transport
+            .post_json(
+                SEMANTIC_SCHOLAR_SOURCE,
+                "retry_schedule_test",
+                &format!("http://{address}/paper/batch"),
+                &[],
+                &json!({"ids": ["DOI:10.1/test"]}),
+                None,
+            )
+            .expect("second attempt should succeed");
+        server.join().expect("test server should finish");
+        let first_started = started_receiver
+            .recv()
+            .expect("first attempt timestamp should exist");
+        let second_started = started_receiver
+            .recv()
+            .expect("second attempt timestamp should exist");
+
+        assert_eq!(payload, json!([]));
+        assert_eq!(transport.attempts().len(), 2);
+        assert!(transport.attempts()[1].did_retry);
+        assert!(second_started.duration_since(first_started) >= Duration::from_millis(1_050));
+    }
+
+    #[test]
+    fn live_crossref_process_phases_limit_rate_and_in_flight() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("test listener should bind");
+        let address = listener.local_addr().expect("test address should resolve");
+        let (started_sender, started_receiver) = mpsc::channel();
+        let active = Arc::new(AtomicUsize::new(0));
+        let maximum_active = Arc::new(AtomicUsize::new(0));
+        let server_active = Arc::clone(&active);
+        let server_maximum_active = Arc::clone(&maximum_active);
+        let server = thread::spawn(move || {
+            let mut handlers = Vec::new();
+            for _ in 0..6 {
+                let (mut stream, _) = listener.accept().expect("test request should connect");
+                started_sender
+                    .send(Instant::now())
+                    .expect("attempt timestamp should send");
+                let handler_active = Arc::clone(&server_active);
+                let handler_maximum_active = Arc::clone(&server_maximum_active);
+                handlers.push(thread::spawn(move || {
+                    let current_active = handler_active.fetch_add(1, Ordering::SeqCst) + 1;
+                    handler_maximum_active.fetch_max(current_active, Ordering::SeqCst);
+                    let mut request = [0_u8; 8_192];
+                    let _ = stream.read(&mut request).expect("test request should read");
+                    thread::sleep(Duration::from_millis(250));
+                    let body = r#"{"message":{"items":[]}}"#;
+                    write!(
+                        stream,
+                        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                        body.len()
+                    )
+                    .expect("test response should write");
+                    handler_active.fetch_sub(1, Ordering::SeqCst);
+                }));
+            }
+            for handler in handlers {
+                handler.join().expect("test response handler should finish");
+            }
+        });
+        let schedule_epoch_unix_millis = unix_time_millis().saturating_add(200);
+        let mut workers = Vec::new();
+        for worker_id in 0..3 {
+            workers.push(thread::spawn(move || {
+                let config = LiveScholarlyConfig {
+                    timeout_seconds: 3,
+                    openalex_api_keys: Vec::new(),
+                    semantic_scholar_api_keys: Vec::new(),
+                    crossref_mailtos: Vec::new(),
+                    semantic_scholar_worker_id: worker_id,
+                    semantic_scholar_process_count: 3,
+                    semantic_scholar_base_interval_ms: SEMANTIC_SCHOLAR_ATTEMPT_INTERVAL_MS,
+                    schedule_epoch_unix_millis,
+                };
+                let mut transport =
+                    LiveScholarlyTransport::new(config).expect("live transport should build");
+                for _ in 0..2 {
+                    transport
+                        .get_json(
+                            CROSSREF_SOURCE,
+                            "phase_test",
+                            &format!("http://{address}/works"),
+                            &[],
+                        )
+                        .expect("Crossref fixture request should succeed");
+                }
+            }));
+        }
+        for worker in workers {
+            worker.join().expect("test worker should finish");
+        }
+        server.join().expect("test server should finish");
+        let mut starts = (0..6)
+            .map(|_| {
+                started_receiver
+                    .recv()
+                    .expect("attempt timestamp should exist")
+            })
+            .collect::<Vec<_>>();
+        starts.sort_unstable();
+
+        assert!(starts
+            .windows(2)
+            .all(|window| window[1].duration_since(window[0]) >= Duration::from_millis(80)));
+        assert_eq!(maximum_active.load(Ordering::SeqCst), 3);
+        assert_eq!(active.load(Ordering::SeqCst), 0);
     }
 
     #[test]
@@ -3170,6 +3438,7 @@ mod tests {
             semantic_scholar_worker_id: 0,
             semantic_scholar_process_count: 1,
             semantic_scholar_base_interval_ms: 1_000,
+            schedule_epoch_unix_millis: 0,
         };
         let transport =
             LiveScholarlyTransport::new(config).expect("live transport should initialize");
@@ -3596,6 +3865,7 @@ mod tests {
             semantic_scholar_worker_id: 0,
             semantic_scholar_process_count: 1,
             semantic_scholar_base_interval_ms: 1_000,
+            schedule_epoch_unix_millis: 0,
         };
         let mut transport =
             LiveScholarlyTransport::new(config).expect("live transport should initialize");

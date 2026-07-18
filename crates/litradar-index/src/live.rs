@@ -37,6 +37,7 @@ use crate::transforms::{read_catalog_csv, CatalogContractError};
 
 const LIVE_INDEX_HEARTBEAT_INTERVAL_SECONDS: u64 = 30;
 const MAX_PROVIDER_PAGES_PER_JOURNAL: usize = 100_000;
+const SCHOLARLY_MAX_PROCESS_COUNT: usize = 3;
 
 /// Live index run configuration.
 #[derive(Debug, Clone)]
@@ -267,6 +268,7 @@ struct LiveIndexWorkerRequest {
     worker_id: usize,
     process_count: usize,
     source_worker_count: usize,
+    schedule_epoch_unix_millis: u64,
     timeout_seconds: u64,
     resume: bool,
     update: bool,
@@ -285,6 +287,7 @@ struct LiveIndexWorkerResponse {
 #[derive(Debug, Clone, Copy)]
 struct LiveRunTime {
     epoch_seconds: i64,
+    epoch_milliseconds: u64,
     epoch_nanoseconds: u128,
 }
 
@@ -295,6 +298,7 @@ impl LiveRunTime {
             .unwrap_or_default();
         Self {
             epoch_seconds: i64::try_from(duration.as_secs()).unwrap_or(i64::MAX),
+            epoch_milliseconds: u64::try_from(duration.as_millis()).unwrap_or(u64::MAX),
             epoch_nanoseconds: duration.as_nanos(),
         }
     }
@@ -455,6 +459,16 @@ fn validate_live_config(config: &LiveIndexConfig) -> Result<(), LiveIndexError> 
             "process_count must be greater than zero".to_string(),
         ));
     }
+    if config.process_count > SCHOLARLY_MAX_PROCESS_COUNT
+        && config
+            .index_provider_routes
+            .values()
+            .any(|provider| provider == SCHOLARLY_PROVIDER_NAME)
+    {
+        return Err(LiveIndexError::InvalidConfig(format!(
+            "process_count must be at most {SCHOLARLY_MAX_PROCESS_COUNT} for scholarly indexing"
+        )));
+    }
     if config.issue_batch_size == 0 {
         return Err(LiveIndexError::InvalidConfig(
             "issue_batch_size must be greater than zero".to_string(),
@@ -564,6 +578,7 @@ fn run_catalog(
             &provider_name,
             &run_id,
             &timestamp,
+            run_time.epoch_milliseconds,
             &entries,
         );
         run_worker_processes(config, requests)
@@ -578,6 +593,7 @@ fn run_catalog(
             worker_id: 0,
             process_count: 1,
             source_worker_count: config.worker_count,
+            schedule_epoch_unix_millis: run_time.epoch_milliseconds,
             timeout_seconds: config.timeout_seconds,
             resume: config.resume,
             update: config.update,
@@ -668,6 +684,7 @@ fn build_worker_requests(
     provider_name: &str,
     run_id: &str,
     timestamp: &str,
+    schedule_epoch_unix_millis: u64,
     entries: &[JournalCatalogEntry],
 ) -> Vec<LiveIndexWorkerRequest> {
     let process_count = config.process_count.min(entries.len()).max(1);
@@ -688,6 +705,7 @@ fn build_worker_requests(
             worker_id,
             process_count,
             source_worker_count: config.worker_count,
+            schedule_epoch_unix_millis,
             timeout_seconds: config.timeout_seconds,
             resume: config.resume,
             update: config.update,
@@ -817,7 +835,8 @@ fn run_worker_request(request: &LiveIndexWorkerRequest) -> Result<IndexRunMetric
         request
             .scholarly_config
             .clone()
-            .with_worker_context(request.worker_id, request.process_count),
+            .with_worker_context(request.worker_id, request.process_count)
+            .with_schedule_epoch(request.schedule_epoch_unix_millis),
         request.source_worker_count,
         request.timeout_seconds,
     )?;
@@ -1050,9 +1069,10 @@ mod tests {
     use tempfile::tempdir;
 
     use super::{
-        build_worker_requests, index_entries_with_provider, run_live_index_worker_from_file_path,
-        validate_live_config, LeaseHeartbeat, LiveIndexConfig, LiveIndexError,
-        LiveIndexWorkerRequest, LiveRunTime, OPENALEX_MAX_WORKERS_PER_PROCESS,
+        build_worker_requests, index_entries_with_provider, run_live_index,
+        run_live_index_worker_from_file_path, validate_live_config, LeaseHeartbeat,
+        LiveIndexConfig, LiveIndexError, LiveIndexWorkerRequest, LiveRunTime,
+        OPENALEX_MAX_WORKERS_PER_PROCESS,
     };
     use crate::control::{
         acquire_lease, open_control_db, read_checkpoint, release_lease, CheckpointScope,
@@ -1153,6 +1173,7 @@ mod tests {
             worker_id: 0,
             process_count: 1,
             source_worker_count: 1,
+            schedule_epoch_unix_millis: 0,
             timeout_seconds: 10,
             resume: true,
             update: false,
@@ -1312,12 +1333,16 @@ mod tests {
             "scholarly",
             "run",
             "time",
+            123_456,
             &entries,
         );
         assert_eq!(requests.len(), 3);
         assert!(requests
             .iter()
             .all(|request| request.source_worker_count == 2));
+        assert!(requests
+            .iter()
+            .all(|request| request.schedule_epoch_unix_millis == 123_456));
         let mut excessive_workers = config.clone();
         excessive_workers.worker_count = OPENALEX_MAX_WORKERS_PER_PROCESS + 1;
         assert!(matches!(
@@ -1325,6 +1350,21 @@ mod tests {
             Err(LiveIndexError::InvalidConfig(message))
                 if message == "worker_count must be at most 6 for scholarly indexing"
         ));
+        let mut excessive_processes = config.clone();
+        excessive_processes.process_count = 4;
+        assert!(matches!(
+            validate_live_config(&excessive_processes),
+            Err(LiveIndexError::InvalidConfig(message))
+                if message == "process_count must be at most 3 for scholarly indexing"
+        ));
+        let directory = tempdir().expect("temporary directory should create");
+        excessive_processes.project_root = directory.path().to_path_buf();
+        assert!(matches!(
+            run_live_index(&excessive_processes),
+            Err(LiveIndexError::InvalidConfig(message))
+                if message == "process_count must be at most 3 for scholarly indexing"
+        ));
+        assert!(!directory.path().join("data").exists());
         let ids = requests
             .iter()
             .flat_map(|request| request.entries.iter())
