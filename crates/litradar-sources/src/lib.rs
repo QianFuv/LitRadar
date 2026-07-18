@@ -1,12 +1,17 @@
 //! Source clients used by Rust index migration workflows.
 
 pub mod cnki;
+pub mod providers;
 pub mod scholarly;
 pub mod zjlib_cnki;
 
 pub use cnki::{
     CnkiClient, CnkiFixtureData, CnkiSourceError, CnkiTransport, FixtureCnkiTransport,
     LiveCnkiConfig, LiveCnkiTransport,
+};
+pub use providers::{
+    cnki_index_registration, scholarly_index_registration, CnkiIndexProvider,
+    ScholarlyIndexProvider, CNKI_PROVIDER_NAME, SCHOLARLY_PROVIDER_NAME,
 };
 pub use scholarly::{
     normalize_doi, FixtureScholarlyTransport, LiveScholarlyConfig, LiveScholarlyTransport,

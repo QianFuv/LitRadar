@@ -1,5 +1,6 @@
 //! Shared Rust backend command entrypoints.
 
+use std::collections::BTreeMap;
 use std::error::Error;
 use std::fs;
 use std::io::BufRead;
@@ -325,8 +326,8 @@ fn run_index_command_with_bundled_meta_dir(
     prepare_index_managed_meta(&storage_config, bundled_meta_dir.as_deref())?;
     let secret_codec = SecretCodec::load(&secret_key_file)?;
     verify_database_secrets(&auth_db_path, &secret_codec)?;
-    let scholarly_config =
-        live_scholarly_config(&auth_db_path, &secret_codec, options.timeout_seconds)?;
+    let (scholarly_config, index_provider_routes) =
+        live_index_runtime_config(&auth_db_path, &secret_codec, options.timeout_seconds)?;
     let effective_concurrency = json!({
         "workers": options.worker_count,
         "processes": options.process_count,
@@ -346,6 +347,7 @@ fn run_index_command_with_bundled_meta_dir(
         notify: options.notify,
         notify_dry_run: options.notify_dry_run,
         scholarly_config,
+        index_provider_routes,
     });
     migrate_existing_index_databases(&StorageConfig::from_project_root(&project_root))?;
     let outcome = outcome?;
@@ -915,11 +917,11 @@ fn default_delivery_state_dir(project_root: &Path, workflow: DeliveryWorkflow) -
     }
 }
 
-fn live_scholarly_config(
+fn live_index_runtime_config(
     auth_db_path: &Path,
     secret_codec: &SecretCodec,
     timeout_seconds: u64,
-) -> Result<LiveScholarlyConfig, Box<dyn Error>> {
+) -> Result<(LiveScholarlyConfig, BTreeMap<String, String>), Box<dyn Error>> {
     let settings = litradar_storage::load_runtime_settings(auth_db_path, secret_codec)?;
     let setting_value = |field: &str| {
         settings
@@ -928,12 +930,15 @@ fn live_scholarly_config(
             .map(|setting| setting.value.as_str())
             .unwrap_or_default()
     };
-    Ok(LiveScholarlyConfig::from_value_pools(
+    let scholarly_config = LiveScholarlyConfig::from_value_pools(
         timeout_seconds,
         setting_value("openalex_api_key_pool"),
         setting_value("semantic_scholar_api_key_pool"),
         setting_value("crossref_mailto_pool"),
-    ))
+    );
+    let index_provider_routes =
+        serde_json::from_str::<BTreeMap<String, String>>(setting_value("index_provider_routes"))?;
+    Ok((scholarly_config, index_provider_routes))
 }
 
 fn index_usage() -> String {
@@ -1391,6 +1396,50 @@ mod tests {
             "unexpected index worker arguments: unexpected"
         );
         assert!(!root.path().join("data").exists());
+    }
+
+    #[test]
+    fn legacy_index_failure_names_exact_file_before_machine_result_output() {
+        let root = temp_root("litradar-cli-legacy-index-rebuild");
+        let project_root = root.path().join("project");
+        let index_dir = project_root.join("data/index");
+        fs::create_dir_all(&index_dir).expect("index directory should create");
+        let legacy_path = index_dir.join("legacy.sqlite");
+        let connection = litradar_storage::open_sqlite_connection(&legacy_path)
+            .expect("legacy index database should open");
+        connection
+            .execute_batch(
+                "CREATE TABLE journals (journal_id INTEGER PRIMARY KEY);
+                 PRAGMA user_version = 3;",
+            )
+            .expect("legacy schema should initialize");
+        drop(connection);
+        let secret_key_file = root.path().join("secret.key");
+        fs::write(&secret_key_file, [7_u8; 32]).expect("secret key should write");
+
+        let error = run_index_command_with_bundled_meta_dir(
+            vec![
+                "--project-root".to_string(),
+                project_root.to_string_lossy().into_owned(),
+                "--secret-key-file".to_string(),
+                secret_key_file.to_string_lossy().into_owned(),
+            ],
+            Path::new("litradar"),
+            None,
+        )
+        .expect_err("legacy index should require a deliberate rebuild");
+        let message = error.to_string();
+        let expected_path = legacy_path.display().to_string();
+        let expected_path = expected_path
+            .strip_prefix(r"\\?\")
+            .unwrap_or(&expected_path)
+            .replace('/', "\\");
+        assert!(
+            message.contains(&expected_path),
+            "expected path {expected_path:?}; unexpected diagnostic: {message}"
+        );
+        assert!(message.contains("legacy schema version 3"));
+        assert!(message.contains("move or delete that exact file and rebuild"));
     }
 
     #[test]

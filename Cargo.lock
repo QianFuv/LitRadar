@@ -1176,6 +1176,8 @@ dependencies = [
 name = "litradar-sources"
 version = "0.1.0"
 dependencies = [
+ "litradar-domain",
+ "litradar-provider",
  "reqwest",
  "serde",
  "serde_json",

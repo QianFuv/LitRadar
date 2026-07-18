@@ -16,6 +16,7 @@ use crate::{open_sqlite_connection, StorageConfig};
 
 const BUNDLE_FORMAT: &str = "litradar-meta-bundle";
 const BUNDLE_MANIFEST_FILENAME: &str = "bundle-manifest.json";
+const CATALOG_V2_HEADER: &str = "catalog_id,title,issn,eissn,all_issns,title_aliases,area,utd_rank,utd_rating,abs_rank,abs_rating,fms_rank,fms_rating,fmscn_rank,fmscn_rating";
 
 /// Action taken for one persistent metadata catalog.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -317,6 +318,9 @@ fn validate_bundle(bundle_dir: &Path) -> Result<ValidatedBundle, ManagedMetaErro
         let catalog_path = bundle_dir.join(&catalog.filename);
         validate_bundle_file(&catalog_path, &catalog.filename)?;
         let bytes = fs::read(&catalog_path)?;
+        if manifest.version >= 2 {
+            validate_catalog_v2_header(&bytes, &catalog.filename)?;
+        }
         let actual = canonical_sha256(&bytes).map_err(|_| {
             ManagedMetaError::InvalidBundle(format!(
                 "catalog {} is not valid UTF-8",
@@ -342,6 +346,23 @@ fn validate_bundle(bundle_dir: &Path) -> Result<ValidatedBundle, ManagedMetaErro
         version: manifest.version,
         catalogs,
     })
+}
+
+fn validate_catalog_v2_header(bytes: &[u8], filename: &str) -> Result<(), ManagedMetaError> {
+    let text = std::str::from_utf8(bytes).map_err(|_| {
+        ManagedMetaError::InvalidBundle(format!("catalog {filename} is not valid UTF-8"))
+    })?;
+    let header = text
+        .lines()
+        .next()
+        .map(|value| value.trim_end_matches('\r'))
+        .unwrap_or_default();
+    if header != CATALOG_V2_HEADER {
+        return Err(ManagedMetaError::InvalidBundle(format!(
+            "catalog {filename} must use the exact canonical v2 header"
+        )));
+    }
+    Ok(())
 }
 
 fn validate_bundle_file(path: &Path, filename: &str) -> Result<(), ManagedMetaError> {
@@ -696,7 +717,7 @@ mod tests {
 
     const ALPHA_CURRENT: &[u8] = b"name,value\nalpha,current\n";
     const ALPHA_LEGACY: &[u8] = b"name,value\nalpha,legacy\n";
-    const ALPHA_UPDATED: &[u8] = b"name,value\nalpha,updated\n";
+    const ALPHA_UPDATED: &[u8] = b"catalog_id,title,issn,eissn,all_issns,title_aliases,area,utd_rank,utd_rating,abs_rank,abs_rating,fms_rank,fms_rating,fmscn_rank,fmscn_rating\nalpha-journal,Alpha Journal,1234-5679,,1234-5679,,,,,,,,,,\n";
     const BETA_CURRENT: &[u8] = b"name,value\nbeta,current\n";
     const BETA_LEGACY: &[u8] = b"name,value\nbeta,legacy\n";
 
@@ -980,6 +1001,30 @@ mod tests {
                 "case {index} wrote the persistent metadata directory"
             );
         }
+    }
+
+    #[test]
+    fn version_two_bundle_rejects_noncanonical_catalog_header() {
+        let project = TestProject::new();
+        let bundle = project.bundle(
+            "invalid-v2-header",
+            2,
+            &[CatalogFixture {
+                filename: "alpha.csv",
+                current: ALPHA_CURRENT,
+                legacy: Vec::new(),
+            }],
+        );
+
+        let error = prepare_managed_meta(&project.storage_config, bundle)
+            .expect_err("noncanonical v2 catalog should fail");
+
+        assert!(matches!(
+            error,
+            ManagedMetaError::InvalidBundle(message)
+                if message.contains("exact canonical v2 header")
+        ));
+        assert!(!project.storage_config.meta_dir().exists());
     }
 
     #[test]

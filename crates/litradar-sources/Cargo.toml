@@ -5,6 +5,8 @@ edition.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+litradar-domain = { path = "../litradar-domain" }
+litradar-provider = { path = "../litradar-provider" }
 reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
