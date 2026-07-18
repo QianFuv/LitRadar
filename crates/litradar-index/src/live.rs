@@ -34,10 +34,12 @@ use crate::schema::{
 };
 use crate::stats::IndexRunMetrics;
 use crate::transforms::{read_catalog_csv, CatalogContractError};
+use crate::writer_gate::{WriterGate, WriterGateError, WriterGateGuard};
 
 const LIVE_INDEX_HEARTBEAT_INTERVAL_SECONDS: u64 = 30;
 const MAX_PROVIDER_PAGES_PER_JOURNAL: usize = 100_000;
 const SCHOLARLY_MAX_PROCESS_COUNT: usize = 3;
+const WRITER_GATE_FAILURE_MESSAGE: &str = "writer gate operation failed";
 
 /// Live index run configuration.
 #[derive(Debug, Clone)]
@@ -350,6 +352,7 @@ enum LiveIndexWorkerOperation {
     ProviderSetup,
     ProviderRequest,
     Configuration,
+    WriterGate,
     WorkerProcess,
     WorkerResponse,
     Notification,
@@ -371,6 +374,7 @@ impl LiveIndexWorkerOperation {
             Self::ProviderSetup => "provider_setup",
             Self::ProviderRequest => "provider_request",
             Self::Configuration => "configuration",
+            Self::WriterGate => "writer_gate",
             Self::WorkerProcess => "worker_process",
             Self::WorkerResponse => "worker_response",
             Self::Notification => "notification",
@@ -431,9 +435,13 @@ impl LiveIndexWorkerFailure {
                 LiveIndexWorkerFailureClass::InvalidConfig,
                 LiveIndexWorkerOperation::Configuration,
             ),
-            LiveIndexError::Worker(_) => Self::fixed(
+            LiveIndexError::Worker(message) => Self::fixed(
                 LiveIndexWorkerFailureClass::Worker,
-                LiveIndexWorkerOperation::WorkerProcess,
+                if message == WRITER_GATE_FAILURE_MESSAGE {
+                    LiveIndexWorkerOperation::WriterGate
+                } else {
+                    LiveIndexWorkerOperation::WorkerProcess
+                },
             ),
             LiveIndexError::Notify(_) => Self::fixed(
                 LiveIndexWorkerFailureClass::Notify,
@@ -552,21 +560,38 @@ impl LeaseHeartbeat {
         provider_name: String,
         run_id: String,
         interval: Duration,
+        writer_gate: Option<WriterGate>,
     ) -> Self {
         let (stop, receiver) = mpsc::channel();
         let handle = thread::spawn(move || {
-            let connection = open_control_db(control_path).map_err(|error| error.to_string())?;
+            let connection = {
+                let _guard = acquire_optional_writer_gate(
+                    writer_gate.as_ref(),
+                    "parent",
+                    "control_database_open",
+                )
+                .map_err(|_| WRITER_GATE_FAILURE_MESSAGE.to_string())?;
+                open_control_db(control_path).map_err(|error| error.to_string())?
+            };
             loop {
                 match receiver.recv_timeout(interval) {
                     Ok(()) | Err(RecvTimeoutError::Disconnected) => return Ok(()),
-                    Err(RecvTimeoutError::Timeout) => heartbeat_lease(
-                        &connection,
-                        &catalog_name,
-                        &provider_name,
-                        &run_id,
-                        LiveRunTime::now().epoch_seconds,
-                    )
-                    .map_err(|error| error.to_string())?,
+                    Err(RecvTimeoutError::Timeout) => {
+                        let _guard = acquire_optional_writer_gate(
+                            writer_gate.as_ref(),
+                            "parent",
+                            "heartbeat",
+                        )
+                        .map_err(|_| WRITER_GATE_FAILURE_MESSAGE.to_string())?;
+                        heartbeat_lease(
+                            &connection,
+                            &catalog_name,
+                            &provider_name,
+                            &run_id,
+                            LiveRunTime::now().epoch_seconds,
+                        )
+                        .map_err(|error| error.to_string())?;
+                    }
                 }
             }
         });
@@ -767,6 +792,7 @@ fn run_catalog(
     std::fs::create_dir_all(&control_dir)?;
     let content_path = index_dir.join(format!("{catalog_name}.sqlite"));
     let control_path = control_dir.join(format!("{catalog_name}.sqlite"));
+    let uses_worker_processes = config.process_count > 1 && entries.len() > 1;
     let content =
         open_content_db(&content_path).map_err(|source| LiveIndexError::ContentDatabase {
             path: content_path.clone(),
@@ -777,6 +803,14 @@ fn run_catalog(
     let run_time = LiveRunTime::now();
     let run_id = run_time.run_id(&catalog_name);
     let timestamp = run_time.timestamp();
+    let parent_writer_gate = if uses_worker_processes {
+        Some(open_writer_gate(
+            &writer_gate_path(&control_path),
+            "parent",
+        )?)
+    } else {
+        None
+    };
     acquire_lease(
         &control,
         &catalog_name,
@@ -790,9 +824,10 @@ fn run_catalog(
         provider_name.clone(),
         run_id.clone(),
         Duration::from_secs(LIVE_INDEX_HEARTBEAT_INTERVAL_SECONDS),
+        parent_writer_gate,
     );
 
-    let execution = if config.process_count > 1 && entries.len() > 1 {
+    let execution = if uses_worker_processes {
         let requests = build_worker_requests(
             config,
             &control_path,
@@ -1069,6 +1104,63 @@ fn worker_failure_error(worker_id: usize, failure: &LiveIndexWorkerFailure) -> L
     ))
 }
 
+/// Derive the reusable writer sidecar from one disposable control database path.
+fn writer_gate_path(control_path: &Path) -> PathBuf {
+    control_path.with_extension("writer.lock")
+}
+
+/// Open one writer gate and emit only safe fixed fields on failure.
+fn open_writer_gate(path: &Path, worker_id: &str) -> Result<WriterGate, LiveIndexError> {
+    WriterGate::open(path).map_err(|error| {
+        emit_writer_gate_failure(worker_id, "open", &error);
+        LiveIndexError::Worker(WRITER_GATE_FAILURE_MESSAGE.to_string())
+    })
+}
+
+/// Acquire an optional multi-process writer gate and retain its guard for the caller.
+fn acquire_optional_writer_gate<'gate>(
+    writer_gate: Option<&'gate WriterGate>,
+    worker_id: &str,
+    operation: &'static str,
+) -> Result<Option<WriterGateGuard<'gate>>, LiveIndexError> {
+    let Some(writer_gate) = writer_gate else {
+        return Ok(None);
+    };
+    match writer_gate.acquire() {
+        Ok(guard) => {
+            tracing::debug!(
+                event = "index.writer_gate.acquired",
+                component = "index",
+                worker_id,
+                operation,
+                wait_ms = guard.waited_ms(),
+            );
+            Ok(Some(guard))
+        }
+        Err(error) => {
+            emit_writer_gate_failure(worker_id, operation, &error);
+            Err(LiveIndexError::Worker(
+                WRITER_GATE_FAILURE_MESSAGE.to_string(),
+            ))
+        }
+    }
+}
+
+/// Emit a writer-gate failure without a path or operating-system message.
+fn emit_writer_gate_failure(worker_id: &str, operation: &'static str, error: &WriterGateError) {
+    tracing::error!(
+        event = "index.writer_gate.failed",
+        component = "index",
+        worker_id,
+        operation,
+        error_kind = error.kind(),
+        io_kind = ?error.io_kind(),
+        is_timeout = error.is_timeout(),
+        has_wait_ms = error.waited_ms().is_some(),
+        wait_ms = error.waited_ms().unwrap_or_default(),
+    );
+}
+
 struct SpawnedWorker {
     worker_id: usize,
     request_path: PathBuf,
@@ -1103,14 +1195,34 @@ fn run_worker_request(request: &LiveIndexWorkerRequest) -> Result<IndexRunMetric
             request.provider_name
         ))
     })?;
-    let content = open_content_db(&request.content_path).map_err(|source| {
-        LiveIndexError::ContentDatabase {
-            path: request.content_path.clone(),
-            source,
-        }
-    })?;
-    let control = open_control_db(&request.control_path)?;
-    index_entries_with_provider(&content, &control, provider.as_ref(), request)
+    let worker_id = request.worker_id.to_string();
+    let writer_gate = if request.process_count > 1 {
+        Some(open_writer_gate(
+            &writer_gate_path(&request.control_path),
+            &worker_id,
+        )?)
+    } else {
+        None
+    };
+    let (content, control) = {
+        let _guard =
+            acquire_optional_writer_gate(writer_gate.as_ref(), &worker_id, "database_open")?;
+        let content = open_content_db(&request.content_path).map_err(|source| {
+            LiveIndexError::ContentDatabase {
+                path: request.content_path.clone(),
+                source,
+            }
+        })?;
+        let control = open_control_db(&request.control_path)?;
+        (content, control)
+    };
+    index_entries_with_provider(
+        &content,
+        &control,
+        provider.as_ref(),
+        request,
+        writer_gate.as_ref(),
+    )
 }
 
 fn build_index_registration(
@@ -1156,12 +1268,15 @@ fn index_entries_with_provider(
     control: &Connection,
     provider: &dyn IndexContentProvider,
     request: &LiveIndexWorkerRequest,
+    writer_gate: Option<&WriterGate>,
 ) -> Result<IndexRunMetrics, LiveIndexError> {
     let mut metrics = IndexRunMetrics {
         journals_total: request.entries.len(),
         ..IndexRunMetrics::default()
     };
+    let worker_id = request.worker_id.to_string();
     for entry in &request.entries {
+        let _guard = acquire_optional_writer_gate(writer_gate, &worker_id, "journal_heartbeat")?;
         heartbeat_lease(
             control,
             &request.catalog_name,
@@ -1170,6 +1285,7 @@ fn index_entries_with_provider(
             LiveRunTime::now().epoch_seconds,
         )
         .map_err(|error| LiveIndexError::Heartbeat(error.to_string()))?;
+        drop(_guard);
         let scope = CheckpointScope::Journal {
             catalog_id: entry.catalog_id.clone(),
         };
@@ -1198,6 +1314,7 @@ fn index_entries_with_provider(
             seen_checkpoints.insert(value.clone());
         }
         for page_index in 0..MAX_PROVIDER_PAGES_PER_JOURNAL {
+            let _guard = acquire_optional_writer_gate(writer_gate, &worker_id, "page_heartbeat")?;
             heartbeat_lease(
                 control,
                 &request.catalog_name,
@@ -1206,28 +1323,36 @@ fn index_entries_with_provider(
                 LiveRunTime::now().epoch_seconds,
             )
             .map_err(|error| LiveIndexError::Heartbeat(error.to_string()))?;
+            drop(_guard);
             let batch = provider.fetch(entry, provider_checkpoint.as_deref())?;
             let stored_checkpoint = checkpoint_after_batch(&batch)?;
             let encoded_checkpoint = serde_json::to_string(&stored_checkpoint)?;
             let content_revision =
                 format!("{}:{}:{}", request.run_id, entry.catalog_id, page_index);
-            let outcome = commit_content_then_checkpoint(
-                control,
-                &request.catalog_name,
-                &request.provider_name,
-                &scope,
-                &encoded_checkpoint,
-                &request.timestamp,
-                || {
-                    write_content_batch(
-                        content,
-                        entry,
-                        &batch,
-                        &content_revision,
-                        &request.timestamp,
-                    )
-                },
-            )?;
+            let outcome = {
+                let _guard = acquire_optional_writer_gate(
+                    writer_gate,
+                    &worker_id,
+                    "content_checkpoint_commit",
+                )?;
+                commit_content_then_checkpoint(
+                    control,
+                    &request.catalog_name,
+                    &request.provider_name,
+                    &scope,
+                    &encoded_checkpoint,
+                    &request.timestamp,
+                    || {
+                        write_content_batch(
+                            content,
+                            entry,
+                            &batch,
+                            &content_revision,
+                            &request.timestamp,
+                        )
+                    },
+                )?
+            };
             metrics.record_write(outcome);
             if matches!(stored_checkpoint, StoredCheckpoint::Complete) {
                 metrics.journals_succeeded += 1;
@@ -1325,23 +1450,26 @@ mod tests {
         ArticleAuthorDraft, ArticleDraft, IssueDraft, JournalCatalogEntry, JournalDraft,
         JournalRankings, ProviderBatch,
     };
-    use litradar_provider::{IndexContentProvider, ProviderError};
+    use litradar_provider::{IndexContentProvider, ProviderError, ProviderErrorKind};
     use rusqlite::{Connection, ErrorCode};
     use tempfile::tempdir;
     use tracing_subscriber::fmt::MakeWriter;
 
     use super::{
-        build_worker_requests, emit_worker_failure, index_entries_with_provider, run_live_index,
+        acquire_optional_writer_gate, build_worker_requests, emit_worker_failure,
+        emit_writer_gate_failure, index_entries_with_provider, run_live_index,
         run_live_index_worker_from_file_path, validate_live_config, worker_failure_error,
-        LeaseHeartbeat, LiveIndexConfig, LiveIndexError, LiveIndexWorkerFailureClass,
-        LiveIndexWorkerOperation, LiveIndexWorkerRequest, LiveIndexWorkerResponse, LiveRunTime,
-        OPENALEX_MAX_WORKERS_PER_PROCESS,
+        writer_gate_path, LeaseHeartbeat, LiveIndexConfig, LiveIndexError, LiveIndexWorkerFailure,
+        LiveIndexWorkerFailureClass, LiveIndexWorkerOperation, LiveIndexWorkerRequest,
+        LiveIndexWorkerResponse, LiveRunTime, OPENALEX_MAX_WORKERS_PER_PROCESS,
+        WRITER_GATE_FAILURE_MESSAGE,
     };
     use crate::control::{
-        acquire_lease, open_control_db, read_checkpoint, release_lease, CheckpointScope,
-        ContentCheckpointCommitError,
+        acquire_lease, commit_content_then_checkpoint, open_control_db, read_checkpoint,
+        release_lease, CheckpointScope, ContentCheckpointCommitError,
     };
-    use crate::schema::{open_content_db, ContentDatabaseError};
+    use crate::schema::{open_content_db, write_content_batch, ContentDatabaseError};
+    use crate::writer_gate::{WriterGate, WriterGateError};
 
     #[derive(Clone, Default)]
     struct CapturedLogs {
@@ -1420,6 +1548,52 @@ mod tests {
         ) -> Result<ProviderBatch, ProviderError> {
             assert!(checkpoint.is_none());
             *self.calls.lock().expect("call count should lock") += 1;
+            Ok(canonical_batch(catalog))
+        }
+    }
+
+    struct WriterGateProbeProvider {
+        gate: WriterGate,
+        did_acquire_during_fetch: Mutex<bool>,
+    }
+
+    impl WriterGateProbeProvider {
+        fn new(gate: WriterGate) -> Self {
+            Self {
+                gate,
+                did_acquire_during_fetch: Mutex::new(false),
+            }
+        }
+
+        fn did_acquire_during_fetch(&self) -> bool {
+            *self
+                .did_acquire_during_fetch
+                .lock()
+                .expect("gate probe state should lock")
+        }
+    }
+
+    impl IndexContentProvider for WriterGateProbeProvider {
+        fn fetch(
+            &self,
+            catalog: &JournalCatalogEntry,
+            checkpoint: Option<&str>,
+        ) -> Result<ProviderBatch, ProviderError> {
+            assert!(checkpoint.is_none());
+            let guard = self
+                .gate
+                .acquire_with(Duration::from_millis(100), Duration::from_millis(5))
+                .map_err(|_| {
+                    ProviderError::new(
+                        ProviderErrorKind::Internal,
+                        "provider fetch observed a held writer gate",
+                    )
+                })?;
+            *self
+                .did_acquire_during_fetch
+                .lock()
+                .expect("gate probe state should lock") = true;
+            drop(guard);
             Ok(canonical_batch(catalog))
         }
     }
@@ -1521,7 +1695,7 @@ mod tests {
             now,
         )
         .expect("provider A lease should acquire");
-        index_entries_with_provider(&content, &control, &provider, &request_a)
+        index_entries_with_provider(&content, &control, &provider, &request_a, None)
             .expect("provider A should index");
         let article_id = content
             .query_row("SELECT article_id FROM articles", [], |row| {
@@ -1545,7 +1719,7 @@ mod tests {
             now,
         )
         .expect("provider B lease should acquire");
-        index_entries_with_provider(&content, &control, &provider, &request_b)
+        index_entries_with_provider(&content, &control, &provider, &request_b, None)
             .expect("provider B should index");
         let replayed_id = content
             .query_row("SELECT article_id FROM articles", [], |row| {
@@ -1591,7 +1765,7 @@ mod tests {
             now,
         )
         .expect("lease should acquire");
-        index_entries_with_provider(&content, &control, &provider, &request)
+        index_entries_with_provider(&content, &control, &provider, &request, None)
             .expect("first run should index");
         drop(control);
         std::fs::remove_file(&request.control_path).expect("control database should delete");
@@ -1607,8 +1781,9 @@ mod tests {
             now,
         )
         .expect("replay lease should acquire");
-        let metrics = index_entries_with_provider(&content, &replay_control, &provider, &replay)
-            .expect("control-loss replay should succeed");
+        let metrics =
+            index_entries_with_provider(&content, &replay_control, &provider, &replay, None)
+                .expect("control-loss replay should succeed");
         assert_eq!(metrics.articles_changed, 0);
         for table in ["journals", "issues", "articles", "article_change_events"] {
             let count = content
@@ -1707,8 +1882,11 @@ mod tests {
         )
         .expect("worker request should write");
 
-        let response = run_live_index_worker_from_file_path(&request_path)
-            .expect("worker entrypoint should return JSON");
+        let captured = CapturedLogs::default();
+        let response = tracing::subscriber::with_default(captured.subscriber(), || {
+            run_live_index_worker_from_file_path(&request_path)
+                .expect("worker entrypoint should return JSON")
+        });
         let payload: serde_json::Value =
             serde_json::from_str(&response).expect("worker response should be one JSON value");
 
@@ -1718,6 +1896,180 @@ mod tests {
         assert!(payload["failure"].is_null());
         assert!(payload.get("error").is_none());
         assert_eq!(response.lines().count(), 1);
+        assert!(!writer_gate_path(&request.control_path).exists());
+        assert!(!captured.text().contains("index.writer_gate"));
+    }
+
+    #[test]
+    fn writer_gate_keeps_provider_fetch_outside_the_guarded_write_phase() {
+        let directory = tempdir().expect("temporary directory should create");
+        let mut request = worker_request(directory.path(), "provider-a", "run-gated");
+        request.process_count = 2;
+        let content = open_content_db(&request.content_path).expect("content should open");
+        let control = open_control_db(&request.control_path).expect("control should open");
+        acquire_lease(
+            &control,
+            &request.catalog_name,
+            &request.provider_name,
+            &request.run_id,
+            LiveRunTime::now().epoch_seconds,
+        )
+        .expect("lease should acquire");
+        let lock_path = writer_gate_path(&request.control_path);
+        let writer_gate = WriterGate::open(&lock_path).expect("worker gate should open");
+        let provider = WriterGateProbeProvider::new(
+            WriterGate::open(&lock_path).expect("provider probe gate should open"),
+        );
+        let captured = CapturedLogs::default();
+
+        let metrics = tracing::subscriber::with_default(captured.subscriber(), || {
+            index_entries_with_provider(&content, &control, &provider, &request, Some(&writer_gate))
+                .expect("gated index should succeed")
+        });
+
+        assert!(provider.did_acquire_during_fetch());
+        assert_eq!(metrics.journals_succeeded, 1);
+        assert_eq!(metrics.articles_changed, 1);
+        let logs = captured.text();
+        assert!(logs.contains("index.writer_gate.acquired"));
+        assert!(logs.contains("journal_heartbeat"));
+        assert!(logs.contains("page_heartbeat"));
+        assert!(logs.contains("content_checkpoint_commit"));
+        assert!(!logs.contains("index.writer_gate.failed"));
+        let verifier = WriterGate::open(&lock_path).expect("verifier gate should open");
+        let guard = verifier
+            .acquire_with(Duration::from_millis(100), Duration::from_millis(5))
+            .expect("write gate should release after indexing");
+        drop(guard);
+        assert_eq!(
+            std::fs::metadata(lock_path)
+                .expect("writer sidecar should exist")
+                .len(),
+            0
+        );
+    }
+
+    #[test]
+    fn writer_gate_failure_events_and_worker_boundary_are_redacted() {
+        let captured = CapturedLogs::default();
+        let sensitive_sentinel = "C:\\private\\catalog.sqlite secret-key@example.invalid";
+        let error = WriterGateError::from_io(io::Error::other(sensitive_sentinel));
+        tracing::subscriber::with_default(captured.subscriber(), || {
+            emit_writer_gate_failure("2", "content_checkpoint_commit", &error);
+        });
+        let boundary_error = LiveIndexError::Worker(WRITER_GATE_FAILURE_MESSAGE.to_string());
+        let response = LiveIndexWorkerResponse::failed(2, &boundary_error);
+        let failure = LiveIndexWorkerFailure::from_error(&boundary_error);
+        let combined = format!(
+            "{}\n{}",
+            captured.text(),
+            serde_json::to_string(&response).expect("worker response should serialize")
+        );
+
+        assert_eq!(failure.class, LiveIndexWorkerFailureClass::Worker);
+        assert_eq!(failure.operation, LiveIndexWorkerOperation::WriterGate);
+        assert!(combined.contains("index.writer_gate.failed"));
+        assert!(combined.contains("\"error_kind\":\"io\""));
+        assert!(combined.contains("\"is_timeout\":false"));
+        assert!(!combined.contains(sensitive_sentinel));
+    }
+
+    #[test]
+    fn gated_checkpoint_failure_replays_committed_content_idempotently() {
+        let directory = tempdir().expect("temporary directory should create");
+        let content_path = directory.path().join("content.sqlite");
+        let control_path = directory.path().join("control.sqlite");
+        let content = open_content_db(&content_path).expect("content should open");
+        let control = open_control_db(&control_path).expect("control should open");
+        let gate =
+            WriterGate::open(&writer_gate_path(&control_path)).expect("writer gate should open");
+        let catalog = catalog("journal-gated-replay");
+        let batch = canonical_batch(&catalog);
+        let scope = CheckpointScope::Journal {
+            catalog_id: catalog.catalog_id.clone(),
+        };
+        control
+            .execute_batch(
+                "CREATE TRIGGER fail_gated_checkpoint
+                 BEFORE INSERT ON provider_checkpoints
+                 BEGIN SELECT RAISE(ABORT, 'forced checkpoint failure'); END;",
+            )
+            .expect("checkpoint failpoint should install");
+
+        let checkpoint_error = {
+            let _guard =
+                acquire_optional_writer_gate(Some(&gate), "0", "content_checkpoint_commit")
+                    .expect("writer gate should acquire");
+            commit_content_then_checkpoint(
+                &control,
+                "chinese_journals",
+                "provider-a",
+                &scope,
+                "complete",
+                "2026-07-18T00:00:00Z",
+                || {
+                    write_content_batch(
+                        &content,
+                        &catalog,
+                        &batch,
+                        "revision-gated",
+                        "2026-07-18T00:00:00Z",
+                    )
+                },
+            )
+            .expect_err("checkpoint failure should follow committed content")
+        };
+        assert!(matches!(
+            checkpoint_error,
+            ContentCheckpointCommitError::Control(_)
+        ));
+        assert_eq!(
+            content
+                .query_row("SELECT COUNT(*) FROM articles", [], |row| row
+                    .get::<_, i64>(0))
+                .expect("article count should read"),
+            1
+        );
+        assert_eq!(
+            read_checkpoint(&control, "chinese_journals", "provider-a", &scope)
+                .expect("checkpoint should read"),
+            None
+        );
+        control
+            .execute_batch("DROP TRIGGER fail_gated_checkpoint")
+            .expect("checkpoint failpoint should drop");
+
+        let replay = {
+            let _guard =
+                acquire_optional_writer_gate(Some(&gate), "0", "content_checkpoint_commit")
+                    .expect("writer gate should reacquire");
+            commit_content_then_checkpoint(
+                &control,
+                "chinese_journals",
+                "provider-a",
+                &scope,
+                "complete",
+                "2026-07-18T00:01:00Z",
+                || {
+                    write_content_batch(
+                        &content,
+                        &catalog,
+                        &batch,
+                        "revision-gated",
+                        "2026-07-18T00:00:00Z",
+                    )
+                },
+            )
+            .expect("gated replay should advance the checkpoint")
+        };
+        assert_eq!(replay.articles_changed, 0);
+        assert_eq!(replay.change_events_emitted, 0);
+        assert_eq!(
+            read_checkpoint(&control, "chinese_journals", "provider-a", &scope)
+                .expect("checkpoint should read")
+                .as_deref(),
+            Some("complete")
+        );
     }
 
     #[test]
@@ -1850,6 +2202,8 @@ mod tests {
         let directory = tempdir().expect("temporary directory should create");
         let control_path = directory.path().join("control.sqlite");
         let control = open_control_db(&control_path).expect("control should open");
+        let writer_gate_path = writer_gate_path(&control_path);
+        let writer_gate = WriterGate::open(&writer_gate_path).expect("writer gate should open");
         let now = LiveRunTime::now().epoch_seconds;
         acquire_lease(&control, "catalog", "provider", "run", now).expect("lease should acquire");
         let mut heartbeat = LeaseHeartbeat::start(
@@ -1858,6 +2212,7 @@ mod tests {
             "provider".to_string(),
             "run".to_string(),
             Duration::from_millis(10),
+            Some(writer_gate),
         );
         std::thread::sleep(Duration::from_millis(35));
         heartbeat.stop_and_check().expect("heartbeat should stop");
@@ -1869,5 +2224,11 @@ mod tests {
             )
             .expect("heartbeat timestamp should read");
         assert!(heartbeat_at >= now);
+        assert_eq!(
+            std::fs::metadata(writer_gate_path)
+                .expect("writer sidecar should exist")
+                .len(),
+            0
+        );
     }
 }

@@ -7,6 +7,7 @@ pub mod live;
 pub mod schema;
 pub mod stats;
 pub mod transforms;
+mod writer_gate;
 
 #[cfg(test)]
 mod sqlite_pressure;

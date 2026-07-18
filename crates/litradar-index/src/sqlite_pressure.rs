@@ -16,8 +16,12 @@ use litradar_domain::{
 use rusqlite::{Connection, ErrorCode};
 use serde::Serialize;
 
-use crate::control::{open_control_db, write_checkpoint, CheckpointScope, ControlDatabaseError};
+use crate::control::{
+    commit_content_then_checkpoint, open_control_db, CheckpointScope, ContentCheckpointCommitError,
+    ControlDatabaseError,
+};
 use crate::schema::{open_content_db, write_content_batch, ContentDatabaseError};
+use crate::writer_gate::{WriterGate, WriterGateError};
 
 const REPORT_PATH_ENV: &str = "LITRADAR_SQLITE_PRESSURE_REPORT";
 const FULL_WORKER_COUNT: usize = 3;
@@ -55,6 +59,15 @@ impl PressureConfig {
         }
     }
 
+    fn smoke() -> Self {
+        Self {
+            worker_count: 3,
+            pages_per_worker: 3,
+            articles_per_page: 4,
+            injected_failure: None,
+        }
+    }
+
     fn expected_pages(self) -> usize {
         self.worker_count * self.pages_per_worker
     }
@@ -78,6 +91,7 @@ struct PressureReport {
     scenario: ScenarioReport,
     progress: ProgressReport,
     commit_latency_ms: LatencyReport,
+    writer_gate_wait_ms: LatencyReport,
     peak_rss_bytes: Option<u64>,
     terminal_count: usize,
     first_failure: Option<FailureReport>,
@@ -94,6 +108,7 @@ struct ScenarioReport {
     expected_articles: usize,
     uses_canonical_content_writer: bool,
     writes_content_before_checkpoint: bool,
+    uses_writer_gate: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -147,7 +162,11 @@ struct IntegrityReport {
 }
 
 enum WorkerEvent {
-    Committed { articles: usize, elapsed_ms: u64 },
+    Committed {
+        articles: usize,
+        elapsed_ms: u64,
+        writer_gate_wait_ms: u64,
+    },
     Failed(FailureReport),
     Finished,
 }
@@ -185,9 +204,34 @@ fn injected_worker_failure_always_emits_a_redacted_report() {
     assert_eq!(failure.error_domain, "synthetic");
     assert_eq!(failure.error_code, "InjectedWorkerFailure");
     assert!(!failure.is_busy_or_locked);
+    assert_eq!(report.report_version, 2);
+    assert!(report.scenario.uses_writer_gate);
+    assert!(report_text.contains("\"writer_gate_wait_ms\""));
     assert!(!report_text.contains(&temp.path().to_string_lossy().to_string()));
     assert!(!report_text.contains("10.9000/"));
     assert!(!report_text.contains("Pressure Article"));
+}
+
+#[test]
+fn coordinated_writer_smoke_reports_gate_wait_distribution() {
+    let config = PressureConfig::smoke();
+    let report = run_pressure(config);
+
+    assert_eq!(report.status, "passed");
+    assert_eq!(report.terminal_count, 0);
+    assert!(report.first_failure.is_none());
+    assert!(report.scenario.uses_writer_gate);
+    assert_eq!(report.progress.committed_pages, config.expected_pages());
+    assert_eq!(
+        report.progress.committed_articles,
+        config.expected_articles()
+    );
+    assert_eq!(
+        report.writer_gate_wait_ms.sample_count,
+        config.expected_pages()
+    );
+    assert!(report.integrity.row_alignment);
+    assert!(report.integrity.checkpoint_alignment);
 }
 
 fn run_pressure(config: PressureConfig) -> PressureReport {
@@ -204,6 +248,7 @@ fn run_pressure(config: PressureConfig) -> PressureReport {
     };
     let content_path = temp.path().join("content.sqlite");
     let control_path = temp.path().join("control.sqlite");
+    let writer_gate_path = temp.path().join("catalog.writer.lock");
 
     if let Err(error) = open_content_db(&content_path) {
         return failed_setup_report(
@@ -242,14 +287,24 @@ fn run_pressure(config: PressureConfig) -> PressureReport {
                 );
             }
         };
-        connections.push((worker_slot, content, control));
+        let writer_gate = match WriterGate::open(&writer_gate_path) {
+            Ok(writer_gate) => writer_gate,
+            Err(error) => {
+                return failed_setup_report(
+                    config,
+                    started_at,
+                    classify_writer_gate_error("open_writer_gate", Some(worker_slot), None, &error),
+                );
+            }
+        };
+        connections.push((worker_slot, content, control, writer_gate));
     }
 
     let barrier = Arc::new(Barrier::new(config.worker_count));
     let should_stop = Arc::new(AtomicBool::new(false));
     let (sender, receiver) = mpsc::channel();
     let mut handles = Vec::with_capacity(config.worker_count);
-    for (worker_slot, content, control) in connections {
+    for (worker_slot, content, control, writer_gate) in connections {
         let worker_barrier = Arc::clone(&barrier);
         let worker_stop = Arc::clone(&should_stop);
         let worker_sender = sender.clone();
@@ -261,6 +316,7 @@ fn run_pressure(config: PressureConfig) -> PressureReport {
                     worker_slot,
                     &content,
                     &control,
+                    &writer_gate,
                     &worker_stop,
                     &worker_sender,
                 );
@@ -283,15 +339,18 @@ fn run_pressure(config: PressureConfig) -> PressureReport {
     let mut terminal_count = 0;
     let mut first_failure = None;
     let mut commit_latencies = Vec::with_capacity(config.expected_pages());
+    let mut writer_gate_waits = Vec::with_capacity(config.expected_pages());
     while finished_workers < config.worker_count {
         match receiver.recv_timeout(EVENT_TIMEOUT) {
             Ok(WorkerEvent::Committed {
                 articles,
                 elapsed_ms,
+                writer_gate_wait_ms,
             }) => {
                 committed_pages += 1;
                 committed_articles += articles;
                 commit_latencies.push(elapsed_ms);
+                writer_gate_waits.push(writer_gate_wait_ms);
             }
             Ok(WorkerEvent::Failed(failure)) => {
                 terminal_count += 1;
@@ -363,6 +422,7 @@ fn run_pressure(config: PressureConfig) -> PressureReport {
         terminal_count,
         first_failure,
         commit_latencies,
+        writer_gate_waits,
         inspection.counts,
         inspection.integrity,
     )
@@ -373,6 +433,7 @@ fn run_worker(
     worker_slot: usize,
     content: &Connection,
     control: &Connection,
+    writer_gate: &WriterGate,
     should_stop: &AtomicBool,
     sender: &Sender<WorkerEvent>,
 ) {
@@ -407,47 +468,52 @@ fn run_worker(
         let revision = format!("pressure-w{worker_slot}-p{page_index}");
         let checkpoint = format!("page-{page_index}");
         let commit_started_at = Instant::now();
-        let outcome =
-            match write_content_batch(content, &catalog, &batch, &revision, "2026-07-18T00:00:00Z")
-            {
-                Ok(outcome) => outcome,
-                Err(error) => {
-                    publish_failure(
-                        should_stop,
-                        sender,
-                        classify_content_error(
-                            "write_content_batch",
-                            Some(worker_slot),
-                            Some(page_index),
-                            &error,
-                        ),
-                    );
-                    break;
-                }
-            };
-        if let Err(error) = write_checkpoint(
+        let guard = match writer_gate.acquire() {
+            Ok(guard) => guard,
+            Err(error) => {
+                publish_failure(
+                    should_stop,
+                    sender,
+                    classify_writer_gate_error(
+                        "acquire_writer_gate",
+                        Some(worker_slot),
+                        Some(page_index),
+                        &error,
+                    ),
+                );
+                break;
+            }
+        };
+        let writer_gate_wait_ms = guard.waited_ms();
+        let outcome = match commit_content_then_checkpoint(
             control,
             "pressure-catalog",
             "pressure-provider",
             &scope,
             &checkpoint,
             "2026-07-18T00:00:00Z",
+            || write_content_batch(content, &catalog, &batch, &revision, "2026-07-18T00:00:00Z"),
         ) {
-            publish_failure(
-                should_stop,
-                sender,
-                classify_control_error(
-                    "write_checkpoint",
-                    Some(worker_slot),
-                    Some(page_index),
-                    &error,
-                ),
-            );
-            break;
-        }
+            Ok(outcome) => outcome,
+            Err(error) => {
+                publish_failure(
+                    should_stop,
+                    sender,
+                    classify_commit_error(
+                        "commit_content_then_checkpoint",
+                        Some(worker_slot),
+                        Some(page_index),
+                        &error,
+                    ),
+                );
+                break;
+            }
+        };
+        drop(guard);
         let _ = sender.send(WorkerEvent::Committed {
             articles: outcome.articles_seen,
             elapsed_ms: elapsed_millis(commit_started_at),
+            writer_gate_wait_ms,
         });
     }
 }
@@ -707,6 +773,40 @@ fn classify_control_error(
     }
 }
 
+fn classify_commit_error(
+    operation: &'static str,
+    worker_slot: Option<usize>,
+    page_index: Option<usize>,
+    error: &ContentCheckpointCommitError,
+) -> FailureReport {
+    match error {
+        ContentCheckpointCommitError::Content(error) => {
+            classify_content_error(operation, worker_slot, page_index, error)
+        }
+        ContentCheckpointCommitError::Control(error) => {
+            classify_control_error(operation, worker_slot, page_index, error)
+        }
+    }
+}
+
+fn classify_writer_gate_error(
+    operation: &'static str,
+    worker_slot: Option<usize>,
+    page_index: Option<usize>,
+    error: &WriterGateError,
+) -> FailureReport {
+    safe_scoped_failure(
+        operation,
+        worker_slot,
+        page_index,
+        "writer_gate",
+        match error {
+            WriterGateError::Io(_) => "Io",
+            WriterGateError::Timeout { .. } => "Timeout",
+        },
+    )
+}
+
 fn classify_sqlite_error(
     operation: &'static str,
     worker_slot: Option<usize>,
@@ -792,6 +892,7 @@ fn failed_setup_report(
         1,
         Some(failure),
         Vec::new(),
+        Vec::new(),
         DatabaseCounts::default(),
         IntegrityReport::default(),
     )
@@ -808,13 +909,14 @@ fn build_report(
     terminal_count: usize,
     first_failure: Option<FailureReport>,
     commit_latencies: Vec<u64>,
+    writer_gate_waits: Vec<u64>,
     database_counts: DatabaseCounts,
     integrity: IntegrityReport,
 ) -> PressureReport {
     let elapsed_ms = elapsed_millis(started_at);
     let elapsed_seconds = (elapsed_ms.max(1) as f64) / 1_000.0;
     PressureReport {
-        report_version: 1,
+        report_version: 2,
         generated_at_unix_ms: SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
@@ -830,6 +932,7 @@ fn build_report(
             expected_articles: config.expected_articles(),
             uses_canonical_content_writer: true,
             writes_content_before_checkpoint: true,
+            uses_writer_gate: true,
         },
         progress: ProgressReport {
             finished_workers,
@@ -839,6 +942,7 @@ fn build_report(
             throughput_articles_per_second: committed_articles as f64 / elapsed_seconds,
         },
         commit_latency_ms: latency_report(commit_latencies),
+        writer_gate_wait_ms: latency_report(writer_gate_waits),
         peak_rss_bytes: peak_rss_bytes(),
         terminal_count,
         first_failure,
