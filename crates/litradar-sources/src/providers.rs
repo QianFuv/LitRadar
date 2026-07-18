@@ -364,8 +364,16 @@ where
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "mode", rename_all = "snake_case", deny_unknown_fields)]
 enum ScholarlyCheckpoint {
-    Crossref { issn: String, cursor: String },
-    OpenAlex { source_id: String, cursor: String },
+    Crossref {
+        issn: String,
+        cursor: String,
+        #[serde(default)]
+        page_index: u64,
+    },
+    OpenAlex {
+        source_id: String,
+        cursor: String,
+    },
 }
 
 enum FirstScholarlyPage {
@@ -396,7 +404,11 @@ where
             )
         })?;
         match checkpoint {
-            ScholarlyCheckpoint::Crossref { issn, cursor } => {
+            ScholarlyCheckpoint::Crossref {
+                issn,
+                cursor,
+                page_index,
+            } => {
                 let page = client
                     .fetch_journal_works_page(&issn, None, Some(&cursor))
                     .map_err(map_scholarly_error)?;
@@ -404,6 +416,7 @@ where
                     ScholarlyCheckpoint::Crossref {
                         issn,
                         cursor: cursor.clone(),
+                        page_index,
                     },
                     page.next_cursor,
                     &cursor,
@@ -493,6 +506,7 @@ where
                     ScholarlyCheckpoint::Crossref {
                         issn: issn.clone(),
                         cursor: String::new(),
+                        page_index: 0,
                     },
                     page.next_cursor,
                     "",
@@ -563,21 +577,31 @@ fn next_scholarly_checkpoint(
     let Some(next_cursor) = next_cursor.filter(|_| !is_empty) else {
         return Ok(None);
     };
-    if next_cursor == previous_cursor {
-        return Err(ProviderError::new(
-            ProviderErrorKind::InvalidResponse,
-            "scholarly provider returned a repeated cursor",
-        ));
-    }
     let checkpoint = match current {
-        ScholarlyCheckpoint::Crossref { issn, .. } => ScholarlyCheckpoint::Crossref {
+        ScholarlyCheckpoint::Crossref {
+            issn, page_index, ..
+        } => ScholarlyCheckpoint::Crossref {
             issn,
             cursor: next_cursor,
+            page_index: page_index.checked_add(1).ok_or_else(|| {
+                ProviderError::new(
+                    ProviderErrorKind::InvalidResponse,
+                    "scholarly Crossref checkpoint page index overflowed",
+                )
+            })?,
         },
-        ScholarlyCheckpoint::OpenAlex { source_id, .. } => ScholarlyCheckpoint::OpenAlex {
-            source_id,
-            cursor: next_cursor,
-        },
+        ScholarlyCheckpoint::OpenAlex { source_id, .. } => {
+            if next_cursor == previous_cursor {
+                return Err(ProviderError::new(
+                    ProviderErrorKind::InvalidResponse,
+                    "scholarly provider returned a repeated cursor",
+                ));
+            }
+            ScholarlyCheckpoint::OpenAlex {
+                source_id,
+                cursor: next_cursor,
+            }
+        }
     };
     serde_json::to_string(&checkpoint).map(Some).map_err(|_| {
         ProviderError::new(
@@ -1238,18 +1262,19 @@ fn emit_source_attempt_summary(provider: &str, attempts: &[SourceAttempt]) {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeMap;
+    use std::collections::{BTreeMap, BTreeSet};
 
     use litradar_domain::{
         ArticleAccessContext, ArticleId, ArticleLocator, JournalRankings, ProviderCapabilityKind,
     };
-    use litradar_provider::ProviderRegistry;
+    use litradar_provider::{ProviderErrorKind, ProviderRegistry};
     use serde_json::json;
 
     use super::{
         cnki_access_registration, cnki_article_draft, cnki_index_registration, cnki_issue_draft,
-        scholarly_access_registration, scholarly_article_draft, scholarly_index_registration,
-        CnkiIndexProvider, ScholarlyIndexProvider, CNKI_REDIRECT_HOSTS, SCHOLARLY_REDIRECT_HOSTS,
+        next_scholarly_checkpoint, scholarly_access_registration, scholarly_article_draft,
+        scholarly_index_registration, CnkiIndexProvider, ScholarlyCheckpoint,
+        ScholarlyIndexProvider, CNKI_REDIRECT_HOSTS, SCHOLARLY_REDIRECT_HOSTS,
     };
     use crate::{
         CnkiFixtureData, FixtureCnkiTransport, FixtureScholarlyTransport, ScholarlyFixtureData,
@@ -1285,6 +1310,18 @@ mod tests {
             doi: None,
             pmid: None,
         }
+    }
+
+    fn crossref_works(start: usize, count: usize) -> Vec<serde_json::Value> {
+        (start..start + count)
+            .map(|index| {
+                json!({
+                    "DOI": format!("10.1000/stateful-{index}"),
+                    "title": [format!("Stateful cursor article {index}")],
+                    "published": {"date-parts": [[2026, 7, 18]]}
+                })
+            })
+            .collect()
     }
 
     #[test]
@@ -1482,6 +1519,139 @@ mod tests {
         assert!(batch.is_complete);
         assert_eq!(batch.articles.len(), 1);
         assert_eq!(batch.articles[0].doi.as_deref(), Some("10.1000/crossref"));
+    }
+
+    #[test]
+    fn scholarly_registration_traverses_stateful_crossref_cursor() {
+        let registration = scholarly_index_registration(
+            FixtureScholarlyTransport::new(ScholarlyFixtureData {
+                crossref_work_pages: vec![
+                    crossref_works(0, 225),
+                    crossref_works(225, 225),
+                    crossref_works(450, 1),
+                ],
+                ..ScholarlyFixtureData::default()
+            }),
+            false,
+        )
+        .expect("Scholarly registration should pass");
+        let provider = registration
+            .index_content()
+            .expect("indexing capability should exist");
+        let catalog = catalog();
+        let mut checkpoint = None;
+        let mut checkpoints = Vec::new();
+        let mut dois = BTreeSet::new();
+        let mut batch_count = 0;
+
+        loop {
+            let batch = provider
+                .fetch(&catalog, checkpoint.as_deref())
+                .expect("stateful Crossref page should fetch");
+            batch_count += 1;
+            for article in batch.articles {
+                dois.insert(article.doi.expect("fixture article should have a DOI"));
+            }
+            if batch.is_complete {
+                assert!(batch.next_checkpoint.is_none());
+                break;
+            }
+            let next_checkpoint = batch
+                .next_checkpoint
+                .expect("incomplete batch should have a checkpoint");
+            checkpoints.push(next_checkpoint.clone());
+            checkpoint = Some(next_checkpoint);
+        }
+
+        assert_eq!(batch_count, 3);
+        assert_eq!(dois.len(), 451);
+        assert_eq!(checkpoints.len(), 2);
+        assert_ne!(checkpoints[0], checkpoints[1]);
+        let parsed = checkpoints
+            .iter()
+            .map(|checkpoint| {
+                serde_json::from_str::<ScholarlyCheckpoint>(checkpoint)
+                    .expect("checkpoint should decode")
+            })
+            .collect::<Vec<_>>();
+        let cursor_pages = parsed
+            .iter()
+            .map(|checkpoint| match checkpoint {
+                ScholarlyCheckpoint::Crossref {
+                    cursor, page_index, ..
+                } => (cursor.as_str(), *page_index),
+                ScholarlyCheckpoint::OpenAlex { .. } => {
+                    panic!("Crossref fixture should not emit an OpenAlex checkpoint")
+                }
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(cursor_pages[0].0, cursor_pages[1].0);
+        assert_eq!(
+            cursor_pages
+                .iter()
+                .map(|(_, page_index)| *page_index)
+                .collect::<Vec<_>>(),
+            vec![1, 2]
+        );
+    }
+
+    #[test]
+    fn legacy_crossref_checkpoint_advances_with_page_index() {
+        let legacy = serde_json::from_str::<ScholarlyCheckpoint>(
+            r#"{"mode":"crossref","issn":"1234-5679","cursor":"stateful"}"#,
+        )
+        .expect("legacy checkpoint should decode");
+        let next =
+            next_scholarly_checkpoint(legacy, Some("stateful".to_string()), "stateful", false)
+                .expect("stateful cursor should advance")
+                .expect("non-terminal page should have a checkpoint");
+        let decoded = serde_json::from_str::<ScholarlyCheckpoint>(&next)
+            .expect("advanced checkpoint should decode");
+
+        assert_eq!(
+            decoded,
+            ScholarlyCheckpoint::Crossref {
+                issn: "1234-5679".to_string(),
+                cursor: "stateful".to_string(),
+                page_index: 1,
+            }
+        );
+    }
+
+    #[test]
+    fn scholarly_checkpoint_rejects_overflow_and_repeated_openalex_cursor() {
+        let overflow = next_scholarly_checkpoint(
+            ScholarlyCheckpoint::Crossref {
+                issn: "1234-5679".to_string(),
+                cursor: "stateful".to_string(),
+                page_index: u64::MAX,
+            },
+            Some("stateful".to_string()),
+            "stateful",
+            false,
+        )
+        .expect_err("Crossref page index should not wrap");
+        assert_eq!(overflow.kind(), ProviderErrorKind::InvalidResponse);
+        assert_eq!(
+            overflow.to_string(),
+            "scholarly Crossref checkpoint page index overflowed"
+        );
+
+        let repeated_openalex = next_scholarly_checkpoint(
+            ScholarlyCheckpoint::OpenAlex {
+                source_id: "S1".to_string(),
+                cursor: "fixture-page-1".to_string(),
+            },
+            Some("fixture-page-1".to_string()),
+            "fixture-page-1",
+            false,
+        )
+        .expect_err("OpenAlex cursor should advance textually");
+        assert_eq!(repeated_openalex.kind(), ProviderErrorKind::InvalidResponse);
+        assert_eq!(
+            repeated_openalex.to_string(),
+            "scholarly provider returned a repeated cursor"
+        );
     }
 
     #[test]
