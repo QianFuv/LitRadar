@@ -18,7 +18,7 @@ use litradar_sources::{
     LiveScholarlyConfig, LiveScholarlyTransport, CNKI_PROVIDER_NAME,
     OPENALEX_MAX_WORKERS_PER_PROCESS, SCHOLARLY_PROVIDER_NAME,
 };
-use rusqlite::Connection;
+use rusqlite::{Connection, ErrorCode};
 use serde::{Deserialize, Serialize};
 
 use crate::changes::{
@@ -281,7 +281,235 @@ struct LiveIndexWorkerResponse {
     worker_id: usize,
     status: String,
     metrics: IndexRunMetrics,
-    error: Option<String>,
+    failure: Option<LiveIndexWorkerFailure>,
+}
+
+impl LiveIndexWorkerResponse {
+    /// Build one failed worker response from a typed internal error.
+    fn failed(worker_id: usize, error: &LiveIndexError) -> Self {
+        Self {
+            worker_id,
+            status: "failed".to_string(),
+            metrics: IndexRunMetrics::default(),
+            failure: Some(LiveIndexWorkerFailure::from_error(error)),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum LiveIndexWorkerFailureClass {
+    Io,
+    Json,
+    Catalog,
+    Sqlite,
+    Content,
+    Control,
+    Registry,
+    ProviderSetup,
+    Provider,
+    InvalidConfig,
+    Worker,
+    Notify,
+    Heartbeat,
+}
+
+impl LiveIndexWorkerFailureClass {
+    /// Return the fixed event value for this failure class.
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Io => "io",
+            Self::Json => "json",
+            Self::Catalog => "catalog",
+            Self::Sqlite => "sqlite",
+            Self::Content => "content",
+            Self::Control => "control",
+            Self::Registry => "registry",
+            Self::ProviderSetup => "provider_setup",
+            Self::Provider => "provider",
+            Self::InvalidConfig => "invalid_config",
+            Self::Worker => "worker",
+            Self::Notify => "notify",
+            Self::Heartbeat => "heartbeat",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum LiveIndexWorkerOperation {
+    FileSystem,
+    WorkerJson,
+    CatalogRead,
+    ContentDatabaseOpen,
+    ContentCommit,
+    CheckpointCommit,
+    ControlDatabase,
+    Heartbeat,
+    ProviderRegistry,
+    ProviderSetup,
+    ProviderRequest,
+    Configuration,
+    WorkerProcess,
+    WorkerResponse,
+    Notification,
+}
+
+impl LiveIndexWorkerOperation {
+    /// Return the fixed event value for this worker operation.
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::FileSystem => "file_system",
+            Self::WorkerJson => "worker_json",
+            Self::CatalogRead => "catalog_read",
+            Self::ContentDatabaseOpen => "content_database_open",
+            Self::ContentCommit => "content_commit",
+            Self::CheckpointCommit => "checkpoint_commit",
+            Self::ControlDatabase => "control_database",
+            Self::Heartbeat => "heartbeat",
+            Self::ProviderRegistry => "provider_registry",
+            Self::ProviderSetup => "provider_setup",
+            Self::ProviderRequest => "provider_request",
+            Self::Configuration => "configuration",
+            Self::WorkerProcess => "worker_process",
+            Self::WorkerResponse => "worker_response",
+            Self::Notification => "notification",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+struct LiveIndexWorkerFailure {
+    class: LiveIndexWorkerFailureClass,
+    operation: LiveIndexWorkerOperation,
+    sqlite_code: Option<String>,
+    sqlite_extended_code: Option<i32>,
+    is_busy_or_locked: bool,
+}
+
+impl LiveIndexWorkerFailure {
+    /// Classify one typed worker error without retaining its free-form message.
+    fn from_error(error: &LiveIndexError) -> Self {
+        match error {
+            LiveIndexError::Io(_) => Self::fixed(
+                LiveIndexWorkerFailureClass::Io,
+                LiveIndexWorkerOperation::FileSystem,
+            ),
+            LiveIndexError::Json(_) => Self::fixed(
+                LiveIndexWorkerFailureClass::Json,
+                LiveIndexWorkerOperation::WorkerJson,
+            ),
+            LiveIndexError::Catalog(_) => Self::fixed(
+                LiveIndexWorkerFailureClass::Catalog,
+                LiveIndexWorkerOperation::CatalogRead,
+            ),
+            LiveIndexError::ContentDatabase { source, .. } => {
+                Self::from_content(LiveIndexWorkerOperation::ContentDatabaseOpen, source)
+            }
+            LiveIndexError::Commit(ContentCheckpointCommitError::Content(source)) => {
+                Self::from_content(LiveIndexWorkerOperation::ContentCommit, source)
+            }
+            LiveIndexError::Commit(ContentCheckpointCommitError::Control(source)) => {
+                Self::from_control(LiveIndexWorkerOperation::CheckpointCommit, source)
+            }
+            LiveIndexError::Control(source) => {
+                Self::from_control(LiveIndexWorkerOperation::ControlDatabase, source)
+            }
+            LiveIndexError::Registry(_) => Self::fixed(
+                LiveIndexWorkerFailureClass::Registry,
+                LiveIndexWorkerOperation::ProviderRegistry,
+            ),
+            LiveIndexError::ProviderSetup(_) => Self::fixed(
+                LiveIndexWorkerFailureClass::ProviderSetup,
+                LiveIndexWorkerOperation::ProviderSetup,
+            ),
+            LiveIndexError::Provider(_) => Self::fixed(
+                LiveIndexWorkerFailureClass::Provider,
+                LiveIndexWorkerOperation::ProviderRequest,
+            ),
+            LiveIndexError::InvalidConfig(_) => Self::fixed(
+                LiveIndexWorkerFailureClass::InvalidConfig,
+                LiveIndexWorkerOperation::Configuration,
+            ),
+            LiveIndexError::Worker(_) => Self::fixed(
+                LiveIndexWorkerFailureClass::Worker,
+                LiveIndexWorkerOperation::WorkerProcess,
+            ),
+            LiveIndexError::Notify(_) => Self::fixed(
+                LiveIndexWorkerFailureClass::Notify,
+                LiveIndexWorkerOperation::Notification,
+            ),
+            LiveIndexError::Heartbeat(_) => Self::fixed(
+                LiveIndexWorkerFailureClass::Heartbeat,
+                LiveIndexWorkerOperation::Heartbeat,
+            ),
+        }
+    }
+
+    /// Build a safe fallback for a failed response without a failure payload.
+    fn missing() -> Self {
+        Self::fixed(
+            LiveIndexWorkerFailureClass::Worker,
+            LiveIndexWorkerOperation::WorkerResponse,
+        )
+    }
+
+    /// Classify one content-domain failure at a fixed operation boundary.
+    fn from_content(operation: LiveIndexWorkerOperation, error: &ContentDatabaseError) -> Self {
+        match error {
+            ContentDatabaseError::Sqlite(error) => Self::from_sqlite(operation, error),
+            ContentDatabaseError::Json(_)
+            | ContentDatabaseError::Contract(_)
+            | ContentDatabaseError::Identity(_)
+            | ContentDatabaseError::Merge(_)
+            | ContentDatabaseError::RebuildRequired { .. }
+            | ContentDatabaseError::InvalidCurrentSchema(_)
+            | ContentDatabaseError::ArticleIdCollision { .. } => {
+                Self::fixed(LiveIndexWorkerFailureClass::Content, operation)
+            }
+        }
+    }
+
+    /// Classify one control-domain failure at a fixed operation boundary.
+    fn from_control(operation: LiveIndexWorkerOperation, error: &ControlDatabaseError) -> Self {
+        match error {
+            ControlDatabaseError::Sqlite(error) => Self::from_sqlite(operation, error),
+            ControlDatabaseError::Io(_) => Self::fixed(LiveIndexWorkerFailureClass::Io, operation),
+            ControlDatabaseError::UnsupportedVersion { .. }
+            | ControlDatabaseError::ActiveLease { .. }
+            | ControlDatabaseError::OwnershipLost { .. } => {
+                Self::fixed(LiveIndexWorkerFailureClass::Control, operation)
+            }
+        }
+    }
+
+    /// Retain only typed SQLite codes from one rusqlite failure.
+    fn from_sqlite(operation: LiveIndexWorkerOperation, error: &rusqlite::Error) -> Self {
+        match error {
+            rusqlite::Error::SqliteFailure(failure, _) => Self {
+                class: LiveIndexWorkerFailureClass::Sqlite,
+                operation,
+                sqlite_code: Some(format!("{:?}", failure.code)),
+                sqlite_extended_code: Some(failure.extended_code),
+                is_busy_or_locked: matches!(
+                    failure.code,
+                    ErrorCode::DatabaseBusy | ErrorCode::DatabaseLocked
+                ),
+            },
+            _ => Self::fixed(LiveIndexWorkerFailureClass::Sqlite, operation),
+        }
+    }
+
+    /// Build one non-SQLite fixed failure classification.
+    fn fixed(class: LiveIndexWorkerFailureClass, operation: LiveIndexWorkerOperation) -> Self {
+        Self {
+            class,
+            operation,
+            sqlite_code: None,
+            sqlite_extended_code: None,
+            is_busy_or_locked: false,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -426,14 +654,9 @@ pub fn run_live_index_worker_from_file_path(
             worker_id,
             status: "succeeded".to_string(),
             metrics,
-            error: None,
+            failure: None,
         },
-        Err(error) => LiveIndexWorkerResponse {
-            worker_id,
-            status: "failed".to_string(),
-            metrics: IndexRunMetrics::default(),
-            error: Some(error.to_string()),
-        },
+        Err(error) => LiveIndexWorkerResponse::failed(worker_id, &error),
     };
     Ok(serde_json::to_string(&response)?)
 }
@@ -797,19 +1020,53 @@ fn run_worker_processes(
                 ))
             })?;
         if response.status != "succeeded" {
+            let failure = response
+                .failure
+                .unwrap_or_else(LiveIndexWorkerFailure::missing);
+            emit_worker_failure(response.worker_id, &failure);
+            let error = worker_failure_error(response.worker_id, &failure);
             cancel_workers(&mut children, index + 1);
-            return Err(LiveIndexError::Worker(format!(
-                "worker {} failed: {}",
-                response.worker_id,
-                response
-                    .error
-                    .as_deref()
-                    .unwrap_or("no safe error was returned")
-            )));
+            return Err(error);
         }
         aggregate.merge(&response.metrics);
     }
     Ok(aggregate)
+}
+
+/// Emit one failed worker event using only fixed classifications and typed SQLite codes.
+fn emit_worker_failure(worker_id: usize, failure: &LiveIndexWorkerFailure) {
+    if let Some(sqlite_code) = failure.sqlite_code.as_deref() {
+        tracing::error!(
+            event = "index.worker.failed",
+            component = "index",
+            worker_id,
+            failure_class = failure.class.as_str(),
+            operation = failure.operation.as_str(),
+            has_sqlite_code = true,
+            sqlite_code,
+            sqlite_extended_code = failure.sqlite_extended_code.unwrap_or_default(),
+            is_busy_or_locked = failure.is_busy_or_locked,
+        );
+    } else {
+        tracing::error!(
+            event = "index.worker.failed",
+            component = "index",
+            worker_id,
+            failure_class = failure.class.as_str(),
+            operation = failure.operation.as_str(),
+            has_sqlite_code = false,
+            is_busy_or_locked = failure.is_busy_or_locked,
+        );
+    }
+}
+
+/// Build a generic parent failure from safe structured worker fields.
+fn worker_failure_error(worker_id: usize, failure: &LiveIndexWorkerFailure) -> LiveIndexError {
+    LiveIndexError::Worker(format!(
+        "worker {worker_id} failed during {} ({})",
+        failure.operation.as_str(),
+        failure.class.as_str()
+    ))
 }
 
 struct SpawnedWorker {
@@ -911,7 +1168,8 @@ fn index_entries_with_provider(
             &request.provider_name,
             &request.run_id,
             LiveRunTime::now().epoch_seconds,
-        )?;
+        )
+        .map_err(|error| LiveIndexError::Heartbeat(error.to_string()))?;
         let scope = CheckpointScope::Journal {
             catalog_id: entry.catalog_id.clone(),
         };
@@ -946,7 +1204,8 @@ fn index_entries_with_provider(
                 &request.provider_name,
                 &request.run_id,
                 LiveRunTime::now().epoch_seconds,
-            )?;
+            )
+            .map_err(|error| LiveIndexError::Heartbeat(error.to_string()))?;
             let batch = provider.fetch(entry, provider_checkpoint.as_deref())?;
             let stored_checkpoint = checkpoint_after_batch(&batch)?;
             let encoded_checkpoint = serde_json::to_string(&stored_checkpoint)?;
@@ -1058,7 +1317,8 @@ fn run_notify_for_manifest(
 #[cfg(test)]
 mod tests {
     use std::collections::{BTreeMap, BTreeSet};
-    use std::sync::Mutex;
+    use std::io::{self, Write};
+    use std::sync::{Arc, Mutex};
     use std::time::Duration;
 
     use litradar_domain::{
@@ -1066,18 +1326,79 @@ mod tests {
         JournalRankings, ProviderBatch,
     };
     use litradar_provider::{IndexContentProvider, ProviderError};
+    use rusqlite::{Connection, ErrorCode};
     use tempfile::tempdir;
+    use tracing_subscriber::fmt::MakeWriter;
 
     use super::{
-        build_worker_requests, index_entries_with_provider, run_live_index,
-        run_live_index_worker_from_file_path, validate_live_config, LeaseHeartbeat,
-        LiveIndexConfig, LiveIndexError, LiveIndexWorkerRequest, LiveRunTime,
+        build_worker_requests, emit_worker_failure, index_entries_with_provider, run_live_index,
+        run_live_index_worker_from_file_path, validate_live_config, worker_failure_error,
+        LeaseHeartbeat, LiveIndexConfig, LiveIndexError, LiveIndexWorkerFailureClass,
+        LiveIndexWorkerOperation, LiveIndexWorkerRequest, LiveIndexWorkerResponse, LiveRunTime,
         OPENALEX_MAX_WORKERS_PER_PROCESS,
     };
     use crate::control::{
         acquire_lease, open_control_db, read_checkpoint, release_lease, CheckpointScope,
+        ContentCheckpointCommitError,
     };
-    use crate::schema::open_content_db;
+    use crate::schema::{open_content_db, ContentDatabaseError};
+
+    #[derive(Clone, Default)]
+    struct CapturedLogs {
+        bytes: Arc<Mutex<Vec<u8>>>,
+    }
+
+    impl CapturedLogs {
+        /// Build a JSON tracing subscriber backed by this capture buffer.
+        fn subscriber(&self) -> impl tracing::Subscriber + Send + Sync {
+            tracing_subscriber::fmt()
+                .with_ansi(false)
+                .with_max_level(tracing::Level::TRACE)
+                .with_writer(self.clone())
+                .json()
+                .flatten_event(true)
+                .finish()
+        }
+
+        /// Return captured JSON Lines as UTF-8 text.
+        fn text(&self) -> String {
+            String::from_utf8(
+                self.bytes
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .clone(),
+            )
+            .expect("captured worker logs should be UTF-8")
+        }
+    }
+
+    struct CapturedWriter {
+        bytes: Arc<Mutex<Vec<u8>>>,
+    }
+
+    impl Write for CapturedWriter {
+        fn write(&mut self, buffer: &[u8]) -> io::Result<usize> {
+            self.bytes
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .extend_from_slice(buffer);
+            Ok(buffer.len())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl<'writer> MakeWriter<'writer> for CapturedLogs {
+        type Writer = CapturedWriter;
+
+        fn make_writer(&'writer self) -> Self::Writer {
+            CapturedWriter {
+                bytes: Arc::clone(&self.bytes),
+            }
+        }
+    }
 
     struct StaticProvider {
         calls: Mutex<usize>,
@@ -1394,8 +1715,134 @@ mod tests {
         assert_eq!(payload["worker_id"], 0);
         assert_eq!(payload["status"], "succeeded");
         assert_eq!(payload["metrics"]["journals_total"], 0);
-        assert!(payload["error"].is_null());
+        assert!(payload["failure"].is_null());
+        assert!(payload.get("error").is_none());
         assert_eq!(response.lines().count(), 1);
+    }
+
+    #[test]
+    fn worker_failure_response_retains_structured_sqlite_codes() {
+        let directory = tempdir().expect("temporary SQLite directory should create");
+        let database_path = directory.path().join("busy.sqlite");
+        let holder = Connection::open(&database_path).expect("holder connection should open");
+        holder
+            .execute_batch(
+                "CREATE TABLE writes (value INTEGER NOT NULL);
+                 BEGIN IMMEDIATE;
+                 INSERT INTO writes VALUES (1);",
+            )
+            .expect("holder should own the write transaction");
+        let contender = Connection::open(&database_path).expect("contender should open");
+        contender
+            .busy_timeout(Duration::ZERO)
+            .expect("contender busy timeout should configure");
+        let sqlite_error = contender
+            .execute("INSERT INTO writes VALUES (2)", [])
+            .expect_err("uncoordinated contender should be busy or locked");
+        let expected = match &sqlite_error {
+            rusqlite::Error::SqliteFailure(failure, _) => {
+                assert!(matches!(
+                    failure.code,
+                    ErrorCode::DatabaseBusy | ErrorCode::DatabaseLocked
+                ));
+                (format!("{:?}", failure.code), failure.extended_code)
+            }
+            other => panic!("expected typed SQLite failure, received {other:?}"),
+        };
+        let error = LiveIndexError::Commit(ContentCheckpointCommitError::Content(
+            ContentDatabaseError::Sqlite(sqlite_error),
+        ));
+
+        let response = LiveIndexWorkerResponse::failed(2, &error);
+        let failure = response
+            .failure
+            .as_ref()
+            .expect("failed worker response should retain one failure");
+        assert_eq!(response.status, "failed");
+        assert_eq!(failure.class, LiveIndexWorkerFailureClass::Sqlite);
+        assert_eq!(failure.operation, LiveIndexWorkerOperation::ContentCommit);
+        assert_eq!(failure.sqlite_code.as_deref(), Some(expected.0.as_str()));
+        assert_eq!(failure.sqlite_extended_code, Some(expected.1));
+        assert!(failure.is_busy_or_locked);
+        let payload = serde_json::to_value(&response).expect("worker response should serialize");
+        assert!(payload.get("error").is_none());
+        assert_eq!(payload["failure"]["class"], "sqlite");
+        assert_eq!(payload["failure"]["operation"], "content_commit");
+        let captured = CapturedLogs::default();
+        tracing::subscriber::with_default(captured.subscriber(), || {
+            emit_worker_failure(response.worker_id, failure);
+        });
+        let event: serde_json::Value = serde_json::from_str(
+            captured
+                .text()
+                .lines()
+                .next()
+                .expect("worker failure event should be captured"),
+        )
+        .expect("worker failure event should be JSON");
+        assert_eq!(event["event"], "index.worker.failed");
+        assert_eq!(event["worker_id"], 2);
+        assert_eq!(event["failure_class"], "sqlite");
+        assert_eq!(event["operation"], "content_commit");
+        assert_eq!(event["sqlite_code"], expected.0);
+        assert_eq!(event["sqlite_extended_code"], expected.1);
+        assert_eq!(event["is_busy_or_locked"], true);
+    }
+
+    #[test]
+    fn worker_failure_event_excludes_free_form_sensitive_values() {
+        let sentinels = [
+            "C:\\private\\worker.sqlite",
+            "openalex-key-sentinel",
+            "operator-sentinel@example.test",
+            "10.9999/sentinel-doi",
+            "Sentinel Article Title",
+            "cursor-sentinel-value",
+            "response-body-sentinel",
+            "Bearer sentinel-token-value",
+        ];
+        let error = LiveIndexError::Worker(sentinels.join(" | "));
+        let response = LiveIndexWorkerResponse::failed(5, &error);
+        let failure = response
+            .failure
+            .as_ref()
+            .expect("failed worker response should retain one failure");
+        let captured = CapturedLogs::default();
+        tracing::subscriber::with_default(captured.subscriber(), || {
+            emit_worker_failure(response.worker_id, failure);
+        });
+        let parent_error = worker_failure_error(response.worker_id, failure);
+        let combined = format!(
+            "{}\n{}\n{parent_error}",
+            serde_json::to_string(&response).expect("worker response should serialize"),
+            captured.text()
+        );
+
+        assert_eq!(failure.class, LiveIndexWorkerFailureClass::Worker);
+        assert_eq!(failure.operation, LiveIndexWorkerOperation::WorkerProcess);
+        assert!(failure.sqlite_code.is_none());
+        assert!(failure.sqlite_extended_code.is_none());
+        assert!(!failure.is_busy_or_locked);
+        assert!(combined.contains("index.worker.failed"));
+        assert!(combined.contains("\"worker_id\":5"));
+        assert!(combined.contains("\"failure_class\":\"worker\""));
+        let event: serde_json::Value = serde_json::from_str(
+            captured
+                .text()
+                .lines()
+                .next()
+                .expect("worker failure event should be captured"),
+        )
+        .expect("worker failure event should be JSON");
+        assert_eq!(event["has_sqlite_code"], false);
+        assert!(event.get("sqlite_code").is_none());
+        assert!(event.get("sqlite_extended_code").is_none());
+        for sentinel in sentinels {
+            assert!(
+                !combined.contains(sentinel),
+                "worker boundary exposed sensitive sentinel"
+            );
+        }
     }
 
     #[test]
