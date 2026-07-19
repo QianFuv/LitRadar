@@ -1076,13 +1076,37 @@ impl LiveScholarlyConfig {
         self
     }
 
+    /// Return whether OpenAlex enrichment can be authenticated.
+    ///
+    /// # Returns
+    ///
+    /// True when at least one non-blank OpenAlex key is configured.
+    pub fn has_openalex_key(&self) -> bool {
+        self.openalex_api_keys
+            .iter()
+            .any(|value| !value.trim().is_empty())
+    }
+
     /// Return whether Semantic Scholar enrichment can be authenticated.
     ///
     /// # Returns
     ///
-    /// True when at least one Semantic Scholar key is configured.
+    /// True when at least one non-blank Semantic Scholar key is configured.
     pub fn has_semantic_scholar_key(&self) -> bool {
-        !self.semantic_scholar_api_keys.is_empty()
+        self.semantic_scholar_api_keys
+            .iter()
+            .any(|value| !value.trim().is_empty())
+    }
+
+    /// Return whether the Crossref polite pool can be selected.
+    ///
+    /// # Returns
+    ///
+    /// True when at least one non-blank Crossref mailto is configured.
+    pub fn has_crossref_mailto(&self) -> bool {
+        self.crossref_mailtos
+            .iter()
+            .any(|value| !value.trim().is_empty())
     }
 }
 
@@ -2949,6 +2973,24 @@ mod tests {
     }
 
     #[test]
+    fn live_config_reports_required_credential_presence() {
+        let empty = LiveScholarlyConfig::from_value_pools(30, "", "", "");
+        let configured = LiveScholarlyConfig::from_value_pools(
+            30,
+            "openalex-key",
+            "semantic-scholar-key",
+            "contact@example.invalid",
+        );
+
+        assert!(!empty.has_openalex_key());
+        assert!(!empty.has_semantic_scholar_key());
+        assert!(!empty.has_crossref_mailto());
+        assert!(configured.has_openalex_key());
+        assert!(configured.has_semantic_scholar_key());
+        assert!(configured.has_crossref_mailto());
+    }
+
+    #[test]
     fn live_config_debug_redacts_credentials() {
         let config = LiveScholarlyConfig {
             timeout_seconds: 30,
@@ -3017,6 +3059,52 @@ mod tests {
     }
 
     #[test]
+    fn provider_attempt_schedule_keeps_crossref_mailto_counts_process_invariant() {
+        let epoch_millis = 25_000;
+        let starts_for = |mailto_pool: &str, process_count: usize| {
+            let mut starts = (0..process_count)
+                .flat_map(|worker_id| {
+                    let config = LiveScholarlyConfig::from_value_pools(
+                        30,
+                        "openalex-key",
+                        "semantic-scholar-key",
+                        mailto_pool,
+                    )
+                    .with_worker_context(worker_id, process_count)
+                    .with_schedule_epoch(epoch_millis);
+                    let mut transport = LiveScholarlyTransport::new(config)
+                        .expect("live transport should initialize");
+                    (0..12)
+                        .map(|_| transport.crossref_attempt_schedule.reserve_at(epoch_millis))
+                        .collect::<Vec<_>>()
+                })
+                .collect::<Vec<_>>();
+            starts.sort_unstable();
+            starts
+        };
+
+        for process_count in 1..=3 {
+            let one_mailto = starts_for("first@example.invalid", process_count);
+            let three_mailtos = starts_for(
+                "first@example.invalid;second@example.invalid;third@example.invalid",
+                process_count,
+            );
+
+            assert_eq!(one_mailto, three_mailtos);
+            assert!(one_mailto
+                .windows(2)
+                .all(|window| { window[1] - window[0] == CROSSREF_ATTEMPT_INTERVAL_MS }));
+            assert!(one_mailto.iter().all(|window_start| {
+                one_mailto
+                    .iter()
+                    .filter(|start| **start >= *window_start && **start < window_start + 1_000)
+                    .count()
+                    <= 10
+            }));
+        }
+    }
+
+    #[test]
     fn provider_attempt_schedule_skips_missed_slots_without_catch_up() {
         let mut schedule =
             ProviderAttemptSchedule::new(10_000, 1, 3, SEMANTIC_SCHOLAR_ATTEMPT_INTERVAL_MS);
@@ -3024,32 +3112,43 @@ mod tests {
         assert_eq!(schedule.reserve_at(10_000), 11_100);
         assert_eq!(schedule.reserve_at(20_000), 21_000);
         assert_eq!(schedule.reserve_at(21_001), 24_300);
+
+        let mut crossref_schedule =
+            ProviderAttemptSchedule::new(10_000, 1, 3, CROSSREF_ATTEMPT_INTERVAL_MS);
+        assert_eq!(crossref_schedule.reserve_at(10_000), 10_110);
+        assert_eq!(crossref_schedule.reserve_at(20_000), 20_010);
+        assert_eq!(crossref_schedule.reserve_at(20_011), 20_340);
     }
 
     #[test]
     fn provider_attempt_schedule_keeps_retry_attempts_in_the_worker_phase() {
         let epoch_millis = 50_000;
-        let mut schedules = (0..3)
-            .map(|worker_id| {
-                ProviderAttemptSchedule::new(
-                    epoch_millis,
-                    worker_id,
-                    3,
-                    SEMANTIC_SCHOLAR_ATTEMPT_INTERVAL_MS,
-                )
-            })
-            .collect::<Vec<_>>();
-        let mut starts = Vec::new();
-        for schedule in &mut schedules {
-            starts.push(schedule.reserve_at(epoch_millis));
-            starts.push(schedule.reserve_at(epoch_millis + 250));
-        }
-        starts.sort_unstable();
+        for interval_millis in [
+            CROSSREF_ATTEMPT_INTERVAL_MS,
+            SEMANTIC_SCHOLAR_ATTEMPT_INTERVAL_MS,
+        ] {
+            let mut schedules = (0..3)
+                .map(|worker_id| {
+                    ProviderAttemptSchedule::new(epoch_millis, worker_id, 3, interval_millis)
+                })
+                .collect::<Vec<_>>();
+            let mut starts = Vec::new();
+            for schedule in &mut schedules {
+                starts.push(schedule.reserve_at(epoch_millis));
+                starts.push(schedule.reserve_at(epoch_millis + 25));
+            }
+            starts.sort_unstable();
 
-        assert!(starts
-            .windows(2)
-            .all(|window| { window[1] - window[0] >= SEMANTIC_SCHOLAR_ATTEMPT_INTERVAL_MS }));
-        assert_eq!(starts, vec![50_000, 51_100, 52_200, 53_300, 54_400, 55_500]);
+            assert!(starts
+                .windows(2)
+                .all(|window| { window[1] - window[0] >= interval_millis }));
+            assert_eq!(
+                starts,
+                (0..6)
+                    .map(|index| epoch_millis + interval_millis * index)
+                    .collect::<Vec<_>>()
+            );
+        }
     }
 
     #[test]

@@ -567,17 +567,16 @@ fn run_live_index_worker_with_io(
 }
 
 fn validate_live_config(config: &LiveIndexConfig) -> Result<(), LiveIndexError> {
+    let has_scholarly_route = config
+        .index_provider_routes
+        .values()
+        .any(|provider| provider == SCHOLARLY_PROVIDER_NAME);
     if config.worker_count == 0 {
         return Err(LiveIndexError::InvalidConfig(
             "worker_count must be greater than zero".to_string(),
         ));
     }
-    if config.worker_count > OPENALEX_MAX_WORKERS_PER_PROCESS
-        && config
-            .index_provider_routes
-            .values()
-            .any(|provider| provider == SCHOLARLY_PROVIDER_NAME)
-    {
+    if config.worker_count > OPENALEX_MAX_WORKERS_PER_PROCESS && has_scholarly_route {
         return Err(LiveIndexError::InvalidConfig(format!(
             "worker_count must be at most {OPENALEX_MAX_WORKERS_PER_PROCESS} for scholarly indexing"
         )));
@@ -587,12 +586,7 @@ fn validate_live_config(config: &LiveIndexConfig) -> Result<(), LiveIndexError> 
             "process_count must be greater than zero".to_string(),
         ));
     }
-    if config.process_count > SCHOLARLY_MAX_PROCESS_COUNT
-        && config
-            .index_provider_routes
-            .values()
-            .any(|provider| provider == SCHOLARLY_PROVIDER_NAME)
-    {
+    if config.process_count > SCHOLARLY_MAX_PROCESS_COUNT && has_scholarly_route {
         return Err(LiveIndexError::InvalidConfig(format!(
             "process_count must be at most {SCHOLARLY_MAX_PROCESS_COUNT} for scholarly indexing"
         )));
@@ -616,6 +610,23 @@ fn validate_live_config(config: &LiveIndexConfig) -> Result<(), LiveIndexError> 
         return Err(LiveIndexError::InvalidConfig(
             "index_provider_routes must not be empty".to_string(),
         ));
+    }
+    if has_scholarly_route {
+        if !config.scholarly_config.has_crossref_mailto() {
+            return Err(LiveIndexError::InvalidConfig(
+                "Crossref mailto is required for scholarly indexing".to_string(),
+            ));
+        }
+        if !config.scholarly_config.has_openalex_key() {
+            return Err(LiveIndexError::InvalidConfig(
+                "OpenAlex API key is required for scholarly indexing".to_string(),
+            ));
+        }
+        if !config.scholarly_config.has_semantic_scholar_key() {
+            return Err(LiveIndexError::InvalidConfig(
+                "Semantic Scholar API key is required for scholarly indexing".to_string(),
+            ));
+        }
     }
     Ok(())
 }
@@ -2361,6 +2372,68 @@ mod tests {
             serde_json::to_string(&requests[0]).expect("worker request should serialize");
         assert!(!request_json.contains("content_path"));
         assert!(!request_json.contains("control_path"));
+    }
+
+    #[test]
+    fn scholarly_credential_preflight_rejects_missing_values_before_mutation() {
+        let cases = [
+            (
+                "",
+                "semantic-scholar-secret",
+                "contact-secret@example.invalid",
+                "OpenAlex API key is required for scholarly indexing",
+            ),
+            (
+                "openalex-secret",
+                "",
+                "contact-secret@example.invalid",
+                "Semantic Scholar API key is required for scholarly indexing",
+            ),
+            (
+                "openalex-secret",
+                "semantic-scholar-secret",
+                "",
+                "Crossref mailto is required for scholarly indexing",
+            ),
+        ];
+
+        for (openalex_keys, semantic_scholar_keys, crossref_mailtos, expected_message) in cases {
+            let directory = tempdir().expect("temporary directory should create");
+            let config = LiveIndexConfig {
+                application_executable: "litradar".into(),
+                project_root: directory.path().to_path_buf(),
+                secret_key_file: "secret.key".into(),
+                file: None,
+                worker_count: 1,
+                process_count: 1,
+                issue_batch_size: 1,
+                timeout_seconds: 10,
+                resume: true,
+                update: false,
+                notify: false,
+                notify_dry_run: true,
+                scholarly_config: litradar_sources::LiveScholarlyConfig::from_value_pools(
+                    10,
+                    openalex_keys,
+                    semantic_scholar_keys,
+                    crossref_mailtos,
+                ),
+                index_provider_routes: BTreeMap::from([(
+                    "catalog".to_string(),
+                    "scholarly".to_string(),
+                )]),
+            };
+
+            let error = run_live_index(&config).expect_err("missing credential should fail");
+            let LiveIndexError::InvalidConfig(message) = error else {
+                panic!("missing credential returned unexpected error: {error:?}");
+            };
+            assert_eq!(message, expected_message);
+            for secret in [openalex_keys, semantic_scholar_keys, crossref_mailtos] {
+                assert!(secret.is_empty() || !message.contains(secret));
+            }
+            assert!(!directory.path().join("data").exists());
+        }
     }
 
     #[test]
