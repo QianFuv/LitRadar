@@ -101,9 +101,9 @@ Scholarly 在线 adapter 不请求或读取索引时保存的 URL：
 
 ## 重试、日志与秘密
 
-Crossref 的通用 HTTP 路径默认最多三次。OpenAlex 和 Semantic Scholar 为了在 key 故障时完成合法 failover，单个逻辑请求最多尝试 `key_count + 2` 次；本次验证覆盖 `1..=3` 个 key，因此该范围最多五次。每个网络尝试（包括 retry）都计入被选 Provider/key 的相位。传输错误及 `429/500/502/503/504` 可重试，401/403 只停用被选 key，其他非 2xx 直接失败。
+Crossref journal-list GET 收到 HTTP 响应后仍最多尝试三次；`429/500/502/503/504` 沿用 1/2 秒退避，其他非 2xx 直接失败。只有 `Client::execute` 没有产生任何 HTTP 响应的传输失败可以扩展到最多六次，并按 1/2/4/8/16 秒退避。扩展次数依据请求 timeout 选择，新增尝试的模型包络不得超过 180 秒；默认 20 秒 timeout 选择六次和 151 秒包络，较长 timeout 会降为五次、四次或原有三次，但不会低于三次。OpenAlex 和 Semantic Scholar 为了在 key 故障时完成合法 failover，单个逻辑请求最多尝试 `key_count + 2` 次；本次验证覆盖 `1..=3` 个 key，因此该范围最多五次。每个网络尝试（包括 retry）都计入被选 Provider/key 的相位。401/403 只停用被选 key。
 
-每次逻辑请求的成功、失败和 retry 会汇总到 `index.provider.attempts` 结构化终态事件。OpenAlex/Semantic Scholar 尝试事件只增加安全的 key-slot 编号、状态分类、retry 标志和耗时，不记录 key 值或请求体。内容库没有 API call/statistics 表。API key、完整查询秘密、DOI 请求体、响应正文和上游 URL 不进入安全错误或持久状态；Semantic Scholar 非白名单错误正文会折叠为固定消息。
+每次逻辑请求的成功、失败和 retry 会汇总到 `index.provider.attempts` 结构化终态事件。OpenAlex/Semantic Scholar 尝试事件只增加安全的 key-slot 编号、状态分类、retry 标志和耗时，不记录 key 值或请求体。内容库没有 API call/statistics 表。Crossref 无响应传输失败在尝试记录和返回错误中都固定为 `transport failure`，不保留可能携带 URL 或查询参数的 Reqwest 原始错误。API key、完整查询秘密、DOI 请求体、响应正文和上游 URL 不进入安全错误或持久状态；Semantic Scholar 非白名单错误正文会折叠为固定消息。
 
 调度器暴露的是有安全余量的可用容量，不是吞吐保证。实际吞吐近似受 `min(Provider 预算, 在途容量 / 响应延迟, 产生工作速率)` 限制；低 worker、慢响应或工作不足不能被标记为限流器利用率不足，也不承诺精确 100% 使用或任何外部状态下都零 429。
 

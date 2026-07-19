@@ -38,6 +38,9 @@ const OPENALEX_MAX_CREDITS_PER_REQUEST: u64 = 10;
 const OPENALEX_KEY_START_INTERVAL: Duration = Duration::from_millis(11);
 const OPENALEX_SOURCE_WORK_ROWS: usize = 200;
 const DEFAULT_MAX_RETRIES: usize = 2;
+const CROSSREF_MAX_TRANSPORT_ATTEMPTS: usize = 6;
+const CROSSREF_TRANSPORT_RETRY_BUDGET_SECONDS: u64 = 180;
+const TRANSPORT_FAILURE_MESSAGE: &str = "transport failure";
 const RETRY_STATUS_CODES: [u16; 5] = [429, 500, 502, 503, 504];
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -2071,6 +2074,36 @@ fn safe_openalex_error_body(endpoint: &str, payload: &Value, query: &[(String, S
     }
 }
 
+fn crossref_transport_retry_delay(failed_attempt_number: usize) -> Duration {
+    let exponent = u32::try_from(failed_attempt_number.saturating_sub(1)).unwrap_or(u32::MAX);
+    let delay_seconds = 1_u64.checked_shl(exponent).unwrap_or(u64::MAX);
+    Duration::from_secs(delay_seconds)
+}
+
+fn crossref_transport_envelope_seconds(timeout_seconds: u64, attempts: usize) -> u64 {
+    let retry_seconds = (1..attempts)
+        .map(crossref_transport_retry_delay)
+        .fold(0_u64, |total, delay| total.saturating_add(delay.as_secs()));
+    timeout_seconds
+        .max(1)
+        .saturating_mul(u64::try_from(attempts).unwrap_or(u64::MAX))
+        .saturating_add(retry_seconds)
+}
+
+fn crossref_transport_attempt_limit(timeout_seconds: u64) -> usize {
+    let minimum_attempts = DEFAULT_MAX_RETRIES + 1;
+    let mut selected_attempts = minimum_attempts;
+    for attempts in (minimum_attempts + 1)..=CROSSREF_MAX_TRANSPORT_ATTEMPTS {
+        if crossref_transport_envelope_seconds(timeout_seconds, attempts)
+            > CROSSREF_TRANSPORT_RETRY_BUDGET_SECONDS
+        {
+            break;
+        }
+        selected_attempts = attempts;
+    }
+    selected_attempts
+}
+
 impl LiveScholarlyTransport {
     /// Build a live Scholarly transport.
     ///
@@ -2648,7 +2681,26 @@ impl LiveScholarlyTransport {
     }
 
     fn request_json(&mut self, live_request: JsonRequest<'_>) -> Result<Value, SourceError> {
-        for attempt in 0..=DEFAULT_MAX_RETRIES {
+        self.request_json_with_sleeper(live_request, thread::sleep)
+    }
+
+    fn request_json_with_sleeper<S>(
+        &mut self,
+        live_request: JsonRequest<'_>,
+        mut sleeper: S,
+    ) -> Result<Value, SourceError>
+    where
+        S: FnMut(Duration),
+    {
+        let has_extended_crossref_transport_retries = live_request.service == CROSSREF_SOURCE
+            && live_request.endpoint == "journal_works"
+            && live_request.method == "GET";
+        let maximum_transport_attempts = if has_extended_crossref_transport_retries {
+            crossref_transport_attempt_limit(self.config.timeout_seconds)
+        } else {
+            DEFAULT_MAX_RETRIES + 1
+        };
+        for attempt in 0..maximum_transport_attempts {
             let attempt_number = attempt + 1;
             let mut builder = match live_request.method {
                 "POST" => self.client.post(live_request.url),
@@ -2719,7 +2771,7 @@ impl LiveScholarlyTransport {
                                 .map(str::to_string),
                         });
                         if will_retry {
-                            thread::sleep(Duration::from_secs((attempt + 1) as u64));
+                            sleeper(Duration::from_secs(attempt_number as u64));
                             continue;
                         }
                         return Err(SourceError::HttpStatus {
@@ -2745,8 +2797,8 @@ impl LiveScholarlyTransport {
                     });
                     return Ok(payload);
                 }
-                Err(error) => {
-                    let will_retry = attempt < DEFAULT_MAX_RETRIES;
+                Err(_) => {
+                    let will_retry = attempt_number < maximum_transport_attempts;
                     self.record_attempt(LiveAttempt {
                         service: live_request.service,
                         endpoint: live_request.endpoint,
@@ -2759,16 +2811,21 @@ impl LiveScholarlyTransport {
                         will_retry,
                         error_kind: "transport",
                         duration_ms: elapsed_millis(started_at),
-                        error: Some(error.to_string()),
+                        error: Some(TRANSPORT_FAILURE_MESSAGE.to_string()),
                     });
                     if will_retry {
-                        thread::sleep(Duration::from_secs((attempt + 1) as u64));
+                        let retry_delay = if has_extended_crossref_transport_retries {
+                            crossref_transport_retry_delay(attempt_number)
+                        } else {
+                            Duration::from_secs(attempt_number as u64)
+                        };
+                        sleeper(retry_delay);
                         continue;
                     }
                     return Err(SourceError::Request {
                         service: live_request.service.to_string(),
                         endpoint: live_request.endpoint.to_string(),
-                        message: error.to_string(),
+                        message: TRANSPORT_FAILURE_MESSAGE.to_string(),
                     });
                 }
             }
@@ -3623,7 +3680,7 @@ pub(crate) mod test_support {
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
-    use std::io::{Read, Write};
+    use std::io::{self, Read, Write};
     use std::net::TcpListener;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::mpsc;
@@ -3636,11 +3693,13 @@ mod tests {
     use super::test_support::CapturedLogs;
 
     use super::{
-        crossref_journal_filter, execute_openalex_batches, normalize_doi, normalize_issn,
-        normalize_source_title, openalex_doi_query, openalex_doi_request_url,
-        openalex_rate_headers, openalex_short_source_id, openalex_source_work_filter,
-        partition_openalex_doi_batches, redact_url, run_bounded_indexed, unix_time_duration,
-        unix_time_millis, value_pool_from_text, FixtureScholarlyTransport, LiveScholarlyConfig,
+        crossref_journal_filter, crossref_transport_attempt_limit,
+        crossref_transport_envelope_seconds, crossref_transport_retry_delay,
+        execute_openalex_batches, normalize_doi, normalize_issn, normalize_source_title,
+        openalex_doi_query, openalex_doi_request_url, openalex_rate_headers,
+        openalex_short_source_id, openalex_source_work_filter, partition_openalex_doi_batches,
+        redact_url, run_bounded_indexed, unix_time_duration, unix_time_millis,
+        value_pool_from_text, FixtureScholarlyTransport, JsonRequest, LiveScholarlyConfig,
         LiveScholarlyTransport, OpenAlexHealthOutcome, OpenAlexRateHeaders,
         OpenAlexScheduleDecision, OpenAlexScheduler, OpenAlexSchedulerState,
         ProviderAttemptSchedule, ScholarlyClient, ScholarlyFixtureData, ScholarlyTransport,
@@ -3648,8 +3707,134 @@ mod tests {
         SemanticScholarSchedulerState, SourceError, CROSSREF_ATTEMPT_INTERVAL_MS, CROSSREF_ROWS,
         CROSSREF_SOURCE, OPENALEX_DOI_FILTER_MAX_VALUES, OPENALEX_DOI_REQUEST_URL_BUDGET,
         OPENALEX_KEY_START_INTERVAL, OPENALEX_MAX_WORKERS_PER_PROCESS,
-        SEMANTIC_SCHOLAR_ATTEMPT_INTERVAL_MS,
+        SEMANTIC_SCHOLAR_ATTEMPT_INTERVAL_MS, SEMANTIC_SCHOLAR_SOURCE,
     };
+
+    #[derive(Clone, Copy)]
+    enum LiveJsonTestOutcome {
+        DropConnection,
+        HttpStatus(u16),
+        Success,
+    }
+
+    fn duration_seconds(durations: &[Duration]) -> Vec<u64> {
+        durations.iter().map(Duration::as_secs).collect()
+    }
+
+    fn execute_live_json_sequence(
+        service: &'static str,
+        endpoint: &'static str,
+        timeout_seconds: u64,
+        outcomes: Vec<LiveJsonTestOutcome>,
+    ) -> (
+        Result<serde_json::Value, SourceError>,
+        LiveScholarlyTransport,
+        Vec<Duration>,
+        Vec<Instant>,
+        String,
+    ) {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("test listener should bind");
+        listener
+            .set_nonblocking(true)
+            .expect("test listener should become nonblocking");
+        let address = listener.local_addr().expect("test address should resolve");
+        let server = thread::spawn(move || {
+            let mut starts = Vec::new();
+            for outcome in outcomes {
+                let accept_deadline = Instant::now() + Duration::from_secs(2);
+                let (mut stream, _) = loop {
+                    match listener.accept() {
+                        Ok(connection) => break connection,
+                        Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+                            if Instant::now() >= accept_deadline {
+                                return starts;
+                            }
+                            thread::sleep(Duration::from_millis(5));
+                        }
+                        Err(error) => panic!("test request should connect: {error}"),
+                    }
+                };
+                stream
+                    .set_nonblocking(false)
+                    .expect("accepted test connection should become blocking");
+                starts.push(Instant::now());
+                let mut request = [0_u8; 8_192];
+                let _ = stream.read(&mut request).expect("test request should read");
+                match outcome {
+                    LiveJsonTestOutcome::DropConnection => {
+                        stream
+                            .shutdown(std::net::Shutdown::Both)
+                            .expect("test connection should close");
+                    }
+                    LiveJsonTestOutcome::HttpStatus(status_code) => {
+                        let reason = if status_code == 429 {
+                            "Too Many Requests"
+                        } else {
+                            "Service Unavailable"
+                        };
+                        let body = r#"{"error":"test failure"}"#;
+                        write!(
+                            stream,
+                            "HTTP/1.1 {status_code} {reason}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                            body.len()
+                        )
+                        .expect("test response should write");
+                    }
+                    LiveJsonTestOutcome::Success => {
+                        let body = r#"{"ok":true}"#;
+                        write!(
+                            stream,
+                            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                            body.len()
+                        )
+                        .expect("test response should write");
+                    }
+                }
+            }
+            starts
+        });
+        let config = LiveScholarlyConfig {
+            timeout_seconds,
+            openalex_api_keys: Vec::new(),
+            semantic_scholar_api_keys: Vec::new(),
+            crossref_mailtos: vec!["transport-mailto-sentinel@example.invalid".to_string()],
+            semantic_scholar_worker_id: 0,
+            semantic_scholar_process_count: 1,
+            semantic_scholar_base_interval_ms: SEMANTIC_SCHOLAR_ATTEMPT_INTERVAL_MS,
+            schedule_epoch_unix_millis: unix_time_millis(),
+        };
+        let mut transport =
+            LiveScholarlyTransport::new(config).expect("live transport should build");
+        let url = format!("http://{address}/works");
+        let query = vec![
+            (
+                "cursor".to_string(),
+                "transport-cursor-sentinel".to_string(),
+            ),
+            (
+                "mailto".to_string(),
+                "transport-mailto-sentinel@example.invalid".to_string(),
+            ),
+        ];
+        let mut retry_delays = Vec::new();
+        let logs = CapturedLogs::default();
+        let result = tracing::subscriber::with_default(logs.subscriber(), || {
+            transport.request_json_with_sleeper(
+                JsonRequest {
+                    service,
+                    endpoint,
+                    method: "GET",
+                    url: &url,
+                    query: &query,
+                    body: None,
+                    header: None,
+                },
+                |delay| retry_delays.push(delay),
+            )
+        });
+        let starts = server.join().expect("test server should finish");
+        (result, transport, retry_delays, starts, logs.text())
+    }
 
     #[test]
     fn live_attempt_events_keep_worker_context_and_omit_request_material() {
@@ -5748,6 +5933,172 @@ mod tests {
         );
         assert_eq!(transport.attempts().len(), 1);
         assert!(transport.attempts()[0].did_succeed);
+    }
+
+    #[test]
+    fn crossref_transport_retry_policy_is_bounded_by_timeout() {
+        let cases = [
+            (20_u64, 6, 151),
+            (24, 6, 175),
+            (25, 5, 140),
+            (34, 4, 143),
+            (44, 3, 135),
+            (60, 3, 183),
+        ];
+
+        for (timeout_seconds, expected_attempts, expected_envelope_seconds) in cases {
+            let attempts = crossref_transport_attempt_limit(timeout_seconds);
+
+            assert_eq!(attempts, expected_attempts);
+            assert_eq!(
+                crossref_transport_envelope_seconds(timeout_seconds, attempts),
+                expected_envelope_seconds
+            );
+            if attempts > 3 {
+                assert!(crossref_transport_envelope_seconds(timeout_seconds, attempts) <= 180);
+            }
+        }
+        assert_eq!(crossref_transport_attempt_limit(0), 6);
+        assert_eq!(crossref_transport_attempt_limit(u64::MAX), 3);
+        assert_eq!(
+            (1..6)
+                .map(crossref_transport_retry_delay)
+                .collect::<Vec<_>>(),
+            [1, 2, 4, 8, 16].map(Duration::from_secs)
+        );
+    }
+
+    #[test]
+    fn crossref_transport_retries_recover_on_attempts_four_and_six() {
+        for expected_attempts in [4, 6] {
+            let mut outcomes = vec![LiveJsonTestOutcome::DropConnection; expected_attempts - 1];
+            outcomes.push(LiveJsonTestOutcome::Success);
+            let (result, transport, retry_delays, starts, _) =
+                execute_live_json_sequence(CROSSREF_SOURCE, "journal_works", 20, outcomes);
+
+            assert_eq!(
+                result.expect("Crossref retry should recover"),
+                json!({"ok": true})
+            );
+            assert_eq!(starts.len(), expected_attempts);
+            assert!(starts.windows(2).all(|window| {
+                window[1].duration_since(window[0])
+                    >= Duration::from_millis(CROSSREF_ATTEMPT_INTERVAL_MS.saturating_sub(10))
+            }));
+            assert_eq!(transport.attempts().len(), expected_attempts);
+            assert!(transport
+                .attempts()
+                .last()
+                .is_some_and(|attempt| attempt.did_succeed));
+            assert_eq!(
+                retry_delays,
+                (1..expected_attempts)
+                    .map(crossref_transport_retry_delay)
+                    .collect::<Vec<_>>()
+            );
+        }
+    }
+
+    #[test]
+    fn crossref_transport_retry_exhaustion_is_bounded_and_redacted() {
+        let (result, transport, retry_delays, starts, log_text) = execute_live_json_sequence(
+            CROSSREF_SOURCE,
+            "journal_works",
+            20,
+            vec![LiveJsonTestOutcome::DropConnection; 6],
+        );
+
+        assert!(matches!(
+            result,
+            Err(SourceError::Request { ref message, .. }) if message == "transport failure"
+        ));
+        assert_eq!(starts.len(), 6);
+        assert_eq!(transport.attempts().len(), 6);
+        assert_eq!(duration_seconds(&retry_delays), vec![1, 2, 4, 8, 16]);
+        assert!(transport.attempts().iter().all(|attempt| {
+            attempt.status_code.is_none()
+                && !attempt.did_succeed
+                && attempt.error.as_deref() == Some("transport failure")
+        }));
+        assert!(
+            transport
+                .attempts()
+                .last()
+                .expect("terminal attempt should exist")
+                .did_retry
+        );
+        let retained = format!("{result:?} {:?} {log_text}", transport.attempts());
+        for forbidden in [
+            "transport-cursor-sentinel",
+            "transport-mailto-sentinel@example.invalid",
+            "error sending request for url",
+        ] {
+            assert!(!retained.contains(forbidden));
+        }
+    }
+
+    #[test]
+    fn crossref_transport_retry_keeps_http_and_provider_boundaries() {
+        let (mixed_result, mixed_transport, mixed_delays, mixed_starts, _) =
+            execute_live_json_sequence(
+                CROSSREF_SOURCE,
+                "journal_works",
+                20,
+                vec![
+                    LiveJsonTestOutcome::DropConnection,
+                    LiveJsonTestOutcome::HttpStatus(503),
+                    LiveJsonTestOutcome::DropConnection,
+                    LiveJsonTestOutcome::Success,
+                ],
+            );
+        assert_eq!(
+            mixed_result.expect("mixed Crossref failures should recover"),
+            json!({"ok": true})
+        );
+        assert_eq!(mixed_starts.len(), 4);
+        assert_eq!(
+            mixed_transport
+                .attempts()
+                .iter()
+                .map(|attempt| attempt.status_code)
+                .collect::<Vec<_>>(),
+            vec![None, Some(503), None, Some(200)]
+        );
+        assert_eq!(duration_seconds(&mixed_delays), vec![1, 2, 4]);
+
+        let (http_result, http_transport, http_delays, http_starts, _) = execute_live_json_sequence(
+            CROSSREF_SOURCE,
+            "journal_works",
+            20,
+            vec![LiveJsonTestOutcome::HttpStatus(503); 3],
+        );
+        assert!(matches!(
+            http_result,
+            Err(SourceError::HttpStatus {
+                status_code: 503,
+                ..
+            })
+        ));
+        assert_eq!(http_starts.len(), 3);
+        assert_eq!(http_transport.attempts().len(), 3);
+        assert_eq!(duration_seconds(&http_delays), vec![1, 2]);
+
+        for (service, endpoint) in [
+            (CROSSREF_SOURCE, "unrelated_get"),
+            (SEMANTIC_SCHOLAR_SOURCE, "transport_retry_test"),
+        ] {
+            let (other_result, other_transport, other_delays, other_starts, _) =
+                execute_live_json_sequence(
+                    service,
+                    endpoint,
+                    20,
+                    vec![LiveJsonTestOutcome::DropConnection; 3],
+                );
+            assert!(matches!(other_result, Err(SourceError::Request { .. })));
+            assert_eq!(other_starts.len(), 3);
+            assert_eq!(other_transport.attempts().len(), 3);
+            assert_eq!(duration_seconds(&other_delays), vec![1, 2]);
+        }
     }
 
     #[test]
