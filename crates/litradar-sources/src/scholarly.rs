@@ -27,14 +27,15 @@ const SEMANTIC_SCHOLAR_SOURCE: &str = "semantic_scholar";
 const SEMANTIC_SCHOLAR_FIELDS: &str = "externalIds,url,isOpenAccess,openAccessPdf,abstract";
 const OPENALEX_SOURCE_FIELDS: &str = "id,display_name,issn_l,issn,works_count";
 const OPENALEX_WORK_FIELDS: &str = "id,doi,title,display_name,publication_year,publication_date,language,cited_by_count,is_retracted,primary_location,locations,open_access,best_oa_location,authorships,ids,biblio,abstract_inverted_index,topics,primary_topic,funders,awards";
-const DEFAULT_USER_AGENT: &str = "LitRadar/0.1 (mailto:litradar@example.invalid)";
+const DEFAULT_USER_AGENT: &str = "LitRadar/0.1";
 const CROSSREF_ATTEMPT_INTERVAL_MS: u64 = 110;
 const SEMANTIC_SCHOLAR_ATTEMPT_INTERVAL_MS: u64 = 1_100;
 const CROSSREF_ROWS: usize = 225;
 const OPENALEX_DOI_FILTER_MAX_VALUES: usize = 100;
 const OPENALEX_DOI_REQUEST_URL_BUDGET: usize = 1_900;
 const OPENALEX_DEFAULT_REMAINING_CREDITS: u64 = 100_000;
-const OPENALEX_KEY_START_INTERVAL: Duration = Duration::from_millis(34);
+const OPENALEX_MAX_CREDITS_PER_REQUEST: u64 = 10;
+const OPENALEX_KEY_START_INTERVAL: Duration = Duration::from_millis(11);
 const OPENALEX_SOURCE_WORK_ROWS: usize = 200;
 const DEFAULT_MAX_RETRIES: usize = 2;
 const RETRY_STATUS_CODES: [u16; 5] = [429, 500, 502, 503, 504];
@@ -42,6 +43,7 @@ const RETRY_STATUS_CODES: [u16; 5] = [429, 500, 502, 503, 504];
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 struct OpenAlexRateHeaders {
     remaining: Option<u64>,
+    credits_used: Option<u64>,
     reset_after: Option<Duration>,
     retry_after: Option<Duration>,
 }
@@ -58,12 +60,14 @@ enum OpenAlexHealthOutcome {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct OpenAlexSlotReservation {
     slot_index: usize,
+    start_at: Duration,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum OpenAlexScheduleDecision {
     Reserved(OpenAlexSlotReservation),
     WaitUntil(Duration),
+    WaitForChange,
     Unavailable,
 }
 
@@ -96,17 +100,39 @@ impl Default for OpenAlexKeyState {
 struct OpenAlexSchedulerState {
     slots: Vec<OpenAlexKeyState>,
     next_tie_slot: usize,
+    period: Duration,
+    total_inflight_capacity: usize,
+    maximum_request_credits: u64,
 }
 
 impl OpenAlexSchedulerState {
-    fn new(key_count: usize, process_id: usize) -> Self {
+    fn with_context(
+        key_count: usize,
+        process_id: usize,
+        process_count: usize,
+        epoch: Duration,
+        total_inflight_capacity: usize,
+    ) -> Self {
+        let process_count = process_count.max(1);
+        let process_id = process_id.min(process_count.saturating_sub(1));
+        let process_count = u32::try_from(process_count).unwrap_or(u32::MAX);
+        let process_id = u32::try_from(process_id).unwrap_or(u32::MAX);
+        let phase = OPENALEX_KEY_START_INTERVAL.saturating_mul(process_id);
+        let period = OPENALEX_KEY_START_INTERVAL.saturating_mul(process_count);
+        let mut slots = vec![OpenAlexKeyState::default(); key_count];
+        for slot in &mut slots {
+            slot.next_start_at = epoch.saturating_add(phase);
+        }
         Self {
-            slots: vec![OpenAlexKeyState::default(); key_count],
+            slots,
             next_tie_slot: if key_count == 0 {
                 0
             } else {
-                process_id % key_count
+                usize::try_from(process_id).unwrap_or(usize::MAX) % key_count
             },
+            period,
+            total_inflight_capacity: total_inflight_capacity.max(1),
+            maximum_request_credits: OPENALEX_MAX_CREDITS_PER_REQUEST,
         }
     }
 
@@ -116,37 +142,85 @@ impl OpenAlexSchedulerState {
         excluded_slots: &[usize],
     ) -> OpenAlexScheduleDecision {
         self.refresh(now);
-        let ready_slots = self
+        let available_slots = self
             .slots
             .iter()
             .enumerate()
-            .filter_map(|(index, slot)| (self.ready_at(slot)? <= now).then_some(index))
+            .filter_map(|(index, slot)| self.is_slot_available(slot, now).then_some(index))
             .collect::<Vec<_>>();
-        let preferred_slots = ready_slots
+        let preferred_slots = available_slots
             .iter()
             .copied()
             .filter(|index| !excluded_slots.contains(index))
             .collect::<Vec<_>>();
         let candidates = if preferred_slots.is_empty() {
-            &ready_slots
+            &available_slots
         } else {
             &preferred_slots
         };
-        if let Some(slot_index) = self.best_slot(candidates) {
+        let earliest_start = candidates
+            .iter()
+            .map(|index| {
+                openalex_phase_at_or_after(self.slots[*index].next_start_at, now, self.period)
+            })
+            .min();
+        let earliest_slots = earliest_start
+            .map(|start_at| {
+                candidates
+                    .iter()
+                    .copied()
+                    .filter(|index| {
+                        openalex_phase_at_or_after(
+                            self.slots[*index].next_start_at,
+                            now,
+                            self.period,
+                        ) == start_at
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        if let Some(slot_index) = self.best_slot(&earliest_slots) {
+            let start_at = earliest_start.unwrap_or(now);
             let slot = &mut self.slots[slot_index];
-            let reservation = OpenAlexSlotReservation { slot_index };
+            let reservation = OpenAlexSlotReservation {
+                slot_index,
+                start_at,
+            };
             slot.in_flight = slot.in_flight.saturating_add(1);
-            slot.next_start_at = now.saturating_add(OPENALEX_KEY_START_INTERVAL);
+            slot.next_start_at = start_at.saturating_add(self.period);
             self.next_tie_slot = (slot_index + 1) % self.slots.len();
             return OpenAlexScheduleDecision::Reserved(reservation);
         }
-        self.slots
+        let waiting_slots = self
+            .slots
             .iter()
-            .filter_map(|slot| self.ready_at(slot))
-            .min()
-            .map_or(OpenAlexScheduleDecision::Unavailable, |ready_at| {
-                OpenAlexScheduleDecision::WaitUntil(ready_at)
+            .enumerate()
+            .filter_map(|(index, slot)| {
+                self.next_provider_ready_at(slot, now)
+                    .map(|ready_at| (index, ready_at))
             })
+            .collect::<Vec<_>>();
+        let preferred_waits = waiting_slots
+            .iter()
+            .copied()
+            .filter(|(index, _)| !excluded_slots.contains(index))
+            .collect::<Vec<_>>();
+        let waits = if preferred_waits.is_empty() {
+            &waiting_slots
+        } else {
+            &preferred_waits
+        };
+        if let Some(ready_at) = waits.iter().map(|(_, ready_at)| *ready_at).min() {
+            return OpenAlexScheduleDecision::WaitUntil(ready_at);
+        }
+        if self
+            .slots
+            .iter()
+            .any(|slot| self.is_waiting_for_quota_change(slot))
+        {
+            return OpenAlexScheduleDecision::WaitForChange;
+        }
+        OpenAlexScheduleDecision::Unavailable
     }
 
     fn finish_slot(
@@ -158,6 +232,9 @@ impl OpenAlexSchedulerState {
         retry_delay: Duration,
     ) {
         self.refresh(now);
+        if let Some(credits_used) = headers.credits_used {
+            self.maximum_request_credits = self.maximum_request_credits.max(credits_used);
+        }
         let Some(slot) = self.slots.get_mut(reservation.slot_index) else {
             return;
         };
@@ -217,18 +294,85 @@ impl OpenAlexSchedulerState {
         }
     }
 
-    fn ready_at(&self, slot: &OpenAlexKeyState) -> Option<Duration> {
+    fn is_slot_available(&self, slot: &OpenAlexKeyState, now: Duration) -> bool {
         if slot.is_disabled {
+            return false;
+        }
+        if slot
+            .cooldown_until
+            .is_some_and(|cooldown_until| cooldown_until > now)
+        {
+            return false;
+        }
+        if slot.remaining.is_none() && slot.in_flight > 0 {
+            return false;
+        }
+        slot.remaining
+            .is_none_or(|remaining| remaining > self.daily_reserve_credits())
+    }
+
+    fn next_provider_ready_at(&self, slot: &OpenAlexKeyState, now: Duration) -> Option<Duration> {
+        if slot.is_disabled || (slot.remaining.is_none() && slot.in_flight > 0) {
             return None;
         }
-        let mut ready_at = slot.next_start_at;
+        let mut ready_at = now;
         if let Some(cooldown_until) = slot.cooldown_until {
             ready_at = ready_at.max(cooldown_until);
         }
-        if slot.remaining == Some(0) {
+        if slot
+            .remaining
+            .is_some_and(|remaining| remaining <= self.daily_reserve_credits())
+        {
             ready_at = ready_at.max(slot.reset_at?);
         }
-        Some(ready_at)
+        (ready_at > now).then_some(ready_at)
+    }
+
+    fn is_waiting_for_quota_change(&self, slot: &OpenAlexKeyState) -> bool {
+        !slot.is_disabled
+            && slot.in_flight > 0
+            && (slot.remaining.is_none()
+                || (slot
+                    .remaining
+                    .is_some_and(|remaining| remaining <= self.daily_reserve_credits())
+                    && slot.reset_at.is_none()))
+    }
+
+    fn reservation_is_eligible(
+        &mut self,
+        reservation: &OpenAlexSlotReservation,
+        now: Duration,
+    ) -> bool {
+        self.refresh(now);
+        let obsolete_at = reservation
+            .start_at
+            .saturating_add(self.period)
+            .saturating_add(OPENALEX_KEY_START_INTERVAL);
+        if now >= obsolete_at {
+            return false;
+        }
+        let reserve_credits = self.daily_reserve_credits();
+        self.slots.get(reservation.slot_index).is_some_and(|slot| {
+            !slot.is_disabled
+                && slot
+                    .cooldown_until
+                    .is_none_or(|cooldown_until| cooldown_until <= now)
+                && slot
+                    .remaining
+                    .is_none_or(|remaining| remaining > reserve_credits)
+        })
+    }
+
+    fn cancel_slot(&mut self, reservation: &OpenAlexSlotReservation) {
+        if let Some(slot) = self.slots.get_mut(reservation.slot_index) {
+            slot.in_flight = slot.in_flight.saturating_sub(1);
+        }
+    }
+
+    fn daily_reserve_credits(&self) -> u64 {
+        u64::try_from(self.total_inflight_capacity)
+            .unwrap_or(u64::MAX)
+            .saturating_mul(self.maximum_request_credits)
     }
 
     fn best_slot(&mut self, candidates: &[usize]) -> Option<usize> {
@@ -261,6 +405,22 @@ impl OpenAlexSchedulerState {
     }
 }
 
+fn openalex_phase_at_or_after(
+    next_start_at: Duration,
+    now: Duration,
+    period: Duration,
+) -> Duration {
+    if next_start_at >= now {
+        return next_start_at;
+    }
+    let period_millis = period.as_millis().max(1);
+    let next_millis = next_start_at.as_millis();
+    let overdue_millis = now.as_millis().saturating_sub(next_millis);
+    let skipped_periods = overdue_millis.div_ceil(period_millis);
+    let aligned_millis = next_millis.saturating_add(skipped_periods.saturating_mul(period_millis));
+    Duration::from_millis(u64::try_from(aligned_millis).unwrap_or(u64::MAX))
+}
+
 struct OpenAlexReservation {
     slot: OpenAlexSlotReservation,
     api_key: String,
@@ -280,7 +440,6 @@ struct OpenAlexScheduler {
     api_keys: Vec<String>,
     state: Mutex<OpenAlexSchedulerState>,
     changed: Condvar,
-    started_at: Instant,
 }
 
 impl fmt::Debug for OpenAlexScheduler {
@@ -294,12 +453,23 @@ impl fmt::Debug for OpenAlexScheduler {
 }
 
 impl OpenAlexScheduler {
-    fn new(api_keys: Vec<String>, process_id: usize) -> Self {
+    fn with_context(
+        api_keys: Vec<String>,
+        process_id: usize,
+        process_count: usize,
+        epoch_unix_millis: u64,
+        total_inflight_capacity: usize,
+    ) -> Self {
         Self {
-            state: Mutex::new(OpenAlexSchedulerState::new(api_keys.len(), process_id)),
+            state: Mutex::new(OpenAlexSchedulerState::with_context(
+                api_keys.len(),
+                process_id,
+                process_count,
+                Duration::from_millis(epoch_unix_millis),
+                total_inflight_capacity,
+            )),
             api_keys,
             changed: Condvar::new(),
-            started_at: Instant::now(),
         }
     }
 
@@ -308,46 +478,66 @@ impl OpenAlexScheduler {
     }
 
     fn reserve(&self, excluded_slots: &[usize]) -> Result<OpenAlexReservation, SourceError> {
-        let mut state = self.state.lock().map_err(|_| {
-            SourceError::Configuration("OpenAlex key scheduler is unavailable.".to_string())
-        })?;
         loop {
-            let now = self.started_at.elapsed();
-            match state.reserve_slot(now, excluded_slots) {
-                OpenAlexScheduleDecision::Reserved(slot) => {
-                    return Ok(OpenAlexReservation {
-                        api_key: self.api_keys[slot.slot_index].clone(),
-                        slot,
-                    });
-                }
-                OpenAlexScheduleDecision::WaitUntil(ready_at) => {
-                    let wait = ready_at.saturating_sub(now);
-                    if wait.is_zero() {
-                        continue;
+            let slot = {
+                let mut state = self.state.lock().map_err(|_| {
+                    SourceError::Configuration("OpenAlex key scheduler is unavailable.".to_string())
+                })?;
+                loop {
+                    let now = unix_time_duration();
+                    match state.reserve_slot(now, excluded_slots) {
+                        OpenAlexScheduleDecision::Reserved(slot) => break slot,
+                        OpenAlexScheduleDecision::WaitUntil(ready_at) => {
+                            let wait = ready_at.saturating_sub(now);
+                            if wait.is_zero() {
+                                continue;
+                            }
+                            if wait >= Duration::from_secs(1) {
+                                tracing::info!(
+                                    event = "source.openalex.quota_wait",
+                                    component = "source",
+                                    provider = OPENALEX_SOURCE,
+                                    reason = "quota_or_cooldown",
+                                    wait_ms = wait.as_millis().min(u128::from(u64::MAX)) as u64,
+                                    key_slot_count = self.api_keys.len(),
+                                );
+                            }
+                            let (next_state, _) =
+                                self.changed.wait_timeout(state, wait).map_err(|_| {
+                                    SourceError::Configuration(
+                                        "OpenAlex key scheduler is unavailable.".to_string(),
+                                    )
+                                })?;
+                            state = next_state;
+                        }
+                        OpenAlexScheduleDecision::WaitForChange => {
+                            state = self.changed.wait(state).map_err(|_| {
+                                SourceError::Configuration(
+                                    "OpenAlex key scheduler is unavailable.".to_string(),
+                                )
+                            })?;
+                        }
+                        OpenAlexScheduleDecision::Unavailable => {
+                            return Err(SourceError::Configuration(
+                                "No eligible OpenAlex API key is available.".to_string(),
+                            ));
+                        }
                     }
-                    if wait >= Duration::from_secs(1) {
-                        tracing::info!(
-                            event = "source.openalex.quota_wait",
-                            component = "source",
-                            provider = OPENALEX_SOURCE,
-                            reason = "quota_or_cooldown",
-                            wait_ms = wait.as_millis().min(u128::from(u64::MAX)) as u64,
-                            key_slot_count = self.api_keys.len(),
-                        );
-                    }
-                    let (next_state, _) = self.changed.wait_timeout(state, wait).map_err(|_| {
-                        SourceError::Configuration(
-                            "OpenAlex key scheduler is unavailable.".to_string(),
-                        )
-                    })?;
-                    state = next_state;
                 }
-                OpenAlexScheduleDecision::Unavailable => {
-                    return Err(SourceError::Configuration(
-                        "No eligible OpenAlex API key is available.".to_string(),
-                    ));
-                }
+            };
+            wait_until_openalex_start(slot.start_at);
+            let mut state = self.state.lock().map_err(|_| {
+                SourceError::Configuration("OpenAlex key scheduler is unavailable.".to_string())
+            })?;
+            if !state.reservation_is_eligible(&slot, unix_time_duration()) {
+                state.cancel_slot(&slot);
+                self.changed.notify_all();
+                continue;
             }
+            return Ok(OpenAlexReservation {
+                api_key: self.api_keys[slot.slot_index].clone(),
+                slot,
+            });
         }
     }
 
@@ -361,7 +551,7 @@ impl OpenAlexScheduler {
         if let Ok(mut state) = self.state.lock() {
             state.finish_slot(
                 &reservation.slot,
-                self.started_at.elapsed(),
+                unix_time_duration(),
                 headers,
                 outcome,
                 retry_delay,
@@ -371,9 +561,20 @@ impl OpenAlexScheduler {
     }
 }
 
+fn wait_until_openalex_start(start_at: Duration) {
+    loop {
+        let wait = start_at.saturating_sub(unix_time_duration());
+        if wait.is_zero() {
+            return;
+        }
+        thread::sleep(wait);
+    }
+}
+
 fn openalex_rate_headers(headers: &HeaderMap) -> OpenAlexRateHeaders {
     OpenAlexRateHeaders {
         remaining: header_u64(headers, "x-ratelimit-remaining"),
+        credits_used: header_u64(headers, "x-ratelimit-credits-used"),
         reset_after: header_u64(headers, "x-ratelimit-reset").map(Duration::from_secs),
         retry_after: header_u64(headers, "retry-after").map(Duration::from_secs),
     }
@@ -439,11 +640,7 @@ where
     Ok(indexed.into_iter().map(|(_, result)| result).collect())
 }
 
-fn openalex_doi_query(
-    dois: &[String],
-    api_key: Option<&str>,
-    mailto: Option<&str>,
-) -> Vec<(String, String)> {
+fn openalex_doi_query(dois: &[String], api_key: Option<&str>) -> Vec<(String, String)> {
     let mut query = vec![
         ("filter".to_string(), format!("doi:{}", dois.join("|"))),
         ("per-page".to_string(), dois.len().max(1).to_string()),
@@ -452,17 +649,10 @@ fn openalex_doi_query(
     if let Some(api_key) = api_key {
         query.push(("api_key".to_string(), api_key.to_string()));
     }
-    if let Some(mailto) = mailto {
-        query.push(("mailto".to_string(), mailto.to_string()));
-    }
     query
 }
 
-fn openalex_doi_request_url(
-    dois: &[String],
-    api_key: Option<&str>,
-    mailto: Option<&str>,
-) -> Result<Url, SourceError> {
+fn openalex_doi_request_url(dois: &[String], api_key: Option<&str>) -> Result<Url, SourceError> {
     let mut url = Url::parse(&format!("{OPENALEX_BASE_URL}/works")).map_err(|_| {
         SourceError::Configuration(
             "OpenAlex DOI enrichment URL configuration is invalid.".to_string(),
@@ -470,7 +660,7 @@ fn openalex_doi_request_url(
     })?;
     {
         let mut query_pairs = url.query_pairs_mut();
-        for (name, value) in openalex_doi_query(dois, api_key, mailto) {
+        for (name, value) in openalex_doi_query(dois, api_key) {
             query_pairs.append_pair(&name, &value);
         }
     }
@@ -482,7 +672,6 @@ fn partition_openalex_doi_batches(
     requested_batch_size: usize,
     url_budget: usize,
     api_key: Option<&str>,
-    mailto: Option<&str>,
 ) -> Result<Vec<Vec<String>>, SourceError> {
     let maximum_batch_size = requested_batch_size.clamp(1, OPENALEX_DOI_FILTER_MAX_VALUES);
     let mut batches = Vec::new();
@@ -491,7 +680,7 @@ fn partition_openalex_doi_batches(
         let mut candidate = current.clone();
         candidate.push(doi.clone());
         let does_candidate_fit = candidate.len() <= maximum_batch_size
-            && openalex_doi_request_url(&candidate, api_key, mailto)?
+            && openalex_doi_request_url(&candidate, api_key)?
                 .as_str()
                 .len()
                 <= url_budget;
@@ -506,11 +695,7 @@ fn partition_openalex_doi_batches(
         }
         batches.push(std::mem::take(&mut current));
         current.push(doi.clone());
-        if openalex_doi_request_url(&current, api_key, mailto)?
-            .as_str()
-            .len()
-            > url_budget
-        {
+        if openalex_doi_request_url(&current, api_key)?.as_str().len() > url_budget {
             return Err(SourceError::Configuration(
                 "One OpenAlex DOI enrichment value exceeds the request URL budget.".to_string(),
             ));
@@ -786,7 +971,6 @@ pub trait ScholarlyTransport {
             dois,
             requested_batch_size,
             OPENALEX_DOI_REQUEST_URL_BUDGET,
-            None,
             None,
         )
     }
@@ -1164,6 +1348,10 @@ fn unix_time_millis() -> u64 {
     u64::try_from(duration.as_millis()).unwrap_or(u64::MAX)
 }
 
+fn unix_time_duration() -> Duration {
+    Duration::from_millis(unix_time_millis())
+}
+
 /// Blocking HTTP transport for live Scholarly sources.
 #[derive(Debug, Clone)]
 pub struct LiveScholarlyTransport {
@@ -1220,15 +1408,13 @@ fn execute_openalex_batches(
     scheduler: &Arc<OpenAlexScheduler>,
     worker_count: usize,
     url: &str,
-    mailto: Option<&str>,
     batches: &[Vec<String>],
 ) -> Result<Vec<OpenAlexExecution>, SourceError> {
     let client = client.clone();
     let scheduler = Arc::clone(scheduler);
     let url = url.to_string();
-    let mailto = mailto.map(str::to_string);
     run_bounded_indexed(batches, worker_count, move |_, batch| {
-        let query = openalex_doi_query(batch, None, mailto.as_deref());
+        let query = openalex_doi_query(batch, None);
         execute_openalex_request(&client, scheduler.as_ref(), "works", &url, &query)
     })
 }
@@ -1541,6 +1727,8 @@ impl LiveScholarlyTransport {
         config: LiveScholarlyConfig,
         openalex_worker_count: usize,
     ) -> Result<Self, SourceError> {
+        let openalex_worker_count =
+            openalex_worker_count.clamp(1, OPENALEX_MAX_WORKERS_PER_PROCESS);
         let client = Client::builder()
             .timeout(Duration::from_secs(config.timeout_seconds.max(1)))
             .user_agent(DEFAULT_USER_AGENT)
@@ -1550,9 +1738,12 @@ impl LiveScholarlyTransport {
                 endpoint: "client".to_string(),
                 message: error.to_string(),
             })?;
-        let openalex_scheduler = Arc::new(OpenAlexScheduler::new(
+        let openalex_scheduler = Arc::new(OpenAlexScheduler::with_context(
             config.openalex_api_keys.clone(),
             config.semantic_scholar_worker_id,
+            config.semantic_scholar_process_count,
+            config.schedule_epoch_unix_millis,
+            openalex_worker_count.saturating_mul(config.semantic_scholar_process_count.max(1)),
         ));
         let crossref_attempt_schedule = ProviderAttemptSchedule::new(
             config.schedule_epoch_unix_millis,
@@ -1573,7 +1764,7 @@ impl LiveScholarlyTransport {
             crossref_attempt_schedule,
             semantic_scholar_attempt_schedule,
             openalex_scheduler,
-            openalex_worker_count: openalex_worker_count.clamp(1, OPENALEX_MAX_WORKERS_PER_PROCESS),
+            openalex_worker_count,
         })
     }
 
@@ -1617,12 +1808,11 @@ impl LiveScholarlyTransport {
     }
 
     fn openalex_source_by_issn(&mut self, issn: &str) -> Result<Value, SourceError> {
-        let mut query = vec![
+        let query = vec![
             ("filter".to_string(), format!("issn:{issn}")),
             ("per-page".to_string(), "5".to_string()),
             ("select".to_string(), OPENALEX_SOURCE_FIELDS.to_string()),
         ];
-        self.append_openalex_mailto(&mut query);
         self.openalex_get_json(
             OPENALEX_SOURCE,
             "sources",
@@ -1632,12 +1822,11 @@ impl LiveScholarlyTransport {
     }
 
     fn openalex_source_by_title(&mut self, title: &str) -> Result<Value, SourceError> {
-        let mut query = vec![
+        let query = vec![
             ("search".to_string(), title.to_string()),
             ("per-page".to_string(), "5".to_string()),
             ("select".to_string(), OPENALEX_SOURCE_FIELDS.to_string()),
         ];
-        self.append_openalex_mailto(&mut query);
         self.openalex_get_json(
             OPENALEX_SOURCE,
             "source_search",
@@ -1655,7 +1844,7 @@ impl LiveScholarlyTransport {
         let Some(source_key) = openalex_short_source_id(source_id) else {
             return Ok(json!({ "results": [] }));
         };
-        let mut query = vec![
+        let query = vec![
             (
                 "filter".to_string(),
                 openalex_source_work_filter(&source_key, from_sync_date),
@@ -1668,7 +1857,6 @@ impl LiveScholarlyTransport {
             ("sort".to_string(), "publication_date:asc".to_string()),
             ("select".to_string(), OPENALEX_WORK_FIELDS.to_string()),
         ];
-        self.append_openalex_mailto(&mut query);
         let mut payload = self.openalex_get_json(
             OPENALEX_SOURCE,
             "source_works",
@@ -1689,8 +1877,7 @@ impl LiveScholarlyTransport {
     }
 
     fn openalex_works_by_doi(&mut self, dois: &[String]) -> Result<Value, SourceError> {
-        let mailto = self.config.crossref_mailtos.first().map(String::as_str);
-        let query = openalex_doi_query(dois, None, mailto);
+        let query = openalex_doi_query(dois, None);
         self.openalex_get_json(
             OPENALEX_SOURCE,
             "works",
@@ -1727,12 +1914,6 @@ impl LiveScholarlyTransport {
         }
     }
 
-    fn append_openalex_mailto(&self, query: &mut Vec<(String, String)>) {
-        if let Some(mailto) = self.config.crossref_mailtos.first() {
-            query.push(("mailto".to_string(), mailto.clone()));
-        }
-    }
-
     fn openalex_get_json(
         &mut self,
         service: &str,
@@ -1757,7 +1938,6 @@ impl LiveScholarlyTransport {
             &self.openalex_scheduler,
             self.openalex_worker_count,
             &format!("{OPENALEX_BASE_URL}/works"),
-            self.config.crossref_mailtos.first().map(String::as_str),
             batches,
         )?;
         let mut payloads = Vec::with_capacity(executions.len());
@@ -2155,7 +2335,7 @@ impl ScholarlyTransport for FixtureScholarlyTransport {
 }
 
 impl ScholarlyTransport for LiveScholarlyTransport {
-    /// Partition OpenAlex DOI values using the longest configured credentials.
+    /// Partition OpenAlex DOI values using the longest configured API key.
     fn prepare_openalex_doi_batches(
         &self,
         dois: &[String],
@@ -2167,18 +2347,11 @@ impl ScholarlyTransport for LiveScholarlyTransport {
             .iter()
             .max_by_key(|value| value.len())
             .map(String::as_str);
-        let mailto = self
-            .config
-            .crossref_mailtos
-            .iter()
-            .max_by_key(|value| value.len())
-            .map(String::as_str);
         partition_openalex_doi_batches(
             dois,
             requested_batch_size,
             OPENALEX_DOI_REQUEST_URL_BUDGET,
             api_key,
-            mailto,
         )
     }
 
@@ -2857,7 +3030,8 @@ mod tests {
         ProviderAttemptSchedule, ScholarlyClient, ScholarlyFixtureData, ScholarlyTransport,
         SourceError, CROSSREF_ATTEMPT_INTERVAL_MS, CROSSREF_ROWS, CROSSREF_SOURCE,
         OPENALEX_DOI_FILTER_MAX_VALUES, OPENALEX_DOI_REQUEST_URL_BUDGET,
-        OPENALEX_KEY_START_INTERVAL, SEMANTIC_SCHOLAR_ATTEMPT_INTERVAL_MS, SEMANTIC_SCHOLAR_SOURCE,
+        OPENALEX_KEY_START_INTERVAL, OPENALEX_MAX_WORKERS_PER_PROCESS,
+        SEMANTIC_SCHOLAR_ATTEMPT_INTERVAL_MS, SEMANTIC_SCHOLAR_SOURCE,
     };
 
     #[test]
@@ -3466,14 +3640,12 @@ mod tests {
             })
             .collect::<Vec<_>>();
         let api_key = "k".repeat(32);
-        let mailto = "load-test@example.invalid";
 
         let batches = partition_openalex_doi_batches(
             &dois,
             OPENALEX_DOI_FILTER_MAX_VALUES,
             OPENALEX_DOI_REQUEST_URL_BUDGET,
             Some(&api_key),
-            Some(mailto),
         )
         .expect("representative DOI values should partition");
 
@@ -3481,8 +3653,8 @@ mod tests {
         assert_eq!(batches.iter().flatten().cloned().collect::<Vec<_>>(), dois);
         for batch in &batches {
             assert!(batch.len() <= OPENALEX_DOI_FILTER_MAX_VALUES);
-            let url = openalex_doi_request_url(batch, Some(&api_key), Some(mailto))
-                .expect("batch URL should build");
+            let url =
+                openalex_doi_request_url(batch, Some(&api_key)).expect("batch URL should build");
             assert!(url.as_str().len() <= OPENALEX_DOI_REQUEST_URL_BUDGET);
         }
     }
@@ -3497,7 +3669,6 @@ mod tests {
             &dois,
             usize::MAX,
             OPENALEX_DOI_REQUEST_URL_BUDGET,
-            None,
             None,
         )
         .expect("short DOI values should partition");
@@ -3517,7 +3688,6 @@ mod tests {
             OPENALEX_DOI_FILTER_MAX_VALUES,
             OPENALEX_DOI_REQUEST_URL_BUDGET,
             None,
-            None,
         )
         .expect_err("one oversized DOI should fail before transport");
 
@@ -3526,7 +3696,7 @@ mod tests {
     }
 
     #[test]
-    fn live_openalex_batch_planning_uses_the_longest_configured_credentials() {
+    fn live_openalex_batch_planning_uses_the_longest_configured_api_key() {
         let long_key = "long-key".repeat(24);
         let long_mailto = format!("{}@example.invalid", "m".repeat(96));
         let config = LiveScholarlyConfig {
@@ -3550,13 +3720,10 @@ mod tests {
             .expect("live DOI batches should plan");
 
         for batch in batches {
-            let url = openalex_doi_request_url(
-                &batch,
-                Some(long_key.as_str()),
-                Some(long_mailto.as_str()),
-            )
-            .expect("worst-case batch URL should build");
+            let url = openalex_doi_request_url(&batch, Some(long_key.as_str()))
+                .expect("worst-case batch URL should build");
             assert!(url.as_str().len() <= OPENALEX_DOI_REQUEST_URL_BUDGET);
+            assert!(!url.as_str().contains(&long_mailto));
         }
     }
 
@@ -3564,28 +3731,32 @@ mod tests {
     fn openalex_doi_request_uses_bare_filter_values() {
         let dois = ["10.1/a".to_string(), "10.1/b".to_string()];
         let api_key = "key-value";
-        let mailto = "contact@example.invalid";
-        let url = openalex_doi_request_url(&dois, Some(api_key), Some(mailto))
-            .expect("DOI request URL should build");
+        let crossref_mailto = "contact@example.invalid";
+        let url =
+            openalex_doi_request_url(&dois, Some(api_key)).expect("DOI request URL should build");
         let filter = url
             .query_pairs()
             .find_map(|(name, value)| (name == "filter").then(|| value.into_owned()))
             .expect("filter query should exist");
         let request = reqwest::blocking::Client::new()
             .get(format!("{}/works", super::OPENALEX_BASE_URL))
-            .query(&openalex_doi_query(&dois, Some(api_key), Some(mailto)))
+            .query(&openalex_doi_query(&dois, Some(api_key)))
             .build()
             .expect("live-equivalent request should build");
 
         assert_eq!(filter, "doi:10.1/a|10.1/b");
         assert!(!filter.contains("https://doi.org/"));
         assert_eq!(request.url(), &url);
+        assert!(!url.query_pairs().any(|(name, _)| name == "mailto"));
+        assert!(!url.as_str().contains(crossref_mailto));
+        assert!(!super::DEFAULT_USER_AGENT.contains("mailto"));
     }
 
     #[test]
     fn openalex_scheduler_offsets_equal_capacity_by_process() {
         for (process_id, expected_slot) in [(0, 0), (1, 1), (2, 2)] {
-            let mut state = OpenAlexSchedulerState::new(3, process_id);
+            let mut state =
+                OpenAlexSchedulerState::with_context(3, process_id, 3, Duration::ZERO, 18);
 
             let OpenAlexScheduleDecision::Reserved(reservation) =
                 state.reserve_slot(Duration::ZERO, &[])
@@ -3594,30 +3765,33 @@ mod tests {
             };
 
             assert_eq!(reservation.slot_index, expected_slot);
+            assert_eq!(
+                reservation.start_at,
+                OPENALEX_KEY_START_INTERVAL
+                    .saturating_mul(u32::try_from(process_id).expect("process id should fit"))
+            );
         }
     }
 
     #[test]
     fn openalex_scheduler_enforces_pacing_and_ignores_stale_quota_increases() {
-        let mut state = OpenAlexSchedulerState::new(1, 0);
+        let mut state = OpenAlexSchedulerState::with_context(1, 0, 1, Duration::ZERO, 1);
+        state.slots[0].remaining = Some(100);
         let OpenAlexScheduleDecision::Reserved(first) = state.reserve_slot(Duration::ZERO, &[])
         else {
             panic!("first key reservation should succeed");
         };
-        assert_eq!(
-            state.reserve_slot(Duration::ZERO, &[]),
-            OpenAlexScheduleDecision::WaitUntil(OPENALEX_KEY_START_INTERVAL)
-        );
-        let OpenAlexScheduleDecision::Reserved(second) =
-            state.reserve_slot(OPENALEX_KEY_START_INTERVAL, &[])
+        let OpenAlexScheduleDecision::Reserved(second) = state.reserve_slot(Duration::ZERO, &[])
         else {
             panic!("second paced reservation should succeed");
         };
+        assert_eq!(second.start_at, OPENALEX_KEY_START_INTERVAL);
         state.finish_slot(
             &second,
             Duration::from_millis(40),
             OpenAlexRateHeaders {
                 remaining: Some(10),
+                credits_used: Some(1),
                 reset_after: Some(Duration::from_secs(100)),
                 retry_after: None,
             },
@@ -3629,6 +3803,7 @@ mod tests {
             Duration::from_millis(50),
             OpenAlexRateHeaders {
                 remaining: Some(90),
+                credits_used: Some(1),
                 reset_after: Some(Duration::from_secs(100)),
                 retry_after: None,
             },
@@ -3642,7 +3817,7 @@ mod tests {
 
     #[test]
     fn openalex_scheduler_disables_auth_failures_and_cools_rate_limits() {
-        let mut state = OpenAlexSchedulerState::new(3, 0);
+        let mut state = OpenAlexSchedulerState::with_context(3, 0, 1, Duration::ZERO, 1);
         let OpenAlexScheduleDecision::Reserved(first) = state.reserve_slot(Duration::ZERO, &[])
         else {
             panic!("first key reservation should succeed");
@@ -3665,6 +3840,7 @@ mod tests {
             Duration::ZERO,
             OpenAlexRateHeaders {
                 remaining: Some(0),
+                credits_used: None,
                 reset_after: Some(Duration::from_secs(2)),
                 retry_after: None,
             },
@@ -3686,7 +3862,7 @@ mod tests {
 
     #[test]
     fn openalex_scheduler_waits_for_all_key_reset_and_rejects_all_disabled() {
-        let mut cooling = OpenAlexSchedulerState::new(1, 0);
+        let mut cooling = OpenAlexSchedulerState::with_context(1, 0, 1, Duration::ZERO, 1);
         let OpenAlexScheduleDecision::Reserved(rate_limited) =
             cooling.reserve_slot(Duration::ZERO, &[])
         else {
@@ -3697,6 +3873,7 @@ mod tests {
             Duration::ZERO,
             OpenAlexRateHeaders {
                 remaining: Some(0),
+                credits_used: None,
                 reset_after: Some(Duration::from_secs(2)),
                 retry_after: None,
             },
@@ -3712,7 +3889,7 @@ mod tests {
             OpenAlexScheduleDecision::Reserved(_)
         ));
 
-        let mut disabled = OpenAlexSchedulerState::new(1, 0);
+        let mut disabled = OpenAlexSchedulerState::with_context(1, 0, 1, Duration::ZERO, 1);
         let OpenAlexScheduleDecision::Reserved(invalid) =
             disabled.reserve_slot(Duration::ZERO, &[])
         else {
@@ -3732,16 +3909,162 @@ mod tests {
     }
 
     #[test]
-    fn openalex_pacing_keeps_three_processes_below_one_hundred_rps_per_key() {
+    fn openalex_pacing_uses_eleven_millisecond_global_slots() {
         let interval_ms = OPENALEX_KEY_START_INTERVAL.as_millis();
 
-        assert!(1_000_u128.div_ceil(interval_ms) <= 30);
-        assert!(3_u128.saturating_mul(1_000) < 100_u128.saturating_mul(interval_ms));
+        assert_eq!(interval_ms, 11);
+        assert_eq!(1_000_u128.div_ceil(interval_ms), 91);
+        assert!(1_000_u128 < 100_u128.saturating_mul(interval_ms));
+    }
+
+    #[test]
+    fn openalex_common_epoch_schedule_is_invariant_across_keys_workers_and_processes() {
+        let epoch = Duration::from_secs(1_000);
+
+        for key_count in 1..=3 {
+            for worker_count in 1..=OPENALEX_MAX_WORKERS_PER_PROCESS {
+                for process_count in 1..=3 {
+                    let mut starts_by_key = vec![Vec::new(); key_count];
+                    for process_id in 0..process_count {
+                        let mut state = OpenAlexSchedulerState::with_context(
+                            key_count,
+                            process_id,
+                            process_count,
+                            epoch,
+                            worker_count * process_count,
+                        );
+                        let mut now = epoch;
+                        for _ in 0..key_count * 110 {
+                            let OpenAlexScheduleDecision::Reserved(reservation) =
+                                state.reserve_slot(now, &[])
+                            else {
+                                panic!("healthy OpenAlex key should reserve a phase");
+                            };
+                            let offset_millis =
+                                reservation.start_at.saturating_sub(epoch).as_millis();
+                            assert_eq!(
+                                (offset_millis / OPENALEX_KEY_START_INTERVAL.as_millis())
+                                    % process_count as u128,
+                                process_id as u128
+                            );
+                            now = reservation.start_at;
+                            starts_by_key[reservation.slot_index].push(reservation.start_at);
+                            state.finish_slot(
+                                &reservation,
+                                now,
+                                OpenAlexRateHeaders::default(),
+                                OpenAlexHealthOutcome::Success,
+                                Duration::ZERO,
+                            );
+                        }
+                        assert_eq!(state.total_inflight_capacity, worker_count * process_count);
+                    }
+
+                    for starts in &mut starts_by_key {
+                        starts.sort_unstable();
+                        assert_eq!(
+                            starts
+                                .iter()
+                                .filter(|start| **start >= epoch
+                                    && **start < epoch + Duration::from_secs(1))
+                                .count(),
+                            91
+                        );
+                        assert!(starts.windows(2).all(|window| {
+                            window[1].saturating_sub(window[0]) == OPENALEX_KEY_START_INTERVAL
+                        }));
+                        assert!(starts.iter().all(|window_start| {
+                            starts
+                                .iter()
+                                .filter(|start| {
+                                    **start >= *window_start
+                                        && **start < *window_start + Duration::from_secs(1)
+                                })
+                                .count()
+                                <= 91
+                        }));
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn openalex_scheduler_reserves_global_daily_credit_headroom() {
+        let epoch = Duration::from_secs(20);
+        let mut state = OpenAlexSchedulerState::with_context(1, 0, 3, epoch, 18);
+        assert_eq!(state.daily_reserve_credits(), 180);
+
+        let OpenAlexScheduleDecision::Reserved(first) = state.reserve_slot(epoch, &[]) else {
+            panic!("unknown quota should permit one probe request");
+        };
+        assert_eq!(
+            state.reserve_slot(epoch, &[]),
+            OpenAlexScheduleDecision::WaitForChange
+        );
+        state.finish_slot(
+            &first,
+            epoch,
+            OpenAlexRateHeaders {
+                remaining: Some(199),
+                credits_used: Some(11),
+                reset_after: Some(Duration::from_secs(100)),
+                retry_after: None,
+            },
+            OpenAlexHealthOutcome::Success,
+            Duration::ZERO,
+        );
+        assert_eq!(state.daily_reserve_credits(), 198);
+
+        let OpenAlexScheduleDecision::Reserved(second) = state.reserve_slot(epoch, &[]) else {
+            panic!("credit above reserve should permit a request");
+        };
+        state.finish_slot(
+            &second,
+            second.start_at,
+            OpenAlexRateHeaders {
+                remaining: Some(198),
+                credits_used: Some(11),
+                reset_after: Some(Duration::from_secs(100)),
+                retry_after: None,
+            },
+            OpenAlexHealthOutcome::Success,
+            Duration::ZERO,
+        );
+        let reset_at = second.start_at + Duration::from_secs(100);
+        assert_eq!(
+            state.reserve_slot(second.start_at, &[]),
+            OpenAlexScheduleDecision::WaitUntil(reset_at)
+        );
+        let OpenAlexScheduleDecision::Reserved(after_reset) = state.reserve_slot(reset_at, &[])
+        else {
+            panic!("reset should restore one probe request");
+        };
+        assert!(after_reset.start_at >= reset_at);
+    }
+
+    #[test]
+    fn openalex_scheduler_skips_obsolete_reserved_phases_after_clock_jump() {
+        let mut state = OpenAlexSchedulerState::with_context(1, 0, 3, Duration::ZERO, 18);
+        state.slots[0].remaining = Some(1_000);
+        let OpenAlexScheduleDecision::Reserved(stale) = state.reserve_slot(Duration::ZERO, &[])
+        else {
+            panic!("initial phase should reserve");
+        };
+
+        assert!(!state.reservation_is_eligible(&stale, Duration::from_millis(50)));
+        state.cancel_slot(&stale);
+        let OpenAlexScheduleDecision::Reserved(next) =
+            state.reserve_slot(Duration::from_millis(50), &[])
+        else {
+            panic!("future owned phase should reserve");
+        };
+        assert_eq!(next.start_at, Duration::from_millis(66));
     }
 
     #[test]
     fn openalex_scheduler_weights_capacity_without_starving_lower_slots() {
-        let mut state = OpenAlexSchedulerState::new(3, 0);
+        let mut state = OpenAlexSchedulerState::with_context(3, 0, 1, Duration::ZERO, 1);
         state.slots[0].remaining = Some(90_000);
         state.slots[1].remaining = Some(30_000);
         state.slots[2].remaining = Some(10_000);
@@ -3780,6 +4103,10 @@ mod tests {
             reqwest::header::HeaderValue::from_static("43200"),
         );
         headers.insert(
+            "x-ratelimit-credits-used",
+            reqwest::header::HeaderValue::from_static("10"),
+        );
+        headers.insert(
             "retry-after",
             reqwest::header::HeaderValue::from_static("3"),
         );
@@ -3788,6 +4115,7 @@ mod tests {
             openalex_rate_headers(&headers),
             OpenAlexRateHeaders {
                 remaining: Some(8_766),
+                credits_used: Some(10),
                 reset_after: Some(Duration::from_secs(43_200)),
                 retry_after: Some(Duration::from_secs(3)),
             }
@@ -3826,7 +4154,7 @@ mod tests {
                 .expect("test response should write");
             }
         });
-        let scheduler = OpenAlexScheduler::new(
+        let scheduler = OpenAlexScheduler::with_context(
             vec![
                 "key-zero".into(),
                 "key-one".into(),
@@ -3834,13 +4162,16 @@ mod tests {
                 "key-three".into(),
             ],
             0,
+            1,
+            unix_time_millis(),
+            1,
         );
         let execution = super::execute_openalex_request(
             &reqwest::blocking::Client::new(),
             &scheduler,
             "works",
             &format!("http://{address}/works"),
-            &openalex_doi_query(&["10.1/example".to_string()], None, None),
+            &openalex_doi_query(&["10.1/example".to_string()], None),
         );
         server.join().expect("test server should finish");
 
@@ -3886,13 +4217,19 @@ mod tests {
             )
             .expect("retry response should write");
         });
-        let scheduler = OpenAlexScheduler::new(vec!["key-zero".into(), "key-one".into()], 0);
+        let scheduler = OpenAlexScheduler::with_context(
+            vec!["key-zero".into(), "key-one".into()],
+            0,
+            1,
+            unix_time_millis(),
+            1,
+        );
         let execution = super::execute_openalex_request(
             &reqwest::blocking::Client::new(),
             &scheduler,
             "works",
             &format!("http://{address}/works"),
-            &openalex_doi_query(&["10.1/example".to_string()], None, None),
+            &openalex_doi_query(&["10.1/example".to_string()], None),
         );
         server.join().expect("test server should finish");
 
@@ -3926,13 +4263,19 @@ mod tests {
             )
             .expect("test response should write");
         });
-        let scheduler = OpenAlexScheduler::new(vec![secret_key.to_string()], 0);
+        let scheduler = OpenAlexScheduler::with_context(
+            vec![secret_key.to_string()],
+            0,
+            1,
+            unix_time_millis(),
+            1,
+        );
         let execution = super::execute_openalex_request(
             &reqwest::blocking::Client::new(),
             &scheduler,
             "works",
             &format!("http://{address}/works"),
-            &openalex_doi_query(&[secret_doi.to_string()], None, Some(secret_mailto)),
+            &openalex_doi_query(&[secret_doi.to_string()], None),
         );
         server.join().expect("test server should finish");
 
@@ -4010,8 +4353,10 @@ mod tests {
     }
 
     #[test]
-    fn live_openalex_batches_use_all_keys_and_never_exceed_six_in_flight() {
-        let request_count = 12;
+    fn live_openalex_batches_use_all_keys_and_respect_global_in_flight_capacity() {
+        let process_count = 3;
+        let requests_per_process = 12;
+        let request_count = process_count * requests_per_process;
         let active = Arc::new(AtomicUsize::new(0));
         let maximum = Arc::new(AtomicUsize::new(0));
         let listener = TcpListener::bind("127.0.0.1:0").expect("test listener should bind");
@@ -4044,28 +4389,43 @@ mod tests {
                 handler.join().expect("test response handler should finish");
             }
         });
-        let scheduler = Arc::new(OpenAlexScheduler::new(
-            vec!["key-zero".into(), "key-one".into(), "key-two".into()],
-            0,
-        ));
-        let batches = (0..request_count)
-            .map(|index| vec![format!("10.1/value-{index}")])
+        let schedule_epoch_unix_millis = unix_time_millis().saturating_add(100);
+        let mut processes = Vec::new();
+        for process_id in 0..process_count {
+            processes.push(thread::spawn(move || {
+                let scheduler = Arc::new(OpenAlexScheduler::with_context(
+                    vec!["key-zero".into(), "key-one".into(), "key-two".into()],
+                    process_id,
+                    process_count,
+                    schedule_epoch_unix_millis,
+                    OPENALEX_MAX_WORKERS_PER_PROCESS * process_count,
+                ));
+                let batches = (0..requests_per_process)
+                    .map(|index| vec![format!("10.1/process-{process_id}-value-{index}")])
+                    .collect::<Vec<_>>();
+                execute_openalex_batches(
+                    &reqwest::blocking::Client::new(),
+                    &scheduler,
+                    OPENALEX_MAX_WORKERS_PER_PROCESS,
+                    &format!("http://{address}/works"),
+                    &batches,
+                )
+                .expect("bounded OpenAlex batches should execute")
+            }));
+        }
+        let executions = processes
+            .into_iter()
+            .flat_map(|process| process.join().expect("OpenAlex process should finish"))
             .collect::<Vec<_>>();
-
-        let executions = execute_openalex_batches(
-            &reqwest::blocking::Client::new(),
-            &scheduler,
-            usize::MAX,
-            &format!("http://{address}/works"),
-            None,
-            &batches,
-        )
-        .expect("bounded OpenAlex batches should execute");
         server.join().expect("test server should finish");
 
         assert_eq!(executions.len(), request_count);
         assert!(executions.iter().all(|execution| execution.result.is_ok()));
-        assert!((4..=6).contains(&maximum.load(Ordering::SeqCst)));
+        assert!(
+            (process_count + 1..=OPENALEX_MAX_WORKERS_PER_PROCESS * process_count)
+                .contains(&maximum.load(Ordering::SeqCst))
+        );
+        assert_eq!(active.load(Ordering::SeqCst), 0);
         let mut key_starts = [0_usize; 3];
         for attempt in executions
             .iter()
