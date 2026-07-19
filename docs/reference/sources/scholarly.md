@@ -21,7 +21,7 @@ Scholarly 是内置 Provider adapter，不是内容 schema。它把 Crossref、O
 
 上游 URL、source ID、Crossref cursor、OpenAlex cursor 和 Semantic Scholar PDF/landing-page URL 不进入 `ArticleDraft` 或内容数据库。URL 只允许存在于私有 transport payload 和当前调用内。
 
-被 `index_provider_routes` 路由到 `scholarly` 的目录需要非空 `openalex_api_key_pool` 和 `semantic_scholar_api_key_pool`。`crossref_mailto_pool` 可选，生产环境应配置可联系邮箱。配置见[运行配置](../configuration.md)。
+只要选中的目录被 `index_provider_routes` 路由到 `scholarly`，`openalex_api_key_pool`、`semantic_scholar_api_key_pool` 和 `crossref_mailto_pool` 都必须至少包含一个非空值。缺少任一类会在创建内容库、控制库或其他索引状态前失败。配置见[运行配置](../configuration.md)。
 
 ## 索引流程
 
@@ -63,15 +63,29 @@ Provider 不返回 PDF URL、landing page、permalink 或 content location。在
 
 Crossref cursor 只作为 Provider checkpoint 内容存于 `data/index-control`，不会进入内容库。
 
+当前 [Crossref REST API 访问合同](https://www.crossref.org/documentation/retrieve-metadata/rest-api/access-and-authentication/) 的 polite pool 为 `10 req/s`、并发 `3`。Scholarly 对整个父进程树使用一个公共 epoch，每 110 ms 允许一个请求尝试，约为 `9.09 req/s`；最多三个期刊子进程各有一个请求在途。每次重试也必须取得下一个未来相位，错过的相位不会补发成突发流量。
+
+mailto 是 Crossref 的联系身份，不是独立配额凭据。客户端稳定使用池中的第一个 mailto；一个和三个 mailto 得到完全相同的速率/并发预算，不轮转身份来放大容量。
+
 ## OpenAlex fallback 与已知限制
 
 OpenAlex `/sources` 以 ISSN 精确查询优先，题名 search 只作为 fallback。source works 使用 `primary_location.source.id`、cursor 和出版日期升序。
+
+当前 [OpenAlex 认证与计费合同](https://developers.openalex.org/api-reference/authentication) 为每个 API key 最多 `100 req/s`，并为每个 key 独立统计每日 credits。Scholarly 为每个健康 key 建立跨进程公共相位：每 11 ms 一个相位，约为 `90.9 req/s/key`。进程 `p` 拥有 `epoch + p × 11 ms + n × process_count × 11 ms` 的相位；改变进程数只改变所有权，不改变单 key 或 key 池的总速率。
+
+所有配置的 OpenAlex key 都参与调度。选择会考虑剩余 credits、在途请求、冷却和认证状态；401/403 只禁用对应 slot，429/reset 只冷却对应 slot，失败切换不能绕过另一个 key 的未来相位。调度器解析 remaining、reset 和单次 credits-used，并保留 `workers × processes × 最大已知单次 cost` 的每日 headroom；额度未知时每个 key/进程只允许一个探测请求。每个进程最多六个 OpenAlex DOI 子批在途，三个进程的全局上限为 18。
+
+[OpenAlex deprecation 说明](https://developers.openalex.org/guides/deprecations)记录其自 2026 年 2 月起忽略 mailto。LitRadar 的 source、source search、source works 和 DOI 请求均不发送 Crossref mailto，URL 长度预算也只计入 OpenAlex key。
 
 当前 source-works fallback 仍请求 `per-page=200`，而现有上游文档的公开上限是 100。这只影响 Crossref 对全部 ISSN 返回 404 后的 OpenAlex source 清单路径。代码任务修复该偏差时必须同时调整分页终止条件和 fixtures；本文不把 200 描述为受上游保证的值。
 
 ## Semantic Scholar 节流
 
-请求为 `POST /graph/v1/paper/batch`，最多 500 个规范 DOI ID。多个本机索引进程使用保守时隙：基础间隔 1 秒，worker 初始偏移为 `worker_id × 1s`，同一 worker 后续间隔为 `process_count × 1s`。这不是跨主机分布式限流器。
+请求为 `POST /graph/v1/paper/batch`，最多 500 个规范 DOI ID。当前 [Semantic Scholar API 合同](https://www.semanticscholar.org/product/api) 的入门配额为每 API key `1 req/s`。Scholarly 对每个合法 key 使用 1,100-ms 跨进程相位，约为 `0.909 req/s/key`；生产路径会把更小的内部间隔钳制到 1,100 ms。
+
+key `k`、进程 `p` 的相位为 `epoch + p × 1,100 ms + k × 1,100 ms / key_count + n × process_count × 1,100 ms`。key 间在一个周期内均匀错开，使串行 batch 调用也能使用两个或三个独立 key 的容量；对任一 key，全部进程合并后仍至少间隔 1,100 ms。401/403 只禁用被选 key，429 使用 Retry-After 与退避的较大值冷却被选 key，5xx/传输失败可切换到其他健康 key，但每次尝试仍需自己的未来相位。
+
+这些相位只协调同一条 `litradar index` 命令创建的进程树，不是跨命令、跨主机或跨应用的分布式限流器。key 的认证/冷却观测保守地保存在各子进程中，因此另一个子进程可能需要独立观察同一失效响应；公共相位仍保证它们不会叠加超过每 key 的本地计划速率。其他客户端共享同一 key 或上游临时降额时仍可能产生 429；调用方应把它视为外部协调信号，而不是通过更激进重试绕过。
 
 “No valid paper ids given” 按空增强处理；其他不接受的 4xx 明确失败。
 
@@ -87,9 +101,11 @@ Scholarly 在线 adapter 不请求或读取索引时保存的 URL：
 
 ## 重试、日志与秘密
 
-Scholarly HTTP 请求默认最多三次。传输错误及 `429/500/502/503/504` 重试，两次退避为 1 秒和 2 秒；其他非 2xx 直接失败。
+Crossref 的通用 HTTP 路径默认最多三次。OpenAlex 和 Semantic Scholar 为了在 key 故障时完成合法 failover，单个逻辑请求最多尝试 `key_count + 2` 次；本次验证覆盖 `1..=3` 个 key，因此该范围最多五次。每个网络尝试（包括 retry）都计入被选 Provider/key 的相位。传输错误及 `429/500/502/503/504` 可重试，401/403 只停用被选 key，其他非 2xx 直接失败。
 
-每次逻辑请求的成功、失败和 retry 会汇总到 `index.provider.attempts` 结构化终态事件。内容库没有 API call/statistics 表。API key、完整查询秘密、响应正文和上游 URL 不进入安全错误或持久状态。
+每次逻辑请求的成功、失败和 retry 会汇总到 `index.provider.attempts` 结构化终态事件。OpenAlex/Semantic Scholar 尝试事件只增加安全的 key-slot 编号、状态分类、retry 标志和耗时，不记录 key 值或请求体。内容库没有 API call/statistics 表。API key、完整查询秘密、DOI 请求体、响应正文和上游 URL 不进入安全错误或持久状态；Semantic Scholar 非白名单错误正文会折叠为固定消息。
+
+调度器暴露的是有安全余量的可用容量，不是吞吐保证。实际吞吐近似受 `min(Provider 预算, 在途容量 / 响应延迟, 产生工作速率)` 限制；低 worker、慢响应或工作不足不能被标记为限流器利用率不足，也不承诺精确 100% 使用或任何外部状态下都零 429。
 
 ## 维护测试
 

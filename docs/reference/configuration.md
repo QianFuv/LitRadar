@@ -48,7 +48,7 @@ LitRadar 不使用单一 `.env` 作为配置中心。不同配置来源服务于
 | --------------------------------- | ------------------------- | ---: | --------------------------------------------- |
 | `openalex_api_key_pool`           | 空                        |   是 | scholarly 索引                                |
 | `semantic_scholar_api_key_pool`   | 空                        |   是 | scholarly 索引                                |
-| `crossref_mailto_pool`            | 空                        |   否 | Crossref 联系邮箱；OpenAlex 请求也复用 mailto |
+| `crossref_mailto_pool`            | 空                        |   否 | Crossref polite pool 的稳定联系邮箱           |
 | `cors_allowed_origins`            | 空                        |   否 | API credentialed CORS                         |
 | `mcp_allowed_hosts`               | `localhost,127.0.0.1,::1` |   否 | MCP Host 白名单                               |
 | `mcp_allowed_origins`             | 空                        |   否 | 浏览器 MCP Origin 白名单                      |
@@ -68,9 +68,25 @@ LitRadar 不使用单一 `.env` 作为配置中心。不同配置来源服务于
 }
 ```
 
-索引命令只根据目录 stem 选择 Provider。被路由到 `scholarly` 的目录开始前要求 OpenAlex 和 Semantic Scholar key 池都非空；CSV 本身不含 `source`。Crossref mailto 建议生产配置，但代码不把它设为启动必填。
+索引命令只根据目录 stem 选择 Provider。只要选中的目录被路由到 `scholarly`，OpenAlex key、Semantic Scholar key 和 Crossref mailto 三类配置都必须至少有一个非空值；缺失任一类都会在创建索引状态前失败。CSV 本身不含 `source`。
 
-key/mailto 池按逗号、分号或换行拆分，去除空项并按首次出现顺序去重；当前实时客户端选择池中的第一个值发起请求。池设计保留多个值，但不表示每次请求都会轮转。
+key/mailto 池按逗号、分号或换行拆分，去除空项并按首次出现顺序去重。Crossref 始终使用第一个稳定 mailto；更多 mailto 只是备用配置，不增加、拆分或轮转 Crossref 容量。OpenAlex 和 Semantic Scholar 会使用池中全部合法 key，并按各 key 自己的相位、剩余额度、冷却和认证状态选择 slot；这不是忽略健康状态的逐请求简单轮转。
+
+池中的每个 API key 都必须是为该部署合法签发和允许使用的凭据；不要为了规避 Provider 限流、许可或身份规则而创建或收集额外 key。
+
+### Scholarly 请求预算
+
+| 上游             | 当前合同                         | LitRadar 安全相位                                                    | 池的含义                                      |
+| ---------------- | -------------------------------- | -------------------------------------------------------------------- | --------------------------------------------- |
+| Crossref         | polite `10 req/s`、并发 `3`      | 整个父进程树每 110 ms 一个尝试，约 `9.09 req/s`；最多三个期刊子进程在途 | mailto 是联系身份；数量不乘以容量              |
+| OpenAlex         | 每 key `100 req/s`，另有每日额度 | 每个健康 key 跨进程每 11 ms 一个相位，约 `90.9 req/s/key`            | 每个 key 有独立速率和每日额度                  |
+| Semantic Scholar | 每 key `1 req/s`                 | 每个健康 key 跨进程每 1,100 ms 一个相位，约 `0.909 req/s/key`        | 每个合法 key 有独立速率；key 间在周期内均匀错相 |
+
+这些相位协调同一个 `litradar index` 父进程启动的最多三个期刊子进程，不协调另一条命令、另一台主机或其他应用。外部客户端共享同一 key、上游临时降额或窗口实现差异仍可能产生 429；LitRadar 会冷却对应 key 并保留安全证据，不承诺精确 100% 利用率或任何环境下都零限流。
+
+Scholarly 的 `workers` 只控制每个期刊子进程内 OpenAlex DOI 子批的在途上限，范围 `1..=6`；`processes` 范围 `1..=3`。OpenAlex 的全局在途上限为 `workers × processes`。调度器根据响应的剩余额度、reset 和单次 credit cost，为所有可能在途响应保留 `workers × processes × 最大已知单次 cost` 的每日 headroom；额度未知时，每个 key/进程只允许一个探测请求。OpenAlex 请求不再发送 Crossref mailto。
+
+实际吞吐同时受 Provider 速率、可用在途数、响应延迟和待处理工作量约束，可近似看作 `min(Provider 预算, 在途容量 / 响应延迟, 产生工作速率)`。增加 `workers` 或 `processes` 不能突破每 key 预算；它只在延迟或工作并行度成为瓶颈时提高可达吞吐。
 
 ### Provider 路由语法
 
@@ -150,7 +166,7 @@ key/mailto 池按逗号、分号或换行拆分，去除空项并按首次出现
 
 - OpenAlex key：请求 `/sources` 和 `/works`
 - Semantic Scholar key：`x-api-key` 请求头
-- Crossref mailto：Crossref query 参数，同时传给 OpenAlex mailto
+- Crossref mailto：只作为 Crossref query 参数；不传给 OpenAlex
 
 CNKI overseas 元数据索引不使用这三个设置，也不读取代理配置。
 

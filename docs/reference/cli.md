@@ -170,10 +170,13 @@ litradar index --secret-key-file PATH
 
 - `workers`、`processes`、`issue-batch` 必须至少为 1。
 - 只要选中的目录路由到 Scholarly，`workers` 最多为 6，`processes` 最多为 3；超限会在上游请求前失败。CNKI 路由不受这两个 Scholarly 上限约束。
+- 只要选中的目录路由到 Scholarly，OpenAlex key、Semantic Scholar key 和 Crossref mailto 都必须存在；缺少任一类会在创建内容库、控制库或其他索引状态前失败。
 - `--notify` 必须和 `--update` 同时使用。
 - 单独传 `--notify-dry-run` 不会启动 notify；它只修改 `--notify` handoff 的模式。
-- Scholarly 中的 `--workers` 只扩大每个进程的 OpenAlex DOI 子批并发；`6 × 3` 因此最多同时执行 18 个这类子批请求。OpenAlex key 调度器会根据剩余额度、在途请求、冷却和认证状态选择健康 key，而不是按固定顺序简单轮转。
-- Crossref 和 Semantic Scholar 不使用 `--workers` 扩大并发。本机各期刊子进程依据共同调度 epoch 错开每一次请求尝试（包括重试）：Crossref 的全局相位间隔为 110 ms，Semantic Scholar 为 1.1 s；增加 `--processes` 不会缩短这两个全局间隔，也不保证上游吞吐提升。
+- Scholarly 中的 `--workers` 只扩大每个期刊子进程的 OpenAlex DOI 子批在途容量；`6 × 3` 因此最多同时保留 18 个这类请求。每个 OpenAlex key 跨全部期刊子进程共享一组 11-ms 相位，约暴露 `90.9 req/s/key`；增加进程只改变相位所有权，不把单 key 速率乘以进程数。调度器使用全部健康 key，并按剩余 daily credits、在途、冷却和认证状态负载均衡。每日安全预留按 `workers × processes × 最大已知单次 credit cost` 计算。
+- Crossref 不使用 `--workers`。整个父进程树共享一个 110-ms polite 相位序列，约 `9.09 req/s`，最多由三个期刊子进程各保留一个在途请求。仅第一个稳定 mailto 被发送；增加 mailto 不会增加 10-RPS/并发-3 合同容量。
+- Semantic Scholar 不使用 `--workers`。每个合法 key 各有一个跨进程 1,100-ms 相位序列，约 `0.909 req/s/key`；不同 key 在周期内均匀错开，所以两个或三个 key 可线性增加建模容量。增加 `--processes` 只分配每 key 的相位所有权，不突破 `1 req/s/key`。401/403 只禁用对应 slot，429/Retry-After 只冷却对应 slot，重试同样必须取得未来相位。
+- 这些共同 epoch 只协调同一条 `litradar index` 命令的父进程树，不协调其他命令、主机或应用。实际吞吐受 `min(Provider 预算, 在途容量 / 响应延迟, 产生工作速率)` 约束；低 worker、慢响应或工作不足时不会达到理论 RPS。上游临时降额或其他客户端共享 key 时仍可能返回 429，CLI 不承诺精确 100% 利用率或普遍零限流。
 - 多个 CSV 仍逐个处理。
 - `6/1/8` 是约 100 MiB 索引内存目标下的默认并发。在上述 Provider 约束内显式提高并发仍受支持，但可能超过该预算。
 
