@@ -256,6 +256,12 @@ pub struct ContentWriteOutcome {
     pub change_events_emitted: usize,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct JournalProjectionRefresh {
+    refresh_listing_area: bool,
+    refresh_search_title: bool,
+}
+
 /// Open and validate a provider-neutral content database.
 ///
 /// # Arguments
@@ -346,7 +352,7 @@ pub fn write_content_batch(
         ));
     }
     let transaction = Transaction::new_unchecked(connection, TransactionBehavior::Immediate)?;
-    let journal_id = upsert_canonical_journal(&transaction, catalog)?;
+    let (journal_id, projection_refresh) = upsert_canonical_journal(&transaction, catalog)?;
     for issue in &batch.issues {
         upsert_canonical_issue(&transaction, journal_id, issue)?;
     }
@@ -366,7 +372,7 @@ pub fn write_content_batch(
             &mut outcome,
         )?;
     }
-    refresh_journal_projections(&transaction, journal_id, catalog)?;
+    refresh_journal_projections(&transaction, journal_id, catalog, projection_refresh)?;
     transaction.commit()?;
     Ok(outcome)
 }
@@ -587,8 +593,21 @@ fn validate_current_content_schema(connection: &Connection) -> Result<(), Conten
 fn upsert_canonical_journal(
     connection: &Connection,
     catalog: &JournalCatalogEntry,
-) -> Result<i64, ContentDatabaseError> {
+) -> Result<(i64, JournalProjectionRefresh), ContentDatabaseError> {
     let journal_id = journal_id_from_catalog_id(&catalog.catalog_id);
+    let previous_projection = connection
+        .query_row(
+            "SELECT title, area FROM journals WHERE journal_id = ?1",
+            [journal_id],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?)),
+        )
+        .optional()?;
+    let projection_refresh = previous_projection
+        .map(|(title, area)| JournalProjectionRefresh {
+            refresh_listing_area: area.as_deref() != catalog.area.as_deref(),
+            refresh_search_title: title != catalog.title,
+        })
+        .unwrap_or_default();
     let title_aliases_json = serde_json::to_string(&catalog.title_aliases)?;
     let issns_json = serde_json::to_string(&catalog.all_issns)?;
     connection.execute(
@@ -634,7 +653,7 @@ fn upsert_canonical_journal(
             catalog.rankings.fmscn_rating,
         ],
     )?;
-    Ok(journal_id)
+    Ok((journal_id, projection_refresh))
 }
 
 fn upsert_canonical_issue(
@@ -1029,17 +1048,22 @@ fn refresh_journal_projections(
     connection: &Connection,
     journal_id: i64,
     catalog: &JournalCatalogEntry,
+    refresh: JournalProjectionRefresh,
 ) -> Result<(), ContentDatabaseError> {
-    connection.execute(
-        "UPDATE article_listing SET area = ?1 WHERE journal_id = ?2",
-        params![catalog.area, journal_id],
-    )?;
-    connection.execute(
-        "UPDATE article_search SET journal_title = ?1 WHERE article_id IN (
-             SELECT article_id FROM articles WHERE journal_id = ?2
-         )",
-        params![catalog.title, journal_id],
-    )?;
+    if refresh.refresh_listing_area {
+        connection.execute(
+            "UPDATE article_listing SET area = ?1 WHERE journal_id = ?2",
+            params![catalog.area, journal_id],
+        )?;
+    }
+    if refresh.refresh_search_title {
+        connection.execute(
+            "UPDATE article_search SET journal_title = ?1 WHERE article_id IN (
+                 SELECT article_id FROM articles WHERE journal_id = ?2
+             )",
+            params![catalog.title, journal_id],
+        )?;
+    }
     Ok(())
 }
 
@@ -1079,8 +1103,11 @@ mod tests {
     use rusqlite::Connection;
 
     use super::{
-        init_content_db, write_content_batch, ContentDatabaseError, CONTENT_SCHEMA_VERSION,
+        init_content_db, write_content_batch, ContentDatabaseError, ContentWriteOutcome,
+        CONTENT_SCHEMA_VERSION,
     };
+
+    const TEST_CREATED_AT: &str = "2026-07-18T00:00:00Z";
 
     fn catalog() -> JournalCatalogEntry {
         JournalCatalogEntry {
@@ -1135,6 +1162,90 @@ mod tests {
             is_complete: true,
             next_checkpoint: None,
         }
+    }
+
+    fn batch_with_article_count(article_count: usize) -> ProviderBatch {
+        let mut provider_batch = batch();
+        let template = provider_batch.articles[0].clone();
+        provider_batch.articles = (0..article_count)
+            .map(|index| {
+                let mut article = template.clone();
+                article.title = format!("Projection Article {index}");
+                article.start_page = Some((index + 1).to_string());
+                article.end_page = Some((index + 2).to_string());
+                article.doi = Some(format!("10.1000/projection-{index}"));
+                article
+            })
+            .collect();
+        provider_batch
+    }
+
+    fn empty_batch(catalog: &JournalCatalogEntry) -> ProviderBatch {
+        let mut provider_batch = batch();
+        provider_batch.journal.observed_title = Some(catalog.title.clone());
+        provider_batch.issues.clear();
+        provider_batch.articles.clear();
+        provider_batch
+    }
+
+    fn write_test_batch(
+        connection: &Connection,
+        catalog: &JournalCatalogEntry,
+        provider_batch: &ProviderBatch,
+        revision: &str,
+    ) -> ContentWriteOutcome {
+        write_content_batch(
+            connection,
+            catalog,
+            provider_batch,
+            revision,
+            TEST_CREATED_AT,
+        )
+        .expect("test batch should write")
+    }
+
+    fn write_empty_catalog_update(
+        connection: &Connection,
+        catalog: &JournalCatalogEntry,
+        revision: &str,
+    ) -> u64 {
+        let changes_before = connection.total_changes();
+        write_test_batch(connection, catalog, &empty_batch(catalog), revision);
+        connection.total_changes() - changes_before
+    }
+
+    fn assert_projection_metadata(
+        connection: &Connection,
+        catalog: &JournalCatalogEntry,
+        expected_count: i64,
+    ) {
+        let counts = connection
+            .query_row(
+                "SELECT
+                     (SELECT COUNT(*) FROM article_listing),
+                     (SELECT COUNT(*) FROM article_listing WHERE area IS ?1),
+                     (SELECT COUNT(*) FROM article_search),
+                     (SELECT COUNT(*) FROM article_search WHERE journal_title = ?2)",
+                rusqlite::params![catalog.area, catalog.title],
+                |row| {
+                    Ok((
+                        row.get::<_, i64>(0)?,
+                        row.get::<_, i64>(1)?,
+                        row.get::<_, i64>(2)?,
+                        row.get::<_, i64>(3)?,
+                    ))
+                },
+            )
+            .expect("projection metadata should read");
+        assert_eq!(
+            counts,
+            (
+                expected_count,
+                expected_count,
+                expected_count,
+                expected_count
+            )
+        );
     }
 
     #[test]
@@ -1221,6 +1332,127 @@ mod tests {
                 .expect("row count should read");
             assert_eq!(count, expected, "unexpected replay cardinality for {table}");
         }
+    }
+
+    #[test]
+    fn unchanged_journal_metadata_does_not_rewrite_existing_projections() {
+        let changes = [1_usize, 64].map(|article_count| {
+            let connection = Connection::open_in_memory().expect("database should open");
+            init_content_db(&connection).expect("content schema should initialize");
+            let test_catalog = catalog();
+            write_test_batch(
+                &connection,
+                &test_catalog,
+                &batch_with_article_count(article_count),
+                "catalog:journal-1:seed",
+            );
+            let replay_changes = write_empty_catalog_update(
+                &connection,
+                &test_catalog,
+                "catalog:journal-1:empty-replay",
+            );
+            assert_projection_metadata(&connection, &test_catalog, article_count as i64);
+            replay_changes
+        });
+
+        assert_eq!(
+            changes,
+            [1, 1],
+            "an identical empty replay must change only the maintained journal row"
+        );
+    }
+
+    #[test]
+    fn journal_metadata_changes_refresh_only_affected_projections() {
+        const ARTICLE_COUNT: usize = 4;
+        let connection = Connection::open_in_memory().expect("database should open");
+        init_content_db(&connection).expect("content schema should initialize");
+        let original_catalog = catalog();
+        write_test_batch(
+            &connection,
+            &original_catalog,
+            &batch_with_article_count(ARTICLE_COUNT),
+            "catalog:journal-1:seed",
+        );
+
+        let mut area_only_catalog = original_catalog.clone();
+        area_only_catalog.area = Some("Data Systems".to_string());
+        assert_eq!(
+            write_empty_catalog_update(
+                &connection,
+                &area_only_catalog,
+                "catalog:journal-1:area-only",
+            ),
+            1 + ARTICLE_COUNT as u64,
+            "area-only metadata must not rewrite search projections"
+        );
+        assert_projection_metadata(&connection, &area_only_catalog, ARTICLE_COUNT as i64);
+
+        let mut title_only_catalog = area_only_catalog.clone();
+        title_only_catalog.title = "Renamed Journal".to_string();
+        let title_only_changes = write_empty_catalog_update(
+            &connection,
+            &title_only_catalog,
+            "catalog:journal-1:title-only",
+        );
+        assert!(title_only_changes > 1);
+        assert_projection_metadata(&connection, &title_only_catalog, ARTICLE_COUNT as i64);
+
+        let mut combined_catalog = title_only_catalog.clone();
+        combined_catalog.title = "Combined Journal".to_string();
+        combined_catalog.area = Some("Combined Area".to_string());
+        let combined_changes = write_empty_catalog_update(
+            &connection,
+            &combined_catalog,
+            "catalog:journal-1:combined",
+        );
+        assert_eq!(
+            combined_changes,
+            title_only_changes + ARTICLE_COUNT as u64,
+            "combined metadata must add exactly one listing refresh"
+        );
+        assert_projection_metadata(&connection, &combined_catalog, ARTICLE_COUNT as i64);
+
+        assert_eq!(
+            write_empty_catalog_update(
+                &connection,
+                &combined_catalog,
+                "catalog:journal-1:combined-replay",
+            ),
+            1
+        );
+
+        let mut changed_article_batch = batch_with_article_count(ARTICLE_COUNT);
+        changed_article_batch.journal.observed_title = Some(combined_catalog.title.clone());
+        changed_article_batch.articles[0].abstract_text =
+            Some("Updated canonical abstract with additional detail".to_string());
+        let changed = write_test_batch(
+            &connection,
+            &combined_catalog,
+            &changed_article_batch,
+            "catalog:journal-1:article-change",
+        );
+        let changed_search_rows = connection
+            .query_row(
+                "SELECT COUNT(*) FROM article_search
+                 WHERE abstract_text = 'Updated canonical abstract with additional detail'
+                   AND journal_title = ?1",
+                [combined_catalog.title.as_str()],
+                |row| row.get::<_, i64>(0),
+            )
+            .expect("changed search projection should read");
+        assert_eq!(changed.articles_changed, 1);
+        assert_eq!(changed.change_events_emitted, 1);
+        assert_eq!(changed_search_rows, 1);
+        assert_projection_metadata(&connection, &combined_catalog, ARTICLE_COUNT as i64);
+
+        let new_connection = Connection::open_in_memory().expect("database should open");
+        init_content_db(&new_connection).expect("content schema should initialize");
+        assert_eq!(
+            write_empty_catalog_update(&new_connection, &catalog(), "catalog:journal-1:new-empty",),
+            1
+        );
+        assert_projection_metadata(&new_connection, &catalog(), 0);
     }
 
     #[test]
