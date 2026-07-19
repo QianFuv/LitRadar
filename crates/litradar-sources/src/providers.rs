@@ -2,6 +2,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use litradar_domain::{
     normalize_bibliographic_label, normalize_bibliographic_text, normalize_contract_doi,
@@ -35,6 +36,7 @@ pub const SCHOLARLY_REDIRECT_HOSTS: &[&str] = &["doi.org", "pubmed.ncbi.nlm.nih.
 pub const CNKI_REDIRECT_HOSTS: &[&str] = &["oversea.cnki.net", "kns.cnki.net", "www.cnki.net"];
 
 const SCHOLARLY_ENRICHMENT_BATCH_SIZE: usize = 100;
+const CROSSREF_CURSOR_REUSE_SECONDS: u64 = 240;
 
 /// Stateless Scholarly access provider that derives live DOI or PubMed destinations.
 #[derive(Debug, Clone, Copy, Default)]
@@ -369,6 +371,8 @@ enum ScholarlyCheckpoint {
         cursor: String,
         #[serde(default)]
         page_index: u64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        cursor_refreshed_at_epoch_seconds: Option<u64>,
     },
     OpenAlex {
         source_id: String,
@@ -387,6 +391,59 @@ enum FirstScholarlyPage {
     },
 }
 
+fn current_epoch_seconds() -> Result<u64, ProviderError> {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_secs())
+        .map_err(|_| {
+            ProviderError::new(
+                ProviderErrorKind::Internal,
+                "system clock is before the Unix epoch",
+            )
+        })
+}
+
+fn crossref_cursor_is_fresh(
+    cursor_refreshed_at_epoch_seconds: Option<u64>,
+    current_epoch_seconds: u64,
+) -> bool {
+    cursor_refreshed_at_epoch_seconds
+        .and_then(|refreshed_at| current_epoch_seconds.checked_sub(refreshed_at))
+        .is_some_and(|age| age < CROSSREF_CURSOR_REUSE_SECONDS)
+}
+
+fn crossref_checkpoint_epoch(
+    next_cursor: Option<&String>,
+    is_empty: bool,
+    clock: &mut impl FnMut() -> Result<u64, ProviderError>,
+) -> Result<Option<u64>, ProviderError> {
+    if next_cursor.is_some() && !is_empty {
+        clock().map(Some)
+    } else {
+        Ok(None)
+    }
+}
+
+fn is_crossref_cursor_http_500(error: &SourceError) -> bool {
+    matches!(
+        error,
+        SourceError::HttpStatus {
+            status_code: 500,
+            ..
+        }
+    )
+}
+
+fn emit_crossref_cursor_restart(reason: &'static str, prior_page_index: u64) {
+    tracing::warn!(
+        event = "source.crossref.cursor_restarted",
+        component = "source",
+        provider = "crossref",
+        reason,
+        prior_page_index,
+    );
+}
+
 fn fetch_scholarly_batch<T>(
     client: &mut ScholarlyClient<T>,
     catalog: &JournalCatalogEntry,
@@ -395,6 +452,51 @@ fn fetch_scholarly_batch<T>(
 ) -> Result<ProviderBatch, ProviderError>
 where
     T: ScholarlyTransport,
+{
+    let mut clock = current_epoch_seconds;
+    fetch_scholarly_batch_with_clock(
+        client,
+        catalog,
+        checkpoint,
+        has_semantic_scholar_key,
+        &mut clock,
+    )
+}
+
+fn fetch_scholarly_batch_with_clock<T, F>(
+    client: &mut ScholarlyClient<T>,
+    catalog: &JournalCatalogEntry,
+    checkpoint: Option<&str>,
+    has_semantic_scholar_key: bool,
+    clock: &mut F,
+) -> Result<ProviderBatch, ProviderError>
+where
+    T: ScholarlyTransport,
+    F: FnMut() -> Result<u64, ProviderError>,
+{
+    let mut restart = emit_crossref_cursor_restart;
+    fetch_scholarly_batch_with_clock_and_restart(
+        client,
+        catalog,
+        checkpoint,
+        has_semantic_scholar_key,
+        clock,
+        &mut restart,
+    )
+}
+
+fn fetch_scholarly_batch_with_clock_and_restart<T, F, R>(
+    client: &mut ScholarlyClient<T>,
+    catalog: &JournalCatalogEntry,
+    checkpoint: Option<&str>,
+    has_semantic_scholar_key: bool,
+    clock: &mut F,
+    restart: &mut R,
+) -> Result<ProviderBatch, ProviderError>
+where
+    T: ScholarlyTransport,
+    F: FnMut() -> Result<u64, ProviderError>,
+    R: FnMut(&'static str, u64),
 {
     let (works, next_checkpoint) = if let Some(checkpoint) = checkpoint {
         let checkpoint = serde_json::from_str::<ScholarlyCheckpoint>(checkpoint).map_err(|_| {
@@ -408,19 +510,50 @@ where
                 issn,
                 cursor,
                 page_index,
+                cursor_refreshed_at_epoch_seconds,
             } => {
-                let page = client
-                    .fetch_journal_works_page(&issn, None, Some(&cursor))
-                    .map_err(map_scholarly_error)?;
+                if !crossref_cursor_is_fresh(cursor_refreshed_at_epoch_seconds, clock()?) {
+                    restart("expired_or_legacy", page_index);
+                    return fetch_scholarly_batch_with_clock_and_restart(
+                        client,
+                        catalog,
+                        None,
+                        has_semantic_scholar_key,
+                        clock,
+                        restart,
+                    );
+                }
+                let page = match client.fetch_journal_works_page(&issn, None, Some(&cursor)) {
+                    Ok(page) => page,
+                    Err(error) if is_crossref_cursor_http_500(&error) => {
+                        restart("cursor_http_500", page_index);
+                        return fetch_scholarly_batch_with_clock_and_restart(
+                            client,
+                            catalog,
+                            None,
+                            has_semantic_scholar_key,
+                            clock,
+                            restart,
+                        );
+                    }
+                    Err(error) => return Err(map_scholarly_error(error)),
+                };
+                let cursor_refreshed_at_epoch_seconds = crossref_checkpoint_epoch(
+                    page.next_cursor.as_ref(),
+                    page.items.is_empty(),
+                    clock,
+                )?;
                 let next = next_scholarly_checkpoint(
                     ScholarlyCheckpoint::Crossref {
                         issn,
                         cursor: cursor.clone(),
                         page_index,
+                        cursor_refreshed_at_epoch_seconds,
                     },
                     page.next_cursor,
                     &cursor,
                     page.items.is_empty(),
+                    cursor_refreshed_at_epoch_seconds,
                 )?;
                 (page.items, next)
             }
@@ -441,12 +574,13 @@ where
                     page.next_cursor,
                     &cursor,
                     items.is_empty(),
+                    None,
                 )?;
                 return Ok(batch_from_articles(catalog, items, next));
             }
         }
     } else {
-        match first_scholarly_page(client, catalog)? {
+        match first_scholarly_page(client, catalog, clock)? {
             FirstScholarlyPage::Crossref {
                 works,
                 next_checkpoint,
@@ -494,6 +628,7 @@ where
 fn first_scholarly_page<T>(
     client: &mut ScholarlyClient<T>,
     catalog: &JournalCatalogEntry,
+    clock: &mut impl FnMut() -> Result<u64, ProviderError>,
 ) -> Result<FirstScholarlyPage, ProviderError>
 where
     T: ScholarlyTransport,
@@ -502,15 +637,22 @@ where
     for issn in &issns {
         match client.fetch_journal_works_page(issn, None, None) {
             Ok(page) => {
+                let cursor_refreshed_at_epoch_seconds = crossref_checkpoint_epoch(
+                    page.next_cursor.as_ref(),
+                    page.items.is_empty(),
+                    clock,
+                )?;
                 let next = next_scholarly_checkpoint(
                     ScholarlyCheckpoint::Crossref {
                         issn: issn.clone(),
                         cursor: String::new(),
                         page_index: 0,
+                        cursor_refreshed_at_epoch_seconds,
                     },
                     page.next_cursor,
                     "",
                     page.items.is_empty(),
+                    cursor_refreshed_at_epoch_seconds,
                 )?;
                 return Ok(FirstScholarlyPage::Crossref {
                     works: page.items,
@@ -561,6 +703,7 @@ where
         page.next_cursor,
         "",
         articles.is_empty(),
+        None,
     )?;
     Ok(FirstScholarlyPage::OpenAlex {
         articles,
@@ -573,6 +716,7 @@ fn next_scholarly_checkpoint(
     next_cursor: Option<String>,
     previous_cursor: &str,
     is_empty: bool,
+    cursor_refreshed_at_epoch_seconds: Option<u64>,
 ) -> Result<Option<String>, ProviderError> {
     let Some(next_cursor) = next_cursor.filter(|_| !is_empty) else {
         return Ok(None);
@@ -589,6 +733,14 @@ fn next_scholarly_checkpoint(
                     "scholarly Crossref checkpoint page index overflowed",
                 )
             })?,
+            cursor_refreshed_at_epoch_seconds: Some(cursor_refreshed_at_epoch_seconds.ok_or_else(
+                || {
+                    ProviderError::new(
+                        ProviderErrorKind::Internal,
+                        "scholarly Crossref checkpoint timestamp is unavailable",
+                    )
+                },
+            )?),
         },
         ScholarlyCheckpoint::OpenAlex { source_id, .. } => {
             if next_cursor == previous_cursor {
@@ -1262,23 +1414,145 @@ fn emit_source_attempt_summary(provider: &str, attempts: &[SourceAttempt]) {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::{BTreeMap, BTreeSet};
+    use std::collections::{BTreeMap, BTreeSet, VecDeque};
+    use std::thread;
 
     use litradar_domain::{
-        ArticleAccessContext, ArticleId, ArticleLocator, JournalRankings, ProviderCapabilityKind,
+        ArticleAccessContext, ArticleId, ArticleLocator, JournalCatalogEntry, JournalRankings,
+        ProviderBatch, ProviderCapabilityKind,
     };
-    use litradar_provider::{ProviderErrorKind, ProviderRegistry};
+    use litradar_provider::{ProviderError, ProviderErrorKind, ProviderRegistry};
     use serde_json::json;
 
     use super::{
         cnki_access_registration, cnki_article_draft, cnki_index_registration, cnki_issue_draft,
-        next_scholarly_checkpoint, scholarly_access_registration, scholarly_article_draft,
-        scholarly_index_registration, CnkiIndexProvider, ScholarlyCheckpoint,
-        ScholarlyIndexProvider, CNKI_REDIRECT_HOSTS, SCHOLARLY_REDIRECT_HOSTS,
+        crossref_cursor_is_fresh, fetch_scholarly_batch_with_clock,
+        fetch_scholarly_batch_with_clock_and_restart, next_scholarly_checkpoint,
+        scholarly_access_registration, scholarly_article_draft, scholarly_index_registration,
+        CnkiIndexProvider, ScholarlyCheckpoint, ScholarlyIndexProvider, CNKI_REDIRECT_HOSTS,
+        CROSSREF_CURSOR_REUSE_SECONDS, SCHOLARLY_REDIRECT_HOSTS,
     };
+    use crate::scholarly::test_support::CapturedLogs;
     use crate::{
-        CnkiFixtureData, FixtureCnkiTransport, FixtureScholarlyTransport, ScholarlyFixtureData,
+        CnkiFixtureData, FixtureCnkiTransport, FixtureScholarlyTransport, ScholarlyClient,
+        ScholarlyFixtureData, ScholarlyRequest, ScholarlyRequestKind, ScholarlyTransport,
+        SourceAttempt, SourceError,
     };
+
+    #[derive(Debug, Clone)]
+    enum CrossrefFixtureResponse {
+        Page {
+            items: Vec<serde_json::Value>,
+            next_cursor: Option<String>,
+        },
+        HttpStatus(u16),
+        RequestFailure,
+    }
+
+    #[derive(Debug)]
+    struct CursorRecoveryTransport {
+        responses: VecDeque<CrossrefFixtureResponse>,
+        attempts: Vec<SourceAttempt>,
+        requested_cursors: Vec<Option<String>>,
+    }
+
+    impl CursorRecoveryTransport {
+        fn new(responses: Vec<CrossrefFixtureResponse>) -> Self {
+            Self {
+                responses: responses.into(),
+                attempts: Vec::new(),
+                requested_cursors: Vec::new(),
+            }
+        }
+
+        fn record_attempt(
+            &mut self,
+            request: &ScholarlyRequest,
+            status_code: Option<u16>,
+            did_succeed: bool,
+            error: Option<&str>,
+        ) {
+            self.attempts.push(SourceAttempt {
+                service: request.service.clone(),
+                endpoint: request.endpoint.clone(),
+                method: request.method.clone(),
+                url: request.url.clone(),
+                status_code,
+                did_succeed,
+                did_retry: false,
+                error: error.map(str::to_string),
+            });
+        }
+    }
+
+    impl ScholarlyTransport for CursorRecoveryTransport {
+        fn request(&mut self, request: ScholarlyRequest) -> Result<serde_json::Value, SourceError> {
+            match &request.kind {
+                ScholarlyRequestKind::CrossrefJournalWorks { cursor, .. } => {
+                    self.requested_cursors.push(cursor.clone());
+                    match self.responses.pop_front().ok_or_else(|| {
+                        SourceError::InvalidFixture(
+                            "cursor recovery response script exhausted".to_string(),
+                        )
+                    })? {
+                        CrossrefFixtureResponse::Page { items, next_cursor } => {
+                            self.record_attempt(&request, Some(200), true, None);
+                            Ok(json!({
+                                "message": {
+                                    "items": items,
+                                    "next-cursor": next_cursor,
+                                }
+                            }))
+                        }
+                        CrossrefFixtureResponse::HttpStatus(status_code) => {
+                            self.record_attempt(
+                                &request,
+                                Some(status_code),
+                                false,
+                                Some("http_status"),
+                            );
+                            Err(SourceError::HttpStatus {
+                                service: request.service,
+                                endpoint: request.endpoint,
+                                status_code,
+                                body: json!({"error": "fixture-response-body-sentinel"}),
+                            })
+                        }
+                        CrossrefFixtureResponse::RequestFailure => {
+                            self.record_attempt(&request, None, false, Some("transport"));
+                            Err(SourceError::Request {
+                                service: request.service,
+                                endpoint: request.endpoint,
+                                message: "fixture-transport-sentinel".to_string(),
+                            })
+                        }
+                    }
+                }
+                ScholarlyRequestKind::OpenAlexSourceByIssn { .. }
+                | ScholarlyRequestKind::OpenAlexSourceByTitle { .. } => {
+                    self.record_attempt(&request, Some(200), true, None);
+                    Ok(json!({"results": []}))
+                }
+                ScholarlyRequestKind::OpenAlexWorksBySource { .. }
+                | ScholarlyRequestKind::OpenAlexWorksByDoi { .. } => {
+                    self.record_attempt(&request, Some(200), true, None);
+                    Ok(json!({"results": [], "meta": {"next_cursor": null}}))
+                }
+                ScholarlyRequestKind::SemanticScholarBatch { .. } => {
+                    self.record_attempt(&request, Some(200), true, None);
+                    Ok(json!([]))
+                }
+            }
+        }
+
+        fn attempts(&self) -> &[SourceAttempt] {
+            &self.attempts
+        }
+
+        fn drain_attempts(&mut self) -> Vec<SourceAttempt> {
+            std::mem::take(&mut self.attempts)
+        }
+    }
 
     fn catalog() -> litradar_domain::JournalCatalogEntry {
         litradar_domain::JournalCatalogEntry {
@@ -1322,6 +1596,69 @@ mod tests {
                 })
             })
             .collect()
+    }
+
+    fn recovery_page(next_cursor: Option<&str>) -> CrossrefFixtureResponse {
+        CrossrefFixtureResponse::Page {
+            items: vec![json!({
+                "title": ["Recovery article"],
+                "published": {"date-parts": [[2026, 7, 19]]},
+                "volume": "1"
+            })],
+            next_cursor: next_cursor.map(str::to_string),
+        }
+    }
+
+    fn crossref_checkpoint(
+        cursor: &str,
+        page_index: u64,
+        cursor_refreshed_at_epoch_seconds: Option<u64>,
+    ) -> String {
+        serde_json::to_string(&ScholarlyCheckpoint::Crossref {
+            issn: "1234-5679".to_string(),
+            cursor: cursor.to_string(),
+            page_index,
+            cursor_refreshed_at_epoch_seconds,
+        })
+        .expect("Crossref checkpoint should encode")
+    }
+
+    fn fetch_cursor_recovery(
+        catalog: &JournalCatalogEntry,
+        responses: Vec<CrossrefFixtureResponse>,
+        checkpoint: &str,
+        clock_values: Vec<u64>,
+    ) -> (
+        Result<ProviderBatch, ProviderError>,
+        CursorRecoveryTransport,
+    ) {
+        let transport = CursorRecoveryTransport::new(responses);
+        let mut client = ScholarlyClient::new(transport, false);
+        let mut clock_values = VecDeque::from(clock_values);
+        let fallback_clock_value = *clock_values.back().unwrap_or(&1_000);
+        let mut clock = || Ok(clock_values.pop_front().unwrap_or(fallback_clock_value));
+        let mut restart = |_: &'static str, _: u64| {};
+        let result = fetch_scholarly_batch_with_clock_and_restart(
+            &mut client,
+            catalog,
+            Some(checkpoint),
+            false,
+            &mut clock,
+            &mut restart,
+        );
+        (result, client.into_transport())
+    }
+
+    fn fetch_cursor_recovery_with_logging(
+        catalog: &JournalCatalogEntry,
+        responses: Vec<CrossrefFixtureResponse>,
+        checkpoint: &str,
+        current_epoch_seconds: u64,
+    ) -> Result<ProviderBatch, ProviderError> {
+        let transport = CursorRecoveryTransport::new(responses);
+        let mut client = ScholarlyClient::new(transport, false);
+        let mut clock = || Ok(current_epoch_seconds);
+        fetch_scholarly_batch_with_clock(&mut client, catalog, Some(checkpoint), false, &mut clock)
     }
 
     #[test]
@@ -1596,26 +1933,202 @@ mod tests {
     }
 
     #[test]
-    fn legacy_crossref_checkpoint_advances_with_page_index() {
-        let legacy = serde_json::from_str::<ScholarlyCheckpoint>(
-            r#"{"mode":"crossref","issn":"1234-5679","cursor":"stateful"}"#,
+    fn crossref_cursor_freshness_has_an_exact_240_second_boundary() {
+        assert_eq!(CROSSREF_CURSOR_REUSE_SECONDS, 240);
+        assert!(crossref_cursor_is_fresh(Some(761), 1_000));
+        assert!(!crossref_cursor_is_fresh(Some(760), 1_000));
+        assert!(!crossref_cursor_is_fresh(Some(1_001), 1_000));
+        assert!(!crossref_cursor_is_fresh(None, 1_000));
+    }
+
+    #[test]
+    fn legacy_expired_boundary_and_future_crossref_checkpoints_restart_before_use() {
+        let legacy =
+            r#"{"mode":"crossref","issn":"1234-5679","cursor":"legacy-secret"}"#.to_string();
+        let decoded = serde_json::from_str::<ScholarlyCheckpoint>(&legacy)
+            .expect("legacy checkpoint should decode");
+        assert!(matches!(
+            decoded,
+            ScholarlyCheckpoint::Crossref {
+                cursor_refreshed_at_epoch_seconds: None,
+                ..
+            }
+        ));
+        let checkpoints = [
+            legacy,
+            crossref_checkpoint("expired-secret", 4, Some(700)),
+            crossref_checkpoint("boundary-secret", 5, Some(760)),
+            crossref_checkpoint("future-secret", 6, Some(1_001)),
+        ];
+        for checkpoint in checkpoints {
+            let (result, transport) = fetch_cursor_recovery(
+                &catalog(),
+                vec![recovery_page(None)],
+                &checkpoint,
+                vec![1_000],
+            );
+            let batch = result.expect("stale checkpoint should restart successfully");
+            assert!(batch.is_complete);
+            assert_eq!(transport.requested_cursors, vec![None]);
+            assert!(transport.responses.is_empty());
+        }
+    }
+
+    #[test]
+    fn fresh_crossref_checkpoint_reuses_cursor_and_refreshes_epoch() {
+        let checkpoint = crossref_checkpoint("stateful", 7, Some(761));
+        let (result, transport) = fetch_cursor_recovery(
+            &catalog(),
+            vec![recovery_page(Some("stateful"))],
+            &checkpoint,
+            vec![1_000, 1_001],
+        );
+        let batch = result.expect("fresh checkpoint should continue");
+        let next = serde_json::from_str::<ScholarlyCheckpoint>(
+            batch
+                .next_checkpoint
+                .as_deref()
+                .expect("continued page should retain a checkpoint"),
         )
-        .expect("legacy checkpoint should decode");
-        let next =
-            next_scholarly_checkpoint(legacy, Some("stateful".to_string()), "stateful", false)
-                .expect("stateful cursor should advance")
-                .expect("non-terminal page should have a checkpoint");
-        let decoded = serde_json::from_str::<ScholarlyCheckpoint>(&next)
-            .expect("advanced checkpoint should decode");
+        .expect("continued checkpoint should decode");
 
         assert_eq!(
-            decoded,
+            transport.requested_cursors,
+            vec![Some("stateful".to_string())]
+        );
+        assert_eq!(
+            next,
             ScholarlyCheckpoint::Crossref {
                 issn: "1234-5679".to_string(),
                 cursor: "stateful".to_string(),
-                page_index: 1,
+                page_index: 8,
+                cursor_refreshed_at_epoch_seconds: Some(1_001),
             }
         );
+    }
+
+    #[test]
+    fn crossref_cursor_http_500_uses_one_bounded_fresh_session_fallback() {
+        let checkpoint = crossref_checkpoint("stored-cursor", 9, Some(900));
+        let (success, success_transport) = fetch_cursor_recovery(
+            &catalog(),
+            vec![
+                CrossrefFixtureResponse::HttpStatus(500),
+                recovery_page(None),
+            ],
+            &checkpoint,
+            vec![1_000],
+        );
+        assert!(success.expect("fresh fallback should succeed").is_complete);
+        assert_eq!(
+            success_transport.requested_cursors,
+            vec![Some("stored-cursor".to_string()), None]
+        );
+
+        let (failure, failure_transport) = fetch_cursor_recovery(
+            &catalog(),
+            vec![
+                CrossrefFixtureResponse::HttpStatus(500),
+                CrossrefFixtureResponse::HttpStatus(500),
+            ],
+            &checkpoint,
+            vec![1_000],
+        );
+        let error = failure.expect_err("failing fresh fallback should fail loud");
+        assert_eq!(error.kind(), ProviderErrorKind::TemporarilyUnavailable);
+        assert_eq!(
+            failure_transport.requested_cursors,
+            vec![Some("stored-cursor".to_string()), None]
+        );
+        assert!(failure_transport.responses.is_empty());
+    }
+
+    #[test]
+    fn non_500_and_transport_cursor_failures_do_not_restart() {
+        let checkpoint = crossref_checkpoint("stored-cursor", 10, Some(900));
+        let responses = [
+            CrossrefFixtureResponse::HttpStatus(429),
+            CrossrefFixtureResponse::HttpStatus(502),
+            CrossrefFixtureResponse::HttpStatus(503),
+            CrossrefFixtureResponse::HttpStatus(504),
+            CrossrefFixtureResponse::RequestFailure,
+        ];
+        for response in responses {
+            let (result, transport) =
+                fetch_cursor_recovery(&catalog(), vec![response], &checkpoint, vec![1_000]);
+            let error = result.expect_err("non-500 cursor failure should fail loud");
+            assert_eq!(error.kind(), ProviderErrorKind::TemporarilyUnavailable);
+            assert_eq!(
+                transport.requested_cursors,
+                vec![Some("stored-cursor".to_string())]
+            );
+            assert!(transport.responses.is_empty());
+        }
+    }
+
+    #[test]
+    fn crossref_restart_events_are_symbolic_and_private() {
+        let logs = CapturedLogs::default();
+        let mut private_catalog = catalog();
+        private_catalog.catalog_id = "catalog-private-sentinel".to_string();
+        private_catalog.title = "title-private-sentinel".to_string();
+        private_catalog.issn = Some("9876-5432".to_string());
+        private_catalog.all_issns = vec!["9876-5432".to_string()];
+        tracing::subscriber::with_default(logs.subscriber(), || {
+            let expired = crossref_checkpoint("expired-cursor-sentinel", 17, Some(700));
+            let expired_result = fetch_cursor_recovery_with_logging(
+                &private_catalog,
+                vec![recovery_page(None)],
+                &expired,
+                1_000,
+            );
+            expired_result.expect("expired checkpoint should recover");
+
+            let fresh = crossref_checkpoint("http-500-cursor-sentinel", 18, Some(900));
+            let private_page = CrossrefFixtureResponse::Page {
+                items: vec![json!({
+                    "DOI": "10.1000/private-doi-sentinel",
+                    "title": ["private-article-title-sentinel"],
+                    "published": {"date-parts": [[2026, 7, 19]]}
+                })],
+                next_cursor: None,
+            };
+            let fallback_result = fetch_cursor_recovery_with_logging(
+                &private_catalog,
+                vec![CrossrefFixtureResponse::HttpStatus(500), private_page],
+                &fresh,
+                1_000,
+            );
+            fallback_result.expect("HTTP 500 checkpoint should recover");
+        });
+        let restart_events = logs
+            .events()
+            .into_iter()
+            .filter(|event| event["event"] == "source.crossref.cursor_restarted")
+            .collect::<Vec<_>>();
+
+        assert_eq!(restart_events.len(), 2, "captured logs: {}", logs.text());
+        assert_eq!(restart_events[0]["provider"], "crossref");
+        assert_eq!(restart_events[0]["reason"], "expired_or_legacy");
+        assert_eq!(restart_events[0]["prior_page_index"], 17);
+        assert_eq!(restart_events[1]["provider"], "crossref");
+        assert_eq!(restart_events[1]["reason"], "cursor_http_500");
+        assert_eq!(restart_events[1]["prior_page_index"], 18);
+        for private_value in [
+            "catalog-private-sentinel",
+            "title-private-sentinel",
+            "9876-5432",
+            "expired-cursor-sentinel",
+            "http-500-cursor-sentinel",
+            "10.1000/private-doi-sentinel",
+            "private-article-title-sentinel",
+            "fixture-response-body-sentinel",
+            "fixture-transport-sentinel",
+            "private@example.invalid",
+            "https://api.crossref.org",
+        ] {
+            assert!(!logs.text().contains(private_value));
+        }
     }
 
     #[test]
@@ -1625,10 +2138,12 @@ mod tests {
                 issn: "1234-5679".to_string(),
                 cursor: "stateful".to_string(),
                 page_index: u64::MAX,
+                cursor_refreshed_at_epoch_seconds: Some(1_000),
             },
             Some("stateful".to_string()),
             "stateful",
             false,
+            Some(1_001),
         )
         .expect_err("Crossref page index should not wrap");
         assert_eq!(overflow.kind(), ProviderErrorKind::InvalidResponse);
@@ -1645,6 +2160,7 @@ mod tests {
             Some("fixture-page-1".to_string()),
             "fixture-page-1",
             false,
+            None,
         )
         .expect_err("OpenAlex cursor should advance textually");
         assert_eq!(repeated_openalex.kind(), ProviderErrorKind::InvalidResponse);
@@ -1652,6 +2168,164 @@ mod tests {
             repeated_openalex.to_string(),
             "scholarly provider returned a repeated cursor"
         );
+    }
+
+    #[test]
+    fn crossref_checkpoint_stays_within_the_provider_contract_limit() {
+        let cursor = "c".repeat(4_096);
+        let checkpoint = next_scholarly_checkpoint(
+            ScholarlyCheckpoint::Crossref {
+                issn: "1234-5679".to_string(),
+                cursor: "previous".to_string(),
+                page_index: 22,
+                cursor_refreshed_at_epoch_seconds: Some(1_000),
+            },
+            Some(cursor),
+            "previous",
+            false,
+            Some(1_001),
+        )
+        .expect("Crossref checkpoint should encode")
+        .expect("non-terminal page should have a checkpoint");
+
+        assert!(checkpoint.len() < 65_536);
+    }
+
+    #[test]
+    fn openalex_checkpoint_resume_is_unchanged() {
+        let registration = scholarly_index_registration(
+            FixtureScholarlyTransport::new(ScholarlyFixtureData {
+                openalex_source_work_pages: vec![
+                    vec![json!({"display_name": "Ignored first page"})],
+                    vec![json!({
+                        "doi": "https://doi.org/10.1000/openalex-resume",
+                        "display_name": "OpenAlex resumed article",
+                        "publication_year": 2026,
+                        "publication_date": "2026-07-19"
+                    })],
+                    vec![json!({"display_name": "Later page"})],
+                ],
+                ..ScholarlyFixtureData::default()
+            }),
+            false,
+        )
+        .expect("Scholarly registration should pass");
+        let checkpoint = serde_json::to_string(&ScholarlyCheckpoint::OpenAlex {
+            source_id: "S1".to_string(),
+            cursor: "fixture-page-1".to_string(),
+        })
+        .expect("OpenAlex checkpoint should encode");
+        let batch = registration
+            .index_content()
+            .expect("indexing capability should exist")
+            .fetch(&catalog(), Some(&checkpoint))
+            .expect("OpenAlex checkpoint should resume");
+
+        assert_eq!(batch.articles.len(), 1);
+        assert_eq!(
+            batch.articles[0].doi.as_deref(),
+            Some("10.1000/openalex-resume")
+        );
+        assert!(matches!(
+            serde_json::from_str::<ScholarlyCheckpoint>(
+                batch
+                    .next_checkpoint
+                    .as_deref()
+                    .expect("resumed OpenAlex page should continue")
+            )
+            .expect("OpenAlex checkpoint should decode"),
+            ScholarlyCheckpoint::OpenAlex { .. }
+        ));
+    }
+
+    fn run_cursor_recovery_pressure_instance() -> [usize; 7] {
+        const CASE_COUNT: usize = 200;
+        let mut responses = Vec::with_capacity(300);
+        for case_index in 0..CASE_COUNT {
+            match case_index % 4 {
+                0 | 1 => responses.push(recovery_page(None)),
+                2 => {
+                    responses.push(CrossrefFixtureResponse::HttpStatus(500));
+                    responses.push(recovery_page(None));
+                }
+                3 => {
+                    responses.push(CrossrefFixtureResponse::HttpStatus(500));
+                    responses.push(CrossrefFixtureResponse::HttpStatus(500));
+                }
+                _ => unreachable!("modulo four should stay bounded"),
+            }
+        }
+        let transport = CursorRecoveryTransport::new(responses);
+        let mut client = ScholarlyClient::new(transport, false);
+        let mut successes = 0;
+        let mut failures = 0;
+        let mut restart_count = 0;
+        let mut clock = || Ok(1_000);
+        let mut restart = |_: &'static str, _: u64| restart_count += 1;
+        for case_index in 0..CASE_COUNT {
+            let refreshed_at = if case_index % 4 == 0 { 700 } else { 900 };
+            let checkpoint = crossref_checkpoint(
+                &format!("pressure-cursor-{case_index}"),
+                case_index as u64,
+                Some(refreshed_at),
+            );
+            match fetch_scholarly_batch_with_clock_and_restart(
+                &mut client,
+                &catalog(),
+                Some(&checkpoint),
+                false,
+                &mut clock,
+                &mut restart,
+            ) {
+                Ok(batch) => {
+                    assert!(batch.is_complete);
+                    successes += 1;
+                }
+                Err(error) => {
+                    assert_eq!(error.kind(), ProviderErrorKind::TemporarilyUnavailable);
+                    failures += 1;
+                }
+            }
+        }
+        let transport = client.into_transport();
+        let request_count = transport.requested_cursors.len();
+        let cursor_request_count = transport
+            .requested_cursors
+            .iter()
+            .filter(|cursor| cursor.is_some())
+            .count();
+        let fresh_request_count = request_count - cursor_request_count;
+        [
+            CASE_COUNT,
+            successes,
+            failures,
+            request_count,
+            restart_count,
+            cursor_request_count,
+            fresh_request_count,
+        ]
+    }
+
+    #[test]
+    fn crossref_cursor_recovery_pressure_is_bounded_across_three_instances() {
+        let handles = (0..3)
+            .map(|_| thread::spawn(run_cursor_recovery_pressure_instance))
+            .collect::<Vec<_>>();
+        let mut totals = [0_usize; 7];
+        for handle in handles {
+            let result = handle.join().expect("pressure instance should not panic");
+            for (total, value) in totals.iter_mut().zip(result) {
+                *total += value;
+            }
+        }
+
+        assert_eq!(totals[0], 600);
+        assert_eq!(totals[1], 450);
+        assert_eq!(totals[2], 150);
+        assert_eq!(totals[3], 900);
+        assert_eq!(totals[4], 450);
+        assert_eq!(totals[5], 450);
+        assert_eq!(totals[6], 450);
     }
 
     #[test]
