@@ -160,9 +160,7 @@ impl OpenAlexSchedulerState {
         };
         let earliest_start = candidates
             .iter()
-            .map(|index| {
-                openalex_phase_at_or_after(self.slots[*index].next_start_at, now, self.period)
-            })
+            .map(|index| phase_at_or_after(self.slots[*index].next_start_at, now, self.period))
             .min();
         let earliest_slots = earliest_start
             .map(|start_at| {
@@ -170,11 +168,8 @@ impl OpenAlexSchedulerState {
                     .iter()
                     .copied()
                     .filter(|index| {
-                        openalex_phase_at_or_after(
-                            self.slots[*index].next_start_at,
-                            now,
-                            self.period,
-                        ) == start_at
+                        phase_at_or_after(self.slots[*index].next_start_at, now, self.period)
+                            == start_at
                     })
                     .collect::<Vec<_>>()
             })
@@ -405,11 +400,7 @@ impl OpenAlexSchedulerState {
     }
 }
 
-fn openalex_phase_at_or_after(
-    next_start_at: Duration,
-    now: Duration,
-    period: Duration,
-) -> Duration {
+fn phase_at_or_after(next_start_at: Duration, now: Duration, period: Duration) -> Duration {
     if next_start_at >= now {
         return next_start_at;
     }
@@ -419,6 +410,307 @@ fn openalex_phase_at_or_after(
     let skipped_periods = overdue_millis.div_ceil(period_millis);
     let aligned_millis = next_millis.saturating_add(skipped_periods.saturating_mul(period_millis));
     Duration::from_millis(u64::try_from(aligned_millis).unwrap_or(u64::MAX))
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SemanticScholarHealthOutcome {
+    Success,
+    AuthenticationFailure,
+    RateLimited,
+    TransientFailure,
+    TerminalFailure,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct SemanticScholarSlotReservation {
+    slot_index: usize,
+    start_at: Duration,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SemanticScholarScheduleDecision {
+    Reserved(SemanticScholarSlotReservation),
+    WaitUntil(Duration),
+    Unavailable,
+}
+
+#[derive(Debug, Clone, Default)]
+struct SemanticScholarKeyState {
+    cooldown_until: Option<Duration>,
+    next_start_at: Duration,
+    is_disabled: bool,
+}
+
+#[derive(Debug, Clone)]
+struct SemanticScholarSchedulerState {
+    slots: Vec<SemanticScholarKeyState>,
+    next_tie_slot: usize,
+    start_interval: Duration,
+    period: Duration,
+}
+
+impl SemanticScholarSchedulerState {
+    fn with_context(
+        key_count: usize,
+        process_id: usize,
+        process_count: usize,
+        epoch: Duration,
+        start_interval: Duration,
+    ) -> Self {
+        let process_count = process_count.max(1);
+        let process_id = process_id.min(process_count.saturating_sub(1));
+        let process_count = u32::try_from(process_count).unwrap_or(u32::MAX);
+        let process_id = u32::try_from(process_id).unwrap_or(u32::MAX);
+        let start_interval = start_interval.max(Duration::from_millis(1));
+        let phase = start_interval.saturating_mul(process_id);
+        let period = start_interval.saturating_mul(process_count);
+        let mut slots = vec![SemanticScholarKeyState::default(); key_count];
+        for (slot_index, slot) in slots.iter_mut().enumerate() {
+            let key_phase_millis = start_interval
+                .as_millis()
+                .saturating_mul(slot_index as u128)
+                / key_count.max(1) as u128;
+            let key_phase =
+                Duration::from_millis(u64::try_from(key_phase_millis).unwrap_or(u64::MAX));
+            slot.next_start_at = epoch.saturating_add(phase).saturating_add(key_phase);
+        }
+        Self {
+            slots,
+            next_tie_slot: if key_count == 0 {
+                0
+            } else {
+                usize::try_from(process_id).unwrap_or(usize::MAX) % key_count
+            },
+            start_interval,
+            period,
+        }
+    }
+
+    fn reserve_slot(
+        &mut self,
+        now: Duration,
+        excluded_slots: &[usize],
+    ) -> SemanticScholarScheduleDecision {
+        self.refresh(now);
+        let eligible_slots = self
+            .slots
+            .iter()
+            .enumerate()
+            .filter_map(|(index, slot)| (!slot.is_disabled).then_some(index))
+            .collect::<Vec<_>>();
+        let preferred_slots = eligible_slots
+            .iter()
+            .copied()
+            .filter(|index| !excluded_slots.contains(index))
+            .collect::<Vec<_>>();
+        let candidates = if preferred_slots.is_empty() {
+            &eligible_slots
+        } else {
+            &preferred_slots
+        };
+        let active_slots = candidates
+            .iter()
+            .copied()
+            .filter(|index| {
+                self.slots[*index]
+                    .cooldown_until
+                    .is_none_or(|cooldown_until| cooldown_until <= now)
+            })
+            .collect::<Vec<_>>();
+        if active_slots.is_empty() {
+            return candidates
+                .iter()
+                .filter_map(|index| self.slots[*index].cooldown_until)
+                .min()
+                .map_or(SemanticScholarScheduleDecision::Unavailable, |ready_at| {
+                    SemanticScholarScheduleDecision::WaitUntil(ready_at)
+                });
+        }
+        let earliest_start = active_slots
+            .iter()
+            .map(|index| phase_at_or_after(self.slots[*index].next_start_at, now, self.period))
+            .min()
+            .unwrap_or(now);
+        let earliest_slots = active_slots
+            .iter()
+            .copied()
+            .filter(|index| {
+                phase_at_or_after(self.slots[*index].next_start_at, now, self.period)
+                    == earliest_start
+            })
+            .collect::<Vec<_>>();
+        let Some(slot_index) = self.select_tie(&earliest_slots) else {
+            return SemanticScholarScheduleDecision::Unavailable;
+        };
+        self.slots[slot_index].next_start_at = earliest_start.saturating_add(self.period);
+        self.next_tie_slot = (slot_index + 1) % self.slots.len();
+        SemanticScholarScheduleDecision::Reserved(SemanticScholarSlotReservation {
+            slot_index,
+            start_at: earliest_start,
+        })
+    }
+
+    fn finish_slot(
+        &mut self,
+        reservation: &SemanticScholarSlotReservation,
+        now: Duration,
+        outcome: SemanticScholarHealthOutcome,
+        retry_delay: Duration,
+    ) {
+        self.refresh(now);
+        let Some(slot) = self.slots.get_mut(reservation.slot_index) else {
+            return;
+        };
+        match outcome {
+            SemanticScholarHealthOutcome::Success
+            | SemanticScholarHealthOutcome::TerminalFailure => {}
+            SemanticScholarHealthOutcome::AuthenticationFailure => {
+                slot.is_disabled = true;
+                slot.cooldown_until = None;
+            }
+            SemanticScholarHealthOutcome::RateLimited => {
+                let retry_delay = retry_delay.max(self.start_interval);
+                slot.cooldown_until = Some(now.saturating_add(retry_delay));
+            }
+            SemanticScholarHealthOutcome::TransientFailure => {
+                if !retry_delay.is_zero() {
+                    slot.cooldown_until = Some(now.saturating_add(retry_delay));
+                }
+            }
+        }
+    }
+
+    fn reservation_is_obsolete(
+        &self,
+        reservation: &SemanticScholarSlotReservation,
+        now: Duration,
+    ) -> bool {
+        now >= reservation
+            .start_at
+            .saturating_add(self.period)
+            .saturating_add(self.start_interval)
+    }
+
+    fn refresh(&mut self, now: Duration) {
+        for slot in &mut self.slots {
+            if slot
+                .cooldown_until
+                .is_some_and(|cooldown_until| cooldown_until <= now)
+            {
+                slot.cooldown_until = None;
+            }
+        }
+    }
+
+    fn select_tie(&self, candidates: &[usize]) -> Option<usize> {
+        let slot_count = self.slots.len();
+        candidates
+            .iter()
+            .copied()
+            .min_by_key(|index| (*index + slot_count - self.next_tie_slot) % slot_count)
+    }
+}
+
+#[derive(Clone)]
+struct SemanticScholarScheduler {
+    api_keys: Vec<String>,
+    state: SemanticScholarSchedulerState,
+}
+
+impl fmt::Debug for SemanticScholarScheduler {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("SemanticScholarScheduler")
+            .field("key_count", &self.api_keys.len())
+            .field("credentials", &"[REDACTED]")
+            .finish()
+    }
+}
+
+impl SemanticScholarScheduler {
+    fn with_context(
+        api_keys: Vec<String>,
+        process_id: usize,
+        process_count: usize,
+        epoch_unix_millis: u64,
+        start_interval: Duration,
+    ) -> Self {
+        Self {
+            state: SemanticScholarSchedulerState::with_context(
+                api_keys.len(),
+                process_id,
+                process_count,
+                Duration::from_millis(epoch_unix_millis),
+                start_interval,
+            ),
+            api_keys,
+        }
+    }
+
+    fn key_count(&self) -> usize {
+        self.api_keys.len()
+    }
+
+    fn reserve(
+        &mut self,
+        excluded_slots: &[usize],
+    ) -> Result<SemanticScholarReservation, SourceError> {
+        loop {
+            let now = unix_time_duration();
+            match self.state.reserve_slot(now, excluded_slots) {
+                SemanticScholarScheduleDecision::Reserved(slot) => {
+                    wait_until_unix_start(slot.start_at);
+                    if self
+                        .state
+                        .reservation_is_obsolete(&slot, unix_time_duration())
+                    {
+                        continue;
+                    }
+                    return Ok(SemanticScholarReservation {
+                        api_key: self.api_keys[slot.slot_index].clone(),
+                        slot,
+                    });
+                }
+                SemanticScholarScheduleDecision::WaitUntil(ready_at) => {
+                    wait_until_unix_start(ready_at);
+                }
+                SemanticScholarScheduleDecision::Unavailable => {
+                    return Err(SourceError::Configuration(
+                        "No eligible Semantic Scholar API key is available.".to_string(),
+                    ));
+                }
+            }
+        }
+    }
+
+    fn finish(
+        &mut self,
+        reservation: &SemanticScholarReservation,
+        outcome: SemanticScholarHealthOutcome,
+        retry_delay: Duration,
+    ) {
+        self.state.finish_slot(
+            &reservation.slot,
+            unix_time_duration(),
+            outcome,
+            retry_delay,
+        );
+    }
+}
+
+struct SemanticScholarReservation {
+    slot: SemanticScholarSlotReservation,
+    api_key: String,
+}
+
+impl fmt::Debug for SemanticScholarReservation {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("SemanticScholarReservation")
+            .field("slot_index", &self.slot.slot_index)
+            .field("api_key", &"[REDACTED]")
+            .finish()
+    }
 }
 
 struct OpenAlexReservation {
@@ -525,7 +817,7 @@ impl OpenAlexScheduler {
                     }
                 }
             };
-            wait_until_openalex_start(slot.start_at);
+            wait_until_unix_start(slot.start_at);
             let mut state = self.state.lock().map_err(|_| {
                 SourceError::Configuration("OpenAlex key scheduler is unavailable.".to_string())
             })?;
@@ -561,7 +853,7 @@ impl OpenAlexScheduler {
     }
 }
 
-fn wait_until_openalex_start(start_at: Duration) {
+fn wait_until_unix_start(start_at: Duration) {
     loop {
         let wait = start_at.saturating_sub(unix_time_duration());
         if wait.is_zero() {
@@ -1359,7 +1651,7 @@ pub struct LiveScholarlyTransport {
     config: LiveScholarlyConfig,
     attempts: Vec<SourceAttempt>,
     crossref_attempt_schedule: ProviderAttemptSchedule,
-    semantic_scholar_attempt_schedule: ProviderAttemptSchedule,
+    semantic_scholar_scheduler: SemanticScholarScheduler,
     openalex_scheduler: Arc<OpenAlexScheduler>,
     openalex_worker_count: usize,
 }
@@ -1390,6 +1682,15 @@ struct LiveAttempt<'a> {
 }
 
 struct OpenAlexAttemptRecord {
+    source_attempt: SourceAttempt,
+    attempt_number: usize,
+    key_slot: usize,
+    will_retry: bool,
+    error_kind: &'static str,
+    duration_ms: u64,
+}
+
+struct SemanticScholarAttemptRecord {
     source_attempt: SourceAttempt,
     attempt_number: usize,
     key_slot: usize,
@@ -1666,9 +1967,80 @@ fn openalex_attempt_record(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
+fn semantic_scholar_attempt_record(
+    endpoint: &str,
+    url: &str,
+    attempt_number: usize,
+    key_slot: usize,
+    status_code: Option<u16>,
+    did_succeed: bool,
+    will_retry: bool,
+    error_kind: &'static str,
+    duration_ms: u64,
+) -> SemanticScholarAttemptRecord {
+    SemanticScholarAttemptRecord {
+        source_attempt: SourceAttempt {
+            service: SEMANTIC_SCHOLAR_SOURCE.to_string(),
+            endpoint: endpoint.to_string(),
+            method: "POST".to_string(),
+            url: url.to_string(),
+            status_code,
+            did_succeed,
+            did_retry: attempt_number > 1,
+            error: (!did_succeed).then(|| error_kind.to_string()),
+        },
+        attempt_number,
+        key_slot,
+        will_retry,
+        error_kind,
+        duration_ms,
+    }
+}
+
 fn add_excluded_slot(excluded_slots: &mut Vec<usize>, slot_index: usize) {
     if !excluded_slots.contains(&slot_index) {
         excluded_slots.push(slot_index);
+    }
+}
+
+fn safe_semantic_scholar_error_body(status_code: u16, payload: &Value) -> Value {
+    let is_no_valid_ids = status_code == 400
+        && payload
+            .get("error")
+            .and_then(Value::as_str)
+            .is_some_and(|value| {
+                value
+                    .trim()
+                    .eq_ignore_ascii_case("no valid paper ids given")
+            });
+    if is_no_valid_ids {
+        json!({ "error": "No valid paper ids given" })
+    } else {
+        json!({ "error": "Semantic Scholar request failed" })
+    }
+}
+
+fn semantic_scholar_health_outcome(status_code: u16) -> SemanticScholarHealthOutcome {
+    match status_code {
+        401 | 403 => SemanticScholarHealthOutcome::AuthenticationFailure,
+        429 => SemanticScholarHealthOutcome::RateLimited,
+        status if RETRY_STATUS_CODES.contains(&status) => {
+            SemanticScholarHealthOutcome::TransientFailure
+        }
+        _ => SemanticScholarHealthOutcome::TerminalFailure,
+    }
+}
+
+fn semantic_scholar_health_delay(
+    health: SemanticScholarHealthOutcome,
+    retry_after: Option<Duration>,
+    retry_delay: Duration,
+) -> Duration {
+    if matches!(health, SemanticScholarHealthOutcome::RateLimited) {
+        retry_after.unwrap_or(retry_delay).max(retry_delay)
+    } else {
+        retry_delay
     }
 }
 
@@ -1751,18 +2123,23 @@ impl LiveScholarlyTransport {
             config.semantic_scholar_process_count,
             CROSSREF_ATTEMPT_INTERVAL_MS,
         );
-        let semantic_scholar_attempt_schedule = ProviderAttemptSchedule::new(
-            config.schedule_epoch_unix_millis,
+        let semantic_scholar_scheduler = SemanticScholarScheduler::with_context(
+            config.semantic_scholar_api_keys.clone(),
             config.semantic_scholar_worker_id,
             config.semantic_scholar_process_count,
-            config.semantic_scholar_base_interval_ms,
+            config.schedule_epoch_unix_millis,
+            Duration::from_millis(
+                config
+                    .semantic_scholar_base_interval_ms
+                    .max(SEMANTIC_SCHOLAR_ATTEMPT_INTERVAL_MS),
+            ),
         );
         Ok(Self {
             client,
             config,
             attempts: Vec::new(),
             crossref_attempt_schedule,
-            semantic_scholar_attempt_schedule,
+            semantic_scholar_scheduler,
             openalex_scheduler,
             openalex_worker_count,
         })
@@ -1887,30 +2264,21 @@ impl LiveScholarlyTransport {
     }
 
     fn semantic_scholar_batch(&mut self, dois: &[String]) -> Result<Value, SourceError> {
-        let Some(api_key) = self.config.semantic_scholar_api_keys.first().cloned() else {
-            return Err(SourceError::Configuration(
-                "Semantic Scholar API key is required for DOI enrichment.".to_string(),
-            ));
-        };
         let query = vec![("fields".to_string(), SEMANTIC_SCHOLAR_FIELDS.to_string())];
         let body = json!({
             "ids": dois.iter().map(|doi| format!("DOI:{doi}")).collect::<Vec<_>>()
         });
-        self.post_json(
-            SEMANTIC_SCHOLAR_SOURCE,
+        self.semantic_scholar_post_json(
             "paper_batch",
             &format!("{SEMANTIC_SCHOLAR_BASE_URL}/paper/batch"),
             &query,
             &body,
-            Some(("x-api-key", api_key)),
         )
     }
 
     fn wait_for_provider_attempt(&mut self, service: &str) {
-        match service {
-            CROSSREF_SOURCE => self.crossref_attempt_schedule.wait_for_next(),
-            SEMANTIC_SCHOLAR_SOURCE => self.semantic_scholar_attempt_schedule.wait_for_next(),
-            _ => {}
+        if service == CROSSREF_SOURCE {
+            self.crossref_attempt_schedule.wait_for_next();
         }
     }
 
@@ -1993,6 +2361,253 @@ impl LiveScholarlyTransport {
         self.attempts.push(attempt.source_attempt);
     }
 
+    fn semantic_scholar_post_json(
+        &mut self,
+        endpoint: &str,
+        url: &str,
+        query: &[(String, String)],
+        body: &Value,
+    ) -> Result<Value, SourceError> {
+        let maximum_attempts = self
+            .semantic_scholar_scheduler
+            .key_count()
+            .max(1)
+            .saturating_add(DEFAULT_MAX_RETRIES);
+        let mut excluded_slots = Vec::new();
+        let mut last_error = None;
+        for attempt_index in 0..maximum_attempts {
+            let reservation = self.semantic_scholar_scheduler.reserve(&excluded_slots)?;
+            let attempt_number = attempt_index + 1;
+            let retry_delay = Duration::from_secs(1_u64 << attempt_index.min(5));
+            let request = match self
+                .client
+                .post(url)
+                .query(query)
+                .json(body)
+                .header("x-api-key", reservation.api_key.as_str())
+                .build()
+            {
+                Ok(request) => request,
+                Err(_) => {
+                    self.semantic_scholar_scheduler.finish(
+                        &reservation,
+                        SemanticScholarHealthOutcome::TerminalFailure,
+                        Duration::ZERO,
+                    );
+                    return Err(SourceError::Request {
+                        service: SEMANTIC_SCHOLAR_SOURCE.to_string(),
+                        endpoint: endpoint.to_string(),
+                        message: "request build failed".to_string(),
+                    });
+                }
+            };
+            let request_url = redact_url(request.url().as_ref());
+            let started_at = Instant::now();
+            match self.client.execute(request) {
+                Ok(response) => {
+                    let status_code = response.status().as_u16();
+                    let retry_after =
+                        header_u64(response.headers(), "retry-after").map(Duration::from_secs);
+                    let text = match response.text() {
+                        Ok(text) => text,
+                        Err(_) => {
+                            let health = if (200..300).contains(&status_code) {
+                                SemanticScholarHealthOutcome::TransientFailure
+                            } else {
+                                semantic_scholar_health_outcome(status_code)
+                            };
+                            let is_retryable =
+                                !matches!(health, SemanticScholarHealthOutcome::TerminalFailure);
+                            let will_retry = is_retryable && attempt_number < maximum_attempts;
+                            let health_delay =
+                                semantic_scholar_health_delay(health, retry_after, retry_delay);
+                            self.semantic_scholar_scheduler.finish(
+                                &reservation,
+                                health,
+                                health_delay,
+                            );
+                            self.record_semantic_scholar_attempt(semantic_scholar_attempt_record(
+                                endpoint,
+                                &request_url,
+                                attempt_number,
+                                reservation.slot.slot_index,
+                                Some(status_code),
+                                false,
+                                will_retry,
+                                "response_body",
+                                elapsed_millis(started_at),
+                            ));
+                            let error = if (200..300).contains(&status_code) {
+                                SourceError::Request {
+                                    service: SEMANTIC_SCHOLAR_SOURCE.to_string(),
+                                    endpoint: endpoint.to_string(),
+                                    message: "response body could not be read".to_string(),
+                                }
+                            } else {
+                                SourceError::HttpStatus {
+                                    service: SEMANTIC_SCHOLAR_SOURCE.to_string(),
+                                    endpoint: endpoint.to_string(),
+                                    status_code,
+                                    body: safe_semantic_scholar_error_body(status_code, &json!({})),
+                                }
+                            };
+                            if will_retry {
+                                add_excluded_slot(&mut excluded_slots, reservation.slot.slot_index);
+                                last_error = Some(error);
+                                continue;
+                            }
+                            return Err(error);
+                        }
+                    };
+                    let payload = match serde_json::from_str::<Value>(&text) {
+                        Ok(payload) => payload,
+                        Err(_) if (200..300).contains(&status_code) => {
+                            let will_retry = attempt_number < maximum_attempts;
+                            self.semantic_scholar_scheduler.finish(
+                                &reservation,
+                                SemanticScholarHealthOutcome::TransientFailure,
+                                retry_delay,
+                            );
+                            self.record_semantic_scholar_attempt(semantic_scholar_attempt_record(
+                                endpoint,
+                                &request_url,
+                                attempt_number,
+                                reservation.slot.slot_index,
+                                Some(status_code),
+                                false,
+                                will_retry,
+                                "invalid_json",
+                                elapsed_millis(started_at),
+                            ));
+                            let error = SourceError::Request {
+                                service: SEMANTIC_SCHOLAR_SOURCE.to_string(),
+                                endpoint: endpoint.to_string(),
+                                message: "Semantic Scholar returned invalid JSON".to_string(),
+                            };
+                            if will_retry {
+                                add_excluded_slot(&mut excluded_slots, reservation.slot.slot_index);
+                                last_error = Some(error);
+                                continue;
+                            }
+                            return Err(error);
+                        }
+                        Err(_) => json!({}),
+                    };
+                    if (200..300).contains(&status_code) {
+                        self.semantic_scholar_scheduler.finish(
+                            &reservation,
+                            SemanticScholarHealthOutcome::Success,
+                            Duration::ZERO,
+                        );
+                        self.record_semantic_scholar_attempt(semantic_scholar_attempt_record(
+                            endpoint,
+                            &request_url,
+                            attempt_number,
+                            reservation.slot.slot_index,
+                            Some(status_code),
+                            true,
+                            false,
+                            "none",
+                            elapsed_millis(started_at),
+                        ));
+                        return Ok(payload);
+                    }
+                    let health = semantic_scholar_health_outcome(status_code);
+                    let is_retryable =
+                        !matches!(health, SemanticScholarHealthOutcome::TerminalFailure);
+                    let will_retry = is_retryable && attempt_number < maximum_attempts;
+                    let health_delay =
+                        semantic_scholar_health_delay(health, retry_after, retry_delay);
+                    self.semantic_scholar_scheduler
+                        .finish(&reservation, health, health_delay);
+                    self.record_semantic_scholar_attempt(semantic_scholar_attempt_record(
+                        endpoint,
+                        &request_url,
+                        attempt_number,
+                        reservation.slot.slot_index,
+                        Some(status_code),
+                        false,
+                        will_retry,
+                        "http_status",
+                        elapsed_millis(started_at),
+                    ));
+                    let error = SourceError::HttpStatus {
+                        service: SEMANTIC_SCHOLAR_SOURCE.to_string(),
+                        endpoint: endpoint.to_string(),
+                        status_code,
+                        body: safe_semantic_scholar_error_body(status_code, &payload),
+                    };
+                    if will_retry {
+                        add_excluded_slot(&mut excluded_slots, reservation.slot.slot_index);
+                        last_error = Some(error);
+                        continue;
+                    }
+                    return Err(error);
+                }
+                Err(_) => {
+                    let will_retry = attempt_number < maximum_attempts;
+                    self.semantic_scholar_scheduler.finish(
+                        &reservation,
+                        SemanticScholarHealthOutcome::TransientFailure,
+                        retry_delay,
+                    );
+                    self.record_semantic_scholar_attempt(semantic_scholar_attempt_record(
+                        endpoint,
+                        &request_url,
+                        attempt_number,
+                        reservation.slot.slot_index,
+                        None,
+                        false,
+                        will_retry,
+                        "transport",
+                        elapsed_millis(started_at),
+                    ));
+                    let error = SourceError::Request {
+                        service: SEMANTIC_SCHOLAR_SOURCE.to_string(),
+                        endpoint: endpoint.to_string(),
+                        message: "transport failure".to_string(),
+                    };
+                    if will_retry {
+                        add_excluded_slot(&mut excluded_slots, reservation.slot.slot_index);
+                        last_error = Some(error);
+                        continue;
+                    }
+                    return Err(error);
+                }
+            }
+        }
+        Err(last_error.unwrap_or_else(|| SourceError::Request {
+            service: SEMANTIC_SCHOLAR_SOURCE.to_string(),
+            endpoint: endpoint.to_string(),
+            message: "request retry loop exhausted".to_string(),
+        }))
+    }
+
+    fn record_semantic_scholar_attempt(&mut self, attempt: SemanticScholarAttemptRecord) {
+        let outcome = if attempt.source_attempt.did_succeed {
+            "success"
+        } else {
+            "failure"
+        };
+        tracing::info!(
+            event = "source.semantic_scholar.attempt",
+            component = "source",
+            provider = SEMANTIC_SCHOLAR_SOURCE,
+            endpoint = attempt.source_attempt.endpoint,
+            method = attempt.source_attempt.method,
+            attempt = attempt.attempt_number,
+            key_slot = attempt.key_slot,
+            outcome,
+            error_kind = attempt.error_kind,
+            http_status = attempt.source_attempt.status_code.unwrap_or(0),
+            has_http_status = attempt.source_attempt.status_code.is_some(),
+            is_retry = attempt.source_attempt.did_retry,
+            will_retry = attempt.will_retry,
+            duration_ms = attempt.duration_ms,
+        );
+        self.attempts.push(attempt.source_attempt);
+    }
+
     fn get_json(
         &mut self,
         service: &str,
@@ -2011,6 +2626,7 @@ impl LiveScholarlyTransport {
         })
     }
 
+    #[cfg(test)]
     fn post_json(
         &mut self,
         service: &str,
@@ -3023,15 +3639,16 @@ mod tests {
         crossref_journal_filter, execute_openalex_batches, normalize_doi, normalize_issn,
         normalize_source_title, openalex_doi_query, openalex_doi_request_url,
         openalex_rate_headers, openalex_short_source_id, openalex_source_work_filter,
-        partition_openalex_doi_batches, redact_url, run_bounded_indexed, unix_time_millis,
-        value_pool_from_text, FixtureScholarlyTransport, LiveScholarlyConfig,
+        partition_openalex_doi_batches, redact_url, run_bounded_indexed, unix_time_duration,
+        unix_time_millis, value_pool_from_text, FixtureScholarlyTransport, LiveScholarlyConfig,
         LiveScholarlyTransport, OpenAlexHealthOutcome, OpenAlexRateHeaders,
         OpenAlexScheduleDecision, OpenAlexScheduler, OpenAlexSchedulerState,
         ProviderAttemptSchedule, ScholarlyClient, ScholarlyFixtureData, ScholarlyTransport,
-        SourceError, CROSSREF_ATTEMPT_INTERVAL_MS, CROSSREF_ROWS, CROSSREF_SOURCE,
-        OPENALEX_DOI_FILTER_MAX_VALUES, OPENALEX_DOI_REQUEST_URL_BUDGET,
+        SemanticScholarHealthOutcome, SemanticScholarScheduleDecision,
+        SemanticScholarSchedulerState, SourceError, CROSSREF_ATTEMPT_INTERVAL_MS, CROSSREF_ROWS,
+        CROSSREF_SOURCE, OPENALEX_DOI_FILTER_MAX_VALUES, OPENALEX_DOI_REQUEST_URL_BUDGET,
         OPENALEX_KEY_START_INTERVAL, OPENALEX_MAX_WORKERS_PER_PROCESS,
-        SEMANTIC_SCHOLAR_ATTEMPT_INTERVAL_MS, SEMANTIC_SCHOLAR_SOURCE,
+        SEMANTIC_SCHOLAR_ATTEMPT_INTERVAL_MS,
     };
 
     #[test]
@@ -3326,6 +3943,364 @@ mod tests {
     }
 
     #[test]
+    fn semantic_scholar_common_epoch_schedule_scales_per_key_across_processes() {
+        let epoch = Duration::from_secs(40);
+
+        for key_count in 1..=3 {
+            for process_count in 1..=3 {
+                let mut starts_by_key = vec![Vec::new(); key_count];
+                for process_id in 0..process_count {
+                    let mut state = SemanticScholarSchedulerState::with_context(
+                        key_count,
+                        process_id,
+                        process_count,
+                        epoch,
+                        Duration::from_millis(SEMANTIC_SCHOLAR_ATTEMPT_INTERVAL_MS),
+                    );
+                    let mut now = epoch;
+                    for _ in 0..key_count * 4 {
+                        let SemanticScholarScheduleDecision::Reserved(reservation) =
+                            state.reserve_slot(now, &[])
+                        else {
+                            panic!("healthy Semantic Scholar key should reserve a phase");
+                        };
+                        let offset_millis = reservation.start_at.saturating_sub(epoch).as_millis();
+                        assert_eq!(
+                            (offset_millis / u128::from(SEMANTIC_SCHOLAR_ATTEMPT_INTERVAL_MS))
+                                % process_count as u128,
+                            process_id as u128
+                        );
+                        now = reservation.start_at;
+                        starts_by_key[reservation.slot_index].push(reservation.start_at);
+                        state.finish_slot(
+                            &reservation,
+                            now,
+                            SemanticScholarHealthOutcome::Success,
+                            Duration::ZERO,
+                        );
+                    }
+                }
+
+                for starts in &mut starts_by_key {
+                    starts.sort_unstable();
+                    assert_eq!(starts.len(), process_count * 4);
+                    assert!(starts.windows(2).all(|window| {
+                        window[1].saturating_sub(window[0])
+                            == Duration::from_millis(SEMANTIC_SCHOLAR_ATTEMPT_INTERVAL_MS)
+                    }));
+                    assert!(starts.iter().all(|window_start| {
+                        starts
+                            .iter()
+                            .filter(|start| {
+                                **start >= *window_start
+                                    && **start < *window_start + Duration::from_secs(1)
+                            })
+                            .count()
+                            <= 1
+                    }));
+                }
+                if process_count == 1 {
+                    assert_eq!(
+                        starts_by_key
+                            .iter()
+                            .map(|starts| starts[0])
+                            .collect::<Vec<_>>(),
+                        (0..key_count)
+                            .map(|slot_index| {
+                                epoch
+                                    + Duration::from_millis(
+                                        SEMANTIC_SCHOLAR_ATTEMPT_INTERVAL_MS * slot_index as u64
+                                            / key_count as u64,
+                                    )
+                            })
+                            .collect::<Vec<_>>()
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn semantic_scholar_scheduler_isolates_key_failures_and_skips_missed_phases() {
+        let epoch = Duration::from_secs(60);
+        let interval = Duration::from_millis(SEMANTIC_SCHOLAR_ATTEMPT_INTERVAL_MS);
+        let mut state = SemanticScholarSchedulerState::with_context(3, 0, 1, epoch, interval);
+
+        let SemanticScholarScheduleDecision::Reserved(invalid) = state.reserve_slot(epoch, &[])
+        else {
+            panic!("first key should reserve");
+        };
+        assert_eq!(invalid.slot_index, 0);
+        state.finish_slot(
+            &invalid,
+            invalid.start_at,
+            SemanticScholarHealthOutcome::AuthenticationFailure,
+            Duration::ZERO,
+        );
+
+        let SemanticScholarScheduleDecision::Reserved(rate_limited) =
+            state.reserve_slot(epoch, &[])
+        else {
+            panic!("second key should reserve");
+        };
+        assert_eq!(rate_limited.slot_index, 1);
+        state.finish_slot(
+            &rate_limited,
+            rate_limited.start_at,
+            SemanticScholarHealthOutcome::RateLimited,
+            Duration::from_secs(3),
+        );
+
+        let SemanticScholarScheduleDecision::Reserved(transient) = state.reserve_slot(epoch, &[])
+        else {
+            panic!("third key should reserve");
+        };
+        assert_eq!(transient.slot_index, 2);
+        state.finish_slot(
+            &transient,
+            transient.start_at,
+            SemanticScholarHealthOutcome::TransientFailure,
+            Duration::from_secs(2),
+        );
+
+        let transient_ready_at = transient.start_at + Duration::from_secs(2);
+        assert_eq!(
+            state.reserve_slot(epoch, &[]),
+            SemanticScholarScheduleDecision::WaitUntil(transient_ready_at)
+        );
+        let SemanticScholarScheduleDecision::Reserved(recovered) =
+            state.reserve_slot(transient_ready_at, &[])
+        else {
+            panic!("earliest cooled key should recover");
+        };
+        assert_eq!(recovered.slot_index, 2);
+        assert!(recovered.start_at >= transient_ready_at);
+        assert_eq!(
+            recovered
+                .start_at
+                .saturating_sub(transient.start_at)
+                .as_millis()
+                % interval.as_millis(),
+            0
+        );
+        state.finish_slot(
+            &recovered,
+            recovered.start_at,
+            SemanticScholarHealthOutcome::AuthenticationFailure,
+            Duration::ZERO,
+        );
+
+        let rate_limit_ready_at = rate_limited.start_at + Duration::from_secs(3);
+        let SemanticScholarScheduleDecision::Reserved(last_key) =
+            state.reserve_slot(rate_limit_ready_at, &[])
+        else {
+            panic!("remaining cooled key should recover");
+        };
+        assert_eq!(last_key.slot_index, 1);
+        assert!(last_key.start_at >= rate_limit_ready_at);
+        assert_eq!(
+            last_key
+                .start_at
+                .saturating_sub(rate_limited.start_at)
+                .as_millis()
+                % interval.as_millis(),
+            0
+        );
+        state.finish_slot(
+            &last_key,
+            last_key.start_at,
+            SemanticScholarHealthOutcome::AuthenticationFailure,
+            Duration::ZERO,
+        );
+        assert_eq!(
+            state.reserve_slot(last_key.start_at, &[]),
+            SemanticScholarScheduleDecision::Unavailable
+        );
+    }
+
+    #[test]
+    fn scholarly_rate_matrix_covers_all_credential_worker_process_combinations() {
+        let epoch_millis = 100_000;
+        let epoch = Duration::from_millis(epoch_millis);
+        let mut row_count = 0;
+
+        for mailto_count in [0, 1, 3] {
+            for openalex_key_count in 1..=3 {
+                for semantic_scholar_key_count in 1..=3 {
+                    for worker_count in 1..=OPENALEX_MAX_WORKERS_PER_PROCESS {
+                        for process_count in 1..=3 {
+                            row_count += 1;
+                            let config = LiveScholarlyConfig {
+                                timeout_seconds: 1,
+                                openalex_api_keys: (0..openalex_key_count)
+                                    .map(|index| format!("openalex-{index}"))
+                                    .collect(),
+                                semantic_scholar_api_keys: (0..semantic_scholar_key_count)
+                                    .map(|index| format!("semantic-scholar-{index}"))
+                                    .collect(),
+                                crossref_mailtos: (0..mailto_count)
+                                    .map(|index| format!("contact-{index}@example.invalid"))
+                                    .collect(),
+                                semantic_scholar_worker_id: 0,
+                                semantic_scholar_process_count: process_count,
+                                semantic_scholar_base_interval_ms:
+                                    SEMANTIC_SCHOLAR_ATTEMPT_INTERVAL_MS,
+                                schedule_epoch_unix_millis: epoch_millis,
+                            };
+                            assert_eq!(config.has_crossref_mailto(), mailto_count > 0);
+                            assert!(config.has_openalex_key());
+                            assert!(config.has_semantic_scholar_key());
+
+                            let mut crossref_starts = (0..process_count)
+                                .flat_map(|process_id| {
+                                    let mut schedule = ProviderAttemptSchedule::new(
+                                        epoch_millis,
+                                        process_id,
+                                        process_count,
+                                        CROSSREF_ATTEMPT_INTERVAL_MS,
+                                    );
+                                    (0..12)
+                                        .map(|_| schedule.reserve_at(epoch_millis))
+                                        .collect::<Vec<_>>()
+                                })
+                                .collect::<Vec<_>>();
+                            crossref_starts.sort_unstable();
+                            assert!(crossref_starts.iter().all(|window_start| {
+                                crossref_starts
+                                    .iter()
+                                    .filter(|start| {
+                                        **start >= *window_start && **start < window_start + 1_000
+                                    })
+                                    .count()
+                                    <= 10
+                            }));
+
+                            let mut openalex_starts = vec![Vec::new(); openalex_key_count];
+                            for process_id in 0..process_count {
+                                let mut state = OpenAlexSchedulerState::with_context(
+                                    openalex_key_count,
+                                    process_id,
+                                    process_count,
+                                    epoch,
+                                    worker_count * process_count,
+                                );
+                                for slot in &mut state.slots {
+                                    slot.remaining = Some(100_000);
+                                }
+                                let mut now = epoch;
+                                for _ in 0..openalex_key_count * 110 {
+                                    let OpenAlexScheduleDecision::Reserved(reservation) =
+                                        state.reserve_slot(now, &[])
+                                    else {
+                                        panic!("matrix OpenAlex key should reserve");
+                                    };
+                                    now = reservation.start_at;
+                                    openalex_starts[reservation.slot_index]
+                                        .push(reservation.start_at);
+                                    state.finish_slot(
+                                        &reservation,
+                                        now,
+                                        OpenAlexRateHeaders::default(),
+                                        OpenAlexHealthOutcome::Success,
+                                        Duration::ZERO,
+                                    );
+                                }
+                                assert_eq!(
+                                    state.total_inflight_capacity,
+                                    worker_count * process_count
+                                );
+                            }
+                            for starts in &mut openalex_starts {
+                                starts.sort_unstable();
+                                assert_eq!(
+                                    starts
+                                        .iter()
+                                        .filter(|start| {
+                                            **start >= epoch
+                                                && **start < epoch + Duration::from_secs(1)
+                                        })
+                                        .count(),
+                                    91
+                                );
+                                assert!(starts.iter().all(|window_start| {
+                                    starts
+                                        .iter()
+                                        .filter(|start| {
+                                            **start >= *window_start
+                                                && **start < *window_start + Duration::from_secs(1)
+                                        })
+                                        .count()
+                                        <= 91
+                                }));
+                            }
+
+                            let mut semantic_scholar_starts =
+                                vec![Vec::new(); semantic_scholar_key_count];
+                            for process_id in 0..process_count {
+                                let mut state = SemanticScholarSchedulerState::with_context(
+                                    semantic_scholar_key_count,
+                                    process_id,
+                                    process_count,
+                                    epoch,
+                                    Duration::from_millis(SEMANTIC_SCHOLAR_ATTEMPT_INTERVAL_MS),
+                                );
+                                let mut now = epoch;
+                                for _ in 0..semantic_scholar_key_count * 4 {
+                                    let SemanticScholarScheduleDecision::Reserved(reservation) =
+                                        state.reserve_slot(now, &[])
+                                    else {
+                                        panic!("matrix Semantic Scholar key should reserve");
+                                    };
+                                    now = reservation.start_at;
+                                    semantic_scholar_starts[reservation.slot_index]
+                                        .push(reservation.start_at);
+                                    state.finish_slot(
+                                        &reservation,
+                                        now,
+                                        SemanticScholarHealthOutcome::Success,
+                                        Duration::ZERO,
+                                    );
+                                }
+                            }
+                            for starts in &mut semantic_scholar_starts {
+                                starts.sort_unstable();
+                                assert!(!starts.is_empty());
+                                assert!(starts.iter().all(|window_start| {
+                                    starts
+                                        .iter()
+                                        .filter(|start| {
+                                            **start >= *window_start
+                                                && **start < *window_start + Duration::from_secs(1)
+                                        })
+                                        .count()
+                                        <= 1
+                                }));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        assert_eq!(row_count, 486);
+        assert_eq!(
+            SemanticScholarSchedulerState::with_context(
+                0,
+                0,
+                1,
+                epoch,
+                Duration::from_millis(SEMANTIC_SCHOLAR_ATTEMPT_INTERVAL_MS),
+            )
+            .reserve_slot(epoch, &[]),
+            SemanticScholarScheduleDecision::Unavailable
+        );
+        assert_eq!(
+            OpenAlexSchedulerState::with_context(0, 0, 1, epoch, 1).reserve_slot(epoch, &[]),
+            OpenAlexScheduleDecision::Unavailable
+        );
+    }
+
+    #[test]
     fn semantic_scholar_live_retries_reserve_every_attempt() {
         let listener = TcpListener::bind("127.0.0.1:0").expect("test listener should bind");
         let address = listener.local_addr().expect("test address should resolve");
@@ -3360,13 +4335,11 @@ mod tests {
             LiveScholarlyTransport::new(config).expect("live transport should build");
 
         let payload = transport
-            .post_json(
-                SEMANTIC_SCHOLAR_SOURCE,
+            .semantic_scholar_post_json(
                 "retry_schedule_test",
                 &format!("http://{address}/paper/batch"),
                 &[],
                 &json!({"ids": ["DOI:10.1/test"]}),
-                None,
             )
             .expect("second attempt should succeed");
         server.join().expect("test server should finish");
@@ -3381,6 +4354,211 @@ mod tests {
         assert_eq!(transport.attempts().len(), 2);
         assert!(transport.attempts()[1].did_retry);
         assert!(second_started.duration_since(first_started) >= Duration::from_millis(1_050));
+    }
+
+    #[test]
+    fn live_semantic_scholar_balances_keys_and_isolates_auth_and_rate_limits() {
+        let api_keys = [
+            "semantic-key-zero-secret",
+            "semantic-key-one-secret",
+            "semantic-key-two-secret",
+        ];
+        let secret_doi = "10.1/private-semantic-doi";
+        let secret_response = "private-semantic-response";
+        let listener = TcpListener::bind("127.0.0.1:0").expect("test listener should bind");
+        let address = listener.local_addr().expect("test address should resolve");
+        let (request_sender, request_receiver) = mpsc::channel();
+        let server = thread::spawn(move || {
+            for (status, retry_after) in [
+                ("401 Unauthorized", None),
+                ("429 Too Many Requests", Some("7")),
+                ("200 OK", None),
+            ] {
+                let (mut stream, _) = listener.accept().expect("test request should connect");
+                let mut request = [0_u8; 16_384];
+                let read = stream.read(&mut request).expect("test request should read");
+                request_sender
+                    .send(String::from_utf8_lossy(&request[..read]).into_owned())
+                    .expect("captured request should send");
+                let body = if status == "200 OK" {
+                    "[]".to_string()
+                } else {
+                    format!(
+                        r#"{{"error":"{secret_response} {secret_doi} {}"}}"#,
+                        api_keys.join(" ")
+                    )
+                };
+                let retry_header = retry_after
+                    .map(|value| format!("Retry-After: {value}\r\n"))
+                    .unwrap_or_default();
+                write!(
+                    stream,
+                    "HTTP/1.1 {status}\r\nContent-Type: application/json\r\n{retry_header}Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                )
+                .expect("test response should write");
+            }
+        });
+        let config = LiveScholarlyConfig {
+            timeout_seconds: 3,
+            openalex_api_keys: Vec::new(),
+            semantic_scholar_api_keys: api_keys.iter().map(ToString::to_string).collect(),
+            crossref_mailtos: Vec::new(),
+            semantic_scholar_worker_id: 0,
+            semantic_scholar_process_count: 1,
+            semantic_scholar_base_interval_ms: 20,
+            schedule_epoch_unix_millis: unix_time_millis().saturating_add(100),
+        };
+        let mut transport =
+            LiveScholarlyTransport::new(config).expect("live transport should build");
+        assert_eq!(
+            transport.semantic_scholar_scheduler.state.start_interval,
+            Duration::from_millis(SEMANTIC_SCHOLAR_ATTEMPT_INTERVAL_MS)
+        );
+        let logs = CapturedLogs::default();
+        let payload = tracing::subscriber::with_default(logs.subscriber(), || {
+            transport.semantic_scholar_post_json(
+                "paper_batch",
+                &format!("http://{address}/paper/batch"),
+                &[],
+                &json!({"ids": [format!("DOI:{secret_doi}")]}),
+            )
+        })
+        .expect("third key should succeed");
+        server.join().expect("test server should finish");
+
+        let requests = (0..3)
+            .map(|_| {
+                request_receiver
+                    .recv()
+                    .expect("captured request should exist")
+                    .to_ascii_lowercase()
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(payload, json!([]));
+        for (request, api_key) in requests.iter().zip(api_keys) {
+            assert!(request.contains(&format!("x-api-key: {api_key}")));
+        }
+        assert_eq!(
+            transport
+                .attempts()
+                .iter()
+                .map(|attempt| attempt.status_code)
+                .collect::<Vec<_>>(),
+            vec![Some(401), Some(429), Some(200)]
+        );
+        assert_eq!(
+            transport
+                .attempts()
+                .iter()
+                .map(|attempt| attempt.did_retry)
+                .collect::<Vec<_>>(),
+            vec![false, true, true]
+        );
+        assert!(transport.semantic_scholar_scheduler.state.slots[0].is_disabled);
+        let cooldown_remaining = transport.semantic_scholar_scheduler.state.slots[1]
+            .cooldown_until
+            .map(|cooldown_until| cooldown_until.saturating_sub(unix_time_duration()));
+        assert!(
+            cooldown_remaining.is_some_and(|remaining| remaining >= Duration::from_secs(4)),
+            "Retry-After cooldown should exceed fallback backoff: {cooldown_remaining:?}"
+        );
+        assert!(!transport.semantic_scholar_scheduler.state.slots[2].is_disabled);
+        let events = logs
+            .events()
+            .into_iter()
+            .filter(|event| event["event"] == "source.semantic_scholar.attempt")
+            .collect::<Vec<_>>();
+        assert_eq!(events.len(), 3);
+        assert_eq!(
+            events
+                .iter()
+                .map(|event| event["key_slot"].as_u64().expect("slot should be numeric"))
+                .collect::<Vec<_>>(),
+            vec![0, 1, 2]
+        );
+        let retained_text = format!("{:?} {:?} {}", transport, transport.attempts(), logs.text());
+        for secret in api_keys.into_iter().chain([secret_doi, secret_response]) {
+            assert!(!retained_text.contains(secret));
+        }
+    }
+
+    #[test]
+    fn live_semantic_scholar_terminal_failure_redacts_request_and_response_material() {
+        let secret_keys = [
+            "forbidden-semantic-key-secret",
+            "terminal-semantic-key-secret",
+        ];
+        let secret_doi = "10.1/terminal-semantic-doi";
+        let secret_response = "terminal-semantic-response-secret";
+        let listener = TcpListener::bind("127.0.0.1:0").expect("test listener should bind");
+        let address = listener.local_addr().expect("test address should resolve");
+        let server = thread::spawn(move || {
+            for status in ["403 Forbidden", "400 Bad Request"] {
+                let (mut stream, _) = listener.accept().expect("test request should connect");
+                let mut request = [0_u8; 16_384];
+                let _ = stream.read(&mut request).expect("test request should read");
+                let body = format!(
+                    r#"{{"error":"{} {secret_doi} {secret_response}"}}"#,
+                    secret_keys.join(" ")
+                );
+                write!(
+                    stream,
+                    "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                )
+                .expect("test response should write");
+            }
+        });
+        let config = LiveScholarlyConfig {
+            timeout_seconds: 3,
+            openalex_api_keys: Vec::new(),
+            semantic_scholar_api_keys: secret_keys.iter().map(ToString::to_string).collect(),
+            crossref_mailtos: Vec::new(),
+            semantic_scholar_worker_id: 0,
+            semantic_scholar_process_count: 1,
+            semantic_scholar_base_interval_ms: 1,
+            schedule_epoch_unix_millis: unix_time_millis().saturating_add(50),
+        };
+        let mut transport =
+            LiveScholarlyTransport::new(config).expect("live transport should build");
+        let logs = CapturedLogs::default();
+        let error = tracing::subscriber::with_default(logs.subscriber(), || {
+            transport.semantic_scholar_post_json(
+                "paper_batch",
+                &format!("http://{address}/paper/batch"),
+                &[],
+                &json!({"ids": [format!("DOI:{secret_doi}")]}),
+            )
+        })
+        .expect_err("terminal response should fail");
+        server.join().expect("test server should finish");
+
+        assert!(matches!(
+            &error,
+            SourceError::HttpStatus {
+                status_code: 400,
+                body,
+                ..
+            } if body == &json!({"error": "Semantic Scholar request failed"})
+        ));
+        assert_eq!(
+            transport
+                .attempts()
+                .iter()
+                .map(|attempt| attempt.status_code)
+                .collect::<Vec<_>>(),
+            vec![Some(403), Some(400)]
+        );
+        let retained_text = format!(
+            "{error:?} {:?} {:?} {}",
+            transport,
+            transport.attempts(),
+            logs.text()
+        );
+        for secret in secret_keys.into_iter().chain([secret_doi, secret_response]) {
+            assert!(!retained_text.contains(secret));
+        }
     }
 
     #[test]
