@@ -21,7 +21,7 @@ use crate::identity::{
 const INDEX_BUSY_TIMEOUT_SECONDS: u64 = 30;
 
 /// Current provider-neutral content database schema version.
-pub const CONTENT_SCHEMA_VERSION: i64 = 4;
+pub const CONTENT_SCHEMA_VERSION: i64 = 5;
 
 const CONTENT_TABLES_SQL: &str = "
     CREATE TABLE journals (
@@ -41,6 +41,13 @@ const CONTENT_TABLES_SQL: &str = "
         fms_rating TEXT,
         fmscn_rank TEXT,
         fmscn_rating TEXT
+    );
+
+    CREATE TABLE journal_identity_keys (
+        identity_kind TEXT NOT NULL CHECK (identity_kind IN ('catalog_id', 'issn')),
+        identity_value TEXT NOT NULL,
+        canonical_catalog_id TEXT NOT NULL,
+        PRIMARY KEY (identity_kind, identity_value)
     );
 
     CREATE TABLE issues (
@@ -123,6 +130,8 @@ const CONTENT_TABLES_SQL: &str = "
 
     CREATE INDEX idx_journals_issn ON journals(issn);
     CREATE INDEX idx_journals_eissn ON journals(eissn);
+    CREATE INDEX idx_journal_identity_keys_catalog
+        ON journal_identity_keys(canonical_catalog_id);
     CREATE INDEX idx_issues_journal_year ON issues(journal_id, publication_year);
     CREATE INDEX idx_articles_journal ON articles(journal_id);
     CREATE INDEX idx_articles_issue ON articles(issue_id);
@@ -270,7 +279,7 @@ struct JournalProjectionRefresh {
 ///
 /// # Returns
 ///
-/// Initialized v4 connection or an explicit rebuild-required failure.
+/// Initialized v5 connection or an explicit rebuild-required failure.
 pub fn open_content_db(path: impl AsRef<Path>) -> Result<Connection, ContentDatabaseError> {
     let connection = Connection::open(path)?;
     connection.busy_timeout(Duration::from_secs(INDEX_BUSY_TIMEOUT_SECONDS))?;
@@ -292,7 +301,7 @@ pub fn optimize_content_db(connection: &Connection) -> Result<(), ContentDatabas
     Ok(())
 }
 
-/// Initialize an empty content database or validate an existing v4 database.
+/// Initialize an empty content database or validate an existing v5 database.
 ///
 /// # Arguments
 ///
@@ -393,6 +402,7 @@ fn validate_current_content_schema(connection: &Connection) -> Result<(), Conten
         "article_search",
         "articles",
         "issues",
+        "journal_identity_keys",
         "journals",
     ]
     .into_iter()
@@ -435,6 +445,10 @@ fn validate_current_content_schema(connection: &Connection) -> Result<(), Conten
                 "fmscn_rank",
                 "fmscn_rating",
             ],
+        ),
+        (
+            "journal_identity_keys",
+            &["identity_kind", "identity_value", "canonical_catalog_id"],
         ),
         (
             "issues",
@@ -537,6 +551,7 @@ fn validate_current_content_schema(connection: &Connection) -> Result<(), Conten
         "idx_articles_journal",
         "idx_articles_pmid",
         "idx_issues_journal_year",
+        "idx_journal_identity_keys_catalog",
         "idx_journals_eissn",
         "idx_journals_issn",
     ]
@@ -1257,6 +1272,34 @@ mod tests {
             .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
             .expect("schema version should read");
         assert_eq!(version, CONTENT_SCHEMA_VERSION);
+        let identity_columns = connection
+            .prepare("PRAGMA table_info(journal_identity_keys)")
+            .expect("journal identity columns should prepare")
+            .query_map([], |row| row.get::<_, String>(1))
+            .expect("journal identity columns should query")
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .expect("journal identity columns should collect");
+        assert_eq!(
+            identity_columns,
+            ["identity_kind", "identity_value", "canonical_catalog_id"]
+        );
+        let identity_index_count = connection
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_schema
+                 WHERE type = 'index' AND name = 'idx_journal_identity_keys_catalog'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .expect("journal identity index should read");
+        assert_eq!(identity_index_count, 1);
+        let identity_foreign_key_count = connection
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_foreign_key_list('journal_identity_keys')",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .expect("journal identity foreign keys should read");
+        assert_eq!(identity_foreign_key_count, 0);
         let schema = connection
             .query_row(
                 "SELECT group_concat(sql, ' ') FROM sqlite_schema WHERE sql IS NOT NULL",
@@ -1265,6 +1308,7 @@ mod tests {
             )
             .expect("schema SQL should read")
             .to_ascii_lowercase();
+        assert!(schema.contains("identity_kind in ('catalog_id', 'issn')"));
         for forbidden in [
             "provider_name",
             "library_id",

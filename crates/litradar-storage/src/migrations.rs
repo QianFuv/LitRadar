@@ -1,6 +1,6 @@
 //! Ordered, transactional migrations for auth and index SQLite databases.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fmt;
 use std::fs;
@@ -9,13 +9,15 @@ use std::time::{Duration, Instant};
 
 use rusqlite::{Connection, OpenFlags, Transaction, TransactionBehavior};
 
+use litradar_domain::normalize_contract_issn;
+
 use crate::{DatabaseResolutionError, StorageConfig};
 
 /// Current auth and business database schema version.
 pub const AUTH_SCHEMA_VERSION: i64 = 6;
 
 /// Current index database schema version.
-pub const INDEX_SCHEMA_VERSION: i64 = 4;
+pub const INDEX_SCHEMA_VERSION: i64 = 5;
 
 const AUTH_DATABASE: &str = "auth";
 const INDEX_DATABASE: &str = "index";
@@ -54,6 +56,10 @@ pub enum MigrationError {
         /// Provider-neutral content version required by this binary.
         required: i64,
     },
+    /// Existing journal identity values are malformed and cannot be migrated safely.
+    InvalidIndexIdentityState,
+    /// Two existing journals claim the same canonical identity key.
+    IndexIdentityConflict,
 }
 
 impl fmt::Display for MigrationError {
@@ -80,6 +86,13 @@ impl fmt::Display for MigrationError {
                 "index database {} uses legacy schema version {found}; move or delete that exact file and rebuild it as content schema v{required}",
                 path.display()
             ),
+            Self::InvalidIndexIdentityState => {
+                write!(formatter, "index journal identity state is invalid for migration")
+            }
+            Self::IndexIdentityConflict => write!(
+                formatter,
+                "index journal identity ownership conflicts across legacy journal rows"
+            ),
         }
     }
 }
@@ -91,7 +104,10 @@ impl Error for MigrationError {
             Self::Io(error) => Some(error),
             Self::Sqlite(error) => Some(error),
             Self::DatabaseResolution(error) => Some(error),
-            Self::UnsupportedSchemaVersion { .. } | Self::IndexRebuildRequired { .. } => None,
+            Self::UnsupportedSchemaVersion { .. }
+            | Self::IndexRebuildRequired { .. }
+            | Self::InvalidIndexIdentityState
+            | Self::IndexIdentityConflict => None,
         }
     }
 }
@@ -274,10 +290,28 @@ fn migrate_index_database_inner(
         reject_newer_version(INDEX_DATABASE, version, INDEX_SCHEMA_VERSION)?;
         if version == INDEX_SCHEMA_VERSION {
             let connection = open_read_only_index_connection(path)?;
-            validate_index_v4_schema(&connection)?;
+            validate_index_v5_schema(&connection)?;
             return Ok(MigrationSummary {
                 from_version: version,
                 to_version: version,
+            });
+        }
+        if version == 4 {
+            {
+                let connection = open_read_only_index_connection(path)?;
+                validate_index_v4_schema(&connection)?;
+            }
+            let connection = open_migration_connection(path)?;
+            configure_writable_connection(&connection)?;
+            let transaction =
+                Transaction::new_unchecked(&connection, TransactionBehavior::Immediate)?;
+            apply_index_version_five(&transaction)?;
+            transaction.pragma_update(None, "user_version", INDEX_SCHEMA_VERSION)?;
+            transaction.commit()?;
+            validate_index_v5_schema(&connection)?;
+            return Ok(MigrationSummary {
+                from_version: version,
+                to_version: INDEX_SCHEMA_VERSION,
             });
         }
         if version != 0 || object_count != 0 {
@@ -297,7 +331,7 @@ fn migrate_index_database_inner(
     transaction.execute_batch(INDEX_CONTENT_TABLES_SQL)?;
     transaction.pragma_update(None, "user_version", INDEX_SCHEMA_VERSION)?;
     transaction.commit()?;
-    validate_index_v4_schema(&connection)?;
+    validate_index_v5_schema(&connection)?;
     Ok(MigrationSummary {
         from_version,
         to_version: INDEX_SCHEMA_VERSION,
@@ -355,6 +389,8 @@ fn migration_error_kind(error: &MigrationError) -> &'static str {
         MigrationError::DatabaseResolution(_) => "database_resolution",
         MigrationError::UnsupportedSchemaVersion { .. } => "unsupported_schema_version",
         MigrationError::IndexRebuildRequired { .. } => "index_rebuild_required",
+        MigrationError::InvalidIndexIdentityState => "invalid_index_identity_state",
+        MigrationError::IndexIdentityConflict => "index_identity_conflict",
     }
 }
 
@@ -365,6 +401,9 @@ fn migration_error_database_version(error: &MigrationError) -> i64 {
         MigrationError::Io(_)
         | MigrationError::Sqlite(_)
         | MigrationError::DatabaseResolution(_) => -1,
+        MigrationError::InvalidIndexIdentityState | MigrationError::IndexIdentityConflict => {
+            INDEX_SCHEMA_VERSION - 1
+        }
     }
 }
 
@@ -401,7 +440,18 @@ fn open_read_only_index_connection(path: &Path) -> Result<Connection, MigrationE
 }
 
 fn validate_index_v4_schema(connection: &Connection) -> Result<(), MigrationError> {
-    let expected = [
+    validate_index_schema(connection, false)
+}
+
+fn validate_index_v5_schema(connection: &Connection) -> Result<(), MigrationError> {
+    validate_index_schema(connection, true)
+}
+
+fn validate_index_schema(
+    connection: &Connection,
+    has_journal_identity_keys: bool,
+) -> Result<(), MigrationError> {
+    let mut expected = [
         "article_change_events",
         "article_identity_keys",
         "article_listing",
@@ -413,6 +463,9 @@ fn validate_index_v4_schema(connection: &Connection) -> Result<(), MigrationErro
     .into_iter()
     .map(str::to_string)
     .collect::<BTreeSet<_>>();
+    if has_journal_identity_keys {
+        expected.insert("journal_identity_keys".to_string());
+    }
     let mut statement = connection.prepare(
         "SELECT name
          FROM sqlite_schema
@@ -531,7 +584,13 @@ fn validate_index_v4_schema(connection: &Connection) -> Result<(), MigrationErro
             return Err(MigrationError::Sqlite(rusqlite::Error::InvalidQuery));
         }
     }
-    let expected_indexes = [
+    if has_journal_identity_keys
+        && table_columns(connection, "journal_identity_keys")?
+            != ["identity_kind", "identity_value", "canonical_catalog_id"]
+    {
+        return Err(MigrationError::Sqlite(rusqlite::Error::InvalidQuery));
+    }
+    let mut expected_indexes = [
         "idx_article_change_events_order",
         "idx_article_change_events_revision",
         "idx_article_identity_keys_article",
@@ -550,6 +609,9 @@ fn validate_index_v4_schema(connection: &Connection) -> Result<(), MigrationErro
     .into_iter()
     .map(str::to_string)
     .collect::<BTreeSet<_>>();
+    if has_journal_identity_keys {
+        expected_indexes.insert("idx_journal_identity_keys_catalog".to_string());
+    }
     let mut statement = connection.prepare(
         "SELECT name FROM sqlite_schema
          WHERE type = 'index' AND name NOT LIKE 'sqlite_%'
@@ -562,6 +624,83 @@ fn validate_index_v4_schema(connection: &Connection) -> Result<(), MigrationErro
         return Err(MigrationError::Sqlite(rusqlite::Error::InvalidQuery));
     }
     Ok(())
+}
+
+fn apply_index_version_five(transaction: &Transaction<'_>) -> Result<(), MigrationError> {
+    transaction.execute_batch(INDEX_VERSION_FIVE_SQL)?;
+    let journals = {
+        let mut statement = transaction.prepare(
+            "SELECT catalog_id, issns_json, issn, eissn FROM journals ORDER BY catalog_id",
+        )?;
+        let journals = statement
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, Option<String>>(2)?,
+                    row.get::<_, Option<String>>(3)?,
+                ))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        journals
+    };
+    let mut owners = BTreeMap::new();
+    for (catalog_id, issns_json, issn, eissn) in journals {
+        if !is_canonical_catalog_id(&catalog_id) {
+            return Err(MigrationError::InvalidIndexIdentityState);
+        }
+        register_index_identity_owner(&mut owners, "catalog_id", catalog_id.clone(), &catalog_id)?;
+        let mut issns = serde_json::from_str::<Vec<String>>(&issns_json)
+            .map_err(|_| MigrationError::InvalidIndexIdentityState)?
+            .into_iter()
+            .collect::<BTreeSet<_>>();
+        issns.extend([issn, eissn].into_iter().flatten());
+        for issn in issns {
+            let normalized = normalize_contract_issn(&issn)
+                .filter(|normalized| normalized == &issn)
+                .ok_or(MigrationError::InvalidIndexIdentityState)?;
+            register_index_identity_owner(&mut owners, "issn", normalized, &catalog_id)?;
+        }
+    }
+    let mut statement = transaction.prepare(
+        "INSERT INTO journal_identity_keys (
+             identity_kind, identity_value, canonical_catalog_id
+         ) VALUES (?1, ?2, ?3)",
+    )?;
+    for ((identity_kind, identity_value), canonical_catalog_id) in owners {
+        statement.execute((identity_kind, identity_value, canonical_catalog_id))?;
+    }
+    Ok(())
+}
+
+fn register_index_identity_owner(
+    owners: &mut BTreeMap<(String, String), String>,
+    identity_kind: &str,
+    identity_value: String,
+    canonical_catalog_id: &str,
+) -> Result<(), MigrationError> {
+    let key = (identity_kind.to_string(), identity_value);
+    if let Some(owner) = owners.get(&key) {
+        if owner != canonical_catalog_id {
+            return Err(MigrationError::IndexIdentityConflict);
+        }
+        return Ok(());
+    }
+    owners.insert(key, canonical_catalog_id.to_string());
+    Ok(())
+}
+
+fn is_canonical_catalog_id(catalog_id: &str) -> bool {
+    (3..=128).contains(&catalog_id.len())
+        && catalog_id.is_ascii()
+        && catalog_id
+            .bytes()
+            .enumerate()
+            .all(|(index, byte)| match byte {
+                b'a'..=b'z' | b'0'..=b'9' => true,
+                b'.' | b'_' | b'-' => index > 0,
+                _ => false,
+            })
 }
 
 fn configure_writable_connection(connection: &Connection) -> rusqlite::Result<()> {
@@ -971,7 +1110,18 @@ const AUTH_INDEXES_SQL: &str = "
     CREATE INDEX IF NOT EXISTS idx_announcements_enabled ON announcements(enabled);
 ";
 
-const INDEX_CONTENT_TABLES_SQL: &str = "
+const INDEX_VERSION_FIVE_SQL: &str = "
+    CREATE TABLE journal_identity_keys (
+        identity_kind TEXT NOT NULL CHECK (identity_kind IN ('catalog_id', 'issn')),
+        identity_value TEXT NOT NULL,
+        canonical_catalog_id TEXT NOT NULL,
+        PRIMARY KEY (identity_kind, identity_value)
+    );
+    CREATE INDEX idx_journal_identity_keys_catalog
+        ON journal_identity_keys(canonical_catalog_id);
+";
+
+pub(crate) const INDEX_CONTENT_TABLES_SQL: &str = "
     CREATE TABLE journals (
         journal_id INTEGER PRIMARY KEY,
         catalog_id TEXT NOT NULL UNIQUE,
@@ -989,6 +1139,13 @@ const INDEX_CONTENT_TABLES_SQL: &str = "
         fms_rating TEXT,
         fmscn_rank TEXT,
         fmscn_rating TEXT
+    );
+
+    CREATE TABLE journal_identity_keys (
+        identity_kind TEXT NOT NULL CHECK (identity_kind IN ('catalog_id', 'issn')),
+        identity_value TEXT NOT NULL,
+        canonical_catalog_id TEXT NOT NULL,
+        PRIMARY KEY (identity_kind, identity_value)
     );
 
     CREATE TABLE issues (
@@ -1071,6 +1228,8 @@ const INDEX_CONTENT_TABLES_SQL: &str = "
 
     CREATE INDEX idx_journals_issn ON journals(issn);
     CREATE INDEX idx_journals_eissn ON journals(eissn);
+    CREATE INDEX idx_journal_identity_keys_catalog
+        ON journal_identity_keys(canonical_catalog_id);
     CREATE INDEX idx_issues_journal_year ON issues(journal_id, publication_year);
     CREATE INDEX idx_articles_journal ON articles(journal_id);
     CREATE INDEX idx_articles_issue ON articles(issue_id);

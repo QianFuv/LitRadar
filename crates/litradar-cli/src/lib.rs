@@ -320,7 +320,8 @@ fn run_index_command_with_bundled_meta_dir(
         return Err(format!("unexpected index arguments: {}", args.join(" ")).into());
     }
     let secret_key_file = required_secret_key_file(secret_key_file)?;
-    migrate_command_databases(&project_root, &auth_db_path)?;
+    migrate_auth_database(&auth_db_path)?;
+    migrate_index_command_databases(&project_root, options.file.as_deref())?;
     let storage_config =
         StorageConfig::from_project_root(&project_root).with_auth_db_path(auth_db_path.clone());
     prepare_index_managed_meta(&storage_config, bundled_meta_dir.as_deref())?;
@@ -337,7 +338,7 @@ fn run_index_command_with_bundled_meta_dir(
         application_executable: application_executable.to_path_buf(),
         project_root: project_root.clone(),
         secret_key_file: secret_key_file.clone(),
-        file: options.file,
+        file: options.file.clone(),
         worker_count: options.worker_count,
         process_count: options.process_count,
         issue_batch_size: options.issue_batch_size,
@@ -349,7 +350,7 @@ fn run_index_command_with_bundled_meta_dir(
         scholarly_config,
         index_provider_routes,
     });
-    migrate_existing_index_databases(&StorageConfig::from_project_root(&project_root))?;
+    migrate_index_command_databases(&project_root, options.file.as_deref())?;
     let outcome = outcome?;
     print_result(&serialize_index_outcome(&outcome, effective_concurrency)?);
     Ok(())
@@ -672,6 +673,35 @@ fn migrate_command_databases(
 ) -> Result<(), Box<dyn Error>> {
     migrate_auth_database(auth_db_path)?;
     migrate_existing_index_databases(&StorageConfig::from_project_root(project_root))?;
+    Ok(())
+}
+
+fn migrate_index_command_databases(
+    project_root: &Path,
+    selected_file: Option<&str>,
+) -> Result<(), Box<dyn Error>> {
+    let storage_config = StorageConfig::from_project_root(project_root);
+    let Some(selected_file) = selected_file else {
+        migrate_existing_index_databases(&storage_config)?;
+        return Ok(());
+    };
+    let file_path = Path::new(selected_file);
+    if file_path.file_name().and_then(|value| value.to_str()) != Some(selected_file)
+        || file_path.extension().and_then(|value| value.to_str()) != Some("csv")
+    {
+        return Err("--file must be one CSV filename without directory components".into());
+    }
+    let catalog_name = file_path
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .ok_or("--file must have a UTF-8 stem")?;
+    let index_path = storage_config
+        .index_dir()
+        .join(format!("{catalog_name}.sqlite"));
+    if index_path.exists() {
+        let tokenizer_path = storage_config.simple_tokenizer_path();
+        migrate_index_database(&index_path, tokenizer_path.as_deref())?;
+    }
     Ok(())
 }
 
@@ -1000,11 +1030,11 @@ mod tests {
     use super::{
         admin_usage, default_delivery_state_dir, delivery_usage, extract_auth_db_path,
         extract_bool_pair, extract_string_option, extract_usize_option, index_usage,
-        migrate_command_databases, normalize_db_name, parse_index_options,
-        prepare_index_managed_meta, resolve_delivery_targets, resolve_project_path,
-        run_admin_command_with_reader, run_index_command, run_index_command_with_bundled_meta_dir,
-        run_notify_command, run_push_command, run_scheduler_command, scheduler_usage,
-        serialize_index_outcome,
+        migrate_command_databases, migrate_index_command_databases, normalize_db_name,
+        parse_index_options, prepare_index_managed_meta, resolve_delivery_targets,
+        resolve_project_path, run_admin_command_with_reader, run_index_command,
+        run_index_command_with_bundled_meta_dir, run_notify_command, run_push_command,
+        run_scheduler_command, scheduler_usage, serialize_index_outcome,
     };
     use litradar_index::LiveIndexOutcome;
     use litradar_worker::delivery::DeliveryWorkflow;
@@ -1358,6 +1388,55 @@ mod tests {
             .expect("managed state should load");
         assert_eq!(state_count, 3);
         assert!(!project_root.join("data/auth.sqlite").exists());
+    }
+
+    #[test]
+    fn selected_index_migration_does_not_open_or_modify_a_sibling_database() {
+        let root = temp_root("litradar-cli-selected-index-migration");
+        let project_root = root.path().join("project");
+        let index_dir = project_root.join("data/index");
+        fs::create_dir_all(&index_dir).expect("index directory should be created");
+        let english_path = index_dir.join("english_journals.sqlite");
+        create_version_four_content_database(&english_path);
+        let ccf_path = index_dir.join("ccf_computer_journals.sqlite");
+        let ccf_connection = litradar_storage::open_sqlite_connection(&ccf_path)
+            .expect("sibling access sentinel should open");
+        ccf_connection
+            .execute_batch(
+                "CREATE TABLE access_sentinel (value TEXT NOT NULL);
+                 INSERT INTO access_sentinel VALUES ('untouched');
+                 PRAGMA user_version = 4;",
+            )
+            .expect("sibling access sentinel should initialize");
+        drop(ccf_connection);
+        let ccf_before = fs::read(&ccf_path).expect("sibling bytes should read");
+
+        migrate_index_command_databases(&project_root, Some("english_journals.csv"))
+            .expect("selected index migration should succeed without inspecting its sibling");
+
+        assert_eq!(content_database_version(&english_path), 5);
+        assert_eq!(
+            fs::read(&ccf_path).expect("sibling bytes should remain readable"),
+            ccf_before
+        );
+    }
+
+    #[test]
+    fn default_index_migration_keeps_all_database_scope() {
+        let root = temp_root("litradar-cli-default-index-migration");
+        let project_root = root.path().join("project");
+        let index_dir = project_root.join("data/index");
+        fs::create_dir_all(&index_dir).expect("index directory should be created");
+        let english_path = index_dir.join("english_journals.sqlite");
+        let ccf_path = index_dir.join("ccf_computer_journals.sqlite");
+        create_version_four_content_database(&english_path);
+        create_version_four_content_database(&ccf_path);
+
+        migrate_index_command_databases(&project_root, None)
+            .expect("default index migration should include every database");
+
+        assert_eq!(content_database_version(&english_path), 5);
+        assert_eq!(content_database_version(&ccf_path), 5);
     }
 
     #[test]
@@ -1777,5 +1856,25 @@ mod tests {
             .prefix(prefix)
             .tempdir()
             .expect("temp root should be created")
+    }
+
+    fn create_version_four_content_database(path: &Path) {
+        litradar_storage::migrate_index_database(path, None)
+            .expect("current content database should initialize");
+        let connection = litradar_storage::open_sqlite_connection(path)
+            .expect("content database should open for downgrade fixture");
+        connection
+            .execute_batch(
+                "DROP TABLE journal_identity_keys;
+                 PRAGMA user_version = 4;",
+            )
+            .expect("version four fixture should be created");
+    }
+
+    fn content_database_version(path: &Path) -> i64 {
+        litradar_storage::open_sqlite_connection(path)
+            .expect("content database should open for version query")
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .expect("content database version should read")
     }
 }

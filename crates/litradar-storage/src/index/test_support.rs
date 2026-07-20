@@ -100,79 +100,11 @@ pub(super) fn create_fixture_user(config: &StorageConfig) {
 
 pub(super) fn create_fixture_schema(connection: &Connection) {
     connection
+        .execute_batch(crate::migrations::INDEX_CONTENT_TABLES_SQL)
+        .expect("exact content schema should be created");
+    connection
         .execute_batch(
             r#"
-            CREATE TABLE journals (
-                journal_id INTEGER PRIMARY KEY,
-                catalog_id TEXT NOT NULL UNIQUE,
-                title TEXT NOT NULL,
-                title_aliases_json TEXT NOT NULL,
-                issns_json TEXT NOT NULL,
-                issn TEXT,
-                eissn TEXT,
-                area TEXT,
-                utd_rank TEXT,
-                utd_rating TEXT,
-                abs_rank TEXT,
-                abs_rating TEXT,
-                fms_rank TEXT,
-                fms_rating TEXT,
-                fmscn_rank TEXT,
-                fmscn_rating TEXT
-            );
-
-            CREATE TABLE issues (
-                issue_id INTEGER PRIMARY KEY,
-                journal_id INTEGER NOT NULL,
-                publication_year INTEGER,
-                title TEXT,
-                volume TEXT,
-                number TEXT,
-                date TEXT
-            );
-
-            CREATE TABLE articles (
-                article_id INTEGER PRIMARY KEY,
-                journal_id INTEGER NOT NULL,
-                issue_id INTEGER,
-                title TEXT NOT NULL,
-                publication_year INTEGER,
-                date TEXT,
-                authors_json TEXT NOT NULL,
-                start_page TEXT,
-                end_page TEXT,
-                abstract_text TEXT,
-                doi TEXT,
-                pmid TEXT,
-                open_access INTEGER,
-                in_press INTEGER,
-                retraction_doi TEXT
-            );
-
-            CREATE TABLE article_listing (
-                article_id INTEGER PRIMARY KEY,
-                journal_id INTEGER NOT NULL,
-                issue_id INTEGER,
-                publication_year INTEGER,
-                date TEXT,
-                open_access INTEGER,
-                in_press INTEGER,
-                doi TEXT,
-                pmid TEXT,
-                area TEXT
-            );
-
-            CREATE VIRTUAL TABLE article_search
-            USING fts5(
-                article_id UNINDEXED,
-                title,
-                abstract_text,
-                doi,
-                pmid,
-                authors,
-                journal_title
-            );
-
             INSERT INTO journals (
                 journal_id, catalog_id, title, title_aliases_json, issns_json,
                 issn, eissn, area, utd_rank, utd_rating, abs_rank, abs_rating,
@@ -184,6 +116,15 @@ pub(super) fn create_fixture_schema(connection: &Connection) {
                  '2049-3630', NULL, 'Engineering', NULL, NULL, '2', 'A', NULL, NULL, NULL, NULL),
                 (3, 'gamma-journal', 'Gamma Journal', '[]', '[]',
                  NULL, NULL, 'Medicine', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL);
+
+            INSERT INTO journal_identity_keys (
+                identity_kind, identity_value, canonical_catalog_id
+            ) VALUES
+                ('catalog_id', 'alpha-journal', 'alpha-journal'),
+                ('issn', '1234-5679', 'alpha-journal'),
+                ('catalog_id', 'beta-journal', 'beta-journal'),
+                ('issn', '2049-3630', 'beta-journal'),
+                ('catalog_id', 'gamma-journal', 'gamma-journal');
 
             INSERT INTO issues
                 (issue_id, journal_id, publication_year, title, volume, number, date)

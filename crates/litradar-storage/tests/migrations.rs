@@ -471,6 +471,7 @@ fn empty_index_database_migration_creates_exact_provider_neutral_schema() {
             "article_search",
             "articles",
             "issues",
+            "journal_identity_keys",
             "journals",
         ]
     );
@@ -496,6 +497,10 @@ fn empty_index_database_migration_creates_exact_provider_neutral_schema() {
         ]
     );
     assert_eq!(
+        table_columns(&path, "journal_identity_keys"),
+        ["identity_kind", "identity_value", "canonical_catalog_id"]
+    );
+    assert_eq!(
         table_columns(&path, "articles"),
         [
             "article_id",
@@ -517,8 +522,11 @@ fn empty_index_database_migration_creates_exact_provider_neutral_schema() {
     );
     assert!(index_exists(&path, "idx_article_identity_keys_article"));
     assert!(index_exists(&path, "idx_article_change_events_revision"));
+    assert!(index_exists(&path, "idx_journal_identity_keys_catalog"));
 
     let schema = sqlite_schema_sql(&path);
+    assert!(schema.contains("identity_kind in ('catalog_id', 'issn')"));
+    assert_eq!(foreign_key_count(&path, "journal_identity_keys"), 0);
     for forbidden in [
         "provider",
         "source_csv",
@@ -538,10 +546,91 @@ fn empty_index_database_migration_creates_exact_provider_neutral_schema() {
 }
 
 #[test]
-fn legacy_index_versions_require_rebuild_without_modifying_files() {
+fn version_four_index_migration_preserves_content_and_seeds_identity_keys() {
+    let temp_dir = tempdir().expect("temp directory should be created");
+    let path = temp_dir.path().join("version-four.sqlite");
+    create_version_four_index_database(&path, true);
+    let before = index_content_snapshot(&path);
+
+    migrate_index_database(&path, None).expect("version four index should migrate");
+
+    assert_eq!(user_version(&path), INDEX_SCHEMA_VERSION);
+    assert_eq!(index_content_snapshot(&path), before);
+    assert_eq!(
+        query_text_rows(
+            &path,
+            "SELECT identity_kind || '|' || identity_value || '|' || canonical_catalog_id
+             FROM journal_identity_keys
+             ORDER BY identity_kind, identity_value",
+        ),
+        [
+            "catalog_id|journal-1|journal-1",
+            "catalog_id|journal-2|journal-2",
+            "issn|1234-5679|journal-1",
+            "issn|2049-3630|journal-1",
+            "issn|2434-561X|journal-2",
+        ]
+    );
+    assert_eq!(foreign_key_count(&path, "journal_identity_keys"), 0);
+    let after_first = fs::read(&path).expect("migrated index bytes should read");
+
+    migrate_index_database(&path, None).expect("current version should be a no-op");
+
+    assert_eq!(
+        fs::read(&path).expect("no-op index bytes should read"),
+        after_first
+    );
+}
+
+#[test]
+fn empty_version_four_index_migration_creates_an_empty_identity_map() {
+    let temp_dir = tempdir().expect("temp directory should be created");
+    let path = temp_dir.path().join("empty-version-four.sqlite");
+    create_version_four_index_database(&path, false);
+
+    migrate_index_database(&path, None).expect("empty version four index should migrate");
+
+    assert_eq!(user_version(&path), INDEX_SCHEMA_VERSION);
+    assert!(table_exists(&path, "journal_identity_keys"));
+    assert_eq!(table_row_count(&path, "journal_identity_keys"), 0);
+}
+
+#[test]
+fn version_four_identity_conflict_rolls_back_atomically() {
+    let temp_dir = tempdir().expect("temp directory should be created");
+    let path = temp_dir.path().join("conflicting-version-four.sqlite");
+    create_version_four_index_database(&path, true);
+    let connection = Connection::open(&path).expect("conflict fixture should open");
+    connection
+        .execute(
+            "UPDATE journals
+             SET issns_json = '[\"1234-5679\"]', issn = '1234-5679', eissn = NULL
+             WHERE catalog_id = 'journal-2'",
+            [],
+        )
+        .expect("conflicting ISSN owner should be installed");
+    drop(connection);
+    let before = index_content_snapshot(&path);
+
+    let error = migrate_index_database(&path, None)
+        .expect_err("conflicting version four identities should fail");
+
+    assert!(matches!(&error, MigrationError::IndexIdentityConflict));
+    assert_eq!(
+        error.to_string(),
+        "index journal identity ownership conflicts across legacy journal rows"
+    );
+    assert_eq!(user_version(&path), 4);
+    assert!(!table_exists(&path, "journal_identity_keys"));
+    assert!(!index_exists(&path, "idx_journal_identity_keys_catalog"));
+    assert_eq!(index_content_snapshot(&path), before);
+}
+
+#[test]
+fn pre_v4_index_versions_require_rebuild_without_modifying_files() {
     let temp_dir = tempdir().expect("temp directory should be created");
 
-    for version in 0..INDEX_SCHEMA_VERSION {
+    for version in 0..(INDEX_SCHEMA_VERSION - 1) {
         let path = temp_dir.path().join(format!("legacy-v{version}.sqlite"));
         create_nonempty_index_database(&path, version);
         let before = fs::read(&path).expect("legacy bytes should read");
@@ -862,6 +951,125 @@ fn sqlite_schema_sql(path: &Path) -> String {
         )
         .expect("schema SQL should load")
         .to_ascii_lowercase()
+}
+
+fn create_version_four_index_database(path: &Path, has_content: bool) {
+    migrate_index_database(path, None).expect("version five fixture should initialize");
+    let connection = Connection::open(path).expect("version four fixture should open");
+    connection
+        .execute_batch(
+            "DROP TABLE journal_identity_keys;
+             PRAGMA user_version = 4;",
+        )
+        .expect("version five identity objects should be removed");
+    if has_content {
+        connection
+            .execute_batch(
+                r#"
+                INSERT INTO journals (
+                    journal_id, catalog_id, title, title_aliases_json, issns_json,
+                    issn, eissn, area, utd_rank, utd_rating, abs_rank, abs_rating,
+                    fms_rank, fms_rating, fmscn_rank, fmscn_rating
+                ) VALUES
+                    (1, 'journal-1', 'Journal One', '[]', '["1234-5679","2049-3630"]',
+                     '1234-5679', '2049-3630', 'Area One', NULL, NULL, NULL, NULL,
+                     NULL, NULL, NULL, NULL),
+                    (2, 'journal-2', 'Journal Two', '[]', '["2434-561X"]',
+                     '2434-561X', NULL, 'Area Two', NULL, NULL, NULL, NULL,
+                     NULL, NULL, NULL, NULL);
+
+                INSERT INTO issues (
+                    issue_id, journal_id, publication_year, title, volume, number, date
+                ) VALUES (10, 1, 2026, 'Issue One', '1', '1', '2026-01-01');
+
+                INSERT INTO articles (
+                    article_id, journal_id, issue_id, title, publication_year, date,
+                    authors_json, start_page, end_page, abstract_text, doi, pmid,
+                    open_access, in_press, retraction_doi
+                ) VALUES (
+                    100, 1, 10, 'Article One', 2026, '2026-01-01', '["Author"]',
+                    '1', '9', 'Abstract', '10.1000/article-one', NULL, 1, 0, NULL
+                );
+
+                INSERT INTO article_identity_keys (
+                    identity_kind, identity_value, article_id
+                ) VALUES
+                    ('doi', '10.1000/article-one', 100),
+                    ('bibliographic', 'journal-1|2026|article one|1', 100);
+
+                INSERT INTO article_listing (
+                    article_id, journal_id, issue_id, publication_year, date,
+                    open_access, in_press, doi, pmid, area
+                ) VALUES (
+                    100, 1, 10, 2026, '2026-01-01', 1, 0,
+                    '10.1000/article-one', NULL, 'Area One'
+                );
+
+                INSERT INTO article_search (
+                    rowid, article_id, title, abstract_text, doi, pmid, authors, journal_title
+                ) VALUES (
+                    100, 100, 'Article One', 'Abstract', '10.1000/article-one', '',
+                    'Author', 'Journal One'
+                );
+
+                INSERT INTO article_change_events (
+                    event_id, content_revision, article_id, change_kind, journal_id,
+                    issue_id, in_press, created_at
+                ) VALUES (
+                    1000, 'fixture:revision', 100, 'upsert', 1, 10, 0,
+                    '2026-07-20T00:00:00Z'
+                );
+                "#,
+            )
+            .expect("version four content should be inserted");
+    }
+}
+
+fn index_content_snapshot(path: &Path) -> Vec<Vec<String>> {
+    [
+        "SELECT CAST(journal_id AS TEXT) || '|' || catalog_id FROM journals ORDER BY journal_id",
+        "SELECT CAST(issue_id AS TEXT) || '|' || CAST(journal_id AS TEXT) FROM issues ORDER BY issue_id",
+        "SELECT CAST(article_id AS TEXT) || '|' || CAST(journal_id AS TEXT) || '|' || COALESCE(CAST(issue_id AS TEXT), '') FROM articles ORDER BY article_id",
+        "SELECT identity_kind || '|' || identity_value || '|' || CAST(article_id AS TEXT) FROM article_identity_keys ORDER BY identity_kind, identity_value",
+        "SELECT CAST(article_id AS TEXT) || '|' || CAST(journal_id AS TEXT) || '|' || COALESCE(CAST(issue_id AS TEXT), '') FROM article_listing ORDER BY article_id",
+        "SELECT CAST(rowid AS TEXT) || '|' || CAST(article_id AS TEXT) FROM article_search ORDER BY rowid",
+        "SELECT CAST(event_id AS TEXT) || '|' || content_revision || '|' || CAST(article_id AS TEXT) || '|' || CAST(journal_id AS TEXT) || '|' || COALESCE(CAST(issue_id AS TEXT), '') FROM article_change_events ORDER BY event_id",
+    ]
+    .into_iter()
+    .map(|query| query_text_rows(path, query))
+    .collect()
+}
+
+fn query_text_rows(path: &Path, query: &str) -> Vec<String> {
+    let connection = Connection::open(path).expect("database should open for text query");
+    let mut statement = connection
+        .prepare(query)
+        .expect("text query should prepare");
+    statement
+        .query_map([], |row| row.get(0))
+        .expect("text rows should query")
+        .collect::<Result<Vec<_>, _>>()
+        .expect("text rows should collect")
+}
+
+fn foreign_key_count(path: &Path, table_name: &str) -> i64 {
+    Connection::open(path)
+        .expect("database should open for foreign key query")
+        .query_row(
+            &format!("SELECT COUNT(*) FROM pragma_foreign_key_list('{table_name}')"),
+            [],
+            |row| row.get(0),
+        )
+        .expect("foreign key count should read")
+}
+
+fn table_row_count(path: &Path, table_name: &str) -> i64 {
+    Connection::open(path)
+        .expect("database should open for row count")
+        .query_row(&format!("SELECT COUNT(*) FROM {table_name}"), [], |row| {
+            row.get(0)
+        })
+        .expect("table row count should read")
 }
 
 fn create_nonempty_index_database(path: &Path, version: i64) {
