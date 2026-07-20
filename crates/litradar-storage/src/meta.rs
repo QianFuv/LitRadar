@@ -17,6 +17,7 @@ use crate::{open_sqlite_connection, StorageConfig};
 const BUNDLE_FORMAT: &str = "litradar-meta-bundle";
 const BUNDLE_MANIFEST_FILENAME: &str = "bundle-manifest.json";
 const CATALOG_V2_HEADER: &str = "catalog_id,title,issn,eissn,all_issns,title_aliases,area,utd_rank,utd_rating,abs_rank,abs_rating,fms_rank,fms_rating,fmscn_rank,fmscn_rating";
+const CATALOG_V3_HEADER: &str = "catalog_id,catalog_aliases,title,issn,eissn,all_issns,title_aliases,area,utd_rank,utd_rating,abs_rank,abs_rating,fms_rank,fms_rating,fmscn_rank,fmscn_rating";
 
 /// Action taken for one persistent metadata catalog.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -318,7 +319,9 @@ fn validate_bundle(bundle_dir: &Path) -> Result<ValidatedBundle, ManagedMetaErro
         let catalog_path = bundle_dir.join(&catalog.filename);
         validate_bundle_file(&catalog_path, &catalog.filename)?;
         let bytes = fs::read(&catalog_path)?;
-        if manifest.version >= 2 {
+        if manifest.version >= 3 {
+            validate_catalog_header(&bytes, &catalog.filename, 3, CATALOG_V3_HEADER)?;
+        } else if manifest.version >= 2 {
             validate_catalog_v2_header(&bytes, &catalog.filename)?;
         }
         let actual = canonical_sha256(&bytes).map_err(|_| {
@@ -349,6 +352,15 @@ fn validate_bundle(bundle_dir: &Path) -> Result<ValidatedBundle, ManagedMetaErro
 }
 
 fn validate_catalog_v2_header(bytes: &[u8], filename: &str) -> Result<(), ManagedMetaError> {
+    validate_catalog_header(bytes, filename, 2, CATALOG_V2_HEADER)
+}
+
+fn validate_catalog_header(
+    bytes: &[u8],
+    filename: &str,
+    version: i64,
+    expected: &str,
+) -> Result<(), ManagedMetaError> {
     let text = std::str::from_utf8(bytes).map_err(|_| {
         ManagedMetaError::InvalidBundle(format!("catalog {filename} is not valid UTF-8"))
     })?;
@@ -357,9 +369,9 @@ fn validate_catalog_v2_header(bytes: &[u8], filename: &str) -> Result<(), Manage
         .next()
         .map(|value| value.trim_end_matches('\r'))
         .unwrap_or_default();
-    if header != CATALOG_V2_HEADER {
+    if header != expected {
         return Err(ManagedMetaError::InvalidBundle(format!(
-            "catalog {filename} must use the exact canonical v2 header"
+            "catalog {filename} must use the exact canonical v{version} header"
         )));
     }
     Ok(())
@@ -805,7 +817,7 @@ mod tests {
             .collect::<Vec<_>>();
         tracked_filenames.sort();
 
-        assert_eq!(bundle.version, 2);
+        assert_eq!(bundle.version, 3);
         assert_eq!(manifest_filenames, tracked_filenames);
         let ccf = bundle
             .catalogs
@@ -818,6 +830,9 @@ mod tests {
         assert!(ccf
             .legacy_sha256
             .contains("550bb218f0d71be5e08486ee4a8ebcf1cdefebf076ac222a3583b857fe15e5a9"));
+        assert!(ccf
+            .legacy_sha256
+            .contains("6cac1db88eeb91b9248f7b6845ebb9bd30f891487428c72d71097120cb507545"));
         let chinese = bundle
             .catalogs
             .iter()
@@ -826,6 +841,9 @@ mod tests {
         assert!(chinese
             .legacy_sha256
             .contains("d51d55dd23fd9db71db5be7d7df73e955df6480e7821d90429d3e21f3a3b0807"));
+        assert!(chinese
+            .legacy_sha256
+            .contains("0c75d99c48f657fd208a7c581c8ea58df2d8b4bbe87ca7333b660bb7a836f1dd"));
         let english = bundle
             .catalogs
             .iter()
@@ -834,6 +852,27 @@ mod tests {
         assert!(english
             .legacy_sha256
             .contains("9c99d4c65dffbf1a026c15d1c8684a3b6520bbf601dba8344d71ded20846195d"));
+        assert!(english
+            .legacy_sha256
+            .contains("0869c2bc52e17bafbc414a20ca7a5283f6ee82b0598a96fbb4a81904c84497e7"));
+
+        for (filename, expected_rows) in [
+            ("ccf_computer_journals.csv", 291),
+            ("chinese_journals.csv", 94),
+            ("english_journals.csv", 571),
+        ] {
+            let catalog = bundle
+                .catalogs
+                .iter()
+                .find(|catalog| catalog.filename == filename)
+                .expect("tracked catalog should be declared");
+            let text = std::str::from_utf8(&catalog.bytes).expect("catalog should be UTF-8");
+            assert_eq!(
+                text.lines().skip(1).filter(|line| !line.is_empty()).count(),
+                expected_rows,
+                "unexpected catalog row count for {filename}"
+            );
+        }
     }
 
     #[test]
@@ -1023,6 +1062,30 @@ mod tests {
             error,
             ManagedMetaError::InvalidBundle(message)
                 if message.contains("exact canonical v2 header")
+        ));
+        assert!(!project.storage_config.meta_dir().exists());
+    }
+
+    #[test]
+    fn version_three_bundle_rejects_version_two_catalog_header() {
+        let project = TestProject::new();
+        let bundle = project.bundle(
+            "invalid-v3-header",
+            3,
+            &[CatalogFixture {
+                filename: "alpha.csv",
+                current: ALPHA_UPDATED,
+                legacy: Vec::new(),
+            }],
+        );
+
+        let error = prepare_managed_meta(&project.storage_config, bundle)
+            .expect_err("version two header should fail for version three bundle");
+
+        assert!(matches!(
+            error,
+            ManagedMetaError::InvalidBundle(message)
+                if message.contains("exact canonical v3 header")
         ));
         assert!(!project.storage_config.meta_dir().exists());
     }

@@ -2182,6 +2182,7 @@ mod tests {
     fn catalog(id: &str) -> JournalCatalogEntry {
         JournalCatalogEntry {
             catalog_id: id.to_string(),
+            catalog_aliases: Vec::new(),
             title: "Canonical Journal".to_string(),
             issn: Some("1234-5679".to_string()),
             eissn: None,

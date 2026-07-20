@@ -58,6 +58,16 @@ impl Error for ContractViolation {}
 /// Success when every canonical field satisfies contract v1.
 pub fn validate_catalog_entry(entry: &JournalCatalogEntry) -> Result<(), ContractViolation> {
     validate_catalog_id(&entry.catalog_id)?;
+    let mut catalog_ids = vec![entry.catalog_id.clone()];
+    for alias in &entry.catalog_aliases {
+        validate_catalog_id(alias)?;
+        if catalog_ids.contains(alias) {
+            return Err(ContractViolation::new(
+                "catalog aliases must be distinct from catalog_id and each other",
+            ));
+        }
+        catalog_ids.push(alias.clone());
+    }
     require_canonical_text(&entry.title, "catalog title")?;
     validate_optional_issn(entry.issn.as_deref(), "print ISSN")?;
     validate_optional_issn(entry.eissn.as_deref(), "electronic ISSN")?;
@@ -747,6 +757,7 @@ mod tests {
     fn catalog() -> JournalCatalogEntry {
         JournalCatalogEntry {
             catalog_id: "issn-1234-5679".to_string(),
+            catalog_aliases: vec!["legacy-journal".to_string()],
             title: "Canonical Journal".to_string(),
             issn: Some("1234-5679".to_string()),
             eissn: None,
@@ -821,6 +832,31 @@ mod tests {
         let catalog = catalog();
         validate_catalog_entry(&catalog).expect("catalog should pass");
         validate_provider_batch(&catalog, &batch()).expect("batch should pass");
+    }
+
+    #[test]
+    fn rejects_noncanonical_or_duplicate_catalog_aliases() {
+        let mut self_alias = catalog();
+        self_alias.catalog_aliases = vec![self_alias.catalog_id.clone()];
+        assert!(validate_catalog_entry(&self_alias)
+            .expect_err("self alias should fail")
+            .to_string()
+            .contains("catalog aliases"));
+
+        let mut duplicate_alias = catalog();
+        duplicate_alias.catalog_aliases =
+            vec!["legacy-journal".to_string(), "legacy-journal".to_string()];
+        assert!(validate_catalog_entry(&duplicate_alias)
+            .expect_err("duplicate alias should fail")
+            .to_string()
+            .contains("catalog aliases"));
+
+        let mut noncanonical_alias = catalog();
+        noncanonical_alias.catalog_aliases = vec!["Legacy Journal".to_string()];
+        assert!(validate_catalog_entry(&noncanonical_alias)
+            .expect_err("noncanonical alias should fail")
+            .to_string()
+            .contains("canonical ASCII"));
     }
 
     #[test]

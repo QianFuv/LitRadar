@@ -849,6 +849,7 @@ fn run_process_fixture() -> Result<(), &'static str> {
 fn pressure_catalog(worker_id: usize) -> JournalCatalogEntry {
     JournalCatalogEntry {
         catalog_id: format!("pressure-journal-{worker_id}"),
+        catalog_aliases: Vec::new(),
         title: format!("Pressure Journal {worker_id}"),
         issn: None,
         eissn: None,

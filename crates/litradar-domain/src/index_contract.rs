@@ -179,6 +179,8 @@ pub struct JournalRankings {
 pub struct JournalCatalogEntry {
     /// Immutable opaque catalog identifier.
     pub catalog_id: String,
+    /// Historical catalog identifiers that resolve to the canonical entry.
+    pub catalog_aliases: Vec<String>,
     /// Canonical journal title.
     pub title: String,
     /// Canonical print ISSN.
@@ -379,6 +381,7 @@ mod tests {
     fn canonical_content_serialization_has_no_provider_or_link_fields() {
         let catalog = JournalCatalogEntry {
             catalog_id: "issn-1234-5678".to_string(),
+            catalog_aliases: vec!["legacy-journal".to_string()],
             title: "Canonical Journal".to_string(),
             issn: Some("1234-5678".to_string()),
             eissn: None,

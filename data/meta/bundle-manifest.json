@@ -1,27 +1,30 @@
 {
   "format": "litradar-meta-bundle",
-  "version": 2,
+  "version": 3,
   "catalogs": [
     {
       "filename": "ccf_computer_journals.csv",
-      "sha256": "6cac1db88eeb91b9248f7b6845ebb9bd30f891487428c72d71097120cb507545",
+      "sha256": "9f60ecba87aa6f62c7705e2a7bcc9c6d2be17863637579f9cb914c6717990f67",
       "legacy_sha256": [
         "550bb218f0d71be5e08486ee4a8ebcf1cdefebf076ac222a3583b857fe15e5a9",
-        "015927e3a57bdc3d99f82348f5af7079475579aa8d282005cfd70fd8113b12ed"
+        "015927e3a57bdc3d99f82348f5af7079475579aa8d282005cfd70fd8113b12ed",
+        "6cac1db88eeb91b9248f7b6845ebb9bd30f891487428c72d71097120cb507545"
       ]
     },
     {
       "filename": "chinese_journals.csv",
-      "sha256": "0c75d99c48f657fd208a7c581c8ea58df2d8b4bbe87ca7333b660bb7a836f1dd",
+      "sha256": "5b28d5cd1ac82cc8c9bbc2c7163fc4afcc0b80fb9e86fb404bb782b23684d05d",
       "legacy_sha256": [
-        "d51d55dd23fd9db71db5be7d7df73e955df6480e7821d90429d3e21f3a3b0807"
+        "d51d55dd23fd9db71db5be7d7df73e955df6480e7821d90429d3e21f3a3b0807",
+        "0c75d99c48f657fd208a7c581c8ea58df2d8b4bbe87ca7333b660bb7a836f1dd"
       ]
     },
     {
       "filename": "english_journals.csv",
-      "sha256": "0869c2bc52e17bafbc414a20ca7a5283f6ee82b0598a96fbb4a81904c84497e7",
+      "sha256": "12a68053f342dd321c650a5bb89509fbb23652a8c79368ecc713531edab141d9",
       "legacy_sha256": [
-        "9c99d4c65dffbf1a026c15d1c8684a3b6520bbf601dba8344d71ded20846195d"
+        "9c99d4c65dffbf1a026c15d1c8684a3b6520bbf601dba8344d71ded20846195d",
+        "0869c2bc52e17bafbc414a20ca7a5283f6ee82b0598a96fbb4a81904c84497e7"
       ]
     }
   ]

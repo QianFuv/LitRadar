@@ -714,6 +714,7 @@ mod tests {
     fn canonical_catalog() -> JournalCatalogEntry {
         JournalCatalogEntry {
             catalog_id: "issn-1234-5679".to_string(),
+            catalog_aliases: Vec::new(),
             title: "Canonical Journal".to_string(),
             issn: Some("1234-5679".to_string()),
             eissn: None,

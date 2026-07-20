@@ -1557,6 +1557,7 @@ mod tests {
     fn catalog() -> litradar_domain::JournalCatalogEntry {
         litradar_domain::JournalCatalogEntry {
             catalog_id: "issn-1234-5679".to_string(),
+            catalog_aliases: vec!["legacy-journal".to_string()],
             title: "Canonical Journal".to_string(),
             issn: Some("1234-5679".to_string()),
             eissn: None,
