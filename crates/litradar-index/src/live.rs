@@ -30,6 +30,7 @@ use crate::control::{
     read_checkpoint, release_lease, CheckpointScope, ContentCheckpointCommitError,
     ControlDatabaseError,
 };
+use crate::identity::{ArticleIdentityError, ArticleMergeError};
 use crate::schema::{
     open_content_db, optimize_content_db, write_content_batch, ContentDatabaseError,
 };
@@ -303,6 +304,72 @@ pub(crate) struct WriterCommitObservation {
     pub(crate) service_ms: u64,
     /// Canonical articles observed in the committed batch.
     pub(crate) articles_seen: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ContentCommitErrorKind {
+    Json,
+    Contract,
+    IdentityMissing,
+    IdentityConflictingAliases,
+    MergeCatalogMismatch,
+    MergeConflictingDoi,
+    MergeConflictingPmid,
+    MergeConflictingOther,
+    RebuildRequired,
+    InvalidCurrentSchema,
+    ArticleIdCollision,
+}
+
+impl ContentCommitErrorKind {
+    fn from_error(error: &ContentDatabaseError) -> Option<Self> {
+        match error {
+            ContentDatabaseError::Sqlite(_) => None,
+            ContentDatabaseError::Json(_) => Some(Self::Json),
+            ContentDatabaseError::Contract(_) => Some(Self::Contract),
+            ContentDatabaseError::Identity(ArticleIdentityError::MissingIdentity) => {
+                Some(Self::IdentityMissing)
+            }
+            ContentDatabaseError::Identity(ArticleIdentityError::ConflictingAliases { .. }) => {
+                Some(Self::IdentityConflictingAliases)
+            }
+            ContentDatabaseError::Merge(ArticleMergeError::CatalogMismatch) => {
+                Some(Self::MergeCatalogMismatch)
+            }
+            ContentDatabaseError::Merge(ArticleMergeError::ConflictingIdentifier { field })
+                if field.eq_ignore_ascii_case("doi") =>
+            {
+                Some(Self::MergeConflictingDoi)
+            }
+            ContentDatabaseError::Merge(ArticleMergeError::ConflictingIdentifier { field })
+                if field.eq_ignore_ascii_case("pmid") =>
+            {
+                Some(Self::MergeConflictingPmid)
+            }
+            ContentDatabaseError::Merge(ArticleMergeError::ConflictingIdentifier { .. }) => {
+                Some(Self::MergeConflictingOther)
+            }
+            ContentDatabaseError::RebuildRequired { .. } => Some(Self::RebuildRequired),
+            ContentDatabaseError::InvalidCurrentSchema(_) => Some(Self::InvalidCurrentSchema),
+            ContentDatabaseError::ArticleIdCollision { .. } => Some(Self::ArticleIdCollision),
+        }
+    }
+
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Json => "json",
+            Self::Contract => "contract",
+            Self::IdentityMissing => "identity_missing",
+            Self::IdentityConflictingAliases => "identity_conflicting_aliases",
+            Self::MergeCatalogMismatch => "merge_catalog_mismatch",
+            Self::MergeConflictingDoi => "merge_conflicting_doi",
+            Self::MergeConflictingPmid => "merge_conflicting_pmid",
+            Self::MergeConflictingOther => "merge_conflicting_other",
+            Self::RebuildRequired => "rebuild_required",
+            Self::InvalidCurrentSchema => "invalid_current_schema",
+            Self::ArticleIdCollision => "article_id_collision",
+        }
+    }
 }
 
 impl LiveIndexWorkerFailure {
@@ -971,6 +1038,25 @@ fn emit_worker_failure(worker_id: usize, failure: &LiveIndexWorkerFailure) {
     }
 }
 
+fn emit_parent_content_commit_failure(worker_id: usize, error: &ContentDatabaseError) {
+    let failure =
+        LiveIndexWorkerFailure::from_content(LiveIndexWorkerOperation::ContentCommit, error);
+    let Some(content_error_kind) = ContentCommitErrorKind::from_error(error) else {
+        emit_worker_failure(worker_id, &failure);
+        return;
+    };
+    tracing::error!(
+        event = "index.worker.failed",
+        component = "index",
+        worker_id,
+        failure_class = failure.class.as_str(),
+        operation = failure.operation.as_str(),
+        has_sqlite_code = false,
+        is_busy_or_locked = failure.is_busy_or_locked,
+        content_error_kind = content_error_kind.as_str(),
+    );
+}
+
 /// Build a generic parent failure from safe structured worker fields.
 fn worker_failure_error(worker_id: usize, failure: &LiveIndexWorkerFailure) -> LiveIndexError {
     LiveIndexError::Worker(format!(
@@ -1424,7 +1510,15 @@ fn handle_worker_message(
             )
             .map_err(|error| {
                 let error = LiveIndexError::Commit(error);
-                emit_worker_failure(pipe_worker_id, &LiveIndexWorkerFailure::from_error(&error));
+                match &error {
+                    LiveIndexError::Commit(ContentCheckpointCommitError::Content(source)) => {
+                        emit_parent_content_commit_failure(pipe_worker_id, source);
+                    }
+                    _ => emit_worker_failure(
+                        pipe_worker_id,
+                        &LiveIndexWorkerFailure::from_error(&error),
+                    ),
+                }
                 error
             })?;
             metrics.record_write(outcome);
@@ -1949,24 +2043,27 @@ mod tests {
         ArticleAuthorDraft, ArticleDraft, IssueDraft, JournalCatalogEntry, JournalDraft,
         JournalRankings, ProviderBatch,
     };
+    use litradar_provider::conformance::ContractViolation;
     use litradar_provider::{IndexContentProvider, ProviderError};
     use rusqlite::{Connection, ErrorCode};
     use tempfile::tempdir;
     use tracing_subscriber::fmt::MakeWriter;
 
     use super::{
-        emit_worker_failure, fetch_worker_assignments_with_provider, index_entries_with_provider,
+        emit_parent_content_commit_failure, emit_worker_failure,
+        fetch_worker_assignments_with_provider, index_entries_with_provider,
         prepare_worker_requests, run_live_index, run_live_index_worker_with_io,
         run_worker_processes_with_launcher, validate_live_config, worker_failure_error,
-        DirectIndexRequest, LaunchedWorkerProcess, LeaseHeartbeat, LiveIndexConfig, LiveIndexError,
-        LiveIndexWorkerFailure, LiveIndexWorkerFailureClass, LiveIndexWorkerOperation,
-        LiveIndexWorkerRequest, LiveRunTime, ParentWriterContext, StoredCheckpoint,
-        OPENALEX_MAX_WORKERS_PER_PROCESS,
+        ContentCommitErrorKind, DirectIndexRequest, LaunchedWorkerProcess, LeaseHeartbeat,
+        LiveIndexConfig, LiveIndexError, LiveIndexWorkerFailure, LiveIndexWorkerFailureClass,
+        LiveIndexWorkerOperation, LiveIndexWorkerRequest, LiveRunTime, ParentWriterContext,
+        StoredCheckpoint, OPENALEX_MAX_WORKERS_PER_PROCESS,
     };
     use crate::control::{
         acquire_lease, commit_content_then_checkpoint, open_control_db, read_checkpoint,
         release_lease, write_checkpoint, CheckpointScope, ContentCheckpointCommitError,
     };
+    use crate::identity::{ArticleIdentityError, ArticleMergeError};
     use crate::schema::{open_content_db, write_content_batch, ContentDatabaseError};
     use crate::stats::IndexRunMetrics;
     use crate::worker_protocol::{
@@ -2898,6 +2995,154 @@ mod tests {
     }
 
     #[test]
+    fn worker_failure_parent_content_commit_kinds_are_fixed_and_redacted() {
+        const SENTINELS: [&str; 8] = [
+            "C:\\private\\catalog.sqlite",
+            "openalex-key-sentinel",
+            "operator-sentinel@example.test",
+            "10.9999/sentinel-doi",
+            "Sentinel Article Title",
+            "cursor-sentinel-value",
+            "response-body-sentinel",
+            "Bearer sentinel-token-value",
+        ];
+        let contract_message = SENTINELS.join(" | ");
+        let cases = vec![
+            (
+                ContentDatabaseError::Json(
+                    serde_json::from_str::<serde_json::Value>("{")
+                        .expect_err("invalid JSON should fail"),
+                ),
+                "json",
+            ),
+            (
+                ContentDatabaseError::Contract(ContractViolation::new(contract_message)),
+                "contract",
+            ),
+            (
+                ContentDatabaseError::Identity(ArticleIdentityError::MissingIdentity),
+                "identity_missing",
+            ),
+            (
+                ContentDatabaseError::Identity(ArticleIdentityError::ConflictingAliases {
+                    article_ids: vec![9_123_456_789, 9_876_543_210],
+                }),
+                "identity_conflicting_aliases",
+            ),
+            (
+                ContentDatabaseError::Merge(ArticleMergeError::CatalogMismatch),
+                "merge_catalog_mismatch",
+            ),
+            (
+                ContentDatabaseError::Merge(ArticleMergeError::ConflictingIdentifier {
+                    field: "DOI",
+                }),
+                "merge_conflicting_doi",
+            ),
+            (
+                ContentDatabaseError::Merge(ArticleMergeError::ConflictingIdentifier {
+                    field: "PMID",
+                }),
+                "merge_conflicting_pmid",
+            ),
+            (
+                ContentDatabaseError::Merge(ArticleMergeError::ConflictingIdentifier {
+                    field: "openalex-key-sentinel",
+                }),
+                "merge_conflicting_other",
+            ),
+            (
+                ContentDatabaseError::RebuildRequired {
+                    found_version: 9_001,
+                },
+                "rebuild_required",
+            ),
+            (
+                ContentDatabaseError::InvalidCurrentSchema(
+                    "C:\\private\\catalog.sqlite operator-sentinel@example.test".to_string(),
+                ),
+                "invalid_current_schema",
+            ),
+            (
+                ContentDatabaseError::ArticleIdCollision {
+                    article_id: 9_223_372_036_854_775_000,
+                },
+                "article_id_collision",
+            ),
+        ];
+
+        for (error, expected) in &cases {
+            assert_eq!(
+                ContentCommitErrorKind::from_error(error).map(ContentCommitErrorKind::as_str),
+                Some(*expected)
+            );
+        }
+
+        let captured = CapturedLogs::default();
+        tracing::subscriber::with_default(captured.subscriber(), || {
+            for (error, _) in &cases {
+                emit_parent_content_commit_failure(0, error);
+            }
+        });
+        let events = captured
+            .text()
+            .lines()
+            .map(|line| {
+                serde_json::from_str::<serde_json::Value>(line).expect("event should parse")
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(events.len(), cases.len());
+        for (event, (_, expected)) in events.iter().zip(&cases) {
+            assert_eq!(event["event"], "index.worker.failed");
+            assert_eq!(event["worker_id"], 0);
+            assert_eq!(event["failure_class"], "content");
+            assert_eq!(event["operation"], "content_commit");
+            assert_eq!(event["has_sqlite_code"], false);
+            assert_eq!(event["is_busy_or_locked"], false);
+            assert_eq!(event["content_error_kind"], *expected);
+            assert!(event.get("sqlite_code").is_none());
+            assert!(event.get("sqlite_extended_code").is_none());
+        }
+
+        let mut combined = captured.text();
+        for (error, _) in cases {
+            let error = LiveIndexError::Commit(ContentCheckpointCommitError::Content(error));
+            let failure = LiveIndexWorkerFailure::from_error(&error);
+            let message = WorkerMessage::Failed {
+                protocol_version: PROTOCOL_VERSION,
+                worker_id: 0,
+                sequence: 0,
+                failure: failure.clone(),
+            };
+            let payload = serde_json::to_value(&message).expect("worker message should serialize");
+            assert_eq!(
+                payload["failure"]
+                    .as_object()
+                    .expect("failure should be an object")
+                    .len(),
+                5
+            );
+            assert!(payload["failure"].get("content_error_kind").is_none());
+            combined.push_str(
+                &serde_json::to_string(&message).expect("worker message should serialize"),
+            );
+            combined.push_str(&worker_failure_error(0, &failure).to_string());
+        }
+        for sentinel in SENTINELS {
+            assert!(
+                !combined.contains(sentinel),
+                "content failure boundary exposed sensitive sentinel"
+            );
+        }
+        for identifier in ["9123456789", "9876543210", "9223372036854775000"] {
+            assert!(
+                !combined.contains(identifier),
+                "content failure boundary exposed an internal identifier"
+            );
+        }
+    }
+
+    #[test]
     fn worker_failure_message_retains_structured_sqlite_codes() {
         let directory = tempdir().expect("temporary SQLite directory should create");
         let database_path = directory.path().join("busy.sqlite");
@@ -2948,7 +3193,11 @@ mod tests {
         assert_eq!(payload["failure"]["operation"], "content_commit");
         let captured = CapturedLogs::default();
         tracing::subscriber::with_default(captured.subscriber(), || {
-            emit_worker_failure(2, &failure);
+            let LiveIndexError::Commit(ContentCheckpointCommitError::Content(source)) = &error
+            else {
+                panic!("expected content commit error");
+            };
+            emit_parent_content_commit_failure(2, source);
         });
         let event: serde_json::Value = serde_json::from_str(
             captured
@@ -2965,6 +3214,7 @@ mod tests {
         assert_eq!(event["sqlite_code"], expected.0);
         assert_eq!(event["sqlite_extended_code"], expected.1);
         assert_eq!(event["is_busy_or_locked"], true);
+        assert!(event.get("content_error_kind").is_none());
     }
 
     #[test]
