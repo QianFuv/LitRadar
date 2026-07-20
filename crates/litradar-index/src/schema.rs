@@ -11,7 +11,9 @@ use rusqlite::{params, Connection, OptionalExtension, Transaction, TransactionBe
 use litradar_domain::{
     ArticleAuthorDraft, ArticleDraft, IssueDraft, JournalCatalogEntry, ProviderBatch,
 };
-use litradar_provider::conformance::{validate_provider_batch, ContractViolation};
+use litradar_provider::conformance::{
+    validate_catalog_entry, validate_provider_batch, ContractViolation,
+};
 
 use crate::identity::{
     article_identity_keys, issue_id_from_draft, journal_id_from_catalog_id,
@@ -19,6 +21,10 @@ use crate::identity::{
     ArticleIdentityKey, ArticleMergeError,
 };
 const INDEX_BUSY_TIMEOUT_SECONDS: u64 = 30;
+const JOURNAL_IDENTITY_CONFLICT_MESSAGE: &str =
+    "journal identity ownership conflicts with canonical catalog";
+const LEGACY_JOURNAL_NOT_EMPTY_MESSAGE: &str =
+    "legacy journal entity owns content or durable history";
 
 /// Current provider-neutral content database schema version.
 pub const CONTENT_SCHEMA_VERSION: i64 = 5;
@@ -334,6 +340,62 @@ pub fn init_content_db(connection: &Connection) -> Result<(), ContentDatabaseErr
     validate_current_content_schema(connection)
 }
 
+/// Reconcile maintained journal identities and existing canonical metadata atomically.
+///
+/// # Arguments
+///
+/// * `connection` - Open current-version content database.
+/// * `entries` - Fully validated maintained catalog selected for one index run.
+///
+/// # Returns
+///
+/// Success after desired identities are owned by their canonical catalog IDs, proven-empty legacy
+/// journal shells are removed, and metadata projections for existing canonical journals converge.
+pub fn reconcile_catalog_identities(
+    connection: &Connection,
+    entries: &[JournalCatalogEntry],
+) -> Result<(), ContentDatabaseError> {
+    let mut desired_owners = BTreeMap::new();
+    let mut legacy_aliases = BTreeMap::new();
+    for entry in entries {
+        validate_catalog_entry(entry)?;
+        for (identity_kind, identity_value) in catalog_identity_keys(entry) {
+            register_desired_identity_owner(
+                &mut desired_owners,
+                identity_kind,
+                identity_value,
+                &entry.catalog_id,
+            )?;
+        }
+        for alias in &entry.catalog_aliases {
+            if legacy_aliases
+                .insert(alias.clone(), entry.catalog_id.clone())
+                .is_some_and(|owner| owner != entry.catalog_id)
+            {
+                return Err(journal_identity_conflict());
+            }
+        }
+    }
+
+    let transaction = Transaction::new_unchecked(connection, TransactionBehavior::Immediate)?;
+    for alias in legacy_aliases.keys() {
+        remove_empty_legacy_journal(&transaction, alias)?;
+    }
+    for ((identity_kind, identity_value), canonical_catalog_id) in desired_owners {
+        claim_journal_identity_key(
+            &transaction,
+            &identity_kind,
+            &identity_value,
+            &canonical_catalog_id,
+        )?;
+    }
+    for entry in entries {
+        refresh_existing_canonical_journal(&transaction, entry)?;
+    }
+    transaction.commit()?;
+    Ok(())
+}
+
 /// Atomically validate, identify, merge, project, and enqueue one canonical batch.
 ///
 /// # Arguments
@@ -361,6 +423,7 @@ pub fn write_content_batch(
         ));
     }
     let transaction = Transaction::new_unchecked(connection, TransactionBehavior::Immediate)?;
+    claim_catalog_identity_keys(&transaction, catalog)?;
     let (journal_id, projection_refresh) = upsert_canonical_journal(&transaction, catalog)?;
     for issue in &batch.issues {
         upsert_canonical_issue(&transaction, journal_id, issue)?;
@@ -603,6 +666,197 @@ fn validate_current_content_schema(connection: &Connection) -> Result<(), Conten
     }
     connection.execute_batch("PRAGMA foreign_keys = ON;")?;
     Ok(())
+}
+
+fn catalog_identity_keys(catalog: &JournalCatalogEntry) -> Vec<(&'static str, &str)> {
+    let mut keys = Vec::with_capacity(1 + catalog.catalog_aliases.len() + catalog.all_issns.len());
+    keys.push(("catalog_id", catalog.catalog_id.as_str()));
+    keys.extend(
+        catalog
+            .catalog_aliases
+            .iter()
+            .map(|alias| ("catalog_id", alias.as_str())),
+    );
+    keys.extend(catalog.all_issns.iter().map(|issn| ("issn", issn.as_str())));
+    keys
+}
+
+fn register_desired_identity_owner(
+    owners: &mut BTreeMap<(String, String), String>,
+    identity_kind: &str,
+    identity_value: &str,
+    canonical_catalog_id: &str,
+) -> Result<(), ContentDatabaseError> {
+    let key = (identity_kind.to_string(), identity_value.to_string());
+    if owners
+        .get(&key)
+        .is_some_and(|owner| owner != canonical_catalog_id)
+    {
+        return Err(journal_identity_conflict());
+    }
+    owners
+        .entry(key)
+        .or_insert_with(|| canonical_catalog_id.to_string());
+    Ok(())
+}
+
+fn remove_empty_legacy_journal(
+    connection: &Connection,
+    legacy_catalog_id: &str,
+) -> Result<(), ContentDatabaseError> {
+    let journal_id = connection
+        .query_row(
+            "SELECT journal_id FROM journals WHERE catalog_id = ?1",
+            [legacy_catalog_id],
+            |row| row.get::<_, i64>(0),
+        )
+        .optional()?;
+    let Some(journal_id) = journal_id else {
+        return Ok(());
+    };
+    let has_durable_state = connection.query_row(
+        "SELECT EXISTS(
+             SELECT 1 FROM issues WHERE journal_id = ?1
+             UNION ALL
+             SELECT 1 FROM articles WHERE journal_id = ?1
+             UNION ALL
+             SELECT 1 FROM article_listing WHERE journal_id = ?1
+             UNION ALL
+             SELECT 1
+             FROM article_search AS article_search
+             JOIN articles AS articles
+               ON articles.article_id = CAST(article_search.article_id AS INTEGER)
+             WHERE articles.journal_id = ?1
+             UNION ALL
+             SELECT 1 FROM article_change_events WHERE journal_id = ?1
+         )",
+        [journal_id],
+        |row| row.get::<_, bool>(0),
+    )?;
+    if has_durable_state {
+        return Err(legacy_journal_not_empty());
+    }
+    connection.execute(
+        "DELETE FROM journal_identity_keys WHERE canonical_catalog_id = ?1",
+        [legacy_catalog_id],
+    )?;
+    let deleted = connection.execute(
+        "DELETE FROM journals WHERE journal_id = ?1 AND catalog_id = ?2",
+        params![journal_id, legacy_catalog_id],
+    )?;
+    if deleted != 1 {
+        return Err(journal_identity_conflict());
+    }
+    Ok(())
+}
+
+fn claim_journal_identity_key(
+    connection: &Connection,
+    identity_kind: &str,
+    identity_value: &str,
+    canonical_catalog_id: &str,
+) -> Result<(), ContentDatabaseError> {
+    let existing_owner = connection
+        .query_row(
+            "SELECT canonical_catalog_id
+             FROM journal_identity_keys
+             WHERE identity_kind = ?1 AND identity_value = ?2",
+            params![identity_kind, identity_value],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()?;
+    match existing_owner {
+        Some(owner) if owner != canonical_catalog_id => Err(journal_identity_conflict()),
+        Some(_) => Ok(()),
+        None => {
+            connection.execute(
+                "INSERT INTO journal_identity_keys (
+                     identity_kind, identity_value, canonical_catalog_id
+                 ) VALUES (?1, ?2, ?3)",
+                params![identity_kind, identity_value, canonical_catalog_id],
+            )?;
+            Ok(())
+        }
+    }
+}
+
+fn ensure_canonical_journal_slot(
+    connection: &Connection,
+    catalog: &JournalCatalogEntry,
+) -> Result<(), ContentDatabaseError> {
+    let expected_journal_id = journal_id_from_catalog_id(&catalog.catalog_id);
+    let catalog_journal_id = connection
+        .query_row(
+            "SELECT journal_id FROM journals WHERE catalog_id = ?1",
+            [&catalog.catalog_id],
+            |row| row.get::<_, i64>(0),
+        )
+        .optional()?;
+    if catalog_journal_id.is_some_and(|journal_id| journal_id != expected_journal_id) {
+        return Err(journal_identity_conflict());
+    }
+    let slot_owner = connection
+        .query_row(
+            "SELECT catalog_id FROM journals WHERE journal_id = ?1",
+            [expected_journal_id],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()?;
+    if slot_owner.is_some_and(|owner| owner != catalog.catalog_id) {
+        return Err(journal_identity_conflict());
+    }
+    Ok(())
+}
+
+fn claim_catalog_identity_keys(
+    connection: &Connection,
+    catalog: &JournalCatalogEntry,
+) -> Result<(), ContentDatabaseError> {
+    ensure_canonical_journal_slot(connection, catalog)?;
+    for alias in &catalog.catalog_aliases {
+        let has_legacy_journal = connection.query_row(
+            "SELECT EXISTS(SELECT 1 FROM journals WHERE catalog_id = ?1)",
+            [alias],
+            |row| row.get::<_, bool>(0),
+        )?;
+        if has_legacy_journal {
+            return Err(journal_identity_conflict());
+        }
+    }
+    for (identity_kind, identity_value) in catalog_identity_keys(catalog) {
+        claim_journal_identity_key(
+            connection,
+            identity_kind,
+            identity_value,
+            &catalog.catalog_id,
+        )?;
+    }
+    Ok(())
+}
+
+fn refresh_existing_canonical_journal(
+    connection: &Connection,
+    catalog: &JournalCatalogEntry,
+) -> Result<(), ContentDatabaseError> {
+    ensure_canonical_journal_slot(connection, catalog)?;
+    let has_canonical_journal = connection.query_row(
+        "SELECT EXISTS(SELECT 1 FROM journals WHERE catalog_id = ?1)",
+        [&catalog.catalog_id],
+        |row| row.get::<_, bool>(0),
+    )?;
+    if !has_canonical_journal {
+        return Ok(());
+    }
+    let (journal_id, projection_refresh) = upsert_canonical_journal(connection, catalog)?;
+    refresh_journal_projections(connection, journal_id, catalog, projection_refresh)
+}
+
+fn journal_identity_conflict() -> ContentDatabaseError {
+    ContentDatabaseError::Contract(ContractViolation::new(JOURNAL_IDENTITY_CONFLICT_MESSAGE))
+}
+
+fn legacy_journal_not_empty() -> ContentDatabaseError {
+    ContentDatabaseError::Contract(ContractViolation::new(LEGACY_JOURNAL_NOT_EMPTY_MESSAGE))
 }
 
 fn upsert_canonical_journal(
@@ -1118,8 +1372,8 @@ mod tests {
     use rusqlite::Connection;
 
     use super::{
-        init_content_db, write_content_batch, ContentDatabaseError, ContentWriteOutcome,
-        CONTENT_SCHEMA_VERSION,
+        init_content_db, reconcile_catalog_identities, write_content_batch, ContentDatabaseError,
+        ContentWriteOutcome, CONTENT_SCHEMA_VERSION,
     };
 
     const TEST_CREATED_AT: &str = "2026-07-18T00:00:00Z";
@@ -1180,6 +1434,64 @@ mod tests {
         }
     }
 
+    fn batch_for_catalog(catalog: &JournalCatalogEntry) -> ProviderBatch {
+        let mut provider_batch = batch();
+        provider_batch.catalog_id.clone_from(&catalog.catalog_id);
+        provider_batch
+            .journal
+            .catalog_id
+            .clone_from(&catalog.catalog_id);
+        provider_batch.journal.observed_title = Some(catalog.title.clone());
+        provider_batch.journal.observed_issns = catalog.all_issns.clone();
+        for issue in &mut provider_batch.issues {
+            issue.catalog_id.clone_from(&catalog.catalog_id);
+        }
+        for article in &mut provider_batch.articles {
+            article.catalog_id.clone_from(&catalog.catalog_id);
+        }
+        provider_batch
+    }
+
+    fn merged_catalog(
+        catalog_id: &str,
+        catalog_alias: &str,
+        title: &str,
+        print_issn: &str,
+        electronic_issn: &str,
+    ) -> JournalCatalogEntry {
+        JournalCatalogEntry {
+            catalog_id: catalog_id.to_string(),
+            catalog_aliases: vec![catalog_alias.to_string()],
+            title: title.to_string(),
+            issn: Some(print_issn.to_string()),
+            eissn: Some(electronic_issn.to_string()),
+            all_issns: vec![electronic_issn.to_string(), print_issn.to_string()],
+            title_aliases: Vec::new(),
+            area: None,
+            rankings: JournalRankings::default(),
+        }
+    }
+
+    fn identity_owners(connection: &Connection) -> Vec<(String, String, String)> {
+        connection
+            .prepare(
+                "SELECT identity_kind, identity_value, canonical_catalog_id
+                 FROM journal_identity_keys
+                 ORDER BY identity_kind, identity_value",
+            )
+            .expect("journal identity query should prepare")
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
+            })
+            .expect("journal identities should query")
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .expect("journal identities should collect")
+    }
+
     fn batch_with_article_count(article_count: usize) -> ProviderBatch {
         let mut provider_batch = batch();
         let template = provider_batch.articles[0].clone();
@@ -1197,8 +1509,7 @@ mod tests {
     }
 
     fn empty_batch(catalog: &JournalCatalogEntry) -> ProviderBatch {
-        let mut provider_batch = batch();
-        provider_batch.journal.observed_title = Some(catalog.title.clone());
+        let mut provider_batch = batch_for_catalog(catalog);
         provider_batch.issues.clear();
         provider_batch.articles.clear();
         provider_batch
@@ -1329,6 +1640,445 @@ mod tests {
     }
 
     #[test]
+    fn catalog_reconciliation_converges_environment_metadata_and_projections() {
+        let connection = Connection::open_in_memory().expect("database should open");
+        init_content_db(&connection).expect("content schema should initialize");
+        let mut original = merged_catalog(
+            "issn-1472-3409",
+            "issn-0308-518x",
+            "Environment and Planning A: Economy and Space",
+            "0308-518X",
+            "1472-3409",
+        );
+        original.catalog_aliases.clear();
+        original.title = "Environment and Planning A".to_string();
+        original.title_aliases.clear();
+        original.issn = None;
+        original.all_issns = vec!["1472-3409".to_string()];
+        original.area = Some("Legacy Area".to_string());
+        write_test_batch(
+            &connection,
+            &original,
+            &batch_for_catalog(&original),
+            "english:environment:seed",
+        );
+
+        let mut merged = merged_catalog(
+            "issn-1472-3409",
+            "issn-0308-518x",
+            "Environment and Planning A: Economy and Space",
+            "0308-518X",
+            "1472-3409",
+        );
+        merged.title_aliases = vec!["Environment and Planning A".to_string()];
+        merged.area = Some("Regional, Environmental & Resource Studies".to_string());
+        reconcile_catalog_identities(&connection, std::slice::from_ref(&merged))
+            .expect("merged identity should reconcile");
+
+        assert_eq!(
+            identity_owners(&connection),
+            vec![
+                (
+                    "catalog_id".to_string(),
+                    "issn-0308-518x".to_string(),
+                    "issn-1472-3409".to_string(),
+                ),
+                (
+                    "catalog_id".to_string(),
+                    "issn-1472-3409".to_string(),
+                    "issn-1472-3409".to_string(),
+                ),
+                (
+                    "issn".to_string(),
+                    "0308-518X".to_string(),
+                    "issn-1472-3409".to_string(),
+                ),
+                (
+                    "issn".to_string(),
+                    "1472-3409".to_string(),
+                    "issn-1472-3409".to_string(),
+                ),
+            ]
+        );
+        let metadata = connection
+            .query_row(
+                "SELECT title, title_aliases_json, issns_json, issn, eissn, area
+                 FROM journals WHERE catalog_id = ?1",
+                [&merged.catalog_id],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, String>(3)?,
+                        row.get::<_, String>(4)?,
+                        row.get::<_, String>(5)?,
+                    ))
+                },
+            )
+            .expect("reconciled metadata should read");
+        assert_eq!(
+            metadata,
+            (
+                merged.title.clone(),
+                serde_json::to_string(&merged.title_aliases).expect("aliases should serialize"),
+                serde_json::to_string(&merged.all_issns).expect("ISSNs should serialize"),
+                "0308-518X".to_string(),
+                "1472-3409".to_string(),
+                "Regional, Environmental & Resource Studies".to_string(),
+            )
+        );
+        assert_projection_metadata(&connection, &merged, 1);
+    }
+
+    #[test]
+    fn empty_catalog_reconciliation_claims_all_merged_identity_keys_without_journal_shells() {
+        let connection = Connection::open_in_memory().expect("database should open");
+        init_content_db(&connection).expect("content schema should initialize");
+        connection
+            .execute(
+                "INSERT INTO journal_identity_keys (
+                     identity_kind, identity_value, canonical_catalog_id
+                 ) VALUES ('catalog_id', 'historical-journal', 'historical-journal')",
+                [],
+            )
+            .expect("unrelated historical key should seed");
+        let series_b = merged_catalog(
+            "issn-1467-9868",
+            "issn-1369-7412",
+            "Journal of the Royal Statistical Society Series B: Statistical Methodology",
+            "1369-7412",
+            "1467-9868",
+        );
+        let transportation = merged_catalog(
+            "issn-1879-2367",
+            "issn-0191-2615",
+            "Transportation Research Part B: Methodological",
+            "0191-2615",
+            "1879-2367",
+        );
+
+        reconcile_catalog_identities(&connection, &[series_b.clone(), transportation.clone()])
+            .expect("empty catalog identities should reconcile");
+
+        assert_eq!(
+            connection
+                .query_row("SELECT COUNT(*) FROM journals", [], |row| row
+                    .get::<_, i64>(0))
+                .expect("journal count should read"),
+            0
+        );
+        let owners = identity_owners(&connection);
+        assert_eq!(owners.len(), 9);
+        assert!(owners.contains(&(
+            "catalog_id".to_string(),
+            "historical-journal".to_string(),
+            "historical-journal".to_string(),
+        )));
+        for entry in [&series_b, &transportation] {
+            for identity_value in std::iter::once(&entry.catalog_id).chain(&entry.catalog_aliases) {
+                assert!(owners.contains(&(
+                    "catalog_id".to_string(),
+                    identity_value.clone(),
+                    entry.catalog_id.clone(),
+                )));
+            }
+            for identity_value in &entry.all_issns {
+                assert!(owners.contains(&(
+                    "issn".to_string(),
+                    identity_value.clone(),
+                    entry.catalog_id.clone(),
+                )));
+            }
+        }
+    }
+
+    #[test]
+    fn catalog_reconciliation_removes_only_a_proven_empty_legacy_shell() {
+        let connection = Connection::open_in_memory().expect("database should open");
+        init_content_db(&connection).expect("content schema should initialize");
+        let legacy = JournalCatalogEntry {
+            catalog_id: "issn-0308-518x".to_string(),
+            catalog_aliases: Vec::new(),
+            title: "Environment and Planning A".to_string(),
+            issn: Some("0308-518X".to_string()),
+            eissn: None,
+            all_issns: vec!["0308-518X".to_string()],
+            title_aliases: Vec::new(),
+            area: None,
+            rankings: JournalRankings::default(),
+        };
+        write_test_batch(
+            &connection,
+            &legacy,
+            &empty_batch(&legacy),
+            "english:legacy:empty",
+        );
+        let canonical = merged_catalog(
+            "issn-1472-3409",
+            "issn-0308-518x",
+            "Environment and Planning A: Economy and Space",
+            "0308-518X",
+            "1472-3409",
+        );
+
+        reconcile_catalog_identities(&connection, std::slice::from_ref(&canonical))
+            .expect("empty legacy shell should reconcile");
+
+        assert_eq!(
+            connection
+                .query_row("SELECT COUNT(*) FROM journals", [], |row| row
+                    .get::<_, i64>(0))
+                .expect("journal count should read"),
+            0
+        );
+        assert_eq!(identity_owners(&connection).len(), 4);
+        assert!(identity_owners(&connection)
+            .iter()
+            .all(|(_, _, owner)| owner == &canonical.catalog_id));
+    }
+
+    #[test]
+    fn nonempty_legacy_journal_blocks_reconciliation_atomically() {
+        let connection = Connection::open_in_memory().expect("database should open");
+        init_content_db(&connection).expect("content schema should initialize");
+        let legacy = JournalCatalogEntry {
+            catalog_id: "issn-0308-518x".to_string(),
+            catalog_aliases: Vec::new(),
+            title: "Environment and Planning A".to_string(),
+            issn: Some("0308-518X".to_string()),
+            eissn: None,
+            all_issns: vec!["0308-518X".to_string()],
+            title_aliases: Vec::new(),
+            area: None,
+            rankings: JournalRankings::default(),
+        };
+        write_test_batch(
+            &connection,
+            &legacy,
+            &batch_for_catalog(&legacy),
+            "english:legacy:content",
+        );
+        let owners_before = identity_owners(&connection);
+        let canonical = merged_catalog(
+            "issn-1472-3409",
+            "issn-0308-518x",
+            "Environment and Planning A: Economy and Space",
+            "0308-518X",
+            "1472-3409",
+        );
+
+        let error = reconcile_catalog_identities(&connection, &[canonical])
+            .expect_err("nonempty legacy journal must fail closed");
+
+        assert_eq!(
+            error.to_string(),
+            "legacy journal entity owns content or durable history"
+        );
+        assert_eq!(identity_owners(&connection), owners_before);
+        for (table, expected) in [
+            ("journals", 1),
+            ("issues", 1),
+            ("articles", 1),
+            ("article_listing", 1),
+            ("article_search", 1),
+            ("article_change_events", 1),
+        ] {
+            let count = connection
+                .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| {
+                    row.get::<_, i64>(0)
+                })
+                .expect("table count should read");
+            assert_eq!(count, expected, "failed reconciliation changed {table}");
+        }
+    }
+
+    #[test]
+    fn journal_identity_conflict_rolls_back_legacy_shell_cleanup() {
+        let connection = Connection::open_in_memory().expect("database should open");
+        init_content_db(&connection).expect("content schema should initialize");
+        let legacy = JournalCatalogEntry {
+            catalog_id: "issn-0308-518x".to_string(),
+            catalog_aliases: Vec::new(),
+            title: "Environment and Planning A".to_string(),
+            issn: Some("0308-518X".to_string()),
+            eissn: None,
+            all_issns: vec!["0308-518X".to_string()],
+            title_aliases: Vec::new(),
+            area: None,
+            rankings: JournalRankings::default(),
+        };
+        write_test_batch(
+            &connection,
+            &legacy,
+            &empty_batch(&legacy),
+            "english:legacy:empty",
+        );
+        connection
+            .execute(
+                "INSERT INTO journal_identity_keys (
+                     identity_kind, identity_value, canonical_catalog_id
+                 ) VALUES ('issn', '1472-3409', 'unrelated-journal')",
+                [],
+            )
+            .expect("conflicting owner should seed");
+        let owners_before = identity_owners(&connection);
+        let canonical = merged_catalog(
+            "issn-1472-3409",
+            "issn-0308-518x",
+            "Environment and Planning A: Economy and Space",
+            "0308-518X",
+            "1472-3409",
+        );
+
+        let error = reconcile_catalog_identities(&connection, &[canonical])
+            .expect_err("identity conflict must fail closed");
+
+        assert_eq!(
+            error.to_string(),
+            "journal identity ownership conflicts with canonical catalog"
+        );
+        assert_eq!(identity_owners(&connection), owners_before);
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT COUNT(*) FROM journals WHERE catalog_id = 'issn-0308-518x'",
+                    [],
+                    |row| row.get::<_, i64>(0),
+                )
+                .expect("legacy journal count should read"),
+            1
+        );
+    }
+
+    #[test]
+    fn write_time_journal_identity_recheck_allows_only_the_same_owner() {
+        let same_owner = Connection::open_in_memory().expect("database should open");
+        init_content_db(&same_owner).expect("content schema should initialize");
+        same_owner
+            .execute(
+                "INSERT INTO journal_identity_keys (
+                     identity_kind, identity_value, canonical_catalog_id
+                 ) VALUES ('catalog_id', 'journal-legacy', 'journal-1')",
+                [],
+            )
+            .expect("same owner alias should seed");
+        let mut aliased = catalog();
+        aliased.catalog_aliases = vec!["journal-legacy".to_string()];
+        write_content_batch(
+            &same_owner,
+            &aliased,
+            &batch_for_catalog(&aliased),
+            "catalog:journal-1:same-owner",
+            TEST_CREATED_AT,
+        )
+        .expect("same identity owner should write");
+
+        let other_owner = Connection::open_in_memory().expect("database should open");
+        init_content_db(&other_owner).expect("content schema should initialize");
+        write_test_batch(&other_owner, &catalog(), &batch(), "catalog:journal-1:seed");
+        other_owner
+            .execute(
+                "INSERT INTO journal_identity_keys (
+                     identity_kind, identity_value, canonical_catalog_id
+                 ) VALUES ('catalog_id', 'journal-legacy', 'other-journal')",
+                [],
+            )
+            .expect("other owner alias should seed");
+        let owners_before = identity_owners(&other_owner);
+        let events_before = other_owner
+            .query_row("SELECT COUNT(*) FROM article_change_events", [], |row| {
+                row.get::<_, i64>(0)
+            })
+            .expect("event count should read");
+
+        let error = write_content_batch(
+            &other_owner,
+            &aliased,
+            &batch_for_catalog(&aliased),
+            "catalog:journal-1:other-owner",
+            TEST_CREATED_AT,
+        )
+        .expect_err("other identity owner must fail closed");
+
+        assert_eq!(
+            error.to_string(),
+            "journal identity ownership conflicts with canonical catalog"
+        );
+        assert_eq!(identity_owners(&other_owner), owners_before);
+        assert_eq!(
+            other_owner
+                .query_row("SELECT COUNT(*) FROM article_change_events", [], |row| {
+                    row.get::<_, i64>(0)
+                })
+                .expect("event count should read"),
+            events_before
+        );
+    }
+
+    #[test]
+    fn cross_catalog_doi_and_pmid_conflicts_roll_back_journal_identity_claims() {
+        for identity_kind in ["doi", "pmid"] {
+            let connection = Connection::open_in_memory().expect("database should open");
+            init_content_db(&connection).expect("content schema should initialize");
+            let first_catalog = catalog();
+            let mut first_batch = batch_for_catalog(&first_catalog);
+            if identity_kind == "pmid" {
+                first_batch.articles[0].doi = None;
+                first_batch.articles[0].pmid = Some("123456".to_string());
+            }
+            write_test_batch(
+                &connection,
+                &first_catalog,
+                &first_batch,
+                &format!("catalog:journal-1:{identity_kind}:seed"),
+            );
+            let owners_before = identity_owners(&connection);
+            let mut second_catalog = catalog();
+            second_catalog.catalog_id = "journal-2".to_string();
+            second_catalog.issn = Some("2049-3630".to_string());
+            second_catalog.all_issns = vec!["2049-3630".to_string()];
+            let mut conflicting_batch = batch_for_catalog(&second_catalog);
+            if identity_kind == "pmid" {
+                conflicting_batch.articles[0].doi = None;
+                conflicting_batch.articles[0].pmid = Some("123456".to_string());
+            }
+
+            let error = write_content_batch(
+                &connection,
+                &second_catalog,
+                &conflicting_batch,
+                &format!("catalog:journal-2:{identity_kind}:conflict"),
+                TEST_CREATED_AT,
+            )
+            .expect_err("cross-catalog identifier must remain fatal");
+
+            assert!(matches!(
+                error,
+                ContentDatabaseError::Merge(crate::identity::ArticleMergeError::CatalogMismatch)
+            ));
+            assert_eq!(identity_owners(&connection), owners_before);
+            assert_eq!(
+                connection
+                    .query_row(
+                        "SELECT COUNT(*) FROM journals WHERE catalog_id = 'journal-2'",
+                        [],
+                        |row| row.get::<_, i64>(0),
+                    )
+                    .expect("second journal count should read"),
+                0
+            );
+            assert_eq!(
+                connection
+                    .query_row("SELECT COUNT(*) FROM articles", [], |row| row
+                        .get::<_, i64>(0))
+                    .expect("article count should read"),
+                1
+            );
+        }
+    }
+
+    #[test]
     fn canonical_replay_keeps_ids_rows_and_outbox_stable() {
         let connection = Connection::open_in_memory().expect("database should open");
         init_content_db(&connection).expect("content schema should initialize");
@@ -1363,6 +2113,7 @@ mod tests {
         assert_eq!(second.articles_changed, 0);
         for (table, expected) in [
             ("journals", 1),
+            ("journal_identity_keys", 2),
             ("issues", 1),
             ("articles", 1),
             ("article_identity_keys", 2),
@@ -1495,7 +2246,7 @@ mod tests {
         init_content_db(&new_connection).expect("content schema should initialize");
         assert_eq!(
             write_empty_catalog_update(&new_connection, &catalog(), "catalog:journal-1:new-empty",),
-            1
+            3
         );
         assert_projection_metadata(&new_connection, &catalog(), 0);
     }

@@ -34,6 +34,7 @@
 | 列                           | 必填 | 规则                                                                                             |
 | ---------------------------- | ---- | ------------------------------------------------------------------------------------------------ |
 | `catalog_id`                 | 是   | 3–128 个小写 ASCII 字符；允许内部的 `.`、`_`、`-`；分配后不可因标题、ISSN 或 Provider 变化而重建 |
+| `catalog_aliases`            | 否   | 以 `;` 分隔的已退役 catalog ID；不得等于当前 ID、相互重复或被其他规范期刊占用                   |
 | `title`                      | 是   | 裁剪并规范化为 Unicode NFC 的规范标题                                                            |
 | `issn`                       | 否   | 校验位正确的 `NNNN-NNNX` 印刷 ISSN                                                               |
 | `eissn`                      | 否   | 校验位正确的电子 ISSN                                                                            |
@@ -53,7 +54,7 @@
 
 ### `JournalCatalogEntry`
 
-LitRadar 传给 Provider 的维护数据：`catalog_id`、标题、ISSN 集、标题别名、领域和排名。Provider 只能读取，不能覆盖维护字段。
+LitRadar 传给 Provider 的维护数据：当前 `catalog_id`、已退役 `catalog_aliases`、标题、ISSN 集、标题别名、领域和排名。Provider 只能读取，不能覆盖维护字段；Provider batch 仍只回显当前 `catalog_id`。
 
 ### `JournalDraft`
 
@@ -106,6 +107,7 @@ Provider 对所请求期刊的观察：
 ID 由 `litradar-index` 独占生成：
 
 - `journal_id` 来自不可变 `catalog_id` 和命名空间 `journal:v1`；
+- 当前 catalog ID、全部 catalog alias 和全部 ISSN 通过 `journal_identity_keys` 归属于同一个规范 catalog ID；
 - `issue_id` 来自 journal ID 加年份/卷/期；缺失时使用日期或标题 fallback；
 - 文章依次建立 DOI、PMID、bibliographic fingerprint 三类 alias；新 ID 使用最强可用 alias，已有任一 alias 命中时复用原 ID。
 
@@ -157,10 +159,14 @@ API 用 `307 Temporary Redirect` 或文档响应返回结果，并设置 `Cache-
 
 | 路径                                  | 生命周期 | 内容                                                                       |
 | ------------------------------------- | -------- | -------------------------------------------------------------------------- |
-| `data/index/<catalog>.sqlite`         | 需要备份 | v4 规范期刊、期次、文章、identity aliases、列表投影、FTS 和文章变更 outbox |
+| `data/index/<catalog>.sqlite`         | 需要备份 | v5 规范期刊、期刊/文章 identity aliases、列表投影、FTS 和文章变更 outbox    |
 | `data/index-control/<catalog>.sqlite` | 可丢弃   | v1 Provider-scoped lease 和 opaque checkpoint                              |
 
 内容提交先完成，检查点随后提交。若检查点提交失败，重跑会重新读取已写内容并依靠 alias/upsert 收敛；不会因控制状态丢失而复制文章。删除控制库只会失去恢复进度，不会改变内容身份。
+
+每次目录运行在构造 Provider、分配 worker 或发出请求之前完成期刊身份预检。当前目录的 catalog ID、退役 catalog alias 和全部 ISSN 必须唯一归属于同一个规范 catalog ID；已有规范 journal 的标题、别名、ISSN、领域、排名及 listing/FTS 投影会在同一内容事务中收敛。即使当前 catalog ID 的 checkpoint 已是 `complete`，这一步仍会执行，随后才以零 Provider 请求恢复该期刊。空内容库只登记身份键，不创建 journal 壳。
+
+旧 catalog alias 若在任意 Provider namespace 下仍有 journal 或 year checkpoint，运行固定失败；系统不会把 opaque checkpoint 搬到当前 catalog ID。旧 alias journal 只有在不存在 issue、article、listing 和 outbox 历史时才可由事务清理。非空旧实体、身份所有权冲突和确定性 ID 冲突都在 Provider 请求前原子失败；内容 batch 写入时还会复核所有权。
 
 内容库禁止 Provider 名称、路由、检查点、lease、运行统计、上游 ID 和 URL。控制库禁止规范文章内容。备份明确排除 `data/index-control`。
 
@@ -194,17 +200,20 @@ cargo clippy -p litradar-provider -p litradar-sources -p litradar-index --all-ta
 5. 备份内容库；控制库无需迁移。
 6. 运行索引并检查共享 alias 的 ID/count 对比。
 
-不需要替换或迁移 v4 内容库。不要把旧 Provider checkpoint 复制给新 Provider；两个 namespace 可同时存在于可丢弃控制库。详情、摘要和全文 Provider 顺序独立配置，不必跟随索引 Provider 一起切换。
+不需要替换 v5 内容库；精确 v4 内容库会原子迁移到 v5。不要把旧 Provider checkpoint 复制给新 Provider；两个 namespace 可同时存在于可丢弃控制库。详情、摘要和全文 Provider 顺序独立配置，不必跟随索引 Provider 一起切换。
 
-## 破坏性 v4 切换
+## v5 升级与旧版本重建
 
-v0 非空库及 v1–v3 索引库不会迁移到 v4。应用只接受：
+应用只接受：
 
 - 不存在的新文件；
 - 完全空的 v0 SQLite；
-- schema 精确匹配的 v4 内容库。
+- schema 精确匹配、可在一个事务内迁移的 v4 内容库；
+- schema 精确匹配的 v5 内容库。
 
-在执行任何移动或删除前，先确认以下影响：旧内容不会导入 v4；重建会使用新的规范身份空间；旧 favorite/tracking 中的 article ID 可能变成陈旧引用。应用不会自动删除、重命名或改写旧库，也不会迁移或清理这些引用。
+v4 到 v5 只增加 `journal_identity_keys` 及其索引，并从已有 journal 行播种当前 catalog ID 和 ISSN 所有权，不重建或重映射内容 ID。v0 非空库及 v1–v3 索引库不会迁移到 v5。
+
+只有需要重建 v1–v3 时，才在执行任何移动或删除前确认以下影响：旧内容不会导入 v5；重建会使用新的规范身份空间；旧 favorite/tracking 中的 article ID 可能变成陈旧引用。应用不会自动删除、重命名或改写旧库，也不会迁移或清理这些引用。
 
 遇到 rebuild-required 错误时使用以下顺序：
 
@@ -213,5 +222,5 @@ v0 非空库及 v1–v3 索引库不会迁移到 v4。应用只接受：
 3. 记录错误中给出的确切文件路径和可用于重建后比较的期刊/文章数量。
 4. 优先把该确切旧索引文件移动到备份位置；确认不再需要回退时才删除。不要使用目录级通配删除。
 5. 从未改名的维护目录重新运行索引。
-6. 验证 v4 schema、目录期刊数、文章数和抽样内容，再恢复服务。
+6. 验证 v5 schema、目录期刊数、文章数和抽样内容，再恢复服务。
 7. 明确决定保留、导出或清理无法解析的旧 favorite/tracking 引用；LitRadar 不会代替运维人员作此决定。

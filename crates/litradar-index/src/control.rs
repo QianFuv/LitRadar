@@ -309,6 +309,46 @@ pub fn read_checkpoint(
         .optional()?)
 }
 
+/// Check whether retired catalog aliases own any journal or year checkpoint.
+///
+/// # Arguments
+///
+/// * `connection` - Open control database connection.
+/// * `catalog_name` - Stable maintained catalog stem.
+/// * `catalog_aliases` - Retired catalog identifiers claimed by canonical entries.
+///
+/// # Returns
+///
+/// Whether any provider namespace retains checkpoint state for an alias.
+pub fn has_catalog_alias_checkpoints(
+    connection: &Connection,
+    catalog_name: &str,
+    catalog_aliases: &[String],
+) -> Result<bool, ControlDatabaseError> {
+    for alias in catalog_aliases {
+        let has_checkpoint = connection.query_row(
+            "SELECT EXISTS(
+                 SELECT 1
+                 FROM provider_checkpoints
+                 WHERE catalog_name = ?1
+                   AND (
+                       (scope_kind = 'journal' AND scope_key = ?2)
+                       OR (
+                           scope_kind = 'year'
+                           AND substr(scope_key, 1, length(?2) + 1) = ?2 || ':'
+                       )
+                   )
+             )",
+            params![catalog_name, alias],
+            |row| row.get::<_, bool>(0),
+        )?;
+        if has_checkpoint {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 /// Commit one opaque provider checkpoint after a content transaction succeeds.
 ///
 /// # Arguments
@@ -493,9 +533,9 @@ mod tests {
     use crate::schema::{init_content_db, open_content_db, write_content_batch};
 
     use super::{
-        acquire_lease, commit_content_then_checkpoint, heartbeat_lease, open_control_db,
-        read_checkpoint, release_lease, write_checkpoint, CheckpointScope,
-        ContentCheckpointCommitError, ControlDatabaseError,
+        acquire_lease, commit_content_then_checkpoint, has_catalog_alias_checkpoints,
+        heartbeat_lease, open_control_db, read_checkpoint, release_lease, write_checkpoint,
+        CheckpointScope, ContentCheckpointCommitError, ControlDatabaseError,
     };
 
     #[test]
@@ -682,6 +722,45 @@ mod tests {
                 .expect("checkpoint should read")
                 .as_deref(),
             Some("page-2")
+        );
+    }
+
+    #[test]
+    fn legacy_alias_checkpoint_detection_covers_every_provider_and_scope() {
+        let connection = rusqlite::Connection::open_in_memory().expect("control database opens");
+        super::init_control_db(&connection).expect("control schema should initialize");
+        let aliases = vec!["legacy-journal".to_string()];
+        write_checkpoint(
+            &connection,
+            "english_journals",
+            "provider-a",
+            &CheckpointScope::Journal {
+                catalog_id: "canonical-journal".to_string(),
+            },
+            "complete",
+            "2026-07-20T00:00:00Z",
+        )
+        .expect("canonical checkpoint should write");
+        assert!(
+            !has_catalog_alias_checkpoints(&connection, "english_journals", &aliases)
+                .expect("canonical checkpoint should not block an alias")
+        );
+
+        write_checkpoint(
+            &connection,
+            "english_journals",
+            "provider-b",
+            &CheckpointScope::Year {
+                catalog_id: aliases[0].clone(),
+                year: 2025,
+            },
+            "cursor",
+            "2026-07-20T00:00:00Z",
+        )
+        .expect("legacy year checkpoint should write");
+        assert!(
+            has_catalog_alias_checkpoints(&connection, "english_journals", &aliases)
+                .expect("legacy checkpoint should be detected")
         );
     }
 

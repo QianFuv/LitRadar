@@ -26,13 +26,14 @@ use crate::changes::{
     discard_content_change_events, write_content_change_manifest, ChangeWriteError,
 };
 use crate::control::{
-    acquire_lease, commit_content_then_checkpoint, heartbeat_lease, open_control_db,
-    read_checkpoint, release_lease, CheckpointScope, ContentCheckpointCommitError,
+    acquire_lease, commit_content_then_checkpoint, has_catalog_alias_checkpoints, heartbeat_lease,
+    open_control_db, read_checkpoint, release_lease, CheckpointScope, ContentCheckpointCommitError,
     ControlDatabaseError,
 };
 use crate::identity::{ArticleIdentityError, ArticleMergeError};
 use crate::schema::{
-    open_content_db, optimize_content_db, write_content_batch, ContentDatabaseError,
+    open_content_db, optimize_content_db, reconcile_catalog_identities, write_content_batch,
+    ContentDatabaseError,
 };
 use crate::stats::IndexRunMetrics;
 use crate::transforms::{read_catalog_csv, CatalogContractError};
@@ -47,6 +48,7 @@ const LIVE_INDEX_HEARTBEAT_INTERVAL_SECONDS: u64 = 30;
 const MAX_PROVIDER_PAGES_PER_JOURNAL: usize = 100_000;
 const SCHOLARLY_MAX_PROCESS_COUNT: usize = 3;
 const WORKER_PROTOCOL_FAILURE_MESSAGE: &str = "worker protocol operation failed";
+const LEGACY_ALIAS_CHECKPOINT_MESSAGE: &str = "legacy catalog alias has provider checkpoint state";
 
 /// Live index run configuration.
 #[derive(Debug, Clone)]
@@ -772,6 +774,12 @@ fn run_catalog(
             });
         }
     };
+    if let Err(error) =
+        prepare_catalog_identities(&content, &control, &content_path, &catalog_name, &entries)
+    {
+        let _ = release_lease(&control, &catalog_name, &provider_name, &run_id);
+        return Err(error);
+    }
     let writer_context = ParentWriterContext {
         catalog_name: catalog_name.clone(),
         provider_name: provider_name.clone(),
@@ -897,6 +905,32 @@ fn run_catalog(
         source_attempt_count: metrics.pages_committed,
         manifest_path: manifest_path.map(|path| path.display().to_string()),
         notify_exit_code,
+    })
+}
+
+fn prepare_catalog_identities(
+    content: &Connection,
+    control: &Connection,
+    content_path: &Path,
+    catalog_name: &str,
+    entries: &[JournalCatalogEntry],
+) -> Result<(), LiveIndexError> {
+    let catalog_aliases = entries
+        .iter()
+        .flat_map(|entry| entry.catalog_aliases.iter().cloned())
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect::<Vec<_>>();
+    if has_catalog_alias_checkpoints(control, catalog_name, &catalog_aliases)? {
+        return Err(LiveIndexError::InvalidConfig(
+            LEGACY_ALIAS_CHECKPOINT_MESSAGE.to_string(),
+        ));
+    }
+    reconcile_catalog_identities(content, entries).map_err(|source| {
+        LiveIndexError::ContentDatabase {
+            path: content_path.to_path_buf(),
+            source,
+        }
     })
 }
 
@@ -2052,12 +2086,12 @@ mod tests {
     use super::{
         emit_parent_content_commit_failure, emit_worker_failure,
         fetch_worker_assignments_with_provider, index_entries_with_provider,
-        prepare_worker_requests, run_live_index, run_live_index_worker_with_io,
-        run_worker_processes_with_launcher, validate_live_config, worker_failure_error,
-        ContentCommitErrorKind, DirectIndexRequest, LaunchedWorkerProcess, LeaseHeartbeat,
-        LiveIndexConfig, LiveIndexError, LiveIndexWorkerFailure, LiveIndexWorkerFailureClass,
-        LiveIndexWorkerOperation, LiveIndexWorkerRequest, LiveRunTime, ParentWriterContext,
-        StoredCheckpoint, OPENALEX_MAX_WORKERS_PER_PROCESS,
+        prepare_catalog_identities, prepare_worker_requests, run_live_index,
+        run_live_index_worker_with_io, run_worker_processes_with_launcher, validate_live_config,
+        worker_failure_error, ContentCommitErrorKind, DirectIndexRequest, LaunchedWorkerProcess,
+        LeaseHeartbeat, LiveIndexConfig, LiveIndexError, LiveIndexWorkerFailure,
+        LiveIndexWorkerFailureClass, LiveIndexWorkerOperation, LiveIndexWorkerRequest, LiveRunTime,
+        ParentWriterContext, StoredCheckpoint, OPENALEX_MAX_WORKERS_PER_PROCESS,
     };
     use crate::control::{
         acquire_lease, commit_content_then_checkpoint, open_control_db, read_checkpoint,
@@ -2193,6 +2227,45 @@ mod tests {
         }
     }
 
+    fn environment_catalog() -> JournalCatalogEntry {
+        JournalCatalogEntry {
+            catalog_id: "issn-1472-3409".to_string(),
+            catalog_aliases: vec!["issn-0308-518x".to_string()],
+            title: "Environment and Planning A: Economy and Space".to_string(),
+            issn: Some("0308-518X".to_string()),
+            eissn: Some("1472-3409".to_string()),
+            all_issns: vec!["1472-3409".to_string(), "0308-518X".to_string()],
+            title_aliases: vec!["Environment and Planning A".to_string()],
+            area: Some("Regional, Environmental & Resource Studies".to_string()),
+            rankings: JournalRankings::default(),
+        }
+    }
+
+    fn legacy_environment_catalog() -> JournalCatalogEntry {
+        JournalCatalogEntry {
+            catalog_id: "issn-0308-518x".to_string(),
+            catalog_aliases: Vec::new(),
+            title: "Environment and Planning A".to_string(),
+            issn: Some("0308-518X".to_string()),
+            eissn: None,
+            all_issns: vec!["0308-518X".to_string()],
+            title_aliases: Vec::new(),
+            area: Some("Legacy Area".to_string()),
+            rankings: JournalRankings::default(),
+        }
+    }
+
+    fn canonical_batch_for_catalog(catalog: &JournalCatalogEntry) -> ProviderBatch {
+        let mut batch = canonical_batch(catalog);
+        for issue in &mut batch.issues {
+            issue.catalog_id.clone_from(&catalog.catalog_id);
+        }
+        for article in &mut batch.articles {
+            article.catalog_id.clone_from(&catalog.catalog_id);
+        }
+        batch
+    }
+
     fn canonical_batch(catalog: &JournalCatalogEntry) -> ProviderBatch {
         ProviderBatch {
             catalog_id: catalog.catalog_id.clone(),
@@ -2246,6 +2319,227 @@ mod tests {
             update: false,
             entries: vec![catalog("journal-1")],
         }
+    }
+
+    #[test]
+    fn complete_checkpoint_reconciles_catalog_identity_without_provider_fetch() {
+        let directory = tempdir().expect("temporary directory should create");
+        let content_path = directory.path().join("content.sqlite");
+        let control_path = directory.path().join("control.sqlite");
+        let content = open_content_db(&content_path).expect("content should open");
+        let control = open_control_db(&control_path).expect("control should open");
+        let mut original = environment_catalog();
+        original.catalog_aliases.clear();
+        original.title = "Environment and Planning A".to_string();
+        original.title_aliases.clear();
+        original.issn = None;
+        original.all_issns = vec!["1472-3409".to_string()];
+        original.area = Some("Legacy Area".to_string());
+        write_content_batch(
+            &content,
+            &original,
+            &canonical_batch_for_catalog(&original),
+            "english:environment:seed",
+            "2026-07-20T00:00:00Z",
+        )
+        .expect("original canonical content should write");
+        let request = DirectIndexRequest {
+            catalog_name: "english_journals".to_string(),
+            provider_name: "provider-a".to_string(),
+            run_id: "run-complete-reconcile".to_string(),
+            timestamp: "2026-07-20T00:00:00Z".to_string(),
+            worker_id: 0,
+            resume: true,
+            update: false,
+            entries: vec![environment_catalog()],
+        };
+        write_checkpoint(
+            &control,
+            &request.catalog_name,
+            &request.provider_name,
+            &CheckpointScope::Journal {
+                catalog_id: request.entries[0].catalog_id.clone(),
+            },
+            &serde_json::to_string(&StoredCheckpoint::Complete)
+                .expect("complete checkpoint should serialize"),
+            &request.timestamp,
+        )
+        .expect("complete checkpoint should write");
+        acquire_lease(
+            &control,
+            &request.catalog_name,
+            &request.provider_name,
+            &request.run_id,
+            LiveRunTime::now().epoch_seconds,
+        )
+        .expect("lease should acquire");
+
+        prepare_catalog_identities(
+            &content,
+            &control,
+            &content_path,
+            &request.catalog_name,
+            &request.entries,
+        )
+        .expect("catalog identity should reconcile before resume");
+        let provider = StaticProvider::new();
+        let metrics = index_entries_with_provider(&content, &control, &provider, &request)
+            .expect("complete checkpoint should resume");
+
+        assert_eq!(metrics.journals_resumed, 1);
+        assert_eq!(metrics.pages_committed, 0);
+        assert_eq!(*provider.calls.lock().expect("call count should lock"), 0);
+        let reconciled = content
+            .query_row(
+                "SELECT
+                     (SELECT COUNT(*) FROM journal_identity_keys
+                      WHERE canonical_catalog_id = 'issn-1472-3409'),
+                     (SELECT title FROM journals WHERE catalog_id = 'issn-1472-3409'),
+                     (SELECT area FROM article_listing),
+                     (SELECT journal_title FROM article_search)",
+                [],
+                |row| {
+                    Ok((
+                        row.get::<_, i64>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, String>(3)?,
+                    ))
+                },
+            )
+            .expect("reconciled state should read");
+        assert_eq!(
+            reconciled,
+            (
+                4,
+                "Environment and Planning A: Economy and Space".to_string(),
+                "Regional, Environmental & Resource Studies".to_string(),
+                "Environment and Planning A: Economy and Space".to_string(),
+            )
+        );
+    }
+
+    #[test]
+    fn legacy_alias_checkpoint_blocks_content_reconciliation_across_provider_namespaces() {
+        let directory = tempdir().expect("temporary directory should create");
+        let content_path = directory.path().join("content.sqlite");
+        let control_path = directory.path().join("control.sqlite");
+        let content = open_content_db(&content_path).expect("content should open");
+        let control = open_control_db(&control_path).expect("control should open");
+        let mut original = environment_catalog();
+        original.catalog_aliases.clear();
+        original.title = "Environment and Planning A".to_string();
+        original.title_aliases.clear();
+        original.issn = None;
+        original.all_issns = vec!["1472-3409".to_string()];
+        write_content_batch(
+            &content,
+            &original,
+            &canonical_batch_for_catalog(&original),
+            "english:environment:seed",
+            "2026-07-20T00:00:00Z",
+        )
+        .expect("original canonical content should write");
+        write_checkpoint(
+            &control,
+            "english_journals",
+            "provider-b",
+            &CheckpointScope::Journal {
+                catalog_id: "issn-0308-518x".to_string(),
+            },
+            "legacy-cursor",
+            "2026-07-20T00:00:00Z",
+        )
+        .expect("legacy checkpoint should write");
+        let owners_before = content
+            .query_row("SELECT COUNT(*) FROM journal_identity_keys", [], |row| {
+                row.get::<_, i64>(0)
+            })
+            .expect("identity count should read");
+        let provider = StaticProvider::new();
+
+        let error = prepare_catalog_identities(
+            &content,
+            &control,
+            &content_path,
+            "english_journals",
+            &[environment_catalog()],
+        )
+        .expect_err("legacy checkpoint must fail closed");
+
+        let LiveIndexError::InvalidConfig(message) = error else {
+            panic!("legacy checkpoint returned unexpected error: {error:?}");
+        };
+        assert_eq!(
+            message,
+            "legacy catalog alias has provider checkpoint state"
+        );
+        assert_eq!(*provider.calls.lock().expect("call count should lock"), 0);
+        assert_eq!(
+            content
+                .query_row("SELECT COUNT(*) FROM journal_identity_keys", [], |row| {
+                    row.get::<_, i64>(0)
+                })
+                .expect("identity count should read"),
+            owners_before
+        );
+        assert_eq!(
+            content
+                .query_row(
+                    "SELECT title FROM journals WHERE catalog_id = 'issn-1472-3409'",
+                    [],
+                    |row| row.get::<_, String>(0),
+                )
+                .expect("journal title should read"),
+            "Environment and Planning A"
+        );
+    }
+
+    #[test]
+    fn nonempty_legacy_journal_blocks_before_provider_fetch() {
+        let directory = tempdir().expect("temporary directory should create");
+        let content_path = directory.path().join("content.sqlite");
+        let control_path = directory.path().join("control.sqlite");
+        let content = open_content_db(&content_path).expect("content should open");
+        let control = open_control_db(&control_path).expect("control should open");
+        let legacy = legacy_environment_catalog();
+        write_content_batch(
+            &content,
+            &legacy,
+            &canonical_batch_for_catalog(&legacy),
+            "english:legacy:seed",
+            "2026-07-20T00:00:00Z",
+        )
+        .expect("legacy content should write");
+        let provider = StaticProvider::new();
+
+        let error = prepare_catalog_identities(
+            &content,
+            &control,
+            &content_path,
+            "english_journals",
+            &[environment_catalog()],
+        )
+        .expect_err("nonempty legacy journal must fail closed");
+
+        let LiveIndexError::ContentDatabase { source, .. } = error else {
+            panic!("nonempty legacy journal returned unexpected error: {error:?}");
+        };
+        assert_eq!(
+            source.to_string(),
+            "legacy journal entity owns content or durable history"
+        );
+        assert_eq!(*provider.calls.lock().expect("call count should lock"), 0);
+        assert_eq!(
+            content
+                .query_row(
+                    "SELECT COUNT(*) FROM journals WHERE catalog_id = 'issn-0308-518x'",
+                    [],
+                    |row| row.get::<_, i64>(0),
+                )
+                .expect("legacy journal count should read"),
+            1
+        );
     }
 
     fn fetch_worker_request(provider_name: &str, run_id: &str) -> LiveIndexWorkerRequest {
