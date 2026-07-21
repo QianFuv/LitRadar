@@ -20,7 +20,8 @@ use tower::ServiceExt;
 use crate::{build_router, ApiConfig};
 
 const TEST_HOST: &str = "127.0.0.1";
-const TEST_PASSWORD: &str = "fixture-password";
+/// Password used by deterministic API authentication fixtures.
+pub(crate) const TEST_PASSWORD: &str = "fixture-password";
 
 /// Deterministic backend fixture rooted in a temporary project directory.
 pub(crate) struct TestBackend {
@@ -158,6 +159,27 @@ impl TestBackend {
             article_id: 9001,
         }
     }
+
+    /// Write one deterministic weekly-update manifest for an index fixture.
+    ///
+    /// # Arguments
+    ///
+    /// * `database` - Index fixture referenced by the manifest.
+    pub(crate) fn create_weekly_manifest(&self, database: &FixtureIndexDatabase) {
+        let push_state_dir = self.project_root().join("data").join("push_state");
+        fs::create_dir_all(&push_state_dir).expect("push state dir should be created");
+        let payload = serde_json::json!({
+            "db_name": database.db_name,
+            "generated_at": "2024-01-22T00:00:00Z",
+            "run_id": "scenario-run",
+            "notifiable_article_ids": [database.article_id]
+        });
+        fs::write(
+            push_state_dir.join("scenario.changes.json"),
+            serde_json::to_vec_pretty(&payload).expect("weekly manifest should serialize"),
+        )
+        .expect("weekly manifest should write");
+    }
 }
 
 /// Authenticated API user fixture.
@@ -275,6 +297,41 @@ pub(crate) async fn json_request(
         headers,
         payload,
     }
+}
+
+/// Replace a JSON value selected by a pointer for deterministic comparison.
+///
+/// # Arguments
+///
+/// * `payload` - JSON payload to normalize.
+/// * `pointer` - RFC 6901 pointer selecting the value.
+/// * `replacement` - Stable replacement value.
+pub(crate) fn replace_json_pointer(payload: &mut Value, pointer: &str, replacement: Value) {
+    let selected = payload
+        .pointer_mut(pointer)
+        .unwrap_or_else(|| panic!("scenario payload should contain pointer {pointer}"));
+    *selected = replacement;
+}
+
+/// Assert that a JSON payload matches a checked-in API scenario.
+///
+/// # Arguments
+///
+/// * `scenario_name` - Scenario filename under `testdata/scenarios/api`.
+/// * `payload` - Normalized real route response.
+pub(crate) fn assert_api_scenario(scenario_name: &str, payload: &Value) {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .join("testdata")
+        .join("scenarios")
+        .join("api")
+        .join(scenario_name);
+    let expected: Value = serde_json::from_slice(
+        &fs::read(&path)
+            .unwrap_or_else(|error| panic!("scenario {} should read: {error}", path.display())),
+    )
+    .unwrap_or_else(|error| panic!("scenario {} should parse: {error}", path.display()));
+    assert_eq!(*payload, expected, "scenario {} drifted", path.display());
 }
 
 fn create_fixture_index_database(path: &Path) {

@@ -1,0 +1,38 @@
+{
+  "generated_at": "2024-01-22T00:00:00Z",
+  "window_start": "2024-01-15T00:00:00Z",
+  "window_end": "2024-01-22T00:00:00Z",
+  "databases": [
+    {
+      "db_name": "scenario.sqlite",
+      "run_id": "scenario-run",
+      "generated_at": "2024-01-22T00:00:00Z",
+      "new_article_count": 1,
+      "journals": [
+        {
+          "journal_id": "101",
+          "journal_title": "Fixture Journal",
+          "new_article_count": 1,
+          "articles": [
+            {
+              "article_id": "9001",
+              "journal_id": "101",
+              "issue_id": 202401,
+              "title": "Fixture Article",
+              "publication_year": 2024,
+              "date": "2024-01-16",
+              "authors": ["Ada Lovelace", "Grace Hopper"],
+              "abstract": "Fixture abstract for route and storage tests.",
+              "doi": "10.1234/fixture",
+              "journal_title": "Fixture Journal",
+              "open_access": true,
+              "in_press": false,
+              "volume": "1",
+              "number": "1"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

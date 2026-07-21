@@ -12,15 +12,27 @@ import {
   parseRuntimeSettingList,
   parseSchedulerStatus,
 } from '@/lib/api-contract';
+import {
+  createAdminErrorScenarioHandlers,
+  createAuthScenarioHandlers,
+  createDiscoveryScenarioHandlers,
+  createFavoriteScenarioHandlers,
+  createTrackingScenarioHandlers,
+} from '@/tests/mocks/handlers';
+import {
+  createArticlePageScenario,
+  createErrorScenario,
+  createLoginScenario,
+  createMaskedNotificationSettingsScenario,
+  createWeeklyUpdatesScenario,
+} from '@/tests/mocks/scenarios';
+import { installScenarioHandlers } from '@/tests/mocks/server';
 
 /**
  * Verify valid generated auth payloads are accepted without coercion.
  */
 function acceptsValidLoginContract(): void {
-  const payload = {
-    expires_at: 42,
-    user: { id: 7, username: 'contract_user', is_admin: true },
-  };
+  const payload = createLoginScenario();
 
   expect(parseLoginResponse(payload)).toBe(payload);
 }
@@ -114,34 +126,7 @@ function acceptsSchedulerStatusContract(): void {
  * Verify notification responses expose only fixed masks and configured flags.
  */
 function acceptsMaskedNotificationContract(): void {
-  const payload = {
-    id: 1,
-    user_id: 7,
-    keywords: [],
-    directions: [],
-    selected_databases: [],
-    delivery_method: 'pushplus',
-    has_pushplus_token: true,
-    pushplus_token_mask: '••••',
-    pushplus_template: 'markdown',
-    pushplus_topic: '',
-    pushplus_channel: 'wechat',
-    sync_to_tracking_folder: false,
-    ai_base_url: 'https://ai.example/v1',
-    has_ai_api_key: true,
-    ai_api_key_mask: '••••',
-    ai_model: 'fixture-model',
-    ai_system_prompt: '',
-    ai_backup_base_url: '',
-    has_ai_backup_api_key: false,
-    ai_backup_api_key_mask: '',
-    ai_backup_model: '',
-    ai_backup_system_prompt: '',
-    ai_retry_attempts: 3,
-    enabled: true,
-    created_at: 1,
-    updated_at: 2,
-  };
+  const payload = createMaskedNotificationSettingsScenario();
 
   expect(parseNotificationSettings(payload)).toBe(payload);
   expect(() =>
@@ -150,9 +135,41 @@ function acceptsMaskedNotificationContract(): void {
   expect(JSON.stringify(parseNotificationSettings(payload))).not.toContain('plaintext-secret');
 }
 
+/**
+ * Verify domain bundles serve all shared scenarios only after explicit installation.
+ */
+async function servesExplicitSharedScenarioHandlers(): Promise<void> {
+  installScenarioHandlers(
+    ...createAuthScenarioHandlers(),
+    ...createDiscoveryScenarioHandlers(),
+    ...createFavoriteScenarioHandlers(),
+    ...createTrackingScenarioHandlers(),
+    ...createAdminErrorScenarioHandlers(),
+  );
+
+  const loginResponse = await fetch('http://localhost/api/auth/login', { method: 'POST' });
+  const articlesResponse = await fetch('http://localhost/api/articles');
+  const weeklyResponse = await fetch('http://localhost/api/weekly-updates');
+  const favoritesResponse = await fetch('http://localhost/api/favorites/folders');
+  const notificationResponse = await fetch('http://localhost/api/tracking/notification-settings');
+  const errorResponse = await fetch('http://localhost/api/admin/users');
+
+  expect(await loginResponse.json()).toEqual(createLoginScenario());
+  expect(await articlesResponse.json()).toEqual(createArticlePageScenario());
+  expect(await weeklyResponse.json()).toEqual(createWeeklyUpdatesScenario());
+  expect(await favoritesResponse.json()).toEqual([]);
+  expect(await notificationResponse.json()).toEqual(createMaskedNotificationSettingsScenario());
+  expect(errorResponse.status).toBe(401);
+  expect(await errorResponse.json()).toEqual(createErrorScenario());
+}
+
 describe('generated API runtime contracts', () => {
   test('accepts a valid login response', acceptsValidLoginContract);
   test('accepts durable scheduler status metadata', acceptsSchedulerStatusContract);
   test('accepts only the masked notification response contract', acceptsMaskedNotificationContract);
   test('rejects malformed control-plane responses', rejectsMalformedControlPlaneContracts);
+  test(
+    'serves explicitly installed shared scenario handlers',
+    servesExplicitSharedScenarioHandlers,
+  );
 });

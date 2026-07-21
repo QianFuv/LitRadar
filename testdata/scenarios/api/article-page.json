@@ -1,0 +1,31 @@
+{
+  "items": [
+    {
+      "article_id": "9001",
+      "journal_id": "101",
+      "issue_id": 202401,
+      "title": "Fixture Article",
+      "publication_year": 2024,
+      "date": "2024-01-16",
+      "authors": ["Ada Lovelace", "Grace Hopper"],
+      "start_page": "1",
+      "end_page": "9",
+      "abstract": "Fixture abstract for route and storage tests.",
+      "doi": "10.1234/fixture",
+      "pmid": "123456",
+      "in_press": false,
+      "open_access": true,
+      "retraction_dois": ["10.1234/retraction-a", "10.1234/retraction-b"],
+      "journal_title": "Fixture Journal",
+      "volume": "1",
+      "number": "1"
+    }
+  ],
+  "page": {
+    "total": 1,
+    "limit": 10,
+    "offset": 0,
+    "next_cursor": null,
+    "has_more": false
+  }
+}

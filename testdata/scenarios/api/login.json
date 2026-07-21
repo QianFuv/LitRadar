@@ -1,0 +1,8 @@
+{
+  "expires_at": 0,
+  "user": {
+    "id": 1,
+    "username": "scenario_admin",
+    "is_admin": true
+  }
+}

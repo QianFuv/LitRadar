@@ -484,6 +484,8 @@ fn current_unix_time() -> Result<f64, Box<dyn Error>> {
 
 #[cfg(test)]
 mod tests {
+    mod contract_scenarios;
+
     use std::collections::HashMap;
     use std::fs;
     use std::path::{Path, PathBuf};
