@@ -18,6 +18,7 @@ WORKDIR /app
 
 COPY --from=frontend-deps /app/node_modules node_modules/
 COPY app/ ./
+COPY testdata /testdata
 
 RUN corepack enable pnpm && pnpm build
 RUN apk add --no-cache gzip \

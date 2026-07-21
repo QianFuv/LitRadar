@@ -8,17 +8,21 @@ on:
     paths:
       - "Cargo.toml"
       - "Cargo.lock"
+      - ".config/nextest.toml"
       - "crates/**"
       - "libs/**"
       - "data/meta/**"
+      - "scripts/test.mjs"
       - ".github/workflows/backend.yaml"
   pull_request:
     paths:
       - "Cargo.toml"
       - "Cargo.lock"
+      - ".config/nextest.toml"
       - "crates/**"
       - "libs/**"
       - "data/meta/**"
+      - "scripts/test.mjs"
       - ".github/workflows/backend.yaml"
 
 concurrency:
@@ -27,6 +31,9 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
+
+permissions:
+  contents: read
 
 jobs:
   backend:
@@ -42,17 +49,102 @@ jobs:
       - name: Install cargo-sort
         run: cargo install cargo-sort --version 2.1.4 --locked
 
-      - name: Check formatting
-        run: cargo fmt --all -- --check
+      - name: Install pinned nextest
+        uses: taiki-e/install-action@v2
+        with:
+          tool: nextest@0.9.137
 
-      - name: Check dependency ordering
-        run: cargo sort --workspace --check
+      - name: Verify nextest version
+        run: |
+          version="$(cargo nextest --version)"
+          echo "$version"
+          printf '%s\n' "$version" | grep -q '^cargo-nextest 0\.9\.137 '
 
-      - name: Run Clippy
-        run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+      - name: Check Rust static quality
+        id: rust_static
+        run: |
+          started_at="$(date +%s)"
+          set +e
+          cargo fmt --all -- --check \
+            && cargo sort --workspace --check \
+            && cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+          status="$?"
+          set -e
+          echo "duration_seconds=$(( $(date +%s) - started_at ))" >> "$GITHUB_OUTPUT"
+          exit "$status"
 
-      - name: Test workspace
-        run: cargo test --workspace --locked
+      - name: Test workspace with nextest
+        id: nextest
+        run: |
+          started_at="$(date +%s)"
+          set +e
+          cargo nextest run --workspace --locked --profile ci
+          status="$?"
+          set -e
+          echo "duration_seconds=$(( $(date +%s) - started_at ))" >> "$GITHUB_OUTPUT"
+          exit "$status"
+
+      - name: Test Rust documentation
+        id: doctests
+        run: |
+          started_at="$(date +%s)"
+          set +e
+          cargo test --workspace --doc --locked
+          status="$?"
+          set -e
+          echo "duration_seconds=$(( $(date +%s) - started_at ))" >> "$GITHUB_OUTPUT"
+          exit "$status"
 
       - name: Build workspace
-        run: cargo build --workspace --all-targets --locked
+        id: build
+        run: |
+          started_at="$(date +%s)"
+          set +e
+          cargo build --workspace --all-targets --locked
+          status="$?"
+          set -e
+          echo "duration_seconds=$(( $(date +%s) - started_at ))" >> "$GITHUB_OUTPUT"
+          exit "$status"
+
+      - name: Upload backend diagnostics
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: backend-test-diagnostics
+          path: target/nextest/ci/junit.xml
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Write backend summary
+        if: always()
+        env:
+          BUILD_DURATION: ${{ steps.build.outputs.duration_seconds }}
+          BUILD_RESULT: ${{ steps.build.outcome }}
+          DOCTEST_DURATION: ${{ steps.doctests.outputs.duration_seconds }}
+          DOCTEST_RESULT: ${{ steps.doctests.outcome }}
+          NEXTEST_DURATION: ${{ steps.nextest.outputs.duration_seconds }}
+          NEXTEST_RESULT: ${{ steps.nextest.outcome }}
+          STATIC_DURATION: ${{ steps.rust_static.outputs.duration_seconds }}
+          STATIC_RESULT: ${{ steps.rust_static.outcome }}
+        run: |
+          label() {
+            case "$1" in
+              success) printf 'Passed' ;;
+              failure) printf 'Failed' ;;
+              cancelled) printf 'Cancelled' ;;
+              skipped) printf 'Skipped' ;;
+              *) printf 'Not run' ;;
+            esac
+          }
+          {
+            echo "## Backend test layers"
+            echo
+            echo "| Layer | Status | Duration |"
+            echo "| --- | --- | ---: |"
+            echo "| Rust static checks | $(label "$STATIC_RESULT") | ${STATIC_DURATION:-n/a}s |"
+            echo "| nextest 0.9.137 | $(label "$NEXTEST_RESULT") | ${NEXTEST_DURATION:-n/a}s |"
+            echo "| Rust doctests | $(label "$DOCTEST_RESULT") | ${DOCTEST_DURATION:-n/a}s |"
+            echo "| Workspace build | $(label "$BUILD_RESULT") | ${BUILD_DURATION:-n/a}s |"
+            echo
+            echo "Rust retries: zero. JUnit: target/nextest/ci/junit.xml."
+          } >> "$GITHUB_STEP_SUMMARY"

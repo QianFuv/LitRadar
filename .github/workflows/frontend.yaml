@@ -11,7 +11,10 @@ on:
       - "crates/litradar/**"
       - "crates/litradar-api/**"
       - "crates/litradar-domain/**"
+      - "crates/litradar-index/**"
+      - "crates/litradar-storage/**"
       - "app/**"
+      - "scripts/test.mjs"
       - ".github/workflows/frontend.yaml"
   pull_request:
     paths:
@@ -20,12 +23,21 @@ on:
       - "crates/litradar/**"
       - "crates/litradar-api/**"
       - "crates/litradar-domain/**"
+      - "crates/litradar-index/**"
+      - "crates/litradar-storage/**"
       - "app/**"
+      - "scripts/test.mjs"
       - ".github/workflows/frontend.yaml"
 
 concurrency:
   group: frontend-ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
+
+env:
+  LITRADAR_TEST_CI: "true"
+
+permissions:
+  contents: read
 
 jobs:
   frontend:
@@ -57,26 +69,120 @@ jobs:
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Check generated API contract
-        run: pnpm generate:api:check
+      - name: Check frontend contracts and static quality
+        id: frontend_static
+        run: |
+          started_at="$(date +%s)"
+          set +e
+          pnpm generate:api:check \
+            && pnpm lint \
+            && pnpm format:check \
+            && pnpm exec tsc --noEmit
+          status="$?"
+          set -e
+          echo "duration_seconds=$(( $(date +%s) - started_at ))" >> "$GITHUB_OUTPUT"
+          exit "$status"
 
-      - name: Lint frontend
-        run: pnpm lint
-
-      - name: Check frontend formatting
-        run: pnpm format:check
-
-      - name: Type-check frontend
-        run: pnpm exec tsc --noEmit
-
-      - name: Test frontend components
-        run: pnpm test
+      - name: Test jsdom features
+        id: unit_tests
+        env:
+          LITRADAR_VITEST_JUNIT: ./test-results/vitest/junit.xml
+        run: |
+          started_at="$(date +%s)"
+          set +e
+          pnpm test:unit
+          status="$?"
+          set -e
+          echo "duration_seconds=$(( $(date +%s) - started_at ))" >> "$GITHUB_OUTPUT"
+          exit "$status"
 
       - name: Install Chromium
         run: pnpm exec playwright install --with-deps chromium
 
-      - name: Test local browser flows
-        run: pnpm test:e2e
+      - name: Test browser-native components
+        id: browser_components
+        env:
+          LITRADAR_VITEST_JUNIT: ./test-results/vitest-browser/junit.xml
+        run: |
+          started_at="$(date +%s)"
+          set +e
+          pnpm test:browser-components
+          status="$?"
+          set -e
+          echo "duration_seconds=$(( $(date +%s) - started_at ))" >> "$GITHUB_OUTPUT"
+          exit "$status"
 
-      - name: Build frontend
-        run: pnpm build
+      - name: Test fixture-backed browser flows
+        id: fixture_smoke
+        run: |
+          started_at="$(date +%s)"
+          set +e
+          pnpm test:e2e:fixtures
+          status="$?"
+          set -e
+          echo "duration_seconds=$(( $(date +%s) - started_at ))" >> "$GITHUB_OUTPUT"
+          exit "$status"
+
+      - name: Build and test real-backend browser flows
+        id: full_stack_smoke
+        run: |
+          started_at="$(date +%s)"
+          set +e
+          pnpm test:e2e:full-stack
+          status="$?"
+          set -e
+          echo "duration_seconds=$(( $(date +%s) - started_at ))" >> "$GITHUB_OUTPUT"
+          exit "$status"
+
+      - name: Upload frontend diagnostics
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: frontend-test-diagnostics
+          path: |
+            app/test-results/vitest/
+            app/test-results/vitest-browser/
+            app/test-results/browser-components/
+            app/test-results/playwright-fixtures/
+            app/test-results/playwright-full-stack/
+            app/playwright-report/fixtures/
+            app/playwright-report/full-stack/
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Write frontend summary
+        if: always()
+        env:
+          BROWSER_DURATION: ${{ steps.browser_components.outputs.duration_seconds }}
+          BROWSER_RESULT: ${{ steps.browser_components.outcome }}
+          FIXTURE_DURATION: ${{ steps.fixture_smoke.outputs.duration_seconds }}
+          FIXTURE_RESULT: ${{ steps.fixture_smoke.outcome }}
+          FULL_STACK_DURATION: ${{ steps.full_stack_smoke.outputs.duration_seconds }}
+          FULL_STACK_RESULT: ${{ steps.full_stack_smoke.outcome }}
+          STATIC_DURATION: ${{ steps.frontend_static.outputs.duration_seconds }}
+          STATIC_RESULT: ${{ steps.frontend_static.outcome }}
+          UNIT_DURATION: ${{ steps.unit_tests.outputs.duration_seconds }}
+          UNIT_RESULT: ${{ steps.unit_tests.outcome }}
+        run: |
+          label() {
+            case "$1" in
+              success) printf 'Passed' ;;
+              failure) printf 'Failed' ;;
+              cancelled) printf 'Cancelled' ;;
+              skipped) printf 'Skipped' ;;
+              *) printf 'Not run' ;;
+            esac
+          }
+          {
+            echo "## Frontend test layers"
+            echo
+            echo "| Layer | Status | Duration |"
+            echo "| --- | --- | ---: |"
+            echo "| Contracts and static checks | $(label "$STATIC_RESULT") | ${STATIC_DURATION:-n/a}s |"
+            echo "| Vitest jsdom | $(label "$UNIT_RESULT") | ${UNIT_DURATION:-n/a}s |"
+            echo "| Vitest Chromium | $(label "$BROWSER_RESULT") | ${BROWSER_DURATION:-n/a}s |"
+            echo "| Fixture Playwright | $(label "$FIXTURE_RESULT") | ${FIXTURE_DURATION:-n/a}s |"
+            echo "| Full-stack Playwright and build | $(label "$FULL_STACK_RESULT") | ${FULL_STACK_DURATION:-n/a}s |"
+            echo
+            echo "Playwright retries: one in CI, with failOnFlakyTests enabled."
+          } >> "$GITHUB_STEP_SUMMARY"

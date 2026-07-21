@@ -1,0 +1,95 @@
+name: Test Diagnostics
+
+on:
+  schedule:
+    - cron: "0 2 * * 1"
+  workflow_dispatch:
+
+concurrency:
+  group: test-diagnostics-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  coverage:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Rust toolchain
+        run: |
+          rustup toolchain install 1.96 --profile minimal --component llvm-tools-preview
+          rustup default 1.96
+
+      - name: Install pinned cargo-llvm-cov
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-llvm-cov@0.8.7
+
+      - name: Verify cargo-llvm-cov version
+        run: |
+          version="$(cargo llvm-cov --version)"
+          echo "$version"
+          test "$version" = "cargo-llvm-cov 0.8.7"
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          version: 10.32.0
+
+      - name: Install Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: app/pnpm-lock.yaml
+
+      - name: Install frontend dependencies
+        run: pnpm --dir app install --frozen-lockfile
+
+      - name: Generate threshold-free coverage diagnostics
+        id: diagnostics
+        run: |
+          started_at="$(date +%s)"
+          set +e
+          node scripts/test.mjs diagnostics --ci
+          status="$?"
+          set -e
+          echo "duration_seconds=$(( $(date +%s) - started_at ))" >> "$GITHUB_OUTPUT"
+          exit "$status"
+
+      - name: Upload Rust coverage
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: rust-coverage-diagnostics
+          path: target/llvm-cov/
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Upload frontend coverage
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: frontend-coverage-diagnostics
+          path: app/coverage/
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Write diagnostics summary
+        if: always()
+        env:
+          DIAGNOSTICS_DURATION: ${{ steps.diagnostics.outputs.duration_seconds }}
+          DIAGNOSTICS_RESULT: ${{ steps.diagnostics.outcome }}
+        run: |
+          {
+            echo "## Scheduled test diagnostics"
+            echo
+            echo "- Status: ${DIAGNOSTICS_RESULT:-not run}"
+            echo "- Duration: ${DIAGNOSTICS_DURATION:-n/a}s"
+            echo "- Rust report: target/llvm-cov/"
+            echo "- Frontend report: app/coverage/"
+            echo "- Policy: informational only; no threshold or pull-request gate."
+          } >> "$GITHUB_STEP_SUMMARY"

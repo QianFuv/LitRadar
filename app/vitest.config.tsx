@@ -7,6 +7,7 @@ import { playwright } from '@vitest/browser-playwright';
 import { defineConfig } from 'vitest/config';
 
 const PROJECT_ROOT = process.cwd();
+const JUNIT_OUTPUT_FILE = process.env.LITRADAR_VITEST_JUNIT?.trim();
 
 export default defineConfig({
   resolve: {
@@ -15,10 +16,14 @@ export default defineConfig({
     },
   },
   test: {
-    reporters:
-      process.env.GITHUB_ACTIONS === 'true'
+    reporters: JUNIT_OUTPUT_FILE
+      ? process.env.GITHUB_ACTIONS === 'true'
+        ? ['default', ['github-actions', { jobSummary: { enabled: false } }], 'junit']
+        : ['default', 'junit']
+      : process.env.GITHUB_ACTIONS === 'true'
         ? ['default', ['github-actions', { jobSummary: { enabled: false } }]]
         : ['default'],
+    outputFile: JUNIT_OUTPUT_FILE ? { junit: JUNIT_OUTPUT_FILE } : undefined,
     projects: [
       {
         extends: true,
@@ -59,7 +64,8 @@ export default defineConfig({
     ],
     coverage: {
       provider: 'v8',
-      reporter: ['text', 'lcov'],
+      reporter: ['text', 'html', 'lcov'],
+      reportsDirectory: './coverage',
       include: ['lib/**/*.tsx', 'components/**/*.tsx', 'app/**/*.tsx'],
       exclude: ['lib/generated/**', 'components/ui/**'],
     },
