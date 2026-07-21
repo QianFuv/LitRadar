@@ -293,6 +293,45 @@ async function rejectsLaterPageFailure(): Promise<void> {
   expect(screen.queryByText('该期刊中没有匹配全文检索条件的本周文章。')).not.toBeInTheDocument();
 }
 
+/**
+ * Verify the weekly owner renders the backend failure instead of an empty success state.
+ */
+async function rendersWeeklyLoadFailure(): Promise<void> {
+  server.use(
+    http.get('http://localhost/api/weekly-updates', () =>
+      HttpResponse.json({ detail: 'weekly storage unavailable' }, { status: 503 }),
+    ),
+    http.get('http://localhost/api/meta/databases', () => HttpResponse.json([])),
+  );
+  renderWeeklyPage('');
+
+  expect(await screen.findByText('加载每周更新失败')).toBeInTheDocument();
+  expect(screen.getByText('weekly storage unavailable')).toBeInTheDocument();
+  expect(screen.queryByText(/个数据库/)).not.toBeInTheDocument();
+}
+
+/**
+ * Verify an empty successful weekly response keeps its zero-count summary and selection guidance.
+ */
+async function rendersEmptyWeeklySummary(): Promise<void> {
+  server.use(
+    http.get('http://localhost/api/weekly-updates', () =>
+      HttpResponse.json({
+        generated_at: '2026-07-08T23:59:59Z',
+        window_start: '2026-07-01T10:20:30Z',
+        window_end: '2026-07-08T23:59:59Z',
+        databases: [],
+      } satisfies WeeklyUpdatesResponse),
+    ),
+    http.get('http://localhost/api/meta/databases', () => HttpResponse.json([])),
+  );
+  renderWeeklyPage('');
+
+  expect(await screen.findByText('0 个数据库')).toBeInTheDocument();
+  expect(screen.getByText('0 篇新文章')).toBeInTheDocument();
+  expect(screen.getByText('请选择一个期刊以查看新收录文章。')).toBeInTheDocument();
+}
+
 beforeEach(() => {
   articleRequestUrls.length = 0;
   weeklyViewMocks.useVisiblePageList.mockClear();
@@ -308,4 +347,6 @@ describe('weekly updates search state', () => {
   test('searches every cursor page with weekly filters and ordering', searchesEveryCursorPage);
   test('rejects a repeated search cursor without partial results', rejectsRepeatedCursor);
   test('rejects a later-page failure without partial results', rejectsLaterPageFailure);
+  test('renders the weekly backend failure', rendersWeeklyLoadFailure);
+  test('renders an empty weekly summary', rendersEmptyWeeklySummary);
 });

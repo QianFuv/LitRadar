@@ -1,6 +1,6 @@
 'use client';
 
-import { useInfiniteQuery, type InfiniteData } from '@tanstack/react-query';
+import { useInfiniteQuery, useQueryClient, type InfiniteData } from '@tanstack/react-query';
 import { useQueryState, parseAsString, parseAsArrayOf } from 'nuqs';
 import { getArticles, type ArticlePage } from '@/lib/api';
 import { ArticleDialogCard } from '@/components/feature/article-dialog-card';
@@ -26,12 +26,43 @@ export function getNextArticlePageParam(lastPage: ArticlePage): string | undefin
 }
 
 /**
+ * Reject a cursor that would revisit a page already requested in the current pagination chain.
+ *
+ * @param page - Newly fetched article page.
+ * @param pageParam - Cursor used to fetch the page, or null for the first page.
+ * @param cachedPageParams - Page parameters from the currently cached pagination chain.
+ * @returns The validated article page.
+ */
+function validateArticlePageCursor(
+  page: ArticlePage,
+  pageParam: string | null,
+  cachedPageParams: readonly (string | null)[],
+): ArticlePage {
+  const nextCursor = page.page.next_cursor;
+  if (!nextCursor || pageParam === null) {
+    return page;
+  }
+
+  const cachedPageIndex = cachedPageParams.indexOf(pageParam);
+  const requestedPageParams =
+    cachedPageIndex >= 0
+      ? cachedPageParams.slice(0, cachedPageIndex + 1)
+      : [...cachedPageParams, pageParam];
+  if (requestedPageParams.includes(nextCursor)) {
+    throw new Error('全文检索分页游标重复');
+  }
+
+  return page;
+}
+
+/**
  * Fetch and render the filtered, progressively visible article result list.
  *
  * @returns Search result summary, article cards, and pagination sentinels.
  */
 export function ResultsList() {
   const { user } = useAuth();
+  const queryClient = useQueryClient();
 
   const [q] = useQueryState('q', parseAsString);
   const [areas] = useQueryState('area', parseAsArrayOf(parseAsString));
@@ -58,6 +89,7 @@ export function ResultsList() {
   }
   const paramsString = params.toString();
   const currentDb = useSelectedDatabase();
+  const queryKey = ['articles', currentDb, paramsString];
 
   const { data, isLoading, isError, error, fetchNextPage, hasNextPage, isFetchingNextPage } =
     useInfiniteQuery<
@@ -67,8 +99,13 @@ export function ResultsList() {
       string[],
       string | null
     >({
-      queryKey: ['articles', currentDb, paramsString],
-      queryFn: ({ pageParam }) => getArticles(params, pageParam, includeTotal, currentDb),
+      queryKey,
+      queryFn: async ({ pageParam }) => {
+        const page = await getArticles(params, pageParam, includeTotal, currentDb);
+        const cachedData =
+          queryClient.getQueryData<InfiniteData<ArticlePage, string | null>>(queryKey);
+        return validateArticlePageCursor(page, pageParam, cachedData?.pageParams ?? []);
+      },
       initialPageParam: null,
       getNextPageParam: getNextArticlePageParam,
       staleTime: 5 * 60 * 1000,

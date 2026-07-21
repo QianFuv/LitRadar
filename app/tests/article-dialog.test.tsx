@@ -238,6 +238,37 @@ async function opensDataSourceSettingsWithoutDialogStacking(): Promise<void> {
   await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
 }
 
+/**
+ * Verify a failed access lookup is visible and a later dialog mount recovers through refetch.
+ */
+async function recoversArticleAccessAfterReopening(): Promise<void> {
+  registerArticleDialogHandlers();
+  let requestCount = 0;
+  server.use(
+    http.get('http://localhost/api/articles/:articleId/access', () => {
+      requestCount += 1;
+      if (requestCount === 1) {
+        return HttpResponse.json({ detail: 'temporary access failure' }, { status: 503 });
+      }
+      return articleAccessResponse();
+    }),
+  );
+  const user = userEvent.setup();
+  renderArticleCard(SAFE_ARTICLE);
+
+  await user.click(screen.getByRole('button', { name: '查看详情' }));
+  const failedAccess = await screen.findByRole('button', { name: '访问状态失败' });
+  expect(failedAccess).toHaveAttribute('title', 'temporary access failure');
+  expect(screen.queryByRole('link', { name: '获取全文' })).not.toBeInTheDocument();
+
+  await user.click(screen.getByRole('button', { name: '关闭' }));
+  await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+  await user.click(screen.getByRole('button', { name: '查看详情' }));
+
+  expect(await screen.findByRole('link', { name: '获取全文' })).toBeInTheDocument();
+  expect(requestCount).toBe(2);
+}
+
 describe('article dialog workflow', () => {
   test(
     'keeps card text selectable and supports named open and close controls',
@@ -252,4 +283,5 @@ describe('article dialog workflow', () => {
     'opens data-source settings without stacking dialogs',
     opensDataSourceSettingsWithoutDialogStacking,
   );
+  test('recovers article access after reopening', recoversArticleAccessAfterReopening);
 });

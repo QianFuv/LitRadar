@@ -180,6 +180,59 @@ async function announcesLoginFailures(): Promise<void> {
   await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('操作失败，请重试'));
 }
 
+/**
+ * Verify a successful login trims identity input, blocks duplicate submission, and returns safely.
+ */
+async function submitsLoginOnceAndReturnsToProtectedPath(): Promise<void> {
+  let resolveLogin: (() => void) | undefined;
+  loginPageMocks.nextParam = '/favorites?folder=4';
+  loginPageMocks.auth.login.mockImplementation(
+    () =>
+      new Promise<void>((resolve) => {
+        resolveLogin = resolve;
+      }),
+  );
+  const user = userEvent.setup();
+  render(<LoginClient />);
+
+  await user.type(screen.getByLabelText('用户名'), '  reader  ');
+  await user.type(screen.getByLabelText('密码'), 'correct-password');
+  await user.click(screen.getByRole('button', { name: '登录' }));
+
+  const pendingButton = screen.getByRole('button', { name: '请稍候…' });
+  expect(pendingButton).toBeDisabled();
+  await user.click(pendingButton);
+  expect(loginPageMocks.auth.login).toHaveBeenCalledOnce();
+  expect(loginPageMocks.auth.login).toHaveBeenCalledWith('reader', 'correct-password');
+
+  resolveLogin?.();
+  await waitFor(() => expect(loginPageMocks.replace).toHaveBeenCalledWith('/favorites?folder=4'));
+}
+
+/**
+ * Verify invited registration submits normalized identity fields and enters the requested route.
+ */
+async function registersInvitedUserAndReturnsToRequestedPath(): Promise<void> {
+  loginPageMocks.nextParam = '/tracking';
+  const user = userEvent.setup();
+  render(<LoginClient />);
+
+  await user.click(screen.getByRole('button', { name: '注册' }));
+  await user.type(screen.getByLabelText('用户名'), '  invited_reader  ');
+  await user.type(screen.getByLabelText('密码'), 'registration-password');
+  await user.type(screen.getByLabelText('邀请码'), '  invite-code  ');
+  await user.click(screen.getByRole('button', { name: '注册' }));
+
+  await waitFor(() =>
+    expect(loginPageMocks.auth.register).toHaveBeenCalledWith(
+      'invited_reader',
+      'registration-password',
+      'invite-code',
+    ),
+  );
+  expect(loginPageMocks.replace).toHaveBeenCalledWith('/tracking');
+}
+
 beforeEach(resetLoginPageMocks);
 
 describe('login page', () => {
@@ -188,4 +241,12 @@ describe('login page', () => {
   test('focuses username and toggles password visibility safely', focusesAndRevealsPasswordSafely);
   test('maps known authentication errors and preserves unknown details', mapsAuthenticationErrors);
   test('announces mapped login failures', announcesLoginFailures);
+  test(
+    'submits a successful login once and returns to the protected path',
+    submitsLoginOnceAndReturnsToProtectedPath,
+  );
+  test(
+    'registers an invited user and returns to the requested path',
+    registersInvitedUserAndReturnsToRequestedPath,
+  );
 });

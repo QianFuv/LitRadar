@@ -3,14 +3,54 @@
  */
 
 import { renderToStaticMarkup } from 'react-dom/server';
-import { render, screen } from '@testing-library/react';
+import type { ReactNode } from 'react';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { describe, expect, test, vi } from 'vitest';
+import { beforeEach, describe, expect, test, vi } from 'vitest';
+
+const routeBoundaryMocks = vi.hoisted(() => ({
+  auth: {
+    loading: false,
+    user: null as { id: number; username: string; is_admin: boolean } | null,
+  },
+  pathname: '/favorites',
+  replace: vi.fn(),
+  searchParams: new URLSearchParams('folder=4'),
+}));
 
 vi.mock('next/font/google', () => ({
   Geist: () => ({ variable: '--font-geist-sans' }),
   Geist_Mono: () => ({ variable: '--font-geist-mono' }),
 }));
+
+vi.mock('next/navigation', () => ({
+  usePathname: () => routeBoundaryMocks.pathname,
+  useRouter: () => ({ replace: routeBoundaryMocks.replace }),
+  useSearchParams: () => routeBoundaryMocks.searchParams,
+}));
+
+vi.mock('@/lib/auth-context', () => ({
+  AuthProvider: ({ children }: { children: ReactNode }) => children,
+  useAuth: () => routeBoundaryMocks.auth,
+}));
+
+vi.mock('@/components/settings/settings-center-dialog', () => ({
+  SettingsCenterDialog: () => <div>settings center marker</div>,
+}));
+
+vi.mock('@/components/feature/user-menu', () => ({
+  UserMenu: () => <div>user menu marker</div>,
+}));
+
+vi.mock('@/components/admin/overview-card', () => ({
+  AdminOverviewCard: () => <div>admin dashboard marker</div>,
+}));
+
+vi.mock('@/components/admin/users-card', () => ({ AdminUsersCard: () => null }));
+vi.mock('@/components/admin/invite-codes-card', () => ({ AdminInviteCodesCard: () => null }));
+vi.mock('@/components/admin/runtime-settings-card', () => ({ RuntimeSettingsCard: () => null }));
+vi.mock('@/components/admin/scheduled-tasks-card', () => ({ ScheduledTasksCard: () => null }));
+vi.mock('@/components/admin/announcements-card', () => ({ AnnouncementsCard: () => null }));
 
 import { metadata as rootMetadata } from '@/app/layout';
 import { metadata as loginMetadata } from '@/app/login/page';
@@ -18,6 +58,8 @@ import { metadata as adminMetadata } from '@/app/(protected)/admin/layout';
 import RouteError from '@/app/error';
 import GlobalError from '@/app/global-error';
 import NotFound, { metadata as notFoundMetadata } from '@/app/not-found';
+import ProtectedLayout from '@/app/(protected)/layout';
+import AdminPage from '@/app/(protected)/admin/page';
 
 /**
  * Verify the root title template and every documented route's static metadata.
@@ -96,9 +138,80 @@ function rendersCustomNotFoundPage(): void {
   expect(screen.getByRole('link', { name: '返回首页' })).toHaveAttribute('href', '/');
 }
 
+/**
+ * Verify protected routes wait for restoration, preserve deep links, and reveal authenticated UI.
+ */
+async function protectsRenderedRouteContent(): Promise<void> {
+  routeBoundaryMocks.auth.loading = true;
+  const view = render(
+    <ProtectedLayout>
+      <div>protected route content</div>
+    </ProtectedLayout>,
+  );
+
+  expect(screen.getByRole('status')).toHaveTextContent('加载中');
+  expect(screen.queryByText('protected route content')).not.toBeInTheDocument();
+
+  routeBoundaryMocks.auth.loading = false;
+  routeBoundaryMocks.auth.user = null;
+  view.rerender(
+    <ProtectedLayout>
+      <div>protected route content</div>
+    </ProtectedLayout>,
+  );
+  await waitFor(() =>
+    expect(routeBoundaryMocks.replace).toHaveBeenCalledWith(
+      '/login?next=%2Ffavorites%3Ffolder%3D4',
+    ),
+  );
+  expect(screen.queryByText('protected route content')).not.toBeInTheDocument();
+
+  routeBoundaryMocks.auth.user = { id: 7, username: 'reader', is_admin: false };
+  view.rerender(
+    <ProtectedLayout>
+      <div>protected route content</div>
+    </ProtectedLayout>,
+  );
+  expect(screen.getByText('protected route content')).toBeInTheDocument();
+  expect(screen.getByText('settings center marker')).toBeInTheDocument();
+  expect(screen.getByText('user menu marker')).toBeInTheDocument();
+}
+
+/**
+ * Verify administrator routing renders a visible denial or the real dashboard boundary.
+ */
+function gatesAdministratorRouteByVisiblePermission(): void {
+  routeBoundaryMocks.auth.user = { id: 8, username: 'reader', is_admin: false };
+  const view = render(<AdminPage />);
+
+  expect(screen.getByText('无管理员权限')).toBeInTheDocument();
+  expect(screen.getByRole('link', { name: '返回首页' })).toHaveAttribute('href', '/');
+  expect(screen.queryByText('admin dashboard marker')).not.toBeInTheDocument();
+
+  routeBoundaryMocks.auth.user = { id: 9, username: 'administrator', is_admin: true };
+  view.rerender(<AdminPage />);
+
+  expect(screen.getByRole('heading', { name: '管理面板' })).toBeInTheDocument();
+  expect(screen.getByText('admin dashboard marker')).toBeInTheDocument();
+  expect(screen.queryByText('无管理员权限')).not.toBeInTheDocument();
+}
+
+beforeEach(() => {
+  routeBoundaryMocks.auth.loading = false;
+  routeBoundaryMocks.auth.user = null;
+  routeBoundaryMocks.pathname = '/favorites';
+  routeBoundaryMocks.searchParams = new URLSearchParams('folder=4');
+  routeBoundaryMocks.replace.mockReset();
+});
+
 describe('route boundaries', () => {
   test('defines specific metadata for every documented route', exposesRouteMetadata);
   test('announces route errors and resets safely', resetsRouteErrors);
   test('renders a self-contained global failure document', rendersGlobalFailureDocument);
   test('renders the custom not-found page', rendersCustomNotFoundPage);
+  test('protects rendered route content and preserves deep links', protectsRenderedRouteContent);
+  test(
+    'gates the administrator route by visible permission',
+    gatesAdministratorRouteByVisiblePermission,
+  );
 });
