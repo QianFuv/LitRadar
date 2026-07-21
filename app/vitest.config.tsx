@@ -16,6 +16,10 @@ export default defineConfig({
   test: {
     environment: 'jsdom',
     globals: true,
+    reporters:
+      process.env.GITHUB_ACTIONS === 'true'
+        ? ['default', ['github-actions', { jobSummary: { enabled: false } }]]
+        : ['default'],
     setupFiles: ['./tests/setup.tsx'],
     include: ['./tests/**/*.test.tsx'],
     clearMocks: true,

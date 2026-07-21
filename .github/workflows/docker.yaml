@@ -66,6 +66,9 @@ jobs:
       needs.backend-quality.result == 'success' &&
       needs.frontend-quality.result == 'success'
     runs-on: ubuntu-latest
+    outputs:
+      image_digest: ${{ steps.build.outputs.digest }}
+      image_tags: ${{ steps.meta.outputs.tags }}
     permissions:
       contents: read
       packages: write
@@ -88,7 +91,11 @@ jobs:
             type=sha
             type=raw,value=latest
 
-      - uses: docker/build-push-action@v7
+      - name: Build and push image
+        id: build
+        uses: docker/build-push-action@v7
+        env:
+          DOCKER_BUILD_SUMMARY: "false"
         with:
           context: .
           push: true
@@ -96,3 +103,81 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+  workflow-summary:
+    name: LitRadar workflow summary
+    needs: [changes, backend-quality, frontend-quality, build-image]
+    if: always()
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Write workflow summary
+        env:
+          BACKEND_RESULT: ${{ needs.backend-quality.result }}
+          BUILD_RESULT: ${{ needs.build-image.result }}
+          CHANGES_RESULT: ${{ needs.changes.result }}
+          COMMIT_SHA: ${{ github.sha }}
+          EVENT_NAME: ${{ github.event_name }}
+          FRONTEND_RESULT: ${{ needs.frontend-quality.result }}
+          IMAGE_DIGEST: ${{ needs.build-image.outputs.image_digest }}
+          IMAGE_NAME: ${{ env.REGISTRY }}/${{ github.repository }}
+          IMAGE_TAGS: ${{ needs.build-image.outputs.image_tags }}
+          REF_NAME: ${{ github.ref_name }}
+          REPOSITORY: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_NUMBER: ${{ github.run_number }}
+          SERVER_URL: ${{ github.server_url }}
+        run: |
+          status_label() {
+            case "$1" in
+              success) printf '✅ Success' ;;
+              failure) printf '❌ Failure' ;;
+              cancelled) printf '⏹️ Cancelled' ;;
+              skipped) printf '⏭️ Skipped' ;;
+              *) printf '❔ Unknown' ;;
+            esac
+          }
+
+          run_url="$SERVER_URL/$REPOSITORY/actions/runs/$RUN_ID"
+          commit_url="$SERVER_URL/$REPOSITORY/commit/$COMMIT_SHA"
+          short_sha="${COMMIT_SHA:0:7}"
+
+          {
+            echo "# LitRadar CI Summary"
+            echo
+            echo "> Unified quality and container delivery report."
+            echo
+            echo "## Pipeline"
+            echo
+            echo "| Stage | Result |"
+            echo "| --- | --- |"
+            echo "| Change detection | $(status_label "$CHANGES_RESULT") |"
+            echo "| Backend quality | $(status_label "$BACKEND_RESULT") |"
+            echo "| Frontend quality | $(status_label "$FRONTEND_RESULT") |"
+            echo "| Container image | $(status_label "$BUILD_RESULT") |"
+            echo
+            echo "## Run"
+            echo
+            echo "- Run: [#$RUN_NUMBER]($run_url)"
+            echo "- Commit: [$short_sha]($commit_url)"
+            echo "- Branch: $REF_NAME"
+            echo "- Event: $EVENT_NAME"
+            echo
+            echo "## Container image"
+            echo
+            if [[ -n "$IMAGE_DIGEST" ]]; then
+              echo "- Image: $IMAGE_NAME"
+              echo "- Digest: $IMAGE_DIGEST"
+              if [[ -n "$IMAGE_TAGS" ]]; then
+                echo "- Tags:"
+                while IFS= read -r image_tag; do
+                  if [[ -n "$image_tag" ]]; then
+                    echo "  - $image_tag"
+                  fi
+                done <<< "$IMAGE_TAGS"
+              fi
+            else
+              echo "No image was published by this run."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
