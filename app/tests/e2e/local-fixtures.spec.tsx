@@ -404,10 +404,8 @@ async function verifiesAggregatedSettingsCenter(page: Page): Promise<void> {
   const mobileDialog = page.getByRole('dialog', { name: '设置中心' });
   await expect(mobileDialog).toBeVisible();
   await hideDevelopmentIndicator(page);
-  const mobileBox = await mobileDialog.boundingBox();
-  expect(mobileBox).not.toBeNull();
-  expect(mobileBox?.width).toBe(390);
-  expect(mobileBox?.height).toBe(844);
+  await expect(mobileDialog).toHaveCSS('width', '390px');
+  await expect(mobileDialog).toHaveCSS('height', '844px');
   const mobileCategories = mobileDialog
     .locator('header')
     .getByRole('navigation', { name: '设置分类' });
