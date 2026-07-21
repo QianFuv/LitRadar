@@ -7,6 +7,7 @@
 - 环境变量的系统级语义见[运行配置](../docs/reference/configuration.md)。
 - UI token 与组件约定见[设计系统](../docs/reference/design-system.md)。
 - 服务端和浏览器日志契约见[日志运维](../docs/operations/logging.md)。
+- 五层测试模型、功能所有权和报告策略见[测试系统](../docs/testing.md)。
 
 ## 工具链
 
@@ -117,8 +118,12 @@ app/
 │   ├── browser-storage.tsx
 │   └── client-logger.tsx  浏览器本地、隐私受限的错误事件
 └── tests/
-    ├── *.test.tsx         Vitest/jsdom/MSW 测试
-    └── e2e/               Playwright 本地 fixture 流程
+    ├── *.test.tsx         Vitest/jsdom 与显式 MSW 场景
+    ├── browser-components/ 选择性的 Vitest Chromium 原生语义
+    ├── mocks/             按领域组织的 typed scenario handlers
+    └── e2e/
+        ├── local-fixtures.spec.tsx  7 条 fixture UI smoke
+        └── full-stack/              3 条真实 Rust/SQLite 关键旅程
 ```
 
 新增业务逻辑时优先放入对应 feature 目录；可复用的视觉原语放入 `components/ui/`。仓库约定所有 TypeScript 源文件使用 `.tsx`，即使文件不包含 JSX。
@@ -173,24 +178,27 @@ pnpm generate:api:check
 
 ## 质量检查
 
-与前端 CI 一致的顺序：
+聚焦前端时运行：
 
 ```bash
 pnpm generate:api:check
 pnpm lint
 pnpm format:check
 pnpm exec tsc --noEmit
-pnpm test
+pnpm test:unit
 pnpm exec playwright install --with-deps chromium
-pnpm test:e2e
+pnpm test:browser-components
+pnpm test:e2e:fixtures
+pnpm test:e2e:full-stack
 pnpm build
 ```
 
 测试边界：
 
-- Vitest 使用 jsdom，`tests/setup.tsx` 注册 MSW；`*.test.tsx` 不访问真实后端。
-- Playwright 默认在 `127.0.0.1:3100` 启动隔离的 Next.js dev server；设置 `PLAYWRIGHT_BASE_URL` 时改为验证已经运行的 Rust 静态站点。`tests/e2e/` 使用页面路由 fixture，不访问真实上游服务。
-- CI 对 Chromium 使用单 worker 和最多两次重试，本地保持 Playwright 默认并行度。
-- 覆盖率排除生成代码和 `components/ui/`，聚焦业务 facade、组件和页面。
+- `unit-jsdom` 通过 `tests/setup.tsx` 注册 handler-free MSW server；每个套件显式安装所需领域场景，未声明请求直接失败。
+- `component-browser` 只运行 3 个 Chromium 原生语义套件；普通组件行为仍留在 jsdom。
+- `fixture-chromium` 在 `127.0.0.1:3100` 启动隔离 Next.js server 并使用页面路由 fixture；`full-stack-chromium` 构建静态导出并启动实际 Rust 服务和临时 SQLite，目录内禁止请求拦截。
+- Playwright 本地零重试；CI 最多一次重试以保留 trace/video，并通过 `failOnFlakyTests` 让 retry-pass 仍失败。
+- 覆盖率排除生成代码和 `components/ui/`，只作独立诊断，不设置完成阈值。
 
-实现变更应运行与影响范围相称的检查；API facade、认证或生成契约变化时至少执行生成检查、类型检查和相关测试。
+实现变更应运行与影响范围相称的检查；API facade、认证或生成契约变化时至少执行生成检查、类型检查和相关测试。统一的 `fast`、`integration`、`e2e-smoke`、`all`、`diagnostics` 命令及 CI 报告路径见[测试系统](../docs/testing.md)。

@@ -1,6 +1,6 @@
 # 开发指南
 
-本文档面向修改 LitRadar 源码的贡献者，说明本地环境、日常开发流程、契约生成和质量检查。系统边界见[架构说明](../architecture.md)，完整命令参数见 [CLI 参考](../reference/cli.md)。
+本文档面向修改 LitRadar 源码的贡献者，说明本地环境、日常开发流程、契约生成和质量检查。系统边界见[架构说明](../architecture.md)，测试层和诊断策略见[测试系统](../testing.md)，完整命令参数见 [CLI 参考](../reference/cli.md)。
 
 ## 工具链
 
@@ -185,25 +185,25 @@ pnpm generate:api:check
 
 ## Rust 检查
 
-与 Backend CI 对齐：
+日常从仓库根选择最低充分的统一入口；完整职责和聚焦命令见[测试系统](../testing.md)：
 
 ```bash
-cargo fmt --all -- --check
-cargo sort --workspace --check
-cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
-cargo test --workspace --locked
-cargo build --workspace --all-targets --locked
+node scripts/test.mjs fast
+node scripts/test.mjs integration
+node scripts/test.mjs all
 ```
 
-覆盖率摘要可单独运行：
+Backend CI 使用固定的 cargo-nextest 0.9.137、零重试和独立 doctest。`cargo test --workspace --locked` 保留为完整计划或发布前的一次 Cargo 兼容门禁，不在每个 PR 中与 nextest 重复。
+
+覆盖率只在每周/手动诊断中分别生成 Rust 和前端报告，不设阈值：
 
 ```bash
-cargo llvm-cov --workspace --summary-only
+node scripts/test.mjs diagnostics
 ```
 
 ## 前端检查
 
-与 frontend CI 对齐：
+聚焦前端时可在 `app/` 直接运行：
 
 ```bash
 cd app
@@ -211,13 +211,15 @@ pnpm generate:api:check
 pnpm lint
 pnpm format:check
 pnpm exec tsc --noEmit
-pnpm test
+pnpm test:unit
 pnpm exec playwright install --with-deps chromium
-pnpm test:e2e
+pnpm test:browser-components
+pnpm test:e2e:fixtures
+pnpm test:e2e:full-stack
 pnpm build
 ```
 
-Vitest/Testing Library/MSW 测试不访问真实后端。Playwright 默认使用隔离的本地 Next.js server 和 `page.route` fixture，不访问真实上游服务；设置 `PLAYWRIGHT_BASE_URL=http://127.0.0.1:<port>` 可用相同 fixture 流程验证已运行的 Rust 静态站点。
+Vitest/jsdom 使用显式 MSW 场景；Browser Mode 只验证焦点、Clipboard 和 IntersectionObserver 等原生语义。Playwright fixture 项目保留 7 条拦截式 UI smoke；full-stack 项目构建前端并通过实际 Rust listener、HttpOnly Cookie 和临时 SQLite 运行 3 条无请求拦截的关键旅程。CI 最多重试 Playwright 一次以取得 trace/video，但 retry-pass 仍按 flaky 失败。
 
 ## 部署检查
 
@@ -226,6 +228,8 @@ Vitest/Testing Library/MSW 测试不访问真实后端。Playwright 默认使用
 ```bash
 docker compose config --quiet
 docker compose build
+docker build --tag litradar:test .
+node scripts/container-smoke.mjs litradar:test
 ```
 
 根 Dockerfile 必须成功导出前端并把 `out/` 复制到最终 Debian 层。最终镜像只复制 release `litradar`，必须没有其他应用可执行文件、Node.js/standalone 运行时并保持非 root；根 Compose 只能声明一个 `litradar` 服务。只读根文件系统、tmpfs、显式数据卷、空 capability 集合、`no-new-privileges`、健康检查和重启策略都是部署契约。
@@ -239,6 +243,8 @@ pwsh ./scripts/profile_logging.ps1 -DataPath ./output/logging-fixture -Rounds 3 
 脚本验证 JSON schema、请求事件完整性、零丢失、p95 延迟差，并复用 Docker warm-idle 内存画像。它会迁移和写入传入目录，不能指向正在运行的真实数据。
 
 ## 测试边界
+
+完整放置规则、共享场景限制、功能所有权和报告路径见[测试系统](../testing.md)。
 
 - 后端测试使用临时目录、临时 SQLite、临时密钥和 fixture transport。
 - 不对仓库真实 `data/` 执行备份恢复、密文迁移或写入。

@@ -8,6 +8,7 @@
 | ---------------------------- | ------------------------------------------------------------ |
 | 了解组件、数据流和持久化边界 | [系统架构](architecture.md)                                  |
 | 搭建本地开发环境             | [开发指南](guides/development.md)                            |
+| 选择测试层、命令和诊断报告   | [测试系统](testing.md)                                       |
 | 使用 Docker Compose 部署     | [Docker 部署](operations/docker.md)                          |
 | 查询和排查结构化日志         | [日志运维](operations/logging.md)                            |
 | 查找 Rust 命令和参数         | [CLI 参考](reference/cli.md)                                 |
@@ -18,6 +19,7 @@
 ## 指南
 
 - [开发指南](guides/development.md)：本地环境、开发流程、OpenAPI 类型生成、测试和质量检查
+- [测试系统](testing.md)：五层测试模型、功能所有权、共享场景、统一命令、报告和 flaky/覆盖率策略
 - [通知与追踪](guides/notifications.md)：候选来源、AI 选择、PushPlus、追踪文件夹、状态和排障
 
 指南回答“怎样完成一项工作”。完整参数、字段和默认值应链接到参考文档，不在指南中维护第二份副本。
@@ -73,6 +75,7 @@
 | Docker 行为        | `Dockerfile`、`docker-compose.yml`                                                              | [Docker 部署](operations/docker.md)                          |
 | 结构化日志         | `crates/litradar/src/observability.rs`、各组件 tracing 事件、`app/lib/client-logger.tsx`        | [日志运维](operations/logging.md)                            |
 | 前端结构           | `app/package.json`、`app/app/`、`app/lib/`、`app/components/`                                   | [前端包说明](../app/README.md)                               |
+| 测试分层与诊断     | `scripts/test.mjs`、测试配置、`.github/workflows/`                                              | [测试系统](testing.md)                                       |
 | UI token 与组件    | `app/app/globals.css`、`app/components/ui/`                                                     | [前端设计系统](reference/design-system.md)                   |
 
 ## 维护原则
