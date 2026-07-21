@@ -1,9 +1,9 @@
 /**
- * Shared destructive confirmation semantics and focus-management coverage.
+ * Shared destructive confirmation pending and failure coverage.
  */
 
 import { useState } from 'react';
-import { act, render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, test, vi } from 'vitest';
 
@@ -61,26 +61,6 @@ function ConfirmHarness({ action }: ConfirmHarnessProps) {
 }
 
 /**
- * Verify cancel and Escape close the dialog and restore trigger focus.
- */
-async function restoresFocusAfterCancellation(): Promise<void> {
-  const user = userEvent.setup();
-  render(<ConfirmHarness action={() => Promise.resolve()} />);
-  const trigger = screen.getByRole('button', { name: '删除项目' });
-
-  await user.click(trigger);
-  expect(screen.getByRole('alertdialog', { name: '删除项目？' })).toBeInTheDocument();
-  await user.click(screen.getByRole('button', { name: '取消' }));
-  await waitFor(() => expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument());
-  expect(trigger).toHaveFocus();
-
-  await user.click(trigger);
-  await user.keyboard('{Escape}');
-  await waitFor(() => expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument());
-  expect(trigger).toHaveFocus();
-}
-
-/**
  * Verify a pending failure cannot submit twice and remains visible for retry.
  */
 async function keepsFailedPendingActionOpen(): Promise<void> {
@@ -112,6 +92,5 @@ async function keepsFailedPendingActionOpen(): Promise<void> {
 }
 
 describe('ConfirmDialog', () => {
-  test('restores trigger focus after cancel and Escape', restoresFocusAfterCancellation);
   test('blocks duplicate pending actions and keeps failures open', keepsFailedPendingActionOpen);
 });

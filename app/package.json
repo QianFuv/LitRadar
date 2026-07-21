@@ -11,9 +11,11 @@
     "format:check": "prettier --check .",
     "generate:api": "cargo run --manifest-path ../Cargo.toml --quiet --bin litradar -- openapi --output lib/generated/openapi.json && openapi-typescript lib/generated/openapi.json -o lib/generated/api-schema.tsx --alphabetize && prettier --write lib/generated/openapi.json lib/generated/api-schema.tsx",
     "generate:api:check": "node scripts/check-generated-api.mjs",
-    "test": "vitest run --config vitest.config.tsx",
-    "test:coverage": "vitest run --config vitest.config.tsx --coverage",
-    "test:watch": "vitest --config vitest.config.tsx",
+    "test": "pnpm test:unit",
+    "test:unit": "vitest run --config vitest.config.tsx --project unit-jsdom",
+    "test:browser-components": "vitest run --config vitest.config.tsx --project component-browser --browser.headless",
+    "test:coverage": "vitest run --config vitest.config.tsx --project unit-jsdom --coverage",
+    "test:watch": "vitest --config vitest.config.tsx --project unit-jsdom",
     "test:e2e": "playwright test --config playwright.config.tsx"
   },
   "dependencies": {
@@ -49,6 +51,7 @@
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "@vitest/browser-playwright": "4.1.10",
     "@vitest/coverage-v8": "^4.1.10",
     "eslint": "^9",
     "eslint-config-next": "16.2.4",

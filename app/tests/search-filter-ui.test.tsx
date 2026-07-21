@@ -5,7 +5,7 @@
 import { useQueryState, parseAsString } from 'nuqs';
 import { NuqsTestingAdapter } from 'nuqs/adapters/testing';
 import { ThemeProvider } from 'next-themes';
-import { renderHook, screen, waitFor, within } from '@testing-library/react';
+import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
 import type { ReactNode } from 'react';
@@ -14,7 +14,6 @@ import { describe, expect, test, vi } from 'vitest';
 import { ActiveFilterChips } from '@/components/feature/active-filter-chips';
 import { SearchBar } from '@/components/feature/search-bar';
 import { Sidebar } from '@/components/feature/sidebar';
-import { useVisiblePageList } from '@/components/feature/use-visible-page-list';
 import { AuthProvider } from '@/lib/auth-context';
 import {
   buildMonthRange,
@@ -316,27 +315,6 @@ async function rendersRecentRangeShortcuts(): Promise<void> {
   expect(screen.getByRole('button', { name: '近 5 年' })).toBeInTheDocument();
 }
 
-/**
- * Verify list-key resets explicitly disable smooth scrolling.
- */
-function resetsResultsScrollWithoutAnimation(): void {
-  const scrollContainer = document.createElement('div');
-  scrollContainer.id = 'test-results-scroll';
-  scrollContainer.scrollTo = vi.fn();
-  document.body.append(scrollContainer);
-
-  renderHook(() =>
-    useVisiblePageList({
-      listKey: 'filters-a',
-      loadedPages: 1,
-      scrollContainerId: scrollContainer.id,
-    }),
-  );
-
-  expect(scrollContainer.scrollTo).toHaveBeenCalledWith({ behavior: 'auto', top: 0 });
-  scrollContainer.remove();
-}
-
 describe('search and filter UI', () => {
   test('normalizes month range values and recent shortcuts', normalizesMonthRanges);
   test('keeps draft clearing separate from query submission', keepsSearchDraftSeparate);
@@ -351,5 +329,4 @@ describe('search and filter UI', () => {
   );
   test('shows an unavailable state for empty year metadata', rendersUnavailableYearState);
   test('renders one, three, and five year shortcuts', rendersRecentRangeShortcuts);
-  test('resets result scrolling with automatic behavior', resetsResultsScrollWithoutAnimation);
 });

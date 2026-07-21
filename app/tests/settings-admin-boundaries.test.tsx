@@ -2,10 +2,10 @@
  * Focused rendering coverage for extracted settings and administrator cards.
  */
 
-import { act, renderHook, screen, waitFor } from '@testing-library/react';
+import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
-import { describe, expect, test, vi } from 'vitest';
+import { describe, expect, test } from 'vitest';
 
 import { AdminInviteCodesCard } from '@/components/admin/invite-codes-card';
 import { AdminUsersCard } from '@/components/admin/users-card';
@@ -14,7 +14,6 @@ import { AccountCard } from '@/components/settings/account-card';
 import { CnkiSettingsCard } from '@/components/settings/cnki-card';
 import { InviteCodeCard } from '@/components/settings/invite-code-card';
 import { PasswordCard } from '@/components/settings/password-card';
-import { useSettingsCopy } from '@/components/settings/use-settings-copy';
 import { AuthProvider } from '@/lib/auth-context';
 import { server } from '@/tests/mocks/server';
 import { renderWithQuery } from '@/tests/render';
@@ -319,29 +318,6 @@ async function rendersPasswordCard(): Promise<void> {
   expect(screen.getByLabelText('新密码')).toHaveAttribute('minlength', '12');
 }
 
-/**
- * Verify one shared copy hook reports the owning card scope.
- */
-async function reportsSharedCopyScope(): Promise<void> {
-  const writeText = vi.fn().mockResolvedValue(undefined);
-  Object.defineProperty(navigator, 'clipboard', {
-    configurable: true,
-    value: { writeText },
-  });
-  const { result } = renderHook(() => useSettingsCopy());
-
-  await act(async () => {
-    await result.current.handleCopy('invite-code', '邀请码已复制。', 'invite');
-  });
-
-  expect(writeText).toHaveBeenCalledWith('invite-code');
-  expect(result.current.copyFeedback).toEqual({
-    message: '邀请码已复制。',
-    scope: 'invite',
-    tone: 'success',
-  });
-}
-
 describe('settings and administrator feature boundaries', () => {
   test('renders administrator user and invite cards', rendersAdministratorCards);
   test('renders flat account, CNKI, invite, and token sections', rendersSettingsCards);
@@ -358,5 +334,4 @@ describe('settings and administrator feature boundaries', () => {
     rendersAccessTokenCreationErrorsAndRetainsRawInput,
   );
   test('keeps password changes inside the auth context', rendersPasswordCard);
-  test('shares scoped copy feedback across settings cards', reportsSharedCopyScope);
 });
