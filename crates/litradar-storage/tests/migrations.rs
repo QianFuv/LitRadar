@@ -468,6 +468,7 @@ fn empty_index_database_migration_creates_exact_provider_neutral_schema() {
             "article_change_events",
             "article_identity_keys",
             "article_listing",
+            "article_retraction_dois",
             "article_search",
             "articles",
             "issues",
@@ -517,16 +518,21 @@ fn empty_index_database_migration_creates_exact_provider_neutral_schema() {
             "pmid",
             "open_access",
             "in_press",
-            "retraction_doi",
         ]
+    );
+    assert_eq!(
+        table_columns(&path, "article_retraction_dois"),
+        ["article_id", "retraction_doi"]
     );
     assert!(index_exists(&path, "idx_article_identity_keys_article"));
     assert!(index_exists(&path, "idx_article_change_events_revision"));
+    assert!(index_exists(&path, "idx_article_retraction_dois_doi"));
     assert!(index_exists(&path, "idx_journal_identity_keys_catalog"));
 
     let schema = sqlite_schema_sql(&path);
     assert!(schema.contains("identity_kind in ('catalog_id', 'issn')"));
     assert_eq!(foreign_key_count(&path, "journal_identity_keys"), 0);
+    assert_eq!(foreign_key_count(&path, "article_retraction_dois"), 1);
     for forbidden in [
         "provider",
         "source_csv",
@@ -583,6 +589,44 @@ fn version_four_index_migration_preserves_content_and_seeds_identity_keys() {
 }
 
 #[test]
+fn version_five_index_migration_discards_legacy_scalar_and_preserves_other_content() {
+    let temp_dir = tempdir().expect("temp directory should be created");
+    let path = temp_dir.path().join("version-five.sqlite");
+    create_version_five_index_database(&path);
+    let before = index_content_snapshot(&path);
+    let identity_before = query_text_rows(
+        &path,
+        "SELECT json_array(identity_kind, identity_value, canonical_catalog_id)
+         FROM journal_identity_keys ORDER BY identity_kind, identity_value",
+    );
+    assert_eq!(
+        query_text_rows(
+            &path,
+            "SELECT retraction_doi FROM articles WHERE article_id = 100"
+        ),
+        ["10.1000/legacy-relation"]
+    );
+
+    migrate_index_database(&path, None).expect("version five index should migrate");
+
+    assert_eq!(user_version(&path), INDEX_SCHEMA_VERSION);
+    assert_eq!(index_content_snapshot(&path), before);
+    assert_eq!(
+        query_text_rows(
+            &path,
+            "SELECT json_array(identity_kind, identity_value, canonical_catalog_id)
+             FROM journal_identity_keys ORDER BY identity_kind, identity_value"
+        ),
+        identity_before
+    );
+    assert!(!table_columns(&path, "articles")
+        .iter()
+        .any(|column| column == "retraction_doi"));
+    assert_eq!(table_row_count(&path, "article_retraction_dois"), 0);
+    assert_eq!(foreign_key_violation_count(&path), 0);
+}
+
+#[test]
 fn empty_version_four_index_migration_creates_an_empty_identity_map() {
     let temp_dir = tempdir().expect("temp directory should be created");
     let path = temp_dir.path().join("empty-version-four.sqlite");
@@ -630,7 +674,7 @@ fn version_four_identity_conflict_rolls_back_atomically() {
 fn pre_v4_index_versions_require_rebuild_without_modifying_files() {
     let temp_dir = tempdir().expect("temp directory should be created");
 
-    for version in 0..(INDEX_SCHEMA_VERSION - 1) {
+    for version in 0..4 {
         let path = temp_dir.path().join(format!("legacy-v{version}.sqlite"));
         create_nonempty_index_database(&path, version);
         let before = fs::read(&path).expect("legacy bytes should read");
@@ -954,14 +998,16 @@ fn sqlite_schema_sql(path: &Path) -> String {
 }
 
 fn create_version_four_index_database(path: &Path, has_content: bool) {
-    migrate_index_database(path, None).expect("version five fixture should initialize");
+    migrate_index_database(path, None).expect("current index fixture should initialize");
     let connection = Connection::open(path).expect("version four fixture should open");
     connection
         .execute_batch(
-            "DROP TABLE journal_identity_keys;
+            "DROP TABLE article_retraction_dois;
+             ALTER TABLE articles ADD COLUMN retraction_doi TEXT;
+             DROP TABLE journal_identity_keys;
              PRAGMA user_version = 4;",
         )
-        .expect("version five identity objects should be removed");
+        .expect("current-only index objects should be removed");
     if has_content {
         connection
             .execute_batch(
@@ -1025,15 +1071,42 @@ fn create_version_four_index_database(path: &Path, has_content: bool) {
     }
 }
 
+fn create_version_five_index_database(path: &Path) {
+    create_version_four_index_database(path, true);
+    let connection = Connection::open(path).expect("version five fixture should open");
+    connection
+        .execute_batch(
+            "CREATE TABLE journal_identity_keys (
+                 identity_kind TEXT NOT NULL CHECK (identity_kind IN ('catalog_id', 'issn')),
+                 identity_value TEXT NOT NULL,
+                 canonical_catalog_id TEXT NOT NULL,
+                 PRIMARY KEY (identity_kind, identity_value)
+             );
+             CREATE INDEX idx_journal_identity_keys_catalog
+                 ON journal_identity_keys(canonical_catalog_id);
+             INSERT INTO journal_identity_keys (
+                 identity_kind, identity_value, canonical_catalog_id
+             ) VALUES
+                 ('catalog_id', 'journal-1', 'journal-1'),
+                 ('catalog_id', 'journal-2', 'journal-2'),
+                 ('issn', '1234-5679', 'journal-1'),
+                 ('issn', '2049-3630', 'journal-1'),
+                 ('issn', '2434-561X', 'journal-2');
+             UPDATE articles SET retraction_doi = '10.1000/legacy-relation';
+             PRAGMA user_version = 5;",
+        )
+        .expect("version five identity and scalar state should be installed");
+}
+
 fn index_content_snapshot(path: &Path) -> Vec<Vec<String>> {
     [
-        "SELECT CAST(journal_id AS TEXT) || '|' || catalog_id FROM journals ORDER BY journal_id",
-        "SELECT CAST(issue_id AS TEXT) || '|' || CAST(journal_id AS TEXT) FROM issues ORDER BY issue_id",
-        "SELECT CAST(article_id AS TEXT) || '|' || CAST(journal_id AS TEXT) || '|' || COALESCE(CAST(issue_id AS TEXT), '') FROM articles ORDER BY article_id",
-        "SELECT identity_kind || '|' || identity_value || '|' || CAST(article_id AS TEXT) FROM article_identity_keys ORDER BY identity_kind, identity_value",
-        "SELECT CAST(article_id AS TEXT) || '|' || CAST(journal_id AS TEXT) || '|' || COALESCE(CAST(issue_id AS TEXT), '') FROM article_listing ORDER BY article_id",
-        "SELECT CAST(rowid AS TEXT) || '|' || CAST(article_id AS TEXT) FROM article_search ORDER BY rowid",
-        "SELECT CAST(event_id AS TEXT) || '|' || content_revision || '|' || CAST(article_id AS TEXT) || '|' || CAST(journal_id AS TEXT) || '|' || COALESCE(CAST(issue_id AS TEXT), '') FROM article_change_events ORDER BY event_id",
+        "SELECT json_array(journal_id, catalog_id, title, title_aliases_json, issns_json, issn, eissn, area, utd_rank, utd_rating, abs_rank, abs_rating, fms_rank, fms_rating, fmscn_rank, fmscn_rating) FROM journals ORDER BY journal_id",
+        "SELECT json_array(issue_id, journal_id, publication_year, title, volume, number, date) FROM issues ORDER BY issue_id",
+        "SELECT json_array(article_id, journal_id, issue_id, title, publication_year, date, authors_json, start_page, end_page, abstract_text, doi, pmid, open_access, in_press) FROM articles ORDER BY article_id",
+        "SELECT json_array(identity_kind, identity_value, article_id) FROM article_identity_keys ORDER BY identity_kind, identity_value",
+        "SELECT json_array(article_id, journal_id, issue_id, publication_year, date, open_access, in_press, doi, pmid, area) FROM article_listing ORDER BY article_id",
+        "SELECT json_array(rowid, article_id, title, abstract_text, doi, pmid, authors, journal_title) FROM article_search ORDER BY rowid",
+        "SELECT json_array(event_id, content_revision, article_id, change_kind, journal_id, issue_id, in_press, created_at) FROM article_change_events ORDER BY event_id",
     ]
     .into_iter()
     .map(|query| query_text_rows(path, query))
@@ -1061,6 +1134,15 @@ fn foreign_key_count(path: &Path, table_name: &str) -> i64 {
             |row| row.get(0),
         )
         .expect("foreign key count should read")
+}
+
+fn foreign_key_violation_count(path: &Path) -> i64 {
+    Connection::open(path)
+        .expect("database should open for foreign key check")
+        .query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |row| {
+            row.get(0)
+        })
+        .expect("foreign key violations should be readable")
 }
 
 fn table_row_count(path: &Path, table_name: &str) -> i64 {

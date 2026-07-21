@@ -358,7 +358,7 @@ fn fetch_articles_by_ids(
     let mut statement = connection.prepare(&format!(
         "SELECT a.article_id, a.journal_id, a.issue_id, a.title, a.publication_year, \
          a.date, a.authors_json, a.start_page, a.end_page, a.abstract_text, a.doi, \
-         a.pmid, a.in_press, a.open_access, a.retraction_doi, j.title, i.volume, i.number \
+         a.pmid, a.in_press, a.open_access, j.title, i.volume, i.number \
          FROM articles a LEFT JOIN issues i ON i.issue_id = a.issue_id \
          JOIN journals j ON j.journal_id = a.journal_id \
          WHERE a.article_id IN ({})",
@@ -369,6 +369,21 @@ fn fetch_articles_by_ids(
         .into_iter()
         .map(|article: ArticleRecord| (article.article_id.value(), article))
         .collect::<HashMap<_, _>>();
+    let mut retraction_statement = connection.prepare(&format!(
+        "SELECT article_id, retraction_doi FROM article_retraction_dois
+         WHERE article_id IN ({}) ORDER BY article_id, retraction_doi",
+        placeholders(article_ids.len())
+    ))?;
+    let retraction_rows = retraction_statement
+        .query_map(params_from_iter(values.iter()), |row| {
+            Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+        })?;
+    for row in retraction_rows {
+        let (article_id, retraction_doi) = row?;
+        if let Some(article) = by_id.get_mut(&article_id) {
+            article.retraction_dois.push(retraction_doi);
+        }
+    }
     Ok(article_ids
         .iter()
         .filter_map(|article_id| by_id.remove(article_id))
@@ -391,10 +406,10 @@ fn article_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ArticleRecord> 
         pmid: row.get(11)?,
         in_press: row.get::<_, Option<i64>>(12)?.map(|value| value != 0),
         open_access: row.get::<_, Option<i64>>(13)?.map(|value| value != 0),
-        retraction_doi: row.get(14)?,
-        journal_title: row.get(15)?,
-        volume: row.get(16)?,
-        number: row.get(17)?,
+        retraction_dois: Vec::new(),
+        journal_title: row.get(14)?,
+        volume: row.get(15)?,
+        number: row.get(16)?,
     })
 }
 
@@ -631,6 +646,18 @@ mod tests {
                 .expect("in-press counts should load")
                 .get("1"),
             Some(&1)
+        );
+    }
+
+    #[test]
+    fn article_reads_plural_retraction_dois_in_lexical_order() {
+        let fixture = IndexFixture::new(true);
+        let article = get_article(&fixture.config, Some(&fixture.db_name), 1001)
+            .expect("article should load");
+
+        assert_eq!(
+            article.retraction_dois,
+            ["10.1000/retraction-a", "10.1000/retraction-b"]
         );
     }
 

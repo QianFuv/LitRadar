@@ -1560,8 +1560,8 @@ export interface components {
        * @description Publication year.
        */
       publication_year?: number | null;
-      /** @description Retraction DOI. */
-      retraction_doi?: string | null;
+      /** @description Retraction DOIs in lexical order without duplicates. */
+      retraction_dois: string[];
       /** @description Start page. */
       start_page?: string | null;
       /** @description Article title. */

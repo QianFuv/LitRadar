@@ -27,7 +27,7 @@ export interface Article {
   pmid?: string | null;
   start_page?: string | null;
   end_page?: string | null;
-  retraction_doi?: string | null;
+  retraction_dois?: string[];
   journal_title?: string | null;
   open_access?: boolean | null;
   in_press?: boolean | null;

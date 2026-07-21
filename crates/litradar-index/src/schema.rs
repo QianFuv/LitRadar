@@ -27,7 +27,7 @@ const LEGACY_JOURNAL_NOT_EMPTY_MESSAGE: &str =
     "legacy journal entity owns content or durable history";
 
 /// Current provider-neutral content database schema version.
-pub const CONTENT_SCHEMA_VERSION: i64 = 5;
+pub const CONTENT_SCHEMA_VERSION: i64 = 6;
 
 const CONTENT_TABLES_SQL: &str = "
     CREATE TABLE journals (
@@ -82,9 +82,15 @@ const CONTENT_TABLES_SQL: &str = "
         pmid TEXT,
         open_access INTEGER,
         in_press INTEGER,
-        retraction_doi TEXT,
         FOREIGN KEY (journal_id) REFERENCES journals(journal_id) ON DELETE CASCADE,
         FOREIGN KEY (issue_id) REFERENCES issues(issue_id) ON DELETE SET NULL
+    );
+
+    CREATE TABLE article_retraction_dois (
+        article_id INTEGER NOT NULL,
+        retraction_doi TEXT NOT NULL,
+        PRIMARY KEY (article_id, retraction_doi),
+        FOREIGN KEY (article_id) REFERENCES articles(article_id) ON DELETE CASCADE
     );
 
     CREATE TABLE article_identity_keys (
@@ -144,6 +150,8 @@ const CONTENT_TABLES_SQL: &str = "
     CREATE INDEX idx_articles_date_id ON articles(date, article_id);
     CREATE INDEX idx_articles_doi ON articles(doi);
     CREATE INDEX idx_articles_pmid ON articles(pmid);
+    CREATE INDEX idx_article_retraction_dois_doi
+        ON article_retraction_dois(retraction_doi);
     CREATE INDEX idx_article_identity_keys_article ON article_identity_keys(article_id);
     CREATE INDEX idx_article_listing_date_id ON article_listing(date, article_id);
     CREATE INDEX idx_article_listing_journal_date_id
@@ -285,7 +293,7 @@ struct JournalProjectionRefresh {
 ///
 /// # Returns
 ///
-/// Initialized v5 connection or an explicit rebuild-required failure.
+/// Initialized v6 connection or an explicit rebuild-required failure.
 pub fn open_content_db(path: impl AsRef<Path>) -> Result<Connection, ContentDatabaseError> {
     let connection = Connection::open(path)?;
     connection.busy_timeout(Duration::from_secs(INDEX_BUSY_TIMEOUT_SECONDS))?;
@@ -307,7 +315,7 @@ pub fn optimize_content_db(connection: &Connection) -> Result<(), ContentDatabas
     Ok(())
 }
 
-/// Initialize an empty content database or validate an existing v5 database.
+/// Initialize an empty content database or validate an existing v6 database.
 ///
 /// # Arguments
 ///
@@ -462,6 +470,7 @@ fn validate_current_content_schema(connection: &Connection) -> Result<(), Conten
         "article_change_events",
         "article_identity_keys",
         "article_listing",
+        "article_retraction_dois",
         "article_search",
         "articles",
         "issues",
@@ -542,9 +551,9 @@ fn validate_current_content_schema(connection: &Connection) -> Result<(), Conten
                 "pmid",
                 "open_access",
                 "in_press",
-                "retraction_doi",
             ],
         ),
+        ("article_retraction_dois", &["article_id", "retraction_doi"]),
         (
             "article_identity_keys",
             &["identity_kind", "identity_value", "article_id"],
@@ -608,6 +617,7 @@ fn validate_current_content_schema(connection: &Connection) -> Result<(), Conten
         "idx_article_listing_date_id",
         "idx_article_listing_issue",
         "idx_article_listing_journal_date_id",
+        "idx_article_retraction_dois_doi",
         "idx_articles_date_id",
         "idx_articles_doi",
         "idx_articles_issue",
@@ -1126,7 +1136,7 @@ fn load_canonical_article(
             "SELECT
                  j.catalog_id, a.title, a.publication_year, a.date, i.title, i.volume, i.number,
                  a.authors_json, a.start_page, a.end_page, a.abstract_text, a.doi, a.pmid,
-                 a.open_access, a.in_press, a.retraction_doi, a.issue_id
+                 a.open_access, a.in_press, a.issue_id
              FROM articles AS a
              JOIN journals AS j ON j.journal_id = a.journal_id
              LEFT JOIN issues AS i ON i.issue_id = a.issue_id
@@ -1149,14 +1159,44 @@ fn load_canonical_article(
                     row.get::<_, Option<String>>(12)?,
                     row.get::<_, Option<i64>>(13)?,
                     row.get::<_, Option<i64>>(14)?,
-                    row.get::<_, Option<String>>(15)?,
-                    row.get::<_, Option<i64>>(16)?,
+                    row.get::<_, Option<i64>>(15)?,
                 ))
             },
         )
         .optional()?;
-    row.map(
-        |(
+    let Some((
+        catalog_id,
+        title,
+        publication_year,
+        date,
+        issue_title,
+        volume,
+        issue_number,
+        authors_json,
+        start_page,
+        end_page,
+        abstract_text,
+        doi,
+        pmid,
+        open_access,
+        in_press,
+        issue_id,
+    )) = row
+    else {
+        return Ok(None);
+    };
+    let retraction_dois = {
+        let mut statement = connection.prepare(
+            "SELECT retraction_doi FROM article_retraction_dois
+             WHERE article_id = ?1 ORDER BY retraction_doi",
+        )?;
+        let values = statement
+            .query_map([article_id], |row| row.get::<_, String>(0))?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        values
+    };
+    Ok(Some((
+        ArticleDraft {
             catalog_id,
             title,
             publication_year,
@@ -1164,41 +1204,18 @@ fn load_canonical_article(
             issue_title,
             volume,
             issue_number,
-            authors_json,
+            authors: serde_json::from_str::<Vec<ArticleAuthorDraft>>(&authors_json)?,
             start_page,
             end_page,
             abstract_text,
             doi,
             pmid,
-            open_access,
-            in_press,
-            retraction_doi,
-            issue_id,
-        )| {
-            Ok((
-                ArticleDraft {
-                    catalog_id,
-                    title,
-                    publication_year,
-                    date,
-                    issue_title,
-                    volume,
-                    issue_number,
-                    authors: serde_json::from_str::<Vec<ArticleAuthorDraft>>(&authors_json)?,
-                    start_page,
-                    end_page,
-                    abstract_text,
-                    doi,
-                    pmid,
-                    open_access: open_access.map(|value| value != 0),
-                    in_press: in_press.map(|value| value != 0),
-                    retraction_doi,
-                },
-                issue_id,
-            ))
+            open_access: open_access.map(|value| value != 0),
+            in_press: in_press.map(|value| value != 0),
+            retraction_dois,
         },
-    )
-    .transpose()
+        issue_id,
+    )))
 }
 
 fn upsert_canonical_article(
@@ -1212,10 +1229,9 @@ fn upsert_canonical_article(
     connection.execute(
         "INSERT INTO articles (
              article_id, journal_id, issue_id, title, publication_year, date, authors_json,
-             start_page, end_page, abstract_text, doi, pmid, open_access, in_press,
-             retraction_doi
+             start_page, end_page, abstract_text, doi, pmid, open_access, in_press
          ) VALUES (
-             ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15
+             ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14
          )
          ON CONFLICT(article_id) DO UPDATE SET
              journal_id = excluded.journal_id,
@@ -1230,8 +1246,7 @@ fn upsert_canonical_article(
              doi = excluded.doi,
              pmid = excluded.pmid,
              open_access = excluded.open_access,
-             in_press = excluded.in_press,
-             retraction_doi = excluded.retraction_doi",
+             in_press = excluded.in_press",
         params![
             article_id,
             journal_id,
@@ -1247,9 +1262,19 @@ fn upsert_canonical_article(
             article.pmid,
             article.open_access.map(i64::from),
             article.in_press.map(i64::from),
-            article.retraction_doi,
         ],
     )?;
+    connection.execute(
+        "DELETE FROM article_retraction_dois WHERE article_id = ?1",
+        [article_id],
+    )?;
+    for retraction_doi in &article.retraction_dois {
+        connection.execute(
+            "INSERT INTO article_retraction_dois (article_id, retraction_doi)
+             VALUES (?1, ?2)",
+            params![article_id, retraction_doi],
+        )?;
+    }
     Ok(())
 }
 
@@ -1427,7 +1452,7 @@ mod tests {
                 pmid: None,
                 open_access: Some(true),
                 in_press: Some(false),
-                retraction_doi: None,
+                retraction_dois: Vec::new(),
             }],
             is_complete: true,
             next_checkpoint: None,
@@ -2116,6 +2141,7 @@ mod tests {
             ("journal_identity_keys", 2),
             ("issues", 1),
             ("articles", 1),
+            ("article_retraction_dois", 0),
             ("article_identity_keys", 2),
             ("article_listing", 1),
             ("article_search", 1),
@@ -2128,6 +2154,65 @@ mod tests {
                 .expect("row count should read");
             assert_eq!(count, expected, "unexpected replay cardinality for {table}");
         }
+    }
+
+    #[test]
+    fn canonical_batch_unions_and_persists_multiple_retraction_dois() {
+        let connection = Connection::open_in_memory().expect("database should open");
+        init_content_db(&connection).expect("content schema should initialize");
+        let mut first_batch = batch();
+        first_batch.articles[0].retraction_dois = vec![
+            "10.1000/retraction-a".to_string(),
+            "10.1000/retraction-b".to_string(),
+        ];
+        write_content_batch(
+            &connection,
+            &catalog(),
+            &first_batch,
+            "catalog:journal-1:retraction-first",
+            TEST_CREATED_AT,
+        )
+        .expect("first retraction set should write");
+
+        let mut second_batch = batch();
+        second_batch.articles[0].retraction_dois = vec![
+            "10.1000/retraction-b".to_string(),
+            "10.1000/retraction-c".to_string(),
+        ];
+        let changed = write_content_batch(
+            &connection,
+            &catalog(),
+            &second_batch,
+            "catalog:journal-1:retraction-second",
+            TEST_CREATED_AT,
+        )
+        .expect("second retraction set should merge");
+        let stored = connection
+            .prepare("SELECT retraction_doi FROM article_retraction_dois ORDER BY retraction_doi")
+            .expect("retraction query should prepare")
+            .query_map([], |row| row.get::<_, String>(0))
+            .expect("retraction query should run")
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .expect("retraction rows should collect");
+
+        assert_eq!(changed.articles_changed, 1);
+        assert_eq!(
+            stored,
+            [
+                "10.1000/retraction-a",
+                "10.1000/retraction-b",
+                "10.1000/retraction-c"
+            ]
+        );
+        let replay = write_content_batch(
+            &connection,
+            &catalog(),
+            &second_batch,
+            "catalog:journal-1:retraction-second",
+            TEST_CREATED_AT,
+        )
+        .expect("retraction replay should converge");
+        assert_eq!(replay.articles_changed, 0);
     }
 
     #[test]

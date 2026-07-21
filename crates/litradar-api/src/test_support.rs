@@ -308,13 +308,17 @@ fn create_fixture_index_database(path: &Path) {
             INSERT INTO articles (
                 article_id, journal_id, issue_id, title, publication_year, date,
                 authors_json, start_page, end_page, abstract_text, doi, pmid,
-                open_access, in_press, retraction_doi
+                open_access, in_press
             ) VALUES (
                 9001, 101, 202401, 'Fixture Article', 2024, '2024-01-16',
                 '["Ada Lovelace","Grace Hopper"]', '1', '9',
                 'Fixture abstract for route and storage tests.',
-                '10.1234/fixture', '123456', 1, 0, NULL
+                '10.1234/fixture', '123456', 1, 0
             );
+
+            INSERT INTO article_retraction_dois (article_id, retraction_doi) VALUES
+                (9001, '10.1234/retraction-b'),
+                (9001, '10.1234/retraction-a');
 
             INSERT INTO article_listing (
                 article_id, journal_id, issue_id, publication_year, date, open_access,

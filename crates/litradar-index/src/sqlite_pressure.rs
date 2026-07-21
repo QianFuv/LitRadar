@@ -889,7 +889,7 @@ fn pressure_batch(
                 pmid: None,
                 open_access: Some(true),
                 in_press: Some(false),
-                retraction_doi: None,
+                retraction_dois: Vec::new(),
             }
         })
         .collect();

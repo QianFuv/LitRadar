@@ -837,7 +837,7 @@ mod tests {
                 pmid: None,
                 open_access: Some(true),
                 in_press: Some(false),
-                retraction_doi: None,
+                retraction_dois: Vec::new(),
             }],
             is_complete: false,
             next_checkpoint: Some("page-2".to_string()),

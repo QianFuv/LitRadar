@@ -17,7 +17,7 @@ use crate::{DatabaseResolutionError, StorageConfig};
 pub const AUTH_SCHEMA_VERSION: i64 = 6;
 
 /// Current index database schema version.
-pub const INDEX_SCHEMA_VERSION: i64 = 5;
+pub const INDEX_SCHEMA_VERSION: i64 = 6;
 
 const AUTH_DATABASE: &str = "auth";
 const INDEX_DATABASE: &str = "index";
@@ -290,25 +290,34 @@ fn migrate_index_database_inner(
         reject_newer_version(INDEX_DATABASE, version, INDEX_SCHEMA_VERSION)?;
         if version == INDEX_SCHEMA_VERSION {
             let connection = open_read_only_index_connection(path)?;
-            validate_index_v5_schema(&connection)?;
+            validate_index_v6_schema(&connection)?;
             return Ok(MigrationSummary {
                 from_version: version,
                 to_version: version,
             });
         }
-        if version == 4 {
+        if version == 4 || version == 5 {
             {
                 let connection = open_read_only_index_connection(path)?;
-                validate_index_v4_schema(&connection)?;
+                if version == 4 {
+                    validate_index_v4_schema(&connection)?;
+                } else {
+                    validate_index_v5_schema(&connection)?;
+                }
             }
             let connection = open_migration_connection(path)?;
             configure_writable_connection(&connection)?;
+            connection.pragma_update(None, "foreign_keys", false)?;
             let transaction =
                 Transaction::new_unchecked(&connection, TransactionBehavior::Immediate)?;
-            apply_index_version_five(&transaction)?;
+            if version == 4 {
+                apply_index_version_five(&transaction)?;
+            }
+            apply_index_version_six(&transaction)?;
             transaction.pragma_update(None, "user_version", INDEX_SCHEMA_VERSION)?;
             transaction.commit()?;
-            validate_index_v5_schema(&connection)?;
+            connection.pragma_update(None, "foreign_keys", true)?;
+            validate_index_v6_schema(&connection)?;
             return Ok(MigrationSummary {
                 from_version: version,
                 to_version: INDEX_SCHEMA_VERSION,
@@ -331,7 +340,7 @@ fn migrate_index_database_inner(
     transaction.execute_batch(INDEX_CONTENT_TABLES_SQL)?;
     transaction.pragma_update(None, "user_version", INDEX_SCHEMA_VERSION)?;
     transaction.commit()?;
-    validate_index_v5_schema(&connection)?;
+    validate_index_v6_schema(&connection)?;
     Ok(MigrationSummary {
         from_version,
         to_version: INDEX_SCHEMA_VERSION,
@@ -401,9 +410,7 @@ fn migration_error_database_version(error: &MigrationError) -> i64 {
         MigrationError::Io(_)
         | MigrationError::Sqlite(_)
         | MigrationError::DatabaseResolution(_) => -1,
-        MigrationError::InvalidIndexIdentityState | MigrationError::IndexIdentityConflict => {
-            INDEX_SCHEMA_VERSION - 1
-        }
+        MigrationError::InvalidIndexIdentityState | MigrationError::IndexIdentityConflict => 4,
     }
 }
 
@@ -440,16 +447,21 @@ fn open_read_only_index_connection(path: &Path) -> Result<Connection, MigrationE
 }
 
 fn validate_index_v4_schema(connection: &Connection) -> Result<(), MigrationError> {
-    validate_index_schema(connection, false)
+    validate_index_schema(connection, false, false)
 }
 
 fn validate_index_v5_schema(connection: &Connection) -> Result<(), MigrationError> {
-    validate_index_schema(connection, true)
+    validate_index_schema(connection, true, false)
+}
+
+fn validate_index_v6_schema(connection: &Connection) -> Result<(), MigrationError> {
+    validate_index_schema(connection, true, true)
 }
 
 fn validate_index_schema(
     connection: &Connection,
     has_journal_identity_keys: bool,
+    has_retraction_dois: bool,
 ) -> Result<(), MigrationError> {
     let mut expected = [
         "article_change_events",
@@ -465,6 +477,9 @@ fn validate_index_schema(
     .collect::<BTreeSet<_>>();
     if has_journal_identity_keys {
         expected.insert("journal_identity_keys".to_string());
+    }
+    if has_retraction_dois {
+        expected.insert("article_retraction_dois".to_string());
     }
     let mut statement = connection.prepare(
         "SELECT name
@@ -512,26 +527,6 @@ fn validate_index_schema(
                 "volume",
                 "number",
                 "date",
-            ],
-        ),
-        (
-            "articles",
-            &[
-                "article_id",
-                "journal_id",
-                "issue_id",
-                "title",
-                "publication_year",
-                "date",
-                "authors_json",
-                "start_page",
-                "end_page",
-                "abstract_text",
-                "doi",
-                "pmid",
-                "open_access",
-                "in_press",
-                "retraction_doi",
             ],
         ),
         (
@@ -584,9 +579,53 @@ fn validate_index_schema(
             return Err(MigrationError::Sqlite(rusqlite::Error::InvalidQuery));
         }
     }
+    let expected_article_columns = if has_retraction_dois {
+        &[
+            "article_id",
+            "journal_id",
+            "issue_id",
+            "title",
+            "publication_year",
+            "date",
+            "authors_json",
+            "start_page",
+            "end_page",
+            "abstract_text",
+            "doi",
+            "pmid",
+            "open_access",
+            "in_press",
+        ][..]
+    } else {
+        &[
+            "article_id",
+            "journal_id",
+            "issue_id",
+            "title",
+            "publication_year",
+            "date",
+            "authors_json",
+            "start_page",
+            "end_page",
+            "abstract_text",
+            "doi",
+            "pmid",
+            "open_access",
+            "in_press",
+            "retraction_doi",
+        ][..]
+    };
+    if table_columns(connection, "articles")? != expected_article_columns {
+        return Err(MigrationError::Sqlite(rusqlite::Error::InvalidQuery));
+    }
     if has_journal_identity_keys
         && table_columns(connection, "journal_identity_keys")?
             != ["identity_kind", "identity_value", "canonical_catalog_id"]
+    {
+        return Err(MigrationError::Sqlite(rusqlite::Error::InvalidQuery));
+    }
+    if has_retraction_dois
+        && table_columns(connection, "article_retraction_dois")? != ["article_id", "retraction_doi"]
     {
         return Err(MigrationError::Sqlite(rusqlite::Error::InvalidQuery));
     }
@@ -612,6 +651,9 @@ fn validate_index_schema(
     if has_journal_identity_keys {
         expected_indexes.insert("idx_journal_identity_keys_catalog".to_string());
     }
+    if has_retraction_dois {
+        expected_indexes.insert("idx_article_retraction_dois_doi".to_string());
+    }
     let mut statement = connection.prepare(
         "SELECT name FROM sqlite_schema
          WHERE type = 'index' AND name NOT LIKE 'sqlite_%'
@@ -622,6 +664,15 @@ fn validate_index_schema(
         .collect::<rusqlite::Result<BTreeSet<_>>>()?;
     if actual_indexes != expected_indexes {
         return Err(MigrationError::Sqlite(rusqlite::Error::InvalidQuery));
+    }
+    if has_retraction_dois {
+        let foreign_key_violation_count =
+            connection.query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |row| {
+                row.get::<_, i64>(0)
+            })?;
+        if foreign_key_violation_count != 0 {
+            return Err(MigrationError::Sqlite(rusqlite::Error::InvalidQuery));
+        }
     }
     Ok(())
 }
@@ -669,6 +720,18 @@ fn apply_index_version_five(transaction: &Transaction<'_>) -> Result<(), Migrati
     )?;
     for ((identity_kind, identity_value), canonical_catalog_id) in owners {
         statement.execute((identity_kind, identity_value, canonical_catalog_id))?;
+    }
+    Ok(())
+}
+
+fn apply_index_version_six(transaction: &Transaction<'_>) -> Result<(), MigrationError> {
+    transaction.execute_batch(INDEX_VERSION_SIX_SQL)?;
+    let foreign_key_violation_count =
+        transaction.query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |row| {
+            row.get::<_, i64>(0)
+        })?;
+    if foreign_key_violation_count != 0 {
+        return Err(MigrationError::Sqlite(rusqlite::Error::InvalidQuery));
     }
     Ok(())
 }
@@ -1121,6 +1184,54 @@ const INDEX_VERSION_FIVE_SQL: &str = "
         ON journal_identity_keys(canonical_catalog_id);
 ";
 
+const INDEX_VERSION_SIX_SQL: &str = "
+    CREATE TABLE articles_v6 (
+        article_id INTEGER PRIMARY KEY,
+        journal_id INTEGER NOT NULL,
+        issue_id INTEGER,
+        title TEXT NOT NULL,
+        publication_year INTEGER,
+        date TEXT,
+        authors_json TEXT NOT NULL,
+        start_page TEXT,
+        end_page TEXT,
+        abstract_text TEXT,
+        doi TEXT,
+        pmid TEXT,
+        open_access INTEGER,
+        in_press INTEGER,
+        FOREIGN KEY (journal_id) REFERENCES journals(journal_id) ON DELETE CASCADE,
+        FOREIGN KEY (issue_id) REFERENCES issues(issue_id) ON DELETE SET NULL
+    );
+
+    INSERT INTO articles_v6 (
+        article_id, journal_id, issue_id, title, publication_year, date, authors_json,
+        start_page, end_page, abstract_text, doi, pmid, open_access, in_press
+    )
+    SELECT
+        article_id, journal_id, issue_id, title, publication_year, date, authors_json,
+        start_page, end_page, abstract_text, doi, pmid, open_access, in_press
+    FROM articles;
+
+    DROP TABLE articles;
+    ALTER TABLE articles_v6 RENAME TO articles;
+
+    CREATE TABLE article_retraction_dois (
+        article_id INTEGER NOT NULL,
+        retraction_doi TEXT NOT NULL,
+        PRIMARY KEY (article_id, retraction_doi),
+        FOREIGN KEY (article_id) REFERENCES articles(article_id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX idx_articles_journal ON articles(journal_id);
+    CREATE INDEX idx_articles_issue ON articles(issue_id);
+    CREATE INDEX idx_articles_date_id ON articles(date, article_id);
+    CREATE INDEX idx_articles_doi ON articles(doi);
+    CREATE INDEX idx_articles_pmid ON articles(pmid);
+    CREATE INDEX idx_article_retraction_dois_doi
+        ON article_retraction_dois(retraction_doi);
+";
+
 pub(crate) const INDEX_CONTENT_TABLES_SQL: &str = "
     CREATE TABLE journals (
         journal_id INTEGER PRIMARY KEY,
@@ -1174,9 +1285,15 @@ pub(crate) const INDEX_CONTENT_TABLES_SQL: &str = "
         pmid TEXT,
         open_access INTEGER,
         in_press INTEGER,
-        retraction_doi TEXT,
         FOREIGN KEY (journal_id) REFERENCES journals(journal_id) ON DELETE CASCADE,
         FOREIGN KEY (issue_id) REFERENCES issues(issue_id) ON DELETE SET NULL
+    );
+
+    CREATE TABLE article_retraction_dois (
+        article_id INTEGER NOT NULL,
+        retraction_doi TEXT NOT NULL,
+        PRIMARY KEY (article_id, retraction_doi),
+        FOREIGN KEY (article_id) REFERENCES articles(article_id) ON DELETE CASCADE
     );
 
     CREATE TABLE article_identity_keys (
@@ -1236,6 +1353,8 @@ pub(crate) const INDEX_CONTENT_TABLES_SQL: &str = "
     CREATE INDEX idx_articles_date_id ON articles(date, article_id);
     CREATE INDEX idx_articles_doi ON articles(doi);
     CREATE INDEX idx_articles_pmid ON articles(pmid);
+    CREATE INDEX idx_article_retraction_dois_doi
+        ON article_retraction_dois(retraction_doi);
     CREATE INDEX idx_article_identity_keys_article ON article_identity_keys(article_id);
     CREATE INDEX idx_article_listing_date_id ON article_listing(date, article_id);
     CREATE INDEX idx_article_listing_journal_date_id

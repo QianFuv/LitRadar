@@ -359,11 +359,14 @@ fn merge_article_drafts_with_doi_policy(
         pmid: merge_identifier(left.pmid.as_ref(), right.pmid.as_ref(), "PMID")?,
         open_access: merge_true_wins(left.open_access, right.open_access),
         in_press: merge_false_wins(left.in_press, right.in_press),
-        retraction_doi: merge_identifier(
-            left.retraction_doi.as_ref(),
-            right.retraction_doi.as_ref(),
-            "retraction DOI",
-        )?,
+        retraction_dois: left
+            .retraction_dois
+            .iter()
+            .chain(&right.retraction_dois)
+            .cloned()
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect(),
     })
 }
 
@@ -534,7 +537,7 @@ mod tests {
             pmid: None,
             open_access: None,
             in_press: None,
-            retraction_doi: None,
+            retraction_dois: Vec::new(),
         }
     }
 
@@ -701,14 +704,24 @@ mod tests {
         );
 
         let mut left_retraction = left;
-        left_retraction.retraction_doi = Some("10.1000/retraction-a".to_string());
+        left_retraction.retraction_dois = vec![
+            "10.1000/retraction-b".to_string(),
+            "10.1000/retraction-a".to_string(),
+        ];
         let mut right_retraction = right;
-        right_retraction.retraction_doi = Some("10.1000/retraction-b".to_string());
+        right_retraction.retraction_dois = vec![
+            "10.1000/retraction-c".to_string(),
+            "10.1000/retraction-a".to_string(),
+        ];
+        let merged_retractions = merge_resolved_article_drafts(&left_retraction, &right_retraction)
+            .expect("multiple retraction links should merge");
         assert_eq!(
-            merge_resolved_article_drafts(&left_retraction, &right_retraction),
-            Err(ArticleMergeError::ConflictingIdentifier {
-                field: "retraction DOI"
-            })
+            merged_retractions.retraction_dois,
+            [
+                "10.1000/retraction-a",
+                "10.1000/retraction-b",
+                "10.1000/retraction-c"
+            ]
         );
     }
 }

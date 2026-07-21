@@ -1566,12 +1566,12 @@ mod tests {
                 INSERT INTO articles (
                     article_id, journal_id, issue_id, title, publication_year, date,
                     authors_json, start_page, end_page, abstract_text, doi, pmid,
-                    open_access, in_press, retraction_doi
+                    open_access, in_press
                 ) VALUES
                     (101, 1, 11, 'Rust systems', 2026, '2026-07-01', '["Alice"]',
-                     NULL, NULL, 'rust systems', '10.0000/101', NULL, 1, 0, NULL),
+                     NULL, NULL, 'rust systems', '10.0000/101', NULL, 1, 0),
                     (102, 1, 11, 'Rust migration', 2026, '2026-07-01', '["Bob"]',
-                     NULL, NULL, 'rust migration', '10.0000/102', NULL, 1, 0, NULL);
+                     NULL, NULL, 'rust migration', '10.0000/102', NULL, 1, 0);
                 "#,
             )
             .expect("index fixture data should be created");

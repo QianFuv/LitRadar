@@ -3944,6 +3944,11 @@ mod tests {
         assert_eq!(invalid_articles.status, StatusCode::BAD_REQUEST);
         assert_eq!(article.status, StatusCode::OK);
         assert_eq!(article.payload["doi"], "10.1234/fixture");
+        assert_eq!(
+            article.payload["retraction_dois"],
+            serde_json::json!(["10.1234/retraction-a", "10.1234/retraction-b"])
+        );
+        assert!(article.payload.get("retraction_doi").is_none());
         assert_eq!(missing_article.status, StatusCode::NOT_FOUND);
         assert_eq!(access.status, StatusCode::OK);
         assert_eq!(access.payload["detail"]["available"], true);
@@ -4546,11 +4551,11 @@ mod tests {
                 INSERT INTO articles (
                     article_id, journal_id, issue_id, title, publication_year, date,
                     authors_json, start_page, end_page, abstract_text, doi, pmid,
-                    open_access, in_press, retraction_doi
+                    open_access, in_press
                 ) VALUES (
                     ?1, 303, 202402, 'Fixture CNKI Article', 2024, '2024-02-02',
                     '["Ada Lovelace","Grace Hopper"]', '1', '8',
-                    'CNKI fulltext fixture abstract.', NULL, NULL, 0, 0, NULL
+                    'CNKI fulltext fixture abstract.', NULL, NULL, 0, 0
                 )
                 "#,
                 [article_id],

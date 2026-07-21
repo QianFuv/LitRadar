@@ -3316,7 +3316,14 @@
       "ArticleRecord": {
         "type": "object",
         "description": "Article record.",
-        "required": ["article_id", "journal_id", "title", "authors", "journal_title"],
+        "required": [
+          "article_id",
+          "journal_id",
+          "title",
+          "authors",
+          "retraction_dois",
+          "journal_title"
+        ],
         "properties": {
           "abstract": {
             "type": ["string", "null"],
@@ -3379,9 +3386,12 @@
             "format": "int64",
             "description": "Publication year."
           },
-          "retraction_doi": {
-            "type": ["string", "null"],
-            "description": "Retraction DOI."
+          "retraction_dois": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Retraction DOIs in lexical order without duplicates."
           },
           "start_page": {
             "type": ["string", "null"],

@@ -2301,7 +2301,7 @@ mod tests {
                 pmid: None,
                 open_access: Some(true),
                 in_press: Some(false),
-                retraction_doi: None,
+                retraction_dois: Vec::new(),
             }],
             is_complete: true,
             next_checkpoint: None,
@@ -3133,6 +3133,39 @@ mod tests {
         assert!(!request_text.contains("content_path"));
         assert!(!request_text.contains("control_path"));
         assert!(!captured.text().contains("index.writer"));
+    }
+
+    #[test]
+    fn worker_protocol_version_two_rejects_version_one_requests() {
+        let directory = tempdir().expect("temporary directory should create");
+        let mut request = fetch_worker_request("scholarly", "run-version-mismatch");
+        request.protocol_version = 1;
+        request.assignments.clear();
+        let request_path = directory.path().join("worker-request.json");
+        std::fs::write(
+            &request_path,
+            serde_json::to_vec(&request).expect("worker request should serialize"),
+        )
+        .expect("worker request should write");
+
+        let mut output = Vec::new();
+        run_live_index_worker_with_io(&request_path, Cursor::new(Vec::<u8>::new()), &mut output)
+            .expect("worker entrypoint should emit a redacted terminal failure");
+        let message: WorkerMessage = read_message(&mut Cursor::new(output))
+            .expect("terminal worker message should deserialize");
+
+        assert!(matches!(
+            message,
+            WorkerMessage::Failed {
+                protocol_version: PROTOCOL_VERSION,
+                worker_id: 0,
+                sequence: 0,
+                failure: LiveIndexWorkerFailure {
+                    class: LiveIndexWorkerFailureClass::InvalidConfig,
+                    ..
+                },
+            }
+        ));
     }
 
     #[test]

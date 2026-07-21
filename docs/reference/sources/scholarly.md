@@ -48,9 +48,11 @@ Crossref 成功但结果为空不会触发 OpenAlex source fallback。没有 DOI
 | `doi`                             | 规范化为小写标识符，不保存 DOI URL                              |
 | `pmid`                            | OpenAlex `ids.pmid` 的数字形式                                  |
 | `open_access`                     | Semantic Scholar 或 OpenAlex 任一明确为 OA 时为 true            |
-| `retraction_doi`                  | Crossref relation 中的规范 DOI                                  |
+| `retraction_dois`                 | Crossref `updated-by` 中 type 为 retraction 的全部规范 DOI，排序去重 |
 
 Provider 不返回 PDF URL、landing page、permalink 或 content location。在线全文不是 Scholarly 当前声明的能力。
+
+通用 Crossref `relation` 不表示撤稿，不能填充 `retraction_dois`。`updated-by` 中 correction 等其他 update type、格式不合法的 DOI、source 标签、更新时间和原始 update payload 都会被忽略；多个来源重复报告同一撤稿 DOI 时只保留一条。
 
 ## Crossref 分页
 

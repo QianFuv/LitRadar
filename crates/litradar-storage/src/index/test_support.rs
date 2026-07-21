@@ -136,20 +136,24 @@ pub(super) fn create_fixture_schema(connection: &Connection) {
             INSERT INTO articles (
                 article_id, journal_id, issue_id, title, publication_year, date,
                 authors_json, start_page, end_page, abstract_text, doi, pmid,
-                open_access, in_press, retraction_doi
+                open_access, in_press
             ) VALUES
                 (1001, 1, 10, 'Genome Methods', 2026, '2026-01-05', '["Alice","Bob"]',
-                 '1', '10', 'Genome sequencing precision study', '10.1000/genome', '1001', 1, 0, NULL),
+                 '1', '10', 'Genome sequencing precision study', '10.1000/genome', '1001', 1, 0),
                 (1002, 1, 10, 'Clinical Data Mining', 2026, '2026-01-04', '["Carol"]',
-                 '11', '20', 'Clinical data search study', '10.1000/clinical', '1002', 0, 0, NULL),
+                 '11', '20', 'Clinical data search study', '10.1000/clinical', '1002', 0, 0),
                 (1003, 2, 20, 'Canonical Knowledge', 2026, '2026-02-01', '["Dan"]',
-                 NULL, NULL, 'Canonical article', NULL, NULL, 0, 0, NULL),
+                 NULL, NULL, 'Canonical article', NULL, NULL, 0, 0),
                 (1004, 1, NULL, 'Accepted Genome Preview', 2026, '2026-01-06', '["Eve"]',
-                 NULL, NULL, 'Genome in press preview', '10.1000/preview', NULL, 0, 1, NULL),
+                 NULL, NULL, 'Genome in press preview', '10.1000/preview', NULL, 0, 1),
                 (1005, 1, 10, 'DOI Only Article', 2026, '2026-01-03', '["Frank"]',
-                 '21', '22', 'DOI fallback study', '10.1000/doi-only', '1005', 0, 0, NULL),
+                 '21', '22', 'DOI fallback study', '10.1000/doi-only', '1005', 0, 0),
                 (1008, 1, 10, 'Bibliographic Article', 2026, '2026-01-02', '["Heidi"]',
-                 '25', '26', 'Article without an external identifier', NULL, NULL, 0, 0, NULL);
+                 '25', '26', 'Article without an external identifier', NULL, NULL, 0, 0);
+
+            INSERT INTO article_retraction_dois (article_id, retraction_doi) VALUES
+                (1001, '10.1000/retraction-b'),
+                (1001, '10.1000/retraction-a');
 
             INSERT INTO article_listing (
                 article_id, journal_id, issue_id, publication_year, date,

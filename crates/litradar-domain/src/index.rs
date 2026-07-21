@@ -95,8 +95,8 @@ pub struct ArticleRecord {
     pub in_press: Option<bool>,
     /// Open-access flag.
     pub open_access: Option<bool>,
-    /// Retraction DOI.
-    pub retraction_doi: Option<String>,
+    /// Retraction DOIs in lexical order without duplicates.
+    pub retraction_dois: Vec<String>,
     /// Journal title.
     pub journal_title: String,
     /// Issue volume.

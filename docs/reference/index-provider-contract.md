@@ -1,6 +1,6 @@
 # 索引与 Provider 契约
 
-本文档是 LitRadar 文章索引 Provider 的规范接入文档。当前契约版本为 `1`，实现来源是 `litradar-domain::index_contract`、`litradar-provider` 和 `litradar-index`。
+本文档是 LitRadar 文章索引 Provider 的规范接入文档。当前契约版本为 `2`，实现来源是 `litradar-domain::index_contract`、`litradar-provider` 和 `litradar-index`。
 
 核心边界只有三条：
 
@@ -81,7 +81,7 @@ Provider 对所请求期刊的观察：
 | 必填 | `catalog_id`、非空 `title`                                                                    |
 | 出版 | `publication_year`、`date`、`issue_title`、`volume`、`issue_number`、`start_page`、`end_page` |
 | 内容 | 有序 `authors[].display_name`、`abstract_text`                                                |
-| 标识 | 规范 DOI、数字 PMID、规范 `retraction_doi`                                                    |
+| 标识 | 规范 DOI、数字 PMID、按字典序排列且无重复的规范 `retraction_dois`                            |
 | 状态 | 可空布尔值 `open_access`、`in_press`                                                          |
 
 文章还必须具有 DOI、PMID，或同时具有出版时间和卷/期/起始页中的至少一个定位字段。禁止 Provider ID、持久 URL、原始响应、权限、订阅、馆藏、会话和传输状态。
@@ -111,7 +111,7 @@ ID 由 `litradar-index` 独占生成：
 - `issue_id` 来自 journal ID 加年份/卷/期；缺失时使用日期或标题 fallback；
 - 文章依次建立 DOI、PMID、bibliographic fingerprint 三类 alias；新 ID 使用最强可用 alias，已有任一 alias 命中时复用原 ID。
 
-bibliographic fingerprint 包含目录、规范题名、由 `publication_year` 或日期提取的年份、卷期和起始页。一个 draft 的 alias 只命中同一不可变文章时，不同 DOI 会作为该文章的多个 identity alias 保留；单值 `articles.doi` 使用规范 DOI 的字典序最小值，保证合并与重放不依赖到达顺序。PMID 和撤稿 DOI 仍禁止冲突。
+bibliographic fingerprint 包含目录、规范题名、由 `publication_year` 或日期提取的年份、卷期和起始页。一个 draft 的 alias 只命中同一不可变文章时，不同 DOI 会作为该文章的多个 identity alias 保留；单值 `articles.doi` 使用规范 DOI 的字典序最小值，保证合并与重放不依赖到达顺序。PMID 仍禁止冲突；撤稿 DOI 以排序集合并集合并。
 
 多个 alias 指向不同已有文章时明确报冲突，不猜测合并。系统不使用模糊题名、作者相似度、嵌入或在线查询做身份合并。
 
@@ -159,7 +159,7 @@ API 用 `307 Temporary Redirect` 或文档响应返回结果，并设置 `Cache-
 
 | 路径                                  | 生命周期 | 内容                                                                       |
 | ------------------------------------- | -------- | -------------------------------------------------------------------------- |
-| `data/index/<catalog>.sqlite`         | 需要备份 | v5 规范期刊、期刊/文章 identity aliases、列表投影、FTS 和文章变更 outbox    |
+| `data/index/<catalog>.sqlite`         | 需要备份 | v6 规范期刊、期刊/文章 identity aliases、撤稿关系、列表投影、FTS 和文章变更 outbox |
 | `data/index-control/<catalog>.sqlite` | 可丢弃   | v1 Provider-scoped lease 和 opaque checkpoint                              |
 
 内容提交先完成，检查点随后提交。若检查点提交失败，重跑会重新读取已写内容并依靠 alias/upsert 收敛；不会因控制状态丢失而复制文章。删除控制库只会失去恢复进度，不会改变内容身份。
@@ -200,20 +200,20 @@ cargo clippy -p litradar-provider -p litradar-sources -p litradar-index --all-ta
 5. 备份内容库；控制库无需迁移。
 6. 运行索引并检查共享 alias 的 ID/count 对比。
 
-不需要替换 v5 内容库；精确 v4 内容库会原子迁移到 v5。不要把旧 Provider checkpoint 复制给新 Provider；两个 namespace 可同时存在于可丢弃控制库。详情、摘要和全文 Provider 顺序独立配置，不必跟随索引 Provider 一起切换。
+不需要替换 v6 内容库；精确 v4/v5 内容库会原子迁移到 v6。不要把旧 Provider checkpoint 复制给新 Provider；两个 namespace 可同时存在于可丢弃控制库。详情、摘要和全文 Provider 顺序独立配置，不必跟随索引 Provider 一起切换。
 
-## v5 升级与旧版本重建
+## v6 升级与旧版本重建
 
 应用只接受：
 
 - 不存在的新文件；
 - 完全空的 v0 SQLite；
-- schema 精确匹配、可在一个事务内迁移的 v4 内容库；
-- schema 精确匹配的 v5 内容库。
+- schema 精确匹配、可在一个事务内迁移的 v4 或 v5 内容库；
+- schema 精确匹配的 v6 内容库。
 
-v4 到 v5 只增加 `journal_identity_keys` 及其索引，并从已有 journal 行播种当前 catalog ID 和 ISSN 所有权，不重建或重映射内容 ID。v0 非空库及 v1–v3 索引库不会迁移到 v5。
+v4 会先增加 `journal_identity_keys` 及其索引，再与 v5 一样迁移到 v6。v5 到 v6 把撤稿关系规范化为 `article_retraction_dois`，不携带旧单值 `articles.retraction_doi`；除此之外不重映射内容 ID，也不改变 projection 或 outbox。v0 非空库及 v1–v3 索引库不会迁移到 v6。
 
-只有需要重建 v1–v3 时，才在执行任何移动或删除前确认以下影响：旧内容不会导入 v5；重建会使用新的规范身份空间；旧 favorite/tracking 中的 article ID 可能变成陈旧引用。应用不会自动删除、重命名或改写旧库，也不会迁移或清理这些引用。
+只有需要重建 v1–v3 时，才在执行任何移动或删除前确认以下影响：旧内容不会导入 v6；重建会使用新的规范身份空间；旧 favorite/tracking 中的 article ID 可能变成陈旧引用。应用不会自动删除、重命名或改写旧库，也不会迁移或清理这些引用。
 
 遇到 rebuild-required 错误时使用以下顺序：
 
@@ -222,5 +222,5 @@ v4 到 v5 只增加 `journal_identity_keys` 及其索引，并从已有 journal 
 3. 记录错误中给出的确切文件路径和可用于重建后比较的期刊/文章数量。
 4. 优先把该确切旧索引文件移动到备份位置；确认不再需要回退时才删除。不要使用目录级通配删除。
 5. 从未改名的维护目录重新运行索引。
-6. 验证 v5 schema、目录期刊数、文章数和抽样内容，再恢复服务。
+6. 验证 v6 schema、目录期刊数、文章数和抽样内容，再恢复服务。
 7. 明确决定保留、导出或清理无法解析的旧 favorite/tracking 引用；LitRadar 不会代替运维人员作此决定。

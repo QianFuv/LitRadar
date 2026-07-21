@@ -1414,7 +1414,10 @@ mod tests {
         migrate_index_command_databases(&project_root, Some("english_journals.csv"))
             .expect("selected index migration should succeed without inspecting its sibling");
 
-        assert_eq!(content_database_version(&english_path), 5);
+        assert_eq!(
+            content_database_version(&english_path),
+            litradar_storage::INDEX_SCHEMA_VERSION
+        );
         assert_eq!(
             fs::read(&ccf_path).expect("sibling bytes should remain readable"),
             ccf_before
@@ -1435,8 +1438,14 @@ mod tests {
         migrate_index_command_databases(&project_root, None)
             .expect("default index migration should include every database");
 
-        assert_eq!(content_database_version(&english_path), 5);
-        assert_eq!(content_database_version(&ccf_path), 5);
+        assert_eq!(
+            content_database_version(&english_path),
+            litradar_storage::INDEX_SCHEMA_VERSION
+        );
+        assert_eq!(
+            content_database_version(&ccf_path),
+            litradar_storage::INDEX_SCHEMA_VERSION
+        );
     }
 
     #[test]
@@ -1865,7 +1874,9 @@ mod tests {
             .expect("content database should open for downgrade fixture");
         connection
             .execute_batch(
-                "DROP TABLE journal_identity_keys;
+                "DROP TABLE article_retraction_dois;
+                 ALTER TABLE articles ADD COLUMN retraction_doi TEXT;
+                 DROP TABLE journal_identity_keys;
                  PRAGMA user_version = 4;",
             )
             .expect("version four fixture should be created");

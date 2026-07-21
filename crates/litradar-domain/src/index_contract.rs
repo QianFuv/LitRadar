@@ -6,7 +6,7 @@ use unicode_normalization::UnicodeNormalization;
 use crate::{ArticleId, UserId};
 
 /// Current canonical provider contract version.
-pub const INDEX_CONTRACT_VERSION: u32 = 1;
+pub const INDEX_CONTRACT_VERSION: u32 = 2;
 
 /// Normalize a contract string to trimmed Unicode NFC form.
 ///
@@ -229,7 +229,7 @@ pub struct IssueDraft {
     pub date: Option<String>,
 }
 
-/// One ordered article author in the canonical v1 contract.
+/// One ordered article author in the canonical v2 contract.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ArticleAuthorDraft {
@@ -271,8 +271,8 @@ pub struct ArticleDraft {
     pub open_access: Option<bool>,
     /// Whether the article is in press.
     pub in_press: Option<bool>,
-    /// Normalized retraction DOI.
-    pub retraction_doi: Option<String>,
+    /// Normalized retraction DOIs in lexical order without duplicates.
+    pub retraction_dois: Vec<String>,
 }
 
 /// One provider page of canonical journal, issue, and article content.
@@ -406,11 +406,13 @@ mod tests {
             pmid: None,
             open_access: Some(true),
             in_press: Some(false),
-            retraction_doi: None,
+            retraction_dois: Vec::new(),
         };
 
         let serialized =
             serde_json::to_string(&(catalog, article.clone())).expect("serialize contract");
+        assert!(serialized.contains("\"retraction_dois\":[]"));
+        assert!(!serialized.contains("\"retraction_doi\":"));
         for forbidden in [
             "provider",
             "source",
@@ -440,6 +442,6 @@ mod tests {
             serde_json::from_value::<ArticleDraft>(serde_json::Value::Object(provider_shaped))
                 .is_err()
         );
-        assert_eq!(INDEX_CONTRACT_VERSION, 1);
+        assert_eq!(INDEX_CONTRACT_VERSION, 2);
     }
 }

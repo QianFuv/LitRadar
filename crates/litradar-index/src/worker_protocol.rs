@@ -10,7 +10,7 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
 /// Current private worker protocol version.
-pub(crate) const PROTOCOL_VERSION: u32 = 1;
+pub(crate) const PROTOCOL_VERSION: u32 = 2;
 
 /// One journal and optional resume cursor assigned to a fetch worker.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
@@ -387,7 +387,7 @@ mod tests {
 
     #[test]
     fn worker_protocol_rejects_unknown_acknowledgement_fields() {
-        let payload = br#"{"type":"committed","protocol_version":1,"worker_id":0,"sequence":0,"journal_ordinal":0,"page_index":0,"is_complete":false,"unexpected":true}"#;
+        let payload = br#"{"type":"committed","protocol_version":2,"worker_id":0,"sequence":0,"journal_ordinal":0,"page_index":0,"is_complete":false,"unexpected":true}"#;
         let mut reader = Cursor::new(payload);
         let error = read_message::<ParentMessage>(&mut reader)
             .expect_err("unknown protocol fields should fail closed");

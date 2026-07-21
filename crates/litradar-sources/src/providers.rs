@@ -919,7 +919,7 @@ fn scholarly_article_draft(
         pmid,
         open_access,
         in_press: Some(work.get("issue").is_none()),
-        retraction_doi: relation_doi(work.get("relation")),
+        retraction_dois: updated_by_retraction_dois(work.get("updated-by")),
     })
 }
 
@@ -967,7 +967,7 @@ fn openalex_article_draft(catalog: &JournalCatalogEntry, work: &Value) -> Option
             .and_then(|value| value.get("is_oa"))
             .and_then(Value::as_bool),
         in_press: Some(false),
-        retraction_doi: None,
+        retraction_dois: Vec::new(),
     })
 }
 
@@ -1037,8 +1037,10 @@ fn cnki_article_draft(
         pmid: json_text(detail.get("pmid")).and_then(|value| normalize_contract_pmid(&value)),
         open_access: bool_value(detail.get("open_access")),
         in_press: Some(false),
-        retraction_doi: json_text(detail.get("retraction_doi"))
-            .and_then(|value| normalize_contract_doi(&value)),
+        retraction_dois: json_text(detail.get("retraction_doi"))
+            .and_then(|value| normalize_contract_doi(&value))
+            .into_iter()
+            .collect(),
     })
 }
 
@@ -1058,6 +1060,13 @@ fn canonical_article(mut article: ArticleDraft) -> Option<ArticleDraft> {
             normalize_contract_text(&author.display_name)
                 .map(|display_name| ArticleAuthorDraft { display_name })
         })
+        .collect();
+    article.retraction_dois = article
+        .retraction_dois
+        .into_iter()
+        .filter_map(|value| normalize_contract_doi(&value))
+        .collect::<BTreeSet<_>>()
+        .into_iter()
         .collect();
     let has_external_identifier = article.doi.is_some() || article.pmid.is_some();
     let has_bibliographic_identity = article.publication_year.is_some()
@@ -1220,17 +1229,21 @@ fn openalex_abstract(value: &Value) -> Option<String> {
     )
 }
 
-fn relation_doi(value: Option<&Value>) -> Option<String> {
-    for relation in value?.as_object()?.values() {
-        for item in relation.as_array()? {
-            if let Some(doi) =
-                json_text(item.get("id")).and_then(|value| normalize_contract_doi(&value))
-            {
-                return Some(doi);
-            }
-        }
-    }
-    None
+fn updated_by_retraction_dois(value: Option<&Value>) -> Vec<String> {
+    value
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter(|item| {
+            json_text(item.get("type"))
+                .is_some_and(|update_type| update_type.eq_ignore_ascii_case("retraction"))
+        })
+        .filter_map(|item| {
+            json_text(item.get("DOI")).and_then(|value| normalize_contract_doi(&value))
+        })
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect()
 }
 
 fn bool_value(value: Option<&Value>) -> Option<bool> {
@@ -1823,6 +1836,48 @@ mod tests {
     }
 
     #[test]
+    fn scholarly_retractions_ignore_generic_relations_and_use_typed_updates() {
+        let catalog = catalog();
+        let generic_relation = scholarly_article_draft(
+            &catalog,
+            &json!({
+                "DOI": "10.1000/article",
+                "title": ["Article with a generic relation"],
+                "published": {"date-parts": [[2026, 7, 18]]},
+                "relation": {
+                    "references": [{"id": "10.1000/not-a-retraction"}]
+                }
+            }),
+            None,
+            None,
+        )
+        .expect("Scholarly article should convert");
+        assert!(generic_relation.retraction_dois.is_empty());
+
+        let typed_updates = scholarly_article_draft(
+            &catalog,
+            &json!({
+                "DOI": "10.1000/article",
+                "title": ["Article with typed updates"],
+                "published": {"date-parts": [[2026, 7, 18]]},
+                "updated-by": [
+                    {"type": "correction", "DOI": "10.1000/correction"},
+                    {"type": "retraction", "DOI": "10.1000/retraction-b"},
+                    {"type": "Retraction", "DOI": "https://doi.org/10.1000/RETRACTION-A"},
+                    {"type": "retraction", "DOI": "10.1000/retraction-a"}
+                ]
+            }),
+            None,
+            None,
+        )
+        .expect("Scholarly article should convert");
+        assert_eq!(
+            typed_updates.retraction_dois,
+            ["10.1000/retraction-a", "10.1000/retraction-b"]
+        );
+    }
+
+    #[test]
     fn provider_types_are_constructible_without_storage_dependencies() {
         let _ = ScholarlyIndexProvider::new(
             FixtureScholarlyTransport::new(ScholarlyFixtureData::default()),
@@ -2090,7 +2145,12 @@ mod tests {
                 items: vec![json!({
                     "DOI": "10.1000/private-doi-sentinel",
                     "title": ["private-article-title-sentinel"],
-                    "published": {"date-parts": [[2026, 7, 19]]}
+                    "published": {"date-parts": [[2026, 7, 19]]},
+                    "updated-by": [{
+                        "type": "retraction",
+                        "DOI": "10.1000/private-retraction-sentinel",
+                        "source": "private-update-source-sentinel"
+                    }]
                 })],
                 next_cursor: None,
             };
@@ -2122,7 +2182,9 @@ mod tests {
             "expired-cursor-sentinel",
             "http-500-cursor-sentinel",
             "10.1000/private-doi-sentinel",
+            "10.1000/private-retraction-sentinel",
             "private-article-title-sentinel",
+            "private-update-source-sentinel",
             "fixture-response-body-sentinel",
             "fixture-transport-sentinel",
             "private@example.invalid",

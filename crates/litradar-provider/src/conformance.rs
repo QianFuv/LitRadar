@@ -55,7 +55,7 @@ impl Error for ContractViolation {}
 ///
 /// # Returns
 ///
-/// Success when every canonical field satisfies contract v1.
+/// Success when every canonical field satisfies contract v2.
 pub fn validate_catalog_entry(entry: &JournalCatalogEntry) -> Result<(), ContractViolation> {
     validate_catalog_id(&entry.catalog_id)?;
     let mut catalog_ids = vec![entry.catalog_id.clone()];
@@ -520,7 +520,16 @@ fn validate_article(
         }
     }
     validate_optional_doi(article.doi.as_deref(), "DOI")?;
-    validate_optional_doi(article.retraction_doi.as_deref(), "retraction DOI")?;
+    let mut previous_retraction_doi = None;
+    for retraction_doi in &article.retraction_dois {
+        validate_optional_doi(Some(retraction_doi), "retraction DOI")?;
+        if previous_retraction_doi.is_some_and(|previous| previous >= retraction_doi) {
+            return Err(ContractViolation::new(
+                "retraction DOIs must be sorted and duplicate-free",
+            ));
+        }
+        previous_retraction_doi = Some(retraction_doi);
+    }
     if let Some(pmid) = article.pmid.as_deref() {
         if normalize_contract_pmid(pmid).as_deref() != Some(pmid) {
             return Err(ContractViolation::new("PMID must use canonical digits"));
@@ -801,7 +810,7 @@ mod tests {
                 pmid: None,
                 open_access: Some(true),
                 in_press: Some(false),
-                retraction_doi: None,
+                retraction_dois: Vec::new(),
             }],
             is_complete: true,
             next_checkpoint: None,
@@ -922,6 +931,26 @@ mod tests {
             .expect_err("URL DOI should fail")
             .to_string()
             .contains("DOI"));
+
+        let mut unordered_retractions = batch();
+        unordered_retractions.articles[0].retraction_dois = vec![
+            "10.1000/retraction-b".to_string(),
+            "10.1000/retraction-a".to_string(),
+        ];
+        assert!(validate_provider_batch(&catalog, &unordered_retractions)
+            .expect_err("unordered retraction DOIs should fail")
+            .to_string()
+            .contains("sorted"));
+
+        let mut duplicate_retractions = batch();
+        duplicate_retractions.articles[0].retraction_dois = vec![
+            "10.1000/retraction-a".to_string(),
+            "10.1000/retraction-a".to_string(),
+        ];
+        assert!(validate_provider_batch(&catalog, &duplicate_retractions)
+            .expect_err("duplicate retraction DOIs should fail")
+            .to_string()
+            .contains("duplicate"));
 
         let mut incomplete_article = batch();
         let article = &mut incomplete_article.articles[0];
