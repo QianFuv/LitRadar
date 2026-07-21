@@ -16,7 +16,9 @@
     "test:browser-components": "vitest run --config vitest.config.tsx --project component-browser --browser.headless",
     "test:coverage": "vitest run --config vitest.config.tsx --project unit-jsdom --coverage",
     "test:watch": "vitest --config vitest.config.tsx --project unit-jsdom",
-    "test:e2e": "playwright test --config playwright.config.tsx"
+    "test:e2e": "pnpm test:e2e:fixtures",
+    "test:e2e:fixtures": "playwright test --config playwright.config.tsx",
+    "test:e2e:full-stack": "pnpm build && cargo build --manifest-path ../Cargo.toml -p litradar --bin litradar --example full_stack_fixture && node tests/e2e/support/full-stack-server.mjs"
   },
   "dependencies": {
     "@radix-ui/react-alert-dialog": "^1.1.19",

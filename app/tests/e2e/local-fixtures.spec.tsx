@@ -347,7 +347,9 @@ async function completesFixtureTrackingPush(page: Page): Promise<void> {
   await page.goto('/?view=favorites&settings=notifications');
 
   await expect(page.getByRole('dialog', { name: '设置中心' })).toBeVisible();
-  await expect(page.getByRole('heading', { name: '通知与推送', exact: true })).toBeVisible();
+  await expect(
+    page.getByLabel('通知与推送设置内容').getByRole('heading', { name: '通知与推送', exact: true }),
+  ).toBeVisible();
   await page.getByRole('button', { name: '推送到追踪文件夹' }).click();
   await expect(page.getByRole('status')).toContainText('本地 fixture 推送完成');
 }

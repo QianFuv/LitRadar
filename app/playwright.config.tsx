@@ -10,6 +10,7 @@ const BASE_URL = EXTERNAL_BASE_URL || MANAGED_BASE_URL;
 
 export default defineConfig({
   testDir: './tests/e2e',
+  testMatch: 'local-fixtures.spec.tsx',
   fullyParallel: true,
   forbidOnly: Boolean(process.env.CI),
   retries: process.env.CI ? 2 : 0,
@@ -23,7 +24,7 @@ export default defineConfig({
   },
   projects: [
     {
-      name: 'chromium',
+      name: 'fixture-chromium',
       use: { ...devices['Desktop Chrome'] },
     },
   ],
