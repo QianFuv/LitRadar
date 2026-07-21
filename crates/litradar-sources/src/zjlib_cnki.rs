@@ -22,7 +22,6 @@ const WWW_BASE_URL: &str = "https://www.zjlib.cn";
 const SHARE_BASE_URL: &str = "https://share.zjlib.cn";
 const ZYPROXY_BASE_URL: &str = "https://http-10--18--17--173.elib.zyproxy.zjlib.cn";
 const ZYPROXY_LOGIN_HOST: &str = "login.elib.zyproxy.zjlib.cn";
-const ZYPROXY_PROXY_HOST: &str = "http-10--18--17--173.elib.zyproxy.zjlib.cn";
 const ENTRY_URL: &str = "https://share.zjlib.cn/entry/area/35594/2120";
 const LIBRARY_REFER: &str = "http://10.18.17.173/kns55/";
 const WFWFID: &str = "2120";
@@ -734,6 +733,76 @@ pub struct LiveZjlibCnkiConfig {
     pub maximum_document_bytes: usize,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct LiveZjlibCnkiEndpoints {
+    www_base_url: Url,
+    share_base_url: Url,
+    zyproxy_login_base_url: Url,
+    zyproxy_base_url: Url,
+    entry_url: Url,
+    library_refer: Url,
+}
+
+impl Default for LiveZjlibCnkiEndpoints {
+    fn default() -> Self {
+        Self {
+            www_base_url: Url::parse(WWW_BASE_URL).expect("WWW base URL should be valid"),
+            share_base_url: Url::parse(SHARE_BASE_URL).expect("Share base URL should be valid"),
+            zyproxy_login_base_url: Url::parse(&format!("https://{ZYPROXY_LOGIN_HOST}"))
+                .expect("zyproxy login base URL should be valid"),
+            zyproxy_base_url: Url::parse(ZYPROXY_BASE_URL)
+                .expect("zyproxy base URL should be valid"),
+            entry_url: Url::parse(ENTRY_URL).expect("Share entry URL should be valid"),
+            library_refer: Url::parse(LIBRARY_REFER).expect("library refer URL should be valid"),
+        }
+    }
+}
+
+impl LiveZjlibCnkiEndpoints {
+    fn append(base_url: &Url, path: &str) -> String {
+        format!("{}{}", base_url.as_str().trim_end_matches('/'), path)
+    }
+
+    fn origin(base_url: &Url) -> String {
+        let mut origin = base_url.clone();
+        origin.set_path("");
+        origin.set_query(None);
+        origin.set_fragment(None);
+        origin.as_str().trim_end_matches('/').to_string()
+    }
+
+    #[cfg(test)]
+    fn loopback(base_url: &str) -> Result<Self, ZjlibCnkiError> {
+        let base_url = Url::parse(base_url).map_err(|_| {
+            ZjlibCnkiError::Parse("loopback fixture base URL was invalid.".to_string())
+        })?;
+        if base_url.scheme() != "http"
+            || !matches!(base_url.host_str(), Some("127.0.0.1" | "localhost"))
+            || !base_url.username().is_empty()
+            || base_url.password().is_some()
+        {
+            return Err(ZjlibCnkiError::Parse(
+                "loopback fixture base URL did not use a local HTTP origin.".to_string(),
+            ));
+        }
+        let endpoint = |path: &str| {
+            let mut url = base_url.clone();
+            url.set_path(path);
+            url.set_query(None);
+            url.set_fragment(None);
+            url
+        };
+        Ok(Self {
+            www_base_url: endpoint("/www"),
+            share_base_url: endpoint("/share"),
+            zyproxy_login_base_url: endpoint("/login"),
+            zyproxy_base_url: endpoint("/proxy"),
+            entry_url: endpoint("/share/entry/area/35594/2120"),
+            library_refer: endpoint("/proxy/kns55/"),
+        })
+    }
+}
+
 impl Default for LiveZjlibCnkiConfig {
     /// Build default live transport configuration.
     ///
@@ -850,41 +919,79 @@ where
     ))
 }
 
+#[cfg(test)]
 fn zyproxy_endpoint(url: &Url) -> Result<ZyproxyEndpoint, ZjlibCnkiError> {
-    if url.scheme() != "https" {
-        return Err(ZjlibCnkiError::Parse(
-            "zyproxy redirect used an unexpected URL scheme.".to_string(),
-        ));
-    }
-    if url.port_or_known_default() != Some(443)
-        || !url.username().is_empty()
-        || url.password().is_some()
-    {
+    zyproxy_endpoint_for(url, &LiveZjlibCnkiEndpoints::default())
+}
+
+fn zyproxy_endpoint_for(
+    url: &Url,
+    endpoints: &LiveZjlibCnkiEndpoints,
+) -> Result<ZyproxyEndpoint, ZjlibCnkiError> {
+    if !url.username().is_empty() || url.password().is_some() {
         return Err(ZjlibCnkiError::Parse(
             "zyproxy redirect used an unexpected origin.".to_string(),
         ));
     }
-    let host = match url.host_str() {
-        Some(ZYPROXY_LOGIN_HOST) => ZyproxyHost::Login,
-        Some(ZYPROXY_PROXY_HOST) => ZyproxyHost::Proxy,
-        _ => {
-            return Err(ZjlibCnkiError::Parse(
-                "zyproxy redirect used an unexpected host.".to_string(),
-            ));
-        }
+    let (host, base_url) = if has_endpoint_origin_and_path(url, &endpoints.zyproxy_login_base_url) {
+        (ZyproxyHost::Login, &endpoints.zyproxy_login_base_url)
+    } else if has_endpoint_origin_and_path(url, &endpoints.zyproxy_base_url) {
+        (ZyproxyHost::Proxy, &endpoints.zyproxy_base_url)
+    } else {
+        return Err(ZjlibCnkiError::Parse(
+            "zyproxy redirect used an unexpected endpoint.".to_string(),
+        ));
     };
-    let path = url.path().trim_end_matches('/');
+    let base_path = base_url.path().trim_end_matches('/');
+    let path = url
+        .path()
+        .strip_prefix(base_path)
+        .unwrap_or(url.path())
+        .trim_end_matches('/');
     Ok(ZyproxyEndpoint {
         host,
         path: if path.is_empty() { "/" } else { path }.to_ascii_lowercase(),
     })
 }
 
+fn has_endpoint_origin_and_path(url: &Url, base_url: &Url) -> bool {
+    if url.scheme() != base_url.scheme()
+        || url.host_str() != base_url.host_str()
+        || url.port_or_known_default() != base_url.port_or_known_default()
+    {
+        return false;
+    }
+    let base_path = base_url.path().trim_end_matches('/');
+    base_path.is_empty()
+        || url.path() == base_path
+        || url
+            .path()
+            .strip_prefix(base_path)
+            .is_some_and(|suffix| suffix.starts_with('/'))
+}
+
+#[cfg(test)]
 fn zyproxy_redirect_action(
     history: &[ZyproxyEndpoint],
     response_url: &Url,
     location: Option<&str>,
     redirect_hops: usize,
+) -> Result<ZyproxyRedirectAction, ZjlibCnkiError> {
+    zyproxy_redirect_action_for(
+        history,
+        response_url,
+        location,
+        redirect_hops,
+        &LiveZjlibCnkiEndpoints::default(),
+    )
+}
+
+fn zyproxy_redirect_action_for(
+    history: &[ZyproxyEndpoint],
+    response_url: &Url,
+    location: Option<&str>,
+    redirect_hops: usize,
+    endpoints: &LiveZjlibCnkiEndpoints,
 ) -> Result<ZyproxyRedirectAction, ZjlibCnkiError> {
     if redirect_hops >= ZYPROXY_REDIRECT_HOPS {
         return Err(ZjlibCnkiError::Request(format!(
@@ -897,8 +1004,8 @@ fn zyproxy_redirect_action(
     let next_url = response_url
         .join(location)
         .map_err(|_| ZjlibCnkiError::Parse("zyproxy redirect Location was invalid.".to_string()))?;
-    let current_endpoint = zyproxy_endpoint(response_url)?;
-    let next_endpoint = zyproxy_endpoint(&next_url)?;
+    let current_endpoint = zyproxy_endpoint_for(response_url, endpoints)?;
+    let next_endpoint = zyproxy_endpoint_for(&next_url, endpoints)?;
     if current_endpoint == next_endpoint {
         return Err(ZjlibCnkiError::Request(
             "zyproxy returned an unexpected self-redirect.".to_string(),
@@ -933,8 +1040,17 @@ fn is_zyproxy_proxy_entry(endpoint: &ZyproxyEndpoint) -> bool {
     endpoint.host == ZyproxyHost::Proxy && endpoint.path == "/kns55"
 }
 
+#[cfg(test)]
 fn validate_zyproxy_success(url: &Url, has_session_cookie: bool) -> Result<String, ZjlibCnkiError> {
-    if zyproxy_endpoint(url)?.host != ZyproxyHost::Proxy {
+    validate_zyproxy_success_for(url, has_session_cookie, &LiveZjlibCnkiEndpoints::default())
+}
+
+fn validate_zyproxy_success_for(
+    url: &Url,
+    has_session_cookie: bool,
+    endpoints: &LiveZjlibCnkiEndpoints,
+) -> Result<String, ZjlibCnkiError> {
+    if zyproxy_endpoint_for(url, endpoints)?.host != ZyproxyHost::Proxy {
         return Err(ZjlibCnkiError::Parse(
             "zyproxy login ended outside the proxy host.".to_string(),
         ));
@@ -953,6 +1069,7 @@ pub struct LiveZjlibCnkiTransport {
     redirect_client: Client,
     no_redirect_client: Client,
     cookie_jar: Arc<Jar>,
+    endpoints: LiveZjlibCnkiEndpoints,
     maximum_document_bytes: usize,
     last_brief_url: Option<String>,
 }
@@ -978,6 +1095,13 @@ impl LiveZjlibCnkiTransport {
     ///
     /// Live transport.
     pub fn new(config: LiveZjlibCnkiConfig) -> Result<Self, ZjlibCnkiError> {
+        Self::new_with_endpoints(config, LiveZjlibCnkiEndpoints::default())
+    }
+
+    fn new_with_endpoints(
+        config: LiveZjlibCnkiConfig,
+        endpoints: LiveZjlibCnkiEndpoints,
+    ) -> Result<Self, ZjlibCnkiError> {
         let cookie_jar = Arc::new(Jar::default());
         let timeout = Duration::from_secs(config.timeout_seconds.max(1));
         let redirect_client = Client::builder()
@@ -996,19 +1120,29 @@ impl LiveZjlibCnkiTransport {
             redirect_client,
             no_redirect_client,
             cookie_jar,
+            endpoints,
             maximum_document_bytes: config.maximum_document_bytes.max(1),
             last_brief_url: None,
         })
     }
 
+    #[cfg(test)]
+    fn new_for_loopback(
+        config: LiveZjlibCnkiConfig,
+        base_url: &str,
+    ) -> Result<Self, ZjlibCnkiError> {
+        Self::new_with_endpoints(config, LiveZjlibCnkiEndpoints::loopback(base_url)?)
+    }
+
     fn build_share_sso_url(&mut self, token: &str) -> Result<String, ZjlibCnkiError> {
         let response = self
             .no_redirect_client
-            .get(format!(
-                "{WWW_BASE_URL}/bff-api/portal-admin-service/open-api/build-and-share/ssoLoginUrl"
+            .get(LiveZjlibCnkiEndpoints::append(
+                &self.endpoints.www_base_url,
+                "/bff-api/portal-admin-service/open-api/build-and-share/ssoLoginUrl",
             ))
-            .query(&[("referURL", ENTRY_URL)])
-            .headers(www_headers(Some(token)))
+            .query(&[("referURL", self.endpoints.entry_url.as_str())])
+            .headers(www_headers(&self.endpoints.www_base_url, Some(token)))
             .send()
             .map_err(request_error)?;
         let payload = json_payload(response, "build Share SSO URL")?;
@@ -1017,7 +1151,10 @@ impl LiveZjlibCnkiTransport {
             .and_then(Value::as_str)
             .unwrap_or_default()
             .to_string();
-        if !sso_url.starts_with(SHARE_BASE_URL) {
+        let parsed_sso_url = Url::parse(&sso_url).map_err(|_| {
+            ZjlibCnkiError::Parse("Share SSO URL response was invalid.".to_string())
+        })?;
+        if !has_endpoint_origin_and_path(&parsed_sso_url, &self.endpoints.share_base_url) {
             return Err(ZjlibCnkiError::Parse(
                 "Share SSO URL response did not contain a share.zjlib.cn URL.".to_string(),
             ));
@@ -1029,7 +1166,7 @@ impl LiveZjlibCnkiTransport {
         let response = self
             .no_redirect_client
             .get(sso_url)
-            .headers(html_headers(Some(&format!("{WWW_BASE_URL}/"))))
+            .headers(html_headers(Some(self.endpoints.www_base_url.as_str())))
             .send()
             .map_err(request_error)?;
         let response = raise_for_status(response, "enter Share protocolAuth")?;
@@ -1041,23 +1178,29 @@ impl LiveZjlibCnkiTransport {
                 .post(sync_url)
                 .form(&data)
                 .headers(html_headers(Some(&response_url)))
-                .header(ORIGIN, SHARE_BASE_URL)
+                .header(
+                    ORIGIN,
+                    LiveZjlibCnkiEndpoints::origin(&self.endpoints.share_base_url),
+                )
                 .send()
                 .map_err(request_error)?;
             raise_for_status(response, "sync Share login cookies")?;
         }
         let response = self
             .redirect_client
-            .get(ENTRY_URL)
+            .get(self.endpoints.entry_url.clone())
             .headers(html_headers(Some(sso_url)))
             .send()
             .map_err(request_error)?;
         raise_for_status(response, "open Share entry")?;
         let response = self
             .redirect_client
-            .get(format!("{SHARE_BASE_URL}/engine2/header/user-info"))
+            .get(LiveZjlibCnkiEndpoints::append(
+                &self.endpoints.share_base_url,
+                "/engine2/header/user-info",
+            ))
             .query(&[("t", current_millis().to_string())])
-            .headers(ajax_headers(Some(ENTRY_URL)))
+            .headers(ajax_headers(Some(self.endpoints.entry_url.as_str())))
             .send()
             .map_err(request_error)?;
         raise_for_status(response, "load Share user info")?;
@@ -1067,9 +1210,15 @@ impl LiveZjlibCnkiTransport {
     fn get_zyproxy_login_url(&mut self) -> Result<String, ZjlibCnkiError> {
         let response = self
             .no_redirect_client
-            .get(format!("{SHARE_BASE_URL}/sso/api/auth/library/vpn358"))
-            .query(&[("wfwfid", WFWFID), ("refer", LIBRARY_REFER)])
-            .headers(html_headers(Some(ENTRY_URL)))
+            .get(LiveZjlibCnkiEndpoints::append(
+                &self.endpoints.share_base_url,
+                "/sso/api/auth/library/vpn358",
+            ))
+            .query(&[
+                ("wfwfid", WFWFID),
+                ("refer", self.endpoints.library_refer.as_str()),
+            ])
+            .headers(html_headers(Some(self.endpoints.entry_url.as_str())))
             .send()
             .map_err(request_error)?;
         let response = raise_for_status(response, "get zyproxy login URL")?;
@@ -1083,7 +1232,10 @@ impl LiveZjlibCnkiTransport {
         }
         let text = response.text().map_err(request_error)?;
         let login_url = extract_window_location(&text, &response_url)?;
-        if !login_url.contains("login.elib.zyproxy.zjlib.cn") {
+        let parsed_login_url = Url::parse(&login_url).map_err(|_| {
+            ZjlibCnkiError::Parse("Share library auth returned an invalid login URL.".to_string())
+        })?;
+        if zyproxy_endpoint_for(&parsed_login_url, &self.endpoints)?.host != ZyproxyHost::Login {
             return Err(ZjlibCnkiError::Parse(
                 "Share library auth did not return login.elib redirect.".to_string(),
             ));
@@ -1094,10 +1246,10 @@ impl LiveZjlibCnkiTransport {
     fn enter_zyproxy(&mut self, login_url: &str) -> Result<ZyproxyEntryOutcome, ZjlibCnkiError> {
         let mut current_url = Url::parse(login_url)
             .map_err(|_| ZjlibCnkiError::Parse("zyproxy login URL was invalid.".to_string()))?;
-        zyproxy_endpoint(&current_url)?;
+        zyproxy_endpoint_for(&current_url, &self.endpoints)?;
         let mut history = Vec::new();
         let mut redirect_hops = 0;
-        let mut referer = format!("{SHARE_BASE_URL}/");
+        let mut referer = self.endpoints.share_base_url.to_string();
         loop {
             let response = self
                 .no_redirect_client
@@ -1109,15 +1261,25 @@ impl LiveZjlibCnkiTransport {
             if response.status().is_success() {
                 let has_session_cookie =
                     self.has_unexpired_cookie("vpn358_sid", current_unix_time());
-                return validate_zyproxy_success(&response_url, has_session_cookie)
-                    .map(ZyproxyEntryOutcome::Ready);
+                return validate_zyproxy_success_for(
+                    &response_url,
+                    has_session_cookie,
+                    &self.endpoints,
+                )
+                .map(ZyproxyEntryOutcome::Ready);
             }
             if response.status().is_redirection() {
                 let location = response
                     .headers()
                     .get(LOCATION)
                     .and_then(|value| value.to_str().ok());
-                match zyproxy_redirect_action(&history, &response_url, location, redirect_hops)? {
+                match zyproxy_redirect_action_for(
+                    &history,
+                    &response_url,
+                    location,
+                    redirect_hops,
+                    &self.endpoints,
+                )? {
                     ZyproxyRedirectAction::Follow {
                         next_url,
                         current_endpoint,
@@ -1174,10 +1336,11 @@ impl ZjlibCnkiTransport for LiveZjlibCnkiTransport {
     fn start_qr_login(&mut self) -> Result<ZjlibCnkiQrLogin, ZjlibCnkiError> {
         let response = self
             .no_redirect_client
-            .get(format!(
-                "{WWW_BASE_URL}/bff-api/reader-sso-service/portal-pc-api/login/zfb-qr"
+            .get(LiveZjlibCnkiEndpoints::append(
+                &self.endpoints.www_base_url,
+                "/bff-api/reader-sso-service/portal-pc-api/login/zfb-qr",
             ))
-            .headers(www_headers(None))
+            .headers(www_headers(&self.endpoints.www_base_url, None))
             .send()
             .map_err(request_error)?;
         let payload = json_payload(response, "start QR login")?;
@@ -1222,11 +1385,12 @@ impl ZjlibCnkiTransport for LiveZjlibCnkiTransport {
         while Instant::now() < deadline {
             let response = self
                 .no_redirect_client
-                .get(format!(
-                    "{WWW_BASE_URL}/bff-api/reader-sso-service/portal-pc-api/qr/status"
+                .get(LiveZjlibCnkiEndpoints::append(
+                    &self.endpoints.www_base_url,
+                    "/bff-api/reader-sso-service/portal-pc-api/qr/status",
                 ))
                 .query(&[("uuid", uuid)])
-                .headers(www_headers(None))
+                .headers(www_headers(&self.endpoints.www_base_url, None))
                 .send()
                 .map_err(request_error)?;
             let payload = json_payload(response, "poll QR login")?;
@@ -1265,10 +1429,11 @@ impl ZjlibCnkiTransport for LiveZjlibCnkiTransport {
 
     /// Add the BFF user token as the browser login cookie.
     fn set_login_cookie(&mut self, token: &str) {
-        if let Ok(url) = Url::parse(WWW_BASE_URL) {
-            self.cookie_jar
-                .add_cookie_str(&format!("userToken={token}; Path=/; Secure"), &url);
-        }
+        let secure = (self.endpoints.www_base_url.scheme() == "https").then_some("; Secure");
+        self.cookie_jar.add_cookie_str(
+            &format!("userToken={token}; Path=/{}", secure.unwrap_or_default()),
+            &self.endpoints.www_base_url,
+        );
     }
 
     /// Prepare live Share and zyproxy cookies.
@@ -1290,7 +1455,7 @@ impl ZjlibCnkiTransport for LiveZjlibCnkiTransport {
             if cookie.name.trim().is_empty() {
                 continue;
             }
-            let Some(url) = cookie_url(cookie) else {
+            let Some(url) = cookie_url(cookie, &self.endpoints) else {
                 continue;
             };
             self.cookie_jar.add_cookie_str(&cookie_string(cookie), &url);
@@ -1300,7 +1465,7 @@ impl ZjlibCnkiTransport for LiveZjlibCnkiTransport {
     /// Snapshot live cookies from known Zhejiang Library domains.
     fn cookies(&self) -> Vec<ZjlibCnkiCookie> {
         let mut cookies = BTreeMap::new();
-        for url in known_cookie_urls() {
+        for url in known_cookie_urls(&self.endpoints) {
             let Some(header_value) = self.cookie_jar.cookies(&url) else {
                 continue;
             };
@@ -1329,10 +1494,24 @@ impl ZjlibCnkiTransport for LiveZjlibCnkiTransport {
         keyword: &str,
         limit: usize,
     ) -> Result<Vec<ZjlibCnkiSearchResult>, ZjlibCnkiError> {
-        let result_url = format!("{ZYPROXY_BASE_URL}/kns55/brief/result.aspx");
-        let handler_url = format!("{ZYPROXY_BASE_URL}/kns55/request/SearchHandler.ashx");
-        let brief_url = format!("{ZYPROXY_BASE_URL}/kns55/brief/brief.aspx");
-        let post_headers = cnki_form_headers(&format!("{ZYPROXY_BASE_URL}/kns55/"));
+        let result_url = LiveZjlibCnkiEndpoints::append(
+            &self.endpoints.zyproxy_base_url,
+            "/kns55/brief/result.aspx",
+        );
+        let handler_url = LiveZjlibCnkiEndpoints::append(
+            &self.endpoints.zyproxy_base_url,
+            "/kns55/request/SearchHandler.ashx",
+        );
+        let brief_url = LiveZjlibCnkiEndpoints::append(
+            &self.endpoints.zyproxy_base_url,
+            "/kns55/brief/brief.aspx",
+        );
+        let proxy_entry =
+            LiveZjlibCnkiEndpoints::append(&self.endpoints.zyproxy_base_url, "/kns55/");
+        let post_headers = cnki_form_headers(
+            &proxy_entry,
+            &LiveZjlibCnkiEndpoints::origin(&self.endpoints.zyproxy_base_url),
+        );
         let result_fields = search_result_form_fields(keyword);
         self.post_form_text(
             &result_url,
@@ -1387,10 +1566,9 @@ impl ZjlibCnkiTransport for LiveZjlibCnkiTransport {
         &mut self,
         result: &ZjlibCnkiSearchResult,
     ) -> Result<ZjlibCnkiArticleCandidate, ZjlibCnkiError> {
-        let referer = self
-            .last_brief_url
-            .clone()
-            .unwrap_or_else(|| format!("{ZYPROXY_BASE_URL}/kns55/"));
+        let referer = self.last_brief_url.clone().unwrap_or_else(|| {
+            LiveZjlibCnkiEndpoints::append(&self.endpoints.zyproxy_base_url, "/kns55/")
+        });
         let response = self
             .redirect_client
             .get(&result.detail_url)
@@ -1417,12 +1595,12 @@ impl ZjlibCnkiTransport for LiveZjlibCnkiTransport {
         title: Option<&str>,
         referer: Option<&str>,
     ) -> Result<ZjlibCnkiDownloadedPdf, ZjlibCnkiError> {
+        let default_referer =
+            LiveZjlibCnkiEndpoints::append(&self.endpoints.zyproxy_base_url, "/kns55/");
         let response = self
             .redirect_client
             .get(pdf_url)
-            .headers(html_headers(Some(
-                referer.unwrap_or(&format!("{ZYPROXY_BASE_URL}/kns55/")),
-            )))
+            .headers(html_headers(Some(referer.unwrap_or(&default_referer))))
             .send()
             .map_err(request_error)?;
         let response = raise_for_status(response, "download PDF")?;
@@ -1701,7 +1879,7 @@ impl ZjlibCnkiTransport for FixtureZjlibCnkiTransport {
     }
 }
 
-fn www_headers(token: Option<&str>) -> HeaderMap {
+fn www_headers(base_url: &Url, token: Option<&str>) -> HeaderMap {
     let mut headers = HeaderMap::new();
     headers.insert(USER_AGENT, HeaderValue::from_static(DEFAULT_USER_AGENT));
     headers.insert(
@@ -1709,7 +1887,9 @@ fn www_headers(token: Option<&str>) -> HeaderMap {
         HeaderValue::from_static(DEFAULT_ACCEPT_LANGUAGE),
     );
     headers.insert(ACCEPT, HeaderValue::from_static("*/*"));
-    headers.insert(REFERER, HeaderValue::from_static(WWW_BASE_URL));
+    if let Ok(referer) = HeaderValue::from_str(base_url.as_str().trim_end_matches('/')) {
+        headers.insert(REFERER, referer);
+    }
     headers.insert("bff-org-id", HeaderValue::from_static(BFF_ORG_ID));
     if let Some(token) = token {
         if let Ok(value) = HeaderValue::from_str(token) {
@@ -1754,13 +1934,15 @@ fn ajax_headers(referer: Option<&str>) -> HeaderMap {
     headers
 }
 
-fn cnki_form_headers(referer: &str) -> HeaderMap {
+fn cnki_form_headers(referer: &str, origin: &str) -> HeaderMap {
     let mut headers = html_headers(Some(referer));
     headers.insert(
         CONTENT_TYPE,
         HeaderValue::from_static("application/x-www-form-urlencoded"),
     );
-    headers.insert(ORIGIN, HeaderValue::from_static(ZYPROXY_BASE_URL));
+    if let Ok(origin) = HeaderValue::from_str(origin) {
+        headers.insert(ORIGIN, origin);
+    }
     headers
 }
 
@@ -2159,6 +2341,12 @@ fn redact_url(url: &str) -> String {
         "sid",
         "uid",
         "filename",
+        "filetitle",
+        "title",
+        "doi",
+        "path",
+        "query",
+        "keyword",
         "dk",
     ];
     let pairs = parsed
@@ -2176,11 +2364,15 @@ fn redact_url(url: &str) -> String {
     output.to_string()
 }
 
-fn known_cookie_urls() -> Vec<Url> {
-    [WWW_BASE_URL, SHARE_BASE_URL, ZYPROXY_BASE_URL]
-        .into_iter()
-        .filter_map(|value| Url::parse(value).ok())
-        .collect()
+fn known_cookie_urls(endpoints: &LiveZjlibCnkiEndpoints) -> Vec<Url> {
+    [
+        endpoints.www_base_url.clone(),
+        endpoints.share_base_url.clone(),
+        endpoints.zyproxy_login_base_url.clone(),
+        endpoints.zyproxy_base_url.clone(),
+    ]
+    .into_iter()
+    .collect()
 }
 
 fn cookie_header_pairs(header: &str) -> Vec<(String, String)> {
@@ -2532,10 +2724,16 @@ fn title_from_pdf_url(url: &str) -> Option<String> {
         .and_then(|value| clean_text(value))
 }
 
-fn cookie_url(cookie: &ZjlibCnkiCookie) -> Option<Url> {
+fn cookie_url(cookie: &ZjlibCnkiCookie, endpoints: &LiveZjlibCnkiEndpoints) -> Option<Url> {
     let host = cookie.domain.trim().trim_start_matches('.');
     if host.is_empty() {
-        return Url::parse(WWW_BASE_URL).ok();
+        return Some(endpoints.www_base_url.clone());
+    }
+    if let Some(url) = known_cookie_urls(endpoints)
+        .into_iter()
+        .find(|url| url.host_str() == Some(host))
+    {
+        return Some(url);
     }
     Url::parse(&format!("https://{host}/")).ok()
 }
@@ -2646,6 +2844,8 @@ fn decode_base64_url(value: &str) -> Option<Vec<u8>> {
 
 #[cfg(test)]
 mod tests {
+    mod live_transport;
+
     use std::io::{Read, Write};
     use std::net::TcpListener;
     use std::time::Duration;
