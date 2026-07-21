@@ -2,7 +2,7 @@
  * Tracking background-job polling coverage using the extracted feature view and API client.
  */
 
-import { screen } from '@testing-library/react';
+import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
 import { describe, expect, test } from 'vitest';
@@ -134,7 +134,9 @@ async function pollsUntilCompleted(): Promise<void> {
   expect(
     await screen.findByText('推送完成（已推送 2 篇）', {}, { timeout: 5_000 }),
   ).toBeInTheDocument();
-  expect(statusRequestCount).toBeGreaterThanOrEqual(2);
+  expect(statusRequestCount).toBe(2);
+  await new Promise<void>((resolve) => window.setTimeout(resolve, 2_100));
+  expect(statusRequestCount).toBe(2);
 }
 
 /**
@@ -184,8 +186,75 @@ async function discardsUnsavedSettings(): Promise<void> {
   expect(discardButton).toBeDisabled();
 }
 
+/**
+ * Verify a polling transport failure stops the chain and a new push can recover.
+ */
+async function recoversAfterPollingFailure(): Promise<void> {
+  let startRequestCount = 0;
+  statusRequestCount = 0;
+  server.use(
+    http.get('http://localhost/api/tracking/status', trackingStatusResponse),
+    http.get('http://localhost/api/meta/databases', databasesResponse),
+    http.get('http://localhost/api/favorites/folders', foldersResponse),
+    http.get('http://localhost/api/tracking/notification-settings', notificationSettingsResponse),
+    http.post('http://localhost/api/tracking/push-weekly', () => {
+      startRequestCount += 1;
+      return HttpResponse.json(
+        startRequestCount === 1
+          ? manualPushStatus('running', '任务已启动', 0)
+          : manualPushStatus('completed', '恢复完成', 1),
+      );
+    }),
+    http.get('http://localhost/api/tracking/push-weekly/status', () => {
+      statusRequestCount += 1;
+      return HttpResponse.json({ detail: 'Polling transport failed' }, { status: 502 });
+    }),
+  );
+  const user = userEvent.setup();
+  renderWithQuery(<TrackingSettingsContent userId={34} section="notifications" />);
+
+  await user.click(await screen.findByRole('button', { name: '推送到追踪文件夹' }));
+  expect(await screen.findByText('Polling transport failed')).toBeInTheDocument();
+  expect(statusRequestCount).toBe(1);
+
+  await user.click(screen.getByRole('button', { name: '推送到追踪文件夹' }));
+  expect(await screen.findByText('恢复完成（已推送 1 篇）')).toBeInTheDocument();
+  expect(startRequestCount).toBe(2);
+  expect(statusRequestCount).toBe(1);
+}
+
+/**
+ * Verify unmounting cancels the active polling interval.
+ */
+async function stopsPollingAfterUnmount(): Promise<void> {
+  statusRequestCount = 0;
+  server.use(
+    http.get('http://localhost/api/tracking/status', trackingStatusResponse),
+    http.get('http://localhost/api/meta/databases', databasesResponse),
+    http.get('http://localhost/api/favorites/folders', foldersResponse),
+    http.get('http://localhost/api/tracking/notification-settings', notificationSettingsResponse),
+    http.post('http://localhost/api/tracking/push-weekly', startPushResponse),
+    http.get('http://localhost/api/tracking/push-weekly/status', () => {
+      statusRequestCount += 1;
+      return HttpResponse.json(manualPushStatus('running', '任务执行中', 0));
+    }),
+  );
+  const user = userEvent.setup();
+  const { unmount } = renderWithQuery(
+    <TrackingSettingsContent userId={35} section="notifications" />,
+  );
+
+  await user.click(await screen.findByRole('button', { name: '推送到追踪文件夹' }));
+  await waitFor(() => expect(statusRequestCount).toBe(1));
+  unmount();
+  await new Promise<void>((resolve) => window.setTimeout(resolve, 2_100));
+  expect(statusRequestCount).toBe(1);
+}
+
 describe('tracking polling flow', () => {
   test('polls a running push until completion', pollsUntilCompleted, 10_000);
   test('shows a capacity error without polling', displaysCapacityErrorWithoutPolling);
   test('discards an unsaved settings draft', discardsUnsavedSettings);
+  test('recovers after a polling failure', recoversAfterPollingFailure);
+  test('stops polling after unmount', stopsPollingAfterUnmount, 8_000);
 });

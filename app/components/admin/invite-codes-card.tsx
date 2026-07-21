@@ -45,7 +45,11 @@ export function AdminInviteCodesCard({ isEnabled }: { isEnabled: boolean }) {
     tone: 'error' | 'success';
   } | null>(null);
   const [inviteCodeToDelete, setInviteCodeToDelete] = useState<AdminInviteCode | null>(null);
-  const { data: inviteCodes = [] } = useQuery({
+  const {
+    data: inviteCodes = [],
+    error: inviteCodesError,
+    isLoading,
+  } = useQuery({
     queryKey: ['admin-invite-codes'],
     queryFn: () => adminGetInviteCodes(),
     enabled: isEnabled,
@@ -95,6 +99,21 @@ export function AdminInviteCodesCard({ isEnabled }: { isEnabled: boolean }) {
           <Plus className="h-4 w-4 mr-1" />
           生成邀请码
         </Button>
+        {isLoading && (
+          <p role="status" className="text-sm text-muted-foreground">
+            加载中…
+          </p>
+        )}
+        {inviteCodesError instanceof Error && (
+          <p role="alert" className="text-sm text-destructive">
+            {inviteCodesError.message}
+          </p>
+        )}
+        {createCodeMut.error instanceof Error && (
+          <p role="alert" className="text-sm text-destructive">
+            {createCodeMut.error.message}
+          </p>
+        )}
         {copyFeedback && (
           <p
             role={copyFeedback.tone === 'error' ? 'alert' : 'status'}

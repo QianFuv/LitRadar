@@ -52,7 +52,11 @@ export function AdminUsersCard({
   const [resetDialogOpen, setResetDialogOpen] = useState(false);
   const [deleteUserId, setDeleteUserId] = useState<number | null>(null);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
-  const { data: users = [] } = useQuery({
+  const {
+    data: users = [],
+    error: usersError,
+    isLoading: isUsersLoading,
+  } = useQuery({
     queryKey: ['admin-users'],
     queryFn: () => adminGetUsers(),
     enabled: isEnabled,
@@ -94,6 +98,23 @@ export function AdminUsersCard({
           <CardDescription>查看和管理所有用户账号</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
+          {isUsersLoading && (
+            <p role="status" className="text-sm text-muted-foreground">
+              加载中…
+            </p>
+          )}
+          {usersError instanceof Error && (
+            <p role="alert" className="text-sm text-destructive">
+              {usersError.message}
+            </p>
+          )}
+          {toggleAdminMut.isError && (
+            <p role="alert" className="text-sm text-destructive">
+              {toggleAdminMut.error instanceof Error
+                ? toggleAdminMut.error.message
+                : '更新管理员状态失败'}
+            </p>
+          )}
           <div className="space-y-3 md:hidden">
             {users.map((u) => (
               <div key={u.id} className="content-visibility-card rounded-lg border p-4">
@@ -154,6 +175,7 @@ export function AdminUsersCard({
                       variant="outline"
                       size="sm"
                       onClick={() => {
+                        resetPwMut.reset();
                         setResetPwUserId(u.id);
                         setResetPwValue('');
                         setResetDialogOpen(true);
@@ -168,6 +190,7 @@ export function AdminUsersCard({
                       className="col-span-2"
                       disabled={u.id === currentUserId}
                       onClick={() => {
+                        deleteUserMut.reset();
                         setDeleteUserId(u.id);
                         setDeleteDialogOpen(true);
                       }}
@@ -261,6 +284,7 @@ export function AdminUsersCard({
                           title="重置密码"
                           aria-label={`重置 ${u.username} 的密码`}
                           onClick={() => {
+                            resetPwMut.reset();
                             setResetPwUserId(u.id);
                             setResetPwValue('');
                             setResetDialogOpen(true);
@@ -276,6 +300,7 @@ export function AdminUsersCard({
                           disabled={u.id === currentUserId}
                           className="text-destructive hover:text-destructive"
                           onClick={() => {
+                            deleteUserMut.reset();
                             setDeleteUserId(u.id);
                             setDeleteDialogOpen(true);
                           }}
@@ -372,6 +397,11 @@ export function AdminUsersCard({
               确认删除
             </Button>
           </div>
+          {deleteUserMut.isError && (
+            <p role="alert" className="text-sm text-destructive">
+              {deleteUserMut.error instanceof Error ? deleteUserMut.error.message : '删除失败'}
+            </p>
+          )}
         </DialogContent>
       </Dialog>
     </>

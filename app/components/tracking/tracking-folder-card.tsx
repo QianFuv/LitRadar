@@ -36,6 +36,13 @@ type TrackingFolderCardProps = {
  * @returns Tracking folder card.
  */
 export function TrackingFolderCard({ model }: TrackingFolderCardProps) {
+  const mutationError =
+    model.setTrackingMutation.error instanceof Error
+      ? model.setTrackingMutation.error.message
+      : model.createAndSetMutation.error instanceof Error
+        ? model.createAndSetMutation.error.message
+        : null;
+
   return (
     <SettingsSection>
       <SettingsSectionHeader>
@@ -97,6 +104,11 @@ export function TrackingFolderCard({ model }: TrackingFolderCardProps) {
             创建并设为追踪
           </Button>
         </div>
+        {mutationError && (
+          <p role="alert" className="text-sm text-destructive">
+            {mutationError}
+          </p>
+        )}
       </SettingsSectionContent>
     </SettingsSection>
   );

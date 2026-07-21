@@ -2,10 +2,10 @@
  * Administrator scheduled-task mutation and cache invalidation coverage.
  */
 
-import { screen, waitFor } from '@testing-library/react';
+import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
-import { describe, expect, test } from 'vitest';
+import { describe, expect, test, vi } from 'vitest';
 
 import { AnnouncementsCard } from '@/components/admin/announcements-card';
 import { AdminInviteCodesCard } from '@/components/admin/invite-codes-card';
@@ -224,6 +224,83 @@ async function createsTypedScheduledTask(): Promise<void> {
 }
 
 /**
+ * Verify a failed scheduled-task creation retains its form and retries the same payload.
+ */
+async function retriesFailedScheduledTaskCreation(): Promise<void> {
+  isTaskDeleted = true;
+  const createPayloads: unknown[] = [];
+  server.use(
+    http.get('http://localhost/api/admin/scheduled-tasks', scheduledTaskListResponse),
+    http.get('http://localhost/api/admin/scheduler/status', schedulerStatusResponse),
+    http.post('http://localhost/api/admin/scheduled-tasks', async ({ request }) => {
+      createPayloads.push(await request.json());
+      if (createPayloads.length === 1) {
+        return HttpResponse.json({ detail: 'Scheduler write unavailable' }, { status: 503 });
+      }
+      return HttpResponse.json(scheduledTaskFixture());
+    }),
+  );
+  const user = userEvent.setup();
+  renderWithQuery(<ScheduledTasksCard />);
+
+  await user.click(await screen.findByRole('button', { name: '新建任务' }));
+  const dialog = screen.getByRole('dialog', { name: '新建定时任务' });
+  const nameInput = within(dialog).getByLabelText('任务名称');
+  await user.type(nameInput, 'Retained task');
+  await user.click(within(dialog).getByRole('button', { name: '创建' }));
+
+  expect(await within(dialog).findByRole('alert')).toHaveTextContent('Scheduler write unavailable');
+  expect(nameInput).toHaveValue('Retained task');
+  await user.click(within(dialog).getByRole('button', { name: '创建' }));
+
+  await waitFor(() =>
+    expect(screen.queryByRole('dialog', { name: '新建定时任务' })).not.toBeInTheDocument(),
+  );
+  expect(createPayloads).toHaveLength(2);
+  expect(createPayloads[1]).toEqual(createPayloads[0]);
+  expect(createPayloads[1]).toMatchObject({ name: 'Retained task' });
+}
+
+/**
+ * Verify a pending scheduled-task mutation rejects duplicate submissions.
+ */
+async function preventsDuplicateScheduledTaskCreation(): Promise<void> {
+  isTaskDeleted = true;
+  let createRequestCount = 0;
+  let releaseCreate = (): void => {
+    throw new Error('Pending create response was not initialized');
+  };
+  const pendingResponse = new Promise<Response>((resolve) => {
+    releaseCreate = () => resolve(HttpResponse.json(scheduledTaskFixture()));
+  });
+  server.use(
+    http.get('http://localhost/api/admin/scheduled-tasks', scheduledTaskListResponse),
+    http.get('http://localhost/api/admin/scheduler/status', schedulerStatusResponse),
+    http.post('http://localhost/api/admin/scheduled-tasks', () => {
+      createRequestCount += 1;
+      return pendingResponse;
+    }),
+  );
+  const user = userEvent.setup();
+  renderWithQuery(<ScheduledTasksCard />);
+
+  await user.click(await screen.findByRole('button', { name: '新建任务' }));
+  const dialog = screen.getByRole('dialog', { name: '新建定时任务' });
+  await user.type(within(dialog).getByLabelText('任务名称'), 'Single submission');
+  const createButton = within(dialog).getByRole('button', { name: '创建' });
+  await user.click(createButton);
+
+  await waitFor(() => expect(createRequestCount).toBe(1));
+  expect(createButton).toBeDisabled();
+  await user.click(createButton);
+  expect(createRequestCount).toBe(1);
+  releaseCreate();
+  await waitFor(() =>
+    expect(screen.queryByRole('dialog', { name: '新建定时任务' })).not.toBeInTheDocument(),
+  );
+}
+
+/**
  * Verify a legacy command is read-only until replaced by a typed job.
  */
 async function replacesLegacyScheduledTask(): Promise<void> {
@@ -343,6 +420,69 @@ async function confirmsAdministratorDeletionTargets(): Promise<void> {
   await waitFor(() => expect(deletedAnnouncementIds).toEqual([51]));
 }
 
+/**
+ * Verify invite creation limits are visible and a successful retry can be copied.
+ */
+async function createsCopiesAndRetriesInviteCodes(): Promise<void> {
+  const inviteCodes: Array<Record<string, unknown>> = [];
+  let createRequestCount = 0;
+  server.use(
+    http.get('http://localhost/api/admin/invite-codes', () => HttpResponse.json(inviteCodes)),
+    http.post('http://localhost/api/admin/invite-codes', () => {
+      createRequestCount += 1;
+      if (createRequestCount === 1) {
+        return HttpResponse.json({ detail: 'Invite code limit reached' }, { status: 429 });
+      }
+      const createdInviteCode = {
+        id: 42,
+        code: 'INVITE-42',
+        created_by: 1,
+        created_by_name: 'admin',
+        used_by: null,
+        used_by_name: null,
+        used_at: null,
+        created_at: 1_900_000_000,
+      };
+      inviteCodes.push(createdInviteCode);
+      return HttpResponse.json(createdInviteCode);
+    }),
+  );
+  const user = userEvent.setup();
+  const writeText = vi.fn().mockResolvedValue(undefined);
+  Object.defineProperty(navigator, 'clipboard', {
+    configurable: true,
+    value: { writeText },
+  });
+  renderWithQuery(<AdminInviteCodesCard isEnabled />);
+
+  const createButton = await screen.findByRole('button', { name: '生成邀请码' });
+  await user.click(createButton);
+  expect(await screen.findByRole('alert')).toHaveTextContent('Invite code limit reached');
+  expect(screen.getAllByText('暂无邀请码')).toHaveLength(2);
+
+  await user.click(createButton);
+  expect(await screen.findByText('INVITE-42')).toBeInTheDocument();
+  await user.click(screen.getByRole('button', { name: '复制邀请码' }));
+
+  expect(writeText).toHaveBeenCalledWith('INVITE-42');
+  expect(await screen.findByRole('status')).toHaveTextContent('邀请码已复制。');
+  expect(createRequestCount).toBe(2);
+}
+
+/**
+ * Verify invite-list failures are visible rather than rendered as an empty success state.
+ */
+async function showsInviteListFailure(): Promise<void> {
+  server.use(
+    http.get('http://localhost/api/admin/invite-codes', () =>
+      HttpResponse.json({ detail: 'Invite list unavailable' }, { status: 503 }),
+    ),
+  );
+  renderWithQuery(<AdminInviteCodesCard isEnabled />);
+
+  expect(await screen.findByRole('alert')).toHaveTextContent('Invite list unavailable');
+}
+
 describe('administrator mutation flow', () => {
   test('updates and deletes a scheduled task', updatesAndDeletesTask);
   test(
@@ -350,7 +490,17 @@ describe('administrator mutation flow', () => {
     createsTypedScheduledTask,
     10_000,
   );
+  test('retries a failed scheduled-task creation', retriesFailedScheduledTaskCreation, 10_000);
+  test(
+    'prevents duplicate scheduled-task creation while pending',
+    preventsDuplicateScheduledTaskCreation,
+  );
   test('keeps legacy commands read-only until typed replacement', replacesLegacyScheduledTask);
+  test(
+    'creates, copies, and retries invite codes after a limit error',
+    createsCopiesAndRetriesInviteCodes,
+  );
+  test('shows invite-list failures', showsInviteListFailure);
   test(
     'confirms selected invite-code and announcement deletions',
     confirmsAdministratorDeletionTargets,
