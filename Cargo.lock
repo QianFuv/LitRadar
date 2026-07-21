@@ -1065,7 +1065,10 @@ name = "litradar"
 version = "0.1.0"
 dependencies = [
  "litradar-api",
+ "litradar-auth",
  "litradar-cli",
+ "litradar-domain",
+ "litradar-index",
  "litradar-storage",
  "litradar-worker",
  "serde_json",

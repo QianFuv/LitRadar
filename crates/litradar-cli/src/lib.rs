@@ -1022,6 +1022,7 @@ fn delivery_usage(workflow: DeliveryWorkflow) -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
     use std::fs;
     use std::path::Path;
 
@@ -1195,6 +1196,62 @@ mod tests {
     }
 
     #[test]
+    fn admin_secret_rotation_reencrypts_existing_values() {
+        let root = temp_root("litradar-cli-secret-rotation");
+        let auth_db_path = root.path().join("auth.sqlite");
+        let old_key_file = root.path().join("old.key");
+        let new_key_file = root.path().join("new.key");
+        fs::write(&old_key_file, [16_u8; 32]).expect("old key should write");
+        fs::write(&new_key_file, [17_u8; 32]).expect("new key should write");
+        litradar_storage::migrate_auth_database(&auth_db_path)
+            .expect("auth database should migrate");
+        let old_codec =
+            litradar_storage::SecretCodec::load(&old_key_file).expect("old codec should load");
+        litradar_storage::upsert_runtime_settings(
+            &auth_db_path,
+            &old_codec,
+            &HashMap::from([(
+                "openalex_api_key_pool".to_string(),
+                Some("rotation-fixture-secret".to_string()),
+            )]),
+            &HashMap::new(),
+        )
+        .expect("encrypted runtime setting should write");
+
+        let payload = run_admin_command_with_reader(
+            vec![
+                "--auth-db".to_string(),
+                auth_db_path.to_string_lossy().into_owned(),
+                "--old-key-file".to_string(),
+                old_key_file.to_string_lossy().into_owned(),
+                "--new-key-file".to_string(),
+                new_key_file.to_string_lossy().into_owned(),
+                "secrets".to_string(),
+                "rotate".to_string(),
+            ],
+            "".as_bytes(),
+        )
+        .expect("secret rotation should succeed");
+        let new_codec =
+            litradar_storage::SecretCodec::load(&new_key_file).expect("new codec should load");
+        let settings = litradar_storage::load_runtime_settings(&auth_db_path, &new_codec)
+            .expect("new codec should decrypt settings");
+
+        assert_eq!(payload["status"], "rotated");
+        assert_eq!(payload["rotated"], 1);
+        assert!(!payload.to_string().contains("rotation-fixture-secret"));
+        assert_eq!(
+            settings
+                .iter()
+                .find(|setting| setting.field == "openalex_api_key_pool")
+                .expect("rotated setting should exist")
+                .value,
+            "rotation-fixture-secret"
+        );
+        assert!(litradar_storage::load_runtime_settings(&auth_db_path, &old_codec).is_err());
+    }
+
+    #[test]
     fn admin_backup_create_verify_and_confirmed_restore_are_explicit() {
         let root = temp_root("litradar-cli-backup");
         let source_root = root.path().join("source");
@@ -1358,6 +1415,79 @@ mod tests {
         assert_eq!(payload["effective_concurrency"]["processes"], 2);
         assert_eq!(payload["effective_concurrency"]["issue_batch"], 3);
         assert!(payload.get("secret_key_file").is_none());
+    }
+
+    #[test]
+    fn index_command_resumes_a_precompleted_local_catalog() {
+        let root = temp_root("litradar-cli-offline-index");
+        let project_root = root.path().join("project");
+        let storage_config = litradar_storage::StorageConfig::from_project_root(&project_root);
+        let secret_key_file = root.path().join("secret.key");
+        fs::write(&secret_key_file, [18_u8; 32]).expect("secret key should write");
+        fs::create_dir_all(storage_config.meta_dir())
+            .expect("metadata directory should be created");
+        fs::write(
+            storage_config.meta_dir().join("offline.csv"),
+            "catalog_id,catalog_aliases,title,issn,eissn,all_issns,title_aliases,area,utd_rank,utd_rating,abs_rank,abs_rating,fms_rank,fms_rating,fmscn_rank,fmscn_rating\nissn-0001-3072,,Abacus,0001-3072,1467-6281,0001-3072;1467-6281,,Accounting & Auditing,,,7,3,7,B,,\n",
+        )
+        .expect("local catalog should write");
+        litradar_storage::migrate_storage(&storage_config).expect("storage should migrate");
+        let codec =
+            litradar_storage::SecretCodec::load(&secret_key_file).expect("codec should load");
+        litradar_storage::upsert_runtime_settings(
+            storage_config.auth_db_path(),
+            &codec,
+            &HashMap::from([(
+                "index_provider_routes".to_string(),
+                Some(r#"{"offline":"cnki"}"#.to_string()),
+            )]),
+            &HashMap::new(),
+        )
+        .expect("offline provider route should write");
+        let control = litradar_index::control::open_control_db(
+            storage_config.index_control_dir().join("offline.sqlite"),
+        )
+        .expect("offline control database should open");
+        litradar_index::control::write_checkpoint(
+            &control,
+            "offline",
+            "cnki",
+            &litradar_index::control::CheckpointScope::Journal {
+                catalog_id: "issn-0001-3072".to_string(),
+            },
+            r#"{"state":"complete"}"#,
+            "2026-07-22T00:00:00Z",
+        )
+        .expect("complete local checkpoint should write");
+        drop(control);
+
+        run_index_command_with_bundled_meta_dir(
+            vec![
+                "--project-root".to_string(),
+                project_root.to_string_lossy().into_owned(),
+                "--secret-key-file".to_string(),
+                secret_key_file.to_string_lossy().into_owned(),
+                "--file".to_string(),
+                "offline.csv".to_string(),
+                "--workers".to_string(),
+                "1".to_string(),
+                "--processes".to_string(),
+                "1".to_string(),
+                "--issue-batch".to_string(),
+                "1".to_string(),
+                "--timeout".to_string(),
+                "1".to_string(),
+            ],
+            Path::new("litradar"),
+            None,
+        )
+        .expect("precompleted local catalog should index without network access");
+
+        assert!(storage_config.index_dir().join("offline.sqlite").is_file());
+        assert!(storage_config
+            .index_control_dir()
+            .join("offline.sqlite")
+            .is_file());
     }
 
     #[test]
