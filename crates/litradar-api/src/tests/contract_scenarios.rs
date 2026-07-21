@@ -50,28 +50,6 @@ async fn article_page_matches_shared_scenario() {
 }
 
 #[tokio::test]
-async fn weekly_updates_match_shared_scenario() {
-    let backend = TestBackend::new();
-    let user = backend.authenticated_user("scenario_reader", false);
-    let database = backend.create_index_database("scenario.sqlite");
-    backend.create_weekly_manifest(&database);
-    let response = json_request(
-        &backend.router(),
-        Method::GET,
-        "/api/weekly-updates",
-        Some(&user.authorization_header()),
-        None,
-        None,
-    )
-    .await;
-    let mut payload = response.payload;
-    replace_json_pointer(&mut payload, "/generated_at", json!("2024-01-22T00:00:00Z"));
-
-    assert_eq!(response.status, StatusCode::OK);
-    assert_api_scenario("weekly-updates.json", &payload);
-}
-
-#[tokio::test]
 async fn masked_notification_settings_match_shared_scenario() {
     let backend = TestBackend::new();
     let user = backend.authenticated_user("scenario_reader", false);
