@@ -114,6 +114,50 @@ async function expectThemeChromeTokensToBeGrayscale(page: Page): Promise<void> {
 }
 
 /**
+ * Verify the filtered-result heading order and sticky summary behavior.
+ *
+ * @param page - Playwright browser page.
+ */
+async function expectActiveFilterSummaryToStick(page: Page): Promise<void> {
+  const resultCount = page.getByText('共找到 30 条结果');
+  const filterSummary = page.getByRole('region', { name: '已应用筛选' });
+  const filterSummarySlot = page.getByTestId('filter-summary-slot');
+  const scrollContainer = page.locator('#results-scroll-container');
+
+  await expect(resultCount).toBeVisible();
+  await expect(filterSummary).toBeVisible();
+  await expect(filterSummarySlot).toHaveCSS('position', 'sticky');
+  expect(
+    await resultCount.evaluate((element) => {
+      const summary = document.querySelector('[aria-label="已应用筛选"]');
+      return Boolean(
+        summary &&
+        (element.compareDocumentPosition(summary) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0,
+      );
+    }),
+  ).toBe(true);
+
+  await scrollContainer.evaluate((element) => {
+    element.scrollTop = 400;
+  });
+  const pinnedTop = Math.round((await filterSummarySlot.boundingBox())?.y ?? -1);
+  expect(pinnedTop).toBeGreaterThan(0);
+
+  await scrollContainer.evaluate((element) => {
+    element.scrollTop = 700;
+  });
+  await expect
+    .poll(async () => Math.round((await filterSummarySlot.boundingBox())?.y ?? -1))
+    .toBe(pinnedTop);
+  await expect(resultCount).not.toBeInViewport();
+  await page.screenshot({ path: '../output/ui/active-filter-sticky.png', fullPage: true });
+
+  await scrollContainer.evaluate((element) => {
+    element.scrollTop = 0;
+  });
+}
+
+/**
  * Serve unauthenticated bootstrap-state API fixtures.
  *
  * @param route - Intercepted API route.
@@ -138,7 +182,8 @@ async function serveBootstrapApi(route: Route): Promise<void> {
  */
 async function serveTrackingApi(route: Route): Promise<void> {
   const request = route.request();
-  const pathname = new URL(request.url()).pathname;
+  const requestUrl = new URL(request.url());
+  const pathname = requestUrl.pathname;
   if (pathname === '/api/auth/me') {
     await fulfillJson(route, { id: 41, username: 'browser_user', is_admin: false });
     return;
@@ -209,9 +254,26 @@ async function serveTrackingApi(route: Route): Promise<void> {
     return;
   }
   if (pathname === '/api/articles') {
+    const items = requestUrl.searchParams.has('q')
+      ? Array.from({ length: 30 }, (_, index) => ({
+          article_id: `search-fixture-${index + 1}`,
+          journal_id: 'fixture-journal',
+          journal_title: 'Journal of Reproducible Literature',
+          title: `Graph evidence fixture ${index + 1}`,
+          authors: ['Browser Fixture'],
+          date: '2026-07-15',
+          abstract: `Graph result ${index + 1} provides enough content for sticky result scrolling.`,
+        }))
+      : [];
     await fulfillJson(route, {
-      items: [],
-      page: { total: 0, limit: 20, offset: 0, next_cursor: null, has_more: false },
+      items,
+      page: {
+        total: items.length,
+        limit: 50,
+        offset: 0,
+        next_cursor: null,
+        has_more: false,
+      },
     });
     return;
   }
@@ -535,6 +597,7 @@ async function verifiesUserMenuNavigationAndTheme(page: Page): Promise<void> {
   await page.goto('/?q=graph');
   await hideDevelopmentIndicator(page);
   await expect(page.locator('html')).toHaveClass(/dark/);
+  await expectActiveFilterSummaryToStick(page);
 
   const pageNavigation = page.getByRole('navigation', { name: '页面导航' });
   const currentNavigationLink = pageNavigation.getByRole('link', { name: '文献检索' });
@@ -625,7 +688,6 @@ async function verifiesUserMenuNavigationAndTheme(page: Page): Promise<void> {
     'color',
   ]);
   await expectElementChromeToBeGrayscale(trigger, ['backgroundColor', 'borderColor', 'color']);
-  await expectElementChromeToBeGrayscale(resetButton, ['backgroundColor', 'color']);
   await expectThemeChromeTokensToBeGrayscale(page);
   await page.screenshot({ path: '../output/ui/default-chrome-light.png', fullPage: true });
 

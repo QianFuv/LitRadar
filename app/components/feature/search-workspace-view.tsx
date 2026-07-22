@@ -26,8 +26,7 @@ export function SearchWorkspaceView() {
       toolbar={<SearchBar className="min-w-0 flex-1 md:mx-auto md:max-w-4xl" />}
     >
       <AnnouncementsDialog />
-      <ActiveFilterChips />
-      <ResultsList />
+      <ResultsList filterSummary={<ActiveFilterChips />} />
     </WorkspaceShell>
   );
 }

@@ -7,13 +7,17 @@ import { ArticleDialogCard } from '@/components/feature/article-dialog-card';
 import { useVisiblePageList } from '@/components/feature/use-visible-page-list';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
-import { useCallback, useMemo } from 'react';
+import { useCallback, useMemo, type ReactNode } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { useAuth } from '@/lib/auth-context';
 import { getMonthRangeDateBounds } from '@/lib/article-filters';
 import { createFtsHighlightPattern, parseFtsHighlightTerms } from '@/lib/fts-highlight';
 import { useSelectedDatabase } from '@/lib/selected-database';
 import { useFavoriteChecks } from '@/components/feature/use-favorite-checks';
+
+type ResultsListProps = {
+  filterSummary?: ReactNode;
+};
 
 /**
  * Resolve the cursor for the next article page.
@@ -58,9 +62,10 @@ function validateArticlePageCursor(
 /**
  * Fetch and render the filtered, progressively visible article result list.
  *
+ * @param props - Optional content rendered beneath the known result total.
  * @returns Search result summary, article cards, and pagination sentinels.
  */
-export function ResultsList() {
+export function ResultsList({ filterSummary }: ResultsListProps) {
   const { user } = useAuth();
   const queryClient = useQueryClient();
 
@@ -165,17 +170,17 @@ export function ResultsList() {
 
   const prefetchThreshold = 25;
   const prefetchIndex = Math.max(0, visibleArticles.length - prefetchThreshold);
+  const total = data?.pages[0]?.page.total ?? null;
+  let resultContent: ReactNode;
 
   if (isError) {
-    return (
+    resultContent = (
       <div role="alert" className="p-4 text-red-500 bg-red-50 dark:bg-red-900/20 rounded-md">
         错误：{error instanceof Error ? error.message : '未知错误'}
       </div>
     );
-  }
-
-  if (isLoading) {
-    return (
+  } else if (isLoading) {
+    resultContent = (
       <div className="space-y-4" role="status" aria-label="正在加载搜索结果">
         {Array.from({ length: 5 }).map((_, i) => (
           <Card key={i}>
@@ -191,40 +196,50 @@ export function ResultsList() {
         ))}
       </div>
     );
-  }
+  } else if (visibleArticles.length === 0) {
+    resultContent = <div className="p-8 text-center text-muted-foreground">未找到文章。</div>;
+  } else {
+    resultContent = (
+      <>
+        {visibleArticles.map((article, index) => (
+          <ArticleDialogCard
+            key={article.article_id}
+            triggerRef={index === prefetchIndex ? prefetchRef : undefined}
+            article={article}
+            dbName={currentDb}
+            title={highlightText(article.title)}
+            preview={highlightText(article.abstract)}
+            initialFolderIds={
+              favoriteChecksByArticle[article.article_id]?.map((item) => item.folder_id) ?? []
+            }
+            isFavoriteStatePending={Boolean(user) && isFavoriteStatePending}
+          />
+        ))}
 
-  if (visibleArticles.length === 0) {
-    return <div className="p-8 text-center text-muted-foreground">未找到文章。</div>;
+        <div ref={loadMoreRef} className="h-1" />
+        {isFetchingNextPage && (
+          <div className="py-4 flex justify-center">
+            <Skeleton className="h-8 w-48" />
+          </div>
+        )}
+      </>
+    );
   }
-
-  const total = data?.pages[0]?.page.total ?? null;
 
   return (
     <div className="space-y-4">
       {includeTotal && typeof total === 'number' && (
         <div className="text-sm text-muted-foreground">共找到 {total} 条结果</div>
       )}
-      {visibleArticles.map((article, index) => (
-        <ArticleDialogCard
-          key={article.article_id}
-          triggerRef={index === prefetchIndex ? prefetchRef : undefined}
-          article={article}
-          dbName={currentDb}
-          title={highlightText(article.title)}
-          preview={highlightText(article.abstract)}
-          initialFolderIds={
-            favoriteChecksByArticle[article.article_id]?.map((item) => item.folder_id) ?? []
-          }
-          isFavoriteStatePending={Boolean(user) && isFavoriteStatePending}
-        />
-      ))}
-
-      <div ref={loadMoreRef} className="h-1" />
-      {isFetchingNextPage && (
-        <div className="py-4 flex justify-center">
-          <Skeleton className="h-8 w-48" />
+      {filterSummary && (
+        <div
+          data-testid="filter-summary-slot"
+          className="sticky top-0 z-20 bg-background py-2 empty:hidden"
+        >
+          {filterSummary}
         </div>
       )}
+      {resultContent}
     </div>
   );
 }

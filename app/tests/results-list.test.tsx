@@ -80,6 +80,11 @@ import { server } from '@/tests/mocks/server';
 import { renderWithQuery } from '@/tests/render';
 
 const SHARED_ARTICLE: Article = createArticlePageScenario().items[0];
+const FILTER_SUMMARY = (
+  <section aria-label="已应用筛选" data-testid="filter-summary">
+    已应用
+  </section>
+);
 
 /**
  * Build one deterministic article page.
@@ -116,11 +121,12 @@ function createArticlePage(
  */
 function renderResultsList(
   searchParams = '?q=Fixture&area=Medicine&journal_id=101&month_range=2024-01..2024-02',
+  filterSummary: React.ReactNode = FILTER_SUMMARY,
 ) {
   resultsListMocks.searchParams = searchParams;
   return renderWithQuery(
     <NuqsTestingAdapter searchParams={searchParams} hasMemory>
-      <ResultsList />
+      <ResultsList filterSummary={filterSummary} />
     </NuqsTestingAdapter>,
   );
 }
@@ -144,10 +150,22 @@ async function rendersTypedResultContent(): Promise<void> {
   renderResultsList();
 
   expect(screen.getByRole('status', { name: '正在加载搜索结果' })).toBeInTheDocument();
+  expect(screen.getByRole('region', { name: '已应用筛选' })).toBeInTheDocument();
   resolveRequest?.();
 
   const article = await screen.findByTestId('result-9001');
-  expect(screen.getByText('共找到 12 条结果')).toBeInTheDocument();
+  const totalSummary = screen.getByText('共找到 12 条结果');
+  const filterSummary = screen.getByRole('region', { name: '已应用筛选' });
+  expect(
+    totalSummary.compareDocumentPosition(filterSummary) & Node.DOCUMENT_POSITION_FOLLOWING,
+  ).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+  expect(filterSummary.parentElement).toHaveClass(
+    'sticky',
+    'top-0',
+    'z-20',
+    'bg-background',
+    'empty:hidden',
+  );
   expect(within(article).getAllByText('Fixture')).toHaveLength(2);
   for (const highlight of within(article).getAllByText('Fixture')) {
     expect(highlight).toHaveClass('font-bold');
@@ -179,11 +197,30 @@ async function recoversFirstPageFailureToEmptyState(): Promise<void> {
   const { queryClient } = renderResultsList('?q=missing');
 
   expect(await screen.findByRole('alert')).toHaveTextContent('article index unavailable');
+  expect(screen.getByRole('region', { name: '已应用筛选' })).toBeInTheDocument();
   shouldFail = false;
   await queryClient.invalidateQueries({ queryKey: ['articles'] });
 
   expect(await screen.findByText('未找到文章。')).toBeInTheDocument();
+  const totalSummary = screen.getByText('共找到 0 条结果');
+  const filterSummary = screen.getByRole('region', { name: '已应用筛选' });
+  expect(
+    totalSummary.compareDocumentPosition(filterSummary) & Node.DOCUMENT_POSITION_FOLLOWING,
+  ).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
   expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+}
+
+/** Verify an absent filter summary does not render an empty sticky wrapper. */
+async function omitsEmptyFilterSummarySlot(): Promise<void> {
+  server.use(
+    http.get('http://localhost/api/articles', () =>
+      HttpResponse.json(createArticlePage([SHARED_ARTICLE], { total: 1 })),
+    ),
+  );
+  renderResultsList('', null);
+
+  expect(await screen.findByTestId('result-9001')).toBeInTheDocument();
+  expect(screen.queryByTestId('filter-summary-slot')).not.toBeInTheDocument();
 }
 
 /**
@@ -317,6 +354,7 @@ beforeEach(() => {
 describe('results list', () => {
   test('renders typed result content and favorite state', rendersTypedResultContent);
   test('recovers a first-page failure to an empty state', recoversFirstPageFailureToEmptyState);
+  test('omits an empty filter summary slot', omitsEmptyFilterSummarySlot);
   test(
     'appends pages and clears stale database results',
     appendsPagesAndClearsStaleDatabaseResults,

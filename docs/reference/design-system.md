@@ -165,6 +165,7 @@ Card 使用 card token、`rounded-lg`、`shadow-vercel-card`、24px 外层纵向
 
 - 首页使用动态 viewport 高度；桌面在 `md` 显示 `w-80` 固定侧栏，移动端改为左侧 Dialog 筛选器。
 - 首页搜索头 sticky，搜索与结果正文限制为 `max-w-4xl`。
+- 有已应用筛选时，结果区先显示“共找到 N 条结果”，再显示相对 `results-scroll-container` 悬浮的筛选摘要；总数随文章列表滚动离开，筛选摘要保持可操作。
 - 聚合设置中心按上面的响应式 Dialog 规则布局；管理和收藏使用 `max-w-5xl`，周报使用 `max-w-6xl`。
 - 页面 padding 常从 `p-4` / 紧凑间距过渡到 `sm:p-6`。
 - 收藏页在 `md` 从单列变成 `280px + 1fr`。
