@@ -142,9 +142,9 @@ export function AdminCenterDialog() {
 
   const replaceSection = useCallback(
     (section: AdminSectionId): void => {
-      router.replace(buildAdminCenterHref(pathname, searchParams, section), { scroll: false });
+      window.history.replaceState(null, '', buildAdminCenterHref(pathname, searchParams, section));
     },
-    [pathname, router, searchParams],
+    [pathname, searchParams],
   );
 
   /** Close the current administrator session and preserve unrelated workspace query state. */

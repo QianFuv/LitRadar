@@ -197,8 +197,11 @@ async function administratorMutationJourney(
     .getByRole('navigation', { name: '管理分类' });
   await expect(adminDialog).toBeVisible();
   await expect(adminDialog.getByText('full-stack.sqlite', { exact: true })).toBeVisible();
-  await adminCategories.getByRole('button', { name: '用户', exact: true }).click();
+  const usersCategory = adminCategories.getByRole('button', { name: '用户', exact: true });
+  await usersCategory.click();
   await expect(page).toHaveURL(/\/?\?admin=users$/);
+  await expect(usersCategory).toHaveAttribute('aria-current', 'page');
+  await expect(adminDialog.getByRole('region', { name: '用户管理内容' })).toBeVisible();
 
   const grantAdminButton = adminDialog.getByRole('button', {
     name: `设为 ${MEMBER_USERNAME} 为管理员`,

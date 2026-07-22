@@ -130,11 +130,13 @@ async function navigatesPersistentAdministratorPanels(): Promise<void> {
       .every((button) => button.hasAttribute('aria-current')),
   ).toBe(true);
 
+  const historyLength = window.history.length;
   await user.click(screen.getAllByRole('button', { name: '运行配置' })[0]);
-  expect(adminCenterMocks.router.replace).toHaveBeenLastCalledWith(
+  expect(`${window.location.pathname}${window.location.search}`).toBe(
     '/?q=graph&area=Accounting+%26+Auditing&admin=runtime-settings',
-    { scroll: false },
   );
+  expect(window.history.length).toBe(historyLength);
+  expect(adminCenterMocks.router.replace).not.toHaveBeenCalled();
 
   await user.click(screen.getByRole('button', { name: '关闭' }));
   expect(adminCenterMocks.router.replace).toHaveBeenLastCalledWith(
@@ -189,6 +191,7 @@ beforeEach(() => {
   adminCenterMocks.searchParams = new URLSearchParams(
     'q=graph&area=Accounting+%26+Auditing&admin=overview',
   );
+  window.history.replaceState(null, '', '/?q=graph&area=Accounting+%26+Auditing&admin=overview');
   adminCenterMocks.router.replace.mockReset();
 });
 
