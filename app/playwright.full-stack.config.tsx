@@ -28,9 +28,9 @@ export default defineConfig({
   outputDir: './test-results/playwright-full-stack/artifacts',
   use: {
     baseURL: BASE_URL,
-    trace: IS_CI ? 'on-first-retry' : 'retain-on-failure',
+    trace: 'retain-on-failure',
     screenshot: 'only-on-failure',
-    video: IS_CI ? 'on-first-retry' : 'off',
+    video: IS_CI ? 'retain-on-failure' : 'off',
   },
   projects: [
     {
