@@ -149,6 +149,8 @@ Card 使用 card token、`rounded-lg`、`shadow-vercel-card`、24px 外层纵向
 
 桌面 `md` 及以上使用受 `90dvh` 和 1rem viewport margin 限制的大型双栏 Dialog：左侧约 240px 分类栏，右侧为固定标题和独立滚动内容。移动端使用 `h-dvh`、`w-screen` 的全屏单列布局，分类导航置于顶部并允许水平滚动，底部操作栏避开 safe area。
 
+该响应式外壳由无业务状态的 `SectionedDialogFrame` 统一提供，包括分类导航、当前分类标题、内容滚动区、关闭控件和焦点归还；设置中心只持有 URL、追踪草稿与确认状态，不重复实现布局。
+
 文献追踪与通知分类在两者之间切换时复用同一个 tracking view model 和草稿；保存/取消栏 sticky 在内容滚动区底部。关闭设置、浏览器返回或离开追踪分类组时，如果草稿未保存，必须先显示独立 `ConfirmDialog`。文章详情中的数据源入口必须先关闭文章 Dialog，再打开 `settings=data-sources`，不允许叠加两个 modal。Dialog 关闭后把焦点归还给仍在文档中的发起控件。
 
 ### 页面导航与账号菜单

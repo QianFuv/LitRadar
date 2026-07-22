@@ -4,15 +4,7 @@
  * Query-driven aggregated settings dialog for every authenticated route.
  */
 
-import {
-  Bell,
-  Database,
-  KeyRound,
-  Radar,
-  Settings2,
-  ShieldCheck,
-  type LucideIcon,
-} from 'lucide-react';
+import { Bell, Database, KeyRound, Radar, Settings2, ShieldCheck } from 'lucide-react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
@@ -28,23 +20,17 @@ import {
   type TrackingSettingsController,
 } from '@/components/tracking/tracking-settings-content';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
-import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
+import {
+  SectionedDialogFrame,
+  type SectionedDialogSectionDefinition,
+} from '@/components/feature/sectioned-dialog';
 import { useAuth } from '@/lib/auth-context';
 import {
   buildSettingsCenterHref,
   isTrackingSettingsSection,
   parseSettingsSection,
-  SETTINGS_CENTER_RETURN_FOCUS_ATTRIBUTE,
   type SettingsSectionId,
 } from '@/lib/settings-center';
-import { cn } from '@/lib/utils';
-
-type SettingsSectionDefinition = {
-  description: string;
-  icon: LucideIcon;
-  id: SettingsSectionId;
-  label: string;
-};
 
 type PendingTransition =
   | { kind: 'close'; restoreUrlOnCancel: boolean }
@@ -79,13 +65,6 @@ type SettingsCenterSessionProps = {
   username: string;
 };
 
-type SettingsCenterNavigationProps = {
-  activeSection: SettingsSectionId;
-  className?: string;
-  isDisabled?: boolean;
-  onSelect: (section: SettingsSectionId) => void;
-};
-
 type SettingsCategoryContentProps = {
   activeSection: SettingsSectionId;
   copyFeedback: ReturnType<typeof useSettingsCopy>['copyFeedback'];
@@ -95,7 +74,7 @@ type SettingsCategoryContentProps = {
   username: string;
 };
 
-const SETTINGS_SECTIONS: readonly SettingsSectionDefinition[] = [
+const SETTINGS_SECTIONS = [
   {
     description: '主题与界面偏好',
     icon: Settings2,
@@ -132,46 +111,10 @@ const SETTINGS_SECTIONS: readonly SettingsSectionDefinition[] = [
     id: 'tokens',
     label: '访问令牌',
   },
+] satisfies readonly [
+  SectionedDialogSectionDefinition<SettingsSectionId>,
+  ...SectionedDialogSectionDefinition<SettingsSectionId>[],
 ];
-
-/**
- * Return the metadata for one stable settings section.
- *
- * @param section - Section identifier.
- * @returns Matching settings definition.
- */
-function getSettingsSectionDefinition(section: SettingsSectionId): SettingsSectionDefinition {
-  return SETTINGS_SECTIONS.find((item) => item.id === section) ?? SETTINGS_SECTIONS[0];
-}
-
-/**
- * Resolve a stable focus target when settings opens from a transient menu item.
- *
- * @param activeElement - Element focused immediately before Dialog auto-focus, if any.
- * @returns A marked trigger, controlling menu trigger, active element, or null.
- */
-function resolveReturnFocusTarget(activeElement: HTMLElement | null): HTMLElement | null {
-  const markedTarget = document.querySelector<HTMLElement>(
-    `[${SETTINGS_CENTER_RETURN_FOCUS_ATTRIBUTE}]`,
-  );
-  markedTarget?.removeAttribute(SETTINGS_CENTER_RETURN_FOCUS_ATTRIBUTE);
-  if (markedTarget?.isConnected) {
-    return markedTarget;
-  }
-  if (!activeElement) {
-    return null;
-  }
-
-  const menu = activeElement.closest<HTMLElement>('[role="menu"]');
-  if (!menu?.id) {
-    return activeElement;
-  }
-
-  const menuTrigger = Array.from(document.querySelectorAll<HTMLElement>('[aria-controls]')).find(
-    (element) => element.getAttribute('aria-controls') === menu.id,
-  );
-  return menuTrigger ?? activeElement;
-}
 
 /**
  * Synchronize the retained mount state when the URL opens or closes a settings session.
@@ -243,44 +186,6 @@ function synchronizeSessionState(
 }
 
 /**
- * Render the category navigation for desktop or mobile layouts.
- *
- * @param props - Active section, selection action, and layout class.
- * @returns Accessible settings category navigation.
- */
-function SettingsCenterNavigation({
-  activeSection,
-  className,
-  isDisabled = false,
-  onSelect,
-}: SettingsCenterNavigationProps) {
-  return (
-    <nav aria-label="设置分类" className={className}>
-      {SETTINGS_SECTIONS.map((section) => {
-        const Icon = section.icon;
-        const isActive = section.id === activeSection;
-        return (
-          <button
-            key={section.id}
-            type="button"
-            aria-current={isActive ? 'page' : undefined}
-            disabled={isDisabled}
-            className={cn(
-              'flex shrink-0 items-center gap-3 rounded-md px-3 py-2.5 text-left text-sm font-medium outline-none transition-colors hover:bg-accent focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-50',
-              isActive && 'bg-accent text-accent-foreground',
-            )}
-            onClick={() => onSelect(section.id)}
-          >
-            <Icon className="size-4" />
-            <span>{section.label}</span>
-          </button>
-        );
-      })}
-    </nav>
-  );
-}
-
-/**
  * Render only the data owners belonging to the active settings category.
  *
  * @param props - Active category, authenticated identity, copy state, and tracking guard.
@@ -349,7 +254,6 @@ function SettingsCenterSession({
   const trackingControllerRef = useRef<TrackingSettingsController | null>(null);
   const { copyFeedback, handleCopy } = useSettingsCopy();
   const { activeSection, isDialogOpen, isRestoringUrl, pendingTransition } = sessionState;
-  const activeDefinition = getSettingsSectionDefinition(activeSection);
 
   if (requestedSection !== sessionState.observedRequestedSection) {
     setSessionState(synchronizeSessionState(sessionState, requestedSection, hasUnsavedSettings));
@@ -442,99 +346,36 @@ function SettingsCenterSession({
 
   return (
     <>
-      <Dialog
+      <SectionedDialogFrame
+        activeSection={activeSection}
+        centerSubtitle="集中管理 LitRadar"
+        centerTitle="设置中心"
+        contentLabelSuffix="设置内容"
+        dialogDescription="在一个弹窗中管理常规、文献追踪、通知、数据源、账号安全和访问令牌设置。"
+        isBusy={isRestoringUrl}
+        isDismissBlocked={pendingTransition !== null}
+        isNavigationDisabled={isRestoringUrl}
+        navigationLabel="设置分类"
         open={isDialogOpen}
         onOpenChange={(open) => {
           if (!open) {
             requestClose();
           }
         }}
+        onSelectSection={requestSection}
+        onSessionClosed={onCloseSession}
+        returnFocusRef={returnFocusRef}
+        sections={SETTINGS_SECTIONS}
       >
-        <DialogContent
-          aria-busy={isRestoringUrl || undefined}
-          className="flex h-dvh w-screen max-w-none translate-x-[-50%] translate-y-[-50%] gap-0 overflow-hidden rounded-none border-0 p-0 shadow-none [&>[data-slot=dialog-close]]:top-5 [&>[data-slot=dialog-close]]:right-5 [&>[data-slot=dialog-close]]:flex [&>[data-slot=dialog-close]]:size-10 [&>[data-slot=dialog-close]]:items-center [&>[data-slot=dialog-close]]:justify-center [&>[data-slot=dialog-close]]:rounded-md [&>[data-slot=dialog-close]]:border [&>[data-slot=dialog-close]]:bg-background [&>[data-slot=dialog-close]]:opacity-100 [&>[data-slot=dialog-close]]:hover:bg-accent md:h-[min(90dvh,52rem)] md:w-[min(calc(100vw-2rem),72rem)] md:max-w-6xl md:rounded-lg md:border md:shadow-lg md:[&>[data-slot=dialog-close]]:right-auto md:[&>[data-slot=dialog-close]]:left-5"
-          onOpenAutoFocus={() => {
-            if (!returnFocusRef.current) {
-              const activeElement =
-                document.activeElement instanceof HTMLElement &&
-                document.activeElement !== document.body
-                  ? document.activeElement
-                  : null;
-              returnFocusRef.current = resolveReturnFocusTarget(activeElement);
-            }
-          }}
-          onCloseAutoFocus={(event) => {
-            const focusTarget = returnFocusRef.current;
-            returnFocusRef.current = null;
-            if (focusTarget?.isConnected) {
-              event.preventDefault();
-              focusTarget.focus();
-            }
-            onCloseSession();
-          }}
-          onEscapeKeyDown={(event) => {
-            if (pendingTransition) {
-              event.preventDefault();
-            }
-          }}
-          onInteractOutside={(event) => {
-            if (pendingTransition) {
-              event.preventDefault();
-            }
-          }}
-        >
-          <DialogTitle className="sr-only">设置中心</DialogTitle>
-          <DialogDescription className="sr-only">
-            在一个弹窗中管理常规、文献追踪、通知、数据源、账号安全和访问令牌设置。
-          </DialogDescription>
-
-          <aside className="hidden w-60 shrink-0 flex-col border-r bg-muted/20 px-3 pb-5 pt-16 md:flex">
-            <div className="px-3 pb-5">
-              <div className="text-lg font-semibold">设置中心</div>
-              <p className="mt-1 text-xs text-muted-foreground">集中管理 LitRadar</p>
-            </div>
-            <SettingsCenterNavigation
-              activeSection={activeSection}
-              className="flex flex-col gap-1"
-              isDisabled={isRestoringUrl}
-              onSelect={requestSection}
-            />
-          </aside>
-
-          <div className="flex min-w-0 flex-1 flex-col">
-            <header className="shrink-0 border-b bg-background px-5 pb-4 pt-5 pr-14 md:px-8 md:py-5 md:pr-8">
-              <div className="md:hidden">
-                <div className="text-lg font-semibold">设置中心</div>
-                <SettingsCenterNavigation
-                  activeSection={activeSection}
-                  className="-mx-1 mt-4 flex gap-1 overflow-x-auto px-1 pb-1"
-                  isDisabled={isRestoringUrl}
-                  onSelect={requestSection}
-                />
-              </div>
-              <div className="mt-4 md:mt-0">
-                <h2 className="text-xl font-semibold">{activeDefinition.label}</h2>
-                <p className="mt-1 text-sm text-muted-foreground">{activeDefinition.description}</p>
-              </div>
-            </header>
-
-            <div
-              role="region"
-              aria-label={`${activeDefinition.label}设置内容`}
-              className="min-h-0 flex-1 overflow-y-auto px-5 py-6 pb-[calc(1.5rem+var(--safe-area-inset-bottom,env(safe-area-inset-bottom,0px)))] md:px-8"
-            >
-              <SettingsCategoryContent
-                activeSection={activeSection}
-                copyFeedback={copyFeedback}
-                handleCopy={handleCopy}
-                onTrackingControllerChange={handleTrackingControllerChange}
-                userId={userId}
-                username={username}
-              />
-            </div>
-          </div>
-        </DialogContent>
-      </Dialog>
+        <SettingsCategoryContent
+          activeSection={activeSection}
+          copyFeedback={copyFeedback}
+          handleCopy={handleCopy}
+          onTrackingControllerChange={handleTrackingControllerChange}
+          userId={userId}
+          username={username}
+        />
+      </SectionedDialogFrame>
 
       <ConfirmDialog
         open={pendingTransition !== null}

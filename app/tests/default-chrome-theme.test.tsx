@@ -43,6 +43,7 @@ const DEFAULT_CHROME_COMPONENTS = [
   'components/feature/search-workspace-view.tsx',
   'components/feature/sidebar.tsx',
   'components/feature/sidebar-navigation.tsx',
+  'components/feature/sectioned-dialog.tsx',
   'components/feature/user-menu.tsx',
   'components/settings/settings-center-dialog.tsx',
 ] as const;
@@ -175,6 +176,19 @@ function keepsChromeComponentUtilitiesNeutral(): void {
   }
 }
 
+/** Verify settings delegates responsive dialog chrome to the shared frame. */
+function sharesSectionedDialogChrome(): void {
+  const frameSource = readProjectFile('components/feature/sectioned-dialog.tsx');
+  const settingsSource = readProjectFile('components/settings/settings-center-dialog.tsx');
+
+  expect(frameSource).toContain('md:w-[min(calc(100vw-2rem),72rem)]');
+  expect(frameSource).toContain('hidden w-60');
+  expect(frameSource).toContain('overflow-x-auto');
+  expect(settingsSource).toContain('<SectionedDialogFrame');
+  expect(settingsSource).not.toContain('<DialogContent');
+  expect(settingsSource).not.toContain('SettingsCenterNavigation');
+}
+
 /**
  * Verify semantic status colors and raster identity assets remain explicit exceptions.
  */
@@ -212,6 +226,7 @@ describe('default chrome theme contract', () => {
     'keeps shell component utilities free of palette hues',
     keepsChromeComponentUtilitiesNeutral,
   );
+  test('shares responsive sectioned dialog chrome', sharesSectionedDialogChrome);
   test(
     'retains semantic status colors and raster identity assets',
     retainsSemanticColorsAndRasterAssets,

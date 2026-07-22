@@ -7,11 +7,11 @@ import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 
+import { SECTIONED_DIALOG_RETURN_FOCUS_ATTRIBUTE } from '@/components/feature/sectioned-dialog';
 import { SettingsCenterDialog } from '@/components/settings/settings-center-dialog';
 import {
   buildSettingsCenterHref,
   parseSettingsSection,
-  SETTINGS_CENTER_RETURN_FOCUS_ATTRIBUTE,
   SETTINGS_SECTION_IDS,
 } from '@/lib/settings-center';
 import { renderWithQuery } from '@/tests/render';
@@ -101,6 +101,8 @@ async function opensAndNavigatesSettingsDialog(): Promise<void> {
 
   expect(await screen.findByRole('dialog', { name: '设置中心' })).toBeInTheDocument();
   expect(screen.getByRole('heading', { name: '常规' })).toBeInTheDocument();
+  expect(screen.getAllByRole('navigation', { name: '设置分类' })).toHaveLength(2);
+  expect(screen.getByRole('region', { name: '常规设置内容' })).toBeInTheDocument();
   expect(screen.getByRole('radiogroup', { name: '外观主题' })).toBeInTheDocument();
 
   await user.click(screen.getAllByRole('button', { name: '通知与推送' })[0]);
@@ -125,7 +127,7 @@ async function restoresFocusToTransientMenuTrigger(): Promise<void> {
   menuTrigger.textContent = '账号菜单';
   menuTrigger.setAttribute('aria-controls', 'settings-source-menu');
   menuTrigger.setAttribute('aria-expanded', 'true');
-  menuTrigger.setAttribute(SETTINGS_CENTER_RETURN_FOCUS_ATTRIBUTE, '');
+  menuTrigger.setAttribute(SECTIONED_DIALOG_RETURN_FOCUS_ATTRIBUTE, '');
   menu.id = 'settings-source-menu';
   menu.setAttribute('role', 'menu');
   menuItem.href = '/?view=favorites&folder=4&settings=general';
@@ -138,7 +140,7 @@ async function restoresFocusToTransientMenuTrigger(): Promise<void> {
 
   renderWithQuery(<SettingsCenterDialog />);
   expect(await screen.findByRole('dialog', { name: '设置中心' })).toBeInTheDocument();
-  expect(menuTrigger).not.toHaveAttribute(SETTINGS_CENTER_RETURN_FOCUS_ATTRIBUTE);
+  expect(menuTrigger).not.toHaveAttribute(SECTIONED_DIALOG_RETURN_FOCUS_ATTRIBUTE);
   menu.remove();
 
   await user.click(screen.getByRole('button', { name: '关闭' }));

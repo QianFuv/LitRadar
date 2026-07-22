@@ -24,11 +24,9 @@ import { usePathname, useSearchParams } from 'next/navigation';
 import { useRef, useSyncExternalStore, type CSSProperties, type MouseEvent } from 'react';
 
 import { Button } from '@/components/ui/button';
+import { SECTIONED_DIALOG_RETURN_FOCUS_ATTRIBUTE } from '@/components/feature/sectioned-dialog';
 import { useAuth } from '@/lib/auth-context';
-import {
-  buildSettingsCenterHref,
-  SETTINGS_CENTER_RETURN_FOCUS_ATTRIBUTE,
-} from '@/lib/settings-center';
+import { buildSettingsCenterHref } from '@/lib/settings-center';
 import { cn } from '@/lib/utils';
 
 type ThemePreference = 'system' | 'light' | 'dark';
@@ -126,7 +124,7 @@ export function UserMenu() {
     if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) {
       return;
     }
-    accountTriggerRef.current?.setAttribute(SETTINGS_CENTER_RETURN_FOCUS_ATTRIBUTE, '');
+    accountTriggerRef.current?.setAttribute(SECTIONED_DIALOG_RETURN_FOCUS_ATTRIBUTE, '');
   }
 
   /**

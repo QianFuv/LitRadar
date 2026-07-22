@@ -8,8 +8,8 @@ import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 
 import Providers from '@/app/providers';
+import { SECTIONED_DIALOG_RETURN_FOCUS_ATTRIBUTE } from '@/components/feature/sectioned-dialog';
 import { UserMenu } from '@/components/feature/user-menu';
-import { SETTINGS_CENTER_RETURN_FOCUS_ATTRIBUTE } from '@/lib/settings-center';
 
 type MockUser = {
   id: number;
@@ -158,11 +158,11 @@ async function marksCurrentTabSettingsInitiator(): Promise<void> {
   const modifiedSettingsLink = screen.getByRole('menuitem', { name: '打开设置中心' });
   modifiedSettingsLink.addEventListener('click', preventNavigation);
   fireEvent.click(modifiedSettingsLink, { ctrlKey: true });
-  expect(trigger).not.toHaveAttribute(SETTINGS_CENTER_RETURN_FOCUS_ATTRIBUTE);
+  expect(trigger).not.toHaveAttribute(SECTIONED_DIALOG_RETURN_FOCUS_ATTRIBUTE);
 
   fireEvent.click(modifiedSettingsLink);
-  expect(trigger).toHaveAttribute(SETTINGS_CENTER_RETURN_FOCUS_ATTRIBUTE);
-  trigger.removeAttribute(SETTINGS_CENTER_RETURN_FOCUS_ATTRIBUTE);
+  expect(trigger).toHaveAttribute(SECTIONED_DIALOG_RETURN_FOCUS_ATTRIBUTE);
+  trigger.removeAttribute(SECTIONED_DIALOG_RETURN_FOCUS_ATTRIBUTE);
 }
 
 /**
