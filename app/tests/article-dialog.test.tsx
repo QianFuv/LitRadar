@@ -1,5 +1,5 @@
 /**
- * Article card selection, dialog accessibility, citation, and safe-link coverage.
+ * Article card selection, dialog accessibility, copy actions, and safe-link coverage.
  */
 
 import { screen, waitFor } from '@testing-library/react';
@@ -10,7 +10,6 @@ import { describe, expect, test, vi } from 'vitest';
 import { ArticleDialogCard } from '@/components/feature/article-dialog-card';
 import type { Article } from '@/lib/api';
 import { AuthProvider } from '@/lib/auth-context';
-import { generateArticleCitation } from '@/lib/citation';
 import { server } from '@/tests/mocks/server';
 import { renderWithQuery } from '@/tests/render';
 
@@ -145,9 +144,9 @@ async function opensAndClosesAccessibleDialog(): Promise<void> {
 }
 
 /**
- * Verify citations copy and all online actions use stable LitRadar routes.
+ * Verify surviving copy actions and all online actions use stable LitRadar routes.
  */
-async function copiesCitationsAndUsesStableActionRoutes(): Promise<void> {
+async function copiesArticleValuesAndUsesStableActionRoutes(): Promise<void> {
   registerArticleDialogHandlers();
   const user = userEvent.setup();
   const writeText = vi.fn().mockResolvedValue(undefined);
@@ -176,16 +175,34 @@ async function copiesCitationsAndUsesStableActionRoutes(): Promise<void> {
     expect(link).toHaveAttribute('rel', 'noreferrer');
   }
 
-  await user.click(screen.getByRole('button', { name: '复制 GB/T 7714' }));
-  expect(writeText).toHaveBeenLastCalledWith(generateArticleCitation(SAFE_ARTICLE, 'gb-t-7714'));
-  await user.click(screen.getByRole('button', { name: '复制 BibTeX' }));
-  expect(writeText).toHaveBeenLastCalledWith(generateArticleCitation(SAFE_ARTICLE, 'bibtex'));
-  await user.click(screen.getByRole('button', { name: '复制 DOI' }));
-  expect(writeText).toHaveBeenLastCalledWith('10.1000/example');
+  expect(screen.queryByText('引用与链接')).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: '复制 GB/T 7714' })).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: '复制 BibTeX' })).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: '复制 DOI' })).not.toBeInTheDocument();
+
+  await user.click(screen.getByRole('button', { name: '复制文章标题' }));
+  expect(writeText).toHaveBeenLastCalledWith('Selectable title');
+  expect(screen.queryByText('文章标题已复制。')).not.toBeInTheDocument();
+  expect(screen.queryByRole('status')).not.toBeInTheDocument();
+
+  await user.click(screen.getByRole('button', { name: '复制信息' }));
+  expect(writeText).toHaveBeenLastCalledWith(
+    [
+      '标题：Selectable title',
+      '作者：Ada Lovelace',
+      '期刊：Journal of Tests',
+      '日期：2024-05-17',
+      'DOI: 10.1000/example',
+      'DOI 链接：https://doi.org/10.1000/example',
+    ].join('\n'),
+  );
+  expect(screen.getByRole('button', { name: '已复制' })).toBeInTheDocument();
+  expect(screen.queryByText('文章信息已复制。')).not.toBeInTheDocument();
+  expect(screen.queryByRole('status')).not.toBeInTheDocument();
 }
 
 /**
- * Verify a DOI remains copyable metadata and is never used as a direct action destination.
+ * Verify stored metadata is never exposed as a direct external-link action.
  */
 async function doesNotExposeStoredOrDirectExternalLinks(): Promise<void> {
   registerArticleDialogHandlers();
@@ -198,10 +215,27 @@ async function doesNotExposeStoredOrDirectExternalLinks(): Promise<void> {
 
   await user.click(screen.getByRole('button', { name: '查看详情' }));
   expect(await screen.findByRole('dialog')).toBeInTheDocument();
-  expect(screen.getByRole('button', { name: '复制 DOI' })).toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: '复制 DOI' })).not.toBeInTheDocument();
   expect(screen.queryByRole('link', { name: '打开 DOI' })).not.toBeInTheDocument();
   expect(screen.queryByRole('link', { name: '打开永久链接' })).not.toBeInTheDocument();
   expect(screen.queryByRole('button', { name: '复制永久链接' })).not.toBeInTheDocument();
+}
+
+/** Verify clipboard rejection remains visible as an accessible error. */
+async function reportsCopyFailure(): Promise<void> {
+  registerArticleDialogHandlers();
+  const user = userEvent.setup();
+  Object.defineProperty(navigator, 'clipboard', {
+    configurable: true,
+    value: { writeText: vi.fn().mockRejectedValue(new Error('clipboard denied')) },
+  });
+  renderArticleCard(SAFE_ARTICLE);
+
+  await user.click(screen.getByRole('button', { name: '查看详情' }));
+  await user.click(screen.getByRole('button', { name: '复制文章标题' }));
+
+  expect(await screen.findByRole('alert')).toHaveTextContent('复制失败，请手动选择文本复制。');
+  expect(screen.queryByRole('status')).not.toBeInTheDocument();
 }
 
 /** Verify the CNKI setup action preserves route state and closes article details first. */
@@ -259,10 +293,11 @@ describe('article dialog workflow', () => {
     opensAndClosesAccessibleDialog,
   );
   test(
-    'copies citations and uses stable online action routes',
-    copiesCitationsAndUsesStableActionRoutes,
+    'copies article values and uses stable online action routes',
+    copiesArticleValuesAndUsesStableActionRoutes,
   );
   test('does not expose stored or direct external links', doesNotExposeStoredOrDirectExternalLinks);
+  test('reports clipboard rejection as an accessible error', reportsCopyFailure);
   test(
     'opens data-source settings without stacking dialogs',
     opensDataSourceSettingsWithoutDialogStacking,

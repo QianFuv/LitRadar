@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import Link from 'next/link';
 import { usePathname, useSearchParams } from 'next/navigation';
@@ -17,7 +17,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { copyTextToClipboard } from '@/lib/clipboard';
-import { generateArticleCitation, getDoiUrl, type ArticleCitationFormat } from '@/lib/citation';
+import { getDoiUrl } from '@/lib/citation';
 import { buildSettingsCenterHref } from '@/lib/settings-center';
 
 type ArticleDetailDialogArticle = Article;
@@ -30,7 +30,7 @@ type ArticleDetailDialogContentProps = {
   extraActions?: ReactNode;
 };
 
-type ArticleCopyTarget = 'title' | 'info' | 'gb-t-7714' | 'bibtex' | 'doi';
+type ArticleCopyTarget = 'title' | 'info';
 
 /**
  * Build the existing plain-text article information summary.
@@ -75,7 +75,7 @@ function buildArticleDescription(article: ArticleDetailDialogArticle): string {
 }
 
 /**
- * Render article metadata, citations, links, access actions, and favorite controls.
+ * Render article metadata, access actions, and favorite controls.
  *
  * @param props - Article detail dialog configuration.
  * @returns Article detail dialog content.
@@ -90,10 +90,8 @@ export function ArticleDetailDialogContent({
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const [copyStatus, setCopyStatus] = useState<ArticleCopyTarget | null>(null);
-  const [copyFeedback, setCopyFeedback] = useState<{
-    message: string;
-    tone: 'error' | 'success';
-  } | null>(null);
+  const [copyError, setCopyError] = useState<string | null>(null);
+  const copyResetTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isAccessQueryEnabled = !!dbName && !!article.article_id;
   const {
     data: access,
@@ -109,51 +107,48 @@ export function ArticleDetailDialogContent({
     refetchOnMount: 'always',
   });
 
+  useEffect(
+    () => () => {
+      if (copyResetTimeoutRef.current !== null) {
+        clearTimeout(copyResetTimeoutRef.current);
+      }
+    },
+    [],
+  );
+
   /**
-   * Copy one article value and publish accessible feedback.
+   * Copy one article value and update its inline state.
    *
    * @param text - Text to copy.
    * @param status - Copy action identifier.
-   * @param successMessage - Success feedback.
    */
-  const handleCopy = async (text: string, status: ArticleCopyTarget, successMessage: string) => {
+  const handleCopy = async (text: string, status: ArticleCopyTarget) => {
+    if (copyResetTimeoutRef.current !== null) {
+      clearTimeout(copyResetTimeoutRef.current);
+    }
     try {
       await copyTextToClipboard(text);
       setCopyStatus(status);
-      setCopyFeedback({ message: successMessage, tone: 'success' });
+      setCopyError(null);
     } catch {
       setCopyStatus(null);
-      setCopyFeedback({ message: '复制失败，请手动选择文本复制。', tone: 'error' });
+      setCopyError('复制失败，请手动选择文本复制。');
     }
-    setTimeout(() => {
+    copyResetTimeoutRef.current = setTimeout(() => {
       setCopyStatus(null);
-      setCopyFeedback(null);
+      setCopyError(null);
+      copyResetTimeoutRef.current = null;
     }, 3000);
   };
 
   /** Copy the article title. */
   const handleCopyTitle = async () => {
-    await handleCopy(article.title || '', 'title', '文章标题已复制。');
+    await handleCopy(article.title || '', 'title');
   };
 
   /** Copy the plain-text article information summary. */
   const handleCopyArticleInfo = async () => {
-    await handleCopy(buildArticleInfoText(article), 'info', '文章信息已复制。');
-  };
-
-  /**
-   * Copy one generated citation format.
-   *
-   * @param format - Single-article citation format.
-   */
-  const handleCopyCitation = async (format: ArticleCitationFormat) => {
-    const label = format === 'gb-t-7714' ? 'GB/T 7714' : 'BibTeX';
-    await handleCopy(generateArticleCitation(article, format), format, `${label} 引用已复制。`);
-  };
-
-  /** Copy the raw DOI field. */
-  const handleCopyDoi = async () => {
-    await handleCopy(article.doi || '', 'doi', 'DOI 已复制。');
+    await handleCopy(buildArticleInfoText(article), 'info');
   };
 
   const abstractAction = access?.abstract_page;
@@ -188,16 +183,9 @@ export function ArticleDetailDialogContent({
           </Button>
         </DialogTitle>
         <DialogDescription>{buildArticleDescription(article)}</DialogDescription>
-        {copyFeedback && (
-          <p
-            role={copyFeedback.tone === 'error' ? 'alert' : 'status'}
-            className={
-              copyFeedback.tone === 'error'
-                ? 'text-sm text-destructive'
-                : 'text-sm text-muted-foreground'
-            }
-          >
-            {copyFeedback.message}
+        {copyError && (
+          <p role="alert" className="text-sm text-destructive">
+            {copyError}
           </p>
         )}
       </DialogHeader>
@@ -214,42 +202,6 @@ export function ArticleDetailDialogContent({
           <p className="text-sm text-muted-foreground leading-relaxed text-justify">
             {article.abstract || '暂无摘要。'}
           </p>
-        </div>
-
-        <div>
-          <h3 className="mb-2 text-sm font-semibold text-foreground/80">引用与链接</h3>
-          <div className="flex flex-wrap gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => void handleCopyCitation('gb-t-7714')}
-            >
-              {copyStatus === 'gb-t-7714' ? (
-                <Check className="mr-2 h-4 w-4 text-green-600" />
-              ) : (
-                <Copy className="mr-2 h-4 w-4" />
-              )}
-              复制 GB/T 7714
-            </Button>
-            <Button variant="outline" size="sm" onClick={() => void handleCopyCitation('bibtex')}>
-              {copyStatus === 'bibtex' ? (
-                <Check className="mr-2 h-4 w-4 text-green-600" />
-              ) : (
-                <Copy className="mr-2 h-4 w-4" />
-              )}
-              复制 BibTeX
-            </Button>
-            {article.doi && (
-              <Button variant="outline" size="sm" onClick={() => void handleCopyDoi()}>
-                {copyStatus === 'doi' ? (
-                  <Check className="mr-2 h-4 w-4 text-green-600" />
-                ) : (
-                  <Copy className="mr-2 h-4 w-4" />
-                )}
-                复制 DOI
-              </Button>
-            )}
-          </div>
         </div>
 
         <div className="pt-4 border-t">
