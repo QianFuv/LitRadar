@@ -73,15 +73,14 @@ pnpm dev
 | `/?view=weekly-updates` | 已登录   | 按数据库和期刊浏览本周变化                    |
 | `?settings=<section>`   | 已登录   | 在当前受保护工作区上打开聚合设置中心          |
 | `?admin=<section>`      | 管理员   | 在当前受保护工作区上打开分栏管理面板          |
-| `/admin`                | 已登录   | 管理员兼容跳转；普通用户显示明确的权限拒绝    |
 
-除 `/login` 外，页面都位于 `app/(protected)/`，布局会通过 `AuthProvider` 恢复当前用户并把未登录访问重定向到 `/login?next=...`。管理面板同时在全局 Dialog 和 `/admin` 兼容入口检查 `is_admin`。
+除 `/login` 外，页面都位于 `app/(protected)/`，布局会通过 `AuthProvider` 恢复当前用户并把未登录访问重定向到 `/login?next=...`。管理面板只由全局 Dialog 提供；账号菜单入口与手工添加的 `admin` query 都检查 `is_admin`，普通用户的管理参数会被移除且不会挂载管理数据组件。
 
 根路由通过 `view` 参数切换检索、收藏和每周更新工作区。省略 `view` 或传入未知值时显示检索；三个固定图标入口分别使用 `/`、`/?view=favorites` 和 `/?view=weekly-updates`，因此可直接访问、刷新并使用浏览器前进/后退。切换固定入口会清除上一工作区的私有参数；收藏继续使用 `folder`，周报继续使用 `db`、`journal` 和 `weekly_q`。`/favorites` 与 `/weekly-updates` 已直接删除，访问时返回普通 404，不提供重定向或兼容页面。
 
-设置中心由受保护布局全局挂载，合法分类为 `general`、`tracking`、`notifications`、`data-sources`、`account` 和 `tokens`。管理面板同样由该布局挂载，合法分类为 `overview`、`users`、`invite-codes`、`runtime-settings`、`scheduled-tasks` 和 `announcements`。打开、切换与关闭只修改对应的 `settings` 或 `admin` 参数并保留其他工作区状态；两个中心互斥，未知分类会被移除。`/admin` 对管理员跳转到 `/?admin=overview`，对普通用户保留明确的无权限反馈；`/settings` 和 `/tracking` 不再是页面路由。
+设置中心由受保护布局全局挂载，合法分类为 `general`、`tracking`、`notifications`、`data-sources`、`account` 和 `tokens`。管理面板同样由该布局挂载，合法分类为 `overview`、`users`、`invite-codes`、`runtime-settings`、`scheduled-tasks` 和 `announcements`。打开、切换与关闭只修改对应的 `settings` 或 `admin` 参数并保留其他工作区状态；两个中心互斥，未知分类会被移除。`/admin`、`/settings` 和 `/tracking` 都不是页面路由，访问时返回普通 404，不提供重定向或兼容页面。
 
-根布局提供统一标题模板；三个 query 工作区共用根页面的通用标题和描述，登录与管理页面保留各自 metadata。未知路由使用可静态导出的自定义 404 页面；普通路由错误提供重试和首页入口，根布局失败时由不依赖 Providers 的独立全局错误文档兜底。
+根布局提供统一标题模板；三个 query 工作区和管理 Dialog 共用根页面的通用标题和描述，登录页保留独立 metadata。未知路由使用可静态导出的自定义 404 页面；普通路由错误提供重试和首页入口，根布局失败时由不依赖 Providers 的独立全局错误文档兜底。
 
 三个工作区复用同一套桌面固定侧栏、移动抽屉、sticky 工具栏、内部文章滚动区和安全区留白。侧栏顶部使用紧凑品牌栏，并把文献检索、我的收藏和每周更新收敛为一行三列的图标导航；下方内容随当前工作区显示检索筛选、收藏夹管理或数据库/期刊选择。每个图标入口都提供可访问名称、悬停提示和当前页面语义。
 

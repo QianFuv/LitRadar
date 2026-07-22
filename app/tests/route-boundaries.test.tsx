@@ -43,12 +43,10 @@ vi.mock('@/components/feature/user-menu', () => ({
 
 import { metadata as rootMetadata } from '@/app/layout';
 import { metadata as loginMetadata } from '@/app/login/page';
-import { metadata as adminMetadata } from '@/app/(protected)/admin/layout';
 import RouteError from '@/app/error';
 import GlobalError from '@/app/global-error';
 import NotFound, { metadata as notFoundMetadata } from '@/app/not-found';
 import ProtectedLayout from '@/app/(protected)/layout';
-import AdminPage from '@/app/(protected)/admin/page';
 
 /**
  * Verify the root title template and every documented route's static metadata.
@@ -62,10 +60,6 @@ function exposesRouteMetadata(): void {
   expect(loginMetadata).toMatchObject({
     title: '登录',
     description: '登录或注册 LitRadar 账号。',
-  });
-  expect(adminMetadata).toMatchObject({
-    title: '管理面板',
-    description: '管理 LitRadar 用户、邀请码、运行设置、计划任务和公告。',
   });
   expect(notFoundMetadata).toMatchObject({
     title: '页面未找到',
@@ -167,25 +161,6 @@ async function protectsRenderedRouteContent(): Promise<void> {
   expect(screen.getByText('user menu marker')).toBeInTheDocument();
 }
 
-/**
- * Verify the legacy administrator route renders a denial or opens the global center.
- */
-async function gatesAdministratorRouteByVisiblePermission(): Promise<void> {
-  routeBoundaryMocks.auth.user = { id: 8, username: 'reader', is_admin: false };
-  const view = render(<AdminPage />);
-
-  expect(screen.getByText('无管理员权限')).toBeInTheDocument();
-  expect(screen.getByRole('link', { name: '返回首页' })).toHaveAttribute('href', '/');
-  expect(routeBoundaryMocks.replace).not.toHaveBeenCalled();
-
-  routeBoundaryMocks.auth.user = { id: 9, username: 'administrator', is_admin: true };
-  view.rerender(<AdminPage />);
-
-  expect(screen.getByRole('status')).toHaveTextContent('正在打开管理面板');
-  expect(screen.queryByText('无管理员权限')).not.toBeInTheDocument();
-  await waitFor(() => expect(routeBoundaryMocks.replace).toHaveBeenCalledWith('/?admin=overview'));
-}
-
 beforeEach(() => {
   routeBoundaryMocks.auth.loading = false;
   routeBoundaryMocks.auth.user = null;
@@ -200,8 +175,4 @@ describe('route boundaries', () => {
   test('renders a self-contained global failure document', rendersGlobalFailureDocument);
   test('renders the custom not-found page', rendersCustomNotFoundPage);
   test('protects rendered route content and preserves deep links', protectsRenderedRouteContent);
-  test(
-    'gates the administrator route by visible permission',
-    gatesAdministratorRouteByVisiblePermission,
-  );
 });

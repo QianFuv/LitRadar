@@ -25,7 +25,13 @@ async function login(page: Page, username: string, password: string): Promise<vo
   await page.goto('/login');
   await page.getByLabel('用户名').fill(username);
   await page.getByLabel('密码', { exact: true }).fill(password);
+  const loginResponse = page.waitForResponse(
+    (response) =>
+      response.request().method() === 'POST' &&
+      new URL(response.url()).pathname === '/api/auth/login',
+  );
   await page.getByRole('button', { name: '登录', exact: true }).click();
+  expect((await loginResponse).ok()).toBe(true);
   await dismissVisibleAnnouncements(page);
   await expect(page.getByRole('button', { name: `打开账号菜单：${username}` })).toBeVisible();
 }
@@ -106,7 +112,7 @@ async function searchAndFavoriteJourney({ page }: { page: Page }): Promise<void>
 async function administratorMutationJourney({ page }: { page: Page }): Promise<void> {
   await login(page, ADMIN_USERNAME, ADMIN_PASSWORD);
   await expectHttpOnlySession(page);
-  await page.goto('/admin');
+  await page.goto('/?admin=overview');
   await expect(page).toHaveURL(/\/?\?admin=overview$/);
   const adminDialog = page.getByRole('dialog', { name: '管理面板' });
   const adminCategories = adminDialog.getByRole('navigation', { name: '管理分类' });
@@ -188,26 +194,29 @@ async function administratorMutationJourney({ page }: { page: Page }): Promise<v
 }
 
 /**
- * Verify real non-administrator denial, logout, and anonymous route protection.
+ * Verify the removed administrator route, API authorization, and logout boundary.
  *
  * @param fixtures - Playwright fixtures.
  * @returns Promise resolved after permission boundaries are verified.
  */
 async function protectedRouteJourney({ page }: { page: Page }): Promise<void> {
   await login(page, MEMBER_USERNAME, MEMBER_PASSWORD);
-  await page.goto('/admin');
-  await expect(page.getByText('无管理员权限', { exact: true })).toBeVisible();
+  const authenticatedAdminRoute = await page.goto('/admin');
+  expect(authenticatedAdminRoute?.status()).toBe(404);
+  await expect(page.getByRole('heading', { name: '页面未找到' })).toBeVisible();
   expect((await page.request.get('/api/admin/users')).status()).toBe(403);
 
+  await page.goto('/');
   await page.getByRole('button', { name: `打开账号菜单：${MEMBER_USERNAME}` }).click();
   await page.getByRole('menuitem', { name: '退出登录' }).click();
-  await expect(page).toHaveURL(/\/login\?next=%2Fadmin$/);
+  await expect(page).toHaveURL(/\/login\?next=%2F$/);
   expect(
     (await page.context().cookies()).some((cookie) => cookie.name === 'litradar_session'),
   ).toBe(false);
 
-  await page.goto('/admin');
-  await expect(page).toHaveURL(/\/login\?next=%2Fadmin$/);
+  const anonymousAdminRoute = await page.goto('/admin');
+  expect(anonymousAdminRoute?.status()).toBe(404);
+  await expect(page.getByRole('heading', { name: '页面未找到' })).toBeVisible();
   expect((await page.request.get('/api/admin/users')).status()).toBe(401);
 }
 

@@ -154,7 +154,7 @@ compact 只改变显示形式，不改变事件选择或隐私规则。一次本
   "event": "client.error",
   "component": "browser",
   "source": "route_boundary",
-  "route": "/admin",
+  "route": "/",
   "error_kind": "api_error",
   "request_id": "019be8c4-4e8a-7c21-9d17-9017ca04a290"
 }

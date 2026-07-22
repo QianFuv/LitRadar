@@ -523,10 +523,9 @@ mod tests {
 
     type CnkiSessionRowSnapshot = (String, String, String, Option<f64>, f64, f64, Option<f64>);
 
-    const STATIC_FRONTEND_ROUTES: [(&str, &str); 7] = [
+    const STATIC_FRONTEND_ROUTES: [(&str, &str); 6] = [
         ("/", "home"),
         ("/login", "login"),
-        ("/admin", "admin"),
         ("/favorites", "favorites"),
         ("/settings", "settings"),
         ("/tracking", "tracking"),
@@ -888,6 +887,10 @@ mod tests {
             missing.headers.get(CACHE_CONTROL).unwrap(),
             FRONTEND_CACHE_CONTROL
         );
+
+        let removed_admin = static_frontend_request(&app, Method::GET, "/admin", &[]).await;
+        assert_eq!(removed_admin.status, StatusCode::NOT_FOUND);
+        assert!(removed_admin.text().contains("missing frontend"));
 
         let missing_head = static_frontend_request(&app, Method::HEAD, "/missing", &[]).await;
         assert_eq!(missing_head.status, StatusCode::NOT_FOUND);
