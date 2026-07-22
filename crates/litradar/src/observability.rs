@@ -2,25 +2,16 @@
 
 use std::error::Error;
 use std::fmt;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
+use litradar_storage::{
+    load_runtime_logging_settings, DEFAULT_RUNTIME_LOG_FILTER, DEFAULT_RUNTIME_LOG_FORMAT,
+};
 use tracing_appender::non_blocking::{ErrorCounter, NonBlockingBuilder, WorkerGuard};
 use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::EnvFilter;
 
-const DEFAULT_LOG_FILTER: &str = concat!(
-    "warn,",
-    "litradar=info,",
-    "litradar_api=info,",
-    "litradar_cli=info,",
-    "litradar_index=info,",
-    "litradar_sources=info,",
-    "litradar_storage=info,",
-    "litradar_worker=info"
-);
 const LOG_BUFFERED_LINES_LIMIT: usize = 4_096;
-const LOG_FILTER_ENV: &str = "LITRADAR_LOG_FILTER";
-const LOG_FORMAT_ENV: &str = "LITRADAR_LOG_FORMAT";
 
 /// Guard that flushes buffered log events and reports overload loss on shutdown.
 pub(crate) struct ObservabilityGuard {
@@ -56,10 +47,12 @@ impl Drop for ObservabilityGuard {
 /// Fixed public reason for process-level logging initialization failure.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ObservabilityError {
-    /// The filter variable is not valid Unicode or filter syntax.
+    /// The persisted filter does not use valid tracing-subscriber syntax.
     InvalidFilter,
-    /// The format variable is not valid Unicode or a supported format.
+    /// The persisted format is unsupported.
     InvalidFormat,
+    /// Runtime logging settings could not be resolved or read safely.
+    RuntimeSettingsUnavailable,
     /// Another global tracing subscriber is already active.
     SubscriberAlreadyInitialized,
 }
@@ -69,6 +62,9 @@ impl fmt::Display for ObservabilityError {
         match self {
             Self::InvalidFilter => formatter.write_str("invalid LitRadar log filter"),
             Self::InvalidFormat => formatter.write_str("invalid LitRadar log format"),
+            Self::RuntimeSettingsUnavailable => {
+                formatter.write_str("LitRadar runtime logging settings are unavailable")
+            }
             Self::SubscriberAlreadyInitialized => {
                 formatter.write_str("LitRadar logging is already initialized")
             }
@@ -86,7 +82,7 @@ enum LogFormat {
 
 impl LogFormat {
     fn parse(value: Option<&str>) -> Result<Self, ObservabilityError> {
-        match value.unwrap_or("json") {
+        match value.unwrap_or(DEFAULT_RUNTIME_LOG_FORMAT) {
             "json" => Ok(Self::Json),
             "compact" => Ok(Self::Compact),
             _ => Err(ObservabilityError::InvalidFormat),
@@ -100,14 +96,24 @@ struct ObservabilityConfig {
 }
 
 impl ObservabilityConfig {
-    fn from_env() -> Result<Self, ObservabilityError> {
-        let filter = unicode_env(LOG_FILTER_ENV, ObservabilityError::InvalidFilter)?;
-        let format = unicode_env(LOG_FORMAT_ENV, ObservabilityError::InvalidFormat)?;
-        Self::from_values(filter.as_deref(), format.as_deref())
+    fn from_args(args: &[String]) -> Result<Self, ObservabilityError> {
+        let current_dir =
+            std::env::current_dir().map_err(|_| ObservabilityError::RuntimeSettingsUnavailable)?;
+        Self::from_args_with_current_dir(args, &current_dir)
+    }
+
+    fn from_args_with_current_dir(
+        args: &[String],
+        current_dir: &Path,
+    ) -> Result<Self, ObservabilityError> {
+        let auth_db_path = resolve_auth_database_path(args, current_dir)?;
+        let settings = load_runtime_logging_settings(auth_db_path)
+            .map_err(|_| ObservabilityError::RuntimeSettingsUnavailable)?;
+        Self::from_values(Some(&settings.log_filter), Some(&settings.log_format))
     }
 
     fn from_values(filter: Option<&str>, format: Option<&str>) -> Result<Self, ObservabilityError> {
-        let filter = EnvFilter::try_new(filter.unwrap_or(DEFAULT_LOG_FILTER))
+        let filter = EnvFilter::try_new(filter.unwrap_or(DEFAULT_RUNTIME_LOG_FILTER))
             .map_err(|_| ObservabilityError::InvalidFilter)?;
         let format = LogFormat::parse(format)?;
         Ok(Self { filter, format })
@@ -119,8 +125,8 @@ impl ObservabilityConfig {
 /// # Returns
 ///
 /// A guard that must remain alive until all application work and terminal events finish.
-pub(crate) fn initialize() -> Result<ObservabilityGuard, ObservabilityError> {
-    let ObservabilityConfig { filter, format } = ObservabilityConfig::from_env()?;
+pub(crate) fn initialize(args: &[String]) -> Result<ObservabilityGuard, ObservabilityError> {
+    let ObservabilityConfig { filter, format } = ObservabilityConfig::from_args(args)?;
     let (writer, worker_guard) = NonBlockingBuilder::default()
         .buffered_lines_limit(LOG_BUFFERED_LINES_LIMIT)
         .lossy(true)
@@ -156,13 +162,27 @@ pub(crate) fn initialize() -> Result<ObservabilityGuard, ObservabilityError> {
     })
 }
 
-fn unicode_env(
-    name: &str,
-    error: ObservabilityError,
-) -> Result<Option<String>, ObservabilityError> {
-    std::env::var_os(name)
-        .map(|value| value.into_string().map_err(|_| error))
-        .transpose()
+fn resolve_auth_database_path(
+    args: &[String],
+    current_dir: &Path,
+) -> Result<PathBuf, ObservabilityError> {
+    let project_root = option_value(args, "--project-root")?
+        .map(PathBuf::from)
+        .unwrap_or_else(|| current_dir.to_path_buf());
+    if let Some(auth_db_path) = option_value(args, "--auth-db")? {
+        return Ok(PathBuf::from(auth_db_path));
+    }
+    Ok(project_root.join("data").join("auth.sqlite"))
+}
+
+fn option_value<'a>(args: &'a [String], name: &str) -> Result<Option<&'a str>, ObservabilityError> {
+    let Some(index) = args.iter().position(|argument| argument == name) else {
+        return Ok(None);
+    };
+    args.get(index + 1)
+        .map(String::as_str)
+        .map(Some)
+        .ok_or(ObservabilityError::RuntimeSettingsUnavailable)
 }
 
 fn install_panic_hook() {
@@ -209,12 +229,18 @@ fn write_dropped_event(format: LogFormat, dropped_count: usize) {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
     use std::io::Write;
+    use std::path::{Path, PathBuf};
     use std::sync::{Arc, Condvar, Mutex};
 
+    use litradar_storage::{
+        migrate_auth_database, open_sqlite_connection, upsert_runtime_settings, SecretCodec,
+    };
+    use tempfile::tempdir;
     use tracing_appender::non_blocking::NonBlockingBuilder;
 
-    use super::{LogFormat, ObservabilityConfig, ObservabilityError};
+    use super::{resolve_auth_database_path, LogFormat, ObservabilityConfig, ObservabilityError};
 
     #[test]
     fn configuration_defaults_to_json_and_rejects_invalid_values() {
@@ -238,6 +264,119 @@ mod tests {
                 .expect("explicit compact configuration should be valid")
                 .format,
             LogFormat::Compact
+        );
+    }
+
+    #[test]
+    fn configuration_loads_persisted_values_from_the_selected_auth_database() {
+        let root = tempdir().expect("temporary project root should be created");
+        let default_auth_db_path = root.path().join("data").join("auth.sqlite");
+        let default = ObservabilityConfig::from_args_with_current_dir(&[], root.path())
+            .expect("missing database should use logging defaults");
+        assert_eq!(default.format, LogFormat::Json);
+        assert!(!default_auth_db_path.exists());
+
+        migrate_auth_database(&default_auth_db_path).expect("auth database should migrate");
+        upsert_runtime_settings(
+            &default_auth_db_path,
+            &SecretCodec::from_key([41_u8; 32]),
+            &HashMap::from([
+                ("log_format".to_string(), Some("compact".to_string())),
+                ("log_filter".to_string(), Some("off".to_string())),
+            ]),
+            &HashMap::new(),
+        )
+        .expect("logging settings should persist");
+        let configured = ObservabilityConfig::from_args_with_current_dir(&[], root.path())
+            .expect("persisted logging settings should load");
+        assert_eq!(configured.format, LogFormat::Compact);
+        assert_eq!(configured.filter.to_string(), "off");
+
+        let custom_auth_db_path = root.path().join("custom.sqlite");
+        migrate_auth_database(&custom_auth_db_path).expect("custom auth database should migrate");
+        upsert_runtime_settings(
+            &custom_auth_db_path,
+            &SecretCodec::from_key([42_u8; 32]),
+            &HashMap::from([("log_filter".to_string(), Some("litradar=debug".to_string()))]),
+            &HashMap::new(),
+        )
+        .expect("custom logging settings should persist");
+        let custom_args = vec![
+            "--auth-db".to_string(),
+            custom_auth_db_path.to_string_lossy().into_owned(),
+        ];
+        let custom = ObservabilityConfig::from_args_with_current_dir(&custom_args, root.path())
+            .expect("explicit auth database should be selected");
+        assert_eq!(custom.filter.to_string(), "litradar=debug");
+
+        let connection =
+            open_sqlite_connection(&custom_auth_db_path).expect("custom database should open");
+        connection
+            .execute(
+                "UPDATE runtime_settings SET value = ?1 WHERE key = 'log_filter'",
+                ["["],
+            )
+            .expect("invalid direct filter fixture should update");
+        assert_eq!(
+            ObservabilityConfig::from_args_with_current_dir(&custom_args, root.path())
+                .err()
+                .expect("invalid persisted filter should fail"),
+            ObservabilityError::InvalidFilter
+        );
+        connection
+            .execute(
+                "INSERT INTO runtime_settings (key, value, updated_at) VALUES ('log_format', 'pretty', 1.0)
+                 ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                [],
+            )
+            .expect("invalid direct format fixture should update");
+        connection
+            .execute(
+                "UPDATE runtime_settings SET value = 'off' WHERE key = 'log_filter'",
+                [],
+            )
+            .expect("valid filter fixture should update");
+        assert_eq!(
+            ObservabilityConfig::from_args_with_current_dir(&custom_args, root.path())
+                .err()
+                .expect("invalid persisted format should fail"),
+            ObservabilityError::InvalidFormat
+        );
+    }
+
+    #[test]
+    fn auth_database_resolution_matches_command_options() {
+        let current_dir = Path::new("fixture-root");
+        assert_eq!(
+            resolve_auth_database_path(&[], current_dir)
+                .expect("default auth database should resolve"),
+            current_dir.join("data").join("auth.sqlite")
+        );
+        assert_eq!(
+            resolve_auth_database_path(
+                &["--project-root".to_string(), "deployment".to_string()],
+                current_dir,
+            )
+            .expect("project auth database should resolve"),
+            PathBuf::from("deployment").join("data").join("auth.sqlite")
+        );
+        assert_eq!(
+            resolve_auth_database_path(
+                &[
+                    "--project-root".to_string(),
+                    "deployment".to_string(),
+                    "--auth-db".to_string(),
+                    "explicit.sqlite".to_string(),
+                ],
+                current_dir,
+            )
+            .expect("explicit auth database should win"),
+            PathBuf::from("explicit.sqlite")
+        );
+        assert_eq!(
+            resolve_auth_database_path(&["--auth-db".to_string()], current_dir)
+                .expect_err("missing option value should fail"),
+            ObservabilityError::RuntimeSettingsUnavailable
         );
     }
 

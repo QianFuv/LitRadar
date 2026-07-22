@@ -3,6 +3,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use litradar_domain::{RuntimeSettingApplyMode, RuntimeSettingControl, RuntimeSettingGroup};
+use rusqlite::OpenFlags;
 
 use super::shared::*;
 use super::*;
@@ -21,9 +22,44 @@ struct RuntimeConfigDefinition {
     default_value: &'static str,
 }
 
-const BOOLEAN_ALLOWED_VALUES: [&str; 2] = ["true", "false"];
+/// Default strict tracing filter used before an administrator stores an override.
+pub const DEFAULT_RUNTIME_LOG_FILTER: &str = concat!(
+    "warn,",
+    "litradar=info,",
+    "litradar_api=info,",
+    "litradar_cli=info,",
+    "litradar_index=info,",
+    "litradar_sources=info,",
+    "litradar_storage=info,",
+    "litradar_worker=info"
+);
 
-const RUNTIME_CONFIG_DEFINITIONS: [RuntimeConfigDefinition; 10] = [
+/// Default structured process log format.
+pub const DEFAULT_RUNTIME_LOG_FORMAT: &str = "json";
+
+const BOOLEAN_ALLOWED_VALUES: [&str; 2] = ["true", "false"];
+const LOG_FORMAT_ALLOWED_VALUES: [&str; 2] = ["json", "compact"];
+
+/// Non-secret logging settings loaded before database migrations or command dispatch.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RuntimeLoggingSettings {
+    /// Strict tracing-subscriber filter directives.
+    pub log_filter: String,
+    /// Structured output format name.
+    pub log_format: String,
+}
+
+impl Default for RuntimeLoggingSettings {
+    /// Return the startup-safe logging defaults.
+    fn default() -> Self {
+        Self {
+            log_filter: DEFAULT_RUNTIME_LOG_FILTER.to_string(),
+            log_format: DEFAULT_RUNTIME_LOG_FORMAT.to_string(),
+        }
+    }
+}
+
+const RUNTIME_CONFIG_DEFINITIONS: [RuntimeConfigDefinition; 12] = [
     RuntimeConfigDefinition {
         field: "openalex_api_key_pool",
         label: "OpenAlex API key pool",
@@ -144,6 +180,30 @@ const RUNTIME_CONFIG_DEFINITIONS: [RuntimeConfigDefinition; 10] = [
         description: "JSON default and per-catalog Provider orders for live article full-text resolution.",
         default_value: "{\"default\":[\"zjlib_cnki\"],\"catalogs\":{}}",
     },
+    RuntimeConfigDefinition {
+        field: "log_format",
+        label: "Log format",
+        group: RuntimeSettingGroup::Observability,
+        control: RuntimeSettingControl::Select,
+        apply_mode: RuntimeSettingApplyMode::RestartRequired,
+        allowed_values: &LOG_FORMAT_ALLOWED_VALUES,
+        input_type: "text",
+        is_secret: false,
+        description: "Structured process log output format. Changes apply after process restart.",
+        default_value: DEFAULT_RUNTIME_LOG_FORMAT,
+    },
+    RuntimeConfigDefinition {
+        field: "log_filter",
+        label: "Log filter",
+        group: RuntimeSettingGroup::Observability,
+        control: RuntimeSettingControl::Text,
+        apply_mode: RuntimeSettingApplyMode::RestartRequired,
+        allowed_values: &[],
+        input_type: "text",
+        is_secret: false,
+        description: "Strict tracing-subscriber EnvFilter directives. Changes apply after process restart.",
+        default_value: DEFAULT_RUNTIME_LOG_FILTER,
+    },
 ];
 /// List managed runtime settings.
 ///
@@ -166,6 +226,55 @@ pub fn list_runtime_settings(
             public_runtime_setting_from_definition(definition, rows.get(definition.field), codec)
         })
         .collect()
+}
+
+/// Load non-secret logging settings without creating or migrating the auth database.
+///
+/// # Arguments
+///
+/// * `auth_db_path` - Selected auth database path.
+///
+/// # Returns
+///
+/// Stored logging values, or startup-safe defaults when the database or table does not exist.
+pub fn load_runtime_logging_settings(
+    auth_db_path: impl AsRef<Path>,
+) -> Result<RuntimeLoggingSettings, BusinessRepositoryError> {
+    let auth_db_path = auth_db_path.as_ref();
+    match fs::metadata(auth_db_path) {
+        Ok(_) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(RuntimeLoggingSettings::default());
+        }
+        Err(error) => return Err(error.into()),
+    }
+
+    let connection = Connection::open_with_flags(auth_db_path, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+    let has_runtime_settings = connection.query_row(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'runtime_settings')",
+        [],
+        |row| row.get::<_, bool>(0),
+    )?;
+    if !has_runtime_settings {
+        return Ok(RuntimeLoggingSettings::default());
+    }
+
+    let mut settings = RuntimeLoggingSettings::default();
+    let mut statement = connection.prepare(
+        "SELECT key, value FROM runtime_settings WHERE key IN ('log_filter', 'log_format')",
+    )?;
+    let rows = statement.query_map([], |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+    })?;
+    for row in rows {
+        let (field, value) = row?;
+        match field.as_str() {
+            "log_filter" => settings.log_filter = value,
+            "log_format" => settings.log_format = value,
+            _ => {}
+        }
+    }
+    Ok(settings)
 }
 
 /// Load managed runtime settings for trusted backend consumers.
@@ -479,6 +588,11 @@ fn normalize_runtime_setting_value(
         "article_abstract_provider_orders" | "article_fulltext_provider_orders" => {
             normalize_provider_order_configuration(definition.field, value)
         }
+        "log_format" if LOG_FORMAT_ALLOWED_VALUES.contains(&value) => Ok(value.to_string()),
+        "log_format" => Err(invalid_runtime_setting(
+            "log_format",
+            "value must be json or compact",
+        )),
         _ => Ok(value.to_string()),
     }
 }
@@ -610,7 +724,7 @@ mod tests {
             .map(|setting| setting.field.as_str())
             .collect::<Vec<_>>();
 
-        assert_eq!(settings.len(), 10);
+        assert_eq!(settings.len(), 12);
         assert!(fields.contains(&"openalex_api_key_pool"));
         assert!(fields.contains(&"secure_cookies"));
         assert!(!fields.contains(&"proxy_pool"));
@@ -704,6 +818,20 @@ mod tests {
                 RuntimeSettingApplyMode::NextRequest,
                 &[][..],
             ),
+            (
+                "log_format",
+                RuntimeSettingGroup::Observability,
+                RuntimeSettingControl::Select,
+                RuntimeSettingApplyMode::RestartRequired,
+                &["json", "compact"][..],
+            ),
+            (
+                "log_filter",
+                RuntimeSettingGroup::Observability,
+                RuntimeSettingControl::Text,
+                RuntimeSettingApplyMode::RestartRequired,
+                &[][..],
+            ),
         ];
 
         assert_eq!(settings.len(), expected.len());
@@ -723,6 +851,70 @@ mod tests {
                     .collect::<Vec<_>>()
             );
         }
+    }
+
+    #[test]
+    fn logging_bootstrap_loader_is_read_only_and_uses_safe_defaults() {
+        let temp_dir = tempdir().expect("temp dir should be created");
+        let missing_path = temp_dir.path().join("missing-auth.sqlite");
+        let missing = load_runtime_logging_settings(&missing_path)
+            .expect("missing database should use defaults");
+        assert_eq!(missing, RuntimeLoggingSettings::default());
+        assert!(!missing_path.exists());
+
+        let empty_path = temp_dir.path().join("empty-auth.sqlite");
+        drop(Connection::open(&empty_path).expect("empty database should be created"));
+        let empty = load_runtime_logging_settings(&empty_path)
+            .expect("database without runtime settings should use defaults");
+        assert_eq!(empty, RuntimeLoggingSettings::default());
+        let runtime_table_count: i64 = Connection::open(&empty_path)
+            .expect("empty database should reopen")
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'runtime_settings'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("schema should be inspectable");
+        assert_eq!(runtime_table_count, 0);
+
+        let auth_db_path = temp_dir.path().join("configured-auth.sqlite");
+        migrate_auth_database(&auth_db_path).expect("auth database should migrate");
+        let codec = SecretCodec::from_key([37_u8; 32]);
+        upsert_runtime_settings(
+            &auth_db_path,
+            &codec,
+            &HashMap::from([
+                ("log_format".to_string(), Some("compact".to_string())),
+                ("log_filter".to_string(), Some("off".to_string())),
+            ]),
+            &HashMap::new(),
+        )
+        .expect("logging settings should update");
+        assert_eq!(
+            load_runtime_logging_settings(&auth_db_path)
+                .expect("stored logging settings should load"),
+            RuntimeLoggingSettings {
+                log_filter: "off".to_string(),
+                log_format: "compact".to_string(),
+            }
+        );
+        let invalid = upsert_runtime_settings(
+            &auth_db_path,
+            &codec,
+            &HashMap::from([("log_format".to_string(), Some("pretty".to_string()))]),
+            &HashMap::new(),
+        )
+        .expect_err("unsupported log format should fail");
+        assert!(matches!(
+            invalid,
+            BusinessRepositoryError::InvalidRuntimeSetting(_)
+        ));
+        assert_eq!(
+            load_runtime_logging_settings(&auth_db_path)
+                .expect("failed update should preserve logging settings")
+                .log_format,
+            "compact"
+        );
     }
 
     #[test]

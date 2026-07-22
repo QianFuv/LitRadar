@@ -16,7 +16,7 @@ use litradar_domain::{
 };
 use litradar_storage::{BusinessRepositoryError, StorageConfig};
 
-use crate::config::validate_runtime_origin_settings_update;
+use crate::config::validate_runtime_settings_update;
 use crate::response::ApiError;
 use crate::routes::auth::{auth_service, map_auth_error, require_admin_user};
 use crate::state::ApiState;
@@ -539,7 +539,7 @@ pub(crate) async fn update_runtime_settings(
 ) -> Result<Json<Vec<RuntimeSettingInfo>>, ApiError> {
     let (admin, _) = require_admin_user(&state, &headers).await?;
     let mut audit = AdminAudit::new("runtime_settings_update", admin.id.0, 0);
-    validate_runtime_origin_settings_update(&body)
+    validate_runtime_settings_update(&body)
         .map_err(|error| ApiError::bad_request(error.to_string()))?;
     validate_runtime_provider_settings_update(&body)?;
     let values = body.values;

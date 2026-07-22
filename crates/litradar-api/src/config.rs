@@ -6,6 +6,7 @@ use std::path::PathBuf;
 
 use axum::http::{HeaderValue, Uri};
 use litradar_domain::{RuntimeSettingValue, RuntimeSettingsUpdate};
+use tracing_subscriber::EnvFilter;
 
 const DEFAULT_MCP_HOSTS: [&str; 3] = ["localhost", "127.0.0.1", "::1"];
 
@@ -119,6 +120,10 @@ pub enum ApiConfigError {
     InvalidMcpAllowedOrigin(String),
     /// A configured boolean runtime setting is not valid.
     InvalidRuntimeBoolean { field: String, value: String },
+    /// The configured process log format is unsupported.
+    InvalidLogFormat,
+    /// The configured process log filter has invalid directive syntax.
+    InvalidLogFilter,
     /// Production startup requires secure session cookies.
     SecureCookiesRequired,
 }
@@ -149,6 +154,8 @@ impl fmt::Display for ApiConfigError {
                     "Invalid boolean runtime setting {field}: {value}"
                 )
             }
+            Self::InvalidLogFormat => formatter.write_str("Invalid LitRadar log format"),
+            Self::InvalidLogFilter => formatter.write_str("Invalid LitRadar log filter"),
             Self::SecureCookiesRequired => formatter.write_str(
                 "Secure session cookies are required; set secure_cookies to true before startup",
             ),
@@ -158,7 +165,7 @@ impl fmt::Display for ApiConfigError {
 
 impl Error for ApiConfigError {}
 
-/// Validate changed runtime Origin settings before persistence.
+/// Validate changed runtime settings that share startup parsing rules.
 ///
 /// # Arguments
 ///
@@ -166,8 +173,8 @@ impl Error for ApiConfigError {}
 ///
 /// # Returns
 ///
-/// Result indicating whether every changed Origin field uses the startup grammar.
-pub(crate) fn validate_runtime_origin_settings_update(
+/// Result indicating whether every changed field uses its startup grammar.
+pub(crate) fn validate_runtime_settings_update(
     update: &RuntimeSettingsUpdate,
 ) -> Result<(), ApiConfigError> {
     for (field, value) in &update.values {
@@ -181,10 +188,29 @@ pub(crate) fn validate_runtime_origin_settings_update(
             "mcp_allowed_origins" => {
                 parse_mcp_allowed_origins(value)?;
             }
+            "log_format" => {
+                parse_log_format(value)?;
+            }
+            "log_filter" => {
+                parse_log_filter(value)?;
+            }
             _ => {}
         }
     }
     Ok(())
+}
+
+fn parse_log_format(value: &str) -> Result<(), ApiConfigError> {
+    match value {
+        "json" | "compact" => Ok(()),
+        _ => Err(ApiConfigError::InvalidLogFormat),
+    }
+}
+
+fn parse_log_filter(value: &str) -> Result<(), ApiConfigError> {
+    EnvFilter::try_new(value)
+        .map(|_| ())
+        .map_err(|_| ApiConfigError::InvalidLogFilter)
 }
 
 /// Parse credentialed CORS origins as exact HTTP(S) Origins.
@@ -277,11 +303,15 @@ fn parse_runtime_bool(field: &str, value: &str) -> Result<bool, ApiConfigError> 
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
     use std::path::PathBuf;
 
-    use litradar_domain::RuntimeSettingValue;
+    use litradar_domain::{RuntimeSettingValue, RuntimeSettingsUpdate};
 
-    use super::{parse_cors_allowed_origins, parse_mcp_allowed_origins, ApiConfig, ApiConfigError};
+    use super::{
+        parse_cors_allowed_origins, parse_mcp_allowed_origins, validate_runtime_settings_update,
+        ApiConfig, ApiConfigError,
+    };
 
     #[test]
     fn parses_python_style_cors_origin_list() {
@@ -511,6 +541,34 @@ mod tests {
             matches!(&error, ApiConfigError::InvalidMcpAllowedOrigin(value) if value == "localhost")
         );
         assert_eq!(error.to_string(), "Invalid MCP allowed origin: localhost");
+    }
+
+    #[test]
+    fn runtime_logging_updates_use_strict_startup_grammar() {
+        let update = |field: &str, value: &str| RuntimeSettingsUpdate {
+            values: HashMap::from([(field.to_string(), Some(value.to_string()))]),
+            secret_pool_updates: HashMap::new(),
+        };
+
+        validate_runtime_settings_update(&update("log_format", "compact"))
+            .expect("compact logging should be valid");
+        validate_runtime_settings_update(&update(
+            "log_filter",
+            "warn,litradar=debug,litradar_api::routes=trace",
+        ))
+        .expect("strict filter directives should be valid");
+        assert!(matches!(
+            validate_runtime_settings_update(&update("log_format", "pretty")),
+            Err(ApiConfigError::InvalidLogFormat)
+        ));
+        assert!(matches!(
+            validate_runtime_settings_update(&update("log_format", " compact ")),
+            Err(ApiConfigError::InvalidLogFormat)
+        ));
+        assert!(matches!(
+            validate_runtime_settings_update(&update("log_filter", "[")),
+            Err(ApiConfigError::InvalidLogFilter)
+        ));
     }
 
     fn runtime_setting(field: &str, value: &str) -> RuntimeSettingValue {

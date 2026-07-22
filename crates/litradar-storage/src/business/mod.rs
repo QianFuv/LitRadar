@@ -46,7 +46,11 @@ pub use notifications::{
     get_notification_settings, get_notification_subscriber, list_notification_subscribers,
     upsert_notification_settings,
 };
-pub use runtime_settings::{list_runtime_settings, load_runtime_settings, upsert_runtime_settings};
+pub use runtime_settings::{
+    list_runtime_settings, load_runtime_logging_settings, load_runtime_settings,
+    upsert_runtime_settings, RuntimeLoggingSettings, DEFAULT_RUNTIME_LOG_FILTER,
+    DEFAULT_RUNTIME_LOG_FORMAT,
+};
 pub use scheduled_tasks::{
     claim_ready_scheduled_runs, create_scheduled_task, delete_scheduled_task,
     enqueue_scheduled_runs, finish_scheduled_run, get_scheduled_task,

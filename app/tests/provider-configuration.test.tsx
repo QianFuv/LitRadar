@@ -190,6 +190,27 @@ function allRuntimeSettingsFixture(): RuntimeSettingInfo[] {
       value: 'false',
     }),
     ...providerSettingsFixture(),
+    runtimeSettingFixture({
+      field: 'log_format',
+      label: 'Log format',
+      description: 'Structured process log output format.',
+      group: 'observability',
+      control: 'select',
+      apply_mode: 'restart_required',
+      allowed_values: ['json', 'compact'],
+      input_type: 'text',
+      value: 'json',
+    }),
+    runtimeSettingFixture({
+      field: 'log_filter',
+      label: 'Log filter',
+      description: 'Tracing filter directives.',
+      group: 'observability',
+      control: 'text',
+      apply_mode: 'restart_required',
+      input_type: 'text',
+      value: 'warn,litradar=info',
+    }),
   ];
 }
 
@@ -279,7 +300,7 @@ async function rendersRuntimeDescriptorParityAndCatalogMatrix(): Promise<void> {
   expect(screen.getByText('legacy_journals')).toBeInTheDocument();
   expect(screen.getAllByText('下次请求生效')).toHaveLength(2);
   expect(screen.getAllByText('下次命令生效')).toHaveLength(4);
-  expect(screen.getAllByText('重启后生效')).toHaveLength(4);
+  expect(screen.getAllByText('重启后生效')).toHaveLength(6);
   expect(document.querySelectorAll('[data-runtime-setting-field]')).toHaveLength(
     runtimeSettings.length,
   );

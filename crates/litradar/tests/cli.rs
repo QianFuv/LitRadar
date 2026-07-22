@@ -108,17 +108,62 @@ fn new_logging_configuration_is_strict_and_ignores_rust_log() {
     assert!(ignored_legacy.status.success());
     assert_eq!(log_events(&ignored_legacy).len(), 2);
 
-    let invalid = run_litradar_with_env(&["--help"], &[("LITRADAR_LOG_FORMAT", "pretty")]);
-    assert!(!invalid.status.success());
+    let root = tempdir().expect("temporary project root should be created");
+    configure_logging(root.path(), "json", "off");
+    let auth_db_path = root.path().join("data").join("auth.sqlite");
+    let connection =
+        litradar_storage::open_sqlite_connection(&auth_db_path).expect("auth database should open");
+    connection
+        .execute(
+            "UPDATE runtime_settings SET value = 'pretty' WHERE key = 'log_format'",
+            [],
+        )
+        .expect("invalid format fixture should update");
+    let invalid_format = run_litradar_in(root.path(), &["--help"]);
+    assert!(!invalid_format.status.success());
     assert_eq!(
-        String::from_utf8(invalid.stderr).expect("error should be UTF-8"),
+        String::from_utf8(invalid_format.stderr).expect("error should be UTF-8"),
         "invalid LitRadar log format\n"
+    );
+    connection
+        .execute(
+            "UPDATE runtime_settings SET value = 'json' WHERE key = 'log_format'",
+            [],
+        )
+        .expect("valid format fixture should update");
+    connection
+        .execute(
+            "UPDATE runtime_settings SET value = '[' WHERE key = 'log_filter'",
+            [],
+        )
+        .expect("invalid filter fixture should update");
+    let invalid_filter = run_litradar_in(root.path(), &["--help"]);
+    assert!(!invalid_filter.status.success());
+    assert_eq!(
+        String::from_utf8(invalid_filter.stderr).expect("error should be UTF-8"),
+        "invalid LitRadar log filter\n"
     );
 }
 
 #[test]
 fn compact_logging_is_plain_text_and_process_context_omits_raw_arguments() {
-    let compact = run_litradar_with_env(&["--help"], &[("LITRADAR_LOG_FORMAT", "compact")]);
+    let root = tempdir().expect("temporary project root should be created");
+    let custom_auth_db_path = root.path().join("custom-auth.sqlite");
+    configure_logging_database(
+        &custom_auth_db_path,
+        "compact",
+        litradar_storage::DEFAULT_RUNTIME_LOG_FILTER,
+    );
+    let compact = run_litradar_in(
+        root.path(),
+        &[
+            "--help",
+            "--auth-db",
+            custom_auth_db_path
+                .to_str()
+                .expect("temporary path should be valid UTF-8"),
+        ],
+    );
     let compact_stderr = String::from_utf8(compact.stderr).expect("logs should be UTF-8");
     assert!(compact.status.success());
     assert!(compact_stderr.contains("process.started"));
@@ -133,6 +178,25 @@ fn compact_logging_is_plain_text_and_process_context_omits_raw_arguments() {
     assert!(log_events(&failed)
         .iter()
         .any(|event| event["span"]["command"] == "unknown"));
+}
+
+fn configure_logging(root: &Path, format: &str, filter: &str) {
+    let auth_db_path = root.join("data").join("auth.sqlite");
+    configure_logging_database(&auth_db_path, format, filter);
+}
+
+fn configure_logging_database(auth_db_path: &Path, format: &str, filter: &str) {
+    litradar_storage::migrate_auth_database(auth_db_path).expect("auth database should migrate");
+    litradar_storage::upsert_runtime_settings(
+        auth_db_path,
+        &litradar_storage::SecretCodec::from_key([43_u8; 32]),
+        &HashMap::from([
+            ("log_format".to_string(), Some(format.to_string())),
+            ("log_filter".to_string(), Some(filter.to_string())),
+        ]),
+        &HashMap::new(),
+    )
+    .expect("logging settings should update");
 }
 
 #[test]

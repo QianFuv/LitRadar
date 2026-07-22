@@ -1,5 +1,6 @@
 //! Real-process lifecycle tests for the unified LitRadar service.
 
+use std::collections::HashMap;
 use std::fs;
 use std::io::{Read, Write};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener, TcpStream};
@@ -42,6 +43,16 @@ fn unified_service_serves_frontend_openapi_and_authenticated_api_then_cleans_up(
         .create_access_token(administrator.id, "service-test", ACCESS_TOKEN_DEFAULT_TTL)
         .expect("service access token should be created")
         .token;
+    litradar_storage::upsert_runtime_settings(
+        storage_config.auth_db_path(),
+        &litradar_storage::SecretCodec::from_key([31_u8; 32]),
+        &HashMap::from([
+            ("log_format".to_string(), Some("compact".to_string())),
+            ("log_filter".to_string(), Some("off".to_string())),
+        ]),
+        &HashMap::new(),
+    )
+    .expect("service logging settings should persist");
     let port = reserve_loopback_port();
     let mut service = ServiceChild::spawn(&root_path, port);
 
@@ -68,6 +79,7 @@ fn unified_service_serves_frontend_openapi_and_authenticated_api_then_cleans_up(
     let output = service.terminate();
     assert!(wait_for_port_release(port));
     let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.is_empty());
     assert!(!stderr.contains(&access_token));
     drop(output);
     drop(temp_dir);
@@ -96,8 +108,6 @@ impl ServiceChild {
                 "3600",
             ])
             .env_remove("LITRADAR_BUNDLED_META_DIR")
-            .env_remove("LITRADAR_LOG_FILTER")
-            .env_remove("LITRADAR_LOG_FORMAT")
             .env_remove("RUST_LOG")
             .stdin(Stdio::null())
             .stdout(Stdio::piped())

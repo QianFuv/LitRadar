@@ -2267,6 +2267,105 @@ mod tests {
         miri,
         ignore = "Miri does not support Tokio's Windows IOCP runtime initialization"
     )]
+    async fn runtime_logging_updates_are_validated_before_persistence() {
+        let backend = TestBackend::new();
+        let admin = backend.authenticated_user("logging_admin", true);
+        let app = backend.router();
+        let admin_auth = admin.authorization_header();
+        let initial = json_request(
+            &app,
+            Method::PUT,
+            "/api/admin/runtime-settings",
+            Some(&admin_auth),
+            None,
+            Some(serde_json::json!({
+                "values": {
+                    "log_format": "compact",
+                    "log_filter": "warn,litradar=debug"
+                }
+            })),
+        )
+        .await;
+        let invalid_format = json_request(
+            &app,
+            Method::PUT,
+            "/api/admin/runtime-settings",
+            Some(&admin_auth),
+            None,
+            Some(serde_json::json!({
+                "values": {
+                    "log_format": "pretty",
+                    "log_filter": "off",
+                    "secure_cookies": "true"
+                }
+            })),
+        )
+        .await;
+        let invalid_filter = json_request(
+            &app,
+            Method::PUT,
+            "/api/admin/runtime-settings",
+            Some(&admin_auth),
+            None,
+            Some(serde_json::json!({
+                "values": {
+                    "log_format": "json",
+                    "log_filter": "["
+                }
+            })),
+        )
+        .await;
+        let stored =
+            litradar_storage::load_runtime_settings(backend.auth_db_path(), backend.secret_codec())
+                .expect("runtime settings should load");
+        let stored_value = |field: &str| {
+            stored
+                .iter()
+                .find(|setting| setting.field == field)
+                .expect("runtime setting should exist")
+                .value
+                .as_str()
+        };
+        let initial_settings = initial
+            .payload
+            .as_array()
+            .expect("runtime settings should be an array");
+        let descriptor = |field: &str| {
+            initial_settings
+                .iter()
+                .find(|setting| setting["field"] == field)
+                .expect("runtime setting descriptor should exist")
+        };
+
+        assert_eq!(initial.status, StatusCode::OK);
+        assert_eq!(descriptor("log_format")["group"], "observability");
+        assert_eq!(descriptor("log_format")["control"], "select");
+        assert_eq!(
+            descriptor("log_format")["allowed_values"],
+            serde_json::json!(["json", "compact"])
+        );
+        assert_eq!(descriptor("log_filter")["control"], "text");
+        assert_eq!(descriptor("log_filter")["apply_mode"], "restart_required");
+        assert_eq!(invalid_format.status, StatusCode::BAD_REQUEST);
+        assert_eq!(
+            invalid_format.payload["detail"],
+            "Invalid LitRadar log format"
+        );
+        assert_eq!(invalid_filter.status, StatusCode::BAD_REQUEST);
+        assert_eq!(
+            invalid_filter.payload["detail"],
+            "Invalid LitRadar log filter"
+        );
+        assert_eq!(stored_value("log_format"), "compact");
+        assert_eq!(stored_value("log_filter"), "warn,litradar=debug");
+        assert_eq!(stored_value("secure_cookies"), "false");
+    }
+
+    #[tokio::test]
+    #[cfg_attr(
+        miri,
+        ignore = "Miri does not support Tokio's Windows IOCP runtime initialization"
+    )]
     async fn provider_catalog_and_runtime_updates_are_capability_aware() {
         let backend = TestBackend::new();
         let admin = backend.authenticated_user("provider_admin", true);

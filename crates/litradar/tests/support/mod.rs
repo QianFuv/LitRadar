@@ -4,18 +4,17 @@ use std::path::Path;
 use std::process::{Command, Output};
 
 use serde_json::Value;
+use tempfile::tempdir;
 
 /// Build a sanitized command for the compiled LitRadar binary.
 ///
 /// # Returns
 ///
-/// Command with ambient logging and packaged-metadata overrides removed.
+/// Command with ambient legacy logging and packaged-metadata overrides removed.
 pub(crate) fn litradar_command() -> Command {
     let mut command = Command::new(env!("CARGO_BIN_EXE_litradar"));
     command
         .env_remove("LITRADAR_BUNDLED_META_DIR")
-        .env_remove("LITRADAR_LOG_FILTER")
-        .env_remove("LITRADAR_LOG_FORMAT")
         .env_remove("RUST_LOG");
     command
 }
@@ -44,8 +43,9 @@ pub(crate) fn run_litradar(args: &[&str]) -> Output {
 ///
 /// Captured process output.
 pub(crate) fn run_litradar_with_env(args: &[&str], environment: &[(&str, &str)]) -> Output {
+    let root = tempdir().expect("temporary project root should be created");
     let mut command = litradar_command();
-    command.args(args);
+    command.current_dir(root.path()).args(args);
     for (name, value) in environment {
         command.env(name, value);
     }

@@ -140,9 +140,18 @@ function shouldDisableRuntimeSpellCheck(
     return true;
   }
   const normalizedField = field.toLowerCase();
-  return ['api', 'command', 'endpoint', 'key', 'model', 'pool', 'secret', 'token', 'url'].some(
-    (marker) => normalizedField.includes(marker),
-  );
+  return [
+    'api',
+    'command',
+    'endpoint',
+    'filter',
+    'key',
+    'model',
+    'pool',
+    'secret',
+    'token',
+    'url',
+  ].some((marker) => normalizedField.includes(marker));
 }
 
 /**

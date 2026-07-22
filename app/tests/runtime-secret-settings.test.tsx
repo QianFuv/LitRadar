@@ -5,7 +5,7 @@
 import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
-import { describe, expect, test } from 'vitest';
+import { beforeEach, describe, expect, test, vi } from 'vitest';
 
 import { RuntimeSettingsCard } from '@/components/admin/runtime-settings-card';
 import { server } from '@/tests/mocks/server';
@@ -56,6 +56,40 @@ function runtimeSettingsFixture() {
       secret_items: [],
       source: 'database',
       updated_at: 1,
+    },
+    {
+      field: 'log_format',
+      label: 'Log format',
+      description: 'Structured process log output format.',
+      group: 'observability',
+      control: 'select',
+      apply_mode: 'restart_required',
+      allowed_values: ['json', 'compact'],
+      input_type: 'text',
+      is_secret: false,
+      value: 'json',
+      has_value: false,
+      masked_value: '',
+      secret_items: [],
+      source: 'default',
+      updated_at: null,
+    },
+    {
+      field: 'log_filter',
+      label: 'Log filter',
+      description: 'Tracing filter directives.',
+      group: 'observability',
+      control: 'text',
+      apply_mode: 'restart_required',
+      allowed_values: [],
+      input_type: 'text',
+      is_secret: false,
+      value: 'warn,litradar=info',
+      has_value: false,
+      masked_value: '',
+      secret_items: [],
+      source: 'default',
+      updated_at: null,
     },
   ];
 }
@@ -180,9 +214,46 @@ async function editsNonSecretPool(): Promise<void> {
   );
 }
 
+/**
+ * Verify persisted logging controls submit explicit restart-required values.
+ */
+async function editsRuntimeLoggingSettings(): Promise<void> {
+  updatePayload = null;
+  renderRuntimeSettings();
+  const user = userEvent.setup();
+
+  const format = await screen.findByRole('combobox', { name: 'Log format' });
+  format.focus();
+  await user.keyboard('{Enter}{End}{Enter}');
+  const filter = screen.getByLabelText('Log filter');
+  expect(filter).toHaveAttribute('spellcheck', 'false');
+  await user.clear(filter);
+  await user.type(filter, 'litradar=debug');
+  expect(screen.getAllByText('重启后生效')).toHaveLength(2);
+  await user.click(screen.getByRole('button', { name: '保存配置' }));
+
+  await waitFor(() =>
+    expect(updatePayload).toEqual({
+      values: {
+        log_format: 'compact',
+        log_filter: 'litradar=debug',
+      },
+      secret_pool_updates: {},
+    }),
+  );
+}
+
+beforeEach(() => {
+  Object.defineProperty(Element.prototype, 'scrollIntoView', {
+    configurable: true,
+    value: vi.fn(),
+  });
+});
+
 describe('runtime secret settings', () => {
   test('renders and preserves stored secret rows', rendersAndPreservesStoredSecrets);
   test('adds and removes individual stored keys', updatesStoredSecretPool);
   test('clears the complete secret pool only through null', clearsSecretPoolWithNull);
   test('keeps the non-secret pool row editor', editsNonSecretPool);
+  test('edits persisted logging controls', editsRuntimeLoggingSettings);
 });

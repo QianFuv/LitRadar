@@ -23,6 +23,8 @@ param(
 
     [string]$ComposeFile = (Join-Path $PSScriptRoot "..\docker-compose.yml"),
 
+    [string]$SqliteExecutable = "sqlite3",
+
     [string]$OutputPath
 )
 
@@ -57,6 +59,109 @@ function Invoke-DockerCommand {
         ExitCode = $exitCode
         Output = $text.Trim()
     }
+}
+
+function Invoke-SqliteCommand {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$DatabasePath,
+
+        [Parameter(Mandatory = $true)]
+        [string]$Statement
+    )
+
+    $command = Get-Command $SqliteExecutable -ErrorAction SilentlyContinue
+    if ($null -eq $command) {
+        throw "SQLite CLI was not found: $SqliteExecutable"
+    }
+    $output = & $command.Source -batch -noheader $DatabasePath $Statement 2>&1
+    $exitCode = $LASTEXITCODE
+    $text = ($output | ForEach-Object { $_.ToString() }) -join [Environment]::NewLine
+    if ($exitCode -ne 0) {
+        throw "SQLite command failed with exit code ${exitCode}: $text"
+    }
+    $text.Trim()
+}
+
+function Get-LoggingSettingsSnapshot {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$ResolvedDataPath
+    )
+
+    $databasePath = Join-Path $ResolvedDataPath "auth.sqlite"
+    $output = Invoke-SqliteCommand `
+        -DatabasePath $databasePath `
+        -Statement "SELECT key || '|' || hex(value) || '|' || quote(updated_at) FROM runtime_settings WHERE key IN ('log_filter', 'log_format') ORDER BY key;"
+    $rows = [Collections.Generic.List[object]]::new()
+    foreach ($line in ($output -split "`r?`n")) {
+        if ([string]::IsNullOrWhiteSpace($line)) {
+            continue
+        }
+        $parts = $line.Split("|", 3)
+        if (
+            $parts.Count -ne 3 -or
+            $parts[0] -notin @("log_filter", "log_format") -or
+            $parts[1] -notmatch '^[0-9A-F]*$' -or
+            $parts[2] -notmatch '^-?[0-9]+(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?$'
+        ) {
+            throw "Unexpected runtime logging snapshot row"
+        }
+        $rows.Add([pscustomobject]@{
+            Key = $parts[0]
+            ValueHex = $parts[1]
+            UpdatedAt = $parts[2]
+        })
+    }
+    [pscustomobject]@{ Rows = @($rows) }
+}
+
+function Set-LoggingProfileMode {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$ResolvedDataPath,
+
+        [Parameter(Mandatory = $true)]
+        [ValidateSet("off", "default")]
+        [string]$Mode
+    )
+
+    $databasePath = Join-Path $ResolvedDataPath "auth.sqlite"
+    $statement = if ($Mode -eq "off") {
+        @"
+BEGIN IMMEDIATE;
+INSERT INTO runtime_settings (key, value, updated_at)
+VALUES ('log_format', 'json', CAST(strftime('%s', 'now') AS REAL))
+ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at;
+INSERT INTO runtime_settings (key, value, updated_at)
+VALUES ('log_filter', 'off', CAST(strftime('%s', 'now') AS REAL))
+ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at;
+COMMIT;
+"@
+    }
+    else {
+        "BEGIN IMMEDIATE; DELETE FROM runtime_settings WHERE key IN ('log_filter', 'log_format'); COMMIT;"
+    }
+    Invoke-SqliteCommand -DatabasePath $databasePath -Statement $statement | Out-Null
+}
+
+function Restore-LoggingSettingsSnapshot {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$ResolvedDataPath,
+
+        [Parameter(Mandatory = $true)]
+        [object]$Snapshot
+    )
+
+    $statement = "BEGIN IMMEDIATE; DELETE FROM runtime_settings WHERE key IN ('log_filter', 'log_format');"
+    foreach ($row in $Snapshot.Rows) {
+        $statement += " INSERT INTO runtime_settings (key, value, updated_at) VALUES ('$($row.Key)', CAST(X'$($row.ValueHex)' AS TEXT), $($row.UpdatedAt));"
+    }
+    $statement += " COMMIT;"
+    Invoke-SqliteCommand `
+        -DatabasePath (Join-Path $ResolvedDataPath "auth.sqlite") `
+        -Statement $statement | Out-Null
 }
 
 function Get-Percentile {
@@ -274,11 +379,7 @@ function New-LoggingOverride {
         [string]$Path,
 
         [Parameter(Mandatory = $true)]
-        [string]$ResolvedDataPath,
-
-        [Parameter(Mandatory = $true)]
-        [ValidateSet("off", "default")]
-        [string]$Mode
+        [string]$ResolvedDataPath
     )
 
     $yamlDataPath = $ResolvedDataPath.Replace("\", "/").Replace("'", "''")
@@ -288,16 +389,54 @@ services:
     restart: "no"
     volumes:
       - '${yamlDataPath}:/app/data:rw'
-    environment:
-      LITRADAR_LOG_FORMAT: 'json'
 "@
-    if ($Mode -eq "off") {
-        $override += "`n      LITRADAR_LOG_FILTER: 'off'`n"
-    }
-    else {
-        $override += "`n"
-    }
     [IO.File]::WriteAllText($Path, $override, [Text.UTF8Encoding]::new($false))
+}
+
+function Initialize-LoggingProfileDatabase {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$ResolvedComposeFile,
+
+        [Parameter(Mandatory = $true)]
+        [string]$ResolvedDataPath,
+
+        [Parameter(Mandatory = $true)]
+        [string]$WorkingDirectory,
+
+        [Parameter(Mandatory = $true)]
+        [string]$Timestamp
+    )
+
+    $projectName = "litradar-logging-bootstrap-$PID-$Timestamp".ToLowerInvariant()
+    $containerName = "$projectName-container"
+    $overridePath = Join-Path $WorkingDirectory "$projectName.compose.yaml"
+    New-LoggingOverride -Path $overridePath -ResolvedDataPath $ResolvedDataPath
+    $composePrefix = @(
+        "compose",
+        "--project-name", $projectName,
+        "--file", $ResolvedComposeFile,
+        "--file", $overridePath
+    )
+    $containerCreated = $false
+    try {
+        Invoke-DockerCommand -Arguments ($composePrefix + @(
+            "run", "--no-deps", "--detach", "--name", $containerName, "litradar"
+        )) | Out-Null
+        $containerCreated = $true
+        Wait-ContainerHealthy -ContainerName $containerName
+    }
+    finally {
+        if ($containerCreated) {
+            Invoke-DockerCommand -Arguments @("rm", "--force", $containerName) -AllowFailure |
+                Out-Null
+        }
+        Invoke-DockerCommand -Arguments ($composePrefix + @("down", "--remove-orphans")) -AllowFailure |
+            Out-Null
+        if (Test-Path -LiteralPath $overridePath) {
+            Remove-Item -LiteralPath $overridePath -Force
+        }
+    }
 }
 
 function Invoke-LatencyRun {
@@ -324,7 +463,7 @@ function Invoke-LatencyRun {
     $projectName = "litradar-logging-$Mode-$PID-$Round-$Timestamp".ToLowerInvariant()
     $containerName = "$projectName-container"
     $overridePath = Join-Path $WorkingDirectory "$projectName.compose.yaml"
-    New-LoggingOverride -Path $overridePath -ResolvedDataPath $ResolvedDataPath -Mode $Mode
+    New-LoggingOverride -Path $overridePath -ResolvedDataPath $ResolvedDataPath
     $composePrefix = @(
         "compose",
         "--project-name", $projectName,
@@ -332,7 +471,11 @@ function Invoke-LatencyRun {
         "--file", $overridePath
     )
     $containerCreated = $false
+    $loggingSnapshot = Get-LoggingSettingsSnapshot -ResolvedDataPath $ResolvedDataPath
+    $areLoggingSettingsChanged = $false
     try {
+        Set-LoggingProfileMode -ResolvedDataPath $ResolvedDataPath -Mode $Mode
+        $areLoggingSettingsChanged = $true
         Invoke-DockerCommand -Arguments ($composePrefix + @(
             "run", "--no-deps", "--detach", "--name", $containerName, "litradar"
         )) | Out-Null
@@ -373,6 +516,11 @@ function Invoke-LatencyRun {
         }
         Invoke-DockerCommand -Arguments ($composePrefix + @("down", "--remove-orphans")) -AllowFailure |
             Out-Null
+        if ($areLoggingSettingsChanged) {
+            Restore-LoggingSettingsSnapshot `
+                -ResolvedDataPath $ResolvedDataPath `
+                -Snapshot $loggingSnapshot
+        }
         if (Test-Path -LiteralPath $overridePath) {
             Remove-Item -LiteralPath $overridePath -Force
         }
@@ -400,8 +548,12 @@ function Invoke-MemoryProfile {
     $overridePath = Join-Path $WorkingDirectory "$Timestamp-memory-$Mode.override.yaml"
     $renderedComposePath = Join-Path $WorkingDirectory "$Timestamp-memory-$Mode.compose.yaml"
     $memoryOutputPath = Join-Path $WorkingDirectory "$Timestamp-memory-$Mode.json"
-    New-LoggingOverride -Path $overridePath -ResolvedDataPath $ResolvedDataPath -Mode $Mode
+    New-LoggingOverride -Path $overridePath -ResolvedDataPath $ResolvedDataPath
+    $loggingSnapshot = Get-LoggingSettingsSnapshot -ResolvedDataPath $ResolvedDataPath
+    $areLoggingSettingsChanged = $false
     try {
+        Set-LoggingProfileMode -ResolvedDataPath $ResolvedDataPath -Mode $Mode
+        $areLoggingSettingsChanged = $true
         $rendered = Invoke-DockerCommand -Arguments @(
             "compose",
             "--file", $ResolvedComposeFile,
@@ -475,6 +627,11 @@ function Invoke-MemoryProfile {
         }
     }
     finally {
+        if ($areLoggingSettingsChanged) {
+            Restore-LoggingSettingsSnapshot `
+                -ResolvedDataPath $ResolvedDataPath `
+                -Snapshot $loggingSnapshot
+        }
         foreach ($path in @($overridePath, $renderedComposePath)) {
             if (Test-Path -LiteralPath $path) {
                 Remove-Item -LiteralPath $path -Force
@@ -499,6 +656,12 @@ elseif (-not [IO.Path]::IsPathRooted($OutputPath)) {
     $OutputPath = Join-Path (Get-Location) $OutputPath
 }
 [IO.Directory]::CreateDirectory((Split-Path $OutputPath -Parent)) | Out-Null
+
+Initialize-LoggingProfileDatabase `
+    -ResolvedComposeFile $resolvedComposeFile `
+    -ResolvedDataPath $resolvedDataPath `
+    -WorkingDirectory $outputDirectory `
+    -Timestamp $timestamp
 
 $runs = [Collections.Generic.List[object]]::new()
 for ($round = 1; $round -le $Rounds; $round++) {
