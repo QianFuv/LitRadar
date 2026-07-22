@@ -501,11 +501,13 @@ pub(crate) async fn get_article_access(
 ) -> Result<Json<litradar_domain::ArticleAccessResponse>, ApiError> {
     let (user, _) = require_current_user(&state, &headers).await?;
     let db = query.db.and_then(nonempty_owned);
-    run_index(&state, move |storage| {
-        litradar_storage::get_article_locator(&storage, db.as_deref(), article_id)
+    let catalog_stem = run_index(&state, move |storage| {
+        let catalog_stem = storage.resolve_index_catalog_stem(db.as_deref())?;
+        litradar_storage::get_article_locator(&storage, db.as_deref(), article_id)?;
+        Ok(catalog_stem)
     })
     .await?;
-    let payload = article_access_response(&state, user.id).await?;
+    let payload = article_access_response(&state, user.id, &catalog_stem).await?;
     Ok(Json(payload))
 }
 
@@ -546,11 +548,13 @@ async fn redirect_article_abstract_action(
 ) -> Result<Response, ApiError> {
     let (user, _) = require_current_user(&state, &headers).await?;
     let db = query.db.and_then(nonempty_owned);
-    let article = run_index(&state, move |storage| {
-        litradar_storage::get_article_locator(&storage, db.as_deref(), article_id)
+    let (article, catalog_stem) = run_index(&state, move |storage| {
+        let catalog_stem = storage.resolve_index_catalog_stem(db.as_deref())?;
+        let article = litradar_storage::get_article_locator(&storage, db.as_deref(), article_id)?;
+        Ok((article, catalog_stem))
     })
     .await?;
-    let redirect = resolve_article_abstract(&state, article, user.id).await?;
+    let redirect = resolve_article_abstract(&state, article, user.id, &catalog_stem).await?;
     no_store_redirect(&redirect.location)
 }
 
@@ -588,11 +592,13 @@ pub(crate) async fn redirect_article_fulltext(
 ) -> Result<Response, ApiError> {
     let (user, _) = require_current_user(&state, &headers).await?;
     let db = query.db.and_then(nonempty_owned);
-    let article = run_index(&state, move |storage| {
-        litradar_storage::get_article_locator(&storage, db.as_deref(), article_id)
+    let (article, catalog_stem) = run_index(&state, move |storage| {
+        let catalog_stem = storage.resolve_index_catalog_stem(db.as_deref())?;
+        let article = litradar_storage::get_article_locator(&storage, db.as_deref(), article_id)?;
+        Ok((article, catalog_stem))
     })
     .await?;
-    match resolve_article_full_text(&state, article, user.id).await? {
+    match resolve_article_full_text(&state, article, user.id, &catalog_stem).await? {
         litradar_domain::ArticleFullTextResolution::Redirect(redirect) => {
             no_store_redirect(&redirect.location)
         }
@@ -797,6 +803,7 @@ fn map_index_error(error: IndexRepositoryError) -> ApiError {
         IndexRepositoryError::DatabaseResolution(
             DatabaseResolutionError::MultipleDatabasesFound,
         )
+        | IndexRepositoryError::DatabaseResolution(DatabaseResolutionError::InvalidDatabaseName)
         | IndexRepositoryError::UnsupportedSortField(_)
         | IndexRepositoryError::UnsupportedArticleSort
         | IndexRepositoryError::InvalidCursor

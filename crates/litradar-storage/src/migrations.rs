@@ -7,14 +7,16 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-use rusqlite::{Connection, OpenFlags, Transaction, TransactionBehavior};
+use rusqlite::{
+    params, Connection, OpenFlags, OptionalExtension, Transaction, TransactionBehavior,
+};
 
-use litradar_domain::normalize_contract_issn;
+use litradar_domain::{normalize_contract_issn, ProviderOrderConfiguration};
 
 use crate::{DatabaseResolutionError, StorageConfig};
 
 /// Current auth and business database schema version.
-pub const AUTH_SCHEMA_VERSION: i64 = 6;
+pub const AUTH_SCHEMA_VERSION: i64 = 7;
 
 /// Current index database schema version.
 pub const INDEX_SCHEMA_VERSION: i64 = 6;
@@ -60,6 +62,8 @@ pub enum MigrationError {
     InvalidIndexIdentityState,
     /// Two existing journals claim the same canonical identity key.
     IndexIdentityConflict,
+    /// Legacy Provider order settings cannot be migrated without changing their meaning.
+    InvalidRuntimeProviderOrderState,
 }
 
 impl fmt::Display for MigrationError {
@@ -93,6 +97,9 @@ impl fmt::Display for MigrationError {
                 formatter,
                 "index journal identity ownership conflicts across legacy journal rows"
             ),
+            Self::InvalidRuntimeProviderOrderState => {
+                formatter.write_str("legacy runtime Provider order state is invalid for migration")
+            }
         }
     }
 }
@@ -107,7 +114,8 @@ impl Error for MigrationError {
             Self::UnsupportedSchemaVersion { .. }
             | Self::IndexRebuildRequired { .. }
             | Self::InvalidIndexIdentityState
-            | Self::IndexIdentityConflict => None,
+            | Self::IndexIdentityConflict
+            | Self::InvalidRuntimeProviderOrderState => None,
         }
     }
 }
@@ -250,6 +258,7 @@ fn migrate_auth_database_inner(path: &Path) -> Result<MigrationSummary, Migratio
             4 => apply_auth_version_four(&transaction)?,
             5 => apply_auth_version_five(&transaction)?,
             6 => apply_auth_version_six(&transaction)?,
+            7 => apply_auth_version_seven(&transaction)?,
             _ => unreachable!("auth migration version should be implemented"),
         }
         transaction.pragma_update(None, "user_version", next_version)?;
@@ -400,6 +409,7 @@ fn migration_error_kind(error: &MigrationError) -> &'static str {
         MigrationError::IndexRebuildRequired { .. } => "index_rebuild_required",
         MigrationError::InvalidIndexIdentityState => "invalid_index_identity_state",
         MigrationError::IndexIdentityConflict => "index_identity_conflict",
+        MigrationError::InvalidRuntimeProviderOrderState => "invalid_runtime_provider_order_state",
     }
 }
 
@@ -411,6 +421,7 @@ fn migration_error_database_version(error: &MigrationError) -> i64 {
         | MigrationError::Sqlite(_)
         | MigrationError::DatabaseResolution(_) => -1,
         MigrationError::InvalidIndexIdentityState | MigrationError::IndexIdentityConflict => 4,
+        MigrationError::InvalidRuntimeProviderOrderState => 6,
     }
 }
 
@@ -990,6 +1001,108 @@ fn apply_auth_version_six(transaction: &Transaction<'_>) -> rusqlite::Result<()>
         );
         ",
     )
+}
+
+fn apply_auth_version_seven(transaction: &Transaction<'_>) -> Result<(), MigrationError> {
+    transaction.execute_batch(
+        "CREATE TABLE IF NOT EXISTS runtime_settings (
+             key        TEXT PRIMARY KEY,
+             value      TEXT NOT NULL DEFAULT '',
+             updated_at REAL NOT NULL
+         );",
+    )?;
+    let detail = legacy_provider_order_row(transaction, "article_detail_provider_order")?;
+    let abstract_page = legacy_provider_order_row(transaction, "article_abstract_provider_order")?;
+    let full_text = legacy_provider_order_row(transaction, "article_fulltext_provider_order")?;
+
+    if let Some((providers, updated_at)) = abstract_page.or(detail) {
+        upsert_provider_order_configuration(
+            transaction,
+            "article_abstract_provider_orders",
+            &providers,
+            updated_at,
+        )?;
+    }
+    if let Some((providers, updated_at)) = full_text {
+        upsert_provider_order_configuration(
+            transaction,
+            "article_fulltext_provider_orders",
+            &providers,
+            updated_at,
+        )?;
+    }
+    transaction.execute(
+        "DELETE FROM runtime_settings
+         WHERE key IN (
+             'article_detail_provider_order',
+             'article_abstract_provider_order',
+             'article_fulltext_provider_order'
+         )",
+        [],
+    )?;
+    Ok(())
+}
+
+fn legacy_provider_order_row(
+    transaction: &Transaction<'_>,
+    field: &str,
+) -> Result<Option<(Vec<String>, f64)>, MigrationError> {
+    let row = transaction
+        .query_row(
+            "SELECT value, updated_at FROM runtime_settings WHERE key = ?1",
+            [field],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, f64>(1)?)),
+        )
+        .optional()?;
+    row.map(|(value, updated_at)| {
+        parse_legacy_provider_order(&value).map(|providers| (providers, updated_at))
+    })
+    .transpose()
+}
+
+fn parse_legacy_provider_order(value: &str) -> Result<Vec<String>, MigrationError> {
+    if value.trim().is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut providers = Vec::new();
+    let mut seen = BTreeSet::new();
+    for part in value.split(',') {
+        let provider = part.trim();
+        if !is_runtime_name(provider) || !seen.insert(provider.to_string()) {
+            return Err(MigrationError::InvalidRuntimeProviderOrderState);
+        }
+        providers.push(provider.to_string());
+    }
+    Ok(providers)
+}
+
+fn upsert_provider_order_configuration(
+    transaction: &Transaction<'_>,
+    field: &str,
+    providers: &[String],
+    updated_at: f64,
+) -> Result<(), MigrationError> {
+    let value = serde_json::to_string(&ProviderOrderConfiguration {
+        default: providers.to_vec(),
+        catalogs: BTreeMap::new(),
+    })
+    .map_err(|_| MigrationError::InvalidRuntimeProviderOrderState)?;
+    transaction.execute(
+        "INSERT INTO runtime_settings (key, value, updated_at) VALUES (?1, ?2, ?3)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
+        params![field, value, updated_at],
+    )?;
+    Ok(())
+}
+
+fn is_runtime_name(value: &str) -> bool {
+    (2..=128).contains(&value.len())
+        && value.is_ascii()
+        && value.bytes().enumerate().all(|(index, byte)| match byte {
+            b'a'..=b'z' | b'0'..=b'9' => true,
+            b'.' | b'_' | b'-' => index > 0,
+            _ => false,
+        })
 }
 
 fn table_columns(connection: &Connection, table_name: &str) -> rusqlite::Result<Vec<String>> {

@@ -1,6 +1,6 @@
 //! Business API request and response models for migrated auth database routes.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::error::Error;
 use std::fmt;
 
@@ -809,6 +809,49 @@ pub struct RuntimeSettingInfo {
     pub source: String,
     /// Database update timestamp.
     pub updated_at: Option<f64>,
+}
+
+/// Ordered online Provider configuration with optional catalog overrides.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ProviderOrderConfiguration {
+    /// Default Provider order used when a catalog has no explicit override.
+    pub default: Vec<String>,
+    /// Complete per-catalog replacement orders keyed by canonical catalog stem.
+    pub catalogs: BTreeMap<String, Vec<String>>,
+}
+
+/// Aggregated capabilities for one logical Provider.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct ProviderCapabilityInfo {
+    /// Stable lowercase runtime Provider name.
+    pub name: String,
+    /// Whether the Provider can build canonical index content.
+    pub index_content: bool,
+    /// Whether the Provider can resolve an online abstract page.
+    pub article_abstract: bool,
+    /// Whether the Provider can resolve online full text.
+    pub article_full_text: bool,
+}
+
+/// Safe catalog file metadata visible to administrators.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct ProviderCatalogInfo {
+    /// Canonical catalog stem shared by CSV and SQLite files.
+    pub stem: String,
+    /// Metadata CSV filename when present.
+    pub csv_filename: Option<String>,
+    /// Content SQLite filename when present.
+    pub database_filename: Option<String>,
+}
+
+/// Administrator Provider and catalog capability response.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct ProviderCatalogResponse {
+    /// Logical Providers and their aggregate capabilities.
+    pub providers: Vec<ProviderCapabilityInfo>,
+    /// Discovered metadata and content catalogs.
+    pub catalogs: Vec<ProviderCatalogInfo>,
 }
 
 /// Individually manageable secret-pool item metadata.

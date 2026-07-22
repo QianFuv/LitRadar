@@ -186,6 +186,10 @@ pub fn public_routes() -> Router<ApiState> {
             axum::routing::get(admin::scheduler_status),
         )
         .route(
+            "/admin/provider-catalog",
+            axum::routing::get(admin::get_provider_catalog),
+        )
+        .route(
             "/admin/runtime-settings",
             axum::routing::get(admin::list_runtime_settings).put(admin::update_runtime_settings),
         )

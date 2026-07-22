@@ -2267,6 +2267,172 @@ mod tests {
         miri,
         ignore = "Miri does not support Tokio's Windows IOCP runtime initialization"
     )]
+    async fn provider_catalog_and_runtime_updates_are_capability_aware() {
+        let backend = TestBackend::new();
+        let admin = backend.authenticated_user("provider_admin", true);
+        let member = backend.authenticated_user("provider_member", false);
+        fs::create_dir_all(backend.storage_config().meta_dir()).expect("meta dir should exist");
+        fs::write(
+            backend.storage_config().meta_dir().join("csv_only.csv"),
+            "title,issn\nFixture,1234-5679\n",
+        )
+        .expect("CSV-only catalog should be created");
+        fs::write(
+            backend.storage_config().meta_dir().join("paired.csv"),
+            "title,issn\nPaired,2049-3630\n",
+        )
+        .expect("paired CSV should be created");
+        backend.create_index_database("database_only.sqlite");
+        backend.create_index_database("paired.sqlite");
+        let app = backend.router();
+        let admin_auth = admin.authorization_header();
+
+        let forbidden = json_request(
+            &app,
+            Method::GET,
+            "/api/admin/provider-catalog",
+            Some(&member.authorization_header()),
+            None,
+            None,
+        )
+        .await;
+        let catalog = json_request(
+            &app,
+            Method::GET,
+            "/api/admin/provider-catalog",
+            Some(&admin_auth),
+            None,
+            None,
+        )
+        .await;
+        assert_eq!(forbidden.status, StatusCode::FORBIDDEN);
+        assert_eq!(catalog.status, StatusCode::OK);
+        let providers = catalog.payload["providers"]
+            .as_array()
+            .expect("providers should be an array");
+        let provider = |name: &str| {
+            providers
+                .iter()
+                .find(|provider| provider["name"] == name)
+                .expect("Provider should be listed")
+        };
+        assert_eq!(provider("scholarly")["index_content"], true);
+        assert_eq!(provider("cnki")["article_abstract"], true);
+        assert_eq!(provider("zjlib_cnki")["article_full_text"], true);
+        assert_eq!(provider("zjlib_cnki")["index_content"], false);
+        let catalogs = catalog.payload["catalogs"]
+            .as_array()
+            .expect("catalogs should be an array");
+        let discovered = |stem: &str| {
+            catalogs
+                .iter()
+                .find(|catalog| catalog["stem"] == stem)
+                .expect("catalog should be listed")
+        };
+        assert_eq!(discovered("csv_only")["csv_filename"], "csv_only.csv");
+        assert!(discovered("csv_only")["database_filename"].is_null());
+        assert_eq!(
+            discovered("database_only")["database_filename"],
+            "database_only.sqlite"
+        );
+        assert!(discovered("database_only")["csv_filename"].is_null());
+        assert_eq!(discovered("paired")["csv_filename"], "paired.csv");
+        assert_eq!(discovered("paired")["database_filename"], "paired.sqlite");
+
+        let valid = json_request(
+            &app,
+            Method::PUT,
+            "/api/admin/runtime-settings",
+            Some(&admin_auth),
+            None,
+            Some(serde_json::json!({
+                "values": {
+                    "index_provider_routes": serde_json::json!({
+                        "csv_only": "scholarly",
+                        "database_only": "cnki",
+                        "paired": "scholarly"
+                    }).to_string(),
+                    "article_abstract_provider_orders": serde_json::json!({
+                        "default": ["scholarly", "cnki"],
+                        "catalogs": {"csv_only": ["cnki", "scholarly"], "paired": []}
+                    }).to_string(),
+                    "article_fulltext_provider_orders": serde_json::json!({
+                        "default": ["zjlib_cnki"],
+                        "catalogs": {"csv_only": []}
+                    }).to_string()
+                }
+            })),
+        )
+        .await;
+        assert_eq!(valid.status, StatusCode::OK);
+
+        let unknown = json_request(
+            &app,
+            Method::PUT,
+            "/api/admin/runtime-settings",
+            Some(&admin_auth),
+            None,
+            Some(serde_json::json!({
+                "values": {
+                    "secure_cookies": "true",
+                    "article_abstract_provider_orders": serde_json::json!({
+                        "default": ["unknown"], "catalogs": {}
+                    }).to_string()
+                }
+            })),
+        )
+        .await;
+        let duplicate = json_request(
+            &app,
+            Method::PUT,
+            "/api/admin/runtime-settings",
+            Some(&admin_auth),
+            None,
+            Some(serde_json::json!({
+                "values": {
+                    "article_abstract_provider_orders": serde_json::json!({
+                        "default": ["scholarly", "scholarly"], "catalogs": {}
+                    }).to_string()
+                }
+            })),
+        )
+        .await;
+        let mismatch = json_request(
+            &app,
+            Method::PUT,
+            "/api/admin/runtime-settings",
+            Some(&admin_auth),
+            None,
+            Some(serde_json::json!({
+                "values": {
+                    "index_provider_routes": serde_json::json!({
+                        "csv_only": "zjlib_cnki"
+                    }).to_string()
+                }
+            })),
+        )
+        .await;
+        assert_eq!(unknown.status, StatusCode::BAD_REQUEST);
+        assert_eq!(duplicate.status, StatusCode::BAD_REQUEST);
+        assert_eq!(mismatch.status, StatusCode::BAD_REQUEST);
+        let settings =
+            litradar_storage::load_runtime_settings(backend.auth_db_path(), backend.secret_codec())
+                .expect("runtime settings should load");
+        assert_eq!(
+            settings
+                .iter()
+                .find(|setting| setting.field == "secure_cookies")
+                .expect("secure cookie setting should exist")
+                .value,
+            "false"
+        );
+    }
+
+    #[tokio::test]
+    #[cfg_attr(
+        miri,
+        ignore = "Miri does not support Tokio's Windows IOCP runtime initialization"
+    )]
     async fn scheduler_admin_routes_cover_user_invite_stats_settings_tasks_and_announcements() {
         let backend = TestBackend::new();
         let admin = backend.authenticated_user("admin", true);

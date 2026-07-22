@@ -10,10 +10,11 @@ pub use cnki::{
     LiveCnkiConfig, LiveCnkiTransport,
 };
 pub use providers::{
-    cnki_access_registration, cnki_index_registration, scholarly_access_registration,
-    scholarly_index_registration, CnkiArticleAccessProvider, CnkiIndexProvider,
-    ScholarlyArticleAccessProvider, ScholarlyIndexProvider, CNKI_PROVIDER_NAME,
+    built_in_provider_capabilities, cnki_access_registration, cnki_index_registration,
+    scholarly_access_registration, scholarly_index_registration, CnkiArticleAccessProvider,
+    CnkiIndexProvider, ScholarlyArticleAccessProvider, ScholarlyIndexProvider, CNKI_PROVIDER_NAME,
     CNKI_REDIRECT_HOSTS, SCHOLARLY_PROVIDER_NAME, SCHOLARLY_REDIRECT_HOSTS,
+    ZJLIB_CNKI_PROVIDER_NAME,
 };
 pub use scholarly::{
     normalize_doi, FixtureScholarlyTransport, LiveScholarlyConfig, LiveScholarlyTransport,

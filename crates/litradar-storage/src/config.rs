@@ -1,9 +1,12 @@
 //! Storage path configuration and database selection.
 
+use std::collections::BTreeMap;
 use std::error::Error;
 use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
+
+use litradar_domain::ProviderCatalogInfo;
 
 /// Storage paths derived from a project root.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -154,6 +157,23 @@ impl StorageConfig {
         }
     }
 
+    /// Resolve the canonical catalog stem for one selected index database.
+    ///
+    /// # Arguments
+    ///
+    /// * `db_name` - Optional database stem or filename.
+    ///
+    /// # Returns
+    ///
+    /// Safe lowercase catalog stem shared with its metadata CSV.
+    pub fn resolve_index_catalog_stem(
+        &self,
+        db_name: Option<&str>,
+    ) -> Result<String, DatabaseResolutionError> {
+        let path = self.resolve_index_db_path(db_name)?;
+        safe_catalog_stem(&path).ok_or(DatabaseResolutionError::InvalidDatabaseName)
+    }
+
     /// List tracked SQLite database files under the index directory.
     ///
     /// # Returns
@@ -174,6 +194,20 @@ impl StorageConfig {
         sqlite_files.sort();
         Ok(sqlite_files)
     }
+
+    /// Discover safe metadata and content catalogs for administrator configuration.
+    ///
+    /// # Returns
+    ///
+    /// Catalogs sorted by canonical stem without exposing filesystem paths.
+    pub fn list_provider_catalogs(
+        &self,
+    ) -> Result<Vec<ProviderCatalogInfo>, DatabaseResolutionError> {
+        let mut catalogs = BTreeMap::new();
+        collect_catalog_files(&self.meta_dir, "csv", true, &mut catalogs)?;
+        collect_catalog_files(&self.index_dir, "sqlite", false, &mut catalogs)?;
+        Ok(catalogs.into_values().collect())
+    }
 }
 
 /// Database selection errors matching existing API detail strings.
@@ -185,6 +219,8 @@ pub enum DatabaseResolutionError {
     DatabaseNotFound,
     /// More than one database exists and no `db` value was provided.
     MultipleDatabasesFound,
+    /// The selected database does not have a safe canonical catalog stem.
+    InvalidDatabaseName,
     /// Filesystem access failed while reading database files.
     Io(std::io::Error),
 }
@@ -197,6 +233,9 @@ impl fmt::Display for DatabaseResolutionError {
             Self::DatabaseNotFound => formatter.write_str("Database not found"),
             Self::MultipleDatabasesFound => {
                 formatter.write_str("Multiple databases found, specify ?db=<name>")
+            }
+            Self::InvalidDatabaseName => {
+                formatter.write_str("Database name is not a safe catalog stem")
             }
             Self::Io(error) => write!(formatter, "{error}"),
         }
@@ -235,13 +274,72 @@ fn normalize_database_name(db_name: &str) -> Option<PathBuf> {
     }
 }
 
+fn collect_catalog_files(
+    directory: &Path,
+    extension: &str,
+    is_csv: bool,
+    catalogs: &mut BTreeMap<String, ProviderCatalogInfo>,
+) -> Result<(), DatabaseResolutionError> {
+    if !directory.exists() {
+        return Ok(());
+    }
+    for entry in fs::read_dir(directory)? {
+        let entry = entry?;
+        if !entry.file_type()?.is_file() {
+            continue;
+        }
+        let path = entry.path();
+        if path.extension().and_then(|value| value.to_str()) != Some(extension) {
+            continue;
+        }
+        let Some(stem) = safe_catalog_stem(&path) else {
+            continue;
+        };
+        let Some(filename) = path
+            .file_name()
+            .and_then(|value| value.to_str())
+            .map(str::to_string)
+        else {
+            continue;
+        };
+        let catalog = catalogs
+            .entry(stem.clone())
+            .or_insert_with(|| ProviderCatalogInfo {
+                stem,
+                csv_filename: None,
+                database_filename: None,
+            });
+        if is_csv {
+            catalog.csv_filename = Some(filename);
+        } else {
+            catalog.database_filename = Some(filename);
+        }
+    }
+    Ok(())
+}
+
+fn safe_catalog_stem(path: &Path) -> Option<String> {
+    let stem = path.file_stem()?.to_str()?;
+    is_runtime_name(stem).then(|| stem.to_string())
+}
+
+fn is_runtime_name(value: &str) -> bool {
+    (2..=128).contains(&value.len())
+        && value.is_ascii()
+        && value.bytes().enumerate().all(|(index, byte)| match byte {
+            b'a'..=b'z' | b'0'..=b'9' => true,
+            b'.' | b'_' | b'-' => index > 0,
+            _ => false,
+        })
+}
+
 #[cfg(test)]
 mod tests {
     use std::fs::File;
 
     use tempfile::tempdir;
 
-    use super::{DatabaseResolutionError, StorageConfig};
+    use super::{DatabaseResolutionError, ProviderCatalogInfo, StorageConfig};
 
     #[test]
     fn explicit_auth_database_keeps_project_data_directories() {
@@ -279,6 +377,18 @@ mod tests {
             .expect("single database should resolve");
 
         assert_eq!(resolved, expected_path);
+        assert_eq!(
+            config
+                .resolve_index_catalog_stem(None)
+                .expect("single catalog stem should resolve"),
+            "contract"
+        );
+        assert_eq!(
+            config
+                .resolve_index_catalog_stem(Some("contract.sqlite"))
+                .expect("filename catalog stem should resolve"),
+            "contract"
+        );
     }
 
     #[test]
@@ -329,5 +439,45 @@ mod tests {
             DatabaseResolutionError::DatabaseNotFound
         ));
         assert_eq!(missing_error.to_string(), "Database not found");
+    }
+
+    #[test]
+    fn discovers_safe_csv_and_database_catalog_union() {
+        let temp_dir = tempdir().expect("temp dir should be created");
+        let config = StorageConfig::from_project_root(temp_dir.path());
+        std::fs::create_dir_all(config.meta_dir()).expect("meta dir should exist");
+        std::fs::create_dir_all(config.index_dir()).expect("index dir should exist");
+        File::create(config.meta_dir().join("csv_only.csv")).expect("CSV should be created");
+        File::create(config.meta_dir().join("paired.csv")).expect("paired CSV should be created");
+        File::create(config.meta_dir().join("Unsafe.csv")).expect("unsafe CSV should be created");
+        File::create(config.index_dir().join("paired.sqlite"))
+            .expect("paired database should be created");
+        File::create(config.index_dir().join("database_only.sqlite"))
+            .expect("database should be created");
+
+        let catalogs = config
+            .list_provider_catalogs()
+            .expect("catalogs should be discovered");
+
+        assert_eq!(
+            catalogs,
+            vec![
+                ProviderCatalogInfo {
+                    stem: "csv_only".to_string(),
+                    csv_filename: Some("csv_only.csv".to_string()),
+                    database_filename: None,
+                },
+                ProviderCatalogInfo {
+                    stem: "database_only".to_string(),
+                    csv_filename: None,
+                    database_filename: Some("database_only.sqlite".to_string()),
+                },
+                ProviderCatalogInfo {
+                    stem: "paired".to_string(),
+                    csv_filename: Some("paired.csv".to_string()),
+                    database_filename: Some("paired.sqlite".to_string()),
+                },
+            ]
+        );
     }
 }

@@ -75,6 +75,23 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  '/api/admin/provider-catalog': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Return built-in Provider capabilities and discovered catalog files. */
+    get: operations['get_provider_catalog'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   '/api/admin/runtime-settings': {
     parameters: {
       query?: never;
@@ -2236,6 +2253,42 @@ export interface components {
        */
       total?: number | null;
     };
+    /** @description Aggregated capabilities for one logical Provider. */
+    ProviderCapabilityInfo: {
+      /** @description Whether the Provider can resolve an online abstract page. */
+      article_abstract: boolean;
+      /** @description Whether the Provider can resolve online full text. */
+      article_full_text: boolean;
+      /** @description Whether the Provider can build canonical index content. */
+      index_content: boolean;
+      /** @description Stable lowercase runtime Provider name. */
+      name: string;
+    };
+    /** @description Safe catalog file metadata visible to administrators. */
+    ProviderCatalogInfo: {
+      /** @description Metadata CSV filename when present. */
+      csv_filename?: string | null;
+      /** @description Content SQLite filename when present. */
+      database_filename?: string | null;
+      /** @description Canonical catalog stem shared by CSV and SQLite files. */
+      stem: string;
+    };
+    /** @description Administrator Provider and catalog capability response. */
+    ProviderCatalogResponse: {
+      /** @description Discovered metadata and content catalogs. */
+      catalogs: components['schemas']['ProviderCatalogInfo'][];
+      /** @description Logical Providers and their aggregate capabilities. */
+      providers: components['schemas']['ProviderCapabilityInfo'][];
+    };
+    /** @description Ordered online Provider configuration with optional catalog overrides. */
+    ProviderOrderConfiguration: {
+      /** @description Complete per-catalog replacement orders keyed by canonical catalog stem. */
+      catalogs: {
+        [key: string]: string[];
+      };
+      /** @description Default Provider order used when a catalog has no explicit override. */
+      default: string[];
+    };
     /** @description Push-state statistics payload. */
     PushStats: {
       /** @description State file stem. */
@@ -2842,6 +2895,26 @@ export interface operations {
         };
         content: {
           'application/json': components['schemas']['OkResponse'];
+        };
+      };
+    };
+  };
+  get_provider_catalog: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Provider capabilities and catalogs. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ProviderCatalogResponse'];
         };
       };
     };

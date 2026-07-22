@@ -15,7 +15,7 @@ struct RuntimeConfigDefinition {
     default_value: &'static str,
 }
 
-const RUNTIME_CONFIG_DEFINITIONS: [RuntimeConfigDefinition; 11] = [
+const RUNTIME_CONFIG_DEFINITIONS: [RuntimeConfigDefinition; 10] = [
     RuntimeConfigDefinition {
         field: "openalex_api_key_pool",
         label: "OpenAlex API key pool",
@@ -81,28 +81,20 @@ const RUNTIME_CONFIG_DEFINITIONS: [RuntimeConfigDefinition; 11] = [
         default_value: "{\"ccf_computer_journals\":\"scholarly\",\"chinese_journals\":\"cnki\",\"english_journals\":\"scholarly\"}",
     },
     RuntimeConfigDefinition {
-        field: "article_detail_provider_order",
-        label: "Article detail provider order",
+        field: "article_abstract_provider_orders",
+        label: "Article abstract provider orders",
         input_type: "text",
         is_secret: false,
-        description: "Ordered comma-separated providers for live article detail resolution.",
-        default_value: "scholarly,cnki",
+        description: "JSON default and per-catalog Provider orders for live article abstract-page resolution.",
+        default_value: "{\"default\":[\"scholarly\",\"cnki\"],\"catalogs\":{}}",
     },
     RuntimeConfigDefinition {
-        field: "article_abstract_provider_order",
-        label: "Article abstract provider order",
+        field: "article_fulltext_provider_orders",
+        label: "Article full-text provider orders",
         input_type: "text",
         is_secret: false,
-        description: "Ordered comma-separated providers for live article abstract-page resolution.",
-        default_value: "scholarly,cnki",
-    },
-    RuntimeConfigDefinition {
-        field: "article_fulltext_provider_order",
-        label: "Article full-text provider order",
-        input_type: "text",
-        is_secret: false,
-        description: "Ordered comma-separated providers for live article full-text resolution.",
-        default_value: "zjlib_cnki",
+        description: "JSON default and per-catalog Provider orders for live article full-text resolution.",
+        default_value: "{\"default\":[\"zjlib_cnki\"],\"catalogs\":{}}",
     },
 ];
 /// List managed runtime settings.
@@ -428,15 +420,20 @@ fn normalize_runtime_setting_value(
 ) -> Result<String, BusinessRepositoryError> {
     match definition.field {
         "index_provider_routes" => normalize_index_provider_routes(value),
-        "article_detail_provider_order"
-        | "article_abstract_provider_order"
-        | "article_fulltext_provider_order" => normalize_provider_order(definition.field, value),
+        "article_abstract_provider_orders" | "article_fulltext_provider_orders" => {
+            normalize_provider_order_configuration(definition.field, value)
+        }
         _ => Ok(value.to_string()),
     }
 }
 
 fn normalize_index_provider_routes(value: &str) -> Result<String, BusinessRepositoryError> {
-    let routes = serde_json::from_str::<BTreeMap<String, String>>(value)?;
+    let routes = serde_json::from_str::<BTreeMap<String, String>>(value).map_err(|_| {
+        invalid_runtime_setting(
+            "index_provider_routes",
+            "value must be a JSON object of catalog and Provider names",
+        )
+    })?;
     if routes.is_empty() {
         return Err(invalid_runtime_setting(
             "index_provider_routes",
@@ -460,29 +457,50 @@ fn normalize_index_provider_routes(value: &str) -> Result<String, BusinessReposi
     Ok(serde_json::to_string(&routes)?)
 }
 
-fn normalize_provider_order(field: &str, value: &str) -> Result<String, BusinessRepositoryError> {
-    if value.trim().is_empty() {
-        return Ok(String::new());
+fn normalize_provider_order_configuration(
+    field: &str,
+    value: &str,
+) -> Result<String, BusinessRepositoryError> {
+    let configuration =
+        serde_json::from_str::<ProviderOrderConfiguration>(value).map_err(|_| {
+            invalid_runtime_setting(
+                field,
+                "value must contain only JSON default and catalogs fields",
+            )
+        })?;
+    validate_provider_order(field, &configuration.default)?;
+    for (catalog, providers) in &configuration.catalogs {
+        if !is_runtime_name(catalog) {
+            return Err(invalid_runtime_setting(
+                field,
+                "catalog stems must use lowercase ASCII names",
+            ));
+        }
+        validate_provider_order(field, providers)?;
     }
-    let mut providers = Vec::new();
+    Ok(serde_json::to_string(&configuration)?)
+}
+
+fn validate_provider_order(
+    field: &str,
+    providers: &[String],
+) -> Result<(), BusinessRepositoryError> {
     let mut seen = BTreeSet::new();
-    for part in value.split(',') {
-        let provider = part.trim();
+    for provider in providers {
         if !is_runtime_name(provider) {
             return Err(invalid_runtime_setting(
                 field,
-                "provider order must contain lowercase ASCII names",
+                "Provider orders must contain lowercase ASCII names",
             ));
         }
-        if !seen.insert(provider.to_string()) {
+        if !seen.insert(provider) {
             return Err(invalid_runtime_setting(
                 field,
-                "provider order must not contain duplicates",
+                "Provider orders must not contain duplicates",
             ));
         }
-        providers.push(provider.to_string());
     }
-    Ok(providers.join(","))
+    Ok(())
 }
 
 fn is_runtime_name(value: &str) -> bool {
@@ -496,10 +514,7 @@ fn is_runtime_name(value: &str) -> bool {
 }
 
 fn invalid_runtime_setting(field: &str, detail: &str) -> BusinessRepositoryError {
-    BusinessRepositoryError::Json(serde_json::Error::io(std::io::Error::new(
-        std::io::ErrorKind::InvalidInput,
-        format!("invalid {field}: {detail}"),
-    )))
+    BusinessRepositoryError::InvalidRuntimeSetting(format!("Invalid {field}: {detail}"))
 }
 
 #[cfg(test)]
@@ -539,7 +554,7 @@ mod tests {
             .map(|setting| setting.field.as_str())
             .collect::<Vec<_>>();
 
-        assert_eq!(settings.len(), 11);
+        assert_eq!(settings.len(), 10);
         assert!(fields.contains(&"openalex_api_key_pool"));
         assert!(fields.contains(&"secure_cookies"));
         assert!(!fields.contains(&"proxy_pool"));
@@ -569,12 +584,17 @@ mod tests {
                 ),
             ),
             (
-                "article_detail_provider_order".to_string(),
-                Some("scholarly, cnki".to_string()),
-            ),
-            (
-                "article_abstract_provider_order".to_string(),
-                Some(String::new()),
+                "article_abstract_provider_orders".to_string(),
+                Some(
+                    r#"{
+                        "catalogs": {
+                            "chinese_journals": ["cnki", "scholarly"],
+                            "disabled_catalog": []
+                        },
+                        "default": ["scholarly", "cnki"]
+                    }"#
+                    .to_string(),
+                ),
             ),
         ]);
 
@@ -591,24 +611,22 @@ mod tests {
         assert_eq!(
             settings
                 .iter()
-                .find(|setting| setting.field == "article_detail_provider_order")
-                .expect("detail order should exist")
+                .find(|setting| setting.field == "article_abstract_provider_orders")
+                .expect("abstract orders should exist")
                 .value,
-            "scholarly,cnki"
-        );
-        assert_eq!(
-            settings
-                .iter()
-                .find(|setting| setting.field == "article_abstract_provider_order")
-                .expect("abstract order should exist")
-                .value,
-            ""
+            "{\"default\":[\"scholarly\",\"cnki\"],\"catalogs\":{\"chinese_journals\":[\"cnki\",\"scholarly\"],\"disabled_catalog\":[]}}"
         );
 
         for invalid in [
             ("index_provider_routes", "{\"chinese_journals\":\"CNKI\"}"),
-            ("article_detail_provider_order", "scholarly,scholarly"),
-            ("article_fulltext_provider_order", "zjlib cnki"),
+            (
+                "article_abstract_provider_orders",
+                "{\"default\":[\"scholarly\",\"scholarly\"],\"catalogs\":{}}",
+            ),
+            (
+                "article_fulltext_provider_orders",
+                "{\"default\":[\"zjlib cnki\"],\"catalogs\":{}}",
+            ),
         ] {
             let error = upsert_runtime_settings(
                 &auth_db_path,
@@ -617,7 +635,10 @@ mod tests {
                 &HashMap::new(),
             )
             .expect_err("invalid provider setting should fail");
-            assert!(matches!(error, BusinessRepositoryError::Json(_)));
+            assert!(matches!(
+                error,
+                BusinessRepositoryError::InvalidRuntimeSetting(_)
+            ));
         }
     }
     #[test]

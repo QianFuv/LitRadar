@@ -12,9 +12,9 @@ use litradar_domain::{
     AnnouncementInfo, AuthStats, FavoriteAdd, FavoriteArticleRef, FavoriteArticleResponse,
     FavoriteBatchCheckResponse, FavoriteCheckResponse, FavoriteResponse, FolderResponse,
     IndexDatabaseStats, IndexStats, NotificationSettings, NotificationSettingsUpdate,
-    NotificationSubscriberInfo, PushStats, RuntimeSecretItemInfo, RuntimeSecretPoolUpdate,
-    RuntimeSettingInfo, RuntimeSettingValue, ScheduledJobSpec, ScheduledTaskInfo,
-    ScheduledTaskRunInfo, SchedulerStatusResponse, SchedulerWorkerInfo, UserId,
+    NotificationSubscriberInfo, ProviderOrderConfiguration, PushStats, RuntimeSecretItemInfo,
+    RuntimeSecretPoolUpdate, RuntimeSettingInfo, RuntimeSettingValue, ScheduledJobSpec,
+    ScheduledTaskInfo, ScheduledTaskRunInfo, SchedulerStatusResponse, SchedulerWorkerInfo, UserId,
 };
 use rusqlite::types::Type;
 use rusqlite::{params, Connection, ErrorCode, OptionalExtension, TransactionBehavior};
@@ -82,6 +82,8 @@ pub enum BusinessRepositoryError {
     UnknownRuntimeSetting(String),
     /// Runtime boolean could not be parsed.
     InvalidRuntimeBoolean(String),
+    /// A managed runtime setting failed structural validation.
+    InvalidRuntimeSetting(String),
     /// A null update attempted to clear a non-secret runtime setting.
     NonSecretRuntimeSettingCannotBeCleared(String),
     /// A secret-pool mutation contained an invalid field or item reference.
@@ -115,6 +117,7 @@ impl fmt::Display for BusinessRepositoryError {
             Self::InvalidRuntimeBoolean(value) => {
                 write!(formatter, "Invalid boolean value: {value}")
             }
+            Self::InvalidRuntimeSetting(message) => formatter.write_str(message),
             Self::NonSecretRuntimeSettingCannotBeCleared(field) => {
                 write!(formatter, "Only secret runtime settings may be cleared: {field}")
             }

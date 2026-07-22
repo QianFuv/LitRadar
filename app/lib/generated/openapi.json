@@ -252,6 +252,33 @@
         ]
       }
     },
+    "/api/admin/provider-catalog": {
+      "get": {
+        "tags": ["admin"],
+        "summary": "Return built-in Provider capabilities and discovered catalog files.",
+        "operationId": "get_provider_catalog",
+        "responses": {
+          "200": {
+            "description": "Provider capabilities and catalogs.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProviderCatalogResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          },
+          {
+            "session_cookie": []
+          }
+        ]
+      }
+    },
     "/api/admin/runtime-settings": {
       "get": {
         "tags": ["admin"],
@@ -4614,6 +4641,97 @@
             "description": "Total rows when requested."
           }
         }
+      },
+      "ProviderCapabilityInfo": {
+        "type": "object",
+        "description": "Aggregated capabilities for one logical Provider.",
+        "required": ["name", "index_content", "article_abstract", "article_full_text"],
+        "properties": {
+          "article_abstract": {
+            "type": "boolean",
+            "description": "Whether the Provider can resolve an online abstract page."
+          },
+          "article_full_text": {
+            "type": "boolean",
+            "description": "Whether the Provider can resolve online full text."
+          },
+          "index_content": {
+            "type": "boolean",
+            "description": "Whether the Provider can build canonical index content."
+          },
+          "name": {
+            "type": "string",
+            "description": "Stable lowercase runtime Provider name."
+          }
+        }
+      },
+      "ProviderCatalogInfo": {
+        "type": "object",
+        "description": "Safe catalog file metadata visible to administrators.",
+        "required": ["stem"],
+        "properties": {
+          "csv_filename": {
+            "type": ["string", "null"],
+            "description": "Metadata CSV filename when present."
+          },
+          "database_filename": {
+            "type": ["string", "null"],
+            "description": "Content SQLite filename when present."
+          },
+          "stem": {
+            "type": "string",
+            "description": "Canonical catalog stem shared by CSV and SQLite files."
+          }
+        }
+      },
+      "ProviderCatalogResponse": {
+        "type": "object",
+        "description": "Administrator Provider and catalog capability response.",
+        "required": ["providers", "catalogs"],
+        "properties": {
+          "catalogs": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ProviderCatalogInfo"
+            },
+            "description": "Discovered metadata and content catalogs."
+          },
+          "providers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ProviderCapabilityInfo"
+            },
+            "description": "Logical Providers and their aggregate capabilities."
+          }
+        }
+      },
+      "ProviderOrderConfiguration": {
+        "type": "object",
+        "description": "Ordered online Provider configuration with optional catalog overrides.",
+        "required": ["default", "catalogs"],
+        "properties": {
+          "catalogs": {
+            "type": "object",
+            "description": "Complete per-catalog replacement orders keyed by canonical catalog stem.",
+            "additionalProperties": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "default": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Default Provider order used when a catalog has no explicit override."
+          }
+        },
+        "additionalProperties": false
       },
       "PushStats": {
         "type": "object",

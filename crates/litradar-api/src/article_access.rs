@@ -8,7 +8,8 @@ use std::time::Duration;
 use axum::http::StatusCode;
 use litradar_domain::{
     ArticleAccessAction, ArticleAccessContext, ArticleAccessResponse, ArticleFullTextDocument,
-    ArticleFullTextResolution, ArticleLocator, ArticleRedirect, ProviderCapabilityKind, UserId,
+    ArticleFullTextResolution, ArticleLocator, ArticleRedirect, ProviderCapabilityKind,
+    ProviderOrderConfiguration, UserId,
 };
 use litradar_provider::conformance::{
     validate_article_locator, validate_article_redirect, validate_full_text_resolution,
@@ -22,7 +23,7 @@ use litradar_sources::{
     scholarly_access_registration, CnkiArticleAccessProvider, LiveCnkiConfig, LiveCnkiTransport,
     LiveZjlibCnkiConfig, LiveZjlibCnkiTransport, ZhejiangLibraryCnkiClient,
     ZjlibCnkiArticleIdentity, ZjlibCnkiDownloadedPdf, ZjlibCnkiError, CNKI_PROVIDER_NAME,
-    CNKI_REDIRECT_HOSTS, DEFAULT_FULL_TEXT_MAXIMUM_BYTES,
+    CNKI_REDIRECT_HOSTS, DEFAULT_FULL_TEXT_MAXIMUM_BYTES, ZJLIB_CNKI_PROVIDER_NAME,
 };
 #[cfg(test)]
 use litradar_sources::{FixtureZjlibCnkiMode, FixtureZjlibCnkiTransport};
@@ -33,8 +34,6 @@ use crate::state::{ApiState, BlockingTaskError};
 
 const ARTICLE_ACTION_TIMEOUT: Duration = Duration::from_secs(30);
 const ZJLIB_FULL_TEXT_TIMEOUT: Duration = Duration::from_secs(120);
-const ZJLIB_CNKI_PROVIDER_NAME: &str = "zjlib_cnki";
-
 #[cfg(test)]
 static FULL_TEXT_FIXTURE_MODE: OnceLock<Mutex<Option<FixtureZjlibCnkiMode>>> = OnceLock::new();
 
@@ -65,6 +64,7 @@ pub(crate) fn build_article_provider_registry(
 ///
 /// * `state` - Shared API state.
 /// * `user_id` - Authenticated user identifier.
+/// * `catalog_stem` - Canonical catalog configuration key.
 ///
 /// # Returns
 ///
@@ -72,29 +72,32 @@ pub(crate) fn build_article_provider_registry(
 pub(crate) async fn article_access_response(
     state: &ApiState,
     user_id: UserId,
+    catalog_stem: &str,
 ) -> Result<ArticleAccessResponse, ApiError> {
     let orders = load_provider_orders(state).await?;
+    let abstract_order = provider_order_for_catalog(&orders.abstract_page, catalog_stem);
+    let full_text_order = provider_order_for_catalog(&orders.full_text, catalog_stem);
     let has_cnki_session = has_active_cnki_session(state, user_id).await?;
     let abstract_page = action_status(
         state,
-        &orders.abstract_page,
+        abstract_order,
         ProviderCapabilityKind::ArticleAbstract,
         "查看摘要页",
         false,
     );
-    let has_full_text_without_cnki_login = orders.full_text.iter().any(|name| {
+    let has_full_text_without_cnki_login = full_text_order.iter().any(|name| {
         name != ZJLIB_CNKI_PROVIDER_NAME
             && provider_has_capability(state, name, ProviderCapabilityKind::ArticleFullText)
     });
     let full_text_requires_login = !has_cnki_session
         && !has_full_text_without_cnki_login
-        && orders.full_text.iter().any(|name| {
+        && full_text_order.iter().any(|name| {
             name == ZJLIB_CNKI_PROVIDER_NAME
                 && provider_has_capability(state, name, ProviderCapabilityKind::ArticleFullText)
         });
     let fulltext = action_status(
         state,
-        &orders.full_text,
+        full_text_order,
         ProviderCapabilityKind::ArticleFullText,
         "获取全文",
         full_text_requires_login,
@@ -112,6 +115,7 @@ pub(crate) async fn article_access_response(
 /// * `state` - Shared API state.
 /// * `article` - Canonical article locator.
 /// * `user_id` - Authenticated user identifier.
+/// * `catalog_stem` - Canonical catalog configuration key.
 /// # Returns
 ///
 /// Validated ephemeral redirect or a stable API error.
@@ -119,6 +123,7 @@ pub(crate) async fn resolve_article_abstract(
     state: &ApiState,
     article: ArticleLocator,
     user_id: UserId,
+    catalog_stem: &str,
 ) -> Result<ArticleRedirect, ApiError> {
     validate_article_locator(&article).map_err(|_| ApiError::internal_server_error())?;
     let orders = load_provider_orders(state).await?;
@@ -126,10 +131,10 @@ pub(crate) async fn resolve_article_abstract(
         user_id: Some(user_id),
     };
     let mut did_require_authentication = false;
-    for name in orders.abstract_page {
+    for name in provider_order_for_catalog(&orders.abstract_page, catalog_stem) {
         let Some((provider, allowed_redirect_hosts)) = state
             .article_providers()
-            .find(&name)
+            .find(name)
             .and_then(|registration| {
                 registration.article_abstract().cloned().map(|provider| {
                     (
@@ -141,7 +146,7 @@ pub(crate) async fn resolve_article_abstract(
         else {
             continue;
         };
-        let provider_name = name.clone();
+        let provider_name = name.to_string();
         let request_article = article.clone();
         let result = state
             .run_blocking_with_timeout(ARTICLE_ACTION_TIMEOUT, move || {
@@ -186,6 +191,7 @@ pub(crate) async fn resolve_article_abstract(
 /// * `state` - Shared API state.
 /// * `article` - Canonical article locator.
 /// * `user_id` - Authenticated user identifier.
+/// * `catalog_stem` - Canonical catalog configuration key.
 ///
 /// # Returns
 ///
@@ -194,6 +200,7 @@ pub(crate) async fn resolve_article_full_text(
     state: &ApiState,
     article: ArticleLocator,
     user_id: UserId,
+    catalog_stem: &str,
 ) -> Result<ArticleFullTextResolution, ApiError> {
     validate_article_locator(&article).map_err(|_| ApiError::internal_server_error())?;
     let orders = load_provider_orders(state).await?;
@@ -201,10 +208,10 @@ pub(crate) async fn resolve_article_full_text(
         user_id: Some(user_id),
     };
     let mut did_require_authentication = false;
-    for name in orders.full_text {
+    for name in provider_order_for_catalog(&orders.full_text, catalog_stem) {
         let Some((provider, allowed_redirect_hosts)) = state
             .article_providers()
-            .find(&name)
+            .find(name)
             .and_then(|registration| {
                 registration.article_full_text().cloned().map(|provider| {
                     (
@@ -216,7 +223,7 @@ pub(crate) async fn resolve_article_full_text(
         else {
             continue;
         };
-        let provider_name = name.clone();
+        let provider_name = name.to_string();
         let request_article = article.clone();
         let result = state
             .run_blocking_with_timeout(ZJLIB_FULL_TEXT_TIMEOUT, move || {
@@ -255,8 +262,8 @@ pub(crate) async fn resolve_article_full_text(
 
 #[derive(Debug, Clone, Default)]
 struct ArticleProviderOrders {
-    abstract_page: Vec<String>,
-    full_text: Vec<String>,
+    abstract_page: ProviderOrderConfiguration,
+    full_text: ProviderOrderConfiguration,
 }
 
 async fn load_provider_orders(state: &ApiState) -> Result<ArticleProviderOrders, ApiError> {
@@ -267,10 +274,22 @@ async fn load_provider_orders(state: &ApiState) -> Result<ArticleProviderOrders,
             let values = litradar_storage::load_runtime_settings(&auth_db_path, &secret_codec)?;
             let mut orders = ArticleProviderOrders::default();
             for setting in values {
-                let value = parse_provider_order(&setting.value);
                 match setting.field.as_str() {
-                    "article_abstract_provider_order" => orders.abstract_page = value,
-                    "article_fulltext_provider_order" => orders.full_text = value,
+                    "article_abstract_provider_orders" => {
+                        orders.abstract_page =
+                            serde_json::from_str(&setting.value).map_err(|_| {
+                                litradar_storage::BusinessRepositoryError::InvalidRuntimeSetting(
+                                    "Invalid stored article abstract Provider orders".to_string(),
+                                )
+                            })?;
+                    }
+                    "article_fulltext_provider_orders" => {
+                        orders.full_text = serde_json::from_str(&setting.value).map_err(|_| {
+                            litradar_storage::BusinessRepositoryError::InvalidRuntimeSetting(
+                                "Invalid stored article full-text Provider orders".to_string(),
+                            )
+                        })?;
+                    }
                     _ => {}
                 }
             }
@@ -280,13 +299,14 @@ async fn load_provider_orders(state: &ApiState) -> Result<ArticleProviderOrders,
         .map_err(|_| ApiError::internal_server_error())
 }
 
-fn parse_provider_order(value: &str) -> Vec<String> {
-    value
-        .split(',')
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(str::to_string)
-        .collect()
+fn provider_order_for_catalog<'configuration>(
+    configuration: &'configuration ProviderOrderConfiguration,
+    catalog_stem: &str,
+) -> &'configuration [String] {
+    configuration
+        .catalogs
+        .get(catalog_stem)
+        .unwrap_or(&configuration.default)
 }
 
 fn action_status(
@@ -721,12 +741,17 @@ mod tests {
             .expect("auth database should initialize");
         let secret_codec = litradar_storage::SecretCodec::from_key([42_u8; 32]);
         if let Some(order) = full_text_order {
+            let providers = order
+                .split(',')
+                .map(str::trim)
+                .filter(|provider| !provider.is_empty())
+                .collect::<Vec<_>>();
             litradar_storage::upsert_runtime_settings(
                 storage_config.auth_db_path(),
                 &secret_codec,
                 &HashMap::from([(
-                    "article_fulltext_provider_order".to_string(),
-                    Some(order.to_string()),
+                    "article_fulltext_provider_orders".to_string(),
+                    Some(json!({"default": providers, "catalogs": {}}).to_string()),
                 )]),
                 &HashMap::new(),
             )
@@ -759,11 +784,75 @@ mod tests {
     }
 
     #[test]
-    fn provider_order_parser_discards_empty_items_without_reordering() {
+    fn provider_order_selection_distinguishes_inherit_override_and_disable() {
+        let configuration = ProviderOrderConfiguration {
+            default: vec!["scholarly".to_string(), "cnki".to_string()],
+            catalogs: std::collections::BTreeMap::from([
+                ("disabled".to_string(), Vec::new()),
+                ("reverse".to_string(), vec!["cnki".to_string()]),
+            ]),
+        };
         assert_eq!(
-            parse_provider_order("scholarly, cnki, ,zjlib_cnki"),
-            ["scholarly", "cnki", "zjlib_cnki"]
+            provider_order_for_catalog(&configuration, "inherited"),
+            ["scholarly", "cnki"]
         );
+        assert_eq!(
+            provider_order_for_catalog(&configuration, "reverse"),
+            ["cnki"]
+        );
+        assert!(provider_order_for_catalog(&configuration, "disabled").is_empty());
+    }
+
+    #[tokio::test]
+    async fn abstract_resolution_uses_catalog_override_and_explicit_disable() {
+        let mut registry = ProviderRegistry::default();
+        registry
+            .register(abstract_registration(
+                "scholarly",
+                RedirectFixtureOutcome::Redirect("https://oversea.cnki.net/kcms/detail/scholarly"),
+            ))
+            .expect("Scholarly fixture should register");
+        registry
+            .register(abstract_registration(
+                "cnki",
+                RedirectFixtureOutcome::Redirect("https://oversea.cnki.net/kcms/detail/cnki"),
+            ))
+            .expect("CNKI fixture should register");
+        let (_directory, state) = test_state(registry, None);
+        litradar_storage::upsert_runtime_settings(
+            state.storage_config().auth_db_path(),
+            state.secret_codec(),
+            &HashMap::from([(
+                "article_abstract_provider_orders".to_string(),
+                Some(
+                    json!({
+                        "default": ["scholarly", "cnki"],
+                        "catalogs": {"reverse": ["cnki", "scholarly"], "disabled": []}
+                    })
+                    .to_string(),
+                ),
+            )]),
+            &HashMap::new(),
+        )
+        .expect("abstract Provider orders should update");
+
+        let redirect = resolve_article_abstract(&state, article_locator(), UserId(1), "reverse")
+            .await
+            .expect("catalog override should resolve");
+        assert_eq!(
+            redirect.location,
+            "https://oversea.cnki.net/kcms/detail/cnki"
+        );
+
+        let error = resolve_article_abstract(&state, article_locator(), UserId(1), "disabled")
+            .await
+            .expect_err("empty catalog override should disable abstract access");
+        match error {
+            ApiError::Http { status, .. } => assert_eq!(status, StatusCode::NOT_FOUND),
+            ApiError::JsonDetail { .. }
+            | ApiError::TooManyRequests { .. }
+            | ApiError::Unexpected { .. } => panic!("expected not-found HTTP error"),
+        }
     }
 
     #[tokio::test]
@@ -786,9 +875,10 @@ mod tests {
                 .expect("fallback provider should register");
             let (_directory, state) = test_state(registry, None);
 
-            let redirect = resolve_article_abstract(&state, article_locator(), UserId(1))
-                .await
-                .expect("fallback provider should resolve");
+            let redirect =
+                resolve_article_abstract(&state, article_locator(), UserId(1), "fixture")
+                    .await
+                    .expect("fallback provider should resolve");
 
             assert_eq!(
                 redirect.location,
@@ -801,7 +891,7 @@ mod tests {
     async fn redirect_resolution_reports_unavailable_without_a_capable_provider() {
         let (_directory, state) = test_state(ProviderRegistry::default(), None);
 
-        let error = resolve_article_abstract(&state, article_locator(), UserId(1))
+        let error = resolve_article_abstract(&state, article_locator(), UserId(1), "fixture")
             .await
             .expect_err("missing providers should fail");
 
@@ -830,7 +920,7 @@ mod tests {
             .expect("fallback provider should register");
         let (_directory, state) = test_state(registry, Some("zjlib_cnki,fixture"));
 
-        let resolution = resolve_article_full_text(&state, article_locator(), UserId(1))
+        let resolution = resolve_article_full_text(&state, article_locator(), UserId(1), "fixture")
             .await
             .expect("full-text fallback should resolve");
 
@@ -860,7 +950,7 @@ mod tests {
             .expect("fallback provider should register");
         let (_directory, state) = test_state(registry, Some("zjlib_cnki,fixture"));
 
-        let response = article_access_response(&state, UserId(1))
+        let response = article_access_response(&state, UserId(1), "fixture")
             .await
             .expect("local action status should resolve");
 

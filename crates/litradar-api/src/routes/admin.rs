@@ -1,5 +1,6 @@
 //! Admin route handlers for auth database business state.
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use axum::extract::{Path, State};
@@ -9,7 +10,8 @@ use litradar_auth::{is_valid_new_password, MIN_PASSWORD_LENGTH};
 use litradar_domain::{
     validate_scheduled_task_timing, AdminInviteCodeInfo, AdminResetPassword, AdminSetAdmin,
     AdminStatsResponse, AdminUserInfo, AnnouncementCreate, AnnouncementInfo, AnnouncementUpdate,
-    OkResponse, RuntimeSettingInfo, RuntimeSettingsUpdate, ScheduledJobSpec, ScheduledTaskCreate,
+    OkResponse, ProviderCapabilityInfo, ProviderCatalogResponse, ProviderOrderConfiguration,
+    RuntimeSettingInfo, RuntimeSettingsUpdate, ScheduledJobSpec, ScheduledTaskCreate,
     ScheduledTaskInfo, ScheduledTaskUpdate, SchedulerStatusResponse, UserId,
 };
 use litradar_storage::{BusinessRepositoryError, StorageConfig};
@@ -21,6 +23,13 @@ use crate::state::ApiState;
 
 type AnnouncementPayload<'a> = (Option<&'a str>, Option<&'a str>, Option<String>);
 type ScheduledTaskPayload<'a> = (Option<&'a str>, Option<&'a str>, Option<&'a str>);
+
+#[derive(Debug, Clone, Copy)]
+enum ProviderConfigurationCapability {
+    IndexContent,
+    ArticleAbstract,
+    ArticleFullText,
+}
 
 struct AdminAudit {
     action: &'static str,
@@ -490,6 +499,30 @@ pub(crate) async fn list_runtime_settings(
     Ok(Json(settings))
 }
 
+/// Return built-in Provider capabilities and discovered catalog files.
+#[utoipa::path(
+    get,
+    path = "/api/admin/provider-catalog",
+    tag = "admin",
+    responses((status = 200, description = "Provider capabilities and catalogs.", body = ProviderCatalogResponse)),
+    security(("bearer_auth" = []), ("session_cookie" = []))
+)]
+pub(crate) async fn get_provider_catalog(
+    State(state): State<ApiState>,
+    headers: HeaderMap,
+) -> Result<Json<ProviderCatalogResponse>, ApiError> {
+    require_admin_user(&state, &headers).await?;
+    let storage = state.storage_config().clone();
+    let catalogs = state
+        .run_blocking(move || storage.list_provider_catalogs())
+        .await?
+        .map_err(|_| ApiError::internal_server_error())?;
+    Ok(Json(ProviderCatalogResponse {
+        providers: litradar_sources::built_in_provider_capabilities(),
+        catalogs,
+    }))
+}
+
 /// Update managed runtime settings.
 #[utoipa::path(
     put,
@@ -508,6 +541,7 @@ pub(crate) async fn update_runtime_settings(
     let mut audit = AdminAudit::new("runtime_settings_update", admin.id.0, 0);
     validate_runtime_origin_settings_update(&body)
         .map_err(|error| ApiError::bad_request(error.to_string()))?;
+    validate_runtime_provider_settings_update(&body)?;
     let values = body.values;
     let secret_pool_updates = body.secret_pool_updates;
     let secret_codec = state.secret_codec().clone();
@@ -723,6 +757,7 @@ fn map_business_error(error: BusinessRepositoryError) -> ApiError {
     match error {
         BusinessRepositoryError::UnknownRuntimeSetting(_)
         | BusinessRepositoryError::InvalidRuntimeBoolean(_)
+        | BusinessRepositoryError::InvalidRuntimeSetting(_)
         | BusinessRepositoryError::InvalidRuntimeSecretPoolUpdate(_)
         | BusinessRepositoryError::InvalidScheduledJob(_)
         | BusinessRepositoryError::InvalidScheduledTask(_)
@@ -731,6 +766,106 @@ fn map_business_error(error: BusinessRepositoryError) -> ApiError {
         }
         _ => ApiError::internal_server_error(),
     }
+}
+
+fn validate_runtime_provider_settings_update(
+    update: &RuntimeSettingsUpdate,
+) -> Result<(), ApiError> {
+    let providers = litradar_sources::built_in_provider_capabilities();
+    for (field, value) in &update.values {
+        let Some(value) = value else {
+            continue;
+        };
+        match field.as_str() {
+            "index_provider_routes" => {
+                let routes = serde_json::from_str::<BTreeMap<String, String>>(value)
+                    .map_err(|_| ApiError::bad_request("Invalid index Provider routes"))?;
+                for provider in routes.values() {
+                    validate_provider_capability(
+                        &providers,
+                        provider,
+                        ProviderConfigurationCapability::IndexContent,
+                    )?;
+                }
+            }
+            "article_abstract_provider_orders" => {
+                let configuration = parse_provider_order_configuration(value, field)?;
+                validate_provider_order_capabilities(
+                    &providers,
+                    &configuration,
+                    ProviderConfigurationCapability::ArticleAbstract,
+                )?;
+            }
+            "article_fulltext_provider_orders" => {
+                let configuration = parse_provider_order_configuration(value, field)?;
+                validate_provider_order_capabilities(
+                    &providers,
+                    &configuration,
+                    ProviderConfigurationCapability::ArticleFullText,
+                )?;
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+fn parse_provider_order_configuration(
+    value: &str,
+    field: &str,
+) -> Result<ProviderOrderConfiguration, ApiError> {
+    serde_json::from_str(value).map_err(|_| ApiError::bad_request(format!("Invalid {field}")))
+}
+
+fn validate_provider_order_capabilities(
+    providers: &[ProviderCapabilityInfo],
+    configuration: &ProviderOrderConfiguration,
+    capability: ProviderConfigurationCapability,
+) -> Result<(), ApiError> {
+    validate_provider_order(providers, &configuration.default, capability)?;
+    for order in configuration.catalogs.values() {
+        validate_provider_order(providers, order, capability)?;
+    }
+    Ok(())
+}
+
+fn validate_provider_order(
+    providers: &[ProviderCapabilityInfo],
+    order: &[String],
+    capability: ProviderConfigurationCapability,
+) -> Result<(), ApiError> {
+    let mut seen = BTreeSet::new();
+    for provider in order {
+        if !seen.insert(provider) {
+            return Err(ApiError::bad_request(format!(
+                "Duplicate Provider in order: {provider}"
+            )));
+        }
+        validate_provider_capability(providers, provider, capability)?;
+    }
+    Ok(())
+}
+
+fn validate_provider_capability(
+    providers: &[ProviderCapabilityInfo],
+    provider_name: &str,
+    capability: ProviderConfigurationCapability,
+) -> Result<(), ApiError> {
+    let provider = providers
+        .iter()
+        .find(|provider| provider.name == provider_name)
+        .ok_or_else(|| ApiError::bad_request(format!("Unknown Provider: {provider_name}")))?;
+    let is_supported = match capability {
+        ProviderConfigurationCapability::IndexContent => provider.index_content,
+        ProviderConfigurationCapability::ArticleAbstract => provider.article_abstract,
+        ProviderConfigurationCapability::ArticleFullText => provider.article_full_text,
+    };
+    if !is_supported {
+        return Err(ApiError::bad_request(format!(
+            "Provider {provider_name} does not support the configured capability"
+        )));
+    }
+    Ok(())
 }
 
 async fn run_business<Output, Work>(state: &ApiState, work: Work) -> Result<Output, ApiError>

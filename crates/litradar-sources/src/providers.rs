@@ -8,7 +8,7 @@ use litradar_domain::{
     normalize_bibliographic_label, normalize_bibliographic_text, normalize_contract_doi,
     normalize_contract_pmid, normalize_contract_text, ArticleAccessContext, ArticleAuthorDraft,
     ArticleDraft, ArticleLocator, ArticleRedirect, IssueDraft, JournalCatalogEntry, JournalDraft,
-    ProviderBatch,
+    ProviderBatch, ProviderCapabilityInfo,
 };
 use litradar_provider::{
     ArticleAbstractProvider, IndexContentProvider, ProviderCapabilities, ProviderDescriptor,
@@ -29,11 +29,42 @@ pub const SCHOLARLY_PROVIDER_NAME: &str = "scholarly";
 /// Stable runtime name for the built-in CNKI indexing provider.
 pub const CNKI_PROVIDER_NAME: &str = "cnki";
 
+/// Stable runtime name for the Zhejiang Library CNKI full-text Provider.
+pub const ZJLIB_CNKI_PROVIDER_NAME: &str = "zjlib_cnki";
+
 /// Exact HTTPS hosts emitted by the Scholarly online access provider.
 pub const SCHOLARLY_REDIRECT_HOSTS: &[&str] = &["doi.org", "pubmed.ncbi.nlm.nih.gov"];
 
 /// Exact HTTPS hosts emitted by the CNKI online access provider.
 pub const CNKI_REDIRECT_HOSTS: &[&str] = &["oversea.cnki.net", "kns.cnki.net", "www.cnki.net"];
+
+/// Return aggregate capabilities for every built-in logical Provider.
+///
+/// # Returns
+///
+/// Deterministically ordered Provider capability metadata.
+pub fn built_in_provider_capabilities() -> Vec<ProviderCapabilityInfo> {
+    vec![
+        ProviderCapabilityInfo {
+            name: CNKI_PROVIDER_NAME.to_string(),
+            index_content: true,
+            article_abstract: true,
+            article_full_text: false,
+        },
+        ProviderCapabilityInfo {
+            name: SCHOLARLY_PROVIDER_NAME.to_string(),
+            index_content: true,
+            article_abstract: true,
+            article_full_text: false,
+        },
+        ProviderCapabilityInfo {
+            name: ZJLIB_CNKI_PROVIDER_NAME.to_string(),
+            index_content: false,
+            article_abstract: false,
+            article_full_text: true,
+        },
+    ]
+}
 
 const SCHOLARLY_ENRICHMENT_BATCH_SIZE: usize = 100;
 const CROSSREF_CURSOR_REUSE_SECONDS: u64 = 240;
