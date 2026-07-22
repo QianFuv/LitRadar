@@ -1,24 +1,27 @@
 'use client';
 
+import { useEffect } from 'react';
 import Link from 'next/link';
-import { ArrowLeft, Shield } from 'lucide-react';
+import { useRouter } from 'next/navigation';
 
 import { useAuth } from '@/lib/auth-context';
-import { AdminInviteCodesCard } from '@/components/admin/invite-codes-card';
-import { AdminOverviewCard } from '@/components/admin/overview-card';
-import { AdminUsersCard } from '@/components/admin/users-card';
-import { AnnouncementsCard } from '@/components/admin/announcements-card';
-import { RuntimeSettingsCard } from '@/components/admin/runtime-settings-card';
-import { ScheduledTasksCard } from '@/components/admin/scheduled-tasks-card';
 import { Button } from '@/components/ui/button';
 
 /**
- * Compose administrator feature cards behind the administrator permission gate.
+ * Preserve the legacy administrator route as a permission and compatibility boundary.
  *
  * @returns Administrator dashboard page.
  */
 export default function AdminPage() {
   const { user } = useAuth();
+  const router = useRouter();
+
+  useEffect(() => {
+    if (user?.is_admin) {
+      router.replace('/?admin=overview');
+    }
+  }, [router, user?.is_admin]);
+
   if (!user?.is_admin) {
     return (
       <main
@@ -34,31 +37,10 @@ export default function AdminPage() {
   }
 
   return (
-    <main
-      id="main-content"
-      className="mx-auto max-w-5xl space-y-4 p-4 sm:space-y-6 sm:p-6"
-      style={{
-        paddingBottom:
-          'calc(6rem + var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px)))',
-      }}
-    >
-      <div className="flex items-start gap-2 sm:gap-3">
-        <Button variant="ghost" size="icon" aria-label="返回首页" asChild>
-          <Link href="/">
-            <ArrowLeft className="h-5 w-5" />
-          </Link>
-        </Button>
-        <h1 className="flex items-center gap-2 text-xl font-bold sm:text-2xl">
-          <Shield className="h-6 w-6" />
-          管理面板
-        </h1>
+    <main id="main-content" className="flex min-h-[60vh] items-center justify-center">
+      <div role="status" className="animate-pulse text-muted-foreground">
+        正在打开管理面板…
       </div>
-      <AdminOverviewCard isEnabled />
-      <AdminUsersCard currentUserId={user.id} isEnabled />
-      <AdminInviteCodesCard isEnabled />
-      <RuntimeSettingsCard />
-      <ScheduledTasksCard />
-      <AnnouncementsCard />
     </main>
   );
 }

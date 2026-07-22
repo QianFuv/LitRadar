@@ -38,19 +38,13 @@ vi.mock('@/components/settings/settings-center-dialog', () => ({
   SettingsCenterDialog: () => <div>settings center marker</div>,
 }));
 
+vi.mock('@/components/admin/admin-center-dialog', () => ({
+  AdminCenterDialog: () => <div>admin center marker</div>,
+}));
+
 vi.mock('@/components/feature/user-menu', () => ({
   UserMenu: () => <div>user menu marker</div>,
 }));
-
-vi.mock('@/components/admin/overview-card', () => ({
-  AdminOverviewCard: () => <div>admin dashboard marker</div>,
-}));
-
-vi.mock('@/components/admin/users-card', () => ({ AdminUsersCard: () => null }));
-vi.mock('@/components/admin/invite-codes-card', () => ({ AdminInviteCodesCard: () => null }));
-vi.mock('@/components/admin/runtime-settings-card', () => ({ RuntimeSettingsCard: () => null }));
-vi.mock('@/components/admin/scheduled-tasks-card', () => ({ ScheduledTasksCard: () => null }));
-vi.mock('@/components/admin/announcements-card', () => ({ AnnouncementsCard: () => null }));
 
 import { metadata as rootMetadata } from '@/app/layout';
 import { metadata as loginMetadata } from '@/app/login/page';
@@ -174,26 +168,27 @@ async function protectsRenderedRouteContent(): Promise<void> {
   );
   expect(screen.getByText('protected route content')).toBeInTheDocument();
   expect(screen.getByText('settings center marker')).toBeInTheDocument();
+  expect(screen.getByText('admin center marker')).toBeInTheDocument();
   expect(screen.getByText('user menu marker')).toBeInTheDocument();
 }
 
 /**
- * Verify administrator routing renders a visible denial or the real dashboard boundary.
+ * Verify the legacy administrator route renders a denial or opens the global center.
  */
-function gatesAdministratorRouteByVisiblePermission(): void {
+async function gatesAdministratorRouteByVisiblePermission(): Promise<void> {
   routeBoundaryMocks.auth.user = { id: 8, username: 'reader', is_admin: false };
   const view = render(<AdminPage />);
 
   expect(screen.getByText('无管理员权限')).toBeInTheDocument();
   expect(screen.getByRole('link', { name: '返回首页' })).toHaveAttribute('href', '/');
-  expect(screen.queryByText('admin dashboard marker')).not.toBeInTheDocument();
+  expect(routeBoundaryMocks.replace).not.toHaveBeenCalled();
 
   routeBoundaryMocks.auth.user = { id: 9, username: 'administrator', is_admin: true };
   view.rerender(<AdminPage />);
 
-  expect(screen.getByRole('heading', { name: '管理面板' })).toBeInTheDocument();
-  expect(screen.getByText('admin dashboard marker')).toBeInTheDocument();
+  expect(screen.getByRole('status')).toHaveTextContent('正在打开管理面板');
   expect(screen.queryByText('无管理员权限')).not.toBeInTheDocument();
+  await waitFor(() => expect(routeBoundaryMocks.replace).toHaveBeenCalledWith('/?admin=overview'));
 }
 
 beforeEach(() => {

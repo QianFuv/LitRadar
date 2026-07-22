@@ -143,7 +143,7 @@ Card 使用 card token、`rounded-lg`、`shadow-vercel-card`、24px 外层纵向
 
 复杂表单应组合现有 primitive，不要重新实现键盘导航、焦点管理或 portal 行为。
 
-### 聚合设置中心
+### 聚合设置与管理中心
 
 所有已认证页面都从当前 pathname 的 `settings` query 打开全局设置 Dialog。稳定分类为 `general`、`tracking`、`notifications`、`data-sources`、`account` 和 `tokens`；分类切换使用 replace 语义，只改这一参数，关闭时移除参数，未知值直接规范化移除。`/settings` 与 `/tracking` 不是页面路由。
 
@@ -151,13 +151,15 @@ Card 使用 card token、`rounded-lg`、`shadow-vercel-card`、24px 外层纵向
 
 该响应式外壳由无业务状态的 `SectionedDialogFrame` 统一提供，包括分类导航、当前分类标题、内容滚动区、关闭控件和焦点归还；设置中心只持有 URL、追踪草稿与确认状态，不重复实现布局。
 
+管理员通过当前受保护 pathname 的 `admin` query 打开同一外壳。稳定分类为 `overview`、`users`、`invite-codes`、`runtime-settings`、`scheduled-tasks` 和 `announcements`；六个既有管理卡片在一次 Dialog 会话内保持挂载，非当前 panel 使用原生 `hidden` 隐藏，因此切换分类不会丢失局部表单状态。`settings` 与 `admin` 互斥，打开任一中心会移除另一个参数；合法 `settings` 与手工冲突的 `admin` 同时出现时由设置中心优先并清理管理参数。未知分类和普通用户手工添加的 `admin` 会被规范化移除，不会挂载管理数据组件。
+
 文献追踪与通知分类在两者之间切换时复用同一个 tracking view model 和草稿；保存/取消栏 sticky 在内容滚动区底部。关闭设置、浏览器返回或离开追踪分类组时，如果草稿未保存，必须先显示独立 `ConfirmDialog`。文章详情中的数据源入口必须先关闭文章 Dialog，再打开 `settings=data-sources`，不允许叠加两个 modal。Dialog 关闭后把焦点归还给仍在文档中的发起控件。
 
 ### 页面导航与账号菜单
 
 首页侧栏顶部使用紧凑的品牌栏，品牌栏下方是一行三列的图标导航：`Search` 对应文献检索、`Star` 对应我的收藏、`CalendarDays` 对应每周更新。图标入口必须同时提供 `aria-label`、`title`、`sr-only` 文本和 `aria-current="page"` 当前页语义；桌面侧栏与移动端筛选 Dialog 复用同一导航组件。
 
-所有受保护页面右下角使用带圆形头像、用户名和展开提示的账号 pill。账号菜单只承载四类账号级动作：打开聚合设置中心、在子菜单中选择 system/light/dark 主题、向管理员显示管理面板入口，以及使用 destructive 语义退出登录。页面级导航不应在账号菜单中重复；设置链接必须保留当前 pathname 和现有 query。菜单复用 Radix Dropdown Menu 的键盘导航、Escape、点击外部关闭与焦点归还行为，并避开设备 safe area。退出登录的红色属于明确的危险操作语义，不受普通 UI chrome 的中性色约束。
+所有受保护页面右下角使用带圆形头像、用户名和展开提示的账号 pill。账号菜单只承载四类账号级动作：打开聚合设置中心、在子菜单中选择 system/light/dark 主题、向管理员显示管理面板入口，以及使用 destructive 语义退出登录。页面级导航不应在账号菜单中重复；设置与管理链接必须保留当前 pathname 和现有 query，并用一次性标记让 Dialog 关闭后把焦点归还给账号按钮。菜单复用 Radix Dropdown Menu 的键盘导航、Escape、点击外部关闭与焦点归还行为，并避开设备 safe area。退出登录的红色属于明确的危险操作语义，不受普通 UI chrome 的中性色约束。
 
 ## 布局与响应式
 
@@ -168,7 +170,7 @@ Card 使用 card token、`rounded-lg`、`shadow-vercel-card`、24px 外层纵向
 - 首页使用动态 viewport 高度；桌面在 `md` 显示 `w-80` 固定侧栏，移动端改为左侧 Dialog 筛选器。
 - 首页搜索头 sticky，搜索与结果正文限制为 `max-w-4xl`。
 - 有已应用筛选时，结果区先显示“共找到 N 条结果”，再显示相对 `results-scroll-container` 悬浮的筛选摘要；总数随文章列表滚动离开，筛选摘要保持可操作。
-- 聚合设置中心按上面的响应式 Dialog 规则布局；管理和收藏使用 `max-w-5xl`，周报使用 `max-w-6xl`。
+- 聚合设置中心与管理面板按上面的共享响应式 Dialog 规则布局；收藏使用 `max-w-5xl`，周报使用 `max-w-6xl`。
 - 页面 padding 常从 `p-4` / 紧凑间距过渡到 `sm:p-6`。
 - 收藏页在 `md` 从单列变成 `280px + 1fr`。
 - 表单按钮和选择器通常在移动端占满宽度，`sm` 后恢复行内布局。

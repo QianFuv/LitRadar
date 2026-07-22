@@ -338,6 +338,62 @@ async function serveTrackingApi(route: Route): Promise<void> {
 }
 
 /**
+ * Serve an authenticated administrator together with the existing workspace fixtures.
+ *
+ * @param route - Intercepted API route.
+ */
+async function serveAdministratorApi(route: Route): Promise<void> {
+  const pathname = new URL(route.request().url()).pathname;
+  if (pathname === '/api/auth/me') {
+    await fulfillJson(route, { id: 42, username: 'browser_admin', is_admin: true });
+    return;
+  }
+  if (pathname === '/api/admin/stats') {
+    await fulfillJson(route, {
+      auth: {
+        total_users: 2,
+        admin_count: 1,
+        total_folders: 1,
+        total_favorites: 1,
+        total_invite_codes: 1,
+        used_invite_codes: 0,
+        unused_invite_codes: 1,
+        active_tokens: 0,
+        notification_subscribers: 0,
+        scheduled_tasks: 0,
+        active_announcements: 0,
+      },
+      index: {
+        databases: [],
+        total_articles: 30,
+        total_journals: 1,
+      },
+      push: [],
+    });
+    return;
+  }
+  if (
+    pathname === '/api/admin/users' ||
+    pathname === '/api/admin/invite-codes' ||
+    pathname === '/api/admin/runtime-settings' ||
+    pathname === '/api/admin/scheduled-tasks' ||
+    pathname === '/api/admin/announcements'
+  ) {
+    await fulfillJson(route, []);
+    return;
+  }
+  if (pathname === '/api/admin/provider-catalog') {
+    await fulfillJson(route, { catalogs: [], providers: [] });
+    return;
+  }
+  if (pathname === '/api/admin/scheduler/status') {
+    await fulfillJson(route, { last_checked_at: null, recent_runs: [], workers: [] });
+    return;
+  }
+  await serveTrackingApi(route);
+}
+
+/**
  * Verify an uninitialized deployment disables public registration.
  *
  * @param page - Playwright browser page.
@@ -483,6 +539,60 @@ async function verifiesAggregatedSettingsCenter(page: Page): Promise<void> {
   const mobileTokensButton = mobileCategories.getByRole('button', { name: '访问令牌' });
   await mobileTokensButton.scrollIntoViewIfNeeded();
   await expect(mobileTokensButton).toBeInViewport();
+}
+
+/**
+ * Verify administrator menu entry, responsive center, query preservation, and focus return.
+ *
+ * @param page - Playwright browser page.
+ */
+async function verifiesAdministratorCenter(page: Page): Promise<void> {
+  await page.route('**/api/**', serveAdministratorApi);
+  await page.setViewportSize({ width: 1600, height: 1000 });
+  await page.goto('/?q=graph');
+  await hideDevelopmentIndicator(page);
+
+  const accountTrigger = page.getByRole('button', {
+    name: '打开账号菜单：browser_admin',
+  });
+  await accountTrigger.click();
+  const adminEntry = page.getByRole('menuitem', { name: '管理面板' });
+  await expect(adminEntry).toHaveAttribute('href', '/?q=graph&admin=overview');
+  await adminEntry.click();
+
+  await expect(page).toHaveURL('/?q=graph&admin=overview');
+  const adminDialog = page.getByRole('dialog', { name: '管理面板' });
+  await expect(adminDialog).toBeVisible();
+  await expect(adminDialog).toHaveCSS('max-width', '1152px');
+  await expect(page.getByRole('heading', { name: '概览', exact: true })).toBeVisible();
+  const desktopCategories = adminDialog.locator('aside').getByRole('navigation', {
+    name: '管理分类',
+  });
+  await expect(desktopCategories.getByRole('button')).toHaveCount(6);
+  await page.screenshot({ path: '../output/ui/admin-center-desktop.png', fullPage: true });
+
+  await desktopCategories.getByRole('button', { name: '用户' }).click();
+  await expect(page).toHaveURL('/?q=graph&admin=users');
+  await expect(page.getByRole('heading', { name: '用户', exact: true })).toBeVisible();
+  await adminDialog.getByRole('button', { name: '关闭' }).click();
+  await expect(page).toHaveURL('/?q=graph');
+  await expect(adminDialog).toHaveCount(0);
+  await expect(accountTrigger).toBeFocused();
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/?q=graph&admin=overview');
+  const mobileDialog = page.getByRole('dialog', { name: '管理面板' });
+  await expect(mobileDialog).toBeVisible();
+  await hideDevelopmentIndicator(page);
+  await expect(mobileDialog).toHaveCSS('width', '390px');
+  await expect(mobileDialog).toHaveCSS('height', '844px');
+  const mobileCategories = mobileDialog
+    .locator('header')
+    .getByRole('navigation', { name: '管理分类' });
+  expect(
+    await mobileCategories.evaluate((element) => element.scrollWidth > element.clientWidth),
+  ).toBe(true);
+  await page.screenshot({ path: '../output/ui/admin-center-mobile.png', fullPage: true });
 }
 
 /**
@@ -786,6 +896,15 @@ async function aggregatedSettingsCenterTest({ page }: { page: Page }): Promise<v
 }
 
 /**
+ * Run the administrator-center browser test.
+ *
+ * @param fixtures - Playwright page fixture.
+ */
+async function administratorCenterTest({ page }: { page: Page }): Promise<void> {
+  await verifiesAdministratorCenter(page);
+}
+
+/**
  * Run the unified root-workspace browser test.
  *
  * @param fixtures - Playwright page fixture.
@@ -814,5 +933,6 @@ test(
   'supports the aggregated settings center across desktop and mobile',
   aggregatedSettingsCenterTest,
 );
+test('supports the administrator center across desktop and mobile', administratorCenterTest);
 test('supports three deep-linkable root workspaces', unifiedRootWorkspacesTest);
 test('supports accessible navigation and theme selection', userMenuNavigationTest);

@@ -56,6 +56,7 @@ export function buildSettingsCenterHref(
   const nextSearchParams = new URLSearchParams(searchParams.toString());
   if (section) {
     nextSearchParams.set('settings', section);
+    nextSearchParams.delete('admin');
   } else {
     nextSearchParams.delete('settings');
   }

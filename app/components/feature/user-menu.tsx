@@ -25,6 +25,7 @@ import { useRef, useSyncExternalStore, type CSSProperties, type MouseEvent } fro
 
 import { Button } from '@/components/ui/button';
 import { SECTIONED_DIALOG_RETURN_FOCUS_ATTRIBUTE } from '@/components/feature/sectioned-dialog';
+import { buildAdminCenterHref, parseAdminSection } from '@/lib/admin-center';
 import { useAuth } from '@/lib/auth-context';
 import { buildSettingsCenterHref } from '@/lib/settings-center';
 import { cn } from '@/lib/utils';
@@ -106,7 +107,8 @@ export function UserMenu() {
   const selectedThemeLabel =
     THEME_ITEMS.find((item) => item.value === selectedTheme)?.label ?? '跟随系统';
   const settingsHref = buildSettingsCenterHref(pathname, searchParams, 'general');
-  const isAdminRoute = pathname === '/admin' || pathname.startsWith('/admin/');
+  const adminHref = buildAdminCenterHref(pathname, searchParams, 'overview');
+  const isAdminOpen = parseAdminSection(searchParams.get('admin')) !== null;
 
   /**
    * Clear the authenticated session after the menu selection closes.
@@ -116,11 +118,11 @@ export function UserMenu() {
   }
 
   /**
-   * Mark the persistent account trigger before current-tab settings navigation.
+   * Mark the persistent account trigger before current-tab sectioned-dialog navigation.
    *
-   * @param event - Settings-link click event.
+   * @param event - Sectioned-dialog link click event.
    */
-  function handleSettingsOpen(event: MouseEvent<HTMLAnchorElement>): void {
+  function handleSectionedDialogOpen(event: MouseEvent<HTMLAnchorElement>): void {
     if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) {
       return;
     }
@@ -186,7 +188,11 @@ export function UserMenu() {
             <DropdownMenuPrimitive.Separator className="-mx-1 my-1 h-px bg-border" />
 
             <DropdownMenuPrimitive.Item asChild>
-              <Link href={settingsHref} className={MENU_ITEM_CLASS} onClick={handleSettingsOpen}>
+              <Link
+                href={settingsHref}
+                className={MENU_ITEM_CLASS}
+                onClick={handleSectionedDialogOpen}
+              >
                 <Settings2 />
                 <span>打开设置中心</span>
               </Link>
@@ -240,9 +246,10 @@ export function UserMenu() {
             {user.is_admin && (
               <DropdownMenuPrimitive.Item asChild>
                 <Link
-                  href="/admin"
-                  aria-current={isAdminRoute ? 'page' : undefined}
-                  className={cn(MENU_ITEM_CLASS, isAdminRoute && 'bg-accent')}
+                  href={adminHref}
+                  aria-current={isAdminOpen ? 'page' : undefined}
+                  className={cn(MENU_ITEM_CLASS, isAdminOpen && 'bg-accent')}
+                  onClick={handleSectionedDialogOpen}
                 >
                   <Shield />
                   <span>管理面板</span>

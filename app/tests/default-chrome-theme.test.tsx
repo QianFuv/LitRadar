@@ -45,6 +45,7 @@ const DEFAULT_CHROME_COMPONENTS = [
   'components/feature/sidebar-navigation.tsx',
   'components/feature/sectioned-dialog.tsx',
   'components/feature/user-menu.tsx',
+  'components/admin/admin-center-dialog.tsx',
   'components/settings/settings-center-dialog.tsx',
 ] as const;
 
@@ -179,6 +180,7 @@ function keepsChromeComponentUtilitiesNeutral(): void {
 /** Verify settings delegates responsive dialog chrome to the shared frame. */
 function sharesSectionedDialogChrome(): void {
   const frameSource = readProjectFile('components/feature/sectioned-dialog.tsx');
+  const adminSource = readProjectFile('components/admin/admin-center-dialog.tsx');
   const settingsSource = readProjectFile('components/settings/settings-center-dialog.tsx');
 
   expect(frameSource).toContain('md:w-[min(calc(100vw-2rem),72rem)]');
@@ -187,6 +189,8 @@ function sharesSectionedDialogChrome(): void {
   expect(settingsSource).toContain('<SectionedDialogFrame');
   expect(settingsSource).not.toContain('<DialogContent');
   expect(settingsSource).not.toContain('SettingsCenterNavigation');
+  expect(adminSource).toContain('<SectionedDialogFrame');
+  expect(adminSource).not.toContain('<DialogContent');
 }
 
 /**

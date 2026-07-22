@@ -127,7 +127,11 @@ async function exposesAccountActions(): Promise<void> {
   };
   rerender(<UserMenu />);
   await user.click(screen.getByRole('button', { name: '打开账号菜单：admin_user' }));
-  expect(screen.getByRole('menuitem', { name: '管理面板' })).toHaveAttribute('href', '/admin');
+  const adminLink = screen.getByRole('menuitem', { name: '管理面板' });
+  expect(adminLink).toHaveAttribute('href', '/?view=favorites&folder=4&admin=overview');
+  adminLink.addEventListener('click', preventNavigation);
+  fireEvent.click(adminLink);
+  expect(trigger).toHaveAttribute(SECTIONED_DIALOG_RETURN_FOCUS_ATTRIBUTE);
 }
 
 /**

@@ -81,7 +81,7 @@ function preservesSettingsQueryState(): void {
   expect(
     buildSettingsCenterHref(
       '/',
-      new URLSearchParams('view=favorites&folder=4&settings=general'),
+      new URLSearchParams('view=favorites&folder=4&settings=general&admin=users'),
       'tokens',
     ),
   ).toBe('/?view=favorites&folder=4&settings=tokens');
