@@ -305,9 +305,10 @@ async function removeFixtureRoot() {
  * Run Playwright through the package manager executable used for this script.
  *
  * @param {string} baseUrl - Rust service base URL.
+ * @param {string[]} playwrightArguments - Explicit Playwright CLI arguments.
  * @returns {Promise<number>} Playwright exit code.
  */
-async function runPlaywright(baseUrl) {
+async function runPlaywright(baseUrl, playwrightArguments) {
   const packageManagerScript = process.env.npm_execpath;
   if (!packageManagerScript) {
     throw new Error('npm_execpath is required to launch Playwright');
@@ -321,6 +322,7 @@ async function runPlaywright(baseUrl) {
       'test',
       '--config',
       'playwright.full-stack.config.tsx',
+      ...playwrightArguments,
     ],
     {
       cwd: APP_ROOT,
@@ -340,9 +342,10 @@ async function runPlaywright(baseUrl) {
 /**
  * Create, seed, serve, test, and clean one disposable full-stack environment.
  *
+ * @param {string[]} playwrightArguments - Explicit Playwright CLI arguments.
  * @returns {Promise<number>} Process exit code.
  */
-async function main() {
+async function main(playwrightArguments) {
   await Promise.all([
     fs.access(path.join(APP_ROOT, 'out'), fsConstants.R_OK),
     fs.access(SERVICE_BINARY, fsConstants.X_OK),
@@ -399,7 +402,7 @@ async function main() {
   try {
     await waitForReadiness(baseUrl);
     process.stdout.write(`[full-stack] Rust service ready at ${baseUrl}\n`);
-    return await runPlaywright(baseUrl);
+    return await runPlaywright(baseUrl, playwrightArguments);
   } finally {
     await terminateProcessTree(testProcess);
     await terminateProcessTree(serviceProcess);
@@ -417,7 +420,8 @@ for (const signal of ['SIGINT', 'SIGTERM']) {
 }
 
 try {
-  process.exitCode = await main();
+  const playwrightArguments = process.argv.slice(process.argv[2] === '--' ? 3 : 2);
+  process.exitCode = await main(playwrightArguments);
 } catch (error) {
   process.stderr.write(
     `[full-stack] ${sanitizeDiagnostic(error instanceof Error ? (error.stack ?? error.message) : String(error))}\n`,

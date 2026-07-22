@@ -2,14 +2,16 @@
  * Serial browser journeys through the real Rust listener and disposable SQLite state.
  */
 
-import { expect, test, type Page } from '@playwright/test';
+import { expect, test, type Page, type TestInfo } from '@playwright/test';
+
+import type { AdminUserInfo, FavoriteArticleItem, Folder } from '@/lib/api';
 
 const ADMIN_USERNAME = 'fullstack_admin';
 const ADMIN_PASSWORD = 'FullStackAdmin!2026';
 const MEMBER_USERNAME = 'fullstack_member';
 const MEMBER_PASSWORD = 'FullStackMember!2026';
 const ARTICLE_TITLE = 'Evidence Graphs for Living Literature Reviews';
-const CREATED_ANNOUNCEMENT_TITLE = 'Browser-persisted release notice';
+const CREATED_ANNOUNCEMENT_TITLE_PREFIX = 'Browser-persisted release notice';
 
 test.describe.configure({ mode: 'serial' });
 
@@ -68,6 +70,70 @@ async function expectHttpOnlySession(page: Page): Promise<void> {
 }
 
 /**
+ * Restore the seeded Reading folder to its empty precondition.
+ *
+ * @param page - Authenticated Playwright page.
+ * @returns Promise resolved after any persisted fixture favorites are removed.
+ */
+async function emptyReadingFolder(page: Page): Promise<void> {
+  const foldersResponse = await page.request.get('/api/favorites/folders');
+  expect(foldersResponse.ok()).toBe(true);
+  const folders = (await foldersResponse.json()) as Folder[];
+  const readingFolder = folders.find((folder) => folder.name === 'Reading');
+  if (!readingFolder) {
+    throw new Error('seeded Reading folder is missing');
+  }
+
+  const articlesResponse = await page.request.get(
+    `/api/favorites/folders/${readingFolder.id}/articles?limit=100&offset=0`,
+  );
+  expect(articlesResponse.ok()).toBe(true);
+  const articles = (await articlesResponse.json()) as FavoriteArticleItem[];
+  if (articles.length === 0) {
+    return;
+  }
+
+  const removeResponse = await page.request.post(
+    `/api/favorites/folders/${readingFolder.id}/articles/bulk-remove`,
+    {
+      data: {
+        articles: articles.map((article) => ({
+          article_id: article.article_id,
+          db_name: article.db_name,
+        })),
+      },
+    },
+  );
+  expect(removeResponse.ok()).toBe(true);
+  const removalResult = (await removeResponse.json()) as { count: number };
+  expect(removalResult.count).toBe(articles.length);
+}
+
+/**
+ * Restore the seeded member to the non-administrator precondition.
+ *
+ * @param page - Authenticated administrator page.
+ * @returns Promise resolved after any stale administrator role is revoked.
+ */
+async function ensureMemberIsNotAdministrator(page: Page): Promise<void> {
+  const usersResponse = await page.request.get('/api/admin/users');
+  expect(usersResponse.ok()).toBe(true);
+  const users = (await usersResponse.json()) as AdminUserInfo[];
+  const member = users.find((user) => user.username === MEMBER_USERNAME);
+  if (!member) {
+    throw new Error(`seeded member ${MEMBER_USERNAME} is missing`);
+  }
+  if (!member.is_admin) {
+    return;
+  }
+
+  const revokeResponse = await page.request.put(`/api/admin/users/${member.id}/admin`, {
+    data: { is_admin: false },
+  });
+  expect(revokeResponse.ok()).toBe(true);
+}
+
+/**
  * Exercise search, article detail, and persisted favorites as the seeded member.
  *
  * @param fixtures - Playwright fixtures.
@@ -76,6 +142,11 @@ async function expectHttpOnlySession(page: Page): Promise<void> {
 async function searchAndFavoriteJourney({ page }: { page: Page }): Promise<void> {
   await login(page, MEMBER_USERNAME, MEMBER_PASSWORD);
   await expectHttpOnlySession(page);
+  await emptyReadingFolder(page);
+  await page.reload();
+  await expect(
+    page.getByRole('button', { name: `打开账号菜单：${MEMBER_USERNAME}` }),
+  ).toBeVisible();
 
   const searchInput = page.getByRole('combobox', { name: '搜索文章' });
   await searchInput.fill(ARTICLE_TITLE);
@@ -107,11 +178,17 @@ async function searchAndFavoriteJourney({ page }: { page: Page }): Promise<void>
  * Persist administrator user, invite, and announcement mutations across refetches.
  *
  * @param fixtures - Playwright fixtures.
+ * @param testInfo - Retry and repeat identity for attempt-unique persisted data.
  * @returns Promise resolved after all mutations are reloaded and verified.
  */
-async function administratorMutationJourney({ page }: { page: Page }): Promise<void> {
+async function administratorMutationJourney(
+  { page }: { page: Page },
+  testInfo: TestInfo,
+): Promise<void> {
   await login(page, ADMIN_USERNAME, ADMIN_PASSWORD);
   await expectHttpOnlySession(page);
+  await ensureMemberIsNotAdministrator(page);
+  const createdAnnouncementTitle = `${CREATED_ANNOUNCEMENT_TITLE_PREFIX} ${testInfo.repeatEachIndex}-${testInfo.retry}`;
   await page.goto('/?admin=overview');
   await expect(page).toHaveURL(/\/?\?admin=overview$/);
   const adminDialog = page.getByRole('dialog', { name: '管理面板' });
@@ -159,7 +236,7 @@ async function administratorMutationJourney({ page }: { page: Page }): Promise<v
   await expect(page).toHaveURL(/\/?\?admin=announcements$/);
   await page.getByRole('button', { name: '新建公告' }).click();
   const announcementDialog = page.getByRole('dialog', { name: '新建公告' });
-  await announcementDialog.getByLabel('公告标题').fill(CREATED_ANNOUNCEMENT_TITLE);
+  await announcementDialog.getByLabel('公告标题').fill(createdAnnouncementTitle);
   await announcementDialog
     .getByLabel('公告内容')
     .fill('Created through the browser against the disposable auth database.');
@@ -170,10 +247,10 @@ async function administratorMutationJourney({ page }: { page: Page }): Promise<v
   );
   await announcementDialog.getByRole('button', { name: '创建', exact: true }).click();
   expect((await announcementResponse).ok()).toBe(true);
-  await expect(page.getByText(CREATED_ANNOUNCEMENT_TITLE, { exact: true })).toBeVisible();
-  await page.reload();
   await dismissVisibleAnnouncements(page);
-  await expect(page.getByText(CREATED_ANNOUNCEMENT_TITLE, { exact: true })).toBeVisible();
+  await expect(adminDialog.getByText(createdAnnouncementTitle, { exact: true })).toBeVisible();
+  await page.reload();
+  await expect(adminDialog.getByText(createdAnnouncementTitle, { exact: true })).toBeVisible();
 
   await adminCategories.getByRole('button', { name: '用户', exact: true }).click();
   await expect(page).toHaveURL(/\/?\?admin=users$/);
