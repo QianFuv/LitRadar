@@ -5,7 +5,6 @@
 import { spawn } from "node:child_process";
 import fs from "node:fs/promises";
 import net from "node:net";
-import os from "node:os";
 import path from "node:path";
 import { randomBytes } from "node:crypto";
 import { fileURLToPath } from "node:url";
@@ -21,8 +20,6 @@ const REPORT_ROOT = path.join(
 );
 const SUMMARY_PATH = path.join(REPORT_ROOT, "summary.json");
 const FAILURE_LOG_PATH = path.join(REPORT_ROOT, "failure.log");
-const TEMP_MARKER_FILE = ".litradar-container-smoke-root";
-const TEMP_MARKER_CONTENT = "litradar-container-smoke-v1\n";
 const COMMAND_TIMEOUT_MS = 60_000;
 const READY_TIMEOUT_MS = 60_000;
 const POLL_INTERVAL_MS = 250;
@@ -30,7 +27,8 @@ const POLL_INTERVAL_MS = 250;
 let activeChild;
 let containerName;
 let hostPort;
-let secretRoot;
+let secretInitializerName;
+let secretVolumeName;
 let shutdownSignal;
 let volumeName;
 
@@ -42,19 +40,6 @@ let volumeName;
  */
 function delay(durationMs) {
   return new Promise((resolve) => setTimeout(resolve, durationMs));
-}
-
-/**
- * Redact the temporary host path from retained diagnostics.
- *
- * @param {string} value - Raw diagnostic text.
- * @returns {string} Redacted text.
- */
-function sanitizeDiagnostic(value) {
-  if (!secretRoot) {
-    return value;
-  }
-  return value.split(secretRoot).join("<secret-root>");
 }
 
 /**
@@ -135,8 +120,8 @@ async function runDocker(args, options = {}) {
   }
   const captured = {
     code: result.code ?? 1,
-    stdout: sanitizeDiagnostic(stdout.trim()),
-    stderr: sanitizeDiagnostic(stderr.trim()),
+    stdout: stdout.trim(),
+    stderr: stderr.trim(),
   };
   if (shutdownSignal) {
     throw new Error(`Docker command interrupted by ${shutdownSignal}`);
@@ -228,6 +213,32 @@ function parsePublishedPort(value) {
 }
 
 /**
+ * Resolve the published port while preserving an early container-exit diagnosis.
+ *
+ * @returns {Promise<number>} Published loopback port.
+ */
+async function resolvePublishedPort() {
+  const portResult = await runDocker(["port", containerName, "8000/tcp"], {
+    allowFailure: true,
+  });
+  if (portResult.code === 0) {
+    return parsePublishedPort(portResult.stdout);
+  }
+  const state = await runDocker(
+    ["inspect", "--format", "{{.State.Status}}", containerName],
+    { allowFailure: true },
+  );
+  if (state.code !== 0 || state.stdout !== "running") {
+    throw new Error(
+      `container exited before port publication: ${state.stdout || state.stderr}`,
+    );
+  }
+  throw new Error(
+    `published port unavailable: ${portResult.stderr || portResult.stdout}`,
+  );
+}
+
+/**
  * Determine whether the published loopback port has closed.
  *
  * @param {number} port - Host port.
@@ -269,90 +280,74 @@ async function waitForPortClosure() {
 }
 
 /**
- * Remove the marker-guarded temporary secret root.
+ * Remove one managed container if it still exists.
  *
- * @returns {Promise<boolean>} True when no temporary root remains.
+ * @param {string | undefined} name - Managed container name.
+ * @returns {Promise<{removed: boolean, error: string}>} Removal result.
  */
-async function removeSecretRoot() {
-  if (!secretRoot) {
-    return true;
+async function removeManagedContainer(name) {
+  if (!name) {
+    return { removed: true, error: "" };
   }
-  const metadata = await fs.lstat(secretRoot);
-  assertInvariant(
-    metadata.isDirectory() && !metadata.isSymbolicLink(),
-    "unsafe secret root type",
-  );
-  const [realRoot, realTemp] = await Promise.all([
-    fs.realpath(secretRoot),
-    fs.realpath(os.tmpdir()),
-  ]);
-  const relativeRoot = path.relative(realTemp, realRoot);
-  assertInvariant(
-    Boolean(relativeRoot) &&
-      !relativeRoot.startsWith("..") &&
-      !path.isAbsolute(relativeRoot),
-    "unsafe secret root location",
-  );
-  const markerPath = path.join(realRoot, TEMP_MARKER_FILE);
-  const markerMetadata = await fs.lstat(markerPath);
-  assertInvariant(
-    markerMetadata.isFile() && !markerMetadata.isSymbolicLink(),
-    "unsafe secret root marker",
-  );
-  assertInvariant(
-    (await fs.readFile(markerPath, "utf8")) === TEMP_MARKER_CONTENT,
-    "invalid secret root marker",
-  );
-  await fs.rm(realRoot, { recursive: true, force: false });
-  secretRoot = undefined;
-  return true;
+  const result = await runDocker(["rm", "--force", name], {
+    allowFailure: true,
+  }).catch((error) => ({ code: 1, stderr: error.message }));
+  const removed = result.code === 0 || /No such container/i.test(result.stderr);
+  return { removed, error: removed ? "" : result.stderr };
 }
 
 /**
- * Remove the managed container, named volume, listener, and secret root.
+ * Remove one managed volume if it still exists.
  *
- * @returns {Promise<{containerRemoved: boolean, volumeRemoved: boolean, portClosed: boolean, secretRootRemoved: boolean, errors: string[]}>} Cleanup report.
+ * @param {string | undefined} name - Managed volume name.
+ * @returns {Promise<{removed: boolean, error: string}>} Removal result.
+ */
+async function removeManagedVolume(name) {
+  if (!name) {
+    return { removed: true, error: "" };
+  }
+  const result = await runDocker(["volume", "rm", "--force", name], {
+    allowFailure: true,
+  }).catch((error) => ({ code: 1, stderr: error.message }));
+  const removed = result.code === 0 || /No such volume/i.test(result.stderr);
+  return { removed, error: removed ? "" : result.stderr };
+}
+
+/**
+ * Remove the managed containers, named volumes, and listener.
+ *
+ * @returns {Promise<{containerRemoved: boolean, secretInitializerRemoved: boolean, volumeRemoved: boolean, secretVolumeRemoved: boolean, portClosed: boolean, errors: string[]}>} Cleanup report.
  */
 async function cleanup() {
   const errors = [];
-  let containerRemoved = !containerName;
-  let volumeRemoved = !volumeName;
-  if (containerName) {
-    const result = await runDocker(["rm", "--force", containerName], {
-      allowFailure: true,
-    }).catch((error) => ({ code: 1, stderr: error.message }));
-    containerRemoved =
-      result.code === 0 || /No such container/i.test(result.stderr);
-    if (!containerRemoved) {
-      errors.push(`container cleanup: ${result.stderr}`);
-    }
+  const containerRemoval = await removeManagedContainer(containerName);
+  if (!containerRemoval.removed) {
+    errors.push(`container cleanup: ${containerRemoval.error}`);
+  }
+  const initializerRemoval = await removeManagedContainer(
+    secretInitializerName,
+  );
+  if (!initializerRemoval.removed) {
+    errors.push(`secret initializer cleanup: ${initializerRemoval.error}`);
   }
   const portClosed = await waitForPortClosure();
   if (!portClosed) {
     errors.push(`published port ${hostPort} remained open`);
   }
-  if (volumeName) {
-    const result = await runDocker(["volume", "rm", "--force", volumeName], {
-      allowFailure: true,
-    }).catch((error) => ({ code: 1, stderr: error.message }));
-    volumeRemoved = result.code === 0 || /No such volume/i.test(result.stderr);
-    if (!volumeRemoved) {
-      errors.push(`volume cleanup: ${result.stderr}`);
-    }
+  const volumeRemoval = await removeManagedVolume(volumeName);
+  if (!volumeRemoval.removed) {
+    errors.push(`volume cleanup: ${volumeRemoval.error}`);
   }
-  let secretRootRemoved = false;
-  try {
-    secretRootRemoved = await removeSecretRoot();
-  } catch (error) {
-    errors.push(
-      `secret cleanup: ${error instanceof Error ? error.message : String(error)}`,
-    );
+  const secretVolumeRemoval = await removeManagedVolume(secretVolumeName);
+  if (!secretVolumeRemoval.removed) {
+    errors.push(`secret volume cleanup: ${secretVolumeRemoval.error}`);
   }
   return {
-    containerRemoved,
-    volumeRemoved,
+    containerRemoved: containerRemoval.removed,
+    secretInitializerRemoved: initializerRemoval.removed,
+    volumeRemoved: volumeRemoval.removed,
+    secretVolumeRemoved: secretVolumeRemoval.removed,
     portClosed,
-    secretRootRemoved,
     errors,
   };
 }
@@ -366,19 +361,9 @@ async function cleanup() {
 async function runSmoke(imageReference) {
   const suffix = `${process.pid}-${randomBytes(4).toString("hex")}`;
   containerName = `litradar-smoke-${suffix}`;
+  secretInitializerName = `${containerName}-secret-init`;
   volumeName = `litradar-smoke-data-${suffix}`;
-  secretRoot = await fs.mkdtemp(
-    path.join(os.tmpdir(), "litradar-container-smoke-"),
-  );
-  await Promise.all([
-    fs.writeFile(path.join(secretRoot, TEMP_MARKER_FILE), TEMP_MARKER_CONTENT, {
-      flag: "wx",
-    }),
-    fs.writeFile(path.join(secretRoot, "litradar_key"), randomBytes(32), {
-      flag: "wx",
-      mode: 0o600,
-    }),
-  ]);
+  secretVolumeName = `litradar-smoke-secret-${suffix}`;
 
   const imageId = (
     await runDocker(["image", "inspect", "--format", "{{.Id}}", imageReference])
@@ -388,6 +373,27 @@ async function runSmoke(imageReference) {
     "local image did not resolve to a content ID",
   );
   await runDocker(["volume", "create", volumeName]);
+  await runDocker(["volume", "create", secretVolumeName]);
+  await runDocker([
+    "run",
+    "--rm",
+    "--name",
+    secretInitializerName,
+    "--network",
+    "none",
+    "--read-only",
+    "--cap-drop",
+    "ALL",
+    "--security-opt",
+    "no-new-privileges",
+    "--mount",
+    `type=volume,source=${secretVolumeName},target=/app/data`,
+    "--entrypoint",
+    "/bin/sh",
+    imageReference,
+    "-c",
+    'umask 077; head -c 32 /dev/urandom > /app/data/litradar_key; test "$(wc -c < /app/data/litradar_key)" -eq 32',
+  ]);
   await runDocker([
     "run",
     "--detach",
@@ -403,14 +409,13 @@ async function runSmoke(imageReference) {
     "--mount",
     `type=volume,source=${volumeName},target=/app/data`,
     "--mount",
-    `type=bind,source=${secretRoot},target=/run/secrets,readonly`,
+    `type=volume,source=${secretVolumeName},target=/run/secrets,readonly`,
     "--publish",
     "127.0.0.1::8000",
     imageReference,
   ]);
 
-  const portOutput = await runDocker(["port", containerName, "8000/tcp"]);
-  hostPort = parsePublishedPort(portOutput.stdout);
+  hostPort = await resolvePublishedPort();
   const baseUrl = `http://127.0.0.1:${hostPort}`;
   await waitForReadiness(baseUrl);
 
@@ -475,6 +480,10 @@ async function runSmoke(imageReference) {
     "container runs as root",
   );
   assertInvariant(dataMount?.RW === true, "data mount is not writable");
+  assertInvariant(
+    secretMount?.Type === "volume" && secretMount?.Name === secretVolumeName,
+    "secret mount is not the managed volume",
+  );
   assertInvariant(secretMount?.RW === false, "secret mount is not read-only");
 
   return {
@@ -521,9 +530,7 @@ if (args.length !== 1 || !args[0].trim()) {
       const logs = await runDocker(["logs", "--tail", "200", containerName], {
         allowFailure: true,
       }).catch(() => ({ stdout: "", stderr: "" }));
-      const safeLogs = sanitizeDiagnostic(
-        [logs.stdout, logs.stderr].filter(Boolean).join("\n"),
-      );
+      const safeLogs = [logs.stdout, logs.stderr].filter(Boolean).join("\n");
       if (safeLogs) {
         failure = new Error(`${failure.message}\n${safeLogs}`);
       }
@@ -547,7 +554,7 @@ await fs.writeFile(
 );
 
 if (failure) {
-  const safeFailure = sanitizeDiagnostic(failure.stack ?? failure.message);
+  const safeFailure = failure.stack ?? failure.message;
   await fs.writeFile(FAILURE_LOG_PATH, `${safeFailure}\n`, "utf8");
   process.stderr.write(`[container-smoke] ${safeFailure}\n`);
   process.exitCode =
