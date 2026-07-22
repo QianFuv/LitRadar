@@ -107,9 +107,14 @@ async function administratorMutationJourney({ page }: { page: Page }): Promise<v
   await login(page, ADMIN_USERNAME, ADMIN_PASSWORD);
   await expectHttpOnlySession(page);
   await page.goto('/admin');
-  await expect(page.getByRole('heading', { name: '管理面板' })).toBeVisible();
+  await expect(page).toHaveURL(/\/?\?admin=overview$/);
+  const adminDialog = page.getByRole('dialog', { name: '管理面板' });
+  const adminCategories = adminDialog.getByRole('navigation', { name: '管理分类' });
+  await expect(adminDialog).toBeVisible();
+  await adminCategories.getByRole('button', { name: '用户', exact: true }).click();
+  await expect(page).toHaveURL(/\/?\?admin=users$/);
 
-  const grantAdminButton = page.getByRole('button', {
+  const grantAdminButton = adminDialog.getByRole('button', {
     name: `设为 ${MEMBER_USERNAME} 为管理员`,
   });
   await expect(grantAdminButton).toBeVisible();
@@ -121,19 +126,21 @@ async function administratorMutationJourney({ page }: { page: Page }): Promise<v
   await grantAdminButton.click();
   expect((await grantResponse).ok()).toBe(true);
   await expect(
-    page.getByRole('button', { name: `取消 ${MEMBER_USERNAME} 的管理员` }),
+    adminDialog.getByRole('button', { name: `取消 ${MEMBER_USERNAME} 的管理员` }),
   ).toBeVisible();
   await page.reload();
   await expect(
-    page.getByRole('button', { name: `取消 ${MEMBER_USERNAME} 的管理员` }),
+    adminDialog.getByRole('button', { name: `取消 ${MEMBER_USERNAME} 的管理员` }),
   ).toBeVisible();
 
+  await adminCategories.getByRole('button', { name: '邀请码', exact: true }).click();
+  await expect(page).toHaveURL(/\/?\?admin=invite-codes$/);
   const inviteResponse = page.waitForResponse(
     (response) =>
       response.request().method() === 'POST' &&
       new URL(response.url()).pathname === '/api/admin/invite-codes',
   );
-  await page.getByRole('button', { name: '生成邀请码' }).click();
+  await adminDialog.getByRole('button', { name: '生成邀请码' }).click();
   const createdInviteResponse = await inviteResponse;
   expect(createdInviteResponse.ok()).toBe(true);
   const createdInvite = (await createdInviteResponse.json()) as { code: string };
@@ -142,6 +149,8 @@ async function administratorMutationJourney({ page }: { page: Page }): Promise<v
   await page.reload();
   await expect(page.getByText(invitePrefix, { exact: true })).toBeVisible();
 
+  await adminCategories.getByRole('button', { name: '公告', exact: true }).click();
+  await expect(page).toHaveURL(/\/?\?admin=announcements$/);
   await page.getByRole('button', { name: '新建公告' }).click();
   const announcementDialog = page.getByRole('dialog', { name: '新建公告' });
   await announcementDialog.getByLabel('公告标题').fill(CREATED_ANNOUNCEMENT_TITLE);
@@ -157,9 +166,12 @@ async function administratorMutationJourney({ page }: { page: Page }): Promise<v
   expect((await announcementResponse).ok()).toBe(true);
   await expect(page.getByText(CREATED_ANNOUNCEMENT_TITLE, { exact: true })).toBeVisible();
   await page.reload();
+  await dismissVisibleAnnouncements(page);
   await expect(page.getByText(CREATED_ANNOUNCEMENT_TITLE, { exact: true })).toBeVisible();
 
-  const revokeAdminButton = page.getByRole('button', {
+  await adminCategories.getByRole('button', { name: '用户', exact: true }).click();
+  await expect(page).toHaveURL(/\/?\?admin=users$/);
+  const revokeAdminButton = adminDialog.getByRole('button', {
     name: `取消 ${MEMBER_USERNAME} 的管理员`,
   });
   const revokeResponse = page.waitForResponse(
@@ -171,7 +183,7 @@ async function administratorMutationJourney({ page }: { page: Page }): Promise<v
   expect((await revokeResponse).ok()).toBe(true);
   await page.reload();
   await expect(
-    page.getByRole('button', { name: `设为 ${MEMBER_USERNAME} 为管理员` }),
+    adminDialog.getByRole('button', { name: `设为 ${MEMBER_USERNAME} 为管理员` }),
   ).toBeVisible();
 }
 
