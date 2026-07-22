@@ -550,18 +550,17 @@ async function verifiesUserMenuNavigationAndTheme(page: Page): Promise<void> {
   );
 
   const trigger = page.getByRole('button', { name: '打开账号菜单：browser_user' });
-  const resetButton = page.getByRole('complementary').getByRole('button', { name: '重置筛选' });
   await expect(trigger).toContainText('browser_user');
+  await expect(
+    page.getByRole('complementary').getByRole('button', { name: '重置筛选' }),
+  ).toHaveCount(0);
   await expectElementChromeToBeGrayscale(currentNavigationLink, [
     'backgroundColor',
     'borderColor',
     'color',
   ]);
   await expectElementChromeToBeGrayscale(trigger, ['backgroundColor', 'borderColor', 'color']);
-  await expectElementChromeToBeGrayscale(resetButton, ['backgroundColor', 'color']);
   await expectThemeChromeTokensToBeGrayscale(page);
-  await expect(resetButton).toHaveCSS('background-color', 'rgb(237, 237, 237)');
-  await expect(resetButton).toHaveCSS('color', 'rgb(0, 0, 0)');
   await page.screenshot({ path: '../output/ui/default-chrome-dark.png', fullPage: true });
 
   await trigger.click();

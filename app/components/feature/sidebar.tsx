@@ -222,13 +222,6 @@ export function Sidebar({ className }: { className?: string }) {
     router.refresh();
   };
 
-  const handleClearFilters = () => {
-    setQ(null);
-    setAreas([]);
-    setJournalIds([]);
-    setMonthRange(null);
-  };
-
   const handleClearJournalFilters = () => {
     setAreas([]);
     setJournalIds([]);
@@ -577,16 +570,6 @@ export function Sidebar({ className }: { className?: string }) {
           </>
         )}
       </div>
-
-      <Button
-        type="button"
-        variant="default"
-        size="sm"
-        className="w-full bg-sidebar-primary text-sidebar-primary-foreground hover:bg-sidebar-primary/90 focus-visible:ring-sidebar-ring/50"
-        onClick={handleClearFilters}
-      >
-        重置筛选
-      </Button>
     </WorkspaceSidebar>
   );
 }
