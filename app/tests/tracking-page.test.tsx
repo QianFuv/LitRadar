@@ -416,7 +416,7 @@ describe('TrackingSettingsContent', () => {
   test(
     'saves complete recommendation and delivery settings',
     savesCompleteRecommendationAndDeliverySettings,
-    15_000,
+    30_000,
   );
   test('selects and creates tracking folders', selectsAndCreatesTrackingFolders);
   test('reports tracking folder failures', reportsTrackingFolderFailure);

@@ -16,8 +16,27 @@ use crate::{open_sqlite_connection, StorageConfig};
 
 const BUNDLE_FORMAT: &str = "litradar-meta-bundle";
 const BUNDLE_MANIFEST_FILENAME: &str = "bundle-manifest.json";
+const PACKAGED_META_DIRECTORY: &str = "/usr/share/litradar/meta";
 const CATALOG_V2_HEADER: &str = "catalog_id,title,issn,eissn,all_issns,title_aliases,area,utd_rank,utd_rating,abs_rank,abs_rating,fms_rank,fms_rating,fmscn_rank,fmscn_rating";
 const CATALOG_V3_HEADER: &str = "catalog_id,catalog_aliases,title,issn,eissn,all_issns,title_aliases,area,utd_rank,utd_rating,abs_rank,abs_rating,fms_rank,fms_rating,fmscn_rank,fmscn_rating";
+
+/// Discover the immutable metadata bundle at the fixed packaged-runtime path.
+///
+/// # Returns
+///
+/// The fixed bundle directory when its exact manifest path exists, or `None` for a local
+/// non-packaged runtime.
+pub fn discover_packaged_meta_dir() -> std::io::Result<Option<PathBuf>> {
+    discover_packaged_meta_dir_at(Path::new(PACKAGED_META_DIRECTORY))
+}
+
+fn discover_packaged_meta_dir_at(directory: &Path) -> std::io::Result<Option<PathBuf>> {
+    match fs::metadata(directory.join(BUNDLE_MANIFEST_FILENAME)) {
+        Ok(_) => Ok(Some(directory.to_path_buf())),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error),
+    }
+}
 
 /// Action taken for one persistent metadata catalog.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -722,8 +741,9 @@ mod tests {
     use tempfile::{tempdir, TempDir};
 
     use super::{
-        canonical_sha256, prepare_managed_meta, prepare_managed_meta_with_hook, validate_bundle,
-        ManagedMetaAction, ManagedMetaError, ManagedMetaPreparationReport, PreparationHook,
+        canonical_sha256, discover_packaged_meta_dir_at, prepare_managed_meta,
+        prepare_managed_meta_with_hook, validate_bundle, ManagedMetaAction, ManagedMetaError,
+        ManagedMetaPreparationReport, PreparationHook, BUNDLE_MANIFEST_FILENAME,
     };
     use crate::{migrate_auth_database, StorageConfig};
 
@@ -777,6 +797,31 @@ mod tests {
             }
             Ok(())
         }
+    }
+
+    #[test]
+    fn packaged_discovery_requires_the_exact_manifest_boundary() {
+        let root = tempdir().expect("temporary directory should be created");
+        let packaged_meta_dir = root.path().join("share").join("litradar").join("meta");
+
+        assert_eq!(
+            discover_packaged_meta_dir_at(&packaged_meta_dir)
+                .expect("missing packaged path should be inspectable"),
+            None
+        );
+        fs::create_dir_all(&packaged_meta_dir).expect("packaged directory should be created");
+        assert_eq!(
+            discover_packaged_meta_dir_at(&packaged_meta_dir)
+                .expect("directory without manifest should be inspectable"),
+            None
+        );
+        fs::write(packaged_meta_dir.join(BUNDLE_MANIFEST_FILENAME), b"{}")
+            .expect("manifest boundary should be created");
+        assert_eq!(
+            discover_packaged_meta_dir_at(&packaged_meta_dir)
+                .expect("manifest boundary should be discovered"),
+            Some(packaged_meta_dir)
+        );
     }
 
     #[test]

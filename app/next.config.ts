@@ -5,9 +5,9 @@
  */
 
 import type { NextConfig } from 'next';
+import { PHASE_DEVELOPMENT_SERVER } from 'next/constants';
 
-const BACKEND_URL = process.env.INTERNAL_API_URL || 'http://localhost:8001';
-const IS_DEVELOPMENT = process.env.NODE_ENV === 'development';
+const DEVELOPMENT_BACKEND_URL = 'http://127.0.0.1:8001';
 
 /**
  * Build the development-only backend rewrites.
@@ -20,38 +20,44 @@ const DEVELOPMENT_REWRITES: NonNullable<NextConfig['rewrites']> = async () => ({
   fallback: [
     {
       source: '/api/:path*',
-      destination: `${BACKEND_URL}/api/:path*`,
+      destination: `${DEVELOPMENT_BACKEND_URL}/api/:path*`,
     },
     {
       source: '/mcp/:path*',
-      destination: `${BACKEND_URL}/mcp/:path*`,
+      destination: `${DEVELOPMENT_BACKEND_URL}/mcp/:path*`,
     },
     {
       source: '/docs/',
-      destination: `${BACKEND_URL}/docs/`,
+      destination: `${DEVELOPMENT_BACKEND_URL}/docs/`,
     },
     {
       source: '/docs/:path*',
-      destination: `${BACKEND_URL}/docs/:path*`,
+      destination: `${DEVELOPMENT_BACKEND_URL}/docs/:path*`,
     },
     {
       source: '/openapi.json',
-      destination: `${BACKEND_URL}/openapi.json`,
+      destination: `${DEVELOPMENT_BACKEND_URL}/openapi.json`,
     },
   ],
 });
 
-const NEXT_CONFIG: NextConfig = {
-  ...(IS_DEVELOPMENT
-    ? {
-        rewrites: DEVELOPMENT_REWRITES,
-        skipTrailingSlashRedirect: true,
-      }
-    : { output: 'export' }),
-  allowedDevOrigins: ['127.0.0.1'],
-  images: {
-    unoptimized: true,
-  },
-};
-
-export default NEXT_CONFIG;
+/**
+ * Select deterministic development rewrites or production static export behavior.
+ *
+ * @param phase - Current Next.js build or development phase.
+ * @returns Next.js configuration for the selected phase.
+ */
+export default function buildNextConfig(phase: string): NextConfig {
+  return {
+    ...(phase === PHASE_DEVELOPMENT_SERVER
+      ? {
+          rewrites: DEVELOPMENT_REWRITES,
+          skipTrailingSlashRedirect: true,
+        }
+      : { output: 'export' }),
+    allowedDevOrigins: ['127.0.0.1'],
+    images: {
+      unoptimized: true,
+    },
+  };
+}

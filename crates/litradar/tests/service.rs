@@ -107,7 +107,6 @@ impl ServiceChild {
                 "--scheduler-interval-seconds",
                 "3600",
             ])
-            .env_remove("LITRADAR_BUNDLED_META_DIR")
             .env_remove("RUST_LOG")
             .stdin(Stdio::null())
             .stdout(Stdio::piped())

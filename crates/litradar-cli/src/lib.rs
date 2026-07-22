@@ -29,7 +29,6 @@ use serde_json::json;
 const DEFAULT_INDEX_WORKER_COUNT: usize = 6;
 const DEFAULT_INDEX_PROCESS_COUNT: usize = 1;
 const DEFAULT_INDEX_ISSUE_BATCH_SIZE: usize = 8;
-const BUNDLED_META_DIR_ENV: &str = "LITRADAR_BUNDLED_META_DIR";
 
 fn run_cli_command(
     command: &'static str,
@@ -290,7 +289,7 @@ pub fn run_index_command(
         run_index_command_with_bundled_meta_dir(
             args,
             &application_executable,
-            std::env::var_os(BUNDLED_META_DIR_ENV).map(PathBuf::from),
+            litradar_storage::discover_packaged_meta_dir()?,
         )
     })
 }

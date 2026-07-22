@@ -62,8 +62,7 @@ COPY --chown=litradar:litradar libs/simple-linux libs/simple-linux
 COPY data/meta /usr/share/litradar/meta
 COPY --chown=litradar:litradar --from=frontend-build /app/out web
 
-ENV HOME=/tmp \
-    LITRADAR_BUNDLED_META_DIR=/usr/share/litradar/meta
+ENV HOME=/tmp
 
 USER litradar
 

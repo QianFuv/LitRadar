@@ -8,8 +8,9 @@ use std::error::Error;
 use std::path::Path;
 use std::time::Instant;
 
+use litradar_worker::scheduler::INTERNAL_PARENT_RUN_ID_ARGUMENT;
+
 const SERVICE_RUNTIME_WORKER_THREADS: usize = 2;
-const PARENT_RUN_ID_ENV: &str = "LITRADAR_PARENT_RUN_ID";
 
 /// Run the application command selected by process arguments.
 ///
@@ -20,10 +21,10 @@ const PARENT_RUN_ID_ENV: &str = "LITRADAR_PARENT_RUN_ID";
 /// # Returns
 ///
 /// Result indicating whether the selected command completed successfully.
-pub fn run(args: Vec<String>) -> Result<(), Box<dyn Error>> {
+pub fn run(mut args: Vec<String>) -> Result<(), Box<dyn Error>> {
     let application_executable = std::env::current_exe()?;
+    let parent_run_id = extract_parent_run_id(&mut args);
     let command = command_name(&args);
-    let parent_run_id = parent_run_id();
     let process_span = tracing::info_span!(
         "process",
         component = "runtime",
@@ -32,13 +33,16 @@ pub fn run(args: Vec<String>) -> Result<(), Box<dyn Error>> {
         process_id = std::process::id(),
         parent_run_id = tracing::field::Empty,
     );
-    if let Some(parent_run_id) = parent_run_id.as_deref() {
+    if let Ok(Some(parent_run_id)) = &parent_run_id {
         process_span.record("parent_run_id", parent_run_id);
     }
     process_span.in_scope(|| {
         let started_at = Instant::now();
         tracing::info!(event = "process.started", component = "runtime");
-        let result = run_with_executable(args, &application_executable);
+        let result = match parent_run_id {
+            Ok(_) => run_with_executable(args, &application_executable),
+            Err(error) => Err(error),
+        };
         let duration_ms = started_at.elapsed().as_millis();
         match &result {
             Ok(()) => tracing::info!(
@@ -73,16 +77,36 @@ fn command_name(args: &[String]) -> &'static str {
     }
 }
 
-fn parent_run_id() -> Option<String> {
-    std::env::var_os(PARENT_RUN_ID_ENV)
-        .and_then(|value| value.into_string().ok())
-        .filter(|value| {
-            !value.is_empty()
-                && value.len() <= 128
-                && value
-                    .chars()
-                    .all(|character| character.is_ascii_alphanumeric() || "-_.".contains(character))
-        })
+fn extract_parent_run_id(args: &mut Vec<String>) -> Result<Option<String>, Box<dyn Error>> {
+    let Some(index) = args
+        .iter()
+        .position(|argument| argument == INTERNAL_PARENT_RUN_ID_ARGUMENT)
+    else {
+        return Ok(None);
+    };
+    if index + 1 >= args.len() {
+        return Err("internal parent run id requires a value".into());
+    }
+    let value = args.remove(index + 1);
+    args.remove(index);
+    if args
+        .iter()
+        .any(|argument| argument == INTERNAL_PARENT_RUN_ID_ARGUMENT)
+    {
+        return Err("internal parent run id must be unique".into());
+    }
+    let mut characters = value.chars();
+    let is_valid = value.len() <= 128
+        && characters
+            .next()
+            .is_some_and(|character| character.is_ascii_alphanumeric())
+        && characters.all(|character| {
+            character.is_ascii_alphanumeric() || matches!(character, '-' | '_' | '.')
+        });
+    if !is_valid {
+        return Err("invalid internal parent run id".into());
+    }
+    Ok(Some(value))
 }
 
 fn run_with_executable(
@@ -155,7 +179,7 @@ fn has_help(args: &[String]) -> bool {
 mod tests {
     use std::path::Path;
 
-    use super::run_with_executable;
+    use super::{application_usage, extract_parent_run_id, run_with_executable};
 
     #[test]
     fn unknown_subcommands_fail_without_legacy_dispatch() {
@@ -178,5 +202,40 @@ mod tests {
         .expect("synchronous help should succeed");
 
         assert!(tokio::runtime::Handle::try_current().is_err());
+    }
+
+    #[test]
+    fn hidden_parent_run_id_is_validated_removed_and_not_advertised() {
+        let mut args = vec![
+            "notify".to_string(),
+            "--litradar-parent-run-id".to_string(),
+            "run-123.safe".to_string(),
+            "--dry-run".to_string(),
+        ];
+        assert_eq!(
+            extract_parent_run_id(&mut args).expect("safe parent run id should parse"),
+            Some("run-123.safe".to_string())
+        );
+        assert_eq!(args, ["notify", "--dry-run"]);
+        assert!(!application_usage().contains("parent-run-id"));
+
+        for mut invalid in [
+            vec!["--litradar-parent-run-id".to_string()],
+            vec![
+                "--litradar-parent-run-id".to_string(),
+                "unsafe/value".to_string(),
+            ],
+            vec![
+                "--litradar-parent-run-id".to_string(),
+                "first".to_string(),
+                "--litradar-parent-run-id".to_string(),
+                "second".to_string(),
+            ],
+        ] {
+            let error = extract_parent_run_id(&mut invalid)
+                .expect_err("invalid parent run id input should fail")
+                .to_string();
+            assert!(!error.contains("unsafe/value"));
+        }
     }
 }

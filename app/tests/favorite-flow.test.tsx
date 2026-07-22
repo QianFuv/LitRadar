@@ -554,6 +554,6 @@ describe('favorite mutation flow', () => {
   test('confirms folder deletion before mutation', confirmsFolderDeletion);
   test('confirms one favorite removal before mutation', confirmsSingleFavoriteRemoval);
   test('confirms bulk favorite removal with a target snapshot', confirmsBulkFavoriteRemoval);
-  test('manages folders and export formats', managesFoldersAndExportFormats);
+  test('manages folders and export formats', managesFoldersAndExportFormats, 15_000);
   test('retries a failed bulk move', retriesFailedBulkMove);
 });

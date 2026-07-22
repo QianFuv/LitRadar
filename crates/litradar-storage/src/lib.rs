@@ -58,8 +58,8 @@ pub use index::{
     ArticleListParams, IndexRepositoryError, IssueListParams, JournalListParams,
 };
 pub use meta::{
-    prepare_managed_meta, ManagedMetaAction, ManagedMetaCatalogReport, ManagedMetaError,
-    ManagedMetaPreparationReport,
+    discover_packaged_meta_dir, prepare_managed_meta, ManagedMetaAction, ManagedMetaCatalogReport,
+    ManagedMetaError, ManagedMetaPreparationReport,
 };
 pub use migrations::{
     migrate_auth_database, migrate_existing_index_databases, migrate_index_database,

@@ -24,7 +24,9 @@ const PROCESS_POLL_INTERVAL: Duration = Duration::from_millis(25);
 const PROCESS_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5);
 const MAX_CAPTURE_BYTES: usize = 2_048;
 const MAX_OUTPUT_SUMMARY_CHARS: usize = 4_096;
-const PARENT_RUN_ID_ENV: &str = "LITRADAR_PARENT_RUN_ID";
+
+/// Hidden application argument used to correlate scheduler child process logs.
+pub const INTERNAL_PARENT_RUN_ID_ARGUMENT: &str = "--litradar-parent-run-id";
 
 /// Maximum age of a healthy persisted worker heartbeat.
 pub const SCHEDULER_HEALTH_WINDOW_SECONDS: f64 = 90.0;
@@ -993,7 +995,8 @@ fn execute_scheduled_process_in_span(
     let mut command = Command::new(&process.executable);
     command
         .args(process.arguments)
-        .env(PARENT_RUN_ID_ENV, &context.run_id)
+        .arg(INTERNAL_PARENT_RUN_ID_ARGUMENT)
+        .arg(&context.run_id)
         .stdout(Stdio::piped())
         .stderr(Stdio::inherit());
     let mut child = match command.spawn() {
@@ -2022,6 +2025,7 @@ mod tests {
                 "--exact".into(),
                 "scheduler::tests::scheduler_timeout_child_fixture".into(),
                 "--nocapture".into(),
+                "--".into(),
             ],
         };
         let logs = CapturedLogs::default();
@@ -2061,6 +2065,7 @@ mod tests {
                 "--exact".into(),
                 "scheduler::tests::scheduler_timeout_child_fixture".into(),
                 "--nocapture".into(),
+                "--".into(),
             ],
         };
         let logs = CapturedLogs::default();
@@ -2105,6 +2110,7 @@ mod tests {
                 "--exact".into(),
                 "scheduler::tests::scheduler_output_child_fixture".into(),
                 "--nocapture".into(),
+                "--".into(),
             ],
         };
         let logs = CapturedLogs::default();
@@ -2174,6 +2180,7 @@ mod tests {
                 "--exact".into(),
                 "scheduler::tests::scheduler_nonzero_child_fixture".into(),
                 "--nocapture".into(),
+                "--".into(),
             ],
         };
         let logs = CapturedLogs::default();
@@ -2204,10 +2211,13 @@ mod tests {
     #[test]
     #[ignore = "helper process for scheduler output boundary coverage"]
     fn scheduler_output_child_fixture() {
-        println!(
-            "parent_run_id={}",
-            std::env::var(PARENT_RUN_ID_ENV).unwrap_or_default()
-        );
+        let arguments = std::env::args().collect::<Vec<_>>();
+        let parent_run_id = arguments
+            .windows(2)
+            .find(|pair| pair[0] == INTERNAL_PARENT_RUN_ID_ARGUMENT)
+            .map(|pair| pair[1].as_str())
+            .unwrap_or_default();
+        println!("parent_run_id={parent_run_id}");
         eprintln!("scheduler-child-stderr-sentinel");
     }
 

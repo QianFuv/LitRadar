@@ -8,8 +8,6 @@ import { afterAll, afterEach, beforeAll } from 'vitest';
 
 import { server } from '@/tests/mocks/server';
 
-process.env.NEXT_PUBLIC_API_URL = 'http://localhost';
-
 /**
  * Start request interception and fail tests on unhandled network calls.
  */

@@ -23,6 +23,14 @@ const FAILURE_LOG_PATH = path.join(REPORT_ROOT, "failure.log");
 const COMMAND_TIMEOUT_MS = 60_000;
 const READY_TIMEOUT_MS = 60_000;
 const POLL_INTERVAL_MS = 250;
+const REMOVED_APPLICATION_ENVIRONMENT_NAMES = [
+  "NEXT_PUBLIC_API_URL",
+  "INTERNAL_API_URL",
+  "LITRADAR_BUNDLED_META_DIR",
+  "LITRADAR_LOG_FORMAT",
+  "LITRADAR_LOG_FILTER",
+  "LITRADAR_PARENT_RUN_ID",
+];
 
 let activeChild;
 let containerName;
@@ -419,6 +427,13 @@ async function runSmoke(imageReference) {
   const baseUrl = `http://127.0.0.1:${hostPort}`;
   await waitForReadiness(baseUrl);
 
+  await runDocker([
+    "exec",
+    containerName,
+    "sh",
+    "-c",
+    "test -f /app/data/meta/ccf_computer_journals.csv && test -f /app/data/meta/chinese_journals.csv && test -f /app/data/meta/english_journals.csv",
+  ]);
   const [rootResponse, openApiResponse, inspectResult] = await Promise.all([
     fetchRuntime(`${baseUrl}/`),
     fetchRuntime(`${baseUrl}/openapi.json`),
@@ -454,6 +469,12 @@ async function runSmoke(imageReference) {
   const secretMount = inspection.Mounts.find(
     (mount) => mount.Destination === "/run/secrets",
   );
+  const configuredEnvironment = inspection.Config.Env ?? [];
+  const removedEnvironmentOverrides = configuredEnvironment.filter((entry) =>
+    REMOVED_APPLICATION_ENVIRONMENT_NAMES.some((name) =>
+      entry.startsWith(`${name}=`),
+    ),
+  );
   assertInvariant(
     inspection.Image === imageId,
     "container did not use the inspected image ID",
@@ -485,6 +506,10 @@ async function runSmoke(imageReference) {
     "secret mount is not the managed volume",
   );
   assertInvariant(secretMount?.RW === false, "secret mount is not read-only");
+  assertInvariant(
+    removedEnvironmentOverrides.length === 0,
+    "container declares removed application environment overrides",
+  );
 
   return {
     status: "passed",
@@ -492,6 +517,8 @@ async function runSmoke(imageReference) {
     imageId,
     containerUser: inspection.Config.User,
     endpoints: ["/", "/health/ready", "/openapi.json"],
+    managedMetaPrepared: true,
+    removedEnvironmentOverrides: [],
     security: {
       readOnlyRoot: true,
       capabilitiesDropped: true,

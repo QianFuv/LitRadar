@@ -10,12 +10,10 @@ use tempfile::tempdir;
 ///
 /// # Returns
 ///
-/// Command with ambient legacy logging and packaged-metadata overrides removed.
+/// Command with ambient legacy logging overrides removed.
 pub(crate) fn litradar_command() -> Command {
     let mut command = Command::new(env!("CARGO_BIN_EXE_litradar"));
-    command
-        .env_remove("LITRADAR_BUNDLED_META_DIR")
-        .env_remove("RUST_LOG");
+    command.env_remove("RUST_LOG");
     command
 }
 

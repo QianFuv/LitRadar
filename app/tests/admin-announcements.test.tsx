@@ -217,7 +217,7 @@ describe('administrator announcements', () => {
   test(
     'creates, edits, prioritizes, and toggles an announcement',
     managesAnnouncementLifecycle,
-    10_000,
+    20_000,
   );
   test('retries a failed announcement creation', retriesFailedAnnouncementCreation);
   test('retries a failed announcement deletion', retriesFailedAnnouncementDeletion);

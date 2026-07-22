@@ -54,7 +54,6 @@ export const DEFAULT_DB = DEFAULT_DATABASE;
 export const SELECTED_DATABASE_KEY = 'litradar:v1:selected_database';
 const LEGACY_SELECTED_DATABASE_KEY = 'selected_database';
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || '';
 const REQUEST_ID_HEADER = 'X-Request-Id';
 
 /**
@@ -63,13 +62,10 @@ const REQUEST_ID_HEADER = 'X-Request-Id';
  * @returns Absolute backend URL.
  */
 export function resolveApiBase(): string {
-  if (API_BASE_URL) {
-    return API_BASE_URL;
-  }
-  if (typeof window !== 'undefined') {
+  if (typeof window !== 'undefined' && window.location.origin !== 'null') {
     return window.location.origin;
   }
-  return 'http://localhost:8000';
+  return 'http://localhost';
 }
 
 /**
