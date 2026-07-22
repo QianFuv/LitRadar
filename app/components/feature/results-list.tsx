@@ -75,7 +75,6 @@ export function ResultsList({ filterSummary }: ResultsListProps) {
   const [monthRange] = useQueryState('month_range', parseAsString);
   const searchParams = useSearchParams();
   const searchKey = searchParams.toString();
-  const includeTotal = true;
 
   const params = new URLSearchParams();
   if (q) params.set('q', q);
@@ -106,7 +105,7 @@ export function ResultsList({ filterSummary }: ResultsListProps) {
     >({
       queryKey,
       queryFn: async ({ pageParam }) => {
-        const page = await getArticles(params, pageParam, includeTotal, currentDb);
+        const page = await getArticles(params, pageParam, pageParam === null, currentDb);
         const cachedData =
           queryClient.getQueryData<InfiniteData<ArticlePage, string | null>>(queryKey);
         return validateArticlePageCursor(page, pageParam, cachedData?.pageParams ?? []);
@@ -228,7 +227,7 @@ export function ResultsList({ filterSummary }: ResultsListProps) {
 
   return (
     <div className="space-y-4">
-      {includeTotal && typeof total === 'number' && (
+      {typeof total === 'number' && (
         <div className="text-sm text-muted-foreground">共找到 {total} 条结果</div>
       )}
       {filterSummary && (

@@ -267,7 +267,10 @@ async function appendsPagesAndClearsStaleDatabaseResults(): Promise<void> {
   });
   expect(await screen.findByTestId('result-9002')).toBeInTheDocument();
   expect(requestUrls).toHaveLength(2);
+  expect(requestUrls[0].searchParams.get('include_total')).toBe('1');
   expect(requestUrls[1].searchParams.get('cursor')).toBe('page-two');
+  expect(requestUrls[1].searchParams.get('include_total')).toBe('0');
+  expect(screen.getByText('共找到 2 条结果')).toBeInTheDocument();
 
   act(() => setSelectedDatabase('other.sqlite'));
   expect(await screen.findByTestId('result-other-1')).toBeInTheDocument();

@@ -8,7 +8,9 @@ import { describe, expect, test, vi } from 'vitest';
 import { useVisiblePageList } from '@/components/feature/use-visible-page-list';
 
 type VisiblePageHarnessProps = {
+  isFetchingNextPage?: boolean;
   listKey: string;
+  loadedPages?: number;
   onFetchNextPage: () => void;
 };
 
@@ -18,11 +20,17 @@ type VisiblePageHarnessProps = {
  * @param props - Current list identity and next-page callback.
  * @returns Scrollable observer harness.
  */
-function VisiblePageHarness({ listKey, onFetchNextPage }: VisiblePageHarnessProps) {
+function VisiblePageHarness({
+  isFetchingNextPage = false,
+  listKey,
+  loadedPages = 2,
+  onFetchNextPage,
+}: VisiblePageHarnessProps) {
   const { loadMoreRef, prefetchRef, visiblePages } = useVisiblePageList({
     listKey,
-    loadedPages: 2,
+    loadedPages,
     hasNextPage: true,
+    isFetchingNextPage,
     onFetchNextPage,
   });
 
@@ -73,6 +81,39 @@ async function respondsToNativeIntersections(): Promise<void> {
   expect(screen.getByTestId('visible-pages')).toHaveTextContent('1');
 }
 
+/** Verify a delayed page is revealed while its sentinel remains intersecting. */
+async function revealsDelayedPageWithoutSecondIntersection(): Promise<void> {
+  const onFetchNextPage = vi.fn();
+  const { rerender } = render(
+    <VisiblePageHarness listKey="delayed-list" loadedPages={1} onFetchNextPage={onFetchNextPage} />,
+  );
+
+  await act(async () => {
+    screen.getByTestId('load-more-sentinel').scrollIntoView({ block: 'center' });
+    await waitForIntersectionDelivery();
+  });
+  await waitFor(() => expect(onFetchNextPage).toHaveBeenCalledTimes(1));
+
+  rerender(
+    <VisiblePageHarness
+      isFetchingNextPage
+      listKey="delayed-list"
+      loadedPages={1}
+      onFetchNextPage={onFetchNextPage}
+    />,
+  );
+  rerender(
+    <VisiblePageHarness listKey="delayed-list" loadedPages={2} onFetchNextPage={onFetchNextPage} />,
+  );
+
+  await waitFor(() => expect(screen.getByTestId('visible-pages')).toHaveTextContent('2'));
+  expect(onFetchNextPage).toHaveBeenCalledTimes(1);
+}
+
 describe('visible page list in Chromium', () => {
   test('responds to native intersections and list reset events', respondsToNativeIntersections);
+  test(
+    'reveals a delayed page without a second intersection',
+    revealsDelayedPageWithoutSecondIntersection,
+  );
 });

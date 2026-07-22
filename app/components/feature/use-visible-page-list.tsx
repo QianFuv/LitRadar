@@ -84,10 +84,29 @@ export function useVisiblePageList({
     onChange: handlePrefetchChange,
   });
 
-  const { ref: loadMoreRef } = useInView({
+  const { ref: loadMoreRef, inView: isLoadMoreInView } = useInView({
     threshold: 0,
     onChange: handleLoadMoreChange,
   });
+
+  useEffect(() => {
+    if (!isLoadMoreInView || visiblePages >= loadedPages) {
+      return;
+    }
+
+    const animationFrame = window.requestAnimationFrame(() => {
+      setVisiblePageState((current) => {
+        const currentCount = current.listKey === listKey ? current.count : 1;
+        const nextCount = Math.min(currentCount + 1, loadedPages);
+        if (current.listKey === listKey && current.count === nextCount) {
+          return current;
+        }
+        return { listKey, count: nextCount };
+      });
+    });
+
+    return () => window.cancelAnimationFrame(animationFrame);
+  }, [isLoadMoreInView, listKey, loadedPages, visiblePages]);
 
   return {
     visiblePages,
