@@ -1,4 +1,5 @@
 @import '../assets/JetBrainsLxgwNerdMono-Regular/result.css';
+@import '../assets/JetBrainsLxgwNerdMono-Bold/result.css';
 @import 'tailwindcss';
 @plugin "tailwindcss-animate";
 

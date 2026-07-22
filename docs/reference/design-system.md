@@ -29,7 +29,7 @@
 | 正文与普通 UI                | `'JetBrainsLxgwNerdMono', monospace` |
 | `code`、`kbd`、`samp`、`pre` | `'JetBrainsLxgwNerdMono', monospace` |
 
-`JetBrainsLxgwNerdMono` 是正文、控件、标题、文章内容、设置/管理 Dialog 和代码区域的统一首选字体。`app/assets/JetBrainsLxgwNerdMono-Regular/result.css` 保留生成器、版权与 OFL/MIT 授权元数据，通过 Unicode range 引用 344 个本地 WOFF2 分片，并为每个 `@font-face` 使用 `font-display: swap`。根布局不加载 Google 托管字体，字体链只在本地字体缺失时回退系统 `monospace`；正文与代码继续启用 `'liga' 1`。当前资产只有 Regular 字重，其他字重由浏览器合成。
+`JetBrainsLxgwNerdMono` 是正文、控件、标题、文章内容、设置/管理 Dialog 和代码区域的统一首选字体。`app/assets/JetBrainsLxgwNerdMono-Regular/result.css` 通过 344 个本地 WOFF2 分片提供 400 字重，`app/assets/JetBrainsLxgwNerdMono-Bold/result.css` 通过 324 个本地 WOFF2 分片提供 700 字重；两套生成样式都保留生成器、版权与 OFL/MIT 授权元数据，按 Unicode range 引用字体并为每个 `@font-face` 使用 `font-display: swap`。根布局不加载 Google 托管字体，字体链只在本地字体缺失时回退系统 `monospace`；正文与代码继续启用 `'liga' 1`，700 字重使用本地 Bold 字形。
 
 字号和字重主要使用 Tailwind utility，由具体组件按信息层级选择；项目没有一套独立的固定 display typography scale。旧版外部品牌标题尺寸、负字距和三字重规则不属于项目约束。
 

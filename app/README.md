@@ -88,7 +88,7 @@ pnpm dev
 
 常规 UI chrome（页面表面、文字、边框、焦点环、默认/选中控件和导航状态）在 light/dark 下只使用黑、白与中性灰。具有明确业务含义的颜色继续保留：蓝色表示信息或搜索命中，红色表示错误或危险操作，黄/琥珀表示收藏或警告，绿色表示成功。状态色必须同时配合文字、图标或 ARIA 语义，Logo 和账号头像位图保持原色。
 
-正文、控件、标题、文章内容、设置/管理 Dialog 与代码区域统一使用本地 `JetBrainsLxgwNerdMono`。字体位于 `assets/JetBrainsLxgwNerdMono-Regular/`，由保留原始授权元数据的 `result.css` 按 Unicode range 加载 344 个 WOFF2 分片并使用 `font-display: swap`；根布局不依赖 Google 托管字体或运行时字体网络请求。当前输入仅含 Regular 字重，较粗文字由浏览器合成。
+正文、控件、标题、文章内容、设置/管理 Dialog 与代码区域统一使用本地 `JetBrainsLxgwNerdMono`。`assets/JetBrainsLxgwNerdMono-Regular/result.css` 以 344 个 WOFF2 分片提供 400 字重，`assets/JetBrainsLxgwNerdMono-Bold/result.css` 以 324 个 WOFF2 分片提供 700 字重；两套生成样式均保留原始授权元数据、按 Unicode range 加载并使用 `font-display: swap`。根布局不依赖 Google 托管字体或运行时字体网络请求，700 字重使用本地 Bold 字形而不再由浏览器合成。
 
 ## 目录职责
 
