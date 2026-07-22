@@ -233,7 +233,7 @@ pub(super) fn json_string_vec_from_row(
     index: usize,
 ) -> rusqlite::Result<Vec<String>> {
     let payload = row.get::<_, String>(index)?;
-    serde_json::from_str(&payload).map_err(|error| {
+    crate::article_authors::decode_article_author_names(&payload).map_err(|error| {
         rusqlite::Error::FromSqlConversionFailure(
             index,
             rusqlite::types::Type::Text,

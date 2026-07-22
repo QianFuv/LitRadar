@@ -1,6 +1,7 @@
 //! SQLite storage boundaries and path resolution helpers.
 
 pub mod announcements;
+mod article_authors;
 pub mod auth;
 pub mod backup;
 pub mod business;

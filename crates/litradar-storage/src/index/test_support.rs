@@ -138,7 +138,8 @@ pub(super) fn create_fixture_schema(connection: &Connection) {
                 authors_json, start_page, end_page, abstract_text, doi, pmid,
                 open_access, in_press
             ) VALUES
-                (1001, 1, 10, 'Genome Methods', 2026, '2026-01-05', '["Alice","Bob"]',
+                (1001, 1, 10, 'Genome Methods', 2026, '2026-01-05',
+                 '[{"display_name":"Alice"},{"display_name":"Bob"}]',
                  '1', '10', 'Genome sequencing precision study', '10.1000/genome', '1001', 1, 0),
                 (1002, 1, 10, 'Clinical Data Mining', 2026, '2026-01-04', '["Carol"]',
                  '11', '20', 'Clinical data search study', '10.1000/clinical', '1002', 0, 0),
