@@ -97,12 +97,12 @@ litradar openapi > openapi.json 2> litradar.log
 
 ## 配置
 
-日志配置只接受两个进程环境变量：
+日志配置是 `data/auth.sqlite.runtime_settings` 中的两个非秘密管理员设置：
 
-| 变量                  | 默认值 | 允许值/语义                                  |
-| --------------------- | ------ | -------------------------------------------- |
-| `LITRADAR_LOG_FORMAT` | `json` | `json` 或 `compact`                          |
-| `LITRADAR_LOG_FILTER` | 见下文 | tracing `EnvFilter` 指令；`off` 完全关闭事件 |
+| 字段         | 默认值 | 前端控件 | 生效方式 | 允许值/语义                                  |
+| ------------ | ------ | -------- | -------- | -------------------------------------------- |
+| `log_format` | `json` | 单选     | 重启进程 | `json` 或 `compact`                          |
+| `log_filter` | 见下文 | 文本     | 重启进程 | tracing `EnvFilter` 指令；`off` 完全关闭事件 |
 
 默认 filter 为：
 
@@ -110,24 +110,13 @@ litradar openapi > openapi.json 2> litradar.log
 warn,litradar=info,litradar_api=info,litradar_cli=info,litradar_index=info,litradar_sources=info,litradar_storage=info,litradar_worker=info
 ```
 
-变量值必须是有效 Unicode，format 必须精确匹配允许值，filter 必须能被 `EnvFilter` 解析。非法配置让进程在业务工作前失败；系统不会静默回退。旧的通用 Rust 日志变量不再读取，也不存在兼容别名。
+管理员页面从后端运行设置元数据选择控件、允许值和“重启后生效”提示。保存时 API 严格验证 format 和 filter，并与同一请求中的其他设置原子提交。每个 `litradar` 进程在迁移或子命令分发前，按 `--project-root`/`--auth-db` 解析认证库并只读加载这两行；数据库或表不存在时使用默认值。已存在但非法或不可读的配置让进程在业务工作前失败，不会静默回退，也没有环境变量兼容别名。
 
 本地交互开发推荐 compact：
 
-```bash
-LITRADAR_LOG_FORMAT=compact cargo run --bin litradar -- serve \
-  --host 127.0.0.1 \
-  --port 8001 \
-  --secret-key-file secrets/litradar.key
-```
-
-PowerShell：
-
-```powershell
-$env:LITRADAR_LOG_FORMAT = "compact"
-cargo run --bin litradar -- serve --host 127.0.0.1 --port 8001 --secret-key-file secrets/litradar.key
-Remove-Item Env:LITRADAR_LOG_FORMAT
-```
+1. 先以默认 JSON 启动服务并登录管理员页面。
+2. 在“运行配置 → 可观测性”把“Log format”改为 `compact`。
+3. 保存后重启当前服务或下一条 CLI 进程。
 
 compact 只改变显示形式，不改变事件选择或隐私规则。一次本地命令看起来类似：
 
@@ -136,12 +125,7 @@ compact 只改变显示形式，不改变事件选择或隐私规则。一次本
 2026-07-18T03:22:14.682Z  INFO process: litradar: event="process.completed" component="runtime" outcome="success" duration_ms=0 component="runtime" command="help" version="0.1.0" process_id=42412
 ```
 
-生产和需要机器解析的本地检查保持默认 JSON。临时增加目标级别时应写最窄指令，例如：
-
-```bash
-LITRADAR_LOG_FILTER='warn,litradar=debug,litradar_api=debug' litradar serve \
-  --secret-key-file secrets/litradar.key
-```
+生产和需要机器解析的本地检查保持默认 JSON。临时增加目标级别时，在同一管理分组把 `log_filter` 保存为最窄指令，例如 `warn,litradar=debug,litradar_api=debug`，重启并完成诊断后再恢复默认值。
 
 即使启用 `DEBUG` 或 `TRACE`，也禁止增加秘密或内容字段。
 
@@ -155,7 +139,7 @@ LITRADAR_LOG_FILTER='warn,litradar=debug,litradar_api=debug' litradar serve \
 
 ### 调度与子进程
 
-调度事件在 span 中包含安全的 `task_id`、`job_id`、`run_id` 和 `worker_id`。父进程通过 `LITRADAR_PARENT_RUN_ID` 把当前 run ID 传给规范子进程；子进程的 process span 记录 `parent_run_id`。该内部变量只接受最长 128 个字符的 ASCII 字母、数字和 `-_.`。
+调度事件在 span 中包含安全的 `task_id`、`job_id`、`run_id` 和 `worker_id`。父进程通过隐藏内部 argv 把当前 run ID 传给规范子进程；应用在公共命令分发前验证并移除它，子进程的 process span 记录 `parent_run_id`。该值最长 128 字节，首字符必须为 ASCII 字母或数字，其余只允许 ASCII 字母、数字和 `-_.`。参数不出现在 `--help`，也不属于用户或管理员配置。
 
 索引 worker 继续使用索引 `run_id` 和 worker 标识关联。不要用命令参数文本、文件完整路径或凭据建立关联。
 
@@ -245,7 +229,7 @@ pwsh ./scripts/profile_logging.ps1 `
   -Concurrency 4
 ```
 
-脚本交错运行两种模式，对 `/api/logging-profile-missing` 发起固定 404 请求，验证每个默认模式应用行都是 JSON 且含必填字段，并检查请求事件数与丢失数。它还分别调用现有 `profile_docker_memory.ps1` 的 warm-idle 场景，复用 20 MiB p95、24 MiB peak 和 160 MiB cgroup 门禁。报告写入已忽略的 `output/logging/`。
+脚本先用正常容器启动完成迁移，通过可配置的 `sqlite3` CLI 快照 `log_format`/`log_filter`，再事务性切换 off/default 两种模式并在结束时恢复原始行。它交错运行两种模式，对 `/api/logging-profile-missing` 发起固定 404 请求，验证每个默认模式应用行都是 JSON 且含必填字段，并检查请求事件数与丢失数。它还分别调用现有 `profile_docker_memory.ps1` 的 warm-idle 场景，复用 20 MiB p95、24 MiB peak 和 160 MiB cgroup 门禁。报告写入已忽略的 `output/logging/`。
 
 门禁：
 

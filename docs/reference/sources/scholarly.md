@@ -1,15 +1,15 @@
 # Scholarly Provider
 
-Scholarly 是内置 Provider adapter，不是内容 schema。它把 Crossref、OpenAlex 和 Semantic Scholar 响应转换为[规范 Provider 契约](../index-provider-contract.md)，并可独立提供在线详情/摘要页能力。
+Scholarly 是内置 Provider adapter，不是内容 schema。它把 Crossref、OpenAlex 和 Semantic Scholar 响应转换为[规范 Provider 契约](../index-provider-contract.md)，并可独立提供在线摘要页能力。
 
 ## 能力声明
 
-| 注册                            | 能力                                               | 不提供     |
-| ------------------------------- | -------------------------------------------------- | ---------- |
-| `scholarly_index_registration`  | `IndexContentProvider`                             | 在线动作   |
-| `scholarly_access_registration` | `ArticleDetailProvider`、`ArticleAbstractProvider` | 索引、全文 |
+| 注册                            | 能力                      | 进程边界与不提供项            |
+| ------------------------------- | ------------------------- | ----------------------------- |
+| `scholarly_index_registration`  | `IndexContentProvider`    | `index` 进程；不提供在线动作  |
+| `scholarly_access_registration` | `ArticleAbstractProvider` | `serve` API；不提供索引或全文 |
 
-索引进程和 API 进程分别构造所需注册。索引能力不会让文章记录携带 `scholarly` provenance；在线能力也不要求文章曾由 Scholarly 索引。
+索引进程和 API 进程分别构造所需注册，管理端按相同逻辑名称把两者聚合为 `index_content + article_abstract`。这就是“分进程注册”：同一二进制内的命令边界不同，不是两个常驻服务，也不是自动 fallback。索引能力不会让文章记录携带 `scholarly` provenance；在线能力也不要求文章曾由 Scholarly 索引。
 
 ## 索引上游职责
 
@@ -38,16 +38,16 @@ Crossref 成功但结果为空不会触发 OpenAlex source fallback。没有 DOI
 
 ## 字段合并
 
-| 规范字段                          | 顺序/规则                                                       |
-| --------------------------------- | --------------------------------------------------------------- |
-| `title`                           | Crossref，缺失时 OpenAlex                                       |
-| `authors`                         | Crossref，缺失时 OpenAlex；只保留有序 display name              |
-| `abstract_text`                   | Crossref 去标记文本，缺失时 OpenAlex，再缺失时 Semantic Scholar |
-| `publication_year` / `date`       | Crossref 日期链，缺失时 OpenAlex publication date               |
-| `volume` / `issue_number` / pages | Crossref                                                        |
-| `doi`                             | 规范化为小写标识符，不保存 DOI URL                              |
-| `pmid`                            | OpenAlex `ids.pmid` 的数字形式                                  |
-| `open_access`                     | Semantic Scholar 或 OpenAlex 任一明确为 OA 时为 true            |
+| 规范字段                          | 顺序/规则                                                            |
+| --------------------------------- | -------------------------------------------------------------------- |
+| `title`                           | Crossref，缺失时 OpenAlex                                            |
+| `authors`                         | Crossref，缺失时 OpenAlex；只保留有序 display name                   |
+| `abstract_text`                   | Crossref 去标记文本，缺失时 OpenAlex，再缺失时 Semantic Scholar      |
+| `publication_year` / `date`       | Crossref 日期链，缺失时 OpenAlex publication date                    |
+| `volume` / `issue_number` / pages | Crossref                                                             |
+| `doi`                             | 规范化为小写标识符，不保存 DOI URL                                   |
+| `pmid`                            | OpenAlex `ids.pmid` 的数字形式                                       |
+| `open_access`                     | Semantic Scholar 或 OpenAlex 任一明确为 OA 时为 true                 |
 | `retraction_dois`                 | Crossref `updated-by` 中 type 为 retraction 的全部规范 DOI，排序去重 |
 
 Provider 不返回 PDF URL、landing page、permalink 或 content location。在线全文不是 Scholarly 当前声明的能力。
@@ -91,7 +91,7 @@ key `k`、进程 `p` 的相位为 `epoch + p × 1,100 ms + k × 1,100 ms / key_c
 
 “No valid paper ids given” 按空增强处理；其他不接受的 4xx 明确失败。
 
-## 在线详情和摘要页
+## 在线摘要页
 
 Scholarly 在线 adapter 不请求或读取索引时保存的 URL：
 
@@ -99,7 +99,9 @@ Scholarly 在线 adapter 不请求或读取索引时保存的 URL：
 2. 否则有 PMID 时，生成 `https://pubmed.ncbi.nlm.nih.gov/{pmid}/`；
 3. 两者都没有时返回 `NotFound`。
 
-详情和摘要页当前使用同一规范目的地。注册的精确 allowlist 只有 `doi.org` 和 `pubmed.ncbi.nlm.nih.gov`；API 再执行统一 HTTPS/host 校验并返回 no-store 307。生成 URL 不写回数据库。
+该摘要能力使用上述规范目的地。注册的精确 allowlist 只有 `doi.org` 和 `pubmed.ncbi.nlm.nih.gov`；API 再执行统一 HTTPS/host 校验并返回 no-store 307。生成 URL 不写回数据库。前端文章详情弹窗展示本地已存元数据，不调用该 adapter。
+
+默认摘要顺序中的 `scholarly → cnki` 是请求时 fallback：有 DOI/PMID 时 scholarly 通常先返回，否则或解析失败时继续 CNKI。管理员可以按 CSV/database stem 继承默认顺序、完整替换顺序或用空列表禁用；这不改变 `index_provider_routes`。
 
 ## 重试、日志与秘密
 

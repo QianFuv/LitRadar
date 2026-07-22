@@ -58,18 +58,7 @@ cargo run --bin litradar -- serve \
 - OpenAPI：`http://localhost:8000/openapi.json`
 - MCP：`http://localhost:8000/mcp`
 
-服务端默认把 JSON Lines 写入 stderr；请求终态使用匹配 route、status、outcome、duration 和服务器生成的 request ID，不记录 query。成功健康检查和静态流量被抑制。本地阅读可改为 compact，并用 LitRadar 专用 filter 临时增加目标级别：
-
-```bash
-LITRADAR_LOG_FORMAT=compact \
-LITRADAR_LOG_FILTER='warn,litradar=debug,litradar_api=debug' \
-cargo run --bin litradar -- serve \
-  --host 127.0.0.1 \
-  --port 8001 \
-  --secret-key-file secrets/litradar.key
-```
-
-PowerShell 需要先设置 `$env:LITRADAR_LOG_FORMAT = "compact"` 和 `$env:LITRADAR_LOG_FILTER = "warn,litradar=debug,litradar_api=debug"`，运行后用 `Remove-Item Env:LITRADAR_LOG_FORMAT, Env:LITRADAR_LOG_FILTER` 清理。配置、实际终端样式和隐私边界见[日志运维](../operations/logging.md)。
+服务端默认把 JSON Lines 写入 stderr；请求终态使用匹配 route、status、outcome、duration 和服务器生成的 request ID，不记录 query。成功健康检查和静态流量被抑制。日志格式和 filter 是管理员“运行配置”中的持久设置，不接受进程环境覆盖：首次按默认 JSON 启动，登录管理页把 `log_format` 改为 `compact`，按需把 `log_filter` 改为例如 `warn,litradar=debug,litradar_api=debug`，再重启进程。配置、实际终端样式和隐私边界见[日志运维](../operations/logging.md)。
 
 ### 首个管理员
 
@@ -97,7 +86,7 @@ cd app
 pnpm dev
 ```
 
-默认地址为 `http://localhost:8000`。`next.config.ts` 只在开发模式把同源 `/api/*`、`/mcp/*`、`/docs/*` 和 `/openapi.json` rewrite 到 `INTERNAL_API_URL`，默认 `http://localhost:8001`。只有浏览器需要跨源直连 API 时才设置 `NEXT_PUBLIC_API_URL`。
+默认地址为 `http://localhost:8000`。`next.config.ts` 只在开发 phase 把同源 `/api/*`、`/mcp/*`、`/docs/*` 和 `/openapi.json` rewrite 到固定 `http://127.0.0.1:8001`。浏览器始终使用当前 Origin，不存在构建时 API 地址或开发代理环境覆盖。
 
 生产构建执行静态导出，rewrite 不会进入产物；Rust 直接从 `/app/web` 提供页面和压缩资源，并在同一 8000 监听器处理后端命名空间。
 
@@ -116,7 +105,7 @@ cargo run --bin litradar -- notify \
   --dry-run
 ```
 
-Scholarly 索引需要先在 `data/auth.sqlite` 的运行配置中保存 OpenAlex 和 Semantic Scholar key。通知 dry-run 仍会调用配置的 AI endpoint，但不会发送 PushPlus或写入收藏；完全确定性的开发检查应使用现有 fixture 测试。
+Scholarly 索引需要先在 `data/auth.sqlite` 的运行配置中保存 OpenAlex 和 Semantic Scholar key。管理员页还会按每个已发现 CSV/database stem 显示索引 Provider 单选，以及摘要页/全文的继承、排序和显式禁用控件；选项由后端 capability 目录过滤，不需要编辑 JSON。通知 dry-run 仍会调用配置的 AI endpoint，但不会发送 PushPlus或写入收藏；完全确定性的开发检查应使用现有 fixture 测试。
 
 ## 修改位置
 
@@ -258,5 +247,5 @@ pwsh ./scripts/profile_logging.ps1 -DataPath ./output/logging-fixture -Rounds 3 
 - `push` 的默认状态目录是 `data/folder_push_state`，不是 `data/push_state`。
 - 每周更新和投递依赖 `*.changes.json`，不是按文章日期实时扫描。
 - 前端 API 入口是 `app/lib/api.tsx` 和 `app/lib/api/`。
-- `INTERNAL_API_URL` 只控制本地 `next dev` 的内部代理目标，不是生产容器配置。
+- 前端 API 始终同源；本地 Rust 服务需要监听固定的 `127.0.0.1:8001` 才能被 `pnpm dev` 代理。
 - 全局 scholarly key 池与用户级 AI/PushPlus 设置是两套不同配置。

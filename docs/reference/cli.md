@@ -157,7 +157,7 @@ litradar index --secret-key-file PATH
 | ------------------------------------------ | -------- | ------------------------------------------------------------ |
 | `--secret-key-file PATH`                   | 必填     | 解密索引运行配置                                             |
 | `--file FILE`、`-f FILE`                   | 全部 CSV | 只处理 `data/meta/` 下的一个文件                             |
-| `--workers N`、`-w N`                      | `6`      | 每个期刊子进程内的 CNKI 文章详情和 OpenAlex DOI 增强并发上限 |
+| `--workers N`、`-w N`                      | `6`      | 每个期刊子进程内的 CNKI 文章解析和 OpenAlex DOI 增强并发上限 |
 | `--processes N`                            | `1`      | 单个 CSV 的独立期刊子进程数                                  |
 | `--issue-batch N`                          | `8`      | 每轮合并的 CNKI issue 数                                     |
 | `--timeout N`                              | `20`     | 上游 HTTP 超时秒数                                           |
@@ -180,11 +180,11 @@ litradar index --secret-key-file PATH
 - 多个 CSV 仍逐个处理。
 - `6/1/8` 是约 100 MiB 索引内存目标下的默认并发。在上述 Provider 约束内显式提高并发仍受支持，但可能超过该预算。
 
-索引多进程也通过当前可执行路径启动 `litradar index` 的内部工作请求；不依赖另一个程序名。同步 CLI 命令不创建 Tokio 工作线程池，只有 `serve` 使用固定为 2 个工作线程的小型异步运行时。
+索引多进程也通过当前可执行路径启动 `litradar index` 的内部工作请求；不依赖另一个程序名。调度父进程同样通过当前二进制启动类型化子命令，并用经过校验的隐藏内部参数关联 `parent_run_id`。该参数在公共 parser 前被移除，不出现在 `--help`，也不是用户可配置的 CLI。同步 CLI 命令不创建 Tokio 工作线程池，只有 `serve` 使用固定为 2 个工作线程的小型异步运行时。
 
 命令结果保持原有顶层 `status`、`message` 和 `csvs` 字段，并新增不含密钥的 `effective_concurrency`，记录本次实际使用的 `workers`、`processes` 和 `issue_batch`。每个 CSV 结果使用定长的 `written_article_count`；旧的 `written_article_ids` 列表不再返回。内部索引工作进程同样只返回计数，避免结果大小随文章数量增长。
 
-发布镜像设置 `LITRADAR_BUNDLED_META_DIR=/usr/share/litradar/meta`。普通 `index` 在认证库迁移后、读取密钥和运行设置前准备持久的 `<project-root>/data/meta`，再进入下述规范目录校验；内部多进程 worker 请求不会重复准备。准备结果产生 `storage.managed_meta.prepared` 聚合事件，不改变上述 stdout JSON。未设置该变量的本地运行不执行受管准备；目录缺失会明确失败，存在但没有选中 CSV 时返回 `skipped`。
+发布镜像把 bundle 固定放在 `/usr/share/litradar/meta`。普通 `index` 仅在精确的 `bundle-manifest.json` 存在时，于认证库迁移后、读取密钥和运行设置前准备持久的 `<project-root>/data/meta`，再进入下述规范目录校验；内部多进程 worker 请求不会重复准备。准备结果产生 `storage.managed_meta.prepared` 聚合事件，不改变上述 stdout JSON。该路径不接受环境变量或 CLI 覆盖；本地构建通常发现不到 manifest，因此执行 no-op。运行目录缺失会明确失败，存在但没有选中 CSV 时返回 `skipped`。
 
 ### 规范目录和 Provider 路由
 
@@ -198,7 +198,7 @@ data/index-control/<stem>.sqlite
 
 CSV 使用 LitRadar 维护的 `catalog_id,title,issn,eissn,all_issns,title_aliases,area,...rankings` 契约，没有 `source` 或上游 ID。解析器在网络请求前拒绝未知列、非法/重复 `catalog_id`、非法 ISSN、重复别名和不规范文本。
 
-`index_provider_routes` 从 `auth.sqlite.runtime_settings` 把 stem 映射到一个已注册 `IndexContentProvider`。缺少 route、Provider 未注册或没有索引 capability 都会在启动 worker 前失败。改变 route 不改目录或内容库身份；在线详情、摘要和全文顺序另行配置。
+`index_provider_routes` 从 `auth.sqlite.runtime_settings` 把 stem 映射到一个已注册 `IndexContentProvider`。缺少 route、Provider 未注册或没有索引 capability 都会在启动 worker 前失败。改变 route 不改目录或内容库身份；在线摘要页和全文使用各自的 default + per-catalog 顺序，和索引 Provider 单选相互独立。
 
 内容库必须是新建/空 v0 或精确 v4。非空 v0 及 v1–v3 会返回包含确切路径的 rebuild-required 错误；命令不自动删除、改名、迁移或降低 `user_version`。先备份，再移动或删除点名文件并重建。
 

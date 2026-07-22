@@ -4,7 +4,7 @@
 
 - 系统进程与数据流见[系统架构](../docs/architecture.md)。
 - REST 契约与认证方式见[API 参考](../docs/reference/api.md)。
-- 环境变量的系统级语义见[运行配置](../docs/reference/configuration.md)。
+- 后端与前端的无环境覆盖配置边界见[运行配置](../docs/reference/configuration.md)。
 - UI token 与组件约定见[设计系统](../docs/reference/design-system.md)。
 - 服务端和浏览器日志契约见[日志运维](../docs/operations/logging.md)。
 - 五层测试模型、功能所有权和报告策略见[测试系统](../docs/testing.md)。
@@ -44,7 +44,7 @@ pnpm install --frozen-lockfile
 pnpm dev
 ```
 
-默认浏览器入口统一为 `http://localhost:8000`。Next.js 开发服务器保留 HMR，并把 `/api/*`、`/mcp/*`、`/docs/*` 和 `/openapi.json` 代理到内部 Rust 地址 `http://localhost:8001`；浏览器不需要访问第二个端口。
+默认浏览器入口统一为 `http://localhost:8000`。Next.js 开发服务器保留 HMR，并把 `/api/*`、`/mcp/*`、`/docs/*` 和 `/openapi.json` 代理到固定内部 Rust 地址 `http://127.0.0.1:8001`；浏览器不需要访问第二个端口。
 
 - Web：`http://localhost:8000/`
 - REST API：`http://localhost:8000/api`
@@ -54,25 +54,25 @@ pnpm dev
 
 生产构建执行 `pnpm build` 并写入 `out/`。生产静态文件和后端路由由同一个 Rust 监听器提供，不使用 Next.js rewrite，也没有 `pnpm start`/`next start` 路径。
 
-## 环境变量
+## 前端网络配置
 
-| 变量                  | 默认值                  | 作用                                                                 |
-| --------------------- | ----------------------- | -------------------------------------------------------------------- |
-| `NEXT_PUBLIC_API_URL` | 空                      | 浏览器 API 根地址；空值使用当前 Origin                               |
-| `INTERNAL_API_URL`    | `http://localhost:8001` | 仅供 `next dev` 将后端命名空间转发到内部 Rust 监听器；生产导出不使用 |
+前端没有应用专用环境配置，也不把 API 根地址嵌入构建产物：
 
-只有浏览器需要跨源直连后端时才设置 `NEXT_PUBLIC_API_URL`；该值会进入前端构建产物，此时后端必须允许对应 CORS Origin。标准开发和生产拓扑都保持同源，不需要设置它。
+- 浏览器始终从 `window.location.origin` 生成同源 API URL。
+- `pnpm dev` 只使用 `next.config.ts` 中固定的 `http://127.0.0.1:8001` 开发代理。
+- `pnpm build` 始终静态导出，由 Rust 与 API 共用一个 Origin。
+- 浏览器跨源直连和构建时 API 地址覆盖不再受支持；需要不同公网入口时，应在同一 Origin 前部署反向代理。
 
 ## 路由
 
-| 路由                    | 访问边界 | 页面职责                                      |
-| ----------------------- | -------- | --------------------------------------------- |
-| `/login`                | 公开     | 登录、注册和邀请码状态                        |
-| `/`                     | 已登录   | 数据库/领域/期刊/日期筛选、FTS 搜索与文章列表 |
-| `/?view=favorites`      | 已登录   | 文件夹、收藏、批量操作与引文导出              |
-| `/?view=weekly-updates` | 已登录   | 按数据库和期刊浏览本周变化                    |
-| `?settings=<section>`   | 已登录   | 在当前受保护工作区上打开聚合设置中心          |
-| `/admin`                | 管理员   | 用户、邀请码、统计、运行配置、计划任务与公告  |
+| 路由                    | 访问边界 | 页面职责                                              |
+| ----------------------- | -------- | ----------------------------------------------------- |
+| `/login`                | 公开     | 登录、注册和邀请码状态                                |
+| `/`                     | 已登录   | 数据库/领域/期刊/日期筛选、FTS 搜索与文章列表         |
+| `/?view=favorites`      | 已登录   | 文件夹、收藏、批量操作与引文导出                      |
+| `/?view=weekly-updates` | 已登录   | 按数据库和期刊浏览本周变化                            |
+| `?settings=<section>`   | 已登录   | 在当前受保护工作区上打开聚合设置中心                  |
+| `/admin`                | 管理员   | 用户、邀请码、统计、Provider/运行配置、计划任务与公告 |
 
 除 `/login` 外，页面都位于 `app/(protected)/`，布局会通过 `AuthProvider` 恢复当前用户并把未登录访问重定向到 `/login?next=...`。`/admin` 还在页面层检查 `is_admin`。
 
@@ -174,7 +174,7 @@ pnpm generate:api:check
 
 生成命令会运行 Rust `litradar openapi` 子命令、生成 TypeScript 类型并格式化产物。不要手工修改 `lib/generated/`。
 
-`lib/api/` 提供面向页面的请求 facade；`lib/api-contract.tsx` 对认证、秘密配置、计划任务和手动推送等控制面响应再做运行时校验。普通页面不应绕过共享 transport 自行复制 Cookie、Bearer、数据库选择或错误解析逻辑。
+`lib/api/` 提供面向页面的请求 facade；`lib/api-contract.tsx` 对认证、运行设置元数据、Provider 能力目录、计划任务和手动推送等控制面响应再做运行时校验。管理页按后端返回的 group、control、apply mode 和 allowed values 渲染全部设置，并按 capability 过滤 Provider 选项。普通页面不应绕过共享 transport 自行复制 Cookie、Bearer、数据库选择或错误解析逻辑。
 
 ## 质量检查
 
