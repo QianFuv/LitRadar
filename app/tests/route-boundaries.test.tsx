@@ -18,11 +18,6 @@ const routeBoundaryMocks = vi.hoisted(() => ({
   searchParams: new URLSearchParams('folder=4'),
 }));
 
-vi.mock('next/font/google', () => ({
-  Geist: () => ({ variable: '--font-geist-sans' }),
-  Geist_Mono: () => ({ variable: '--font-geist-mono' }),
-}));
-
 vi.mock('next/navigation', () => ({
   usePathname: () => routeBoundaryMocks.pathname,
   useRouter: () => ({ replace: routeBoundaryMocks.replace }),

@@ -3,7 +3,7 @@
 本文档描述当前已经实现的视觉 token、基础组件、布局和无障碍约定，不是外部品牌复刻规范。实现来源：
 
 - `app/app/globals.css`：主题、字体、圆角、阴影和全局行为
-- `app/app/layout.tsx`、`app/app/providers.tsx`：字体变量、主题和根级无障碍
+- `app/app/layout.tsx`、`app/app/providers.tsx`：根文档、主题和根级无障碍
 - `app/components/ui/*.tsx`：基础组件 variants
 - `app/app/(protected)/*.tsx` 与业务组件：真实布局和响应式用法
 
@@ -24,12 +24,12 @@
 
 有效字体链由 `globals.css` 决定：
 
-| 内容                         | 字体链                                                         |
-| ---------------------------- | -------------------------------------------------------------- |
-| 正文与普通 UI                | `'Maple Mono Normal NL CN', var(--font-geist-sans), monospace` |
-| `code`、`kbd`、`samp`、`pre` | `'Maple Mono Normal NL CN', var(--font-geist-mono), monospace` |
+| 内容                         | 字体链                               |
+| ---------------------------- | ------------------------------------ |
+| 正文与普通 UI                | `'JetBrainsLxgwNerdMono', monospace` |
+| `code`、`kbd`、`samp`、`pre` | `'JetBrainsLxgwNerdMono', monospace` |
 
-Maple Mono 是当前正文和代码的首选字体。根布局通过 `next/font/google` 加载 Geist Sans 与 Geist Mono，但它们只提供回退变量，不是有效首选字体。两条字体链都启用 `'liga' 1`。
+`JetBrainsLxgwNerdMono` 是正文、控件、标题、文章内容、设置/管理 Dialog 和代码区域的统一首选字体。`app/assets/JetBrainsLxgwNerdMono-Regular/result.css` 保留生成器、版权与 OFL/MIT 授权元数据，通过 Unicode range 引用 344 个本地 WOFF2 分片，并为每个 `@font-face` 使用 `font-display: swap`。根布局不加载 Google 托管字体，字体链只在本地字体缺失时回退系统 `monospace`；正文与代码继续启用 `'liga' 1`。当前资产只有 Regular 字重，其他字重由浏览器合成。
 
 字号和字重主要使用 Tailwind utility，由具体组件按信息层级选择；项目没有一套独立的固定 display typography scale。旧版外部品牌标题尺寸、负字距和三字重规则不属于项目约束。
 

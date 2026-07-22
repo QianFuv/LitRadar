@@ -1,4 +1,4 @@
-@import '../assets/MapleMonoNormalNL-CN-Regular/result.css';
+@import '../assets/JetBrainsLxgwNerdMono-Regular/result.css';
 @import 'tailwindcss';
 @plugin "tailwindcss-animate";
 
@@ -7,8 +7,8 @@
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --font-sans: 'JetBrainsLxgwNerdMono', monospace;
+  --font-mono: 'JetBrainsLxgwNerdMono', monospace;
   --color-sidebar-ring: var(--sidebar-ring);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
@@ -131,14 +131,14 @@
   }
   body {
     @apply bg-background text-foreground;
-    font-family: 'Maple Mono Normal NL CN', var(--font-geist-sans), monospace;
+    font-family: 'JetBrainsLxgwNerdMono', monospace;
     font-feature-settings: 'liga' 1;
   }
   code,
   kbd,
   samp,
   pre {
-    font-family: 'Maple Mono Normal NL CN', var(--font-geist-mono), monospace;
+    font-family: 'JetBrainsLxgwNerdMono', monospace;
     font-feature-settings: 'liga' 1;
   }
 }
