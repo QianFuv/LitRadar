@@ -15,8 +15,7 @@ use serde::Deserialize;
 use utoipa::IntoParams;
 
 use crate::article_access::{
-    article_access_response, resolve_article_full_text, resolve_article_redirect,
-    RedirectActionKind,
+    article_access_response, resolve_article_abstract, resolve_article_full_text,
 };
 use crate::response::ApiError;
 use crate::routes::auth::require_current_user;
@@ -510,42 +509,6 @@ pub(crate) async fn get_article_access(
     Ok(Json(payload))
 }
 
-/// Resolve and redirect to an article detail page online.
-///
-/// # Arguments
-///
-/// * `state` - Shared API state.
-/// * `headers` - Request headers.
-/// * `article_id` - Article identifier.
-/// * `query` - Database selector.
-///
-/// # Returns
-///
-/// No-store temporary redirect.
-#[utoipa::path(
-    get,
-    path = "/api/articles/{article_id}/detail",
-    tag = "index",
-    params(("article_id" = i64, Path, description = "Article identifier."), DbQuery),
-    responses((status = 307, description = "Temporary online detail redirect.")),
-    security(("bearer_auth" = []), ("session_cookie" = []))
-)]
-pub(crate) async fn redirect_article_detail(
-    State(state): State<ApiState>,
-    headers: HeaderMap,
-    Path(article_id): Path<i64>,
-    Query(query): Query<DbQuery>,
-) -> Result<Response, ApiError> {
-    redirect_article_action(
-        state,
-        headers,
-        article_id,
-        query,
-        RedirectActionKind::Detail,
-    )
-    .await
-}
-
 /// Resolve and redirect to an article abstract page online.
 ///
 /// # Arguments
@@ -572,22 +535,14 @@ pub(crate) async fn redirect_article_abstract(
     Path(article_id): Path<i64>,
     Query(query): Query<DbQuery>,
 ) -> Result<Response, ApiError> {
-    redirect_article_action(
-        state,
-        headers,
-        article_id,
-        query,
-        RedirectActionKind::Abstract,
-    )
-    .await
+    redirect_article_abstract_action(state, headers, article_id, query).await
 }
 
-async fn redirect_article_action(
+async fn redirect_article_abstract_action(
     state: ApiState,
     headers: HeaderMap,
     article_id: i64,
     query: DbQuery,
-    kind: RedirectActionKind,
 ) -> Result<Response, ApiError> {
     let (user, _) = require_current_user(&state, &headers).await?;
     let db = query.db.and_then(nonempty_owned);
@@ -595,7 +550,7 @@ async fn redirect_article_action(
         litradar_storage::get_article_locator(&storage, db.as_deref(), article_id)
     })
     .await?;
-    let redirect = resolve_article_redirect(&state, article, user.id, kind).await?;
+    let redirect = resolve_article_abstract(&state, article, user.id).await?;
     no_store_redirect(&redirect.location)
 }
 

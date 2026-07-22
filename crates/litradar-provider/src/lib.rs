@@ -90,25 +90,6 @@ pub trait IndexContentProvider: Send + Sync {
     ) -> Result<ProviderBatch, ProviderError>;
 }
 
-/// Optional provider capability for live article detail-page resolution.
-pub trait ArticleDetailProvider: Send + Sync {
-    /// Resolve an ephemeral article detail destination.
-    ///
-    /// # Arguments
-    ///
-    /// * `article` - Provider-neutral article locator.
-    /// * `context` - Request authentication context.
-    ///
-    /// # Returns
-    ///
-    /// Ephemeral redirect or a safe provider error.
-    fn resolve_detail(
-        &self,
-        article: &ArticleLocator,
-        context: ArticleAccessContext,
-    ) -> Result<ArticleRedirect, ProviderError>;
-}
-
 /// Optional provider capability for live article abstract-page resolution.
 pub trait ArticleAbstractProvider: Send + Sync {
     /// Resolve an ephemeral article abstract-page destination.
@@ -152,8 +133,6 @@ pub trait ArticleFullTextProvider: Send + Sync {
 pub struct ProviderCapabilities {
     /// Whether canonical indexing is implemented.
     pub index_content: bool,
-    /// Whether live detail-page resolution is implemented.
-    pub article_detail: bool,
     /// Whether live abstract-page resolution is implemented.
     pub article_abstract: bool,
     /// Whether live full-text resolution is implemented.
@@ -173,17 +152,13 @@ impl ProviderCapabilities {
     pub fn contains(self, kind: ProviderCapabilityKind) -> bool {
         match kind {
             ProviderCapabilityKind::IndexContent => self.index_content,
-            ProviderCapabilityKind::ArticleDetail => self.article_detail,
             ProviderCapabilityKind::ArticleAbstract => self.article_abstract,
             ProviderCapabilityKind::ArticleFullText => self.article_full_text,
         }
     }
 
     fn is_empty(self) -> bool {
-        !self.index_content
-            && !self.article_detail
-            && !self.article_abstract
-            && !self.article_full_text
+        !self.index_content && !self.article_abstract && !self.article_full_text
     }
 }
 
@@ -203,8 +178,6 @@ pub struct ProviderDescriptor {
 pub struct ProviderImplementations {
     /// Canonical indexing implementation.
     pub index_content: Option<Arc<dyn IndexContentProvider>>,
-    /// Live detail-page implementation.
-    pub article_detail: Option<Arc<dyn ArticleDetailProvider>>,
     /// Live abstract-page implementation.
     pub article_abstract: Option<Arc<dyn ArticleAbstractProvider>>,
     /// Live full-text implementation.
@@ -215,7 +188,6 @@ impl ProviderImplementations {
     fn capabilities(&self) -> ProviderCapabilities {
         ProviderCapabilities {
             index_content: self.index_content.is_some(),
-            article_detail: self.article_detail.is_some(),
             article_abstract: self.article_abstract.is_some(),
             article_full_text: self.article_full_text.is_some(),
         }
@@ -277,15 +249,6 @@ impl ProviderRegistration {
     /// Optional indexing provider.
     pub fn index_content(&self) -> Option<&Arc<dyn IndexContentProvider>> {
         self.implementations.index_content.as_ref()
-    }
-
-    /// Return the detail-page implementation when declared.
-    ///
-    /// # Returns
-    ///
-    /// Optional detail provider.
-    pub fn article_detail(&self) -> Option<&Arc<dyn ArticleDetailProvider>> {
-        self.implementations.article_detail.as_ref()
     }
 
     /// Return the abstract-page implementation when declared.
@@ -438,9 +401,8 @@ fn validate_provider_name(name: &str) -> Result<(), ProviderRegistryError> {
 }
 
 fn validate_redirect_hosts(descriptor: &ProviderDescriptor) -> Result<(), ProviderRegistryError> {
-    let has_online_capability = descriptor.capabilities.article_detail
-        || descriptor.capabilities.article_abstract
-        || descriptor.capabilities.article_full_text;
+    let has_online_capability =
+        descriptor.capabilities.article_abstract || descriptor.capabilities.article_full_text;
     if !has_online_capability && !descriptor.allowed_redirect_hosts.is_empty() {
         return Err(ProviderRegistryError::RedirectHostsWithoutOnlineCapability(
             descriptor.name.clone(),
@@ -493,9 +455,9 @@ mod tests {
     };
 
     use super::{
-        ArticleAbstractProvider, ArticleDetailProvider, ArticleFullTextProvider,
-        IndexContentProvider, ProviderCapabilities, ProviderDescriptor, ProviderError,
-        ProviderImplementations, ProviderRegistration, ProviderRegistry, ProviderRegistryError,
+        ArticleAbstractProvider, ArticleFullTextProvider, IndexContentProvider,
+        ProviderCapabilities, ProviderDescriptor, ProviderError, ProviderImplementations,
+        ProviderRegistration, ProviderRegistry, ProviderRegistryError,
     };
 
     struct FakeProvider;
@@ -507,16 +469,6 @@ mod tests {
             _checkpoint: Option<&str>,
         ) -> Result<ProviderBatch, ProviderError> {
             unreachable!("registration tests do not fetch")
-        }
-    }
-
-    impl ArticleDetailProvider for FakeProvider {
-        fn resolve_detail(
-            &self,
-            _article: &ArticleLocator,
-            _context: ArticleAccessContext,
-        ) -> Result<ArticleRedirect, ProviderError> {
-            unreachable!("registration tests do not resolve")
         }
     }
 
@@ -556,17 +508,6 @@ mod tests {
                 },
             ),
             (
-                "detail-only",
-                ProviderCapabilities {
-                    article_detail: true,
-                    ..ProviderCapabilities::default()
-                },
-                ProviderImplementations {
-                    article_detail: Some(provider.clone()),
-                    ..ProviderImplementations::default()
-                },
-            ),
-            (
                 "abstract-only",
                 ProviderCapabilities {
                     article_abstract: true,
@@ -591,26 +532,11 @@ mod tests {
             (
                 "two-online",
                 ProviderCapabilities {
-                    article_detail: true,
-                    article_abstract: true,
-                    ..ProviderCapabilities::default()
-                },
-                ProviderImplementations {
-                    article_detail: Some(provider.clone()),
-                    article_abstract: Some(provider.clone()),
-                    ..ProviderImplementations::default()
-                },
-            ),
-            (
-                "three-online",
-                ProviderCapabilities {
-                    article_detail: true,
                     article_abstract: true,
                     article_full_text: true,
                     ..ProviderCapabilities::default()
                 },
                 ProviderImplementations {
-                    article_detail: Some(provider.clone()),
                     article_abstract: Some(provider.clone()),
                     article_full_text: Some(provider.clone()),
                     ..ProviderImplementations::default()
@@ -620,13 +546,11 @@ mod tests {
                 "all-capabilities",
                 ProviderCapabilities {
                     index_content: true,
-                    article_detail: true,
                     article_abstract: true,
                     article_full_text: true,
                 },
                 ProviderImplementations {
                     index_content: Some(provider.clone()),
-                    article_detail: Some(provider.clone()),
                     article_abstract: Some(provider.clone()),
                     article_full_text: Some(provider.clone()),
                 },
@@ -638,8 +562,7 @@ mod tests {
                 ProviderDescriptor {
                     name: name.to_string(),
                     capabilities,
-                    allowed_redirect_hosts: if capabilities.article_detail
-                        || capabilities.article_abstract
+                    allowed_redirect_hosts: if capabilities.article_abstract
                         || capabilities.article_full_text
                     {
                         vec!["example.com".to_string()]
@@ -659,7 +582,7 @@ mod tests {
             ProviderDescriptor {
                 name: "false-provider".to_string(),
                 capabilities: ProviderCapabilities {
-                    article_detail: true,
+                    article_abstract: true,
                     ..ProviderCapabilities::default()
                 },
                 allowed_redirect_hosts: Vec::new(),
@@ -719,7 +642,7 @@ mod tests {
             1
         );
         assert!(registry
-            .providers_with(ProviderCapabilityKind::ArticleDetail)
+            .providers_with(ProviderCapabilityKind::ArticleAbstract)
             .is_empty());
 
         let duplicate = ProviderRegistration::try_new(
@@ -752,13 +675,13 @@ mod tests {
                 ProviderDescriptor {
                     name: "invalid-host-provider".to_string(),
                     capabilities: ProviderCapabilities {
-                        article_detail: true,
+                        article_abstract: true,
                         ..ProviderCapabilities::default()
                     },
                     allowed_redirect_hosts: vec![host.to_string()],
                 },
                 ProviderImplementations {
-                    article_detail: Some(Arc::new(FakeProvider)),
+                    article_abstract: Some(Arc::new(FakeProvider)),
                     ..ProviderImplementations::default()
                 },
             )
@@ -774,13 +697,13 @@ mod tests {
             ProviderDescriptor {
                 name: "duplicate-host-provider".to_string(),
                 capabilities: ProviderCapabilities {
-                    article_detail: true,
+                    article_abstract: true,
                     ..ProviderCapabilities::default()
                 },
                 allowed_redirect_hosts: vec!["example.com".to_string(), "example.com".to_string()],
             },
             ProviderImplementations {
-                article_detail: Some(Arc::new(FakeProvider)),
+                article_abstract: Some(Arc::new(FakeProvider)),
                 ..ProviderImplementations::default()
             },
         )

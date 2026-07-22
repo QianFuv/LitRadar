@@ -62,12 +62,6 @@ function currentUserResponse(): Response {
  */
 function articleAccessResponse(): Response {
   return HttpResponse.json({
-    detail: {
-      available: true,
-      label: '查看详情',
-      requires_login: false,
-      message: null,
-    },
     abstract_page: {
       available: true,
       label: '查看摘要页',
@@ -90,12 +84,6 @@ function articleAccessResponse(): Response {
  */
 function articleLoginRequiredResponse(): Response {
   return HttpResponse.json({
-    detail: {
-      available: true,
-      label: '查看详情',
-      requires_login: false,
-      message: null,
-    },
     abstract_page: {
       available: true,
       label: '查看摘要页',
@@ -172,12 +160,8 @@ async function copiesCitationsAndUsesStableActionRoutes(): Promise<void> {
   await user.click(screen.getByRole('button', { name: '查看详情' }));
   expect(await screen.findByRole('dialog')).toBeInTheDocument();
 
-  const detailLink = await screen.findByRole('link', { name: '查看详情' });
-  expect(detailLink).toHaveAttribute(
-    'href',
-    'http://localhost/api/articles/article-1/detail?db=fixture.sqlite',
-  );
-  const abstractLink = screen.getByRole('link', { name: '查看摘要页' });
+  expect(screen.queryByRole('link', { name: '查看详情' })).not.toBeInTheDocument();
+  const abstractLink = await screen.findByRole('link', { name: '查看摘要页' });
   expect(abstractLink).toHaveAttribute(
     'href',
     'http://localhost/api/articles/article-1/abstract?db=fixture.sqlite',
@@ -187,7 +171,7 @@ async function copiesCitationsAndUsesStableActionRoutes(): Promise<void> {
     'href',
     'http://localhost/api/articles/article-1/fulltext?db=fixture.sqlite',
   );
-  for (const link of [detailLink, abstractLink, fulltextLink]) {
+  for (const link of [abstractLink, fulltextLink]) {
     expect(link).toHaveAttribute('target', '_blank');
     expect(link).toHaveAttribute('rel', 'noreferrer');
   }

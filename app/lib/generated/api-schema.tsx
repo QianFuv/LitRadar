@@ -372,35 +372,6 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
-  '/api/articles/{article_id}/detail': {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    /**
-     * Resolve and redirect to an article detail page online.
-     * @description # Arguments
-     *
-     *     * `state` - Shared API state.
-     *     * `headers` - Request headers.
-     *     * `article_id` - Article identifier.
-     *     * `query` - Database selector.
-     *
-     *     # Returns
-     *
-     *     No-store temporary redirect.
-     */
-    get: operations['redirect_article_detail'];
-    put?: never;
-    post?: never;
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
   '/api/articles/{article_id}/fulltext': {
     parameters: {
       query?: never;
@@ -1510,8 +1481,6 @@ export interface components {
     ArticleAccessResponse: {
       /** @description Abstract-page action. */
       abstract_page: components['schemas']['ArticleAccessAction'];
-      /** @description Detail action. */
-      detail: components['schemas']['ArticleAccessAction'];
       /** @description Full-text action. */
       fulltext: components['schemas']['ArticleAccessAction'];
     };
@@ -3300,30 +3269,6 @@ export interface operations {
         content: {
           'application/json': components['schemas']['ArticleAccessResponse'];
         };
-      };
-    };
-  };
-  redirect_article_detail: {
-    parameters: {
-      query?: {
-        /** @description Database name or filename under `data/index`. */
-        db?: string;
-      };
-      header?: never;
-      path: {
-        /** @description Article identifier. */
-        article_id: number;
-      };
-      cookie?: never;
-    };
-    requestBody?: never;
-    responses: {
-      /** @description Temporary online detail redirect. */
-      307: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content?: never;
       };
     };
   };

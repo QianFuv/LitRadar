@@ -156,12 +156,8 @@ export function ArticleDetailDialogContent({
     await handleCopy(article.doi || '', 'doi', 'DOI 已复制。');
   };
 
-  const detailAction = access?.detail;
   const abstractAction = access?.abstract_page;
   const fulltextAction = access?.fulltext;
-  const detailUrl = detailAction?.available
-    ? getArticleActionUrlForDatabase(article.article_id, dbName, 'detail')
-    : null;
   const abstractUrl = abstractAction?.available
     ? getArticleActionUrlForDatabase(article.article_id, dbName, 'abstract')
     : null;
@@ -286,14 +282,6 @@ export function ArticleDetailDialogContent({
               >
                 <ExternalLink className="mr-2 h-4 w-4" />
                 访问状态失败
-              </Button>
-            )}
-            {canShowAccessActions && detailUrl && (
-              <Button asChild variant="outline" size="sm">
-                <a href={detailUrl} target="_blank" rel="noreferrer">
-                  <ExternalLink className="mr-2 h-4 w-4" />
-                  {detailAction?.label ?? '查看详情'}
-                </a>
               </Button>
             )}
             {canShowAccessActions && abstractUrl && (

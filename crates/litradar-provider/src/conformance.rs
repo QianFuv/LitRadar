@@ -9,9 +9,7 @@ use litradar_domain::{
     ArticleFullTextResolution, ArticleLocator, ArticleRedirect, JournalCatalogEntry, ProviderBatch,
 };
 
-use crate::{
-    ArticleAbstractProvider, ArticleDetailProvider, ArticleFullTextProvider, IndexContentProvider,
-};
+use crate::{ArticleAbstractProvider, ArticleFullTextProvider, IndexContentProvider};
 
 const MAX_CHECKPOINT_BYTES: usize = 65_536;
 
@@ -143,33 +141,6 @@ pub fn validate_index_provider_fixture(
     })?;
     validate_provider_batch(catalog, &batch)?;
     Ok(batch)
-}
-
-/// Execute and validate a detail capability fixture.
-///
-/// # Arguments
-///
-/// * `provider` - Detail provider implementation under test.
-/// * `article` - Canonical article locator fixture.
-/// * `context` - Request context fixture.
-///
-/// # Returns
-///
-/// Validated ephemeral redirect.
-pub fn validate_detail_provider_fixture(
-    provider: &dyn ArticleDetailProvider,
-    article: &ArticleLocator,
-    context: ArticleAccessContext,
-) -> Result<ArticleRedirect, ContractViolation> {
-    validate_article_locator(article)?;
-    let redirect = provider.resolve_detail(article, context).map_err(|error| {
-        ContractViolation::new(format!(
-            "detail provider fixture failed with {:?}",
-            error.kind()
-        ))
-    })?;
-    validate_article_redirect(&redirect)?;
-    Ok(redirect)
 }
 
 /// Execute and validate an abstract-page capability fixture.
@@ -703,12 +674,11 @@ mod tests {
 
     use super::{
         validate_abstract_provider_fixture, validate_article_redirect, validate_catalog_entry,
-        validate_detail_provider_fixture, validate_full_text_provider_fixture,
-        validate_full_text_resolution, validate_index_provider_fixture, validate_provider_batch,
+        validate_full_text_provider_fixture, validate_full_text_resolution,
+        validate_index_provider_fixture, validate_provider_batch,
     };
     use crate::{
-        ArticleAbstractProvider, ArticleDetailProvider, ArticleFullTextProvider,
-        IndexContentProvider, ProviderError,
+        ArticleAbstractProvider, ArticleFullTextProvider, IndexContentProvider, ProviderError,
     };
 
     struct FakeProvider;
@@ -720,18 +690,6 @@ mod tests {
             _checkpoint: Option<&str>,
         ) -> Result<ProviderBatch, ProviderError> {
             Ok(batch())
-        }
-    }
-
-    impl ArticleDetailProvider for FakeProvider {
-        fn resolve_detail(
-            &self,
-            _article: &ArticleLocator,
-            _context: ArticleAccessContext,
-        ) -> Result<ArticleRedirect, ProviderError> {
-            Ok(ArticleRedirect {
-                location: "https://example.test/article".to_string(),
-            })
         }
     }
 
@@ -876,8 +834,6 @@ mod tests {
 
         validate_index_provider_fixture(&provider, &catalog, None)
             .expect("index fixture should pass");
-        validate_detail_provider_fixture(&provider, &article, ArticleAccessContext::default())
-            .expect("detail fixture should pass");
         validate_abstract_provider_fixture(&provider, &article, ArticleAccessContext::default())
             .expect("abstract fixture should pass");
         validate_full_text_provider_fixture(

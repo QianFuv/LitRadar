@@ -163,8 +163,6 @@ pub struct ArticleAccessAction {
 /// Article access response.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct ArticleAccessResponse {
-    /// Detail action.
-    pub detail: ArticleAccessAction,
     /// Abstract-page action.
     pub abstract_page: ArticleAccessAction,
     /// Full-text action.

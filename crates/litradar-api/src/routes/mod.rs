@@ -52,10 +52,6 @@ pub fn public_routes() -> Router<ApiState> {
             axum::routing::get(index::get_article_access),
         )
         .route(
-            "/articles/{article_id}/detail",
-            axum::routing::get(index::redirect_article_detail),
-        )
-        .route(
             "/articles/{article_id}/abstract",
             axum::routing::get(index::redirect_article_abstract),
         )

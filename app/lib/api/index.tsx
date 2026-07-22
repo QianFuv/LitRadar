@@ -146,7 +146,7 @@ export function getAnnouncements(): Promise<AnnouncementInfo[]> {
 }
 
 /** Article action resolved online through a stable LitRadar route. */
-export type ArticleActionKind = 'detail' | 'abstract' | 'fulltext';
+export type ArticleActionKind = 'abstract' | 'fulltext';
 
 /**
  * Build an online article action URL for the selected database.
@@ -178,7 +178,7 @@ export function getArticleActionUrlForDatabase(
 }
 
 /**
- * Fetch article detail, abstract-page, and full-text access capabilities.
+ * Fetch article abstract-page and full-text access capabilities.
  *
  * @param articleId - Article id.
  * @param dbName - Database name.

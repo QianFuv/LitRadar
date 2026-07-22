@@ -3844,7 +3844,7 @@ mod tests {
             None,
         )
         .await;
-        let detail_response = app
+        let removed_detail_response = app
             .clone()
             .oneshot(
                 Request::builder()
@@ -3858,15 +3858,7 @@ mod tests {
             )
             .await
             .expect("response should be returned");
-        let detail_status = detail_response.status();
-        let detail_headers = detail_response.headers().clone();
-        assert_eq!(detail_status, StatusCode::TEMPORARY_REDIRECT);
-        let detail_location = detail_headers
-            .get(LOCATION)
-            .expect("location should exist")
-            .to_str()
-            .expect("location should be visible ASCII")
-            .to_string();
+        let removed_detail_status = removed_detail_response.status();
         let abstract_response = app
             .clone()
             .oneshot(
@@ -3954,20 +3946,13 @@ mod tests {
         assert!(article.payload.get("retraction_doi").is_none());
         assert_eq!(missing_article.status, StatusCode::NOT_FOUND);
         assert_eq!(access.status, StatusCode::OK);
-        assert_eq!(access.payload["detail"]["available"], true);
+        assert!(access.payload.get("detail").is_none());
         assert_eq!(access.payload["abstract_page"]["available"], true);
         assert_eq!(access.payload["fulltext"]["available"], false);
         assert_eq!(access.payload["fulltext"]["requires_login"], true);
-        assert!(access.payload["detail"].get("provider").is_none());
-        assert!(access.payload["detail"].get("url").is_none());
-        assert_eq!(detail_status, StatusCode::TEMPORARY_REDIRECT);
-        assert_eq!(detail_location, "https://doi.org/10.1234/fixture");
-        assert_eq!(
-            detail_headers
-                .get(CACHE_CONTROL)
-                .expect("cache-control should exist"),
-            AUTHENTICATED_CACHE_CONTROL
-        );
+        assert!(access.payload["abstract_page"].get("provider").is_none());
+        assert!(access.payload["abstract_page"].get("url").is_none());
+        assert_eq!(removed_detail_status, StatusCode::NOT_FOUND);
         assert_eq!(abstract_status, StatusCode::TEMPORARY_REDIRECT);
         assert_eq!(abstract_location, "https://doi.org/10.1234/fixture");
         assert_eq!(

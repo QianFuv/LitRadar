@@ -11,9 +11,9 @@ use litradar_domain::{
     ProviderBatch,
 };
 use litradar_provider::{
-    ArticleAbstractProvider, ArticleDetailProvider, IndexContentProvider, ProviderCapabilities,
-    ProviderDescriptor, ProviderError, ProviderErrorKind, ProviderImplementations,
-    ProviderRegistration, ProviderRegistryError,
+    ArticleAbstractProvider, IndexContentProvider, ProviderCapabilities, ProviderDescriptor,
+    ProviderError, ProviderErrorKind, ProviderImplementations, ProviderRegistration,
+    ProviderRegistryError,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -41,16 +41,6 @@ const CROSSREF_CURSOR_REUSE_SECONDS: u64 = 240;
 /// Stateless Scholarly access provider that derives live DOI or PubMed destinations.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct ScholarlyArticleAccessProvider;
-
-impl ArticleDetailProvider for ScholarlyArticleAccessProvider {
-    fn resolve_detail(
-        &self,
-        article: &ArticleLocator,
-        _context: ArticleAccessContext,
-    ) -> Result<ArticleRedirect, ProviderError> {
-        scholarly_article_redirect(article)
-    }
-}
 
 impl ArticleAbstractProvider for ScholarlyArticleAccessProvider {
     fn resolve_abstract(
@@ -96,19 +86,6 @@ where
         let result = resolve_cnki_article_redirect(&mut client, article);
         emit_source_attempt_summary(CNKI_PROVIDER_NAME, &client.drain_attempts());
         result
-    }
-}
-
-impl<T> ArticleDetailProvider for CnkiArticleAccessProvider<T>
-where
-    T: CnkiTransport + Send,
-{
-    fn resolve_detail(
-        &self,
-        article: &ArticleLocator,
-        _context: ArticleAccessContext,
-    ) -> Result<ArticleRedirect, ProviderError> {
-        self.resolve(article)
     }
 }
 
@@ -298,7 +275,7 @@ where
     )
 }
 
-/// Register Scholarly detail and abstract-page access capabilities.
+/// Register the Scholarly abstract-page access capability.
 ///
 /// # Returns
 ///
@@ -309,7 +286,6 @@ pub fn scholarly_access_registration() -> Result<ProviderRegistration, ProviderR
         ProviderDescriptor {
             name: SCHOLARLY_PROVIDER_NAME.to_string(),
             capabilities: ProviderCapabilities {
-                article_detail: true,
                 article_abstract: true,
                 ..ProviderCapabilities::default()
             },
@@ -319,14 +295,13 @@ pub fn scholarly_access_registration() -> Result<ProviderRegistration, ProviderR
                 .collect(),
         },
         ProviderImplementations {
-            article_detail: Some(provider.clone()),
             article_abstract: Some(provider),
             ..ProviderImplementations::default()
         },
     )
 }
 
-/// Register CNKI detail and abstract-page access capabilities.
+/// Register the CNKI abstract-page access capability.
 ///
 /// # Arguments
 ///
@@ -346,7 +321,6 @@ where
         ProviderDescriptor {
             name: CNKI_PROVIDER_NAME.to_string(),
             capabilities: ProviderCapabilities {
-                article_detail: true,
                 article_abstract: true,
                 ..ProviderCapabilities::default()
             },
@@ -356,7 +330,6 @@ where
                 .collect(),
         },
         ProviderImplementations {
-            article_detail: Some(provider.clone()),
             article_abstract: Some(provider),
             ..ProviderImplementations::default()
         },
@@ -1696,7 +1669,7 @@ mod tests {
             2
         );
         assert!(registry
-            .providers_with(ProviderCapabilityKind::ArticleDetail)
+            .providers_with(ProviderCapabilityKind::ArticleAbstract)
             .is_empty());
     }
 
@@ -1710,22 +1683,20 @@ mod tests {
             SCHOLARLY_REDIRECT_HOSTS
         );
         let scholarly_redirect = scholarly
-            .article_detail()
-            .expect("detail capability should exist")
-            .resolve_detail(
+            .article_abstract()
+            .expect("abstract capability should exist")
+            .resolve_abstract(
                 &ArticleLocator {
                     doi: Some("10.1000/article".to_string()),
                     ..article_locator("Article", "Canonical Journal")
                 },
                 ArticleAccessContext::default(),
             )
-            .expect("Scholarly detail should resolve online");
+            .expect("Scholarly abstract should resolve online");
         assert_eq!(
             scholarly_redirect.location,
             "https://doi.org/10.1000/article"
         );
-        assert!(scholarly.article_abstract().is_some());
-
         let fixture = CnkiFixtureData {
             journal_detail_html: r#"
                 <html><head><title>CNKI Test Journal - 中国知网</title></head>
@@ -1785,7 +1756,6 @@ mod tests {
         assert!(cnki_redirect
             .location
             .starts_with("https://oversea.cnki.net/"));
-        assert!(cnki.article_detail().is_some());
     }
 
     #[test]

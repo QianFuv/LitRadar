@@ -14,9 +14,9 @@ use litradar_provider::conformance::{
     validate_article_locator, validate_article_redirect, validate_full_text_resolution,
 };
 use litradar_provider::{
-    ArticleAbstractProvider, ArticleDetailProvider, ArticleFullTextProvider, ProviderCapabilities,
-    ProviderDescriptor, ProviderError, ProviderErrorKind, ProviderImplementations,
-    ProviderRegistration, ProviderRegistry, ProviderRegistryError,
+    ArticleAbstractProvider, ArticleFullTextProvider, ProviderCapabilities, ProviderDescriptor,
+    ProviderError, ProviderErrorKind, ProviderImplementations, ProviderRegistration,
+    ProviderRegistry, ProviderRegistryError,
 };
 use litradar_sources::{
     scholarly_access_registration, CnkiArticleAccessProvider, LiveCnkiConfig, LiveCnkiTransport,
@@ -37,15 +37,6 @@ const ZJLIB_CNKI_PROVIDER_NAME: &str = "zjlib_cnki";
 
 #[cfg(test)]
 static FULL_TEXT_FIXTURE_MODE: OnceLock<Mutex<Option<FixtureZjlibCnkiMode>>> = OnceLock::new();
-
-/// Redirect action selected by a stable LitRadar route.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum RedirectActionKind {
-    /// Resolve an article detail page.
-    Detail,
-    /// Resolve an article abstract page.
-    Abstract,
-}
 
 /// Build all request-time providers available to the API process.
 ///
@@ -84,13 +75,6 @@ pub(crate) async fn article_access_response(
 ) -> Result<ArticleAccessResponse, ApiError> {
     let orders = load_provider_orders(state).await?;
     let has_cnki_session = has_active_cnki_session(state, user_id).await?;
-    let detail = action_status(
-        state,
-        &orders.detail,
-        ProviderCapabilityKind::ArticleDetail,
-        "查看详情",
-        false,
-    );
     let abstract_page = action_status(
         state,
         &orders.abstract_page,
@@ -116,74 +100,58 @@ pub(crate) async fn article_access_response(
         full_text_requires_login,
     );
     Ok(ArticleAccessResponse {
-        detail,
         abstract_page,
         fulltext,
     })
 }
 
-/// Resolve one redirect action through the configured provider chain.
+/// Resolve an abstract-page redirect through the configured provider chain.
 ///
 /// # Arguments
 ///
 /// * `state` - Shared API state.
 /// * `article` - Canonical article locator.
 /// * `user_id` - Authenticated user identifier.
-/// * `kind` - Detail or abstract-page action.
-///
 /// # Returns
 ///
 /// Validated ephemeral redirect or a stable API error.
-pub(crate) async fn resolve_article_redirect(
+pub(crate) async fn resolve_article_abstract(
     state: &ApiState,
     article: ArticleLocator,
     user_id: UserId,
-    kind: RedirectActionKind,
 ) -> Result<ArticleRedirect, ApiError> {
     validate_article_locator(&article).map_err(|_| ApiError::internal_server_error())?;
     let orders = load_provider_orders(state).await?;
-    let names = match kind {
-        RedirectActionKind::Detail => orders.detail,
-        RedirectActionKind::Abstract => orders.abstract_page,
-    };
     let context = ArticleAccessContext {
         user_id: Some(user_id),
     };
     let mut did_require_authentication = false;
-    for name in names {
-        let provider = match state.article_providers().find(&name) {
-            Some(registration) => match kind {
-                RedirectActionKind::Detail => registration
-                    .article_detail()
-                    .cloned()
-                    .map(RedirectProvider::Detail),
-                RedirectActionKind::Abstract => registration
-                    .article_abstract()
-                    .cloned()
-                    .map(RedirectProvider::Abstract),
-            }
-            .map(|provider| {
-                (
-                    provider,
-                    registration.descriptor().allowed_redirect_hosts.clone(),
-                )
-            }),
-            None => None,
-        };
-        let Some((provider, allowed_redirect_hosts)) = provider else {
+    for name in orders.abstract_page {
+        let Some((provider, allowed_redirect_hosts)) = state
+            .article_providers()
+            .find(&name)
+            .and_then(|registration| {
+                registration.article_abstract().cloned().map(|provider| {
+                    (
+                        provider,
+                        registration.descriptor().allowed_redirect_hosts.clone(),
+                    )
+                })
+            })
+        else {
             continue;
         };
         let provider_name = name.clone();
         let request_article = article.clone();
         let result = state
             .run_blocking_with_timeout(ARTICLE_ACTION_TIMEOUT, move || {
-                provider.resolve(&request_article, context)
+                provider.resolve_abstract(&request_article, context)
             })
             .await;
         let result = match result {
             Ok(result) => result,
             Err(BlockingTaskError::TimedOut) => {
-                log_fallback(&provider_name, kind.label(), "timeout");
+                log_fallback(&provider_name, "abstract", "timeout");
                 continue;
             }
             Err(error) => return Err(error.into()),
@@ -195,23 +163,20 @@ pub(crate) async fn resolve_article_redirect(
             {
                 return Ok(redirect);
             }
-            Ok(_) => log_fallback(&provider_name, kind.label(), "invalid_response"),
+            Ok(_) => log_fallback(&provider_name, "abstract", "invalid_response"),
             Err(error) if error.kind() == ProviderErrorKind::AuthenticationRequired => {
                 did_require_authentication = true;
-                log_fallback(&provider_name, kind.label(), "authentication_required");
+                log_fallback(&provider_name, "abstract", "authentication_required");
             }
-            Err(error) => {
-                log_fallback(&provider_name, kind.label(), error_kind_label(error.kind()))
-            }
+            Err(error) => log_fallback(&provider_name, "abstract", error_kind_label(error.kind())),
         }
     }
     if did_require_authentication {
-        return Err(authentication_required(kind.label()));
+        return Err(authentication_required("abstract"));
     }
-    Err(ApiError::not_found(format!(
-        "Article {} action is unavailable",
-        kind.label()
-    )))
+    Err(ApiError::not_found(
+        "Article abstract action is unavailable",
+    ))
 }
 
 /// Resolve full text through the configured provider chain.
@@ -288,37 +253,8 @@ pub(crate) async fn resolve_article_full_text(
     Err(ApiError::not_found("Article full text is unavailable"))
 }
 
-#[derive(Clone)]
-enum RedirectProvider {
-    Detail(Arc<dyn litradar_provider::ArticleDetailProvider>),
-    Abstract(Arc<dyn litradar_provider::ArticleAbstractProvider>),
-}
-
-impl RedirectProvider {
-    fn resolve(
-        &self,
-        article: &ArticleLocator,
-        context: ArticleAccessContext,
-    ) -> Result<ArticleRedirect, ProviderError> {
-        match self {
-            Self::Detail(provider) => provider.resolve_detail(article, context),
-            Self::Abstract(provider) => provider.resolve_abstract(article, context),
-        }
-    }
-}
-
-impl RedirectActionKind {
-    fn label(self) -> &'static str {
-        match self {
-            Self::Detail => "detail",
-            Self::Abstract => "abstract",
-        }
-    }
-}
-
 #[derive(Debug, Clone, Default)]
 struct ArticleProviderOrders {
-    detail: Vec<String>,
     abstract_page: Vec<String>,
     full_text: Vec<String>,
 }
@@ -333,7 +269,6 @@ async fn load_provider_orders(state: &ApiState) -> Result<ArticleProviderOrders,
             for setting in values {
                 let value = parse_provider_order(&setting.value);
                 match setting.field.as_str() {
-                    "article_detail_provider_order" => orders.detail = value,
                     "article_abstract_provider_order" => orders.abstract_page = value,
                     "article_fulltext_provider_order" => orders.full_text = value,
                     _ => {}
@@ -446,17 +381,7 @@ impl LiveCnkiAccessProvider {
                 "CNKI transport is unavailable",
             )
         })?;
-        CnkiArticleAccessProvider::new(transport).resolve_detail(article, context)
-    }
-}
-
-impl ArticleDetailProvider for LiveCnkiAccessProvider {
-    fn resolve_detail(
-        &self,
-        article: &ArticleLocator,
-        context: ArticleAccessContext,
-    ) -> Result<ArticleRedirect, ProviderError> {
-        self.resolve(article, context)
+        CnkiArticleAccessProvider::new(transport).resolve_abstract(article, context)
     }
 }
 
@@ -480,7 +405,6 @@ fn live_cnki_access_registration() -> Result<ProviderRegistration, ProviderRegis
         ProviderDescriptor {
             name: CNKI_PROVIDER_NAME.to_string(),
             capabilities: ProviderCapabilities {
-                article_detail: true,
                 article_abstract: true,
                 ..ProviderCapabilities::default()
             },
@@ -490,7 +414,6 @@ fn live_cnki_access_registration() -> Result<ProviderRegistration, ProviderRegis
                 .collect(),
         },
         ProviderImplementations {
-            article_detail: Some(provider.clone()),
             article_abstract: Some(provider),
             ..ProviderImplementations::default()
         },
@@ -673,8 +596,8 @@ mod tests {
         outcome: RedirectFixtureOutcome,
     }
 
-    impl ArticleDetailProvider for RedirectFixtureProvider {
-        fn resolve_detail(
+    impl ArticleAbstractProvider for RedirectFixtureProvider {
+        fn resolve_abstract(
             &self,
             _article: &ArticleLocator,
             _context: ArticleAccessContext,
@@ -742,22 +665,22 @@ mod tests {
         }
     }
 
-    fn detail_registration(name: &str, outcome: RedirectFixtureOutcome) -> ProviderRegistration {
+    fn abstract_registration(name: &str, outcome: RedirectFixtureOutcome) -> ProviderRegistration {
         ProviderRegistration::try_new(
             ProviderDescriptor {
                 name: name.to_string(),
                 capabilities: ProviderCapabilities {
-                    article_detail: true,
+                    article_abstract: true,
                     ..ProviderCapabilities::default()
                 },
                 allowed_redirect_hosts: vec!["oversea.cnki.net".to_string()],
             },
             ProviderImplementations {
-                article_detail: Some(Arc::new(RedirectFixtureProvider { outcome })),
+                article_abstract: Some(Arc::new(RedirectFixtureProvider { outcome })),
                 ..ProviderImplementations::default()
             },
         )
-        .expect("detail fixture registration should be valid")
+        .expect("abstract fixture registration should be valid")
     }
 
     fn full_text_registration(
@@ -851,10 +774,10 @@ mod tests {
         ] {
             let mut registry = ProviderRegistry::default();
             registry
-                .register(detail_registration("scholarly", first_outcome))
+                .register(abstract_registration("scholarly", first_outcome))
                 .expect("first provider should register");
             registry
-                .register(detail_registration(
+                .register(abstract_registration(
                     "cnki",
                     RedirectFixtureOutcome::Redirect(
                         "https://oversea.cnki.net/kcms/detail/fixture",
@@ -863,14 +786,9 @@ mod tests {
                 .expect("fallback provider should register");
             let (_directory, state) = test_state(registry, None);
 
-            let redirect = resolve_article_redirect(
-                &state,
-                article_locator(),
-                UserId(1),
-                RedirectActionKind::Detail,
-            )
-            .await
-            .expect("fallback provider should resolve");
+            let redirect = resolve_article_abstract(&state, article_locator(), UserId(1))
+                .await
+                .expect("fallback provider should resolve");
 
             assert_eq!(
                 redirect.location,
@@ -883,14 +801,9 @@ mod tests {
     async fn redirect_resolution_reports_unavailable_without_a_capable_provider() {
         let (_directory, state) = test_state(ProviderRegistry::default(), None);
 
-        let error = resolve_article_redirect(
-            &state,
-            article_locator(),
-            UserId(1),
-            RedirectActionKind::Detail,
-        )
-        .await
-        .expect_err("missing providers should fail");
+        let error = resolve_article_abstract(&state, article_locator(), UserId(1))
+            .await
+            .expect_err("missing providers should fail");
 
         match error {
             ApiError::Http { status, .. } => assert_eq!(status, StatusCode::NOT_FOUND),

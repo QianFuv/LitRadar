@@ -48,7 +48,6 @@ export interface ArticleAccessAction {
 }
 
 export interface ArticleAccessResponse {
-  detail: ArticleAccessAction;
   abstract_page: ArticleAccessAction;
   fulltext: ArticleAccessAction;
 }

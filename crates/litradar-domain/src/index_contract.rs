@@ -331,8 +331,6 @@ pub struct ArticleLocator {
 pub enum ProviderCapabilityKind {
     /// Canonical journal and article indexing.
     IndexContent,
-    /// Request-time article detail-page resolution.
-    ArticleDetail,
     /// Request-time article abstract-page resolution.
     ArticleAbstract,
     /// Request-time article full-text resolution.
