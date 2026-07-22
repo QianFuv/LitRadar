@@ -4816,6 +4816,29 @@
           }
         }
       },
+      "RuntimeSettingApplyMode": {
+        "type": "string",
+        "description": "Lifecycle point at which a saved runtime setting becomes effective.",
+        "enum": ["next_request", "next_command", "restart_required"]
+      },
+      "RuntimeSettingControl": {
+        "type": "string",
+        "description": "Frontend control requested for a runtime setting.",
+        "enum": [
+          "text",
+          "secret_pool",
+          "string_list",
+          "boolean",
+          "select",
+          "index_provider_routes",
+          "provider_order"
+        ]
+      },
+      "RuntimeSettingGroup": {
+        "type": "string",
+        "description": "Functional section used to group runtime settings in administrator clients.",
+        "enum": ["source_access", "provider_routing", "server_security", "observability"]
+      },
       "RuntimeSettingInfo": {
         "type": "object",
         "description": "Runtime setting response payload.",
@@ -4823,6 +4846,10 @@
           "field",
           "label",
           "description",
+          "group",
+          "control",
+          "apply_mode",
+          "allowed_values",
           "input_type",
           "is_secret",
           "value",
@@ -4831,6 +4858,21 @@
           "source"
         ],
         "properties": {
+          "allowed_values": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Finite allowed values for selection controls."
+          },
+          "apply_mode": {
+            "$ref": "#/components/schemas/RuntimeSettingApplyMode",
+            "description": "Lifecycle point at which changes become effective."
+          },
+          "control": {
+            "$ref": "#/components/schemas/RuntimeSettingControl",
+            "description": "Requested frontend control."
+          },
           "description": {
             "type": "string",
             "description": "Human-readable description."
@@ -4838,6 +4880,10 @@
           "field": {
             "type": "string",
             "description": "API field name."
+          },
+          "group": {
+            "$ref": "#/components/schemas/RuntimeSettingGroup",
+            "description": "Functional administrator configuration group."
           },
           "has_value": {
             "type": "boolean",

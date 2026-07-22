@@ -3,10 +3,12 @@
  */
 
 import {
+  parseProviderCatalogResponse,
   parseRuntimeSettingList,
   parseSchedulerStatus,
   parseScheduledTaskInfo,
   parseScheduledTaskList,
+  type ProviderCatalogResponse,
   type RuntimeSettingInfo,
   type RuntimeSettingsUpdate,
   type SchedulerStatus,
@@ -156,6 +158,21 @@ export function adminGetRuntimeSettings(): Promise<RuntimeSettingInfo[]> {
     undefined,
     '获取运行配置失败',
     parseRuntimeSettingList,
+  );
+}
+
+/**
+ * Fetch built-in Provider capabilities and discovered catalog files.
+ *
+ * @returns Capability-aware Provider and catalog metadata.
+ */
+export function adminGetProviderCatalog(): Promise<ProviderCatalogResponse> {
+  return requestJson<ProviderCatalogResponse>(
+    buildApiUrl('/api/admin/provider-catalog'),
+    null,
+    undefined,
+    '获取 Provider 配置目录失败',
+    parseProviderCatalogResponse,
   );
 }
 

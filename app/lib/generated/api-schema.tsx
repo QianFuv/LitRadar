@@ -2325,12 +2325,42 @@ export interface components {
       /** @description Opaque item references to remove. */
       remove?: string[];
     };
+    /**
+     * @description Lifecycle point at which a saved runtime setting becomes effective.
+     * @enum {string}
+     */
+    RuntimeSettingApplyMode: 'next_request' | 'next_command' | 'restart_required';
+    /**
+     * @description Frontend control requested for a runtime setting.
+     * @enum {string}
+     */
+    RuntimeSettingControl:
+      | 'text'
+      | 'secret_pool'
+      | 'string_list'
+      | 'boolean'
+      | 'select'
+      | 'index_provider_routes'
+      | 'provider_order';
+    /**
+     * @description Functional section used to group runtime settings in administrator clients.
+     * @enum {string}
+     */
+    RuntimeSettingGroup: 'source_access' | 'provider_routing' | 'server_security' | 'observability';
     /** @description Runtime setting response payload. */
     RuntimeSettingInfo: {
+      /** @description Finite allowed values for selection controls. */
+      allowed_values: string[];
+      /** @description Lifecycle point at which changes become effective. */
+      apply_mode: components['schemas']['RuntimeSettingApplyMode'];
+      /** @description Requested frontend control. */
+      control: components['schemas']['RuntimeSettingControl'];
       /** @description Human-readable description. */
       description: string;
       /** @description API field name. */
       field: string;
+      /** @description Functional administrator configuration group. */
+      group: components['schemas']['RuntimeSettingGroup'];
       /** @description Whether a credential value is configured. */
       has_value: boolean;
       /** @description Frontend input type. */

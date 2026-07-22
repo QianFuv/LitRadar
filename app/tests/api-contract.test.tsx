@@ -9,6 +9,7 @@ import {
   parseLoginResponse,
   parseManualPushStatus,
   parseNotificationSettings,
+  parseProviderCatalogResponse,
   parseRuntimeSettingList,
   parseSchedulerStatus,
 } from '@/lib/api-contract';
@@ -55,6 +56,25 @@ function rejectsMalformedControlPlaneContracts(): void {
     ]),
   ).toThrow(ApiContractError);
   expect(() =>
+    parseProviderCatalogResponse({
+      providers: [
+        {
+          name: 'scholarly',
+          index_content: true,
+          article_abstract: true,
+          article_full_text: false,
+        },
+      ],
+      catalogs: [
+        {
+          stem: 'english_journals',
+          csv_filename: '../english_journals.csv',
+          database_filename: null,
+        },
+      ],
+    }),
+  ).toThrow(ApiContractError);
+  expect(() =>
     parseManualPushStatus({
       job_id: 'job-1',
       status: 'unknown',
@@ -87,6 +107,76 @@ function rejectsMalformedControlPlaneContracts(): void {
         },
       ],
     }),
+  ).toThrow(ApiContractError);
+}
+
+/**
+ * Verify strong runtime metadata and safe Provider catalogs are accepted.
+ */
+function acceptsRuntimeMetadataAndProviderCatalog(): void {
+  const booleanSetting = {
+    field: 'secure_cookies',
+    label: 'Secure cookies',
+    description: 'Use secure session cookies.',
+    group: 'server_security',
+    control: 'boolean',
+    apply_mode: 'restart_required',
+    allowed_values: ['true', 'false'],
+    input_type: 'boolean',
+    is_secret: false,
+    value: 'false',
+    has_value: true,
+    masked_value: '',
+    secret_items: [],
+    source: 'default',
+    updated_at: null,
+  };
+  const futureControl = {
+    ...booleanSetting,
+    field: 'future_setting',
+    label: 'Future setting',
+    description: 'Backend-declared future setting.',
+    group: 'observability',
+    control: 'future_text',
+    apply_mode: 'next_command',
+    allowed_values: [],
+    input_type: 'text',
+    value: 'value',
+  };
+  const runtimeSettings = [booleanSetting, futureControl];
+  const providerCatalog = {
+    providers: [
+      {
+        name: 'scholarly',
+        index_content: true,
+        article_abstract: true,
+        article_full_text: false,
+      },
+    ],
+    catalogs: [
+      {
+        stem: 'english_journals',
+        csv_filename: 'english_journals.csv',
+        database_filename: null,
+      },
+    ],
+  };
+
+  expect(parseRuntimeSettingList(runtimeSettings)).toBe(runtimeSettings);
+  expect(parseProviderCatalogResponse(providerCatalog)).toBe(providerCatalog);
+  expect(() => parseRuntimeSettingList([booleanSetting, booleanSetting])).toThrow(ApiContractError);
+  expect(() => parseRuntimeSettingList([{ ...booleanSetting, group: 'unknown_group' }])).toThrow(
+    ApiContractError,
+  );
+  expect(() =>
+    parseRuntimeSettingList([
+      {
+        ...futureControl,
+        field: 'article_abstract_provider_orders',
+        control: 'provider_order',
+        value: '{"default":["scholarly","scholarly"],"catalogs":{}}',
+      },
+    ]),
   ).toThrow(ApiContractError);
 }
 
@@ -166,6 +256,10 @@ async function servesExplicitSharedScenarioHandlers(): Promise<void> {
 describe('generated API runtime contracts', () => {
   test('accepts a valid login response', acceptsValidLoginContract);
   test('accepts durable scheduler status metadata', acceptsSchedulerStatusContract);
+  test(
+    'accepts strong runtime metadata and safe Provider catalogs',
+    acceptsRuntimeMetadataAndProviderCatalog,
+  );
   test('accepts only the masked notification response contract', acceptsMaskedNotificationContract);
   test('rejects malformed control-plane responses', rejectsMalformedControlPlaneContracts);
   test(

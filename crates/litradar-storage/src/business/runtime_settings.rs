@@ -2,6 +2,8 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use litradar_domain::{RuntimeSettingApplyMode, RuntimeSettingControl, RuntimeSettingGroup};
+
 use super::shared::*;
 use super::*;
 
@@ -9,16 +11,26 @@ use super::*;
 struct RuntimeConfigDefinition {
     field: &'static str,
     label: &'static str,
+    group: RuntimeSettingGroup,
+    control: RuntimeSettingControl,
+    apply_mode: RuntimeSettingApplyMode,
+    allowed_values: &'static [&'static str],
     input_type: &'static str,
     is_secret: bool,
     description: &'static str,
     default_value: &'static str,
 }
 
+const BOOLEAN_ALLOWED_VALUES: [&str; 2] = ["true", "false"];
+
 const RUNTIME_CONFIG_DEFINITIONS: [RuntimeConfigDefinition; 10] = [
     RuntimeConfigDefinition {
         field: "openalex_api_key_pool",
         label: "OpenAlex API key pool",
+        group: RuntimeSettingGroup::SourceAccess,
+        control: RuntimeSettingControl::SecretPool,
+        apply_mode: RuntimeSettingApplyMode::NextCommand,
+        allowed_values: &[],
         input_type: "password",
         is_secret: true,
         description: "OpenAlex authenticated request key pool.",
@@ -27,6 +39,10 @@ const RUNTIME_CONFIG_DEFINITIONS: [RuntimeConfigDefinition; 10] = [
     RuntimeConfigDefinition {
         field: "semantic_scholar_api_key_pool",
         label: "Semantic Scholar API key pool",
+        group: RuntimeSettingGroup::SourceAccess,
+        control: RuntimeSettingControl::SecretPool,
+        apply_mode: RuntimeSettingApplyMode::NextCommand,
+        allowed_values: &[],
         input_type: "password",
         is_secret: true,
         description: "Comma- or semicolon-separated Semantic Scholar REST API keys.",
@@ -35,6 +51,10 @@ const RUNTIME_CONFIG_DEFINITIONS: [RuntimeConfigDefinition; 10] = [
     RuntimeConfigDefinition {
         field: "crossref_mailto_pool",
         label: "Crossref mailto pool",
+        group: RuntimeSettingGroup::SourceAccess,
+        control: RuntimeSettingControl::StringList,
+        apply_mode: RuntimeSettingApplyMode::NextCommand,
+        allowed_values: &[],
         input_type: "email",
         is_secret: false,
         description: "Comma- or semicolon-separated Crossref contact emails.",
@@ -43,6 +63,10 @@ const RUNTIME_CONFIG_DEFINITIONS: [RuntimeConfigDefinition; 10] = [
     RuntimeConfigDefinition {
         field: "cors_allowed_origins",
         label: "CORS allowed origins",
+        group: RuntimeSettingGroup::ServerSecurity,
+        control: RuntimeSettingControl::StringList,
+        apply_mode: RuntimeSettingApplyMode::RestartRequired,
+        allowed_values: &[],
         input_type: "text",
         is_secret: false,
         description: "Comma-separated exact HTTP(S) origins for credentialed API requests; paths, wildcard, user-info, query, fragment, and null are rejected. Changes apply after API restart.",
@@ -51,6 +75,10 @@ const RUNTIME_CONFIG_DEFINITIONS: [RuntimeConfigDefinition; 10] = [
     RuntimeConfigDefinition {
         field: "mcp_allowed_hosts",
         label: "MCP allowed hosts",
+        group: RuntimeSettingGroup::ServerSecurity,
+        control: RuntimeSettingControl::StringList,
+        apply_mode: RuntimeSettingApplyMode::RestartRequired,
+        allowed_values: &[],
         input_type: "text",
         is_secret: false,
         description: "Comma-separated hosts accepted by the Streamable HTTP MCP endpoint.",
@@ -59,6 +87,10 @@ const RUNTIME_CONFIG_DEFINITIONS: [RuntimeConfigDefinition; 10] = [
     RuntimeConfigDefinition {
         field: "mcp_allowed_origins",
         label: "MCP allowed origins",
+        group: RuntimeSettingGroup::ServerSecurity,
+        control: RuntimeSettingControl::StringList,
+        apply_mode: RuntimeSettingApplyMode::RestartRequired,
+        allowed_values: &[],
         input_type: "text",
         is_secret: false,
         description: "Comma-separated exact HTTP(S) origins accepted by the Streamable HTTP MCP endpoint; null is also supported. Changes apply after API restart.",
@@ -67,6 +99,10 @@ const RUNTIME_CONFIG_DEFINITIONS: [RuntimeConfigDefinition; 10] = [
     RuntimeConfigDefinition {
         field: "secure_cookies",
         label: "Secure session cookies",
+        group: RuntimeSettingGroup::ServerSecurity,
+        control: RuntimeSettingControl::Boolean,
+        apply_mode: RuntimeSettingApplyMode::RestartRequired,
+        allowed_values: &BOOLEAN_ALLOWED_VALUES,
         input_type: "boolean",
         is_secret: false,
         description: "Whether session cookies include the Secure attribute.",
@@ -75,6 +111,10 @@ const RUNTIME_CONFIG_DEFINITIONS: [RuntimeConfigDefinition; 10] = [
     RuntimeConfigDefinition {
         field: "index_provider_routes",
         label: "Index provider routes",
+        group: RuntimeSettingGroup::ProviderRouting,
+        control: RuntimeSettingControl::IndexProviderRoutes,
+        apply_mode: RuntimeSettingApplyMode::NextCommand,
+        allowed_values: &[],
         input_type: "text",
         is_secret: false,
         description: "JSON object mapping each catalog stem to one registered indexing provider.",
@@ -83,6 +123,10 @@ const RUNTIME_CONFIG_DEFINITIONS: [RuntimeConfigDefinition; 10] = [
     RuntimeConfigDefinition {
         field: "article_abstract_provider_orders",
         label: "Article abstract provider orders",
+        group: RuntimeSettingGroup::ProviderRouting,
+        control: RuntimeSettingControl::ProviderOrder,
+        apply_mode: RuntimeSettingApplyMode::NextRequest,
+        allowed_values: &[],
         input_type: "text",
         is_secret: false,
         description: "JSON default and per-catalog Provider orders for live article abstract-page resolution.",
@@ -91,6 +135,10 @@ const RUNTIME_CONFIG_DEFINITIONS: [RuntimeConfigDefinition; 10] = [
     RuntimeConfigDefinition {
         field: "article_fulltext_provider_orders",
         label: "Article full-text provider orders",
+        group: RuntimeSettingGroup::ProviderRouting,
+        control: RuntimeSettingControl::ProviderOrder,
+        apply_mode: RuntimeSettingApplyMode::NextRequest,
+        allowed_values: &[],
         input_type: "text",
         is_secret: false,
         description: "JSON default and per-catalog Provider orders for live article full-text resolution.",
@@ -258,6 +306,14 @@ fn public_runtime_setting_from_definition(
         field: definition.field.to_string(),
         label: definition.label.to_string(),
         description: definition.description.to_string(),
+        group: definition.group,
+        control: definition.control,
+        apply_mode: definition.apply_mode,
+        allowed_values: definition
+            .allowed_values
+            .iter()
+            .map(|value| (*value).to_string())
+            .collect(),
         input_type: definition.input_type.to_string(),
         is_secret: definition.is_secret,
         value: if definition.is_secret {
@@ -567,6 +623,106 @@ mod tests {
             .expect("OpenAlex setting should exist");
         assert_eq!(openalex.value, "");
         assert_eq!(openalex.source, "default");
+    }
+
+    #[test]
+    fn runtime_setting_descriptors_declare_controls_groups_and_apply_modes() {
+        let temp_dir = tempdir().expect("temp dir should be created");
+        let auth_db_path = temp_dir.path().join("auth.sqlite");
+        migrate_auth_database(&auth_db_path).expect("auth database should migrate");
+        let codec = SecretCodec::from_key([17_u8; 32]);
+        let settings =
+            list_runtime_settings(&auth_db_path, &codec).expect("runtime settings should load");
+        let expected = [
+            (
+                "openalex_api_key_pool",
+                RuntimeSettingGroup::SourceAccess,
+                RuntimeSettingControl::SecretPool,
+                RuntimeSettingApplyMode::NextCommand,
+                &[][..],
+            ),
+            (
+                "semantic_scholar_api_key_pool",
+                RuntimeSettingGroup::SourceAccess,
+                RuntimeSettingControl::SecretPool,
+                RuntimeSettingApplyMode::NextCommand,
+                &[][..],
+            ),
+            (
+                "crossref_mailto_pool",
+                RuntimeSettingGroup::SourceAccess,
+                RuntimeSettingControl::StringList,
+                RuntimeSettingApplyMode::NextCommand,
+                &[][..],
+            ),
+            (
+                "cors_allowed_origins",
+                RuntimeSettingGroup::ServerSecurity,
+                RuntimeSettingControl::StringList,
+                RuntimeSettingApplyMode::RestartRequired,
+                &[][..],
+            ),
+            (
+                "mcp_allowed_hosts",
+                RuntimeSettingGroup::ServerSecurity,
+                RuntimeSettingControl::StringList,
+                RuntimeSettingApplyMode::RestartRequired,
+                &[][..],
+            ),
+            (
+                "mcp_allowed_origins",
+                RuntimeSettingGroup::ServerSecurity,
+                RuntimeSettingControl::StringList,
+                RuntimeSettingApplyMode::RestartRequired,
+                &[][..],
+            ),
+            (
+                "secure_cookies",
+                RuntimeSettingGroup::ServerSecurity,
+                RuntimeSettingControl::Boolean,
+                RuntimeSettingApplyMode::RestartRequired,
+                &["true", "false"][..],
+            ),
+            (
+                "index_provider_routes",
+                RuntimeSettingGroup::ProviderRouting,
+                RuntimeSettingControl::IndexProviderRoutes,
+                RuntimeSettingApplyMode::NextCommand,
+                &[][..],
+            ),
+            (
+                "article_abstract_provider_orders",
+                RuntimeSettingGroup::ProviderRouting,
+                RuntimeSettingControl::ProviderOrder,
+                RuntimeSettingApplyMode::NextRequest,
+                &[][..],
+            ),
+            (
+                "article_fulltext_provider_orders",
+                RuntimeSettingGroup::ProviderRouting,
+                RuntimeSettingControl::ProviderOrder,
+                RuntimeSettingApplyMode::NextRequest,
+                &[][..],
+            ),
+        ];
+
+        assert_eq!(settings.len(), expected.len());
+        for (field, group, control, apply_mode, allowed_values) in expected {
+            let setting = settings
+                .iter()
+                .find(|setting| setting.field == field)
+                .expect("declared runtime setting should exist");
+            assert_eq!(setting.group, group);
+            assert_eq!(setting.control, control);
+            assert_eq!(setting.apply_mode, apply_mode);
+            assert_eq!(
+                setting.allowed_values,
+                allowed_values
+                    .iter()
+                    .map(|value| (*value).to_string())
+                    .collect::<Vec<_>>()
+            );
+        }
     }
 
     #[test]

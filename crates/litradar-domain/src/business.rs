@@ -783,6 +783,52 @@ pub struct SchedulerStatusResponse {
     pub recent_runs: Vec<ScheduledTaskRunInfo>,
 }
 
+/// Functional section used to group runtime settings in administrator clients.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum RuntimeSettingGroup {
+    /// Upstream source credentials and request identity.
+    SourceAccess,
+    /// Index and online article Provider selection.
+    ProviderRouting,
+    /// API, MCP, and session boundary settings.
+    ServerSecurity,
+    /// Process diagnostics and structured logging.
+    Observability,
+}
+
+/// Frontend control requested for a runtime setting.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum RuntimeSettingControl {
+    /// Generic single-value text input.
+    Text,
+    /// Incrementally managed encrypted value pool.
+    SecretPool,
+    /// Ordered line-based list of non-secret values.
+    StringList,
+    /// Boolean switch.
+    Boolean,
+    /// Single selection from declared allowed values.
+    Select,
+    /// Per-catalog index Provider selection.
+    IndexProviderRoutes,
+    /// Default and per-catalog ordered online Provider selection.
+    ProviderOrder,
+}
+
+/// Lifecycle point at which a saved runtime setting becomes effective.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum RuntimeSettingApplyMode {
+    /// The next matching request reads the saved value.
+    NextRequest,
+    /// The next matching command reads the saved value.
+    NextCommand,
+    /// A server or process restart is required.
+    RestartRequired,
+}
+
 /// Runtime setting response payload.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct RuntimeSettingInfo {
@@ -792,6 +838,14 @@ pub struct RuntimeSettingInfo {
     pub label: String,
     /// Human-readable description.
     pub description: String,
+    /// Functional administrator configuration group.
+    pub group: RuntimeSettingGroup,
+    /// Requested frontend control.
+    pub control: RuntimeSettingControl,
+    /// Lifecycle point at which changes become effective.
+    pub apply_mode: RuntimeSettingApplyMode,
+    /// Finite allowed values for selection controls.
+    pub allowed_values: Vec<String>,
     /// Frontend input type.
     pub input_type: String,
     /// Whether the value contains credentials.
