@@ -32,7 +32,7 @@ function providerSettingsFixture(): RuntimeSettingInfo[] {
       input_type: 'text',
       is_secret: false,
       value:
-        '{"ccf_computer_journals":"scholarly","chinese_journals":"cnki_oversea","legacy_journals":"scholarly"}',
+        '{"ccf_computer_journals":"scholarly","chinese_journals":"cnki","legacy_journals":"scholarly"}',
       has_value: true,
       masked_value: '',
       secret_items: [],
@@ -50,7 +50,7 @@ function providerSettingsFixture(): RuntimeSettingInfo[] {
       input_type: 'text',
       is_secret: false,
       value:
-        '{"default":["scholarly","cnki_oversea"],"catalogs":{"chinese_journals":["cnki_oversea","scholarly"],"legacy_journals":[]}}',
+        '{"default":["scholarly","cnki"],"catalogs":{"chinese_journals":["cnki","scholarly"],"legacy_journals":[]}}',
       has_value: true,
       masked_value: '',
       secret_items: [],
@@ -223,6 +223,12 @@ function providerCatalogFixture(): ProviderCatalogResponse {
   return {
     providers: [
       {
+        name: 'cnki',
+        index_content: true,
+        article_abstract: true,
+        article_full_text: false,
+      },
+      {
         name: 'cnki_oversea',
         index_content: true,
         article_abstract: true,
@@ -359,7 +365,7 @@ async function serializesReorderedDefaultProviderOrder(): Promise<void> {
     expect(updatePayload).toEqual({
       values: {
         article_abstract_provider_orders:
-          '{"default":["cnki_oversea","scholarly"],"catalogs":{"chinese_journals":["cnki_oversea","scholarly"],"legacy_journals":[]}}',
+          '{"default":["cnki","scholarly"],"catalogs":{"chinese_journals":["cnki","scholarly"],"legacy_journals":[]}}',
       },
       secret_pool_updates: {},
     }),
@@ -395,7 +401,7 @@ async function serializesInheritanceAndExplicitDisable(): Promise<void> {
     expect(updatePayload).toEqual({
       values: {
         article_abstract_provider_orders:
-          '{"default":["scholarly","cnki_oversea"],"catalogs":{"ccf_computer_journals":[],"chinese_journals":["cnki_oversea","scholarly"]}}',
+          '{"default":["scholarly","cnki"],"catalogs":{"ccf_computer_journals":[],"chinese_journals":["cnki","scholarly"]}}',
       },
       secret_pool_updates: {},
     }),
@@ -414,14 +420,14 @@ async function serializesOneIndexProviderPerCatalog(): Promise<void> {
   });
   select.focus();
   await user.keyboard('{Enter}{Home}{Enter}');
-  await waitFor(() => expect(select).toHaveTextContent('cnki_oversea'));
+  await waitFor(() => expect(select).toHaveTextContent('cnki'));
   await user.click(screen.getByRole('button', { name: '保存配置' }));
 
   await waitFor(() =>
     expect(updatePayload).toEqual({
       values: {
         index_provider_routes:
-          '{"ccf_computer_journals":"cnki_oversea","chinese_journals":"cnki_oversea","legacy_journals":"scholarly"}',
+          '{"ccf_computer_journals":"cnki","chinese_journals":"cnki","legacy_journals":"scholarly"}',
       },
       secret_pool_updates: {},
     }),

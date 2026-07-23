@@ -10,7 +10,7 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
 /// Current private worker protocol version.
-pub(crate) const PROTOCOL_VERSION: u32 = 2;
+pub(crate) const PROTOCOL_VERSION: u32 = 3;
 
 /// One journal and optional resume cursor assigned to a fetch worker.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
@@ -48,6 +48,9 @@ pub(crate) struct WorkerRequest {
     pub(crate) timeout_seconds: u64,
     /// Scholarly provider runtime configuration.
     pub(crate) scholarly_config: LiveScholarlyConfig,
+    /// Domestic CNKI captcha solver token (memory-only; never logged).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) cnki_captcha_token: Option<String>,
     /// Ordered journal assignments owned by this worker.
     pub(crate) assignments: Vec<WorkerJournalAssignment>,
 }

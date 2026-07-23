@@ -603,6 +603,7 @@ fn pressure_requests(config: PressureConfig, context: &ParentWriterContext) -> V
             scholarly_config: litradar_sources::LiveScholarlyConfig::from_value_pools(
                 10, "", "", "",
             ),
+            cnki_captcha_token: None,
             assignments: vec![WorkerJournalAssignment {
                 journal_ordinal: worker_id,
                 entry: pressure_catalog(worker_id),

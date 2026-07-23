@@ -80,6 +80,8 @@ pub struct LiveIndexConfig {
     pub notify_dry_run: bool,
     /// Scholarly source runtime configuration.
     pub scholarly_config: LiveScholarlyConfig,
+    /// Domestic CNKI captcha solver token loaded from runtime secrets or probe env.
+    pub cnki_captcha_token: Option<String>,
     /// Validated catalog-stem to indexing-provider routes loaded outside index databases.
     pub index_provider_routes: BTreeMap<String, String>,
 }
@@ -1001,6 +1003,7 @@ fn prepare_worker_requests(
             schedule_epoch_unix_millis,
             timeout_seconds: config.timeout_seconds,
             scholarly_config: config.scholarly_config.clone(),
+            cnki_captcha_token: config.cnki_captcha_token.clone(),
             assignments,
         })
         .collect();
@@ -1701,6 +1704,7 @@ fn run_direct_request(
             .with_schedule_epoch(schedule_epoch_unix_millis),
         config.worker_count,
         config.timeout_seconds,
+        config.cnki_captcha_token.clone(),
     )?;
     let provider = registration.index_content().cloned().ok_or_else(|| {
         LiveIndexError::InvalidConfig(format!(
@@ -1768,6 +1772,7 @@ fn fetch_worker_assignments(
             .with_schedule_epoch(request.schedule_epoch_unix_millis),
         request.source_worker_count,
         request.timeout_seconds,
+        request.cnki_captcha_token.clone(),
     )?;
     let provider = registration.index_content().cloned().ok_or_else(|| {
         LiveIndexError::InvalidConfig(format!(
@@ -1864,6 +1869,7 @@ fn build_index_registration(
     scholarly_config: LiveScholarlyConfig,
     source_worker_count: usize,
     timeout_seconds: u64,
+    cnki_captcha_token: Option<String>,
 ) -> Result<ProviderRegistration, LiveIndexError> {
     match provider_name {
         SCHOLARLY_PROVIDER_NAME => {
@@ -1892,9 +1898,11 @@ fn build_index_registration(
             Ok(cnki_oversea_index_registration(transport)?)
         }
         CNKI_PROVIDER_NAME => {
-            let captcha_token = std::env::var("LITRADAR_CNKI_CAPTCHA_TOKEN")
-                .ok()
-                .filter(|value| !value.trim().is_empty());
+            let captcha_token = cnki_captcha_token.or_else(|| {
+                std::env::var("LITRADAR_CNKI_CAPTCHA_TOKEN")
+                    .ok()
+                    .filter(|value| !value.trim().is_empty())
+            });
             let transport = LiveDomesticCnkiTransport::new(LiveDomesticCnkiConfig {
                 timeout_seconds,
                 captcha_token,
@@ -2572,6 +2580,7 @@ mod tests {
             scholarly_config: litradar_sources::LiveScholarlyConfig::from_value_pools(
                 10, "", "", "",
             ),
+            cnki_captcha_token: None,
             assignments: vec![WorkerJournalAssignment {
                 journal_ordinal: 0,
                 entry: catalog("journal-1"),
@@ -2716,6 +2725,7 @@ mod tests {
             scholarly_config: litradar_sources::LiveScholarlyConfig::from_value_pools(
                 10, "", "", "",
             ),
+            cnki_captcha_token: None,
             index_provider_routes: BTreeMap::from([(
                 "catalog".to_string(),
                 "scholarly".to_string(),
@@ -2826,6 +2836,7 @@ mod tests {
                     semantic_scholar_keys,
                     crossref_mailtos,
                 ),
+                cnki_captcha_token: None,
                 index_provider_routes: BTreeMap::from([(
                     "catalog".to_string(),
                     "scholarly".to_string(),
@@ -2862,6 +2873,7 @@ mod tests {
             scholarly_config: litradar_sources::LiveScholarlyConfig::from_value_pools(
                 10, "", "", "",
             ),
+            cnki_captcha_token: None,
             index_provider_routes: BTreeMap::new(),
         };
         let entries = vec![catalog("complete"), catalog("resumable")];

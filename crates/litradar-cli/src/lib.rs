@@ -326,7 +326,7 @@ fn run_index_command_with_bundled_meta_dir(
     prepare_index_managed_meta(&storage_config, bundled_meta_dir.as_deref())?;
     let secret_codec = SecretCodec::load(&secret_key_file)?;
     verify_database_secrets(&auth_db_path, &secret_codec)?;
-    let (scholarly_config, index_provider_routes) =
+    let (scholarly_config, index_provider_routes, cnki_captcha_token) =
         live_index_runtime_config(&auth_db_path, &secret_codec, options.timeout_seconds)?;
     let effective_concurrency = json!({
         "workers": options.worker_count,
@@ -347,6 +347,7 @@ fn run_index_command_with_bundled_meta_dir(
         notify: options.notify,
         notify_dry_run: options.notify_dry_run,
         scholarly_config,
+        cnki_captcha_token,
         index_provider_routes,
     });
     migrate_index_command_databases(&project_root, options.file.as_deref())?;
@@ -946,11 +947,17 @@ fn default_delivery_state_dir(project_root: &Path, workflow: DeliveryWorkflow) -
     }
 }
 
+type LiveIndexRuntimeConfig = (
+    LiveScholarlyConfig,
+    BTreeMap<String, String>,
+    Option<String>,
+);
+
 fn live_index_runtime_config(
     auth_db_path: &Path,
     secret_codec: &SecretCodec,
     timeout_seconds: u64,
-) -> Result<(LiveScholarlyConfig, BTreeMap<String, String>), Box<dyn Error>> {
+) -> Result<LiveIndexRuntimeConfig, Box<dyn Error>> {
     let settings = litradar_storage::load_runtime_settings(auth_db_path, secret_codec)?;
     let setting_value = |field: &str| {
         settings
@@ -967,7 +974,17 @@ fn live_index_runtime_config(
     );
     let index_provider_routes =
         serde_json::from_str::<BTreeMap<String, String>>(setting_value("index_provider_routes"))?;
-    Ok((scholarly_config, index_provider_routes))
+    let cnki_captcha_token = {
+        let from_settings = setting_value("cnki_captcha_token").trim();
+        if !from_settings.is_empty() {
+            Some(from_settings.to_string())
+        } else {
+            std::env::var("LITRADAR_CNKI_CAPTCHA_TOKEN")
+                .ok()
+                .filter(|value| !value.trim().is_empty())
+        }
+    };
+    Ok((scholarly_config, index_provider_routes, cnki_captcha_token))
 }
 
 fn index_usage() -> String {

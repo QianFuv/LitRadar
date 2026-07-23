@@ -1313,7 +1313,7 @@ fn strip_tags(value: &str) -> String {
 }
 
 fn clean_text(value: &str) -> Option<String> {
-    non_empty(&decode_html(value).replace('\u{a0}', " ").trim())
+    non_empty(decode_html(value).replace('\u{a0}', " ").trim())
 }
 
 fn decode_html(value: &str) -> String {

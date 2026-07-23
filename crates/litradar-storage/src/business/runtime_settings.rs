@@ -59,7 +59,7 @@ impl Default for RuntimeLoggingSettings {
     }
 }
 
-const RUNTIME_CONFIG_DEFINITIONS: [RuntimeConfigDefinition; 12] = [
+const RUNTIME_CONFIG_DEFINITIONS: [RuntimeConfigDefinition; 13] = [
     RuntimeConfigDefinition {
         field: "openalex_api_key_pool",
         label: "OpenAlex API key pool",
@@ -82,6 +82,18 @@ const RUNTIME_CONFIG_DEFINITIONS: [RuntimeConfigDefinition; 12] = [
         input_type: "password",
         is_secret: true,
         description: "Comma- or semicolon-separated Semantic Scholar REST API keys.",
+        default_value: "",
+    },
+    RuntimeConfigDefinition {
+        field: "cnki_captcha_token",
+        label: "CNKI captcha solver token",
+        group: RuntimeSettingGroup::SourceAccess,
+        control: RuntimeSettingControl::Text,
+        apply_mode: RuntimeSettingApplyMode::NextCommand,
+        allowed_values: &[],
+        input_type: "password",
+        is_secret: true,
+        description: "jfbym dual-image token used by domestic CNKI index and abstract captcha solving. Probe override: LITRADAR_CNKI_CAPTCHA_TOKEN.",
         default_value: "",
     },
     RuntimeConfigDefinition {
@@ -154,7 +166,7 @@ const RUNTIME_CONFIG_DEFINITIONS: [RuntimeConfigDefinition; 12] = [
         input_type: "text",
         is_secret: false,
         description: "JSON object mapping each catalog stem to one registered indexing provider.",
-        default_value: "{\"ccf_computer_journals\":\"scholarly\",\"chinese_journals\":\"cnki_oversea\",\"english_journals\":\"scholarly\"}",
+        default_value: "{\"ccf_computer_journals\":\"scholarly\",\"chinese_journals\":\"cnki\",\"english_journals\":\"scholarly\"}",
     },
     RuntimeConfigDefinition {
         field: "article_abstract_provider_orders",
@@ -166,7 +178,7 @@ const RUNTIME_CONFIG_DEFINITIONS: [RuntimeConfigDefinition; 12] = [
         input_type: "text",
         is_secret: false,
         description: "JSON default and per-catalog Provider orders for live article abstract-page resolution.",
-        default_value: "{\"default\":[\"scholarly\",\"cnki_oversea\"],\"catalogs\":{}}",
+        default_value: "{\"default\":[\"scholarly\",\"cnki\"],\"catalogs\":{}}",
     },
     RuntimeConfigDefinition {
         field: "article_fulltext_provider_orders",
@@ -673,8 +685,9 @@ fn normalize_provider_order_configuration(
 }
 
 fn rewrite_legacy_provider_runtime_name(name: &str) -> String {
+    // Auth migration v8 rewrote stored `cnki` -> `cnki_oversea` once. After domestic
+    // registration, bare `cnki` is the NZKPT product name and must not be rewritten.
     match name {
-        "cnki" => "cnki_oversea".to_string(),
         "zjlib_cnki" => "zjlib".to_string(),
         other => other.to_string(),
     }
@@ -753,8 +766,9 @@ mod tests {
             .map(|setting| setting.field.as_str())
             .collect::<Vec<_>>();
 
-        assert_eq!(settings.len(), 12);
+        assert_eq!(settings.len(), 13);
         assert!(fields.contains(&"openalex_api_key_pool"));
+        assert!(fields.contains(&"cnki_captcha_token"));
         assert!(fields.contains(&"secure_cookies"));
         assert!(!fields.contains(&"proxy_pool"));
         assert!(settings
@@ -788,6 +802,13 @@ mod tests {
                 "semantic_scholar_api_key_pool",
                 RuntimeSettingGroup::SourceAccess,
                 RuntimeSettingControl::SecretPool,
+                RuntimeSettingApplyMode::NextCommand,
+                &[][..],
+            ),
+            (
+                "cnki_captcha_token",
+                RuntimeSettingGroup::SourceAccess,
+                RuntimeSettingControl::Text,
                 RuntimeSettingApplyMode::NextCommand,
                 &[][..],
             ),
@@ -983,7 +1004,7 @@ mod tests {
                 .find(|setting| setting.field == "index_provider_routes")
                 .expect("route setting should exist")
                 .value,
-            "{\"chinese_journals\":\"cnki_oversea\",\"english_journals\":\"scholarly\"}"
+            "{\"chinese_journals\":\"cnki\",\"english_journals\":\"scholarly\"}"
         );
         assert_eq!(
             settings
@@ -1282,5 +1303,39 @@ mod tests {
                 .value,
             "replacement-key"
         );
+    }
+
+    #[test]
+    fn end_state_defaults_prefer_domestic_cnki() {
+        let temp_dir = tempdir().expect("temp dir should be created");
+        let auth_db_path = temp_dir.path().join("auth.sqlite");
+        migrate_auth_database(&auth_db_path).expect("auth database should migrate");
+        let codec = SecretCodec::from_key([19_u8; 32]);
+        let settings =
+            list_runtime_settings(&auth_db_path, &codec).expect("runtime settings should load");
+        let routes = settings
+            .iter()
+            .find(|setting| setting.field == "index_provider_routes")
+            .expect("routes");
+        assert!(routes.value.contains("\"chinese_journals\":\"cnki\""));
+        assert!(!routes
+            .value
+            .contains("\"chinese_journals\":\"cnki_oversea\""));
+        let abstracts = settings
+            .iter()
+            .find(|setting| setting.field == "article_abstract_provider_orders")
+            .expect("abstracts");
+        assert_eq!(
+            abstracts.value,
+            "{\"default\":[\"scholarly\",\"cnki\"],\"catalogs\":{}}"
+        );
+        let captcha = settings
+            .iter()
+            .find(|setting| setting.field == "cnki_captcha_token")
+            .expect("captcha");
+        assert!(captcha.is_secret);
+        assert_eq!(captcha.value, "");
+        assert_eq!(captcha.masked_value, "");
+        assert!(!captcha.has_value);
     }
 }

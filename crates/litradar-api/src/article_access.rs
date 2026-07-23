@@ -53,10 +53,11 @@ pub(crate) fn build_article_provider_registry(
     storage_config: litradar_storage::StorageConfig,
     secret_codec: litradar_storage::SecretCodec,
 ) -> Result<ProviderRegistry, ProviderRegistryError> {
+    let captcha_token = load_cnki_captcha_token(&storage_config, &secret_codec);
     let mut registry = ProviderRegistry::default();
     registry.register(scholarly_access_registration()?)?;
     registry.register(live_cnki_oversea_access_registration()?)?;
-    registry.register(live_cnki_access_registration()?)?;
+    registry.register(live_cnki_access_registration(captcha_token)?)?;
     registry.register(zjlib_full_text_registration(storage_config, secret_codec)?)?;
     Ok(registry)
 }
@@ -473,10 +474,30 @@ impl ArticleAbstractProvider for LiveDomesticCnkiAccessProvider {
     }
 }
 
-fn live_cnki_access_registration() -> Result<ProviderRegistration, ProviderRegistryError> {
-    let captcha_token = std::env::var("LITRADAR_CNKI_CAPTCHA_TOKEN")
-        .ok()
-        .filter(|value| !value.trim().is_empty());
+fn load_cnki_captcha_token(
+    storage_config: &litradar_storage::StorageConfig,
+    secret_codec: &litradar_storage::SecretCodec,
+) -> Option<String> {
+    let from_settings =
+        litradar_storage::load_runtime_settings(storage_config.auth_db_path(), secret_codec)
+            .ok()
+            .and_then(|settings| {
+                settings
+                    .into_iter()
+                    .find(|setting| setting.field == "cnki_captcha_token")
+                    .map(|setting| setting.value)
+            })
+            .filter(|value| !value.trim().is_empty());
+    from_settings.or_else(|| {
+        std::env::var("LITRADAR_CNKI_CAPTCHA_TOKEN")
+            .ok()
+            .filter(|value| !value.trim().is_empty())
+    })
+}
+
+fn live_cnki_access_registration(
+    captcha_token: Option<String>,
+) -> Result<ProviderRegistration, ProviderRegistryError> {
     let provider = Arc::new(LiveDomesticCnkiAccessProvider {
         config: LiveDomesticCnkiConfig {
             timeout_seconds: ARTICLE_ACTION_TIMEOUT.as_secs(),
@@ -755,7 +776,12 @@ mod tests {
                     article_abstract: true,
                     ..ProviderCapabilities::default()
                 },
-                allowed_redirect_hosts: vec!["oversea.cnki.net".to_string()],
+                allowed_redirect_hosts: vec![
+                    "oversea.cnki.net".to_string(),
+                    "navi.cnki.net".to_string(),
+                    "kns.cnki.net".to_string(),
+                    "www.cnki.net".to_string(),
+                ],
             },
             ProviderImplementations {
                 article_abstract: Some(Arc::new(RedirectFixtureProvider { outcome })),
@@ -929,9 +955,9 @@ mod tests {
                 .expect("first provider should register");
             registry
                 .register(abstract_registration(
-                    "cnki_oversea",
+                    "cnki",
                     RedirectFixtureOutcome::Redirect(
-                        "https://oversea.cnki.net/kcms/detail/fixture",
+                        "https://navi.cnki.net/knavi/journals/detail?pcode=CJFD&pykm=fixture",
                     ),
                 ))
                 .expect("fallback provider should register");
@@ -944,7 +970,7 @@ mod tests {
 
             assert_eq!(
                 redirect.location,
-                "https://oversea.cnki.net/kcms/detail/fixture"
+                "https://navi.cnki.net/knavi/journals/detail?pcode=CJFD&pykm=fixture"
             );
         }
     }
