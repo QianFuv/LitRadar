@@ -1,10 +1,18 @@
 //! Source clients used by Rust index migration workflows.
 
+pub mod cnki_domestic;
 pub mod cnki_oversea;
 pub mod providers;
 pub mod scholarly;
 pub mod zjlib;
 
+pub use cnki_domestic::{
+    domestic_journal_search_form, parse_domestic_article_detail,
+    parse_domestic_issue_articles, parse_domestic_journal_detail,
+    parse_domestic_journal_search_results, parse_domestic_year_issues,
+    DomesticCnkiFixtureData, DomesticCnkiSourceError, DOMESTIC_KNS_BASE_URL,
+    DOMESTIC_NAVI_BASE_URL,
+};
 pub use cnki_oversea::{
     CnkiClient, CnkiFixtureData, CnkiSourceError, CnkiTransport, FixtureCnkiTransport,
     LiveCnkiConfig, LiveCnkiTransport,
