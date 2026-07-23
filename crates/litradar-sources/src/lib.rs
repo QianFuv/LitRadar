@@ -2,27 +2,35 @@
 
 pub mod cnki_domestic;
 pub mod cnki_oversea;
+pub mod jfbym;
 pub mod providers;
 pub mod scholarly;
 pub mod zjlib;
 
 pub use cnki_domestic::{
-    domestic_journal_search_form, parse_domestic_article_detail,
-    parse_domestic_issue_articles, parse_domestic_journal_detail,
-    parse_domestic_journal_search_results, parse_domestic_year_issues,
-    DomesticCnkiFixtureData, DomesticCnkiSourceError, DOMESTIC_KNS_BASE_URL,
-    DOMESTIC_NAVI_BASE_URL,
+    captcha_check_request_body, captcha_check_succeeded, captcha_get_request_body,
+    domestic_journal_search_form, extract_challenge_url, looks_like_captcha_challenge,
+    parse_captcha_puzzle, parse_domestic_article_detail, parse_domestic_issue_articles,
+    parse_domestic_journal_detail, parse_domestic_journal_search_results,
+    parse_domestic_year_issues, DomesticCaptchaPuzzle, DomesticCaptchaSession,
+    DomesticCnkiFixtureData, DomesticCnkiSourceError, DOMESTIC_CAPTCHA_SOLVE_BUDGET,
+    DOMESTIC_KNS_BASE_URL, DOMESTIC_NAVI_BASE_URL,
 };
 pub use cnki_oversea::{
     CnkiClient, CnkiFixtureData, CnkiSourceError, CnkiTransport, FixtureCnkiTransport,
     LiveCnkiConfig, LiveCnkiTransport,
 };
+pub use jfbym::{
+    encrypt_point_json, parse_slider_distance, point_x_candidates, strip_data_url_base64,
+    FixtureJfbymSolver, JfbymError, JfbymSolver, LiveJfbymSolver, JFBYM_API_URL,
+    JFBYM_DUAL_SLIDER_TYPE, JFBYM_SUCCESS_CODE,
+};
 pub use providers::{
-    built_in_provider_capabilities, cnki_oversea_access_registration, cnki_oversea_index_registration,
-    scholarly_access_registration, scholarly_index_registration, CnkiArticleAccessProvider,
-    CnkiIndexProvider, ScholarlyArticleAccessProvider, ScholarlyIndexProvider, CNKI_OVERSEA_PROVIDER_NAME,
-    CNKI_REDIRECT_HOSTS, SCHOLARLY_PROVIDER_NAME, SCHOLARLY_REDIRECT_HOSTS,
-    ZJLIB_PROVIDER_NAME,
+    built_in_provider_capabilities, cnki_oversea_access_registration,
+    cnki_oversea_index_registration, scholarly_access_registration, scholarly_index_registration,
+    CnkiArticleAccessProvider, CnkiIndexProvider, ScholarlyArticleAccessProvider,
+    ScholarlyIndexProvider, CNKI_OVERSEA_PROVIDER_NAME, CNKI_REDIRECT_HOSTS,
+    SCHOLARLY_PROVIDER_NAME, SCHOLARLY_REDIRECT_HOSTS, ZJLIB_PROVIDER_NAME,
 };
 pub use scholarly::{
     normalize_doi, FixtureScholarlyTransport, LiveScholarlyConfig, LiveScholarlyTransport,

@@ -1,4 +1,4 @@
-//! Domestic NZKPT CNKI metadata client parsers and fixtures.
+//! Domestic NZKPT CNKI metadata client parsers, fixtures, and captcha session.
 //!
 //! This module is intentionally unregistered as a product provider until later
 //! tasks wire index and abstract capabilities under the runtime name `cnki`.
@@ -6,10 +6,14 @@
 use std::collections::BTreeMap;
 use std::error::Error;
 use std::fmt;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::Deserialize;
 use serde_json::{json, Value};
 
+use crate::jfbym::{
+    encrypt_point_json, point_x_candidates, strip_data_url_base64, JfbymError, JfbymSolver,
+};
 use crate::scholarly::SourceError;
 
 /// Domestic navigation host used by NZKPT journal search and detail pages.
@@ -21,6 +25,9 @@ const DOMESTIC_LANGUAGE: &str = "CHS";
 const DOMESTIC_JOURNAL_PARENT_CODE: &str = "SQN63324";
 const DOMESTIC_SEARCH_PRODUCT_CODE: &str = "OYXNO5VW";
 const DEFAULT_PCODE: &str = "CJFD,CCJD";
+/// Maximum fresh captcha puzzle solves allowed per domestic session budget.
+pub const DOMESTIC_CAPTCHA_SOLVE_BUDGET: usize = 5;
+const DOMESTIC_POINT_JSON_Y: i32 = 5;
 
 /// Fixture payload used by domestic NZKPT source replay.
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -86,7 +93,6 @@ impl From<SourceError> for DomesticCnkiSourceError {
         Self::Source(error)
     }
 }
-
 
 /// Build the HAR-shaped domestic journal search form fields.
 ///
@@ -246,7 +252,6 @@ pub fn parse_domestic_journal_detail(text: &str) -> Result<Value, DomesticCnkiSo
         "platform": DOMESTIC_PLATFORM,
     }))
 }
-
 
 /// Parse domestic year-issue tree HTML.
 ///
@@ -418,12 +423,584 @@ pub fn contains_overseas_host(value: &str) -> bool {
     value.to_lowercase().contains("oversea.cnki.net")
 }
 
+/// Puzzle payload returned by CNKI `/verify-api/get`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DomesticCaptchaPuzzle {
+    /// Challenge page URL.
+    pub challenge_url: String,
+    /// Captcha type, typically `blockPuzzle`.
+    pub captcha_type: String,
+    /// Challenge ident query value.
+    pub ident: String,
+    /// Memory-only captcha id retained after a successful solve.
+    pub captcha_id: String,
+    /// Encoded return URL from the challenge.
+    pub return_url: String,
+    /// AES secret key for pointJson encryption.
+    pub secret_key: String,
+    /// Puzzle token submitted with pointJson.
+    pub token: String,
+    /// Base64 background image.
+    pub original_image_b64: String,
+    /// Base64 jigsaw/slide image.
+    pub jigsaw_image_b64: String,
+}
+
+impl fmt::Display for DomesticCaptchaPuzzle {
+    /// Format puzzle metadata without secrets or image payloads.
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            formatter,
+            "DomesticCaptchaPuzzle {{ captcha_type: {}, captcha_id_len: {}, secret_key_len: {}, token_len: {}, original_len: {}, jigsaw_len: {} }}",
+            self.captcha_type,
+            self.captcha_id.len(),
+            self.secret_key.len(),
+            self.token.len(),
+            self.original_image_b64.len(),
+            self.jigsaw_image_b64.len()
+        )
+    }
+}
+
+/// Memory-only captcha session state shared by domestic index and abstract calls.
+#[derive(Debug, Clone)]
+pub struct DomesticCaptchaSession {
+    captcha_id: Option<String>,
+    solve_attempts: usize,
+    solve_budget: usize,
+}
+
+impl Default for DomesticCaptchaSession {
+    /// Build a captcha session with the default solve budget.
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl DomesticCaptchaSession {
+    /// Build a captcha session with the default solve budget.
+    ///
+    /// # Returns
+    ///
+    /// Empty session that has not solved a challenge yet.
+    pub fn new() -> Self {
+        Self::with_budget(DOMESTIC_CAPTCHA_SOLVE_BUDGET)
+    }
+
+    /// Build a captcha session with an explicit solve budget.
+    ///
+    /// # Arguments
+    ///
+    /// * `solve_budget` - Maximum fresh puzzle solves allowed.
+    ///
+    /// # Returns
+    ///
+    /// Empty session with the provided budget.
+    pub fn with_budget(solve_budget: usize) -> Self {
+        Self {
+            captcha_id: None,
+            solve_attempts: 0,
+            solve_budget: solve_budget.max(1),
+        }
+    }
+
+    /// Return whether the solve budget has remaining capacity.
+    ///
+    /// # Returns
+    ///
+    /// True when another puzzle solve may be attempted.
+    pub fn has_budget(&self) -> bool {
+        self.solve_attempts < self.solve_budget
+    }
+
+    /// Return remaining puzzle solves.
+    ///
+    /// # Returns
+    ///
+    /// Remaining budget count.
+    pub fn remaining_budget(&self) -> usize {
+        self.solve_budget.saturating_sub(self.solve_attempts)
+    }
+
+    /// Return whether a captcha id is currently retained in memory.
+    ///
+    /// # Returns
+    ///
+    /// True when a successful solve stored a captcha id.
+    pub fn has_captcha_id(&self) -> bool {
+        self.captcha_id
+            .as_ref()
+            .is_some_and(|value| !value.is_empty())
+    }
+
+    /// Return the memory-only captcha id length without exposing the value.
+    ///
+    /// # Returns
+    ///
+    /// Length of the stored captcha id, or zero.
+    pub fn captcha_id_len(&self) -> usize {
+        self.captcha_id.as_ref().map(String::len).unwrap_or(0)
+    }
+
+    /// Attach a captcha id query parameter when one is present.
+    ///
+    /// # Arguments
+    ///
+    /// * `url` - Domestic request URL.
+    ///
+    /// # Returns
+    ///
+    /// URL with `captchaId` appended when available.
+    pub fn attach_captcha_id(&self, url: &str) -> String {
+        let Some(captcha_id) = self.captcha_id.as_deref().filter(|value| !value.is_empty()) else {
+            return url.to_string();
+        };
+        if url.contains("captchaId=") {
+            return url.to_string();
+        }
+        let separator = if url.contains('?') { '&' } else { '?' };
+        format!("{url}{separator}captchaId={captcha_id}")
+    }
+
+    /// Clear the retained captcha id after a failed authenticated request.
+    pub fn clear_captcha_id(&mut self) {
+        self.captcha_id = None;
+    }
+
+    /// Detect and solve a captcha challenge using a jfbym dual-image solver.
+    ///
+    /// # Arguments
+    ///
+    /// * `response_text` - Domestic response body that may embed a challenge.
+    /// * `response_url` - Request URL associated with the response.
+    /// * `solver` - Dual-image solver implementation.
+    /// * `fetch_puzzle` - Loads puzzle images and keys for one challenge URL.
+    /// * `submit_point` - Submits encrypted pointJson for one candidate x.
+    ///
+    /// # Returns
+    ///
+    /// Ok when no challenge was present or a solve succeeded.
+    pub fn ensure_access<S, F, C>(
+        &mut self,
+        response_text: &str,
+        response_url: &str,
+        solver: &mut S,
+        mut fetch_puzzle: F,
+        mut submit_point: C,
+    ) -> Result<(), DomesticCnkiSourceError>
+    where
+        S: JfbymSolver,
+        F: FnMut(&str) -> Result<DomesticCaptchaPuzzle, DomesticCnkiSourceError>,
+        C: FnMut(&DomesticCaptchaPuzzle, &str) -> Result<bool, DomesticCnkiSourceError>,
+    {
+        if !looks_like_captcha_challenge(response_text, response_url) {
+            return Ok(());
+        }
+        let challenge_url =
+            extract_challenge_url(response_text, response_url).ok_or_else(|| {
+                DomesticCnkiSourceError::Request(
+                    "domestic CNKI verification required but challenge URL is missing".to_string(),
+                )
+            })?;
+        self.solve_challenge(&challenge_url, solver, &mut fetch_puzzle, &mut submit_point)
+    }
+
+    /// Solve one captcha challenge within the remaining budget.
+    ///
+    /// # Arguments
+    ///
+    /// * `challenge_url` - CNKI `/verify/home` challenge URL.
+    /// * `solver` - Dual-image solver implementation.
+    /// * `fetch_puzzle` - Loads puzzle images and keys for one challenge URL.
+    /// * `submit_point` - Submits encrypted pointJson for one candidate x.
+    ///
+    /// # Returns
+    ///
+    /// Ok when a candidate is accepted and the captcha id is retained.
+    pub fn solve_challenge<S, F, C>(
+        &mut self,
+        challenge_url: &str,
+        solver: &mut S,
+        mut fetch_puzzle: F,
+        mut submit_point: C,
+    ) -> Result<(), DomesticCnkiSourceError>
+    where
+        S: JfbymSolver,
+        F: FnMut(&str) -> Result<DomesticCaptchaPuzzle, DomesticCnkiSourceError>,
+        C: FnMut(&DomesticCaptchaPuzzle, &str) -> Result<bool, DomesticCnkiSourceError>,
+    {
+        while self.has_budget() {
+            self.solve_attempts += 1;
+            let puzzle = fetch_puzzle(challenge_url)?;
+            validate_puzzle(&puzzle)?;
+            let distance = solver
+                .solve_dual_image(&puzzle.jigsaw_image_b64, &puzzle.original_image_b64)
+                .map_err(map_jfbym_error)?;
+            // One candidate per fresh puzzle: failed checks invalidate the puzzle token.
+            let candidates = point_x_candidates(distance);
+            let candidate_index = (self.solve_attempts - 1) % candidates.len();
+            let x = candidates[candidate_index];
+            let point_json = encrypt_point_json(&puzzle.secret_key, x, DOMESTIC_POINT_JSON_Y)
+                .map_err(map_jfbym_error)?;
+            if submit_point(&puzzle, &point_json)? {
+                self.captcha_id = Some(puzzle.captcha_id);
+                return Ok(());
+            }
+        }
+        Err(DomesticCnkiSourceError::Request(format!(
+            "domestic CNKI captcha solve budget exhausted after {} attempts",
+            self.solve_attempts
+        )))
+    }
+}
+
+/// Return whether response text or URL indicates a captcha challenge.
+///
+/// # Arguments
+///
+/// * `text` - Response body.
+/// * `url` - Request or redirect URL.
+///
+/// # Returns
+///
+/// True when verification is required.
+pub fn looks_like_captcha_challenge(text: &str, url: &str) -> bool {
+    if contains_overseas_host(text) || contains_overseas_host(url) {
+        return false;
+    }
+    if looks_like_domestic_content(text) {
+        return false;
+    }
+    let lowered = text.to_lowercase();
+    lowered.contains("captcha")
+        || text.contains("访问异常")
+        || text.contains("安全验证")
+        || text.contains("\"code\":-403")
+        || text.contains("/verify/home")
+        || url.contains("/verify/home")
+        || url.to_lowercase().contains("captcha")
+}
+
+/// Extract a CNKI challenge URL from a blocked domestic response.
+///
+/// # Arguments
+///
+/// * `text` - Response body that may embed a challenge URL.
+/// * `url` - Request or redirect URL.
+///
+/// # Returns
+///
+/// Challenge URL when present.
+pub fn extract_challenge_url(text: &str, url: &str) -> Option<String> {
+    if url.contains("/verify/home") {
+        return Some(url.to_string());
+    }
+    if let Ok(payload) = serde_json::from_str::<Value>(text) {
+        if let Some(message) = payload.get("message").and_then(Value::as_str) {
+            if message.contains("/verify/home") {
+                return Some(message.to_string());
+            }
+        }
+    }
+    let marker = "https://kns.cnki.net/verify/home?";
+    if let Some(start) = text.find(marker) {
+        let rest = &text[start..];
+        let end = rest
+            .find(|character: char| {
+                character.is_whitespace() || character == '"' || character == '\''
+            })
+            .unwrap_or(rest.len());
+        return Some(rest[..end].to_string());
+    }
+    let relative = "/verify/home?";
+    if let Some(start) = text.find(relative) {
+        let rest = &text[start..];
+        let end = rest
+            .find(|character: char| {
+                character.is_whitespace() || character == '"' || character == '\''
+            })
+            .unwrap_or(rest.len());
+        return Some(format!("{DOMESTIC_KNS_BASE_URL}{}", &rest[..end]));
+    }
+    None
+}
+
+/// Parse a `/verify-api/get` JSON body into a puzzle payload.
+///
+/// # Arguments
+///
+/// * `challenge_url` - Challenge page URL providing query fields.
+/// * `body` - JSON response body from `/verify-api/get`.
+///
+/// # Returns
+///
+/// Parsed puzzle or a request/parse error.
+pub fn parse_captcha_puzzle(
+    challenge_url: &str,
+    body: &Value,
+) -> Result<DomesticCaptchaPuzzle, DomesticCnkiSourceError> {
+    let query = query_map(challenge_url);
+    let container = puzzle_container(body).ok_or_else(|| {
+        DomesticCnkiSourceError::Parse(
+            "domestic captcha puzzle missing image container".to_string(),
+        )
+    })?;
+    let original = strip_data_url_base64(
+        container
+            .get("originalImageBase64")
+            .and_then(Value::as_str)
+            .unwrap_or_default(),
+    )
+    .to_string();
+    let jigsaw = strip_data_url_base64(
+        container
+            .get("jigsawImageBase64")
+            .and_then(Value::as_str)
+            .unwrap_or_default(),
+    )
+    .to_string();
+    let secret_key = container
+        .get("secretKey")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string();
+    let token = container
+        .get("token")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string();
+    let captcha_type = query
+        .get("captchaType")
+        .cloned()
+        .or_else(|| {
+            container
+                .get("captchaType")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+        })
+        .unwrap_or_else(|| "blockPuzzle".to_string());
+    let ident = query.get("ident").cloned().unwrap_or_default();
+    let captcha_id = query
+        .get("captchaId")
+        .cloned()
+        .or_else(|| {
+            container
+                .get("captchaId")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+        })
+        .unwrap_or_default();
+    let return_url = query.get("returnUrl").cloned().unwrap_or_default();
+    let puzzle = DomesticCaptchaPuzzle {
+        challenge_url: challenge_url.to_string(),
+        captcha_type,
+        ident,
+        captcha_id,
+        return_url,
+        secret_key,
+        token,
+        original_image_b64: original,
+        jigsaw_image_b64: jigsaw,
+    };
+    validate_puzzle(&puzzle)?;
+    Ok(puzzle)
+}
+
+/// Build the JSON body for `/verify-api/get`.
+///
+/// # Arguments
+///
+/// * `challenge_url` - Challenge page URL.
+///
+/// # Returns
+///
+/// Request body for puzzle fetch.
+pub fn captcha_get_request_body(challenge_url: &str) -> Value {
+    let query = query_map(challenge_url);
+    json!({
+        "captchaType": query.get("captchaType").cloned().unwrap_or_else(|| "blockPuzzle".to_string()),
+        "clientUid": client_uid_hex(),
+        "ts": unix_millis(),
+        "ident": query.get("ident").cloned().unwrap_or_default(),
+        "captchaId": query.get("captchaId").cloned().unwrap_or_default(),
+    })
+}
+
+/// Build the JSON body for `/verify-api/web/check`.
+///
+/// # Arguments
+///
+/// * `puzzle` - Captcha puzzle from `/verify-api/get`.
+/// * `point_json` - Encrypted pointJson ciphertext.
+///
+/// # Returns
+///
+/// Request body for captcha check.
+pub fn captcha_check_request_body(puzzle: &DomesticCaptchaPuzzle, point_json: &str) -> Value {
+    json!({
+        "captchaType": puzzle.captcha_type,
+        "pointJson": point_json,
+        "token": puzzle.token,
+        "ident": puzzle.ident,
+        "returnUrl": puzzle.return_url,
+    })
+}
+
+/// Return whether a `/verify-api/web/check` response accepted the pointJson.
+///
+/// # Arguments
+///
+/// * `body` - JSON response body.
+///
+/// # Returns
+///
+/// True when the captcha check succeeded.
+pub fn captcha_check_succeeded(body: &Value) -> bool {
+    if matches!(body.get("success"), Some(Value::Bool(true))) {
+        return true;
+    }
+    if body.get("success").and_then(Value::as_str) == Some("true") {
+        return true;
+    }
+    if body.get("success").and_then(Value::as_i64) == Some(1) {
+        return true;
+    }
+    let container = body
+        .get("repData")
+        .or_else(|| body.get("data"))
+        .and_then(Value::as_object);
+    if let Some(container) = container {
+        if matches!(container.get("result"), Some(Value::Bool(true))) {
+            return true;
+        }
+        if container.get("result").and_then(Value::as_str) == Some("true") {
+            return true;
+        }
+        if container.get("result").and_then(Value::as_i64) == Some(1) {
+            return true;
+        }
+    }
+    false
+}
+
+fn validate_puzzle(puzzle: &DomesticCaptchaPuzzle) -> Result<(), DomesticCnkiSourceError> {
+    if puzzle.original_image_b64.is_empty()
+        || puzzle.jigsaw_image_b64.is_empty()
+        || puzzle.secret_key.is_empty()
+        || puzzle.token.is_empty()
+        || puzzle.captcha_id.is_empty()
+    {
+        return Err(DomesticCnkiSourceError::Parse(
+            "domestic captcha puzzle missing required fields".to_string(),
+        ));
+    }
+    if puzzle.secret_key.len() != 16 {
+        return Err(DomesticCnkiSourceError::Parse(format!(
+            "domestic captcha secretKey length is {}, expected 16",
+            puzzle.secret_key.len()
+        )));
+    }
+    Ok(())
+}
+
+fn puzzle_container(body: &Value) -> Option<&Value> {
+    if body.get("originalImageBase64").is_some() {
+        return Some(body);
+    }
+    for key in ["repData", "data"] {
+        if let Some(value) = body.get(key) {
+            if value.get("originalImageBase64").is_some() {
+                return Some(value);
+            }
+            if let Some(nested) = value.as_object() {
+                for nested_value in nested.values() {
+                    if nested_value.get("originalImageBase64").is_some() {
+                        return Some(nested_value);
+                    }
+                }
+            }
+        }
+    }
+    body.as_object().and_then(|map| {
+        map.values()
+            .find(|value| value.get("originalImageBase64").is_some())
+    })
+}
+
+fn query_map(url: &str) -> BTreeMap<String, String> {
+    let mut map = BTreeMap::new();
+    let Some(query) = url.split_once('?').map(|(_, query)| query) else {
+        return map;
+    };
+    for pair in query.split('&') {
+        if pair.is_empty() {
+            continue;
+        }
+        let (key, value) = pair.split_once('=').unwrap_or((pair, ""));
+        if key.is_empty() {
+            continue;
+        }
+        map.insert(percent_decode(key), percent_decode(value));
+    }
+    map
+}
+
+fn percent_decode(value: &str) -> String {
+    let bytes = value.as_bytes();
+    let mut output = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        match bytes[index] {
+            b'+' => {
+                output.push(b' ');
+                index += 1;
+            }
+            b'%' if index + 2 < bytes.len() => {
+                let hex = &value[index + 1..index + 3];
+                if let Ok(byte) = u8::from_str_radix(hex, 16) {
+                    output.push(byte);
+                    index += 3;
+                } else {
+                    output.push(bytes[index]);
+                    index += 1;
+                }
+            }
+            byte => {
+                output.push(byte);
+                index += 1;
+            }
+        }
+    }
+    String::from_utf8_lossy(&output).into_owned()
+}
+
+fn client_uid_hex() -> String {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or(0);
+    format!("{nanos:032x}")[..32].to_string()
+}
+
+fn unix_millis() -> u128 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis())
+        .unwrap_or(0)
+}
+
+fn map_jfbym_error(error: JfbymError) -> DomesticCnkiSourceError {
+    match error {
+        JfbymError::Configuration(message) => DomesticCnkiSourceError::Request(message),
+        JfbymError::Request(message) | JfbymError::InvalidResponse(message) => {
+            DomesticCnkiSourceError::Request(message)
+        }
+    }
+}
 
 fn journal_result_issn_near(text: &str, href: &str) -> Option<String> {
     let encoded_href = href.replace('&', "&amp;");
-    let href_index = text
-        .find(href)
-        .or_else(|| text.find(&encoded_href))?;
+    let href_index = text.find(href).or_else(|| text.find(&encoded_href))?;
     let matched_len = if text[href_index..].starts_with(href) {
         href.len()
     } else {
@@ -479,15 +1056,13 @@ fn summary_text(text: &str) -> Option<String> {
         .into_iter()
         .find_map(|tag| {
             let tag_attrs = attrs(&tag);
-            let is_summary = tag_attrs.get("id").is_some_and(|value| value == "ChDivSummary")
+            let is_summary = tag_attrs
+                .get("id")
+                .is_some_and(|value| value == "ChDivSummary")
                 || tag_attrs.get("class").is_some_and(|value| {
-                    value
-                        .split_whitespace()
-                        .any(|item| item == "abstract-text")
+                    value.split_whitespace().any(|item| item == "abstract-text")
                 });
-            is_summary
-                .then(|| non_empty(&strip_tags(&tag)))
-                .flatten()
+            is_summary.then(|| non_empty(&strip_tags(&tag))).flatten()
         })
         .or_else(|| input_value(text, "abstract_text"))
 }
@@ -613,7 +1188,9 @@ fn span_title(text: &str, class_name: &str) -> Option<String> {
 fn author_text(text: &str) -> Option<String> {
     let block = tags(text, "h3").into_iter().find(|tag| {
         let tag_attrs = attrs(tag);
-        tag_attrs.get("id").is_some_and(|value| value == "authorpart")
+        tag_attrs
+            .get("id")
+            .is_some_and(|value| value == "authorpart")
             && tag_attrs
                 .get("class")
                 .is_some_and(|value| value.split_whitespace().any(|item| item == "author"))
@@ -784,7 +1361,6 @@ fn with_domestic_platform(url: &str) -> String {
     format!("{path}?{}", pairs.join("&"))
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -863,7 +1439,9 @@ mod tests {
         assert!(state.contains("OYXNO5VW"));
         assert!(state.contains("世界经济"));
         assert!(!state.contains("oversea.cnki.net"));
-        assert!(!form.values().any(|value| value.contains("oversea.cnki.net")));
+        assert!(!form
+            .values()
+            .any(|value| value.contains("oversea.cnki.net")));
     }
 
     #[test]
@@ -946,7 +1524,13 @@ mod tests {
 
     #[test]
     fn fixtures_do_not_embed_captcha_secrets() {
-        for sample in [SEARCH_HTML, DETAIL_HTML, YEAR_HTML, PAPERS_HTML, ABSTRACT_HTML] {
+        for sample in [
+            SEARCH_HTML,
+            DETAIL_HTML,
+            YEAR_HTML,
+            PAPERS_HTML,
+            ABSTRACT_HTML,
+        ] {
             let lowered = sample.to_lowercase();
             assert!(!lowered.contains("token="));
             assert!(!lowered.contains("secretkey"));
@@ -954,5 +1538,103 @@ mod tests {
             assert!(!lowered.contains("jfbym"));
             assert!(!lowered.contains("api.jfbym.com"));
         }
+    }
+
+    #[test]
+    fn detects_challenge_and_extracts_verify_url() {
+        let body = r#"{"code":-403,"message":"https://kns.cnki.net/verify/home?captchaType=blockPuzzle&ident=eea05a&captchaId=2222b8cc-69e3-42a9-b1d2-07f08ff6dd54&returnUrl=opaque"}"#;
+        assert!(looks_like_captcha_challenge(
+            body,
+            "https://navi.cnki.net/knavi/journals/searchbaseinfo"
+        ));
+        let challenge = extract_challenge_url(body, "search").expect("challenge");
+        assert!(challenge.contains("/verify/home?"));
+        assert!(challenge.contains("captchaId="));
+        assert!(!challenge.contains("oversea.cnki.net"));
+    }
+
+    #[test]
+    fn captcha_session_solves_within_budget_and_redacts_debug() {
+        use crate::jfbym::FixtureJfbymSolver;
+
+        let challenge = "https://kns.cnki.net/verify/home?captchaType=blockPuzzle&ident=eea05a&captchaId=2222b8cc-69e3-42a9-b1d2-07f08ff6dd54&returnUrl=opaque";
+        let puzzle_body = json!({
+            "repData": {
+                "originalImageBase64": "AAAA",
+                "jigsawImageBase64": "BBBB",
+                "secretKey": "0123456789abcdef",
+                "token": "tokentokentokentokentokentoken12"
+            }
+        });
+        let puzzle = parse_captcha_puzzle(challenge, &puzzle_body).expect("puzzle");
+        let debug = format!("{puzzle}");
+        assert!(debug.contains("captcha_id_len: 36"));
+        assert!(!debug.contains("2222b8cc"));
+        assert!(!debug.contains("0123456789abcdef"));
+        assert!(!debug.contains("tokentokentokentokentokentoken12"));
+        assert!(!debug.contains("AAAA"));
+
+        let mut session = DomesticCaptchaSession::with_budget(2);
+        let mut solver = FixtureJfbymSolver::new(261.0);
+        let mut accepted_x = None;
+        session
+            .solve_challenge(
+                challenge,
+                &mut solver,
+                |_| Ok(puzzle.clone()),
+                |puzzle, point_json| {
+                    assert_eq!(puzzle.secret_key.len(), 16);
+                    assert!(!point_json.is_empty());
+                    assert!(!point_json.contains("261"));
+                    accepted_x = Some(point_json.to_string());
+                    Ok(true)
+                },
+            )
+            .expect("solve");
+        assert!(session.has_captcha_id());
+        assert_eq!(session.captcha_id_len(), 36);
+        let attached = session.attach_captcha_id("https://navi.cnki.net/knavi/journals/index");
+        assert!(attached.contains("captchaId="));
+        assert!(accepted_x.is_some());
+
+        let get_body = captcha_get_request_body(challenge);
+        assert_eq!(get_body["captchaType"], "blockPuzzle");
+        assert_eq!(get_body["ident"], "eea05a");
+        assert_eq!(get_body["clientUid"].as_str().unwrap().len(), 32);
+
+        let check_body = captcha_check_request_body(&puzzle, "cipher");
+        assert_eq!(check_body["pointJson"], "cipher");
+        assert_eq!(check_body["token"], "tokentokentokentokentokentoken12");
+        assert!(captcha_check_succeeded(&json!({"success": true})));
+        assert!(captcha_check_succeeded(&json!({"data": {"result": true}})));
+        assert!(!captcha_check_succeeded(&json!({"success": false})));
+    }
+
+    #[test]
+    fn captcha_session_exhausts_budget_without_success() {
+        use crate::jfbym::FixtureJfbymSolver;
+
+        let challenge = "https://kns.cnki.net/verify/home?captchaType=blockPuzzle&ident=eea05a&captchaId=2222b8cc-69e3-42a9-b1d2-07f08ff6dd54&returnUrl=opaque";
+        let puzzle_body = json!({
+            "data": {
+                "originalImageBase64": "AAAA",
+                "jigsawImageBase64": "BBBB",
+                "secretKey": "0123456789abcdef",
+                "token": "tokentokentokentokentokentoken12"
+            }
+        });
+        let puzzle = parse_captcha_puzzle(challenge, &puzzle_body).expect("puzzle");
+        let mut session = DomesticCaptchaSession::with_budget(1);
+        let mut solver = FixtureJfbymSolver::new(10.0);
+        let error = session
+            .solve_challenge(
+                challenge,
+                &mut solver,
+                |_| Ok(puzzle.clone()),
+                |_puzzle, _point| Ok(false),
+            )
+            .expect_err("budget");
+        assert!(error.to_string().contains("budget exhausted"));
+        assert!(!session.has_captcha_id());
     }
 }
