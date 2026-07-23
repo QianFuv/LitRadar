@@ -154,7 +154,7 @@ const RUNTIME_CONFIG_DEFINITIONS: [RuntimeConfigDefinition; 12] = [
         input_type: "text",
         is_secret: false,
         description: "JSON object mapping each catalog stem to one registered indexing provider.",
-        default_value: "{\"ccf_computer_journals\":\"scholarly\",\"chinese_journals\":\"cnki\",\"english_journals\":\"scholarly\"}",
+        default_value: "{\"ccf_computer_journals\":\"scholarly\",\"chinese_journals\":\"cnki_oversea\",\"english_journals\":\"scholarly\"}",
     },
     RuntimeConfigDefinition {
         field: "article_abstract_provider_orders",
@@ -166,7 +166,7 @@ const RUNTIME_CONFIG_DEFINITIONS: [RuntimeConfigDefinition; 12] = [
         input_type: "text",
         is_secret: false,
         description: "JSON default and per-catalog Provider orders for live article abstract-page resolution.",
-        default_value: "{\"default\":[\"scholarly\",\"cnki\"],\"catalogs\":{}}",
+        default_value: "{\"default\":[\"scholarly\",\"cnki_oversea\"],\"catalogs\":{}}",
     },
     RuntimeConfigDefinition {
         field: "article_fulltext_provider_orders",
@@ -178,7 +178,7 @@ const RUNTIME_CONFIG_DEFINITIONS: [RuntimeConfigDefinition; 12] = [
         input_type: "text",
         is_secret: false,
         description: "JSON default and per-catalog Provider orders for live article full-text resolution.",
-        default_value: "{\"default\":[\"zjlib_cnki\"],\"catalogs\":{}}",
+        default_value: "{\"default\":[\"zjlib\"],\"catalogs\":{}}",
     },
     RuntimeConfigDefinition {
         field: "log_format",
@@ -610,34 +610,55 @@ fn normalize_index_provider_routes(value: &str) -> Result<String, BusinessReposi
             "at least one catalog route is required",
         ));
     }
-    for (catalog, provider) in &routes {
-        if !is_runtime_name(catalog) {
+    let mut normalized = BTreeMap::new();
+    for (catalog, provider) in routes {
+        if !is_runtime_name(&catalog) {
             return Err(invalid_runtime_setting(
                 "index_provider_routes",
                 "catalog stems must use lowercase ASCII names",
             ));
         }
-        if !is_runtime_name(provider) {
+        let provider = rewrite_legacy_provider_runtime_name(&provider);
+        if !is_runtime_name(&provider) {
             return Err(invalid_runtime_setting(
                 "index_provider_routes",
                 "provider names must use lowercase ASCII names",
             ));
         }
+        normalized.insert(catalog, provider);
     }
-    Ok(serde_json::to_string(&routes)?)
+    Ok(serde_json::to_string(&normalized)?)
 }
 
 fn normalize_provider_order_configuration(
     field: &str,
     value: &str,
 ) -> Result<String, BusinessRepositoryError> {
-    let configuration =
+    let mut configuration =
         serde_json::from_str::<ProviderOrderConfiguration>(value).map_err(|_| {
             invalid_runtime_setting(
                 field,
                 "value must contain only JSON default and catalogs fields",
             )
         })?;
+    configuration.default = configuration
+        .default
+        .into_iter()
+        .map(|name| rewrite_legacy_provider_runtime_name(&name))
+        .collect();
+    configuration.catalogs = configuration
+        .catalogs
+        .into_iter()
+        .map(|(catalog, providers)| {
+            (
+                catalog,
+                providers
+                    .into_iter()
+                    .map(|name| rewrite_legacy_provider_runtime_name(&name))
+                    .collect(),
+            )
+        })
+        .collect();
     validate_provider_order(field, &configuration.default)?;
     for (catalog, providers) in &configuration.catalogs {
         if !is_runtime_name(catalog) {
@@ -649,6 +670,14 @@ fn normalize_provider_order_configuration(
         validate_provider_order(field, providers)?;
     }
     Ok(serde_json::to_string(&configuration)?)
+}
+
+fn rewrite_legacy_provider_runtime_name(name: &str) -> String {
+    match name {
+        "cnki" => "cnki_oversea".to_string(),
+        "zjlib_cnki" => "zjlib".to_string(),
+        other => other.to_string(),
+    }
 }
 
 fn validate_provider_order(
@@ -936,10 +965,10 @@ mod tests {
                 Some(
                     r#"{
                         "catalogs": {
-                            "chinese_journals": ["cnki", "scholarly"],
+                            "chinese_journals": ["cnki_oversea", "scholarly"],
                             "disabled_catalog": []
                         },
-                        "default": ["scholarly", "cnki"]
+                        "default": ["scholarly", "cnki_oversea"]
                     }"#
                     .to_string(),
                 ),
@@ -954,7 +983,7 @@ mod tests {
                 .find(|setting| setting.field == "index_provider_routes")
                 .expect("route setting should exist")
                 .value,
-            "{\"chinese_journals\":\"cnki\",\"english_journals\":\"scholarly\"}"
+            "{\"chinese_journals\":\"cnki_oversea\",\"english_journals\":\"scholarly\"}"
         );
         assert_eq!(
             settings
@@ -962,7 +991,7 @@ mod tests {
                 .find(|setting| setting.field == "article_abstract_provider_orders")
                 .expect("abstract orders should exist")
                 .value,
-            "{\"default\":[\"scholarly\",\"cnki\"],\"catalogs\":{\"chinese_journals\":[\"cnki\",\"scholarly\"],\"disabled_catalog\":[]}}"
+            "{\"default\":[\"scholarly\",\"cnki_oversea\"],\"catalogs\":{\"chinese_journals\":[\"cnki_oversea\",\"scholarly\"],\"disabled_catalog\":[]}}"
         );
 
         for invalid in [

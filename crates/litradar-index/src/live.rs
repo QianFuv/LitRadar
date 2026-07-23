@@ -15,8 +15,8 @@ use litradar_provider::{
     IndexContentProvider, ProviderError, ProviderRegistration, ProviderRegistryError,
 };
 use litradar_sources::{
-    cnki_index_registration, scholarly_index_registration, LiveCnkiConfig, LiveCnkiTransport,
-    LiveScholarlyConfig, LiveScholarlyTransport, CNKI_PROVIDER_NAME,
+    cnki_oversea_index_registration, scholarly_index_registration, LiveCnkiConfig, LiveCnkiTransport,
+    LiveScholarlyConfig, LiveScholarlyTransport, CNKI_OVERSEA_PROVIDER_NAME,
     OPENALEX_MAX_WORKERS_PER_PROCESS, SCHOLARLY_PROVIDER_NAME,
 };
 use rusqlite::{Connection, ErrorCode};
@@ -1881,14 +1881,14 @@ fn build_index_registration(
                 has_semantic_scholar_key,
             )?)
         }
-        CNKI_PROVIDER_NAME => {
+        CNKI_OVERSEA_PROVIDER_NAME => {
             let transport =
                 LiveCnkiTransport::new(LiveCnkiConfig { timeout_seconds }).map_err(|_| {
                     LiveIndexError::ProviderSetup(
                         "CNKI indexing provider could not initialize".to_string(),
                     )
                 })?;
-            Ok(cnki_index_registration(transport)?)
+            Ok(cnki_oversea_index_registration(transport)?)
         }
         name => Err(LiveIndexError::InvalidConfig(format!(
             "index provider {name} is not registered"

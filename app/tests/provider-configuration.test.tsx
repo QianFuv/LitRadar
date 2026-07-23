@@ -32,7 +32,7 @@ function providerSettingsFixture(): RuntimeSettingInfo[] {
       input_type: 'text',
       is_secret: false,
       value:
-        '{"ccf_computer_journals":"scholarly","chinese_journals":"cnki","legacy_journals":"scholarly"}',
+        '{"ccf_computer_journals":"scholarly","chinese_journals":"cnki_oversea","legacy_journals":"scholarly"}',
       has_value: true,
       masked_value: '',
       secret_items: [],
@@ -50,7 +50,7 @@ function providerSettingsFixture(): RuntimeSettingInfo[] {
       input_type: 'text',
       is_secret: false,
       value:
-        '{"default":["scholarly","cnki"],"catalogs":{"chinese_journals":["cnki","scholarly"],"legacy_journals":[]}}',
+        '{"default":["scholarly","cnki_oversea"],"catalogs":{"chinese_journals":["cnki_oversea","scholarly"],"legacy_journals":[]}}',
       has_value: true,
       masked_value: '',
       secret_items: [],
@@ -67,7 +67,7 @@ function providerSettingsFixture(): RuntimeSettingInfo[] {
       allowed_values: [],
       input_type: 'text',
       is_secret: false,
-      value: '{"default":["zjlib_cnki"],"catalogs":{}}',
+      value: '{"default":["zjlib"],"catalogs":{}}',
       has_value: true,
       masked_value: '',
       secret_items: [],
@@ -223,7 +223,7 @@ function providerCatalogFixture(): ProviderCatalogResponse {
   return {
     providers: [
       {
-        name: 'cnki',
+        name: 'cnki_oversea',
         index_content: true,
         article_abstract: true,
         article_full_text: false,
@@ -235,7 +235,7 @@ function providerCatalogFixture(): ProviderCatalogResponse {
         article_full_text: false,
       },
       {
-        name: 'zjlib_cnki',
+        name: 'zjlib',
         index_content: false,
         article_abstract: false,
         article_full_text: true,
@@ -326,9 +326,9 @@ async function filtersProviderCandidatesByCapability(): Promise<void> {
   });
   indexSelect.focus();
   await user.keyboard('{Enter}');
-  expect(screen.getByRole('option', { name: 'cnki' })).toBeInTheDocument();
+  expect(screen.getByRole('option', { name: 'cnki_oversea' })).toBeInTheDocument();
   expect(screen.getByRole('option', { name: 'scholarly' })).toBeInTheDocument();
-  expect(screen.queryByRole('option', { name: 'zjlib_cnki' })).not.toBeInTheDocument();
+  expect(screen.queryByRole('option', { name: 'zjlib' })).not.toBeInTheDocument();
   await user.keyboard('{Escape}');
 
   const fulltextSelect = screen.getByRole('combobox', {
@@ -336,8 +336,8 @@ async function filtersProviderCandidatesByCapability(): Promise<void> {
   });
   fulltextSelect.focus();
   await user.keyboard('{Enter}');
-  expect(screen.getByRole('option', { name: 'zjlib_cnki' })).toBeInTheDocument();
-  expect(screen.queryByRole('option', { name: 'cnki' })).not.toBeInTheDocument();
+  expect(screen.getByRole('option', { name: 'zjlib' })).toBeInTheDocument();
+  expect(screen.queryByRole('option', { name: 'cnki_oversea' })).not.toBeInTheDocument();
   expect(screen.queryByRole('option', { name: 'scholarly' })).not.toBeInTheDocument();
 }
 
@@ -359,7 +359,7 @@ async function serializesReorderedDefaultProviderOrder(): Promise<void> {
     expect(updatePayload).toEqual({
       values: {
         article_abstract_provider_orders:
-          '{"default":["cnki","scholarly"],"catalogs":{"chinese_journals":["cnki","scholarly"],"legacy_journals":[]}}',
+          '{"default":["cnki_oversea","scholarly"],"catalogs":{"chinese_journals":["cnki_oversea","scholarly"],"legacy_journals":[]}}',
       },
       secret_pool_updates: {},
     }),
@@ -395,7 +395,7 @@ async function serializesInheritanceAndExplicitDisable(): Promise<void> {
     expect(updatePayload).toEqual({
       values: {
         article_abstract_provider_orders:
-          '{"default":["scholarly","cnki"],"catalogs":{"ccf_computer_journals":[],"chinese_journals":["cnki","scholarly"]}}',
+          '{"default":["scholarly","cnki_oversea"],"catalogs":{"ccf_computer_journals":[],"chinese_journals":["cnki_oversea","scholarly"]}}',
       },
       secret_pool_updates: {},
     }),
@@ -414,14 +414,14 @@ async function serializesOneIndexProviderPerCatalog(): Promise<void> {
   });
   select.focus();
   await user.keyboard('{Enter}{Home}{Enter}');
-  await waitFor(() => expect(select).toHaveTextContent('cnki'));
+  await waitFor(() => expect(select).toHaveTextContent('cnki_oversea'));
   await user.click(screen.getByRole('button', { name: '保存配置' }));
 
   await waitFor(() =>
     expect(updatePayload).toEqual({
       values: {
         index_provider_routes:
-          '{"ccf_computer_journals":"cnki","chinese_journals":"cnki","legacy_journals":"scholarly"}',
+          '{"ccf_computer_journals":"cnki_oversea","chinese_journals":"cnki_oversea","legacy_journals":"scholarly"}',
       },
       secret_pool_updates: {},
     }),

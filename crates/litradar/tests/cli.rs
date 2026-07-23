@@ -349,7 +349,7 @@ fn index_command_resumes_a_local_catalog_without_network_access() {
         &codec,
         &HashMap::from([(
             "index_provider_routes".to_string(),
-            Some(r#"{"offline":"cnki"}"#.to_string()),
+            Some(r#"{"offline":"cnki_oversea"}"#.to_string()),
         )]),
         &HashMap::new(),
     )
@@ -361,7 +361,7 @@ fn index_command_resumes_a_local_catalog_without_network_access() {
     litradar_index::control::write_checkpoint(
         &control,
         "offline",
-        "cnki",
+        "cnki_oversea",
         &litradar_index::control::CheckpointScope::Journal {
             catalog_id: "issn-0001-3072".to_string(),
         },

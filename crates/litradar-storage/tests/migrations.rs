@@ -95,7 +95,7 @@ fn provider_order_migration_prefers_abstract_and_preserves_empty_fulltext() {
     assert_eq!(
         runtime_setting(&path, "article_abstract_provider_orders"),
         Some((
-            "{\"default\":[\"scholarly\",\"cnki\"],\"catalogs\":{}}".to_string(),
+            "{\"default\":[\"scholarly\",\"cnki_oversea\"],\"catalogs\":{}}".to_string(),
             20.0,
         ))
     );
@@ -132,7 +132,7 @@ fn provider_order_migration_uses_detail_when_abstract_is_absent() {
     assert_eq!(
         runtime_setting(&path, "article_abstract_provider_orders"),
         Some((
-            "{\"default\":[\"cnki\",\"scholarly\"],\"catalogs\":{}}".to_string(),
+            "{\"default\":[\"cnki_oversea\",\"scholarly\"],\"catalogs\":{}}".to_string(),
             11.0,
         ))
     );
@@ -149,7 +149,7 @@ fn malformed_provider_order_rolls_back_version_six_migration() {
             "PRAGMA user_version = 6;
              INSERT INTO runtime_settings (key, value, updated_at) VALUES
                  ('article_detail_provider_order', 'scholarly,scholarly', 12.0),
-                 ('article_fulltext_provider_order', 'zjlib_cnki', 13.0);",
+                 ('article_fulltext_provider_order', 'zjlib', 13.0);",
         )
         .expect("invalid legacy settings should be inserted");
     drop(connection);
@@ -167,6 +167,63 @@ fn malformed_provider_order_rolls_back_version_six_migration() {
     );
     assert!(runtime_setting(&path, "article_abstract_provider_orders").is_none());
     assert!(runtime_setting(&path, "article_fulltext_provider_orders").is_none());
+}
+
+#[test]
+fn provider_runtime_name_migration_rewrites_cnki_and_zjlib_tokens() {
+    let temp_dir = tempdir().expect("temp directory should be created");
+    let path = temp_dir.path().join("provider-name-rewrite.sqlite");
+    migrate_auth_database(&path).expect("current auth database should migrate");
+    let connection = Connection::open(&path).expect("auth database should open");
+    connection
+        .execute_batch(
+            r#"
+            PRAGMA user_version = 7;
+            INSERT INTO runtime_settings (key, value, updated_at) VALUES
+                (
+                    'index_provider_routes',
+                    '{"chinese_journals":"cnki","english_journals":"scholarly"}',
+                    40.0
+                ),
+                (
+                    'article_abstract_provider_orders',
+                    '{"default":["scholarly","cnki"],"catalogs":{"chinese_journals":["cnki","scholarly"]}}',
+                    41.0
+                ),
+                (
+                    'article_fulltext_provider_orders',
+                    '{"default":["zjlib_cnki"],"catalogs":{}}',
+                    42.0
+                );
+            "#,
+        )
+        .expect("version seven provider settings should be inserted");
+    drop(connection);
+
+    migrate_auth_database(&path).expect("provider name rewrite should migrate");
+
+    assert_eq!(user_version(&path), AUTH_SCHEMA_VERSION);
+    assert_eq!(
+        runtime_setting(&path, "index_provider_routes"),
+        Some((
+            "{\"chinese_journals\":\"cnki_oversea\",\"english_journals\":\"scholarly\"}".to_string(),
+            40.0,
+        ))
+    );
+    assert_eq!(
+        runtime_setting(&path, "article_abstract_provider_orders"),
+        Some((
+            "{\"default\":[\"scholarly\",\"cnki_oversea\"],\"catalogs\":{\"chinese_journals\":[\"cnki_oversea\",\"scholarly\"]}}".to_string(),
+            41.0,
+        ))
+    );
+    assert_eq!(
+        runtime_setting(&path, "article_fulltext_provider_orders"),
+        Some((
+            "{\"default\":[\"zjlib\"],\"catalogs\":{}}".to_string(),
+            42.0,
+        ))
+    );
 }
 
 #[test]

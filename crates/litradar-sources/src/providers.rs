@@ -26,11 +26,11 @@ use crate::{
 /// Stable runtime name for the built-in Scholarly indexing provider.
 pub const SCHOLARLY_PROVIDER_NAME: &str = "scholarly";
 
-/// Stable runtime name for the built-in CNKI indexing provider.
-pub const CNKI_PROVIDER_NAME: &str = "cnki";
+/// Stable runtime name for the built-in overseas CNKI indexing provider.
+pub const CNKI_OVERSEA_PROVIDER_NAME: &str = "cnki_oversea";
 
-/// Stable runtime name for the Zhejiang Library CNKI full-text Provider.
-pub const ZJLIB_CNKI_PROVIDER_NAME: &str = "zjlib_cnki";
+/// Stable runtime name for the Zhejiang Library full-text Provider.
+pub const ZJLIB_PROVIDER_NAME: &str = "zjlib";
 
 /// Exact HTTPS hosts emitted by the Scholarly online access provider.
 pub const SCHOLARLY_REDIRECT_HOSTS: &[&str] = &["doi.org", "pubmed.ncbi.nlm.nih.gov"];
@@ -46,7 +46,7 @@ pub const CNKI_REDIRECT_HOSTS: &[&str] = &["oversea.cnki.net", "kns.cnki.net", "
 pub fn built_in_provider_capabilities() -> Vec<ProviderCapabilityInfo> {
     vec![
         ProviderCapabilityInfo {
-            name: CNKI_PROVIDER_NAME.to_string(),
+            name: CNKI_OVERSEA_PROVIDER_NAME.to_string(),
             index_content: true,
             article_abstract: true,
             article_full_text: false,
@@ -58,7 +58,7 @@ pub fn built_in_provider_capabilities() -> Vec<ProviderCapabilityInfo> {
             article_full_text: false,
         },
         ProviderCapabilityInfo {
-            name: ZJLIB_CNKI_PROVIDER_NAME.to_string(),
+            name: ZJLIB_PROVIDER_NAME.to_string(),
             index_content: false,
             article_abstract: false,
             article_full_text: true,
@@ -115,7 +115,7 @@ where
             )
         })?;
         let result = resolve_cnki_article_redirect(&mut client, article);
-        emit_source_attempt_summary(CNKI_PROVIDER_NAME, &client.drain_attempts());
+        emit_source_attempt_summary(CNKI_OVERSEA_PROVIDER_NAME, &client.drain_attempts());
         result
     }
 }
@@ -234,7 +234,7 @@ where
             )
         })?;
         let result = fetch_cnki_batch(&mut client, catalog);
-        emit_source_attempt_summary(CNKI_PROVIDER_NAME, &client.drain_attempts());
+        emit_source_attempt_summary(CNKI_OVERSEA_PROVIDER_NAME, &client.drain_attempts());
         result
     }
 }
@@ -284,7 +284,7 @@ where
 /// # Returns
 ///
 /// Registration declaring exactly the canonical indexing capability.
-pub fn cnki_index_registration<T>(
+pub fn cnki_oversea_index_registration<T>(
     transport: T,
 ) -> Result<ProviderRegistration, ProviderRegistryError>
 where
@@ -292,7 +292,7 @@ where
 {
     ProviderRegistration::try_new(
         ProviderDescriptor {
-            name: CNKI_PROVIDER_NAME.to_string(),
+            name: CNKI_OVERSEA_PROVIDER_NAME.to_string(),
             capabilities: ProviderCapabilities {
                 index_content: true,
                 ..ProviderCapabilities::default()
@@ -341,7 +341,7 @@ pub fn scholarly_access_registration() -> Result<ProviderRegistration, ProviderR
 /// # Returns
 ///
 /// Access-only CNKI registration.
-pub fn cnki_access_registration<T>(
+pub fn cnki_oversea_access_registration<T>(
     transport: T,
 ) -> Result<ProviderRegistration, ProviderRegistryError>
 where
@@ -350,7 +350,7 @@ where
     let provider = Arc::new(CnkiArticleAccessProvider::new(transport));
     ProviderRegistration::try_new(
         ProviderDescriptor {
-            name: CNKI_PROVIDER_NAME.to_string(),
+            name: CNKI_OVERSEA_PROVIDER_NAME.to_string(),
             capabilities: ProviderCapabilities {
                 article_abstract: true,
                 ..ProviderCapabilities::default()
@@ -1442,7 +1442,7 @@ mod tests {
     use serde_json::json;
 
     use super::{
-        cnki_access_registration, cnki_article_draft, cnki_index_registration, cnki_issue_draft,
+        cnki_oversea_access_registration, cnki_article_draft, cnki_oversea_index_registration, cnki_issue_draft,
         crossref_cursor_is_fresh, fetch_scholarly_batch_with_clock,
         fetch_scholarly_batch_with_clock_and_restart, next_scholarly_checkpoint,
         scholarly_access_registration, scholarly_article_draft, scholarly_index_registration,
@@ -1686,7 +1686,7 @@ mod tests {
             true,
         )
         .expect("Scholarly registration should pass");
-        let cnki = cnki_index_registration(FixtureCnkiTransport::new(CnkiFixtureData::default()))
+        let cnki = cnki_oversea_index_registration(FixtureCnkiTransport::new(CnkiFixtureData::default()))
             .expect("CNKI registration should pass");
         let mut registry = ProviderRegistry::default();
         registry
@@ -1768,7 +1768,7 @@ mod tests {
             )]),
             fail_endpoint: None,
         };
-        let cnki = cnki_access_registration(FixtureCnkiTransport::new(fixture))
+        let cnki = cnki_oversea_access_registration(FixtureCnkiTransport::new(fixture))
             .expect("CNKI access should register");
         assert!(cnki.index_content().is_none());
         assert!(cnki.article_full_text().is_none());
@@ -2467,7 +2467,7 @@ mod tests {
             )]),
             fail_endpoint: None,
         };
-        let registration = cnki_index_registration(FixtureCnkiTransport::new(fixture))
+        let registration = cnki_oversea_index_registration(FixtureCnkiTransport::new(fixture))
             .expect("CNKI registration should pass");
         let mut cnki_catalog = catalog();
         cnki_catalog.title = "CNKI Test Journal".to_string();

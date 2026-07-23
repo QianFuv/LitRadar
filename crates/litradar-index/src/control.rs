@@ -275,6 +275,59 @@ pub fn init_control_db(connection: &Connection) -> Result<(), ControlDatabaseErr
              ON provider_checkpoints(catalog_name, provider_name);
          PRAGMA user_version = 1;",
     )?;
+    rewrite_legacy_provider_names(connection)?;
+    Ok(())
+}
+
+/// Rewrite disposable control keys from retired provider runtime names.
+///
+/// # Arguments
+///
+/// * `connection` - Open control database connection.
+///
+/// # Returns
+///
+/// Success after legacy provider keys are rewritten or discarded on conflict.
+fn rewrite_legacy_provider_names(connection: &Connection) -> Result<(), ControlDatabaseError> {
+    for (legacy_name, current_name) in [
+        ("cnki", "cnki_oversea"),
+        ("zjlib_cnki", "zjlib"),
+    ] {
+        connection.execute(
+            "UPDATE provider_checkpoints
+             SET provider_name = ?1
+             WHERE provider_name = ?2
+               AND NOT EXISTS (
+                   SELECT 1
+                   FROM provider_checkpoints AS existing
+                   WHERE existing.catalog_name = provider_checkpoints.catalog_name
+                     AND existing.provider_name = ?1
+                     AND existing.scope_kind = provider_checkpoints.scope_kind
+                     AND existing.scope_key = provider_checkpoints.scope_key
+               )",
+            params![current_name, legacy_name],
+        )?;
+        connection.execute(
+            "DELETE FROM provider_checkpoints WHERE provider_name = ?1",
+            params![legacy_name],
+        )?;
+        connection.execute(
+            "UPDATE provider_leases
+             SET provider_name = ?1
+             WHERE provider_name = ?2
+               AND NOT EXISTS (
+                   SELECT 1
+                   FROM provider_leases AS existing
+                   WHERE existing.catalog_name = provider_leases.catalog_name
+                     AND existing.provider_name = ?1
+               )",
+            params![current_name, legacy_name],
+        )?;
+        connection.execute(
+            "DELETE FROM provider_leases WHERE provider_name = ?1",
+            params![legacy_name],
+        )?;
+    }
     Ok(())
 }
 
@@ -564,14 +617,14 @@ mod tests {
         write_checkpoint(
             &connection,
             "chinese_journals",
-            "cnki",
+            "cnki_oversea",
             &scope,
             "opaque-a",
             "2026-07-18T00:00:00Z",
         )
         .expect("checkpoint should write");
         assert_eq!(
-            read_checkpoint(&connection, "chinese_journals", "cnki", &scope)
+            read_checkpoint(&connection, "chinese_journals", "cnki_oversea", &scope)
                 .expect("checkpoint should read")
                 .as_deref(),
             Some("opaque-a")
@@ -585,7 +638,7 @@ mod tests {
         std::fs::remove_file(&path).expect("disposable control database should delete");
         let recreated = open_control_db(&path).expect("control database should recreate");
         assert_eq!(
-            read_checkpoint(&recreated, "chinese_journals", "cnki", &scope)
+            read_checkpoint(&recreated, "chinese_journals", "cnki_oversea", &scope)
                 .expect("recreated checkpoint should read"),
             None
         );
@@ -608,7 +661,42 @@ mod tests {
     }
 
     #[test]
+    fn legacy_provider_checkpoint_keys_are_rewritten_on_open() {
+        let temp = tempdir().expect("temporary directory should create");
+        let path = temp.path().join("legacy-provider.control.sqlite");
+        let connection = open_control_db(&path).expect("control database should open");
+        let scope = CheckpointScope::Journal {
+            catalog_id: "issn-1234-5679".to_string(),
+        };
+        write_checkpoint(
+            &connection,
+            "chinese_journals",
+            "cnki",
+            &scope,
+            "opaque-legacy",
+            "2026-07-18T00:00:00Z",
+        )
+        .expect("legacy checkpoint should write");
+        drop(connection);
+
+        let reopened = open_control_db(&path).expect("control database should reopen");
+        assert_eq!(
+            read_checkpoint(&reopened, "chinese_journals", "cnki", &scope)
+                .expect("legacy key should read")
+                .as_deref(),
+            None
+        );
+        assert_eq!(
+            read_checkpoint(&reopened, "chinese_journals", "cnki_oversea", &scope)
+                .expect("rewritten key should read")
+                .as_deref(),
+            Some("opaque-legacy")
+        );
+    }
+
+    #[test]
     fn content_precedes_checkpoint_and_both_failure_sides_are_replay_safe() {
+
         let content = rusqlite::Connection::open_in_memory().expect("content database should open");
         init_content_db(&content).expect("content schema should initialize");
         let control = rusqlite::Connection::open_in_memory().expect("control database should open");

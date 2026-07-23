@@ -16,7 +16,7 @@ use litradar_domain::{normalize_contract_issn, ProviderOrderConfiguration};
 use crate::{DatabaseResolutionError, StorageConfig};
 
 /// Current auth and business database schema version.
-pub const AUTH_SCHEMA_VERSION: i64 = 7;
+pub const AUTH_SCHEMA_VERSION: i64 = 8;
 
 /// Current index database schema version.
 pub const INDEX_SCHEMA_VERSION: i64 = 6;
@@ -259,6 +259,7 @@ fn migrate_auth_database_inner(path: &Path) -> Result<MigrationSummary, Migratio
             5 => apply_auth_version_five(&transaction)?,
             6 => apply_auth_version_six(&transaction)?,
             7 => apply_auth_version_seven(&transaction)?,
+            8 => apply_auth_version_eight(&transaction)?,
             _ => unreachable!("auth migration version should be implemented"),
         }
         transaction.pragma_update(None, "user_version", next_version)?;
@@ -1041,6 +1042,101 @@ fn apply_auth_version_seven(transaction: &Transaction<'_>) -> Result<(), Migrati
         [],
     )?;
     Ok(())
+}
+
+fn apply_auth_version_eight(transaction: &Transaction<'_>) -> Result<(), MigrationError> {
+    rewrite_runtime_provider_name_tokens(transaction)?;
+    Ok(())
+}
+
+fn rewrite_runtime_provider_name_tokens(
+    transaction: &Transaction<'_>,
+) -> Result<(), MigrationError> {
+    let mut statement = transaction.prepare(
+        "SELECT key, value, updated_at FROM runtime_settings
+         WHERE key IN (
+             'index_provider_routes',
+             'article_abstract_provider_orders',
+             'article_fulltext_provider_orders'
+         )",
+    )?;
+    let rows = statement
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, f64>(2)?,
+            ))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    drop(statement);
+
+    for (key, value, updated_at) in rows {
+        let rewritten = match key.as_str() {
+            "index_provider_routes" => rewrite_index_provider_route_tokens(&value)?,
+            "article_abstract_provider_orders" | "article_fulltext_provider_orders" => {
+                rewrite_provider_order_tokens(&value)?
+            }
+            _ => continue,
+        };
+        if rewritten == value {
+            continue;
+        }
+        transaction.execute(
+            "UPDATE runtime_settings SET value = ?1 WHERE key = ?2 AND updated_at = ?3",
+            params![rewritten, key, updated_at],
+        )?;
+    }
+    Ok(())
+}
+
+fn rewrite_index_provider_route_tokens(value: &str) -> Result<String, MigrationError> {
+    let parsed: serde_json::Value = serde_json::from_str(value)
+        .map_err(|_| MigrationError::InvalidRuntimeProviderOrderState)?;
+    let object = parsed
+        .as_object()
+        .ok_or(MigrationError::InvalidRuntimeProviderOrderState)?;
+    let mut routes = BTreeMap::new();
+    for (catalog, provider) in object {
+        let provider = provider
+            .as_str()
+            .ok_or(MigrationError::InvalidRuntimeProviderOrderState)?;
+        routes.insert(catalog.clone(), rewrite_provider_runtime_name(provider));
+    }
+    serde_json::to_string(&routes).map_err(|_| MigrationError::InvalidRuntimeProviderOrderState)
+}
+
+fn rewrite_provider_order_tokens(value: &str) -> Result<String, MigrationError> {
+    let mut configuration: ProviderOrderConfiguration = serde_json::from_str(value)
+        .map_err(|_| MigrationError::InvalidRuntimeProviderOrderState)?;
+    configuration.default = configuration
+        .default
+        .into_iter()
+        .map(|name| rewrite_provider_runtime_name(&name))
+        .collect();
+    configuration.catalogs = configuration
+        .catalogs
+        .into_iter()
+        .map(|(catalog, providers)| {
+            (
+                catalog,
+                providers
+                    .into_iter()
+                    .map(|name| rewrite_provider_runtime_name(&name))
+                    .collect(),
+            )
+        })
+        .collect();
+    serde_json::to_string(&configuration)
+        .map_err(|_| MigrationError::InvalidRuntimeProviderOrderState)
+}
+
+fn rewrite_provider_runtime_name(name: &str) -> String {
+    match name {
+        "cnki" => "cnki_oversea".to_string(),
+        "zjlib_cnki" => "zjlib".to_string(),
+        other => other.to_string(),
+    }
 }
 
 fn legacy_provider_order_row(

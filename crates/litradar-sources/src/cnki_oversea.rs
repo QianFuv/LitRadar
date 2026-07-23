@@ -231,7 +231,7 @@ impl FixtureCnkiTransport {
         error: Option<String>,
     ) {
         self.attempts.push(SourceAttempt {
-            service: "cnki".to_string(),
+            service: "cnki_oversea".to_string(),
             endpoint: endpoint.to_string(),
             method: if endpoint == "journal_detail" || endpoint == "article_detail" {
                 "GET".to_string()
@@ -560,7 +560,7 @@ impl LiveCnkiTransport {
             tracing::warn!(
                 event = "source.request.failed",
                 component = "source",
-                provider = "cnki",
+                provider = "cnki_oversea",
                 endpoint = attempt.endpoint,
                 method = attempt.method,
                 attempt = attempt.attempt,
@@ -574,7 +574,7 @@ impl LiveCnkiTransport {
             );
         }
         self.attempts.push(SourceAttempt {
-            service: "cnki".to_string(),
+            service: "cnki_oversea".to_string(),
             endpoint: attempt.endpoint.to_string(),
             method: attempt.method.to_string(),
             url: attempt.url.to_string(),
@@ -1526,7 +1526,7 @@ mod tests {
         assert_eq!(events.len(), 1);
         let failed = &events[0];
         assert_eq!(failed["event"], "source.request.failed");
-        assert_eq!(failed["provider"], "cnki");
+        assert_eq!(failed["provider"], "cnki_oversea");
         assert_eq!(failed["endpoint"], "article_detail");
         assert_eq!(failed["attempt"], 2);
         assert_eq!(failed["duration_ms"], 17);

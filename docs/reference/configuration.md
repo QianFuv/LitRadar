@@ -61,7 +61,7 @@ manifest 存在时，`serve` 和普通 `index` 会在认证库迁移后验证整
 ```json
 {
   "ccf_computer_journals": "scholarly",
-  "chinese_journals": "cnki",
+  "chinese_journals": "cnki_oversea",
   "english_journals": "scholarly"
 }
 ```
@@ -94,9 +94,9 @@ Scholarly 的 `workers` 只控制每个期刊子进程内 OpenAlex DOI 子批的
 
 ```json
 {
-  "default": ["scholarly", "cnki"],
+  "default": ["scholarly", "cnki_oversea"],
   "catalogs": {
-    "chinese_journals": ["cnki", "scholarly"],
+    "chinese_journals": ["cnki_oversea", "scholarly"],
     "disabled_catalog": []
   }
 }
@@ -108,7 +108,7 @@ Scholarly 的 `workers` 只控制每个期刊子进程内 OpenAlex DOI 子批的
 - 顺序中的名称不得重复，且只能使用安全的小写 ASCII 运行时名称；未知 JSON 字段被拒绝。
 - 保存时 catalog key 确定性排序并压缩为规范 JSON。
 
-默认摘要配置是 `{"default":["scholarly","cnki"],"catalogs":{}}`，默认全文配置是 `{"default":["zjlib_cnki"],"catalogs":{}}`。`scholarly → cnki` 明确表示请求时先尝试 scholarly，失败后再尝试 CNKI；它不是索引来源或静态绑定。
+默认摘要配置是 `{"default":["scholarly","cnki_oversea"],"catalogs":{}}`，默认全文配置是 `{"default":["zjlib"],"catalogs":{}}`。`scholarly → cnki_oversea` 明确表示请求时先尝试 scholarly，失败后再尝试 CNKI；它不是索引来源或静态绑定。
 
 管理页调用 `GET /api/admin/provider-catalog`，把 `data/meta/*.csv` 与 `data/index/*.sqlite` 按安全 stem 合并为 catalog 列表，并按 `index_content`、`article_abstract`、`article_full_text` capability 过滤每个控件的候选项。索引 Provider 每个 catalog 单选；摘要页和全文各自支持默认排序、catalog 继承、覆盖与禁用。粒度止于 CSV/database stem，不细化到 CSV 内的期刊。
 

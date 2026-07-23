@@ -83,7 +83,7 @@ fn observe_zjlib_operation<T>(
         Ok(_) => tracing::debug!(
             event = "source.request.completed",
             component = "source",
-            provider = "zjlib_cnki",
+            provider = "zjlib",
             endpoint,
             attempt,
             outcome = "success",
@@ -96,7 +96,7 @@ fn observe_zjlib_operation<T>(
         Err(error) => tracing::warn!(
             event = "source.request.failed",
             component = "source",
-            provider = "zjlib_cnki",
+            provider = "zjlib",
             endpoint,
             attempt,
             outcome = "failure",
@@ -573,7 +573,7 @@ where
             tracing::debug!(
                 event = "source.session.reused",
                 component = "source",
-                provider = "zjlib_cnki",
+                provider = "zjlib",
                 endpoint = "fulltext_session",
             );
             return Ok(self
@@ -650,7 +650,7 @@ where
                 tracing::debug!(
                     event = "source.fallback.activated",
                     component = "source",
-                    provider = "zjlib_cnki",
+                    provider = "zjlib",
                     endpoint = "fulltext_match",
                     reason = "metadata_mismatch",
                     fallback = "next_candidate",
@@ -663,7 +663,7 @@ where
                 tracing::debug!(
                     event = "source.fallback.activated",
                     component = "source",
-                    provider = "zjlib_cnki",
+                    provider = "zjlib",
                     endpoint = "fulltext_match",
                     reason = "pdf_link_missing",
                     fallback = "next_candidate",
@@ -682,7 +682,7 @@ where
             tracing::info!(
                 event = "source.fulltext.completed",
                 component = "source",
-                provider = "zjlib_cnki",
+                provider = "zjlib",
                 outcome = "success",
                 inspected_candidate_count = attempt,
                 byte_count = download.content.len(),
@@ -693,7 +693,7 @@ where
         tracing::warn!(
             event = "source.fulltext.failed",
             component = "source",
-            provider = "zjlib_cnki",
+            provider = "zjlib",
             outcome = "failure",
             error_kind = "no_exact_match",
             inspected_candidate_count = errors.len(),
@@ -862,7 +862,7 @@ where
                 tracing::warn!(
                     event = "source.request.failed",
                     component = "source",
-                    provider = "zjlib_cnki",
+                    provider = "zjlib",
                     endpoint = "zyproxy_login",
                     attempt = attempt_number,
                     outcome = "failure",
@@ -880,7 +880,7 @@ where
                 tracing::warn!(
                     event = "source.request.failed",
                     component = "source",
-                    provider = "zjlib_cnki",
+                    provider = "zjlib",
                     endpoint = "zyproxy_login",
                     attempt = attempt_number,
                     outcome = "failure",
@@ -899,7 +899,7 @@ where
                 tracing::warn!(
                     event = "source.request.failed",
                     component = "source",
-                    provider = "zjlib_cnki",
+                    provider = "zjlib",
                     endpoint = "zyproxy_login",
                     attempt = attempt_number,
                     outcome = "failure",
@@ -2892,7 +2892,7 @@ mod tests {
             .iter()
             .find(|event| event["event"] == "source.fulltext.failed")
             .expect("fulltext failure should be logged");
-        assert_eq!(failed["provider"], "zjlib_cnki");
+        assert_eq!(failed["provider"], "zjlib");
         assert_eq!(failed["error_kind"], "no_exact_match");
         assert_eq!(failed["span"]["run_id"], "run-fulltext-correlation");
         assert_eq!(failed["span"]["worker_id"], 6);

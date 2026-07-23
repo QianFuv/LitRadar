@@ -8,11 +8,11 @@ CNKI overseas 页面和内部接口不是 LitRadar 控制的稳定公共 API。�
 
 | 注册/实现                                     | 能力                      | 进程与凭据                                              |
 | --------------------------------------------- | ------------------------- | ------------------------------------------------------- |
-| `cnki_index_registration`                     | `IndexContentProvider`    | `index` 进程直连 CNKI overseas；不使用用户会话          |
-| `cnki_access_registration` / API live adapter | `ArticleAbstractProvider` | `serve` API 每次在线精确定位；不使用 ZJLib 会话         |
-| `zjlib_cnki` API registration                 | `ArticleFullTextProvider` | `serve` API 只读取当前用户已有的 active ZJLib CNKI 会话 |
+| `cnki_oversea_index_registration`                     | `IndexContentProvider`    | `index` 进程直连 CNKI overseas；不使用用户会话          |
+| `cnki_oversea_access_registration` / API live adapter | `ArticleAbstractProvider` | `serve` API 每次在线精确定位；不使用 ZJLib 会话         |
+| `zjlib` API registration                 | `ArticleFullTextProvider` | `serve` API 只读取当前用户已有的 active ZJLib CNKI 会话 |
 
-同一个逻辑名称 `cnki` 在索引与 API 进程分别注册实现，管理端把它们聚合为 `index_content + article_abstract`；这不是多个部署服务。三个能力可以独立选择、排序、启用或替换。中文目录以后切换到其他索引 Provider 时，CNKI 在线摘要或 ZJLib 全文仍可继续作为运行时候选。
+同一个逻辑名称 `cnki_oversea` 在索引与 API 进程分别注册实现，管理端把它们聚合为 `index_content + article_abstract`；这不是多个部署服务。三个能力可以独立选择、排序、启用或替换。中文目录以后切换到其他索引 Provider 时，CNKI 在线摘要或 ZJLib 全文仍可继续作为运行时候选。
 
 ## 元数据索引流程
 

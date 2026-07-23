@@ -2419,9 +2419,9 @@ mod tests {
                 .expect("Provider should be listed")
         };
         assert_eq!(provider("scholarly")["index_content"], true);
-        assert_eq!(provider("cnki")["article_abstract"], true);
-        assert_eq!(provider("zjlib_cnki")["article_full_text"], true);
-        assert_eq!(provider("zjlib_cnki")["index_content"], false);
+        assert_eq!(provider("cnki_oversea")["article_abstract"], true);
+        assert_eq!(provider("zjlib")["article_full_text"], true);
+        assert_eq!(provider("zjlib")["index_content"], false);
         let catalogs = catalog.payload["catalogs"]
             .as_array()
             .expect("catalogs should be an array");
@@ -2451,15 +2451,15 @@ mod tests {
                 "values": {
                     "index_provider_routes": serde_json::json!({
                         "csv_only": "scholarly",
-                        "database_only": "cnki",
+                        "database_only": "cnki_oversea",
                         "paired": "scholarly"
                     }).to_string(),
                     "article_abstract_provider_orders": serde_json::json!({
-                        "default": ["scholarly", "cnki"],
-                        "catalogs": {"csv_only": ["cnki", "scholarly"], "paired": []}
+                        "default": ["scholarly", "cnki_oversea"],
+                        "catalogs": {"csv_only": ["cnki_oversea", "scholarly"], "paired": []}
                     }).to_string(),
                     "article_fulltext_provider_orders": serde_json::json!({
-                        "default": ["zjlib_cnki"],
+                        "default": ["zjlib"],
                         "catalogs": {"csv_only": []}
                     }).to_string()
                 }
@@ -2508,7 +2508,7 @@ mod tests {
             Some(serde_json::json!({
                 "values": {
                     "index_provider_routes": serde_json::json!({
-                        "csv_only": "zjlib_cnki"
+                        "csv_only": "zjlib"
                     }).to_string()
                 }
             })),

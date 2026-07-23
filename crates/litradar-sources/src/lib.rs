@@ -1,20 +1,20 @@
 //! Source clients used by Rust index migration workflows.
 
-pub mod cnki;
+pub mod cnki_oversea;
 pub mod providers;
 pub mod scholarly;
-pub mod zjlib_cnki;
+pub mod zjlib;
 
-pub use cnki::{
+pub use cnki_oversea::{
     CnkiClient, CnkiFixtureData, CnkiSourceError, CnkiTransport, FixtureCnkiTransport,
     LiveCnkiConfig, LiveCnkiTransport,
 };
 pub use providers::{
-    built_in_provider_capabilities, cnki_access_registration, cnki_index_registration,
+    built_in_provider_capabilities, cnki_oversea_access_registration, cnki_oversea_index_registration,
     scholarly_access_registration, scholarly_index_registration, CnkiArticleAccessProvider,
-    CnkiIndexProvider, ScholarlyArticleAccessProvider, ScholarlyIndexProvider, CNKI_PROVIDER_NAME,
+    CnkiIndexProvider, ScholarlyArticleAccessProvider, ScholarlyIndexProvider, CNKI_OVERSEA_PROVIDER_NAME,
     CNKI_REDIRECT_HOSTS, SCHOLARLY_PROVIDER_NAME, SCHOLARLY_REDIRECT_HOSTS,
-    ZJLIB_CNKI_PROVIDER_NAME,
+    ZJLIB_PROVIDER_NAME,
 };
 pub use scholarly::{
     normalize_doi, FixtureScholarlyTransport, LiveScholarlyConfig, LiveScholarlyTransport,
@@ -22,7 +22,7 @@ pub use scholarly::{
     ScholarlyTransport, ScholarlyWorksPage, SourceAttempt, SourceError,
     OPENALEX_MAX_WORKERS_PER_PROCESS, SEMANTIC_SCHOLAR_BATCH_SIZE,
 };
-pub use zjlib_cnki::{
+pub use zjlib::{
     FixtureZjlibCnkiMode, FixtureZjlibCnkiTransport, LiveZjlibCnkiConfig, LiveZjlibCnkiTransport,
     ZhejiangLibraryCnkiClient, ZjlibCnkiArticleCandidate, ZjlibCnkiArticleIdentity,
     ZjlibCnkiCookie, ZjlibCnkiDownloadedPdf, ZjlibCnkiError, ZjlibCnkiQrLogin,

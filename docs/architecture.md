@@ -193,7 +193,7 @@ Provider 只能返回规范 `JournalDraft`、`IssueDraft`、`ArticleDraft` 和 o
 
 ### CNKI 索引和全文
 
-CNKI 元数据 Provider 使用 overseas 页面和接口生成规范内容；页面 filename 和详情 URL 只存在于一次适配调用中。按用户全文获取是独立的 `zjlib_cnki` 在线能力，使用当前用户已有的浙江图书馆会话，与索引 Provider 无关。详见 [CNKI 数据源](reference/sources/cnki.md)。
+CNKI 元数据 Provider 使用 overseas 页面和接口生成规范内容；页面 filename 和详情 URL 只存在于一次适配调用中。按用户全文获取是独立的 `zjlib` 在线能力，使用当前用户已有的浙江图书馆会话，与索引 Provider 无关。详见 [CNKI 数据源](reference/sources/cnki.md)。
 
 ### 文章在线访问
 
@@ -207,7 +207,7 @@ browser -> stable LitRadar action URL -> load ArticleLocator
         -> 307/PDF + Cache-Control: private, no-store
 ```
 
-默认 `scholarly → cnki` 是摘要能力的有序 fallback：先尝试 scholarly，遇到超时、未找到、临时失败或无效结果才继续 CNKI；它不是索引来源映射。catalog override 完整替换默认顺序，显式空数组禁用该 CSV 的动作。上游目的地不会出现在 `/access`、文章响应或索引库中。动作调用也不更新文章、outbox、checkpoint、认证会话或文件缓存。Provider 注册携带精确的运行时跳转域名 allowlist，API 不按 Provider 名称硬编码域名。
+默认 `scholarly → cnki_oversea` 是摘要能力的有序 fallback：先尝试 scholarly，遇到超时、未找到、临时失败或无效结果才继续 CNKI；它不是索引来源映射。catalog override 完整替换默认顺序，显式空数组禁用该 CSV 的动作。上游目的地不会出现在 `/access`、文章响应或索引库中。动作调用也不更新文章、outbox、checkpoint、认证会话或文件缓存。Provider 注册携带精确的运行时跳转域名 allowlist，API 不按 Provider 名称硬编码域名。
 
 前端的“文章详情”是展示已经存入 LitRadar 的题名、作者、期刊、摘要等本地元数据的弹窗，不是第三种在线 Provider capability，也没有 `/detail` 动作路由。“查看摘要页”才会触发上述在线解析和外部跳转。
 

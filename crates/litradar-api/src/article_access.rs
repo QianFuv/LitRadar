@@ -22,8 +22,8 @@ use litradar_provider::{
 use litradar_sources::{
     scholarly_access_registration, CnkiArticleAccessProvider, LiveCnkiConfig, LiveCnkiTransport,
     LiveZjlibCnkiConfig, LiveZjlibCnkiTransport, ZhejiangLibraryCnkiClient,
-    ZjlibCnkiArticleIdentity, ZjlibCnkiDownloadedPdf, ZjlibCnkiError, CNKI_PROVIDER_NAME,
-    CNKI_REDIRECT_HOSTS, DEFAULT_FULL_TEXT_MAXIMUM_BYTES, ZJLIB_CNKI_PROVIDER_NAME,
+    ZjlibCnkiArticleIdentity, ZjlibCnkiDownloadedPdf, ZjlibCnkiError, CNKI_OVERSEA_PROVIDER_NAME,
+    CNKI_REDIRECT_HOSTS, DEFAULT_FULL_TEXT_MAXIMUM_BYTES, ZJLIB_PROVIDER_NAME,
 };
 #[cfg(test)]
 use litradar_sources::{FixtureZjlibCnkiMode, FixtureZjlibCnkiTransport};
@@ -53,7 +53,7 @@ pub(crate) fn build_article_provider_registry(
 ) -> Result<ProviderRegistry, ProviderRegistryError> {
     let mut registry = ProviderRegistry::default();
     registry.register(scholarly_access_registration()?)?;
-    registry.register(live_cnki_access_registration()?)?;
+    registry.register(live_cnki_oversea_access_registration()?)?;
     registry.register(zjlib_full_text_registration(storage_config, secret_codec)?)?;
     Ok(registry)
 }
@@ -86,13 +86,13 @@ pub(crate) async fn article_access_response(
         false,
     );
     let has_full_text_without_cnki_login = full_text_order.iter().any(|name| {
-        name != ZJLIB_CNKI_PROVIDER_NAME
+        name != ZJLIB_PROVIDER_NAME
             && provider_has_capability(state, name, ProviderCapabilityKind::ArticleFullText)
     });
     let full_text_requires_login = !has_cnki_session
         && !has_full_text_without_cnki_login
         && full_text_order.iter().any(|name| {
-            name == ZJLIB_CNKI_PROVIDER_NAME
+            name == ZJLIB_PROVIDER_NAME
                 && provider_has_capability(state, name, ProviderCapabilityKind::ArticleFullText)
         });
     let fulltext = action_status(
@@ -363,7 +363,7 @@ fn zjlib_full_text_registration(
 ) -> Result<ProviderRegistration, ProviderRegistryError> {
     ProviderRegistration::try_new(
         ProviderDescriptor {
-            name: ZJLIB_CNKI_PROVIDER_NAME.to_string(),
+            name: ZJLIB_PROVIDER_NAME.to_string(),
             capabilities: ProviderCapabilities {
                 article_full_text: true,
                 ..ProviderCapabilities::default()
@@ -415,7 +415,7 @@ impl ArticleAbstractProvider for LiveCnkiAccessProvider {
     }
 }
 
-fn live_cnki_access_registration() -> Result<ProviderRegistration, ProviderRegistryError> {
+fn live_cnki_oversea_access_registration() -> Result<ProviderRegistration, ProviderRegistryError> {
     let provider = Arc::new(LiveCnkiAccessProvider {
         config: LiveCnkiConfig {
             timeout_seconds: ARTICLE_ACTION_TIMEOUT.as_secs(),
@@ -423,7 +423,7 @@ fn live_cnki_access_registration() -> Result<ProviderRegistration, ProviderRegis
     });
     ProviderRegistration::try_new(
         ProviderDescriptor {
-            name: CNKI_PROVIDER_NAME.to_string(),
+            name: CNKI_OVERSEA_PROVIDER_NAME.to_string(),
             capabilities: ProviderCapabilities {
                 article_abstract: true,
                 ..ProviderCapabilities::default()
@@ -786,19 +786,19 @@ mod tests {
     #[test]
     fn provider_order_selection_distinguishes_inherit_override_and_disable() {
         let configuration = ProviderOrderConfiguration {
-            default: vec!["scholarly".to_string(), "cnki".to_string()],
+            default: vec!["scholarly".to_string(), "cnki_oversea".to_string()],
             catalogs: std::collections::BTreeMap::from([
                 ("disabled".to_string(), Vec::new()),
-                ("reverse".to_string(), vec!["cnki".to_string()]),
+                ("reverse".to_string(), vec!["cnki_oversea".to_string()]),
             ]),
         };
         assert_eq!(
             provider_order_for_catalog(&configuration, "inherited"),
-            ["scholarly", "cnki"]
+            ["scholarly", "cnki_oversea"]
         );
         assert_eq!(
             provider_order_for_catalog(&configuration, "reverse"),
-            ["cnki"]
+            ["cnki_oversea"]
         );
         assert!(provider_order_for_catalog(&configuration, "disabled").is_empty());
     }
@@ -814,7 +814,7 @@ mod tests {
             .expect("Scholarly fixture should register");
         registry
             .register(abstract_registration(
-                "cnki",
+                "cnki_oversea",
                 RedirectFixtureOutcome::Redirect("https://oversea.cnki.net/kcms/detail/cnki"),
             ))
             .expect("CNKI fixture should register");
@@ -826,8 +826,8 @@ mod tests {
                 "article_abstract_provider_orders".to_string(),
                 Some(
                     json!({
-                        "default": ["scholarly", "cnki"],
-                        "catalogs": {"reverse": ["cnki", "scholarly"], "disabled": []}
+                        "default": ["scholarly", "cnki_oversea"],
+                        "catalogs": {"reverse": ["cnki_oversea", "scholarly"], "disabled": []}
                     })
                     .to_string(),
                 ),
@@ -867,7 +867,7 @@ mod tests {
                 .expect("first provider should register");
             registry
                 .register(abstract_registration(
-                    "cnki",
+                    "cnki_oversea",
                     RedirectFixtureOutcome::Redirect(
                         "https://oversea.cnki.net/kcms/detail/fixture",
                     ),
@@ -908,7 +908,7 @@ mod tests {
         let mut registry = ProviderRegistry::default();
         registry
             .register(full_text_registration(
-                ZJLIB_CNKI_PROVIDER_NAME,
+                ZJLIB_PROVIDER_NAME,
                 Arc::new(AuthenticationRequiredFullTextProvider),
             ))
             .expect("authenticated provider should register");
@@ -918,7 +918,7 @@ mod tests {
                 Arc::new(PdfFullTextProvider),
             ))
             .expect("fallback provider should register");
-        let (_directory, state) = test_state(registry, Some("zjlib_cnki,fixture"));
+        let (_directory, state) = test_state(registry, Some("zjlib,fixture"));
 
         let resolution = resolve_article_full_text(&state, article_locator(), UserId(1), "fixture")
             .await
@@ -938,7 +938,7 @@ mod tests {
         let mut registry = ProviderRegistry::default();
         registry
             .register(full_text_registration(
-                ZJLIB_CNKI_PROVIDER_NAME,
+                ZJLIB_PROVIDER_NAME,
                 Arc::new(AuthenticationRequiredFullTextProvider),
             ))
             .expect("authenticated provider should register");
@@ -948,7 +948,7 @@ mod tests {
                 Arc::new(PdfFullTextProvider),
             ))
             .expect("fallback provider should register");
-        let (_directory, state) = test_state(registry, Some("zjlib_cnki,fixture"));
+        let (_directory, state) = test_state(registry, Some("zjlib,fixture"));
 
         let response = article_access_response(&state, UserId(1), "fixture")
             .await
