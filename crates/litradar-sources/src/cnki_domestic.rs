@@ -8,13 +8,17 @@ use std::error::Error;
 use std::fmt;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use serde::Deserialize;
+use reqwest::blocking::Client;
+use reqwest::redirect::Policy;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use std::thread;
+use std::time::{Duration, Instant};
 
 use crate::jfbym::{
     encrypt_point_json, point_x_candidates, strip_data_url_base64, JfbymError, JfbymSolver,
 };
-use crate::scholarly::SourceError;
+use crate::scholarly::{SourceAttempt, SourceError};
 
 /// Domestic navigation host used by NZKPT journal search and detail pages.
 pub const DOMESTIC_NAVI_BASE_URL: &str = "https://navi.cnki.net";
@@ -370,7 +374,7 @@ pub fn parse_domestic_article_detail(
         row_value(text, "在线公开时间").or_else(|| row_value(text, "Online Release Time"));
     let permalink = with_domestic_platform(article_url);
     Ok(json!({
-        "article_url": permalink,
+        "article_url": permalink.clone(),
         "platform_id": filename,
         "dbcode": dbcode,
         "dbname": dbname,
@@ -380,6 +384,7 @@ pub fn parse_domestic_article_detail(
         "doi": row_value(text, "DOI"),
         "online_release_date": online_time.and_then(|value| date_part(&value)),
         "pages": label_value(&strip_tags(text), &["页码", "Pages"]),
+        "permalink": permalink,
         "platform": DOMESTIC_PLATFORM,
     }))
 }
@@ -1361,6 +1366,849 @@ fn with_domestic_platform(url: &str) -> String {
     format!("{path}?{}", pairs.join("&"))
 }
 
+/// Domestic NZKPT source transport abstraction.
+pub trait DomesticCnkiTransport {
+    /// Resolve one catalog journal row to domestic journal details.
+    ///
+    /// # Arguments
+    ///
+    /// * `row` - Catalog title/ISSN row.
+    ///
+    /// # Returns
+    ///
+    /// Parsed journal details when found.
+    fn resolve_journal(
+        &mut self,
+        row: &BTreeMap<String, String>,
+    ) -> Result<Option<Value>, DomesticCnkiSourceError>;
+
+    /// Fetch publication issues for one journal.
+    ///
+    /// # Arguments
+    ///
+    /// * `journal` - Domestic journal details.
+    ///
+    /// # Returns
+    ///
+    /// Parsed issue payloads.
+    fn year_issues(&mut self, journal: &Value) -> Result<Vec<Value>, DomesticCnkiSourceError>;
+
+    /// Fetch article summaries for one issue.
+    ///
+    /// # Arguments
+    ///
+    /// * `journal` - Domestic journal details.
+    /// * `issue` - Domestic issue payload.
+    ///
+    /// # Returns
+    ///
+    /// Article summary payloads.
+    fn issue_articles(
+        &mut self,
+        journal: &Value,
+        issue: &Value,
+    ) -> Result<Vec<Value>, DomesticCnkiSourceError>;
+
+    /// Fetch one article detail payload.
+    ///
+    /// # Arguments
+    ///
+    /// * `article_url` - Article URL from issue summary.
+    /// * `platform_id` - Optional platform id from issue summary.
+    ///
+    /// # Returns
+    ///
+    /// Article detail payload.
+    fn article_detail(
+        &mut self,
+        article_url: &str,
+        platform_id: Option<&str>,
+    ) -> Result<Value, DomesticCnkiSourceError>;
+
+    /// Return captured source attempts.
+    ///
+    /// # Returns
+    ///
+    /// Captured source attempts.
+    fn attempts(&self) -> &[SourceAttempt];
+
+    /// Remove and return captured source attempts.
+    ///
+    /// # Returns
+    ///
+    /// Captured attempts, leaving the transport buffer empty.
+    fn drain_attempts(&mut self) -> Vec<SourceAttempt>;
+}
+
+/// Deterministic fixture transport for domestic NZKPT tests.
+#[derive(Debug, Clone)]
+pub struct FixtureDomesticCnkiTransport {
+    data: DomesticCnkiFixtureData,
+    attempts: Vec<SourceAttempt>,
+}
+
+impl FixtureDomesticCnkiTransport {
+    /// Build a fixture transport from response data.
+    ///
+    /// # Arguments
+    ///
+    /// * `data` - Domestic fixture response payloads.
+    ///
+    /// # Returns
+    ///
+    /// Fixture transport.
+    pub fn new(data: DomesticCnkiFixtureData) -> Self {
+        Self {
+            data,
+            attempts: Vec::new(),
+        }
+    }
+
+    fn record_attempt(
+        &mut self,
+        endpoint: &str,
+        key: Option<&str>,
+        did_succeed: bool,
+        error: Option<String>,
+    ) {
+        self.attempts.push(SourceAttempt {
+            service: "cnki".to_string(),
+            endpoint: endpoint.to_string(),
+            method: if endpoint == "journal_detail" || endpoint == "article_detail" {
+                "GET".to_string()
+            } else {
+                "POST".to_string()
+            },
+            url: domestic_fixture_url(endpoint, key),
+            status_code: Some(if did_succeed { 200 } else { 500 }),
+            did_succeed,
+            did_retry: false,
+            error,
+        });
+    }
+}
+
+impl DomesticCnkiTransport for FixtureDomesticCnkiTransport {
+    /// Resolve one fixture journal row by matching detail title/ISSN.
+    fn resolve_journal(
+        &mut self,
+        row: &BTreeMap<String, String>,
+    ) -> Result<Option<Value>, DomesticCnkiSourceError> {
+        if self
+            .data
+            .fail_endpoint
+            .as_deref()
+            .is_some_and(|value| value == "journal_detail")
+        {
+            let message = "domestic CNKI fixture failed for journal_detail".to_string();
+            self.record_attempt("journal_detail", None, false, Some(message.clone()));
+            return Err(DomesticCnkiSourceError::Parse(message));
+        }
+        if self.data.journal_detail_html.trim().is_empty() {
+            self.record_attempt("journal_detail", None, true, None);
+            return Ok(None);
+        }
+        let details = parse_domestic_journal_detail(&self.data.journal_detail_html)?;
+        let title = row.get("title").map(String::as_str).unwrap_or_default();
+        let issn = row.get("issn").map(String::as_str).unwrap_or_default();
+        self.record_attempt("journal_detail", None, true, None);
+        if domestic_journal_detail_matches(&details, title, issn) {
+            Ok(Some(details))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Fetch fixture year issues for one journal.
+    fn year_issues(&mut self, journal: &Value) -> Result<Vec<Value>, DomesticCnkiSourceError> {
+        let _ = journal;
+        if self
+            .data
+            .fail_endpoint
+            .as_deref()
+            .is_some_and(|value| value == "year_issues")
+        {
+            let message = "domestic CNKI fixture failed for year_issues".to_string();
+            self.record_attempt("year_issues", None, false, Some(message.clone()));
+            return Err(DomesticCnkiSourceError::Parse(message));
+        }
+        let issues = parse_domestic_year_issues(&self.data.year_issues_html)?;
+        self.record_attempt("year_issues", None, true, None);
+        Ok(issues)
+    }
+
+    /// Fetch fixture article summaries for one issue.
+    fn issue_articles(
+        &mut self,
+        journal: &Value,
+        issue: &Value,
+    ) -> Result<Vec<Value>, DomesticCnkiSourceError> {
+        let _ = journal;
+        let year_issue_id = json_text(issue.get("year_issue_id"))
+            .or_else(|| json_text(issue.get("year_issue")))
+            .ok_or_else(|| {
+                DomesticCnkiSourceError::Parse(
+                    "domestic CNKI issue missing year_issue_id".to_string(),
+                )
+            })?;
+        if self
+            .data
+            .fail_endpoint
+            .as_deref()
+            .is_some_and(|value| value == "issue_articles")
+        {
+            let message = "domestic CNKI fixture failed for issue_articles".to_string();
+            self.record_attempt(
+                "issue_articles",
+                Some(&year_issue_id),
+                false,
+                Some(message.clone()),
+            );
+            return Err(DomesticCnkiSourceError::Parse(message));
+        }
+        let text = self
+            .data
+            .issue_articles_html
+            .get(&year_issue_id)
+            .cloned()
+            .ok_or_else(|| {
+                DomesticCnkiSourceError::MissingFixture(format!(
+                    "domestic CNKI fixture missing issue_articles for {year_issue_id}"
+                ))
+            })?;
+        let articles = parse_domestic_issue_articles(&text, issue)?;
+        self.record_attempt("issue_articles", Some(&year_issue_id), true, None);
+        Ok(articles)
+    }
+
+    /// Fetch one fixture article detail payload.
+    fn article_detail(
+        &mut self,
+        article_url: &str,
+        platform_id: Option<&str>,
+    ) -> Result<Value, DomesticCnkiSourceError> {
+        let key = platform_id.unwrap_or(article_url).to_string();
+        if self
+            .data
+            .fail_endpoint
+            .as_deref()
+            .is_some_and(|value| value == "article_detail")
+        {
+            let message = "domestic CNKI fixture failed for article_detail".to_string();
+            self.record_attempt("article_detail", Some(&key), false, Some(message.clone()));
+            return Err(DomesticCnkiSourceError::Parse(message));
+        }
+        let text = self
+            .data
+            .article_detail_html
+            .get(&key)
+            .cloned()
+            .ok_or_else(|| {
+                DomesticCnkiSourceError::MissingFixture(format!(
+                    "domestic CNKI fixture missing article_detail for {key}"
+                ))
+            })?;
+        let detail = parse_domestic_article_detail(&text, article_url)?;
+        self.record_attempt("article_detail", Some(&key), true, None);
+        Ok(detail)
+    }
+
+    /// Return captured source attempts.
+    fn attempts(&self) -> &[SourceAttempt] {
+        &self.attempts
+    }
+
+    /// Remove and return captured source attempts.
+    fn drain_attempts(&mut self) -> Vec<SourceAttempt> {
+        std::mem::take(&mut self.attempts)
+    }
+}
+
+/// Domestic NZKPT metadata client using a transport implementation.
+#[derive(Debug, Clone)]
+pub struct DomesticCnkiClient<T> {
+    transport: T,
+}
+
+impl<T> DomesticCnkiClient<T>
+where
+    T: DomesticCnkiTransport,
+{
+    /// Build a domestic CNKI client from a transport.
+    ///
+    /// # Arguments
+    ///
+    /// * `transport` - Domestic source transport.
+    ///
+    /// # Returns
+    ///
+    /// Domestic CNKI client.
+    pub fn new(transport: T) -> Self {
+        Self { transport }
+    }
+
+    /// Resolve one catalog journal row to domestic journal details.
+    ///
+    /// # Arguments
+    ///
+    /// * `row` - Catalog title/ISSN row.
+    ///
+    /// # Returns
+    ///
+    /// Parsed journal details when found.
+    pub fn resolve_journal(
+        &mut self,
+        row: &BTreeMap<String, String>,
+    ) -> Result<Option<Value>, DomesticCnkiSourceError> {
+        self.transport.resolve_journal(row)
+    }
+
+    /// Fetch publication issues for one journal.
+    ///
+    /// # Arguments
+    ///
+    /// * `journal` - Domestic journal details.
+    ///
+    /// # Returns
+    ///
+    /// Parsed issue payloads.
+    pub fn year_issues(&mut self, journal: &Value) -> Result<Vec<Value>, DomesticCnkiSourceError> {
+        self.transport.year_issues(journal)
+    }
+
+    /// Fetch article summaries for one issue.
+    ///
+    /// # Arguments
+    ///
+    /// * `journal` - Domestic journal details.
+    /// * `issue` - Domestic issue payload.
+    ///
+    /// # Returns
+    ///
+    /// Article summary payloads.
+    pub fn issue_articles(
+        &mut self,
+        journal: &Value,
+        issue: &Value,
+    ) -> Result<Vec<Value>, DomesticCnkiSourceError> {
+        self.transport.issue_articles(journal, issue)
+    }
+
+    /// Fetch one article detail payload.
+    ///
+    /// # Arguments
+    ///
+    /// * `article_url` - Article URL from issue summary.
+    /// * `platform_id` - Optional platform id from issue summary.
+    ///
+    /// # Returns
+    ///
+    /// Article detail payload.
+    pub fn article_detail(
+        &mut self,
+        article_url: &str,
+        platform_id: Option<&str>,
+    ) -> Result<Value, DomesticCnkiSourceError> {
+        self.transport.article_detail(article_url, platform_id)
+    }
+
+    /// Return captured source attempts.
+    ///
+    /// # Returns
+    ///
+    /// Captured source attempts.
+    pub fn attempts(&self) -> &[SourceAttempt] {
+        self.transport.attempts()
+    }
+
+    /// Remove and return captured source attempts.
+    ///
+    /// # Returns
+    ///
+    /// Captured attempts, leaving the client buffer empty.
+    pub fn drain_attempts(&mut self) -> Vec<SourceAttempt> {
+        self.transport.drain_attempts()
+    }
+}
+
+/// Opaque checkpoint for resumable domestic index walks.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DomesticCnkiCheckpoint {
+    /// Zero-based issue index in yearList order.
+    pub issue_index: usize,
+    /// Zero-based article summary index within the current issue page set.
+    #[serde(default)]
+    pub article_index: usize,
+}
+
+fn domestic_fixture_url(endpoint: &str, key: Option<&str>) -> String {
+    match (endpoint, key) {
+        ("journal_detail", _) => format!("{DOMESTIC_NAVI_BASE_URL}/knavi/detail"),
+        ("year_issues", _) => format!("{DOMESTIC_NAVI_BASE_URL}/knavi/journals/yearList"),
+        ("issue_articles", Some(key)) => {
+            format!("{DOMESTIC_NAVI_BASE_URL}/knavi/journals/papers?yearIssue={key}")
+        }
+        ("article_detail", Some(key)) => {
+            format!("{DOMESTIC_KNS_BASE_URL}/kcms2/article/abstract?v={key}")
+        }
+        _ => format!("{DOMESTIC_NAVI_BASE_URL}/knavi/{endpoint}"),
+    }
+}
+
+fn domestic_journal_detail_matches(details: &Value, title: &str, issn: &str) -> bool {
+    let detail_title = json_text(details.get("title")).unwrap_or_default();
+    if !title.trim().is_empty() {
+        normalize_title(title) == normalize_title(&detail_title)
+    } else {
+        !issn.trim().is_empty()
+            && normalize_issn(issn)
+                == normalize_issn(&json_text(details.get("issn")).unwrap_or_default())
+    }
+}
+
+fn normalize_title(value: &str) -> String {
+    value
+        .chars()
+        .filter(|character| !character.is_whitespace())
+        .flat_map(|character| character.to_lowercase())
+        .collect()
+}
+
+fn normalize_issn(value: &str) -> String {
+    value
+        .chars()
+        .filter(|character| character.is_ascii_alphanumeric())
+        .map(|character| character.to_ascii_uppercase())
+        .collect()
+}
+
+/// Live domestic CNKI transport configuration.
+#[derive(Clone)]
+pub struct LiveDomesticCnkiConfig {
+    /// HTTP request timeout in seconds.
+    pub timeout_seconds: u64,
+    /// Optional jfbym token used when CNKI returns a captcha challenge.
+    pub captcha_token: Option<String>,
+}
+
+impl fmt::Debug for LiveDomesticCnkiConfig {
+    /// Format configuration without exposing captcha tokens.
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("LiveDomesticCnkiConfig")
+            .field("timeout_seconds", &self.timeout_seconds)
+            .field(
+                "captcha_token",
+                &self.captcha_token.as_ref().map(|_| "[REDACTED]"),
+            )
+            .finish()
+    }
+}
+
+/// Blocking HTTP transport for live domestic NZKPT sources.
+#[derive(Clone)]
+pub struct LiveDomesticCnkiTransport {
+    client: Client,
+    captcha_token: Option<String>,
+    captcha_session: DomesticCaptchaSession,
+    attempts: Vec<SourceAttempt>,
+}
+
+impl fmt::Debug for LiveDomesticCnkiTransport {
+    /// Format transport state without exposing captcha tokens.
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("LiveDomesticCnkiTransport")
+            .field(
+                "captcha_token",
+                &self.captcha_token.as_ref().map(|_| "[REDACTED]"),
+            )
+            .field("has_captcha_id", &self.captcha_session.has_captcha_id())
+            .field("attempt_count", &self.attempts.len())
+            .finish_non_exhaustive()
+    }
+}
+
+impl LiveDomesticCnkiTransport {
+    /// Build a live domestic CNKI transport.
+    ///
+    /// # Arguments
+    ///
+    /// * `config` - Live source configuration.
+    ///
+    /// # Returns
+    ///
+    /// Live domestic transport.
+    pub fn new(config: LiveDomesticCnkiConfig) -> Result<Self, DomesticCnkiSourceError> {
+        let client = Client::builder()
+            .timeout(Duration::from_secs(config.timeout_seconds.max(1)))
+            .cookie_store(true)
+            .redirect(Policy::limited(10))
+            .build()
+            .map_err(|error| DomesticCnkiSourceError::Request(error.to_string()))?;
+        Ok(Self {
+            client,
+            captcha_token: config
+                .captcha_token
+                .filter(|value| !value.trim().is_empty()),
+            captcha_session: DomesticCaptchaSession::new(),
+            attempts: Vec::new(),
+        })
+    }
+
+    fn search_journals(
+        &mut self,
+        keyword: &str,
+        field_name: &str,
+    ) -> Result<Vec<Value>, DomesticCnkiSourceError> {
+        let form = domestic_journal_search_form(keyword, field_name);
+        let data: Vec<(String, String)> = form.into_iter().collect();
+        let text = self.post_text(
+            &format!("{DOMESTIC_NAVI_BASE_URL}/knavi/journals/searchbaseinfo"),
+            &data,
+            Some(&format!("{DOMESTIC_NAVI_BASE_URL}/knavi")),
+            "journal_search",
+        )?;
+        parse_domestic_journal_search_results(&text)
+    }
+
+    fn get_journal_detail(
+        &mut self,
+        detail_url: &str,
+    ) -> Result<Option<Value>, DomesticCnkiSourceError> {
+        let text = self.get_text(detail_url, None, "journal_detail")?;
+        if input_value(&text, "pykm").is_none() {
+            return Ok(None);
+        }
+        parse_domestic_journal_detail(&text).map(Some)
+    }
+
+    fn get_text(
+        &mut self,
+        url: &str,
+        referer: Option<&str>,
+        endpoint: &str,
+    ) -> Result<String, DomesticCnkiSourceError> {
+        self.request_text("GET", url, &[], referer, endpoint)
+    }
+
+    fn post_text(
+        &mut self,
+        url: &str,
+        data: &[(String, String)],
+        referer: Option<&str>,
+        endpoint: &str,
+    ) -> Result<String, DomesticCnkiSourceError> {
+        self.request_text("POST", url, data, referer, endpoint)
+    }
+
+    fn request_text(
+        &mut self,
+        method: &str,
+        url: &str,
+        data: &[(String, String)],
+        referer: Option<&str>,
+        endpoint: &str,
+    ) -> Result<String, DomesticCnkiSourceError> {
+        let mut request_url = self.captcha_session.attach_captcha_id(url);
+        let mut did_retry = false;
+        for attempt in 1..=3 {
+            let started_at = Instant::now();
+            let mut builder = match method {
+                "POST" => self.client.post(&request_url).form(data),
+                _ => self.client.get(&request_url),
+            };
+            builder = builder.header(
+                "User-Agent",
+                "Mozilla/5.0 (compatible; LitRadar/0.1; +https://github.com/QianFuv/LitRadar)",
+            );
+            if let Some(referer) = referer {
+                builder = builder.header("Referer", referer);
+            }
+            let response = builder.send();
+            let duration_ms = started_at.elapsed().as_millis() as u64;
+            let response = match response {
+                Ok(response) => response,
+                Err(error) => {
+                    self.attempts.push(SourceAttempt {
+                        service: "cnki".to_string(),
+                        endpoint: endpoint.to_string(),
+                        method: method.to_string(),
+                        url: request_url.clone(),
+                        status_code: None,
+                        did_succeed: false,
+                        did_retry,
+                        error: Some(error.to_string()),
+                    });
+                    if attempt < 3 {
+                        did_retry = true;
+                        thread::sleep(Duration::from_millis(200 * attempt as u64));
+                        continue;
+                    }
+                    return Err(DomesticCnkiSourceError::Request(error.to_string()));
+                }
+            };
+            let status = response.status();
+            let final_url = response.url().to_string();
+            let text = response
+                .text()
+                .map_err(|error| DomesticCnkiSourceError::Request(error.to_string()))?;
+            if looks_like_captcha_challenge(&text, &final_url) {
+                self.attempts.push(SourceAttempt {
+                    service: "cnki".to_string(),
+                    endpoint: endpoint.to_string(),
+                    method: method.to_string(),
+                    url: request_url.clone(),
+                    status_code: Some(status.as_u16()),
+                    did_succeed: false,
+                    did_retry,
+                    error: Some("captcha challenge".to_string()),
+                });
+                self.solve_live_captcha(&text, &final_url)?;
+                request_url = self.captcha_session.attach_captcha_id(url);
+                did_retry = true;
+                continue;
+            }
+            if contains_overseas_host(&text) || contains_overseas_host(&final_url) {
+                self.attempts.push(SourceAttempt {
+                    service: "cnki".to_string(),
+                    endpoint: endpoint.to_string(),
+                    method: method.to_string(),
+                    url: request_url.clone(),
+                    status_code: Some(status.as_u16()),
+                    did_succeed: false,
+                    did_retry,
+                    error: Some("overseas host".to_string()),
+                });
+                return Err(DomesticCnkiSourceError::Request(
+                    "domestic CNKI transport received overseas host".to_string(),
+                ));
+            }
+            if !status.is_success() {
+                self.attempts.push(SourceAttempt {
+                    service: "cnki".to_string(),
+                    endpoint: endpoint.to_string(),
+                    method: method.to_string(),
+                    url: request_url.clone(),
+                    status_code: Some(status.as_u16()),
+                    did_succeed: false,
+                    did_retry,
+                    error: Some(format!("HTTP {}", status.as_u16())),
+                });
+                if attempt < 3 {
+                    did_retry = true;
+                    continue;
+                }
+                return Err(DomesticCnkiSourceError::Request(format!(
+                    "domestic CNKI HTTP {}",
+                    status.as_u16()
+                )));
+            }
+            checked_text(&text, &final_url)?;
+            self.attempts.push(SourceAttempt {
+                service: "cnki".to_string(),
+                endpoint: endpoint.to_string(),
+                method: method.to_string(),
+                url: request_url,
+                status_code: Some(status.as_u16()),
+                did_succeed: true,
+                did_retry,
+                error: None,
+            });
+            let _ = duration_ms;
+            return Ok(text);
+        }
+        Err(DomesticCnkiSourceError::Request(
+            "domestic CNKI request retries exhausted".to_string(),
+        ))
+    }
+
+    fn solve_live_captcha(
+        &mut self,
+        response_text: &str,
+        response_url: &str,
+    ) -> Result<(), DomesticCnkiSourceError> {
+        let token = self.captcha_token.clone().ok_or_else(|| {
+            DomesticCnkiSourceError::Request("domestic CNKI captcha token is required".to_string())
+        })?;
+        let mut solver = crate::jfbym::LiveJfbymSolver::new(token, 30)
+            .map_err(|error| DomesticCnkiSourceError::Request(error.to_string()))?;
+        let client = self.client.clone();
+        self.captcha_session.ensure_access(
+            response_text,
+            response_url,
+            &mut solver,
+            |challenge_url| {
+                let _ = client
+                    .get(challenge_url)
+                    .header(
+                        "User-Agent",
+                        "Mozilla/5.0 (compatible; LitRadar/0.1; +https://github.com/QianFuv/LitRadar)",
+                    )
+                    .send()
+                    .map_err(|error| DomesticCnkiSourceError::Request(error.to_string()))?;
+                let body = captcha_get_request_body(challenge_url);
+                let response = client
+                    .post(format!("{DOMESTIC_KNS_BASE_URL}/verify-api/get"))
+                    .header("Content-Type", "application/json;charset=UTF-8")
+                    .header("Origin", DOMESTIC_KNS_BASE_URL)
+                    .header("Referer", challenge_url)
+                    .header("X-Requested-With", "XMLHttpRequest")
+                    .json(&body)
+                    .send()
+                    .map_err(|error| DomesticCnkiSourceError::Request(error.to_string()))?;
+                let payload: Value = response
+                    .json()
+                    .map_err(|error| DomesticCnkiSourceError::Parse(error.to_string()))?;
+                parse_captcha_puzzle(challenge_url, &payload)
+            },
+            |puzzle, point_json| {
+                let body = captcha_check_request_body(puzzle, point_json);
+                let response = client
+                    .post(format!("{DOMESTIC_KNS_BASE_URL}/verify-api/web/check"))
+                    .header("Content-Type", "application/json;charset=UTF-8")
+                    .header("Origin", DOMESTIC_KNS_BASE_URL)
+                    .header("Referer", &puzzle.challenge_url)
+                    .header("X-Requested-With", "XMLHttpRequest")
+                    .json(&body)
+                    .send()
+                    .map_err(|error| DomesticCnkiSourceError::Request(error.to_string()))?;
+                let payload: Value = response
+                    .json()
+                    .map_err(|error| DomesticCnkiSourceError::Parse(error.to_string()))?;
+                Ok(captcha_check_succeeded(&payload))
+            },
+        )
+    }
+}
+
+impl DomesticCnkiTransport for LiveDomesticCnkiTransport {
+    /// Resolve one catalog journal row through domestic search and detail pages.
+    fn resolve_journal(
+        &mut self,
+        row: &BTreeMap<String, String>,
+    ) -> Result<Option<Value>, DomesticCnkiSourceError> {
+        let title = row
+            .get("title")
+            .map(String::as_str)
+            .unwrap_or_default()
+            .trim();
+        let issn = row
+            .get("issn")
+            .map(String::as_str)
+            .unwrap_or_default()
+            .trim();
+        if !title.is_empty() {
+            for candidate in self.search_journals(title, "TI")? {
+                let Some(detail_url) = json_text(candidate.get("detail_url")) else {
+                    continue;
+                };
+                let Some(details) = self.get_journal_detail(&detail_url)? else {
+                    continue;
+                };
+                if domestic_journal_detail_matches(&details, title, issn) {
+                    return Ok(Some(details));
+                }
+            }
+        }
+        if !issn.is_empty() {
+            for candidate in self.search_journals(issn, "SN")? {
+                let Some(detail_url) = json_text(candidate.get("detail_url")) else {
+                    continue;
+                };
+                let Some(details) = self.get_journal_detail(&detail_url)? else {
+                    continue;
+                };
+                if domestic_journal_detail_matches(&details, title, issn) {
+                    return Ok(Some(details));
+                }
+            }
+        }
+        Ok(None)
+    }
+
+    /// Fetch publication issues for one domestic journal.
+    fn year_issues(&mut self, journal: &Value) -> Result<Vec<Value>, DomesticCnkiSourceError> {
+        let pykm = json_text(journal.get("pykm")).ok_or_else(|| {
+            DomesticCnkiSourceError::Parse("domestic CNKI journal missing pykm".to_string())
+        })?;
+        let data = vec![
+            ("pIdx".to_string(), "0".to_string()),
+            (
+                "time".to_string(),
+                json_text(journal.get("time")).unwrap_or_default(),
+            ),
+            ("isEpublish".to_string(), "0".to_string()),
+            (
+                "pcode".to_string(),
+                json_text(journal.get("pcode")).unwrap_or_else(|| DEFAULT_PCODE.to_string()),
+            ),
+        ];
+        let text = self.post_text(
+            &format!("{DOMESTIC_NAVI_BASE_URL}/knavi/journals/{pykm}/yearList"),
+            &data,
+            json_text(journal.get("detail_url")).as_deref(),
+            "year_issues",
+        )?;
+        parse_domestic_year_issues(&text)
+    }
+
+    /// Fetch article summaries for one issue.
+    fn issue_articles(
+        &mut self,
+        journal: &Value,
+        issue: &Value,
+    ) -> Result<Vec<Value>, DomesticCnkiSourceError> {
+        let pykm = json_text(journal.get("pykm")).ok_or_else(|| {
+            DomesticCnkiSourceError::Parse("domestic CNKI journal missing pykm".to_string())
+        })?;
+        let year_issue = json_text(issue.get("year_issue"))
+            .or_else(|| json_text(issue.get("year_issue_id")))
+            .ok_or_else(|| {
+                DomesticCnkiSourceError::Parse("domestic CNKI issue missing year_issue".to_string())
+            })?;
+        let data = vec![
+            ("yearIssue".to_string(), year_issue),
+            ("pageIdx".to_string(), "0".to_string()),
+            (
+                "pcode".to_string(),
+                json_text(journal.get("pcode")).unwrap_or_else(|| DEFAULT_PCODE.to_string()),
+            ),
+            ("isEpublish".to_string(), "0".to_string()),
+            ("language".to_string(), DOMESTIC_LANGUAGE.to_string()),
+            ("uniplatform".to_string(), DOMESTIC_PLATFORM.to_string()),
+        ];
+        let text = self.post_text(
+            &format!("{DOMESTIC_NAVI_BASE_URL}/knavi/journals/{pykm}/papers"),
+            &data,
+            json_text(journal.get("detail_url")).as_deref(),
+            "issue_articles",
+        )?;
+        parse_domestic_issue_articles(&text, issue)
+    }
+
+    /// Fetch one article detail payload.
+    fn article_detail(
+        &mut self,
+        article_url: &str,
+        platform_id: Option<&str>,
+    ) -> Result<Value, DomesticCnkiSourceError> {
+        let _ = platform_id;
+        let text = self.get_text(article_url, None, "article_detail")?;
+        parse_domestic_article_detail(&text, article_url)
+    }
+
+    /// Return captured source attempts.
+    fn attempts(&self) -> &[SourceAttempt] {
+        &self.attempts
+    }
+
+    /// Remove and return captured source attempts.
+    fn drain_attempts(&mut self) -> Vec<SourceAttempt> {
+        std::mem::take(&mut self.attempts)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1636,5 +2484,50 @@ mod tests {
             .expect_err("budget");
         assert!(error.to_string().contains("budget exhausted"));
         assert!(!session.has_captcha_id());
+    }
+
+    #[test]
+    fn fixture_domestic_client_resolves_journal_and_articles() {
+        let data = DomesticCnkiFixtureData {
+            journal_search_html: SEARCH_HTML.to_string(),
+            journal_detail_html: DETAIL_HTML.to_string(),
+            year_issues_html: YEAR_HTML.to_string(),
+            issue_articles_html: BTreeMap::from([("202512".to_string(), PAPERS_HTML.to_string())]),
+            article_detail_html: BTreeMap::from([(
+                "SJJJ202512002".to_string(),
+                ABSTRACT_HTML.to_string(),
+            )]),
+            fail_endpoint: None,
+        };
+        let mut client = DomesticCnkiClient::new(FixtureDomesticCnkiTransport::new(data));
+        let row = BTreeMap::from([
+            ("title".to_string(), "世界经济".to_string()),
+            ("issn".to_string(), "1002-9621".to_string()),
+        ]);
+        let journal = client
+            .resolve_journal(&row)
+            .expect("journal")
+            .expect("found");
+        assert_eq!(journal["pykm"], "SJJJ");
+        let issues = client.year_issues(&journal).expect("issues");
+        assert_eq!(issues[0]["year_issue_id"], "202512");
+        let articles = client
+            .issue_articles(&journal, &issues[0])
+            .expect("articles");
+        assert_eq!(articles[0]["platform_id"], "SJJJ202512002");
+        let detail = client
+            .article_detail(
+                articles[0]["article_url"].as_str().unwrap(),
+                Some("SJJJ202512002"),
+            )
+            .expect("detail");
+        assert!(detail["permalink"]
+            .as_str()
+            .unwrap_or_default()
+            .starts_with("https://kns.cnki.net/"));
+        assert!(!detail["permalink"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("oversea.cnki.net"));
     }
 }

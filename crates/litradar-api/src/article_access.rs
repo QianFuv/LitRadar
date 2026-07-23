@@ -20,10 +20,12 @@ use litradar_provider::{
     ProviderRegistry, ProviderRegistryError,
 };
 use litradar_sources::{
-    scholarly_access_registration, CnkiArticleAccessProvider, LiveCnkiConfig, LiveCnkiTransport,
+    scholarly_access_registration, CnkiArticleAccessProvider, DomesticCnkiArticleAccessProvider,
+    LiveCnkiConfig, LiveCnkiTransport, LiveDomesticCnkiConfig, LiveDomesticCnkiTransport,
     LiveZjlibCnkiConfig, LiveZjlibCnkiTransport, ZhejiangLibraryCnkiClient,
     ZjlibCnkiArticleIdentity, ZjlibCnkiDownloadedPdf, ZjlibCnkiError, CNKI_OVERSEA_PROVIDER_NAME,
-    CNKI_REDIRECT_HOSTS, DEFAULT_FULL_TEXT_MAXIMUM_BYTES, ZJLIB_PROVIDER_NAME,
+    CNKI_PROVIDER_NAME, CNKI_REDIRECT_HOSTS, DEFAULT_FULL_TEXT_MAXIMUM_BYTES,
+    DOMESTIC_CNKI_REDIRECT_HOSTS, ZJLIB_PROVIDER_NAME,
 };
 #[cfg(test)]
 use litradar_sources::{FixtureZjlibCnkiMode, FixtureZjlibCnkiTransport};
@@ -54,6 +56,7 @@ pub(crate) fn build_article_provider_registry(
     let mut registry = ProviderRegistry::default();
     registry.register(scholarly_access_registration()?)?;
     registry.register(live_cnki_oversea_access_registration()?)?;
+    registry.register(live_cnki_access_registration()?)?;
     registry.register(zjlib_full_text_registration(storage_config, secret_codec)?)?;
     Ok(registry)
 }
@@ -429,6 +432,65 @@ fn live_cnki_oversea_access_registration() -> Result<ProviderRegistration, Provi
                 ..ProviderCapabilities::default()
             },
             allowed_redirect_hosts: CNKI_REDIRECT_HOSTS
+                .iter()
+                .map(|host| (*host).to_string())
+                .collect(),
+        },
+        ProviderImplementations {
+            article_abstract: Some(provider),
+            ..ProviderImplementations::default()
+        },
+    )
+}
+
+struct LiveDomesticCnkiAccessProvider {
+    config: LiveDomesticCnkiConfig,
+}
+
+impl LiveDomesticCnkiAccessProvider {
+    fn resolve(
+        &self,
+        article: &ArticleLocator,
+        context: ArticleAccessContext,
+    ) -> Result<ArticleRedirect, ProviderError> {
+        let transport = LiveDomesticCnkiTransport::new(self.config.clone()).map_err(|_| {
+            ProviderError::new(
+                ProviderErrorKind::TemporarilyUnavailable,
+                "domestic CNKI transport is unavailable",
+            )
+        })?;
+        DomesticCnkiArticleAccessProvider::new(transport).resolve_abstract(article, context)
+    }
+}
+
+impl ArticleAbstractProvider for LiveDomesticCnkiAccessProvider {
+    fn resolve_abstract(
+        &self,
+        article: &ArticleLocator,
+        context: ArticleAccessContext,
+    ) -> Result<ArticleRedirect, ProviderError> {
+        self.resolve(article, context)
+    }
+}
+
+fn live_cnki_access_registration() -> Result<ProviderRegistration, ProviderRegistryError> {
+    let captcha_token = std::env::var("LITRADAR_CNKI_CAPTCHA_TOKEN")
+        .ok()
+        .filter(|value| !value.trim().is_empty());
+    let provider = Arc::new(LiveDomesticCnkiAccessProvider {
+        config: LiveDomesticCnkiConfig {
+            timeout_seconds: ARTICLE_ACTION_TIMEOUT.as_secs(),
+            captcha_token,
+        },
+    });
+    ProviderRegistration::try_new(
+        ProviderDescriptor {
+            name: CNKI_PROVIDER_NAME.to_string(),
+            capabilities: ProviderCapabilities {
+                article_abstract: true,
+                ..ProviderCapabilities::default()
+            },
+            allowed_redirect_hosts: DOMESTIC_CNKI_REDIRECT_HOSTS
                 .iter()
                 .map(|host| (*host).to_string())
                 .collect(),
