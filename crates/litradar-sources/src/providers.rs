@@ -3,7 +3,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use litradar_domain::{
     normalize_bibliographic_label, normalize_bibliographic_text, normalize_contract_doi,
@@ -34,6 +34,8 @@ pub const CNKI_OVERSEA_PROVIDER_NAME: &str = "cnki_oversea";
 
 /// Stable runtime name for the built-in domestic NZKPT CNKI provider.
 pub const CNKI_PROVIDER_NAME: &str = "cnki";
+
+const DOMESTIC_CNKI_BATCH_ATTEMPT_LIMIT: usize = 3;
 
 /// Stable runtime name for the Zhejiang Library full-text Provider.
 pub const ZJLIB_PROVIDER_NAME: &str = "zjlib";
@@ -502,29 +504,63 @@ where
                 "domestic CNKI provider state is unavailable",
             )
         })?;
-        let mut detail_attempts = Vec::new();
-        let result = {
-            let DomesticCnkiIndexState {
-                client,
-                journal_snapshots,
-            } = &mut *state;
-            fetch_domestic_cnki_batch(
-                client,
-                journal_snapshots,
-                catalog,
-                checkpoint,
-                self.worker_count,
-                &mut detail_attempts,
-            )
+        let mut attempts = Vec::new();
+        let mut batch_attempt = 1;
+        let result = loop {
+            let mut detail_attempts = Vec::new();
+            let result = {
+                let DomesticCnkiIndexState {
+                    client,
+                    journal_snapshots,
+                } = &mut *state;
+                fetch_domestic_cnki_batch(
+                    client,
+                    journal_snapshots,
+                    catalog,
+                    checkpoint,
+                    self.worker_count,
+                    &mut detail_attempts,
+                )
+            };
+            attempts.append(&mut state.client.drain_attempts());
+            attempts.append(&mut detail_attempts);
+            let should_retry = result.as_ref().is_err_and(|error| {
+                is_retryable_domestic_batch_error(error)
+                    && batch_attempt < DOMESTIC_CNKI_BATCH_ATTEMPT_LIMIT
+            });
+            if !should_retry {
+                break result;
+            }
+            let error = result.as_ref().expect_err("retry requires an error");
+            tracing::info!(
+                event = "index.provider.batch.retry",
+                component = "index",
+                provider = CNKI_PROVIDER_NAME,
+                failed_attempt = batch_attempt,
+                next_attempt = batch_attempt + 1,
+                failure_kind = ?error.kind(),
+            );
+            thread::sleep(domestic_batch_retry_delay(batch_attempt));
+            batch_attempt += 1;
         };
-        let mut attempts = state.client.drain_attempts();
-        attempts.append(&mut detail_attempts);
         emit_source_attempt_summary(CNKI_PROVIDER_NAME, &attempts);
         if result.as_ref().is_ok_and(|batch| batch.is_complete) {
             state.journal_snapshots.remove(&catalog.catalog_id);
         }
         result
     }
+}
+
+fn is_retryable_domestic_batch_error(error: &ProviderError) -> bool {
+    matches!(
+        error.kind(),
+        ProviderErrorKind::TemporarilyUnavailable | ProviderErrorKind::InvalidResponse
+    )
+}
+
+fn domestic_batch_retry_delay(failed_attempt: usize) -> Duration {
+    let exponent = failed_attempt.saturating_sub(1).min(3) as u32;
+    Duration::from_secs(1_u64 << exponent)
 }
 
 /// Register one built-in domestic CNKI indexing capability.
@@ -2298,6 +2334,63 @@ mod tests {
         }
     }
 
+    #[derive(Clone)]
+    struct BatchRecoveryDomesticTransport {
+        inner: FixtureDomesticCnkiTransport,
+        remaining_detail_failures: Arc<AtomicUsize>,
+        detail_attempt_count: Arc<AtomicUsize>,
+    }
+
+    impl DomesticCnkiTransport for BatchRecoveryDomesticTransport {
+        fn resolve_journal(
+            &mut self,
+            locator: &DomesticJournalLocator,
+        ) -> Result<Option<Value>, DomesticCnkiSourceError> {
+            self.inner.resolve_journal(locator)
+        }
+
+        fn year_issues(&mut self, journal: &Value) -> Result<Vec<Value>, DomesticCnkiSourceError> {
+            self.inner.year_issues(journal)
+        }
+
+        fn issue_articles(
+            &mut self,
+            journal: &Value,
+            issue: &Value,
+            page_index: usize,
+        ) -> Result<DomesticIssueArticlePage, DomesticCnkiSourceError> {
+            self.inner.issue_articles(journal, issue, page_index)
+        }
+
+        fn article_detail(
+            &mut self,
+            article_url: &str,
+            platform_id: Option<&str>,
+        ) -> Result<Value, DomesticCnkiSourceError> {
+            self.detail_attempt_count.fetch_add(1, Ordering::SeqCst);
+            let should_fail = self
+                .remaining_detail_failures
+                .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |remaining| {
+                    remaining.checked_sub(1)
+                })
+                .is_ok();
+            if should_fail {
+                return Err(DomesticCnkiSourceError::Parse(
+                    "temporary article detail response".to_string(),
+                ));
+            }
+            self.inner.article_detail(article_url, platform_id)
+        }
+
+        fn attempts(&self) -> &[SourceAttempt] {
+            self.inner.attempts()
+        }
+
+        fn drain_attempts(&mut self) -> Vec<SourceAttempt> {
+            self.inner.drain_attempts()
+        }
+    }
+
     #[derive(Debug, Clone)]
     enum CrossrefFixtureResponse {
         Page {
@@ -3701,6 +3794,36 @@ mod tests {
         assert!(terminal.articles.is_empty());
         assert!(terminal.is_complete);
         assert!(terminal.next_checkpoint.is_none());
+    }
+
+    #[test]
+    fn domestic_cnki_replays_transient_batch_from_same_checkpoint() {
+        let remaining_detail_failures = Arc::new(AtomicUsize::new(1));
+        let detail_attempt_count = Arc::new(AtomicUsize::new(0));
+        let transport = BatchRecoveryDomesticTransport {
+            inner: FixtureDomesticCnkiTransport::new(domestic_paged_fixture(vec![(
+                "202512".to_string(),
+                vec![vec![(
+                    "RECOVER".to_string(),
+                    "Recovered article".to_string(),
+                )]],
+            )])),
+            remaining_detail_failures: Arc::clone(&remaining_detail_failures),
+            detail_attempt_count: Arc::clone(&detail_attempt_count),
+        };
+        let registration = cnki_index_registration(transport).expect("recovery registration");
+
+        let batch = registration
+            .index_content()
+            .expect("recovery index")
+            .fetch(&domestic_test_catalog(), None)
+            .expect("transient batch should replay");
+
+        assert!(batch.is_complete);
+        assert_eq!(batch.articles.len(), 1);
+        assert_eq!(batch.articles[0].title, "Recovered article");
+        assert_eq!(remaining_detail_failures.load(Ordering::SeqCst), 0);
+        assert_eq!(detail_attempt_count.load(Ordering::SeqCst), 2);
     }
 
     #[test]
