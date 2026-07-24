@@ -2013,7 +2013,7 @@ fn index_entries_with_provider(
         journals_total: request.entries.len(),
         ..IndexRunMetrics::default()
     };
-    for entry in &request.entries {
+    for (journal_ordinal, entry) in request.entries.iter().enumerate() {
         heartbeat_lease(
             control,
             &request.catalog_name,
@@ -2058,7 +2058,19 @@ fn index_entries_with_provider(
                 LiveRunTime::now().epoch_seconds,
             )
             .map_err(|error| LiveIndexError::Heartbeat(error.to_string()))?;
-            let batch = provider.fetch(entry, provider_checkpoint.as_deref())?;
+            let batch = provider
+                .fetch(entry, provider_checkpoint.as_deref())
+                .map_err(|error| {
+                    tracing::error!(
+                        event = "index.provider.failed",
+                        component = "index",
+                        provider = request.provider_name,
+                        journal_ordinal = journal_ordinal + 1,
+                        catalog_id = entry.catalog_id,
+                        failure_kind = ?error.kind(),
+                    );
+                    LiveIndexError::Provider(error)
+                })?;
             let stored_checkpoint = checkpoint_after_batch(&batch)?;
             let encoded_checkpoint = serde_json::to_string(&stored_checkpoint)?;
             let content_revision =
@@ -2185,7 +2197,7 @@ mod tests {
         JournalRankings, ProviderBatch,
     };
     use litradar_provider::conformance::ContractViolation;
-    use litradar_provider::{IndexContentProvider, ProviderError};
+    use litradar_provider::{IndexContentProvider, ProviderError, ProviderErrorKind};
     use rusqlite::{Connection, ErrorCode};
     use tempfile::tempdir;
     use tracing_subscriber::fmt::MakeWriter;
@@ -2309,6 +2321,21 @@ mod tests {
             assert!(checkpoint.is_none());
             *self.calls.lock().expect("call count should lock") += 1;
             Ok(canonical_batch(catalog))
+        }
+    }
+
+    struct FailingProvider;
+
+    impl IndexContentProvider for FailingProvider {
+        fn fetch(
+            &self,
+            _catalog: &JournalCatalogEntry,
+            _checkpoint: Option<&str>,
+        ) -> Result<ProviderBatch, ProviderError> {
+            Err(ProviderError::new(
+                ProviderErrorKind::NotFound,
+                "sensitive provider diagnostic",
+            ))
         }
     }
 
@@ -2445,6 +2472,46 @@ mod tests {
             update: false,
             entries: vec![catalog("journal-1")],
         }
+    }
+
+    #[test]
+    fn direct_provider_failure_reports_catalog_and_kind() {
+        let directory = tempdir().expect("temporary directory should create");
+        let content = open_content_db(directory.path().join("content.sqlite"))
+            .expect("content database should open");
+        let control = open_control_db(directory.path().join("control.sqlite"))
+            .expect("control database should open");
+        let mut request = direct_request("cnki", "run-direct-provider-failure");
+        request.entries[0].catalog_id = "issn-0253-9772".to_string();
+        acquire_lease(
+            &control,
+            &request.catalog_name,
+            &request.provider_name,
+            &request.run_id,
+            LiveRunTime::now().epoch_seconds,
+        )
+        .expect("lease should acquire");
+        let captured = CapturedLogs::default();
+
+        let error = tracing::subscriber::with_default(captured.subscriber(), || {
+            index_entries_with_provider(&content, &control, &FailingProvider, &request)
+        })
+        .expect_err("provider failure should stop the direct run");
+        let event = captured
+            .text()
+            .lines()
+            .map(|line| {
+                serde_json::from_str::<serde_json::Value>(line).expect("event should parse")
+            })
+            .find(|event| event["event"] == "index.provider.failed")
+            .expect("provider failure event should be emitted");
+
+        assert!(matches!(error, LiveIndexError::Provider(_)));
+        assert_eq!(event["provider"], "cnki");
+        assert_eq!(event["journal_ordinal"], 1);
+        assert_eq!(event["catalog_id"], "issn-0253-9772");
+        assert_eq!(event["failure_kind"], "NotFound");
+        assert!(!captured.text().contains("sensitive provider diagnostic"));
     }
 
     #[test]
