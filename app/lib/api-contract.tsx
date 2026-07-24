@@ -500,25 +500,32 @@ function isConsistentRuntimeMetadata(value: Record<string, unknown>): boolean {
     return false;
   }
   if (control === 'boolean') {
-    return (
-      allowedValues.length === 2 && allowedValues[0] === 'true' && allowedValues[1] === 'false'
-    );
+    if (allowedValues.length !== 2 || allowedValues[0] !== 'true' || allowedValues[1] !== 'false') {
+      return false;
+    }
   }
   if (control === 'select' && allowedValues.length === 0) {
     return false;
   }
-  if (control === 'secret_pool' && (!isSecret || inputType !== 'password')) {
-    return false;
-  }
-  if (isSecret && control !== 'secret_pool') {
-    return false;
-  }
-  if (isSecret) {
+  if (control === 'secret_pool') {
     return (
+      isSecret &&
+      inputType === 'password' &&
+      allowedValues.length === 0 &&
       value.value === '' &&
       (hasValue
         ? value.masked_value === '••••' && secretItems.length > 0
         : value.masked_value === '' && secretItems.length === 0)
+    );
+  }
+  if (isSecret) {
+    return (
+      control === 'text' &&
+      inputType === 'password' &&
+      allowedValues.length === 0 &&
+      value.value === '' &&
+      secretItems.length === 0 &&
+      value.masked_value === (hasValue ? '••••' : '')
     );
   }
   return value.masked_value === '' && secretItems.length === 0;

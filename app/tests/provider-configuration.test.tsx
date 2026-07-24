@@ -9,10 +9,13 @@ import { beforeEach, describe, expect, test, vi } from 'vitest';
 
 import { RuntimeSettingsCard } from '@/components/admin/runtime-settings-card';
 import type { ProviderCatalogResponse, RuntimeSettingInfo, RuntimeSettingsUpdate } from '@/lib/api';
+import { ApiContractError, parseRuntimeSettingList } from '@/lib/api-contract';
 import { server } from '@/tests/mocks/server';
 import { renderWithQuery } from '@/tests/render';
 
 let updatePayload: RuntimeSettingsUpdate | null = null;
+
+const SCALAR_SECRET_SENTINEL = 'captcha-secret-sentinel';
 
 /**
  * Return the three backend-declared Provider runtime settings.
@@ -110,6 +113,29 @@ function runtimeSettingFixture(
 }
 
 /**
+ * Build the scalar CNKI captcha token descriptor without exposing its value.
+ *
+ * @param hasValue - Whether the backend reports one configured token.
+ * @returns Secret-safe scalar runtime setting metadata.
+ */
+function scalarSecretSettingFixture(hasValue = true): RuntimeSettingInfo {
+  return runtimeSettingFixture({
+    field: 'cnki_captcha_token',
+    label: 'CNKI captcha solver token',
+    description: 'Domestic CNKI captcha solver credential.',
+    group: 'source_access',
+    control: 'text',
+    apply_mode: 'next_command',
+    input_type: 'password',
+    value: '',
+    is_secret: true,
+    has_value: hasValue,
+    masked_value: hasValue ? '••••' : '',
+    secret_items: [],
+  });
+}
+
+/**
  * Return every runtime descriptor currently declared by the backend.
  *
  * @returns Complete metadata parity fixture.
@@ -138,6 +164,7 @@ function allRuntimeSettingsFixture(): RuntimeSettingInfo[] {
       value: '',
       is_secret: true,
     }),
+    scalarSecretSettingFixture(),
     runtimeSettingFixture({
       field: 'crossref_mailto_pool',
       label: 'Crossref mailto pool',
@@ -273,9 +300,10 @@ function providerCatalogFixture(): ProviderCatalogResponse {
 function renderProviderConfiguration(
   runtimeSettings: RuntimeSettingInfo[] = providerSettingsFixture(),
 ): void {
+  let currentRuntimeSettings = runtimeSettings;
   server.use(
     http.get('http://localhost/api/admin/runtime-settings', () =>
-      HttpResponse.json(runtimeSettings),
+      HttpResponse.json(currentRuntimeSettings),
     ),
     http.get('http://localhost/api/admin/provider-catalog', () =>
       HttpResponse.json(providerCatalogFixture()),
@@ -283,12 +311,39 @@ function renderProviderConfiguration(
     http.put('http://localhost/api/admin/runtime-settings', async ({ request }) => {
       updatePayload = (await request.json()) as RuntimeSettingsUpdate;
       const values = updatePayload.values;
-      return HttpResponse.json(
-        runtimeSettings.map((setting) => ({
-          ...setting,
-          value: typeof values[setting.field] === 'string' ? values[setting.field] : setting.value,
-        })),
-      );
+      currentRuntimeSettings = currentRuntimeSettings.map((setting) => {
+        const updatedValue = values[setting.field];
+        if (!setting.is_secret) {
+          return {
+            ...setting,
+            value: typeof updatedValue === 'string' ? updatedValue : setting.value,
+          };
+        }
+        if (updatedValue === null) {
+          return {
+            ...setting,
+            value: '',
+            has_value: false,
+            masked_value: '',
+            secret_items: [],
+            source: 'database',
+            updated_at: 2,
+          };
+        }
+        if (typeof updatedValue === 'string' && updatedValue.trim().length > 0) {
+          return {
+            ...setting,
+            value: '',
+            has_value: true,
+            masked_value: '••••',
+            secret_items: [],
+            source: 'database',
+            updated_at: 2,
+          };
+        }
+        return setting;
+      });
+      return HttpResponse.json(currentRuntimeSettings);
     }),
   );
   renderWithQuery(<RuntimeSettingsCard />);
@@ -301,11 +356,12 @@ async function rendersRuntimeDescriptorParityAndCatalogMatrix(): Promise<void> {
   const runtimeSettings = allRuntimeSettingsFixture();
   renderProviderConfiguration(runtimeSettings);
 
+  expect(runtimeSettings).toHaveLength(13);
   expect(await screen.findByText('ccf_computer_journals')).toBeInTheDocument();
   expect(screen.getByText('chinese_journals')).toBeInTheDocument();
   expect(screen.getByText('legacy_journals')).toBeInTheDocument();
   expect(screen.getAllByText('下次请求生效')).toHaveLength(2);
-  expect(screen.getAllByText('下次命令生效')).toHaveLength(4);
+  expect(screen.getAllByText('下次命令生效')).toHaveLength(5);
   expect(screen.getAllByText('重启后生效')).toHaveLength(6);
   expect(document.querySelectorAll('[data-runtime-setting-field]')).toHaveLength(
     runtimeSettings.length,
@@ -318,6 +374,70 @@ async function rendersRuntimeDescriptorParityAndCatalogMatrix(): Promise<void> {
   expect(document.body.textContent).not.toContain('{"default"');
   expect(screen.getAllByText('CSV 已发现')).toHaveLength(2);
   expect(screen.getAllByText('数据库已发现')).toHaveLength(2);
+}
+
+/**
+ * Verify scalar secret metadata rejects unsafe shapes before reaching the component.
+ */
+function rejectsInvalidScalarSecretMetadata(): void {
+  const valid = scalarSecretSettingFixture();
+  expect(parseRuntimeSettingList([valid])).toEqual([valid]);
+
+  for (const invalid of [
+    { ...valid, input_type: 'text' },
+    { ...valid, value: SCALAR_SECRET_SENTINEL },
+    { ...valid, masked_value: '' },
+    { ...valid, secret_items: [{ reference: 'opaque', masked_value: '*****' }] },
+    { ...valid, has_value: false, masked_value: '••••' },
+  ]) {
+    expect(() => parseRuntimeSettingList([invalid])).toThrow(ApiContractError);
+  }
+}
+
+/**
+ * Verify blank, replacement, and clear updates preserve scalar secret redaction.
+ */
+async function serializesScalarSecretLifecycle(): Promise<void> {
+  renderProviderConfiguration(allRuntimeSettingsFixture());
+  const user = userEvent.setup();
+
+  const tokenInput = await screen.findByLabelText('CNKI captcha solver token');
+  expect(tokenInput).toHaveAttribute('type', 'password');
+  expect(tokenInput).toHaveValue('');
+  expect(document.body.textContent).not.toContain(SCALAR_SECRET_SENTINEL);
+
+  const logFilter = screen.getByLabelText('Log filter');
+  await user.clear(logFilter);
+  await user.type(logFilter, 'warn,litradar=debug');
+  await user.click(screen.getByRole('button', { name: '保存配置' }));
+  await waitFor(() =>
+    expect(updatePayload).toEqual({
+      values: { log_filter: 'warn,litradar=debug' },
+      secret_pool_updates: {},
+    }),
+  );
+
+  await user.type(screen.getByLabelText('CNKI captcha solver token'), SCALAR_SECRET_SENTINEL);
+  await user.click(screen.getByRole('button', { name: '保存配置' }));
+  await waitFor(() =>
+    expect(updatePayload).toEqual({
+      values: { cnki_captcha_token: SCALAR_SECRET_SENTINEL },
+      secret_pool_updates: {},
+    }),
+  );
+  await waitFor(() => expect(screen.getByLabelText('CNKI captcha solver token')).toHaveValue(''));
+  expect(document.body.textContent).not.toContain(SCALAR_SECRET_SENTINEL);
+
+  await user.click(screen.getByRole('button', { name: '清除全部密钥' }));
+  await user.click(screen.getByRole('button', { name: '保存配置' }));
+  await waitFor(() =>
+    expect(updatePayload).toEqual({
+      values: { cnki_captcha_token: null },
+      secret_pool_updates: {},
+    }),
+  );
+  expect(screen.getByLabelText('CNKI captcha solver token')).toHaveValue('');
+  expect(document.body.textContent).not.toContain(SCALAR_SECRET_SENTINEL);
 }
 
 /**
@@ -493,5 +613,7 @@ describe('Provider configuration', () => {
     serializesInheritanceAndExplicitDisable,
   );
   test('serializes one index Provider per catalog', serializesOneIndexProviderPerCatalog);
+  test('rejects unsafe scalar secret metadata', rejectsInvalidScalarSecretMetadata);
+  test('preserves, replaces, and clears a scalar secret safely', serializesScalarSecretLifecycle);
   test('renders one safe fallback for a future backend control', rendersFutureGenericControlOnce);
 });

@@ -1147,6 +1147,70 @@ mod tests {
     }
 
     #[test]
+    fn runtime_scalar_secret_is_encrypted_and_publicly_redacted() {
+        let temp_dir = tempdir().expect("temp dir should be created");
+        let auth_db_path = temp_dir.path().join("auth.sqlite");
+        migrate_auth_database(&auth_db_path).expect("auth database should migrate");
+        let codec = SecretCodec::from_key([41_u8; 32]);
+        let sentinel = "captcha-secret-sentinel";
+
+        let public = upsert_runtime_settings(
+            &auth_db_path,
+            &codec,
+            &HashMap::from([("cnki_captcha_token".to_string(), Some(sentinel.to_string()))]),
+            &HashMap::new(),
+        )
+        .expect("scalar secret should update");
+        let captcha = public
+            .iter()
+            .find(|setting| setting.field == "cnki_captcha_token")
+            .expect("captcha setting should exist");
+        assert_eq!(captcha.control, RuntimeSettingControl::Text);
+        assert_eq!(captcha.input_type, "password");
+        assert_eq!(captcha.value, "");
+        assert!(captcha.has_value);
+        assert_eq!(captcha.masked_value, "••••");
+        assert!(captcha.secret_items.is_empty());
+        assert!(!format!("{captcha:?}").contains(sentinel));
+
+        let raw: String = Connection::open(&auth_db_path)
+            .expect("auth database should open")
+            .query_row(
+                "SELECT value FROM runtime_settings WHERE key = 'cnki_captcha_token'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("encrypted scalar secret should load");
+        assert!(raw.starts_with("litradarenc:v1:"));
+        assert!(!raw.contains(sentinel));
+        assert_eq!(
+            load_runtime_settings(&auth_db_path, &codec)
+                .expect("trusted settings should decrypt")
+                .into_iter()
+                .find(|setting| setting.field == "cnki_captcha_token")
+                .expect("captcha setting should exist")
+                .value,
+            sentinel
+        );
+
+        let cleared = upsert_runtime_settings(
+            &auth_db_path,
+            &codec,
+            &HashMap::from([("cnki_captcha_token".to_string(), None)]),
+            &HashMap::new(),
+        )
+        .expect("scalar secret should clear");
+        let captcha = cleared
+            .iter()
+            .find(|setting| setting.field == "cnki_captcha_token")
+            .expect("captcha setting should exist");
+        assert_eq!(captcha.value, "");
+        assert!(!captcha.has_value);
+        assert_eq!(captcha.masked_value, "");
+        assert!(captcha.secret_items.is_empty());
+    }
+
+    #[test]
     fn runtime_secret_pool_updates_are_exact_atomic_and_secret_safe() {
         let temp_dir = tempdir().expect("temp dir should be created");
         let auth_db_path = temp_dir.path().join("auth.sqlite");
