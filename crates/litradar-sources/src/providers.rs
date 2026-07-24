@@ -3464,9 +3464,9 @@ mod tests {
         }
     }
 
-    fn domestic_paged_fixture(
-        issues: Vec<(String, Vec<Vec<(String, String)>>)>,
-    ) -> DomesticCnkiFixtureData {
+    type DomesticPagedFixtureInput = Vec<(String, Vec<Vec<(String, String)>>)>;
+
+    fn domestic_paged_fixture(issues: DomesticPagedFixtureInput) -> DomesticCnkiFixtureData {
         let mut year_rows = String::new();
         let mut issue_article_pages = BTreeMap::new();
         let mut article_detail_html = BTreeMap::new();
