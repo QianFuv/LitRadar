@@ -8,12 +8,13 @@ use std::error::Error;
 use std::fmt;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use reqwest::blocking::Client;
+use reqwest::blocking::{Client, Response};
 use reqwest::redirect::Policy;
+use reqwest::Url;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use crate::jfbym::{
     encrypt_point_json, point_x_candidates, strip_data_url_base64, JfbymError, JfbymSolver,
@@ -32,6 +33,61 @@ const DEFAULT_PCODE: &str = "CJFD,CCJD";
 /// Maximum fresh captcha puzzle solves allowed per domestic session budget.
 pub const DOMESTIC_CAPTCHA_SOLVE_BUDGET: usize = 5;
 const DOMESTIC_POINT_JSON_Y: i32 = 5;
+const DOMESTIC_REDIRECT_LIMIT: usize = 10;
+const DOMESTIC_REQUEST_ATTEMPT_LIMIT: usize = 3;
+
+#[derive(Debug, Default)]
+struct DomesticRequestBudget {
+    ordinary_attempts: usize,
+    captcha_replays: usize,
+    has_pending_captcha_replay: bool,
+}
+
+struct DomesticAttempt<'a> {
+    endpoint: &'a str,
+    method: &'a str,
+    request_url: &'a str,
+    status_code: Option<u16>,
+    did_succeed: bool,
+    did_retry: bool,
+    error: Option<&'a str>,
+}
+
+impl DomesticRequestBudget {
+    fn next_attempt(&mut self) -> Option<bool> {
+        if self.has_pending_captcha_replay {
+            if self.captcha_replays >= DOMESTIC_CAPTCHA_SOLVE_BUDGET {
+                return None;
+            }
+            self.has_pending_captcha_replay = false;
+            self.captcha_replays += 1;
+            return Some(true);
+        }
+        if self.ordinary_attempts >= DOMESTIC_REQUEST_ATTEMPT_LIMIT {
+            return None;
+        }
+        self.ordinary_attempts += 1;
+        Some(false)
+    }
+
+    fn schedule_captcha_replay(&mut self) -> Result<(), DomesticCnkiSourceError> {
+        if self.captcha_replays >= DOMESTIC_CAPTCHA_SOLVE_BUDGET {
+            return Err(DomesticCnkiSourceError::Request(
+                "domestic CNKI captcha replay budget exhausted".to_string(),
+            ));
+        }
+        self.has_pending_captcha_replay = true;
+        Ok(())
+    }
+
+    fn can_retry_ordinary(&self) -> bool {
+        self.ordinary_attempts < DOMESTIC_REQUEST_ATTEMPT_LIMIT
+    }
+
+    fn did_retry(&self) -> bool {
+        self.ordinary_attempts + self.captcha_replays > 1
+    }
+}
 
 /// Fixture payload used by domestic NZKPT source replay.
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -183,7 +239,7 @@ pub fn domestic_journal_search_form(keyword: &str, field_name: &str) -> BTreeMap
 pub fn parse_domestic_journal_search_results(
     text: &str,
 ) -> Result<Vec<Value>, DomesticCnkiSourceError> {
-    checked_text(text, "journal_search")?;
+    validate_domestic_response("journal_search", text)?;
     let mut candidates = Vec::new();
     let mut seen = Vec::<String>::new();
     for tag in tags(text, "a") {
@@ -194,7 +250,7 @@ pub fn parse_domestic_journal_search_results(
         if !href.contains("/knavi/detail?") {
             continue;
         }
-        let detail_url = absolute_domestic_url(href);
+        let detail_url = with_domestic_platform(href)?;
         if contains_overseas_host(&detail_url) {
             return Err(DomesticCnkiSourceError::Parse(
                 "domestic journal search returned overseas host".to_string(),
@@ -214,7 +270,7 @@ pub fn parse_domestic_journal_search_results(
         candidates.push(json!({
             "title": title,
             "issn": issn,
-            "detail_url": with_domestic_platform(&detail_url),
+            "detail_url": detail_url,
         }));
     }
     Ok(candidates)
@@ -230,7 +286,7 @@ pub fn parse_domestic_journal_search_results(
 ///
 /// Journal detail payload with `pykm` and product codes.
 pub fn parse_domestic_journal_detail(text: &str) -> Result<Value, DomesticCnkiSourceError> {
-    checked_text(text, "journal_detail")?;
+    validate_domestic_response("journal_detail", text)?;
     let pykm = input_value(text, "pykm").ok_or_else(|| {
         DomesticCnkiSourceError::Parse("domestic journal detail missing pykm".to_string())
     })?;
@@ -238,7 +294,7 @@ pub fn parse_domestic_journal_detail(text: &str) -> Result<Value, DomesticCnkiSo
     let visible_text = strip_tags(text);
     let detail_url = with_domestic_platform(&format!(
         "{DOMESTIC_NAVI_BASE_URL}/knavi/detail?pykm={pykm}"
-    ));
+    ))?;
     if contains_overseas_host(&detail_url) {
         return Err(DomesticCnkiSourceError::Parse(
             "domestic journal detail produced overseas host".to_string(),
@@ -267,7 +323,7 @@ pub fn parse_domestic_journal_detail(text: &str) -> Result<Value, DomesticCnkiSo
 ///
 /// Parsed issue payloads.
 pub fn parse_domestic_year_issues(text: &str) -> Result<Vec<Value>, DomesticCnkiSourceError> {
-    checked_text(text, "year_issues")?;
+    validate_domestic_response("year_issues", text)?;
     let mut issues = Vec::new();
     for tag in tags(text, "a") {
         let tag_attrs = attrs(&tag);
@@ -308,7 +364,7 @@ pub fn parse_domestic_issue_articles(
     text: &str,
     issue: &Value,
 ) -> Result<Vec<Value>, DomesticCnkiSourceError> {
-    checked_text(text, "issue_articles")?;
+    validate_domestic_response("issue_articles", text)?;
     let mut articles = Vec::new();
     let mut current_section = String::new();
     let mut cursor = 0;
@@ -321,7 +377,7 @@ pub fn parse_domestic_issue_articles(
                 break;
             }
         } else if let Some((block, end)) = tag_block_at(text, "dd", start) {
-            if let Some(article) = parse_article_row(&block, issue, &current_section) {
+            if let Some(article) = parse_article_row(&block, issue, &current_section)? {
                 if contains_overseas_host(
                     &json_text(article.get("article_url")).unwrap_or_default(),
                 ) {
@@ -353,12 +409,8 @@ pub fn parse_domestic_article_detail(
     text: &str,
     article_url: &str,
 ) -> Result<Value, DomesticCnkiSourceError> {
-    checked_text(text, article_url)?;
-    if contains_overseas_host(article_url) {
-        return Err(DomesticCnkiSourceError::Parse(
-            "domestic article detail used overseas host".to_string(),
-        ));
-    }
+    validate_domestic_response("article_detail", text)?;
+    let article_url = absolute_domestic_url(article_url)?;
     let filename =
         input_value(text, "paramfilename").or_else(|| input_value(text, "param-filename"));
     let dbcode = input_value(text, "paramdbcode").or_else(|| input_value(text, "param-dbcode"));
@@ -372,7 +424,7 @@ pub fn parse_domestic_article_detail(
         .and_then(|value| non_empty(&value));
     let online_time =
         row_value(text, "在线公开时间").or_else(|| row_value(text, "Online Release Time"));
-    let permalink = with_domestic_platform(article_url);
+    let permalink = with_domestic_platform(&article_url)?;
     Ok(json!({
         "article_url": permalink.clone(),
         "platform_id": filename,
@@ -394,12 +446,17 @@ pub fn parse_domestic_article_detail(
 /// # Arguments
 ///
 /// * `text` - Response text.
-/// * `url` - Request URL or fixture key.
+/// * `_url` - Request URL or fixture key retained for API compatibility.
 ///
 /// # Returns
 ///
 /// Ok when the response appears usable.
-pub fn checked_text(text: &str, url: &str) -> Result<(), DomesticCnkiSourceError> {
+pub fn checked_text(text: &str, _url: &str) -> Result<(), DomesticCnkiSourceError> {
+    if text.trim().is_empty() {
+        return Err(DomesticCnkiSourceError::Parse(
+            "domestic CNKI returned an empty response".to_string(),
+        ));
+    }
     let lowered = text.to_lowercase();
     if (lowered.contains("captcha")
         || text.contains("访问异常")
@@ -408,11 +465,62 @@ pub fn checked_text(text: &str, url: &str) -> Result<(), DomesticCnkiSourceError
         || text.contains("/verify/home"))
         && !looks_like_domestic_content(text)
     {
-        return Err(DomesticCnkiSourceError::Request(format!(
-            "domestic CNKI verification required: {url}"
+        return Err(DomesticCnkiSourceError::Request(
+            "domestic CNKI verification required".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+impl DomesticCnkiSourceError {
+    /// Return the upstream HTTP status when this is a status-aware request failure.
+    ///
+    /// # Returns
+    ///
+    /// Exact status code, or `None` for transport, captcha, fixture, and parse failures.
+    pub fn http_status(&self) -> Option<u16> {
+        let Self::Request(message) = self else {
+            return None;
+        };
+        message
+            .strip_prefix("domestic CNKI HTTP status ")
+            .and_then(|value| value.parse().ok())
+    }
+}
+
+fn validate_domestic_response(endpoint: &str, text: &str) -> Result<(), DomesticCnkiSourceError> {
+    checked_text(text, endpoint)?;
+    let has_expected_structure = match endpoint {
+        "journal_search" => text.contains("/knavi/detail?") || has_explicit_empty_marker(text),
+        "journal_detail" => input_value(text, "pykm").is_some() || has_explicit_empty_marker(text),
+        "year_issues" => text.contains("YearIssueTree"),
+        "issue_articles" => text.contains("articleCount") || text.contains("class=\"row clearfix"),
+        "article_detail" => {
+            input_value(text, "paramfilename").is_some()
+                || input_value(text, "param-filename").is_some()
+        }
+        _ => false,
+    };
+    if !has_expected_structure {
+        return Err(DomesticCnkiSourceError::Parse(format!(
+            "domestic CNKI {endpoint} response is structurally incomplete"
         )));
     }
     Ok(())
+}
+
+fn has_explicit_empty_marker(text: &str) -> bool {
+    let lowered = text.to_lowercase();
+    [
+        "暂无数据",
+        "暂无相关",
+        "未检索到",
+        "没有找到",
+        "无相关记录",
+        "no results",
+    ]
+    .iter()
+    .any(|marker| lowered.contains(marker))
 }
 
 /// Return whether a URL or body fragment points at overseas CNKI.
@@ -429,7 +537,7 @@ pub fn contains_overseas_host(value: &str) -> bool {
 }
 
 /// Puzzle payload returned by CNKI `/verify-api/get`.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct DomesticCaptchaPuzzle {
     /// Challenge page URL.
     pub challenge_url: String,
@@ -456,8 +564,8 @@ impl fmt::Display for DomesticCaptchaPuzzle {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             formatter,
-            "DomesticCaptchaPuzzle {{ captcha_type: {}, captcha_id_len: {}, secret_key_len: {}, token_len: {}, original_len: {}, jigsaw_len: {} }}",
-            self.captcha_type,
+            "DomesticCaptchaPuzzle {{ captcha_type_len: {}, captcha_id_len: {}, secret_key_len: {}, token_len: {}, original_len: {}, jigsaw_len: {} }}",
+            self.captcha_type.len(),
             self.captcha_id.len(),
             self.secret_key.len(),
             self.token.len(),
@@ -467,12 +575,32 @@ impl fmt::Display for DomesticCaptchaPuzzle {
     }
 }
 
+impl fmt::Debug for DomesticCaptchaPuzzle {
+    /// Format puzzle metadata without secrets or image payloads.
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Display::fmt(self, formatter)
+    }
+}
+
 /// Memory-only captcha session state shared by domestic index and abstract calls.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct DomesticCaptchaSession {
     captcha_id: Option<String>,
     solve_attempts: usize,
     solve_budget: usize,
+}
+
+impl fmt::Debug for DomesticCaptchaSession {
+    /// Format captcha session state without exposing the retained captcha id.
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("DomesticCaptchaSession")
+            .field("has_captcha_id", &self.has_captcha_id())
+            .field("captcha_id_len", &self.captcha_id_len())
+            .field("solve_attempts", &self.solve_attempts)
+            .field("solve_budget", &self.solve_budget)
+            .finish()
+    }
 }
 
 impl Default for DomesticCaptchaSession {
@@ -556,15 +684,18 @@ impl DomesticCaptchaSession {
     /// # Returns
     ///
     /// URL with `captchaId` appended when available.
-    pub fn attach_captcha_id(&self, url: &str) -> String {
+    pub fn attach_captcha_id(&self, url: &str) -> Result<String, DomesticCnkiSourceError> {
+        let mut parsed = parse_domestic_url(url)?;
         let Some(captcha_id) = self.captcha_id.as_deref().filter(|value| !value.is_empty()) else {
-            return url.to_string();
+            return Ok(parsed.to_string());
         };
-        if url.contains("captchaId=") {
-            return url.to_string();
+        if parsed.query_pairs().any(|(key, _)| key == "captchaId") {
+            return Ok(parsed.to_string());
         }
-        let separator = if url.contains('?') { '&' } else { '?' };
-        format!("{url}{separator}captchaId={captcha_id}")
+        parsed
+            .query_pairs_mut()
+            .append_pair("captchaId", captcha_id);
+        Ok(parsed.to_string())
     }
 
     /// Clear the retained captcha id after a failed authenticated request.
@@ -602,7 +733,7 @@ impl DomesticCaptchaSession {
             return Ok(());
         }
         let challenge_url =
-            extract_challenge_url(response_text, response_url).ok_or_else(|| {
+            extract_challenge_url(response_text, response_url)?.ok_or_else(|| {
                 DomesticCnkiSourceError::Request(
                     "domestic CNKI verification required but challenge URL is missing".to_string(),
                 )
@@ -695,14 +826,17 @@ pub fn looks_like_captcha_challenge(text: &str, url: &str) -> bool {
 /// # Returns
 ///
 /// Challenge URL when present.
-pub fn extract_challenge_url(text: &str, url: &str) -> Option<String> {
+pub fn extract_challenge_url(
+    text: &str,
+    url: &str,
+) -> Result<Option<String>, DomesticCnkiSourceError> {
     if url.contains("/verify/home") {
-        return Some(url.to_string());
+        return parse_challenge_url(url).map(Some);
     }
     if let Ok(payload) = serde_json::from_str::<Value>(text) {
         if let Some(message) = payload.get("message").and_then(Value::as_str) {
             if message.contains("/verify/home") {
-                return Some(message.to_string());
+                return parse_challenge_url(message).map(Some);
             }
         }
     }
@@ -714,7 +848,7 @@ pub fn extract_challenge_url(text: &str, url: &str) -> Option<String> {
                 character.is_whitespace() || character == '"' || character == '\''
             })
             .unwrap_or(rest.len());
-        return Some(rest[..end].to_string());
+        return parse_challenge_url(&rest[..end]).map(Some);
     }
     let relative = "/verify/home?";
     if let Some(start) = text.find(relative) {
@@ -724,9 +858,9 @@ pub fn extract_challenge_url(text: &str, url: &str) -> Option<String> {
                 character.is_whitespace() || character == '"' || character == '\''
             })
             .unwrap_or(rest.len());
-        return Some(format!("{DOMESTIC_KNS_BASE_URL}{}", &rest[..end]));
+        return parse_challenge_url(&rest[..end]).map(Some);
     }
-    None
+    Ok(None)
 }
 
 /// Parse a `/verify-api/get` JSON body into a puzzle payload.
@@ -743,7 +877,8 @@ pub fn parse_captcha_puzzle(
     challenge_url: &str,
     body: &Value,
 ) -> Result<DomesticCaptchaPuzzle, DomesticCnkiSourceError> {
-    let query = query_map(challenge_url);
+    let challenge_url = parse_challenge_url(challenge_url)?;
+    let query = query_map(&challenge_url)?;
     let container = puzzle_container(body).ok_or_else(|| {
         DomesticCnkiSourceError::Parse(
             "domestic captcha puzzle missing image container".to_string(),
@@ -796,7 +931,7 @@ pub fn parse_captcha_puzzle(
         .unwrap_or_default();
     let return_url = query.get("returnUrl").cloned().unwrap_or_default();
     let puzzle = DomesticCaptchaPuzzle {
-        challenge_url: challenge_url.to_string(),
+        challenge_url,
         captcha_type,
         ident,
         captcha_id,
@@ -819,15 +954,15 @@ pub fn parse_captcha_puzzle(
 /// # Returns
 ///
 /// Request body for puzzle fetch.
-pub fn captcha_get_request_body(challenge_url: &str) -> Value {
-    let query = query_map(challenge_url);
-    json!({
+pub fn captcha_get_request_body(challenge_url: &str) -> Result<Value, DomesticCnkiSourceError> {
+    let query = query_map(challenge_url)?;
+    Ok(json!({
         "captchaType": query.get("captchaType").cloned().unwrap_or_else(|| "blockPuzzle".to_string()),
         "clientUid": client_uid_hex(),
         "ts": unix_millis(),
         "ident": query.get("ident").cloned().unwrap_or_default(),
         "captchaId": query.get("captchaId").cloned().unwrap_or_default(),
-    })
+    }))
 }
 
 /// Build the JSON body for `/verify-api/web/check`.
@@ -931,51 +1066,28 @@ fn puzzle_container(body: &Value) -> Option<&Value> {
     })
 }
 
-fn query_map(url: &str) -> BTreeMap<String, String> {
-    let mut map = BTreeMap::new();
-    let Some(query) = url.split_once('?').map(|(_, query)| query) else {
-        return map;
-    };
-    for pair in query.split('&') {
-        if pair.is_empty() {
-            continue;
-        }
-        let (key, value) = pair.split_once('=').unwrap_or((pair, ""));
-        if key.is_empty() {
-            continue;
-        }
-        map.insert(percent_decode(key), percent_decode(value));
-    }
-    map
+fn query_map(url: &str) -> Result<BTreeMap<String, String>, DomesticCnkiSourceError> {
+    let parsed = parse_domestic_url(&decode_html(url))?;
+    Ok(parsed
+        .query_pairs()
+        .map(|(key, value)| (key.into_owned(), value.into_owned()))
+        .collect())
 }
 
-fn percent_decode(value: &str) -> String {
-    let bytes = value.as_bytes();
-    let mut output = Vec::with_capacity(bytes.len());
-    let mut index = 0;
-    while index < bytes.len() {
-        match bytes[index] {
-            b'+' => {
-                output.push(b' ');
-                index += 1;
-            }
-            b'%' if index + 2 < bytes.len() => {
-                let hex = &value[index + 1..index + 3];
-                if let Ok(byte) = u8::from_str_radix(hex, 16) {
-                    output.push(byte);
-                    index += 3;
-                } else {
-                    output.push(bytes[index]);
-                    index += 1;
-                }
-            }
-            byte => {
-                output.push(byte);
-                index += 1;
-            }
-        }
+fn parse_challenge_url(value: &str) -> Result<String, DomesticCnkiSourceError> {
+    let decoded = decode_html(value);
+    let absolute = if decoded.starts_with("/verify/home") {
+        format!("{DOMESTIC_KNS_BASE_URL}{decoded}")
+    } else {
+        decoded
+    };
+    let parsed = parse_domestic_url(&absolute)?;
+    if parsed.host_str() != Some("kns.cnki.net") || parsed.path() != "/verify/home" {
+        return Err(DomesticCnkiSourceError::Request(
+            "domestic CNKI challenge URL is not allowed".to_string(),
+        ));
     }
-    String::from_utf8_lossy(&output).into_owned()
+    Ok(parsed.to_string())
 }
 
 fn client_uid_hex() -> String {
@@ -1010,14 +1122,18 @@ fn journal_result_issn_near(text: &str, href: &str) -> Option<String> {
     } else {
         encoded_href.len()
     };
-    let window_start = href_index.saturating_sub(80);
-    let window_end = (href_index + matched_len + 400).min(text.len());
+    let window_start = previous_char_boundary(text, href_index.saturating_sub(80));
+    let window_end = next_char_boundary(text, (href_index + matched_len + 400).min(text.len()));
     let window = &text[window_start..window_end];
     let visible = strip_tags(window);
     label_value(&visible, &["ISSN"])
 }
 
-fn parse_article_row(row_html: &str, issue: &Value, section: &str) -> Option<Value> {
+fn parse_article_row(
+    row_html: &str,
+    issue: &Value,
+    section: &str,
+) -> Result<Option<Value>, DomesticCnkiSourceError> {
     let link = tags(row_html, "a").into_iter().find_map(|tag| {
         let tag_attrs = attrs(&tag);
         let href = tag_attrs.get("href")?;
@@ -1029,8 +1145,12 @@ fn parse_article_row(row_html: &str, issue: &Value, section: &str) -> Option<Val
             .cloned()
             .and_then(|value| non_empty(&value))
             .or_else(|| non_empty(&strip_tags(&tag)))?;
-        Some((with_domestic_platform(&absolute_domestic_url(href)), title))
-    })?;
+        Some((href.clone(), title))
+    });
+    let Some((href, title)) = link else {
+        return Ok(None);
+    };
+    let link = (with_domestic_platform(&href)?, title);
     let platform_id = tags(row_html, "b").into_iter().find_map(|tag| {
         let tag_attrs = attrs(&tag);
         tag_attrs
@@ -1042,7 +1162,7 @@ fn parse_article_row(row_html: &str, issue: &Value, section: &str) -> Option<Val
     });
     let authors = span_title(row_html, "author");
     let pages = span_title(row_html, "company");
-    Some(json!({
+    Ok(Some(json!({
         "title": link.1,
         "article_url": link.0,
         "platform_id": platform_id,
@@ -1052,7 +1172,21 @@ fn parse_article_row(row_html: &str, issue: &Value, section: &str) -> Option<Val
         "year": issue.get("year").cloned(),
         "number": issue.get("number").cloned(),
         "platform": DOMESTIC_PLATFORM,
-    }))
+    })))
+}
+
+fn previous_char_boundary(text: &str, mut index: usize) -> usize {
+    while index > 0 && !text.is_char_boundary(index) {
+        index -= 1;
+    }
+    index
+}
+
+fn next_char_boundary(text: &str, mut index: usize) -> usize {
+    while index < text.len() && !text.is_char_boundary(index) {
+        index += 1;
+    }
+    index
 }
 
 fn summary_text(text: &str) -> Option<String> {
@@ -1334,35 +1468,140 @@ fn non_empty(value: &str) -> Option<String> {
     (!trimmed.is_empty()).then(|| trimmed.to_string())
 }
 
-fn absolute_domestic_url(value: &str) -> String {
-    if value.starts_with("http://") || value.starts_with("https://") {
-        value.to_string()
-    } else if value.starts_with("/kcms") || value.starts_with("/starter") {
-        format!("{DOMESTIC_KNS_BASE_URL}{value}")
-    } else if value.starts_with('/') {
-        format!("{DOMESTIC_NAVI_BASE_URL}{value}")
-    } else {
-        value.to_string()
-    }
+fn absolute_domestic_url(value: &str) -> Result<String, DomesticCnkiSourceError> {
+    parse_domestic_url(value).map(|url| url.to_string())
 }
 
-fn with_domestic_platform(url: &str) -> String {
-    let absolute = absolute_domestic_url(url);
-    let mut parts = absolute.splitn(2, '?');
-    let path = parts.next().unwrap_or_default();
-    let query = parts.next().unwrap_or_default();
-    let mut pairs = query
-        .split('&')
-        .filter(|part| !part.is_empty())
-        .filter(|part| {
-            let key = part.split('=').next().unwrap_or_default().to_lowercase();
-            key != "language" && key != "uniplatform"
-        })
-        .map(str::to_string)
+fn parse_domestic_url(value: &str) -> Result<Url, DomesticCnkiSourceError> {
+    let value = value.trim();
+    if value.is_empty() || value.starts_with("//") {
+        return Err(DomesticCnkiSourceError::Request(
+            "domestic CNKI URL is invalid".to_string(),
+        ));
+    }
+    let parsed = if let Ok(url) = Url::parse(value) {
+        url
+    } else {
+        if !value.starts_with('/') {
+            return Err(DomesticCnkiSourceError::Request(
+                "domestic CNKI relative URL is invalid".to_string(),
+            ));
+        }
+        let base = if value.starts_with("/kcms")
+            || value.starts_with("/starter")
+            || value.starts_with("/verify")
+        {
+            DOMESTIC_KNS_BASE_URL
+        } else {
+            DOMESTIC_NAVI_BASE_URL
+        };
+        Url::parse(base)
+            .and_then(|base| base.join(value))
+            .map_err(|_| {
+                DomesticCnkiSourceError::Request("domestic CNKI URL is invalid".to_string())
+            })?
+    };
+    validate_domestic_url(&parsed)?;
+    Ok(parsed)
+}
+
+fn validate_domestic_url(url: &Url) -> Result<(), DomesticCnkiSourceError> {
+    if !is_allowed_domestic_url(url) {
+        return Err(DomesticCnkiSourceError::Request(
+            "domestic CNKI URL is not allowed".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+fn is_allowed_domestic_url(url: &Url) -> bool {
+    url.scheme() == "https"
+        && matches!(url.host_str(), Some("navi.cnki.net") | Some("kns.cnki.net"))
+        && url.username().is_empty()
+        && url.password().is_none()
+        && url.port().is_none_or(|port| port == 443)
+}
+
+fn with_domestic_platform(url: &str) -> Result<String, DomesticCnkiSourceError> {
+    let mut parsed = parse_domestic_url(url)?;
+    let pairs = parsed
+        .query_pairs()
+        .filter(|(key, _)| !key.eq_ignore_ascii_case("language"))
+        .filter(|(key, _)| !key.eq_ignore_ascii_case("uniplatform"))
+        .map(|(key, value)| (key.into_owned(), value.into_owned()))
         .collect::<Vec<_>>();
-    pairs.push(format!("uniplatform={DOMESTIC_PLATFORM}"));
-    pairs.push(format!("language={DOMESTIC_LANGUAGE}"));
-    format!("{path}?{}", pairs.join("&"))
+    parsed.set_query(None);
+    {
+        let mut query = parsed.query_pairs_mut();
+        for (key, value) in pairs {
+            query.append_pair(&key, &value);
+        }
+        query.append_pair("uniplatform", DOMESTIC_PLATFORM);
+        query.append_pair("language", DOMESTIC_LANGUAGE);
+    }
+    Ok(parsed.to_string())
+}
+
+fn redact_domestic_url(url: &str) -> String {
+    let Ok(mut parsed) = Url::parse(url) else {
+        return "[REDACTED INVALID DOMESTIC URL]".to_string();
+    };
+    let pairs = parsed
+        .query_pairs()
+        .map(|(key, value)| {
+            let should_redact = matches!(
+                key.to_ascii_lowercase().as_str(),
+                "captchaid"
+                    | "ident"
+                    | "returnurl"
+                    | "token"
+                    | "secretkey"
+                    | "pointjson"
+                    | "originalimagebase64"
+                    | "jigsawimagebase64"
+            );
+            (
+                key.into_owned(),
+                if should_redact {
+                    "[REDACTED]".to_string()
+                } else {
+                    value.into_owned()
+                },
+            )
+        })
+        .collect::<Vec<_>>();
+    parsed.set_query(None);
+    if !pairs.is_empty() {
+        let mut query = parsed.query_pairs_mut();
+        for (key, value) in pairs {
+            query.append_pair(&key, &value);
+        }
+    }
+    parsed.to_string()
+}
+
+fn domestic_http_status_error(status_code: u16) -> DomesticCnkiSourceError {
+    DomesticCnkiSourceError::Request(format!("domestic CNKI HTTP status {status_code}"))
+}
+
+fn validate_domestic_http_response(response: &Response) -> Result<(), DomesticCnkiSourceError> {
+    validate_domestic_url(response.url())?;
+    if !response.status().is_success() {
+        return Err(domestic_http_status_error(response.status().as_u16()));
+    }
+    Ok(())
+}
+
+fn parse_domestic_json_response(
+    response: Response,
+    endpoint: &str,
+) -> Result<Value, DomesticCnkiSourceError> {
+    validate_domestic_http_response(&response)?;
+    response.json().map_err(|_| {
+        DomesticCnkiSourceError::Parse(format!(
+            "domestic CNKI {endpoint} response is not valid JSON"
+        ))
+    })
 }
 
 /// Domestic NZKPT source transport abstraction.
@@ -1842,9 +2081,21 @@ impl LiveDomesticCnkiTransport {
         let client = Client::builder()
             .timeout(Duration::from_secs(config.timeout_seconds.max(1)))
             .cookie_store(true)
-            .redirect(Policy::limited(10))
+            .redirect(Policy::custom(|attempt| {
+                if attempt.previous().len() >= DOMESTIC_REDIRECT_LIMIT {
+                    attempt.error("domestic CNKI redirect limit exceeded")
+                } else if is_allowed_domestic_url(attempt.url()) {
+                    attempt.follow()
+                } else {
+                    attempt.error("domestic CNKI redirect URL rejected")
+                }
+            }))
             .build()
-            .map_err(|error| DomesticCnkiSourceError::Request(error.to_string()))?;
+            .map_err(|_| {
+                DomesticCnkiSourceError::Request(
+                    "domestic CNKI HTTP client initialization failed".to_string(),
+                )
+            })?;
         Ok(Self {
             client,
             captcha_token: config
@@ -1909,10 +2160,15 @@ impl LiveDomesticCnkiTransport {
         referer: Option<&str>,
         endpoint: &str,
     ) -> Result<String, DomesticCnkiSourceError> {
-        let mut request_url = self.captcha_session.attach_captcha_id(url);
-        let mut did_retry = false;
-        for attempt in 1..=3 {
-            let started_at = Instant::now();
+        let base_url = absolute_domestic_url(url)?;
+        let referer = referer
+            .map(parse_domestic_url)
+            .transpose()?
+            .map(|url| url.to_string());
+        let mut request_url = self.captcha_session.attach_captcha_id(&base_url)?;
+        let mut budget = DomesticRequestBudget::default();
+        while budget.next_attempt().is_some() {
+            let did_retry = budget.did_retry();
             let mut builder = match method {
                 "POST" => self.client.post(&request_url).form(data),
                 _ => self.client.get(&request_url),
@@ -1921,105 +2177,149 @@ impl LiveDomesticCnkiTransport {
                 "User-Agent",
                 "Mozilla/5.0 (compatible; LitRadar/0.1; +https://github.com/QianFuv/LitRadar)",
             );
-            if let Some(referer) = referer {
+            if let Some(referer) = referer.as_deref() {
                 builder = builder.header("Referer", referer);
             }
             let response = builder.send();
-            let duration_ms = started_at.elapsed().as_millis() as u64;
             let response = match response {
                 Ok(response) => response,
-                Err(error) => {
-                    self.attempts.push(SourceAttempt {
-                        service: "cnki".to_string(),
-                        endpoint: endpoint.to_string(),
-                        method: method.to_string(),
-                        url: request_url.clone(),
+                Err(_) => {
+                    self.record_attempt(DomesticAttempt {
+                        endpoint,
+                        method,
+                        request_url: &request_url,
                         status_code: None,
                         did_succeed: false,
                         did_retry,
-                        error: Some(error.to_string()),
+                        error: Some("request failed"),
                     });
-                    if attempt < 3 {
-                        did_retry = true;
-                        thread::sleep(Duration::from_millis(200 * attempt as u64));
+                    if budget.can_retry_ordinary() {
+                        thread::sleep(Duration::from_millis(
+                            200 * budget.ordinary_attempts.max(1) as u64,
+                        ));
                         continue;
                     }
-                    return Err(DomesticCnkiSourceError::Request(error.to_string()));
+                    return Err(DomesticCnkiSourceError::Request(
+                        "domestic CNKI request failed".to_string(),
+                    ));
                 }
             };
             let status = response.status();
             let final_url = response.url().to_string();
-            let text = response
-                .text()
-                .map_err(|error| DomesticCnkiSourceError::Request(error.to_string()))?;
-            if looks_like_captcha_challenge(&text, &final_url) {
-                self.attempts.push(SourceAttempt {
-                    service: "cnki".to_string(),
-                    endpoint: endpoint.to_string(),
-                    method: method.to_string(),
-                    url: request_url.clone(),
+            if validate_domestic_url(response.url()).is_err() {
+                self.record_attempt(DomesticAttempt {
+                    endpoint,
+                    method,
+                    request_url: &request_url,
                     status_code: Some(status.as_u16()),
                     did_succeed: false,
                     did_retry,
-                    error: Some("captcha challenge".to_string()),
+                    error: Some("redirect URL rejected"),
+                });
+                return Err(DomesticCnkiSourceError::Request(
+                    "domestic CNKI redirect URL is not allowed".to_string(),
+                ));
+            }
+            let text = match response.text() {
+                Ok(text) => text,
+                Err(_) => {
+                    self.record_attempt(DomesticAttempt {
+                        endpoint,
+                        method,
+                        request_url: &request_url,
+                        status_code: Some(status.as_u16()),
+                        did_succeed: false,
+                        did_retry,
+                        error: Some("response read failed"),
+                    });
+                    return Err(DomesticCnkiSourceError::Request(
+                        "domestic CNKI response read failed".to_string(),
+                    ));
+                }
+            };
+            if looks_like_captcha_challenge(&text, &final_url) {
+                self.record_attempt(DomesticAttempt {
+                    endpoint,
+                    method,
+                    request_url: &request_url,
+                    status_code: Some(status.as_u16()),
+                    did_succeed: false,
+                    did_retry,
+                    error: Some("captcha challenge"),
                 });
                 self.solve_live_captcha(&text, &final_url)?;
-                request_url = self.captcha_session.attach_captcha_id(url);
-                did_retry = true;
+                request_url = self.captcha_session.attach_captcha_id(&base_url)?;
+                budget.schedule_captcha_replay()?;
                 continue;
             }
-            if contains_overseas_host(&text) || contains_overseas_host(&final_url) {
-                self.attempts.push(SourceAttempt {
-                    service: "cnki".to_string(),
-                    endpoint: endpoint.to_string(),
-                    method: method.to_string(),
-                    url: request_url.clone(),
+            if contains_overseas_host(&text) {
+                self.record_attempt(DomesticAttempt {
+                    endpoint,
+                    method,
+                    request_url: &request_url,
                     status_code: Some(status.as_u16()),
                     did_succeed: false,
                     did_retry,
-                    error: Some("overseas host".to_string()),
+                    error: Some("overseas host"),
                 });
                 return Err(DomesticCnkiSourceError::Request(
                     "domestic CNKI transport received overseas host".to_string(),
                 ));
             }
             if !status.is_success() {
-                self.attempts.push(SourceAttempt {
-                    service: "cnki".to_string(),
-                    endpoint: endpoint.to_string(),
-                    method: method.to_string(),
-                    url: request_url.clone(),
+                self.record_attempt(DomesticAttempt {
+                    endpoint,
+                    method,
+                    request_url: &request_url,
                     status_code: Some(status.as_u16()),
                     did_succeed: false,
                     did_retry,
-                    error: Some(format!("HTTP {}", status.as_u16())),
+                    error: Some("HTTP status"),
                 });
-                if attempt < 3 {
-                    did_retry = true;
+                if !matches!(status.as_u16(), 404 | 410) && budget.can_retry_ordinary() {
                     continue;
                 }
-                return Err(DomesticCnkiSourceError::Request(format!(
-                    "domestic CNKI HTTP {}",
-                    status.as_u16()
-                )));
+                return Err(domestic_http_status_error(status.as_u16()));
             }
-            checked_text(&text, &final_url)?;
-            self.attempts.push(SourceAttempt {
-                service: "cnki".to_string(),
-                endpoint: endpoint.to_string(),
-                method: method.to_string(),
-                url: request_url,
+            if let Err(error) = validate_domestic_response(endpoint, &text) {
+                self.record_attempt(DomesticAttempt {
+                    endpoint,
+                    method,
+                    request_url: &request_url,
+                    status_code: Some(status.as_u16()),
+                    did_succeed: false,
+                    did_retry,
+                    error: Some("invalid response"),
+                });
+                return Err(error);
+            }
+            self.record_attempt(DomesticAttempt {
+                endpoint,
+                method,
+                request_url: &request_url,
                 status_code: Some(status.as_u16()),
                 did_succeed: true,
                 did_retry,
                 error: None,
             });
-            let _ = duration_ms;
             return Ok(text);
         }
         Err(DomesticCnkiSourceError::Request(
             "domestic CNKI request retries exhausted".to_string(),
         ))
+    }
+
+    fn record_attempt(&mut self, attempt: DomesticAttempt<'_>) {
+        self.attempts.push(SourceAttempt {
+            service: "cnki".to_string(),
+            endpoint: attempt.endpoint.to_string(),
+            method: attempt.method.to_string(),
+            url: redact_domestic_url(attempt.request_url),
+            status_code: attempt.status_code,
+            did_succeed: attempt.did_succeed,
+            did_retry: attempt.did_retry,
+            error: attempt.error.map(str::to_string),
+        });
     }
 
     fn solve_live_captcha(
@@ -2030,23 +2330,27 @@ impl LiveDomesticCnkiTransport {
         let token = self.captcha_token.clone().ok_or_else(|| {
             DomesticCnkiSourceError::Request("domestic CNKI captcha token is required".to_string())
         })?;
-        let mut solver = crate::jfbym::LiveJfbymSolver::new(token, 30)
-            .map_err(|error| DomesticCnkiSourceError::Request(error.to_string()))?;
+        let mut solver = crate::jfbym::LiveJfbymSolver::new(token, 30).map_err(map_jfbym_error)?;
         let client = self.client.clone();
         self.captcha_session.ensure_access(
             response_text,
             response_url,
             &mut solver,
             |challenge_url| {
-                let _ = client
+                let response = client
                     .get(challenge_url)
                     .header(
                         "User-Agent",
                         "Mozilla/5.0 (compatible; LitRadar/0.1; +https://github.com/QianFuv/LitRadar)",
                     )
                     .send()
-                    .map_err(|error| DomesticCnkiSourceError::Request(error.to_string()))?;
-                let body = captcha_get_request_body(challenge_url);
+                    .map_err(|_| {
+                        DomesticCnkiSourceError::Request(
+                            "domestic CNKI captcha page request failed".to_string(),
+                        )
+                    })?;
+                validate_domestic_http_response(&response)?;
+                let body = captcha_get_request_body(challenge_url)?;
                 let response = client
                     .post(format!("{DOMESTIC_KNS_BASE_URL}/verify-api/get"))
                     .header("Content-Type", "application/json;charset=UTF-8")
@@ -2055,10 +2359,12 @@ impl LiveDomesticCnkiTransport {
                     .header("X-Requested-With", "XMLHttpRequest")
                     .json(&body)
                     .send()
-                    .map_err(|error| DomesticCnkiSourceError::Request(error.to_string()))?;
-                let payload: Value = response
-                    .json()
-                    .map_err(|error| DomesticCnkiSourceError::Parse(error.to_string()))?;
+                    .map_err(|_| {
+                        DomesticCnkiSourceError::Request(
+                            "domestic CNKI captcha puzzle request failed".to_string(),
+                        )
+                    })?;
+                let payload = parse_domestic_json_response(response, "captcha puzzle")?;
                 parse_captcha_puzzle(challenge_url, &payload)
             },
             |puzzle, point_json| {
@@ -2071,10 +2377,12 @@ impl LiveDomesticCnkiTransport {
                     .header("X-Requested-With", "XMLHttpRequest")
                     .json(&body)
                     .send()
-                    .map_err(|error| DomesticCnkiSourceError::Request(error.to_string()))?;
-                let payload: Value = response
-                    .json()
-                    .map_err(|error| DomesticCnkiSourceError::Parse(error.to_string()))?;
+                    .map_err(|_| {
+                        DomesticCnkiSourceError::Request(
+                            "domestic CNKI captcha check request failed".to_string(),
+                        )
+                    })?;
+                let payload = parse_domestic_json_response(response, "captcha check")?;
                 Ok(captcha_check_succeeded(&payload))
             },
         )
@@ -2357,7 +2665,7 @@ mod tests {
         let overseas = parse_domestic_journal_search_results(
             r#"<a href="https://oversea.cnki.net/knavi/detail?p=1" title="x">x</a>"#,
         );
-        assert!(matches!(overseas, Err(DomesticCnkiSourceError::Parse(_))));
+        assert!(matches!(overseas, Err(DomesticCnkiSourceError::Request(_))));
 
         let overseas_detail = parse_domestic_article_detail(
             ABSTRACT_HTML,
@@ -2365,8 +2673,158 @@ mod tests {
         );
         assert!(matches!(
             overseas_detail,
-            Err(DomesticCnkiSourceError::Parse(_))
+            Err(DomesticCnkiSourceError::Request(_))
         ));
+    }
+
+    #[test]
+    fn rejects_disallowed_absolute_urls_and_incomplete_success_pages() {
+        for url in [
+            "http://navi.cnki.net/knavi/detail?p=1",
+            "https://navi.cnki.net.evil.example/knavi/detail?p=1",
+            "https://127.0.0.1/knavi/detail?p=1",
+            "https://user@navi.cnki.net/knavi/detail?p=1",
+            "https://navi.cnki.net:444/knavi/detail?p=1",
+        ] {
+            let html = format!(r#"<a href="{url}" title="x">x</a><p>ISSN：1002-9621</p>"#);
+            assert!(parse_domestic_journal_search_results(&html).is_err());
+        }
+
+        assert!(parse_domestic_journal_search_results(" ").is_err());
+        assert!(parse_domestic_journal_detail("<html></html>").is_err());
+        assert!(parse_domestic_year_issues("<html></html>").is_err());
+        assert!(parse_domestic_issue_articles("<html></html>", &json!({})).is_err());
+        assert!(parse_domestic_article_detail(
+            "<html></html>",
+            "https://kns.cnki.net/kcms2/article/abstract?v=1"
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn allows_only_exact_domestic_https_origins_and_safe_relative_paths() {
+        for valid in [
+            "https://navi.cnki.net/knavi/detail?p=1",
+            "https://kns.cnki.net:443/kcms2/article/abstract?v=1",
+            "/knavi/detail?p=1",
+            "/kcms2/article/abstract?v=1",
+            "/verify/home?captchaType=blockPuzzle",
+        ] {
+            assert!(parse_domestic_url(valid).is_ok(), "{valid}");
+        }
+        for invalid in [
+            "http://navi.cnki.net/knavi/detail?p=1",
+            "https://oversea.cnki.net/knavi/detail?p=1",
+            "https://navi.cnki.net.evil.example/knavi/detail?p=1",
+            "https://127.0.0.1/knavi/detail?p=1",
+            "https://192.168.1.2/knavi/detail?p=1",
+            "https://[::1]/knavi/detail?p=1",
+            "https://user:password@navi.cnki.net/knavi/detail?p=1",
+            "https://kns.cnki.net:444/kcms2/article/abstract?v=1",
+            "//evil.example/path",
+            "knavi/detail?p=1",
+        ] {
+            assert!(parse_domestic_url(invalid).is_err(), "{invalid}");
+        }
+    }
+
+    #[test]
+    fn accepts_only_explicit_structured_empty_responses() {
+        assert!(parse_domestic_journal_search_results("<div>暂无数据</div>")
+            .expect("explicit empty search")
+            .is_empty());
+        assert!(
+            parse_domestic_year_issues("<div id=\"YearIssueTree\"></div>")
+                .expect("empty issue tree")
+                .is_empty()
+        );
+        assert!(parse_domestic_issue_articles(
+            "<input id=\"articleCount\" value=\"0\">",
+            &json!({})
+        )
+        .expect("explicit empty papers page")
+        .is_empty());
+    }
+
+    #[test]
+    fn redacts_domestic_attempt_urls_and_preserves_http_status() {
+        let sensitive_url = "https://kns.cnki.net/verify/home?captchaId=captcha-secret-sentinel&ident=ident-secret-sentinel&returnUrl=return-secret-sentinel&language=CHS";
+        let redacted = redact_domestic_url(sensitive_url);
+        assert!(!redacted.contains("captcha-secret-sentinel"));
+        assert!(!redacted.contains("ident-secret-sentinel"));
+        assert!(!redacted.contains("return-secret-sentinel"));
+        assert!(redacted.contains("language=CHS"));
+
+        let mut transport = LiveDomesticCnkiTransport::new(LiveDomesticCnkiConfig {
+            timeout_seconds: 1,
+            captcha_token: Some("captcha-token-sentinel".to_string()),
+        })
+        .expect("transport");
+        transport.record_attempt(DomesticAttempt {
+            endpoint: "journal_search",
+            method: "GET",
+            request_url: sensitive_url,
+            status_code: Some(403),
+            did_succeed: false,
+            did_retry: true,
+            error: Some("captcha challenge"),
+        });
+        let diagnostic = format!(
+            "{:?} {}",
+            transport.attempts(),
+            serde_json::to_string(transport.attempts()).expect("attempts should serialize")
+        );
+        assert!(!diagnostic.contains("captcha-secret-sentinel"));
+        assert!(!diagnostic.contains("ident-secret-sentinel"));
+        assert!(!diagnostic.contains("return-secret-sentinel"));
+        assert!(!format!("{transport:?}").contains("captcha-token-sentinel"));
+
+        let status_error = domestic_http_status_error(410);
+        assert_eq!(status_error.http_status(), Some(410));
+        assert_eq!(
+            DomesticCnkiSourceError::Request("request failed".to_string()).http_status(),
+            None
+        );
+    }
+
+    #[test]
+    fn final_ordinary_attempt_can_schedule_one_authenticated_replay() {
+        let mut budget = DomesticRequestBudget::default();
+        assert_eq!(budget.next_attempt(), Some(false));
+        assert_eq!(budget.next_attempt(), Some(false));
+        assert_eq!(budget.next_attempt(), Some(false));
+        budget
+            .schedule_captcha_replay()
+            .expect("captcha replay should fit budget");
+        assert_eq!(budget.next_attempt(), Some(true));
+        assert_eq!(budget.next_attempt(), None);
+    }
+
+    #[test]
+    fn parses_html_encoded_challenge_queries_exactly() {
+        let body = r#"<a href="https://kns.cnki.net/verify/home?captchaType=blockPuzzle&amp;ident=ident-sentinel&amp;captchaId=captcha-sentinel&amp;returnUrl=return-sentinel">verify</a>"#;
+
+        let challenge = extract_challenge_url(body, "search")
+            .expect("challenge should parse")
+            .expect("challenge should exist");
+        let get_body = captcha_get_request_body(&challenge).expect("request body");
+
+        assert_eq!(get_body["captchaType"], "blockPuzzle");
+        assert_eq!(get_body["ident"], "ident-sentinel");
+        assert_eq!(get_body["captchaId"], "captcha-sentinel");
+        assert!(!challenge.contains("&amp;"));
+    }
+
+    #[test]
+    fn parses_search_issn_window_at_utf8_boundaries() {
+        let prefix = "中".repeat(31);
+        let html = format!(
+            r#"<div>{prefix}<a href="https://navi.cnki.net/knavi/detail?p=1" title="世界经济">世界经济</a><p>ISSN：1002-9621</p></div>"#
+        );
+
+        let candidates = parse_domestic_journal_search_results(&html).expect("search");
+
+        assert_eq!(candidates[0]["issn"], "1002-9621");
     }
 
     #[test]
@@ -2394,7 +2852,9 @@ mod tests {
             body,
             "https://navi.cnki.net/knavi/journals/searchbaseinfo"
         ));
-        let challenge = extract_challenge_url(body, "search").expect("challenge");
+        let challenge = extract_challenge_url(body, "search")
+            .expect("challenge should parse")
+            .expect("challenge should exist");
         assert!(challenge.contains("/verify/home?"));
         assert!(challenge.contains("captchaId="));
         assert!(!challenge.contains("oversea.cnki.net"));
@@ -2420,6 +2880,11 @@ mod tests {
         assert!(!debug.contains("0123456789abcdef"));
         assert!(!debug.contains("tokentokentokentokentokentoken12"));
         assert!(!debug.contains("AAAA"));
+        let debug = format!("{puzzle:?}");
+        assert!(!debug.contains("2222b8cc"));
+        assert!(!debug.contains("0123456789abcdef"));
+        assert!(!debug.contains("tokentokentokentokentokentoken12"));
+        assert!(!debug.contains("AAAA"));
 
         let mut session = DomesticCaptchaSession::with_budget(2);
         let mut solver = FixtureJfbymSolver::new(261.0);
@@ -2440,11 +2905,15 @@ mod tests {
             .expect("solve");
         assert!(session.has_captcha_id());
         assert_eq!(session.captcha_id_len(), 36);
-        let attached = session.attach_captcha_id("https://navi.cnki.net/knavi/journals/index");
+        let session_debug = format!("{session:?}");
+        assert!(!session_debug.contains("2222b8cc"));
+        let attached = session
+            .attach_captcha_id("https://navi.cnki.net/knavi/journals/index")
+            .expect("captcha id should attach");
         assert!(attached.contains("captchaId="));
         assert!(accepted_x.is_some());
 
-        let get_body = captcha_get_request_body(challenge);
+        let get_body = captcha_get_request_body(challenge).expect("request body");
         assert_eq!(get_body["captchaType"], "blockPuzzle");
         assert_eq!(get_body["ident"], "eea05a");
         assert_eq!(get_body["clientUid"].as_str().unwrap().len(), 32);
