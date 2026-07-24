@@ -6,6 +6,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fmt;
+use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use reqwest::blocking::{Client, Response};
@@ -2245,8 +2246,66 @@ impl fmt::Debug for LiveDomesticCnkiConfig {
 pub struct LiveDomesticCnkiTransport {
     client: Client,
     captcha_token: Option<String>,
-    captcha_session: DomesticCaptchaSession,
+    captcha_session: SharedDomesticCaptchaSession,
     attempts: Vec<SourceAttempt>,
+}
+
+#[derive(Clone)]
+struct SharedDomesticCaptchaSession {
+    state: Arc<Mutex<LiveDomesticCaptchaState>>,
+}
+
+struct LiveDomesticCaptchaState {
+    session: DomesticCaptchaSession,
+    generation: u64,
+}
+
+impl SharedDomesticCaptchaSession {
+    fn new() -> Self {
+        Self {
+            state: Arc::new(Mutex::new(LiveDomesticCaptchaState {
+                session: DomesticCaptchaSession::new(),
+                generation: 0,
+            })),
+        }
+    }
+
+    fn has_captcha_id(&self) -> bool {
+        self.state
+            .lock()
+            .is_ok_and(|state| state.session.has_captcha_id())
+    }
+
+    fn request_url(&self, base_url: &str) -> Result<(String, u64), DomesticCnkiSourceError> {
+        let state = self.state.lock().map_err(|_| {
+            DomesticCnkiSourceError::Request(
+                "domestic CNKI captcha session is unavailable".to_string(),
+            )
+        })?;
+        let request_url = state.session.attach_captcha_id(base_url)?;
+        Ok((request_url, state.generation))
+    }
+
+    fn refresh<F>(
+        &self,
+        observed_generation: u64,
+        refresh: F,
+    ) -> Result<bool, DomesticCnkiSourceError>
+    where
+        F: FnOnce(&mut DomesticCaptchaSession) -> Result<(), DomesticCnkiSourceError>,
+    {
+        let mut state = self.state.lock().map_err(|_| {
+            DomesticCnkiSourceError::Request(
+                "domestic CNKI captcha session is unavailable".to_string(),
+            )
+        })?;
+        if state.generation != observed_generation {
+            return Ok(false);
+        }
+        refresh(&mut state.session)?;
+        state.generation = state.generation.wrapping_add(1);
+        Ok(true)
+    }
 }
 
 impl fmt::Debug for LiveDomesticCnkiTransport {
@@ -2298,7 +2357,7 @@ impl LiveDomesticCnkiTransport {
             captcha_token: config
                 .captcha_token
                 .filter(|value| !value.trim().is_empty()),
-            captcha_session: DomesticCaptchaSession::new(),
+            captcha_session: SharedDomesticCaptchaSession::new(),
             attempts: Vec::new(),
         })
     }
@@ -2362,7 +2421,8 @@ impl LiveDomesticCnkiTransport {
             .map(parse_domestic_url)
             .transpose()?
             .map(|url| url.to_string());
-        let mut request_url = self.captcha_session.attach_captcha_id(&base_url)?;
+        let (mut request_url, mut captcha_generation) =
+            self.captcha_session.request_url(&base_url)?;
         let mut budget = DomesticRequestBudget::default();
         while budget.next_attempt().is_some() {
             let did_retry = budget.did_retry();
@@ -2444,8 +2504,8 @@ impl LiveDomesticCnkiTransport {
                     did_retry,
                     error: Some("captcha challenge"),
                 });
-                self.solve_live_captcha(&text, &final_url)?;
-                request_url = self.captcha_session.attach_captcha_id(&base_url)?;
+                self.solve_live_captcha(&text, &final_url, captcha_generation)?;
+                (request_url, captcha_generation) = self.captcha_session.request_url(&base_url)?;
                 budget.schedule_captcha_replay()?;
                 continue;
             }
@@ -2520,69 +2580,74 @@ impl LiveDomesticCnkiTransport {
     }
 
     fn solve_live_captcha(
-        &mut self,
+        &self,
         response_text: &str,
         response_url: &str,
+        observed_generation: u64,
     ) -> Result<(), DomesticCnkiSourceError> {
         let token = self.captcha_token.clone().ok_or_else(|| {
             DomesticCnkiSourceError::Request("domestic CNKI captcha token is required".to_string())
         })?;
-        let mut solver = crate::jfbym::LiveJfbymSolver::new(token, 30).map_err(map_jfbym_error)?;
         let client = self.client.clone();
-        self.captcha_session.ensure_access(
-            response_text,
-            response_url,
-            &mut solver,
-            |challenge_url| {
-                let response = client
-                    .get(challenge_url)
-                    .header(
-                        "User-Agent",
-                        "Mozilla/5.0 (compatible; LitRadar/0.1; +https://github.com/QianFuv/LitRadar)",
-                    )
-                    .send()
-                    .map_err(|_| {
-                        DomesticCnkiSourceError::Request(
-                            "domestic CNKI captcha page request failed".to_string(),
+        self.captcha_session.refresh(observed_generation, |session| {
+            let mut solver =
+                crate::jfbym::LiveJfbymSolver::new(token, 30).map_err(map_jfbym_error)?;
+            session.ensure_access(
+                response_text,
+                response_url,
+                &mut solver,
+                |challenge_url| {
+                    let response = client
+                        .get(challenge_url)
+                        .header(
+                            "User-Agent",
+                            "Mozilla/5.0 (compatible; LitRadar/0.1; +https://github.com/QianFuv/LitRadar)",
                         )
-                    })?;
-                validate_domestic_http_response(&response)?;
-                let body = captcha_get_request_body(challenge_url)?;
-                let response = client
-                    .post(format!("{DOMESTIC_KNS_BASE_URL}/verify-api/get"))
-                    .header("Content-Type", "application/json;charset=UTF-8")
-                    .header("Origin", DOMESTIC_KNS_BASE_URL)
-                    .header("Referer", challenge_url)
-                    .header("X-Requested-With", "XMLHttpRequest")
-                    .json(&body)
-                    .send()
-                    .map_err(|_| {
-                        DomesticCnkiSourceError::Request(
-                            "domestic CNKI captcha puzzle request failed".to_string(),
-                        )
-                    })?;
-                let payload = parse_domestic_json_response(response, "captcha puzzle")?;
-                parse_captcha_puzzle(challenge_url, &payload)
-            },
-            |puzzle, point_json| {
-                let body = captcha_check_request_body(puzzle, point_json);
-                let response = client
-                    .post(format!("{DOMESTIC_KNS_BASE_URL}/verify-api/web/check"))
-                    .header("Content-Type", "application/json;charset=UTF-8")
-                    .header("Origin", DOMESTIC_KNS_BASE_URL)
-                    .header("Referer", &puzzle.challenge_url)
-                    .header("X-Requested-With", "XMLHttpRequest")
-                    .json(&body)
-                    .send()
-                    .map_err(|_| {
-                        DomesticCnkiSourceError::Request(
-                            "domestic CNKI captcha check request failed".to_string(),
-                        )
-                    })?;
-                let payload = parse_domestic_json_response(response, "captcha check")?;
-                Ok(captcha_check_succeeded(&payload))
-            },
-        )
+                        .send()
+                        .map_err(|_| {
+                            DomesticCnkiSourceError::Request(
+                                "domestic CNKI captcha page request failed".to_string(),
+                            )
+                        })?;
+                    validate_domestic_http_response(&response)?;
+                    let body = captcha_get_request_body(challenge_url)?;
+                    let response = client
+                        .post(format!("{DOMESTIC_KNS_BASE_URL}/verify-api/get"))
+                        .header("Content-Type", "application/json;charset=UTF-8")
+                        .header("Origin", DOMESTIC_KNS_BASE_URL)
+                        .header("Referer", challenge_url)
+                        .header("X-Requested-With", "XMLHttpRequest")
+                        .json(&body)
+                        .send()
+                        .map_err(|_| {
+                            DomesticCnkiSourceError::Request(
+                                "domestic CNKI captcha puzzle request failed".to_string(),
+                            )
+                        })?;
+                    let payload = parse_domestic_json_response(response, "captcha puzzle")?;
+                    parse_captcha_puzzle(challenge_url, &payload)
+                },
+                |puzzle, point_json| {
+                    let body = captcha_check_request_body(puzzle, point_json);
+                    let response = client
+                        .post(format!("{DOMESTIC_KNS_BASE_URL}/verify-api/web/check"))
+                        .header("Content-Type", "application/json;charset=UTF-8")
+                        .header("Origin", DOMESTIC_KNS_BASE_URL)
+                        .header("Referer", &puzzle.challenge_url)
+                        .header("X-Requested-With", "XMLHttpRequest")
+                        .json(&body)
+                        .send()
+                        .map_err(|_| {
+                            DomesticCnkiSourceError::Request(
+                                "domestic CNKI captcha check request failed".to_string(),
+                            )
+                        })?;
+                    let payload = parse_domestic_json_response(response, "captcha check")?;
+                    Ok(captcha_check_succeeded(&payload))
+                },
+            )
+        })?;
+        Ok(())
     }
 }
 
@@ -3234,6 +3299,46 @@ mod tests {
         assert!(parse_domestic_journal_search_results(body)
             .expect("authenticated empty result should parse")
             .is_empty());
+    }
+
+    #[test]
+    fn cloned_live_transport_sessions_share_one_captcha_refresh() {
+        let parent = SharedDomesticCaptchaSession::new();
+        let base_url = "https://kns.cnki.net/kcms2/article/abstract";
+        let (_, generation) = parent.request_url(base_url).expect("initial captcha URL");
+        let refresh_count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let barrier = Arc::new(std::sync::Barrier::new(6));
+        let refresh_results = thread::scope(|scope| {
+            let handles = (0..6)
+                .map(|_| {
+                    let worker = parent.clone();
+                    let refresh_count = Arc::clone(&refresh_count);
+                    let barrier = Arc::clone(&barrier);
+                    scope.spawn(move || {
+                        barrier.wait();
+                        worker
+                            .refresh(generation, |session| {
+                                refresh_count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                                thread::sleep(Duration::from_millis(25));
+                                session.captcha_id = Some("captcha-id-sentinel".to_string());
+                                Ok(())
+                            })
+                            .expect("shared captcha refresh")
+                    })
+                })
+                .collect::<Vec<_>>();
+            handles
+                .into_iter()
+                .map(|handle| handle.join().expect("captcha worker"))
+                .collect::<Vec<_>>()
+        });
+        let (attached, refreshed_generation) =
+            parent.request_url(base_url).expect("parent captcha URL");
+
+        assert_eq!(refresh_results.iter().filter(|result| **result).count(), 1);
+        assert_eq!(refresh_count.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert_eq!(refreshed_generation, generation.wrapping_add(1));
+        assert!(attached.contains("captchaId="));
     }
 
     #[test]
