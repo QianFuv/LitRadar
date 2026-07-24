@@ -11,14 +11,18 @@ use aes::cipher::{BlockEncrypt, KeyInit};
 use aes::Aes128;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use reqwest::blocking::Client;
+use reqwest::redirect::Policy;
 use serde_json::Value;
 
 /// Official jfbym dual-image slider type used for CNKI `blockPuzzle`.
 pub const JFBYM_DUAL_SLIDER_TYPE: &str = "20111";
-/// Documented jfbym custom API endpoint (HTTP preferred by vendor docs).
-pub const JFBYM_API_URL: &str = "http://api.jfbym.com/api/YmServer/customApi";
+/// Verified HTTPS jfbym custom API endpoint.
+pub const JFBYM_API_URL: &str = "https://api.jfbym.com/api/YmServer/customApi";
 /// Success code returned by jfbym when recognition succeeds.
 pub const JFBYM_SUCCESS_CODE: i64 = 10000;
+
+const JFBYM_MAX_POINT_X: i32 = 10_000;
+const JFBYM_MAX_SLIDER_DISTANCE: f64 = JFBYM_MAX_POINT_X as f64;
 
 /// Errors returned by the jfbym dual-image solver.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -167,6 +171,7 @@ impl LiveJfbymSolver {
         }
         let client = Client::builder()
             .timeout(Duration::from_secs(timeout_seconds.max(1)))
+            .redirect(Policy::none())
             .build()
             .map_err(|error| JfbymError::Request(error.to_string()))?;
         Ok(Self {
@@ -206,33 +211,26 @@ impl JfbymSolver for LiveJfbymSolver {
             .send()
             .map_err(|error| JfbymError::Request(error.to_string()))?;
         let status = response.status();
-        let body: Value = response
-            .json()
-            .map_err(|error| JfbymError::InvalidResponse(error.to_string()))?;
         if !status.is_success() {
             return Err(JfbymError::Request(format!(
                 "jfbym HTTP status {}",
                 status.as_u16()
             )));
         }
+        let body: Value = response.json().map_err(|_| {
+            JfbymError::InvalidResponse("jfbym response is not valid JSON".to_string())
+        })?;
         let code = body.get("code").and_then(Value::as_i64).or_else(|| {
             body.get("code")
                 .and_then(Value::as_u64)
                 .map(|value| value as i64)
         });
         if code != Some(JFBYM_SUCCESS_CODE) {
-            let message = body
-                .get("msg")
-                .or_else(|| body.get("message"))
-                .and_then(Value::as_str)
-                .unwrap_or("jfbym recognition failed");
             return Err(JfbymError::InvalidResponse(format!(
-                "jfbym recognition failed with code {code:?}: {message}"
+                "jfbym recognition failed with code {code:?}"
             )));
         }
-        parse_slider_distance(&body).ok_or_else(|| {
-            JfbymError::InvalidResponse("jfbym response missing slider distance".to_string())
-        })
+        parse_slider_distance(&body)
     }
 }
 
@@ -280,32 +278,42 @@ pub fn encrypt_point_json(secret_key: &str, x: i32, y: i32) -> Result<String, Jf
     Ok(BASE64.encode(ciphertext))
 }
 
-/// Extract a numeric slider distance from a jfbym response payload.
+/// Extract and validate the slider distance from a successful jfbym response.
 ///
 /// # Arguments
 ///
-/// * `payload` - Full jfbym JSON body or nested fragment.
+/// * `payload` - Full jfbym JSON response body.
 ///
 /// # Returns
 ///
-/// Parsed distance when present.
-pub fn parse_slider_distance(payload: &Value) -> Option<f64> {
-    match payload {
+/// Valid distance, or a fixed diagnostic when the response shape or value is unsafe.
+pub fn parse_slider_distance(payload: &Value) -> Result<f64, JfbymError> {
+    let code = payload.get("code").and_then(Value::as_i64).or_else(|| {
+        payload
+            .get("code")
+            .and_then(Value::as_u64)
+            .map(|value| value as i64)
+    });
+    if code != Some(JFBYM_SUCCESS_CODE) {
+        return Err(JfbymError::InvalidResponse(
+            "jfbym response did not report recognition success".to_string(),
+        ));
+    }
+    let value = payload
+        .get("data")
+        .and_then(|data| data.get("data"))
+        .ok_or_else(|| {
+            JfbymError::InvalidResponse("jfbym response missing slider distance".to_string())
+        })?;
+    let distance = match value {
         Value::Number(number) => number.as_f64(),
-        Value::String(text) => parse_distance_text(text),
-        Value::Array(items) => items.iter().find_map(parse_slider_distance),
-        Value::Object(map) => {
-            for key in ["data", "result", "distance", "x", "value"] {
-                if let Some(value) = map.get(key) {
-                    if let Some(distance) = parse_slider_distance(value) {
-                        return Some(distance);
-                    }
-                }
-            }
-            map.values().find_map(parse_slider_distance)
-        }
+        Value::String(text) => text.trim().parse::<f64>().ok(),
         _ => None,
     }
+    .ok_or_else(|| {
+        JfbymError::InvalidResponse("jfbym response has invalid slider distance".to_string())
+    })?;
+    validate_slider_distance(distance)
 }
 
 /// Build integer x candidates from a jfbym gap-edge distance.
@@ -317,48 +325,35 @@ pub fn parse_slider_distance(payload: &Value) -> Option<f64> {
 /// # Returns
 ///
 /// Ordered unique candidate x values: raw, then +/-1, then +/-2.
-pub fn point_x_candidates(raw_distance: f64) -> Vec<i32> {
-    let raw = raw_distance.round() as i32;
+pub fn point_x_candidates(raw_distance: f64) -> Result<Vec<i32>, JfbymError> {
+    let raw = validate_slider_distance(raw_distance)?.round() as i32;
     let mut candidates = Vec::new();
     for offset in [0, 1, -1, 2, -2] {
-        let value = raw + offset;
-        if value < 0 {
+        let Some(value) = raw.checked_add(offset) else {
+            continue;
+        };
+        if !(0..=JFBYM_MAX_POINT_X).contains(&value) {
             continue;
         }
         if !candidates.contains(&value) {
             candidates.push(value);
         }
     }
-    candidates
+    if candidates.is_empty() {
+        return Err(JfbymError::InvalidResponse(
+            "jfbym slider distance produced no safe point candidates".to_string(),
+        ));
+    }
+    Ok(candidates)
 }
 
-fn parse_distance_text(text: &str) -> Option<f64> {
-    let trimmed = text.trim();
-    if trimmed.is_empty() {
-        return None;
+fn validate_slider_distance(distance: f64) -> Result<f64, JfbymError> {
+    if !distance.is_finite() || !(0.0..=JFBYM_MAX_SLIDER_DISTANCE).contains(&distance) {
+        return Err(JfbymError::InvalidResponse(
+            "jfbym response has out-of-range slider distance".to_string(),
+        ));
     }
-    if let Ok(value) = trimmed.parse::<f64>() {
-        return Some(value);
-    }
-    if let Ok(value) = serde_json::from_str::<Value>(trimmed) {
-        return parse_slider_distance(&value);
-    }
-    let number = trimmed.chars().enumerate().find_map(|(index, character)| {
-        if character.is_ascii_digit() || character == '-' || character == '+' {
-            Some(&trimmed[index..])
-        } else {
-            None
-        }
-    })?;
-    let end = number
-        .find(|character: char| {
-            !(character.is_ascii_digit()
-                || character == '.'
-                || character == '-'
-                || character == '+')
-        })
-        .unwrap_or(number.len());
-    number[..end].parse().ok()
+    Ok(distance)
 }
 
 fn encrypt_aes128_ecb_pkcs7(key: &[u8], plaintext: &[u8]) -> Result<Vec<u8>, JfbymError> {
@@ -380,6 +375,9 @@ fn encrypt_aes128_ecb_pkcs7(key: &[u8], plaintext: &[u8]) -> Result<Vec<u8>, Jfb
 mod tests {
     use super::*;
     use aes::cipher::BlockDecrypt;
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+    use std::thread;
 
     #[test]
     fn encrypts_point_json_with_aes128_ecb_pkcs7() {
@@ -415,12 +413,46 @@ mod tests {
                 "time": 0.01
             }
         });
-        assert_eq!(parse_slider_distance(&body), Some(261.0));
+        assert_eq!(parse_slider_distance(&body), Ok(261.0));
+    }
+
+    #[test]
+    fn rejects_missing_unrelated_unicode_and_out_of_range_distances() {
+        for body in [
+            serde_json::json!({
+                "code": 10000,
+                "data": {"code": 0, "time": 0.01}
+            }),
+            serde_json::json!({
+                "code": 10000,
+                "data": {"data": {"distance": 261}}
+            }),
+            serde_json::json!({
+                "code": 10000,
+                "data": {"data": "距离：261"}
+            }),
+            serde_json::json!({"code": 10000, "data": {"data": "-1"}}),
+            serde_json::json!({"code": 10000, "data": {"data": "NaN"}}),
+            serde_json::json!({"code": 10000, "data": {"data": "10000.1"}}),
+            serde_json::json!({"code": 0, "data": {"data": 261}}),
+        ] {
+            assert!(parse_slider_distance(&body).is_err());
+        }
     }
 
     #[test]
     fn point_candidates_prefer_raw_then_small_offsets() {
-        assert_eq!(point_x_candidates(261.4), vec![261, 262, 260, 263, 259]);
+        assert_eq!(
+            point_x_candidates(261.4).expect("candidates"),
+            vec![261, 262, 260, 263, 259]
+        );
+        assert_eq!(
+            point_x_candidates(10_000.0).expect("bounded candidates"),
+            vec![10_000, 9_999, 9_998]
+        );
+        for distance in [-1.0, f64::NAN, f64::INFINITY, 10_000.1] {
+            assert!(point_x_candidates(distance).is_err());
+        }
     }
 
     #[test]
@@ -440,8 +472,58 @@ mod tests {
     }
 
     #[test]
+    fn live_solver_uses_https_and_does_not_follow_redirects() {
+        assert!(JFBYM_API_URL.starts_with("https://"));
+        let (api_url, server) = serve_once(
+            "HTTP/1.0 302 Found\r\nLocation: http://127.0.0.1:9/followed\r\nConnection: close\r\n\r\n",
+        );
+        let mut solver = LiveJfbymSolver::new("super-secret-token", 2).expect("solver");
+        solver.api_url = api_url;
+
+        let error = solver
+            .solve_dual_image("slide", "background")
+            .expect_err("redirect should not be followed");
+
+        assert!(matches!(error, JfbymError::Request(message) if message.contains("302")));
+        server.join().expect("server should stop");
+    }
+
+    #[test]
+    fn live_solver_errors_do_not_echo_credentials_or_images() {
+        let (api_url, server) = serve_once(
+            "HTTP/1.0 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n{\"code\":10001,\"msg\":\"super-secret-token slide-image background-image\"}",
+        );
+        let mut solver = LiveJfbymSolver::new("super-secret-token", 2).expect("solver");
+        solver.api_url = api_url;
+
+        let error = solver
+            .solve_dual_image("slide-image", "background-image")
+            .expect_err("failure response should be rejected");
+        let diagnostic = format!("{error:?} {error}");
+
+        assert!(!diagnostic.contains("super-secret-token"));
+        assert!(!diagnostic.contains("slide-image"));
+        assert!(!diagnostic.contains("background-image"));
+        server.join().expect("server should stop");
+    }
+
+    #[test]
     fn strips_data_url_prefix() {
         assert_eq!(strip_data_url_base64("data:image/png;base64,AAAA"), "AAAA");
         assert_eq!(strip_data_url_base64("  BBBB  "), "BBBB");
+    }
+
+    fn serve_once(response: &'static str) -> (String, thread::JoinHandle<()>) {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("test server should bind");
+        let address = listener.local_addr().expect("test address should resolve");
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("test request should arrive");
+            let mut request = [0_u8; 4096];
+            let _ = stream.read(&mut request).expect("request should read");
+            stream
+                .write_all(response.as_bytes())
+                .expect("response should write");
+        });
+        (format!("http://{address}/customApi"), server)
     }
 }

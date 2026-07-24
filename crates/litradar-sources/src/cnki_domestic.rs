@@ -641,8 +641,7 @@ impl DomesticCaptchaSession {
             let distance = solver
                 .solve_dual_image(&puzzle.jigsaw_image_b64, &puzzle.original_image_b64)
                 .map_err(map_jfbym_error)?;
-            // One candidate per fresh puzzle: failed checks invalidate the puzzle token.
-            let candidates = point_x_candidates(distance);
+            let candidates = point_x_candidates(distance).map_err(map_jfbym_error)?;
             let candidate_index = (self.solve_attempts - 1) % candidates.len();
             let x = candidates[candidate_index];
             let point_json = encrypt_point_json(&puzzle.secret_key, x, DOMESTIC_POINT_JSON_Y)
@@ -2483,6 +2482,36 @@ mod tests {
             )
             .expect_err("budget");
         assert!(error.to_string().contains("budget exhausted"));
+        assert!(!session.has_captcha_id());
+    }
+
+    #[test]
+    fn captcha_session_rejects_invalid_solver_distance_without_panicking() {
+        use crate::jfbym::FixtureJfbymSolver;
+
+        let challenge = "https://kns.cnki.net/verify/home?captchaType=blockPuzzle&ident=eea05a&captchaId=2222b8cc-69e3-42a9-b1d2-07f08ff6dd54&returnUrl=opaque";
+        let puzzle_body = json!({
+            "data": {
+                "originalImageBase64": "AAAA",
+                "jigsawImageBase64": "BBBB",
+                "secretKey": "0123456789abcdef",
+                "token": "tokentokentokentokentokentoken12"
+            }
+        });
+        let puzzle = parse_captcha_puzzle(challenge, &puzzle_body).expect("puzzle");
+        let mut session = DomesticCaptchaSession::with_budget(1);
+        let mut solver = FixtureJfbymSolver::new(-1.0);
+
+        let error = session
+            .solve_challenge(
+                challenge,
+                &mut solver,
+                |_| Ok(puzzle.clone()),
+                |_puzzle, _point| Ok(true),
+            )
+            .expect_err("invalid distance should fail");
+
+        assert!(error.to_string().contains("slider distance"));
         assert!(!session.has_captcha_id());
     }
 
