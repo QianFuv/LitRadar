@@ -40,7 +40,7 @@ const DOMESTIC_POINT_JSON_Y: i32 = 5;
 const DOMESTIC_PAPERS_CONTINUATION_COUNT: usize = 10;
 const DOMESTIC_REDIRECT_LIMIT: usize = 10;
 const DOMESTIC_REQUEST_ATTEMPT_LIMIT: usize = 5;
-const DOMESTIC_TRANSPORT_ATTEMPT_LIMIT: usize = 5;
+const DOMESTIC_TRANSPORT_ATTEMPT_LIMIT: usize = 8;
 /// Current stable domestic CNKI traversal checkpoint version.
 pub const DOMESTIC_CNKI_CHECKPOINT_VERSION: u32 = 1;
 
@@ -3324,11 +3324,11 @@ mod tests {
     }
 
     #[test]
-    fn transport_failures_receive_five_bounded_exponential_attempts() {
+    fn transport_failures_receive_eight_bounded_exponential_attempts() {
         let mut budget = DomesticRequestBudget::default();
         assert_eq!(budget.next_attempt(), Some(false));
 
-        for expected_seconds in [1, 2, 4, 8] {
+        for expected_seconds in [1, 2, 4, 8, 8, 8, 8] {
             assert!(budget.schedule_transport_retry());
             assert_eq!(
                 budget.transport_retry_delay(),
@@ -3339,8 +3339,8 @@ mod tests {
         }
 
         assert!(!budget.schedule_transport_retry());
-        assert_eq!(budget.transport_failures, 5);
-        assert_eq!(budget.attempts_started, 5);
+        assert_eq!(budget.transport_failures, 8);
+        assert_eq!(budget.attempts_started, 8);
     }
 
     #[test]
