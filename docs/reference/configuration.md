@@ -12,7 +12,7 @@ LitRadar 不使用单一 `.env` 作为配置中心。不同配置来源服务于
 | 固定前端/镜像/进程协议              | 构建与运行时   | 同源 API、开发代理、只读 Meta bundle、父子进程日志关联    |
 | 部署密钥文件                        | 一个部署       | 认证和解密数据库秘密值                                    |
 
-生产应用不读取 LitRadar 自定义环境变量。旧版的前端 API/开发代理、bundle 路径、日志和父子进程环境覆盖均已删除且没有兼容回退；全局可配置业务值通过管理员前端写入数据库，用户级通知/追踪值通过个人设置中心写入数据库。固定打包/进程协议不属于用户设置，标准测试工具和 OS 进程发现仍保留自己的环境输入边界。
+生产应用不把 LitRadar 自定义环境变量作为通用配置中心。旧版的前端 API/开发代理、bundle 路径、日志和父子进程环境覆盖均已删除且没有兼容回退；唯一的来源凭据例外是数据库 token 为空时，`litradar index` 可读取 `LITRADAR_CNKI_CAPTCHA_TOKEN` 作为单次国内 CNKI 探测输入。全局可配置业务值通过管理员前端写入数据库，用户级通知/追踪值通过个人设置中心写入数据库。固定打包/进程协议不属于用户设置，标准测试工具和 OS 进程发现仍保留自己的环境输入边界。
 
 ## 部署密钥文件
 
@@ -39,13 +39,13 @@ manifest 存在时，`serve` 和普通 `index` 会在认证库迁移后验证整
 
 ## 全局运行设置
 
-管理员通过 `GET/PUT /api/admin/runtime-settings` 或前端管理页维护以下 12 项。响应中的 group、control、apply mode、allowed values 和秘密标记是前端控件的权威元数据；管理页必须逐项呈现，不能用硬编码字段子集代替。
+管理员通过 `GET/PUT /api/admin/runtime-settings` 或前端管理页维护以下 13 项。响应中的 group、control、apply mode、allowed values 和秘密标记是前端控件的权威元数据；管理页必须逐项呈现，不能用硬编码字段子集代替。
 
 | 字段                               | 默认值                    | 秘密 | 前端控件                          | 生效时机 | 使用者                            |
 | ---------------------------------- | ------------------------- | ---: | --------------------------------- | -------- | --------------------------------- |
 | `openalex_api_key_pool`            | 空                        |   是 | 可逐项增删的掩码秘密池            | 下一命令 | scholarly 索引                    |
 | `semantic_scholar_api_key_pool`    | 空                        |   是 | 可逐项增删的掩码秘密池            | 下一命令 | scholarly 索引                    |
-| `cnki_captcha_token` | 空 | 是 | 密码文本 | 下一命令 | 国内 CNKI captcha（jfbym）token；探测覆盖 `LITRADAR_CNKI_CAPTCHA_TOKEN` |
+| `cnki_captcha_token`               | 空                        |   是 | 单值密码文本                      | 下一命令 | 国内 CNKI captcha（jfbym）token   |
 | `crossref_mailto_pool`             | 空                        |   否 | 有序字符串列表                    | 下一命令 | Crossref polite 联系邮箱          |
 | `cors_allowed_origins`             | 空                        |   否 | 有序字符串列表                    | 重启进程 | API credentialed CORS             |
 | `mcp_allowed_hosts`                | `localhost,127.0.0.1,::1` |   否 | 有序字符串列表                    | 重启进程 | MCP Host 白名单                   |
@@ -56,6 +56,8 @@ manifest 存在时，`serve` 和普通 `index` 会在认证库迁移后验证整
 | `article_fulltext_provider_orders` | 见下文                    |   否 | 默认顺序 + catalog 继承/排序/禁用 | 下一请求 | 在线全文 fallback                 |
 | `log_format`                       | `json`                    |   否 | `json` / `compact` 单选           | 重启进程 | 结构化日志格式                    |
 | `log_filter`                       | 见[日志设置](#日志设置)   |   否 | 文本                              | 重启进程 | tracing filter                    |
+
+`cnki_captcha_token` 是 scalar secret，不是 secret pool。公开 GET/PUT 响应始终返回 `value=""` 和 `secret_items=[]`；已配置时只通过 `has_value=true`、`masked_value="••••"` 表示存在。管理页的空密码框表示保留，非空文本表示加密替换，显式“清除”提交 JSON `null`。数据库值为空时，`LITRADAR_CNKI_CAPTCHA_TOKEN` 仅作为当前 `index` 父进程的探测回退；它不会进入 worker request 文件或非国内 worker。
 
 默认 `index_provider_routes` 为：
 
@@ -124,6 +126,10 @@ Scholarly 的 `workers` 只控制每个期刊子进程内 OpenAlex DOI 子批的
 3. 旧顺序成为 `default`，`catalogs` 初始为空；旧空值保留为显式空 default。
 4. 成功后删除三个旧字段。重复或非法 Provider 名称会使整个迁移回滚并保留 v6 状态。
 
+认证库 v8 同时完成运行时 Provider 名称迁移。由 v1-v7 升级且缺少 Provider 配置行的旧安装，会先物化旧版有效默认值，再把 `cnki` 重写为 `cnki_oversea`、把 `zjlib_cnki` 重写为 `zjlib`；因此“从未保存默认值”和“显式保存旧默认值”的升级结果一致。已有自定义 JSON 只重写其中的旧运行时 token。
+
+全新 v0 数据库不会物化这些 legacy 行，继续从当前代码默认值读取国内语义：中文索引为 `cnki`，摘要为 `scholarly → cnki`，全文为 `zjlib`。这一区分只保护升级语义，不改变管理员以后显式保存的配置。
+
 公共在线详情 capability 和 `/api/articles/{article_id}/detail` 已删除。前端“文章详情”仍是本地弹窗，用于显示数据库里已经保存的元数据；在线“查看摘要页”使用唯一的摘要 Provider 链路。
 
 ### Origin 语法
@@ -144,14 +150,14 @@ Scholarly 的 `workers` 只控制每个期刊子进程内 OpenAlex DOI 子批的
 
 ## 读取和更新语义
 
-数据库没有行时使用上表默认值，不回退到环境变量。`next_request` 字段由匹配 API 动作按请求读取，`next_command` 字段在下一条相关命令构造 Provider 前读取，`restart_required` 字段在进程启动时读取。每次响应都返回实际 `source=default|database` 和可选 `updated_at`。
+数据库没有行时使用上表默认值；除 `cnki_captcha_token` 的单次索引探测例外外，不回退到环境变量。该探测值不改变管理 API 返回的 `source=default`，也不会写回数据库。`next_request` 字段由匹配 API 动作按请求读取，`next_command` 字段在下一条相关命令构造 Provider 前读取，`restart_required` 字段在进程启动时读取。每次响应都返回实际 `source=default|database` 和可选 `updated_at`。
 
 秘密字段响应：
 
 - `value=""`
 - `has_value=true|false`
 - `masked_value="••••"` 或空字符串
-- 秘密池提供逐项 `secret_items=[{reference, masked_value}]`；其他设置返回空数组
+- 秘密池提供逐项 `secret_items=[{reference, masked_value}]`；scalar secret 和非秘密设置返回空数组
 
 秘密池的逐项 `masked_value` 保留前 5 个字符并把其余字符替换为等量 `*`；长度不超过 5 的异常值全部掩码。`reference` 是字段绑定的不透明删除引用，不是完整密钥，也不是 `runtime_settings.value` 中的持久密文。前端用 `secret_items.length` 展示已保存数量，用掩码区分条目。
 
@@ -193,6 +199,8 @@ Scholarly 的 `workers` 只控制每个期刊子进程内 OpenAlex DOI 子批的
 `litradar index` 的一次运行参数由 CLI 决定；scholarly transport 的 key/mailto 从全局运行设置读取：
 
 普通索引先迁移认证库并验证现有内容库，再执行固定 manifest 发现和可选的官方 Meta 准备，然后验证部署密钥、读取运行设置、校验规范目录，并按 `index_provider_routes` 构造 Provider。内部索引 worker 不重复准备。准备只管理 manifest 声明的持久文件，不替代目录契约校验。
+
+多进程国内 CNKI 索引把调度数据写入可丢弃 worker request JSON，但该 JSON 没有 `cnki_captcha_token` 字段。父进程启动 child 后，从 child 环境删除探测变量，并通过现有 stdin 管道发送一次带协议版本和 worker ID 的 bootstrap；只有 `provider_name=cnki` 的 bootstrap 可以携带 token。worker 在 Provider 构造前验证并消费它，随后同一 stdin 流只接收 durable commit ACK。bootstrap/协议失败使用固定错误分类并清理 request 文件和 child 进程。
 
 - OpenAlex key：请求 `/sources` 和 `/works`
 - Semantic Scholar key：`x-api-key` 请求头

@@ -16,8 +16,8 @@ CNKI 元数据索引、CNKI 在线摘要页和浙江图书馆全文是独立运�
 
 | 注册/实现 | 能力 | 进程与凭据 |
 | --- | --- | --- |
-| `cnki_index_registration` / live domestic transport | `IndexContentProvider` | `index` 进程直连国内 NZKPT；captcha 需要 `cnki_captcha_token`（或探测环境变量 `LITRADAR_CNKI_CAPTCHA_TOKEN`） |
-| `cnki_access_registration` / API live domestic adapter | `ArticleAbstractProvider` | `serve` API 每次在线精确定位；同一 captcha secret |
+| `cnki_index_registration` / live domestic transport | `IndexContentProvider` | `index` 父进程加载 `cnki_captcha_token`；多进程时只通过 stdin bootstrap 交给国内 worker |
+| `cnki_access_registration` / API live domestic adapter | `ArticleAbstractProvider` | `serve` API 每次在线精确定位；读取同一加密 runtime secret |
 | `cnki_oversea_index_registration` | `IndexContentProvider` | `index` 进程直连 CNKI overseas；不使用用户会话 |
 | `cnki_oversea_access_registration` / API live adapter | `ArticleAbstractProvider` | `serve` API 每次在线精确定位；不使用 ZJLib 会话 |
 | `zjlib` API registration | `ArticleFullTextProvider` | `serve` API 只读取当前用户已有的 active ZJLib CNKI 会话 |
@@ -26,17 +26,17 @@ CNKI 元数据索引、CNKI 在线摘要页和浙江图书馆全文是独立运�
 
 ## 国内 NZKPT 索引流程
 
-Provider 接收 LitRadar 维护的 `JournalCatalogEntry`，按题名优先、ISSN fallback 定位期刊：
+Provider 接收 LitRadar 维护的 `JournalCatalogEntry`，使用 canonical title、全部标题别名、印刷/电子 ISSN 和 `all_issns` 定位期刊：
 
-1. 用维护标题搜索国内 journal 列表（HAR 形 `searchStateJson`）。
-2. 打开候选详情页，核对题名和 ISSN。
-3. 题名路径无可信匹配时，以维护 ISSN 精确搜索。
+1. 按规范顺序搜索全部维护标题，再搜索全部合法 ISSN（HAR 形 `searchStateJson`）。
+2. 每个详情 URL 最多读取一次；候选与维护目录都提供 ISSN 且没有交集时，即使标题相同也拒绝。
+3. ISSN 相交时可以接受 Provider 标题变体；任一侧没有 ISSN 时才回退到 canonical/alias 标题比较。
 4. 从匹配详情页读取 `pykm`、`pCode` 和 yearList。
-5. 按 issue 分页读取 papers，并在当前 Provider 调用内打开文章详情。
-6. 映射为 `JournalDraft`、`IssueDraft`、`ArticleDraft`，丢弃所有 transport handle 和 URL。
-7. 以 issue 游标 checkpoint 恢复；checkpoint **不得**包含 captcha 字段。
+5. 按稳定 `year_issue_id` 和零基 `pageIdx` 读取 papers；每个 Provider batch 只处理一个经过计数验证的页面。
+6. 页面内文章详情全部成功或仅有明确永久缺失后，映射为 `JournalDraft`、`IssueDraft`、`ArticleDraft`；所有 transport handle 和 URL 都在边界丢弃。
+7. checkpoint 指向下一页或下一稳定期次；它不保存期次/文章数组下标，也不包含 captcha 字段。
 
-基础站点为 `https://navi.cnki.net` 与 `https://kns.cnki.net`。当前私有请求路径包括 journal 搜索、详情、year list、papers、article abstract 和 captcha verify API；这些路径不是内容契约。
+基础站点为 `https://navi.cnki.net` 与 `https://kns.cnki.net`。Transport 对初始 URL、Referer、challenge、每个 redirect hop 和最终 URL 使用同一规则：只允许这两个精确主机的 HTTPS 默认端口，拒绝 userinfo、IP literal、自定义端口、协议降级和跨域跳转。当前私有请求路径包括 journal 搜索、详情、year list、papers、article abstract 和 captcha verify API；这些路径不是内容契约。
 
 ### Captcha
 
@@ -44,11 +44,11 @@ Provider 接收 LitRadar 维护的 `JournalCatalogEntry`，按题名优先、ISS
 
 1. 检测 `-403` / `/verify/home` / 安全验证正文；
 2. `verify-api/get` 取背景与滑块图、`secretKey`；
-3. jfbym dual-image 识别 gap x；
+3. 固定 HTTPS、禁止重定向的 jfbym dual-image 请求识别 gap x；只接受成功响应的 `data.data` 数字/纯数字字符串和 `0..=10_000` 的有限坐标；
 4. AES-128-ECB PKCS7 加密 `pointJson` 后 `verify-api/web/check`；
-5. 内存保留 `captchaId`，重试原请求。
+5. 内存保留 `captchaId`，重试原请求；即使 challenge 出现在最后一次普通尝试，也会执行一次受预算限制的已认证重放。
 
-密钥通过 runtime secret `cnki_captcha_token` 配置；探测可用 `LITRADAR_CNKI_CAPTCHA_TOKEN`。token、secretKey、captchaId 与图片不得进入日志或内容库。
+密钥通过加密 runtime secret `cnki_captcha_token` 配置；数据库值为空时，单次索引探测可用 `LITRADAR_CNKI_CAPTCHA_TOKEN`。父进程解析该值后会从 child 环境移除变量；worker request JSON 不含 token，只有 `provider_name=cnki` 的 worker 在构造 Provider 前通过版本化 stdin bootstrap 收到它，后续同一管道继续传输 durable ACK。token、secretKey、captchaId 与图片不得进入 request 文件、日志、Debug、内容库或控制库。
 
 ## 海外 CNKI 索引流程
 
@@ -74,14 +74,24 @@ CNKI filename、`pykm`、`pCode`、数据库代码、详情路径、search URL�
 
 索引 adapter 可以把分页/年期进度编码为 opaque checkpoint。LitRadar 只把该文本保存在 `data/index-control/<catalog>.sqlite` 的 Provider namespace，并在下一次 `fetch` 原样传回。
 
-国内 checkpoint 形状为 issue/article 游标 JSON，**禁止** captcha 字段。Provider 不能把 checkpoint 嵌入 `ArticleDraft`。控制库删除或更换 Provider 后从头读取，内容 writer 依靠规范 identity alias 幂等复用已有 ID。
+国内 checkpoint 是指向下一处理位置的版本化 JSON，例如：
+
+```json
+{"version":1,"year_issue_id":"202512","page_index":1}
+```
+
+`year_issue_id` 必须精确匹配重新读取的 year list；新期次插到列表前部不会改变恢复目标。保存的期次已经消失时，Provider fail closed 并提示删除对应的可丢弃控制库后重扫，不按旧序号猜测位置。旧 `issue_index` / `article_index` 和任何 captcha 字段都会被拒绝。
+
+papers 页必须含 `articleCount`，其值必须等于解析出的文章行数且不超过固定页容量 10。计数为 10 时 checkpoint 指向同一期下一页，小于 10 时进入下一稳定期次或完成；总数正好为 10 的倍数时，必须再读取一个结构有效的 0-count 终止页。空白、登录页、缺 marker 或局部行页面都是失败，不推进 checkpoint。
+
+页面是最小提交和重放单元。只有 HTTP 404/410 或明确“记录已删除/文献不存在”的详情页会记录不含 URL/凭据的 ordinal/status 事件并跳过；网络错误、429、5xx、captcha 或结构错误会中止整个 batch，不返回新 checkpoint。控制库删除或更换 Provider 后从头读取，内容 writer 依靠规范 identity alias 幂等复用已有 ID。Provider 不能把 checkpoint 嵌入 `ArticleDraft`。
 
 ## 在线摘要页
 
 摘要动作不会读取持久链接。每次请求都使用 `ArticleLocator` 的维护期刊题名/ISSN、文章题名、年份、卷期、页码、作者和 DOI 执行在线定位：
 
 1. 精确定位期刊；
-2. 读取相关年期和文章候选；
+2. 读取相关年期的全部经过验证的 papers 页面和文章候选；
 3. 打开候选详情并核对规范文章身份；
 4. 只把本次匹配的 HTTPS 目的地返回给 API。
 
@@ -111,7 +121,7 @@ reqwest 错误在转换为业务错误前移除完整 URL。需要诊断的自�
 
 ## 重试和可观测性
 
-单个 CNKI HTTP 操作最多三次，两次等待分别为 1 秒和 2 秒。传输失败、非 2xx、验证码或异常验证页会重试；持续失败使当前 Provider 操作明确失败，不写空内容冒充成功。国内 captcha 另有独立 solve budget。
+单个 CNKI HTTP 操作有三次普通尝试，两次等待分别为 1 秒和 2 秒。传输失败、非 2xx、验证码或异常验证页会重试；国内 captcha 另有最多五次 fresh solve/replay 的独立预算。持续失败使当前 Provider 操作明确失败，不写空内容冒充成功；只有上述窄范围永久文章缺失可以在同页继续。
 
 请求尝试只汇总到结构化 `index.provider.attempts` 或文章访问 fallback 事件。内容库没有 API/path statistics 表，也不保存 URL、响应正文、查询参数或解码器样本。
 
@@ -122,10 +132,11 @@ reqwest 错误在转换为业务错误前移除完整 URL。需要诊断的自�
 修改 CNKI/ZJLib adapter 时至少覆盖：
 
 - 题名优先、ISSN fallback 和候选期刊验证（国内与海外）；
-- `pykm`/`pCode`、年期树、文章列表与详情变体；
+- `pykm`/`pCode`、年期树、10+2 与 10+0 papers 分页、计数不一致和详情变体；
 - captcha/验证页、非 2xx 和 decode retry；预算与 secret 脱敏；
+- 稳定 `year_issue_id + page_index` 恢复、期次重排/消失、永久详情跳过和临时错误整页重放；
 - batch 中没有 filename、Provider、URL 或原始 HTML；
-- 在线摘要每次重新解析且 host 受限；
+- 在线摘要每次重新解析全部页面且 host 受限；
 - ZJLib 用户隔离、题名/作者/期刊三项精确匹配和 32 MiB 上限；
 - 成功、无匹配和 fallback 后索引/control/auth 行与文件系统均不变；
 - zyproxy 协议、主机、跳数、循环和 URL 脱敏。

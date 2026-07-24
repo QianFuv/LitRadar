@@ -118,7 +118,7 @@ HTTP 外层先移除不受信的 `X-Request-Id`，再生成并返回服务器 UU
 准备入口和后续顺序保持一致：
 
 - `litradar serve`：迁移认证库和现有索引库，准备 Meta，验证密钥并加载运行设置，构建 HTTP 服务，然后启动内嵌调度。
-- 普通 `litradar index`：迁移数据库，准备 Meta，验证密钥并加载 scholarly 设置，然后进入下述现有 Meta 期刊预检和索引流程。
+- 普通 `litradar index`：迁移数据库，准备 Meta，验证密钥并加载 Provider 运行设置，然后进入下述现有 Meta 期刊预检和索引流程。
 - 多进程索引的内部 worker 请求不重复准备；它使用父进程已经准备和预检的持久目录。
 - 本地构建通常没有固定路径下的 manifest，因此受管发现返回 no-op；`data/meta` 目录缺失时索引明确失败，目录存在但没有选中的 CSV 时返回 `skipped`。
 
@@ -134,7 +134,7 @@ read canonical CSV -> validate catalog contract
         +-- catalog stem -> runtime index_provider_routes -> registered IndexContentProvider
         |
         +-- data/index/<stem>.sqlite         (content v4)
-        +-- data/index-control/<stem>.sqlite (disposable control v1)
+        +-- data/index-control/<stem>.sqlite (disposable control v2)
                     |
                     v
 acquire provider-scoped lease -> fetch canonical batches
@@ -145,6 +145,8 @@ acquire provider-scoped lease -> fetch canonical batches
 目录验证在 Provider 请求前拒绝未知列、重复/非法 `catalog_id`、非法 ISSN、重复别名和不规范文本。索引路由来自 `auth.sqlite.runtime_settings.index_provider_routes`；摘要页和全文顺序分别来自带 default 与 catalog overrides 的运行设置。内容库和目录都不知道实际 Provider。
 
 “分进程注册”只表示同一个 `litradar` 二进制在不同命令边界构造不同的内存注册表：`index` 进程注册索引实现，`serve` 的 API 进程注册摘要页/全文实现。它不是多服务部署，也不表示 Provider 自动回退。管理 API 按相同逻辑名称聚合这些注册，形成供前端过滤选项的 capability 目录。
+
+多进程索引把调度信息和 journal assignments 写入可丢弃 request JSON。国内 CNKI captcha token 不属于该文件：父进程启动 child 后移除继承的探测环境变量，只为 `provider_name=cnki` 的 worker 通过 stdin 发送一次版本化 bootstrap；worker 在 Provider 构造前验证协议版本和 worker ID，随后同一管道继续接收 parent 的 durable commit ACK。其他 worker 的 bootstrap 不携带该 token，相关 Debug、错误和日志只保留固定脱敏字段。
 
 Provider 只能返回规范 `JournalDraft`、`IssueDraft`、`ArticleDraft` 和 opaque checkpoint。`litradar-index` 负责校验、稳定 ID、合并、SQLite 事务和 outbox。内容先提交、checkpoint 后提交；控制提交失败时重跑会依靠规范 alias 幂等收敛。
 
@@ -193,7 +195,7 @@ Provider 只能返回规范 `JournalDraft`、`IssueDraft`、`ArticleDraft` 和 o
 
 ### CNKI 索引和全文
 
-CNKI 元数据 Provider 使用 overseas 页面和接口生成规范内容；页面 filename 和详情 URL 只存在于一次适配调用中。按用户全文获取是独立的 `zjlib` 在线能力，使用当前用户已有的浙江图书馆会话，与索引 Provider 无关。详见 [CNKI 数据源](reference/sources/cnki.md)。
+默认国内 `cnki` 元数据 Provider 使用 NZKPT 的 `navi.cnki.net` / `kns.cnki.net` 页面和接口生成规范内容；可选的 `cnki_oversea` 保留海外实现。页面 filename、详情 URL 和 captcha 状态只存在于一次适配调用中。按用户全文获取是独立的 `zjlib` 在线能力，使用当前用户已有的浙江图书馆会话，与索引 Provider 无关。详见 [CNKI 数据源](reference/sources/cnki.md)。
 
 ### 文章在线访问
 
@@ -207,7 +209,7 @@ browser -> stable LitRadar action URL -> load ArticleLocator
         -> 307/PDF + Cache-Control: private, no-store
 ```
 
-默认 `scholarly → cnki_oversea` 是摘要能力的有序 fallback：先尝试 scholarly，遇到超时、未找到、临时失败或无效结果才继续 CNKI；它不是索引来源映射。catalog override 完整替换默认顺序，显式空数组禁用该 CSV 的动作。上游目的地不会出现在 `/access`、文章响应或索引库中。动作调用也不更新文章、outbox、checkpoint、认证会话或文件缓存。Provider 注册携带精确的运行时跳转域名 allowlist，API 不按 Provider 名称硬编码域名。
+全新安装的默认 `scholarly → cnki` 是摘要能力的有序 fallback：先尝试 scholarly，遇到超时、未找到、临时失败或无效结果才继续国内 CNKI；它不是索引来源映射。由旧认证库升级时，v8 会先物化旧有效默认值再把旧 `cnki` token 重写为 `cnki_oversea`，因此 legacy 安装保持原来的海外 fallback，除非管理员显式修改。catalog override 完整替换默认顺序，显式空数组禁用该 CSV 的动作。上游目的地不会出现在 `/access`、文章响应或索引库中。动作调用也不更新文章、outbox、checkpoint、认证会话或文件缓存。Provider 注册携带精确的运行时跳转域名 allowlist，API 不按 Provider 名称硬编码域名。
 
 前端的“文章详情”是展示已经存入 LitRadar 的题名、作者、期刊、摘要等本地元数据的弹窗，不是第三种在线 Provider capability，也没有 `/detail` 动作路由。“查看摘要页”才会触发上述在线解析和外部跳转。
 
@@ -243,7 +245,7 @@ browser -> stable LitRadar action URL -> load ArticleLocator
 - 固定前端网络边界：浏览器同源，`next dev` 固定代理到 `127.0.0.1:8001`，生产静态导出
 - 部署密钥文件：只用于认证和解密数据库中的秘密值
 
-生产应用不读取 LitRadar 自定义环境变量。固定镜像路径和隐藏父子进程关联参数都是不可配置的内部协议；CLI 路径/监听/并发参数、部署密钥文件和测试工具输入仍保留各自边界。
+生产应用不把 LitRadar 自定义环境变量作为通用配置中心。固定镜像路径和隐藏父子进程关联参数都是不可配置的内部协议；CLI 路径/监听/并发参数、部署密钥文件和测试工具输入仍保留各自边界。数据库 token 为空时，`LITRADAR_CNKI_CAPTCHA_TOKEN` 是国内 CNKI 单次索引探测的唯一来源凭据例外，并在父进程解析后从 child 环境移除。
 
 来源、默认值和优先级见[运行配置](reference/configuration.md)。
 
@@ -255,7 +257,7 @@ browser -> stable LitRadar action URL -> load ArticleLocator
 2. 检查 `PRAGMA user_version`。
 3. 认证库在独立 `BEGIN IMMEDIATE` 事务中逐版本迁移。
 4. 内容索引只接受新建/空 v0 或精确 v4；非空 v0 及 v1–v3 明确要求人工备份、移动或删除点名文件后重建。
-5. 控制库按 v1 创建，可随时删除并重建。
+5. 控制库按 v2 创建，可随时删除并重建；已有 v1 只在升级事务中把海外时代的 `cnki` / `zjlib_cnki` key 重写一次，之后重开不会改写当前国内 `cnki` 状态。
 6. 遇到未来版本或失败立即退出，不自动删除或改写文件。
 
 `litradar serve` 先完成一次存储迁移、密钥验证和 HTTP 准备，再启动监听器与立即执行的首个调度 tick。普通查询仓库不负责 DDL。
