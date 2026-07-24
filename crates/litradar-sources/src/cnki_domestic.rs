@@ -36,7 +36,7 @@ const DEFAULT_PCODE: &str = "CJFD,CCJD";
 /// Maximum fresh captcha puzzle solves allowed per domestic session budget.
 pub const DOMESTIC_CAPTCHA_SOLVE_BUDGET: usize = 5;
 const DOMESTIC_POINT_JSON_Y: i32 = 5;
-const DOMESTIC_PAPERS_PAGE_SIZE: usize = 10;
+const DOMESTIC_PAPERS_CONTINUATION_COUNT: usize = 10;
 const DOMESTIC_REDIRECT_LIMIT: usize = 10;
 const DOMESTIC_REQUEST_ATTEMPT_LIMIT: usize = 3;
 /// Current stable domestic CNKI traversal checkpoint version.
@@ -453,24 +453,25 @@ pub fn parse_domestic_issue_articles(
     issue: &Value,
     page_index: usize,
 ) -> Result<DomesticIssueArticlePage, DomesticCnkiSourceError> {
-    validate_domestic_response("issue_articles", text)?;
-    let article_count = input_value(text, "articleCount")
-        .ok_or_else(|| {
-            DomesticCnkiSourceError::Parse(
-                "domestic issue article page missing articleCount".to_string(),
-            )
-        })?
-        .parse::<usize>()
-        .map_err(|_| {
+    let is_explicit_empty_page = is_explicitly_empty_issue_page(text, page_index);
+    if is_explicit_empty_page {
+        checked_text(text, "issue_articles")?;
+    } else {
+        validate_domestic_response("issue_articles", text)?;
+    }
+    let article_count = match input_value(text, "articleCount") {
+        Some(value) => value.parse::<usize>().map_err(|_| {
             DomesticCnkiSourceError::Parse(
                 "domestic issue article page has invalid articleCount".to_string(),
             )
-        })?;
-    if article_count > DOMESTIC_PAPERS_PAGE_SIZE {
-        return Err(DomesticCnkiSourceError::Parse(
-            "domestic issue article page exceeds the fixed page size".to_string(),
-        ));
-    }
+        })?,
+        None if is_explicit_empty_page => 0,
+        None => {
+            return Err(DomesticCnkiSourceError::Parse(
+                "domestic issue article page missing articleCount".to_string(),
+            ));
+        }
+    };
     let mut articles = Vec::new();
     let mut current_section = String::new();
     let mut cursor = 0;
@@ -507,7 +508,7 @@ pub fn parse_domestic_issue_articles(
         articles,
         page_index,
         article_count,
-        has_next_page: article_count == DOMESTIC_PAPERS_PAGE_SIZE,
+        has_next_page: article_count == DOMESTIC_PAPERS_CONTINUATION_COUNT,
     })
 }
 
@@ -613,7 +614,11 @@ fn validate_domestic_response(endpoint: &str, text: &str) -> Result<(), Domestic
         "journal_search" => text.contains("/knavi/detail?") || has_explicit_empty_marker(text),
         "journal_detail" => input_value(text, "pykm").is_some() || has_explicit_empty_marker(text),
         "year_issues" => text.contains("YearIssueTree"),
-        "issue_articles" => text.contains("articleCount") || text.contains("class=\"row clearfix"),
+        "issue_articles" => {
+            text.contains("articleCount")
+                || text.contains("class=\"row clearfix")
+                || is_domestic_update_placeholder(text)
+        }
         "article_detail" => {
             input_value(text, "paramfilename").is_some()
                 || input_value(text, "param-filename").is_some()
@@ -649,10 +654,28 @@ fn has_explicit_empty_marker(text: &str) -> bool {
         "未检索到",
         "没有找到",
         "无相关记录",
+        "共 0 条结果",
+        "共0条结果",
+        "找到 0 条结果",
+        "找到0条结果",
         "no results",
     ]
     .iter()
     .any(|marker| lowered.contains(marker))
+}
+
+fn is_explicitly_empty_issue_page(text: &str, page_index: usize) -> bool {
+    if input_value(text, "articleCount").is_some() || text.contains("class=\"row clearfix") {
+        return false;
+    }
+    if has_explicit_empty_marker(text) {
+        return true;
+    }
+    page_index > 0 && is_domestic_update_placeholder(text)
+}
+
+fn is_domestic_update_placeholder(text: &str) -> bool {
+    strip_tags(&decode_html(text)).contains("该刊数据正在更新中，请耐心等待")
 }
 
 /// Return whether a URL or body fragment points at overseas CNKI.
@@ -939,13 +962,13 @@ pub fn looks_like_captcha_challenge(text: &str, url: &str) -> bool {
         return false;
     }
     let lowered = text.to_lowercase();
+    let lowered_url_path = url.split(['?', '#']).next().unwrap_or(url).to_lowercase();
     lowered.contains("captcha")
         || text.contains("访问异常")
         || text.contains("安全验证")
         || text.contains("\"code\":-403")
         || text.contains("/verify/home")
-        || url.contains("/verify/home")
-        || url.to_lowercase().contains("captcha")
+        || lowered_url_path.contains("/verify/home")
 }
 
 /// Extract a CNKI challenge URL from a blocked domestic response.
@@ -1345,6 +1368,7 @@ fn looks_like_domestic_content(text: &str) -> bool {
         || text.contains("class=\"row clearfix")
         || text.contains("param-filename")
         || text.contains("paramfilename")
+        || has_explicit_empty_marker(text)
 }
 
 fn next_article_block(text: &str, from: usize) -> Option<(usize, &'static str)> {
@@ -2855,9 +2879,11 @@ mod tests {
         assert_eq!(empty.page_index, 2);
         assert_eq!(empty.article_count, 0);
         assert!(!empty.has_next_page);
-        assert!(
-            parse_domestic_issue_articles(&papers_fixture_page("TOO_MANY", 11), &issue, 0).is_err()
-        );
+        let expanded =
+            parse_domestic_issue_articles(&papers_fixture_page("EXPANDED", 11), &issue, 0)
+                .expect("structurally complete expanded page");
+        assert_eq!(expanded.articles.len(), 11);
+        assert!(!expanded.has_next_page);
 
         let mut transport = FixtureDomesticCnkiTransport::new(DomesticCnkiFixtureData {
             issue_article_pages: BTreeMap::from([(
@@ -3065,6 +3091,27 @@ mod tests {
     }
 
     #[test]
+    fn update_placeholder_is_terminal_only_after_the_first_issue_page() {
+        let body = "<div>该刊数据正在<span>更新中</span>，请耐心等待</div>";
+
+        assert!(validate_domestic_response("issue_articles", body).is_ok());
+        let terminal = parse_domestic_issue_articles(body, &json!({}), 1)
+            .expect("out-of-range update placeholder should terminate paging");
+        assert!(terminal.articles.is_empty());
+        assert!(!terminal.has_next_page);
+        assert!(parse_domestic_issue_articles(body, &json!({}), 0).is_err());
+    }
+
+    #[test]
+    fn explicit_empty_words_do_not_override_structured_issue_rows() {
+        let body = papers_fixture_page("没有找到", 1);
+
+        let page = parse_domestic_issue_articles(&body, &json!({}), 0)
+            .expect("structured article row should take precedence");
+        assert_eq!(page.articles.len(), 1);
+    }
+
+    #[test]
     fn redacts_domestic_attempt_urls_and_preserves_http_status() {
         let sensitive_url = "https://kns.cnki.net/verify/home?captchaId=captcha-secret-sentinel&ident=ident-secret-sentinel&returnUrl=return-secret-sentinel&language=CHS";
         let redacted = redact_domestic_url(sensitive_url);
@@ -3176,6 +3223,17 @@ mod tests {
         assert!(challenge.contains("/verify/home?"));
         assert!(challenge.contains("captchaId="));
         assert!(!challenge.contains("oversea.cnki.net"));
+    }
+
+    #[test]
+    fn authenticated_empty_search_result_is_not_a_captcha_challenge() {
+        let body = r#"<div class="result-count">共 0 条结果</div><p>找到 0 条结果</p>"#;
+        let url = "https://navi.cnki.net/knavi/journals/searchbaseinfo?captchaId=opaque";
+
+        assert!(!looks_like_captcha_challenge(body, url));
+        assert!(parse_domestic_journal_search_results(body)
+            .expect("authenticated empty result should parse")
+            .is_empty());
     }
 
     #[test]

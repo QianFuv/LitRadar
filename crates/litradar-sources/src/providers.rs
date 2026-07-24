@@ -1598,6 +1598,16 @@ fn domestic_journal_locator_from_article(article: &ArticleLocator) -> DomesticJo
     )
 }
 
+fn domestic_cnki_lacks_authors_and_doi(summary: &Value, detail: &Value) -> bool {
+    let has_authors = json_text(detail.get("authors"))
+        .or_else(|| json_text(summary.get("authors")))
+        .is_some_and(|value| !split_authors(&value).is_empty());
+    let has_doi = json_text(detail.get("doi"))
+        .and_then(|value| normalize_contract_doi(&value))
+        .is_some();
+    !has_authors && !has_doi
+}
+
 fn fetch_domestic_cnki_batch<T>(
     client: &mut DomesticCnkiClient<T>,
     catalog: &JournalCatalogEntry,
@@ -1727,6 +1737,16 @@ where
             }
             Err(error) => return Err(map_domestic_cnki_error(error)),
         };
+        if domestic_cnki_lacks_authors_and_doi(&summary, &detail) {
+            tracing::info!(
+                event = "index.provider.article.skipped",
+                component = "index",
+                provider = CNKI_PROVIDER_NAME,
+                reason = "missing_authors_and_doi",
+                article_ordinal = article_index + 1,
+            );
+            continue;
+        }
         let article = cnki_article_draft(catalog, &issue, &summary, &detail).ok_or_else(|| {
             ProviderError::new(
                 ProviderErrorKind::InvalidResponse,
@@ -3424,6 +3444,82 @@ mod tests {
     }
 
     #[test]
+    fn domestic_cnki_filter_requires_missing_authors_and_doi() {
+        let no_metadata = json!({});
+        assert!(super::domestic_cnki_lacks_authors_and_doi(
+            &json!({"title": "Concluding note", "section": "Articles"}),
+            &no_metadata,
+        ));
+        assert!(!super::domestic_cnki_lacks_authors_and_doi(
+            &json!({"title": "Reference book review 书评", "authors": "Reviewer;", "section": "书评"}),
+            &no_metadata,
+        ));
+        assert!(!super::domestic_cnki_lacks_authors_and_doi(
+            &json!({"title": "Research article"}),
+            &json!({"authors": "Researcher;"}),
+        ));
+        assert!(!super::domestic_cnki_lacks_authors_and_doi(
+            &json!({"title": "《世界经济》征稿启事"}),
+            &json!({"doi": "10.1000/call-for-papers"}),
+        ));
+    }
+
+    #[test]
+    fn domestic_cnki_discards_only_articles_without_authors_or_doi() {
+        let entries = vec![
+            ("DROP".to_string(), "Concluding note".to_string()),
+            ("CALL".to_string(), "《世界经济》征稿启事".to_string()),
+            (
+                "REVIEW".to_string(),
+                "Reference book review 书评".to_string(),
+            ),
+        ];
+        let mut fixture = domestic_paged_fixture(vec![("202601".to_string(), vec![entries])]);
+        fixture.issue_article_pages.insert(
+            "202601".to_string(),
+            vec![r#"
+                <dd class="row clearfix">
+                  <a href="https://kns.cnki.net/kcms2/article/abstract?v=DROP">Concluding note</a>
+                  <b name="encrypt" id="DROP"></b>
+                </dd>
+                <dd class="row clearfix">
+                  <a href="https://kns.cnki.net/kcms2/article/abstract?v=CALL">《世界经济》征稿启事</a>
+                  <b name="encrypt" id="CALL"></b>
+                </dd>
+                <dt class="tit">书评</dt>
+                <dd class="row clearfix">
+                  <a href="https://kns.cnki.net/kcms2/article/abstract?v=REVIEW">Reference book review 书评</a>
+                  <b name="encrypt" id="REVIEW"></b>
+                  <span class="author" title="Reviewer;">Reviewer;</span>
+                </dd>
+                <input id="articleCount" value="3">
+            "#
+            .to_string()],
+        );
+        fixture.article_detail_html.insert(
+            "DROP".to_string(),
+            domestic_test_article_detail_without_doi("DROP", "Concluding note"),
+        );
+        fixture.article_detail_html.insert(
+            "REVIEW".to_string(),
+            domestic_test_article_detail_without_doi("REVIEW", "Reference book review 书评"),
+        );
+        let registration = cnki_index_registration(FixtureDomesticCnkiTransport::new(fixture))
+            .expect("filtered registration");
+
+        let batch = registration
+            .index_content()
+            .expect("filtered index")
+            .fetch(&domestic_test_catalog(), None)
+            .expect("metadata rule should complete");
+
+        assert!(batch.is_complete);
+        assert_eq!(batch.articles.len(), 2);
+        assert_eq!(batch.articles[0].title, "《世界经济》征稿启事");
+        assert_eq!(batch.articles[1].title, "Reference book review 书评");
+    }
+
+    #[test]
     fn domestic_cnki_abstract_traverses_later_pages() {
         let first_page = (0..10)
             .map(|index| (format!("FIRST{index:02}"), format!("Unrelated {index}")))
@@ -3520,6 +3616,12 @@ mod tests {
     }
 
     fn domestic_test_article_detail(platform_id: &str, title: &str) -> String {
+        format!(
+            r#"<html><head><title>{title} - 中国知网</title></head><body><input id="param-filename" value="{platform_id}"><h1 class="title">{title}</h1><input id="abstract_text" value="Abstract"><span class="rowtit">DOI：</span><p>10.1000/{platform_id}</p></body></html>"#
+        )
+    }
+
+    fn domestic_test_article_detail_without_doi(platform_id: &str, title: &str) -> String {
         format!(
             r#"<html><head><title>{title} - 中国知网</title></head><body><input id="param-filename" value="{platform_id}"><h1 class="title">{title}</h1><input id="abstract_text" value="Abstract"></body></html>"#
         )

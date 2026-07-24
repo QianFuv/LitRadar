@@ -82,7 +82,9 @@ CNKI filename、`pykm`、`pCode`、数据库代码、详情路径、search URL�
 
 `year_issue_id` 必须精确匹配重新读取的 year list；新期次插到列表前部不会改变恢复目标。保存的期次已经消失时，Provider fail closed 并提示删除对应的可丢弃控制库后重扫，不按旧序号猜测位置。旧 `issue_index` / `article_index` 和任何 captcha 字段都会被拒绝。
 
-papers 页必须含 `articleCount`，其值必须等于解析出的文章行数且不超过固定页容量 10。计数为 10 时 checkpoint 指向同一期下一页，小于 10 时进入下一稳定期次或完成；总数正好为 10 的倍数时，必须再读取一个结构有效的 0-count 终止页。空白、登录页、缺 marker 或局部行页面都是失败，不推进 checkpoint。
+papers 页必须含 `articleCount`，其值必须等于解析出的文章行数。计数为 10 时 checkpoint 指向同一期下一页；其他结构完整的计数进入下一稳定期次或完成，因为 CNKI 的历史期次可能在单页返回超过 10 条文章。总数正好为 10 的倍数时，必须再读取一个结构有效的空终止页；后续页的 `该刊数据正在更新中，请耐心等待` 是已确认的越界终止占位响应，可按 0-count 处理，但首个 papers 页出现同一响应仍然失败。空白、登录页、缺 marker 或局部行页面都是失败，不推进 checkpoint。
+
+国内 CNKI Provider 读取详情页后，合并详情与 papers 行的作者字段，并规范化详情 DOI。仅当作者仍为空且 DOI 也为空时才排除该记录；标题和栏目不参与内容类型判断，因此带 DOI 的征稿启事以及有作者的书评会被保留。被排除的行不生成 `ArticleDraft`，但页面计数与 checkpoint 仍按原始响应推进。已有内容库不会因规则变更自动恢复之前排除的记录，应用新规则时应删除对应内容库和控制库再完整重建。
 
 页面是最小提交和重放单元。只有 HTTP 404/410 或明确“记录已删除/文献不存在”的详情页会记录不含 URL/凭据的 ordinal/status 事件并跳过；网络错误、429、5xx、captcha 或结构错误会中止整个 batch，不返回新 checkpoint。控制库删除或更换 Provider 后从头读取，内容 writer 依靠规范 identity alias 幂等复用已有 ID。Provider 不能把 checkpoint 嵌入 `ArticleDraft`。
 
