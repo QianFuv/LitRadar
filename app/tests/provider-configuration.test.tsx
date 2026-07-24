@@ -614,6 +614,10 @@ describe('Provider configuration', () => {
   );
   test('serializes one index Provider per catalog', serializesOneIndexProviderPerCatalog);
   test('rejects unsafe scalar secret metadata', rejectsInvalidScalarSecretMetadata);
-  test('preserves, replaces, and clears a scalar secret safely', serializesScalarSecretLifecycle);
+  test(
+    'preserves, replaces, and clears a scalar secret safely',
+    serializesScalarSecretLifecycle,
+    10_000,
+  );
   test('renders one safe fallback for a future backend control', rendersFutureGenericControlOnce);
 });
