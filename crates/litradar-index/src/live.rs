@@ -40,9 +40,10 @@ use crate::stats::IndexRunMetrics;
 use crate::transforms::{read_catalog_csv, CatalogContractError};
 use crate::worker_protocol::{
     read_message, write_message, ParentMessage, ProtocolError,
-    WorkerFailure as LiveIndexWorkerFailure, WorkerFailureClass as LiveIndexWorkerFailureClass,
-    WorkerJournalAssignment, WorkerMessage, WorkerOperation as LiveIndexWorkerOperation,
-    WorkerRequest as LiveIndexWorkerRequest, PROTOCOL_VERSION,
+    WorkerBootstrap as LiveIndexWorkerBootstrap, WorkerFailure as LiveIndexWorkerFailure,
+    WorkerFailureClass as LiveIndexWorkerFailureClass, WorkerJournalAssignment, WorkerMessage,
+    WorkerOperation as LiveIndexWorkerOperation, WorkerRequest as LiveIndexWorkerRequest,
+    PROTOCOL_VERSION,
 };
 
 const LIVE_INDEX_HEARTBEAT_INTERVAL_SECONDS: u64 = 30;
@@ -52,7 +53,7 @@ const WORKER_PROTOCOL_FAILURE_MESSAGE: &str = "worker protocol operation failed"
 const LEGACY_ALIAS_CHECKPOINT_MESSAGE: &str = "legacy catalog alias has provider checkpoint state";
 
 /// Live index run configuration.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct LiveIndexConfig {
     /// Canonical application executable used for worker and notification subprocesses.
     pub application_executable: PathBuf,
@@ -84,6 +85,29 @@ pub struct LiveIndexConfig {
     pub cnki_captcha_token: Option<String>,
     /// Validated catalog-stem to indexing-provider routes loaded outside index databases.
     pub index_provider_routes: BTreeMap<String, String>,
+}
+
+impl fmt::Debug for LiveIndexConfig {
+    /// Format live indexing configuration without exposing provider credentials.
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("LiveIndexConfig")
+            .field("application_executable", &self.application_executable)
+            .field("project_root", &self.project_root)
+            .field("secret_key_file", &self.secret_key_file)
+            .field("file", &self.file)
+            .field("worker_count", &self.worker_count)
+            .field("process_count", &self.process_count)
+            .field("issue_batch_size", &self.issue_batch_size)
+            .field("timeout_seconds", &self.timeout_seconds)
+            .field("resume", &self.resume)
+            .field("update", &self.update)
+            .field("notify", &self.notify)
+            .field("notify_dry_run", &self.notify_dry_run)
+            .field("index_provider_routes", &self.index_provider_routes)
+            .field("provider_credentials", &"[REDACTED]")
+            .finish()
+    }
 }
 
 /// Live index command outcome.
@@ -1003,7 +1027,6 @@ fn prepare_worker_requests(
             schedule_epoch_unix_millis,
             timeout_seconds: config.timeout_seconds,
             scholarly_config: config.scholarly_config.clone(),
-            cnki_captcha_token: config.cnki_captcha_token.clone(),
             assignments,
         })
         .collect();
@@ -1029,6 +1052,7 @@ fn run_worker_processes(
         control,
         context,
         requests,
+        config.cnki_captcha_token.as_deref(),
         metrics,
         Duration::from_secs(LIVE_INDEX_HEARTBEAT_INTERVAL_SECONDS),
         |request_path, worker_id| {
@@ -1036,6 +1060,7 @@ fn run_worker_processes(
                 .arg("index")
                 .arg("--live-worker-request")
                 .arg(request_path)
+                .env_remove("LITRADAR_CNKI_CAPTCHA_TOKEN")
                 .stdin(Stdio::piped())
                 .stdout(Stdio::piped())
                 .stderr(Stdio::inherit())
@@ -1237,6 +1262,7 @@ impl WorkerProgress {
 /// * `control` - Parent-owned control connection.
 /// * `context` - Stable commit and lease context.
 /// * `requests` - Versioned worker assignments.
+/// * `cnki_captcha_token` - Memory-only domestic CNKI credential.
 /// * `metrics` - Aggregate metrics prepared from parent checkpoint reads.
 /// * `heartbeat_interval` - Lease renewal interval.
 /// * `launcher` - Production or test-only child process launcher.
@@ -1252,6 +1278,7 @@ pub(crate) fn run_worker_processes_with_launcher<Launcher, Observer>(
     control: &Connection,
     context: &ParentWriterContext,
     requests: Vec<LiveIndexWorkerRequest>,
+    cnki_captcha_token: Option<&str>,
     metrics: IndexRunMetrics,
     heartbeat_interval: Duration,
     mut launcher: Launcher,
@@ -1312,6 +1339,14 @@ where
                 break;
             }
         };
+        let launched = match bootstrap_worker_process(launched, request, cnki_captcha_token) {
+            Ok(launched) => launched,
+            Err(error) => {
+                let _ = std::fs::remove_file(&request_path);
+                spawn_error = Some(error);
+                break;
+            }
+        };
         children.push(attach_worker_process(
             launched,
             request.worker_id,
@@ -1347,6 +1382,35 @@ where
     }
     join_worker_readers(&mut children);
     execution
+}
+
+fn worker_bootstrap(
+    request: &LiveIndexWorkerRequest,
+    cnki_captcha_token: Option<&str>,
+) -> LiveIndexWorkerBootstrap {
+    LiveIndexWorkerBootstrap {
+        protocol_version: PROTOCOL_VERSION,
+        worker_id: request.worker_id,
+        cnki_captcha_token: if request.provider_name == CNKI_PROVIDER_NAME {
+            cnki_captcha_token.map(str::to_owned)
+        } else {
+            None
+        },
+    }
+}
+
+fn bootstrap_worker_process(
+    mut launched: LaunchedWorkerProcess,
+    request: &LiveIndexWorkerRequest,
+    cnki_captcha_token: Option<&str>,
+) -> Result<LaunchedWorkerProcess, LiveIndexError> {
+    let bootstrap = worker_bootstrap(request, cnki_captcha_token);
+    if write_message(&mut launched.writer, &bootstrap).is_err() {
+        let _ = launched.child.kill();
+        let _ = launched.child.wait();
+        return Err(protocol_failure(request.worker_id));
+    }
+    Ok(launched)
 }
 
 fn attach_worker_process(
@@ -1721,7 +1785,9 @@ fn run_fetch_worker_stream(
     writer: &mut impl Write,
 ) -> Result<(), LiveIndexError> {
     let mut sequence = 0_u64;
-    let execution = fetch_worker_assignments(request, reader, writer, &mut sequence);
+    let execution = read_worker_bootstrap(request, reader).and_then(|cnki_captcha_token| {
+        fetch_worker_assignments(request, cnki_captcha_token, reader, writer, &mut sequence)
+    });
     let message = match execution {
         Ok(()) => WorkerMessage::Succeeded {
             protocol_version: PROTOCOL_VERSION,
@@ -1739,8 +1805,26 @@ fn run_fetch_worker_stream(
         .map_err(|_| LiveIndexError::Worker(WORKER_PROTOCOL_FAILURE_MESSAGE.to_string()))
 }
 
+fn read_worker_bootstrap(
+    request: &LiveIndexWorkerRequest,
+    reader: &mut impl Read,
+) -> Result<Option<String>, LiveIndexError> {
+    let bootstrap: LiveIndexWorkerBootstrap = read_message(reader)
+        .map_err(|_| LiveIndexError::Worker(WORKER_PROTOCOL_FAILURE_MESSAGE.to_string()))?;
+    if bootstrap.protocol_version != PROTOCOL_VERSION
+        || bootstrap.worker_id != request.worker_id
+        || (request.provider_name != CNKI_PROVIDER_NAME && bootstrap.cnki_captcha_token.is_some())
+    {
+        return Err(LiveIndexError::InvalidConfig(
+            "worker bootstrap is invalid".to_string(),
+        ));
+    }
+    Ok(bootstrap.cnki_captcha_token)
+}
+
 fn fetch_worker_assignments(
     request: &LiveIndexWorkerRequest,
+    cnki_captcha_token: Option<String>,
     reader: &mut impl Read,
     writer: &mut impl Write,
     sequence: &mut u64,
@@ -1772,7 +1856,7 @@ fn fetch_worker_assignments(
             .with_schedule_epoch(request.schedule_epoch_unix_millis),
         request.source_worker_count,
         request.timeout_seconds,
-        request.cnki_captcha_token.clone(),
+        cnki_captcha_token,
     )?;
     let provider = registration.index_content().cloned().ok_or_else(|| {
         LiveIndexError::InvalidConfig(format!(
@@ -1898,14 +1982,9 @@ fn build_index_registration(
             Ok(cnki_oversea_index_registration(transport)?)
         }
         CNKI_PROVIDER_NAME => {
-            let captcha_token = cnki_captcha_token.or_else(|| {
-                std::env::var("LITRADAR_CNKI_CAPTCHA_TOKEN")
-                    .ok()
-                    .filter(|value| !value.trim().is_empty())
-            });
             let transport = LiveDomesticCnkiTransport::new(LiveDomesticCnkiConfig {
                 timeout_seconds,
-                captcha_token,
+                captcha_token: cnki_captcha_token,
             })
             .map_err(|_| {
                 LiveIndexError::ProviderSetup(
@@ -2112,10 +2191,11 @@ mod tests {
         fetch_worker_assignments_with_provider, index_entries_with_provider,
         prepare_catalog_identities, prepare_worker_requests, run_live_index,
         run_live_index_worker_with_io, run_worker_processes_with_launcher, validate_live_config,
-        worker_failure_error, ContentCommitErrorKind, DirectIndexRequest, LaunchedWorkerProcess,
-        LeaseHeartbeat, LiveIndexConfig, LiveIndexError, LiveIndexWorkerFailure,
-        LiveIndexWorkerFailureClass, LiveIndexWorkerOperation, LiveIndexWorkerRequest, LiveRunTime,
-        ParentWriterContext, StoredCheckpoint, OPENALEX_MAX_WORKERS_PER_PROCESS,
+        worker_bootstrap, worker_failure_error, ContentCommitErrorKind, DirectIndexRequest,
+        LaunchedWorkerProcess, LeaseHeartbeat, LiveIndexConfig, LiveIndexError,
+        LiveIndexWorkerBootstrap, LiveIndexWorkerFailure, LiveIndexWorkerFailureClass,
+        LiveIndexWorkerOperation, LiveIndexWorkerRequest, LiveRunTime, ParentWriterContext,
+        StoredCheckpoint, OPENALEX_MAX_WORKERS_PER_PROCESS,
     };
     use crate::control::{
         acquire_lease, commit_content_then_checkpoint, open_control_db, read_checkpoint,
@@ -2160,6 +2240,24 @@ mod tests {
 
     struct CapturedWriter {
         bytes: Arc<Mutex<Vec<u8>>>,
+    }
+
+    struct FailingWriter;
+
+    impl Write for FailingWriter {
+        fn write(&mut self, _buffer: &[u8]) -> io::Result<usize> {
+            Err(io::Error::new(
+                io::ErrorKind::BrokenPipe,
+                "fixture write failed",
+            ))
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Err(io::Error::new(
+                io::ErrorKind::BrokenPipe,
+                "fixture flush failed",
+            ))
+        }
     }
 
     impl Write for CapturedWriter {
@@ -2580,13 +2678,97 @@ mod tests {
             scholarly_config: litradar_sources::LiveScholarlyConfig::from_value_pools(
                 10, "", "", "",
             ),
-            cnki_captcha_token: None,
             assignments: vec![WorkerJournalAssignment {
                 journal_ordinal: 0,
                 entry: catalog("journal-1"),
                 initial_checkpoint: None,
             }],
         }
+    }
+
+    fn worker_test_config(
+        provider_name: &str,
+        cnki_captcha_token: Option<String>,
+    ) -> LiveIndexConfig {
+        LiveIndexConfig {
+            application_executable: "litradar".into(),
+            project_root: ".".into(),
+            secret_key_file: "secret.key".into(),
+            file: None,
+            worker_count: 1,
+            process_count: 1,
+            issue_batch_size: 1,
+            timeout_seconds: 10,
+            resume: true,
+            update: false,
+            notify: false,
+            notify_dry_run: true,
+            scholarly_config: litradar_sources::LiveScholarlyConfig::from_value_pools(
+                10, "", "", "",
+            ),
+            cnki_captcha_token,
+            index_provider_routes: BTreeMap::from([(
+                "chinese_journals".to_string(),
+                provider_name.to_string(),
+            )]),
+        }
+    }
+
+    #[test]
+    fn worker_boundary_redacts_provider_credentials() {
+        let sentinel = "captcha-secret-sentinel";
+        let config = worker_test_config("cnki", Some(sentinel.to_string()));
+        let cnki_request = fetch_worker_request("cnki", "run-cnki-bootstrap");
+        let cnki_bootstrap = worker_bootstrap(&cnki_request, Some(sentinel));
+        let scholarly_bootstrap = worker_bootstrap(
+            &fetch_worker_request("scholarly", "run-scholarly-bootstrap"),
+            Some(sentinel),
+        );
+        let overseas_bootstrap = worker_bootstrap(
+            &fetch_worker_request("cnki_oversea", "run-overseas-bootstrap"),
+            Some(sentinel),
+        );
+
+        let debug = format!("{config:?}");
+        let bootstrap_debug = format!("{cnki_bootstrap:?}");
+
+        assert!(!debug.contains(sentinel));
+        assert!(debug.contains("[REDACTED]"));
+        assert!(!bootstrap_debug.contains(sentinel));
+        assert!(bootstrap_debug.contains("[REDACTED]"));
+        assert_eq!(cnki_bootstrap.cnki_captcha_token.as_deref(), Some(sentinel));
+        assert!(scholarly_bootstrap.cnki_captcha_token.is_none());
+        assert!(overseas_bootstrap.cnki_captcha_token.is_none());
+    }
+
+    #[test]
+    fn worker_request_file_excludes_cnki_secret() {
+        let sentinel = "captcha-secret-sentinel";
+        let config = worker_test_config("cnki", Some(sentinel.to_string()));
+        let directory = tempdir().expect("temporary control directory should create");
+        let control = open_control_db(directory.path().join("control.sqlite"))
+            .expect("control database should open");
+        let context = ParentWriterContext {
+            catalog_name: "chinese_journals".to_string(),
+            provider_name: "cnki".to_string(),
+            run_id: "run-secret-boundary".to_string(),
+            timestamp: "time".to_string(),
+        };
+
+        let (requests, _) =
+            prepare_worker_requests(&config, &control, &context, 0, &[catalog("journal-1")])
+                .expect("worker request should prepare");
+        let request_path = directory.path().join("worker-request.json");
+        std::fs::write(
+            &request_path,
+            serde_json::to_vec(&requests[0]).expect("worker request should serialize"),
+        )
+        .expect("worker request should write");
+        let request_json =
+            std::fs::read_to_string(request_path).expect("worker request should read");
+
+        assert!(!request_json.contains(sentinel));
+        assert!(!request_json.contains("cnki_captcha_token"));
     }
 
     #[test]
@@ -2955,6 +3137,7 @@ mod tests {
             &control,
             &context,
             vec![first, second],
+            None,
             IndexRunMetrics::default(),
             Duration::from_secs(1),
             |_, _| panic!("invalid assignments must fail before process launch"),
@@ -3143,8 +3326,11 @@ mod tests {
 
         let captured = CapturedLogs::default();
         let mut output = Vec::new();
+        let mut input = Vec::new();
+        write_message(&mut input, &worker_bootstrap(&request, None))
+            .expect("worker bootstrap should serialize");
         tracing::subscriber::with_default(captured.subscriber(), || {
-            run_live_index_worker_with_io(&request_path, Cursor::new(Vec::<u8>::new()), &mut output)
+            run_live_index_worker_with_io(&request_path, Cursor::new(input), &mut output)
                 .expect("worker entrypoint should stream terminal JSON")
         });
         let message: WorkerMessage = read_message(&mut Cursor::new(output))
@@ -3164,7 +3350,177 @@ mod tests {
     }
 
     #[test]
-    fn worker_protocol_version_two_rejects_version_one_requests() {
+    fn worker_protocol_domestic_bootstrap_completes_handshake() {
+        let sentinel = "captcha-secret-sentinel";
+        let directory = tempdir().expect("temporary directory should create");
+        let mut request = fetch_worker_request("cnki", "run-domestic-bootstrap");
+        request.assignments.clear();
+        let request_path = directory.path().join("worker-request.json");
+        std::fs::write(
+            &request_path,
+            serde_json::to_vec(&request).expect("worker request should serialize"),
+        )
+        .expect("worker request should write");
+        let mut input = Vec::new();
+        write_message(&mut input, &worker_bootstrap(&request, Some(sentinel)))
+            .expect("domestic bootstrap should serialize");
+        let mut output = Vec::new();
+
+        run_live_index_worker_with_io(&request_path, Cursor::new(input), &mut output)
+            .expect("domestic worker handshake should complete");
+        let message: WorkerMessage = read_message(&mut Cursor::new(output))
+            .expect("terminal worker message should deserialize");
+
+        assert!(matches!(
+            message,
+            WorkerMessage::Succeeded {
+                protocol_version: PROTOCOL_VERSION,
+                worker_id: 0,
+                sequence: 0,
+            }
+        ));
+    }
+
+    #[test]
+    fn worker_protocol_rejects_non_domestic_secret_without_exposure() {
+        let sentinel = "captcha-secret-sentinel";
+        let directory = tempdir().expect("temporary directory should create");
+        let mut request = fetch_worker_request("scholarly", "run-invalid-bootstrap");
+        request.assignments.clear();
+        let request_path = directory.path().join("worker-request.json");
+        std::fs::write(
+            &request_path,
+            serde_json::to_vec(&request).expect("worker request should serialize"),
+        )
+        .expect("worker request should write");
+        let bootstrap = LiveIndexWorkerBootstrap {
+            protocol_version: PROTOCOL_VERSION,
+            worker_id: 0,
+            cnki_captcha_token: Some(sentinel.to_string()),
+        };
+        let mut input = Vec::new();
+        write_message(&mut input, &bootstrap).expect("invalid bootstrap should serialize");
+        let mut output = Vec::new();
+
+        run_live_index_worker_with_io(&request_path, Cursor::new(input), &mut output)
+            .expect("worker should emit a redacted terminal failure");
+        let output_text = String::from_utf8(output.clone()).expect("worker output should be UTF-8");
+        let message: WorkerMessage = read_message(&mut Cursor::new(output))
+            .expect("terminal worker message should deserialize");
+
+        assert!(matches!(
+            message,
+            WorkerMessage::Failed {
+                protocol_version: PROTOCOL_VERSION,
+                worker_id: 0,
+                sequence: 0,
+                failure: LiveIndexWorkerFailure {
+                    class: LiveIndexWorkerFailureClass::InvalidConfig,
+                    ..
+                },
+            }
+        ));
+        assert!(!output_text.contains(sentinel));
+        assert!(!format!("{bootstrap:?}").contains(sentinel));
+    }
+
+    #[test]
+    fn worker_protocol_rejects_mismatched_bootstrap_identity() {
+        let directory = tempdir().expect("temporary directory should create");
+        let mut request = fetch_worker_request("scholarly", "run-bootstrap-mismatch");
+        request.assignments.clear();
+        let request_path = directory.path().join("worker-request.json");
+        std::fs::write(
+            &request_path,
+            serde_json::to_vec(&request).expect("worker request should serialize"),
+        )
+        .expect("worker request should write");
+        let mismatches = [
+            LiveIndexWorkerBootstrap {
+                protocol_version: PROTOCOL_VERSION - 1,
+                worker_id: 0,
+                cnki_captcha_token: None,
+            },
+            LiveIndexWorkerBootstrap {
+                protocol_version: PROTOCOL_VERSION,
+                worker_id: 1,
+                cnki_captcha_token: None,
+            },
+        ];
+
+        for bootstrap in mismatches {
+            let mut input = Vec::new();
+            write_message(&mut input, &bootstrap).expect("bootstrap should serialize");
+            let mut output = Vec::new();
+            run_live_index_worker_with_io(&request_path, Cursor::new(input), &mut output)
+                .expect("worker should emit a terminal failure");
+            let message: WorkerMessage = read_message(&mut Cursor::new(output))
+                .expect("terminal worker message should deserialize");
+            assert!(matches!(
+                message,
+                WorkerMessage::Failed {
+                    failure: LiveIndexWorkerFailure {
+                        class: LiveIndexWorkerFailureClass::InvalidConfig,
+                        ..
+                    },
+                    ..
+                }
+            ));
+        }
+    }
+
+    #[test]
+    fn worker_protocol_bootstrap_failure_cleans_request_and_process() {
+        let sentinel = "captcha-secret-sentinel";
+        let directory = tempdir().expect("temporary writer directory should create");
+        let content = open_content_db(directory.path().join("content.sqlite"))
+            .expect("content database should open");
+        let control = open_control_db(directory.path().join("control.sqlite"))
+            .expect("control database should open");
+        let context = ParentWriterContext {
+            catalog_name: "chinese_journals".to_string(),
+            provider_name: "cnki".to_string(),
+            run_id: "run-bootstrap-write-failure".to_string(),
+            timestamp: "2026-07-24T00:00:00Z".to_string(),
+        };
+        let request = fetch_worker_request(&context.provider_name, &context.run_id);
+        let request_dir = directory.path().join("worker-requests");
+        let captured = CapturedLogs::default();
+
+        let error = tracing::subscriber::with_default(captured.subscriber(), || {
+            run_worker_processes_with_launcher(
+                &request_dir,
+                &content,
+                &control,
+                &context,
+                vec![request],
+                Some(sentinel),
+                IndexRunMetrics::default(),
+                Duration::from_secs(1),
+                |_, _| {
+                    Ok(LaunchedWorkerProcess::from_test_streams(
+                        spawn_stdio_echo_process(),
+                        Cursor::new(Vec::<u8>::new()),
+                        FailingWriter,
+                    ))
+                },
+                |_| {},
+            )
+        })
+        .expect_err("bootstrap write failure should stop supervision");
+
+        assert!(matches!(error, LiveIndexError::Worker(_)));
+        assert!(!format!("{error:?}").contains(sentinel));
+        assert!(!captured.text().contains(sentinel));
+        assert!(request_dir.exists());
+        assert!(std::fs::read_dir(&request_dir)
+            .expect("request directory should read")
+            .next()
+            .is_none());
+    }
+
+    #[test]
+    fn worker_protocol_version_four_rejects_version_one_requests() {
         let directory = tempdir().expect("temporary directory should create");
         let mut request = fetch_worker_request("scholarly", "run-version-mismatch");
         request.protocol_version = 1;
@@ -3177,7 +3533,10 @@ mod tests {
         .expect("worker request should write");
 
         let mut output = Vec::new();
-        run_live_index_worker_with_io(&request_path, Cursor::new(Vec::<u8>::new()), &mut output)
+        let mut input = Vec::new();
+        write_message(&mut input, &worker_bootstrap(&request, None))
+            .expect("worker bootstrap should serialize");
+        run_live_index_worker_with_io(&request_path, Cursor::new(input), &mut output)
             .expect("worker entrypoint should emit a redacted terminal failure");
         let message: WorkerMessage = read_message(&mut Cursor::new(output))
             .expect("terminal worker message should deserialize");

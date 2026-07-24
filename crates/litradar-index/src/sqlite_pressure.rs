@@ -25,7 +25,7 @@ use crate::live::{
 use crate::schema::{open_content_db, ContentDatabaseError};
 use crate::stats::IndexRunMetrics;
 use crate::worker_protocol::{
-    read_message, write_message, ParentMessage, WorkerFailure, WorkerFailureClass,
+    read_message, write_message, ParentMessage, WorkerBootstrap, WorkerFailure, WorkerFailureClass,
     WorkerJournalAssignment, WorkerMessage, WorkerOperation, WorkerRequest, PROTOCOL_VERSION,
 };
 
@@ -269,21 +269,32 @@ struct DatabaseInspection {
     failure: Option<FailureReport>,
 }
 
-struct FailingAcknowledgementWriter;
+struct FailingAcknowledgementWriter {
+    stream: TcpStream,
+    did_flush_bootstrap: bool,
+}
 
 impl Write for FailingAcknowledgementWriter {
-    fn write(&mut self, _buffer: &[u8]) -> io::Result<usize> {
-        Err(io::Error::new(
-            io::ErrorKind::BrokenPipe,
-            "synthetic acknowledgement failure",
-        ))
+    fn write(&mut self, buffer: &[u8]) -> io::Result<usize> {
+        if self.did_flush_bootstrap {
+            return Err(io::Error::new(
+                io::ErrorKind::BrokenPipe,
+                "synthetic acknowledgement failure",
+            ));
+        }
+        self.stream.write(buffer)
     }
 
     fn flush(&mut self) -> io::Result<()> {
-        Err(io::Error::new(
-            io::ErrorKind::BrokenPipe,
-            "synthetic acknowledgement failure",
-        ))
+        if self.did_flush_bootstrap {
+            return Err(io::Error::new(
+                io::ErrorKind::BrokenPipe,
+                "synthetic acknowledgement failure",
+            ));
+        }
+        self.stream.flush()?;
+        self.did_flush_bootstrap = true;
+        Ok(())
     }
 }
 
@@ -481,6 +492,7 @@ fn run_pressure(config: PressureConfig) -> PressureReport {
         &control,
         &context,
         requests,
+        None,
         IndexRunMetrics {
             journals_total: config.worker_count,
             ..IndexRunMetrics::default()
@@ -603,7 +615,6 @@ fn pressure_requests(config: PressureConfig, context: &ParentWriterContext) -> V
             scholarly_config: litradar_sources::LiveScholarlyConfig::from_value_pools(
                 10, "", "", "",
             ),
-            cnki_captcha_token: None,
             assignments: vec![WorkerJournalAssignment {
                 journal_ordinal: worker_id,
                 entry: pressure_catalog(worker_id),
@@ -669,7 +680,10 @@ fn launch_process_fixture(
         return Ok(LaunchedWorkerProcess::from_test_streams(
             child,
             reader,
-            FailingAcknowledgementWriter,
+            FailingAcknowledgementWriter {
+                stream,
+                did_flush_bootstrap: false,
+            },
         ));
     }
     Ok(LaunchedWorkerProcess::from_test_streams(
@@ -744,6 +758,14 @@ fn run_process_fixture() -> Result<(), &'static str> {
             .map_err(|_| "fixture reader clone failed")?,
     );
     let mut writer = BufWriter::new(stream);
+    let bootstrap: WorkerBootstrap =
+        read_message(&mut reader).map_err(|_| "bootstrap read failed")?;
+    if bootstrap.protocol_version != PROTOCOL_VERSION
+        || bootstrap.worker_id != request.worker_id
+        || bootstrap.cnki_captcha_token.is_some()
+    {
+        return Err("bootstrap validation failed");
+    }
     if !start_delay.is_zero() {
         thread::sleep(start_delay);
     }

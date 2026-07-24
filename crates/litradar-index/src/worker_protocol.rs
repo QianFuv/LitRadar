@@ -10,7 +10,7 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
 /// Current private worker protocol version.
-pub(crate) const PROTOCOL_VERSION: u32 = 3;
+pub(crate) const PROTOCOL_VERSION: u32 = 4;
 
 /// One journal and optional resume cursor assigned to a fetch worker.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
@@ -48,9 +48,6 @@ pub(crate) struct WorkerRequest {
     pub(crate) timeout_seconds: u64,
     /// Scholarly provider runtime configuration.
     pub(crate) scholarly_config: LiveScholarlyConfig,
-    /// Domestic CNKI captcha solver token (memory-only; never logged).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(crate) cnki_captcha_token: Option<String>,
     /// Ordered journal assignments owned by this worker.
     pub(crate) assignments: Vec<WorkerJournalAssignment>,
 }
@@ -73,6 +70,31 @@ impl fmt::Debug for WorkerRequest {
             )
             .field("timeout_seconds", &self.timeout_seconds)
             .field("assignment_count", &self.assignments.len())
+            .field("credentials", &"[REDACTED]")
+            .finish()
+    }
+}
+
+/// One-shot in-memory credentials sent before worker fetches begin.
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct WorkerBootstrap {
+    /// Private protocol version expected by both processes.
+    pub(crate) protocol_version: u32,
+    /// Worker receiving this bootstrap.
+    pub(crate) worker_id: usize,
+    /// Domestic CNKI captcha solver token, present only for domestic workers.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) cnki_captcha_token: Option<String>,
+}
+
+impl fmt::Debug for WorkerBootstrap {
+    /// Format bootstrap metadata without exposing credentials.
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("WorkerBootstrap")
+            .field("protocol_version", &self.protocol_version)
+            .field("worker_id", &self.worker_id)
             .field("credentials", &"[REDACTED]")
             .finish()
     }
@@ -367,7 +389,29 @@ pub(crate) fn read_message<Message: DeserializeOwned>(
 mod tests {
     use std::io::{BufReader, Cursor};
 
-    use super::{read_message, write_message, ParentMessage, PROTOCOL_VERSION};
+    use super::{read_message, write_message, ParentMessage, WorkerBootstrap, PROTOCOL_VERSION};
+
+    #[test]
+    fn worker_protocol_bootstrap_round_trips_and_redacts_credentials() {
+        let sentinel = "captcha-secret-sentinel";
+        let bootstrap = WorkerBootstrap {
+            protocol_version: PROTOCOL_VERSION,
+            worker_id: 2,
+            cnki_captcha_token: Some(sentinel.to_string()),
+        };
+        let mut bytes = Vec::new();
+
+        write_message(&mut bytes, &bootstrap).expect("bootstrap should serialize");
+        let decoded: WorkerBootstrap =
+            read_message(&mut Cursor::new(bytes)).expect("bootstrap should deserialize");
+        let debug = format!("{bootstrap:?}");
+
+        assert_eq!(decoded.protocol_version, PROTOCOL_VERSION);
+        assert_eq!(decoded.worker_id, 2);
+        assert_eq!(decoded.cnki_captcha_token.as_deref(), Some(sentinel));
+        assert!(!debug.contains(sentinel));
+        assert!(debug.contains("[REDACTED]"));
+    }
 
     #[test]
     fn worker_protocol_round_trips_one_acknowledgement() {
