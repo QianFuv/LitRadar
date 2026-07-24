@@ -20,8 +20,9 @@ use serde_json::Value;
 
 use crate::{
     CnkiClient, CnkiSourceError, CnkiTransport, DomesticCnkiCheckpoint, DomesticCnkiClient,
-    DomesticCnkiSourceError, DomesticCnkiTransport, DomesticJournalLocator, ScholarlyClient,
-    ScholarlyTransport, SourceAttempt, SourceError, SEMANTIC_SCHOLAR_BATCH_SIZE,
+    DomesticCnkiSourceError, DomesticCnkiTransport, DomesticIssueArticlePage,
+    DomesticJournalLocator, ScholarlyClient, ScholarlyTransport, SourceAttempt, SourceError,
+    SEMANTIC_SCHOLAR_BATCH_SIZE,
 };
 
 /// Stable runtime name for the built-in Scholarly indexing provider.
@@ -1618,19 +1619,26 @@ where
             ));
         }
     }
-    let resume = if let Some(raw) = checkpoint {
-        serde_json::from_str::<DomesticCnkiCheckpoint>(raw).map_err(|_| {
-            ProviderError::new(
+    let resume = checkpoint
+        .map(|raw| {
+            serde_json::from_str::<DomesticCnkiCheckpoint>(raw).map_err(|_| {
+                ProviderError::new(
+                    ProviderErrorKind::InvalidResponse,
+                    "domestic CNKI checkpoint is invalid",
+                )
+            })
+        })
+        .transpose()?;
+    if let Some(resume) = &resume {
+        if resume.version != crate::DOMESTIC_CNKI_CHECKPOINT_VERSION
+            || !is_stable_domestic_issue_id(&resume.year_issue_id)
+        {
+            return Err(ProviderError::new(
                 ProviderErrorKind::InvalidResponse,
-                "domestic CNKI checkpoint is invalid",
-            )
-        })?
-    } else {
-        DomesticCnkiCheckpoint {
-            issue_index: 0,
-            article_index: 0,
+                "domestic CNKI checkpoint version or issue id is invalid",
+            ));
         }
-    };
+    }
 
     let locator = domestic_journal_locator_from_catalog(catalog);
     let journal = client
@@ -1645,7 +1653,10 @@ where
     let issue_payloads = client
         .year_issues(&journal)
         .map_err(map_domestic_cnki_error)?;
-    if resume.issue_index >= issue_payloads.len() {
+    if issue_payloads.is_empty() {
+        if resume.is_some() {
+            return Err(missing_domestic_checkpoint_issue_error());
+        }
         return Ok(ProviderBatch {
             catalog_id: catalog.catalog_id.clone(),
             journal: journal_observation(catalog),
@@ -1655,67 +1666,156 @@ where
             next_checkpoint: None,
         });
     }
-
-    let issue_payload = &issue_payloads[resume.issue_index];
-    let Some(issue) = cnki_issue_draft(catalog, issue_payload) else {
-        let next = DomesticCnkiCheckpoint {
-            issue_index: resume.issue_index + 1,
-            article_index: 0,
-        };
-        return Ok(ProviderBatch {
-            catalog_id: catalog.catalog_id.clone(),
-            journal: journal_observation(catalog),
-            issues: Vec::new(),
-            articles: Vec::new(),
-            is_complete: next.issue_index >= issue_payloads.len(),
-            next_checkpoint: encode_domestic_checkpoint(&next, issue_payloads.len())?,
-        });
+    let (issue_index, page_index) = if let Some(resume) = &resume {
+        let issue_index = issue_payloads
+            .iter()
+            .position(|issue| {
+                domestic_year_issue_id(issue).as_deref() == Some(resume.year_issue_id.as_str())
+            })
+            .ok_or_else(missing_domestic_checkpoint_issue_error)?;
+        (issue_index, resume.page_index)
+    } else {
+        (0, 0)
     };
-
-    let summaries = client
-        .issue_articles(&journal, issue_payload)
-        .map_err(map_domestic_cnki_error)?;
-    let mut articles = Vec::new();
-    for summary in summaries.into_iter().skip(resume.article_index) {
-        let Some(article_url) = json_text(summary.get("article_url")) else {
-            continue;
-        };
-        let platform_id = json_text(summary.get("platform_id"));
-        let detail = client
-            .article_detail(&article_url, platform_id.as_deref())
-            .map_err(map_domestic_cnki_error)?;
-        if let Some(article) = cnki_article_draft(catalog, &issue, &summary, &detail) {
-            articles.push(article);
-        }
+    let issue_payload = &issue_payloads[issue_index];
+    let year_issue_id = domestic_year_issue_id(issue_payload).ok_or_else(|| {
+        ProviderError::new(
+            ProviderErrorKind::InvalidResponse,
+            "domestic CNKI issue payload omitted its stable year_issue_id",
+        )
+    })?;
+    if issue_payload.get("year").and_then(Value::as_i64).is_none() {
+        return Err(ProviderError::new(
+            ProviderErrorKind::InvalidResponse,
+            "domestic CNKI issue payload omitted its publication year",
+        ));
     }
+    let issue = cnki_issue_draft(catalog, issue_payload).ok_or_else(|| {
+        ProviderError::new(
+            ProviderErrorKind::InvalidResponse,
+            "domestic CNKI issue payload could not be converted",
+        )
+    })?;
 
-    let next = DomesticCnkiCheckpoint {
-        issue_index: resume.issue_index + 1,
-        article_index: 0,
+    let page = client
+        .issue_articles(&journal, issue_payload, page_index)
+        .map_err(map_domestic_cnki_error)?;
+    validate_domestic_issue_page(&page, page_index)?;
+    let has_next_page = page.has_next_page;
+    let mut articles = Vec::new();
+    for (article_index, summary) in page.articles.into_iter().enumerate() {
+        let article_url = json_text(summary.get("article_url")).ok_or_else(|| {
+            ProviderError::new(
+                ProviderErrorKind::InvalidResponse,
+                "domestic CNKI article summary omitted its URL",
+            )
+        })?;
+        let platform_id = json_text(summary.get("platform_id"));
+        let detail = match client.article_detail(&article_url, platform_id.as_deref()) {
+            Ok(detail) => detail,
+            Err(error) if is_permanent_domestic_article_error(&error) => {
+                tracing::warn!(
+                    event = "index.provider.article.skipped",
+                    component = "index",
+                    provider = CNKI_PROVIDER_NAME,
+                    reason = "permanent_missing",
+                    article_ordinal = article_index + 1,
+                    http_status = error.http_status().unwrap_or(0),
+                    has_http_status = error.http_status().is_some(),
+                );
+                continue;
+            }
+            Err(error) => return Err(map_domestic_cnki_error(error)),
+        };
+        let article = cnki_article_draft(catalog, &issue, &summary, &detail).ok_or_else(|| {
+            ProviderError::new(
+                ProviderErrorKind::InvalidResponse,
+                "domestic CNKI article payload could not be converted",
+            )
+        })?;
+        articles.push(article);
+    }
+    let next = if has_next_page {
+        Some(DomesticCnkiCheckpoint {
+            version: crate::DOMESTIC_CNKI_CHECKPOINT_VERSION,
+            year_issue_id,
+            page_index: page_index.checked_add(1).ok_or_else(|| {
+                ProviderError::new(
+                    ProviderErrorKind::InvalidResponse,
+                    "domestic CNKI page index overflowed",
+                )
+            })?,
+        })
+    } else if let Some(next_issue) = issue_payloads.get(issue_index + 1) {
+        Some(DomesticCnkiCheckpoint {
+            version: crate::DOMESTIC_CNKI_CHECKPOINT_VERSION,
+            year_issue_id: domestic_year_issue_id(next_issue).ok_or_else(|| {
+                ProviderError::new(
+                    ProviderErrorKind::InvalidResponse,
+                    "domestic CNKI next issue omitted its stable year_issue_id",
+                )
+            })?,
+            page_index: 0,
+        })
+    } else {
+        None
     };
     Ok(ProviderBatch {
         catalog_id: catalog.catalog_id.clone(),
         journal: journal_observation(catalog),
         issues: vec![issue],
         articles,
-        is_complete: next.issue_index >= issue_payloads.len(),
-        next_checkpoint: encode_domestic_checkpoint(&next, issue_payloads.len())?,
+        is_complete: next.is_none(),
+        next_checkpoint: next.as_ref().map(encode_domestic_checkpoint).transpose()?,
     })
 }
 
 fn encode_domestic_checkpoint(
     checkpoint: &DomesticCnkiCheckpoint,
-    issue_count: usize,
-) -> Result<Option<String>, ProviderError> {
-    if checkpoint.issue_index >= issue_count {
-        return Ok(None);
-    }
-    serde_json::to_string(checkpoint).map(Some).map_err(|_| {
+) -> Result<String, ProviderError> {
+    serde_json::to_string(checkpoint).map_err(|_| {
         ProviderError::new(
             ProviderErrorKind::Internal,
             "domestic CNKI checkpoint could not be encoded",
         )
     })
+}
+
+fn domestic_year_issue_id(issue: &Value) -> Option<String> {
+    json_text(issue.get("year_issue_id")).filter(|value| is_stable_domestic_issue_id(value))
+}
+
+fn is_stable_domestic_issue_id(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 64
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
+}
+
+fn missing_domestic_checkpoint_issue_error() -> ProviderError {
+    ProviderError::new(
+        ProviderErrorKind::InvalidResponse,
+        "domestic CNKI checkpoint issue is missing; reset the disposable control database",
+    )
+}
+
+fn is_permanent_domestic_article_error(error: &DomesticCnkiSourceError) -> bool {
+    matches!(error, DomesticCnkiSourceError::PermanentArticleMissing)
+        || matches!(error.http_status(), Some(404 | 410))
+}
+
+fn validate_domestic_issue_page(
+    page: &DomesticIssueArticlePage,
+    expected_page_index: usize,
+) -> Result<(), ProviderError> {
+    if page.page_index != expected_page_index || page.article_count != page.articles.len() {
+        return Err(ProviderError::new(
+            ProviderErrorKind::InvalidResponse,
+            "domestic CNKI issue article page metadata is inconsistent",
+        ));
+    }
+    Ok(())
 }
 
 fn resolve_domestic_cnki_article_redirect<T>(
@@ -1742,52 +1842,82 @@ where
         if !cnki_issue_matches_locator(&issue_payload, article) {
             continue;
         }
-        for summary in client
-            .issue_articles(&journal, &issue_payload)
-            .map_err(map_domestic_cnki_error)?
-        {
-            let Some(summary_title) = json_text(summary.get("title")) else {
-                continue;
-            };
-            if normalize_bibliographic_text(&summary_title)
-                != normalize_bibliographic_text(&article.title)
-            {
-                continue;
-            }
-            let Some(article_url) = json_text(summary.get("article_url")) else {
-                continue;
-            };
-            let platform_id = json_text(summary.get("platform_id"));
-            let detail = client
-                .article_detail(&article_url, platform_id.as_deref())
+        let mut page_index = 0;
+        loop {
+            let page = client
+                .issue_articles(&journal, &issue_payload, page_index)
                 .map_err(map_domestic_cnki_error)?;
-            if !cnki_detail_matches_locator(&detail, article) {
-                continue;
-            }
-            let location = json_text(detail.get("permalink"))
-                .or_else(|| json_text(detail.get("article_url")))
-                .ok_or_else(|| {
+            validate_domestic_issue_page(&page, page_index)?;
+            let has_next_page = page.has_next_page;
+            for (article_index, summary) in page.articles.into_iter().enumerate() {
+                let Some(summary_title) = json_text(summary.get("title")) else {
+                    continue;
+                };
+                if normalize_bibliographic_text(&summary_title)
+                    != normalize_bibliographic_text(&article.title)
+                {
+                    continue;
+                }
+                let article_url = json_text(summary.get("article_url")).ok_or_else(|| {
                     ProviderError::new(
                         ProviderErrorKind::InvalidResponse,
-                        "domestic CNKI detail response omitted its request-time destination",
+                        "domestic CNKI matching article summary omitted its URL",
                     )
                 })?;
-            if !(location.starts_with("https://navi.cnki.net/")
-                || location.starts_with("https://kns.cnki.net/")
-                || location.starts_with("https://www.cnki.net/"))
-            {
-                return Err(ProviderError::new(
-                    ProviderErrorKind::InvalidResponse,
-                    "domestic CNKI abstract destination is outside the allowlist",
-                ));
+                let platform_id = json_text(summary.get("platform_id"));
+                let detail = match client.article_detail(&article_url, platform_id.as_deref()) {
+                    Ok(detail) => detail,
+                    Err(error) if is_permanent_domestic_article_error(&error) => {
+                        tracing::warn!(
+                            event = "index.provider.article.skipped",
+                            component = "index",
+                            provider = CNKI_PROVIDER_NAME,
+                            reason = "permanent_missing",
+                            article_ordinal = article_index + 1,
+                            http_status = error.http_status().unwrap_or(0),
+                            has_http_status = error.http_status().is_some(),
+                        );
+                        continue;
+                    }
+                    Err(error) => return Err(map_domestic_cnki_error(error)),
+                };
+                if !cnki_detail_matches_locator(&detail, article) {
+                    continue;
+                }
+                let location = json_text(detail.get("permalink"))
+                    .or_else(|| json_text(detail.get("article_url")))
+                    .ok_or_else(|| {
+                        ProviderError::new(
+                            ProviderErrorKind::InvalidResponse,
+                            "domestic CNKI detail response omitted its request-time destination",
+                        )
+                    })?;
+                if !(location.starts_with("https://navi.cnki.net/")
+                    || location.starts_with("https://kns.cnki.net/")
+                    || location.starts_with("https://www.cnki.net/"))
+                {
+                    return Err(ProviderError::new(
+                        ProviderErrorKind::InvalidResponse,
+                        "domestic CNKI abstract destination is outside the allowlist",
+                    ));
+                }
+                if location.to_ascii_lowercase().contains("oversea.cnki.net") {
+                    return Err(ProviderError::new(
+                        ProviderErrorKind::InvalidResponse,
+                        "domestic CNKI abstract destination used overseas host",
+                    ));
+                }
+                return Ok(ArticleRedirect { location });
             }
-            if location.to_ascii_lowercase().contains("oversea.cnki.net") {
-                return Err(ProviderError::new(
-                    ProviderErrorKind::InvalidResponse,
-                    "domestic CNKI abstract destination used overseas host",
-                ));
+            if !has_next_page {
+                break;
             }
-            return Ok(ArticleRedirect { location });
+            page_index = page_index.checked_add(1).ok_or_else(|| {
+                ProviderError::new(
+                    ProviderErrorKind::InvalidResponse,
+                    "domestic CNKI abstract page index overflowed",
+                )
+            })?;
         }
     }
     Err(ProviderError::new(
@@ -1804,6 +1934,7 @@ fn map_domestic_cnki_error(error: DomesticCnkiSourceError) -> ProviderError {
         DomesticCnkiSourceError::Parse(_) | DomesticCnkiSourceError::MissingFixture(_) => {
             ProviderErrorKind::InvalidResponse
         }
+        DomesticCnkiSourceError::PermanentArticleMissing => ProviderErrorKind::NotFound,
     };
     ProviderError::new(kind, "domestic CNKI provider request failed")
 }
@@ -2946,10 +3077,10 @@ mod tests {
                 </div>
             "#
             .to_string(),
-            issue_articles_html: BTreeMap::from([
+            issue_article_pages: BTreeMap::from([
                 (
                     "202512".to_string(),
-                    r#"
+                    vec![r#"
                 <dt class="tit">Articles</dt>
                 <dd class="row clearfix">
                   <span class="name">
@@ -2962,12 +3093,13 @@ mod tests {
                   <span class="author" title="侯俊军;丁琪琪;">侯俊军;丁琪琪;</span>
                   <span class="company" title="3-31">3-31</span>
                 </dd>
+                <input id="articleCount" value="1">
             "#
-                    .to_string(),
+                    .to_string()],
                 ),
                 (
                     "202511".to_string(),
-                    r#"
+                    vec![r#"
                 <dt class="tit">Articles</dt>
                 <dd class="row clearfix">
                   <span class="name">
@@ -2980,8 +3112,9 @@ mod tests {
                   <span class="author" title="作者;">作者;</span>
                   <span class="company" title="1-2">1-2</span>
                 </dd>
+                <input id="articleCount" value="1">
             "#
-                    .to_string(),
+                    .to_string()],
                 ),
             ]),
             article_detail_html: BTreeMap::from([
@@ -3105,5 +3238,290 @@ mod tests {
             )
             .expect_err("captcha checkpoint");
         assert_eq!(error.kind(), ProviderErrorKind::InvalidResponse);
+    }
+
+    #[test]
+    fn domestic_cnki_traverses_all_pages_with_stable_checkpoint() {
+        let first_issue_articles = (0..12)
+            .map(|index| {
+                (
+                    format!("SJJJ202512{index:03}"),
+                    format!("Paged article {index}"),
+                )
+            })
+            .collect::<Vec<_>>();
+        let first_issue_pages = vec![
+            first_issue_articles[..10].to_vec(),
+            first_issue_articles[10..].to_vec(),
+        ];
+        let second_issue_pages = vec![vec![(
+            "SJJJ202511001".to_string(),
+            "Following issue article".to_string(),
+        )]];
+        let fixture = domestic_paged_fixture(vec![
+            ("202512".to_string(), first_issue_pages.clone()),
+            ("202511".to_string(), second_issue_pages.clone()),
+        ]);
+        let registration = cnki_index_registration(FixtureDomesticCnkiTransport::new(fixture))
+            .expect("domestic registration");
+        let index = registration.index_content().expect("index provider");
+        let catalog = domestic_test_catalog();
+
+        let first = index.fetch(&catalog, None).expect("first page");
+        assert_eq!(first.articles.len(), 10);
+        assert!(!first.is_complete);
+        let first_checkpoint = first.next_checkpoint.expect("page checkpoint");
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&first_checkpoint).expect("checkpoint JSON"),
+            json!({"version": 1, "year_issue_id": "202512", "page_index": 1})
+        );
+        assert!(!first_checkpoint.contains("issue_index"));
+        assert!(!first_checkpoint.contains("article_index"));
+
+        let reordered_fixture = domestic_paged_fixture(vec![
+            ("202513".to_string(), vec![Vec::new()]),
+            ("202512".to_string(), first_issue_pages),
+            ("202511".to_string(), second_issue_pages),
+        ]);
+        let reordered =
+            cnki_index_registration(FixtureDomesticCnkiTransport::new(reordered_fixture))
+                .expect("reordered registration");
+        let reordered_index = reordered.index_content().expect("reordered index");
+        let resumed = reordered_index
+            .fetch(&catalog, Some(&first_checkpoint))
+            .expect("stable resume");
+        assert_eq!(resumed.articles.len(), 2);
+        assert_eq!(resumed.articles[0].title, "Paged article 10");
+        let next_issue_checkpoint = resumed.next_checkpoint.expect("next issue checkpoint");
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&next_issue_checkpoint)
+                .expect("next checkpoint JSON"),
+            json!({"version": 1, "year_issue_id": "202511", "page_index": 0})
+        );
+        let final_batch = reordered_index
+            .fetch(&catalog, Some(&next_issue_checkpoint))
+            .expect("following issue");
+        assert!(final_batch.is_complete);
+        assert_eq!(final_batch.articles.len(), 1);
+        assert_eq!(final_batch.articles[0].title, "Following issue article");
+
+        let missing = cnki_index_registration(FixtureDomesticCnkiTransport::new(
+            domestic_paged_fixture(vec![(
+                "202511".to_string(),
+                vec![vec![(
+                    "SJJJ202511001".to_string(),
+                    "Following issue article".to_string(),
+                )]],
+            )]),
+        ))
+        .expect("missing issue registration");
+        let error = missing
+            .index_content()
+            .expect("missing issue index")
+            .fetch(&catalog, Some(&first_checkpoint))
+            .expect_err("missing checkpoint issue should fail");
+        assert_eq!(error.kind(), ProviderErrorKind::InvalidResponse);
+        assert!(error.to_string().contains("reset"));
+    }
+
+    #[test]
+    fn domestic_cnki_exact_multiple_requires_empty_terminal_page() {
+        let entries = (0..10)
+            .map(|index| {
+                (
+                    format!("EXACT{index:02}"),
+                    format!("Exact page article {index}"),
+                )
+            })
+            .collect::<Vec<_>>();
+        let registration = cnki_index_registration(FixtureDomesticCnkiTransport::new(
+            domestic_paged_fixture(vec![("202512".to_string(), vec![entries, Vec::new()])]),
+        ))
+        .expect("exact-multiple registration");
+        let index = registration.index_content().expect("exact-multiple index");
+        let catalog = domestic_test_catalog();
+
+        let articles = index.fetch(&catalog, None).expect("full page");
+        assert_eq!(articles.articles.len(), 10);
+        assert!(!articles.is_complete);
+        let checkpoint = articles.next_checkpoint.expect("terminal checkpoint");
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&checkpoint).expect("checkpoint JSON"),
+            json!({"version": 1, "year_issue_id": "202512", "page_index": 1})
+        );
+
+        let terminal = index
+            .fetch(&catalog, Some(&checkpoint))
+            .expect("validated empty terminal page");
+        assert!(terminal.articles.is_empty());
+        assert!(terminal.is_complete);
+        assert!(terminal.next_checkpoint.is_none());
+    }
+
+    #[test]
+    fn domestic_cnki_skips_permanent_details_and_replays_temporary_page() {
+        let entries = vec![
+            ("DELETED".to_string(), "Deleted article".to_string()),
+            ("NOT_FOUND".to_string(), "Not found article".to_string()),
+            ("GONE".to_string(), "Gone article".to_string()),
+            ("LATER".to_string(), "Later article".to_string()),
+        ];
+        let mut permanent_fixture =
+            domestic_paged_fixture(vec![("202512".to_string(), vec![entries.clone()])]);
+        permanent_fixture.article_detail_html.insert(
+            "DELETED".to_string(),
+            "<html><body>该文献不存在</body></html>".to_string(),
+        );
+        permanent_fixture
+            .article_detail_status_codes
+            .insert("NOT_FOUND".to_string(), 404);
+        permanent_fixture
+            .article_detail_status_codes
+            .insert("GONE".to_string(), 410);
+        let permanent =
+            cnki_index_registration(FixtureDomesticCnkiTransport::new(permanent_fixture))
+                .expect("permanent fixture registration");
+        let batch = permanent
+            .index_content()
+            .expect("permanent index")
+            .fetch(&domestic_test_catalog(), None)
+            .expect("permanent misses should skip");
+        assert!(batch.is_complete);
+        assert_eq!(batch.articles.len(), 1);
+        assert_eq!(batch.articles[0].title, "Later article");
+
+        let temporary_entries = vec![
+            ("TEMP".to_string(), "Temporary article".to_string()),
+            ("AFTER".to_string(), "After temporary article".to_string()),
+        ];
+        let mut temporary_fixture = domestic_paged_fixture(vec![(
+            "202512".to_string(),
+            vec![temporary_entries.clone()],
+        )]);
+        temporary_fixture
+            .article_detail_status_codes
+            .insert("TEMP".to_string(), 500);
+        let temporary =
+            cnki_index_registration(FixtureDomesticCnkiTransport::new(temporary_fixture))
+                .expect("temporary fixture registration");
+        let error = temporary
+            .index_content()
+            .expect("temporary index")
+            .fetch(&domestic_test_catalog(), None)
+            .expect_err("temporary failure should abort the page");
+        assert_eq!(error.kind(), ProviderErrorKind::TemporarilyUnavailable);
+
+        let replay = cnki_index_registration(FixtureDomesticCnkiTransport::new(
+            domestic_paged_fixture(vec![("202512".to_string(), vec![temporary_entries])]),
+        ))
+        .expect("replay fixture registration");
+        let replayed = replay
+            .index_content()
+            .expect("replay index")
+            .fetch(&domestic_test_catalog(), None)
+            .expect("page should replay from its original checkpoint");
+        assert_eq!(replayed.articles.len(), 2);
+    }
+
+    #[test]
+    fn domestic_cnki_abstract_traverses_later_pages() {
+        let first_page = (0..10)
+            .map(|index| (format!("FIRST{index:02}"), format!("Unrelated {index}")))
+            .collect::<Vec<_>>();
+        let second_page = vec![
+            ("SECOND00".to_string(), "Other later article".to_string()),
+            ("TARGET".to_string(), "Target later article".to_string()),
+        ];
+        let access = cnki_access_registration(FixtureDomesticCnkiTransport::new(
+            domestic_paged_fixture(vec![("202512".to_string(), vec![first_page, second_page])]),
+        ))
+        .expect("domestic access registration");
+        let mut locator = article_locator("Target later article", "世界经济");
+        locator.journal_issns = vec!["1002-9621".to_string()];
+        locator.publication_year = Some(2025);
+        locator.issue_number = Some("12".to_string());
+
+        let redirect = access
+            .article_abstract()
+            .expect("abstract provider")
+            .resolve_abstract(&locator, ArticleAccessContext::default())
+            .expect("later-page abstract should resolve");
+
+        assert!(redirect.location.contains("TARGET"));
+    }
+
+    fn domestic_test_catalog() -> JournalCatalogEntry {
+        JournalCatalogEntry {
+            catalog_id: "sjjj".to_string(),
+            catalog_aliases: Vec::new(),
+            title: "世界经济".to_string(),
+            issn: Some("1002-9621".to_string()),
+            eissn: None,
+            all_issns: vec!["1002-9621".to_string()],
+            title_aliases: Vec::new(),
+            area: None,
+            rankings: JournalRankings::default(),
+        }
+    }
+
+    fn domestic_paged_fixture(
+        issues: Vec<(String, Vec<Vec<(String, String)>>)>,
+    ) -> DomesticCnkiFixtureData {
+        let mut year_rows = String::new();
+        let mut issue_article_pages = BTreeMap::new();
+        let mut article_detail_html = BTreeMap::new();
+        for (year_issue_id, pages) in issues {
+            let issue_number = year_issue_id.get(4..).unwrap_or("0");
+            year_rows.push_str(&format!(
+                r#"<a id="yq{year_issue_id}" value="opaque-{year_issue_id}">No.{issue_number}</a>"#
+            ));
+            let page_html = pages
+                .into_iter()
+                .map(|entries| {
+                    for (platform_id, title) in &entries {
+                        article_detail_html.insert(
+                            platform_id.clone(),
+                            domestic_test_article_detail(platform_id, title),
+                        );
+                    }
+                    domestic_test_papers_page(&entries)
+                })
+                .collect::<Vec<_>>();
+            issue_article_pages.insert(year_issue_id, page_html);
+        }
+        DomesticCnkiFixtureData {
+            journal_detail_html: r#"
+                <html><head><title>世界经济 - 中国知网</title></head><body>
+                  <input id="pykm" value="SJJJ"><input id="pCode" value="CJFD">
+                  <input id="shareChName" value="世界经济"><span>ISSN：1002-9621</span>
+                </body></html>
+            "#
+            .to_string(),
+            year_issues_html: format!("<div id=\"YearIssueTree\">{year_rows}</div>"),
+            issue_article_pages,
+            article_detail_html,
+            ..DomesticCnkiFixtureData::default()
+        }
+    }
+
+    fn domestic_test_papers_page(entries: &[(String, String)]) -> String {
+        let rows = entries
+            .iter()
+            .map(|(platform_id, title)| {
+                format!(
+                    r#"<dd class="row clearfix"><a href="https://kns.cnki.net/kcms2/article/abstract?v={platform_id}" title="{title}">{title}</a><b name="encrypt" id="{platform_id}"></b></dd>"#
+                )
+            })
+            .collect::<String>();
+        format!(
+            "<dt class=\"tit\">Articles</dt>{rows}<input id=\"articleCount\" value=\"{}\">",
+            entries.len()
+        )
+    }
+
+    fn domestic_test_article_detail(platform_id: &str, title: &str) -> String {
+        format!(
+            r#"<html><head><title>{title} - 中国知网</title></head><body><input id="param-filename" value="{platform_id}"><h1 class="title">{title}</h1><input id="abstract_text" value="Abstract"></body></html>"#
+        )
     }
 }

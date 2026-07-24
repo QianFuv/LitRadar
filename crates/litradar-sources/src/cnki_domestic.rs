@@ -36,8 +36,11 @@ const DEFAULT_PCODE: &str = "CJFD,CCJD";
 /// Maximum fresh captcha puzzle solves allowed per domestic session budget.
 pub const DOMESTIC_CAPTCHA_SOLVE_BUDGET: usize = 5;
 const DOMESTIC_POINT_JSON_Y: i32 = 5;
+const DOMESTIC_PAPERS_PAGE_SIZE: usize = 10;
 const DOMESTIC_REDIRECT_LIMIT: usize = 10;
 const DOMESTIC_REQUEST_ATTEMPT_LIMIT: usize = 3;
+/// Current stable domestic CNKI traversal checkpoint version.
+pub const DOMESTIC_CNKI_CHECKPOINT_VERSION: u32 = 1;
 
 #[derive(Debug, Default)]
 struct DomesticRequestBudget {
@@ -63,6 +66,19 @@ pub struct DomesticJournalLocator {
     issns: Vec<String>,
     normalized_titles: BTreeSet<String>,
     normalized_issns: BTreeSet<String>,
+}
+
+/// One validated page of domestic issue article summaries.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DomesticIssueArticlePage {
+    /// Parsed article summaries in upstream order.
+    pub articles: Vec<Value>,
+    /// Zero-based page index used for this response.
+    pub page_index: usize,
+    /// Validated upstream article count for this page.
+    pub article_count: usize,
+    /// Whether the fixed-size page requires a following page request.
+    pub has_next_page: bool,
 }
 
 impl DomesticJournalLocator {
@@ -164,12 +180,15 @@ pub struct DomesticCnkiFixtureData {
     /// Year issue tree HTML.
     #[serde(default)]
     pub year_issues_html: String,
-    /// Issue article HTML keyed by year-issue id such as `202512`.
+    /// Issue article HTML pages keyed by year-issue id such as `202512`.
     #[serde(default)]
-    pub issue_articles_html: BTreeMap<String, String>,
+    pub issue_article_pages: BTreeMap<String, Vec<String>>,
     /// Article detail HTML keyed by platform id.
     #[serde(default)]
     pub article_detail_html: BTreeMap<String, String>,
+    /// Optional article detail HTTP status keyed by platform id.
+    #[serde(default)]
+    pub article_detail_status_codes: BTreeMap<String, u16>,
     /// Optional endpoint forced to return a parser error.
     #[serde(default)]
     pub fail_endpoint: Option<String>,
@@ -184,6 +203,8 @@ pub enum DomesticCnkiSourceError {
     Parse(String),
     /// Fixture data is missing a required response.
     MissingFixture(String),
+    /// One article detail is explicitly and permanently unavailable.
+    PermanentArticleMissing,
     /// Shared source error.
     Source(SourceError),
 }
@@ -194,6 +215,9 @@ impl fmt::Display for DomesticCnkiSourceError {
         match self {
             Self::Request(message) | Self::Parse(message) | Self::MissingFixture(message) => {
                 formatter.write_str(message)
+            }
+            Self::PermanentArticleMissing => {
+                formatter.write_str("domestic CNKI article is permanently unavailable")
             }
             Self::Source(error) => write!(formatter, "{error}"),
         }
@@ -419,6 +443,7 @@ pub fn parse_domestic_year_issues(text: &str) -> Result<Vec<Value>, DomesticCnki
 ///
 /// * `text` - Issue article HTML.
 /// * `issue` - Issue payload.
+/// * `page_index` - Zero-based papers page index.
 ///
 /// # Returns
 ///
@@ -426,8 +451,26 @@ pub fn parse_domestic_year_issues(text: &str) -> Result<Vec<Value>, DomesticCnki
 pub fn parse_domestic_issue_articles(
     text: &str,
     issue: &Value,
-) -> Result<Vec<Value>, DomesticCnkiSourceError> {
+    page_index: usize,
+) -> Result<DomesticIssueArticlePage, DomesticCnkiSourceError> {
     validate_domestic_response("issue_articles", text)?;
+    let article_count = input_value(text, "articleCount")
+        .ok_or_else(|| {
+            DomesticCnkiSourceError::Parse(
+                "domestic issue article page missing articleCount".to_string(),
+            )
+        })?
+        .parse::<usize>()
+        .map_err(|_| {
+            DomesticCnkiSourceError::Parse(
+                "domestic issue article page has invalid articleCount".to_string(),
+            )
+        })?;
+    if article_count > DOMESTIC_PAPERS_PAGE_SIZE {
+        return Err(DomesticCnkiSourceError::Parse(
+            "domestic issue article page exceeds the fixed page size".to_string(),
+        ));
+    }
     let mut articles = Vec::new();
     let mut current_section = String::new();
     let mut cursor = 0;
@@ -455,7 +498,17 @@ pub fn parse_domestic_issue_articles(
             break;
         }
     }
-    Ok(articles)
+    if articles.len() != article_count {
+        return Err(DomesticCnkiSourceError::Parse(
+            "domestic issue article count does not match parsed rows".to_string(),
+        ));
+    }
+    Ok(DomesticIssueArticlePage {
+        articles,
+        page_index,
+        article_count,
+        has_next_page: article_count == DOMESTIC_PAPERS_PAGE_SIZE,
+    })
 }
 
 /// Parse one domestic article detail HTML page.
@@ -553,6 +606,9 @@ impl DomesticCnkiSourceError {
 
 fn validate_domestic_response(endpoint: &str, text: &str) -> Result<(), DomesticCnkiSourceError> {
     checked_text(text, endpoint)?;
+    if endpoint == "article_detail" && is_explicitly_missing_article(text) {
+        return Err(DomesticCnkiSourceError::PermanentArticleMissing);
+    }
     let has_expected_structure = match endpoint {
         "journal_search" => text.contains("/knavi/detail?") || has_explicit_empty_marker(text),
         "journal_detail" => input_value(text, "pykm").is_some() || has_explicit_empty_marker(text),
@@ -570,6 +626,19 @@ fn validate_domestic_response(endpoint: &str, text: &str) -> Result<(), Domestic
         )));
     }
     Ok(())
+}
+
+fn is_explicitly_missing_article(text: &str) -> bool {
+    let lowered = text.to_lowercase();
+    [
+        "记录已删除",
+        "文献不存在",
+        "该文献不存在",
+        "record has been deleted",
+        "record does not exist",
+    ]
+    .iter()
+    .any(|marker| lowered.contains(marker))
 }
 
 fn has_explicit_empty_marker(text: &str) -> bool {
@@ -1700,15 +1769,17 @@ pub trait DomesticCnkiTransport {
     ///
     /// * `journal` - Domestic journal details.
     /// * `issue` - Domestic issue payload.
+    /// * `page_index` - Zero-based papers page index.
     ///
     /// # Returns
     ///
-    /// Article summary payloads.
+    /// Validated article summary page.
     fn issue_articles(
         &mut self,
         journal: &Value,
         issue: &Value,
-    ) -> Result<Vec<Value>, DomesticCnkiSourceError>;
+        page_index: usize,
+    ) -> Result<DomesticIssueArticlePage, DomesticCnkiSourceError>;
 
     /// Fetch one article detail payload.
     ///
@@ -1841,7 +1912,8 @@ impl DomesticCnkiTransport for FixtureDomesticCnkiTransport {
         &mut self,
         journal: &Value,
         issue: &Value,
-    ) -> Result<Vec<Value>, DomesticCnkiSourceError> {
+        page_index: usize,
+    ) -> Result<DomesticIssueArticlePage, DomesticCnkiSourceError> {
         let _ = journal;
         let year_issue_id = json_text(issue.get("year_issue_id"))
             .or_else(|| json_text(issue.get("year_issue")))
@@ -1867,17 +1939,19 @@ impl DomesticCnkiTransport for FixtureDomesticCnkiTransport {
         }
         let text = self
             .data
-            .issue_articles_html
+            .issue_article_pages
             .get(&year_issue_id)
+            .and_then(|pages| pages.get(page_index))
             .cloned()
             .ok_or_else(|| {
                 DomesticCnkiSourceError::MissingFixture(format!(
-                    "domestic CNKI fixture missing issue_articles for {year_issue_id}"
+                    "domestic CNKI fixture missing issue_articles page {page_index} for {year_issue_id}"
                 ))
             })?;
-        let articles = parse_domestic_issue_articles(&text, issue)?;
-        self.record_attempt("issue_articles", Some(&year_issue_id), true, None);
-        Ok(articles)
+        let page = parse_domestic_issue_articles(&text, issue, page_index)?;
+        let attempt_key = format!("{year_issue_id}:{page_index}");
+        self.record_attempt("issue_articles", Some(&attempt_key), true, None);
+        Ok(page)
     }
 
     /// Fetch one fixture article detail payload.
@@ -1887,6 +1961,19 @@ impl DomesticCnkiTransport for FixtureDomesticCnkiTransport {
         platform_id: Option<&str>,
     ) -> Result<Value, DomesticCnkiSourceError> {
         let key = platform_id.unwrap_or(article_url).to_string();
+        if let Some(status_code) = self.data.article_detail_status_codes.get(&key).copied() {
+            self.attempts.push(SourceAttempt {
+                service: "cnki".to_string(),
+                endpoint: "article_detail".to_string(),
+                method: "GET".to_string(),
+                url: domestic_fixture_url("article_detail", Some(&key)),
+                status_code: Some(status_code),
+                did_succeed: false,
+                did_retry: false,
+                error: Some("HTTP status".to_string()),
+            });
+            return Err(domestic_http_status_error(status_code));
+        }
         if self
             .data
             .fail_endpoint
@@ -1981,16 +2068,18 @@ where
     ///
     /// * `journal` - Domestic journal details.
     /// * `issue` - Domestic issue payload.
+    /// * `page_index` - Zero-based papers page index.
     ///
     /// # Returns
     ///
-    /// Article summary payloads.
+    /// Validated article summary page.
     pub fn issue_articles(
         &mut self,
         journal: &Value,
         issue: &Value,
-    ) -> Result<Vec<Value>, DomesticCnkiSourceError> {
-        self.transport.issue_articles(journal, issue)
+        page_index: usize,
+    ) -> Result<DomesticIssueArticlePage, DomesticCnkiSourceError> {
+        self.transport.issue_articles(journal, issue, page_index)
     }
 
     /// Fetch one article detail payload.
@@ -2032,12 +2121,14 @@ where
 
 /// Opaque checkpoint for resumable domestic index walks.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct DomesticCnkiCheckpoint {
-    /// Zero-based issue index in yearList order.
-    pub issue_index: usize,
-    /// Zero-based article summary index within the current issue page set.
-    #[serde(default)]
-    pub article_index: usize,
+    /// Checkpoint schema version.
+    pub version: u32,
+    /// Stable year-issue identifier for the next page to process.
+    pub year_issue_id: String,
+    /// Zero-based papers page index within the stable issue.
+    pub page_index: usize,
 }
 
 fn domestic_fixture_url(endpoint: &str, key: Option<&str>) -> String {
@@ -2535,7 +2626,8 @@ impl DomesticCnkiTransport for LiveDomesticCnkiTransport {
         &mut self,
         journal: &Value,
         issue: &Value,
-    ) -> Result<Vec<Value>, DomesticCnkiSourceError> {
+        page_index: usize,
+    ) -> Result<DomesticIssueArticlePage, DomesticCnkiSourceError> {
         let pykm = json_text(journal.get("pykm")).ok_or_else(|| {
             DomesticCnkiSourceError::Parse("domestic CNKI journal missing pykm".to_string())
         })?;
@@ -2546,7 +2638,7 @@ impl DomesticCnkiTransport for LiveDomesticCnkiTransport {
             })?;
         let data = vec![
             ("yearIssue".to_string(), year_issue),
-            ("pageIdx".to_string(), "0".to_string()),
+            ("pageIdx".to_string(), page_index.to_string()),
             (
                 "pcode".to_string(),
                 json_text(journal.get("pcode")).unwrap_or_else(|| DEFAULT_PCODE.to_string()),
@@ -2561,7 +2653,7 @@ impl DomesticCnkiTransport for LiveDomesticCnkiTransport {
             json_text(journal.get("detail_url")).as_deref(),
             "issue_articles",
         )?;
-        parse_domestic_issue_articles(&text, issue)
+        parse_domestic_issue_articles(&text, issue, page_index)
     }
 
     /// Fetch one article detail payload.
@@ -2639,6 +2731,7 @@ mod tests {
           <span class="author" title="侯俊军;丁琪琪;">侯俊军;丁琪琪;</span>
           <span class="company" title="3-31">3-31</span>
         </dd>
+        <input id="articleCount" type="hidden" value="1">
     "#;
 
     const ABSTRACT_HTML: &str = r#"
@@ -2697,20 +2790,23 @@ mod tests {
         assert_eq!(issues[0]["year_issue_id"], "202512");
         assert_eq!(issues[0]["year_issue"], "opaque-issue-token");
 
-        let articles = parse_domestic_issue_articles(PAPERS_HTML, &issues[0]).expect("papers");
-        assert_eq!(articles.len(), 1);
-        assert_eq!(articles[0]["platform_id"], "SJJJ202512002");
-        assert_eq!(articles[0]["authors"], "侯俊军;丁琪琪;");
-        assert_eq!(articles[0]["pages"], "3-31");
-        assert!(articles[0]["article_url"]
+        let page = parse_domestic_issue_articles(PAPERS_HTML, &issues[0], 0).expect("papers");
+        assert_eq!(page.page_index, 0);
+        assert_eq!(page.article_count, 1);
+        assert_eq!(page.articles.len(), 1);
+        assert!(!page.has_next_page);
+        assert_eq!(page.articles[0]["platform_id"], "SJJJ202512002");
+        assert_eq!(page.articles[0]["authors"], "侯俊军;丁琪琪;");
+        assert_eq!(page.articles[0]["pages"], "3-31");
+        assert!(page.articles[0]["article_url"]
             .as_str()
             .unwrap_or_default()
             .starts_with("https://kns.cnki.net/kcms2/article/abstract?"));
         assert!(!contains_overseas_host(
-            articles[0]["article_url"].as_str().unwrap_or_default()
+            page.articles[0]["article_url"].as_str().unwrap_or_default()
         ));
 
-        let article_url = articles[0]["article_url"].as_str().unwrap_or_default();
+        let article_url = page.articles[0]["article_url"].as_str().unwrap_or_default();
         let abstract_page =
             parse_domestic_article_detail(ABSTRACT_HTML, article_url).expect("abstract");
         assert_eq!(abstract_page["platform_id"], "SJJJ202512002");
@@ -2722,6 +2818,67 @@ mod tests {
         assert!(!contains_overseas_host(
             abstract_page["article_url"].as_str().unwrap_or_default()
         ));
+    }
+
+    #[test]
+    fn domestic_cnki_rejects_partial_papers_page() {
+        let issues = parse_domestic_year_issues(YEAR_HTML).expect("years");
+        let partial = PAPERS_HTML.replace("value=\"1\"", "value=\"2\"");
+
+        assert!(parse_domestic_issue_articles(&partial, &issues[0], 0).is_err());
+    }
+
+    #[test]
+    fn domestic_cnki_papers_pages_validate_counts_and_terminal_page() {
+        let issue = json!({
+            "year": 2025,
+            "number": "12",
+            "year_issue_id": "202512",
+            "year_issue": "opaque"
+        });
+        let first_html = papers_fixture_page("FIRST", 10);
+        let final_html = papers_fixture_page("FINAL", 2);
+        let empty_html = papers_fixture_page("EMPTY", 0);
+
+        let first = parse_domestic_issue_articles(&first_html, &issue, 0).expect("first page");
+        assert_eq!(first.articles.len(), 10);
+        assert_eq!(first.page_index, 0);
+        assert_eq!(first.article_count, 10);
+        assert!(first.has_next_page);
+        let final_page = parse_domestic_issue_articles(&final_html, &issue, 1).expect("final page");
+        assert_eq!(final_page.articles.len(), 2);
+        assert_eq!(final_page.page_index, 1);
+        assert_eq!(final_page.article_count, 2);
+        assert!(!final_page.has_next_page);
+        let empty = parse_domestic_issue_articles(&empty_html, &issue, 2).expect("empty terminal");
+        assert!(empty.articles.is_empty());
+        assert_eq!(empty.page_index, 2);
+        assert_eq!(empty.article_count, 0);
+        assert!(!empty.has_next_page);
+        assert!(
+            parse_domestic_issue_articles(&papers_fixture_page("TOO_MANY", 11), &issue, 0).is_err()
+        );
+
+        let mut transport = FixtureDomesticCnkiTransport::new(DomesticCnkiFixtureData {
+            issue_article_pages: BTreeMap::from([(
+                "202512".to_string(),
+                vec![first_html, empty_html],
+            )]),
+            ..DomesticCnkiFixtureData::default()
+        });
+        assert!(
+            transport
+                .issue_articles(&json!({}), &issue, 0)
+                .expect("fixture page zero")
+                .has_next_page
+        );
+        assert!(
+            !transport
+                .issue_articles(&json!({}), &issue, 1)
+                .expect("fixture empty terminal")
+                .has_next_page
+        );
+        assert!(transport.issue_articles(&json!({}), &issue, 2).is_err());
     }
 
     #[test]
@@ -2852,7 +3009,7 @@ mod tests {
         assert!(parse_domestic_journal_search_results(" ").is_err());
         assert!(parse_domestic_journal_detail("<html></html>").is_err());
         assert!(parse_domestic_year_issues("<html></html>").is_err());
-        assert!(parse_domestic_issue_articles("<html></html>", &json!({})).is_err());
+        assert!(parse_domestic_issue_articles("<html></html>", &json!({}), 0).is_err());
         assert!(parse_domestic_article_detail(
             "<html></html>",
             "https://kns.cnki.net/kcms2/article/abstract?v=1"
@@ -2899,9 +3056,11 @@ mod tests {
         );
         assert!(parse_domestic_issue_articles(
             "<input id=\"articleCount\" value=\"0\">",
-            &json!({})
+            &json!({}),
+            0
         )
         .expect("explicit empty papers page")
+        .articles
         .is_empty());
     }
 
@@ -3149,11 +3308,15 @@ mod tests {
             journal_search_html: SEARCH_HTML.to_string(),
             journal_detail_html: DETAIL_HTML.to_string(),
             year_issues_html: YEAR_HTML.to_string(),
-            issue_articles_html: BTreeMap::from([("202512".to_string(), PAPERS_HTML.to_string())]),
+            issue_article_pages: BTreeMap::from([(
+                "202512".to_string(),
+                vec![PAPERS_HTML.to_string()],
+            )]),
             article_detail_html: BTreeMap::from([(
                 "SJJJ202512002".to_string(),
                 ABSTRACT_HTML.to_string(),
             )]),
+            article_detail_status_codes: BTreeMap::new(),
             fail_endpoint: None,
         };
         let mut client = DomesticCnkiClient::new(FixtureDomesticCnkiTransport::new(data));
@@ -3169,12 +3332,12 @@ mod tests {
         let issues = client.year_issues(&journal).expect("issues");
         assert_eq!(issues[0]["year_issue_id"], "202512");
         let articles = client
-            .issue_articles(&journal, &issues[0])
+            .issue_articles(&journal, &issues[0], 0)
             .expect("articles");
-        assert_eq!(articles[0]["platform_id"], "SJJJ202512002");
+        assert_eq!(articles.articles[0]["platform_id"], "SJJJ202512002");
         let detail = client
             .article_detail(
-                articles[0]["article_url"].as_str().unwrap(),
+                articles.articles[0]["article_url"].as_str().unwrap(),
                 Some("SJJJ202512002"),
             )
             .expect("detail");
@@ -3186,5 +3349,19 @@ mod tests {
             .as_str()
             .unwrap_or_default()
             .contains("oversea.cnki.net"));
+    }
+
+    fn papers_fixture_page(prefix: &str, article_count: usize) -> String {
+        let rows = (0..article_count)
+            .map(|index| {
+                let platform_id = format!("{prefix}{index:02}");
+                format!(
+                    r#"<dd class="row clearfix"><a href="https://kns.cnki.net/kcms2/article/abstract?v={platform_id}" title="Article {index}">Article {index}</a><b name="encrypt" id="{platform_id}"></b></dd>"#
+                )
+            })
+            .collect::<String>();
+        format!(
+            "<dt class=\"tit\">Articles</dt>{rows}<input id=\"articleCount\" value=\"{article_count}\">"
+        )
     }
 }

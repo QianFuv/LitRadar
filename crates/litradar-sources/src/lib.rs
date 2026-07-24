@@ -14,9 +14,10 @@ pub use cnki_domestic::{
     parse_domestic_journal_detail, parse_domestic_journal_search_results,
     parse_domestic_year_issues, DomesticCaptchaPuzzle, DomesticCaptchaSession,
     DomesticCnkiCheckpoint, DomesticCnkiClient, DomesticCnkiFixtureData, DomesticCnkiSourceError,
-    DomesticCnkiTransport, DomesticJournalLocator, FixtureDomesticCnkiTransport,
-    LiveDomesticCnkiConfig, LiveDomesticCnkiTransport, DOMESTIC_CAPTCHA_SOLVE_BUDGET,
-    DOMESTIC_KNS_BASE_URL, DOMESTIC_NAVI_BASE_URL,
+    DomesticCnkiTransport, DomesticIssueArticlePage, DomesticJournalLocator,
+    FixtureDomesticCnkiTransport, LiveDomesticCnkiConfig, LiveDomesticCnkiTransport,
+    DOMESTIC_CAPTCHA_SOLVE_BUDGET, DOMESTIC_CNKI_CHECKPOINT_VERSION, DOMESTIC_KNS_BASE_URL,
+    DOMESTIC_NAVI_BASE_URL,
 };
 pub use cnki_oversea::{
     CnkiClient, CnkiFixtureData, CnkiSourceError, CnkiTransport, FixtureCnkiTransport,
