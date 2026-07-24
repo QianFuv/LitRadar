@@ -198,6 +198,15 @@ impl DomesticRequestBudget {
     }
 }
 
+fn invalid_response_retry_delay(
+    error: &DomesticCnkiSourceError,
+    budget: &DomesticRequestBudget,
+) -> Option<Duration> {
+    matches!(error, DomesticCnkiSourceError::Parse(_))
+        .then(|| budget.ordinary_retry_delay())
+        .flatten()
+}
+
 /// Fixture payload used by domestic NZKPT source replay.
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct DomesticCnkiFixtureData {
@@ -2578,6 +2587,10 @@ impl LiveDomesticCnkiTransport {
                     did_retry,
                     error: Some("invalid response"),
                 });
+                if let Some(delay) = invalid_response_retry_delay(&error, &budget) {
+                    thread::sleep(delay);
+                    continue;
+                }
                 return Err(error);
             }
             self.record_attempt(DomesticAttempt {
@@ -3276,6 +3289,38 @@ mod tests {
         assert_eq!(budget.next_attempt(), None);
         assert_eq!(budget.ordinary_attempts, 5);
         assert_eq!(budget.attempts_started, 5);
+    }
+
+    #[test]
+    fn structurally_incomplete_responses_receive_five_bounded_exponential_attempts() {
+        let mut budget = DomesticRequestBudget::default();
+        let incomplete = validate_domestic_response(
+            "article_detail",
+            "<html><body>temporarily incomplete</body></html>",
+        )
+        .expect_err("incomplete response should fail validation");
+
+        for expected_delay_seconds in [1, 2, 4, 8] {
+            assert_eq!(budget.next_attempt(), Some(false));
+            assert_eq!(
+                invalid_response_retry_delay(&incomplete, &budget),
+                Some(Duration::from_secs(expected_delay_seconds))
+            );
+        }
+        assert_eq!(budget.next_attempt(), Some(false));
+        assert_eq!(invalid_response_retry_delay(&incomplete, &budget), None);
+        assert_eq!(budget.next_attempt(), None);
+
+        let missing = validate_domestic_response("article_detail", "<p>记录已删除</p>")
+            .expect_err("deleted article should be permanently missing");
+        assert!(matches!(
+            missing,
+            DomesticCnkiSourceError::PermanentArticleMissing
+        ));
+        assert_eq!(
+            invalid_response_retry_delay(&missing, &DomesticRequestBudget::default()),
+            None
+        );
     }
 
     #[test]
