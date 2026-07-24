@@ -1801,6 +1801,15 @@ fn parse_domestic_json_response(
 
 /// Domestic NZKPT source transport abstraction.
 pub trait DomesticCnkiTransport {
+    /// Reset transient session state before replaying a failed provider batch.
+    ///
+    /// # Returns
+    ///
+    /// Ok when the transport is ready for a clean replay.
+    fn reset_transient_state(&mut self) -> Result<(), DomesticCnkiSourceError> {
+        Ok(())
+    }
+
     /// Resolve one journal locator to domestic journal details.
     ///
     /// # Arguments
@@ -2096,6 +2105,15 @@ where
         Self { transport }
     }
 
+    /// Reset transient transport state before replaying a failed provider batch.
+    ///
+    /// # Returns
+    ///
+    /// Ok when the transport is ready for a clean replay.
+    pub fn reset_transient_state(&mut self) -> Result<(), DomesticCnkiSourceError> {
+        self.transport.reset_transient_state()
+    }
+
     /// Resolve one journal locator to domestic journal details.
     ///
     /// # Arguments
@@ -2283,6 +2301,7 @@ impl fmt::Debug for LiveDomesticCnkiConfig {
 #[derive(Clone)]
 pub struct LiveDomesticCnkiTransport {
     client: Client,
+    timeout_seconds: u64,
     captcha_token: Option<String>,
     captcha_session: SharedDomesticCaptchaSession,
     attempts: Vec<SourceAttempt>,
@@ -2344,6 +2363,17 @@ impl SharedDomesticCaptchaSession {
         state.generation = state.generation.wrapping_add(1);
         Ok(true)
     }
+
+    fn reset(&self) -> Result<(), DomesticCnkiSourceError> {
+        let mut state = self.state.lock().map_err(|_| {
+            DomesticCnkiSourceError::Request(
+                "domestic CNKI captcha session is unavailable".to_string(),
+            )
+        })?;
+        state.session.clear_captcha_id();
+        state.generation = state.generation.wrapping_add(1);
+        Ok(())
+    }
 }
 
 impl fmt::Debug for LiveDomesticCnkiTransport {
@@ -2351,6 +2381,7 @@ impl fmt::Debug for LiveDomesticCnkiTransport {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("LiveDomesticCnkiTransport")
+            .field("timeout_seconds", &self.timeout_seconds)
             .field(
                 "captcha_token",
                 &self.captcha_token.as_ref().map(|_| "[REDACTED]"),
@@ -2359,6 +2390,29 @@ impl fmt::Debug for LiveDomesticCnkiTransport {
             .field("attempt_count", &self.attempts.len())
             .finish_non_exhaustive()
     }
+}
+
+fn build_live_domestic_http_client(
+    timeout_seconds: u64,
+) -> Result<Client, DomesticCnkiSourceError> {
+    Client::builder()
+        .timeout(Duration::from_secs(timeout_seconds))
+        .cookie_store(true)
+        .redirect(Policy::custom(|attempt| {
+            if attempt.previous().len() >= DOMESTIC_REDIRECT_LIMIT {
+                attempt.error("domestic CNKI redirect limit exceeded")
+            } else if is_allowed_domestic_url(attempt.url()) {
+                attempt.follow()
+            } else {
+                attempt.error("domestic CNKI redirect URL rejected")
+            }
+        }))
+        .build()
+        .map_err(|_| {
+            DomesticCnkiSourceError::Request(
+                "domestic CNKI HTTP client initialization failed".to_string(),
+            )
+        })
 }
 
 impl LiveDomesticCnkiTransport {
@@ -2372,26 +2426,11 @@ impl LiveDomesticCnkiTransport {
     ///
     /// Live domestic transport.
     pub fn new(config: LiveDomesticCnkiConfig) -> Result<Self, DomesticCnkiSourceError> {
-        let client = Client::builder()
-            .timeout(Duration::from_secs(config.timeout_seconds.max(1)))
-            .cookie_store(true)
-            .redirect(Policy::custom(|attempt| {
-                if attempt.previous().len() >= DOMESTIC_REDIRECT_LIMIT {
-                    attempt.error("domestic CNKI redirect limit exceeded")
-                } else if is_allowed_domestic_url(attempt.url()) {
-                    attempt.follow()
-                } else {
-                    attempt.error("domestic CNKI redirect URL rejected")
-                }
-            }))
-            .build()
-            .map_err(|_| {
-                DomesticCnkiSourceError::Request(
-                    "domestic CNKI HTTP client initialization failed".to_string(),
-                )
-            })?;
+        let timeout_seconds = config.timeout_seconds.max(1);
+        let client = build_live_domestic_http_client(timeout_seconds)?;
         Ok(Self {
             client,
+            timeout_seconds,
             captcha_token: config
                 .captcha_token
                 .filter(|value| !value.trim().is_empty()),
@@ -2695,6 +2734,13 @@ impl LiveDomesticCnkiTransport {
 }
 
 impl DomesticCnkiTransport for LiveDomesticCnkiTransport {
+    fn reset_transient_state(&mut self) -> Result<(), DomesticCnkiSourceError> {
+        let client = build_live_domestic_http_client(self.timeout_seconds)?;
+        self.captcha_session.reset()?;
+        self.client = client;
+        Ok(())
+    }
+
     /// Resolve one journal locator through domestic search and detail pages.
     fn resolve_journal(
         &mut self,
@@ -3452,6 +3498,17 @@ mod tests {
         assert_eq!(refresh_count.load(std::sync::atomic::Ordering::SeqCst), 1);
         assert_eq!(refreshed_generation, generation.wrapping_add(1));
         assert!(attached.contains("captchaId="));
+
+        let cloned = parent.clone();
+        parent.reset().expect("shared captcha reset");
+        let (parent_url, reset_generation) =
+            parent.request_url(base_url).expect("reset parent URL");
+        let (cloned_url, cloned_generation) =
+            cloned.request_url(base_url).expect("reset cloned URL");
+        assert_eq!(reset_generation, refreshed_generation.wrapping_add(1));
+        assert_eq!(cloned_generation, reset_generation);
+        assert!(!parent_url.contains("captchaId="));
+        assert!(!cloned_url.contains("captchaId="));
     }
 
     #[test]

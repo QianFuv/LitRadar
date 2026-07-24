@@ -540,6 +540,9 @@ where
                 next_attempt = batch_attempt + 1,
                 failure_kind = ?error.kind(),
             );
+            if let Err(error) = state.client.reset_transient_state() {
+                break Err(map_domestic_cnki_error(error));
+            }
             thread::sleep(domestic_batch_retry_delay(batch_attempt));
             batch_attempt += 1;
         };
@@ -2205,7 +2208,7 @@ fn emit_source_attempt_summary(provider: &str, attempts: &[SourceAttempt]) {
 #[cfg(test)]
 mod tests {
     use std::collections::{BTreeMap, BTreeSet, VecDeque};
-    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use std::sync::Arc;
     use std::thread;
     use std::time::Duration;
@@ -2337,11 +2340,18 @@ mod tests {
     #[derive(Clone)]
     struct BatchRecoveryDomesticTransport {
         inner: FixtureDomesticCnkiTransport,
-        remaining_detail_failures: Arc<AtomicUsize>,
+        is_session_stale: Arc<AtomicBool>,
+        session_reset_count: Arc<AtomicUsize>,
         detail_attempt_count: Arc<AtomicUsize>,
     }
 
     impl DomesticCnkiTransport for BatchRecoveryDomesticTransport {
+        fn reset_transient_state(&mut self) -> Result<(), DomesticCnkiSourceError> {
+            self.is_session_stale.store(false, Ordering::SeqCst);
+            self.session_reset_count.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+
         fn resolve_journal(
             &mut self,
             locator: &DomesticJournalLocator,
@@ -2368,13 +2378,7 @@ mod tests {
             platform_id: Option<&str>,
         ) -> Result<Value, DomesticCnkiSourceError> {
             self.detail_attempt_count.fetch_add(1, Ordering::SeqCst);
-            let should_fail = self
-                .remaining_detail_failures
-                .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |remaining| {
-                    remaining.checked_sub(1)
-                })
-                .is_ok();
-            if should_fail {
+            if self.is_session_stale.load(Ordering::SeqCst) {
                 return Err(DomesticCnkiSourceError::Parse(
                     "temporary article detail response".to_string(),
                 ));
@@ -3798,7 +3802,8 @@ mod tests {
 
     #[test]
     fn domestic_cnki_replays_transient_batch_from_same_checkpoint() {
-        let remaining_detail_failures = Arc::new(AtomicUsize::new(1));
+        let is_session_stale = Arc::new(AtomicBool::new(true));
+        let session_reset_count = Arc::new(AtomicUsize::new(0));
         let detail_attempt_count = Arc::new(AtomicUsize::new(0));
         let transport = BatchRecoveryDomesticTransport {
             inner: FixtureDomesticCnkiTransport::new(domestic_paged_fixture(vec![(
@@ -3808,7 +3813,8 @@ mod tests {
                     "Recovered article".to_string(),
                 )]],
             )])),
-            remaining_detail_failures: Arc::clone(&remaining_detail_failures),
+            is_session_stale: Arc::clone(&is_session_stale),
+            session_reset_count: Arc::clone(&session_reset_count),
             detail_attempt_count: Arc::clone(&detail_attempt_count),
         };
         let registration = cnki_index_registration(transport).expect("recovery registration");
@@ -3822,7 +3828,8 @@ mod tests {
         assert!(batch.is_complete);
         assert_eq!(batch.articles.len(), 1);
         assert_eq!(batch.articles[0].title, "Recovered article");
-        assert_eq!(remaining_detail_failures.load(Ordering::SeqCst), 0);
+        assert!(!is_session_stale.load(Ordering::SeqCst));
+        assert_eq!(session_reset_count.load(Ordering::SeqCst), 1);
         assert_eq!(detail_attempt_count.load(Ordering::SeqCst), 2);
     }
 
