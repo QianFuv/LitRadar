@@ -3632,16 +3632,28 @@ mod tests {
     }
 
     #[test]
-    fn parent_heartbeat_renews_provider_scoped_lease() {
+    fn parent_heartbeat_preserves_domestic_cnki_lease_and_checkpoint() {
         let directory = tempdir().expect("temporary directory should create");
         let control_path = directory.path().join("control.sqlite");
         let control = open_control_db(&control_path).expect("control should open");
         let now = LiveRunTime::now().epoch_seconds;
-        acquire_lease(&control, "catalog", "provider", "run", now).expect("lease should acquire");
+        let scope = CheckpointScope::Journal {
+            catalog_id: "journal".to_string(),
+        };
+        acquire_lease(&control, "catalog", "cnki", "run", now).expect("lease should acquire");
+        write_checkpoint(
+            &control,
+            "catalog",
+            "cnki",
+            &scope,
+            "domestic-cursor",
+            "2026-07-24T00:00:00Z",
+        )
+        .expect("checkpoint should write");
         let mut heartbeat = LeaseHeartbeat::start(
             control_path.clone(),
             "catalog".to_string(),
-            "provider".to_string(),
+            "cnki".to_string(),
             "run".to_string(),
             Duration::from_millis(10),
         );
@@ -3655,5 +3667,11 @@ mod tests {
             )
             .expect("heartbeat timestamp should read");
         assert!(heartbeat_at >= now);
+        assert_eq!(
+            read_checkpoint(&control, "catalog", "cnki", &scope)
+                .expect("domestic checkpoint should read")
+                .as_deref(),
+            Some("domestic-cursor")
+        );
     }
 }

@@ -31,6 +31,13 @@ fn empty_auth_database_migration_creates_current_schema() {
     assert!(table_exists(&path, "scheduler_workers"));
     assert!(table_exists(&path, "service_heartbeats"));
     assert!(table_exists(&path, "managed_meta_catalogs"));
+    for field in [
+        "index_provider_routes",
+        "article_abstract_provider_orders",
+        "article_fulltext_provider_orders",
+    ] {
+        assert!(runtime_setting(&path, field).is_none());
+    }
 }
 
 #[test]
@@ -206,7 +213,8 @@ fn provider_runtime_name_migration_rewrites_cnki_and_zjlib_tokens() {
     assert_eq!(
         runtime_setting(&path, "index_provider_routes"),
         Some((
-            "{\"chinese_journals\":\"cnki_oversea\",\"english_journals\":\"scholarly\"}".to_string(),
+            "{\"chinese_journals\":\"cnki_oversea\",\"english_journals\":\"scholarly\"}"
+                .to_string(),
             40.0,
         ))
     );
@@ -224,6 +232,113 @@ fn provider_runtime_name_migration_rewrites_cnki_and_zjlib_tokens() {
             42.0,
         ))
     );
+}
+
+#[test]
+fn provider_runtime_name_migration_materializes_implicit_legacy_defaults() {
+    let temp_dir = tempdir().expect("temp directory should be created");
+    let path = temp_dir.path().join("provider-implicit-defaults.sqlite");
+    migrate_auth_database(&path).expect("current auth database should migrate");
+    let connection = Connection::open(&path).expect("auth database should open");
+    connection
+        .pragma_update(None, "user_version", 7)
+        .expect("version seven fixture should write");
+    drop(connection);
+
+    migrate_auth_database(&path).expect("implicit provider defaults should migrate");
+
+    let index = runtime_setting(&path, "index_provider_routes")
+        .expect("legacy index default should materialize");
+    let abstracts = runtime_setting(&path, "article_abstract_provider_orders")
+        .expect("legacy abstract default should materialize");
+    let fulltext = runtime_setting(&path, "article_fulltext_provider_orders")
+        .expect("legacy fulltext default should materialize");
+    assert_eq!(
+        index.0,
+        "{\"ccf_computer_journals\":\"scholarly\",\"chinese_journals\":\"cnki_oversea\",\"english_journals\":\"scholarly\"}"
+    );
+    assert_eq!(
+        abstracts.0,
+        "{\"default\":[\"scholarly\",\"cnki_oversea\"],\"catalogs\":{}}"
+    );
+    assert_eq!(fulltext.0, "{\"default\":[\"zjlib\"],\"catalogs\":{}}");
+    assert!(index.1 > 0.0);
+    assert_eq!(abstracts.1, index.1);
+    assert_eq!(fulltext.1, index.1);
+}
+
+#[test]
+fn provider_runtime_name_migration_materializes_only_missing_defaults() {
+    let temp_dir = tempdir().expect("temp directory should be created");
+    let path = temp_dir.path().join("provider-partial-defaults.sqlite");
+    migrate_auth_database(&path).expect("current auth database should migrate");
+    let connection = Connection::open(&path).expect("auth database should open");
+    connection
+        .execute_batch(
+            r#"
+            PRAGMA user_version = 7;
+            INSERT INTO runtime_settings (key, value, updated_at) VALUES (
+                'index_provider_routes',
+                '{"chinese_journals":"cnki","custom_catalog":"custom_provider"}',
+                55.0
+            );
+            "#,
+        )
+        .expect("partial version seven fixture should write");
+    drop(connection);
+
+    migrate_auth_database(&path).expect("partial provider defaults should migrate");
+
+    assert_eq!(
+        runtime_setting(&path, "index_provider_routes"),
+        Some((
+            "{\"chinese_journals\":\"cnki_oversea\",\"custom_catalog\":\"custom_provider\"}"
+                .to_string(),
+            55.0,
+        ))
+    );
+    assert_eq!(
+        runtime_setting(&path, "article_abstract_provider_orders")
+            .expect("missing abstract default should materialize")
+            .0,
+        "{\"default\":[\"scholarly\",\"cnki_oversea\"],\"catalogs\":{}}"
+    );
+    assert_eq!(
+        runtime_setting(&path, "article_fulltext_provider_orders")
+            .expect("missing fulltext default should materialize")
+            .0,
+        "{\"default\":[\"zjlib\"],\"catalogs\":{}}"
+    );
+}
+
+#[test]
+fn malformed_provider_runtime_name_migration_rolls_back_materialized_defaults() {
+    let temp_dir = tempdir().expect("temp directory should be created");
+    let path = temp_dir.path().join("provider-invalid-v8.sqlite");
+    migrate_auth_database(&path).expect("current auth database should migrate");
+    let connection = Connection::open(&path).expect("auth database should open");
+    connection
+        .execute_batch(
+            "PRAGMA user_version = 7;
+             INSERT INTO runtime_settings (key, value, updated_at)
+             VALUES ('index_provider_routes', 'not-json', 60.0);",
+        )
+        .expect("invalid version seven fixture should write");
+    drop(connection);
+
+    let error = migrate_auth_database(&path).expect_err("invalid v8 state should fail migration");
+
+    assert!(matches!(
+        error,
+        MigrationError::InvalidRuntimeProviderOrderState
+    ));
+    assert_eq!(user_version(&path), 7);
+    assert_eq!(
+        runtime_setting(&path, "index_provider_routes"),
+        Some(("not-json".to_string(), 60.0))
+    );
+    assert!(runtime_setting(&path, "article_abstract_provider_orders").is_none());
+    assert!(runtime_setting(&path, "article_fulltext_provider_orders").is_none());
 }
 
 #[test]

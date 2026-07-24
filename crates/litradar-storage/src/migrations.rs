@@ -5,7 +5,7 @@ use std::error::Error;
 use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use rusqlite::{
     params, Connection, OpenFlags, OptionalExtension, Transaction, TransactionBehavior,
@@ -259,7 +259,7 @@ fn migrate_auth_database_inner(path: &Path) -> Result<MigrationSummary, Migratio
             5 => apply_auth_version_five(&transaction)?,
             6 => apply_auth_version_six(&transaction)?,
             7 => apply_auth_version_seven(&transaction)?,
-            8 => apply_auth_version_eight(&transaction)?,
+            8 => apply_auth_version_eight(&transaction, from_version)?,
             _ => unreachable!("auth migration version should be implemented"),
         }
         transaction.pragma_update(None, "user_version", next_version)?;
@@ -1044,7 +1044,36 @@ fn apply_auth_version_seven(transaction: &Transaction<'_>) -> Result<(), Migrati
     Ok(())
 }
 
-fn apply_auth_version_eight(transaction: &Transaction<'_>) -> Result<(), MigrationError> {
+fn apply_auth_version_eight(
+    transaction: &Transaction<'_>,
+    from_version: i64,
+) -> Result<(), MigrationError> {
+    if (1..=7).contains(&from_version) {
+        let updated_at = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs_f64();
+        for (key, value) in [
+            (
+                "index_provider_routes",
+                r#"{"ccf_computer_journals":"scholarly","chinese_journals":"cnki","english_journals":"scholarly"}"#,
+            ),
+            (
+                "article_abstract_provider_orders",
+                r#"{"default":["scholarly","cnki"],"catalogs":{}}"#,
+            ),
+            (
+                "article_fulltext_provider_orders",
+                r#"{"default":["zjlib_cnki"],"catalogs":{}}"#,
+            ),
+        ] {
+            transaction.execute(
+                "INSERT OR IGNORE INTO runtime_settings (key, value, updated_at)
+                 VALUES (?1, ?2, ?3)",
+                params![key, value, updated_at],
+            )?;
+        }
+    }
     rewrite_runtime_provider_name_tokens(transaction)?;
     Ok(())
 }

@@ -10,7 +10,7 @@ use rusqlite::{params, Connection, OptionalExtension, Transaction, TransactionBe
 use crate::schema::ContentDatabaseError;
 
 /// Current disposable control database schema version.
-pub const CONTROL_SCHEMA_VERSION: i64 = 1;
+pub const CONTROL_SCHEMA_VERSION: i64 = 2;
 
 const CONTROL_BUSY_TIMEOUT_SECONDS: u64 = 30;
 const LEASE_DURATION_SECONDS: i64 = 300;
@@ -249,33 +249,43 @@ pub fn init_control_db(connection: &Connection) -> Result<(), ControlDatabaseErr
     connection.execute_batch(
         "PRAGMA foreign_keys = ON;
          PRAGMA journal_mode = WAL;
-         PRAGMA synchronous = NORMAL;
-
-         CREATE TABLE IF NOT EXISTS provider_leases (
-             catalog_name TEXT NOT NULL,
-             provider_name TEXT NOT NULL,
-             run_id TEXT NOT NULL,
-             heartbeat_at INTEGER NOT NULL,
-             expires_at INTEGER NOT NULL,
-             PRIMARY KEY (catalog_name, provider_name)
-         );
-
-         CREATE TABLE IF NOT EXISTS provider_checkpoints (
-             catalog_name TEXT NOT NULL,
-             provider_name TEXT NOT NULL,
-             scope_kind TEXT NOT NULL
-                 CHECK (scope_kind IN ('listing', 'journal', 'year')),
-             scope_key TEXT NOT NULL,
-             checkpoint TEXT NOT NULL,
-             updated_at TEXT NOT NULL,
-             PRIMARY KEY (catalog_name, provider_name, scope_kind, scope_key)
-         );
-
-         CREATE INDEX IF NOT EXISTS idx_provider_checkpoints_catalog_provider
-             ON provider_checkpoints(catalog_name, provider_name);
-         PRAGMA user_version = 1;",
+         PRAGMA synchronous = NORMAL;",
     )?;
-    rewrite_legacy_provider_names(connection)?;
+    if version == CONTROL_SCHEMA_VERSION {
+        return Ok(());
+    }
+
+    let transaction = Transaction::new_unchecked(connection, TransactionBehavior::Immediate)?;
+    if version == 0 {
+        transaction.execute_batch(
+            "CREATE TABLE IF NOT EXISTS provider_leases (
+                 catalog_name TEXT NOT NULL,
+                 provider_name TEXT NOT NULL,
+                 run_id TEXT NOT NULL,
+                 heartbeat_at INTEGER NOT NULL,
+                 expires_at INTEGER NOT NULL,
+                 PRIMARY KEY (catalog_name, provider_name)
+             );
+
+             CREATE TABLE IF NOT EXISTS provider_checkpoints (
+                 catalog_name TEXT NOT NULL,
+                 provider_name TEXT NOT NULL,
+                 scope_kind TEXT NOT NULL
+                     CHECK (scope_kind IN ('listing', 'journal', 'year')),
+                 scope_key TEXT NOT NULL,
+                 checkpoint TEXT NOT NULL,
+                 updated_at TEXT NOT NULL,
+                 PRIMARY KEY (catalog_name, provider_name, scope_kind, scope_key)
+             );
+
+             CREATE INDEX IF NOT EXISTS idx_provider_checkpoints_catalog_provider
+                 ON provider_checkpoints(catalog_name, provider_name);",
+        )?;
+    } else {
+        rewrite_legacy_provider_names(&transaction)?;
+    }
+    transaction.pragma_update(None, "user_version", CONTROL_SCHEMA_VERSION)?;
+    transaction.commit()?;
     Ok(())
 }
 
@@ -289,10 +299,7 @@ pub fn init_control_db(connection: &Connection) -> Result<(), ControlDatabaseErr
 ///
 /// Success after legacy provider keys are rewritten or discarded on conflict.
 fn rewrite_legacy_provider_names(connection: &Connection) -> Result<(), ControlDatabaseError> {
-    for (legacy_name, current_name) in [
-        ("cnki", "cnki_oversea"),
-        ("zjlib_cnki", "zjlib"),
-    ] {
+    for (legacy_name, current_name) in [("cnki", "cnki_oversea"), ("zjlib_cnki", "zjlib")] {
         connection.execute(
             "UPDATE provider_checkpoints
              SET provider_name = ?1
@@ -581,6 +588,7 @@ mod tests {
     use litradar_domain::{
         ArticleDraft, IssueDraft, JournalCatalogEntry, JournalDraft, JournalRankings, ProviderBatch,
     };
+    use rusqlite::Connection;
     use tempfile::tempdir;
 
     use crate::schema::{init_content_db, open_content_db, write_content_batch};
@@ -661,10 +669,10 @@ mod tests {
     }
 
     #[test]
-    fn legacy_provider_checkpoint_keys_are_rewritten_on_open() {
+    fn legacy_provider_keys_are_rewritten_once_during_v1_upgrade() {
         let temp = tempdir().expect("temporary directory should create");
         let path = temp.path().join("legacy-provider.control.sqlite");
-        let connection = open_control_db(&path).expect("control database should open");
+        let connection = create_legacy_control_database(&path);
         let scope = CheckpointScope::Journal {
             catalog_id: "issn-1234-5679".to_string(),
         };
@@ -677,9 +685,17 @@ mod tests {
             "2026-07-18T00:00:00Z",
         )
         .expect("legacy checkpoint should write");
+        acquire_lease(&connection, "chinese_journals", "cnki", "legacy-run", 100)
+            .expect("legacy lease should write");
         drop(connection);
 
         let reopened = open_control_db(&path).expect("control database should reopen");
+        assert_eq!(
+            reopened
+                .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
+                .expect("control version should read"),
+            2
+        );
         assert_eq!(
             read_checkpoint(&reopened, "chinese_journals", "cnki", &scope)
                 .expect("legacy key should read")
@@ -692,11 +708,114 @@ mod tests {
                 .as_deref(),
             Some("opaque-legacy")
         );
+        heartbeat_lease(
+            &reopened,
+            "chinese_journals",
+            "cnki_oversea",
+            "legacy-run",
+            101,
+        )
+        .expect("rewritten lease should remain owned");
+        write_checkpoint(
+            &reopened,
+            "chinese_journals",
+            "cnki",
+            &scope,
+            "opaque-domestic",
+            "2026-07-24T00:00:00Z",
+        )
+        .expect("current domestic checkpoint should write");
+        drop(reopened);
+
+        let current = open_control_db(&path).expect("current control database should reopen");
+        assert_eq!(
+            read_checkpoint(&current, "chinese_journals", "cnki", &scope)
+                .expect("current domestic key should read")
+                .as_deref(),
+            Some("opaque-domestic")
+        );
+        assert_eq!(
+            read_checkpoint(&current, "chinese_journals", "cnki_oversea", &scope)
+                .expect("rewritten overseas key should read")
+                .as_deref(),
+            Some("opaque-legacy")
+        );
+    }
+
+    #[test]
+    fn current_domestic_provider_keys_survive_reopen() {
+        let temp = tempdir().expect("temporary directory should create");
+        let path = temp.path().join("current-provider.control.sqlite");
+        let connection = open_control_db(&path).expect("control database should open");
+        let scope = CheckpointScope::Journal {
+            catalog_id: "issn-1234-5679".to_string(),
+        };
+        write_checkpoint(
+            &connection,
+            "chinese_journals",
+            "cnki",
+            &scope,
+            "opaque-domestic",
+            "2026-07-24T00:00:00Z",
+        )
+        .expect("domestic checkpoint should write");
+        acquire_lease(&connection, "chinese_journals", "cnki", "domestic-run", 100)
+            .expect("domestic lease should write");
+        drop(connection);
+
+        let reopened = open_control_db(&path).expect("control database should reopen");
+        assert_eq!(
+            read_checkpoint(&reopened, "chinese_journals", "cnki", &scope)
+                .expect("domestic checkpoint should read")
+                .as_deref(),
+            Some("opaque-domestic")
+        );
+        heartbeat_lease(&reopened, "chinese_journals", "cnki", "domestic-run", 101)
+            .expect("domestic lease should remain owned");
+    }
+
+    #[test]
+    fn failed_legacy_provider_rewrite_keeps_v1_state() {
+        let temp = tempdir().expect("temporary directory should create");
+        let path = temp.path().join("failed-provider-rewrite.control.sqlite");
+        let connection = create_legacy_control_database(&path);
+        connection
+            .execute_batch(
+                "INSERT INTO provider_checkpoints (
+                     catalog_name, provider_name, scope_kind, scope_key, checkpoint, updated_at
+                 ) VALUES (
+                     'chinese_journals', 'cnki', 'listing', '', 'opaque-legacy', 'time'
+                 );
+                 CREATE TRIGGER fail_provider_rewrite
+                 BEFORE UPDATE OF provider_name ON provider_checkpoints
+                 BEGIN SELECT RAISE(ABORT, 'forced provider rewrite failure'); END;",
+            )
+            .expect("legacy failure fixture should write");
+        drop(connection);
+
+        open_control_db(&path).expect_err("legacy rewrite should fail");
+
+        let unchanged = Connection::open(&path).expect("failed control database should reopen");
+        assert_eq!(
+            unchanged
+                .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
+                .expect("control version should read"),
+            1
+        );
+        assert_eq!(
+            unchanged
+                .query_row(
+                    "SELECT provider_name FROM provider_checkpoints",
+                    [],
+                    |row| row.get::<_, String>(0),
+                )
+                .expect("legacy provider key should read"),
+            "cnki"
+        );
     }
 
     #[test]
     fn content_precedes_checkpoint_and_both_failure_sides_are_replay_safe() {
-
         let content = rusqlite::Connection::open_in_memory().expect("content database should open");
         init_content_db(&content).expect("content schema should initialize");
         let control = rusqlite::Connection::open_in_memory().expect("control database should open");
@@ -890,6 +1009,36 @@ mod tests {
             area: Some("Systems".to_string()),
             rankings: JournalRankings::default(),
         }
+    }
+
+    fn create_legacy_control_database(path: &std::path::Path) -> Connection {
+        let connection = Connection::open(path).expect("legacy control database should open");
+        connection
+            .execute_batch(
+                "CREATE TABLE provider_leases (
+                     catalog_name TEXT NOT NULL,
+                     provider_name TEXT NOT NULL,
+                     run_id TEXT NOT NULL,
+                     heartbeat_at INTEGER NOT NULL,
+                     expires_at INTEGER NOT NULL,
+                     PRIMARY KEY (catalog_name, provider_name)
+                 );
+                 CREATE TABLE provider_checkpoints (
+                     catalog_name TEXT NOT NULL,
+                     provider_name TEXT NOT NULL,
+                     scope_kind TEXT NOT NULL
+                         CHECK (scope_kind IN ('listing', 'journal', 'year')),
+                     scope_key TEXT NOT NULL,
+                     checkpoint TEXT NOT NULL,
+                     updated_at TEXT NOT NULL,
+                     PRIMARY KEY (catalog_name, provider_name, scope_kind, scope_key)
+                 );
+                 CREATE INDEX idx_provider_checkpoints_catalog_provider
+                     ON provider_checkpoints(catalog_name, provider_name);
+                 PRAGMA user_version = 1;",
+            )
+            .expect("legacy control schema should initialize");
+        connection
     }
 
     fn canonical_batch() -> ProviderBatch {
