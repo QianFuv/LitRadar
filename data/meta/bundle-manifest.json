@@ -1,6 +1,6 @@
 {
   "format": "litradar-meta-bundle",
-  "version": 3,
+  "version": 4,
   "catalogs": [
     {
       "filename": "ccf_computer_journals.csv",
@@ -13,10 +13,11 @@
     },
     {
       "filename": "chinese_journals.csv",
-      "sha256": "5b28d5cd1ac82cc8c9bbc2c7163fc4afcc0b80fb9e86fb404bb782b23684d05d",
+      "sha256": "7a86e119336951a568f2bb15cb2383d2aa644ab95ec83687bd98c1b4e94be5e9",
       "legacy_sha256": [
         "d51d55dd23fd9db71db5be7d7df73e955df6480e7821d90429d3e21f3a3b0807",
-        "0c75d99c48f657fd208a7c581c8ea58df2d8b4bbe87ca7333b660bb7a836f1dd"
+        "0c75d99c48f657fd208a7c581c8ea58df2d8b4bbe87ca7333b660bb7a836f1dd",
+        "5b28d5cd1ac82cc8c9bbc2c7163fc4afcc0b80fb9e86fb404bb782b23684d05d"
       ]
     },
     {

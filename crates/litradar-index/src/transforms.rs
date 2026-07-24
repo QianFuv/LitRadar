@@ -499,6 +499,17 @@ mod tests {
         assert_eq!(chinese.len(), 94);
         assert_eq!(english.len(), 571);
 
+        let world_economic_papers = chinese
+            .iter()
+            .find(|entry| entry.catalog_id == "issn-0488-6364")
+            .expect("World Economic Papers should use its canonical ISSN");
+        assert_eq!(world_economic_papers.title, "世界经济文汇");
+        assert_eq!(world_economic_papers.issn.as_deref(), Some("0488-6364"));
+        assert_eq!(world_economic_papers.all_issns, ["0488-6364"]);
+        assert!(chinese
+            .iter()
+            .all(|entry| entry.catalog_id != "issn-0253-9772"));
+
         let environment = english
             .iter()
             .find(|entry| entry.catalog_id == "issn-1472-3409")
