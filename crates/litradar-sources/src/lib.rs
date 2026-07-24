@@ -30,12 +30,13 @@ pub use jfbym::{
 };
 pub use providers::{
     built_in_provider_capabilities, cnki_access_registration, cnki_index_registration,
-    cnki_oversea_access_registration, cnki_oversea_index_registration,
-    scholarly_access_registration, scholarly_index_registration, CnkiArticleAccessProvider,
-    CnkiIndexProvider, DomesticCnkiArticleAccessProvider, DomesticCnkiIndexProvider,
-    ScholarlyArticleAccessProvider, ScholarlyIndexProvider, CNKI_OVERSEA_PROVIDER_NAME,
-    CNKI_PROVIDER_NAME, CNKI_REDIRECT_HOSTS, DOMESTIC_CNKI_REDIRECT_HOSTS, SCHOLARLY_PROVIDER_NAME,
-    SCHOLARLY_REDIRECT_HOSTS, ZJLIB_PROVIDER_NAME,
+    cnki_index_registration_with_workers, cnki_oversea_access_registration,
+    cnki_oversea_index_registration, scholarly_access_registration, scholarly_index_registration,
+    CnkiArticleAccessProvider, CnkiIndexProvider, DomesticCnkiArticleAccessProvider,
+    DomesticCnkiIndexProvider, ScholarlyArticleAccessProvider, ScholarlyIndexProvider,
+    CNKI_OVERSEA_PROVIDER_NAME, CNKI_PROVIDER_NAME, CNKI_REDIRECT_HOSTS,
+    DOMESTIC_CNKI_REDIRECT_HOSTS, SCHOLARLY_PROVIDER_NAME, SCHOLARLY_REDIRECT_HOSTS,
+    ZJLIB_PROVIDER_NAME,
 };
 pub use scholarly::{
     normalize_doi, FixtureScholarlyTransport, LiveScholarlyConfig, LiveScholarlyTransport,

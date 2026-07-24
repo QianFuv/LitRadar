@@ -15,10 +15,11 @@ use litradar_provider::{
     IndexContentProvider, ProviderError, ProviderRegistration, ProviderRegistryError,
 };
 use litradar_sources::{
-    cnki_index_registration, cnki_oversea_index_registration, scholarly_index_registration,
-    LiveCnkiConfig, LiveCnkiTransport, LiveDomesticCnkiConfig, LiveDomesticCnkiTransport,
-    LiveScholarlyConfig, LiveScholarlyTransport, CNKI_OVERSEA_PROVIDER_NAME, CNKI_PROVIDER_NAME,
-    OPENALEX_MAX_WORKERS_PER_PROCESS, SCHOLARLY_PROVIDER_NAME,
+    cnki_index_registration_with_workers, cnki_oversea_index_registration,
+    scholarly_index_registration, LiveCnkiConfig, LiveCnkiTransport, LiveDomesticCnkiConfig,
+    LiveDomesticCnkiTransport, LiveScholarlyConfig, LiveScholarlyTransport,
+    CNKI_OVERSEA_PROVIDER_NAME, CNKI_PROVIDER_NAME, OPENALEX_MAX_WORKERS_PER_PROCESS,
+    SCHOLARLY_PROVIDER_NAME,
 };
 use rusqlite::{Connection, ErrorCode};
 use serde::{Deserialize, Serialize};
@@ -1991,7 +1992,10 @@ fn build_index_registration(
                     "domestic CNKI indexing provider could not initialize".to_string(),
                 )
             })?;
-            Ok(cnki_index_registration(transport)?)
+            Ok(cnki_index_registration_with_workers(
+                transport,
+                source_worker_count,
+            )?)
         }
         name => Err(LiveIndexError::InvalidConfig(format!(
             "index provider {name} is not registered"

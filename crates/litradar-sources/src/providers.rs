@@ -2,6 +2,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex};
+use std::thread;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use litradar_domain::{
@@ -435,6 +436,7 @@ where
 /// Canonical domestic CNKI indexing provider backed by one source transport.
 pub struct DomesticCnkiIndexProvider<T> {
     client: Mutex<DomesticCnkiClient<T>>,
+    worker_count: usize,
 }
 
 impl<T> DomesticCnkiIndexProvider<T>
@@ -451,15 +453,30 @@ where
     ///
     /// Provider adapter that emits only canonical content batches.
     pub fn new(transport: T) -> Self {
+        Self::with_worker_count(transport, 1)
+    }
+
+    /// Build a canonical domestic CNKI provider with bounded detail workers.
+    ///
+    /// # Arguments
+    ///
+    /// * `transport` - Domestic CNKI source transport.
+    /// * `worker_count` - Maximum concurrent article detail requests.
+    ///
+    /// # Returns
+    ///
+    /// Provider adapter with at least one detail worker.
+    pub fn with_worker_count(transport: T, worker_count: usize) -> Self {
         Self {
             client: Mutex::new(DomesticCnkiClient::new(transport)),
+            worker_count: worker_count.max(1),
         }
     }
 }
 
 impl<T> IndexContentProvider for DomesticCnkiIndexProvider<T>
 where
-    T: DomesticCnkiTransport + Send,
+    T: DomesticCnkiTransport + Clone + Send,
 {
     fn fetch(
         &self,
@@ -472,8 +489,17 @@ where
                 "domestic CNKI provider state is unavailable",
             )
         })?;
-        let result = fetch_domestic_cnki_batch(&mut client, catalog, checkpoint);
-        emit_source_attempt_summary(CNKI_PROVIDER_NAME, &client.drain_attempts());
+        let mut detail_attempts = Vec::new();
+        let result = fetch_domestic_cnki_batch(
+            &mut client,
+            catalog,
+            checkpoint,
+            self.worker_count,
+            &mut detail_attempts,
+        );
+        let mut attempts = client.drain_attempts();
+        attempts.append(&mut detail_attempts);
+        emit_source_attempt_summary(CNKI_PROVIDER_NAME, &attempts);
         result
     }
 }
@@ -491,7 +517,27 @@ pub fn cnki_index_registration<T>(
     transport: T,
 ) -> Result<ProviderRegistration, ProviderRegistryError>
 where
-    T: DomesticCnkiTransport + Send + 'static,
+    T: DomesticCnkiTransport + Clone + Send + 'static,
+{
+    cnki_index_registration_with_workers(transport, 1)
+}
+
+/// Register domestic CNKI indexing with bounded per-process detail workers.
+///
+/// # Arguments
+///
+/// * `transport` - Domestic CNKI source transport.
+/// * `worker_count` - Maximum concurrent article detail requests.
+///
+/// # Returns
+///
+/// Registration declaring exactly the canonical indexing capability.
+pub fn cnki_index_registration_with_workers<T>(
+    transport: T,
+    worker_count: usize,
+) -> Result<ProviderRegistration, ProviderRegistryError>
+where
+    T: DomesticCnkiTransport + Clone + Send + 'static,
 {
     ProviderRegistration::try_new(
         ProviderDescriptor {
@@ -503,7 +549,10 @@ where
             allowed_redirect_hosts: Vec::new(),
         },
         ProviderImplementations {
-            index_content: Some(Arc::new(DomesticCnkiIndexProvider::new(transport))),
+            index_content: Some(Arc::new(DomesticCnkiIndexProvider::with_worker_count(
+                transport,
+                worker_count,
+            ))),
             ..ProviderImplementations::default()
         },
     )
@@ -1608,13 +1657,88 @@ fn domestic_cnki_lacks_authors_and_doi(summary: &Value, detail: &Value) -> bool 
     !has_authors && !has_doi
 }
 
+#[derive(Clone)]
+struct DomesticCnkiDetailTask {
+    article_index: usize,
+    summary: Value,
+    article_url: String,
+    platform_id: Option<String>,
+}
+
+struct DomesticCnkiDetailOutcome {
+    article_index: usize,
+    summary: Value,
+    detail: Result<Value, DomesticCnkiSourceError>,
+    attempts: Vec<SourceAttempt>,
+}
+
+fn fetch_domestic_cnki_details<T>(
+    client: &mut DomesticCnkiClient<T>,
+    tasks: Vec<DomesticCnkiDetailTask>,
+    worker_count: usize,
+) -> Result<Vec<DomesticCnkiDetailOutcome>, ProviderError>
+where
+    T: DomesticCnkiTransport + Clone + Send,
+{
+    if worker_count <= 1 || tasks.len() <= 1 {
+        return Ok(tasks
+            .into_iter()
+            .map(|task| DomesticCnkiDetailOutcome {
+                article_index: task.article_index,
+                detail: client.article_detail(&task.article_url, task.platform_id.as_deref()),
+                summary: task.summary,
+                attempts: Vec::new(),
+            })
+            .collect());
+    }
+    let worker_count = worker_count.max(1);
+    let mut outcomes = Vec::with_capacity(tasks.len());
+    for chunk in tasks.chunks(worker_count) {
+        let chunk_outcomes = thread::scope(|scope| {
+            let handles = chunk
+                .iter()
+                .cloned()
+                .map(|task| {
+                    let mut worker_client = client.clone();
+                    worker_client.drain_attempts();
+                    scope.spawn(move || {
+                        let detail = worker_client
+                            .article_detail(&task.article_url, task.platform_id.as_deref());
+                        DomesticCnkiDetailOutcome {
+                            article_index: task.article_index,
+                            summary: task.summary,
+                            detail,
+                            attempts: worker_client.drain_attempts(),
+                        }
+                    })
+                })
+                .collect::<Vec<_>>();
+            handles
+                .into_iter()
+                .map(|handle| {
+                    handle.join().map_err(|_| {
+                        ProviderError::new(
+                            ProviderErrorKind::Internal,
+                            "domestic CNKI detail worker panicked",
+                        )
+                    })
+                })
+                .collect::<Result<Vec<_>, _>>()
+        })?;
+        outcomes.extend(chunk_outcomes);
+    }
+    Ok(outcomes)
+}
+
 fn fetch_domestic_cnki_batch<T>(
     client: &mut DomesticCnkiClient<T>,
     catalog: &JournalCatalogEntry,
     checkpoint: Option<&str>,
+    worker_count: usize,
+    detail_attempts: &mut Vec<SourceAttempt>,
 ) -> Result<ProviderBatch, ProviderError>
 where
-    T: DomesticCnkiTransport,
+    T: DomesticCnkiTransport + Clone + Send,
 {
     if let Some(raw) = checkpoint {
         let lowered = raw.to_ascii_lowercase();
@@ -1712,16 +1836,34 @@ where
         .map_err(map_domestic_cnki_error)?;
     validate_domestic_issue_page(&page, page_index)?;
     let has_next_page = page.has_next_page;
+    let detail_tasks = page
+        .articles
+        .into_iter()
+        .enumerate()
+        .map(|(article_index, summary)| {
+            let article_url = json_text(summary.get("article_url")).ok_or_else(|| {
+                ProviderError::new(
+                    ProviderErrorKind::InvalidResponse,
+                    "domestic CNKI article summary omitted its URL",
+                )
+            })?;
+            Ok(DomesticCnkiDetailTask {
+                article_index,
+                platform_id: json_text(summary.get("platform_id")),
+                summary,
+                article_url,
+            })
+        })
+        .collect::<Result<Vec<_>, ProviderError>>()?;
+    let mut detail_outcomes = fetch_domestic_cnki_details(client, detail_tasks, worker_count)?;
+    for outcome in &mut detail_outcomes {
+        detail_attempts.append(&mut outcome.attempts);
+    }
     let mut articles = Vec::new();
-    for (article_index, summary) in page.articles.into_iter().enumerate() {
-        let article_url = json_text(summary.get("article_url")).ok_or_else(|| {
-            ProviderError::new(
-                ProviderErrorKind::InvalidResponse,
-                "domestic CNKI article summary omitted its URL",
-            )
-        })?;
-        let platform_id = json_text(summary.get("platform_id"));
-        let detail = match client.article_detail(&article_url, platform_id.as_deref()) {
+    for outcome in detail_outcomes {
+        let article_index = outcome.article_index;
+        let summary = outcome.summary;
+        let detail = match outcome.detail {
             Ok(detail) => detail,
             Err(error) if is_permanent_domestic_article_error(&error) => {
                 tracing::warn!(
@@ -1989,32 +2131,87 @@ fn emit_source_attempt_summary(provider: &str, attempts: &[SourceAttempt]) {
 #[cfg(test)]
 mod tests {
     use std::collections::{BTreeMap, BTreeSet, VecDeque};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
     use std::thread;
+    use std::time::Duration;
 
     use litradar_domain::{
         ArticleAccessContext, ArticleId, ArticleLocator, JournalCatalogEntry, JournalRankings,
         ProviderBatch, ProviderCapabilityKind,
     };
     use litradar_provider::{ProviderError, ProviderErrorKind, ProviderRegistry};
-    use serde_json::json;
+    use serde_json::{json, Value};
 
     use super::{
         built_in_provider_capabilities, cnki_access_registration, cnki_article_draft,
-        cnki_index_registration, cnki_issue_draft, cnki_oversea_access_registration,
-        cnki_oversea_index_registration, crossref_cursor_is_fresh,
-        fetch_scholarly_batch_with_clock, fetch_scholarly_batch_with_clock_and_restart,
-        next_scholarly_checkpoint, scholarly_access_registration, scholarly_article_draft,
-        scholarly_index_registration, CnkiIndexProvider, ScholarlyCheckpoint,
-        ScholarlyIndexProvider, CNKI_PROVIDER_NAME, CNKI_REDIRECT_HOSTS,
-        CROSSREF_CURSOR_REUSE_SECONDS, DOMESTIC_CNKI_REDIRECT_HOSTS, SCHOLARLY_REDIRECT_HOSTS,
+        cnki_index_registration, cnki_index_registration_with_workers, cnki_issue_draft,
+        cnki_oversea_access_registration, cnki_oversea_index_registration,
+        crossref_cursor_is_fresh, fetch_scholarly_batch_with_clock,
+        fetch_scholarly_batch_with_clock_and_restart, next_scholarly_checkpoint,
+        scholarly_access_registration, scholarly_article_draft, scholarly_index_registration,
+        CnkiIndexProvider, ScholarlyCheckpoint, ScholarlyIndexProvider, CNKI_PROVIDER_NAME,
+        CNKI_REDIRECT_HOSTS, CROSSREF_CURSOR_REUSE_SECONDS, DOMESTIC_CNKI_REDIRECT_HOSTS,
+        SCHOLARLY_REDIRECT_HOSTS,
     };
     use crate::scholarly::test_support::CapturedLogs;
     use crate::{
-        CnkiFixtureData, DomesticCnkiFixtureData, FixtureCnkiTransport,
+        CnkiFixtureData, DomesticCnkiFixtureData, DomesticCnkiSourceError, DomesticCnkiTransport,
+        DomesticIssueArticlePage, DomesticJournalLocator, FixtureCnkiTransport,
         FixtureDomesticCnkiTransport, FixtureScholarlyTransport, ScholarlyClient,
         ScholarlyFixtureData, ScholarlyRequest, ScholarlyRequestKind, ScholarlyTransport,
         SourceAttempt, SourceError,
     };
+
+    #[derive(Clone)]
+    struct ConcurrentDomesticTransport {
+        inner: FixtureDomesticCnkiTransport,
+        active_requests: Arc<AtomicUsize>,
+        peak_requests: Arc<AtomicUsize>,
+    }
+
+    impl DomesticCnkiTransport for ConcurrentDomesticTransport {
+        fn resolve_journal(
+            &mut self,
+            locator: &DomesticJournalLocator,
+        ) -> Result<Option<Value>, DomesticCnkiSourceError> {
+            self.inner.resolve_journal(locator)
+        }
+
+        fn year_issues(&mut self, journal: &Value) -> Result<Vec<Value>, DomesticCnkiSourceError> {
+            self.inner.year_issues(journal)
+        }
+
+        fn issue_articles(
+            &mut self,
+            journal: &Value,
+            issue: &Value,
+            page_index: usize,
+        ) -> Result<DomesticIssueArticlePage, DomesticCnkiSourceError> {
+            self.inner.issue_articles(journal, issue, page_index)
+        }
+
+        fn article_detail(
+            &mut self,
+            article_url: &str,
+            platform_id: Option<&str>,
+        ) -> Result<Value, DomesticCnkiSourceError> {
+            let active = self.active_requests.fetch_add(1, Ordering::SeqCst) + 1;
+            self.peak_requests.fetch_max(active, Ordering::SeqCst);
+            thread::sleep(Duration::from_millis(30));
+            let result = self.inner.article_detail(article_url, platform_id);
+            self.active_requests.fetch_sub(1, Ordering::SeqCst);
+            result
+        }
+
+        fn attempts(&self) -> &[SourceAttempt] {
+            self.inner.attempts()
+        }
+
+        fn drain_attempts(&mut self) -> Vec<SourceAttempt> {
+            self.inner.drain_attempts()
+        }
+    }
 
     #[derive(Debug, Clone)]
     enum CrossrefFixtureResponse {
@@ -3517,6 +3714,41 @@ mod tests {
         assert_eq!(batch.articles.len(), 2);
         assert_eq!(batch.articles[0].title, "《世界经济》征稿启事");
         assert_eq!(batch.articles[1].title, "Reference book review 书评");
+    }
+
+    #[test]
+    fn domestic_cnki_workers_bound_parallel_details_and_preserve_order() {
+        let entries = (0..6)
+            .map(|index| {
+                (
+                    format!("PARALLEL{index}"),
+                    format!("Parallel article {index}"),
+                )
+            })
+            .collect::<Vec<_>>();
+        let active_requests = Arc::new(AtomicUsize::new(0));
+        let peak_requests = Arc::new(AtomicUsize::new(0));
+        let transport = ConcurrentDomesticTransport {
+            inner: FixtureDomesticCnkiTransport::new(domestic_paged_fixture(vec![(
+                "202601".to_string(),
+                vec![entries],
+            )])),
+            active_requests,
+            peak_requests: Arc::clone(&peak_requests),
+        };
+        let registration = cnki_index_registration_with_workers(transport, 3)
+            .expect("parallel domestic registration");
+
+        let batch = registration
+            .index_content()
+            .expect("parallel domestic index")
+            .fetch(&domestic_test_catalog(), None)
+            .expect("parallel details should complete");
+
+        assert_eq!(peak_requests.load(Ordering::SeqCst), 3);
+        assert_eq!(batch.articles.len(), 6);
+        assert_eq!(batch.articles[0].title, "Parallel article 0");
+        assert_eq!(batch.articles[5].title, "Parallel article 5");
     }
 
     #[test]

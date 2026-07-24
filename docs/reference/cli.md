@@ -157,7 +157,7 @@ litradar index --secret-key-file PATH
 | ------------------------------------------ | -------- | ------------------------------------------------------------ |
 | `--secret-key-file PATH`                   | 必填     | 解密索引运行配置                                             |
 | `--file FILE`、`-f FILE`                   | 全部 CSV | 只处理 `data/meta/` 下的一个文件                             |
-| `--workers N`、`-w N`                      | `6`      | 每个期刊子进程内的 CNKI 文章解析和 OpenAlex DOI 增强并发上限 |
+| `--workers N`、`-w N`                      | `6`      | 每个期刊子进程内的 CNKI 详情请求和 OpenAlex DOI 增强并发上限 |
 | `--processes N`                            | `1`      | 单个 CSV 的独立期刊子进程数                                  |
 | `--issue-batch N`                          | `8`      | 每轮合并的 CNKI issue 数                                     |
 | `--timeout N`                              | `20`     | 上游 HTTP 超时秒数                                           |
@@ -170,6 +170,7 @@ litradar index --secret-key-file PATH
 
 - `workers`、`processes`、`issue-batch` 必须至少为 1。
 - 只要选中的目录路由到 Scholarly，`workers` 最多为 6，`processes` 最多为 3；超限会在上游请求前失败。CNKI 路由不受这两个 Scholarly 上限约束。
+- 国内 CNKI 中，`processes` 并行不同期刊，`workers` 在每个期刊子进程内并行当前 papers 页的文章详情请求；期刊定位、刊期树、papers 页、checkpoint 和 SQLite 提交仍保持有序。实际详情在途量不超过 `workers × min(processes, 期刊数)`，也不会超过各当前 papers 页的文章数。
 - 只要选中的目录路由到 Scholarly，OpenAlex key、Semantic Scholar key 和 Crossref mailto 都必须存在；缺少任一类会在创建内容库、控制库或其他索引状态前失败。
 - `--notify` 必须和 `--update` 同时使用。
 - 单独传 `--notify-dry-run` 不会启动 notify；它只修改 `--notify` handoff 的模式。
