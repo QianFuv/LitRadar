@@ -39,7 +39,7 @@ pub const DOMESTIC_CAPTCHA_SOLVE_BUDGET: usize = 5;
 const DOMESTIC_POINT_JSON_Y: i32 = 5;
 const DOMESTIC_PAPERS_CONTINUATION_COUNT: usize = 10;
 const DOMESTIC_REDIRECT_LIMIT: usize = 10;
-const DOMESTIC_REQUEST_ATTEMPT_LIMIT: usize = 3;
+const DOMESTIC_REQUEST_ATTEMPT_LIMIT: usize = 5;
 const DOMESTIC_TRANSPORT_ATTEMPT_LIMIT: usize = 5;
 /// Current stable domestic CNKI traversal checkpoint version.
 pub const DOMESTIC_CNKI_CHECKPOINT_VERSION: u32 = 1;
@@ -185,8 +185,12 @@ impl DomesticRequestBudget {
         Duration::from_secs(1_u64 << exponent)
     }
 
-    fn can_retry_ordinary(&self) -> bool {
-        self.ordinary_attempts < DOMESTIC_REQUEST_ATTEMPT_LIMIT
+    fn ordinary_retry_delay(&self) -> Option<Duration> {
+        if self.ordinary_attempts >= DOMESTIC_REQUEST_ATTEMPT_LIMIT {
+            return None;
+        }
+        let exponent = self.ordinary_attempts.saturating_sub(1).min(3) as u32;
+        Some(Duration::from_secs(1_u64 << exponent))
     }
 
     fn did_retry(&self) -> bool {
@@ -2556,8 +2560,11 @@ impl LiveDomesticCnkiTransport {
                     did_retry,
                     error: Some("HTTP status"),
                 });
-                if !matches!(status.as_u16(), 404 | 410) && budget.can_retry_ordinary() {
-                    continue;
+                if !matches!(status.as_u16(), 404 | 410) {
+                    if let Some(delay) = budget.ordinary_retry_delay() {
+                        thread::sleep(delay);
+                        continue;
+                    }
                 }
                 return Err(domestic_http_status_error(status.as_u16()));
             }
@@ -3243,14 +3250,32 @@ mod tests {
     #[test]
     fn final_ordinary_attempt_can_schedule_one_authenticated_replay() {
         let mut budget = DomesticRequestBudget::default();
-        assert_eq!(budget.next_attempt(), Some(false));
-        assert_eq!(budget.next_attempt(), Some(false));
-        assert_eq!(budget.next_attempt(), Some(false));
+        for _ in 0..DOMESTIC_REQUEST_ATTEMPT_LIMIT {
+            assert_eq!(budget.next_attempt(), Some(false));
+        }
         budget
             .schedule_captcha_replay()
             .expect("captcha replay should fit budget");
         assert_eq!(budget.next_attempt(), Some(true));
         assert_eq!(budget.next_attempt(), None);
+    }
+
+    #[test]
+    fn retryable_http_statuses_receive_five_bounded_exponential_attempts() {
+        let mut budget = DomesticRequestBudget::default();
+
+        for expected_delay_seconds in [1, 2, 4, 8] {
+            assert_eq!(budget.next_attempt(), Some(false));
+            assert_eq!(
+                budget.ordinary_retry_delay(),
+                Some(Duration::from_secs(expected_delay_seconds))
+            );
+        }
+        assert_eq!(budget.next_attempt(), Some(false));
+        assert_eq!(budget.ordinary_retry_delay(), None);
+        assert_eq!(budget.next_attempt(), None);
+        assert_eq!(budget.ordinary_attempts, 5);
+        assert_eq!(budget.attempts_started, 5);
     }
 
     #[test]
