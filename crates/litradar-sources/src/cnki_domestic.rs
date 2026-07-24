@@ -40,13 +40,17 @@ const DOMESTIC_POINT_JSON_Y: i32 = 5;
 const DOMESTIC_PAPERS_CONTINUATION_COUNT: usize = 10;
 const DOMESTIC_REDIRECT_LIMIT: usize = 10;
 const DOMESTIC_REQUEST_ATTEMPT_LIMIT: usize = 3;
+const DOMESTIC_TRANSPORT_ATTEMPT_LIMIT: usize = 5;
 /// Current stable domestic CNKI traversal checkpoint version.
 pub const DOMESTIC_CNKI_CHECKPOINT_VERSION: u32 = 1;
 
 #[derive(Debug, Default)]
 struct DomesticRequestBudget {
     ordinary_attempts: usize,
+    transport_failures: usize,
     captcha_replays: usize,
+    attempts_started: usize,
+    has_pending_transport_retry: bool,
     has_pending_captcha_replay: bool,
 }
 
@@ -141,12 +145,19 @@ impl DomesticRequestBudget {
             }
             self.has_pending_captcha_replay = false;
             self.captcha_replays += 1;
+            self.attempts_started += 1;
+            return Some(true);
+        }
+        if self.has_pending_transport_retry {
+            self.has_pending_transport_retry = false;
+            self.attempts_started += 1;
             return Some(true);
         }
         if self.ordinary_attempts >= DOMESTIC_REQUEST_ATTEMPT_LIMIT {
             return None;
         }
         self.ordinary_attempts += 1;
+        self.attempts_started += 1;
         Some(false)
     }
 
@@ -160,12 +171,26 @@ impl DomesticRequestBudget {
         Ok(())
     }
 
+    fn schedule_transport_retry(&mut self) -> bool {
+        self.transport_failures += 1;
+        if self.transport_failures >= DOMESTIC_TRANSPORT_ATTEMPT_LIMIT {
+            return false;
+        }
+        self.has_pending_transport_retry = true;
+        true
+    }
+
+    fn transport_retry_delay(&self) -> Duration {
+        let exponent = self.transport_failures.saturating_sub(1).min(3) as u32;
+        Duration::from_secs(1_u64 << exponent)
+    }
+
     fn can_retry_ordinary(&self) -> bool {
         self.ordinary_attempts < DOMESTIC_REQUEST_ATTEMPT_LIMIT
     }
 
     fn did_retry(&self) -> bool {
-        self.ordinary_attempts + self.captcha_replays > 1
+        self.attempts_started > 1
     }
 }
 
@@ -2450,10 +2475,8 @@ impl LiveDomesticCnkiTransport {
                         did_retry,
                         error: Some("request failed"),
                     });
-                    if budget.can_retry_ordinary() {
-                        thread::sleep(Duration::from_millis(
-                            200 * budget.ordinary_attempts.max(1) as u64,
-                        ));
+                    if budget.schedule_transport_retry() {
+                        thread::sleep(budget.transport_retry_delay());
                         continue;
                     }
                     return Err(DomesticCnkiSourceError::Request(
@@ -3228,6 +3251,26 @@ mod tests {
             .expect("captcha replay should fit budget");
         assert_eq!(budget.next_attempt(), Some(true));
         assert_eq!(budget.next_attempt(), None);
+    }
+
+    #[test]
+    fn transport_failures_receive_five_bounded_exponential_attempts() {
+        let mut budget = DomesticRequestBudget::default();
+        assert_eq!(budget.next_attempt(), Some(false));
+
+        for expected_seconds in [1, 2, 4, 8] {
+            assert!(budget.schedule_transport_retry());
+            assert_eq!(
+                budget.transport_retry_delay(),
+                Duration::from_secs(expected_seconds)
+            );
+            assert_eq!(budget.next_attempt(), Some(true));
+            assert!(budget.did_retry());
+        }
+
+        assert!(!budget.schedule_transport_retry());
+        assert_eq!(budget.transport_failures, 5);
+        assert_eq!(budget.attempts_started, 5);
     }
 
     #[test]

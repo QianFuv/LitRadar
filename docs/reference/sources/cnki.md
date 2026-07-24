@@ -36,6 +36,8 @@ Provider 接收 LitRadar 维护的 `JournalCatalogEntry`，使用 canonical titl
 6. 页面内文章详情全部成功或仅有明确永久缺失后，映射为 `JournalDraft`、`IssueDraft`、`ArticleDraft`；所有 transport handle 和 URL 都在边界丢弃。
 7. checkpoint 指向下一页或下一稳定期次；它不保存期次/文章数组下标，也不包含 captcha 字段。
 
+同一索引进程处理一本期刊期间，首次 batch 取得的期刊详情和刊期树作为内存快照复用于后续页面；该刊完成后立即释放。新进程或新一轮已完成期刊索引会重新获取快照，因此 checkpoint 仍只依赖稳定 `year_issue_id`，不持久化上游句柄。
+
 基础站点为 `https://navi.cnki.net` 与 `https://kns.cnki.net`。Transport 对初始 URL、Referer、challenge、每个 redirect hop 和最终 URL 使用同一规则：只允许这两个精确主机的 HTTPS 默认端口，拒绝 userinfo、IP literal、自定义端口、协议降级和跨域跳转。当前私有请求路径包括 journal 搜索、详情、year list、papers、article abstract 和 captcha verify API；这些路径不是内容契约。
 
 ### Captcha
@@ -123,7 +125,7 @@ reqwest 错误在转换为业务错误前移除完整 URL。需要诊断的自�
 
 ## 重试和可观测性
 
-单个 CNKI HTTP 操作有三次普通尝试，两次等待分别为 1 秒和 2 秒。传输失败、非 2xx、验证码或异常验证页会重试；国内 captcha 另有最多五次 fresh solve/replay 的独立预算。持续失败使当前 Provider 操作明确失败，不写空内容冒充成功；只有上述窄范围永久文章缺失可以在同页继续。
+单个 CNKI HTTP 操作最多有三次普通响应尝试。没有收到 HTTP 响应的传输失败最多尝试五次，并按 1、2、4、8 秒进行有界指数退避；国内 captcha 另有最多五次 fresh solve/replay 的独立预算。持续失败使当前 Provider 操作明确失败，不写空内容冒充成功；只有上述窄范围永久文章缺失可以在同页继续。
 
 请求尝试只汇总到结构化 `index.provider.attempts` 或文章访问 fallback 事件。内容库没有 API/path statistics 表，也不保存 URL、响应正文、查询参数或解码器样本。
 

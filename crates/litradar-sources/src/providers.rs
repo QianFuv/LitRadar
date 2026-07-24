@@ -435,8 +435,18 @@ where
 
 /// Canonical domestic CNKI indexing provider backed by one source transport.
 pub struct DomesticCnkiIndexProvider<T> {
-    client: Mutex<DomesticCnkiClient<T>>,
+    state: Mutex<DomesticCnkiIndexState<T>>,
     worker_count: usize,
+}
+
+struct DomesticCnkiIndexState<T> {
+    client: DomesticCnkiClient<T>,
+    journal_snapshots: BTreeMap<String, DomesticCnkiJournalSnapshot>,
+}
+
+struct DomesticCnkiJournalSnapshot {
+    journal: Value,
+    issue_payloads: Vec<Value>,
 }
 
 impl<T> DomesticCnkiIndexProvider<T>
@@ -468,7 +478,10 @@ where
     /// Provider adapter with at least one detail worker.
     pub fn with_worker_count(transport: T, worker_count: usize) -> Self {
         Self {
-            client: Mutex::new(DomesticCnkiClient::new(transport)),
+            state: Mutex::new(DomesticCnkiIndexState {
+                client: DomesticCnkiClient::new(transport),
+                journal_snapshots: BTreeMap::new(),
+            }),
             worker_count: worker_count.max(1),
         }
     }
@@ -483,23 +496,33 @@ where
         catalog: &JournalCatalogEntry,
         checkpoint: Option<&str>,
     ) -> Result<ProviderBatch, ProviderError> {
-        let mut client = self.client.lock().map_err(|_| {
+        let mut state = self.state.lock().map_err(|_| {
             ProviderError::new(
                 ProviderErrorKind::Internal,
                 "domestic CNKI provider state is unavailable",
             )
         })?;
         let mut detail_attempts = Vec::new();
-        let result = fetch_domestic_cnki_batch(
-            &mut client,
-            catalog,
-            checkpoint,
-            self.worker_count,
-            &mut detail_attempts,
-        );
-        let mut attempts = client.drain_attempts();
+        let result = {
+            let DomesticCnkiIndexState {
+                client,
+                journal_snapshots,
+            } = &mut *state;
+            fetch_domestic_cnki_batch(
+                client,
+                journal_snapshots,
+                catalog,
+                checkpoint,
+                self.worker_count,
+                &mut detail_attempts,
+            )
+        };
+        let mut attempts = state.client.drain_attempts();
         attempts.append(&mut detail_attempts);
         emit_source_attempt_summary(CNKI_PROVIDER_NAME, &attempts);
+        if result.as_ref().is_ok_and(|batch| batch.is_complete) {
+            state.journal_snapshots.remove(&catalog.catalog_id);
+        }
         result
     }
 }
@@ -1732,6 +1755,7 @@ where
 
 fn fetch_domestic_cnki_batch<T>(
     client: &mut DomesticCnkiClient<T>,
+    journal_snapshots: &mut BTreeMap<String, DomesticCnkiJournalSnapshot>,
     catalog: &JournalCatalogEntry,
     checkpoint: Option<&str>,
     worker_count: usize,
@@ -1774,19 +1798,33 @@ where
         }
     }
 
-    let locator = domestic_journal_locator_from_catalog(catalog);
-    let journal = client
-        .resolve_journal(&locator)
-        .map_err(map_domestic_cnki_error)?
-        .ok_or_else(|| {
-            ProviderError::new(
-                ProviderErrorKind::NotFound,
-                "domestic CNKI provider could not resolve the journal",
-            )
-        })?;
-    let issue_payloads = client
-        .year_issues(&journal)
-        .map_err(map_domestic_cnki_error)?;
+    if !journal_snapshots.contains_key(&catalog.catalog_id) {
+        let locator = domestic_journal_locator_from_catalog(catalog);
+        let journal = client
+            .resolve_journal(&locator)
+            .map_err(map_domestic_cnki_error)?
+            .ok_or_else(|| {
+                ProviderError::new(
+                    ProviderErrorKind::NotFound,
+                    "domestic CNKI provider could not resolve the journal",
+                )
+            })?;
+        let issue_payloads = client
+            .year_issues(&journal)
+            .map_err(map_domestic_cnki_error)?;
+        journal_snapshots.insert(
+            catalog.catalog_id.clone(),
+            DomesticCnkiJournalSnapshot {
+                journal,
+                issue_payloads,
+            },
+        );
+    }
+    let snapshot = journal_snapshots
+        .get(&catalog.catalog_id)
+        .expect("domestic CNKI snapshot inserted above");
+    let journal = &snapshot.journal;
+    let issue_payloads = &snapshot.issue_payloads;
     if issue_payloads.is_empty() {
         if resume.is_some() {
             return Err(missing_domestic_checkpoint_issue_error());
@@ -1832,7 +1870,7 @@ where
     })?;
 
     let page = client
-        .issue_articles(&journal, issue_payload, page_index)
+        .issue_articles(journal, issue_payload, page_index)
         .map_err(map_domestic_cnki_error)?;
     validate_domestic_issue_page(&page, page_index)?;
     let has_next_page = page.has_next_page;
@@ -2202,6 +2240,53 @@ mod tests {
             let result = self.inner.article_detail(article_url, platform_id);
             self.active_requests.fetch_sub(1, Ordering::SeqCst);
             result
+        }
+
+        fn attempts(&self) -> &[SourceAttempt] {
+            self.inner.attempts()
+        }
+
+        fn drain_attempts(&mut self) -> Vec<SourceAttempt> {
+            self.inner.drain_attempts()
+        }
+    }
+
+    #[derive(Clone)]
+    struct MetadataCountingDomesticTransport {
+        inner: FixtureDomesticCnkiTransport,
+        journal_resolution_count: Arc<AtomicUsize>,
+        issue_tree_count: Arc<AtomicUsize>,
+    }
+
+    impl DomesticCnkiTransport for MetadataCountingDomesticTransport {
+        fn resolve_journal(
+            &mut self,
+            locator: &DomesticJournalLocator,
+        ) -> Result<Option<Value>, DomesticCnkiSourceError> {
+            self.journal_resolution_count.fetch_add(1, Ordering::SeqCst);
+            self.inner.resolve_journal(locator)
+        }
+
+        fn year_issues(&mut self, journal: &Value) -> Result<Vec<Value>, DomesticCnkiSourceError> {
+            self.issue_tree_count.fetch_add(1, Ordering::SeqCst);
+            self.inner.year_issues(journal)
+        }
+
+        fn issue_articles(
+            &mut self,
+            journal: &Value,
+            issue: &Value,
+            page_index: usize,
+        ) -> Result<DomesticIssueArticlePage, DomesticCnkiSourceError> {
+            self.inner.issue_articles(journal, issue, page_index)
+        }
+
+        fn article_detail(
+            &mut self,
+            article_url: &str,
+            platform_id: Option<&str>,
+        ) -> Result<Value, DomesticCnkiSourceError> {
+            self.inner.article_detail(article_url, platform_id)
         }
 
         fn attempts(&self) -> &[SourceAttempt] {
@@ -3539,6 +3624,49 @@ mod tests {
             .expect_err("missing checkpoint issue should fail");
         assert_eq!(error.kind(), ProviderErrorKind::InvalidResponse);
         assert!(error.to_string().contains("reset"));
+    }
+
+    #[test]
+    fn domestic_cnki_reuses_journal_metadata_until_completion() {
+        let entries = (0..11)
+            .map(|index| {
+                (
+                    format!("CACHE{index:02}"),
+                    format!("Cached metadata article {index}"),
+                )
+            })
+            .collect::<Vec<_>>();
+        let journal_resolution_count = Arc::new(AtomicUsize::new(0));
+        let issue_tree_count = Arc::new(AtomicUsize::new(0));
+        let transport = MetadataCountingDomesticTransport {
+            inner: FixtureDomesticCnkiTransport::new(domestic_paged_fixture(vec![(
+                "202601".to_string(),
+                vec![entries[..10].to_vec(), entries[10..].to_vec()],
+            )])),
+            journal_resolution_count: Arc::clone(&journal_resolution_count),
+            issue_tree_count: Arc::clone(&issue_tree_count),
+        };
+        let registration = cnki_index_registration(transport).expect("metadata cache registration");
+        let index = registration
+            .index_content()
+            .expect("metadata cache provider");
+        let catalog = domestic_test_catalog();
+
+        let first = index.fetch(&catalog, None).expect("first cached page");
+        let checkpoint = first.next_checkpoint.expect("cached page checkpoint");
+        let second = index
+            .fetch(&catalog, Some(&checkpoint))
+            .expect("second cached page");
+
+        assert!(second.is_complete);
+        assert_eq!(journal_resolution_count.load(Ordering::SeqCst), 1);
+        assert_eq!(issue_tree_count.load(Ordering::SeqCst), 1);
+
+        index
+            .fetch(&catalog, None)
+            .expect("completed journal should load a fresh snapshot");
+        assert_eq!(journal_resolution_count.load(Ordering::SeqCst), 2);
+        assert_eq!(issue_tree_count.load(Ordering::SeqCst), 2);
     }
 
     #[test]
