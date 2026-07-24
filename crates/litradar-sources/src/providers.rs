@@ -20,8 +20,8 @@ use serde_json::Value;
 
 use crate::{
     CnkiClient, CnkiSourceError, CnkiTransport, DomesticCnkiCheckpoint, DomesticCnkiClient,
-    DomesticCnkiSourceError, DomesticCnkiTransport, ScholarlyClient, ScholarlyTransport,
-    SourceAttempt, SourceError, SEMANTIC_SCHOLAR_BATCH_SIZE,
+    DomesticCnkiSourceError, DomesticCnkiTransport, DomesticJournalLocator, ScholarlyClient,
+    ScholarlyTransport, SourceAttempt, SourceError, SEMANTIC_SCHOLAR_BATCH_SIZE,
 };
 
 /// Stable runtime name for the built-in Scholarly indexing provider.
@@ -1577,6 +1577,26 @@ fn map_scholarly_error(error: SourceError) -> ProviderError {
     ProviderError::new(kind, "scholarly provider request failed")
 }
 
+fn domestic_journal_locator_from_catalog(catalog: &JournalCatalogEntry) -> DomesticJournalLocator {
+    let mut titles = vec![catalog.title.clone()];
+    titles.extend(catalog.title_aliases.iter().cloned());
+    let mut issns = catalog
+        .issn
+        .iter()
+        .chain(catalog.eissn.iter())
+        .cloned()
+        .collect::<Vec<_>>();
+    issns.extend(catalog.all_issns.iter().cloned());
+    DomesticJournalLocator::new(titles, issns)
+}
+
+fn domestic_journal_locator_from_article(article: &ArticleLocator) -> DomesticJournalLocator {
+    DomesticJournalLocator::new(
+        vec![article.journal_title.clone()],
+        article.journal_issns.clone(),
+    )
+}
+
 fn fetch_domestic_cnki_batch<T>(
     client: &mut DomesticCnkiClient<T>,
     catalog: &JournalCatalogEntry,
@@ -1612,13 +1632,9 @@ where
         }
     };
 
-    let row = BTreeMap::from([
-        ("catalog_id".to_string(), catalog.catalog_id.clone()),
-        ("title".to_string(), catalog.title.clone()),
-        ("issn".to_string(), catalog.issn.clone().unwrap_or_default()),
-    ]);
+    let locator = domestic_journal_locator_from_catalog(catalog);
     let journal = client
-        .resolve_journal(&row)
+        .resolve_journal(&locator)
         .map_err(map_domestic_cnki_error)?
         .ok_or_else(|| {
             ProviderError::new(
@@ -1709,15 +1725,9 @@ fn resolve_domestic_cnki_article_redirect<T>(
 where
     T: DomesticCnkiTransport,
 {
-    let row = BTreeMap::from([
-        ("title".to_string(), article.journal_title.clone()),
-        (
-            "issn".to_string(),
-            article.journal_issns.first().cloned().unwrap_or_default(),
-        ),
-    ]);
+    let locator = domestic_journal_locator_from_article(article);
     let journal = client
-        .resolve_journal(&row)
+        .resolve_journal(&locator)
         .map_err(map_domestic_cnki_error)?
         .ok_or_else(|| {
             ProviderError::new(
@@ -2885,6 +2895,38 @@ mod tests {
         assert!(!serialized.contains("http"));
     }
     #[test]
+    fn domestic_cnki_journal_locators_keep_all_catalog_and_article_identities() {
+        let catalog = JournalCatalogEntry {
+            catalog_id: "domestic".to_string(),
+            catalog_aliases: Vec::new(),
+            title: "Canonical title".to_string(),
+            issn: Some("1002-9621".to_string()),
+            eissn: Some("2049-3630".to_string()),
+            all_issns: vec![
+                "1002-9621".to_string(),
+                "2049-3630".to_string(),
+                "1234-5679".to_string(),
+            ],
+            title_aliases: vec!["Alias title".to_string(), " canonical title ".to_string()],
+            area: None,
+            rankings: JournalRankings::default(),
+        };
+
+        let catalog_locator = super::domestic_journal_locator_from_catalog(&catalog);
+        assert_eq!(catalog_locator.titles(), ["Canonical title", "Alias title"]);
+        assert_eq!(
+            catalog_locator.issns(),
+            ["1002-9621", "2049-3630", "1234-5679"]
+        );
+
+        let mut article = article_locator("Article", "Canonical title");
+        article.journal_issns = vec!["2049-3630".to_string(), "1002-9621".to_string()];
+        let article_locator = super::domestic_journal_locator_from_article(&article);
+        assert_eq!(article_locator.titles(), ["Canonical title"]);
+        assert_eq!(article_locator.issns(), ["2049-3630", "1002-9621"]);
+    }
+
+    #[test]
     fn domestic_cnki_declares_index_and_abstract_without_fulltext() {
         let fixture = DomesticCnkiFixtureData {
             journal_detail_html: r#"
@@ -2986,11 +3028,11 @@ mod tests {
         let catalog = JournalCatalogEntry {
             catalog_id: "sjjj".to_string(),
             catalog_aliases: Vec::new(),
-            title: "世界经济".to_string(),
-            issn: Some("1002-9621".to_string()),
-            eissn: None,
-            all_issns: vec!["1002-9621".to_string()],
-            title_aliases: Vec::new(),
+            title: "World Economy".to_string(),
+            issn: Some("2049-3630".to_string()),
+            eissn: Some("1002-9621".to_string()),
+            all_issns: vec!["2049-3630".to_string(), "1002-9621".to_string()],
+            title_aliases: vec!["世界经济".to_string()],
             area: None,
             rankings: JournalRankings::default(),
         };
@@ -3024,8 +3066,9 @@ mod tests {
             access.descriptor().allowed_redirect_hosts,
             DOMESTIC_CNKI_REDIRECT_HOSTS
         );
-        let mut locator = article_locator("建立互利共赢的标准化合作伙伴关系", "世界经济");
-        locator.journal_issns = vec!["1002-9621".to_string()];
+        let mut locator =
+            article_locator("建立互利共赢的标准化合作伙伴关系", "Provider title variant");
+        locator.journal_issns = vec!["2049-3630".to_string(), "1002-9621".to_string()];
         locator.publication_year = Some(2025);
         locator.issue_number = Some("12".to_string());
         locator.doi = Some("10.1000/domestic.sample".to_string());

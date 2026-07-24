@@ -3,7 +3,7 @@
 //! This module is intentionally unregistered as a product provider until later
 //! tasks wire index and abstract capabilities under the runtime name `cnki`.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fmt;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -20,6 +20,9 @@ use crate::jfbym::{
     encrypt_point_json, point_x_candidates, strip_data_url_base64, JfbymError, JfbymSolver,
 };
 use crate::scholarly::{SourceAttempt, SourceError};
+use litradar_domain::{
+    normalize_bibliographic_text, normalize_contract_issn, normalize_contract_text,
+};
 
 /// Domestic navigation host used by NZKPT journal search and detail pages.
 pub const DOMESTIC_NAVI_BASE_URL: &str = "https://navi.cnki.net";
@@ -51,6 +54,66 @@ struct DomesticAttempt<'a> {
     did_succeed: bool,
     did_retry: bool,
     error: Option<&'a str>,
+}
+
+/// Ordered domestic journal identity candidates used by index and abstract resolution.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DomesticJournalLocator {
+    titles: Vec<String>,
+    issns: Vec<String>,
+    normalized_titles: BTreeSet<String>,
+    normalized_issns: BTreeSet<String>,
+}
+
+impl DomesticJournalLocator {
+    /// Build a locator from canonical and alias titles plus print/electronic ISSNs.
+    ///
+    /// # Arguments
+    ///
+    /// * `titles` - Ordered title search candidates.
+    /// * `issns` - Ordered ISSN search candidates.
+    ///
+    /// # Returns
+    ///
+    /// Locator with empty, invalid, and normalized duplicate candidates removed.
+    pub fn new(titles: Vec<String>, issns: Vec<String>) -> Self {
+        let mut normalized_titles = BTreeSet::new();
+        let titles = titles
+            .into_iter()
+            .filter_map(|title| normalize_contract_text(&title))
+            .filter(|title| normalized_titles.insert(normalize_bibliographic_text(title)))
+            .collect();
+        let mut normalized_issns = BTreeSet::new();
+        let issns = issns
+            .into_iter()
+            .filter_map(|issn| normalize_contract_issn(&issn))
+            .filter(|issn| normalized_issns.insert(issn.clone()))
+            .collect();
+        Self {
+            titles,
+            issns,
+            normalized_titles,
+            normalized_issns,
+        }
+    }
+
+    /// Return ordered title queries after normalized deduplication.
+    ///
+    /// # Returns
+    ///
+    /// Canonical title followed by distinct aliases.
+    pub fn titles(&self) -> &[String] {
+        &self.titles
+    }
+
+    /// Return ordered canonical ISSN queries after deduplication.
+    ///
+    /// # Returns
+    ///
+    /// Distinct print/electronic ISSNs in caller order.
+    pub fn issns(&self) -> &[String] {
+        &self.issns
+    }
 }
 
 impl DomesticRequestBudget {
@@ -1606,18 +1669,18 @@ fn parse_domestic_json_response(
 
 /// Domestic NZKPT source transport abstraction.
 pub trait DomesticCnkiTransport {
-    /// Resolve one catalog journal row to domestic journal details.
+    /// Resolve one journal locator to domestic journal details.
     ///
     /// # Arguments
     ///
-    /// * `row` - Catalog title/ISSN row.
+    /// * `locator` - Ordered canonical/alias title and ISSN candidates.
     ///
     /// # Returns
     ///
     /// Parsed journal details when found.
     fn resolve_journal(
         &mut self,
-        row: &BTreeMap<String, String>,
+        locator: &DomesticJournalLocator,
     ) -> Result<Option<Value>, DomesticCnkiSourceError>;
 
     /// Fetch publication issues for one journal.
@@ -1727,10 +1790,10 @@ impl FixtureDomesticCnkiTransport {
 }
 
 impl DomesticCnkiTransport for FixtureDomesticCnkiTransport {
-    /// Resolve one fixture journal row by matching detail title/ISSN.
+    /// Resolve one fixture journal locator against observed detail identities.
     fn resolve_journal(
         &mut self,
-        row: &BTreeMap<String, String>,
+        locator: &DomesticJournalLocator,
     ) -> Result<Option<Value>, DomesticCnkiSourceError> {
         if self
             .data
@@ -1747,10 +1810,8 @@ impl DomesticCnkiTransport for FixtureDomesticCnkiTransport {
             return Ok(None);
         }
         let details = parse_domestic_journal_detail(&self.data.journal_detail_html)?;
-        let title = row.get("title").map(String::as_str).unwrap_or_default();
-        let issn = row.get("issn").map(String::as_str).unwrap_or_default();
         self.record_attempt("journal_detail", None, true, None);
-        if domestic_journal_detail_matches(&details, title, issn) {
+        if domestic_journal_detail_matches(&details, locator) {
             Ok(Some(details))
         } else {
             Ok(None)
@@ -1885,20 +1946,20 @@ where
         Self { transport }
     }
 
-    /// Resolve one catalog journal row to domestic journal details.
+    /// Resolve one journal locator to domestic journal details.
     ///
     /// # Arguments
     ///
-    /// * `row` - Catalog title/ISSN row.
+    /// * `locator` - Ordered canonical/alias title and ISSN candidates.
     ///
     /// # Returns
     ///
     /// Parsed journal details when found.
     pub fn resolve_journal(
         &mut self,
-        row: &BTreeMap<String, String>,
+        locator: &DomesticJournalLocator,
     ) -> Result<Option<Value>, DomesticCnkiSourceError> {
-        self.transport.resolve_journal(row)
+        self.transport.resolve_journal(locator)
     }
 
     /// Fetch publication issues for one journal.
@@ -1993,31 +2054,52 @@ fn domestic_fixture_url(endpoint: &str, key: Option<&str>) -> String {
     }
 }
 
-fn domestic_journal_detail_matches(details: &Value, title: &str, issn: &str) -> bool {
-    let detail_title = json_text(details.get("title")).unwrap_or_default();
-    if !title.trim().is_empty() {
-        normalize_title(title) == normalize_title(&detail_title)
-    } else {
-        !issn.trim().is_empty()
-            && normalize_issn(issn)
-                == normalize_issn(&json_text(details.get("issn")).unwrap_or_default())
+fn domestic_journal_detail_matches(details: &Value, locator: &DomesticJournalLocator) -> bool {
+    let observed = DomesticJournalLocator::new(
+        json_strings(details, "title", "title_aliases"),
+        json_strings(details, "issn", "issns")
+            .into_iter()
+            .chain(json_text(details.get("eissn")))
+            .collect(),
+    );
+    if !locator.normalized_issns.is_empty() && !observed.normalized_issns.is_empty() {
+        return !locator
+            .normalized_issns
+            .is_disjoint(&observed.normalized_issns);
     }
+    !locator
+        .normalized_titles
+        .is_disjoint(&observed.normalized_titles)
 }
 
-fn normalize_title(value: &str) -> String {
-    value
-        .chars()
-        .filter(|character| !character.is_whitespace())
-        .flat_map(|character| character.to_lowercase())
-        .collect()
+fn json_strings(value: &Value, scalar_field: &str, array_field: &str) -> Vec<String> {
+    let mut values = json_text(value.get(scalar_field))
+        .into_iter()
+        .collect::<Vec<_>>();
+    values.extend(
+        value
+            .get(array_field)
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|value| value.as_str().map(str::to_string)),
+    );
+    values
 }
 
-fn normalize_issn(value: &str) -> String {
-    value
-        .chars()
-        .filter(|character| character.is_ascii_alphanumeric())
-        .map(|character| character.to_ascii_uppercase())
-        .collect()
+fn append_unique_domestic_detail_urls(
+    detail_urls: &mut Vec<String>,
+    seen_detail_urls: &mut BTreeSet<String>,
+    candidates: Vec<Value>,
+) {
+    for candidate in candidates {
+        let Some(detail_url) = json_text(candidate.get("detail_url")) else {
+            continue;
+        };
+        if seen_detail_urls.insert(detail_url.clone()) {
+            detail_urls.push(detail_url);
+        }
+    }
 }
 
 /// Live domestic CNKI transport configuration.
@@ -2390,45 +2472,33 @@ impl LiveDomesticCnkiTransport {
 }
 
 impl DomesticCnkiTransport for LiveDomesticCnkiTransport {
-    /// Resolve one catalog journal row through domestic search and detail pages.
+    /// Resolve one journal locator through domestic search and detail pages.
     fn resolve_journal(
         &mut self,
-        row: &BTreeMap<String, String>,
+        locator: &DomesticJournalLocator,
     ) -> Result<Option<Value>, DomesticCnkiSourceError> {
-        let title = row
-            .get("title")
-            .map(String::as_str)
-            .unwrap_or_default()
-            .trim();
-        let issn = row
-            .get("issn")
-            .map(String::as_str)
-            .unwrap_or_default()
-            .trim();
-        if !title.is_empty() {
-            for candidate in self.search_journals(title, "TI")? {
-                let Some(detail_url) = json_text(candidate.get("detail_url")) else {
-                    continue;
-                };
-                let Some(details) = self.get_journal_detail(&detail_url)? else {
-                    continue;
-                };
-                if domestic_journal_detail_matches(&details, title, issn) {
-                    return Ok(Some(details));
-                }
-            }
+        let mut detail_urls = Vec::new();
+        let mut seen_detail_urls = BTreeSet::new();
+        for title in locator.titles() {
+            append_unique_domestic_detail_urls(
+                &mut detail_urls,
+                &mut seen_detail_urls,
+                self.search_journals(title, "TI")?,
+            );
         }
-        if !issn.is_empty() {
-            for candidate in self.search_journals(issn, "SN")? {
-                let Some(detail_url) = json_text(candidate.get("detail_url")) else {
-                    continue;
-                };
-                let Some(details) = self.get_journal_detail(&detail_url)? else {
-                    continue;
-                };
-                if domestic_journal_detail_matches(&details, title, issn) {
-                    return Ok(Some(details));
-                }
+        for issn in locator.issns() {
+            append_unique_domestic_detail_urls(
+                &mut detail_urls,
+                &mut seen_detail_urls,
+                self.search_journals(issn, "SN")?,
+            );
+        }
+        for detail_url in detail_urls {
+            let Some(details) = self.get_journal_detail(&detail_url)? else {
+                continue;
+            };
+            if domestic_journal_detail_matches(&details, locator) {
+                return Ok(Some(details));
             }
         }
         Ok(None)
@@ -2652,6 +2722,95 @@ mod tests {
         assert!(!contains_overseas_host(
             abstract_page["article_url"].as_str().unwrap_or_default()
         ));
+    }
+
+    #[test]
+    fn domestic_cnki_journal_identity_matrix_rejects_conflicts_and_uses_fallbacks() {
+        let locator = DomesticJournalLocator::new(
+            vec![
+                "世界经济".to_string(),
+                "世界经济别名".to_string(),
+                " 世界经济别名 ".to_string(),
+            ],
+            vec![
+                "1002-9621".to_string(),
+                "10029621".to_string(),
+                "1234-5679".to_string(),
+            ],
+        );
+        assert_eq!(locator.titles(), ["世界经济", "世界经济别名"]);
+        assert_eq!(locator.issns(), ["1002-9621", "1234-5679"]);
+
+        let conflicting = json!({
+            "title": "世界经济",
+            "issn": "2049-3630"
+        });
+        assert!(!domestic_journal_detail_matches(&conflicting, &locator));
+
+        let alias_with_intersection = json!({
+            "title": "世界经济别名",
+            "issn": "1002-9621"
+        });
+        assert!(domestic_journal_detail_matches(
+            &alias_with_intersection,
+            &locator
+        ));
+
+        let provider_title_with_intersection = json!({
+            "title": "Provider 自有题名",
+            "issns": ["1002-9621", "2049-3630"]
+        });
+        assert!(domestic_journal_detail_matches(
+            &provider_title_with_intersection,
+            &locator
+        ));
+
+        let missing_observed_issn = json!({"title": "世界经济别名"});
+        assert!(domestic_journal_detail_matches(
+            &missing_observed_issn,
+            &locator
+        ));
+        let title_only_locator =
+            DomesticJournalLocator::new(vec!["世界经济".to_string()], vec!["invalid".to_string()]);
+        let observed_with_only_issn = json!({
+            "title": "世界经济",
+            "issn": "2049-3630"
+        });
+        assert!(domestic_journal_detail_matches(
+            &observed_with_only_issn,
+            &title_only_locator
+        ));
+    }
+
+    #[test]
+    fn domestic_cnki_journal_detail_urls_are_deduplicated_in_search_order() {
+        let mut detail_urls = Vec::new();
+        let mut seen_detail_urls = BTreeSet::new();
+        append_unique_domestic_detail_urls(
+            &mut detail_urls,
+            &mut seen_detail_urls,
+            vec![
+                json!({"detail_url": "https://navi.cnki.net/knavi/detail?p=1"}),
+                json!({"detail_url": "https://navi.cnki.net/knavi/detail?p=2"}),
+            ],
+        );
+        append_unique_domestic_detail_urls(
+            &mut detail_urls,
+            &mut seen_detail_urls,
+            vec![
+                json!({"detail_url": "https://navi.cnki.net/knavi/detail?p=1"}),
+                json!({"detail_url": "https://navi.cnki.net/knavi/detail?p=3"}),
+            ],
+        );
+
+        assert_eq!(
+            detail_urls,
+            [
+                "https://navi.cnki.net/knavi/detail?p=1",
+                "https://navi.cnki.net/knavi/detail?p=2",
+                "https://navi.cnki.net/knavi/detail?p=3",
+            ]
+        );
     }
 
     #[test]
@@ -2998,12 +3157,12 @@ mod tests {
             fail_endpoint: None,
         };
         let mut client = DomesticCnkiClient::new(FixtureDomesticCnkiTransport::new(data));
-        let row = BTreeMap::from([
-            ("title".to_string(), "世界经济".to_string()),
-            ("issn".to_string(), "1002-9621".to_string()),
-        ]);
+        let locator = DomesticJournalLocator::new(
+            vec!["世界经济".to_string()],
+            vec!["1002-9621".to_string()],
+        );
         let journal = client
-            .resolve_journal(&row)
+            .resolve_journal(&locator)
             .expect("journal")
             .expect("found");
         assert_eq!(journal["pykm"], "SJJJ");
