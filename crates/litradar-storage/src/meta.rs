@@ -862,7 +862,7 @@ mod tests {
             .collect::<Vec<_>>();
         tracked_filenames.sort();
 
-        assert_eq!(bundle.version, 4);
+        assert_eq!(bundle.version, 5);
         assert_eq!(manifest_filenames, tracked_filenames);
         let ccf = bundle
             .catalogs
@@ -892,6 +892,9 @@ mod tests {
         assert!(chinese
             .legacy_sha256
             .contains("5b28d5cd1ac82cc8c9bbc2c7163fc4afcc0b80fb9e86fb404bb782b23684d05d"));
+        assert!(chinese
+            .legacy_sha256
+            .contains("7a86e119336951a568f2bb15cb2383d2aa644ab95ec83687bd98c1b4e94be5e9"));
         let english = bundle
             .catalogs
             .iter()

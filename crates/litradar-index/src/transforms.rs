@@ -510,6 +510,16 @@ mod tests {
             .iter()
             .all(|entry| entry.catalog_id != "issn-0253-9772"));
 
+        let journal_of_systems_and_management = chinese
+            .iter()
+            .find(|entry| entry.catalog_id == "issn-1005-2542")
+            .expect("Journal of Systems and Management should use its former title alias");
+        assert_eq!(journal_of_systems_and_management.title, "系统管理学报");
+        assert_eq!(
+            journal_of_systems_and_management.title_aliases,
+            ["系统工程理论方法应用"]
+        );
+
         let environment = english
             .iter()
             .find(|entry| entry.catalog_id == "issn-1472-3409")
