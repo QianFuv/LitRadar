@@ -512,13 +512,28 @@ mod tests {
 
         let journal_of_systems_and_management = chinese
             .iter()
-            .find(|entry| entry.catalog_id == "issn-1005-2542")
-            .expect("Journal of Systems and Management should use its former title alias");
+            .find(|entry| entry.catalog_id == "issn-2097-4558")
+            .expect("Journal of Systems and Management should use its current ISSN");
+        assert_eq!(
+            journal_of_systems_and_management.catalog_aliases,
+            ["issn-1005-2542"]
+        );
         assert_eq!(journal_of_systems_and_management.title, "系统管理学报");
+        assert_eq!(
+            journal_of_systems_and_management.issn.as_deref(),
+            Some("2097-4558")
+        );
+        assert_eq!(
+            journal_of_systems_and_management.all_issns,
+            ["2097-4558", "1005-2542"]
+        );
         assert_eq!(
             journal_of_systems_and_management.title_aliases,
             ["系统工程理论方法应用"]
         );
+        assert!(chinese
+            .iter()
+            .all(|entry| entry.catalog_id != "issn-1005-2542"));
 
         let environment = english
             .iter()
