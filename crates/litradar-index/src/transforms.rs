@@ -560,6 +560,28 @@ mod tests {
             .iter()
             .all(|entry| entry.catalog_id != "issn-1674-1625"));
 
+        let journal_of_modern_finance = chinese
+            .iter()
+            .find(|entry| entry.catalog_id == "issn-2097-5481")
+            .expect("Journal of Modern Finance should use its current ISSN");
+        assert_eq!(
+            journal_of_modern_finance.catalog_aliases,
+            ["issn-1009-9190"]
+        );
+        assert_eq!(journal_of_modern_finance.title, "现代金融研究");
+        assert_eq!(journal_of_modern_finance.issn.as_deref(), Some("2097-5481"));
+        assert_eq!(
+            journal_of_modern_finance.all_issns,
+            ["2097-5481", "1009-9190"]
+        );
+        assert_eq!(
+            journal_of_modern_finance.title_aliases,
+            ["金融论坛", "城市金融论坛"]
+        );
+        assert!(chinese
+            .iter()
+            .all(|entry| entry.catalog_id != "issn-1009-9190"));
+
         let environment = english
             .iter()
             .find(|entry| entry.catalog_id == "issn-1472-3409")
