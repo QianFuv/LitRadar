@@ -2244,6 +2244,15 @@ fn domestic_journal_detail_matches(details: &Value, locator: &DomesticJournalLoc
         .is_disjoint(&observed.normalized_titles)
 }
 
+fn domestic_title_search_terms(title: &str) -> Vec<String> {
+    let ascii_parentheses = title.replace('（', "(").replace('）', ")");
+    if ascii_parentheses == title {
+        vec![title.to_string()]
+    } else {
+        vec![title.to_string(), ascii_parentheses]
+    }
+}
+
 fn json_strings(value: &Value, scalar_field: &str, array_field: &str) -> Vec<String> {
     let mut values = json_text(value.get(scalar_field))
         .into_iter()
@@ -2749,11 +2758,13 @@ impl DomesticCnkiTransport for LiveDomesticCnkiTransport {
         let mut detail_urls = Vec::new();
         let mut seen_detail_urls = BTreeSet::new();
         for title in locator.titles() {
-            append_unique_domestic_detail_urls(
-                &mut detail_urls,
-                &mut seen_detail_urls,
-                self.search_journals(title, "TI")?,
-            );
+            for search_term in domestic_title_search_terms(title) {
+                append_unique_domestic_detail_urls(
+                    &mut detail_urls,
+                    &mut seen_detail_urls,
+                    self.search_journals(&search_term, "TI")?,
+                );
+            }
         }
         for issn in locator.issns() {
             append_unique_domestic_detail_urls(
@@ -3117,6 +3128,15 @@ mod tests {
             &observed_with_only_issn,
             &title_only_locator
         ));
+    }
+
+    #[test]
+    fn domestic_cnki_title_search_retries_ascii_parentheses() {
+        assert_eq!(
+            domestic_title_search_terms("经济学（季刊）"),
+            ["经济学（季刊）", "经济学(季刊)"]
+        );
+        assert_eq!(domestic_title_search_terms("世界经济"), ["世界经济"]);
     }
 
     #[test]
