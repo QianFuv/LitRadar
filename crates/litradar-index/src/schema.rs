@@ -722,6 +722,10 @@ fn remove_empty_legacy_journal(
         )
         .optional()?;
     let Some(journal_id) = journal_id else {
+        connection.execute(
+            "DELETE FROM journal_identity_keys WHERE canonical_catalog_id = ?1",
+            [legacy_catalog_id],
+        )?;
         return Ok(());
     };
     let has_durable_state = connection.query_row(
@@ -1816,6 +1820,50 @@ mod tests {
                 )));
             }
         }
+    }
+
+    #[test]
+    fn catalog_reconciliation_reassigns_orphaned_legacy_identity_keys() {
+        let connection = Connection::open_in_memory().expect("database should open");
+        init_content_db(&connection).expect("content schema should initialize");
+        let legacy = JournalCatalogEntry {
+            catalog_id: "issn-1005-2542".to_string(),
+            catalog_aliases: Vec::new(),
+            title: "系统管理学报".to_string(),
+            issn: Some("1005-2542".to_string()),
+            eissn: None,
+            all_issns: vec!["1005-2542".to_string()],
+            title_aliases: vec!["系统工程理论方法应用".to_string()],
+            area: None,
+            rankings: JournalRankings::default(),
+        };
+        reconcile_catalog_identities(&connection, std::slice::from_ref(&legacy))
+            .expect("legacy identities should reconcile before content exists");
+        assert_eq!(
+            connection
+                .query_row("SELECT COUNT(*) FROM journals", [], |row| row
+                    .get::<_, i64>(0))
+                .expect("journal count should read"),
+            0
+        );
+        assert!(identity_owners(&connection)
+            .iter()
+            .all(|(_, _, owner)| owner == &legacy.catalog_id));
+
+        let canonical = merged_catalog(
+            "issn-2097-4558",
+            "issn-1005-2542",
+            "系统管理学报",
+            "1005-2542",
+            "2097-4558",
+        );
+        reconcile_catalog_identities(&connection, std::slice::from_ref(&canonical))
+            .expect("orphaned legacy identities should move to the canonical catalog");
+
+        assert_eq!(identity_owners(&connection).len(), 4);
+        assert!(identity_owners(&connection)
+            .iter()
+            .all(|(_, _, owner)| owner == &canonical.catalog_id));
     }
 
     #[test]
