@@ -535,6 +535,31 @@ mod tests {
             .iter()
             .all(|entry| entry.catalog_id != "issn-1005-2542"));
 
+        let financial_economics_research = chinese
+            .iter()
+            .find(|entry| entry.catalog_id == "issn-2097-1346")
+            .expect("Financial Economics Research should use its current ISSN");
+        assert_eq!(
+            financial_economics_research.catalog_aliases,
+            ["issn-1674-1625"]
+        );
+        assert_eq!(financial_economics_research.title, "金融经济学研究");
+        assert_eq!(
+            financial_economics_research.issn.as_deref(),
+            Some("2097-1346")
+        );
+        assert_eq!(
+            financial_economics_research.all_issns,
+            ["2097-1346", "1674-1625"]
+        );
+        assert_eq!(
+            financial_economics_research.title_aliases,
+            ["广东金融学院学报"]
+        );
+        assert!(chinese
+            .iter()
+            .all(|entry| entry.catalog_id != "issn-1674-1625"));
+
         let environment = english
             .iter()
             .find(|entry| entry.catalog_id == "issn-1472-3409")
