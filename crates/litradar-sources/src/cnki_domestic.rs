@@ -2370,7 +2370,7 @@ impl SharedDomesticCaptchaSession {
                 "domestic CNKI captcha session is unavailable".to_string(),
             )
         })?;
-        state.session.clear_captcha_id();
+        state.session = DomesticCaptchaSession::new();
         state.generation = state.generation.wrapping_add(1);
         Ok(())
     }
@@ -3509,6 +3509,34 @@ mod tests {
         assert_eq!(cloned_generation, reset_generation);
         assert!(!parent_url.contains("captchaId="));
         assert!(!cloned_url.contains("captchaId="));
+    }
+
+    #[test]
+    fn resetting_shared_captcha_session_restores_exhausted_solve_budget() {
+        let session = SharedDomesticCaptchaSession::new();
+        let base_url = "https://kns.cnki.net/kcms2/article/abstract";
+        let (_, generation) = session.request_url(base_url).expect("initial captcha URL");
+        session
+            .refresh(generation, |captcha_session| {
+                captcha_session.solve_attempts = captcha_session.solve_budget;
+                Ok(())
+            })
+            .expect("exhaust captcha budget");
+
+        session.reset().expect("shared captcha reset");
+        let (_, reset_generation) = session.request_url(base_url).expect("reset captcha URL");
+        let did_refresh = session
+            .refresh(reset_generation, |captcha_session| {
+                assert!(captcha_session.has_budget());
+                assert_eq!(
+                    captcha_session.remaining_budget(),
+                    DOMESTIC_CAPTCHA_SOLVE_BUDGET
+                );
+                Ok(())
+            })
+            .expect("refresh after reset");
+
+        assert!(did_refresh);
     }
 
     #[test]
