@@ -61,11 +61,17 @@ pub(super) struct DefaultDeliveryAiSelector<F: AiSelectionClientFactory> {
 }
 
 impl DefaultDeliveryAiSelector<LiveAiSelectionClientFactory> {
-    pub(super) fn live(timeout_seconds: u64, retry_attempts: usize, auth_db_path: PathBuf) -> Self {
+    pub(super) fn live(
+        timeout_seconds: u64,
+        retry_attempts: usize,
+        auth_db_path: PathBuf,
+        execution_control: Option<DeliveryExecutionControl>,
+    ) -> Self {
         Self {
             factory: LiveAiSelectionClientFactory {
                 timeout_seconds,
                 auth_db_path,
+                execution_control,
             },
             retry_attempts,
             max_rounds: MAX_AI_SELECTION_ROUNDS,
@@ -171,6 +177,7 @@ impl<F: AiSelectionClientFactory> DeliveryAiSelector for DefaultDeliveryAiSelect
 pub(super) struct LiveAiSelectionClientFactory {
     timeout_seconds: u64,
     auth_db_path: PathBuf,
+    execution_control: Option<DeliveryExecutionControl>,
 }
 
 impl AiSelectionClientFactory for LiveAiSelectionClientFactory {
@@ -180,11 +187,12 @@ impl AiSelectionClientFactory for LiveAiSelectionClientFactory {
         retry_attempts: usize,
         temperature: f64,
     ) -> Result<Box<dyn AiSelectionClient>, String> {
-        let client = live_ai_client(
+        let client = crate::ai::live_ai_client_with_control(
             self.timeout_seconds,
             retry_attempts,
             temperature,
             &self.auth_db_path,
+            self.execution_control.clone(),
         )
         .map_err(|error| error.to_string())?;
         Ok(Box::new(LiveAiSelectionClient {

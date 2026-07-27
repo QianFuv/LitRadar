@@ -7,19 +7,26 @@ use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
 
-use crate::http::{redacted_url, BoundedHttpClient};
-use crate::retry::{bounded_retry_attempts, retry_backoff_delay};
+use crate::delivery::{DeliveryExecutionControl, DeliveryExecutionControlError};
+use crate::http::{redacted_url, BoundedHttpClient, OutboundHttpError};
+use crate::retry::{bounded_retry_attempts, retry_delay};
 
 /// PushPlus send endpoint.
 pub const PUSHPLUS_ENDPOINT: &str = "https://www.pushplus.plus/send";
 
-const TRANSIENT_STATUS_CODES: [u16; 5] = [429, 500, 502, 503, 504];
+const TRANSIENT_STATUS_CODES: [u16; 4] = [429, 502, 503, 504];
 
 /// Error returned by PushPlus delivery clients.
 #[derive(Debug, Clone, PartialEq)]
 pub enum PushPlusError {
+    /// Connection establishment failed before a response was received.
+    ConnectFailed,
+    /// The individual HTTP request timed out.
+    TimedOut,
     /// HTTP transport failed before a response payload was available.
     Transport(String),
+    /// Durable job cancellation or deadline stopped execution.
+    Control(DeliveryExecutionControlError),
     /// Upstream returned a non-success HTTP status.
     HttpStatus {
         /// HTTP status code.
@@ -42,7 +49,10 @@ impl fmt::Display for PushPlusError {
     /// Format the PushPlus error.
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::ConnectFailed => formatter.write_str("PushPlus connection failed"),
+            Self::TimedOut => formatter.write_str("PushPlus request timed out"),
             Self::Transport(message) => formatter.write_str(message),
+            Self::Control(error) => write!(formatter, "{error}"),
             Self::HttpStatus {
                 status_code,
                 request_id: Some(request_id),
@@ -109,6 +119,8 @@ pub struct PushPlusHttpRequest {
     pub url: String,
     /// JSON request body.
     pub body: Value,
+    /// Optional total-job-capped timeout for this attempt.
+    pub timeout: Option<Duration>,
 }
 
 impl fmt::Debug for PushPlusHttpRequest {
@@ -118,6 +130,7 @@ impl fmt::Debug for PushPlusHttpRequest {
             .debug_struct("PushPlusHttpRequest")
             .field("endpoint", &redacted_url(&self.url))
             .field("payload_bytes", &self.body.to_string().len())
+            .field("timeout", &self.timeout)
             .field("body", &"[REDACTED]")
             .finish()
     }
@@ -175,6 +188,7 @@ pub trait PushPlusTransport {
 #[derive(Debug, Clone)]
 pub struct ReqwestPushPlusTransport {
     client: BoundedHttpClient,
+    default_timeout: Duration,
 }
 
 impl ReqwestPushPlusTransport {
@@ -190,6 +204,7 @@ impl ReqwestPushPlusTransport {
     pub fn new(timeout_seconds: u64) -> Result<Self, PushPlusError> {
         Ok(Self {
             client: BoundedHttpClient::new(timeout_seconds),
+            default_timeout: Duration::from_secs(timeout_seconds.max(1)),
         })
     }
 }
@@ -202,8 +217,13 @@ impl PushPlusTransport for ReqwestPushPlusTransport {
     ) -> Result<PushPlusHttpResponse, PushPlusError> {
         let response = self
             .client
-            .post_json(&request.url, &[], &request.body)
-            .map_err(|error| PushPlusError::Transport(error.to_string()))?;
+            .post_json_with_timeout(
+                &request.url,
+                &[],
+                &request.body,
+                request.timeout.unwrap_or(self.default_timeout),
+            )
+            .map_err(pushplus_transport_error)?;
         Ok(PushPlusHttpResponse {
             status_code: response.status_code,
             request_id: response.request_id,
@@ -218,6 +238,8 @@ pub struct PushPlusClient<T: PushPlusTransport> {
     transport: T,
     retry_attempts: usize,
     sleep: Box<dyn Fn(Duration) + Send + Sync>,
+    execution_control: Option<DeliveryExecutionControl>,
+    default_timeout: Duration,
 }
 
 impl<T: PushPlusTransport> PushPlusClient<T> {
@@ -232,10 +254,33 @@ impl<T: PushPlusTransport> PushPlusClient<T> {
     ///
     /// PushPlus client.
     pub fn new(transport: T, retry_attempts: usize) -> Self {
+        Self::new_with_control(transport, retry_attempts, Duration::from_secs(60), None)
+    }
+
+    /// Build a PushPlus client sharing an optional durable execution boundary.
+    ///
+    /// # Arguments
+    ///
+    /// * `transport` - HTTP transport implementation.
+    /// * `retry_attempts` - Retry attempts.
+    /// * `default_timeout` - Normal timeout before the total deadline cap.
+    /// * `execution_control` - Optional durable job control.
+    ///
+    /// # Returns
+    ///
+    /// PushPlus client.
+    pub fn new_with_control(
+        transport: T,
+        retry_attempts: usize,
+        default_timeout: Duration,
+        execution_control: Option<DeliveryExecutionControl>,
+    ) -> Self {
         Self {
             transport,
             retry_attempts: bounded_retry_attempts(retry_attempts),
             sleep: Box::new(thread::sleep),
+            execution_control,
+            default_timeout: default_timeout.max(Duration::from_millis(1)),
         }
     }
 
@@ -309,9 +354,16 @@ impl<T: PushPlusTransport> PushPlusClient<T> {
         let mut last_error =
             PushPlusError::InvalidResponse("PushPlus request was not attempted".into());
         for attempt in 0..=self.retry_attempts {
+            let timeout = self
+                .execution_control
+                .as_ref()
+                .map(|control| control.begin_external_request(self.default_timeout))
+                .transpose()
+                .map_err(PushPlusError::Control)?;
             let request = PushPlusHttpRequest {
                 url: PUSHPLUS_ENDPOINT.to_string(),
                 body: pushplus_body(message),
+                timeout,
             };
             let attempt_started_at = Instant::now();
             match self.send_once(request) {
@@ -328,35 +380,29 @@ impl<T: PushPlusTransport> PushPlusClient<T> {
                 }
                 Err(error) => {
                     let can_retry = attempt < self.retry_attempts;
-                    let should_retry = can_retry
-                        && match &error {
-                            PushPlusError::HttpStatus { status_code, .. } => {
-                                TRANSIENT_STATUS_CODES.contains(status_code)
-                            }
-                            _ => true,
-                        };
+                    let should_retry = can_retry && is_retryable_pushplus_error(&error);
                     emit_pushplus_request_failure(
                         &error,
                         attempt + 1,
                         should_retry,
                         attempt_started_at,
                     );
+                    let retry_after_seconds = pushplus_retry_after_seconds(&error);
                     last_error = error;
                     if should_retry {
-                        (self.sleep)(retry_backoff_delay(attempt));
-                        continue;
-                    }
-                    if can_retry && !matches!(last_error, PushPlusError::HttpStatus { .. }) {
-                        (self.sleep)(retry_backoff_delay(attempt));
+                        let delay = retry_delay(attempt, retry_after_seconds);
+                        if let Some(control) = self.execution_control.as_ref() {
+                            control.wait(delay).map_err(PushPlusError::Control)?;
+                        } else {
+                            (self.sleep)(delay);
+                        }
                         continue;
                     }
                     break;
                 }
             }
         }
-        Err(PushPlusError::InvalidResponse(format!(
-            "PushPlus request failed: {last_error}"
-        )))
+        Err(last_error)
     }
 
     fn send_once(
@@ -399,9 +445,30 @@ pub fn live_pushplus_client(
     timeout_seconds: u64,
     retry_attempts: usize,
 ) -> Result<PushPlusClient<ReqwestPushPlusTransport>, PushPlusError> {
-    Ok(PushPlusClient::new(
+    live_pushplus_client_with_control(timeout_seconds, retry_attempts, None)
+}
+
+/// Build a live PushPlus client sharing an optional durable execution boundary.
+///
+/// # Arguments
+///
+/// * `timeout_seconds` - Normal per-request timeout in seconds.
+/// * `retry_attempts` - Retry attempts.
+/// * `execution_control` - Optional total deadline and cancellation probe.
+///
+/// # Returns
+///
+/// Live PushPlus client.
+pub fn live_pushplus_client_with_control(
+    timeout_seconds: u64,
+    retry_attempts: usize,
+    execution_control: Option<DeliveryExecutionControl>,
+) -> Result<PushPlusClient<ReqwestPushPlusTransport>, PushPlusError> {
+    Ok(PushPlusClient::new_with_control(
         ReqwestPushPlusTransport::new(timeout_seconds)?,
         retry_attempts,
+        Duration::from_secs(timeout_seconds.max(1)),
+        execution_control,
     ))
 }
 
@@ -489,10 +556,42 @@ fn emit_pushplus_request_failure(
 
 fn pushplus_error_kind(error: &PushPlusError) -> &'static str {
     match error {
+        PushPlusError::ConnectFailed => "connect_failed",
+        PushPlusError::TimedOut => "timeout",
         PushPlusError::Transport(_) => "transport",
+        PushPlusError::Control(error) => error.as_str(),
         PushPlusError::HttpStatus { .. } => "http_status",
         PushPlusError::Api { .. } => "api_error",
         PushPlusError::InvalidResponse(_) => "invalid_response",
+    }
+}
+
+fn pushplus_transport_error(error: OutboundHttpError) -> PushPlusError {
+    match error {
+        OutboundHttpError::ConnectFailed => PushPlusError::ConnectFailed,
+        OutboundHttpError::TimedOut => PushPlusError::TimedOut,
+        error => PushPlusError::Transport(error.to_string()),
+    }
+}
+
+fn is_retryable_pushplus_error(error: &PushPlusError) -> bool {
+    matches!(
+        error,
+        PushPlusError::ConnectFailed | PushPlusError::TimedOut
+    ) || matches!(
+        error,
+        PushPlusError::HttpStatus { status_code, .. }
+            if TRANSIENT_STATUS_CODES.contains(status_code)
+    )
+}
+
+fn pushplus_retry_after_seconds(error: &PushPlusError) -> Option<u64> {
+    match error {
+        PushPlusError::HttpStatus {
+            retry_after_seconds,
+            ..
+        } => *retry_after_seconds,
+        _ => None,
     }
 }
 
@@ -591,6 +690,86 @@ mod tests {
     }
 
     #[test]
+    fn send_does_not_retry_nonretryable_http_statuses() {
+        for status_code in [400_u16, 401, 403, 500] {
+            let response = Ok(PushPlusHttpResponse {
+                status_code,
+                request_id: None,
+                retry_after_seconds: None,
+                body: json!({"error": "redacted"}),
+            });
+            let mut client = PushPlusClient::new(FixturePushPlusTransport::new(vec![response]), 10)
+                .with_sleep(|_| {});
+
+            let error = client
+                .send(&message())
+                .expect_err("nonretryable status should fail immediately");
+
+            assert!(matches!(
+                error,
+                PushPlusError::HttpStatus {
+                    status_code: actual,
+                    ..
+                } if actual == status_code
+            ));
+            assert_eq!(client.transport().requests.len(), 1);
+        }
+    }
+
+    #[test]
+    fn send_retries_connect_and_timeout_failures() {
+        for failure in [PushPlusError::ConnectFailed, PushPlusError::TimedOut] {
+            let responses = vec![
+                Err(failure),
+                ok_response(json!({"code": 200, "data": "msg-retried"})),
+            ];
+            let mut client =
+                PushPlusClient::new(FixturePushPlusTransport::new(responses), 1).with_sleep(|_| {});
+
+            assert_eq!(
+                client
+                    .send(&message())
+                    .expect("transient failure should retry"),
+                "msg-retried"
+            );
+            assert_eq!(client.transport().requests.len(), 2);
+        }
+    }
+
+    #[test]
+    fn send_honors_the_capped_retry_after_delay() {
+        let responses = vec![
+            Ok(PushPlusHttpResponse {
+                status_code: 503,
+                request_id: None,
+                retry_after_seconds: Some(300),
+                body: json!({"error": "busy"}),
+            }),
+            ok_response(json!({"code": 200, "data": "msg-after-delay"})),
+        ];
+        let delays = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let captured_delays = delays.clone();
+        let mut client = PushPlusClient::new(FixturePushPlusTransport::new(responses), 1)
+            .with_sleep(move |delay| {
+                captured_delays
+                    .lock()
+                    .expect("retry delay lock should not be poisoned")
+                    .push(delay);
+            });
+
+        client
+            .send(&message())
+            .expect("capped Retry-After should allow the retry");
+
+        assert_eq!(
+            *delays
+                .lock()
+                .expect("retry delay lock should not be poisoned"),
+            vec![Duration::from_secs(60)]
+        );
+    }
+
+    #[test]
     fn pushplus_attempt_events_omit_token_message_and_response_material() {
         let sentinel = "pushplus-token-message-response-sentinel";
         let responses = vec![
@@ -653,7 +832,7 @@ mod tests {
             .send(&message())
             .expect_err("PushPlus API error should fail");
 
-        assert!(error.to_string().contains("PushPlus request failed"));
+        assert!(error.to_string().contains("PushPlus failed with code"));
         assert!(!error.to_string().contains("bad token"));
     }
 
@@ -699,6 +878,7 @@ mod tests {
         let request = PushPlusHttpRequest {
             url: PUSHPLUS_ENDPOINT.to_string(),
             body: json!({"token": "request-secret", "content": "message"}),
+            timeout: None,
         };
 
         let debug = format!("{request:?}");

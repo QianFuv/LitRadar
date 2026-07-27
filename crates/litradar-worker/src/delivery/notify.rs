@@ -11,9 +11,17 @@ pub(super) struct LiveDeliveryPushPlusSender {
 }
 
 impl LiveDeliveryPushPlusSender {
-    pub(super) fn new(timeout_seconds: u64, retry_attempts: usize) -> Result<Self, DeliveryError> {
+    pub(super) fn new(
+        timeout_seconds: u64,
+        retry_attempts: usize,
+        execution_control: Option<DeliveryExecutionControl>,
+    ) -> Result<Self, DeliveryError> {
         Ok(Self {
-            client: live_pushplus_client(timeout_seconds, retry_attempts)?,
+            client: crate::pushplus::live_pushplus_client_with_control(
+                timeout_seconds,
+                retry_attempts,
+                execution_control,
+            )?,
         })
     }
 }

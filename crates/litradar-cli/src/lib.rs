@@ -21,7 +21,8 @@ use litradar_storage::{
     StorageConfig,
 };
 use litradar_worker::delivery::{
-    run_recommendation_delivery, DeliveryMode, DeliveryWorkflow, RecommendationRunConfig,
+    run_manual_delivery_job, run_recommendation_delivery, DeliveryMode, DeliveryWorkflow,
+    RecommendationRunConfig,
 };
 use litradar_worker::scheduler::{load_scheduler_jobs, run_task_now, SchedulerMode};
 use serde_json::json;
@@ -510,6 +511,55 @@ pub fn run_scheduler_command(
     })
 }
 
+/// Run the private durable manual-delivery child command.
+///
+/// The application composition root only dispatches this entrypoint when a validated internal
+/// parent-run marker is present.
+///
+/// # Arguments
+///
+/// * `args` - Private child arguments without the executable or subcommand name.
+///
+/// # Returns
+///
+/// Result indicating whether the durable job reached a persisted terminal state.
+pub fn run_delivery_run_command(args: Vec<String>) -> Result<(), Box<dyn Error>> {
+    run_cli_command("delivery-run", move || run_delivery_run_command_inner(args))
+}
+
+fn run_delivery_run_command_inner(mut args: Vec<String>) -> Result<(), Box<dyn Error>> {
+    let project_root = extract_project_root(&mut args)?;
+    let auth_db_path = extract_auth_db_path_with_project_root(&mut args, &project_root)?;
+    let secret_key_file =
+        required_secret_key_file(extract_path_option(&mut args, "--secret-key-file")?)?;
+    let run_id = extract_string_option(&mut args, "--run-id")?
+        .ok_or("--run-id is required")?
+        .parse::<i64>()?;
+    let owner_id =
+        extract_string_option(&mut args, "--owner-id")?.ok_or("--owner-id is required")?;
+    if run_id <= 0 {
+        return Err("--run-id must be a positive integer".into());
+    }
+    if !args.is_empty() {
+        return Err("unexpected delivery-run arguments".into());
+    }
+
+    migrate_auth_database(&auth_db_path)?;
+    let secret_codec = SecretCodec::load(&secret_key_file)?;
+    verify_database_secrets(&auth_db_path, &secret_codec)?;
+    let storage_config =
+        StorageConfig::from_project_root(project_root).with_auth_db_path(auth_db_path);
+    let terminal = run_manual_delivery_job(&storage_config, secret_codec, run_id, &owner_id)?;
+    if !terminal.status.is_terminal() {
+        return Err("durable manual delivery job did not reach a terminal state".into());
+    }
+    print_result(&serde_json::to_string(&json!({
+        "run_id": terminal.id,
+        "status": terminal.status.as_str(),
+    }))?);
+    Ok(())
+}
+
 fn run_scheduler_command_inner(
     mut args: Vec<String>,
     application_executable: &Path,
@@ -642,6 +692,8 @@ fn run_delivery_command_inner(
             dedupe_retention_days,
             mode,
             workflow,
+            trigger: litradar_worker::delivery::DeliveryTrigger::Scheduled,
+            execution_control: None,
         })?;
         outcomes.push(outcome);
     }

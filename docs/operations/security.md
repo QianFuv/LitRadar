@@ -44,6 +44,8 @@ wc -c secrets/litradar.key
 
 Unix 取消和超时先向整个 group 发送 SIGTERM，等待 250 ms grace period，再对仍存活的 group 发送 SIGKILL；Windows 原子终止整个 Job Object。所有路径都等待直接子进程完成，Drop/shutdown 也执行强制兜底。spawn/assignment、TERM、force-kill 和 wait 失败只进入固定分类，不把可执行路径或操作系统自由文本写入调度状态与普通日志。Linux 和 Windows CI 都运行真实“子进程派生孙进程”夹具，并以两级监听端口或心跳停止作为回收证据。
 
+手动投递使用相同监管器和私有类型化 `delivery-run` child。SQLite 保存每用户唯一 active run、owner/revision lease、10 分钟绝对 deadline 与取消标志；实例池默认并发 2。child 每个业务边界轮询取消，所有 HTTP timeout 受剩余 deadline 限制。dispatcher 在取消 grace 后回收完整树；deadline 到达时直接强制回收。若强制回收时不能证明外部副作用未发生，任务固定为 `unknown` 且不允许自动重试。
+
 默认保留 180 天，可通过 `audit_retention_days` 设置 1–3650 天。启动后立即检查并每 24 小时检查一次；跨实例持久窗口和每事务 10,000 行上限避免无界删除。系统不暴露远程审计 API，查询、导出和取证只能使用受控的只读数据库副本；具体 SQL 与告警规则见[日志运维](logging.md)。`auth.sqlite` 固定备份范围包含审计历史和 maintenance 标记。
 
 ## 数据库凭据加密
@@ -218,6 +220,8 @@ AI 与 PushPlus 共用以下出站边界：
 - 只接受未压缩 JSON 成功响应，响应体硬上限为 2 MiB
 - 非 2xx 响应不读取 body；错误只保留固定分类、HTTP 状态和可选上游 request ID
 - 请求对象的 Debug 输出不包含 API key、prompt、文章、通知正文或 URL query
+
+AI/PushPlus 只重试连接失败、timeout 和 `429/502/503/504`；数值 `Retry-After` 上限 60 秒，其他情况使用指数 full jitter。`400/401/403` 和 PushPlus `500` 都只尝试一次。手动任务跨主备 Endpoint、格式和摘要请求共享 8 次 AI HTTP 预算；输出格式降级只发生在成功响应的明确兼容性失败之后。
 
 应用层策略不能替代基础设施隔离。公网部署仍应在容器、主机或云网络层设置 egress ACL，只放行确有需要的 AI/PushPlus 目标和 DNS/TLS 基础设施。
 

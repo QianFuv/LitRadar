@@ -1235,6 +1235,40 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  '/api/tracking/push-weekly/runs/{run_id}': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Get one durable manual weekly-push run visible to its owner or an administrator. */
+    get: operations['get_push_weekly_run'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/tracking/push-weekly/runs/{run_id}/cancel': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Request cancellation of one durable manual weekly-push run. */
+    post: operations['cancel_push_weekly_run'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   '/api/tracking/push-weekly/status': {
     parameters: {
       query?: never;
@@ -2091,6 +2125,17 @@ export interface components {
     };
     /** @description Manual weekly push job status payload. */
     ManualWeeklyPushStatus: {
+      /** @description Whether the current job still accepts cancellation. */
+      can_cancel: boolean;
+      /** @description Whether starting a new run cannot replay an ambiguous external outcome. */
+      can_retry: boolean;
+      /** @description Whether durable cancellation has been requested. */
+      cancellation_requested: boolean;
+      /**
+       * Format: double
+       * @description Absolute Unix timestamp after which the job must stop.
+       */
+      deadline_at?: number | null;
       /**
        * Format: double
        * @description Unix timestamp when the job finished.
@@ -2122,7 +2167,7 @@ export interface components {
        * @description Unix timestamp when the job started.
        */
       started_at?: number | null;
-      /** @description Job status: `idle`, `running`, `completed`, or `failed`. */
+      /** @description Durable job status. */
       status: string;
       /** @description AI-generated summary text when available. */
       summary: string;
@@ -4439,7 +4484,30 @@ export interface operations {
     };
     requestBody?: never;
     responses: {
-      /** @description Manual weekly push status. */
+      /** @description Queued or existing active manual weekly push. */
+      202: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ManualWeeklyPushStatus'];
+        };
+      };
+    };
+  };
+  get_push_weekly_run: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        /** @description Opaque manual push job id. */
+        run_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Durable manual weekly push status. */
       200: {
         headers: {
           [name: string]: unknown;
@@ -4448,8 +4516,40 @@ export interface operations {
           'application/json': components['schemas']['ManualWeeklyPushStatus'];
         };
       };
-      /** @description Another manual weekly push owns the process-local storage slot. */
-      503: {
+      /** @description Manual push job not found. */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorEnvelope'];
+        };
+      };
+    };
+  };
+  cancel_push_weekly_run: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        /** @description Opaque manual push job id. */
+        run_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Cancellation state. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ManualWeeklyPushStatus'];
+        };
+      };
+      /** @description Manual push job not found. */
+      404: {
         headers: {
           [name: string]: unknown;
         };

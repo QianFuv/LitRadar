@@ -15,8 +15,9 @@ use litradar_recommend::{
 use reqwest::Url;
 use serde_json::{json, Value};
 
-use crate::http::{redacted_url, BoundedHttpClient};
-use crate::retry::{bounded_retry_attempts, retry_backoff_delay};
+use crate::delivery::{DeliveryExecutionControl, DeliveryExecutionControlError};
+use crate::http::{redacted_url, BoundedHttpClient, OutboundHttpError};
+use crate::retry::{bounded_retry_attempts, retry_delay};
 
 const CHAT_COMPLETIONS_PATH: &str = "chat/completions";
 const HTTP_REFERER: &str = "https://github.com/openai/codex";
@@ -32,8 +33,14 @@ pub const DEFAULT_SELECTION_SYSTEM_PROMPT: &str = "You are a precise academic re
 /// Error returned by AI delivery clients.
 #[derive(Debug, Clone, PartialEq)]
 pub enum AiClientError {
+    /// Connection establishment failed before a response was received.
+    ConnectFailed,
+    /// The individual HTTP request timed out.
+    TimedOut,
     /// HTTP transport failed before a response payload was available.
     Transport(String),
+    /// Durable job cancellation, deadline, or request budget stopped execution.
+    Control(DeliveryExecutionControlError),
     /// Upstream returned a non-success HTTP status.
     HttpStatus {
         /// HTTP status code.
@@ -51,7 +58,10 @@ impl fmt::Display for AiClientError {
     /// Format the AI client error.
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::ConnectFailed => formatter.write_str("AI endpoint connection failed"),
+            Self::TimedOut => formatter.write_str("AI request timed out"),
             Self::Transport(message) => formatter.write_str(message),
+            Self::Control(error) => write!(formatter, "{error}"),
             Self::HttpStatus {
                 status_code,
                 request_id: Some(request_id),
@@ -101,6 +111,8 @@ pub struct AiHttpRequest {
     pub headers: Vec<AiHttpHeader>,
     /// JSON request body.
     pub body: Value,
+    /// Optional total-job-capped timeout for this attempt.
+    pub timeout: Option<Duration>,
 }
 
 impl fmt::Debug for AiHttpRequest {
@@ -111,6 +123,7 @@ impl fmt::Debug for AiHttpRequest {
             .field("endpoint", &redacted_url(&self.url))
             .field("headers", &self.headers)
             .field("payload_bytes", &self.body.to_string().len())
+            .field("timeout", &self.timeout)
             .field("body", &"[REDACTED]")
             .finish()
     }
@@ -170,6 +183,7 @@ pub trait AiTransport {
 #[derive(Clone)]
 pub struct ReqwestAiTransport {
     client: BoundedHttpClient,
+    default_timeout: Duration,
     auth_db_path: PathBuf,
 }
 
@@ -178,6 +192,7 @@ impl fmt::Debug for ReqwestAiTransport {
         formatter
             .debug_struct("ReqwestAiTransport")
             .field("client", &self.client)
+            .field("default_timeout", &self.default_timeout)
             .field("endpoint_catalog", &"[CONFIGURED]")
             .finish()
     }
@@ -200,6 +215,7 @@ impl ReqwestAiTransport {
     ) -> Result<Self, AiClientError> {
         Ok(Self {
             client: BoundedHttpClient::new(timeout_seconds),
+            default_timeout: Duration::from_secs(timeout_seconds.max(1)),
             auth_db_path: auth_db_path.into(),
         })
     }
@@ -220,8 +236,13 @@ impl AiTransport for ReqwestAiTransport {
             .collect::<Vec<_>>();
         let response = self
             .client
-            .post_json(&request.url, &headers, &request.body)
-            .map_err(|error| AiClientError::Transport(error.to_string()))?;
+            .post_json_with_timeout(
+                &request.url,
+                &headers,
+                &request.body,
+                request.timeout.unwrap_or(self.default_timeout),
+            )
+            .map_err(ai_transport_error)?;
         Ok(AiHttpResponse {
             status_code: response.status_code,
             request_id: response.request_id,
@@ -237,6 +258,8 @@ pub struct AiCompletionClient<T: AiTransport> {
     retry_attempts: usize,
     temperature: f64,
     sleep: Box<dyn Fn(Duration) + Send + Sync>,
+    execution_control: Option<DeliveryExecutionControl>,
+    default_timeout: Duration,
 }
 
 impl<T: AiTransport> AiCompletionClient<T> {
@@ -252,11 +275,42 @@ impl<T: AiTransport> AiCompletionClient<T> {
     ///
     /// Completion client.
     pub fn new(transport: T, retry_attempts: usize, temperature: f64) -> Self {
+        Self::new_with_control(
+            transport,
+            retry_attempts,
+            temperature,
+            Duration::from_secs(60),
+            None,
+        )
+    }
+
+    /// Build an AI client sharing one durable job deadline, cancellation probe, and budget.
+    ///
+    /// # Arguments
+    ///
+    /// * `transport` - HTTP transport implementation.
+    /// * `retry_attempts` - Retry attempts per response format variant.
+    /// * `temperature` - Model temperature.
+    /// * `default_timeout` - Normal timeout before the job deadline cap.
+    /// * `execution_control` - Optional durable job control.
+    ///
+    /// # Returns
+    ///
+    /// Completion client.
+    pub fn new_with_control(
+        transport: T,
+        retry_attempts: usize,
+        temperature: f64,
+        default_timeout: Duration,
+        execution_control: Option<DeliveryExecutionControl>,
+    ) -> Self {
         Self {
             transport,
             retry_attempts: bounded_retry_attempts(retry_attempts),
             temperature,
             sleep: Box::new(thread::sleep),
+            execution_control,
+            default_timeout: default_timeout.max(Duration::from_millis(1)),
         }
     }
 
@@ -528,6 +582,12 @@ impl<T: AiTransport> AiCompletionClient<T> {
                 );
             }
             for attempt in 0..=self.retry_attempts {
+                let timeout = self
+                    .execution_control
+                    .as_ref()
+                    .map(|control| control.begin_ai_request(self.default_timeout))
+                    .transpose()
+                    .map_err(AiClientError::Control)?;
                 let body = completion_body(
                     config,
                     self.temperature,
@@ -538,6 +598,7 @@ impl<T: AiTransport> AiCompletionClient<T> {
                     url: completion_url.clone(),
                     headers: ai_headers(&config.api_key),
                     body,
+                    timeout,
                 };
                 let attempt_started_at = Instant::now();
                 match self.send_completion(request, payload_kind) {
@@ -554,9 +615,11 @@ impl<T: AiTransport> AiCompletionClient<T> {
                         return Ok(response.payload);
                     }
                     Err(error) => {
-                        let will_retry = attempt < self.retry_attempts;
-                        let will_fallback =
-                            !will_retry && format_index + 1 < response_formats.len();
+                        let will_retry =
+                            attempt < self.retry_attempts && is_retryable_ai_error(&error);
+                        let will_fallback = !will_retry
+                            && is_format_compatibility_error(&error)
+                            && format_index + 1 < response_formats.len();
                         emit_ai_request_failure(
                             &error,
                             response_format.kind,
@@ -565,17 +628,26 @@ impl<T: AiTransport> AiCompletionClient<T> {
                             will_fallback,
                             attempt_started_at,
                         );
+                        let retry_after_seconds = ai_retry_after_seconds(&error);
                         last_error = error;
                         if will_retry {
-                            (self.sleep)(retry_backoff_delay(attempt));
+                            let delay = retry_delay(attempt, retry_after_seconds);
+                            if let Some(control) = self.execution_control.as_ref() {
+                                control.wait(delay).map_err(AiClientError::Control)?;
+                            } else {
+                                (self.sleep)(delay);
+                            }
+                            continue;
                         }
+                        if !will_fallback {
+                            return Err(last_error);
+                        }
+                        break;
                     }
                 }
             }
         }
-        Err(AiClientError::InvalidResponse(format!(
-            "AI request failed: {last_error}"
-        )))
+        Err(last_error)
     }
 
     fn send_completion(
@@ -618,10 +690,41 @@ pub fn live_ai_client(
     temperature: f64,
     auth_db_path: impl AsRef<Path>,
 ) -> Result<AiCompletionClient<ReqwestAiTransport>, AiClientError> {
-    Ok(AiCompletionClient::new(
+    live_ai_client_with_control(
+        timeout_seconds,
+        retry_attempts,
+        temperature,
+        auth_db_path,
+        None,
+    )
+}
+
+/// Build a live AI client sharing an optional durable job execution boundary.
+///
+/// # Arguments
+///
+/// * `timeout_seconds` - Normal per-request timeout in seconds.
+/// * `retry_attempts` - Retry attempts per response format variant.
+/// * `temperature` - Model temperature.
+/// * `auth_db_path` - Database containing the current AI endpoint catalog.
+/// * `execution_control` - Optional total deadline, cancellation probe, and AI budget.
+///
+/// # Returns
+///
+/// Live completion client.
+pub fn live_ai_client_with_control(
+    timeout_seconds: u64,
+    retry_attempts: usize,
+    temperature: f64,
+    auth_db_path: impl AsRef<Path>,
+    execution_control: Option<DeliveryExecutionControl>,
+) -> Result<AiCompletionClient<ReqwestAiTransport>, AiClientError> {
+    Ok(AiCompletionClient::new_with_control(
         ReqwestAiTransport::new(timeout_seconds, auth_db_path.as_ref().to_path_buf())?,
         retry_attempts,
         temperature,
+        Duration::from_secs(timeout_seconds.max(1)),
+        execution_control,
     ))
 }
 
@@ -733,9 +836,47 @@ fn emit_ai_request_failure(
 
 fn ai_error_kind(error: &AiClientError) -> &'static str {
     match error {
+        AiClientError::ConnectFailed => "connect_failed",
+        AiClientError::TimedOut => "timeout",
         AiClientError::Transport(_) => "transport",
+        AiClientError::Control(error) => error.as_str(),
         AiClientError::HttpStatus { .. } => "http_status",
         AiClientError::InvalidResponse(_) => "invalid_response",
+    }
+}
+
+fn ai_transport_error(error: OutboundHttpError) -> AiClientError {
+    match error {
+        OutboundHttpError::ConnectFailed => AiClientError::ConnectFailed,
+        OutboundHttpError::TimedOut => AiClientError::TimedOut,
+        error => AiClientError::Transport(error.to_string()),
+    }
+}
+
+fn is_retryable_ai_error(error: &AiClientError) -> bool {
+    matches!(
+        error,
+        AiClientError::ConnectFailed | AiClientError::TimedOut
+    ) || matches!(
+        error,
+        AiClientError::HttpStatus {
+            status_code: 429 | 502 | 503 | 504,
+            ..
+        }
+    )
+}
+
+fn is_format_compatibility_error(error: &AiClientError) -> bool {
+    matches!(error, AiClientError::InvalidResponse(_))
+}
+
+fn ai_retry_after_seconds(error: &AiClientError) -> Option<u64> {
+    match error {
+        AiClientError::HttpStatus {
+            retry_after_seconds,
+            ..
+        } => *retry_after_seconds,
+        _ => None,
     }
 }
 
@@ -1038,6 +1179,7 @@ mod tests {
                 value: "Bearer ai-request-secret".to_string(),
             }],
             body: json!({"model": "fixture-model"}),
+            timeout: None,
         };
 
         let debug = format!("{request:?}");
@@ -1085,6 +1227,7 @@ mod tests {
             url: "https://127.0.0.1/v1/chat/completions".to_string(),
             headers: Vec::new(),
             body: json!({}),
+            timeout: None,
         };
 
         assert_eq!(
@@ -1137,11 +1280,7 @@ mod tests {
     #[test]
     fn completion_falls_back_response_format_variants() {
         let responses = vec![
-            Err(AiClientError::HttpStatus {
-                status_code: 400,
-                request_id: None,
-                retry_after_seconds: None,
-            }),
+            ok_response(json!({"choices": []})),
             ok_response(json!({
                 "choices": [{
                     "message": {
@@ -1171,7 +1310,7 @@ mod tests {
     #[test]
     fn completion_retries_each_response_format() {
         let responses = vec![
-            Err(AiClientError::Transport("temporary".into())),
+            Err(AiClientError::ConnectFailed),
             ok_response(json!({
                 "choices": [{
                     "message": {
@@ -1222,11 +1361,11 @@ mod tests {
         article.abstract_text = sentinel.to_string();
         let logs = CapturedLogs::default();
         let mut client =
-            AiCompletionClient::new(FixtureAiTransport::new(responses), 0, 0.2).with_sleep(|_| {});
+            AiCompletionClient::new(FixtureAiTransport::new(responses), 2, 0.2).with_sleep(|_| {});
 
         let error = logs
             .capture(|| client.select_articles(&config, &subscriber, &defaults(), &[article]))
-            .expect_err("all response format attempts should fail");
+            .expect_err("all transient attempts should fail");
 
         assert!(!error.to_string().contains(sentinel));
         let events = logs.events();
@@ -1244,7 +1383,7 @@ mod tests {
                 .iter()
                 .filter(|event| event["event"] == "ai.response_format.fallback")
                 .count(),
-            2
+            0
         );
         assert_eq!(
             events
@@ -1259,7 +1398,7 @@ mod tests {
     #[test]
     fn retry_backoff_is_capped_for_later_attempts() {
         let mut responses = (0..10)
-            .map(|_| Err(AiClientError::Transport("temporary".into())))
+            .map(|_| Err(AiClientError::ConnectFailed))
             .collect::<Vec<_>>();
         responses.push(ok_response(json!({
             "choices": [{
@@ -1282,12 +1421,79 @@ mod tests {
             .select_articles(&ai_config(), &subscriber(), &defaults(), &[candidate(103)])
             .expect("retry sequence should eventually succeed");
 
-        assert_eq!(
-            *delays
-                .lock()
-                .expect("retry delay lock should not be poisoned"),
-            [1_u64, 2, 4, 8, 8, 8, 8, 8, 8, 8].map(Duration::from_secs)
+        let delays = delays
+            .lock()
+            .expect("retry delay lock should not be poisoned");
+        assert_eq!(delays.len(), 10);
+        for (delay, cap) in delays.iter().zip([1_u64, 2, 4, 8, 8, 8, 8, 8, 8, 8]) {
+            assert!(*delay <= Duration::from_secs(cap));
+        }
+    }
+
+    #[test]
+    fn completion_does_not_retry_or_fallback_nonretryable_http_statuses() {
+        for status_code in [400_u16, 401, 403] {
+            let responses = vec![Err(AiClientError::HttpStatus {
+                status_code,
+                request_id: None,
+                retry_after_seconds: None,
+            })];
+            let mut client = AiCompletionClient::new(FixtureAiTransport::new(responses), 10, 0.2)
+                .with_sleep(|_| {});
+
+            let error = client
+                .select_articles(&ai_config(), &subscriber(), &defaults(), &[candidate(103)])
+                .expect_err("nonretryable status should fail immediately");
+
+            assert!(matches!(
+                error,
+                AiClientError::HttpStatus {
+                    status_code: actual,
+                    ..
+                } if actual == status_code
+            ));
+            assert_eq!(client.transport().requests.len(), 1);
+        }
+    }
+
+    #[test]
+    fn completion_enforces_one_shared_eight_request_budget() {
+        let responses = (0..9)
+            .map(|_| {
+                Err(AiClientError::HttpStatus {
+                    status_code: 429,
+                    request_id: None,
+                    retry_after_seconds: Some(0),
+                })
+            })
+            .collect::<Vec<_>>();
+        let control = DeliveryExecutionControl::new(
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("system time should follow Unix epoch")
+                .as_secs_f64()
+                + 60.0,
+            8,
+            || Ok(false),
         );
+        let mut client = AiCompletionClient::new_with_control(
+            FixtureAiTransport::new(responses),
+            10,
+            0.2,
+            Duration::from_secs(60),
+            Some(control),
+        )
+        .with_sleep(|_| {});
+
+        let error = client
+            .select_articles(&ai_config(), &subscriber(), &defaults(), &[candidate(103)])
+            .expect_err("ninth AI request should be denied");
+
+        assert_eq!(
+            error,
+            AiClientError::Control(DeliveryExecutionControlError::AiRequestBudgetExhausted)
+        );
+        assert_eq!(client.transport().requests.len(), 8);
     }
 
     #[test]

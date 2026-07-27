@@ -166,10 +166,12 @@ CNKI 会话按 LitRadar 用户隔离；状态接口只返回安全元数据，�
 | `GET`            | `/api/tracking/ai-endpoints`                               | 管理员批准的 AI Endpoint   |
 | `POST`           | `/api/tracking/push-weekly`                                | 启动当前用户的手动周报任务 |
 | `GET`            | `/api/tracking/push-weekly/status`                         | 查询手动周报任务状态       |
+| `GET`            | `/api/tracking/push-weekly/runs/{run_id}`                  | 按 ID 查询 owner/admin 任务 |
+| `POST`           | `/api/tracking/push-weekly/runs/{run_id}/cancel`           | 请求取消 owner/admin 任务   |
 
-手动周报是异步任务；启动接口返回后，应通过状态接口查询进展。完整通知链路见[通知指南](../guides/notifications.md)。
+手动周报是 SQLite 持久化异步任务。启动接口返回 `202`；`pending/running` 状态应继续轮询，服务重启后仍可通过 latest 或 run-id 接口恢复。公开终态为 `completed`、`failed`、`cancelled`、`timed_out` 或 `unknown`，并返回 `deadline_at`、`cancellation_requested`、`can_cancel` 和 `can_retry`。完整通知链路见[通知指南](../guides/notifications.md)。
 
-同一 `litradar serve` 进程对每个 storage instance 同时只接纳一个 running manual `push-weekly` job。同一用户重复启动返回现有状态；另一用户竞争该 slot 时，`POST /api/tracking/push-weekly` 返回通用 `503` ErrorEnvelope，不创建该用户的 job。当前 job 完成或失败后可以重试；该限制不是队列或 `cross-process` 锁。
+SQLite 保证每个用户最多一个 queued/active 手动任务；同一用户重复启动返回现有 job，不同用户可以同时排队或在实例有界池中并行。普通用户只能查询和取消自己的 run；管理员可按不可猜测的 job id 管理任意用户 run。`unknown` 表示外部结果可能已发生，`can_retry=false`，客户端不得把它当普通失败自动重放。
 
 `PUT /api/tracking/notification-settings` 的 `ai_retry_attempts` 只接受 `1..=10`。超出范围时返回 `400`，且不会替换已有设置。历史或被手工修改的数据库值在读取时会归一到该范围，但服务不会因此自动改写数据库。
 

@@ -185,10 +185,9 @@ pub(super) fn admit_durable_delivery_run(
     let now = unix_now();
     let workflow = storage_workflow(config.workflow);
     let owner_id = format!("worker-{}", litradar_storage::random_hex(16)?);
-    let trigger_kind = if subscriber_user_id.is_some() {
-        DeliveryTriggerKind::Manual
-    } else {
-        DeliveryTriggerKind::Scheduled
+    let trigger_kind = match config.trigger {
+        DeliveryTrigger::Scheduled => DeliveryTriggerKind::Scheduled,
+        DeliveryTrigger::Manual => DeliveryTriggerKind::Manual,
     };
     let admission = litradar_storage::admit_delivery_run(
         &config.auth_db_path,
@@ -200,7 +199,10 @@ pub(super) fn admit_durable_delivery_run(
             trigger_kind,
             mode: storage_mode(config.mode),
             user_id: subscriber_user_id.map(UserId::value),
-            deadline_at: None,
+            deadline_at: config
+                .execution_control
+                .as_ref()
+                .map(DeliveryExecutionControl::deadline_at),
             created_at: now,
         },
     )?;

@@ -139,7 +139,7 @@ impl std::fmt::Debug for SelectionResultInfo {
 pub struct ManualWeeklyPushStatus {
     /// Background job identifier.
     pub job_id: Option<String>,
-    /// Job status: `idle`, `running`, `completed`, or `failed`.
+    /// Durable job status.
     pub status: String,
     /// Human-readable status message.
     pub message: String,
@@ -147,6 +147,14 @@ pub struct ManualWeeklyPushStatus {
     pub started_at: Option<f64>,
     /// Unix timestamp when the job finished.
     pub finished_at: Option<f64>,
+    /// Absolute Unix timestamp after which the job must stop.
+    pub deadline_at: Option<f64>,
+    /// Whether durable cancellation has been requested.
+    pub cancellation_requested: bool,
+    /// Whether the current job still accepts cancellation.
+    pub can_cancel: bool,
+    /// Whether starting a new run cannot replay an ambiguous external outcome.
+    pub can_retry: bool,
     /// Number of pushed or tracking-folder-synced articles.
     pub pushed: i64,
     /// Number of selected articles.

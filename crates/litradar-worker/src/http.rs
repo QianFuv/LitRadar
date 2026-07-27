@@ -198,11 +198,23 @@ impl BoundedHttpClient {
     }
 
     /// Send one JSON POST after validating and pinning the destination addresses.
+    #[cfg(test)]
     pub(crate) fn post_json(
         &self,
         url: &str,
         headers: &[(String, String)],
         body: &Value,
+    ) -> Result<BoundedJsonResponse, OutboundHttpError> {
+        self.post_json_with_timeout(url, headers, body, self.total_timeout)
+    }
+
+    /// Send one JSON POST with a caller-supplied timeout capped by a total job deadline.
+    pub(crate) fn post_json_with_timeout(
+        &self,
+        url: &str,
+        headers: &[(String, String)],
+        body: &Value,
+        timeout: Duration,
     ) -> Result<BoundedJsonResponse, OutboundHttpError> {
         let url = self.validate_url(url)?;
         let resolver = Arc::new(ValidatingDnsResolver {
@@ -210,7 +222,7 @@ impl BoundedHttpClient {
         });
         self.post_json_with_builder(
             url,
-            self.client_builder().dns_resolver(resolver),
+            self.client_builder(timeout).dns_resolver(resolver),
             headers,
             body,
         )
@@ -225,7 +237,7 @@ impl BoundedHttpClient {
         headers: &[(String, String)],
         body: &Value,
     ) -> Result<BoundedJsonResponse, OutboundHttpError> {
-        let mut client_builder = self.client_builder();
+        let mut client_builder = self.client_builder(self.total_timeout);
         if parse_ip_host(&host).is_none() {
             client_builder = client_builder.resolve_to_addrs(&host, &addresses);
         }
@@ -242,18 +254,20 @@ impl BoundedHttpClient {
     ) -> Result<BoundedJsonResponse, OutboundHttpError> {
         self.post_json_with_builder(
             url,
-            self.client_builder().dns_resolver(resolver),
+            self.client_builder(self.total_timeout)
+                .dns_resolver(resolver),
             headers,
             body,
         )
     }
 
-    fn client_builder(&self) -> ClientBuilder {
+    fn client_builder(&self, timeout: Duration) -> ClientBuilder {
+        let timeout = timeout.max(Duration::from_millis(1));
         Client::builder()
             .redirect(Policy::none())
             .no_proxy()
-            .connect_timeout(self.connect_timeout)
-            .timeout(self.total_timeout)
+            .connect_timeout(self.connect_timeout.min(timeout))
+            .timeout(timeout)
             .gzip(false)
     }
 

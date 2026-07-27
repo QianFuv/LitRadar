@@ -61,6 +61,38 @@ export function getPushWeeklyStatus(): Promise<ManualPushStatus> {
 }
 
 /**
+ * Fetch one durable weekly-push run by its opaque identifier.
+ *
+ * @param jobId - Owner-visible durable job identifier.
+ * @returns Durable push status.
+ */
+export function getPushWeeklyRun(jobId: string): Promise<ManualPushStatus> {
+  return requestJson<ManualPushStatus>(
+    buildApiUrl(`/api/tracking/push-weekly/runs/${encodeURIComponent(jobId)}`),
+    null,
+    undefined,
+    '获取推送任务失败',
+    parseManualPushStatus,
+  );
+}
+
+/**
+ * Request cancellation of one durable weekly-push run.
+ *
+ * @param jobId - Owner-visible durable job identifier.
+ * @returns Updated durable push status.
+ */
+export function cancelPushWeeklyRun(jobId: string): Promise<ManualPushStatus> {
+  return requestJson<ManualPushStatus>(
+    buildApiUrl(`/api/tracking/push-weekly/runs/${encodeURIComponent(jobId)}/cancel`),
+    null,
+    { method: 'POST' },
+    '取消推送任务失败',
+    parseManualPushStatus,
+  );
+}
+
+/**
  * Fetch notification settings.
  *
  * @returns Notification settings or null.

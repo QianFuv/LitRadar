@@ -1,103 +1,27 @@
 //! Tracking status and notification settings route handlers.
 
-use std::collections::HashMap;
-use std::path::PathBuf;
-use std::sync::{Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use axum::extract::State;
-use axum::http::HeaderMap;
+use axum::extract::{Path, State};
+use axum::http::{HeaderMap, StatusCode};
 use axum::Json;
 use litradar_domain::{
     ErrorEnvelope, ManualWeeklyPushStatus, NotificationSettingsResponse,
-    NotificationSettingsUpdate, TrackingFolderSummary, TrackingStatusResponse, UserId,
+    NotificationSettingsUpdate, TrackingFolderSummary, TrackingStatusResponse,
     NOTIFICATION_AI_RETRY_ATTEMPTS_MAX, NOTIFICATION_AI_RETRY_ATTEMPTS_MIN,
 };
-use litradar_storage::StorageConfig;
-use litradar_worker::delivery::{
-    run_manual_weekly_push, ManualWeeklyPushConfig, ManualWeeklyPushOutcome,
+use litradar_storage::{
+    DeliveryRepositoryError, DeliveryRunAdmissionOutcome, DeliveryRunCreate, DeliveryRunMode,
+    DeliveryRunRecord, DeliveryRunStatus, DeliveryTriggerKind, DeliveryWorkflow, StorageConfig,
 };
-use tracing::instrument::{Instrument, WithSubscriber};
+use litradar_worker::delivery::{ManualWeeklyPushOutcome, MANUAL_DELIVERY_JOB_DEADLINE_SECONDS};
 
 use crate::response::ApiError;
 use crate::routes::auth::require_current_user;
 use crate::state::ApiState;
 
 const ALLOWED_DELIVERY_METHODS: [&str; 2] = ["folder", "pushplus"];
-const MANUAL_PUSH_STARTED_MESSAGE: &str = "Manual push started and is running in the background";
-const MANUAL_PUSH_IDLE_MESSAGE: &str = "No manual push task is running";
-
-static MANUAL_PUSH_REGISTRY: OnceLock<ManualPushRegistry> = OnceLock::new();
-#[cfg(test)]
-static MANUAL_PUSH_TEST_DELAY_MS: OnceLock<Mutex<Option<u64>>> = OnceLock::new();
-
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-struct ManualPushKey {
-    auth_db_path: PathBuf,
-    user_id: UserId,
-}
-
-#[derive(Default)]
-struct ManualPushRegistry {
-    jobs: Mutex<HashMap<ManualPushKey, ManualWeeklyPushStatus>>,
-}
-
-#[derive(Debug)]
-enum ManualPushAdmission {
-    Started(ManualWeeklyPushStatus),
-    Existing(ManualWeeklyPushStatus),
-    Saturated,
-}
-
-impl ManualPushRegistry {
-    fn admit(&self, key: ManualPushKey, proposed: ManualWeeklyPushStatus) -> ManualPushAdmission {
-        let mut jobs = self
-            .jobs
-            .lock()
-            .expect("manual push jobs lock should not be poisoned");
-        if let Some(status) = jobs.get(&key).filter(|status| status.status == "running") {
-            return ManualPushAdmission::Existing(status.clone());
-        }
-        if jobs.iter().any(|(existing_key, status)| {
-            existing_key.auth_db_path == key.auth_db_path && status.status == "running"
-        }) {
-            return ManualPushAdmission::Saturated;
-        }
-        jobs.insert(key, proposed.clone());
-        ManualPushAdmission::Started(proposed)
-    }
-
-    fn current(&self, key: &ManualPushKey) -> Option<ManualWeeklyPushStatus> {
-        self.jobs
-            .lock()
-            .expect("manual push jobs lock should not be poisoned")
-            .get(key)
-            .cloned()
-    }
-
-    fn update_if_current(&self, key: ManualPushKey, job_id: &str, status: ManualWeeklyPushStatus) {
-        let mut jobs = self
-            .jobs
-            .lock()
-            .expect("manual push jobs lock should not be poisoned");
-        let Some(current) = jobs.get(&key) else {
-            return;
-        };
-        if current.job_id.as_deref() == Some(job_id) {
-            jobs.insert(key, status);
-        }
-    }
-
-    #[cfg(test)]
-    fn running_count(&self, auth_db_path: &std::path::Path) -> usize {
-        self.jobs
-            .lock()
-            .expect("manual push jobs lock should not be poisoned")
-            .iter()
-            .filter(|(key, status)| key.auth_db_path == auth_db_path && status.status == "running")
-            .count()
-    }
-}
+const MANUAL_PUSH_IDLE_MESSAGE: &str = "No manual push task is available";
 
 /// Start one manual weekly-push job for the authenticated user.
 #[utoipa::path(
@@ -105,53 +29,41 @@ impl ManualPushRegistry {
     path = "/api/tracking/push-weekly",
     tag = "tracking",
     responses(
-        (status = 200, description = "Manual weekly push status.", body = ManualWeeklyPushStatus),
-        (status = 503, description = "Another manual weekly push owns the process-local storage slot.", body = ErrorEnvelope)
+        (status = 202, description = "Queued or existing active manual weekly push.", body = ManualWeeklyPushStatus)
     ),
     security(("bearer_auth" = []), ("session_cookie" = []))
 )]
 pub(crate) async fn push_weekly_to_tracking(
     State(state): State<ApiState>,
     headers: HeaderMap,
-) -> Result<Json<ManualWeeklyPushStatus>, ApiError> {
+) -> Result<(StatusCode, Json<ManualWeeklyPushStatus>), ApiError> {
     let (user, _) = require_current_user(&state, &headers).await?;
-    let key = manual_push_key(&state, user.id);
     let job_id = run_storage(&state, move |_| litradar_storage::random_hex(16)).await?;
-    let started_at = current_epoch_seconds();
-    let status = manual_push_status(
-        Some(job_id.clone()),
-        "running",
-        MANUAL_PUSH_STARTED_MESSAGE,
-        Some(started_at),
-        None,
-        ManualWeeklyPushOutcome {
-            status: "running".to_string(),
-            message: MANUAL_PUSH_STARTED_MESSAGE.to_string(),
-            pushed: 0,
-            selected: 0,
-            total_candidates: None,
-            summary: String::new(),
-            folder_id: None,
-            folder_name: None,
-        },
-    );
-    let status = match manual_push_registry().admit(key.clone(), status) {
-        ManualPushAdmission::Started(status) => status,
-        ManualPushAdmission::Existing(status) => return Ok(Json(status)),
-        ManualPushAdmission::Saturated => return Err(ApiError::service_unavailable()),
+    let now = current_epoch_seconds();
+    let user_id = user.id.value();
+    let run = run_storage(&state, move |storage| {
+        litradar_storage::admit_delivery_run(
+            storage.auth_db_path(),
+            &DeliveryRunCreate {
+                external_id: job_id,
+                workflow: DeliveryWorkflow::Push,
+                scope_key: format!("manual-user-{user_id}"),
+                db_name: None,
+                trigger_kind: DeliveryTriggerKind::Manual,
+                mode: DeliveryRunMode::Execute,
+                user_id: Some(user_id),
+                deadline_at: Some(now + MANUAL_DELIVERY_JOB_DEADLINE_SECONDS as f64),
+                created_at: now,
+            },
+        )
+    })
+    .await?;
+    let run = match run {
+        DeliveryRunAdmissionOutcome::Enqueued(run)
+        | DeliveryRunAdmissionOutcome::Existing(run)
+        | DeliveryRunAdmissionOutcome::Busy(run) => run,
     };
-    let config = ManualWeeklyPushConfig {
-        storage_config: state.storage_config().clone(),
-        secret_codec: state.secret_codec().clone(),
-        user_id: user.id,
-        ai_model: None,
-        max_candidates: None,
-        timeout_seconds: 120,
-        retry_attempts: 3,
-        dedupe_retention_days: 60,
-    };
-    spawn_manual_push_job(state, key, job_id, started_at, config);
-    Ok(Json(status))
+    Ok((StatusCode::ACCEPTED, Json(manual_push_status(&run))))
 }
 
 /// Get the current manual weekly-push job status for the authenticated user.
@@ -167,10 +79,82 @@ pub(crate) async fn get_push_weekly_status(
     headers: HeaderMap,
 ) -> Result<Json<ManualWeeklyPushStatus>, ApiError> {
     let (user, _) = require_current_user(&state, &headers).await?;
-    let key = manual_push_key(&state, user.id);
+    let run = run_storage(&state, move |storage| {
+        litradar_storage::load_latest_manual_delivery_run(storage.auth_db_path(), user.id.value())
+    })
+    .await?;
     Ok(Json(
-        current_manual_push_status(&key).unwrap_or_else(idle_manual_push_status),
+        run.as_ref()
+            .map(manual_push_status)
+            .unwrap_or_else(idle_manual_push_status),
     ))
+}
+
+/// Get one durable manual weekly-push run visible to its owner or an administrator.
+#[utoipa::path(
+    get,
+    path = "/api/tracking/push-weekly/runs/{run_id}",
+    tag = "tracking",
+    params(("run_id" = String, Path, description = "Opaque manual push job id.")),
+    responses(
+        (status = 200, description = "Durable manual weekly push status.", body = ManualWeeklyPushStatus),
+        (status = 404, description = "Manual push job not found.", body = ErrorEnvelope)
+    ),
+    security(("bearer_auth" = []), ("session_cookie" = []))
+)]
+pub(crate) async fn get_push_weekly_run(
+    State(state): State<ApiState>,
+    headers: HeaderMap,
+    Path(run_id): Path<String>,
+) -> Result<Json<ManualWeeklyPushStatus>, ApiError> {
+    let (user, _) = require_current_user(&state, &headers).await?;
+    validate_manual_job_id(&run_id)?;
+    let run = load_authorized_manual_run(&state, user.id.value(), user.is_admin, run_id).await?;
+    Ok(Json(manual_push_status(&run)))
+}
+
+/// Request cancellation of one durable manual weekly-push run.
+#[utoipa::path(
+    post,
+    path = "/api/tracking/push-weekly/runs/{run_id}/cancel",
+    tag = "tracking",
+    params(("run_id" = String, Path, description = "Opaque manual push job id.")),
+    responses(
+        (status = 200, description = "Cancellation state.", body = ManualWeeklyPushStatus),
+        (status = 404, description = "Manual push job not found.", body = ErrorEnvelope)
+    ),
+    security(("bearer_auth" = []), ("session_cookie" = []))
+)]
+pub(crate) async fn cancel_push_weekly_run(
+    State(state): State<ApiState>,
+    headers: HeaderMap,
+    Path(run_id): Path<String>,
+) -> Result<Json<ManualWeeklyPushStatus>, ApiError> {
+    let (user, _) = require_current_user(&state, &headers).await?;
+    validate_manual_job_id(&run_id)?;
+    let run = load_authorized_manual_run(&state, user.id.value(), user.is_admin, run_id).await?;
+    if run.status.is_terminal() || run.cancellation_requested {
+        return Ok(Json(manual_push_status(&run)));
+    }
+    let updated =
+        run_storage(
+            &state,
+            move |storage| match litradar_storage::request_delivery_run_cancellation(
+                storage.auth_db_path(),
+                run.id,
+                run.revision,
+                current_epoch_seconds(),
+            ) {
+                Ok(updated) => Ok(updated),
+                Err(DeliveryRepositoryError::Conflict) => {
+                    litradar_storage::load_delivery_run(storage.auth_db_path(), run.id)?
+                        .ok_or(DeliveryRepositoryError::NotFound)
+                }
+                Err(error) => Err(error),
+            },
+        )
+        .await?;
+    Ok(Json(manual_push_status(&updated)))
 }
 
 /// Get tracking status for the authenticated user.
@@ -441,21 +425,6 @@ fn nonempty_or_default(value: String, default: &str) -> String {
     }
 }
 
-fn manual_push_registry() -> &'static ManualPushRegistry {
-    MANUAL_PUSH_REGISTRY.get_or_init(ManualPushRegistry::default)
-}
-
-fn manual_push_key(state: &ApiState, user_id: UserId) -> ManualPushKey {
-    ManualPushKey {
-        auth_db_path: state.storage_config().auth_db_path().to_path_buf(),
-        user_id,
-    }
-}
-
-fn current_manual_push_status(key: &ManualPushKey) -> Option<ManualWeeklyPushStatus> {
-    manual_push_registry().current(key)
-}
-
 fn idle_manual_push_status() -> ManualWeeklyPushStatus {
     ManualWeeklyPushStatus {
         job_id: None,
@@ -463,6 +432,10 @@ fn idle_manual_push_status() -> ManualWeeklyPushStatus {
         message: MANUAL_PUSH_IDLE_MESSAGE.to_string(),
         started_at: None,
         finished_at: None,
+        deadline_at: None,
+        cancellation_requested: false,
+        can_cancel: false,
+        can_retry: false,
         pushed: 0,
         selected: 0,
         total_candidates: None,
@@ -470,57 +443,6 @@ fn idle_manual_push_status() -> ManualWeeklyPushStatus {
         folder_id: None,
         folder_name: None,
     }
-}
-
-fn spawn_manual_push_job(
-    state: ApiState,
-    key: ManualPushKey,
-    job_id: String,
-    started_at: f64,
-    config: ManualWeeklyPushConfig,
-) {
-    let span = tracing::Span::current();
-    let subscriber = tracing::dispatcher::get_default(Clone::clone);
-    tokio::spawn(
-        async move {
-            let finished = state
-                .run_background_blocking(move || {
-                    delay_manual_push_for_tests();
-                    run_manual_weekly_push(&config)
-                })
-                .await;
-            let finished_at = current_epoch_seconds();
-            let status = match finished {
-                Ok(Ok(outcome)) => {
-                    let outcome_status = outcome.status.clone();
-                    let outcome_message = outcome.message.clone();
-                    manual_push_status(
-                        Some(job_id.clone()),
-                        &outcome_status,
-                        &outcome_message,
-                        Some(started_at),
-                        Some(finished_at),
-                        outcome,
-                    )
-                }
-                Ok(Err(error)) => failed_manual_push_status(
-                    Some(job_id.clone()),
-                    started_at,
-                    finished_at,
-                    &format!("Manual push failed: {error}"),
-                ),
-                Err(error) => failed_manual_push_status(
-                    Some(job_id.clone()),
-                    started_at,
-                    finished_at,
-                    &format!("Manual push failed: {error}"),
-                ),
-            };
-            update_manual_push_status_if_current(key, &job_id, status);
-        }
-        .instrument(span)
-        .with_subscriber(subscriber),
-    );
 }
 
 async fn run_storage<Output, StorageError, Work>(
@@ -539,55 +461,100 @@ where
         .map_err(|_| ApiError::internal_server_error())
 }
 
-fn update_manual_push_status_if_current(
-    key: ManualPushKey,
-    job_id: &str,
-    status: ManualWeeklyPushStatus,
-) {
-    manual_push_registry().update_if_current(key, job_id, status);
-}
-
-fn manual_push_status(
-    job_id: Option<String>,
-    status: &str,
-    message: &str,
-    started_at: Option<f64>,
-    finished_at: Option<f64>,
-    outcome: ManualWeeklyPushOutcome,
-) -> ManualWeeklyPushStatus {
+fn manual_push_status(run: &DeliveryRunRecord) -> ManualWeeklyPushStatus {
+    let outcome = run
+        .result_json
+        .as_deref()
+        .and_then(|value| serde_json::from_str::<ManualWeeklyPushOutcome>(value).ok());
+    let public_status = public_manual_status(run.status);
+    let message = outcome
+        .as_ref()
+        .map(|outcome| outcome.message.clone())
+        .filter(|message| !message.is_empty())
+        .unwrap_or_else(|| manual_status_message(run).to_string());
     ManualWeeklyPushStatus {
-        job_id,
-        status: status.to_string(),
-        message: message.to_string(),
-        started_at,
-        finished_at,
-        pushed: outcome.pushed,
-        selected: outcome.selected,
-        total_candidates: outcome.total_candidates,
-        summary: outcome.summary,
-        folder_id: outcome.folder_id,
-        folder_name: outcome.folder_name,
+        job_id: Some(run.external_id.clone()),
+        status: public_status.to_string(),
+        message,
+        started_at: run.started_at,
+        finished_at: run.finished_at,
+        deadline_at: run.deadline_at,
+        cancellation_requested: run.cancellation_requested,
+        can_cancel: !run.status.is_terminal() && !run.cancellation_requested,
+        can_retry: run.status.is_terminal() && run.status != DeliveryRunStatus::Unknown,
+        pushed: outcome.as_ref().map_or(0, |outcome| outcome.pushed),
+        selected: outcome.as_ref().map_or(0, |outcome| outcome.selected),
+        total_candidates: outcome
+            .as_ref()
+            .and_then(|outcome| outcome.total_candidates),
+        summary: outcome
+            .as_ref()
+            .map(|outcome| outcome.summary.clone())
+            .unwrap_or_default(),
+        folder_id: outcome.as_ref().and_then(|outcome| outcome.folder_id),
+        folder_name: outcome.and_then(|outcome| outcome.folder_name),
     }
 }
 
-fn failed_manual_push_status(
-    job_id: Option<String>,
-    started_at: f64,
-    finished_at: f64,
-    message: &str,
-) -> ManualWeeklyPushStatus {
-    ManualWeeklyPushStatus {
-        job_id,
-        status: "failed".to_string(),
-        message: message.to_string(),
-        started_at: Some(started_at),
-        finished_at: Some(finished_at),
-        pushed: 0,
-        selected: 0,
-        total_candidates: None,
-        summary: String::new(),
-        folder_id: None,
-        folder_name: None,
+fn public_manual_status(status: DeliveryRunStatus) -> &'static str {
+    match status {
+        DeliveryRunStatus::Queued => "pending",
+        DeliveryRunStatus::Claimed | DeliveryRunStatus::Running | DeliveryRunStatus::Cancelling => {
+            "running"
+        }
+        DeliveryRunStatus::Completed | DeliveryRunStatus::Skipped => "completed",
+        DeliveryRunStatus::Failed => "failed",
+        DeliveryRunStatus::Cancelled => "cancelled",
+        DeliveryRunStatus::TimedOut => "timed_out",
+        DeliveryRunStatus::Unknown => "unknown",
+    }
+}
+
+fn manual_status_message(run: &DeliveryRunRecord) -> &'static str {
+    match run.status {
+        DeliveryRunStatus::Queued => "Manual push is queued",
+        DeliveryRunStatus::Claimed | DeliveryRunStatus::Running => "Manual push is running",
+        DeliveryRunStatus::Cancelling => "Manual push cancellation is pending",
+        DeliveryRunStatus::Completed => "Manual push completed",
+        DeliveryRunStatus::Skipped => "Manual push completed without applicable work",
+        DeliveryRunStatus::Failed => "Manual push failed",
+        DeliveryRunStatus::Cancelled => "Manual push was cancelled",
+        DeliveryRunStatus::TimedOut => "Manual push exceeded its deadline",
+        DeliveryRunStatus::Unknown => {
+            "Manual push outcome is unknown; review delivery state before retrying"
+        }
+    }
+}
+
+async fn load_authorized_manual_run(
+    state: &ApiState,
+    user_id: i64,
+    is_admin: bool,
+    run_id: String,
+) -> Result<DeliveryRunRecord, ApiError> {
+    let run = run_storage(state, move |storage| {
+        if is_admin {
+            litradar_storage::load_manual_delivery_run_by_external_id_for_admin(
+                storage.auth_db_path(),
+                &run_id,
+            )
+        } else {
+            litradar_storage::load_manual_delivery_run_by_external_id(
+                storage.auth_db_path(),
+                user_id,
+                &run_id,
+            )
+        }
+    })
+    .await?;
+    run.ok_or_else(|| ApiError::not_found("Manual push job not found"))
+}
+
+fn validate_manual_job_id(run_id: &str) -> Result<(), ApiError> {
+    if run_id.len() == 32 && run_id.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        Ok(())
+    } else {
+        Err(ApiError::not_found("Manual push job not found"))
     }
 }
 
@@ -599,153 +566,55 @@ fn current_epoch_seconds() -> f64 {
 }
 
 #[cfg(test)]
-fn delay_manual_push_for_tests() {
-    if let Some(delay_millis) = manual_push_test_delay_ms() {
-        std::thread::sleep(std::time::Duration::from_millis(delay_millis));
-    }
-}
-
-#[cfg(not(test))]
-fn delay_manual_push_for_tests() {}
-
-#[cfg(test)]
-fn manual_push_test_delay_ms() -> Option<u64> {
-    *MANUAL_PUSH_TEST_DELAY_MS
-        .get_or_init(|| Mutex::new(None))
-        .lock()
-        .expect("manual push test delay lock should not be poisoned")
-}
-
-/// Set the manual push background delay for route tests.
-///
-/// # Arguments
-///
-/// * `delay_millis` - Optional artificial delay in milliseconds.
-#[cfg(test)]
-pub(crate) fn set_manual_push_test_delay_ms(delay_millis: Option<u64>) {
-    *MANUAL_PUSH_TEST_DELAY_MS
-        .get_or_init(|| Mutex::new(None))
-        .lock()
-        .expect("manual push test delay lock should not be poisoned") = delay_millis;
-}
-
-#[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
-    use std::sync::{Arc, Barrier};
-    use std::thread;
+    use litradar_storage::{
+        DeliveryRunMode, DeliveryRunRecord, DeliveryRunStatus, DeliveryTriggerKind,
+        DeliveryWorkflow,
+    };
 
-    use litradar_domain::{ManualWeeklyPushStatus, UserId};
-
-    use super::{ManualPushAdmission, ManualPushKey, ManualPushRegistry};
-
-    #[test]
-    fn manual_push_admission_is_atomic_and_bounded() {
-        let registry = Arc::new(ManualPushRegistry::default());
-        let key = ManualPushKey {
-            auth_db_path: PathBuf::from("atomic/auth.sqlite"),
-            user_id: UserId(7),
-        };
-        let barrier = Arc::new(Barrier::new(2));
-        let handles = ["job-one", "job-two"].map(|job_id| {
-            let registry = Arc::clone(&registry);
-            let key = key.clone();
-            let barrier = Arc::clone(&barrier);
-            thread::spawn(move || {
-                barrier.wait();
-                registry.admit(key, test_status(job_id, "running"))
-            })
-        });
-        let results = handles.map(|handle| handle.join().expect("admission thread should finish"));
-        let mut started_job_id = None;
-        let mut existing_job_id = None;
-
-        for result in results {
-            match result {
-                ManualPushAdmission::Started(status) => started_job_id = status.job_id,
-                ManualPushAdmission::Existing(status) => existing_job_id = status.job_id,
-                ManualPushAdmission::Saturated => {
-                    panic!("same-user admission should not report saturation")
-                }
-            }
-        }
-
-        assert!(started_job_id.is_some());
-        assert_eq!(existing_job_id, started_job_id);
-        assert_eq!(registry.running_count(&key.auth_db_path), 1);
-    }
+    use super::manual_push_status;
 
     #[test]
-    fn manual_push_admission_scopes_capacity_and_guards_completion() {
-        let registry = ManualPushRegistry::default();
-        let first_key = ManualPushKey {
-            auth_db_path: PathBuf::from("shared/auth.sqlite"),
-            user_id: UserId(1),
-        };
-        let competing_key = ManualPushKey {
-            auth_db_path: first_key.auth_db_path.clone(),
-            user_id: UserId(2),
-        };
-        let independent_key = ManualPushKey {
-            auth_db_path: PathBuf::from("independent/auth.sqlite"),
-            user_id: UserId(3),
-        };
+    fn manual_push_status_maps_durable_states_and_safe_actions() {
+        let queued = fixture_run(DeliveryRunStatus::Queued);
+        let pending = manual_push_status(&queued);
+        assert_eq!(pending.status, "pending");
+        assert!(pending.can_cancel);
+        assert!(!pending.can_retry);
 
-        assert!(matches!(
-            registry.admit(first_key.clone(), test_status("job-first", "running")),
-            ManualPushAdmission::Started(_)
-        ));
-        assert!(matches!(
-            registry.admit(
-                competing_key.clone(),
-                test_status("job-competing", "running")
-            ),
-            ManualPushAdmission::Saturated
-        ));
-        assert!(matches!(
-            registry.admit(independent_key, test_status("job-independent", "running")),
-            ManualPushAdmission::Started(_)
-        ));
-
-        registry.update_if_current(
-            first_key.clone(),
-            "job-first",
-            test_status("job-first", "completed"),
-        );
-        assert!(matches!(
-            registry.admit(
-                competing_key.clone(),
-                test_status("job-competing", "running")
-            ),
-            ManualPushAdmission::Started(_)
-        ));
-        registry.update_if_current(
-            competing_key.clone(),
-            "job-first",
-            test_status("job-first", "failed"),
-        );
-
-        let current = registry
-            .current(&competing_key)
-            .expect("competing job should remain present");
-        assert_eq!(current.status, "running");
-        assert_eq!(current.job_id.as_deref(), Some("job-competing"));
-        assert_eq!(registry.running_count(&competing_key.auth_db_path), 1);
+        let mut unknown = fixture_run(DeliveryRunStatus::Unknown);
+        unknown.cancellation_requested = true;
+        unknown.finished_at = Some(3.0);
+        let unknown = manual_push_status(&unknown);
+        assert_eq!(unknown.status, "unknown");
+        assert!(!unknown.can_cancel);
+        assert!(!unknown.can_retry);
+        assert!(!unknown.message.contains("upstream"));
     }
 
-    fn test_status(job_id: &str, status: &str) -> ManualWeeklyPushStatus {
-        ManualWeeklyPushStatus {
-            job_id: Some(job_id.to_string()),
-            status: status.to_string(),
-            message: status.to_string(),
-            started_at: Some(1.0),
-            finished_at: (status != "running").then_some(2.0),
-            pushed: 0,
-            selected: 0,
-            total_candidates: None,
-            summary: String::new(),
-            folder_id: None,
-            folder_name: None,
+    fn fixture_run(status: DeliveryRunStatus) -> DeliveryRunRecord {
+        DeliveryRunRecord {
+            id: 1,
+            external_id: "0123456789abcdef0123456789abcdef".to_string(),
+            workflow: DeliveryWorkflow::Push,
+            scope_key: "manual-user-1".to_string(),
+            db_name: None,
+            trigger_kind: DeliveryTriggerKind::Manual,
+            mode: DeliveryRunMode::Execute,
+            user_id: Some(1),
+            status,
+            legacy_status: None,
+            owner_id: None,
+            lease_expires_at: None,
+            deadline_at: Some(600.0),
+            cancellation_requested: false,
+            result_json: None,
+            error_code: None,
+            revision: 0,
+            created_at: 1.0,
+            started_at: None,
+            updated_at: 1.0,
+            finished_at: None,
         }
     }
 }

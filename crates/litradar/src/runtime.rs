@@ -63,17 +63,22 @@ async fn run_service_inner(config: ServeConfig) -> Result<(), Box<dyn Error>> {
         shutdown_receiver.clone(),
         cancellation.clone(),
     );
+    let delivery_future = crate::manual_delivery::run_manual_delivery_dispatcher(
+        config.clone(),
+        shutdown_receiver.clone(),
+    );
     let audit_retention_future =
         run_audit_retention_loop(config.auth_db_path.clone(), shutdown_receiver);
     tracing::info!(
         event = "service.ready",
         component = "runtime",
-        component_count = 3,
+        component_count = 4,
     );
     coordinate_components(
         api_future,
         scheduler_future,
         audit_retention_future,
+        delivery_future,
         termination_signal(),
         shutdown_sender,
         cancellation,
@@ -369,10 +374,17 @@ fn elapsed_millis(started_at: Instant) -> u64 {
     started_at.elapsed().as_millis().min(u128::from(u64::MAX)) as u64
 }
 
-async fn coordinate_components<ApiFuture, SchedulerFuture, AuditFuture, SignalFuture>(
+async fn coordinate_components<
+    ApiFuture,
+    SchedulerFuture,
+    AuditFuture,
+    DeliveryFuture,
+    SignalFuture,
+>(
     api_future: ApiFuture,
     scheduler_future: SchedulerFuture,
     audit_future: AuditFuture,
+    delivery_future: DeliveryFuture,
     signal_future: SignalFuture,
     shutdown_sender: watch::Sender<bool>,
     cancellation: SchedulerCancellation,
@@ -381,17 +393,20 @@ where
     ApiFuture: Future<Output = Result<(), Box<dyn Error>>>,
     SchedulerFuture: Future<Output = Result<(), Box<dyn Error>>>,
     AuditFuture: Future<Output = Result<(), Box<dyn Error>>>,
+    DeliveryFuture: Future<Output = Result<(), Box<dyn Error>>>,
     SignalFuture: Future<Output = ()>,
 {
     tokio::pin!(api_future);
     tokio::pin!(scheduler_future);
     tokio::pin!(audit_future);
+    tokio::pin!(delivery_future);
     tokio::pin!(signal_future);
 
     let first = tokio::select! {
         result = &mut api_future => FirstCompletion::Api(result),
         result = &mut scheduler_future => FirstCompletion::Scheduler(result),
         result = &mut audit_future => FirstCompletion::Audit(result),
+        result = &mut delivery_future => FirstCompletion::Delivery(result),
         () = &mut signal_future => FirstCompletion::Signal,
     };
     match &first {
@@ -442,17 +457,32 @@ where
                 "unexpected_stop"
             },
         ),
+        FirstCompletion::Delivery(result) => tracing::error!(
+            event = "service.component.failed",
+            component = "delivery_dispatcher",
+            outcome = if result.is_err() {
+                "failure"
+            } else {
+                "unexpected_stop"
+            },
+            error_kind = if result.is_err() {
+                "component_failure"
+            } else {
+                "unexpected_stop"
+            },
+        ),
     }
     cancellation.cancel();
     let _ = shutdown_sender.send(true);
 
     match first {
         FirstCompletion::Signal => {
-            let (api_result, scheduler_result, audit_result) =
-                tokio::join!(api_future, scheduler_future, audit_future);
+            let (api_result, scheduler_result, audit_result, delivery_result) =
+                tokio::join!(api_future, scheduler_future, audit_future, delivery_future);
             api_result?;
             scheduler_result?;
             audit_result?;
+            delivery_result?;
             tracing::info!(
                 event = "service.shutdown.completed",
                 component = "runtime",
@@ -461,25 +491,40 @@ where
             Ok(())
         }
         FirstCompletion::Api(api_result) => {
-            let (scheduler_result, audit_result) = tokio::join!(scheduler_future, audit_future);
+            let (scheduler_result, audit_result, delivery_result) =
+                tokio::join!(scheduler_future, audit_future, delivery_future);
             api_result?;
             scheduler_result?;
             audit_result?;
+            delivery_result?;
             Err(io::Error::other("HTTP service stopped unexpectedly").into())
         }
         FirstCompletion::Scheduler(scheduler_result) => {
-            let (api_result, audit_result) = tokio::join!(api_future, audit_future);
+            let (api_result, audit_result, delivery_result) =
+                tokio::join!(api_future, audit_future, delivery_future);
             scheduler_result?;
             api_result?;
             audit_result?;
+            delivery_result?;
             Err(io::Error::other("scheduler stopped unexpectedly").into())
         }
         FirstCompletion::Audit(audit_result) => {
-            let (api_result, scheduler_result) = tokio::join!(api_future, scheduler_future);
+            let (api_result, scheduler_result, delivery_result) =
+                tokio::join!(api_future, scheduler_future, delivery_future);
             audit_result?;
             api_result?;
             scheduler_result?;
+            delivery_result?;
             Err(io::Error::other("audit retention stopped unexpectedly").into())
+        }
+        FirstCompletion::Delivery(delivery_result) => {
+            let (api_result, scheduler_result, audit_result) =
+                tokio::join!(api_future, scheduler_future, audit_future);
+            delivery_result?;
+            api_result?;
+            scheduler_result?;
+            audit_result?;
+            Err(io::Error::other("delivery dispatcher stopped unexpectedly").into())
         }
     }
 }
@@ -488,6 +533,7 @@ enum FirstCompletion {
     Api(Result<(), Box<dyn Error>>),
     Scheduler(Result<(), Box<dyn Error>>),
     Audit(Result<(), Box<dyn Error>>),
+    Delivery(Result<(), Box<dyn Error>>),
     Signal,
 }
 
@@ -691,6 +737,7 @@ mod tests {
         let scheduler_drain_assertion = Arc::clone(&did_drain_scheduler);
         let (shutdown_sender, shutdown_receiver) = watch::channel(false);
         let audit_receiver = shutdown_receiver.clone();
+        let delivery_receiver = shutdown_receiver.clone();
         let api =
             async { Err::<(), Box<dyn Error>>(io::Error::other("fixture API failure").into()) };
         let scheduler = async move {
@@ -702,11 +749,16 @@ mod tests {
             wait_for_shutdown(audit_receiver).await;
             Ok::<(), Box<dyn Error>>(())
         };
+        let delivery = async move {
+            wait_for_shutdown(delivery_receiver).await;
+            Ok::<(), Box<dyn Error>>(())
+        };
 
         let error = coordinate_components(
             api,
             scheduler,
             audit,
+            delivery,
             pending(),
             shutdown_sender,
             cancellation,
@@ -738,6 +790,7 @@ mod tests {
         let api_drain_assertion = Arc::clone(&did_drain_api);
         let (shutdown_sender, shutdown_receiver) = watch::channel(false);
         let audit_receiver = shutdown_receiver.clone();
+        let delivery_receiver = shutdown_receiver.clone();
         let api = async move {
             wait_for_shutdown(shutdown_receiver).await;
             api_drain_assertion.store(true, Ordering::SeqCst);
@@ -750,11 +803,16 @@ mod tests {
             wait_for_shutdown(audit_receiver).await;
             Ok::<(), Box<dyn Error>>(())
         };
+        let delivery = async move {
+            wait_for_shutdown(delivery_receiver).await;
+            Ok::<(), Box<dyn Error>>(())
+        };
 
         let error = coordinate_components(
             api,
             scheduler,
             audit,
+            delivery,
             pending(),
             shutdown_sender,
             cancellation,
@@ -855,6 +913,7 @@ mod tests {
         let (shutdown_sender, shutdown_receiver) = watch::channel(false);
         let api_receiver = shutdown_receiver.clone();
         let audit_receiver = shutdown_receiver.clone();
+        let delivery_receiver = shutdown_receiver.clone();
         let api = async move {
             wait_for_shutdown(api_receiver).await;
             did_drain_api_assertion.store(true, Ordering::SeqCst);
@@ -887,10 +946,22 @@ mod tests {
             wait_for_shutdown(audit_receiver).await;
             Ok::<(), Box<dyn Error>>(())
         };
+        let delivery = async move {
+            wait_for_shutdown(delivery_receiver).await;
+            Ok::<(), Box<dyn Error>>(())
+        };
 
-        coordinate_components(api, scheduler, audit, signal, shutdown_sender, cancellation)
-            .await
-            .expect("termination should drain work in progress");
+        coordinate_components(
+            api,
+            scheduler,
+            audit,
+            delivery,
+            signal,
+            shutdown_sender,
+            cancellation,
+        )
+        .await
+        .expect("termination should drain work in progress");
 
         assert!(assertion_handle.is_cancelled());
         assert!(did_finish_tick.load(Ordering::SeqCst));
@@ -905,6 +976,7 @@ mod tests {
         let (shutdown_sender, shutdown_receiver) = watch::channel(false);
         let api_receiver = shutdown_receiver.clone();
         let audit_receiver = shutdown_receiver.clone();
+        let delivery_receiver = shutdown_receiver.clone();
         let api = async move {
             wait_for_shutdown(api_receiver).await;
             Ok::<(), Box<dyn Error>>(())
@@ -917,11 +989,16 @@ mod tests {
             wait_for_shutdown(audit_receiver).await;
             Ok::<(), Box<dyn Error>>(())
         };
+        let delivery = async move {
+            wait_for_shutdown(delivery_receiver).await;
+            Ok::<(), Box<dyn Error>>(())
+        };
 
         coordinate_components(
             api,
             scheduler,
             audit,
+            delivery,
             async {},
             shutdown_sender,
             cancellation,

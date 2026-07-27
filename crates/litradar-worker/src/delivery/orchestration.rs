@@ -26,9 +26,13 @@ pub fn run_recommendation_delivery(
         timeout_seconds,
         config.retry_attempts,
         config.auth_db_path.clone(),
+        config.execution_control.clone(),
     );
-    let mut pushplus_sender =
-        LiveDeliveryPushPlusSender::new(timeout_seconds, config.retry_attempts)?;
+    let mut pushplus_sender = LiveDeliveryPushPlusSender::new(
+        timeout_seconds,
+        config.retry_attempts,
+        config.execution_control.clone(),
+    )?;
     run_recommendation_delivery_with_services_for_user(
         config,
         None,
@@ -56,9 +60,13 @@ pub fn run_recommendation_delivery_for_user(
         timeout_seconds,
         config.retry_attempts,
         config.auth_db_path.clone(),
+        config.execution_control.clone(),
     );
-    let mut pushplus_sender =
-        LiveDeliveryPushPlusSender::new(timeout_seconds, config.retry_attempts)?;
+    let mut pushplus_sender = LiveDeliveryPushPlusSender::new(
+        timeout_seconds,
+        config.retry_attempts,
+        config.execution_control.clone(),
+    )?;
     run_recommendation_delivery_with_services_for_user(
         config,
         Some(user_id),
@@ -102,6 +110,7 @@ pub fn run_manual_weekly_push(
 fn run_manual_weekly_push_inner(
     config: &ManualWeeklyPushConfig,
 ) -> Result<ManualWeeklyPushOutcome, DeliveryError> {
+    check_manual_execution_control(config)?;
     let settings = litradar_storage::get_notification_settings(
         config.storage_config.auth_db_path(),
         &config.secret_codec,
@@ -163,6 +172,7 @@ fn run_manual_weekly_push_inner(
     };
     let mut outcomes = Vec::new();
     for manifest in manifests {
+        check_manual_execution_control(config)?;
         let index_db_path = config
             .storage_config
             .resolve_index_db_path(Some(&manifest.db_name))
@@ -181,6 +191,8 @@ fn run_manual_weekly_push_inner(
                 dedupe_retention_days: config.dedupe_retention_days,
                 mode: DeliveryMode::Execute,
                 workflow,
+                trigger: DeliveryTrigger::Scheduled,
+                execution_control: config.execution_control.clone(),
             },
             config.user_id,
         )?);
@@ -192,6 +204,24 @@ fn run_manual_weekly_push_inner(
         folder.as_ref().map(|item| item.name.clone()),
         &outcomes,
     ))
+}
+
+fn check_manual_execution_control(config: &ManualWeeklyPushConfig) -> Result<(), DeliveryError> {
+    config
+        .execution_control
+        .as_ref()
+        .map(DeliveryExecutionControl::check)
+        .transpose()?;
+    Ok(())
+}
+
+fn check_execution_control(config: &RecommendationRunConfig) -> Result<(), DeliveryError> {
+    config
+        .execution_control
+        .as_ref()
+        .map(DeliveryExecutionControl::check)
+        .transpose()?;
+    Ok(())
 }
 
 #[cfg(test)]
@@ -248,10 +278,19 @@ fn execute_recommendation_delivery_with_services_for_user(
         .as_ref()
         .map(|path| load_change_manifest(path, &config.db_name))
         .transpose()?;
-    let external_id = match manifest.as_ref().and_then(|value| value.run_id.clone()) {
+    let source_external_id = match manifest.as_ref().and_then(|value| value.run_id.clone()) {
         Some(run_id) => run_id,
         None => format!("run-{}", litradar_storage::random_hex(16)?),
     };
+    let external_id = subscriber_user_id.map_or(source_external_id.clone(), |user_id| {
+        format!(
+            "user-run-{}",
+            litradar_domain::stable_sqlite_id(
+                format!("{}:{}", source_external_id, user_id.value()),
+                "manual-delivery",
+            )
+        )
+    });
     let mut context = match admit_durable_delivery_run(config, subscriber_user_id, &external_id)? {
         DurableDeliveryAdmission::Terminal(run) => {
             return Ok(outcome(
@@ -290,6 +329,7 @@ fn execute_owned_delivery(
     ai_selector: &mut impl DeliveryAiSelector,
     pushplus_sender: &mut impl DeliveryPushPlusSender,
 ) -> Result<RecommendationRunOutcome, DeliveryError> {
+    check_execution_control(config)?;
     let previous_snapshot = checkpoint_snapshot(context)?;
     let previous_completed_at = context
         .checkpoint
@@ -454,6 +494,7 @@ fn execute_owned_delivery(
     let mut delivery_dedupe = delivery_dedupe_map(config, context)?;
     let mut plans = Vec::new();
     for subscriber in subscribers {
+        check_execution_control(config)?;
         context.renew(&config.auth_db_path)?;
         let item = items_by_key
             .get(&subscriber.subscriber_id)
@@ -956,6 +997,7 @@ fn delivery_error_kind(error: &DeliveryError) -> &'static str {
         DeliveryError::PushPlus(_) => "pushplus",
         DeliveryError::Manual(_) => "manual_validation",
         DeliveryError::Busy => "busy",
+        DeliveryError::Control(error) => error.as_str(),
     }
 }
 
@@ -1182,6 +1224,8 @@ fn process_subscriber(
         return Ok(plan);
     }
 
+    check_execution_control(config)?;
+
     let user_id = subscriber_id_value(subscriber)?;
     let mut reservations = Vec::new();
     for article_id in &plan.selected_article_ids {
@@ -1243,6 +1287,7 @@ fn process_subscriber(
         })
         .collect::<Vec<_>>();
     if config.workflow == DeliveryWorkflow::Notify {
+        check_execution_control(config)?;
         let sending = litradar_storage::mark_delivery_run_item_sending(
             &config.auth_db_path,
             item.id,
@@ -1956,8 +2001,10 @@ mod tests {
             .expect("auth database should open");
         let corrupt_run_status: String = connection
             .query_row(
-                "SELECT status FROM delivery_runs WHERE external_id = 'corrupt-target'",
-                [],
+                "SELECT status FROM delivery_runs
+                 WHERE user_id = ?1 AND scope_key = 'fixture.sqlite'
+                 ORDER BY id DESC LIMIT 1",
+                [unrelated_user_id.value()],
                 |row| row.get(0),
             )
             .expect("corrupt target run should persist");
@@ -2123,6 +2170,8 @@ mod tests {
             dedupe_retention_days: 30,
             mode: DeliveryMode::Execute,
             workflow,
+            trigger: DeliveryTrigger::Scheduled,
+            execution_control: None,
         };
         let mut ai_selector = ProcessDeliveryAiSelector {
             role: role.clone(),
@@ -2430,6 +2479,8 @@ mod tests {
                 dedupe_retention_days: 30,
                 mode,
                 workflow,
+                trigger: DeliveryTrigger::Scheduled,
+                execution_control: None,
             }
         }
 

@@ -1,33 +1,41 @@
 /**
- * Tracking background-job polling coverage using the extracted feature view and API client.
+ * Durable tracking-job polling, cancellation, and restart coverage.
  */
 
-import { screen, waitFor } from '@testing-library/react';
+import { screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
 import { describe, expect, test } from 'vitest';
 
 import { TrackingSettingsContent } from '@/components/tracking/tracking-settings-content';
+import type { ManualPushStatus } from '@/lib/api';
 import { server } from '@/tests/mocks/server';
 import { renderWithQuery } from '@/tests/render';
 
 let statusRequestCount = 0;
 
 /**
- * Build a complete manual-push status fixture.
+ * Build a complete durable manual-push status fixture.
  *
- * @param status - Background job state.
- * @param message - Display message.
+ * @param status - Public durable job state.
+ * @param message - User-visible fixed or successful result message.
  * @param pushed - Delivered article count.
  * @returns Manual push status payload.
  */
-function manualPushStatus(status: string, message: string, pushed: number) {
+function manualPushStatus(status: string, message: string, pushed: number): ManualPushStatus {
+  const isActive = status === 'pending' || status === 'running';
+  const isIdle = status === 'idle';
+  const isUnknown = status === 'unknown';
   return {
-    job_id: 'job-1',
+    job_id: isIdle ? null : '0123456789abcdef0123456789abcdef',
     status,
     message,
-    started_at: 1,
-    finished_at: status === 'completed' ? 2 : null,
+    started_at: status === 'pending' || isIdle ? null : 1,
+    finished_at: isActive || isIdle ? null : 2,
+    deadline_at: isIdle ? null : 600,
+    cancellation_requested: status === 'cancelled',
+    can_cancel: isActive,
+    can_retry: !isActive && !isIdle && !isUnknown,
     pushed,
     selected: 2,
     total_candidates: 3,
@@ -90,101 +98,103 @@ function aiEndpointsResponse(): Response {
 }
 
 /**
- * Start a running background push fixture.
- *
- * @returns Running status response.
+ * Install common tracking-page fixture handlers.
  */
-function startPushResponse(): Response {
-  return HttpResponse.json(manualPushStatus('running', '任务已启动', 0));
-}
-
-/**
- * Reject a manual push because another user owns the process-local slot.
- *
- * @returns Generic service-capacity error response.
- */
-function saturatedPushResponse(): Response {
-  return HttpResponse.json({ detail: 'Service temporarily unavailable' }, { status: 503 });
-}
-
-/**
- * Return one running poll followed by a completed poll.
- *
- * @returns Current background status response.
- */
-function pollPushResponse(): Response {
-  statusRequestCount += 1;
-  return HttpResponse.json(
-    statusRequestCount === 1
-      ? manualPushStatus('running', '任务执行中', 0)
-      : manualPushStatus('completed', '推送完成', 2),
-  );
-}
-
-/**
- * Verify a running push is polled until completion and updates the UI.
- */
-async function pollsUntilCompleted(): Promise<void> {
-  statusRequestCount = 0;
+function installCommonHandlers(): void {
   server.use(
     http.get('http://localhost/api/tracking/status', trackingStatusResponse),
     http.get('http://localhost/api/meta/databases', databasesResponse),
     http.get('http://localhost/api/favorites/folders', foldersResponse),
     http.get('http://localhost/api/tracking/notification-settings', notificationSettingsResponse),
     http.get('http://localhost/api/tracking/ai-endpoints', aiEndpointsResponse),
-    http.post('http://localhost/api/tracking/push-weekly', startPushResponse),
-    http.get('http://localhost/api/tracking/push-weekly/status', pollPushResponse),
   );
-  const user = userEvent.setup();
+}
+
+/**
+ * Verify a persisted running job resumes polling after a page remount.
+ */
+async function resumesPersistedJobAfterMount(): Promise<void> {
+  statusRequestCount = 0;
+  installCommonHandlers();
+  server.use(
+    http.get('http://localhost/api/tracking/push-weekly/status', () => {
+      statusRequestCount += 1;
+      return HttpResponse.json(
+        statusRequestCount === 1
+          ? manualPushStatus('running', '任务执行中', 0)
+          : manualPushStatus('completed', '推送完成', 2),
+      );
+    }),
+  );
 
   renderWithQuery(<TrackingSettingsContent userId={31} section="notifications" />);
 
-  await user.click(await screen.findByRole('button', { name: '推送到追踪文件夹' }));
   expect(await screen.findByText('任务执行中')).toBeInTheDocument();
   expect(
     await screen.findByText('推送完成（已推送 2 篇）', {}, { timeout: 5_000 }),
   ).toBeInTheDocument();
   expect(statusRequestCount).toBe(2);
-  await new Promise<void>((resolve) => window.setTimeout(resolve, 2_100));
-  expect(statusRequestCount).toBe(2);
 }
 
 /**
- * Verify a capacity rejection displays its safe detail without starting polling.
+ * Verify enqueue and cancellation update the durable query cache and expose safe retry.
  */
-async function displaysCapacityErrorWithoutPolling(): Promise<void> {
-  statusRequestCount = 0;
+async function cancelsQueuedJobAndAllowsRetry(): Promise<void> {
+  installCommonHandlers();
+  let current = manualPushStatus('idle', 'No manual push task is available', 0);
   server.use(
-    http.get('http://localhost/api/tracking/status', trackingStatusResponse),
-    http.get('http://localhost/api/meta/databases', databasesResponse),
-    http.get('http://localhost/api/favorites/folders', foldersResponse),
-    http.get('http://localhost/api/tracking/notification-settings', notificationSettingsResponse),
-    http.get('http://localhost/api/tracking/ai-endpoints', aiEndpointsResponse),
-    http.post('http://localhost/api/tracking/push-weekly', saturatedPushResponse),
-    http.get('http://localhost/api/tracking/push-weekly/status', pollPushResponse),
+    http.get('http://localhost/api/tracking/push-weekly/status', () => HttpResponse.json(current)),
+    http.post('http://localhost/api/tracking/push-weekly', () => {
+      current = manualPushStatus('pending', '任务已排队', 0);
+      return HttpResponse.json(current, { status: 202 });
+    }),
+    http.post(
+      'http://localhost/api/tracking/push-weekly/runs/0123456789abcdef0123456789abcdef/cancel',
+      () => {
+        current = manualPushStatus('cancelled', '任务已取消', 0);
+        return HttpResponse.json(current);
+      },
+    ),
   );
   const user = userEvent.setup();
-
   renderWithQuery(<TrackingSettingsContent userId={32} section="notifications" />);
 
   await user.click(await screen.findByRole('button', { name: '推送到追踪文件夹' }));
-  expect(await screen.findByText('Service temporarily unavailable')).toBeInTheDocument();
-  expect(statusRequestCount).toBe(0);
+  expect(await screen.findByText('任务已排队')).toBeInTheDocument();
+  await user.click(screen.getByRole('button', { name: '取消任务' }));
+  expect(await screen.findByText('任务已取消')).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: '推送到追踪文件夹' })).toBeEnabled();
+}
+
+/**
+ * Verify an ambiguous outcome does not expose a silent retry action.
+ */
+async function blocksRetryForUnknownOutcome(): Promise<void> {
+  installCommonHandlers();
+  server.use(
+    http.get('http://localhost/api/tracking/push-weekly/status', () =>
+      HttpResponse.json(manualPushStatus('unknown', '结果未知，请先检查投递记录', 0)),
+    ),
+  );
+  renderWithQuery(<TrackingSettingsContent userId={33} section="notifications" />);
+
+  expect(await screen.findByText('结果未知，请先检查投递记录')).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: '推送到追踪文件夹' })).toBeDisabled();
+  expect(screen.queryByRole('button', { name: '取消任务' })).not.toBeInTheDocument();
 }
 
 /**
  * Verify the shared footer restores an unsaved tracking draft explicitly.
  */
 async function discardsUnsavedSettings(): Promise<void> {
+  installCommonHandlers();
   server.use(
-    http.get('http://localhost/api/tracking/status', trackingStatusResponse),
-    http.get('http://localhost/api/meta/databases', databasesResponse),
-    http.get('http://localhost/api/favorites/folders', foldersResponse),
-    http.get('http://localhost/api/tracking/notification-settings', notificationSettingsResponse),
-    http.get('http://localhost/api/tracking/ai-endpoints', aiEndpointsResponse),
+    http.get('http://localhost/api/tracking/push-weekly/status', () =>
+      HttpResponse.json(manualPushStatus('idle', 'No manual push task is available', 0)),
+    ),
   );
   const user = userEvent.setup();
-  renderWithQuery(<TrackingSettingsContent userId={33} section="tracking" />);
+  renderWithQuery(<TrackingSettingsContent userId={34} section="tracking" />);
 
   const recommendationSwitch = await screen.findByRole('switch', { name: '启用推荐' });
   await user.click(recommendationSwitch);
@@ -198,77 +208,9 @@ async function discardsUnsavedSettings(): Promise<void> {
   expect(discardButton).toBeDisabled();
 }
 
-/**
- * Verify a polling transport failure stops the chain and a new push can recover.
- */
-async function recoversAfterPollingFailure(): Promise<void> {
-  let startRequestCount = 0;
-  statusRequestCount = 0;
-  server.use(
-    http.get('http://localhost/api/tracking/status', trackingStatusResponse),
-    http.get('http://localhost/api/meta/databases', databasesResponse),
-    http.get('http://localhost/api/favorites/folders', foldersResponse),
-    http.get('http://localhost/api/tracking/notification-settings', notificationSettingsResponse),
-    http.get('http://localhost/api/tracking/ai-endpoints', aiEndpointsResponse),
-    http.post('http://localhost/api/tracking/push-weekly', () => {
-      startRequestCount += 1;
-      return HttpResponse.json(
-        startRequestCount === 1
-          ? manualPushStatus('running', '任务已启动', 0)
-          : manualPushStatus('completed', '恢复完成', 1),
-      );
-    }),
-    http.get('http://localhost/api/tracking/push-weekly/status', () => {
-      statusRequestCount += 1;
-      return HttpResponse.json({ detail: 'Polling transport failed' }, { status: 502 });
-    }),
-  );
-  const user = userEvent.setup();
-  renderWithQuery(<TrackingSettingsContent userId={34} section="notifications" />);
-
-  await user.click(await screen.findByRole('button', { name: '推送到追踪文件夹' }));
-  expect(await screen.findByText('Polling transport failed')).toBeInTheDocument();
-  expect(statusRequestCount).toBe(1);
-
-  await user.click(screen.getByRole('button', { name: '推送到追踪文件夹' }));
-  expect(await screen.findByText('恢复完成（已推送 1 篇）')).toBeInTheDocument();
-  expect(startRequestCount).toBe(2);
-  expect(statusRequestCount).toBe(1);
-}
-
-/**
- * Verify unmounting cancels the active polling interval.
- */
-async function stopsPollingAfterUnmount(): Promise<void> {
-  statusRequestCount = 0;
-  server.use(
-    http.get('http://localhost/api/tracking/status', trackingStatusResponse),
-    http.get('http://localhost/api/meta/databases', databasesResponse),
-    http.get('http://localhost/api/favorites/folders', foldersResponse),
-    http.get('http://localhost/api/tracking/notification-settings', notificationSettingsResponse),
-    http.get('http://localhost/api/tracking/ai-endpoints', aiEndpointsResponse),
-    http.post('http://localhost/api/tracking/push-weekly', startPushResponse),
-    http.get('http://localhost/api/tracking/push-weekly/status', () => {
-      statusRequestCount += 1;
-      return HttpResponse.json(manualPushStatus('running', '任务执行中', 0));
-    }),
-  );
-  const user = userEvent.setup();
-  const { unmount } = renderWithQuery(
-    <TrackingSettingsContent userId={35} section="notifications" />,
-  );
-
-  await user.click(await screen.findByRole('button', { name: '推送到追踪文件夹' }));
-  await waitFor(() => expect(statusRequestCount).toBe(1));
-  unmount();
-  await new Promise<void>((resolve) => window.setTimeout(resolve, 2_100));
-  expect(statusRequestCount).toBe(1);
-}
-
-describe('tracking polling flow', () => {
-  test('polls a running push until completion', pollsUntilCompleted, 10_000);
-  test('shows a capacity error without polling', displaysCapacityErrorWithoutPolling);
+describe('durable tracking job flow', () => {
+  test('resumes polling a persisted job after mount', resumesPersistedJobAfterMount, 8_000);
+  test('cancels a queued job and enables safe retry', cancelsQueuedJobAndAllowsRetry);
+  test('blocks retry for an unknown outcome', blocksRetryForUnknownOutcome);
   test('discards an unsaved settings draft', discardsUnsavedSettings);
-  test('recovers after a polling failure', recoversAfterPollingFailure);
-  test('stops polling after unmount', stopsPollingAfterUnmount, 8_000);
 });

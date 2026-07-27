@@ -17,6 +17,7 @@ const MAX_IDENTIFIER_BYTES: usize = 128;
 const MAX_ITEM_KEY_BYTES: usize = 512;
 const MAX_RESULT_JSON_BYTES: usize = 4 * 1024 * 1024;
 const MAX_LEGACY_STATE_BYTES: u64 = 16 * 1024 * 1024;
+const MAX_MANUAL_DISPATCH_BATCH: usize = 64;
 
 /// Delivery workflow persisted in the authentication database.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -941,6 +942,201 @@ pub fn load_delivery_run(
     validate_positive_id(delivery_run_id, "Delivery run id is invalid")?;
     let connection = open_delivery_connection(auth_db_path)?;
     load_delivery_run_from_connection(&connection, delivery_run_id)
+}
+
+/// Load the most recent manual delivery run for one authenticated user.
+///
+/// # Arguments
+///
+/// * `auth_db_path` - Path to the migrated authentication database.
+/// * `user_id` - Authenticated user identifier.
+///
+/// # Returns
+///
+/// Latest queued, active, or terminal manual run for the user.
+pub fn load_latest_manual_delivery_run(
+    auth_db_path: impl AsRef<Path>,
+    user_id: i64,
+) -> Result<Option<DeliveryRunRecord>, DeliveryRepositoryError> {
+    validate_positive_id(user_id, "Manual delivery user id is invalid")?;
+    let connection = open_delivery_connection(auth_db_path)?;
+    connection
+        .query_row(
+            &format!(
+                "SELECT {RUN_COLUMNS} FROM delivery_runs
+                 WHERE trigger_kind = 'manual' AND user_id = ?1
+                 ORDER BY id DESC LIMIT 1"
+            ),
+            [user_id],
+            run_from_row,
+        )
+        .optional()
+        .map_err(DeliveryRepositoryError::from)
+}
+
+/// Load one user-owned manual delivery run by its public external identifier.
+///
+/// # Arguments
+///
+/// * `auth_db_path` - Path to the migrated authentication database.
+/// * `user_id` - Authenticated user identifier.
+/// * `external_id` - Public opaque job identifier.
+///
+/// # Returns
+///
+/// Matching user-owned manual run, or `None`.
+pub fn load_manual_delivery_run_by_external_id(
+    auth_db_path: impl AsRef<Path>,
+    user_id: i64,
+    external_id: &str,
+) -> Result<Option<DeliveryRunRecord>, DeliveryRepositoryError> {
+    validate_positive_id(user_id, "Manual delivery user id is invalid")?;
+    validate_identifier(external_id, "Manual delivery job id is invalid")?;
+    let connection = open_delivery_connection(auth_db_path)?;
+    connection
+        .query_row(
+            &format!(
+                "SELECT {RUN_COLUMNS} FROM delivery_runs
+                 WHERE trigger_kind = 'manual' AND user_id = ?1 AND external_id = ?2
+                 ORDER BY id DESC LIMIT 1"
+            ),
+            params![user_id, external_id],
+            run_from_row,
+        )
+        .optional()
+        .map_err(DeliveryRepositoryError::from)
+}
+
+/// Load one manual delivery run by its public external identifier without owner filtering.
+///
+/// This repository operation is intended for an already-authorized administrator route.
+///
+/// # Arguments
+///
+/// * `auth_db_path` - Path to the migrated authentication database.
+/// * `external_id` - Public opaque job identifier.
+///
+/// # Returns
+///
+/// Matching manual run, or `None`.
+pub fn load_manual_delivery_run_by_external_id_for_admin(
+    auth_db_path: impl AsRef<Path>,
+    external_id: &str,
+) -> Result<Option<DeliveryRunRecord>, DeliveryRepositoryError> {
+    validate_identifier(external_id, "Manual delivery job id is invalid")?;
+    let connection = open_delivery_connection(auth_db_path)?;
+    connection
+        .query_row(
+            &format!(
+                "SELECT {RUN_COLUMNS} FROM delivery_runs
+                 WHERE trigger_kind = 'manual' AND external_id = ?1
+                 ORDER BY id DESC LIMIT 1"
+            ),
+            [external_id],
+            run_from_row,
+        )
+        .optional()
+        .map_err(DeliveryRepositoryError::from)
+}
+
+/// List queued or lease-expired manual runs eligible for bounded dispatch.
+///
+/// # Arguments
+///
+/// * `auth_db_path` - Path to the migrated authentication database.
+/// * `now` - Current Unix timestamp used for expired-lease selection.
+/// * `limit` - Positive bounded number of rows to return.
+///
+/// # Returns
+///
+/// Oldest dispatchable manual runs in stable insertion order.
+pub fn list_dispatchable_manual_delivery_runs(
+    auth_db_path: impl AsRef<Path>,
+    now: f64,
+    limit: usize,
+) -> Result<Vec<DeliveryRunRecord>, DeliveryRepositoryError> {
+    validate_time(now, "Manual delivery dispatch time is invalid")?;
+    if !(1..=MAX_MANUAL_DISPATCH_BATCH).contains(&limit) {
+        return Err(DeliveryRepositoryError::InvalidInput(
+            "Manual delivery dispatch limit is invalid",
+        ));
+    }
+    let connection = open_delivery_connection(auth_db_path)?;
+    let mut statement = connection.prepare(&format!(
+        "SELECT {RUN_COLUMNS} FROM delivery_runs
+         WHERE trigger_kind = 'manual'
+           AND (status = 'queued'
+                OR (status IN ('claimed', 'running', 'cancelling')
+                    AND lease_expires_at <= ?1))
+         ORDER BY created_at, id LIMIT ?2"
+    ))?;
+    let limit = i64::try_from(limit).expect("bounded dispatch limit should fit i64");
+    let rows = statement.query_map(params![now, limit], run_from_row)?;
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(DeliveryRepositoryError::from)
+}
+
+/// Finalize a queued run that could not start a supervised child process.
+///
+/// # Arguments
+///
+/// * `auth_db_path` - Path to the migrated authentication database.
+/// * `delivery_run_id` - Internal run identifier.
+/// * `expected_revision` - Exact queued revision observed by the dispatcher.
+/// * `terminal_status` - Failed, cancelled, or timed-out terminal status.
+/// * `result_json` - Optional bounded result payload.
+/// * `error_code` - Optional fixed terminal classification.
+/// * `now` - Terminal Unix timestamp.
+///
+/// # Returns
+///
+/// Finalized run, or a conflict when another dispatcher claimed it first.
+#[allow(clippy::too_many_arguments)]
+pub fn finalize_queued_delivery_run(
+    auth_db_path: impl AsRef<Path>,
+    delivery_run_id: i64,
+    expected_revision: i64,
+    terminal_status: DeliveryRunStatus,
+    result_json: Option<&str>,
+    error_code: Option<&str>,
+    now: f64,
+) -> Result<DeliveryRunRecord, DeliveryRepositoryError> {
+    validate_positive_id(delivery_run_id, "Delivery run id is invalid")?;
+    validate_revision_and_time(expected_revision, now)?;
+    if !matches!(
+        terminal_status,
+        DeliveryRunStatus::Failed | DeliveryRunStatus::Cancelled | DeliveryRunStatus::TimedOut
+    ) {
+        return Err(DeliveryRepositoryError::InvalidInput(
+            "Queued delivery terminal status is invalid",
+        ));
+    }
+    validate_optional_json(result_json)?;
+    validate_optional_symbol(error_code, "Delivery error code is invalid")?;
+    let mut connection = open_delivery_connection(auth_db_path)?;
+    let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    let updated = transaction.execute(
+        "UPDATE delivery_runs
+         SET status = ?1, result_json = ?2, error_code = ?3, updated_at = ?4,
+             finished_at = ?5, revision = revision + 1
+         WHERE id = ?6 AND revision = ?7 AND status = 'queued'",
+        params![
+            terminal_status.as_str(),
+            result_json,
+            error_code,
+            now,
+            now,
+            delivery_run_id,
+            expected_revision,
+        ],
+    )?;
+    if updated != 1 {
+        return Err(DeliveryRepositoryError::Conflict);
+    }
+    let record = load_delivery_run_from_connection(&transaction, delivery_run_id)?
+        .ok_or(DeliveryRepositoryError::NotFound)?;
+    transaction.commit()?;
+    Ok(record)
 }
 
 /// List all durable items for one delivery run in insertion order.
@@ -3410,6 +3606,20 @@ mod tests {
         }
     }
 
+    fn manual_run(external_id: &str, user_id: i64, created_at: f64) -> DeliveryRunCreate {
+        DeliveryRunCreate {
+            external_id: external_id.to_string(),
+            workflow: DeliveryWorkflow::Push,
+            scope_key: format!("manual-user-{user_id}"),
+            db_name: None,
+            trigger_kind: DeliveryTriggerKind::Manual,
+            mode: DeliveryRunMode::Execute,
+            user_id: Some(user_id),
+            deadline_at: Some(created_at + 600.0),
+            created_at,
+        }
+    }
+
     fn expect_claimed(outcome: DeliveryRunClaimOutcome) -> DeliveryRunRecord {
         match outcome {
             DeliveryRunClaimOutcome::Claimed(record) => record,
@@ -3480,6 +3690,97 @@ mod tests {
             .expect("checkpoint should exist");
         assert_eq!(stored.revision, 1);
         assert_eq!(stored.status, DeliveryCheckpointStatus::Completed);
+    }
+
+    #[test]
+    fn manual_run_admission_is_per_user_and_persists_latest_status() {
+        let (_temp_dir, path) = migrated_auth_database();
+        let barrier = Arc::new(Barrier::new(3));
+        let handles =
+            [("manual-one", 11_i64), ("manual-two", 12_i64)].map(|(external_id, user_id)| {
+                let path = path.clone();
+                let barrier = Arc::clone(&barrier);
+                thread::spawn(move || {
+                    barrier.wait();
+                    admit_delivery_run(path, &manual_run(external_id, user_id, 10.0))
+                })
+            });
+        barrier.wait();
+        let results = handles.map(|handle| handle.join().expect("admission thread should finish"));
+
+        assert!(results
+            .iter()
+            .all(|result| matches!(result, Ok(DeliveryRunAdmissionOutcome::Enqueued(_)))));
+        let duplicate = admit_delivery_run(&path, &manual_run("manual-three", 11, 11.0))
+            .expect("same-user admission should return the active run");
+        let DeliveryRunAdmissionOutcome::Busy(existing) = duplicate else {
+            panic!("same-user admission should be busy")
+        };
+        assert_eq!(existing.external_id, "manual-one");
+        assert_eq!(
+            load_latest_manual_delivery_run(&path, 11)
+                .expect("latest run should load")
+                .expect("latest run should exist")
+                .external_id,
+            "manual-one"
+        );
+        assert_eq!(
+            load_manual_delivery_run_by_external_id(&path, 11, "manual-one")
+                .expect("manual run should load")
+                .expect("manual run should exist")
+                .id,
+            existing.id
+        );
+        assert!(
+            load_manual_delivery_run_by_external_id(&path, 12, "manual-one")
+                .expect("cross-user lookup should complete")
+                .is_none()
+        );
+        assert_eq!(
+            list_dispatchable_manual_delivery_runs(&path, 12.0, 8)
+                .expect("dispatchable runs should list")
+                .len(),
+            2
+        );
+    }
+
+    #[test]
+    fn queued_manual_run_finalization_is_revision_fenced() {
+        let (_temp_dir, path) = migrated_auth_database();
+        let run = enqueue_delivery_run(&path, &manual_run("manual-failed", 21, 10.0))
+            .expect("manual run should enqueue");
+        let finalized = finalize_queued_delivery_run(
+            &path,
+            run.id,
+            run.revision,
+            DeliveryRunStatus::Failed,
+            Some(r#"{"pushed":0}"#),
+            Some("dispatch_spawn_failed"),
+            11.0,
+        )
+        .expect("queued run should finalize");
+
+        assert_eq!(finalized.status, DeliveryRunStatus::Failed);
+        assert_eq!(
+            finalized.error_code.as_deref(),
+            Some("dispatch_spawn_failed")
+        );
+        assert!(finalized.finished_at.is_some());
+        assert!(matches!(
+            finalize_queued_delivery_run(
+                &path,
+                run.id,
+                run.revision,
+                DeliveryRunStatus::Failed,
+                None,
+                Some("dispatch_spawn_failed"),
+                12.0,
+            ),
+            Err(DeliveryRepositoryError::Conflict)
+        ));
+        assert!(list_dispatchable_manual_delivery_runs(&path, 12.0, 8)
+            .expect("terminal run should not dispatch")
+            .is_empty());
     }
 
     #[test]

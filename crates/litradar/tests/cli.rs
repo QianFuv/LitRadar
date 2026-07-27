@@ -431,7 +431,7 @@ fn notify_and_push_commands_complete_with_local_idle_state() {
     )
     .expect("fixture index should migrate");
 
-    for (command, state_directory) in [("notify", "push_state"), ("push", "folder_push_state")] {
+    for command in ["notify", "push"] {
         let output = run_litradar_in(
             root.path(),
             &[
@@ -458,11 +458,12 @@ fn notify_and_push_commands_complete_with_local_idle_state() {
             payload["databases"][0]["subscribers"],
             Value::Array(Vec::new())
         );
-        assert!(root.path().join("data").join(state_directory).is_dir());
         assert!(log_events(&output)
             .iter()
             .any(|event| event["event"] == "delivery.workflow.completed"));
     }
+    assert!(!root.path().join("data/push_state").exists());
+    assert!(!root.path().join("data/folder_push_state").exists());
 }
 
 #[test]
@@ -545,11 +546,11 @@ fn scheduler_dry_run_and_run_once_use_the_real_child_boundary() {
     assert_eq!(executed_payload["status"], "success");
     assert_eq!(updated.last_status, "success");
     assert!(updated.last_run_at.is_some());
-    assert!(storage_config
+    assert!(!storage_config
         .project_root()
         .join("data")
         .join("push_state")
-        .is_dir());
+        .exists());
     assert!(log_events(&executed)
         .iter()
         .any(|event| event["event"] == "scheduler.run.completed"));

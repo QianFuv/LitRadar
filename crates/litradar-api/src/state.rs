@@ -274,6 +274,7 @@ impl ApiState {
     /// # Returns
     ///
     /// Completed output or an executor shutdown/join failure.
+    #[cfg(test)]
     pub(crate) async fn run_background_blocking<Work, Output>(
         &self,
         work: Work,

@@ -57,6 +57,7 @@ manifest 存在时，`serve` 和普通 `index` 会在认证库迁移后验证整
 | `auth_rate_limit_policy`           | 见下文                    |   否 | 严格 JSON 文本                    | 重启进程 | 登录/注册分层 token bucket        |
 | `audit_retention_days`             | `180`                     |   否 | `1..=3650` 的整数                 | 下一检查 | 持久安全审计保留                  |
 | `ai_allowed_base_urls`             | 空                        |   否 | 有序 HTTPS URL 列表               | 下一请求 | 用户可选择的 AI Endpoint 目录     |
+| `delivery_worker_concurrency`      | `2`                       |   否 | `1..=16` 的整数                   | 重启进程 | 手动投递子进程池                  |
 | `index_provider_routes`            | 三个官方目录的默认映射    |   否 | 每个 catalog 的能力过滤单选       | 下一命令 | CSV stem 到索引 Provider          |
 | `article_abstract_provider_orders` | 见下文                    |   否 | 默认顺序 + catalog 继承/排序/禁用 | 下一请求 | 在线摘要页 fallback               |
 | `article_fulltext_provider_orders` | 见下文                    |   否 | 默认顺序 + catalog 继承/排序/禁用 | 下一请求 | 在线全文 fallback                 |
@@ -239,6 +240,8 @@ AI 凭据和 PushPlus 是用户级设置。每个用户在 `notification_setting
 
 代码只为 base URL 和 model 提供非秘密默认值；默认 base URL 也必须存在于管理员目录中才可执行。没有全局 AI key 或 PushPlus token。CLI `--ai-model` 可以覆盖 model，但不能补 API key。详见[通知与追踪](../guides/notifications.md)。
 
+`delivery_worker_concurrency` 控制单个 `litradar serve` 实例同时监管的手动投递子进程数，默认 2、范围 `1..=16`，保存后重启生效。每个用户仍由 SQLite 唯一约束限制为一个 queued/active run；该池只决定并行执行量，不替代跨实例 lease、revision 或 dedupe。
+
 ## 前端网络边界
 
 前端没有应用专用环境配置。浏览器始终从 `window.location.origin` 生成同源 API URL；`next dev` 通过 Next phase 固定把 `/api`、`/mcp`、`/docs` 和 `/openapi.json` 代理到 `http://127.0.0.1:8001`；其他 phase 始终 `output: 'export'`。生产静态文件和 API 由同一 Rust 监听器提供。
@@ -267,8 +270,8 @@ warn,litradar=info,litradar_api=info,litradar_cli=info,litradar_index=info,litra
 | `data/index`             | 索引 SQLite                             |
 | `data/index-control`     | 可丢弃 Provider checkpoint/lease SQLite |
 | `data/auth.sqlite`       | 认证和业务库                            |
-| `data/push_state`        | 变更清单和 notify 状态                  |
-| `data/folder_push_state` | push 状态                               |
+| `data/push_state`        | `.changes.json` 候选和只读旧状态导入源  |
+| `data/folder_push_state` | 只读旧 push 状态导入源                  |
 | `libs/simple-*`          | 平台 `simple` 扩展                      |
 
 `simple` 扩展只按项目根下的内置平台路径发现，不接受环境变量覆盖。

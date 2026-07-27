@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import {
+  cancelPushWeeklyRun,
   createFolder,
   getAiEndpoints,
   getDatabases,
@@ -31,12 +32,10 @@ const EMPTY_AI_ENDPOINTS: string[] = [];
 export function useTrackingPage(userId: number) {
   const queryClient = useQueryClient();
   const [newFolderName, setNewFolderName] = useState('');
-  const [pushResult, setPushResult] = useState<string | null>(null);
   const [draftSettings, setDraftSettings] = useState<NotificationSettingsUpdate | null>(null);
   const [keywordInput, setKeywordInput] = useState('');
   const [directionInput, setDirectionInput] = useState('');
   const [settingsSaved, setSettingsSaved] = useState(false);
-  const [isPushPolling, setIsPushPolling] = useState(false);
 
   const { data: status } = useQuery({
     queryKey: ['tracking-status'],
@@ -69,6 +68,16 @@ export function useTrackingPage(userId: number) {
     enabled: true,
   });
   const availableAiEndpoints = aiEndpointsQuery.data ?? EMPTY_AI_ENDPOINTS;
+  const manualPushQuery = useQuery({
+    queryKey: ['manual-push', userId],
+    queryFn: () => getPushWeeklyStatus(),
+    enabled: true,
+    retry: false,
+    refetchInterval: (query) => {
+      const pushStatus = query.state.data?.status;
+      return pushStatus === 'pending' || pushStatus === 'running' ? 2000 : false;
+    },
+  });
 
   const normalizeSettings = useCallback(
     (settings: NotificationSettings | null | undefined): NotificationSettingsUpdate => ({
@@ -162,16 +171,13 @@ export function useTrackingPage(userId: number) {
   const pushMut = useMutation({
     mutationFn: () => pushWeeklyToTracking(),
     onSuccess: (data) => {
-      if (data.status === 'running') {
-        setPushResult(data.message || '推送任务已启动，正在后台执行…');
-        setIsPushPolling(true);
-        return;
-      }
-      setPushResult(formatManualPushResult(data));
+      queryClient.setQueryData(['manual-push', userId], data);
     },
-    onError: (err) => {
-      setIsPushPolling(false);
-      setPushResult(err instanceof Error ? err.message : '推送失败');
+  });
+  const cancelPushMut = useMutation({
+    mutationFn: (jobId: string) => cancelPushWeeklyRun(jobId),
+    onSuccess: (data) => {
+      queryClient.setQueryData(['manual-push', userId], data);
     },
   });
   const requiresTrackingFolder = deliveryMethod === 'folder' || syncToTrackingFolder;
@@ -191,14 +197,19 @@ export function useTrackingPage(userId: number) {
   const effectiveSelectedDatabases = normalizedSelectedDatabases(selectedDatabases);
   const allDatabasesSelected =
     availableDatabases.length === 0 || effectiveSelectedDatabases.length === 0;
+  const manualPushStatus = manualPushQuery.data;
+  const isManualPushActive =
+    manualPushStatus?.status === 'pending' || manualPushStatus?.status === 'running';
   const manualPushLabel =
-    pushMut.isPending || isPushPolling
-      ? '推送中…'
-      : deliveryMethod === 'pushplus'
-        ? syncToTrackingFolder
-          ? '推送到 PushPlus 并同步文件夹'
-          : '推送到 PushPlus'
-        : '推送到追踪文件夹';
+    pushMut.isPending || manualPushStatus?.status === 'pending'
+      ? '排队中…'
+      : manualPushStatus?.status === 'running'
+        ? '推送中…'
+        : deliveryMethod === 'pushplus'
+          ? syncToTrackingFolder
+            ? '推送到 PushPlus 并同步文件夹'
+            : '推送到 PushPlus'
+          : '推送到追踪文件夹';
   const manualPushDescription =
     deliveryMethod === 'pushplus'
       ? syncToTrackingFolder
@@ -215,47 +226,27 @@ export function useTrackingPage(userId: number) {
     }
     return `成功推送 ${data.pushed} 篇文章`;
   }, []);
+  const manualPushError = pushMut.error ?? cancelPushMut.error ?? manualPushQuery.error;
+  const pushResult = manualPushError
+    ? manualPushError instanceof Error
+      ? manualPushError.message
+      : '推送任务操作失败'
+    : manualPushStatus && manualPushStatus.status !== 'idle'
+      ? formatManualPushResult(manualPushStatus)
+      : null;
 
   useEffect(() => {
-    if (!isPushPolling) {
+    if (
+      !manualPushStatus ||
+      manualPushStatus.status === 'idle' ||
+      manualPushStatus.status === 'pending' ||
+      manualPushStatus.status === 'running'
+    ) {
       return;
     }
-
-    let cancelled = false;
-
-    const pollStatus = async () => {
-      try {
-        const data = await getPushWeeklyStatus();
-        if (cancelled) {
-          return;
-        }
-        if (data.status === 'running') {
-          setPushResult(data.message || '推送任务执行中…');
-          return;
-        }
-        setPushResult(formatManualPushResult(data));
-        setIsPushPolling(false);
-        queryClient.invalidateQueries({ queryKey: ['tracking-status'] });
-        queryClient.invalidateQueries({ queryKey: ['folders'] });
-      } catch (error) {
-        if (cancelled) {
-          return;
-        }
-        setPushResult(error instanceof Error ? error.message : '获取推送状态失败');
-        setIsPushPolling(false);
-      }
-    };
-
-    void pollStatus();
-    const intervalId = window.setInterval(() => {
-      void pollStatus();
-    }, 2000);
-
-    return () => {
-      cancelled = true;
-      window.clearInterval(intervalId);
-    };
-  }, [formatManualPushResult, isPushPolling, queryClient]);
+    queryClient.invalidateQueries({ queryKey: ['tracking-status'] });
+    queryClient.invalidateQueries({ queryKey: ['folders'] });
+  }, [manualPushStatus, queryClient]);
 
   const saveSettingsMut = useMutation({
     mutationFn: () =>
@@ -354,12 +345,16 @@ export function useTrackingPage(userId: number) {
     discardSettings,
     hasUnsavedSettings,
     manualPush: {
+      cancelMutation: cancelPushMut,
       description: manualPushDescription,
-      isPolling: isPushPolling,
+      hasError: Boolean(manualPushError),
+      isLoading: manualPushQuery.isPending,
+      isPolling: isManualPushActive,
       label: manualPushLabel,
       mutation: pushMut,
       requiresTrackingFolder,
       result: pushResult,
+      status: manualPushStatus,
       trackingFolder,
       weeklyArticlesAvailable: status?.weekly_articles_available,
     },

@@ -371,10 +371,23 @@ function isManualPushStatus(value: unknown): value is ManualPushStatus {
   return (
     isRecord(value) &&
     isNullableString(value.job_id) &&
-    ['idle', 'running', 'completed', 'failed'].includes(String(value.status)) &&
+    [
+      'idle',
+      'pending',
+      'running',
+      'completed',
+      'failed',
+      'cancelled',
+      'timed_out',
+      'unknown',
+    ].includes(String(value.status)) &&
     typeof value.message === 'string' &&
     isNullableNumber(value.started_at) &&
     isNullableNumber(value.finished_at) &&
+    isNullableNumber(value.deadline_at) &&
+    typeof value.cancellation_requested === 'boolean' &&
+    typeof value.can_cancel === 'boolean' &&
+    typeof value.can_retry === 'boolean' &&
     isNumber(value.pushed) &&
     isNumber(value.selected) &&
     isNullableNumber(value.total_candidates) &&

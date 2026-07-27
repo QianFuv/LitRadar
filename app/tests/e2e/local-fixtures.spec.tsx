@@ -322,6 +322,26 @@ async function serveTrackingApi(route: Route): Promise<void> {
     await fulfillJson(route, []);
     return;
   }
+  if (pathname === '/api/tracking/push-weekly/status' && request.method() === 'GET') {
+    await fulfillJson(route, {
+      job_id: null,
+      status: 'idle',
+      message: 'No manual push task is available',
+      started_at: null,
+      finished_at: null,
+      deadline_at: null,
+      cancellation_requested: false,
+      can_cancel: false,
+      can_retry: false,
+      pushed: 0,
+      selected: 0,
+      total_candidates: null,
+      summary: '',
+      folder_id: null,
+      folder_name: null,
+    });
+    return;
+  }
   if (pathname === '/api/tracking/push-weekly' && request.method() === 'POST') {
     await fulfillJson(route, {
       job_id: 'browser-job',
@@ -329,6 +349,10 @@ async function serveTrackingApi(route: Route): Promise<void> {
       message: '本地 fixture 推送完成',
       started_at: 1,
       finished_at: 2,
+      deadline_at: 600,
+      cancellation_requested: false,
+      can_cancel: false,
+      can_retry: true,
       pushed: 2,
       selected: 2,
       total_candidates: 2,

@@ -4,7 +4,7 @@
 
 import { expect, test, type Page, type TestInfo } from '@playwright/test';
 
-import type { AdminUserInfo, FavoriteArticleItem, Folder } from '@/lib/api';
+import type { AdminUserInfo, FavoriteArticleItem, Folder, ManualPushStatus } from '@/lib/api';
 
 const ADMIN_USERNAME = 'fullstack_admin';
 const ADMIN_PASSWORD = 'FullStackAdmin!2026';
@@ -303,6 +303,42 @@ async function protectedRouteJourney({ page }: { page: Page }): Promise<void> {
   expect((await page.request.get('/api/admin/users')).status()).toBe(401);
 }
 
+/**
+ * Admit, execute, and reload a durable manual push through the real service dispatcher.
+ *
+ * @param fixtures - Playwright fixtures.
+ * @returns Promise resolved after the persisted terminal row is observed twice.
+ */
+async function durableManualPushJourney({ page }: { page: Page }): Promise<void> {
+  await login(page, MEMBER_USERNAME, MEMBER_PASSWORD);
+  const admission = await page.request.post('/api/tracking/push-weekly');
+  expect(admission.status()).toBe(202);
+  const admitted = (await admission.json()) as ManualPushStatus;
+  expect(admitted.job_id).toBeTruthy();
+  expect(['pending', 'running', 'completed']).toContain(admitted.status);
+
+  let terminal = admitted;
+  for (
+    let attempt = 0;
+    attempt < 100 && ['pending', 'running'].includes(terminal.status);
+    attempt += 1
+  ) {
+    await page.waitForTimeout(100);
+    const statusResponse = await page.request.get('/api/tracking/push-weekly/status');
+    expect(statusResponse.ok()).toBe(true);
+    terminal = (await statusResponse.json()) as ManualPushStatus;
+  }
+  expect(terminal.status).toBe('completed');
+  expect(terminal.job_id).toBe(admitted.job_id);
+
+  const persisted = await page.request.get(
+    `/api/tracking/push-weekly/runs/${encodeURIComponent(admitted.job_id ?? '')}`,
+  );
+  expect(persisted.ok()).toBe(true);
+  expect(((await persisted.json()) as ManualPushStatus).status).toBe('completed');
+}
+
 test('searches and persists a favorite through the real backend', searchAndFavoriteJourney);
 test('persists administrator mutations through the real backend', administratorMutationJourney);
 test('enforces authenticated and administrator route boundaries', protectedRouteJourney);
+test('persists a manual push through the real dispatcher', durableManualPushJourney);

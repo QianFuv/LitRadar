@@ -2821,8 +2821,46 @@
         "summary": "Start one manual weekly-push job for the authenticated user.",
         "operationId": "push_weekly_to_tracking",
         "responses": {
+          "202": {
+            "description": "Queued or existing active manual weekly push.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManualWeeklyPushStatus"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          },
+          {
+            "session_cookie": []
+          }
+        ]
+      }
+    },
+    "/api/tracking/push-weekly/runs/{run_id}": {
+      "get": {
+        "tags": ["tracking"],
+        "summary": "Get one durable manual weekly-push run visible to its owner or an administrator.",
+        "operationId": "get_push_weekly_run",
+        "parameters": [
+          {
+            "name": "run_id",
+            "in": "path",
+            "description": "Opaque manual push job id.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
           "200": {
-            "description": "Manual weekly push status.",
+            "description": "Durable manual weekly push status.",
             "content": {
               "application/json": {
                 "schema": {
@@ -2831,8 +2869,56 @@
               }
             }
           },
-          "503": {
-            "description": "Another manual weekly push owns the process-local storage slot.",
+          "404": {
+            "description": "Manual push job not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          },
+          {
+            "session_cookie": []
+          }
+        ]
+      }
+    },
+    "/api/tracking/push-weekly/runs/{run_id}/cancel": {
+      "post": {
+        "tags": ["tracking"],
+        "summary": "Request cancellation of one durable manual weekly-push run.",
+        "operationId": "cancel_push_weekly_run",
+        "parameters": [
+          {
+            "name": "run_id",
+            "in": "path",
+            "description": "Opaque manual push job id.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Cancellation state.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManualWeeklyPushStatus"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Manual push job not found.",
             "content": {
               "application/json": {
                 "schema": {
@@ -4332,8 +4418,34 @@
       "ManualWeeklyPushStatus": {
         "type": "object",
         "description": "Manual weekly push job status payload.",
-        "required": ["status", "message", "pushed", "selected", "summary"],
+        "required": [
+          "status",
+          "message",
+          "cancellation_requested",
+          "can_cancel",
+          "can_retry",
+          "pushed",
+          "selected",
+          "summary"
+        ],
         "properties": {
+          "can_cancel": {
+            "type": "boolean",
+            "description": "Whether the current job still accepts cancellation."
+          },
+          "can_retry": {
+            "type": "boolean",
+            "description": "Whether starting a new run cannot replay an ambiguous external outcome."
+          },
+          "cancellation_requested": {
+            "type": "boolean",
+            "description": "Whether durable cancellation has been requested."
+          },
+          "deadline_at": {
+            "type": ["number", "null"],
+            "format": "double",
+            "description": "Absolute Unix timestamp after which the job must stop."
+          },
           "finished_at": {
             "type": ["number", "null"],
             "format": "double",
@@ -4373,7 +4485,7 @@
           },
           "status": {
             "type": "string",
-            "description": "Job status: `idle`, `running`, `completed`, or `failed`."
+            "description": "Durable job status."
           },
           "summary": {
             "type": "string",

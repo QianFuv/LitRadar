@@ -181,7 +181,7 @@ litradar index --secret-key-file PATH
 - 多个 CSV 仍逐个处理。
 - `6/1/8` 是约 100 MiB 索引内存目标下的默认并发。在上述 Provider 约束内显式提高并发仍受支持，但可能超过该预算。
 
-索引多进程也通过当前可执行路径启动 `litradar index` 的内部工作请求；不依赖另一个程序名。每个 worker 都在独立的 Unix process group 或 Windows Job Object 中启动，父进程错误、协议失败和清理路径会终止并等待整个进程树。调度父进程同样通过当前二进制启动类型化子命令，并用经过校验的隐藏内部参数关联 `parent_run_id`。该参数在公共 parser 前被移除，不出现在 `--help`，也不是用户可配置的 CLI。同步 CLI 命令不创建 Tokio 工作线程池，只有 `serve` 使用固定为 2 个工作线程的小型异步运行时。
+索引多进程也通过当前可执行路径启动 `litradar index` 的内部工作请求；不依赖另一个程序名。每个 worker 都在独立的 Unix process group 或 Windows Job Object 中启动，父进程错误、协议失败和清理路径会终止并等待整个进程树。调度父进程同样通过当前二进制启动类型化子命令，并用经过校验的隐藏内部参数关联 `parent_run_id`。手动投递 dispatcher 还会启动私有 `delivery-run --run-id ... --owner-id ...`，child 只从认证 SQLite 和部署密钥加载权威配置。私有命令必须同时携带内部 parent marker，不出现在 `--help`，也不是用户可配置的 CLI。同步公共 CLI 命令不创建 Tokio 工作线程池，只有 `serve` 使用固定为 2 个工作线程的小型异步运行时。
 
 命令结果保持原有顶层 `status`、`message` 和 `csvs` 字段，并新增不含密钥的 `effective_concurrency`，记录本次实际使用的 `workers`、`processes` 和 `issue_batch`。每个 CSV 结果使用定长的 `written_article_count`；旧的 `written_article_ids` 列表不再返回。内部索引工作进程同样只返回计数，避免结果大小随文章数量增长。
 

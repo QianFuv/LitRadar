@@ -4,7 +4,7 @@
  * Manual tracking-push section.
  */
 
-import { Download } from 'lucide-react';
+import { Download, X } from 'lucide-react';
 
 import {
   SettingsSection,
@@ -38,22 +38,37 @@ export function ManualPushCard({ model }: ManualPushCardProps) {
           <div className="text-sm text-muted-foreground">
             可推送文章: {model.weeklyArticlesAvailable ?? '…'} 篇
           </div>
-          <Button
-            className="w-full sm:w-auto"
-            onClick={() => model.mutation.mutate()}
-            disabled={
-              model.mutation.isPending ||
-              model.isPolling ||
-              (model.requiresTrackingFolder && !model.trackingFolder)
-            }
-          >
-            <Download className="mr-1 h-4 w-4" />
-            {model.label}
-          </Button>
+          <div className="flex w-full gap-2 sm:w-auto">
+            {model.status?.can_cancel && model.status.job_id && (
+              <Button
+                className="flex-1 sm:flex-none"
+                variant="outline"
+                onClick={() => model.cancelMutation.mutate(model.status?.job_id ?? '')}
+                disabled={model.cancelMutation.isPending}
+              >
+                <X className="mr-1 h-4 w-4" />
+                {model.cancelMutation.isPending ? '取消中…' : '取消任务'}
+              </Button>
+            )}
+            <Button
+              className="flex-1 sm:flex-none"
+              onClick={() => model.mutation.mutate()}
+              disabled={
+                model.isLoading ||
+                model.mutation.isPending ||
+                model.isPolling ||
+                (model.status?.status === 'unknown' && !model.status.can_retry) ||
+                (model.requiresTrackingFolder && !model.trackingFolder)
+              }
+            >
+              <Download className="mr-1 h-4 w-4" />
+              {model.label}
+            </Button>
+          </div>
         </div>
         {model.result && (
           <div
-            role={model.mutation.isError ? 'alert' : 'status'}
+            role={model.hasError ? 'alert' : 'status'}
             className="rounded-md border px-3 py-2 text-sm"
           >
             {model.result}

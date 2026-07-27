@@ -77,10 +77,14 @@ function rejectsMalformedControlPlaneContracts(): void {
   expect(() =>
     parseManualPushStatus({
       job_id: 'job-1',
-      status: 'unknown',
+      status: 'impossible',
       message: 'bad status',
       started_at: 1,
       finished_at: null,
+      deadline_at: 3,
+      cancellation_requested: false,
+      can_cancel: false,
+      can_retry: false,
       pushed: 0,
       selected: 0,
       total_candidates: null,

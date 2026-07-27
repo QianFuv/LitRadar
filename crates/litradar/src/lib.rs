@@ -1,6 +1,7 @@
 //! Unified LitRadar application composition root.
 
 mod config;
+mod manual_delivery;
 mod openapi;
 mod runtime;
 
@@ -36,11 +37,12 @@ pub fn run(mut args: Vec<String>) -> Result<(), Box<dyn Error>> {
     if let Ok(Some(parent_run_id)) = &parent_run_id {
         process_span.record("parent_run_id", parent_run_id);
     }
+    let is_internal_child = matches!(&parent_run_id, Ok(Some(_)));
     process_span.in_scope(|| {
         let started_at = Instant::now();
         tracing::info!(event = "process.started", component = "runtime");
         let result = match parent_run_id {
-            Ok(_) => run_with_executable(args, &application_executable),
+            Ok(_) => run_with_executable(args, &application_executable, is_internal_child),
             Err(error) => Err(error),
         };
         let duration_ms = started_at.elapsed().as_millis();
@@ -72,6 +74,7 @@ fn command_name(args: &[String]) -> &'static str {
         Some("notify") => "notify",
         Some("push") => "push",
         Some("scheduler") => "scheduler",
+        Some("delivery-run") => "delivery_run",
         Some("openapi") => "openapi",
         Some(_) => "unknown",
     }
@@ -112,6 +115,7 @@ fn extract_parent_run_id(args: &mut Vec<String>) -> Result<Option<String>, Box<d
 fn run_with_executable(
     args: Vec<String>,
     application_executable: &Path,
+    is_internal_child: bool,
 ) -> Result<(), Box<dyn Error>> {
     let Some((subcommand, subcommand_args)) = args.split_first() else {
         println!("{}", application_usage());
@@ -142,6 +146,9 @@ fn run_with_executable(
         "push" => litradar_cli::run_push_command(subcommand_args.to_vec()),
         "scheduler" => {
             litradar_cli::run_scheduler_command(subcommand_args.to_vec(), application_executable)
+        }
+        "delivery-run" if is_internal_child => {
+            litradar_cli::run_delivery_run_command(subcommand_args.to_vec())
         }
         "openapi" => openapi::run(subcommand_args.to_vec()),
         _ => Err(format!(
@@ -183,7 +190,7 @@ mod tests {
 
     #[test]
     fn unknown_subcommands_fail_without_legacy_dispatch() {
-        let error = run_with_executable(vec!["worker".to_string()], Path::new("litradar"))
+        let error = run_with_executable(vec!["worker".to_string()], Path::new("litradar"), false)
             .expect_err("removed worker command should fail");
 
         assert!(error
@@ -198,6 +205,7 @@ mod tests {
         run_with_executable(
             vec!["index".to_string(), "--help".to_string()],
             Path::new("litradar"),
+            false,
         )
         .expect("synchronous help should succeed");
 
@@ -237,5 +245,24 @@ mod tests {
                 .to_string();
             assert!(!error.contains("unsafe/value"));
         }
+    }
+
+    #[test]
+    fn private_delivery_run_requires_internal_parent_marker() {
+        let error = run_with_executable(
+            vec![
+                "delivery-run".to_string(),
+                "--run-id".to_string(),
+                "1".to_string(),
+            ],
+            Path::new("litradar"),
+            false,
+        )
+        .expect_err("private command should reject direct dispatch");
+
+        assert!(error
+            .to_string()
+            .contains("unknown LitRadar subcommand: delivery-run"));
+        assert!(!application_usage().contains("delivery-run"));
     }
 }

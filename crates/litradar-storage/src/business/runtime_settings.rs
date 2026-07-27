@@ -39,6 +39,8 @@ pub enum RuntimeSettingKey {
     AuthRateLimitPolicy,
     /// Durable security audit retention period in days.
     AuditRetentionDays,
+    /// Maximum manual delivery child processes owned by one service instance.
+    DeliveryWorkerConcurrency,
     /// OpenAI-compatible base URLs available to ordinary users.
     AiAllowedBaseUrls,
     /// Catalog-to-index-Provider routes.
@@ -55,7 +57,7 @@ pub enum RuntimeSettingKey {
 
 impl RuntimeSettingKey {
     /// All managed runtime setting keys in administrator display order.
-    pub const ALL: [Self; 17] = [
+    pub const ALL: [Self; 18] = [
         Self::OpenAlexApiKeyPool,
         Self::SemanticScholarApiKeyPool,
         Self::CnkiCaptchaToken,
@@ -67,6 +69,7 @@ impl RuntimeSettingKey {
         Self::TrustedProxyCidrs,
         Self::AuthRateLimitPolicy,
         Self::AuditRetentionDays,
+        Self::DeliveryWorkerConcurrency,
         Self::AiAllowedBaseUrls,
         Self::IndexProviderRoutes,
         Self::ArticleAbstractProviderOrders,
@@ -93,6 +96,7 @@ impl RuntimeSettingKey {
             Self::TrustedProxyCidrs => "trusted_proxy_cidrs",
             Self::AuthRateLimitPolicy => "auth_rate_limit_policy",
             Self::AuditRetentionDays => "audit_retention_days",
+            Self::DeliveryWorkerConcurrency => "delivery_worker_concurrency",
             Self::AiAllowedBaseUrls => "ai_allowed_base_urls",
             Self::IndexProviderRoutes => "index_provider_routes",
             Self::ArticleAbstractProviderOrders => "article_abstract_provider_orders",
@@ -270,6 +274,7 @@ enum RuntimeSettingParser {
     TrustedProxyCidrs,
     AuthRateLimitPolicy,
     AuditRetentionDays,
+    DeliveryWorkerConcurrency,
     HttpsBaseUrlList,
     IndexProviderRoutes,
     ProviderOrder,
@@ -307,6 +312,12 @@ pub const DEFAULT_RUNTIME_LOG_FILTER: &str = concat!(
 /// Default structured process log format.
 pub const DEFAULT_RUNTIME_LOG_FORMAT: &str = "json";
 
+/// Default number of manual delivery child processes per service instance.
+pub const DEFAULT_DELIVERY_WORKER_CONCURRENCY: usize = 2;
+
+/// Maximum configurable manual delivery child processes per service instance.
+pub const MAX_DELIVERY_WORKER_CONCURRENCY: usize = 16;
+
 /// Canonical default authentication limiter policy JSON.
 pub const DEFAULT_AUTH_RATE_LIMIT_POLICY_JSON: &str = concat!(
     "{\"login_ip\":{\"capacity\":30,\"refill_tokens\":1,\"refill_seconds\":1},",
@@ -339,7 +350,7 @@ impl Default for RuntimeLoggingSettings {
     }
 }
 
-const RUNTIME_CONFIG_DEFINITIONS: [RuntimeConfigDefinition; 17] = [
+const RUNTIME_CONFIG_DEFINITIONS: [RuntimeConfigDefinition; 18] = [
     RuntimeConfigDefinition {
         field: "openalex_api_key_pool",
         label: "OpenAlex API key pool",
@@ -488,6 +499,19 @@ const RUNTIME_CONFIG_DEFINITIONS: [RuntimeConfigDefinition; 17] = [
         parser: RuntimeSettingParser::AuditRetentionDays,
     },
     RuntimeConfigDefinition {
+        field: "delivery_worker_concurrency",
+        label: "Delivery worker concurrency",
+        group: RuntimeSettingGroup::ServerSecurity,
+        control: RuntimeSettingControl::Text,
+        apply_mode: RuntimeSettingApplyMode::RestartRequired,
+        allowed_values: &[],
+        input_type: "number",
+        is_secret: false,
+        description: "Maximum supervised manual delivery child processes owned by one service instance. Changes apply after service restart.",
+        default_value: "2",
+        parser: RuntimeSettingParser::DeliveryWorkerConcurrency,
+    },
+    RuntimeConfigDefinition {
         field: "ai_allowed_base_urls",
         label: "AI allowed base URLs",
         group: RuntimeSettingGroup::ServerSecurity,
@@ -629,6 +653,21 @@ pub fn parse_runtime_setting(
             .ok_or_else(|| {
                 BusinessRepositoryError::InvalidRuntimeSetting(format!(
                     "Security audit retention days must be between {MIN_AUDIT_RETENTION_DAYS} and {MAX_AUDIT_RETENTION_DAYS}"
+                ))
+            }),
+        RuntimeSettingParser::DeliveryWorkerConcurrency => value
+            .trim()
+            .parse::<u32>()
+            .ok()
+            .filter(|workers| {
+                (1..=u32::try_from(MAX_DELIVERY_WORKER_CONCURRENCY)
+                    .expect("delivery worker maximum should fit u32"))
+                    .contains(workers)
+            })
+            .map(ParsedRuntimeSettingValue::UnsignedInteger)
+            .ok_or_else(|| {
+                BusinessRepositoryError::InvalidRuntimeSetting(format!(
+                    "Delivery worker concurrency must be between 1 and {MAX_DELIVERY_WORKER_CONCURRENCY}"
                 ))
             }),
         RuntimeSettingParser::HttpsBaseUrlList => {
@@ -1036,6 +1075,39 @@ pub fn load_audit_retention_days(
     match parse_runtime_setting(RuntimeSettingKey::AuditRetentionDays, value)? {
         ParsedRuntimeSettingValue::UnsignedInteger(days) => Ok(days),
         _ => unreachable!("audit retention parser must return an unsigned integer"),
+    }
+}
+
+/// Load the restart-scoped manual delivery worker concurrency.
+///
+/// # Arguments
+///
+/// * `auth_db_path` - Path to the migrated authentication database.
+///
+/// # Returns
+///
+/// Validated per-instance child-process limit.
+pub fn load_delivery_worker_concurrency(
+    auth_db_path: impl AsRef<Path>,
+) -> Result<usize, BusinessRepositoryError> {
+    let connection = open_business_connection(auth_db_path)?;
+    let stored = connection
+        .query_row(
+            "SELECT value FROM runtime_settings WHERE key = ?1",
+            [RuntimeSettingKey::DeliveryWorkerConcurrency.as_str()],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()?;
+    let value = stored
+        .as_deref()
+        .unwrap_or_else(|| runtime_setting_default(RuntimeSettingKey::DeliveryWorkerConcurrency));
+    match parse_runtime_setting(RuntimeSettingKey::DeliveryWorkerConcurrency, value)? {
+        ParsedRuntimeSettingValue::UnsignedInteger(workers) => {
+            usize::try_from(workers).map_err(|_| {
+                invalid_runtime_setting("delivery_worker_concurrency", "value is too large")
+            })
+        }
+        _ => unreachable!("delivery worker parser must return an unsigned integer"),
     }
 }
 
@@ -1525,13 +1597,14 @@ mod tests {
             .map(|setting| setting.field.as_str())
             .collect::<Vec<_>>();
 
-        assert_eq!(settings.len(), 17);
+        assert_eq!(settings.len(), 18);
         assert!(fields.contains(&"openalex_api_key_pool"));
         assert!(fields.contains(&"cnki_captcha_token"));
         assert!(fields.contains(&"secure_cookies"));
         assert!(fields.contains(&"trusted_proxy_cidrs"));
         assert!(fields.contains(&"auth_rate_limit_policy"));
         assert!(fields.contains(&"audit_retention_days"));
+        assert!(fields.contains(&"delivery_worker_concurrency"));
         assert!(!fields.contains(&"proxy_pool"));
         assert!(settings
             .iter()
@@ -1628,6 +1701,13 @@ mod tests {
                 RuntimeSettingGroup::Observability,
                 RuntimeSettingControl::Text,
                 RuntimeSettingApplyMode::NextRequest,
+                &[][..],
+            ),
+            (
+                "delivery_worker_concurrency",
+                RuntimeSettingGroup::ServerSecurity,
+                RuntimeSettingControl::Text,
+                RuntimeSettingApplyMode::RestartRequired,
                 &[][..],
             ),
             (
@@ -1734,6 +1814,31 @@ mod tests {
             assert!(matches!(
                 error,
                 BusinessRepositoryError::InvalidRuntimeSetting(_)
+            ));
+        }
+    }
+
+    #[test]
+    fn delivery_worker_concurrency_is_bounded_and_loaded_from_one_registry() {
+        let temp_dir = tempdir().expect("temp dir should be created");
+        let auth_db_path = temp_dir.path().join("auth.sqlite");
+        migrate_auth_database(&auth_db_path).expect("auth database should migrate");
+
+        assert_eq!(
+            load_delivery_worker_concurrency(&auth_db_path)
+                .expect("default delivery concurrency should load"),
+            DEFAULT_DELIVERY_WORKER_CONCURRENCY
+        );
+        for value in ["1", "2", "16"] {
+            assert!(matches!(
+                parse_runtime_setting(RuntimeSettingKey::DeliveryWorkerConcurrency, value),
+                Ok(ParsedRuntimeSettingValue::UnsignedInteger(_))
+            ));
+        }
+        for value in ["0", "17", "-1", "not-a-number"] {
+            assert!(matches!(
+                parse_runtime_setting(RuntimeSettingKey::DeliveryWorkerConcurrency, value),
+                Err(BusinessRepositoryError::InvalidRuntimeSetting(_))
             ));
         }
     }

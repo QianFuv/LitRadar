@@ -5,11 +5,13 @@ use std::error::Error;
 use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
+use std::thread;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use crate::ai::{live_ai_client, AiClientError, AiCompletionClient, ReqwestAiTransport};
-use crate::pushplus::{
-    live_pushplus_client, PushPlusClient, PushPlusError, PushPlusMessage, ReqwestPushPlusTransport,
-};
+use crate::ai::{AiClientError, AiCompletionClient, ReqwestAiTransport};
+use crate::pushplus::{PushPlusClient, PushPlusError, PushPlusMessage, ReqwestPushPlusTransport};
 use litradar_domain::{
     ArticleCandidateInfo, FavoriteAdd, NotificationSubscriberInfo, RankedSelectionInfo,
     SelectionResultInfo, UserId,
@@ -28,13 +30,209 @@ use serde_json::Value;
 mod candidates;
 mod folder;
 mod manifests;
+mod manual_job;
 mod notify;
 mod orchestration;
 mod state;
 
+pub use manual_job::run_manual_delivery_job;
 pub use orchestration::{
     run_manual_weekly_push, run_recommendation_delivery, run_recommendation_delivery_for_user,
 };
+
+/// Total AI HTTP attempts available to one durable manual delivery job.
+pub const MANUAL_DELIVERY_AI_REQUEST_BUDGET: usize = 8;
+
+/// Default absolute wall-clock budget for an admitted manual delivery job.
+pub const MANUAL_DELIVERY_JOB_DEADLINE_SECONDS: u64 = 10 * 60;
+
+const CONTROL_POLL_INTERVAL: Duration = Duration::from_millis(25);
+
+/// Fixed execution-stop reason shared by delivery clients and orchestration.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeliveryExecutionControlError {
+    /// Durable cancellation was requested.
+    Cancelled,
+    /// The persisted total job deadline elapsed.
+    TimedOut,
+    /// The durable cancellation state could not be loaded safely.
+    StateUnavailable,
+    /// The job exhausted its total AI HTTP request budget.
+    AiRequestBudgetExhausted,
+}
+
+impl DeliveryExecutionControlError {
+    /// Return the stable terminal classification.
+    ///
+    /// # Returns
+    ///
+    /// Fixed ASCII error code.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Cancelled => "cancelled",
+            Self::TimedOut => "deadline_exceeded",
+            Self::StateUnavailable => "cancellation_state_unavailable",
+            Self::AiRequestBudgetExhausted => "ai_request_budget_exhausted",
+        }
+    }
+}
+
+impl fmt::Display for DeliveryExecutionControlError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::Cancelled => "Delivery job was cancelled",
+            Self::TimedOut => "Delivery job deadline was exceeded",
+            Self::StateUnavailable => "Delivery job cancellation state is unavailable",
+            Self::AiRequestBudgetExhausted => "Delivery AI request budget was exhausted",
+        })
+    }
+}
+
+impl Error for DeliveryExecutionControlError {}
+
+/// Cloneable deadline, cancellation, and AI-request budget shared by one manual job.
+#[derive(Clone)]
+pub struct DeliveryExecutionControl {
+    deadline_at: f64,
+    remaining_ai_requests: Arc<AtomicUsize>,
+    cancellation_probe: Arc<dyn Fn() -> Result<bool, ()> + Send + Sync>,
+}
+
+impl fmt::Debug for DeliveryExecutionControl {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("DeliveryExecutionControl")
+            .field("deadline_at", &self.deadline_at)
+            .field(
+                "remaining_ai_requests",
+                &self.remaining_ai_requests.load(Ordering::Relaxed),
+            )
+            .field("cancellation_probe", &"[CONFIGURED]")
+            .finish()
+    }
+}
+
+impl DeliveryExecutionControl {
+    /// Build one shared durable-job execution boundary.
+    ///
+    /// # Arguments
+    ///
+    /// * `deadline_at` - Absolute Unix deadline persisted with the delivery run.
+    /// * `ai_request_budget` - Total AI HTTP attempts across endpoints, formats, and rounds.
+    /// * `cancellation_probe` - Fail-closed durable cancellation lookup.
+    ///
+    /// # Returns
+    ///
+    /// Shared execution control.
+    pub fn new(
+        deadline_at: f64,
+        ai_request_budget: usize,
+        cancellation_probe: impl Fn() -> Result<bool, ()> + Send + Sync + 'static,
+    ) -> Self {
+        Self {
+            deadline_at,
+            remaining_ai_requests: Arc::new(AtomicUsize::new(ai_request_budget)),
+            cancellation_probe: Arc::new(cancellation_probe),
+        }
+    }
+
+    /// Check durable cancellation and the absolute deadline.
+    ///
+    /// # Returns
+    ///
+    /// Empty result while work may continue.
+    pub fn check(&self) -> Result<(), DeliveryExecutionControlError> {
+        match (self.cancellation_probe)() {
+            Ok(true) => return Err(DeliveryExecutionControlError::Cancelled),
+            Ok(false) => {}
+            Err(()) => return Err(DeliveryExecutionControlError::StateUnavailable),
+        }
+        if unix_time() >= self.deadline_at {
+            return Err(DeliveryExecutionControlError::TimedOut);
+        }
+        Ok(())
+    }
+
+    /// Return the persisted absolute Unix deadline.
+    ///
+    /// # Returns
+    ///
+    /// Absolute deadline shared by every child request and database run.
+    pub const fn deadline_at(&self) -> f64 {
+        self.deadline_at
+    }
+
+    /// Reserve one AI request and return its remaining-time-capped timeout.
+    ///
+    /// # Arguments
+    ///
+    /// * `default_timeout` - Normal per-request timeout before the job deadline cap.
+    ///
+    /// # Returns
+    ///
+    /// Positive request timeout bounded by the remaining total deadline.
+    pub fn begin_ai_request(
+        &self,
+        default_timeout: Duration,
+    ) -> Result<Duration, DeliveryExecutionControlError> {
+        self.check()?;
+        self.remaining_ai_requests
+            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |remaining| {
+                remaining.checked_sub(1)
+            })
+            .map_err(|_| DeliveryExecutionControlError::AiRequestBudgetExhausted)?;
+        self.remaining_timeout(default_timeout)
+    }
+
+    /// Return a remaining-time-capped timeout for a non-AI external request.
+    ///
+    /// # Arguments
+    ///
+    /// * `default_timeout` - Normal per-request timeout before the job deadline cap.
+    ///
+    /// # Returns
+    ///
+    /// Positive request timeout bounded by the remaining total deadline.
+    pub fn begin_external_request(
+        &self,
+        default_timeout: Duration,
+    ) -> Result<Duration, DeliveryExecutionControlError> {
+        self.check()?;
+        self.remaining_timeout(default_timeout)
+    }
+
+    /// Sleep through a retry delay while polling cancellation and deadline state.
+    ///
+    /// # Arguments
+    ///
+    /// * `delay` - Requested bounded retry delay.
+    ///
+    /// # Returns
+    ///
+    /// Empty result when the whole delay completed before cancellation or deadline.
+    pub fn wait(&self, delay: Duration) -> Result<(), DeliveryExecutionControlError> {
+        let started_at = std::time::Instant::now();
+        while started_at.elapsed() < delay {
+            self.check()?;
+            let remaining = delay.saturating_sub(started_at.elapsed());
+            thread::sleep(CONTROL_POLL_INTERVAL.min(remaining));
+        }
+        self.check()
+    }
+
+    fn remaining_timeout(
+        &self,
+        default_timeout: Duration,
+    ) -> Result<Duration, DeliveryExecutionControlError> {
+        let remaining_seconds = self.deadline_at - unix_time();
+        if !remaining_seconds.is_finite() || remaining_seconds <= 0.0 {
+            return Err(DeliveryExecutionControlError::TimedOut);
+        }
+        Ok(default_timeout
+            .min(Duration::from_secs_f64(remaining_seconds))
+            .max(Duration::from_millis(1)))
+    }
+}
 
 /// Delivery worker errors.
 #[derive(Debug)]
@@ -57,6 +255,8 @@ pub enum DeliveryError {
     Manual(String),
     /// Another process owns this workflow/database delivery lease.
     Busy,
+    /// Durable job execution was cancelled, timed out, unavailable, or exhausted its budget.
+    Control(DeliveryExecutionControlError),
 }
 
 impl fmt::Display for DeliveryError {
@@ -72,6 +272,7 @@ impl fmt::Display for DeliveryError {
             Self::PushPlus(message) => formatter.write_str(message),
             Self::Manual(message) => formatter.write_str(message),
             Self::Busy => formatter.write_str("Delivery workflow is already running"),
+            Self::Control(error) => write!(formatter, "{error}"),
         }
     }
 }
@@ -85,6 +286,7 @@ impl Error for DeliveryError {
             Self::Durable(error) => Some(error),
             Self::Auth(error) => Some(error),
             Self::Recommendation(error) => Some(error),
+            Self::Control(error) => Some(error),
             Self::Ai(_) | Self::PushPlus(_) | Self::Manual(_) | Self::Busy => None,
         }
     }
@@ -132,6 +334,13 @@ impl From<PushPlusError> for DeliveryError {
     }
 }
 
+impl From<DeliveryExecutionControlError> for DeliveryError {
+    /// Convert execution-control stops into delivery errors.
+    fn from(error: DeliveryExecutionControlError) -> Self {
+        Self::Control(error)
+    }
+}
+
 /// Recommendation delivery workflow.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -150,6 +359,16 @@ pub enum DeliveryMode {
     DryRun,
     /// Execute side effects.
     Execute,
+}
+
+/// Durable admission source for one database-scoped delivery run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DeliveryTrigger {
+    /// Scheduler, CLI, or a durable parent job owns admission.
+    Scheduled,
+    /// Legacy direct authenticated manual execution owns admission.
+    Manual,
 }
 
 /// Recommendation worker run configuration.
@@ -179,6 +398,10 @@ pub struct RecommendationRunConfig {
     pub mode: DeliveryMode,
     /// Delivery workflow.
     pub workflow: DeliveryWorkflow,
+    /// Durable database-run admission source.
+    pub trigger: DeliveryTrigger,
+    /// Optional shared total deadline, cancellation, and request budget.
+    pub execution_control: Option<DeliveryExecutionControl>,
 }
 
 /// Planned favorite write.
@@ -259,10 +482,12 @@ pub struct ManualWeeklyPushConfig {
     pub retry_attempts: usize,
     /// Dedupe retention days.
     pub dedupe_retention_days: i64,
+    /// Optional shared total deadline, cancellation, and request budget.
+    pub execution_control: Option<DeliveryExecutionControl>,
 }
 
 /// Manual weekly push delivery result.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ManualWeeklyPushOutcome {
     /// Final run status.
     pub status: String,
@@ -280,4 +505,11 @@ pub struct ManualWeeklyPushOutcome {
     pub folder_id: Option<i64>,
     /// Tracking folder name when applicable.
     pub folder_name: Option<String>,
+}
+
+fn unix_time() -> f64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs_f64()
 }

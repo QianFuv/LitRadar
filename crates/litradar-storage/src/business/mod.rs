@@ -46,9 +46,11 @@ pub use delivery::{
     claim_next_delivery_run_item, cleanup_confirmed_delivery_dedupe,
     compare_and_swap_delivery_checkpoint, enqueue_delivery_run, ensure_delivery_run_items,
     finalize_delivery_attempt, finalize_delivery_run, finalize_delivery_run_item,
-    finalize_delivery_run_with_checkpoint, import_legacy_delivery_state_files,
-    insert_delivery_run_items, list_delivery_dedupe_for_scope, list_delivery_run_items,
-    load_delivery_checkpoint, load_delivery_dedupe, load_delivery_lease, load_delivery_run,
+    finalize_delivery_run_with_checkpoint, finalize_queued_delivery_run,
+    import_legacy_delivery_state_files, insert_delivery_run_items, list_delivery_dedupe_for_scope,
+    list_delivery_run_items, list_dispatchable_manual_delivery_runs, load_delivery_checkpoint,
+    load_delivery_dedupe, load_delivery_lease, load_delivery_run, load_latest_manual_delivery_run,
+    load_manual_delivery_run_by_external_id, load_manual_delivery_run_by_external_id_for_admin,
     mark_delivery_run_item_sending, reconcile_delivery_run_after_takeover,
     release_delivery_dedupe_reservation, release_delivery_dedupe_reservations,
     release_delivery_lease, renew_delivery_lease, renew_delivery_run, renew_delivery_run_item,
@@ -74,11 +76,12 @@ pub use notifications::{
 };
 pub use runtime_settings::{
     canonicalize_outbound_base_url, list_runtime_settings, load_ai_allowed_base_urls,
-    load_audit_retention_days, load_runtime_logging_settings, load_runtime_settings,
-    parse_runtime_setting, runtime_setting_default, upsert_runtime_settings,
+    load_audit_retention_days, load_delivery_worker_concurrency, load_runtime_logging_settings,
+    load_runtime_settings, parse_runtime_setting, runtime_setting_default, upsert_runtime_settings,
     upsert_runtime_settings_with_audit, AuthRateLimitPolicy, ParsedRuntimeSettingValue,
     RuntimeLoggingSettings, RuntimeSettingKey, TokenBucketPolicy, TrustedProxyCidr,
-    DEFAULT_AUTH_RATE_LIMIT_POLICY_JSON, DEFAULT_RUNTIME_LOG_FILTER, DEFAULT_RUNTIME_LOG_FORMAT,
+    DEFAULT_AUTH_RATE_LIMIT_POLICY_JSON, DEFAULT_DELIVERY_WORKER_CONCURRENCY,
+    DEFAULT_RUNTIME_LOG_FILTER, DEFAULT_RUNTIME_LOG_FORMAT, MAX_DELIVERY_WORKER_CONCURRENCY,
 };
 pub use scheduled_tasks::{
     claim_ready_scheduled_runs, create_scheduled_task, create_scheduled_task_with_audit,

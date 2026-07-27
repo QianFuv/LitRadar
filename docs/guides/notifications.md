@@ -60,7 +60,9 @@
 - API key 没有可用的全局 fallback，用户必须配置
 - 只有用户填写了任一备用字段时才构建备用 endpoint
 
-CLI `--retries` 的范围是 `0..=10`、默认值是 3；用户 `ai_retry_attempts` 的范围是 `1..=10`。两者分别受限后，每个 endpoint 的实际 AI 重试次数仍取两者较大值。该次数分别应用于 `json_schema`、`json_object` 和无 `response_format` 三种兼容形式：值为 N 时，每种形式最多执行一次初始请求和 N 次重试，并按 `1/2/4/8/8...` 秒等待。它不是完整作业时限或所有 endpoint 的请求总数。
+CLI `--retries` 的范围是 `0..=10`、默认值是 3；用户 `ai_retry_attempts` 的范围是 `1..=10`。连接失败、单次请求超时以及 `429/502/503/504` 才会重试；`400/401/403`、配置错误和响应结构错误不会网络重试。退避使用 `1/2/4/8/8...` 秒上限内的 full jitter；数值 `Retry-After` 优先使用并封顶 60 秒。只有成功的 2xx 响应明确表现出输出格式不兼容时，才从 `json_schema` 降级到 `json_object` 或普通 JSON。
+
+手动任务另有跨主备 Endpoint、格式和摘要请求共享的 8 次 AI HTTP 总预算，以及持久化的 10 分钟绝对 deadline。每次请求 timeout 同时受 120 秒默认值和任务剩余时间限制；这些边界不改变独立 CLI `notify`/`push` 的参数语义。
 
 每次请求都会在总截止时间内通过有界解析器重新解析 DNS，并拒绝 loopback、RFC1918、link-local、unspecified、multicast、IPv6 ULA、NAT64/6to4 和其他特殊用途地址；只允许 HTTPS，禁用环境代理和自动重定向。成功响应必须是未压缩 JSON，最大 2 MiB；非 2xx 响应体不会读取、记录或进入用户可见任务状态。`--dry-run` 仍会执行符合这些边界的 AI 请求。
 
@@ -118,7 +120,7 @@ cargo run --bin litradar -- push \
 
 PushPlus 请求开始后的失败按不确定结果处理：不会回显上游 body，不会释放 dedupe，也不会自动重发。进程在 `claimed` 阶段退出时，过期 owner 的 reservation 会释放并安全重试；在 `sending` 阶段退出时，新 owner 会把 item/dedupe 固定收敛到 `unknown`。若发送前已经执行可选文件夹同步，收藏不会回滚，但其唯一约束确保恢复不会重复创建。
 
-PushPlus 传输使用受限后的 CLI `--retries`，并以相同的 `1/2/4/8/8...` 秒封顶退避对网络错误以及 `429`、`500`、`502`、`503`、`504` 重试。响应 JSON 必须满足 `code=200`，`data` 记录为 message ID。
+PushPlus 传输使用受限后的 CLI `--retries`，只对连接失败、timeout 以及 `429/502/503/504` 使用同一 full-jitter/`Retry-After` 策略；包括 `500` 在内的其他状态不会自动重发。响应 JSON 必须满足 `code=200`，`data` 记录为 message ID。
 
 ## 手动推送 API
 
@@ -126,13 +128,13 @@ PushPlus 传输使用受限后的 CLI `--retries`，并以相同的 `1/2/4/8/8..
 
 - 只操作当前认证用户
 - 从 `data/push_state/*.changes.json` 读取最新候选
-- 立即返回后台 job 状态
-- 同一用户已有 running job 时返回该现有状态和 job id，不启动第二份工作
-- 每个 `litradar serve` 进程对同一 storage instance 最多接纳 1 个 running manual job
-- 另一用户占用该 slot 时，启动请求立即返回通用 `503`；调用方应等待当前 job 进入 completed/failed 后再重试
+- 把 job、绝对 deadline、取消标志和终态写入 `data/auth.sqlite`，以 `202` 立即返回
+- 同一用户已有 queued/running job 时返回该现有状态和 job id，不启动第二份工作
+- 不同用户进入实例级有界队列；默认最多同时监管 2 个子进程，可通过 `delivery_worker_concurrency` 配置为 `1..=16`
 - 通过 `GET /api/tracking/push-weekly/status` 轮询
+- 可通过 `GET /api/tracking/push-weekly/runs/{run_id}` 恢复指定任务，通过 `POST .../{run_id}/cancel` 请求取消；owner 和管理员可访问
 
-该 API 使用与 CLI 相同的选择、投递和状态逻辑，但工作流由当前用户的 `delivery_method` 决定。单槽 admission 只约束当前 `litradar serve` 进程，不提供 `cross-process` 协调；独立调用的投递子命令、计划任务子进程或其他应用实例不受它协调。API 契约见 [API 参考](../reference/api.md)和运行时 OpenAPI。
+runtime dispatcher 从 SQLite 认领任务，通过隐藏的类型化 `delivery-run` 子命令和完整进程树监管执行。服务重启后 queued 或 lease 过期的任务仍可恢复；取消与 deadline 会先给 cooperative polling 一个短暂窗口，再终止完整进程树。强制终止时若外部副作用可能已经开始，顶层任务固定为 `unknown`，UI 不提供无提示重试。公开状态为 `pending/running/completed/failed/cancelled/timed_out/unknown`。API 契约见 [API 参考](../reference/api.md)和运行时 OpenAPI。
 
 ## 持久状态与旧文件
 
