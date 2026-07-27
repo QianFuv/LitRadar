@@ -16,6 +16,7 @@ use litradar_storage::{BusinessRepositoryError, StorageConfig};
 use serde::Deserialize;
 use utoipa::IntoParams;
 
+use crate::citation::{serialize_bibtex, serialize_endnote_xml, serialize_ris};
 use crate::response::ApiError;
 use crate::routes::auth::require_current_user;
 use crate::state::ApiState;
@@ -300,13 +301,13 @@ pub(crate) async fn export_folder(
     };
     let format = query.format.unwrap_or_else(|| "bibtex".to_string());
     let (content, media_type, extension) = match format.as_str() {
-        "bibtex" => (to_bibtex(&articles), "application/x-bibtex", "bib"),
+        "bibtex" => (serialize_bibtex(&articles), "application/x-bibtex", "bib"),
         "ris" => (
-            to_ris(&articles),
+            serialize_ris(&articles),
             "application/x-research-info-systems",
             "ris",
         ),
-        "endnote" => (to_endnote(&articles), "application/xml", "xml"),
+        "endnote" => (serialize_endnote_xml(&articles), "application/xml", "xml"),
         _ => return Err(ApiError::bad_request("Invalid export format")),
     };
     let filename = export_filename(&folder.name, extension);
@@ -627,107 +628,11 @@ fn export_filename(folder_name: &str, extension: &str) -> String {
     format!("{base_name}.{extension}")
 }
 
-fn to_bibtex(articles: &[FavoriteArticleResponse]) -> String {
-    articles
-        .iter()
-        .enumerate()
-        .map(|(index, article)| {
-            let authors = article
-                .authors
-                .as_ref()
-                .map(|values| values.join(" and "))
-                .unwrap_or_default();
-            let key = article
-                .doi
-                .as_deref()
-                .filter(|value| !value.is_empty())
-                .unwrap_or("favorite");
-            format!(
-                "@article{{{}{},\n  title = {{{}}},\n  author = {{{}}},\n  journal = {{{}}},\n  year = {{{}}},\n  doi = {{{}}}\n}}",
-                sanitize_citation_key(key),
-                index + 1,
-                article.title.as_deref().unwrap_or(""),
-                authors,
-                article.journal_title.as_deref().unwrap_or(""),
-                article.date.as_deref().unwrap_or(""),
-                article.doi.as_deref().unwrap_or("")
-            )
-        })
-        .collect::<Vec<_>>()
-        .join("\n\n")
-}
-
-fn to_ris(articles: &[FavoriteArticleResponse]) -> String {
-    articles
-        .iter()
-        .map(|article| {
-            let authors = article
-                .authors
-                .as_ref()
-                .map(|values| values.join("\nAU  - "))
-                .unwrap_or_default();
-            format!(
-                "TY  - JOUR\nTI  - {}\nAU  - {}\nJO  - {}\nPY  - {}\nDO  - {}\nER  -",
-                article.title.as_deref().unwrap_or(""),
-                authors,
-                article.journal_title.as_deref().unwrap_or(""),
-                article.date.as_deref().unwrap_or(""),
-                article.doi.as_deref().unwrap_or("")
-            )
-        })
-        .collect::<Vec<_>>()
-        .join("\n\n")
-}
-
-fn to_endnote(articles: &[FavoriteArticleResponse]) -> String {
-    let records = articles
-        .iter()
-        .map(|article| {
-            let authors = article
-                .authors
-                .as_ref()
-                .map(|values| {
-                    values
-                        .iter()
-                        .map(|value| escape_xml(value))
-                        .collect::<Vec<_>>()
-                        .join("</author><author>")
-                })
-                .unwrap_or_default();
-            format!(
-                "<record><titles><title>{}</title></titles><contributors><authors><author>{}</author></authors></contributors><dates><year>{}</year></dates><electronic-resource-num>{}</electronic-resource-num></record>",
-                escape_xml(article.title.as_deref().unwrap_or("")),
-                authors,
-                escape_xml(article.date.as_deref().unwrap_or("")),
-                escape_xml(article.doi.as_deref().unwrap_or(""))
-            )
-        })
-        .collect::<String>();
-    format!("<?xml version=\"1.0\" encoding=\"UTF-8\"?><xml><records>{records}</records></xml>")
-}
-
-fn sanitize_citation_key(value: &str) -> String {
-    value
-        .chars()
-        .filter(|character| character.is_ascii_alphanumeric())
-        .collect::<String>()
-}
-
-fn escape_xml(value: &str) -> String {
-    value
-        .replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;")
-        .replace('\'', "&apos;")
-}
-
 #[cfg(test)]
 mod tests {
     use axum::body::{to_bytes, Body};
     use axum::http::header::{AUTHORIZATION, CONTENT_TYPE};
     use axum::http::{Request, StatusCode};
-    use litradar_domain::{ArticleId, JournalId};
     use serde_json::json;
     use tower::ServiceExt;
 
@@ -826,114 +731,6 @@ mod tests {
             "CNKI-2026_v1.2.xml"
         );
         assert_eq!(export_filename("中文收藏", "bib"), "favorites.bib");
-    }
-
-    #[test]
-    fn bibtex_export_sanitizes_keys_and_keeps_missing_fields_empty() {
-        let articles = vec![favorite_article(
-            1,
-            Some("A & B <Genome>".to_string()),
-            Some(vec!["Alice".to_string(), "Bob".to_string()]),
-            Some("Journal {One}".to_string()),
-            Some("2026-01-05".to_string()),
-            Some("10.1000/abc-def".to_string()),
-        )];
-        let fallback = vec![favorite_article(2, None, None, None, None, None)];
-
-        let bibtex = to_bibtex(&articles);
-        let fallback_bibtex = to_bibtex(&fallback);
-
-        assert!(bibtex.contains("@article{101000abcdef1,"));
-        assert!(bibtex.contains("title = {A & B <Genome>}"));
-        assert!(bibtex.contains("author = {Alice and Bob}"));
-        assert!(bibtex.contains("journal = {Journal {One}}"));
-        assert!(bibtex.contains("year = {2026-01-05}"));
-        assert!(fallback_bibtex.contains("@article{favorite1,"));
-        assert!(fallback_bibtex.contains("title = {}"));
-    }
-
-    #[test]
-    fn ris_export_keeps_journal_fields_and_empty_missing_values() {
-        let articles = vec![
-            favorite_article(
-                1,
-                Some("Clinical Data".to_string()),
-                Some(vec!["Carol".to_string()]),
-                Some("Alpha Journal".to_string()),
-                Some("2026".to_string()),
-                Some("10.1000/clinical".to_string()),
-            ),
-            favorite_article(2, None, None, None, None, None),
-        ];
-
-        let ris = to_ris(&articles);
-
-        assert!(ris.contains("TY  - JOUR\nTI  - Clinical Data"));
-        assert!(ris.contains("AU  - Carol"));
-        assert!(ris.contains("JO  - Alpha Journal"));
-        assert!(ris.contains("DO  - 10.1000/clinical"));
-        assert!(ris.contains("TI  - \nAU  - \nJO  - \nPY  - \nDO  - \nER  -"));
-    }
-
-    #[test]
-    fn endnote_export_escapes_xml_reserved_characters() {
-        let articles = vec![favorite_article(
-            1,
-            Some("A&B <Study> \"One\"".to_string()),
-            Some(vec!["Alice O'Neil".to_string()]),
-            Some("Alpha Journal".to_string()),
-            Some("2026".to_string()),
-            Some("10.1000/a&b".to_string()),
-        )];
-
-        let endnote = to_endnote(&articles);
-
-        assert!(endnote.starts_with("<?xml version=\"1.0\" encoding=\"UTF-8\"?>"));
-        assert!(endnote.contains("A&amp;B &lt;Study&gt; &quot;One&quot;"));
-        assert!(endnote.contains("Alice O&apos;Neil"));
-        assert!(endnote.contains("10.1000/a&amp;b"));
-    }
-
-    #[test]
-    fn citation_key_and_xml_helpers_cover_edge_characters() {
-        assert_eq!(sanitize_citation_key("10.1000/a-b_c"), "101000abc");
-        assert_eq!(
-            escape_xml("A&B <C> \"D\" 'E'"),
-            "A&amp;B &lt;C&gt; &quot;D&quot; &apos;E&apos;"
-        );
-    }
-
-    fn favorite_article(
-        id: i64,
-        title: Option<String>,
-        authors: Option<Vec<String>>,
-        journal_title: Option<String>,
-        date: Option<String>,
-        doi: Option<String>,
-    ) -> FavoriteArticleResponse {
-        FavoriteArticleResponse {
-            id,
-            folder_id: 10,
-            article_id: ArticleId(1_000 + id),
-            db_name: "fixture.sqlite".to_string(),
-            note: String::new(),
-            created_at: 1.0,
-            journal_id: Some(JournalId(1)),
-            issue_id: Some(20),
-            title,
-            publication_year: Some(2026),
-            date,
-            authors,
-            abstract_text: None,
-            doi,
-            journal_title,
-            open_access: None,
-            in_press: None,
-            volume: None,
-            number: None,
-            issn: None,
-            eissn: None,
-        }
     }
 
     fn assert_bad_request_detail(error: ApiError, detail: &str) {

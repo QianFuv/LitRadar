@@ -193,6 +193,8 @@ CNKI 会话按 LitRadar 用户隔离；状态接口只返回安全元数据，�
 
 收藏文件夹名称按 Unicode scalar value 计数，最多 100 个字符；note 最多 2,000 个字符，`db_name` 最多 255 个字符。批量添加、删除、移动和检查每次最多提交 500 个 article item/ID；501 个及以上在构造 SQL 前返回 `400`。动态 `IN` 查询固定按 500 个 ID 分块，HTTP JSON body 超过框架的 2 MiB 上限仍返回 `413`。
 
+引文导出通过 `format=bibtex|ris|endnote` 选择格式，文件扩展名和响应 Content-Type 保持为 `.bib`/`application/x-bibtex`、`.ris`/`application/x-research-info-systems` 和 `.xml`/`application/xml`。服务端使用格式专用 serializer：BibTeX 保留字符和结构性换行被编码为字段值，RIS 值被规范为单行，EndNote 只写入合法且已转义的 XML 1.0 文本；文章元数据不能注入额外字段或记录。
+
 手动周报是 SQLite 持久化异步任务。启动接口返回 `202`；`pending/running` 状态应继续轮询，服务重启后仍可通过 latest 或 run-id 接口恢复。公开终态为 `completed`、`failed`、`cancelled`、`timed_out` 或 `unknown`，并返回 `deadline_at`、`cancellation_requested`、`can_cancel` 和 `can_retry`。完整通知链路见[通知指南](../guides/notifications.md)。
 
 SQLite 保证每个用户最多一个 queued/active 手动任务；同一用户重复启动返回现有 job，不同用户可以同时排队或在实例有界池中并行。普通用户只能查询和取消自己的 run；管理员可按不可猜测的 job id 管理任意用户 run。`unknown` 表示外部结果可能已发生，`can_retry=false`，客户端不得把它当普通失败自动重放。

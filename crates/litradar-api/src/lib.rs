@@ -2,6 +2,7 @@
 
 mod article_access;
 mod audit;
+mod citation;
 pub mod config;
 mod http_observability;
 mod mcp;
