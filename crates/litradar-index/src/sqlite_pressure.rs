@@ -4,13 +4,14 @@ use std::env;
 use std::io::{self, BufReader, BufWriter, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{Command, Stdio};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use litradar_domain::{
     ArticleDraft, IssueDraft, JournalCatalogEntry, JournalDraft, JournalRankings, ProviderBatch,
 };
+use litradar_worker::process_supervisor::SupervisedChild;
 use rusqlite::{Connection, ErrorCode};
 use serde::Serialize;
 
@@ -639,7 +640,8 @@ fn launch_process_fixture(
         .map_err(|_| LiveIndexError::Worker("pressure worker listener failed".to_string()))?;
     let executable = env::current_exe()
         .map_err(|_| LiveIndexError::Worker("pressure worker executable failed".to_string()))?;
-    let mut child = Command::new(executable)
+    let mut command = Command::new(executable);
+    command
         .arg("--exact")
         .arg(CHILD_TEST_NAME)
         .arg("--quiet")
@@ -657,16 +659,14 @@ fn launch_process_fixture(
         )
         .stdin(Stdio::null())
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .map_err(|_| {
-            LiveIndexError::Worker(format!("pressure worker {worker_id} could not start"))
-        })?;
+        .stderr(Stdio::null());
+    let mut child = SupervisedChild::spawn(&mut command).map_err(|_| {
+        LiveIndexError::Worker(format!("pressure worker {worker_id} could not start"))
+    })?;
     let stream = match accept_fixture_stream(&listener, &mut child) {
         Ok(stream) => stream,
         Err(error) => {
-            let _ = child.kill();
-            let _ = child.wait();
+            let _ = child.force_kill_and_wait();
             return Err(error);
         }
     };
@@ -693,7 +693,7 @@ fn launch_process_fixture(
 
 fn accept_fixture_stream(
     listener: &TcpListener,
-    child: &mut Child,
+    child: &mut SupervisedChild,
 ) -> Result<TcpStream, LiveIndexError> {
     let deadline = Instant::now() + CHILD_CONNECT_TIMEOUT;
     loop {

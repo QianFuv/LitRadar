@@ -18,10 +18,13 @@ use litradar_domain::{
 use litradar_storage::ScheduledRunClaim;
 use serde::Serialize;
 
+use crate::process_supervisor::{ProcessSupervisorErrorKind, SupervisedChild};
+
 const CATCH_UP_SECONDS: f64 = 86_400.0;
 const RUN_LEASE_SECONDS: f64 = 90.0;
 const PROCESS_POLL_INTERVAL: Duration = Duration::from_millis(25);
 const PROCESS_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5);
+const PROCESS_TERMINATION_GRACE: Duration = Duration::from_millis(250);
 const MAX_CAPTURE_BYTES: usize = 2_048;
 const MAX_OUTPUT_SUMMARY_CHARS: usize = 4_096;
 
@@ -969,9 +972,8 @@ enum ProcessTerminal {
     Success,
     Cancelled,
     TimedOut,
-    SpawnFailed,
     ExitFailed(Option<i32>),
-    WaitFailed,
+    SupervisorFailed(ProcessSupervisorErrorKind),
 }
 
 fn execute_scheduled_process_in_span(
@@ -999,35 +1001,39 @@ fn execute_scheduled_process_in_span(
         .arg(&context.run_id)
         .stdout(Stdio::piped())
         .stderr(Stdio::inherit());
-    let mut child = match command.spawn() {
+    let mut child = match SupervisedChild::spawn(&mut command) {
         Ok(child) => child,
-        Err(_) => {
-            let terminal = ProcessTerminal::SpawnFailed;
+        Err(error) => {
+            let terminal = ProcessTerminal::SupervisorFailed(error.kind());
             emit_process_terminal(terminal, started_at);
             return process_execution(terminal, process.command, Vec::new());
         }
     };
-    let stdout_reader = child.stdout.take().map(spawn_bounded_reader);
+    let stdout_reader = child.take_stdout().map(spawn_bounded_reader);
     let mut last_heartbeat = Instant::now();
     let terminal = loop {
         if cancellation.is_cancelled() {
-            let _ = child.kill();
-            let _ = child.wait();
-            break ProcessTerminal::Cancelled;
+            break match child.terminate_tree(PROCESS_TERMINATION_GRACE) {
+                Ok(_) => ProcessTerminal::Cancelled,
+                Err(error) => ProcessTerminal::SupervisorFailed(error.kind()),
+            };
         }
         match child.try_wait() {
             Ok(Some(status)) if status.success() => break ProcessTerminal::Success,
             Ok(Some(status)) => break ProcessTerminal::ExitFailed(status.code()),
             Ok(None) if Instant::now() >= deadline => {
-                let _ = child.kill();
-                let _ = child.wait();
-                break ProcessTerminal::TimedOut;
+                break match child.terminate_tree(PROCESS_TERMINATION_GRACE) {
+                    Ok(_) => ProcessTerminal::TimedOut,
+                    Err(error) => ProcessTerminal::SupervisorFailed(error.kind()),
+                };
             }
             Ok(None) => {}
-            Err(_) => {
-                let _ = child.kill();
-                let _ = child.wait();
-                break ProcessTerminal::WaitFailed;
+            Err(error) => {
+                let error_kind = child
+                    .force_kill_and_wait()
+                    .err()
+                    .map_or(error.kind(), |cleanup_error| cleanup_error.kind());
+                break ProcessTerminal::SupervisorFailed(error_kind);
             }
         }
         if last_heartbeat.elapsed() >= PROCESS_HEARTBEAT_INTERVAL {
@@ -1050,19 +1056,23 @@ fn process_execution(
         ProcessTerminal::Success => "success",
         ProcessTerminal::Cancelled => "cancelled",
         ProcessTerminal::TimedOut => "timed_out",
-        ProcessTerminal::SpawnFailed | ProcessTerminal::WaitFailed => "error",
+        ProcessTerminal::SupervisorFailed(_) => "error",
         ProcessTerminal::ExitFailed(_) => "failed",
     };
     let mut summary = match terminal {
         ProcessTerminal::Success => String::new(),
         ProcessTerminal::Cancelled => format!("{command}: cancelled"),
         ProcessTerminal::TimedOut => format!("{command}: timed out"),
-        ProcessTerminal::SpawnFailed => format!("{command}: spawn failed"),
         ProcessTerminal::ExitFailed(Some(exit_code)) => {
             format!("{command}: exit code {exit_code}")
         }
         ProcessTerminal::ExitFailed(None) => format!("{command}: process failed"),
-        ProcessTerminal::WaitFailed => format!("{command}: wait failed"),
+        ProcessTerminal::SupervisorFailed(error_kind) => {
+            format!(
+                "{command}: process supervision failed ({})",
+                error_kind.as_str()
+            )
+        }
     };
     append_captured_output(&mut summary, "stdout", &stdout);
     ProcessExecution {
@@ -1106,7 +1116,7 @@ fn process_terminal_status(terminal: ProcessTerminal) -> &'static str {
         ProcessTerminal::Success => "success",
         ProcessTerminal::Cancelled => "cancelled",
         ProcessTerminal::TimedOut => "timed_out",
-        ProcessTerminal::SpawnFailed | ProcessTerminal::WaitFailed => "error",
+        ProcessTerminal::SupervisorFailed(_) => "error",
         ProcessTerminal::ExitFailed(_) => "failed",
     }
 }
@@ -1116,9 +1126,8 @@ fn process_terminal_error_kind(terminal: ProcessTerminal) -> &'static str {
         ProcessTerminal::Success => "none",
         ProcessTerminal::Cancelled => "cancelled",
         ProcessTerminal::TimedOut => "timeout",
-        ProcessTerminal::SpawnFailed => "spawn_failed",
         ProcessTerminal::ExitFailed(_) => "nonzero_exit",
-        ProcessTerminal::WaitFailed => "wait_failed",
+        ProcessTerminal::SupervisorFailed(error_kind) => error_kind.as_str(),
     }
 }
 
@@ -1541,6 +1550,9 @@ mod tests {
 
     use super::*;
     use crate::ai::test_support::CapturedLogs;
+
+    const PROCESS_TREE_HEARTBEAT_ARGUMENT: &str = "--scheduler-tree-heartbeat";
+    const PROCESS_TREE_HEARTBEAT_ENV: &str = "LITRADAR_SCHEDULER_TREE_HEARTBEAT";
 
     #[test]
     fn scheduler_loads_enabled_jobs_and_skips_invalid_cron() {
@@ -2017,6 +2029,8 @@ mod tests {
     #[test]
     fn scheduler_process_timeout_terminates_child_and_bounds_output() {
         let executable = std::env::current_exe().expect("test executable should resolve");
+        let directory = tempdir().expect("temporary process-tree directory should create");
+        let heartbeat_path = directory.path().join("timeout-heartbeat.txt");
         let process = ScheduledProcess {
             command: "test-timeout",
             executable: executable.into_os_string(),
@@ -2026,6 +2040,8 @@ mod tests {
                 "scheduler::tests::scheduler_timeout_child_fixture".into(),
                 "--nocapture".into(),
                 "--".into(),
+                PROCESS_TREE_HEARTBEAT_ARGUMENT.into(),
+                heartbeat_path.as_os_str().to_owned(),
             ],
         };
         let logs = CapturedLogs::default();
@@ -2035,7 +2051,7 @@ mod tests {
             let result = execute_scheduled_process(
                 process,
                 1,
-                Instant::now() + Duration::from_millis(150),
+                Instant::now() + Duration::from_secs(1),
                 &test_run_context(),
                 &SchedulerCancellation::new(),
                 &mut || {},
@@ -2044,7 +2060,8 @@ mod tests {
         });
 
         assert_eq!(result.status, "timed_out");
-        assert!(process_elapsed < Duration::from_secs(2));
+        assert!(process_elapsed < Duration::from_secs(3));
+        assert_process_tree_heartbeat_stopped(&heartbeat_path);
         assert_single_child_failure(&logs, "timeout");
         assert_eq!(
             bounded_output_summary(&"x".repeat(MAX_OUTPUT_SUMMARY_CHARS * 2))
@@ -2055,8 +2072,10 @@ mod tests {
     }
 
     #[test]
-    fn scheduler_cancellation_terminates_and_waits_for_active_child() {
+    fn scheduler_process_cancellation_terminates_and_waits_for_active_child() {
         let executable = std::env::current_exe().expect("test executable should resolve");
+        let directory = tempdir().expect("temporary process-tree directory should create");
+        let heartbeat_path = directory.path().join("cancellation-heartbeat.txt");
         let process = ScheduledProcess {
             command: "test-cancellation",
             executable: executable.into_os_string(),
@@ -2066,6 +2085,8 @@ mod tests {
                 "scheduler::tests::scheduler_timeout_child_fixture".into(),
                 "--nocapture".into(),
                 "--".into(),
+                PROCESS_TREE_HEARTBEAT_ARGUMENT.into(),
+                heartbeat_path.as_os_str().to_owned(),
             ],
         };
         let logs = CapturedLogs::default();
@@ -2074,7 +2095,7 @@ mod tests {
             let cancellation = SchedulerCancellation::new();
             let cancellation_request = cancellation.clone();
             let cancel_thread = thread::spawn(move || {
-                thread::sleep(Duration::from_millis(150));
+                thread::sleep(Duration::from_secs(1));
                 cancellation_request.cancel();
             });
             let started_at = Instant::now();
@@ -2095,8 +2116,35 @@ mod tests {
 
         assert_eq!(result.status, "cancelled");
         assert!(result.output_summary.contains("cancelled"));
-        assert!(process_elapsed < Duration::from_secs(2));
+        assert!(process_elapsed < Duration::from_secs(3));
+        assert_process_tree_heartbeat_stopped(&heartbeat_path);
         assert_single_child_failure(&logs, "cancelled");
+    }
+
+    #[test]
+    fn scheduler_process_supervision_failures_have_fixed_classifications() {
+        let cases = [
+            ProcessSupervisorErrorKind::SpawnOrAssign,
+            ProcessSupervisorErrorKind::GracefulSignal,
+            ProcessSupervisorErrorKind::ForceKill,
+            ProcessSupervisorErrorKind::Wait,
+        ];
+
+        for error_kind in cases {
+            let terminal = ProcessTerminal::SupervisorFailed(error_kind);
+            let execution = process_execution(terminal, "test-process", Vec::new());
+
+            assert_eq!(execution.status, "error");
+            assert_eq!(process_terminal_status(terminal), "error");
+            assert_eq!(process_terminal_error_kind(terminal), error_kind.as_str());
+            assert_eq!(
+                execution.output_summary,
+                format!(
+                    "test-process: process supervision failed ({})",
+                    error_kind.as_str()
+                )
+            );
+        }
     }
 
     #[test]
@@ -2164,8 +2212,11 @@ mod tests {
         });
 
         assert_eq!(result.status, "error");
-        assert_eq!(result.output_summary, "test-spawn: spawn failed");
-        assert_single_child_failure(&logs, "spawn_failed");
+        assert_eq!(
+            result.output_summary,
+            "test-spawn: process supervision failed (spawn_or_assign_failed)"
+        );
+        assert_single_child_failure(&logs, "spawn_or_assign_failed");
         assert!(!logs.text().contains(sentinel));
     }
 
@@ -2205,7 +2256,53 @@ mod tests {
     #[test]
     #[ignore = "helper process for scheduler timeout coverage"]
     fn scheduler_timeout_child_fixture() {
+        if let Some(heartbeat_path) = process_tree_heartbeat_argument() {
+            let mut command = Command::new(
+                std::env::current_exe().expect("current test executable should resolve"),
+            );
+            command
+                .args([
+                    "--ignored",
+                    "--exact",
+                    "scheduler::tests::scheduler_process_tree_grandchild_fixture",
+                    "--nocapture",
+                ])
+                .env(PROCESS_TREE_HEARTBEAT_ENV, &heartbeat_path)
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null());
+            let mut grandchild = command
+                .spawn()
+                .expect("scheduler grandchild fixture should start");
+            let grandchild_pid = grandchild.id();
+            let grandchild_waiter = thread::spawn(move || grandchild.wait());
+            drop(grandchild_waiter);
+            let deadline = Instant::now() + Duration::from_secs(3);
+            while !heartbeat_path.exists() {
+                assert!(
+                    Instant::now() < deadline,
+                    "scheduler grandchild heartbeat did not start"
+                );
+                thread::sleep(Duration::from_millis(10));
+            }
+            assert_ne!(grandchild_pid, 0);
+        }
         thread::sleep(Duration::from_secs(5));
+    }
+
+    #[test]
+    #[ignore = "helper process for scheduler process-tree coverage"]
+    fn scheduler_process_tree_grandchild_fixture() {
+        let path = std::env::var_os(PROCESS_TREE_HEARTBEAT_ENV)
+            .map(PathBuf::from)
+            .expect("scheduler process-tree heartbeat path should be provided");
+        let mut counter = 0_u64;
+        loop {
+            std::fs::write(&path, format!("{} {counter}", std::process::id()))
+                .expect("scheduler process-tree heartbeat should write");
+            counter = counter.saturating_add(1);
+            thread::sleep(Duration::from_millis(10));
+        }
     }
 
     #[test]
@@ -2225,6 +2322,34 @@ mod tests {
     #[ignore = "helper process for scheduler nonzero exit coverage"]
     fn scheduler_nonzero_child_fixture() {
         std::process::exit(7);
+    }
+
+    fn process_tree_heartbeat_argument() -> Option<PathBuf> {
+        let arguments = std::env::args_os().collect::<Vec<_>>();
+        arguments
+            .windows(2)
+            .find(|pair| pair[0] == PROCESS_TREE_HEARTBEAT_ARGUMENT)
+            .map(|pair| PathBuf::from(&pair[1]))
+    }
+
+    fn assert_process_tree_heartbeat_stopped(path: &Path) {
+        let deadline = Instant::now() + Duration::from_secs(3);
+        let first = loop {
+            if let Ok(contents) = std::fs::read_to_string(path) {
+                if !contents.is_empty() {
+                    break contents;
+                }
+            }
+            assert!(
+                Instant::now() < deadline,
+                "scheduler process-tree heartbeat was never published"
+            );
+            thread::sleep(Duration::from_millis(10));
+        };
+        thread::sleep(Duration::from_millis(150));
+        let second = std::fs::read_to_string(path)
+            .expect("scheduler process-tree heartbeat should remain readable");
+        assert_eq!(first, second, "scheduler descendant remained alive");
     }
 
     #[test]

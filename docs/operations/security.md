@@ -38,6 +38,12 @@ wc -c secrets/litradar.key
 
 业务安全变更与必需审计行在同一个 immediate transaction 中提交。审计插入失败时变更整体回滚，API 返回 `503`；认证拒绝和限流在返回前同步追加。失败路径只向 `stderr` 输出固定 `audit.persistence_failed` 分类和进程内计数，不输出 SQLite 原始错误。普通日志过载不会影响已提交审计行。
 
+## 子进程树隔离
+
+调度任务和索引 worker 保留 `Command::new` 的类型化参数边界，不经过 shell。每个直接子进程在启动时同时成为独立 Unix process group 的 leader，或先以 suspended 状态创建、分配到启用 `KILL_ON_JOB_CLOSE` 的 Windows Job Object 后再恢复。这样后续 worker 再派生的抓取进程仍属于同一监管边界。
+
+Unix 取消和超时先向整个 group 发送 SIGTERM，等待 250 ms grace period，再对仍存活的 group 发送 SIGKILL；Windows 原子终止整个 Job Object。所有路径都等待直接子进程完成，Drop/shutdown 也执行强制兜底。spawn/assignment、TERM、force-kill 和 wait 失败只进入固定分类，不把可执行路径或操作系统自由文本写入调度状态与普通日志。Linux 和 Windows CI 都运行真实“子进程派生孙进程”夹具，并以两级监听端口或心跳停止作为回收证据。
+
 默认保留 180 天，可通过 `audit_retention_days` 设置 1–3650 天。启动后立即检查并每 24 小时检查一次；跨实例持久窗口和每事务 10,000 行上限避免无界删除。系统不暴露远程审计 API，查询、导出和取证只能使用受控的只读数据库副本；具体 SQL 与告警规则见[日志运维](logging.md)。`auth.sqlite` 固定备份范围包含审计历史和 maintenance 标记。
 
 ## 数据库凭据加密

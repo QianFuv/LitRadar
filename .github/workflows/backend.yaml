@@ -148,3 +148,25 @@ jobs:
             echo
             echo "Rust retries: zero. JUnit: target/nextest/ci/junit.xml."
           } >> "$GITHUB_STEP_SUMMARY"
+
+  process-trees:
+    name: Process trees (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - windows-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Rust toolchain
+        run: |
+          rustup toolchain install 1.96 --profile minimal
+          rustup default 1.96
+
+      - name: Verify complete process-tree termination
+        run: |
+          cargo test -p litradar-worker process_tree --locked -- --nocapture
+          cargo test -p litradar-worker scheduler_process --locked -- --nocapture

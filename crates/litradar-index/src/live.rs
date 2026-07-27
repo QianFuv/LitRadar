@@ -5,7 +5,7 @@ use std::error::Error;
 use std::fmt;
 use std::io::{BufReader, BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{Command, Stdio};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender, SyncSender};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -21,6 +21,7 @@ use litradar_sources::{
     CNKI_OVERSEA_PROVIDER_NAME, CNKI_PROVIDER_NAME, OPENALEX_MAX_WORKERS_PER_PROCESS,
     SCHOLARLY_PROVIDER_NAME,
 };
+use litradar_worker::process_supervisor::SupervisedChild;
 use rusqlite::{Connection, ErrorCode};
 use serde::{Deserialize, Serialize};
 
@@ -1057,18 +1058,18 @@ fn run_worker_processes(
         metrics,
         Duration::from_secs(LIVE_INDEX_HEARTBEAT_INTERVAL_SECONDS),
         |request_path, worker_id| {
-            let child = Command::new(&config.application_executable)
+            let mut command = Command::new(&config.application_executable);
+            command
                 .arg("index")
                 .arg("--live-worker-request")
                 .arg(request_path)
                 .env_remove("LITRADAR_CNKI_CAPTCHA_TOKEN")
                 .stdin(Stdio::piped())
                 .stdout(Stdio::piped())
-                .stderr(Stdio::inherit())
-                .spawn()
-                .map_err(|_| {
-                    LiveIndexError::Worker(format!("worker process {worker_id} could not start"))
-                })?;
+                .stderr(Stdio::inherit());
+            let child = SupervisedChild::spawn(&mut command).map_err(|_| {
+                LiveIndexError::Worker(format!("worker process {worker_id} could not start"))
+            })?;
             LaunchedWorkerProcess::from_child_stdio(child, worker_id)
         },
         |_| {},
@@ -1165,14 +1166,14 @@ enum WorkerReaderEvent {
 struct SpawnedWorker {
     worker_id: usize,
     request_path: PathBuf,
-    child: Option<Child>,
+    child: Option<SupervisedChild>,
     stdin: Option<BufWriter<Box<dyn Write + Send>>>,
     reader: Option<JoinHandle<()>>,
 }
 
 /// Process handle and bidirectional protocol streams returned by a worker launcher.
 pub(crate) struct LaunchedWorkerProcess {
-    child: Child,
+    child: SupervisedChild,
     reader: Box<dyn Read + Send>,
     writer: Box<dyn Write + Send>,
 }
@@ -1189,17 +1190,15 @@ impl LaunchedWorkerProcess {
     ///
     /// Process and protocol streams ready for supervision.
     pub(crate) fn from_child_stdio(
-        mut child: Child,
+        mut child: SupervisedChild,
         worker_id: usize,
     ) -> Result<Self, LiveIndexError> {
-        let Some(writer) = child.stdin.take() else {
-            let _ = child.kill();
-            let _ = child.wait();
+        let Some(writer) = child.take_stdin() else {
+            let _ = child.force_kill_and_wait();
             return Err(process_failure(worker_id));
         };
-        let Some(reader) = child.stdout.take() else {
-            let _ = child.kill();
-            let _ = child.wait();
+        let Some(reader) = child.take_stdout() else {
+            let _ = child.force_kill_and_wait();
             return Err(process_failure(worker_id));
         };
         Ok(Self {
@@ -1222,7 +1221,7 @@ impl LaunchedWorkerProcess {
     /// Process and protocol streams ready for production supervision logic.
     #[cfg(test)]
     pub(crate) fn from_test_streams(
-        child: Child,
+        child: SupervisedChild,
         reader: impl Read + Send + 'static,
         writer: impl Write + Send + 'static,
     ) -> Self {
@@ -1407,8 +1406,7 @@ fn bootstrap_worker_process(
 ) -> Result<LaunchedWorkerProcess, LiveIndexError> {
     let bootstrap = worker_bootstrap(request, cnki_captcha_token);
     if write_message(&mut launched.writer, &bootstrap).is_err() {
-        let _ = launched.child.kill();
-        let _ = launched.child.wait();
+        let _ = launched.child.force_kill_and_wait();
         return Err(protocol_failure(request.worker_id));
     }
     Ok(launched)
@@ -1738,8 +1736,7 @@ fn stop_worker_processes(children: &mut [SpawnedWorker]) {
     for worker in children {
         worker.stdin = None;
         if let Some(mut child) = worker.child.take() {
-            let _ = child.kill();
-            let _ = child.wait();
+            let _ = child.force_kill_and_wait();
         }
         let _ = std::fs::remove_file(&worker.request_path);
     }
@@ -2208,7 +2205,7 @@ mod tests {
         LaunchedWorkerProcess, LeaseHeartbeat, LiveIndexConfig, LiveIndexError,
         LiveIndexWorkerBootstrap, LiveIndexWorkerFailure, LiveIndexWorkerFailureClass,
         LiveIndexWorkerOperation, LiveIndexWorkerRequest, LiveRunTime, ParentWriterContext,
-        StoredCheckpoint, OPENALEX_MAX_WORKERS_PER_PROCESS,
+        StoredCheckpoint, SupervisedChild, OPENALEX_MAX_WORKERS_PER_PROCESS,
     };
     use crate::control::{
         acquire_lease, commit_content_then_checkpoint, open_control_db, read_checkpoint,
@@ -3361,24 +3358,24 @@ mod tests {
     }
 
     #[cfg(target_os = "windows")]
-    fn spawn_stdio_echo_process() -> std::process::Child {
-        Command::new("cmd")
+    fn spawn_stdio_echo_process() -> SupervisedChild {
+        let mut command = Command::new("cmd");
+        command
             .args(["/D", "/S", "/C", "more"])
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .spawn()
-            .expect("Windows stdio echo child should start")
+            .stderr(Stdio::null());
+        SupervisedChild::spawn(&mut command).expect("Windows stdio echo child should start")
     }
 
     #[cfg(not(target_os = "windows"))]
-    fn spawn_stdio_echo_process() -> std::process::Child {
-        Command::new("cat")
+    fn spawn_stdio_echo_process() -> SupervisedChild {
+        let mut command = Command::new("cat");
+        command
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .spawn()
-            .expect("stdio echo child should start")
+            .stderr(Stdio::null());
+        SupervisedChild::spawn(&mut command).expect("stdio echo child should start")
     }
 
     #[test]
