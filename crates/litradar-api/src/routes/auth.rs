@@ -157,7 +157,7 @@ pub(crate) async fn register(
     let password = body.password;
     let invite_code = (!body.invite_code.is_empty()).then_some(body.invite_code);
     let auth_username = username.clone();
-    let user = match run_auth(&state, move |service| {
+    let user = match run_auth_kdf(&state, move |service| {
         service.register(&auth_username, &password, invite_code.as_deref())
     })
     .await
@@ -211,7 +211,7 @@ pub(crate) async fn login(
     }
     let password = body.password;
     let auth_username = username.clone();
-    let session = match run_auth(&state, move |service| {
+    let session = match run_auth_kdf(&state, move |service| {
         service.login(&auth_username, &password)
     })
     .await
@@ -300,7 +300,7 @@ pub(crate) async fn change_password(
     audit.set_actor_id(user.id.0);
     let old_password = body.old_password;
     let new_password = body.new_password;
-    let did_change = run_auth(&state, move |service| {
+    let did_change = run_auth_kdf(&state, move |service| {
         service.change_password(user.id, &old_password, &new_password)
     })
     .await?;
@@ -613,6 +613,18 @@ where
         .map_err(map_auth_error)
 }
 
+async fn run_auth_kdf<Output, Work>(state: &ApiState, work: Work) -> Result<Output, ApiError>
+where
+    Work: FnOnce(AuthService) -> Result<Output, AuthServiceError> + Send + 'static,
+    Output: Send + 'static,
+{
+    let service = auth_service(state);
+    state
+        .run_kdf_blocking(move || work(service))
+        .await?
+        .map_err(map_auth_error)
+}
+
 fn resolve_auth_token(headers: &HeaderMap) -> Result<Option<String>, ApiError> {
     if let Some(authorization) = headers.get(AUTHORIZATION) {
         let value = authorization
@@ -702,6 +714,7 @@ pub(crate) fn map_auth_error(error: AuthServiceError) -> ApiError {
         AuthServiceError::Repository(AuthRepositoryError::AccessTokenLimitReached) => {
             ApiError::conflict(error.to_string())
         }
+        AuthServiceError::Password(_) => ApiError::internal_server_error(),
         AuthServiceError::Repository(_) => ApiError::internal_server_error(),
     }
 }

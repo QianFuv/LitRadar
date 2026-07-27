@@ -165,7 +165,7 @@ pub(crate) async fn reset_password(
     let service = auth_service(&state);
     let new_password = body.new_password;
     let did_reset = state
-        .run_blocking(move || service.reset_password(UserId(user_id), &new_password))
+        .run_kdf_blocking(move || service.reset_password(UserId(user_id), &new_password))
         .await?
         .map_err(map_auth_error)?;
     if !did_reset {

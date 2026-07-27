@@ -17,6 +17,7 @@ const AUTH_GLOBAL_WINDOW_SECONDS: u64 = 60;
 const AUTH_TRACKED_USERNAME_LIMIT: usize = 4_096;
 const DEFAULT_BLOCKING_CONCURRENCY: usize = 8;
 const DEFAULT_BLOCKING_TIMEOUT: Duration = Duration::from_secs(30);
+const DEFAULT_KDF_CONCURRENCY: usize = 2;
 
 /// State shared by API route handlers.
 #[derive(Clone)]
@@ -26,6 +27,7 @@ pub struct ApiState {
     are_session_cookies_secure: bool,
     auth_rate_limiter: Arc<Mutex<AuthRateLimiter>>,
     blocking_executor: BlockingExecutor,
+    kdf_executor: BlockingExecutor,
     article_providers: Arc<ProviderRegistry>,
 }
 
@@ -62,6 +64,7 @@ impl ApiState {
                 DEFAULT_BLOCKING_CONCURRENCY,
                 DEFAULT_BLOCKING_TIMEOUT,
             ),
+            kdf_executor: BlockingExecutor::new(DEFAULT_KDF_CONCURRENCY, DEFAULT_BLOCKING_TIMEOUT),
             article_providers: Arc::new(article_providers),
         }
     }
@@ -100,6 +103,7 @@ impl ApiState {
                 AuthRateLimitConfig::default(),
             ))),
             blocking_executor: BlockingExecutor::new(concurrency, timeout),
+            kdf_executor: BlockingExecutor::new(DEFAULT_KDF_CONCURRENCY, timeout),
             article_providers: Arc::new(article_providers),
         }
     }
@@ -170,6 +174,30 @@ impl ApiState {
             .await
     }
 
+    /// Run one password KDF operation behind the dedicated concurrency-two gate.
+    ///
+    /// # Arguments
+    ///
+    /// * `work` - Owned synchronous password operation to execute.
+    ///
+    /// # Returns
+    ///
+    /// Completed output or a bounded-executor failure.
+    pub(crate) async fn run_kdf_blocking<Work, Output>(
+        &self,
+        work: Work,
+    ) -> Result<Output, BlockingTaskError>
+    where
+        Work: FnOnce() -> Output + Send + 'static,
+        Output: Send + 'static,
+    {
+        let span = tracing::Span::current();
+        let subscriber = tracing::dispatcher::get_default(Clone::clone);
+        self.kdf_executor
+            .run(move || tracing::dispatcher::with_default(&subscriber, || span.in_scope(work)))
+            .await
+    }
+
     /// Run synchronous work with an operation-specific total deadline.
     ///
     /// # Arguments
@@ -227,6 +255,7 @@ impl ApiState {
     /// Stop accepting queued blocking work during server shutdown.
     pub(crate) fn close_blocking_executor(&self) {
         self.blocking_executor.close();
+        self.kdf_executor.close();
     }
 
     /// Return whether session cookies include the Secure attribute.
@@ -663,13 +692,14 @@ pub(crate) mod tracing_test_support {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use std::sync::Arc;
     use std::time::Duration;
 
     use axum::body::{to_bytes, Body};
     use axum::http::{Request, StatusCode};
     use litradar_storage::{SecretCodec, StorageConfig};
+    use tempfile::tempdir;
     use tower::ServiceExt;
     use tracing::Instrument;
 
@@ -808,6 +838,61 @@ mod tests {
         assert_eq!(state.run_blocking(|| "available").await, Ok("available"));
     }
 
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn kdf_executor_allows_at_most_two_concurrent_operations() {
+        let temp_dir = tempdir().expect("temporary directory should be created");
+        let state = ApiState::new_with_blocking_limits(
+            StorageConfig::from_project_root(temp_dir.path()),
+            SecretCodec::from_key([1_u8; 32]),
+            false,
+            8,
+            Duration::from_secs(2),
+        );
+        let active = Arc::new(AtomicUsize::new(0));
+        let maximum = Arc::new(AtomicUsize::new(0));
+        let started = Arc::new(AtomicUsize::new(0));
+        let should_release = Arc::new(AtomicBool::new(false));
+        let handles = (0..3)
+            .map(|_| {
+                let state = state.clone();
+                let active = Arc::clone(&active);
+                let maximum = Arc::clone(&maximum);
+                let started = Arc::clone(&started);
+                let should_release = Arc::clone(&should_release);
+                tokio::spawn(async move {
+                    state
+                        .run_kdf_blocking(move || {
+                            let active_count = active.fetch_add(1, Ordering::AcqRel) + 1;
+                            maximum.fetch_max(active_count, Ordering::AcqRel);
+                            started.fetch_add(1, Ordering::Release);
+                            while !should_release.load(Ordering::Acquire) {
+                                std::thread::yield_now();
+                            }
+                            active.fetch_sub(1, Ordering::AcqRel);
+                        })
+                        .await
+                })
+            })
+            .collect::<Vec<_>>();
+
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while started.load(Ordering::Acquire) < 2 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("two KDF operations should start");
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert_eq!(started.load(Ordering::Acquire), 2);
+        assert_eq!(maximum.load(Ordering::Acquire), 2);
+
+        should_release.store(true, Ordering::Release);
+        for handle in handles {
+            assert_eq!(handle.await.expect("KDF task should join"), Ok(()));
+        }
+        assert_eq!(maximum.load(Ordering::Acquire), 2);
+    }
+
     #[tokio::test]
     async fn blocking_executor_close_rejects_new_work() {
         let state = ApiState::new_with_blocking_limits(
@@ -822,6 +907,10 @@ mod tests {
 
         assert_eq!(
             state.run_blocking(|| "unused").await,
+            Err(BlockingTaskError::Closed)
+        );
+        assert_eq!(
+            state.run_kdf_blocking(|| "unused").await,
             Err(BlockingTaskError::Closed)
         );
     }

@@ -191,7 +191,7 @@ announcements
 
 ### 用户、令牌和邀请码
 
-`users` 保存大小写不敏感的唯一用户名、密码 hash/salt、管理员标记和时间。首个管理员只能通过 `litradar admin bootstrap` 创建；公开注册需要邀请码。密码变更与该用户全部 `access_tokens` 的删除在同一个 immediate transaction 中提交，目标用户不存在时返回未更新，删除令牌失败时密码写入回滚。
+`users` 保存大小写不敏感的唯一用户名、密码 hash/salt、管理员标记和时间。新密码的 `password_hash` 是包含算法、版本、成本、salt 和输出的 `$argon2id$` PHC 字符串，旧 `salt` 列为空；旧 PBKDF2 hex 行保留原 salt，并在正确登录后通过原 hash+salt 的 CAS 单次升级。首个管理员只能通过 `litradar admin bootstrap` 创建；公开注册需要邀请码。密码变更与该用户全部 `access_tokens` 的删除在同一个 immediate transaction 中提交，目标用户不存在时返回未更新，删除令牌失败时密码写入回滚。
 
 `access_tokens` 保存唯一 token hash，不保存明文 token。`name='login'` 是浏览器 Cookie 会话的保留行；其他 active personal token 每用户最多 50 个。达到上限只阻止新建，不删除历史行。所有读取路径统一以 `expires_at <= now` 判定过期并清理；salt、原始 token 和邀请码由操作系统 CSPRNG 生成。
 

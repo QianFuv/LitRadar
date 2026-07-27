@@ -589,6 +589,46 @@ pub fn update_user_password_and_delete_tokens(
     finish_immediate_transaction(&connection, result)
 }
 
+/// Replace one matching legacy password row with an Argon2id PHC string.
+///
+/// # Arguments
+///
+/// * `auth_db_path` - Path to the auth SQLite database.
+/// * `user_id` - User identifier.
+/// * `expected_hash` - Legacy password hash observed before verification.
+/// * `expected_salt` - Legacy salt observed before verification.
+/// * `replacement_hash` - Argon2id PHC string to store.
+/// * `now` - Current Unix timestamp.
+///
+/// # Returns
+///
+/// True when the exact legacy row was upgraded. Existing access tokens are unchanged.
+pub fn compare_and_swap_legacy_password_hash(
+    auth_db_path: impl AsRef<Path>,
+    user_id: UserId,
+    expected_hash: &str,
+    expected_salt: &str,
+    replacement_hash: &str,
+    now: f64,
+) -> Result<bool, AuthRepositoryError> {
+    let connection = open_auth_connection(auth_db_path)?;
+    let updated = connection.execute(
+        "UPDATE users SET password_hash = ?1, salt = '', updated_at = ?2 \
+         WHERE id = ?3 AND password_hash = ?4 AND salt = ?5",
+        params![
+            replacement_hash,
+            now,
+            user_id.value(),
+            expected_hash,
+            expected_salt
+        ],
+    )?;
+    if updated > 1 {
+        return Err(AuthRepositoryError::CredentialMutationInvariant);
+    }
+    Ok(updated == 1)
+}
+
 fn update_user_password_and_delete_tokens_in_transaction(
     connection: &Connection,
     user_id: UserId,
@@ -944,9 +984,9 @@ mod tests {
     use tempfile::{tempdir, TempDir};
 
     use super::{
-        bootstrap_admin, delete_access_token, find_user_credentials_by_id,
-        initialize_auth_database, insert_personal_access_token, list_access_tokens,
-        open_auth_connection, random_hex, replace_login_access_token,
+        bootstrap_admin, compare_and_swap_legacy_password_hash, delete_access_token,
+        find_user_credentials_by_id, initialize_auth_database, insert_personal_access_token,
+        list_access_tokens, open_auth_connection, random_hex, replace_login_access_token,
         update_user_password_and_delete_tokens, verify_access_token_hash, AuthRepositoryError,
         AuthUserRow, InviteCodeRow, UserCredentialRow,
     };
@@ -1384,5 +1424,64 @@ mod tests {
         assert!(!debug.contains("password-hash-sentinel"));
         assert!(!debug.contains("password-salt-sentinel"));
         assert!(!debug.contains("invite-code-sentinel"));
+    }
+
+    #[test]
+    fn legacy_password_compare_and_swap_updates_once_without_revoking_tokens() {
+        let (_temp_dir, auth_db_path, user_id) = access_token_fixture();
+        insert_raw_access_token(
+            &auth_db_path,
+            user_id,
+            "legacy-upgrade-token",
+            "integration",
+            4_000_000_000.0,
+            2.0,
+        );
+        let original = find_user_credentials_by_id(&auth_db_path, user_id)
+            .expect("credentials should load")
+            .expect("fixture user should exist");
+        let barrier = Arc::new(Barrier::new(2));
+        let handles = ["$argon2id$fixture-one", "$argon2id$fixture-two"]
+            .into_iter()
+            .map(|replacement| {
+                let auth_db_path = auth_db_path.clone();
+                let original = original.clone();
+                let barrier = Arc::clone(&barrier);
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    compare_and_swap_legacy_password_hash(
+                        auth_db_path,
+                        user_id,
+                        &original.password_hash,
+                        &original.salt,
+                        replacement,
+                        3.0,
+                    )
+                })
+            })
+            .collect::<Vec<_>>();
+        let results = handles
+            .into_iter()
+            .map(|handle| {
+                handle
+                    .join()
+                    .expect("CAS thread should finish")
+                    .expect("CAS operation should run")
+            })
+            .collect::<Vec<_>>();
+        let upgraded = find_user_credentials_by_id(&auth_db_path, user_id)
+            .expect("credentials should reload")
+            .expect("fixture user should remain");
+
+        assert_eq!(results.iter().filter(|result| **result).count(), 1);
+        assert!(matches!(
+            upgraded.password_hash.as_str(),
+            "$argon2id$fixture-one" | "$argon2id$fixture-two"
+        ));
+        assert_eq!(upgraded.salt, "");
+        assert_eq!(
+            count_tokens_by_hash(&auth_db_path, "legacy-upgrade-token"),
+            1
+        );
     }
 }

@@ -18,7 +18,9 @@ pub use litradar_domain::{
 };
 
 pub use password::{
-    hash_password, is_valid_new_password, verify_password, MIN_PASSWORD_LENGTH, PBKDF2_ITERATIONS,
+    hash_legacy_password, hash_password, is_valid_new_password, verify_password, PasswordError,
+    PasswordVerification, ARGON2_MEMORY_KIB, ARGON2_PARALLELISM, ARGON2_TIME_COST,
+    MIN_PASSWORD_LENGTH, PBKDF2_ITERATIONS,
 };
 pub use service::{
     is_valid_username, AuthService, AuthServiceError, LoginSession, ACCESS_TOKEN_DEFAULT_TTL,

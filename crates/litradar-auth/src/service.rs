@@ -7,26 +7,26 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use litradar_domain::{InviteCodeResponse, TokenCreateResponse, TokenInfo, UserId, UserResponse};
 use litradar_storage::{
-    bootstrap_admin, count_users, create_invite_code, delete_access_token,
-    delete_access_token_by_hash, find_user_credentials_by_id, find_user_credentials_by_username,
-    get_user_invite_code, initialize_auth_database, insert_personal_access_token,
-    list_access_tokens, random_hex, register_user_with_invite, replace_login_access_token,
-    update_user_password_and_delete_tokens, verify_access_token_hash, AuthRepositoryError,
-    AuthUserRow, InviteCodeRow,
+    bootstrap_admin, compare_and_swap_legacy_password_hash, count_users, create_invite_code,
+    delete_access_token, delete_access_token_by_hash, find_user_credentials_by_id,
+    find_user_credentials_by_username, get_user_invite_code, initialize_auth_database,
+    insert_personal_access_token, list_access_tokens, random_hex, register_user_with_invite,
+    replace_login_access_token, update_user_password_and_delete_tokens, verify_access_token_hash,
+    AuthRepositoryError, AuthUserRow, InviteCodeRow, UserCredentialRow,
 };
 
+use crate::password::verify_dummy_password;
 use crate::{
-    hash_password, hash_token, is_valid_new_password, verify_password,
-    ACCESS_TOKEN_NAME_LENGTH_DETAIL, ACCESS_TOKEN_NAME_MAX_CODE_POINTS, ACCESS_TOKEN_RESERVED_NAME,
-    ACCESS_TOKEN_RESERVED_NAME_DETAIL, ACCESS_TOKEN_TTL_DETAIL, ACCESS_TOKEN_TTL_MAX_SECONDS,
-    ACCESS_TOKEN_TTL_MIN_SECONDS, MIN_PASSWORD_LENGTH,
+    hash_password, hash_token, is_valid_new_password, verify_password, PasswordError,
+    PasswordVerification, ACCESS_TOKEN_NAME_LENGTH_DETAIL, ACCESS_TOKEN_NAME_MAX_CODE_POINTS,
+    ACCESS_TOKEN_RESERVED_NAME, ACCESS_TOKEN_RESERVED_NAME_DETAIL, ACCESS_TOKEN_TTL_DETAIL,
+    ACCESS_TOKEN_TTL_MAX_SECONDS, ACCESS_TOKEN_TTL_MIN_SECONDS, MIN_PASSWORD_LENGTH,
 };
 
 /// Python-compatible default access token TTL in seconds.
 pub const ACCESS_TOKEN_DEFAULT_TTL: i64 = 7 * 24 * 3600;
 
 const ACCESS_TOKEN_BYTES: usize = 32;
-const PASSWORD_SALT_BYTES: usize = 16;
 const INVITE_CODE_BYTES: usize = 8;
 const MIN_USERNAME_LENGTH: usize = 3;
 const MAX_USERNAME_LENGTH: usize = 32;
@@ -36,6 +36,8 @@ const MAX_USERNAME_LENGTH: usize = 32;
 pub enum AuthServiceError {
     /// Repository operation failed.
     Repository(AuthRepositoryError),
+    /// Password hashing failed.
+    Password(PasswordError),
     /// Credentials did not match a stored user.
     InvalidCredentials,
     /// Username does not satisfy the public account naming policy.
@@ -55,6 +57,7 @@ impl fmt::Display for AuthServiceError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Repository(error) => write!(formatter, "{error}"),
+            Self::Password(error) => write!(formatter, "{error}"),
             Self::InvalidCredentials => formatter.write_str("Invalid username or password"),
             Self::InvalidUsername => {
                 formatter.write_str("Username must be 3-32 alphanumeric or underscore characters")
@@ -75,6 +78,7 @@ impl Error for AuthServiceError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             Self::Repository(error) => Some(error),
+            Self::Password(error) => Some(error),
             Self::InvalidCredentials
             | Self::InvalidUsername
             | Self::PasswordTooShort
@@ -89,6 +93,13 @@ impl From<AuthRepositoryError> for AuthServiceError {
     /// Convert repository errors into service errors.
     fn from(error: AuthRepositoryError) -> Self {
         Self::Repository(error)
+    }
+}
+
+impl From<PasswordError> for AuthServiceError {
+    /// Convert password hashing failures into service errors.
+    fn from(error: PasswordError) -> Self {
+        Self::Password(error)
     }
 }
 
@@ -164,13 +175,12 @@ impl AuthService {
         invite_code: Option<&str>,
     ) -> Result<UserResponse, AuthServiceError> {
         validate_new_credentials(username, password)?;
-        let salt = random_hex(PASSWORD_SALT_BYTES)?;
-        let password_hash = hash_password(password, &salt);
+        let password_hash = hash_password(password)?;
         let user = register_user_with_invite(
             &self.auth_db_path,
             username,
             &password_hash,
-            &salt,
+            "",
             invite_code,
             now_seconds(),
         )?;
@@ -193,13 +203,12 @@ impl AuthService {
         password: &str,
     ) -> Result<UserResponse, AuthServiceError> {
         validate_new_credentials(username, password)?;
-        let salt = random_hex(PASSWORD_SALT_BYTES)?;
-        let password_hash = hash_password(password, &salt);
+        let password_hash = hash_password(password)?;
         let user = bootstrap_admin(
             &self.auth_db_path,
             username,
             &password_hash,
-            &salt,
+            "",
             now_seconds(),
         )?;
         Ok(user_response(user))
@@ -221,16 +230,48 @@ impl AuthService {
         password: &str,
     ) -> Result<Option<UserResponse>, AuthServiceError> {
         let Some(row) = find_user_credentials_by_username(&self.auth_db_path, username)? else {
+            verify_dummy_password(password);
             return Ok(None);
         };
-        if !verify_password(password, &row.salt, &row.password_hash) {
-            return Ok(None);
+        match verify_password(password, &row.salt, &row.password_hash) {
+            PasswordVerification::Invalid => return Ok(None),
+            PasswordVerification::ValidCurrent => {}
+            PasswordVerification::ValidLegacy => {
+                if !self.upgrade_legacy_password(&row, password)? {
+                    return Ok(None);
+                }
+            }
         }
         Ok(Some(UserResponse {
             id: row.id,
             username: row.username,
             is_admin: row.is_admin,
         }))
+    }
+
+    fn upgrade_legacy_password(
+        &self,
+        legacy_row: &UserCredentialRow,
+        password: &str,
+    ) -> Result<bool, AuthServiceError> {
+        let replacement_hash = hash_password(password)?;
+        if compare_and_swap_legacy_password_hash(
+            &self.auth_db_path,
+            legacy_row.id,
+            &legacy_row.password_hash,
+            &legacy_row.salt,
+            &replacement_hash,
+            now_seconds(),
+        )? {
+            return Ok(true);
+        }
+        let Some(current) = find_user_credentials_by_id(&self.auth_db_path, legacy_row.id)? else {
+            return Ok(false);
+        };
+        Ok(
+            verify_password(password, &current.salt, &current.password_hash)
+                != PasswordVerification::Invalid,
+        )
     }
 
     /// Authenticate credentials and create a login session token.
@@ -408,16 +449,17 @@ impl AuthService {
         let Some(row) = find_user_credentials_by_id(&self.auth_db_path, user_id)? else {
             return Ok(false);
         };
-        if !verify_password(old_password, &row.salt, &row.password_hash) {
+        if verify_password(old_password, &row.salt, &row.password_hash)
+            == PasswordVerification::Invalid
+        {
             return Ok(false);
         }
-        let salt = random_hex(PASSWORD_SALT_BYTES)?;
-        let password_hash = hash_password(new_password, &salt);
+        let password_hash = hash_password(new_password)?;
         let did_update = update_user_password_and_delete_tokens(
             &self.auth_db_path,
             user_id,
             &password_hash,
-            &salt,
+            "",
             now_seconds(),
         )?;
         Ok(did_update)
@@ -439,13 +481,12 @@ impl AuthService {
         new_password: &str,
     ) -> Result<bool, AuthServiceError> {
         validate_new_password(new_password)?;
-        let salt = random_hex(PASSWORD_SALT_BYTES)?;
-        let password_hash = hash_password(new_password, &salt);
+        let password_hash = hash_password(new_password)?;
         Ok(update_user_password_and_delete_tokens(
             &self.auth_db_path,
             user_id,
             &password_hash,
-            &salt,
+            "",
             now_seconds(),
         )?)
     }
@@ -559,19 +600,30 @@ fn now_seconds() -> f64 {
 
 #[cfg(test)]
 mod tests {
+    use std::path::Path;
     use std::sync::{Arc, Barrier};
 
     use litradar_domain::UserId;
-    use litradar_storage::{bootstrap_admin, count_users, migrate_auth_database};
+    use litradar_storage::{
+        bootstrap_admin, count_users, find_user_credentials_by_id, migrate_auth_database,
+        UserCredentialRow,
+    };
     use tempfile::tempdir;
 
     use super::{AuthService, AuthServiceError};
+    use crate::password::test_support::{kdf_invocations, reset_kdf_invocations};
     use crate::{
-        hash_password, ACCESS_TOKEN_NAME_LENGTH_DETAIL, ACCESS_TOKEN_RESERVED_NAME_DETAIL,
+        hash_legacy_password, ACCESS_TOKEN_NAME_LENGTH_DETAIL, ACCESS_TOKEN_RESERVED_NAME_DETAIL,
         ACCESS_TOKEN_TTL_DETAIL, ACCESS_TOKEN_TTL_MAX_SECONDS, ACCESS_TOKEN_TTL_MIN_SECONDS,
     };
 
     const STRONG_PASSWORD: &str = "strong-password";
+
+    fn credentials(auth_db_path: &Path, user_id: UserId) -> UserCredentialRow {
+        find_user_credentials_by_id(auth_db_path, user_id)
+            .expect("credentials should load")
+            .expect("fixture user should exist")
+    }
 
     #[test]
     fn auth_service_rejects_weak_new_passwords() {
@@ -592,22 +644,186 @@ mod tests {
     }
 
     #[test]
-    fn auth_service_keeps_existing_short_password_hashes_compatible() {
+    fn legacy_password_login_upgrades_once_and_preserves_the_session() {
         let temp_dir = tempdir().expect("temporary directory should be created");
         let auth_db_path = temp_dir.path().join("auth.sqlite");
         migrate_auth_database(&auth_db_path).expect("auth database should migrate");
         let salt = "legacy-salt";
-        let password_hash = hash_password("short", salt);
+        let password_hash = hash_legacy_password("short", salt);
         bootstrap_admin(&auth_db_path, "legacy-admin", &password_hash, salt, 1.0)
             .expect("legacy administrator should be inserted");
         let service = AuthService::new(&auth_db_path);
 
-        let user = service
-            .verify_user("legacy-admin", "short")
-            .expect("legacy credentials should verify")
-            .expect("legacy user should exist");
+        let session = service
+            .login("legacy-admin", "short")
+            .expect("legacy credentials should create a session");
+        let upgraded = credentials(&auth_db_path, session.user.id);
 
-        assert!(user.is_admin);
+        assert!(session.user.is_admin);
+        assert!(upgraded.password_hash.starts_with("$argon2id$"));
+        assert_eq!(upgraded.salt, "");
+        assert!(service
+            .verify_access_token(&session.token)
+            .expect("upgraded session should verify")
+            .is_some());
+
+        service
+            .verify_user("legacy-admin", "short")
+            .expect("current PHC credentials should verify")
+            .expect("legacy user should remain available");
+        assert_eq!(
+            credentials(&auth_db_path, session.user.id).password_hash,
+            upgraded.password_hash
+        );
+    }
+
+    #[test]
+    fn legacy_wrong_password_never_upgrades_and_concurrent_successes_remain_valid() {
+        let temp_dir = tempdir().expect("temporary directory should be created");
+        let auth_db_path = temp_dir.path().join("auth.sqlite");
+        migrate_auth_database(&auth_db_path).expect("auth database should migrate");
+        let salt = "legacy-concurrent-salt";
+        let password_hash = hash_legacy_password(STRONG_PASSWORD, salt);
+        let user = bootstrap_admin(
+            &auth_db_path,
+            "legacy-concurrent",
+            &password_hash,
+            salt,
+            1.0,
+        )
+        .expect("legacy administrator should be inserted");
+        let service = AuthService::new(&auth_db_path);
+
+        assert!(service
+            .verify_user("legacy-concurrent", "wrong-password")
+            .expect("wrong legacy password should run")
+            .is_none());
+        assert_eq!(
+            credentials(&auth_db_path, user.id).password_hash,
+            password_hash
+        );
+        assert_eq!(credentials(&auth_db_path, user.id).salt, salt);
+
+        let barrier = Arc::new(Barrier::new(2));
+        let handles = (0..2)
+            .map(|_| {
+                let service = service.clone();
+                let barrier = Arc::clone(&barrier);
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    service.verify_user("legacy-concurrent", STRONG_PASSWORD)
+                })
+            })
+            .collect::<Vec<_>>();
+        let verified = handles
+            .into_iter()
+            .map(|handle| {
+                handle
+                    .join()
+                    .expect("legacy verification thread should finish")
+                    .expect("legacy verification should not fail")
+            })
+            .collect::<Vec<_>>();
+        let upgraded = credentials(&auth_db_path, user.id);
+
+        assert!(verified.iter().all(Option::is_some));
+        assert!(upgraded.password_hash.starts_with("$argon2id$"));
+        assert_eq!(upgraded.salt, "");
+    }
+
+    #[test]
+    fn legacy_upgrade_rechecks_password_after_concurrent_reset() {
+        let temp_dir = tempdir().expect("temporary directory should be created");
+        let auth_db_path = temp_dir.path().join("auth.sqlite");
+        migrate_auth_database(&auth_db_path).expect("auth database should migrate");
+        let salt = "legacy-reset-salt";
+        let password_hash = hash_legacy_password(STRONG_PASSWORD, salt);
+        let user = bootstrap_admin(&auth_db_path, "legacy-reset", &password_hash, salt, 1.0)
+            .expect("legacy administrator should be inserted");
+        let service = AuthService::new(&auth_db_path);
+        let stale_credentials = credentials(&auth_db_path, user.id);
+
+        assert!(service
+            .reset_password(user.id, "replacement-password")
+            .expect("concurrent reset should run"));
+        assert!(!service
+            .upgrade_legacy_password(&stale_credentials, STRONG_PASSWORD)
+            .expect("stale legacy upgrade should recheck current credentials"));
+        assert!(service
+            .verify_user("legacy-reset", STRONG_PASSWORD)
+            .expect("old password verification should run")
+            .is_none());
+        assert!(service
+            .verify_user("legacy-reset", "replacement-password")
+            .expect("replacement password verification should run")
+            .is_some());
+    }
+
+    #[test]
+    fn missing_and_wrong_password_paths_each_invoke_argon2id() {
+        let temp_dir = tempdir().expect("temporary directory should be created");
+        let auth_db_path = temp_dir.path().join("auth.sqlite");
+        migrate_auth_database(&auth_db_path).expect("auth database should migrate");
+        let service = AuthService::new(&auth_db_path);
+        service
+            .bootstrap_admin("current_admin", STRONG_PASSWORD)
+            .expect("current administrator should bootstrap");
+
+        reset_kdf_invocations();
+        assert!(service
+            .verify_user("missing_user", "submitted-password")
+            .expect("missing-user verification should run")
+            .is_none());
+        assert_eq!(kdf_invocations(), 1);
+
+        reset_kdf_invocations();
+        assert!(service
+            .verify_user("current_admin", "submitted-password")
+            .expect("wrong-password verification should run")
+            .is_none());
+        assert_eq!(kdf_invocations(), 1);
+    }
+
+    #[test]
+    fn new_registration_change_and_reset_store_argon2id_phc() {
+        let temp_dir = tempdir().expect("temporary directory should be created");
+        let auth_db_path = temp_dir.path().join("auth.sqlite");
+        migrate_auth_database(&auth_db_path).expect("auth database should migrate");
+        let service = AuthService::new(&auth_db_path);
+        let admin = service
+            .bootstrap_admin("current_admin", STRONG_PASSWORD)
+            .expect("current administrator should bootstrap");
+        let bootstrap_credentials = credentials(&auth_db_path, admin.id);
+        assert!(bootstrap_credentials
+            .password_hash
+            .starts_with("$argon2id$"));
+        assert_eq!(bootstrap_credentials.salt, "");
+
+        let invite = service
+            .create_invite_code(admin.id)
+            .expect("invite should be created");
+        let user = service
+            .register("current_user", "registration-password", Some(&invite.code))
+            .expect("current user should register");
+        let registered = credentials(&auth_db_path, user.id);
+        assert!(registered.password_hash.starts_with("$argon2id$"));
+        assert_eq!(registered.salt, "");
+
+        assert!(service
+            .change_password(user.id, "registration-password", "changed-password")
+            .expect("password change should run"));
+        let changed = credentials(&auth_db_path, user.id);
+        assert!(changed.password_hash.starts_with("$argon2id$"));
+        assert_eq!(changed.salt, "");
+        assert_ne!(changed.password_hash, registered.password_hash);
+
+        assert!(service
+            .reset_password(user.id, "administrator-reset-password")
+            .expect("password reset should run"));
+        let reset = credentials(&auth_db_path, user.id);
+        assert!(reset.password_hash.starts_with("$argon2id$"));
+        assert_eq!(reset.salt, "");
+        assert_ne!(reset.password_hash, changed.password_hash);
     }
 
     #[test]
