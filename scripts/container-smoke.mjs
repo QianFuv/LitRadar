@@ -21,8 +21,11 @@ const REPORT_ROOT = path.join(
 const SUMMARY_PATH = path.join(REPORT_ROOT, "summary.json");
 const FAILURE_LOG_PATH = path.join(REPORT_ROOT, "failure.log");
 const COMMAND_TIMEOUT_MS = 60_000;
+const IMAGE_PULL_TIMEOUT_MS = 300_000;
 const READY_TIMEOUT_MS = 60_000;
 const POLL_INTERVAL_MS = 250;
+const DIGEST_REFERENCE_PATTERN =
+  /^[a-z0-9]+(?:[._-][a-z0-9]+)*(?::[0-9]+)?\/[a-z0-9]+(?:[._/-][a-z0-9]+)*@sha256:[0-9a-f]{64}$/;
 const REMOVED_APPLICATION_ENVIRONMENT_NAMES = [
   "NEXT_PUBLIC_API_URL",
   "INTERNAL_API_URL",
@@ -95,17 +98,21 @@ function terminateActiveChild() {
  * Run Docker without echoing mount paths or other arguments.
  *
  * @param {string[]} args - Docker arguments.
- * @param {{allowFailure?: boolean, timeoutMs?: number}} [options={}] - Command options.
+ * @param {{allowFailure?: boolean, input?: string, timeoutMs?: number}} [options={}] - Command options.
  * @returns {Promise<{code: number, stdout: string, stderr: string}>} Captured command result.
  */
 async function runDocker(args, options = {}) {
   const timeoutMs = options.timeoutMs ?? COMMAND_TIMEOUT_MS;
+  const hasInput = typeof options.input === "string";
   activeChild = spawn("docker", args, {
     cwd: WORKSPACE_ROOT,
     env: process.env,
     shell: false,
-    stdio: ["ignore", "pipe", "pipe"],
+    stdio: [hasInput ? "pipe" : "ignore", "pipe", "pipe"],
   });
+  if (hasInput) {
+    activeChild.stdin.end(options.input);
+  }
   let stdout = "";
   let stderr = "";
   activeChild.stdout.on("data", (chunk) => {
@@ -253,6 +260,36 @@ async function waitForReadiness(baseUrl) {
     await delay(POLL_INTERVAL_MS);
   }
   throw new Error(`container readiness timed out: ${lastError}`);
+}
+
+/**
+ * Wait for the image-defined Docker health check to become healthy.
+ *
+ * @returns {Promise<void>} Promise resolved after Docker reports healthy.
+ */
+async function waitForContainerHealth() {
+  const deadline = Date.now() + READY_TIMEOUT_MS;
+  let lastState = "missing";
+  while (Date.now() < deadline) {
+    const state = await runDocker(
+      [
+        "inspect",
+        "--format",
+        "{{if .State.Health}}{{.State.Health.Status}}{{else}}missing{{end}}",
+        containerName,
+      ],
+      { allowFailure: true },
+    );
+    lastState = state.stdout || state.stderr;
+    if (state.code === 0 && state.stdout === "healthy") {
+      return;
+    }
+    if (state.code !== 0 || ["missing", "unhealthy"].includes(state.stdout)) {
+      throw new Error(`container health check failed: ${lastState}`);
+    }
+    await delay(POLL_INTERVAL_MS);
+  }
+  throw new Error(`container health check timed out: ${lastState}`);
 }
 
 /**
@@ -410,25 +447,173 @@ async function cleanup() {
 }
 
 /**
+ * Build hardened service arguments for the managed smoke container.
+ *
+ * @param {string} imageReference - Exact image reference under test.
+ * @param {boolean} areSecureCookiesRequired - Whether startup must enforce secure cookies.
+ * @returns {string[]} Docker run arguments.
+ */
+function buildServiceRunArguments(imageReference, areSecureCookiesRequired) {
+  const runArguments = [
+    "run",
+    "--detach",
+    "--name",
+    containerName,
+    "--read-only",
+    "--cap-drop",
+    "ALL",
+    "--security-opt",
+    "no-new-privileges",
+    "--tmpfs",
+    "/tmp:rw,noexec,nosuid,nodev,size=64m",
+    "--mount",
+    `type=volume,source=${volumeName},target=/app/data`,
+    "--mount",
+    `type=volume,source=${secretVolumeName},target=/run/secrets,readonly`,
+    "--publish",
+    "127.0.0.1::8000",
+    imageReference,
+    "serve",
+    "--host",
+    "0.0.0.0",
+    "--port",
+    "8000",
+    "--project-root",
+    "/app",
+    "--secret-key-file",
+    "/run/secrets/litradar_key",
+  ];
+  if (areSecureCookiesRequired) {
+    runArguments.push("--require-secure-cookies");
+  }
+  return runArguments;
+}
+
+/**
+ * Bootstrap an isolated administrator and persist the secure-cookie setting.
+ *
+ * @param {string} imageReference - Exact image reference under test.
+ * @returns {Promise<void>} Promise resolved after the setting is committed and the setup service is removed.
+ */
+async function enableSecureCookies(imageReference) {
+  const username = "container_smoke_admin";
+  const password = `${randomBytes(24).toString("base64url")}Aa1!`;
+  await runDocker(
+    [
+      "run",
+      "--rm",
+      "--interactive",
+      "--network",
+      "none",
+      "--read-only",
+      "--cap-drop",
+      "ALL",
+      "--security-opt",
+      "no-new-privileges",
+      "--tmpfs",
+      "/tmp:rw,noexec,nosuid,nodev,size=64m",
+      "--mount",
+      `type=volume,source=${volumeName},target=/app/data`,
+      imageReference,
+      "admin",
+      "bootstrap",
+      "--username",
+      username,
+      "--password-stdin",
+      "--project-root",
+      "/app",
+    ],
+    { input: `${password}\n` },
+  );
+  await runDocker(buildServiceRunArguments(imageReference, false));
+  hostPort = await resolvePublishedPort();
+  const baseUrl = `http://127.0.0.1:${hostPort}`;
+  await waitForReadiness(baseUrl);
+  const loginResponse = await fetch(`${baseUrl}/api/auth/login`, {
+    body: JSON.stringify({ username, password }),
+    headers: { "content-type": "application/json" },
+    method: "POST",
+    signal: AbortSignal.timeout(10_000),
+  });
+  assertInvariant(loginResponse.ok, "smoke administrator login failed");
+  const sessionCookie = loginResponse.headers
+    .get("set-cookie")
+    ?.split(";", 1)[0];
+  assertInvariant(
+    Boolean(sessionCookie),
+    "smoke login omitted the session cookie",
+  );
+  const updateResponse = await fetch(`${baseUrl}/api/admin/runtime-settings`, {
+    body: JSON.stringify({ values: { secure_cookies: "true" } }),
+    headers: {
+      "content-type": "application/json",
+      cookie: sessionCookie,
+    },
+    method: "PUT",
+    signal: AbortSignal.timeout(10_000),
+  });
+  assertInvariant(
+    updateResponse.ok,
+    "secure-cookie runtime setting update failed",
+  );
+  const removal = await removeManagedContainer(containerName);
+  assertInvariant(
+    removal.removed,
+    `setup container cleanup failed: ${removal.error}`,
+  );
+  assertInvariant(await waitForPortClosure(), "setup listener remained open");
+  hostPort = undefined;
+}
+
+/**
  * Execute the exact-image security and HTTP probes.
  *
- * @param {string} imageReference - Local image reference.
+ * @param {string} imageReference - Local tag or immutable registry digest reference.
+ * @param {boolean} isDigestRequired - Whether a registry digest reference is mandatory.
  * @returns {Promise<Record<string, unknown>>} Successful smoke report before cleanup.
  */
-async function runSmoke(imageReference) {
+async function runSmoke(imageReference, isDigestRequired) {
   const suffix = `${process.pid}-${randomBytes(4).toString("hex")}`;
   containerName = `litradar-smoke-${suffix}`;
   secretInitializerName = `${containerName}-secret-init`;
   volumeName = `litradar-smoke-data-${suffix}`;
   secretVolumeName = `litradar-smoke-secret-${suffix}`;
 
-  const imageId = (
-    await runDocker(["image", "inspect", "--format", "{{.Id}}", imageReference])
-  ).stdout;
+  const isDigestReference = DIGEST_REFERENCE_PATTERN.test(imageReference);
   assertInvariant(
-    imageId.startsWith("sha256:"),
+    !isDigestRequired || isDigestReference,
+    "release smoke requires a fully qualified image@sha256 digest reference",
+  );
+  if (isDigestReference) {
+    await runDocker(["pull", imageReference], {
+      timeoutMs: IMAGE_PULL_TIMEOUT_MS,
+    });
+  }
+  const imageInspection = JSON.parse(
+    (
+      await runDocker([
+        "image",
+        "inspect",
+        "--format",
+        "{{json .}}",
+        imageReference,
+      ])
+    ).stdout,
+  );
+  const imageId = imageInspection.Id;
+  const repositoryDigests = imageInspection.RepoDigests ?? [];
+  assertInvariant(
+    typeof imageId === "string" && imageId.startsWith("sha256:"),
     "local image did not resolve to a content ID",
   );
+  if (isDigestReference) {
+    assertInvariant(
+      repositoryDigests.some(
+        (digest) => digest.toLowerCase() === imageReference.toLowerCase(),
+      ),
+      "pulled image metadata omitted the requested immutable digest",
+    );
+  }
   await runDocker(["volume", "create", volumeName]);
   await runDocker(["volume", "create", secretVolumeName]);
   await runDocker([
@@ -451,30 +636,13 @@ async function runSmoke(imageReference) {
     "-c",
     'umask 077; head -c 32 /dev/urandom > /app/data/litradar_key; test "$(wc -c < /app/data/litradar_key)" -eq 32',
   ]);
-  await runDocker([
-    "run",
-    "--detach",
-    "--name",
-    containerName,
-    "--read-only",
-    "--cap-drop",
-    "ALL",
-    "--security-opt",
-    "no-new-privileges",
-    "--tmpfs",
-    "/tmp:rw,noexec,nosuid,nodev,size=64m",
-    "--mount",
-    `type=volume,source=${volumeName},target=/app/data`,
-    "--mount",
-    `type=volume,source=${secretVolumeName},target=/run/secrets,readonly`,
-    "--publish",
-    "127.0.0.1::8000",
-    imageReference,
-  ]);
+  await enableSecureCookies(imageReference);
+  await runDocker(buildServiceRunArguments(imageReference, true));
 
   hostPort = await resolvePublishedPort();
   const baseUrl = `http://127.0.0.1:${hostPort}`;
   await waitForReadiness(baseUrl);
+  await waitForContainerHealth();
 
   await runDocker([
     "exec",
@@ -482,6 +650,13 @@ async function runSmoke(imageReference) {
     "sh",
     "-c",
     "test -f /app/data/meta/ccf_computer_journals.csv && test -f /app/data/meta/chinese_journals.csv && test -f /app/data/meta/english_journals.csv",
+  ]);
+  await runDocker([
+    "exec",
+    containerName,
+    "sh",
+    "-c",
+    'test "$(id -u)" = 10001 && test "$(id -g)" = 10001 && test "$(stat -c %a /run/secrets/litradar_key)" = 600 && test "$(stat -c %s /run/secrets/litradar_key)" = 32 && touch /app/data/smoke-write-probe && rm /app/data/smoke-write-probe && if touch /app/root-write-probe 2>/dev/null; then exit 1; fi && if printf x >> /run/secrets/litradar_key 2>/dev/null; then exit 1; fi && printf "#!/bin/sh\\nexit 0\\n" > /tmp/noexec-probe && chmod 700 /tmp/noexec-probe && if /tmp/noexec-probe 2>/dev/null; then exit 1; fi && rm /tmp/noexec-probe',
   ]);
   const [rootResponse, openApiResponse, authResponse, inspectResult] =
     await Promise.all([
@@ -503,7 +678,7 @@ async function runSmoke(imageReference) {
     `anonymous auth endpoint returned ${authResponse.status}`,
   );
   for (const response of [rootResponse, openApiResponse, authResponse]) {
-    assertSecurityHeaders(response, false);
+    assertSecurityHeaders(response, true);
   }
   assertInvariant(
     rootResponse.headers.get("content-security-policy")?.includes("sha256-"),
@@ -536,6 +711,17 @@ async function runSmoke(imageReference) {
   const secretMount = inspection.Mounts.find(
     (mount) => mount.Destination === "/run/secrets",
   );
+  const persistentMountDestinations = inspection.Mounts.map(
+    (mount) => mount.Destination,
+  ).sort();
+  const writableMountDestinations = inspection.Mounts.filter(
+    (mount) => mount.RW,
+  ).map((mount) => mount.Destination);
+  const temporaryFilesystemOptions = new Set(
+    (inspection.HostConfig.Tmpfs?.["/tmp"] ?? "").split(","),
+  );
+  const portBindings = inspection.HostConfig.PortBindings ?? {};
+  const publishedPorts = Object.keys(portBindings);
   const configuredEnvironment = inspection.Config.Env ?? [];
   const removedEnvironmentOverrides = configuredEnvironment.filter((entry) =>
     REMOVED_APPLICATION_ENVIRONMENT_NAMES.some((name) =>
@@ -563,11 +749,55 @@ async function runSmoke(imageReference) {
     "no-new-privileges is missing",
   );
   assertInvariant(
-    Boolean(inspection.Config.User) &&
-      !["0", "root"].includes(inspection.Config.User),
-    "container runs as root",
+    !inspection.HostConfig.CapAdd || inspection.HostConfig.CapAdd.length === 0,
+    "container adds Linux capabilities",
   );
-  assertInvariant(dataMount?.RW === true, "data mount is not writable");
+  assertInvariant(
+    inspection.Config.User === "10001:10001",
+    "container does not declare the fixed unprivileged UID/GID",
+  );
+  assertInvariant(
+    inspection.State.Health?.Status === "healthy",
+    "Docker health state is not healthy",
+  );
+  assertInvariant(
+    inspection.Config.Healthcheck?.Test?.[0] === "CMD-SHELL",
+    "image does not define a Docker health check",
+  );
+  assertInvariant(
+    inspection.Args.includes("--require-secure-cookies"),
+    "hardened smoke did not require secure cookies",
+  );
+  assertInvariant(
+    ["rw", "noexec", "nosuid", "nodev"].every((option) =>
+      temporaryFilesystemOptions.has(option),
+    ),
+    "temporary filesystem omitted a required hardening option",
+  );
+  assertInvariant(
+    publishedPorts.length === 1 && publishedPorts[0] === "8000/tcp",
+    "container published an unexpected port",
+  );
+  assertInvariant(
+    portBindings["8000/tcp"]?.length === 1 &&
+      portBindings["8000/tcp"][0].HostIp === "127.0.0.1",
+    "application port is not bound exclusively to host loopback",
+  );
+  assertInvariant(
+    persistentMountDestinations.length === 2 &&
+      persistentMountDestinations[0] === "/app/data" &&
+      persistentMountDestinations[1] === "/run/secrets",
+    "container has an unexpected persistent mount",
+  );
+  assertInvariant(
+    dataMount?.Type === "volume" && dataMount?.Name === volumeName,
+    "data mount is not the managed volume",
+  );
+  assertInvariant(
+    writableMountDestinations.length === 1 &&
+      writableMountDestinations[0] === "/app/data",
+    "persistent write access is not limited to application data",
+  );
   assertInvariant(
     secretMount?.Type === "volume" && secretMount?.Name === secretVolumeName,
     "secret mount is not the managed volume",
@@ -582,6 +812,8 @@ async function runSmoke(imageReference) {
     status: "passed",
     imageReference,
     imageId,
+    repositoryDigests,
+    immutableDigestRequired: isDigestRequired,
     containerUser: inspection.Config.User,
     endpoints: ["/", "/health/ready", "/openapi.json", "/api/auth/me"],
     managedMetaPrepared: true,
@@ -590,7 +822,11 @@ async function runSmoke(imageReference) {
       readOnlyRoot: true,
       capabilitiesDropped: true,
       noNewPrivileges: true,
+      secureCookiesRequired: true,
+      dockerHealthCheck: true,
+      loopbackPublication: true,
       temporaryFilesystem: true,
+      temporaryFilesystemOptions: ["rw", "noexec", "nosuid", "nodev"],
       writableDataVolume: true,
       readOnlySecretMount: true,
       responseHeaders: true,
@@ -612,13 +848,19 @@ const args = process.argv.slice(2);
 let report;
 let failure;
 
-if (args.length !== 1 || !args[0].trim()) {
+const isDigestRequired = args[1] === "--require-digest";
+if (
+  args.length < 1 ||
+  args.length > 2 ||
+  !args[0].trim() ||
+  (args.length === 2 && !isDigestRequired)
+) {
   failure = new Error(
-    "Usage: node scripts/container-smoke.mjs <local-image-reference>",
+    "Usage: node scripts/container-smoke.mjs <image-reference> [--require-digest]",
   );
 } else {
   try {
-    report = await runSmoke(args[0].trim());
+    report = await runSmoke(args[0].trim(), isDigestRequired);
   } catch (error) {
     failure = error instanceof Error ? error : new Error(String(error));
     if (containerName) {

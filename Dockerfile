@@ -1,6 +1,6 @@
-# syntax=docker/dockerfile:1
+# syntax=docker/dockerfile:1@sha256:87999aa3d42bdc6bea60565083ee17e86d1f3339802f543c0d03998580f9cb89
 
-FROM node:24-alpine AS frontend-deps
+FROM node:24-alpine@sha256:a0b9bf06e4e6193cf7a0f58816cc935ff8c2a908f81e6f1a95432d679c54fbfd AS frontend-deps
 
 WORKDIR /app
 
@@ -12,7 +12,7 @@ RUN --mount=type=cache,id=litradar-pnpm,target=/pnpm/store \
     && pnpm install --frozen-lockfile
 
 
-FROM node:24-alpine AS frontend-build
+FROM node:24-alpine@sha256:a0b9bf06e4e6193cf7a0f58816cc935ff8c2a908f81e6f1a95432d679c54fbfd AS frontend-build
 
 WORKDIR /app
 
@@ -35,17 +35,21 @@ RUN apk add --no-cache gzip \
     \) -exec gzip --best --keep --no-name {} +
 
 
-FROM rust:1.96-bookworm AS rust-build
+FROM rust:1.96-bookworm@sha256:a339861ae23e9abb272cea45dfafde21760d2ce6577a70f8a926153677902663 AS rust-build
 
 WORKDIR /app
 
 COPY Cargo.toml Cargo.lock ./
 COPY crates crates
 
-RUN cargo build --release --locked --bin litradar
+RUN --mount=type=cache,id=litradar-cargo-registry,target=/usr/local/cargo/registry \
+    --mount=type=cache,id=litradar-cargo-git,target=/usr/local/cargo/git \
+    --mount=type=cache,id=litradar-cargo-target,target=/app/target \
+    cargo build --release --locked --bin litradar \
+    && cp /app/target/release/litradar /app/litradar
 
 
-FROM debian:trixie-slim
+FROM debian:trixie-slim@sha256:020c0d20b9880058cbe785a9db107156c3c75c2ac944a6aa7ab59f2add76a7bd
 
 WORKDIR /app
 
@@ -57,7 +61,7 @@ RUN apt-get update \
     && mkdir -p /app/data \
     && chown -R litradar:litradar /app
 
-COPY --from=rust-build /app/target/release/litradar /usr/local/bin/litradar
+COPY --from=rust-build /app/litradar /usr/local/bin/litradar
 
 COPY --chown=litradar:litradar libs/simple-linux libs/simple-linux
 COPY data/meta /usr/share/litradar/meta
@@ -65,9 +69,14 @@ COPY --chown=litradar:litradar --from=frontend-build /app/out web
 
 ENV HOME=/tmp
 
-USER litradar
+USER 10001:10001
 
 EXPOSE 8000
+
+STOPSIGNAL SIGTERM
+
+HEALTHCHECK --interval=10s --timeout=3s --start-period=10s --retries=3 \
+    CMD curl --fail --silent --show-error http://127.0.0.1:8000/health/ready >/dev/null || exit 1
 
 ENTRYPOINT ["litradar"]
 

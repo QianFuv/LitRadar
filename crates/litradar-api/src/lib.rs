@@ -3190,7 +3190,7 @@ mod tests {
         let custom_invite_expiry = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("system clock should follow the Unix epoch")
-            .as_secs_f64()
+            .as_secs() as f64
             + 3_600.0;
         let custom_invite = json_request(
             &app,

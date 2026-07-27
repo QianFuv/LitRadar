@@ -138,11 +138,21 @@ pnpm build
 容器边界必须测试将要发布的确切本地镜像：
 
 ```bash
-docker build --tag litradar:test .
+docker build --provenance=false --tag litradar:test .
 node scripts/container-smoke.mjs litradar:test
 ```
 
-探针要求 readiness、根页和 OpenAPI 成功，镜像 ID 不变，用户非 root，根文件系统只读，drop 全部 capability，启用 no-new-privileges，使用 tmpfs、可写数据卷和只读密钥挂载；成功或失败后都要删除容器、卷、监听端口和 marker 保护的密钥临时根。
+探针先用隔离数据库写入 `secure_cookies=true`，再以 `--require-secure-cookies` 重启同一镜像。它要求 readiness、Docker health、根页、OpenAPI 和 auth Header 成功，镜像 ID 不变，UID/GID 为 `10001:10001`，根文件系统只读，drop 全部 capability，启用 no-new-privileges，只发布 loopback，`/tmp` 含 `noexec,nosuid,nodev`，只有数据卷持久可写，密钥卷只读。成功或失败后都要删除容器、卷和监听端口。
+
+生产覆盖文件的静态边界也必须单独验证：未设置 digest 时 `config` 失败；设置 64 位测试 digest 时，解析结果不含 service build/ports，镜像只使用 `repository@sha256:...`，command 包含 `--require-secure-cookies`：
+
+```bash
+export LITRADAR_IMAGE_DIGEST="$(printf '0%.0s' {1..64})"
+docker compose \
+  -f docker-compose.yml \
+  -f compose.production.yaml \
+  config --format json
+```
 
 ## 供应链与静态安全
 
@@ -166,27 +176,39 @@ OSV-Scanner、actionlint 和 Gitleaks 在 CI 中下载固定版本发行包，�
 
 `.github/workflows/security.yaml` 上传 cargo-audit JSON、cargo-deny 输出、OSV JSON、Gitleaks SARIF 和 Action pin 清单；`.github/workflows/codeql.yaml` 为 Rust 与 JavaScript/TypeScript 分别上传 SARIF。`docker.yaml` 仅在 backend、frontend、supply-chain 和 CodeQL 四类前置工作流全部成功后构建镜像。
 
+容器发布 job 不向本地 daemon load 后再按 tag 推送。它把一次 Buildx 构建以无 tag digest 推入 GHCR，从 `steps.build.outputs.digest` 生成唯一精确 reference，随后按以下固定顺序执行：
+
+1. `container-smoke.mjs <repository@sha256:...> --require-digest` 重新拉取并验证 registry digest。
+2. Syft `v1.49.0` 为该 digest 生成 SPDX 2.3 JSON，且 packages 必须非空。
+3. `actions/attest` 为同一 subject name/digest 生成 SLSA provenance 和 SBOM attestation。
+4. Cosign 对该 digest 进行 keyless signing，并以 workflow 精确 identity 与 GitHub OIDC issuer 验签。
+5. `gh attestation verify` 分别验证 SLSA 与 SPDX predicate。
+6. 最后用 `imagetools create --prefer-index=false` 创建 full-commit SHA tag；已存在但指向其他 digest 时失败，不创建 `latest`。
+
+以上 hosted 步骤必须在最终准备发布的同一 commit 上成功；本地 tag smoke 不能替代 registry digest、attestation 或 signature 证据。
+
 ## 报告与失败诊断
 
 `--ci` 使用以下固定路径：
 
-| 报告                                               | 路径                                                                 |
-| -------------------------------------------------- | -------------------------------------------------------------------- |
-| nextest JUnit                                      | `target/nextest/ci/junit.xml`                                        |
-| Vitest jsdom JUnit                                 | `app/test-results/vitest/junit.xml`                                  |
-| Vitest Browser Mode JUnit                          | `app/test-results/vitest-browser/junit.xml`                          |
-| Browser Mode 截图                                  | `app/test-results/browser-components/screenshots/`                   |
-| fixture Playwright JUnit/trace/screenshot/video    | `app/test-results/playwright-fixtures/`                              |
-| fixture Playwright HTML                            | `app/playwright-report/fixtures/`                                    |
-| full-stack Playwright JUnit/trace/screenshot/video | `app/test-results/playwright-full-stack/`                            |
-| full-stack Playwright HTML                         | `app/playwright-report/full-stack/`                                  |
-| Rust coverage                                      | `target/llvm-cov/html/`、`target/llvm-cov/lcov.info`                 |
-| Frontend coverage                                  | `app/coverage/`、`app/coverage/lcov.info`                            |
-| Container smoke                                    | `test-results/container-smoke/summary.json` 和失败时的 `failure.log` |
-| Rust/OSV supply chain                              | workflow artifacts `rust-supply-chain-results`、`osv-lockfile-results` |
-| Secret scanning                                    | workflow artifact `gitleaks-results` 与 GitHub code scanning SARIF  |
-| CodeQL                                             | workflow artifacts `codeql-<language>-sarif` 与 Security 页面       |
-| Immutable Action inventory                         | workflow artifact `immutable-action-inventory`                       |
+| 报告                                               | 路径                                                                                                                    |
+| -------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| nextest JUnit                                      | `target/nextest/ci/junit.xml`                                                                                           |
+| Vitest jsdom JUnit                                 | `app/test-results/vitest/junit.xml`                                                                                     |
+| Vitest Browser Mode JUnit                          | `app/test-results/vitest-browser/junit.xml`                                                                             |
+| Browser Mode 截图                                  | `app/test-results/browser-components/screenshots/`                                                                      |
+| fixture Playwright JUnit/trace/screenshot/video    | `app/test-results/playwright-fixtures/`                                                                                 |
+| fixture Playwright HTML                            | `app/playwright-report/fixtures/`                                                                                       |
+| full-stack Playwright JUnit/trace/screenshot/video | `app/test-results/playwright-full-stack/`                                                                               |
+| full-stack Playwright HTML                         | `app/playwright-report/full-stack/`                                                                                     |
+| Rust coverage                                      | `target/llvm-cov/html/`、`target/llvm-cov/lcov.info`                                                                    |
+| Frontend coverage                                  | `app/coverage/`、`app/coverage/lcov.info`                                                                               |
+| Container smoke                                    | `test-results/container-smoke/summary.json` 和失败时的 `failure.log`                                                    |
+| Immutable container release                        | workflow artifact `immutable-container-release`，含 exact image、Compose、SBOM、attestation bundle 与 verification JSON |
+| Rust/OSV supply chain                              | workflow artifacts `rust-supply-chain-results`、`osv-lockfile-results`                                                  |
+| Secret scanning                                    | workflow artifact `gitleaks-results` 与 GitHub code scanning SARIF                                                      |
+| CodeQL                                             | workflow artifacts `codeql-<language>-sarif` 与 Security 页面                                                           |
+| Immutable Action inventory                         | workflow artifact `immutable-action-inventory`                                                                          |
 
 CI 的 artifact upload 使用 `if: always()`。失败时先看 workflow summary 的层级状态和时长，再看 JUnit 的失败 owner；浏览器问题打开对应 HTML，并使用失败截图、第一次重试的 trace/video。容器问题先看安全清理摘要，再看已脱敏的尾部日志。报告目录均为生成物，不应提交。
 

@@ -1,0 +1,21 @@
+name: litradar-production
+
+services:
+  litradar:
+    build: !reset null
+    image: ${LITRADAR_IMAGE_REPOSITORY:-ghcr.io/qianfuv/litradar}@sha256:${LITRADAR_IMAGE_DIGEST:?Set LITRADAR_IMAGE_DIGEST to the verified 64-character release digest}
+    pull_policy: always
+    ports: !reset []
+    command:
+      - serve
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
+      - --project-root
+      - /app
+      - --secret-key-file
+      - /run/secrets/litradar_key
+      - --require-secure-cookies
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=64m

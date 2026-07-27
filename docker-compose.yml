@@ -20,13 +20,17 @@ services:
         compress: "true"
     read_only: true
     tmpfs:
-      - /tmp:rw,noexec,nosuid,size=64m
+      - /tmp:rw,noexec,nosuid,nodev,size=64m
     cap_drop:
       - ALL
     security_opt:
       - no-new-privileges:true
     healthcheck:
-      test: ["CMD-SHELL", "curl --fail --silent --show-error http://127.0.0.1:8000/health/ready >/dev/null && curl --fail --silent --show-error http://127.0.0.1:8000/ >/dev/null"]
+      test:
+        [
+          "CMD-SHELL",
+          "curl --fail --silent --show-error http://127.0.0.1:8000/health/ready >/dev/null && curl --fail --silent --show-error http://127.0.0.1:8000/ >/dev/null",
+        ]
       interval: 10s
       timeout: 3s
       retries: 3

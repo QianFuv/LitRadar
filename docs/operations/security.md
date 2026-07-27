@@ -148,13 +148,13 @@ printf '%s\n' "$ADMIN_PASSWORD" |
 
 每个 `litradar serve` 进程按客户端 IP → 当前操作的规范化用户名 → 高阈值全局熔断器顺序检查 token bucket。前置桶拒绝后不会消耗后续额度：
 
-| 桶                       | burst | 补充速率 | 内存 key 上限       |
-| ------------------------ | ----: | -------- | ------------------- |
-| 登录客户端 IP            |    30 | 1/s      | IP 合计 8192        |
-| 注册客户端 IP            |     5 | 1/60s    | IP 合计 8192        |
-| 每种操作的规范化用户名   |     5 | 1/60s    | 用户名合计 4096     |
-| 全局登录熔断器           |  1000 | 100/s    | 单例                |
-| 全局注册熔断器           |   250 | 25/s     | 单例                |
+| 桶                     | burst | 补充速率 | 内存 key 上限   |
+| ---------------------- | ----: | -------- | --------------- |
+| 登录客户端 IP          |    30 | 1/s      | IP 合计 8192    |
+| 注册客户端 IP          |     5 | 1/60s    | IP 合计 8192    |
+| 每种操作的规范化用户名 |     5 | 1/60s    | 用户名合计 4096 |
+| 全局登录熔断器         |  1000 | 100/s    | 单例            |
+| 全局注册熔断器         |   250 | 25/s     | 单例            |
 
 用户名会 trim、截断为注册策略允许的最多 32 个 code point，再转为 ASCII 小写。IP/用户名 map 使用真正的最近使用顺序淘汰，旋转输入不能使 key 数无限增长。成功登录或注册只清除该操作对应的用户名桶，不清除 IP 或全局额度。
 
@@ -248,6 +248,14 @@ AI/PushPlus 只重试连接失败、timeout 和 `429/502/503/504`；数值 `Retr
 
 仓库管理员还必须在 GitHub ruleset 中把四个 supply-chain job 和两个 CodeQL language job 设为 required checks，并启用 code-scanning merge protection、secret scanning 与 push protection。workflow 文件不能替代这些仓库级设置；Gitleaks 是独立的纵深防御，而不是关闭 GitHub secret scanning 的理由。
 
+容器发布工作流同样属于阻断门禁：
+
+- Dockerfile frontend 与 Node/Rust/Debian 基础镜像都固定到 reviewed digest；tag 只保留可读性和 Dependabot 更新入口。
+- Buildx 把一次构建以无 tag digest 推入 GHCR；hardened smoke 必须重新拉取该 `repository@sha256:...`，并验证实际 RepoDigest、固定 UID/GID、只读根、完整 capability drop、no-new-privileges、loopback 端口、Docker health、只读密钥和唯一持久可写数据卷。
+- smoke 成功后才为同一 digest 生成 SPDX SBOM 与 SLSA provenance、写入 GitHub artifact attestations，并用 workflow OIDC 进行 Cosign keyless signing；workflow 随即用精确 certificate identity、issuer 和 digest 重新验证三类证明。
+- 只有上述步骤全部成功，才用 `imagetools create --prefer-index=false` 为同一 digest 创建 `sha-<full commit>` tag。既有 tag 指向其他 digest 时发布失败；不发布 `latest`。
+- `compose.production.yaml` 删除本地 build/ports，要求 64 位 digest 并强制 `--require-secure-cookies`。生产运行仍必须先独立验证 Cosign、provenance 和 SBOM attestation。
+
 ## 网络暴露
 
 根 Compose 仅发布：
@@ -262,11 +270,12 @@ AI/PushPlus 只重试连接失败、timeout 和 `429/502/503/504`；数值 `Retr
 
 - 使用 UID/GID `10001:10001`；最终镜像只有 `/usr/local/bin/litradar`，没有 Node.js 运行时
 - 根文件系统只读
-- `/tmp` 使用 `noexec,nosuid` tmpfs
+- `/tmp` 使用 `noexec,nosuid,nodev` tmpfs
 - 只允许 `/app/data` 持久写入；`/app/web` 保持只读
 - 丢弃全部 Linux capabilities
 - 启用 `no-new-privileges:true`
-- 使用 `/health/ready` 与根 Web 文档组成一份健康检查
+- 镜像定义 `/health/ready` Docker health check；发布 smoke 另行探测根 Web、OpenAPI 和 auth cache/Header 边界
+- 生产覆盖文件不发布宿主机端口，并要求数据库 `secure_cookies=true`
 
 不要通过 root 容器、开放整个宿主机目录或挂载 Docker socket 解决权限问题。
 

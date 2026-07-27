@@ -15,6 +15,8 @@ on:
       - "data/meta/**"
       - ".dockerignore"
       - "Dockerfile"
+      - "docker-compose.yml"
+      - "compose.production.yaml"
       - "app/**"
       - "scripts/**"
       - ".github/workflows/backend.yaml"
@@ -26,6 +28,10 @@ on:
 
 env:
   REGISTRY: ghcr.io
+
+concurrency:
+  group: immutable-container-release-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   changes:
@@ -53,6 +59,8 @@ jobs:
               - "data/meta/**"
               - ".dockerignore"
               - "Dockerfile"
+              - "docker-compose.yml"
+              - "compose.production.yaml"
               - "app/**"
               - "scripts/container-smoke.mjs"
             backend_workflow:
@@ -110,7 +118,14 @@ jobs:
     uses: ./.github/workflows/codeql.yaml
 
   build-image:
-    needs: [changes, backend-quality, frontend-quality, security-quality, codeql-quality]
+    needs:
+      [
+        changes,
+        backend-quality,
+        frontend-quality,
+        security-quality,
+        codeql-quality,
+      ]
     if: |
       always() &&
       needs.changes.result == 'success' &&
@@ -121,13 +136,18 @@ jobs:
       needs.codeql-quality.result == 'success'
     runs-on: ubuntu-latest
     outputs:
-      image_digest: ${{ steps.push.outputs.digest }}
-      image_tags: ${{ steps.meta.outputs.tags }}
+      image_digest: ${{ steps.build.outputs.digest }}
+      image_name: ${{ steps.references.outputs.image_name }}
+      image_reference: ${{ steps.exact.outputs.image_reference }}
+      image_tag: ${{ steps.publish.outputs.release_tag }}
+      provenance_url: ${{ steps.provenance.outputs.attestation-url }}
+      sbom_url: ${{ steps.sbom_attestation.outputs.attestation-url }}
     permissions:
+      actions: read
+      attestations: write
       contents: read
+      id-token: write
       packages: write
-    env:
-      LOCAL_IMAGE: litradar-ci:${{ github.sha }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -140,95 +160,284 @@ jobs:
         with:
           node-version: 24
 
-      - uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
-        id: meta
-        with:
-          images: ${{ env.REGISTRY }}/${{ github.repository }}
-          tags: |
-            type=sha
-            type=raw,value=latest
+      - name: Resolve immutable image references
+        id: references
+        env:
+          SOURCE_REPOSITORY: ${{ github.repository }}
+        run: |
+          image_name="${REGISTRY}/${SOURCE_REPOSITORY,,}"
+          release_tag="${image_name}:sha-${GITHUB_SHA}"
+          created_at="$(git show -s --format=%cI "$GITHUB_SHA")"
+          echo "image_name=$image_name" >> "$GITHUB_OUTPUT"
+          echo "release_tag=$release_tag" >> "$GITHUB_OUTPUT"
+          echo "created_at=$created_at" >> "$GITHUB_OUTPUT"
 
-      - name: Build and load exact image
+      - name: Validate the digest-only production profile
+        run: |
+          mkdir -p release-results
+          if env -u LITRADAR_IMAGE_DIGEST docker compose \
+            -f docker-compose.yml \
+            -f compose.production.yaml \
+            config >/dev/null 2>&1; then
+            echo "Production Compose accepted a missing digest" >&2
+            exit 1
+          fi
+          if LITRADAR_IMAGE_DIGEST=latest docker compose \
+            -f docker-compose.yml \
+            -f compose.production.yaml \
+            config --format json 2>/dev/null \
+            | jq -e '.services.litradar.image | test("@sha256:[0-9a-f]{64}$")' >/dev/null; then
+            echo "Production Compose resolved a source tag as a valid digest" >&2
+            exit 1
+          fi
+          digest="$(printf '0%.0s' {1..64})"
+          LITRADAR_IMAGE_DIGEST="$digest" docker compose \
+            -f docker-compose.yml \
+            -f compose.production.yaml \
+            config --format json \
+            > release-results/compose-production.json
+          jq -e \
+            --arg image "ghcr.io/qianfuv/litradar@sha256:${digest}" \
+            '.services.litradar as $service |
+             $service.image == $image and
+             ($service.image | test("@sha256:[0-9a-f]{64}$")) and
+             ($service | has("build") | not) and
+             (($service.ports // []) | length == 0) and
+             ($service.command | index("--require-secure-cookies") != null) and
+             ($service.tmpfs | any(contains("noexec") and contains("nosuid") and contains("nodev")))' \
+            release-results/compose-production.json >/dev/null
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@abd2ef45e78c5afb21d64d4ca52ee8550d9572c7 # v4.5.1
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push an untagged candidate once
         id: build
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
         env:
           DOCKER_BUILD_SUMMARY: "false"
         with:
           context: .
-          load: true
-          push: false
-          tags: |
-            ${{ steps.meta.outputs.tags }}
-            ${{ env.LOCAL_IMAGE }}
-          labels: ${{ steps.meta.outputs.labels }}
+          outputs: type=image,name=${{ steps.references.outputs.image_name }},push-by-digest=true,name-canonical=true,push=true
+          labels: |
+            org.opencontainers.image.created=${{ steps.references.outputs.created_at }}
+            org.opencontainers.image.licenses=MIT
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.title=LitRadar
+            org.opencontainers.image.version=sha-${{ github.sha }}
+          provenance: false
+          sbom: false
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Smoke test exact image
+      - name: Validate the registry digest
+        id: exact
+        env:
+          IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
+          IMAGE_NAME: ${{ steps.references.outputs.image_name }}
+        run: |
+          if [[ ! "$IMAGE_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "Buildx returned an invalid digest: $IMAGE_DIGEST" >&2
+            exit 1
+          fi
+          image_reference="${IMAGE_NAME}@${IMAGE_DIGEST}"
+          docker buildx imagetools inspect "$image_reference" >/dev/null
+          echo "image_reference=$image_reference" >> "$GITHUB_OUTPUT"
+
+      - name: Pull and smoke the exact registry digest
         id: smoke
+        env:
+          IMAGE_REFERENCE: ${{ steps.exact.outputs.image_reference }}
         run: |
           started_at="$(date +%s)"
           set +e
-          node scripts/container-smoke.mjs "$LOCAL_IMAGE"
+          node scripts/container-smoke.mjs "$IMAGE_REFERENCE" --require-digest
           status="$?"
           set -e
           echo "duration_seconds=$(( $(date +%s) - started_at ))" >> "$GITHUB_OUTPUT"
           exit "$status"
 
-      - uses: docker/login-action@abd2ef45e78c5afb21d64d4ca52ee8550d9572c7 # v4.5.1
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Push tested image tags
-        id: push
+      - name: Prepare release evidence
         env:
-          IMAGE_TAGS: ${{ steps.meta.outputs.tags }}
+          IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
+          IMAGE_REFERENCE: ${{ steps.exact.outputs.image_reference }}
         run: |
-          first_tag=""
-          while IFS= read -r image_tag; do
-            if [[ -z "$image_tag" ]]; then
-              continue
-            fi
-            if [[ -z "$first_tag" ]]; then
-              first_tag="$image_tag"
-            fi
-            docker push "$image_tag"
-          done <<< "$IMAGE_TAGS"
-          test -n "$first_tag"
-          repo_digest="$(docker image inspect "$first_tag" --format '{{index .RepoDigests 0}}')"
-          test -n "$repo_digest"
-          echo "digest=${repo_digest##*@}" >> "$GITHUB_OUTPUT"
+          mkdir -p release-results
+          jq -n \
+            --arg commit "$GITHUB_SHA" \
+            --arg digest "$IMAGE_DIGEST" \
+            --arg reference "$IMAGE_REFERENCE" \
+            '{commit: $commit, digest: $digest, reference: $reference}' \
+            > release-results/image.json
 
-      - name: Upload container smoke diagnostics
+      - name: Generate the exact-image SPDX SBOM
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+        with:
+          image: ${{ steps.exact.outputs.image_reference }}
+          format: spdx-json
+          output-file: release-results/litradar.spdx.json
+          syft-version: v1.49.0
+          upload-artifact: false
+          upload-release-assets: false
+
+      - name: Validate the SPDX SBOM
+        run: |
+          jq -e '
+            .spdxVersion == "SPDX-2.3" and
+            (.packages | type == "array" and length > 0)
+          ' release-results/litradar.spdx.json >/dev/null
+
+      - name: Attest build provenance after smoke
+        id: provenance
+        uses: actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6 # v4.2.0
+        with:
+          subject-name: ${{ steps.references.outputs.image_name }}
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true
+          create-storage-record: false
+
+      - name: Attest the exact-image SBOM after smoke
+        id: sbom_attestation
+        uses: actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6 # v4.2.0
+        with:
+          subject-name: ${{ steps.references.outputs.image_name }}
+          subject-digest: ${{ steps.build.outputs.digest }}
+          sbom-path: release-results/litradar.spdx.json
+          push-to-registry: true
+          create-storage-record: false
+
+      - name: Preserve attestation bundles
+        env:
+          PROVENANCE_BUNDLE: ${{ steps.provenance.outputs.bundle-path }}
+          SBOM_BUNDLE: ${{ steps.sbom_attestation.outputs.bundle-path }}
+        run: |
+          test -f "$PROVENANCE_BUNDLE"
+          test -f "$SBOM_BUNDLE"
+          cp "$PROVENANCE_BUNDLE" release-results/provenance.sigstore.json
+          cp "$SBOM_BUNDLE" release-results/sbom.sigstore.json
+
+      - name: Install checksum-verified Cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+
+      - name: Sign the exact digest with keyless OIDC
+        env:
+          IMAGE_REFERENCE: ${{ steps.exact.outputs.image_reference }}
+        run: |
+          cosign version | grep -q 'GitVersion:[[:space:]]*v3.0.6'
+          cosign sign --yes "$IMAGE_REFERENCE"
+
+      - name: Verify signature and attestations for the exact digest
+        env:
+          GH_TOKEN: ${{ github.token }}
+          IMAGE_REFERENCE: ${{ steps.exact.outputs.image_reference }}
+        run: |
+          certificate_identity="https://github.com/${GITHUB_REPOSITORY}/.github/workflows/docker.yaml@refs/heads/main"
+          cosign verify \
+            --certificate-identity "$certificate_identity" \
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+            "$IMAGE_REFERENCE" \
+            > release-results/cosign-verify.json
+          gh attestation verify "oci://${IMAGE_REFERENCE}" \
+            --repo "$GITHUB_REPOSITORY" \
+            --predicate-type "https://slsa.dev/provenance/v1" \
+            --format json \
+            > release-results/provenance-verify.json
+          gh attestation verify "oci://${IMAGE_REFERENCE}" \
+            --repo "$GITHUB_REPOSITORY" \
+            --predicate-type "https://spdx.dev/Document/v2.3" \
+            --format json \
+            > release-results/sbom-verify.json
+          jq -e 'length > 0' release-results/cosign-verify.json >/dev/null
+          jq -e 'length > 0' release-results/provenance-verify.json >/dev/null
+          jq -e 'length > 0' release-results/sbom-verify.json >/dev/null
+
+      - name: Publish the immutable commit tag without rebuilding
+        id: publish
+        env:
+          IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
+          IMAGE_REFERENCE: ${{ steps.exact.outputs.image_reference }}
+          RELEASE_TAG: ${{ steps.references.outputs.release_tag }}
+        run: |
+          set +e
+          docker buildx imagetools inspect "$RELEASE_TAG" \
+            > release-results/existing-release-tag.txt 2>&1
+          inspect_status="$?"
+          set -e
+          if [[ "$inspect_status" -eq 0 ]]; then
+            existing="$(cat release-results/existing-release-tag.txt)"
+            existing_digest="$(awk '$1 == "Digest:" { print $2; exit }' <<< "$existing")"
+            if [[ "$existing_digest" != "$IMAGE_DIGEST" ]]; then
+              echo "Immutable release tag already points to $existing_digest" >&2
+              exit 1
+            fi
+          elif grep -Eqi 'manifest unknown|not found|no such manifest' \
+            release-results/existing-release-tag.txt; then
+            docker buildx imagetools create \
+              --prefer-index=false \
+              --tag "$RELEASE_TAG" \
+              "$IMAGE_REFERENCE"
+          else
+            cat release-results/existing-release-tag.txt >&2
+            exit "$inspect_status"
+          fi
+          published_digest="$(docker buildx imagetools inspect "$RELEASE_TAG" | awk '$1 == "Digest:" { print $2; exit }')"
+          test "$published_digest" = "$IMAGE_DIGEST"
+          echo "release_tag=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Upload exact-release diagnostics
         if: always()
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
-          name: container-smoke-diagnostics
-          path: test-results/container-smoke/
+          name: immutable-container-release
+          path: |
+            test-results/container-smoke/
+            release-results/
           if-no-files-found: warn
           retention-days: 14
 
-      - name: Write container summary
+      - name: Write immutable container summary
         if: always()
         env:
-          PUSH_RESULT: ${{ steps.push.outcome }}
+          IMAGE_REFERENCE: ${{ steps.exact.outputs.image_reference }}
+          PROVENANCE_RESULT: ${{ steps.provenance.outcome }}
+          PROVENANCE_URL: ${{ steps.provenance.outputs.attestation-url }}
+          PUBLISH_RESULT: ${{ steps.publish.outcome }}
+          RELEASE_TAG: ${{ steps.publish.outputs.release_tag }}
+          SBOM_RESULT: ${{ steps.sbom_attestation.outcome }}
+          SBOM_URL: ${{ steps.sbom_attestation.outputs.attestation-url }}
           SMOKE_DURATION: ${{ steps.smoke.outputs.duration_seconds }}
           SMOKE_RESULT: ${{ steps.smoke.outcome }}
         run: |
           {
-            echo "## Exact-image container gate"
+            echo "## Immutable exact-image release"
             echo
+            echo "- Exact registry reference: ${IMAGE_REFERENCE:-not available}"
             echo "- Smoke status: ${SMOKE_RESULT:-not run}"
             echo "- Smoke duration: ${SMOKE_DURATION:-n/a}s"
-            echo "- Push status: ${PUSH_RESULT:-not run}"
-            echo "- Security: read-only root, all capabilities dropped, no-new-privileges, tmpfs, writable data volume, and read-only key mount."
+            echo "- Provenance status: ${PROVENANCE_RESULT:-not run}"
+            echo "- Provenance: ${PROVENANCE_URL:-not available}"
+            echo "- SBOM status: ${SBOM_RESULT:-not run}"
+            echo "- SBOM: ${SBOM_URL:-not available}"
+            echo "- Immutable tag status: ${PUBLISH_RESULT:-not run}"
+            echo "- Immutable tag: ${RELEASE_TAG:-not available}"
+            echo "- Security: fixed UID/GID, read-only root, all capabilities dropped, no-new-privileges, nodev/noexec/nosuid tmpfs, loopback-only publication, writable data only, read-only key mount, Docker health check, and required secure cookies."
           } >> "$GITHUB_STEP_SUMMARY"
 
   workflow-summary:
     name: LitRadar workflow summary
-    needs: [changes, backend-quality, frontend-quality, security-quality, codeql-quality, build-image]
+    needs:
+      [
+        changes,
+        backend-quality,
+        frontend-quality,
+        security-quality,
+        codeql-quality,
+        build-image,
+      ]
     if: always()
     runs-on: ubuntu-latest
     permissions:
@@ -244,13 +453,16 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
           FRONTEND_RESULT: ${{ needs.frontend-quality.result }}
           IMAGE_DIGEST: ${{ needs.build-image.outputs.image_digest }}
-          IMAGE_NAME: ${{ env.REGISTRY }}/${{ github.repository }}
-          IMAGE_TAGS: ${{ needs.build-image.outputs.image_tags }}
+          IMAGE_NAME: ${{ needs.build-image.outputs.image_name }}
+          IMAGE_REFERENCE: ${{ needs.build-image.outputs.image_reference }}
+          IMAGE_TAG: ${{ needs.build-image.outputs.image_tag }}
+          PROVENANCE_URL: ${{ needs.build-image.outputs.provenance_url }}
           REF_NAME: ${{ github.ref_name }}
           REPOSITORY: ${{ github.repository }}
           RUN_ID: ${{ github.run_id }}
           RUN_NUMBER: ${{ github.run_number }}
           SERVER_URL: ${{ github.server_url }}
+          SBOM_URL: ${{ needs.build-image.outputs.sbom_url }}
           SECURITY_RESULT: ${{ needs.security-quality.result }}
         run: |
           status_label() {
@@ -281,7 +493,7 @@ jobs:
             echo "| Frontend quality | $(status_label "$FRONTEND_RESULT") |"
             echo "| Supply-chain security | $(status_label "$SECURITY_RESULT") |"
             echo "| CodeQL security analysis | $(status_label "$CODEQL_RESULT") |"
-            echo "| Build, smoke, and push exact image | $(status_label "$BUILD_RESULT") |"
+            echo "| Build, digest smoke, attest, sign, and publish | $(status_label "$BUILD_RESULT") |"
             echo
             echo "## Run"
             echo
@@ -294,15 +506,11 @@ jobs:
             echo
             if [[ -n "$IMAGE_DIGEST" ]]; then
               echo "- Image: $IMAGE_NAME"
-              echo "- Tested and pushed digest: $IMAGE_DIGEST"
-              if [[ -n "$IMAGE_TAGS" ]]; then
-                echo "- Tags:"
-                while IFS= read -r image_tag; do
-                  if [[ -n "$image_tag" ]]; then
-                    echo "  - $image_tag"
-                  fi
-                done <<< "$IMAGE_TAGS"
-              fi
+              echo "- Tested registry reference: $IMAGE_REFERENCE"
+              echo "- Tested digest: $IMAGE_DIGEST"
+              echo "- Immutable commit tag: $IMAGE_TAG"
+              echo "- Provenance: $PROVENANCE_URL"
+              echo "- SBOM: $SBOM_URL"
             else
               echo "No image was published by this run."
             fi
