@@ -1,0 +1,169 @@
+{
+  "schemaVersion": 1,
+  "ruleId": "rust/hard-coded-cryptographic-value",
+  "owner": "repository-security-maintainers",
+  "rationale": "CodeQL Rust build-mode none analyzes deterministic credentials and legacy salts that are reachable only from cfg(test), integration-test, API test-support, or the full-stack fixture example. Each reviewed result is constrained by rule, repository path, and CodeQL primary-location fingerprint; production findings are never included.",
+  "expiresOn": "2026-09-30",
+  "findings": [
+    {
+      "path": "crates/litradar-api/src/lib.rs",
+      "fingerprint": "f559737eca8a6a45:1"
+    },
+    {
+      "path": "crates/litradar-api/src/routes/auth.rs",
+      "fingerprint": "ab3f9549a6c4c912:1"
+    },
+    {
+      "path": "crates/litradar-api/src/test_support.rs",
+      "fingerprint": "6886de8ca8c591d8:1"
+    },
+    {
+      "path": "crates/litradar-auth/src/password.rs",
+      "fingerprint": "6073432965a704b8:1"
+    },
+    {
+      "path": "crates/litradar-auth/src/password.rs",
+      "fingerprint": "7fb908c165eac40a:1"
+    },
+    {
+      "path": "crates/litradar-auth/src/password.rs",
+      "fingerprint": "e52428de716f8a7d:1"
+    },
+    {
+      "path": "crates/litradar-auth/src/service.rs",
+      "fingerprint": "1382ed900590088:1"
+    },
+    {
+      "path": "crates/litradar-auth/src/service.rs",
+      "fingerprint": "1a93bf96361b27c2:1"
+    },
+    {
+      "path": "crates/litradar-auth/src/service.rs",
+      "fingerprint": "35451e33db02a69:1"
+    },
+    {
+      "path": "crates/litradar-auth/src/service.rs",
+      "fingerprint": "4349a40fae8225b2:1"
+    },
+    {
+      "path": "crates/litradar-auth/src/service.rs",
+      "fingerprint": "6bb3a7a1f574312c:1"
+    },
+    {
+      "path": "crates/litradar-auth/src/service.rs",
+      "fingerprint": "bab000ad9a9a5c34:1"
+    },
+    {
+      "path": "crates/litradar-auth/src/service.rs",
+      "fingerprint": "e5cc30928d75bef9:1"
+    },
+    {
+      "path": "crates/litradar-auth/src/service.rs",
+      "fingerprint": "f0e72cf8a63d3da8:1"
+    },
+    {
+      "path": "crates/litradar-auth/src/service.rs",
+      "fingerprint": "f617f7461485aaf0:1"
+    },
+    {
+      "path": "crates/litradar-storage/src/auth.rs",
+      "fingerprint": "1a7e8f5cb6c834ea:1"
+    },
+    {
+      "path": "crates/litradar-storage/src/auth.rs",
+      "fingerprint": "2937aa671343000e:1"
+    },
+    {
+      "path": "crates/litradar-storage/src/auth.rs",
+      "fingerprint": "29c8985aafa9c5e2:1"
+    },
+    {
+      "path": "crates/litradar-storage/src/auth.rs",
+      "fingerprint": "3d46f7aa7395f7f2:1"
+    },
+    {
+      "path": "crates/litradar-storage/src/auth.rs",
+      "fingerprint": "40eddfef8849a719:1"
+    },
+    {
+      "path": "crates/litradar-storage/src/auth.rs",
+      "fingerprint": "46e2d42a6adcab1e:1"
+    },
+    {
+      "path": "crates/litradar-storage/src/auth.rs",
+      "fingerprint": "4b482d340f45f314:1"
+    },
+    {
+      "path": "crates/litradar-storage/src/auth.rs",
+      "fingerprint": "5ee30bb04266fa52:1"
+    },
+    {
+      "path": "crates/litradar-storage/src/auth.rs",
+      "fingerprint": "8a21abdb8b477286:1"
+    },
+    {
+      "path": "crates/litradar-storage/src/auth.rs",
+      "fingerprint": "98b09df7e9c9c7a3:1"
+    },
+    {
+      "path": "crates/litradar-storage/src/auth.rs",
+      "fingerprint": "e73422051acfb3d2:1"
+    },
+    {
+      "path": "crates/litradar-storage/src/business/notifications.rs",
+      "fingerprint": "1cbaef26c4bd5231:1"
+    },
+    {
+      "path": "crates/litradar-storage/src/business/notifications.rs",
+      "fingerprint": "83168b430d15903c:1"
+    },
+    {
+      "path": "crates/litradar-storage/src/business/notifications.rs",
+      "fingerprint": "b714aefdcd17839a:1"
+    },
+    {
+      "path": "crates/litradar-storage/src/business/notifications.rs",
+      "fingerprint": "ea9c752df4230200:1"
+    },
+    {
+      "path": "crates/litradar-storage/src/business/notifications.rs",
+      "fingerprint": "f13bf89f6aa24cd1:1"
+    },
+    {
+      "path": "crates/litradar-storage/tests/auth_bootstrap.rs",
+      "fingerprint": "5c4d613fcd49803b:1"
+    },
+    {
+      "path": "crates/litradar-storage/tests/auth_bootstrap.rs",
+      "fingerprint": "d522ac2d3126f219:1"
+    },
+    {
+      "path": "crates/litradar-worker/src/delivery/manual_job.rs",
+      "fingerprint": "c4d8d0e515a4182:1"
+    },
+    {
+      "path": "crates/litradar-worker/src/delivery/orchestration.rs",
+      "fingerprint": "882917bac6aba3a5:1"
+    },
+    {
+      "path": "crates/litradar/examples/full_stack_fixture.rs",
+      "fingerprint": "362de4a9e03686dd:1"
+    },
+    {
+      "path": "crates/litradar/examples/full_stack_fixture.rs",
+      "fingerprint": "ef3bc99b866755be:1"
+    },
+    {
+      "path": "crates/litradar/src/manual_delivery.rs",
+      "fingerprint": "7d7cf3b86ea1f0e5:1"
+    },
+    {
+      "path": "crates/litradar/src/manual_delivery.rs",
+      "fingerprint": "fe44b2075bd77809:1"
+    },
+    {
+      "path": "crates/litradar/tests/service.rs",
+      "fingerprint": "f08d782cad2c55c5:1"
+    }
+  ]
+}

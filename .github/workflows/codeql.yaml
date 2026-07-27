@@ -41,7 +41,7 @@ jobs:
       matrix:
         include:
           - language: rust
-            build_mode: manual
+            build_mode: none
           - language: javascript-typescript
             build_mode: none
     steps:
@@ -56,23 +56,22 @@ jobs:
           build-mode: ${{ matrix.build_mode }}
           queries: security-extended
 
-      - name: Install Rust toolchain
-        if: matrix.language == 'rust'
-        run: |
-          rustup toolchain install 1.96 --profile minimal
-          rustup default 1.96
-
-      - name: Build production Rust targets for CodeQL
-        if: matrix.language == 'rust'
-        run: cargo build --workspace --locked
-
       - name: Analyze source
         id: analysis
         uses: github/codeql-action/analyze@e4fba868fa4b1b91e1fdab776edc8cfbe6e9fb81 # v4.37.3
         with:
           category: "/language:${{ matrix.language }}"
           output: codeql-results/${{ matrix.language }}
-          upload: always
+          upload: never
+
+      - name: Filter reviewed Rust test fixture findings
+        if: matrix.language == 'rust'
+        env:
+          SARIF_DIRECTORY: ${{ steps.analysis.outputs.sarif-output }}
+        run: >-
+          node scripts/filter-codeql-sarif.mjs
+          "$SARIF_DIRECTORY"
+          .github/codeql-reviewed-fixtures.json
 
       - name: Fail on CodeQL alerts
         env:
@@ -94,6 +93,13 @@ jobs:
             echo "- Alerts: $alert_count"
           } >> "$GITHUB_STEP_SUMMARY"
           test "$alert_count" -eq 0
+
+      - name: Upload filtered CodeQL results
+        if: always() && steps.analysis.outcome == 'success'
+        uses: github/codeql-action/upload-sarif@e4fba868fa4b1b91e1fdab776edc8cfbe6e9fb81 # v4.37.3
+        with:
+          sarif_file: ${{ steps.analysis.outputs.sarif-output }}
+          category: "/language:${{ matrix.language }}"
 
       - name: Upload CodeQL SARIF artifact
         if: always()
