@@ -6,7 +6,8 @@ use std::path::PathBuf;
 
 use litradar_domain::{RuntimeSettingValue, RuntimeSettingsUpdate};
 use litradar_storage::{
-    parse_runtime_setting, runtime_setting_default, ParsedRuntimeSettingValue, RuntimeSettingKey,
+    parse_runtime_setting, runtime_setting_default, AuthRateLimitPolicy, ParsedRuntimeSettingValue,
+    RuntimeSettingKey, TrustedProxyCidr,
 };
 
 /// Rust API runtime configuration.
@@ -30,6 +31,10 @@ pub struct ApiConfig {
     pub mcp_allowed_origins: Vec<String>,
     /// Whether browser session cookies include the Secure attribute.
     pub are_session_cookies_secure: bool,
+    /// Direct peer networks trusted to supply client forwarding chains.
+    pub trusted_proxy_cidrs: Vec<TrustedProxyCidr>,
+    /// Process-local authentication token-bucket policy.
+    pub auth_rate_limit_policy: AuthRateLimitPolicy,
     /// Whether startup must fail unless secure session cookies are enabled.
     pub are_secure_cookies_required: bool,
 }
@@ -60,6 +65,8 @@ impl ApiConfig {
             mcp_allowed_hosts: default_runtime_string_list(RuntimeSettingKey::McpAllowedHosts),
             mcp_allowed_origins: default_runtime_string_list(RuntimeSettingKey::McpAllowedOrigins),
             are_session_cookies_secure: default_runtime_boolean(RuntimeSettingKey::SecureCookies),
+            trusted_proxy_cidrs: default_runtime_trusted_proxy_cidrs(),
+            auth_rate_limit_policy: default_runtime_auth_rate_limit_policy(),
             are_secure_cookies_required: false,
         }
     }
@@ -99,6 +106,14 @@ impl ApiConfig {
                 (RuntimeSettingKey::SecureCookies, ParsedRuntimeSettingValue::Boolean(value)) => {
                     self.are_session_cookies_secure = value
                 }
+                (
+                    RuntimeSettingKey::TrustedProxyCidrs,
+                    ParsedRuntimeSettingValue::TrustedProxyCidrs(values),
+                ) => self.trusted_proxy_cidrs = values,
+                (
+                    RuntimeSettingKey::AuthRateLimitPolicy,
+                    ParsedRuntimeSettingValue::AuthRateLimitPolicy(value),
+                ) => self.auth_rate_limit_policy = value,
                 _ => {}
             }
         }
@@ -194,12 +209,37 @@ fn default_runtime_boolean(key: RuntimeSettingKey) -> bool {
     }
 }
 
+fn default_runtime_trusted_proxy_cidrs() -> Vec<TrustedProxyCidr> {
+    match parse_runtime_setting(
+        RuntimeSettingKey::TrustedProxyCidrs,
+        runtime_setting_default(RuntimeSettingKey::TrustedProxyCidrs),
+    )
+    .expect("runtime setting defaults must pass their registry parser")
+    {
+        ParsedRuntimeSettingValue::TrustedProxyCidrs(values) => values,
+        _ => panic!("trusted_proxy_cidrs must use the CIDR-list parser"),
+    }
+}
+
+fn default_runtime_auth_rate_limit_policy() -> AuthRateLimitPolicy {
+    match parse_runtime_setting(
+        RuntimeSettingKey::AuthRateLimitPolicy,
+        runtime_setting_default(RuntimeSettingKey::AuthRateLimitPolicy),
+    )
+    .expect("runtime setting defaults must pass their registry parser")
+    {
+        ParsedRuntimeSettingValue::AuthRateLimitPolicy(value) => value,
+        _ => panic!("auth_rate_limit_policy must use the typed policy parser"),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
     use std::path::PathBuf;
 
     use litradar_domain::{RuntimeSettingValue, RuntimeSettingsUpdate};
+    use litradar_storage::AuthRateLimitPolicy;
 
     use super::{validate_runtime_settings_update, ApiConfig, ApiConfigError};
 
@@ -223,6 +263,11 @@ mod tests {
         assert_eq!(config.mcp_allowed_hosts, ["localhost", "127.0.0.1", "::1"]);
         assert!(config.mcp_allowed_origins.is_empty());
         assert!(!config.are_session_cookies_secure);
+        assert!(config.trusted_proxy_cidrs.is_empty());
+        assert_eq!(
+            config.auth_rate_limit_policy,
+            AuthRateLimitPolicy::default()
+        );
         assert!(!config.are_secure_cookies_required);
     }
 
@@ -234,6 +279,9 @@ mod tests {
             8000,
             PathBuf::from("secret.key"),
         );
+        let mut policy = AuthRateLimitPolicy::default();
+        policy.login_ip.capacity = 31;
+        let policy_json = serde_json::to_string(&policy).expect("policy should serialize");
 
         config
             .apply_runtime_settings(&[
@@ -247,6 +295,8 @@ mod tests {
                     "https://paper.example, null, http://localhost:5173",
                 ),
                 runtime_setting("secure_cookies", "true"),
+                runtime_setting("trusted_proxy_cidrs", "10.2.3.4/8, 2001:db8::1/32"),
+                runtime_setting("auth_rate_limit_policy", &policy_json),
             ])
             .expect("runtime settings should apply");
 
@@ -263,6 +313,15 @@ mod tests {
             ["https://paper.example", "null", "http://localhost:5173"]
         );
         assert!(config.are_session_cookies_secure);
+        assert_eq!(
+            config
+                .trusted_proxy_cidrs
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>(),
+            ["10.0.0.0/8", "2001:db8::/32"]
+        );
+        assert_eq!(config.auth_rate_limit_policy, policy);
     }
 
     #[test]

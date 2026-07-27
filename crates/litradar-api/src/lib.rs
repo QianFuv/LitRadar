@@ -14,6 +14,7 @@ pub(crate) mod test_support;
 use std::convert::Infallible;
 use std::error::Error;
 use std::future::Future;
+use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -134,9 +135,12 @@ impl PreparedApiService {
             tokio::spawn(api_heartbeat_loop(state.clone(), instance_id.clone()));
 
         let server = async move {
-            axum::serve(listener, router)
-                .with_graceful_shutdown(shutdown)
-                .await
+            axum::serve(
+                listener,
+                router.into_make_service_with_connect_info::<SocketAddr>(),
+            )
+            .with_graceful_shutdown(shutdown)
+            .await
         };
         tokio::pin!(server);
         let serve_result: Result<(), Box<dyn Error>> = tokio::select! {
@@ -208,10 +212,12 @@ fn try_build_router_with_state(
     let runtime_settings =
         litradar_storage::load_runtime_settings(storage_config.auth_db_path(), &secret_codec)?;
     config.apply_runtime_settings(&runtime_settings)?;
-    let state = ApiState::new(
+    let state = ApiState::new_with_auth_policy(
         storage_config,
         secret_codec,
         config.are_session_cookies_secure,
+        config.trusted_proxy_cidrs.clone(),
+        config.auth_rate_limit_policy,
     );
 
     let router = Router::new()
@@ -512,6 +518,7 @@ mod tests {
     use serde_json::Value;
     use tower::ServiceExt;
 
+    use crate::state::tracing_test_support::CapturedLogs;
     use crate::state::ApiState;
     use crate::test_support::{json_request, FixtureIndexDatabase, JsonTestResponse, TestBackend};
     use crate::{
@@ -1187,15 +1194,13 @@ mod tests {
             litradar_storage::migrate_storage(&storage).expect("fixture storage should migrate");
             let secret_key_file = temp_dir.path().join("secret.key");
             fs::write(&secret_key_file, [41_u8; 32]).expect("secret key should write");
-            let codec = litradar_storage::SecretCodec::load(&secret_key_file)
-                .expect("secret key should load");
-            litradar_storage::upsert_runtime_settings(
-                storage.auth_db_path(),
-                &codec,
-                &HashMap::from([(field.to_string(), Some(value.to_string()))]),
-                &HashMap::new(),
-            )
-            .expect("legacy runtime origin should persist");
+            Connection::open(storage.auth_db_path())
+                .expect("legacy auth database should open")
+                .execute(
+                    "INSERT INTO runtime_settings (key, value, updated_at) VALUES (?1, ?2, 1.0)",
+                    (field, value),
+                )
+                .expect("legacy runtime origin should persist outside the current parser");
             let config = ApiConfig::new(
                 temp_dir.path().to_path_buf(),
                 "127.0.0.1".to_string(),
@@ -2051,28 +2056,34 @@ mod tests {
         let backend = TestBackend::new();
         backend.authenticated_user("limited_user", false);
         let app = backend.router();
-        let mut limited_responses = Vec::new();
-
-        for username in ["limited_user", "missing_user"] {
-            let mut last_response = None;
-            for _ in 0..=5 {
-                last_response = Some(
-                    json_request(
-                        &app,
-                        Method::POST,
-                        "/api/auth/login",
-                        None,
-                        None,
-                        Some(serde_json::json!({
-                            "username": username,
-                            "password": "always-wrong"
-                        })),
-                    )
-                    .await,
-                );
-            }
-            limited_responses.push(last_response.expect("rate-limit response should exist"));
-        }
+        let logs = CapturedLogs::default();
+        let limited_responses = logs
+            .capture_async(async {
+                let mut limited_responses = Vec::new();
+                for username in ["limited_user", "missing_user"] {
+                    let mut last_response = None;
+                    for _ in 0..=5 {
+                        last_response = Some(
+                            json_request(
+                                &app,
+                                Method::POST,
+                                "/api/auth/login",
+                                None,
+                                None,
+                                Some(serde_json::json!({
+                                    "username": username,
+                                    "password": "always-wrong"
+                                })),
+                            )
+                            .await,
+                        );
+                    }
+                    limited_responses
+                        .push(last_response.expect("rate-limit response should exist"));
+                }
+                limited_responses
+            })
+            .await;
 
         for response in &limited_responses {
             assert_eq!(response.status, StatusCode::TOO_MANY_REQUESTS);
@@ -2091,6 +2102,35 @@ mod tests {
             assert!((1..=300).contains(&retry_after));
         }
         assert_eq!(limited_responses[0].payload, limited_responses[1].payload);
+        let request_ids = limited_responses
+            .iter()
+            .map(|response| {
+                response
+                    .headers
+                    .get(crate::http_observability::X_REQUEST_ID)
+                    .and_then(|value| value.to_str().ok())
+                    .expect("limited response should contain a request ID")
+                    .to_string()
+            })
+            .collect::<Vec<_>>();
+        let rate_limit_events = logs
+            .events()
+            .into_iter()
+            .filter(|event| event["event"] == "security.auth.rate_limited")
+            .collect::<Vec<_>>();
+        assert_eq!(rate_limit_events.len(), 2);
+        for (index, event) in rate_limit_events.iter().enumerate() {
+            assert_eq!(event["reason"], "rate_limit_exceeded");
+            assert_eq!(event["bucket"], "username");
+            assert_eq!(event["source_class"], "missing_peer");
+            assert_eq!(event["rejected_count"], (index + 1) as u64);
+            assert!(request_ids.contains(
+                &event["request_id"]
+                    .as_str()
+                    .expect("rate-limit event should include a request ID")
+                    .to_string()
+            ));
+        }
     }
 
     #[tokio::test]
@@ -2303,6 +2343,93 @@ mod tests {
         );
         assert_eq!(stored_value("mcp_allowed_hosts"), "localhost,127.0.0.1");
         assert_eq!(stored_value("secure_cookies"), "false");
+    }
+
+    #[tokio::test]
+    #[cfg_attr(
+        miri,
+        ignore = "Miri does not support Tokio's Windows IOCP runtime initialization"
+    )]
+    async fn auth_rate_limit_runtime_policy_updates_are_validated_atomically() {
+        let backend = TestBackend::new();
+        let admin = backend.authenticated_user("limiter_admin", true);
+        let app = backend.router();
+        let admin_auth = admin.authorization_header();
+        let mut policy = litradar_storage::AuthRateLimitPolicy::default();
+        policy.login_ip.capacity = 31;
+        let policy_json = serde_json::to_string(&policy).expect("policy should serialize");
+        let valid = json_request(
+            &app,
+            Method::PUT,
+            "/api/admin/runtime-settings",
+            Some(&admin_auth),
+            None,
+            Some(serde_json::json!({
+                "values": {
+                    "trusted_proxy_cidrs": "10.2.3.4/8,2001:db8::1234/32",
+                    "auth_rate_limit_policy": policy_json
+                }
+            })),
+        )
+        .await;
+        assert_eq!(valid.status, StatusCode::OK);
+        let mut replacement_policy = policy;
+        replacement_policy.login_ip.capacity = 32;
+        let replacement_policy_json = serde_json::to_string(&replacement_policy)
+            .expect("replacement policy should serialize");
+
+        let invalid_cidr = json_request(
+            &app,
+            Method::PUT,
+            "/api/admin/runtime-settings",
+            Some(&admin_auth),
+            None,
+            Some(serde_json::json!({
+                "values": {
+                    "trusted_proxy_cidrs": "10.0.0.1/99",
+                    "auth_rate_limit_policy": replacement_policy_json
+                }
+            })),
+        )
+        .await;
+        let invalid_policy = json_request(
+            &app,
+            Method::PUT,
+            "/api/admin/runtime-settings",
+            Some(&admin_auth),
+            None,
+            Some(serde_json::json!({
+                "values": {"auth_rate_limit_policy": "{}"}
+            })),
+        )
+        .await;
+
+        assert_eq!(invalid_cidr.status, StatusCode::BAD_REQUEST);
+        assert_eq!(
+            invalid_cidr.payload["detail"],
+            "Trusted proxy CIDRs must contain only valid IPv4 or IPv6 networks"
+        );
+        assert_eq!(invalid_policy.status, StatusCode::BAD_REQUEST);
+        assert_eq!(
+            invalid_policy.payload["detail"],
+            "Authentication rate-limit policy must be strict bounded JSON"
+        );
+        let stored =
+            litradar_storage::load_runtime_settings(backend.auth_db_path(), backend.secret_codec())
+                .expect("runtime settings should load");
+        let stored_value = |field: &str| {
+            stored
+                .iter()
+                .find(|setting| setting.field == field)
+                .expect("runtime setting should exist")
+                .value
+                .as_str()
+        };
+        assert_eq!(
+            stored_value("trusted_proxy_cidrs"),
+            "10.0.0.0/8,2001:db8::/32"
+        );
+        assert_eq!(stored_value("auth_rate_limit_policy"), policy_json);
     }
 
     #[tokio::test]

@@ -2,19 +2,17 @@
 
 use std::collections::BTreeMap;
 use std::fmt;
+use std::net::{IpAddr, Ipv6Addr, SocketAddr};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 
+use axum::http::HeaderMap;
 use litradar_provider::ProviderRegistry;
-use litradar_storage::{SecretCodec, StorageConfig};
+use litradar_storage::{
+    AuthRateLimitPolicy, SecretCodec, StorageConfig, TokenBucketPolicy, TrustedProxyCidr,
+};
 use tokio::sync::Semaphore;
 
-const AUTH_USERNAME_ATTEMPT_LIMIT: u32 = 5;
-const AUTH_USERNAME_WINDOW_SECONDS: u64 = 5 * 60;
-const AUTH_GLOBAL_LOGIN_ATTEMPT_LIMIT: u32 = 100;
-const AUTH_GLOBAL_REGISTER_ATTEMPT_LIMIT: u32 = 25;
-const AUTH_GLOBAL_WINDOW_SECONDS: u64 = 60;
-const AUTH_TRACKED_USERNAME_LIMIT: usize = 4_096;
 const DEFAULT_BLOCKING_CONCURRENCY: usize = 8;
 const DEFAULT_BLOCKING_TIMEOUT: Duration = Duration::from_secs(30);
 const DEFAULT_KDF_CONCURRENCY: usize = 2;
@@ -26,6 +24,7 @@ pub struct ApiState {
     secret_codec: SecretCodec,
     are_session_cookies_secure: bool,
     auth_rate_limiter: Arc<Mutex<AuthRateLimiter>>,
+    trusted_proxy_cidrs: Arc<[TrustedProxyCidr]>,
     blocking_executor: BlockingExecutor,
     kdf_executor: BlockingExecutor,
     article_providers: Arc<ProviderRegistry>,
@@ -48,6 +47,57 @@ impl ApiState {
         secret_codec: SecretCodec,
         are_session_cookies_secure: bool,
     ) -> Self {
+        Self::build(
+            storage_config,
+            secret_codec,
+            are_session_cookies_secure,
+            Vec::new(),
+            AuthRateLimitPolicy::default(),
+            DEFAULT_BLOCKING_CONCURRENCY,
+            DEFAULT_BLOCKING_TIMEOUT,
+        )
+    }
+
+    /// Build API state with startup-validated authentication network policy.
+    ///
+    /// # Arguments
+    ///
+    /// * `storage_config` - Data path configuration.
+    /// * `secret_codec` - Deployment secret codec.
+    /// * `are_session_cookies_secure` - Whether session cookies include Secure.
+    /// * `trusted_proxy_cidrs` - Direct peer networks allowed to supply forwarding chains.
+    /// * `auth_rate_limit_policy` - Process-local token-bucket policy.
+    ///
+    /// # Returns
+    ///
+    /// Shared API state using the validated authentication policy.
+    pub(crate) fn new_with_auth_policy(
+        storage_config: StorageConfig,
+        secret_codec: SecretCodec,
+        are_session_cookies_secure: bool,
+        trusted_proxy_cidrs: Vec<TrustedProxyCidr>,
+        auth_rate_limit_policy: AuthRateLimitPolicy,
+    ) -> Self {
+        Self::build(
+            storage_config,
+            secret_codec,
+            are_session_cookies_secure,
+            trusted_proxy_cidrs,
+            auth_rate_limit_policy,
+            DEFAULT_BLOCKING_CONCURRENCY,
+            DEFAULT_BLOCKING_TIMEOUT,
+        )
+    }
+
+    fn build(
+        storage_config: StorageConfig,
+        secret_codec: SecretCodec,
+        are_session_cookies_secure: bool,
+        trusted_proxy_cidrs: Vec<TrustedProxyCidr>,
+        auth_rate_limit_policy: AuthRateLimitPolicy,
+        blocking_concurrency: usize,
+        blocking_timeout: Duration,
+    ) -> Self {
         let article_providers = crate::article_access::build_article_provider_registry(
             storage_config.clone(),
             secret_codec.clone(),
@@ -57,14 +107,10 @@ impl ApiState {
             storage_config,
             secret_codec,
             are_session_cookies_secure,
-            auth_rate_limiter: Arc::new(Mutex::new(AuthRateLimiter::new(
-                AuthRateLimitConfig::default(),
-            ))),
-            blocking_executor: BlockingExecutor::new(
-                DEFAULT_BLOCKING_CONCURRENCY,
-                DEFAULT_BLOCKING_TIMEOUT,
-            ),
-            kdf_executor: BlockingExecutor::new(DEFAULT_KDF_CONCURRENCY, DEFAULT_BLOCKING_TIMEOUT),
+            auth_rate_limiter: Arc::new(Mutex::new(AuthRateLimiter::new(auth_rate_limit_policy))),
+            trusted_proxy_cidrs: trusted_proxy_cidrs.into(),
+            blocking_executor: BlockingExecutor::new(blocking_concurrency, blocking_timeout),
+            kdf_executor: BlockingExecutor::new(DEFAULT_KDF_CONCURRENCY, blocking_timeout),
             article_providers: Arc::new(article_providers),
         }
     }
@@ -90,22 +136,15 @@ impl ApiState {
         concurrency: usize,
         timeout: Duration,
     ) -> Self {
-        let article_providers = crate::article_access::build_article_provider_registry(
-            storage_config.clone(),
-            secret_codec.clone(),
-        )
-        .expect("built-in article provider registry should be valid");
-        Self {
+        Self::build(
             storage_config,
             secret_codec,
             are_session_cookies_secure,
-            auth_rate_limiter: Arc::new(Mutex::new(AuthRateLimiter::new(
-                AuthRateLimitConfig::default(),
-            ))),
-            blocking_executor: BlockingExecutor::new(concurrency, timeout),
-            kdf_executor: BlockingExecutor::new(DEFAULT_KDF_CONCURRENCY, timeout),
-            article_providers: Arc::new(article_providers),
-        }
+            Vec::new(),
+            AuthRateLimitPolicy::default(),
+            concurrency,
+            timeout,
+        )
     }
 
     /// Replace request-time article providers for focused capability tests.
@@ -273,33 +312,40 @@ impl ApiState {
     ///
     /// * `kind` - Login or registration global bucket.
     /// * `username` - Username used for the normalized per-account bucket.
+    /// * `peer_address` - Direct TCP peer address when connection metadata is available.
+    /// * `headers` - Request headers containing an optional trusted forwarding chain.
     ///
     /// # Returns
     ///
-    /// Empty result when allowed, or Retry-After seconds when limited.
+    /// Empty result when allowed, or structured rejection metadata when limited.
     pub(crate) fn check_auth_attempt(
         &self,
         kind: AuthAttemptKind,
         username: &str,
-    ) -> Result<(), u64> {
+        peer_address: Option<SocketAddr>,
+        headers: &HeaderMap,
+    ) -> Result<(), AuthRateLimitRejection> {
+        let client_source =
+            resolve_auth_client_source(peer_address, headers, self.trusted_proxy_cidrs.as_ref());
         let mut limiter = self
             .auth_rate_limiter
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        limiter.check(kind, username, current_unix_seconds())
+        limiter.check(kind, client_source, username)
     }
 
     /// Clear the per-username failure bucket after successful authentication.
     ///
     /// # Arguments
     ///
+    /// * `kind` - Authentication operation whose username bucket succeeded.
     /// * `username` - Username whose normalized bucket should be cleared.
-    pub(crate) fn clear_auth_attempts(&self, username: &str) {
+    pub(crate) fn clear_auth_attempts(&self, kind: AuthAttemptKind, username: &str) {
         let mut limiter = self
             .auth_rate_limiter
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        limiter.clear_username(username);
+        limiter.clear_username(kind, username);
     }
 }
 
@@ -313,6 +359,7 @@ impl fmt::Debug for ApiState {
                 "are_session_cookies_secure",
                 &self.are_session_cookies_secure,
             )
+            .field("trusted_proxy_count", &self.trusted_proxy_cidrs.len())
             .field("article_providers", &"[REGISTERED]")
             .finish_non_exhaustive()
     }
@@ -403,8 +450,8 @@ impl BlockingExecutor {
     }
 }
 
-/// Authentication operation with an independent global request bucket.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Authentication operation with independent keyed and global buckets.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum AuthAttemptKind {
     /// Login attempt.
     Login,
@@ -412,134 +459,466 @@ pub(crate) enum AuthAttemptKind {
     Register,
 }
 
-#[derive(Debug, Clone, Copy)]
-struct AuthRateLimitConfig {
-    username_attempt_limit: u32,
-    username_window_seconds: u64,
-    global_login_attempt_limit: u32,
-    global_register_attempt_limit: u32,
-    global_window_seconds: u64,
-    tracked_username_limit: usize,
+/// Structured authentication limiter rejection metadata.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct AuthRateLimitRejection {
+    /// Retry delay returned in the HTTP response.
+    pub(crate) retry_after_seconds: u64,
+    /// Stable rejection classification.
+    pub(crate) reason: &'static str,
+    /// Bucket class that rejected the request.
+    pub(crate) bucket: &'static str,
+    /// Trust classification used to determine the client address.
+    pub(crate) source_class: &'static str,
+    /// Process-local count for this operation and bucket class.
+    pub(crate) rejected_count: u64,
 }
 
-impl Default for AuthRateLimitConfig {
-    fn default() -> Self {
-        Self {
-            username_attempt_limit: AUTH_USERNAME_ATTEMPT_LIMIT,
-            username_window_seconds: AUTH_USERNAME_WINDOW_SECONDS,
-            global_login_attempt_limit: AUTH_GLOBAL_LOGIN_ATTEMPT_LIMIT,
-            global_register_attempt_limit: AUTH_GLOBAL_REGISTER_ATTEMPT_LIMIT,
-            global_window_seconds: AUTH_GLOBAL_WINDOW_SECONDS,
-            tracked_username_limit: AUTH_TRACKED_USERNAME_LIMIT,
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum AuthRateLimitBucket {
+    ClientIp,
+    Username,
+    GlobalBreaker,
+}
+
+impl AuthRateLimitBucket {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::ClientIp => "client_ip",
+            Self::Username => "username",
+            Self::GlobalBreaker => "global_breaker",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct AuthClientSource {
+    address: IpAddr,
+    class: AuthClientSourceClass,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AuthClientSourceClass {
+    Direct,
+    UntrustedForwardingHeader,
+    TrustedForwardingChain,
+    TrustedProxyWithoutHeader,
+    TrustedProxyInvalidHeader,
+    MissingPeer,
+}
+
+impl AuthClientSourceClass {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Direct => "direct",
+            Self::UntrustedForwardingHeader => "untrusted_forwarding_header",
+            Self::TrustedForwardingChain => "trusted_forwarding_chain",
+            Self::TrustedProxyWithoutHeader => "trusted_proxy_without_header",
+            Self::TrustedProxyInvalidHeader => "trusted_proxy_invalid_header",
+            Self::MissingPeer => "missing_peer",
         }
     }
 }
 
 #[derive(Debug)]
 struct AuthRateLimiter {
-    config: AuthRateLimitConfig,
-    login_attempts: AttemptWindow,
-    register_attempts: AttemptWindow,
-    username_attempts: BTreeMap<String, AttemptWindow>,
+    policy: AuthRateLimitPolicy,
+    started_at: Instant,
+    ip_buckets: BTreeMap<(AuthAttemptKind, IpAddr), TrackedTokenBucket>,
+    username_buckets: BTreeMap<(AuthAttemptKind, String), TrackedTokenBucket>,
+    global_login: TokenBucket,
+    global_register: TokenBucket,
+    next_access_sequence: u64,
+    rejection_counts: BTreeMap<(AuthAttemptKind, AuthRateLimitBucket), u64>,
 }
 
 impl AuthRateLimiter {
-    fn new(config: AuthRateLimitConfig) -> Self {
+    fn new(policy: AuthRateLimitPolicy) -> Self {
         Self {
-            config,
-            login_attempts: AttemptWindow::default(),
-            register_attempts: AttemptWindow::default(),
-            username_attempts: BTreeMap::new(),
+            policy,
+            started_at: Instant::now(),
+            ip_buckets: BTreeMap::new(),
+            username_buckets: BTreeMap::new(),
+            global_login: TokenBucket::full(policy.global_login, 0),
+            global_register: TokenBucket::full(policy.global_register, 0),
+            next_access_sequence: 0,
+            rejection_counts: BTreeMap::new(),
         }
     }
 
-    fn check(&mut self, kind: AuthAttemptKind, username: &str, now: u64) -> Result<(), u64> {
-        let global_limit = match kind {
-            AuthAttemptKind::Login => self.config.global_login_attempt_limit,
-            AuthAttemptKind::Register => self.config.global_register_attempt_limit,
-        };
-        let global_attempts = match kind {
-            AuthAttemptKind::Login => &mut self.login_attempts,
-            AuthAttemptKind::Register => &mut self.register_attempts,
-        };
-        global_attempts.try_acquire(now, global_limit, self.config.global_window_seconds)?;
+    fn check(
+        &mut self,
+        kind: AuthAttemptKind,
+        client_source: AuthClientSource,
+        username: &str,
+    ) -> Result<(), AuthRateLimitRejection> {
+        let now = self.started_at.elapsed().as_secs();
+        self.check_at(kind, client_source, username, now)
+    }
 
-        self.prune_usernames(now);
+    fn check_at(
+        &mut self,
+        kind: AuthAttemptKind,
+        client_source: AuthClientSource,
+        username: &str,
+        now: u64,
+    ) -> Result<(), AuthRateLimitRejection> {
+        let access_sequence = self.next_sequence();
+        let ip_policy = match kind {
+            AuthAttemptKind::Login => self.policy.login_ip,
+            AuthAttemptKind::Register => self.policy.register_ip,
+        };
+        if let Err(retry_after_seconds) = try_acquire_tracked_bucket(
+            &mut self.ip_buckets,
+            (kind, client_source.address),
+            self.policy.ip_key_limit,
+            ip_policy,
+            now,
+            access_sequence,
+        ) {
+            return Err(self.rejection(
+                kind,
+                AuthRateLimitBucket::ClientIp,
+                client_source.class,
+                retry_after_seconds,
+            ));
+        }
+
         let normalized_username = normalize_username(username);
-        if !self.username_attempts.contains_key(&normalized_username)
-            && self.username_attempts.len() >= self.config.tracked_username_limit
-        {
-            self.evict_oldest_username();
+        if let Err(retry_after_seconds) = try_acquire_tracked_bucket(
+            &mut self.username_buckets,
+            (kind, normalized_username),
+            self.policy.username_key_limit,
+            self.policy.username,
+            now,
+            access_sequence,
+        ) {
+            return Err(self.rejection(
+                kind,
+                AuthRateLimitBucket::Username,
+                client_source.class,
+                retry_after_seconds,
+            ));
         }
-        self.username_attempts
-            .entry(normalized_username)
-            .or_default()
-            .try_acquire(
-                now,
-                self.config.username_attempt_limit,
-                self.config.username_window_seconds,
-            )
-    }
 
-    fn clear_username(&mut self, username: &str) {
-        self.username_attempts.remove(&normalize_username(username));
-    }
-
-    fn prune_usernames(&mut self, now: u64) {
-        let window_seconds = self.config.username_window_seconds;
-        self.username_attempts.retain(|_, attempts| {
-            attempts.count > 0 && now.saturating_sub(attempts.started_at) < window_seconds
-        });
-    }
-
-    fn evict_oldest_username(&mut self) {
-        let oldest = self
-            .username_attempts
-            .iter()
-            .min_by(|(left_key, left), (right_key, right)| {
-                left.started_at
-                    .cmp(&right.started_at)
-                    .then_with(|| left_key.cmp(right_key))
-            })
-            .map(|(username, _)| username.clone());
-        if let Some(username) = oldest {
-            self.username_attempts.remove(&username);
+        let global_result = match kind {
+            AuthAttemptKind::Login => self.global_login.try_acquire(now, self.policy.global_login),
+            AuthAttemptKind::Register => self
+                .global_register
+                .try_acquire(now, self.policy.global_register),
+        };
+        if let Err(retry_after_seconds) = global_result {
+            return Err(self.rejection(
+                kind,
+                AuthRateLimitBucket::GlobalBreaker,
+                client_source.class,
+                retry_after_seconds,
+            ));
         }
-    }
-}
-
-#[derive(Debug, Default)]
-struct AttemptWindow {
-    started_at: u64,
-    count: u32,
-}
-
-impl AttemptWindow {
-    fn try_acquire(&mut self, now: u64, limit: u32, window_seconds: u64) -> Result<(), u64> {
-        let elapsed = now.saturating_sub(self.started_at);
-        if self.count == 0 || elapsed >= window_seconds {
-            self.started_at = now;
-            self.count = 0;
-        }
-        if self.count >= limit {
-            return Err(window_seconds
-                .saturating_sub(now.saturating_sub(self.started_at))
-                .max(1));
-        }
-        self.count += 1;
         Ok(())
     }
+
+    fn clear_username(&mut self, kind: AuthAttemptKind, username: &str) {
+        self.username_buckets
+            .remove(&(kind, normalize_username(username)));
+    }
+
+    fn next_sequence(&mut self) -> u64 {
+        self.next_access_sequence = self.next_access_sequence.saturating_add(1);
+        self.next_access_sequence
+    }
+
+    fn rejection(
+        &mut self,
+        kind: AuthAttemptKind,
+        bucket: AuthRateLimitBucket,
+        source_class: AuthClientSourceClass,
+        retry_after_seconds: u64,
+    ) -> AuthRateLimitRejection {
+        let rejected_count = self.rejection_counts.entry((kind, bucket)).or_default();
+        *rejected_count = rejected_count.saturating_add(1);
+        AuthRateLimitRejection {
+            retry_after_seconds,
+            reason: "rate_limit_exceeded",
+            bucket: bucket.as_str(),
+            source_class: source_class.as_str(),
+            rejected_count: *rejected_count,
+        }
+    }
 }
+
+#[derive(Debug)]
+struct TrackedTokenBucket {
+    bucket: TokenBucket,
+    last_used_sequence: u64,
+}
+
+impl TrackedTokenBucket {
+    fn new(policy: TokenBucketPolicy, now: u64, last_used_sequence: u64) -> Self {
+        Self {
+            bucket: TokenBucket::full(policy, now),
+            last_used_sequence,
+        }
+    }
+}
+
+#[derive(Debug)]
+struct TokenBucket {
+    available_units: u128,
+    last_refill_at: u64,
+}
+
+impl TokenBucket {
+    fn full(policy: TokenBucketPolicy, now: u64) -> Self {
+        Self {
+            available_units: bucket_capacity_units(policy),
+            last_refill_at: now,
+        }
+    }
+
+    fn try_acquire(&mut self, now: u64, policy: TokenBucketPolicy) -> Result<(), u64> {
+        if now > self.last_refill_at {
+            let elapsed = now - self.last_refill_at;
+            let restored = u128::from(elapsed) * u128::from(policy.refill_tokens);
+            self.available_units = self
+                .available_units
+                .saturating_add(restored)
+                .min(bucket_capacity_units(policy));
+            self.last_refill_at = now;
+        }
+        let request_units = u128::from(policy.refill_seconds);
+        if self.available_units >= request_units {
+            self.available_units -= request_units;
+            return Ok(());
+        }
+        let missing_units = request_units - self.available_units;
+        let refill_tokens = u128::from(policy.refill_tokens);
+        let retry_after_seconds = missing_units.div_ceil(refill_tokens).max(1);
+        Err(u64::try_from(retry_after_seconds).unwrap_or(u64::MAX))
+    }
+}
+
+fn bucket_capacity_units(policy: TokenBucketPolicy) -> u128 {
+    u128::from(policy.capacity) * u128::from(policy.refill_seconds)
+}
+
+fn try_acquire_tracked_bucket<Key>(
+    buckets: &mut BTreeMap<Key, TrackedTokenBucket>,
+    key: Key,
+    key_limit: usize,
+    policy: TokenBucketPolicy,
+    now: u64,
+    access_sequence: u64,
+) -> Result<(), u64>
+where
+    Key: Clone + Ord,
+{
+    if !buckets.contains_key(&key) && buckets.len() >= key_limit {
+        evict_least_recently_used(buckets);
+    }
+    let tracked = buckets
+        .entry(key)
+        .or_insert_with(|| TrackedTokenBucket::new(policy, now, access_sequence));
+    tracked.last_used_sequence = access_sequence;
+    tracked.bucket.try_acquire(now, policy)
+}
+
+fn evict_least_recently_used<Key>(buckets: &mut BTreeMap<Key, TrackedTokenBucket>)
+where
+    Key: Clone + Ord,
+{
+    let oldest = buckets
+        .iter()
+        .min_by(|(left_key, left), (right_key, right)| {
+            left.last_used_sequence
+                .cmp(&right.last_used_sequence)
+                .then_with(|| left_key.cmp(right_key))
+        })
+        .map(|(key, _)| key.clone());
+    if let Some(key) = oldest {
+        buckets.remove(&key);
+    }
+}
+
+const MAX_TRACKED_USERNAME_CHARS: usize = 32;
+const FORWARDED_HEADER: &str = "forwarded";
+const X_FORWARDED_FOR_HEADER: &str = "x-forwarded-for";
 
 fn normalize_username(username: &str) -> String {
-    username.trim().to_ascii_lowercase()
+    username
+        .trim()
+        .chars()
+        .take(MAX_TRACKED_USERNAME_CHARS)
+        .collect::<String>()
+        .to_ascii_lowercase()
 }
 
-fn current_unix_seconds() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("system time should be after Unix epoch")
-        .as_secs()
+fn resolve_auth_client_source(
+    peer_address: Option<SocketAddr>,
+    headers: &HeaderMap,
+    trusted_proxy_cidrs: &[TrustedProxyCidr],
+) -> AuthClientSource {
+    let Some(peer_address) = peer_address else {
+        return AuthClientSource {
+            address: IpAddr::V6(Ipv6Addr::UNSPECIFIED),
+            class: AuthClientSourceClass::MissingPeer,
+        };
+    };
+    let peer_ip = canonical_client_ip(peer_address.ip());
+    let has_forwarding_header =
+        headers.contains_key(FORWARDED_HEADER) || headers.contains_key(X_FORWARDED_FOR_HEADER);
+    if !is_trusted_proxy(peer_ip, trusted_proxy_cidrs) {
+        return AuthClientSource {
+            address: peer_ip,
+            class: if has_forwarding_header {
+                AuthClientSourceClass::UntrustedForwardingHeader
+            } else {
+                AuthClientSourceClass::Direct
+            },
+        };
+    }
+
+    match parse_forwarding_chain(headers) {
+        ForwardingChain::Absent => AuthClientSource {
+            address: peer_ip,
+            class: AuthClientSourceClass::TrustedProxyWithoutHeader,
+        },
+        ForwardingChain::Invalid => AuthClientSource {
+            address: peer_ip,
+            class: AuthClientSourceClass::TrustedProxyInvalidHeader,
+        },
+        ForwardingChain::Valid(chain) => {
+            let mut client_ip = peer_ip;
+            for forwarded_ip in chain.into_iter().rev() {
+                if !is_trusted_proxy(client_ip, trusted_proxy_cidrs) {
+                    break;
+                }
+                client_ip = canonical_client_ip(forwarded_ip);
+            }
+            AuthClientSource {
+                address: client_ip,
+                class: AuthClientSourceClass::TrustedForwardingChain,
+            }
+        }
+    }
+}
+
+fn is_trusted_proxy(address: IpAddr, trusted_proxy_cidrs: &[TrustedProxyCidr]) -> bool {
+    trusted_proxy_cidrs
+        .iter()
+        .any(|network| network.contains(address))
+}
+
+fn canonical_client_ip(address: IpAddr) -> IpAddr {
+    match address {
+        IpAddr::V6(address) => address
+            .to_ipv4_mapped()
+            .map(IpAddr::V4)
+            .unwrap_or(IpAddr::V6(address)),
+        address => address,
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum ForwardingChain {
+    Absent,
+    Invalid,
+    Valid(Vec<IpAddr>),
+}
+
+fn parse_forwarding_chain(headers: &HeaderMap) -> ForwardingChain {
+    if headers.get_all(FORWARDED_HEADER).iter().next().is_some() {
+        return parse_forwarded_header(headers);
+    }
+    if headers
+        .get_all(X_FORWARDED_FOR_HEADER)
+        .iter()
+        .next()
+        .is_some()
+    {
+        return parse_x_forwarded_for_header(headers);
+    }
+    ForwardingChain::Absent
+}
+
+fn parse_forwarded_header(headers: &HeaderMap) -> ForwardingChain {
+    let mut chain = Vec::new();
+    for value in headers.get_all(FORWARDED_HEADER) {
+        let Ok(value) = value.to_str() else {
+            return ForwardingChain::Invalid;
+        };
+        for element in value.split(',') {
+            let mut forwarded_for = None;
+            for parameter in element.split(';') {
+                let Some((name, value)) = parameter.trim().split_once('=') else {
+                    return ForwardingChain::Invalid;
+                };
+                if name.trim().eq_ignore_ascii_case("for") {
+                    if forwarded_for.is_some() {
+                        return ForwardingChain::Invalid;
+                    }
+                    forwarded_for = parse_forwarded_node(value.trim());
+                    if forwarded_for.is_none() {
+                        return ForwardingChain::Invalid;
+                    }
+                }
+            }
+            let Some(forwarded_for) = forwarded_for else {
+                return ForwardingChain::Invalid;
+            };
+            chain.push(forwarded_for);
+        }
+    }
+    if chain.is_empty() {
+        ForwardingChain::Invalid
+    } else {
+        ForwardingChain::Valid(chain)
+    }
+}
+
+fn parse_x_forwarded_for_header(headers: &HeaderMap) -> ForwardingChain {
+    let mut chain = Vec::new();
+    for value in headers.get_all(X_FORWARDED_FOR_HEADER) {
+        let Ok(value) = value.to_str() else {
+            return ForwardingChain::Invalid;
+        };
+        for entry in value.split(',') {
+            let Some(address) = parse_forwarded_node(entry.trim()) else {
+                return ForwardingChain::Invalid;
+            };
+            chain.push(address);
+        }
+    }
+    if chain.is_empty() {
+        ForwardingChain::Invalid
+    } else {
+        ForwardingChain::Valid(chain)
+    }
+}
+
+fn parse_forwarded_node(value: &str) -> Option<IpAddr> {
+    let value = if value.starts_with('"') && value.ends_with('"') && value.len() >= 2 {
+        let value = &value[1..value.len() - 1];
+        if value.contains(['"', '\\']) {
+            return None;
+        }
+        value
+    } else if value.contains('"') {
+        return None;
+    } else {
+        value
+    };
+    value
+        .parse::<IpAddr>()
+        .ok()
+        .or_else(|| value.parse::<SocketAddr>().ok().map(|address| address.ip()))
+        .or_else(|| {
+            value
+                .strip_prefix('[')
+                .and_then(|value| value.strip_suffix(']'))
+                .and_then(|value| value.parse::<IpAddr>().ok())
+        })
+        .map(canonical_client_ip)
 }
 
 #[cfg(test)]
@@ -692,76 +1071,325 @@ pub(crate) mod tracing_test_support {
 
 #[cfg(test)]
 mod tests {
+    use std::net::{IpAddr, SocketAddr};
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use std::sync::Arc;
     use std::time::Duration;
 
     use axum::body::{to_bytes, Body};
-    use axum::http::{Request, StatusCode};
-    use litradar_storage::{SecretCodec, StorageConfig};
+    use axum::http::{HeaderMap, HeaderValue, Request, StatusCode};
+    use litradar_storage::{
+        parse_runtime_setting, AuthRateLimitPolicy, ParsedRuntimeSettingValue, RuntimeSettingKey,
+        SecretCodec, StorageConfig, TokenBucketPolicy, TrustedProxyCidr,
+    };
     use tempfile::tempdir;
     use tower::ServiceExt;
     use tracing::Instrument;
 
     use super::tracing_test_support::CapturedLogs;
     use super::{
-        ApiState, AuthAttemptKind, AuthRateLimitConfig, AuthRateLimiter, BlockingExecutor,
-        BlockingTaskError,
+        resolve_auth_client_source, ApiState, AuthAttemptKind, AuthClientSource,
+        AuthClientSourceClass, AuthRateLimiter, BlockingExecutor, BlockingTaskError,
     };
 
-    fn test_config() -> AuthRateLimitConfig {
-        AuthRateLimitConfig {
-            username_attempt_limit: 2,
-            username_window_seconds: 10,
-            global_login_attempt_limit: 3,
-            global_register_attempt_limit: 2,
-            global_window_seconds: 5,
-            tracked_username_limit: 2,
+    fn bucket(capacity: u32, refill_tokens: u32, refill_seconds: u64) -> TokenBucketPolicy {
+        TokenBucketPolicy {
+            capacity,
+            refill_tokens,
+            refill_seconds,
+        }
+    }
+
+    fn test_policy() -> AuthRateLimitPolicy {
+        AuthRateLimitPolicy {
+            login_ip: bucket(20, 1, 10),
+            username: bucket(2, 1, 10),
+            register_ip: bucket(20, 1, 10),
+            global_login: bucket(20, 1, 10),
+            global_register: bucket(20, 1, 10),
+            ip_key_limit: 2,
+            username_key_limit: 2,
+        }
+    }
+
+    fn direct_source(address: &str) -> AuthClientSource {
+        AuthClientSource {
+            address: address.parse().expect("client IP should parse"),
+            class: AuthClientSourceClass::Direct,
+        }
+    }
+
+    fn trusted_proxy_cidrs(value: &str) -> Vec<TrustedProxyCidr> {
+        match parse_runtime_setting(RuntimeSettingKey::TrustedProxyCidrs, value)
+            .expect("trusted proxy CIDRs should parse")
+        {
+            ParsedRuntimeSettingValue::TrustedProxyCidrs(values) => values,
+            _ => panic!("trusted proxy setting should use the typed CIDR parser"),
         }
     }
 
     #[test]
     fn auth_rate_limit_normalizes_usernames_and_returns_retry_delay() {
-        let mut limiter = AuthRateLimiter::new(test_config());
+        let mut limiter = AuthRateLimiter::new(test_policy());
+        let source = direct_source("192.0.2.10");
 
         assert_eq!(
-            limiter.check(AuthAttemptKind::Login, " Alice ", 100),
+            limiter.check_at(AuthAttemptKind::Login, source, " Alice ", 100),
             Ok(())
         );
-        assert_eq!(limiter.check(AuthAttemptKind::Login, "alice", 101), Ok(()));
-        assert_eq!(limiter.check(AuthAttemptKind::Login, "ALICE", 102), Err(8));
+        assert_eq!(
+            limiter.check_at(AuthAttemptKind::Login, source, "alice", 101),
+            Ok(())
+        );
+        let rejection = limiter
+            .check_at(AuthAttemptKind::Login, source, "ALICE", 102)
+            .expect_err("normalized username bucket should reject");
+        assert_eq!(rejection.retry_after_seconds, 8);
+        assert_eq!(rejection.reason, "rate_limit_exceeded");
+        assert_eq!(rejection.bucket, "username");
+        assert_eq!(rejection.source_class, "direct");
+        assert_eq!(rejection.rejected_count, 1);
 
-        limiter.clear_username("ALIce");
-        assert_eq!(limiter.check(AuthAttemptKind::Login, "alice", 106), Ok(()));
+        limiter.clear_username(AuthAttemptKind::Register, "ALIce");
+        assert_eq!(
+            limiter
+                .check_at(AuthAttemptKind::Login, source, "alice", 106)
+                .expect_err("clearing registration must not clear login failures")
+                .bucket,
+            "username"
+        );
+        limiter.clear_username(AuthAttemptKind::Login, "ALIce");
+        assert_eq!(
+            limiter.check_at(AuthAttemptKind::Login, source, "alice", 106),
+            Ok(())
+        );
     }
 
     #[test]
-    fn auth_rate_limit_separates_global_buckets_and_prunes_bounded_keys() {
-        let mut limiter = AuthRateLimiter::new(test_config());
+    fn auth_rate_limit_front_rejections_do_not_consume_later_buckets() {
+        let mut policy = test_policy();
+        policy.username = bucket(1, 1, 60);
+        policy.global_login = bucket(2, 1, 60);
+        let mut limiter = AuthRateLimiter::new(policy);
 
         assert_eq!(
-            limiter.check(AuthAttemptKind::Register, "alpha", 10),
+            limiter.check_at(
+                AuthAttemptKind::Login,
+                direct_source("192.0.2.1"),
+                "alpha",
+                10
+            ),
             Ok(())
         );
-        assert_eq!(limiter.check(AuthAttemptKind::Register, "beta", 10), Ok(()));
         assert_eq!(
-            limiter.check(AuthAttemptKind::Register, "gamma", 10),
-            Err(5)
+            limiter
+                .check_at(
+                    AuthAttemptKind::Login,
+                    direct_source("192.0.2.1"),
+                    "alpha",
+                    10
+                )
+                .expect_err("username bucket should reject")
+                .bucket,
+            "username"
         );
-        assert_eq!(limiter.check(AuthAttemptKind::Login, "gamma", 10), Ok(()));
-        assert!(limiter.username_attempts.len() <= 2);
+        assert_eq!(
+            limiter.check_at(
+                AuthAttemptKind::Login,
+                direct_source("192.0.2.2"),
+                "beta",
+                10
+            ),
+            Ok(())
+        );
+        assert_eq!(
+            limiter
+                .check_at(
+                    AuthAttemptKind::Login,
+                    direct_source("192.0.2.3"),
+                    "gamma",
+                    10
+                )
+                .expect_err("global breaker should now reject")
+                .bucket,
+            "global_breaker"
+        );
 
+        let mut policy = test_policy();
+        policy.login_ip = bucket(1, 1, 60);
+        policy.username = bucket(10, 1, 60);
+        policy.global_login = bucket(2, 1, 60);
+        let mut limiter = AuthRateLimiter::new(policy);
         assert_eq!(
-            limiter.check(AuthAttemptKind::Register, "gamma", 16),
+            limiter.check_at(
+                AuthAttemptKind::Login,
+                direct_source("198.51.100.1"),
+                "alpha",
+                20
+            ),
             Ok(())
         );
-        assert!(limiter.username_attempts.len() <= 2);
+        assert_eq!(
+            limiter
+                .check_at(
+                    AuthAttemptKind::Login,
+                    direct_source("198.51.100.1"),
+                    "beta",
+                    20
+                )
+                .expect_err("IP bucket should reject")
+                .bucket,
+            "client_ip"
+        );
+        assert!(!limiter
+            .username_buckets
+            .contains_key(&(AuthAttemptKind::Login, "beta".to_string())));
+        assert_eq!(
+            limiter.check_at(
+                AuthAttemptKind::Login,
+                direct_source("198.51.100.2"),
+                "beta",
+                20
+            ),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn auth_rate_limit_lru_maps_remain_bounded_under_rotating_inputs() {
+        let mut limiter = AuthRateLimiter::new(test_policy());
+        for (address, username) in [
+            ("192.0.2.1", "alpha"),
+            ("192.0.2.2", "beta"),
+            ("192.0.2.1", "alpha"),
+            ("192.0.2.3", "gamma"),
+        ] {
+            limiter
+                .check_at(AuthAttemptKind::Login, direct_source(address), username, 10)
+                .expect("bounded fixture request should be accepted");
+        }
+
+        assert_eq!(limiter.ip_buckets.len(), 2);
+        assert!(limiter.ip_buckets.contains_key(&(
+            AuthAttemptKind::Login,
+            "192.0.2.1".parse::<IpAddr>().expect("IP should parse")
+        )));
+        assert!(limiter.ip_buckets.contains_key(&(
+            AuthAttemptKind::Login,
+            "192.0.2.3".parse::<IpAddr>().expect("IP should parse")
+        )));
+        assert_eq!(limiter.username_buckets.len(), 2);
+        assert!(limiter
+            .username_buckets
+            .contains_key(&(AuthAttemptKind::Login, "alpha".to_string())));
+        assert!(limiter
+            .username_buckets
+            .contains_key(&(AuthAttemptKind::Login, "gamma".to_string())));
+
+        for index in 0..100 {
+            let address = SocketAddr::from(([203, 0, 113, index], 443));
+            let username = format!("{}-{index}", "密".repeat(1_000));
+            let _ = limiter.check_at(
+                AuthAttemptKind::Register,
+                AuthClientSource {
+                    address: address.ip(),
+                    class: AuthClientSourceClass::Direct,
+                },
+                &username,
+                20,
+            );
+        }
+        assert!(limiter.ip_buckets.len() <= 2);
+        assert!(limiter.username_buckets.len() <= 2);
+        assert!(limiter
+            .username_buckets
+            .keys()
+            .all(|(_, username)| username.chars().count() <= 32));
+    }
+
+    #[test]
+    fn auth_rate_limit_trusted_proxy_chain_uses_first_untrusted_hop_from_right() {
+        let trusted = trusted_proxy_cidrs("10.0.0.0/8,2001:db8::/32");
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "x-forwarded-for",
+            HeaderValue::from_static("192.0.2.10, 198.51.100.5, 10.0.0.1"),
+        );
+
+        let untrusted = resolve_auth_client_source(
+            Some("203.0.113.9:443".parse().expect("peer should parse")),
+            &headers,
+            &trusted,
+        );
+        assert_eq!(untrusted.address, "203.0.113.9".parse::<IpAddr>().unwrap());
+        assert_eq!(
+            untrusted.class,
+            AuthClientSourceClass::UntrustedForwardingHeader
+        );
+        headers.insert("x-forwarded-for", HeaderValue::from_static("203.0.113.200"));
+        assert_eq!(
+            resolve_auth_client_source(
+                Some("203.0.113.9:443".parse().expect("peer should parse")),
+                &headers,
+                &trusted,
+            ),
+            untrusted
+        );
+        headers.insert(
+            "x-forwarded-for",
+            HeaderValue::from_static("192.0.2.10, 198.51.100.5, 10.0.0.1"),
+        );
+
+        let forwarded = resolve_auth_client_source(
+            Some("10.0.0.2:443".parse().expect("peer should parse")),
+            &headers,
+            &trusted,
+        );
+        assert_eq!(forwarded.address, "198.51.100.5".parse::<IpAddr>().unwrap());
+        assert_eq!(
+            forwarded.class,
+            AuthClientSourceClass::TrustedForwardingChain
+        );
+
+        headers.insert(
+            "forwarded",
+            HeaderValue::from_static("for=203.0.113.7;proto=https, for=\"10.0.0.1:443\""),
+        );
+        let standard = resolve_auth_client_source(
+            Some("10.0.0.2:443".parse().expect("peer should parse")),
+            &headers,
+            &trusted,
+        );
+        assert_eq!(standard.address, "203.0.113.7".parse::<IpAddr>().unwrap());
+    }
+
+    #[test]
+    fn auth_rate_limit_invalid_or_missing_peer_metadata_uses_shared_safe_sources() {
+        let trusted = trusted_proxy_cidrs("10.0.0.0/8");
+        let mut headers = HeaderMap::new();
+        headers.insert("forwarded", HeaderValue::from_static("for=unknown"));
+        headers.insert("x-forwarded-for", HeaderValue::from_static("198.51.100.10"));
+        let invalid = resolve_auth_client_source(
+            Some("10.0.0.2:443".parse().expect("peer should parse")),
+            &headers,
+            &trusted,
+        );
+        assert_eq!(invalid.address, "10.0.0.2".parse::<IpAddr>().unwrap());
+        assert_eq!(
+            invalid.class,
+            AuthClientSourceClass::TrustedProxyInvalidHeader
+        );
+
+        let missing = resolve_auth_client_source(None, &headers, &trusted);
+        assert_eq!(missing.address, "::".parse::<IpAddr>().unwrap());
+        assert_eq!(missing.class, AuthClientSourceClass::MissingPeer);
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn blocking_executor_bounds_concurrency_and_keeps_runtime_responsive() {
+        let temp_dir = tempdir().expect("temporary directory should be created");
         let state = ApiState::new_with_blocking_limits(
-            StorageConfig::from_project_root("blocking-test-root"),
+            StorageConfig::from_project_root(temp_dir.path()),
             SecretCodec::from_key([1_u8; 32]),
             false,
             1,
@@ -895,8 +1523,9 @@ mod tests {
 
     #[tokio::test]
     async fn blocking_executor_close_rejects_new_work() {
+        let temp_dir = tempdir().expect("temporary directory should be created");
         let state = ApiState::new_with_blocking_limits(
-            StorageConfig::from_project_root("blocking-test-root"),
+            StorageConfig::from_project_root(temp_dir.path()),
             SecretCodec::from_key([1_u8; 32]),
             false,
             1,
@@ -917,8 +1546,9 @@ mod tests {
 
     #[tokio::test]
     async fn blocking_work_preserves_request_span_for_security_events() {
+        let temp_dir = tempdir().expect("temporary directory should be created");
         let state = ApiState::new_with_blocking_limits(
-            StorageConfig::from_project_root("blocking-security-test-root"),
+            StorageConfig::from_project_root(temp_dir.path()),
             SecretCodec::from_key([1_u8; 32]),
             false,
             1,

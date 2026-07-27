@@ -1,10 +1,13 @@
 //! Managed runtime setting repositories.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::fmt;
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
 use http::{HeaderValue, Uri};
 use litradar_domain::{RuntimeSettingApplyMode, RuntimeSettingControl, RuntimeSettingGroup};
 use rusqlite::OpenFlags;
+use serde::{Deserialize, Serialize};
 use tracing_subscriber::EnvFilter;
 use url::Url;
 
@@ -30,6 +33,10 @@ pub enum RuntimeSettingKey {
     McpAllowedOrigins,
     /// Secure session-cookie switch.
     SecureCookies,
+    /// Reverse-proxy networks trusted to supply client forwarding chains.
+    TrustedProxyCidrs,
+    /// Process-local authentication limiter policy.
+    AuthRateLimitPolicy,
     /// OpenAI-compatible base URLs available to ordinary users.
     AiAllowedBaseUrls,
     /// Catalog-to-index-Provider routes.
@@ -46,7 +53,7 @@ pub enum RuntimeSettingKey {
 
 impl RuntimeSettingKey {
     /// All managed runtime setting keys in administrator display order.
-    pub const ALL: [Self; 14] = [
+    pub const ALL: [Self; 16] = [
         Self::OpenAlexApiKeyPool,
         Self::SemanticScholarApiKeyPool,
         Self::CnkiCaptchaToken,
@@ -55,6 +62,8 @@ impl RuntimeSettingKey {
         Self::McpAllowedHosts,
         Self::McpAllowedOrigins,
         Self::SecureCookies,
+        Self::TrustedProxyCidrs,
+        Self::AuthRateLimitPolicy,
         Self::AiAllowedBaseUrls,
         Self::IndexProviderRoutes,
         Self::ArticleAbstractProviderOrders,
@@ -78,6 +87,8 @@ impl RuntimeSettingKey {
             Self::McpAllowedHosts => "mcp_allowed_hosts",
             Self::McpAllowedOrigins => "mcp_allowed_origins",
             Self::SecureCookies => "secure_cookies",
+            Self::TrustedProxyCidrs => "trusted_proxy_cidrs",
+            Self::AuthRateLimitPolicy => "auth_rate_limit_policy",
             Self::AiAllowedBaseUrls => "ai_allowed_base_urls",
             Self::IndexProviderRoutes => "index_provider_routes",
             Self::ArticleAbstractProviderOrders => "article_abstract_provider_orders",
@@ -108,6 +119,10 @@ pub enum ParsedRuntimeSettingValue {
     Boolean(bool),
     /// Ordered canonical string-list value.
     StringList(Vec<String>),
+    /// Parsed networks trusted to supply client forwarding chains.
+    TrustedProxyCidrs(Vec<TrustedProxyCidr>),
+    /// Parsed process-local authentication limiter policy.
+    AuthRateLimitPolicy(AuthRateLimitPolicy),
     /// Canonical scalar or structured text value.
     Text(String),
 }
@@ -122,7 +137,117 @@ impl ParsedRuntimeSettingValue {
         match self {
             Self::Boolean(value) => value.to_string(),
             Self::StringList(values) => values.join(","),
+            Self::TrustedProxyCidrs(values) => values
+                .into_iter()
+                .map(|value| value.to_string())
+                .collect::<Vec<_>>()
+                .join(","),
+            Self::AuthRateLimitPolicy(value) => serde_json::to_string(&value)
+                .expect("authentication rate-limit policy serialization should be infallible"),
             Self::Text(value) => value,
+        }
+    }
+}
+
+/// Canonical IPv4 or IPv6 network trusted to supply forwarding headers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub struct TrustedProxyCidr {
+    network: IpAddr,
+    prefix_length: u8,
+}
+
+impl TrustedProxyCidr {
+    /// Return whether an address belongs to this trusted network.
+    ///
+    /// # Arguments
+    ///
+    /// * `address` - Candidate peer address.
+    ///
+    /// # Returns
+    ///
+    /// True when the address matches this network and address family.
+    pub fn contains(self, address: IpAddr) -> bool {
+        match (self.network, address) {
+            (IpAddr::V4(network), IpAddr::V4(address)) => {
+                masked_ipv4(address, self.prefix_length) == network
+            }
+            (IpAddr::V6(network), IpAddr::V6(address)) => {
+                masked_ipv6(address, self.prefix_length) == network
+            }
+            _ => false,
+        }
+    }
+}
+
+impl fmt::Display for TrustedProxyCidr {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "{}/{}", self.network, self.prefix_length)
+    }
+}
+
+/// Token-bucket capacity and rational refill rate.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TokenBucketPolicy {
+    /// Maximum whole tokens held by the bucket.
+    pub capacity: u32,
+    /// Whole tokens restored during each refill period.
+    pub refill_tokens: u32,
+    /// Refill period length in seconds.
+    pub refill_seconds: u64,
+}
+
+/// Bounded process-local authentication rate-limit policy.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AuthRateLimitPolicy {
+    /// Per-client-IP login bucket.
+    pub login_ip: TokenBucketPolicy,
+    /// Per-normalized-username bucket used independently for each auth operation.
+    pub username: TokenBucketPolicy,
+    /// Per-client-IP registration bucket.
+    pub register_ip: TokenBucketPolicy,
+    /// High-threshold process-wide login breaker.
+    pub global_login: TokenBucketPolicy,
+    /// High-threshold process-wide registration breaker.
+    pub global_register: TokenBucketPolicy,
+    /// Maximum combined login and registration IP keys retained in memory.
+    pub ip_key_limit: usize,
+    /// Maximum combined login and registration username keys retained in memory.
+    pub username_key_limit: usize,
+}
+
+impl Default for AuthRateLimitPolicy {
+    /// Return the audited process-local limiter defaults.
+    fn default() -> Self {
+        Self {
+            login_ip: TokenBucketPolicy {
+                capacity: 30,
+                refill_tokens: 1,
+                refill_seconds: 1,
+            },
+            username: TokenBucketPolicy {
+                capacity: 5,
+                refill_tokens: 1,
+                refill_seconds: 60,
+            },
+            register_ip: TokenBucketPolicy {
+                capacity: 5,
+                refill_tokens: 1,
+                refill_seconds: 60,
+            },
+            global_login: TokenBucketPolicy {
+                capacity: 1_000,
+                refill_tokens: 100,
+                refill_seconds: 1,
+            },
+            global_register: TokenBucketPolicy {
+                capacity: 250,
+                refill_tokens: 25,
+                refill_seconds: 1,
+            },
+            ip_key_limit: 8_192,
+            username_key_limit: 4_096,
         }
     }
 }
@@ -135,6 +260,8 @@ enum RuntimeSettingParser {
     ExactOriginList { is_null_allowed: bool },
     HeaderValueList,
     Boolean,
+    TrustedProxyCidrs,
+    AuthRateLimitPolicy,
     HttpsBaseUrlList,
     IndexProviderRoutes,
     ProviderOrder,
@@ -172,6 +299,16 @@ pub const DEFAULT_RUNTIME_LOG_FILTER: &str = concat!(
 /// Default structured process log format.
 pub const DEFAULT_RUNTIME_LOG_FORMAT: &str = "json";
 
+/// Canonical default authentication limiter policy JSON.
+pub const DEFAULT_AUTH_RATE_LIMIT_POLICY_JSON: &str = concat!(
+    "{\"login_ip\":{\"capacity\":30,\"refill_tokens\":1,\"refill_seconds\":1},",
+    "\"username\":{\"capacity\":5,\"refill_tokens\":1,\"refill_seconds\":60},",
+    "\"register_ip\":{\"capacity\":5,\"refill_tokens\":1,\"refill_seconds\":60},",
+    "\"global_login\":{\"capacity\":1000,\"refill_tokens\":100,\"refill_seconds\":1},",
+    "\"global_register\":{\"capacity\":250,\"refill_tokens\":25,\"refill_seconds\":1},",
+    "\"ip_key_limit\":8192,\"username_key_limit\":4096}"
+);
+
 const BOOLEAN_ALLOWED_VALUES: [&str; 2] = ["true", "false"];
 const LOG_FORMAT_ALLOWED_VALUES: [&str; 2] = ["json", "compact"];
 
@@ -194,7 +331,7 @@ impl Default for RuntimeLoggingSettings {
     }
 }
 
-const RUNTIME_CONFIG_DEFINITIONS: [RuntimeConfigDefinition; 14] = [
+const RUNTIME_CONFIG_DEFINITIONS: [RuntimeConfigDefinition; 16] = [
     RuntimeConfigDefinition {
         field: "openalex_api_key_pool",
         label: "OpenAlex API key pool",
@@ -302,6 +439,32 @@ const RUNTIME_CONFIG_DEFINITIONS: [RuntimeConfigDefinition; 14] = [
         description: "Whether session cookies include the Secure attribute.",
         default_value: "false",
         parser: RuntimeSettingParser::Boolean,
+    },
+    RuntimeConfigDefinition {
+        field: "trusted_proxy_cidrs",
+        label: "Trusted proxy CIDRs",
+        group: RuntimeSettingGroup::ServerSecurity,
+        control: RuntimeSettingControl::StringList,
+        apply_mode: RuntimeSettingApplyMode::RestartRequired,
+        allowed_values: &[],
+        input_type: "text",
+        is_secret: false,
+        description: "Comma-separated IPv4 or IPv6 CIDRs whose direct peers may supply Forwarded or X-Forwarded-For client chains. Changes apply after API restart.",
+        default_value: "",
+        parser: RuntimeSettingParser::TrustedProxyCidrs,
+    },
+    RuntimeConfigDefinition {
+        field: "auth_rate_limit_policy",
+        label: "Authentication rate-limit policy",
+        group: RuntimeSettingGroup::ServerSecurity,
+        control: RuntimeSettingControl::Text,
+        apply_mode: RuntimeSettingApplyMode::RestartRequired,
+        allowed_values: &[],
+        input_type: "text",
+        is_secret: false,
+        description: "Strict JSON token-bucket policy for client IP, normalized username, and process-wide authentication breakers. Changes apply after API restart.",
+        default_value: DEFAULT_AUTH_RATE_LIMIT_POLICY_JSON,
+        parser: RuntimeSettingParser::AuthRateLimitPolicy,
     },
     RuntimeConfigDefinition {
         field: "ai_allowed_base_urls",
@@ -428,6 +591,12 @@ pub fn parse_runtime_setting(
         RuntimeSettingParser::Boolean => {
             parse_runtime_bool(key, value).map(ParsedRuntimeSettingValue::Boolean)
         }
+        RuntimeSettingParser::TrustedProxyCidrs => {
+            parse_trusted_proxy_cidrs(value).map(ParsedRuntimeSettingValue::TrustedProxyCidrs)
+        }
+        RuntimeSettingParser::AuthRateLimitPolicy => {
+            parse_auth_rate_limit_policy(value).map(ParsedRuntimeSettingValue::AuthRateLimitPolicy)
+        }
         RuntimeSettingParser::HttpsBaseUrlList => {
             parse_https_base_url_list(value).map(ParsedRuntimeSettingValue::StringList)
         }
@@ -512,6 +681,122 @@ fn parse_https_base_url_list(value: &str) -> Result<Vec<String>, BusinessReposit
         }
     }
     Ok(endpoints)
+}
+
+fn parse_trusted_proxy_cidrs(
+    value: &str,
+) -> Result<Vec<TrustedProxyCidr>, BusinessRepositoryError> {
+    let mut networks = Vec::new();
+    let mut seen = BTreeSet::new();
+    for entry in value
+        .split(',')
+        .map(str::trim)
+        .filter(|entry| !entry.is_empty())
+    {
+        let network = parse_trusted_proxy_cidr(entry)?;
+        if seen.insert(network) {
+            networks.push(network);
+        }
+    }
+    Ok(networks)
+}
+
+fn parse_trusted_proxy_cidr(value: &str) -> Result<TrustedProxyCidr, BusinessRepositoryError> {
+    let (address_text, prefix_text) = match value.split_once('/') {
+        Some(parts) => (parts.0, Some(parts.1)),
+        None => (value, None),
+    };
+    let address = address_text
+        .parse::<IpAddr>()
+        .map_err(|_| invalid_trusted_proxy_cidrs())?;
+    let maximum_prefix = if address.is_ipv4() { 32 } else { 128 };
+    let prefix_length = prefix_text
+        .map(|prefix| prefix.parse::<u8>())
+        .transpose()
+        .map_err(|_| invalid_trusted_proxy_cidrs())?
+        .unwrap_or(maximum_prefix);
+    if prefix_length > maximum_prefix {
+        return Err(invalid_trusted_proxy_cidrs());
+    }
+    let network = match address {
+        IpAddr::V4(address) => IpAddr::V4(masked_ipv4(address, prefix_length)),
+        IpAddr::V6(address) => IpAddr::V6(masked_ipv6(address, prefix_length)),
+    };
+    Ok(TrustedProxyCidr {
+        network,
+        prefix_length,
+    })
+}
+
+fn masked_ipv4(address: Ipv4Addr, prefix_length: u8) -> Ipv4Addr {
+    let mask = if prefix_length == 0 {
+        0
+    } else {
+        u32::MAX << (32 - prefix_length)
+    };
+    Ipv4Addr::from(u32::from(address) & mask)
+}
+
+fn masked_ipv6(address: Ipv6Addr, prefix_length: u8) -> Ipv6Addr {
+    let mask = if prefix_length == 0 {
+        0
+    } else {
+        u128::MAX << (128 - prefix_length)
+    };
+    Ipv6Addr::from(u128::from(address) & mask)
+}
+
+fn invalid_trusted_proxy_cidrs() -> BusinessRepositoryError {
+    BusinessRepositoryError::InvalidRuntimeSetting(
+        "Trusted proxy CIDRs must contain only valid IPv4 or IPv6 networks".to_string(),
+    )
+}
+
+fn parse_auth_rate_limit_policy(
+    value: &str,
+) -> Result<AuthRateLimitPolicy, BusinessRepositoryError> {
+    let policy = serde_json::from_str::<AuthRateLimitPolicy>(value)
+        .map_err(|_| invalid_auth_rate_limit_policy())?;
+    for bucket in [
+        policy.login_ip,
+        policy.username,
+        policy.register_ip,
+        policy.global_login,
+        policy.global_register,
+    ] {
+        if bucket.capacity == 0
+            || bucket.capacity > 100_000
+            || bucket.refill_tokens == 0
+            || bucket.refill_tokens > 100_000
+            || bucket.refill_tokens > bucket.capacity
+            || bucket.refill_seconds == 0
+            || bucket.refill_seconds > 86_400
+        {
+            return Err(invalid_auth_rate_limit_policy());
+        }
+    }
+    if !(1..=65_536).contains(&policy.ip_key_limit)
+        || !(1..=65_536).contains(&policy.username_key_limit)
+        || !global_breaker_dominates(policy.global_login, policy.login_ip)
+        || !global_breaker_dominates(policy.global_login, policy.username)
+        || !global_breaker_dominates(policy.global_register, policy.register_ip)
+        || !global_breaker_dominates(policy.global_register, policy.username)
+    {
+        return Err(invalid_auth_rate_limit_policy());
+    }
+    Ok(policy)
+}
+
+fn global_breaker_dominates(global: TokenBucketPolicy, front: TokenBucketPolicy) -> bool {
+    global.capacity > front.capacity
+        && u128::from(global.refill_tokens) * u128::from(front.refill_seconds)
+            >= u128::from(front.refill_tokens) * u128::from(global.refill_seconds)
+}
+
+fn invalid_auth_rate_limit_policy() -> BusinessRepositoryError {
+    BusinessRepositoryError::InvalidRuntimeSetting(
+        "Authentication rate-limit policy must be strict bounded JSON".to_string(),
+    )
 }
 
 fn invalid_ai_base_url() -> BusinessRepositoryError {
@@ -1163,10 +1448,12 @@ mod tests {
             .map(|setting| setting.field.as_str())
             .collect::<Vec<_>>();
 
-        assert_eq!(settings.len(), 14);
+        assert_eq!(settings.len(), 16);
         assert!(fields.contains(&"openalex_api_key_pool"));
         assert!(fields.contains(&"cnki_captcha_token"));
         assert!(fields.contains(&"secure_cookies"));
+        assert!(fields.contains(&"trusted_proxy_cidrs"));
+        assert!(fields.contains(&"auth_rate_limit_policy"));
         assert!(!fields.contains(&"proxy_pool"));
         assert!(settings
             .iter()
@@ -1243,6 +1530,20 @@ mod tests {
                 RuntimeSettingControl::Boolean,
                 RuntimeSettingApplyMode::RestartRequired,
                 &["true", "false"][..],
+            ),
+            (
+                "trusted_proxy_cidrs",
+                RuntimeSettingGroup::ServerSecurity,
+                RuntimeSettingControl::StringList,
+                RuntimeSettingApplyMode::RestartRequired,
+                &[][..],
+            ),
+            (
+                "auth_rate_limit_policy",
+                RuntimeSettingGroup::ServerSecurity,
+                RuntimeSettingControl::Text,
+                RuntimeSettingApplyMode::RestartRequired,
+                &[][..],
             ),
             (
                 "ai_allowed_base_urls",
@@ -1416,11 +1717,78 @@ mod tests {
     }
 
     #[test]
+    fn auth_network_settings_are_strict_canonical_and_bounded() {
+        let networks = parse_runtime_setting(
+            RuntimeSettingKey::TrustedProxyCidrs,
+            "10.2.3.4/8, 2001:db8::1234/32,127.0.0.1,10.0.0.0/8",
+        )
+        .expect("trusted proxy networks should parse");
+        assert_eq!(
+            networks.clone().into_text(),
+            "10.0.0.0/8,2001:db8::/32,127.0.0.1/32"
+        );
+        let ParsedRuntimeSettingValue::TrustedProxyCidrs(networks) = networks else {
+            panic!("trusted proxy parser should return typed networks");
+        };
+        assert!(networks[0].contains("10.9.8.7".parse().expect("IPv4 should parse")));
+        assert!(!networks[0].contains("11.0.0.1".parse().expect("IPv4 should parse")));
+        assert!(networks[1].contains("2001:db8::beef".parse().expect("IPv6 should parse")));
+
+        let default_policy = parse_runtime_setting(
+            RuntimeSettingKey::AuthRateLimitPolicy,
+            DEFAULT_AUTH_RATE_LIMIT_POLICY_JSON,
+        )
+        .expect("default authentication policy should parse");
+        assert_eq!(
+            default_policy,
+            ParsedRuntimeSettingValue::AuthRateLimitPolicy(AuthRateLimitPolicy::default())
+        );
+        assert_eq!(
+            default_policy.into_text(),
+            DEFAULT_AUTH_RATE_LIMIT_POLICY_JSON
+        );
+
+        for invalid_networks in ["10.0.0.1/33", "2001:db8::/129", "proxy.example/24"] {
+            assert!(
+                parse_runtime_setting(RuntimeSettingKey::TrustedProxyCidrs, invalid_networks)
+                    .is_err()
+            );
+        }
+        for invalid_policy in [
+            "{}",
+            r#"{"login_ip":{"capacity":0,"refill_tokens":1,"refill_seconds":1},"username":{"capacity":5,"refill_tokens":1,"refill_seconds":60},"register_ip":{"capacity":5,"refill_tokens":1,"refill_seconds":60},"global_login":{"capacity":1000,"refill_tokens":100,"refill_seconds":1},"global_register":{"capacity":250,"refill_tokens":25,"refill_seconds":1},"ip_key_limit":8192,"username_key_limit":4096}"#,
+            r#"{"login_ip":{"capacity":30,"refill_tokens":1,"refill_seconds":1},"username":{"capacity":5,"refill_tokens":1,"refill_seconds":60},"register_ip":{"capacity":5,"refill_tokens":1,"refill_seconds":60},"global_login":{"capacity":1000,"refill_tokens":100,"refill_seconds":1},"global_register":{"capacity":250,"refill_tokens":25,"refill_seconds":1},"ip_key_limit":8192,"username_key_limit":4096,"unknown":true}"#,
+        ] {
+            assert!(
+                parse_runtime_setting(RuntimeSettingKey::AuthRateLimitPolicy, invalid_policy)
+                    .is_err()
+            );
+        }
+        let mut undersized_global = AuthRateLimitPolicy::default();
+        undersized_global.global_login.capacity = undersized_global.login_ip.capacity;
+        assert!(parse_runtime_setting(
+            RuntimeSettingKey::AuthRateLimitPolicy,
+            &serde_json::to_string(&undersized_global).expect("policy should serialize")
+        )
+        .is_err());
+        let mut slower_global = AuthRateLimitPolicy::default();
+        slower_global.global_login.refill_tokens = 1;
+        slower_global.global_login.refill_seconds = 60;
+        assert!(parse_runtime_setting(
+            RuntimeSettingKey::AuthRateLimitPolicy,
+            &serde_json::to_string(&slower_global).expect("policy should serialize")
+        )
+        .is_err());
+    }
+
+    #[test]
     fn runtime_setting_write_and_startup_use_the_same_registry_parser() {
         let invalid_values = [
             (RuntimeSettingKey::McpAllowedHosts, "localhost,bad\nhost"),
             (RuntimeSettingKey::SecureCookies, "sometimes"),
             (RuntimeSettingKey::CorsAllowedOrigins, "*"),
+            (RuntimeSettingKey::TrustedProxyCidrs, "10.0.0.1/99"),
+            (RuntimeSettingKey::AuthRateLimitPolicy, "{}"),
             (RuntimeSettingKey::LogFormat, "pretty"),
             (RuntimeSettingKey::LogFilter, "["),
         ];

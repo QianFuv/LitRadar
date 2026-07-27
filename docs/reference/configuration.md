@@ -39,9 +39,9 @@ manifest 存在时，`serve` 和普通 `index` 会在认证库迁移后验证整
 
 ## 全局运行设置
 
-管理员通过 `GET/PUT /api/admin/runtime-settings` 或前端管理页维护以下 14 项。响应中的 group、control、apply mode、allowed values 和秘密标记是前端控件的权威元数据；管理页必须逐项呈现，不能用硬编码字段子集代替。
+管理员通过 `GET/PUT /api/admin/runtime-settings` 或前端管理页维护以下 16 项。响应中的 group、control、apply mode、allowed values 和秘密标记是前端控件的权威元数据；管理页必须逐项呈现，不能用硬编码字段子集代替。
 
-这 14 项的字段名、默认值、parser/serializer、秘密标记和 UI 元数据由 storage 层同一 registry 定义。管理 API 写入、`serve` 启动、命令启动和 observability 初始化都调用该 registry；不存在“保存成功但下次启动才发现语法无效”的第二套校验。registry 的所有默认值和往返序列化均由穷举测试覆盖。
+这 16 项的字段名、默认值、parser/serializer、秘密标记和 UI 元数据由 storage 层同一 registry 定义。管理 API 写入、`serve` 启动、命令启动和 observability 初始化都调用该 registry；不存在“保存成功但下次启动才发现语法无效”的第二套校验。registry 的所有默认值和往返序列化均由穷举测试覆盖。
 
 | 字段                               | 默认值                    | 秘密 | 前端控件                          | 生效时机 | 使用者                            |
 | ---------------------------------- | ------------------------- | ---: | --------------------------------- | -------- | --------------------------------- |
@@ -53,6 +53,8 @@ manifest 存在时，`serve` 和普通 `index` 会在认证库迁移后验证整
 | `mcp_allowed_hosts`                | `localhost,127.0.0.1,::1` |   否 | 有序字符串列表                    | 重启进程 | MCP Host 白名单                   |
 | `mcp_allowed_origins`              | 空                        |   否 | 有序字符串列表                    | 重启进程 | 浏览器 MCP Origin 白名单          |
 | `secure_cookies`                   | `false`                   |   否 | 布尔开关                          | 重启进程 | `litradar_session` 的 Secure 标志 |
+| `trusted_proxy_cidrs`              | 空                        |   否 | IPv4/IPv6 CIDR 列表               | 重启进程 | 可信反向代理直连网络              |
+| `auth_rate_limit_policy`           | 见下文                    |   否 | 严格 JSON 文本                    | 重启进程 | 登录/注册分层 token bucket        |
 | `ai_allowed_base_urls`             | 空                        |   否 | 有序 HTTPS URL 列表               | 下一请求 | 用户可选择的 AI Endpoint 目录     |
 | `index_provider_routes`            | 三个官方目录的默认映射    |   否 | 每个 catalog 的能力过滤单选       | 下一命令 | CSV stem 到索引 Provider          |
 | `article_abstract_provider_orders` | 见下文                    |   否 | 默认顺序 + catalog 继承/排序/禁用 | 下一请求 | 在线摘要页 fallback               |
@@ -151,6 +153,16 @@ Scholarly 的 `workers` 只控制每个期刊子进程内 OpenAlex DOI 子批的
 
 `mcp_allowed_hosts` 的每个非空项还必须是合法 HTTP Header 值，不能包含换行等控制字符。`secure_cookies` 接受大小写不敏感的 `true/false`、`1/0`、`yes/no`、`on/off`，保存时规范化为 `true` 或 `false`；其他值返回 `400`。这两项与 Origin、日志格式和日志 filter 一样，在写入与启动时使用完全相同的 parser，失败的多字段更新整体回滚。
 
+`trusted_proxy_cidrs` 接受逗号分隔的 IPv4/IPv6 CIDR 或单个 IP；单个 IP 规范化为 `/32` 或 `/128`，网络地址会清除 host bits，并按首次出现顺序去重。默认空列表表示任何直连 peer 都不能通过 `Forwarded` 或 `X-Forwarded-For` 改写客户端来源。只有直连 peer 命中该列表时，API 才从右向左跳过可信代理并使用第一个不可信地址；标准 `Forwarded` 存在时不会再回退到 `X-Forwarded-For`。无效链按直连代理地址共享限流，不按攻击者提交的值分桶。
+
+`auth_rate_limit_policy` 使用 `deny_unknown_fields` 的严格 JSON。默认值为：
+
+```json
+{"login_ip":{"capacity":30,"refill_tokens":1,"refill_seconds":1},"username":{"capacity":5,"refill_tokens":1,"refill_seconds":60},"register_ip":{"capacity":5,"refill_tokens":1,"refill_seconds":60},"global_login":{"capacity":1000,"refill_tokens":100,"refill_seconds":1},"global_register":{"capacity":250,"refill_tokens":25,"refill_seconds":1},"ip_key_limit":8192,"username_key_limit":4096}
+```
+
+所有 capacity/refill/key limit 必须为正并处于固定上限内；全局熔断器的容量必须大于每个前置桶，补充速率不得低于前置桶，防止管理员配置重新引入单一来源耗尽全局额度的问题。该字段规范化为紧凑 JSON；未知、缺失、零值、越界或不满足层级关系时返回 `400`，同一更新整体回滚。
+
 `ai_allowed_base_urls` 只接受准确 HTTPS base URL；拒绝 HTTP、凭据、query、fragment 和端口 0，并统一补全 path 尾随 `/`、按首次出现顺序去重。默认空列表会禁用所有 AI 出站请求。普通用户从 `GET /api/tracking/ai-endpoints` 返回的目录中选择，保存时 API 和 storage 事务都会再次做准确成员校验；worker 在每次实际 AI 请求前重新读取当前目录，因此删除目录项会阻止后续尝试继续使用旧配置。
 
 旧版本或库外修改留下的无效 Origin 行会让应用在绑定端口前以明确配置错误拒绝启动，不会忽略、自动删除或降级该策略。升级前应通过当前运行的管理 API 修正；若新版本已经无法启动，应在维护窗口恢复可验证备份或纠正该非秘密行，再重新启动。
@@ -195,7 +207,7 @@ Scholarly 的 `workers` 只控制每个期刊子进程内 OpenAlex DOI 子批的
 3. 若固定打包路径存在精确 manifest，准备持久 Meta 目录。
 4. 用密钥验证数据库秘密。
 5. 加载全局运行设置。
-6. 应用 CORS、MCP 和 Cookie 策略。
+6. 应用 CORS、MCP、Cookie、可信代理和认证限流策略。
 7. 若启用 `--require-secure-cookies` 但设置仍为 `false`，拒绝启动。
 8. 绑定监听端口并并发启动 HTTP 与立即执行的调度 tick。
 

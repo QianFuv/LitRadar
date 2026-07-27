@@ -1,8 +1,9 @@
 //! Authentication route handlers.
 
+use std::net::SocketAddr;
 use std::time::Instant;
 
-use axum::extract::{Path, State};
+use axum::extract::{ConnectInfo, Extension, Path, State};
 use axum::http::header::{AUTHORIZATION, COOKIE, SET_COOKIE};
 use axum::http::{HeaderMap, HeaderValue};
 use axum::response::{IntoResponse, Response};
@@ -17,9 +18,10 @@ use litradar_domain::{
     TokenCreateResponse, TokenInfo, UserResponse,
 };
 use litradar_storage::AuthRepositoryError;
+use tower_http::request_id::RequestId;
 
 use crate::response::ApiError;
-use crate::state::{ApiState, AuthAttemptKind};
+use crate::state::{ApiState, AuthAttemptKind, AuthRateLimitRejection};
 
 const AUTH_RATE_LIMIT_DETAIL: &str = "Too many authentication attempts; try again later";
 
@@ -77,7 +79,7 @@ impl AuthAudit {
         self.is_terminal = true;
     }
 
-    fn rate_limited(&mut self, retry_after_seconds: u64) {
+    fn rate_limited(&mut self, rejection: AuthRateLimitRejection, request_id: &str) {
         tracing::warn!(
             event = "security.auth.rate_limited",
             component = "security",
@@ -85,7 +87,12 @@ impl AuthAudit {
             outcome = "rate_limited",
             actor_id = self.actor_id,
             target_id = self.target_id,
-            retry_after_seconds,
+            reason = rejection.reason,
+            bucket = rejection.bucket,
+            source_class = rejection.source_class,
+            rejected_count = rejection.rejected_count,
+            request_id,
+            retry_after_seconds = rejection.retry_after_seconds,
             duration_ms = self.started_at.elapsed().as_millis() as u64,
         );
         self.is_terminal = true;
@@ -131,6 +138,9 @@ impl Drop for AuthAudit {
 )]
 pub(crate) async fn register(
     State(state): State<ApiState>,
+    headers: HeaderMap,
+    peer: Option<Extension<ConnectInfo<SocketAddr>>>,
+    request_id: Option<Extension<RequestId>>,
     Json(body): Json<RegisterRequest>,
 ) -> Result<Json<UserResponse>, ApiError> {
     let mut audit = AuthAudit::new("register");
@@ -145,10 +155,15 @@ pub(crate) async fn register(
         audit.rejected("validation_failed");
         return Err(ApiError::bad_request(password_policy_message()));
     }
-    if let Err(retry_after_seconds) =
-        check_auth_rate_limit(&state, AuthAttemptKind::Register, &username)
-    {
-        audit.rate_limited(retry_after_seconds);
+    if let Err(rejection) = check_auth_rate_limit(
+        &state,
+        AuthAttemptKind::Register,
+        &username,
+        peer_address(peer),
+        &headers,
+    ) {
+        let retry_after_seconds = rejection.retry_after_seconds;
+        audit.rate_limited(rejection, request_id_text(request_id.as_ref()));
         return Err(ApiError::too_many_requests(
             AUTH_RATE_LIMIT_DETAIL,
             retry_after_seconds,
@@ -168,7 +183,7 @@ pub(crate) async fn register(
             return Err(error);
         }
     };
-    state.clear_auth_attempts(&username);
+    state.clear_auth_attempts(AuthAttemptKind::Register, &username);
     audit.set_actor_id(user.id.0);
     audit.completed();
     Ok(Json(user))
@@ -196,14 +211,22 @@ pub(crate) async fn register(
 )]
 pub(crate) async fn login(
     State(state): State<ApiState>,
+    headers: HeaderMap,
+    peer: Option<Extension<ConnectInfo<SocketAddr>>>,
+    request_id: Option<Extension<RequestId>>,
     Json(body): Json<LoginRequest>,
 ) -> Result<Response, ApiError> {
     let mut audit = AuthAudit::new("login");
     let username = body.username.trim().to_string();
-    if let Err(retry_after_seconds) =
-        check_auth_rate_limit(&state, AuthAttemptKind::Login, &username)
-    {
-        audit.rate_limited(retry_after_seconds);
+    if let Err(rejection) = check_auth_rate_limit(
+        &state,
+        AuthAttemptKind::Login,
+        &username,
+        peer_address(peer),
+        &headers,
+    ) {
+        let retry_after_seconds = rejection.retry_after_seconds;
+        audit.rate_limited(rejection, request_id_text(request_id.as_ref()));
         return Err(ApiError::too_many_requests(
             AUTH_RATE_LIMIT_DETAIL,
             retry_after_seconds,
@@ -222,7 +245,7 @@ pub(crate) async fn login(
             return Err(error);
         }
     };
-    state.clear_auth_attempts(&username);
+    state.clear_auth_attempts(AuthAttemptKind::Login, &username);
     audit.set_actor_id(session.user.id.0);
     let payload = LoginResponse {
         user: session.user,
@@ -684,8 +707,20 @@ fn check_auth_rate_limit(
     state: &ApiState,
     kind: AuthAttemptKind,
     username: &str,
-) -> Result<(), u64> {
-    state.check_auth_attempt(kind, username)
+    peer_address: Option<SocketAddr>,
+    headers: &HeaderMap,
+) -> Result<(), AuthRateLimitRejection> {
+    state.check_auth_attempt(kind, username, peer_address, headers)
+}
+
+fn peer_address(peer: Option<Extension<ConnectInfo<SocketAddr>>>) -> Option<SocketAddr> {
+    peer.map(|Extension(ConnectInfo(address))| address)
+}
+
+fn request_id_text(request_id: Option<&Extension<RequestId>>) -> &str {
+    request_id
+        .and_then(|Extension(request_id)| request_id.header_value().to_str().ok())
+        .unwrap_or("missing")
 }
 
 fn password_policy_message() -> String {
