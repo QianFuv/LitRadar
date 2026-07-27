@@ -8,11 +8,11 @@ use axum::http::HeaderMap;
 use axum::Json;
 use litradar_auth::{is_valid_new_password, MIN_PASSWORD_LENGTH};
 use litradar_domain::{
-    validate_scheduled_task_timing, AdminInviteCodeInfo, AdminResetPassword, AdminSetAdmin,
-    AdminStatsResponse, AdminUserInfo, AnnouncementCreate, AnnouncementInfo, AnnouncementUpdate,
-    OkResponse, ProviderCapabilityInfo, ProviderCatalogResponse, ProviderOrderConfiguration,
-    RuntimeSettingInfo, RuntimeSettingsUpdate, ScheduledJobSpec, ScheduledTaskCreate,
-    ScheduledTaskInfo, ScheduledTaskUpdate, SchedulerStatusResponse, UserId,
+    validate_scheduled_task_timing, AdminInviteCodeCreate, AdminInviteCodeInfo, AdminResetPassword,
+    AdminSetAdmin, AdminStatsResponse, AdminUserInfo, AnnouncementCreate, AnnouncementInfo,
+    AnnouncementUpdate, OkResponse, ProviderCapabilityInfo, ProviderCatalogResponse,
+    ProviderOrderConfiguration, RuntimeSettingInfo, RuntimeSettingsUpdate, ScheduledJobSpec,
+    ScheduledTaskCreate, ScheduledTaskInfo, ScheduledTaskUpdate, SchedulerStatusResponse, UserId,
 };
 use litradar_storage::{BusinessRepositoryError, SecurityAuditEvent, StorageConfig};
 use tower_http::request_id::RequestId;
@@ -407,21 +407,35 @@ pub(crate) async fn list_invite_codes(
 }
 
 /// Create an admin-generated invite code.
+///
+/// # Arguments
+///
+/// * `state` - Shared API state.
+/// * `headers` - Request headers.
+/// * `request_id` - Server-generated request identifier.
+/// * `body` - Optional bounded lifecycle overrides.
+///
+/// # Returns
+///
+/// Created invite code metadata.
 #[utoipa::path(
     post,
     path = "/api/admin/invite-codes",
     tag = "admin",
-    responses((status = 200, description = "Created invite code.", body = serde_json::Value)),
+    request_body = Option<AdminInviteCodeCreate>,
+    responses((status = 200, description = "Created invite code.", body = AdminInviteCodeInfo)),
     security(("bearer_auth" = []), ("session_cookie" = []))
 )]
 pub(crate) async fn create_invite_code(
     State(state): State<ApiState>,
     headers: HeaderMap,
     request_id: Option<Extension<RequestId>>,
-) -> Result<Json<serde_json::Value>, ApiError> {
+    body: Option<Json<AdminInviteCodeCreate>>,
+) -> Result<Json<AdminInviteCodeInfo>, ApiError> {
     let (admin, _) = require_admin_user(&state, &headers).await?;
     let mut audit = AdminAudit::new("invite_create", admin.id.0, 0);
     let request_id = request_id_text(request_id.as_ref());
+    let body = body.map(|Json(body)| body).unwrap_or_default();
     let code = run_audited_business(
         &state,
         "invite_create",
@@ -429,8 +443,10 @@ pub(crate) async fn create_invite_code(
         0,
         request_id,
         move |storage, event| {
-            litradar_storage::admin_create_invite_code_with_audit(
+            litradar_storage::admin_create_invite_code_with_policy_and_audit(
                 storage.auth_db_path(),
+                body.expires_at,
+                body.max_uses,
                 Some(&event),
             )
         },
@@ -438,39 +454,46 @@ pub(crate) async fn create_invite_code(
     .await?;
     audit.set_target_id(code.id);
     audit.completed();
-    Ok(Json(serde_json::json!({
-        "id": code.id,
-        "code": code.code,
-        "created_at": code.created_at,
-    })))
+    Ok(Json(code))
 }
 
-/// Delete an unused invite code.
+/// Irreversibly revoke an invite code.
+///
+/// # Arguments
+///
+/// * `state` - Shared API state.
+/// * `headers` - Request headers.
+/// * `code_id` - Invite code row identifier.
+/// * `request_id` - Server-generated request identifier.
+///
+/// # Returns
+///
+/// OK response when an unrevoked invite was changed.
 #[utoipa::path(
     delete,
     path = "/api/admin/invite-codes/{code_id}",
     tag = "admin",
     params(("code_id" = i64, Path, description = "Invite code row identifier.")),
-    responses((status = 200, description = "Invite code deleted.", body = OkResponse)),
+    responses((status = 200, description = "Invite code revoked.", body = OkResponse)),
     security(("bearer_auth" = []), ("session_cookie" = []))
 )]
-pub(crate) async fn delete_invite_code(
+pub(crate) async fn revoke_admin_invite_code(
     State(state): State<ApiState>,
     headers: HeaderMap,
     Path(code_id): Path<i64>,
     request_id: Option<Extension<RequestId>>,
 ) -> Result<Json<OkResponse>, ApiError> {
     let (admin, _) = require_admin_user(&state, &headers).await?;
-    let mut audit = AdminAudit::new("invite_delete", admin.id.0, code_id);
+    let mut audit = AdminAudit::new("invite_revoke", admin.id.0, code_id);
     let request_id = request_id_text(request_id.as_ref());
-    let did_delete = run_audited_business(
+    let did_revoke = run_audited_business(
         &state,
-        "invite_delete",
+        "invite_revoke",
         admin.id.0,
         code_id,
         request_id.clone(),
         move |storage, event| {
-            litradar_storage::delete_invite_code_with_audit(
+            litradar_storage::revoke_admin_invite_code_with_audit(
                 storage.auth_db_path(),
                 code_id,
                 Some(&event),
@@ -478,17 +501,17 @@ pub(crate) async fn delete_invite_code(
         },
     )
     .await?;
-    if !did_delete {
+    if !did_revoke {
         persist_admin_rejection(
             &state,
-            "invite_delete",
+            "invite_revoke",
             admin.id.0,
             code_id,
             &request_id,
             "target_not_found",
         )
         .await?;
-        return Err(ApiError::not_found("Code not found or already used"));
+        return Err(ApiError::not_found("Code not found or already revoked"));
     }
     audit.completed();
     Ok(Json(OkResponse { ok: true }))
@@ -1159,9 +1182,8 @@ fn map_business_error(error: BusinessRepositoryError) -> ApiError {
         | BusinessRepositoryError::InvalidRuntimeSecretPoolUpdate(_)
         | BusinessRepositoryError::InvalidScheduledJob(_)
         | BusinessRepositoryError::InvalidScheduledTask(_)
-        | BusinessRepositoryError::LegacyScheduledTaskCannotBeEnabled => {
-            ApiError::bad_request(error.to_string())
-        }
+        | BusinessRepositoryError::LegacyScheduledTaskCannotBeEnabled
+        | BusinessRepositoryError::InvalidInvitePolicy => ApiError::bad_request(error.to_string()),
         BusinessRepositoryError::AdministratorActorForbidden => {
             ApiError::forbidden(error.to_string())
         }
@@ -1188,7 +1210,8 @@ fn business_rejection_reason(error: &BusinessRepositoryError) -> &'static str {
         | BusinessRepositoryError::InvalidRuntimeSecretPoolUpdate(_)
         | BusinessRepositoryError::InvalidScheduledJob(_)
         | BusinessRepositoryError::InvalidScheduledTask(_)
-        | BusinessRepositoryError::LegacyScheduledTaskCannotBeEnabled => "validation_failed",
+        | BusinessRepositoryError::LegacyScheduledTaskCannotBeEnabled
+        | BusinessRepositoryError::InvalidInvitePolicy => "validation_failed",
         BusinessRepositoryError::OutboundEndpointNotAllowed => "endpoint_not_allowed",
         BusinessRepositoryError::AuditPersistence(_) => "audit_persistence_failed",
         _ => "operation_failed",

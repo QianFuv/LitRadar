@@ -7,6 +7,37 @@ use utoipa::ToSchema;
 
 use crate::UserId;
 
+/// Default invite-code lifetime in seconds.
+pub const DEFAULT_INVITE_CODE_TTL_SECONDS: i64 = 7 * 24 * 3600;
+
+/// Longest administrator-configurable invite-code lifetime in seconds.
+pub const MAX_INVITE_CODE_TTL_SECONDS: i64 = 365 * 24 * 3600;
+
+/// Default number of registrations permitted by a new invite code.
+pub const DEFAULT_INVITE_CODE_MAX_USES: i64 = 1;
+
+/// Largest administrator-configurable invite-code redemption quota.
+pub const MAX_INVITE_CODE_USES: i64 = 1_000;
+
+/// Return whether an invite-code lifecycle policy is within managed bounds.
+///
+/// # Arguments
+///
+/// * `now` - Current Unix timestamp.
+/// * `expires_at` - Absolute expiration timestamp.
+/// * `max_uses` - Maximum permitted registrations.
+///
+/// # Returns
+///
+/// True when timestamps are finite, expiry is in the next 365 days, and quota is `1..=1000`.
+pub fn is_valid_invite_code_policy(now: f64, expires_at: f64, max_uses: i64) -> bool {
+    now.is_finite()
+        && expires_at.is_finite()
+        && expires_at > now
+        && expires_at - now <= MAX_INVITE_CODE_TTL_SECONDS as f64
+        && (1..=MAX_INVITE_CODE_USES).contains(&max_uses)
+}
+
 /// Maximum active personal access tokens admitted for one user.
 pub const ACCESS_TOKEN_ACTIVE_LIMIT: i64 = 50;
 
@@ -183,6 +214,53 @@ impl fmt::Debug for ChangePasswordRequest {
     }
 }
 
+/// Public lifecycle state for an invite code.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum InviteCodeStatus {
+    /// The code can currently register another user.
+    Active,
+    /// The code passed its expiration timestamp.
+    Expired,
+    /// The code was explicitly or rotationally revoked.
+    Revoked,
+    /// The code consumed its complete redemption quota.
+    Exhausted,
+}
+
+impl InviteCodeStatus {
+    /// Derive a lifecycle state from persisted invite-code fields.
+    ///
+    /// # Arguments
+    ///
+    /// * `expires_at` - Absolute expiration timestamp.
+    /// * `revoked_at` - Optional irreversible revocation timestamp.
+    /// * `max_uses` - Maximum permitted redemption count.
+    /// * `use_count` - Committed redemption count.
+    /// * `now` - Current Unix timestamp.
+    ///
+    /// # Returns
+    ///
+    /// Stable public status with revocation and exhaustion taking precedence over expiry.
+    pub fn from_lifecycle(
+        expires_at: f64,
+        revoked_at: Option<f64>,
+        max_uses: i64,
+        use_count: i64,
+        now: f64,
+    ) -> Self {
+        if revoked_at.is_some() {
+            Self::Revoked
+        } else if use_count >= max_uses {
+            Self::Exhausted
+        } else if expires_at <= now {
+            Self::Expired
+        } else {
+            Self::Active
+        }
+    }
+}
+
 /// Invite code response.
 #[derive(Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct InviteCodeResponse {
@@ -192,6 +270,16 @@ pub struct InviteCodeResponse {
     pub code: String,
     /// Whether the invite code has been consumed.
     pub used: bool,
+    /// Current lifecycle state.
+    pub status: InviteCodeStatus,
+    /// Absolute expiration timestamp.
+    pub expires_at: f64,
+    /// Optional irreversible revocation timestamp.
+    pub revoked_at: Option<f64>,
+    /// Maximum permitted registrations.
+    pub max_uses: i64,
+    /// Number of committed registrations.
+    pub use_count: i64,
     /// Invite code creation timestamp.
     pub created_at: f64,
 }
@@ -203,6 +291,11 @@ impl fmt::Debug for InviteCodeResponse {
             .field("id", &self.id)
             .field("code", &"[REDACTED]")
             .field("used", &self.used)
+            .field("status", &self.status)
+            .field("expires_at", &self.expires_at)
+            .field("revoked_at", &self.revoked_at)
+            .field("max_uses", &self.max_uses)
+            .field("use_count", &self.use_count)
             .field("created_at", &self.created_at)
             .finish()
     }
@@ -263,8 +356,9 @@ pub fn default_token_ttl() -> i64 {
 #[cfg(test)]
 mod tests {
     use super::{
-        default_token_ttl, ChangePasswordRequest, InviteCodeResponse, InviteRequiredResponse,
-        LoginRequest, RegisterRequest, TokenCreateRequest, TokenCreateResponse, UserResponse,
+        default_token_ttl, is_valid_invite_code_policy, ChangePasswordRequest, InviteCodeResponse,
+        InviteCodeStatus, InviteRequiredResponse, LoginRequest, RegisterRequest,
+        TokenCreateRequest, TokenCreateResponse, UserResponse,
     };
 
     #[test]
@@ -287,6 +381,40 @@ mod tests {
             serde_json::to_value(response).expect("response should serialize"),
             serde_json::json!({"required": true, "bootstrap_required": true})
         );
+    }
+
+    #[test]
+    fn invite_status_uses_revocation_quota_and_expiry_precedence() {
+        assert_eq!(
+            InviteCodeStatus::from_lifecycle(20.0, Some(15.0), 1, 1, 20.0),
+            InviteCodeStatus::Revoked
+        );
+        assert_eq!(
+            InviteCodeStatus::from_lifecycle(20.0, None, 1, 1, 20.0),
+            InviteCodeStatus::Exhausted
+        );
+        assert_eq!(
+            InviteCodeStatus::from_lifecycle(20.0, None, 2, 1, 20.0),
+            InviteCodeStatus::Expired
+        );
+        assert_eq!(
+            InviteCodeStatus::from_lifecycle(21.0, None, 2, 1, 20.0),
+            InviteCodeStatus::Active
+        );
+    }
+
+    #[test]
+    fn invite_policy_requires_finite_future_expiry_and_bounded_quota() {
+        assert!(is_valid_invite_code_policy(10.0, 20.0, 1));
+        assert!(is_valid_invite_code_policy(
+            10.0,
+            10.0 + super::MAX_INVITE_CODE_TTL_SECONDS as f64,
+            super::MAX_INVITE_CODE_USES
+        ));
+        assert!(!is_valid_invite_code_policy(10.0, 10.0, 1));
+        assert!(!is_valid_invite_code_policy(10.0, f64::INFINITY, 1));
+        assert!(!is_valid_invite_code_policy(f64::NAN, 20.0, 1));
+        assert!(!is_valid_invite_code_policy(10.0, 20.0, 0));
     }
 
     #[test]
@@ -322,6 +450,11 @@ mod tests {
                     id: 2,
                     code: "invite-code-sentinel".to_string(),
                     used: false,
+                    status: InviteCodeStatus::Active,
+                    expires_at: 4.0,
+                    revoked_at: None,
+                    max_uses: 1,
+                    use_count: 0,
                     created_at: 3.0,
                 },
             )

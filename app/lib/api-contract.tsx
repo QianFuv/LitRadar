@@ -9,6 +9,14 @@ type ApiSchemas = components['schemas'];
 export type AuthUser = ApiSchemas['UserResponse'];
 export type LoginResponse = ApiSchemas['LoginResponse'];
 export type InviteRequirement = ApiSchemas['InviteRequiredResponse'];
+export type InviteCodeStatus = ApiSchemas['InviteCodeStatus'];
+export type InviteCode = Required<ApiSchemas['InviteCodeResponse']>;
+export type AdminInviteCode = Required<ApiSchemas['AdminInviteCodeInfo']>;
+type GeneratedAdminInviteCodeCreate = ApiSchemas['AdminInviteCodeCreate'];
+export type AdminInviteCodeCreate = {
+  expires_at?: Exclude<GeneratedAdminInviteCodeCreate['expires_at'], null | undefined>;
+  max_uses?: Exclude<GeneratedAdminInviteCodeCreate['max_uses'], null | undefined>;
+};
 export type TrackingStatus = ApiSchemas['TrackingStatusResponse'];
 export type ManualPushStatus = ApiSchemas['ManualWeeklyPushStatus'];
 export type NotificationSettings = ApiSchemas['NotificationSettingsResponse'];

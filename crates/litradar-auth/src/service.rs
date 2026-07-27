@@ -5,7 +5,10 @@ use std::fmt;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use litradar_domain::{InviteCodeResponse, TokenCreateResponse, TokenInfo, UserId, UserResponse};
+use litradar_domain::{
+    InviteCodeResponse, InviteCodeStatus, TokenCreateResponse, TokenInfo, UserId, UserResponse,
+    DEFAULT_INVITE_CODE_MAX_USES, DEFAULT_INVITE_CODE_TTL_SECONDS,
+};
 use litradar_storage::{
     bootstrap_admin_with_audit, compare_and_swap_legacy_password_hash, count_users,
     create_invite_code_with_audit, delete_access_token_by_hash_with_audit,
@@ -13,6 +16,7 @@ use litradar_storage::{
     find_user_credentials_by_id, find_user_credentials_by_username, get_user_invite_code,
     initialize_auth_database, insert_personal_access_token_with_audit, list_access_tokens,
     random_hex, register_user_with_invite_and_audit, replace_login_access_token_with_audit,
+    revoke_user_invite_code_with_audit, rotate_user_invite_code_with_audit,
     update_user_password_and_delete_tokens_with_audit, verify_access_token_hash,
     AuthRepositoryError, AuthUserRow, InviteCodeRow, SecurityAuditEvent, UserCredentialRow,
 };
@@ -680,20 +684,112 @@ impl AuthService {
     }
 
     /// Create an invite code with an atomic completion audit.
+    ///
+    /// # Arguments
+    ///
+    /// * `user_id` - Invite creator.
+    /// * `audit` - Completion audit event persisted in the same transaction.
+    ///
+    /// # Returns
+    ///
+    /// Invite code response.
     pub fn create_invite_code_with_audit(
         &self,
         user_id: UserId,
         audit: SecurityAuditEvent,
     ) -> Result<InviteCodeResponse, AuthServiceError> {
         let code = random_hex(INVITE_CODE_BYTES)?;
-        let row = create_invite_code_with_audit(
+        let now = now_seconds();
+        let row =
+            create_invite_code_with_audit(&self.auth_db_path, user_id, &code, now, Some(&audit))?;
+        Ok(invite_response(row, now))
+    }
+
+    /// Revoke the current user's unrevoked invite issuance.
+    ///
+    /// # Arguments
+    ///
+    /// * `user_id` - Invite creator.
+    ///
+    /// # Returns
+    ///
+    /// True when an unrevoked invite was changed.
+    pub fn revoke_invite_code(&self, user_id: UserId) -> Result<bool, AuthServiceError> {
+        self.revoke_invite_code_with_audit(
+            user_id,
+            SecurityAuditEvent::new("invite_revoke", "completed").with_actor_id(user_id.value()),
+        )
+    }
+
+    /// Revoke the current user's unrevoked invite issuance with an atomic audit event.
+    ///
+    /// # Arguments
+    ///
+    /// * `user_id` - Invite creator.
+    /// * `audit` - Completion audit event persisted in the same transaction.
+    ///
+    /// # Returns
+    ///
+    /// True when an unrevoked invite was changed.
+    pub fn revoke_invite_code_with_audit(
+        &self,
+        user_id: UserId,
+        audit: SecurityAuditEvent,
+    ) -> Result<bool, AuthServiceError> {
+        Ok(revoke_user_invite_code_with_audit(
+            &self.auth_db_path,
+            user_id,
+            now_seconds(),
+            Some(&audit),
+        )?)
+    }
+
+    /// Rotate the current user's invite code with the default lifecycle policy.
+    ///
+    /// # Arguments
+    ///
+    /// * `user_id` - Invite creator.
+    ///
+    /// # Returns
+    ///
+    /// Newly issued replacement invite.
+    pub fn rotate_invite_code(
+        &self,
+        user_id: UserId,
+    ) -> Result<InviteCodeResponse, AuthServiceError> {
+        self.rotate_invite_code_with_audit(
+            user_id,
+            SecurityAuditEvent::new("invite_rotate", "completed").with_actor_id(user_id.value()),
+        )
+    }
+
+    /// Rotate the current user's invite code with an atomic audit event.
+    ///
+    /// # Arguments
+    ///
+    /// * `user_id` - Invite creator.
+    /// * `audit` - Completion audit event persisted with the lifecycle transition.
+    ///
+    /// # Returns
+    ///
+    /// Newly issued replacement invite.
+    pub fn rotate_invite_code_with_audit(
+        &self,
+        user_id: UserId,
+        audit: SecurityAuditEvent,
+    ) -> Result<InviteCodeResponse, AuthServiceError> {
+        let code = random_hex(INVITE_CODE_BYTES)?;
+        let now = now_seconds();
+        let row = rotate_user_invite_code_with_audit(
             &self.auth_db_path,
             user_id,
             &code,
-            now_seconds(),
+            now,
+            now + DEFAULT_INVITE_CODE_TTL_SECONDS as f64,
+            DEFAULT_INVITE_CODE_MAX_USES,
             Some(&audit),
         )?;
-        Ok(invite_response(row))
+        Ok(invite_response(row, now))
     }
 
     /// Return the invite code created by a user.
@@ -709,7 +805,8 @@ impl AuthService {
         &self,
         user_id: UserId,
     ) -> Result<Option<InviteCodeResponse>, AuthServiceError> {
-        Ok(get_user_invite_code(&self.auth_db_path, user_id)?.map(invite_response))
+        let now = now_seconds();
+        Ok(get_user_invite_code(&self.auth_db_path, user_id)?.map(|row| invite_response(row, now)))
     }
 
     /// Return whether registration requires an invite code.
@@ -769,11 +866,22 @@ fn user_response(row: AuthUserRow) -> UserResponse {
     }
 }
 
-fn invite_response(row: InviteCodeRow) -> InviteCodeResponse {
+fn invite_response(row: InviteCodeRow, now: f64) -> InviteCodeResponse {
     InviteCodeResponse {
         id: row.id,
         code: row.code,
-        used: row.used_by.is_some(),
+        used: row.use_count > 0,
+        status: InviteCodeStatus::from_lifecycle(
+            row.expires_at,
+            row.revoked_at,
+            row.max_uses,
+            row.use_count,
+            now,
+        ),
+        expires_at: row.expires_at,
+        revoked_at: row.revoked_at,
+        max_uses: row.max_uses,
+        use_count: row.use_count,
         created_at: row.created_at,
     }
 }
@@ -790,7 +898,7 @@ mod tests {
     use std::path::Path;
     use std::sync::{Arc, Barrier};
 
-    use litradar_domain::UserId;
+    use litradar_domain::{InviteCodeStatus, UserId, DEFAULT_INVITE_CODE_TTL_SECONDS};
     use litradar_storage::{
         bootstrap_admin, count_users, find_user_credentials_by_id, migrate_auth_database,
         UserCredentialRow,
@@ -1011,6 +1119,49 @@ mod tests {
         assert!(reset.password_hash.starts_with("$argon2id$"));
         assert_eq!(reset.salt, "");
         assert_ne!(reset.password_hash, changed.password_hash);
+    }
+
+    #[test]
+    fn invite_service_returns_default_rotate_and_revoke_lifecycle_states() {
+        let temp_dir = tempdir().expect("temporary directory should be created");
+        let auth_db_path = temp_dir.path().join("auth.sqlite");
+        migrate_auth_database(&auth_db_path).expect("auth database should migrate");
+        let service = AuthService::new(&auth_db_path);
+        let administrator = service
+            .bootstrap_admin("invite_admin", STRONG_PASSWORD)
+            .expect("fixture administrator should bootstrap");
+
+        let initial = service
+            .create_invite_code(administrator.id)
+            .expect("initial invite should be created");
+        assert_eq!(initial.status, InviteCodeStatus::Active);
+        assert_eq!(initial.max_uses, 1);
+        assert_eq!(initial.use_count, 0);
+        assert!(
+            (initial.expires_at - initial.created_at - DEFAULT_INVITE_CODE_TTL_SECONDS as f64)
+                .abs()
+                < 0.001
+        );
+
+        let replacement = service
+            .rotate_invite_code(administrator.id)
+            .expect("invite should rotate");
+        assert_ne!(replacement.id, initial.id);
+        assert_ne!(replacement.code, initial.code);
+        assert_eq!(replacement.status, InviteCodeStatus::Active);
+        assert!(service
+            .revoke_invite_code(administrator.id)
+            .expect("replacement invite should revoke"));
+        let revoked = service
+            .get_user_invite_code(administrator.id)
+            .expect("invite lookup should succeed")
+            .expect("revoked invite should remain visible");
+        assert_eq!(revoked.id, replacement.id);
+        assert_eq!(revoked.status, InviteCodeStatus::Revoked);
+        assert!(revoked.revoked_at.is_some());
+        assert!(!service
+            .revoke_invite_code(administrator.id)
+            .expect("repeated revocation should be a no-op"));
     }
 
     #[test]

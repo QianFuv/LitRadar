@@ -8,14 +8,15 @@ use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use litradar_domain::{
-    validate_scheduled_task_timing, AdminInviteCodeInfo, AdminStatsResponse, AdminUserInfo,
-    AnnouncementInfo, AuthStats, FavoriteAdd, FavoriteArticleRef, FavoriteArticleResponse,
-    FavoriteBatchCheckResponse, FavoriteCheckResponse, FavoriteResponse, FolderResponse,
-    IndexDatabaseStats, IndexStats, InputValidationError, NotificationSettings,
-    NotificationSettingsUpdate, NotificationSubscriberInfo, ProviderOrderConfiguration, PushStats,
-    RuntimeSecretItemInfo, RuntimeSecretPoolUpdate, RuntimeSettingInfo, RuntimeSettingValue,
-    ScheduledJobSpec, ScheduledTaskInfo, ScheduledTaskRunInfo, SchedulerStatusResponse,
-    SchedulerWorkerInfo, UserId,
+    is_valid_invite_code_policy, validate_scheduled_task_timing, AdminInviteCodeInfo,
+    AdminStatsResponse, AdminUserInfo, AnnouncementInfo, AuthStats, FavoriteAdd,
+    FavoriteArticleRef, FavoriteArticleResponse, FavoriteBatchCheckResponse, FavoriteCheckResponse,
+    FavoriteResponse, FolderResponse, IndexDatabaseStats, IndexStats, InputValidationError,
+    InviteCodeStatus, NotificationSettings, NotificationSettingsUpdate, NotificationSubscriberInfo,
+    ProviderOrderConfiguration, PushStats, RuntimeSecretItemInfo, RuntimeSecretPoolUpdate,
+    RuntimeSettingInfo, RuntimeSettingValue, ScheduledJobSpec, ScheduledTaskInfo,
+    ScheduledTaskRunInfo, SchedulerStatusResponse, SchedulerWorkerInfo, UserId,
+    DEFAULT_INVITE_CODE_MAX_USES, DEFAULT_INVITE_CODE_TTL_SECONDS,
 };
 use rusqlite::types::Type;
 use rusqlite::{params, Connection, ErrorCode, OptionalExtension, TransactionBehavior};
@@ -35,12 +36,13 @@ mod security_audit;
 mod shared;
 
 pub use admin::{
-    admin_create_invite_code, admin_create_invite_code_with_audit, create_announcement,
+    admin_create_invite_code, admin_create_invite_code_with_audit,
+    admin_create_invite_code_with_policy_and_audit, create_announcement,
     create_announcement_with_audit, delete_announcement, delete_announcement_with_audit,
-    delete_invite_code, delete_invite_code_with_audit, delete_user, delete_user_with_audit,
-    get_admin_stats, get_announcement, list_all_announcements, list_all_invite_codes,
-    list_all_users, set_user_admin, set_user_admin_with_audit, update_announcement,
-    update_announcement_with_audit,
+    delete_user, delete_user_with_audit, get_admin_stats, get_announcement, list_all_announcements,
+    list_all_invite_codes, list_all_users, revoke_admin_invite_code,
+    revoke_admin_invite_code_with_audit, set_user_admin, set_user_admin_with_audit,
+    update_announcement, update_announcement_with_audit,
 };
 pub use delivery::{
     acquire_delivery_lease, admit_delivery_run, claim_delivery_run, claim_delivery_run_item,
@@ -143,6 +145,8 @@ pub enum BusinessRepositoryError {
     InvalidScheduledTask(String),
     /// A migrated legacy task was enabled without a typed replacement job.
     LegacyScheduledTaskCannotBeEnabled,
+    /// An invite expiration or use quota falls outside the managed policy.
+    InvalidInvitePolicy,
     /// The administrative actor no longer exists or lacks administrator privileges.
     AdministratorActorForbidden,
     /// The target user does not exist.
@@ -189,6 +193,9 @@ impl fmt::Display for BusinessRepositoryError {
             Self::InvalidScheduledTask(message) => formatter.write_str(message),
             Self::LegacyScheduledTaskCannotBeEnabled => formatter.write_str(
                 "A legacy scheduled task must be replaced with a typed job before it can be enabled",
+            ),
+            Self::InvalidInvitePolicy => formatter.write_str(
+                "Invite code expires_at must be in the next 365 days and max_uses must be between 1 and 1000",
             ),
             Self::AdministratorActorForbidden => formatter.write_str("Admin access required"),
             Self::AdministratorTargetNotFound => formatter.write_str("User not found"),

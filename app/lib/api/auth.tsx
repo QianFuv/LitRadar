@@ -290,3 +290,29 @@ export function generateInviteCode(): Promise<InviteCode> {
     '生成邀请码失败',
   );
 }
+
+/**
+ * Rotate the current user's invite code.
+ *
+ * @returns Newly issued replacement invite code.
+ */
+export function rotateInviteCode(): Promise<InviteCode> {
+  return requestJson<InviteCode>(
+    buildApiUrl('/api/auth/invite-code/rotate'),
+    null,
+    { method: 'POST' },
+    '轮换邀请码失败',
+  );
+}
+
+/**
+ * Irreversibly revoke the current user's invite code.
+ */
+export async function revokeInviteCode(): Promise<void> {
+  await requestJson<unknown>(
+    buildApiUrl('/api/auth/invite-code'),
+    null,
+    { method: 'DELETE' },
+    '撤销邀请码失败',
+  );
+}

@@ -192,13 +192,32 @@
       "post": {
         "tags": ["admin"],
         "summary": "Create an admin-generated invite code.",
+        "description": "# Arguments\n\n* `state` - Shared API state.\n* `headers` - Request headers.\n* `request_id` - Server-generated request identifier.\n* `body` - Optional bounded lifecycle overrides.\n\n# Returns\n\nCreated invite code metadata.",
         "operationId": "create_invite_code",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/AdminInviteCodeCreate"
+                  }
+                ]
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
             "description": "Created invite code.",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/AdminInviteCodeInfo"
+                }
               }
             }
           }
@@ -216,8 +235,9 @@
     "/api/admin/invite-codes/{code_id}": {
       "delete": {
         "tags": ["admin"],
-        "summary": "Delete an unused invite code.",
-        "operationId": "delete_invite_code",
+        "summary": "Irreversibly revoke an invite code.",
+        "description": "# Arguments\n\n* `state` - Shared API state.\n* `headers` - Request headers.\n* `code_id` - Invite code row identifier.\n* `request_id` - Server-generated request identifier.\n\n# Returns\n\nOK response when an unrevoked invite was changed.",
+        "operationId": "revoke_admin_invite_code",
         "parameters": [
           {
             "name": "code_id",
@@ -232,7 +252,7 @@
         ],
         "responses": {
           "200": {
-            "description": "Invite code deleted.",
+            "description": "Invite code revoked.",
             "content": {
               "application/json": {
                 "schema": {
@@ -1230,6 +1250,70 @@
         "responses": {
           "200": {
             "description": "Generated invite code.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InviteCodeResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          },
+          {
+            "session_cookie": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": ["auth"],
+        "summary": "Revoke the current user's unrevoked invite code.",
+        "description": "# Arguments\n\n* `state` - Shared API state.\n* `headers` - Request headers.\n* `request_id` - Server-generated request identifier.\n\n# Returns\n\nOK response when an invite was revoked.",
+        "operationId": "revoke_invite_code",
+        "responses": {
+          "200": {
+            "description": "Invite code revoked.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OkResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No unrevoked invite code exists.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          },
+          {
+            "session_cookie": []
+          }
+        ]
+      }
+    },
+    "/api/auth/invite-code/rotate": {
+      "post": {
+        "tags": ["auth"],
+        "summary": "Revoke any prior issuance and create one replacement invite code.",
+        "description": "# Arguments\n\n* `state` - Shared API state.\n* `headers` - Request headers.\n* `request_id` - Server-generated request identifier.\n\n# Returns\n\nNewly issued replacement invite code.",
+        "operationId": "rotate_invite_code",
+        "responses": {
+          "200": {
+            "description": "Invite code rotated.",
             "content": {
               "application/json": {
                 "schema": {
@@ -3192,10 +3276,29 @@
   },
   "components": {
     "schemas": {
+      "AdminInviteCodeCreate": {
+        "type": "object",
+        "description": "Optional administrator overrides for a newly issued invite code.",
+        "properties": {
+          "expires_at": {
+            "type": ["number", "null"],
+            "format": "double",
+            "description": "Absolute expiration timestamp; omitted values use the seven-day default."
+          },
+          "max_uses": {
+            "type": ["integer", "null"],
+            "format": "int64",
+            "description": "Registration quota; omitted values use one redemption.",
+            "maximum": 1000,
+            "minimum": 1
+          }
+        },
+        "additionalProperties": false
+      },
       "AdminInviteCodeInfo": {
         "type": "object",
         "description": "Admin invite code response payload.",
-        "required": ["id", "code", "created_at"],
+        "required": ["id", "code", "status", "expires_at", "max_uses", "use_count", "created_at"],
         "properties": {
           "code": {
             "type": "string",
@@ -3221,10 +3324,34 @@
             "type": ["string", "null"],
             "description": "Creator username."
           },
+          "expires_at": {
+            "type": "number",
+            "format": "double",
+            "description": "Absolute expiration timestamp."
+          },
           "id": {
             "type": "integer",
             "format": "int64",
             "description": "Invite code row identifier."
+          },
+          "max_uses": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Maximum permitted registrations."
+          },
+          "revoked_at": {
+            "type": ["number", "null"],
+            "format": "double",
+            "description": "Optional irreversible revocation timestamp."
+          },
+          "status": {
+            "$ref": "#/components/schemas/InviteCodeStatus",
+            "description": "Current lifecycle state."
+          },
+          "use_count": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Number of committed registrations."
           },
           "used_at": {
             "type": ["number", "null"],
@@ -4265,7 +4392,16 @@
       "InviteCodeResponse": {
         "type": "object",
         "description": "Invite code response.",
-        "required": ["id", "code", "used", "created_at"],
+        "required": [
+          "id",
+          "code",
+          "used",
+          "status",
+          "expires_at",
+          "max_uses",
+          "use_count",
+          "created_at"
+        ],
         "properties": {
           "code": {
             "type": "string",
@@ -4276,16 +4412,45 @@
             "format": "double",
             "description": "Invite code creation timestamp."
           },
+          "expires_at": {
+            "type": "number",
+            "format": "double",
+            "description": "Absolute expiration timestamp."
+          },
           "id": {
             "type": "integer",
             "format": "int64",
             "description": "Invite code row identifier."
+          },
+          "max_uses": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Maximum permitted registrations."
+          },
+          "revoked_at": {
+            "type": ["number", "null"],
+            "format": "double",
+            "description": "Optional irreversible revocation timestamp."
+          },
+          "status": {
+            "$ref": "#/components/schemas/InviteCodeStatus",
+            "description": "Current lifecycle state."
+          },
+          "use_count": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Number of committed registrations."
           },
           "used": {
             "type": "boolean",
             "description": "Whether the invite code has been consumed."
           }
         }
+      },
+      "InviteCodeStatus": {
+        "type": "string",
+        "description": "Public lifecycle state for an invite code.",
+        "enum": ["active", "expired", "revoked", "exhausted"]
       },
       "InviteRequiredResponse": {
         "type": "object",

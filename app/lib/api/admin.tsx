@@ -19,6 +19,7 @@ import {
 import { buildApiUrl, requestJson } from '@/lib/api/client';
 import type {
   AdminInviteCode,
+  AdminInviteCodeCreate,
   AdminStats,
   AdminUserInfo,
   AnnouncementCreate,
@@ -121,28 +122,29 @@ export function adminGetInviteCodes(): Promise<AdminInviteCode[]> {
 /**
  * Create an admin invite code.
  *
- * @returns Created invite code summary.
+ * @param input - Optional expiry and maximum-use overrides.
+ * @returns Created invite code.
  */
-export function adminCreateInviteCode(): Promise<{ id: number; code: string }> {
-  return requestJson<{ id: number; code: string }>(
+export function adminCreateInviteCode(input: AdminInviteCodeCreate = {}): Promise<AdminInviteCode> {
+  return requestJson<AdminInviteCode>(
     buildApiUrl('/api/admin/invite-codes'),
     null,
-    { method: 'POST' },
+    { method: 'POST', body: JSON.stringify(input) },
     '创建邀请码失败',
   );
 }
 
 /**
- * Delete an unused admin invite code.
+ * Irreversibly revoke an invite code.
  *
  * @param codeId - Invite code id.
  */
-export async function adminDeleteInviteCode(codeId: number): Promise<void> {
+export async function adminRevokeInviteCode(codeId: number): Promise<void> {
   await requestJson<unknown>(
     buildApiUrl(`/api/admin/invite-codes/${codeId}`),
     null,
     { method: 'DELETE' },
-    '删除邀请码失败',
+    '撤销邀请码失败',
   );
 }
 

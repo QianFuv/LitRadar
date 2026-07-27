@@ -123,12 +123,15 @@ Rust handler 上的 OpenAPI 注解是 REST 契约的实现来源。修改 REST �
 | `POST`           | `/api/auth/logout-all`        | 撤销当前用户的全部会话与访问令牌 |
 | `GET` / `POST`   | `/api/auth/tokens`            | 列出或创建访问令牌               |
 | `DELETE`         | `/api/auth/tokens/{token_id}` | 吊销访问令牌                     |
-| `GET` / `POST`   | `/api/auth/invite-code`       | 查看或生成当前用户的一次性邀请码 |
+| `GET` / `POST` / `DELETE` | `/api/auth/invite-code`       | 查看、生成或永久撤销当前用户的邀请码 |
+| `POST`           | `/api/auth/invite-code/rotate` | 撤销旧邀请码并原子签发替代码     |
 | `GET` / `DELETE` | `/api/cnki/session`           | 查看或清除当前用户的 CNKI 会话   |
 | `POST`           | `/api/cnki/login/start`       | 启动浙江图书馆扫码登录           |
 | `POST`           | `/api/cnki/login/poll`        | 轮询扫码登录状态                 |
 
 公开注册始终要求有效邀请码，且只能创建非管理员。首个管理员必须在本机通过 `litradar admin bootstrap` 创建，API 不提供远程引导端点。新密码至少为 12 个 Unicode 字符。
+
+普通用户邀请码默认有效 7 天、最多注册 1 次。`GET` 返回 `status=active|expired|revoked|exhausted`、`expires_at`、`revoked_at`、`max_uses` 与 `use_count`；`rotate` 在一个事务中永久撤销当前未撤销码并创建替代码。过期、撤销或用尽的邀请码均不能注册，重复撤销返回 `404`。
 
 浏览器登录 Cookie 使用固定 7 天有效期，每次登录轮换，不因普通 API 访问而滚动延长。`POST /api/auth/logout` 只撤销当前凭据；`POST /api/auth/logout-all` 在一个事务中撤销该用户的浏览器登录令牌和全部 Personal Access Token。两个端点对携带 `litradar_session` 的请求无论成功或失败都返回清除 Cookie 的 `Set-Cookie`；`logout` 返回 `401` 表示请求到达前令牌已失效，第一方浏览器将其视为幂等注销完成。SQLite busy/locked 只执行一次短时重试；若持久删除仍未确认，返回 `503`：
 
@@ -208,8 +211,8 @@ SQLite 保证每个用户最多一个 queued/active 手动任务；同一用户�
 | `PUT`            | `/api/admin/users/{user_id}/admin`           | 授予或撤销管理员                   |
 | `POST`           | `/api/admin/users/{user_id}/reset-password`  | 重置用户密码                       |
 | `DELETE`         | `/api/admin/users/{user_id}`                 | 删除用户及关联数据                 |
-| `GET` / `POST`   | `/api/admin/invite-codes`                    | 列出或创建邀请码                   |
-| `DELETE`         | `/api/admin/invite-codes/{code_id}`          | 删除未使用的邀请码                 |
+| `GET` / `POST`   | `/api/admin/invite-codes`                    | 列出或按策略创建邀请码             |
+| `DELETE`         | `/api/admin/invite-codes/{code_id}`          | 永久撤销邀请码并保留历史           |
 | `GET`            | `/api/admin/stats`                           | 管理面板统计                       |
 | `GET` / `POST`   | `/api/admin/scheduled-tasks`                 | 列出或创建类型化计划任务           |
 | `PUT` / `DELETE` | `/api/admin/scheduled-tasks/{task_id}`       | 更新或删除计划任务                 |
@@ -218,6 +221,8 @@ SQLite 保证每个用户最多一个 queued/active 手动任务；同一用户�
 | `GET` / `PUT`    | `/api/admin/runtime-settings`                | 读取或更新运行时配置               |
 | `GET` / `POST`   | `/api/admin/announcements`                   | 列出或创建公告                     |
 | `PUT` / `DELETE` | `/api/admin/announcements/{announcement_id}` | 更新或删除公告                     |
+
+管理员创建邀请码的 JSON body 可省略；可选字段为绝对 Unix 秒 `expires_at`（必须晚于当前时间且最多 365 天）和 `max_uses`（`1..=1000`）。省略时仍使用 7 天、1 次。删除路由保留 HTTP `DELETE` 兼容性，但只写入 `revoked_at`，不会物理删除兑换历史。
 
 计划任务只接受固定的类型化 job。内嵌调度器将已验证字段转换为当前可执行文件加 `index`、`notify` 或 `push` 子命令的完整 argv，不会执行 shell 命令。应用终止时，活动子进程会被结束并等待，运行状态保存为 `cancelled`。旧 `legacy_command` 只供审阅，不能启用或执行。
 

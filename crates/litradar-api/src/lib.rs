@@ -1865,6 +1865,28 @@ mod tests {
             None,
         )
         .await;
+        let rotated_invite = json_request(
+            &app,
+            Method::POST,
+            "/api/auth/invite-code/rotate",
+            None,
+            Some(&session_cookie),
+            None,
+        )
+        .await;
+        let rejected_prior_invite = json_request(
+            &app,
+            Method::POST,
+            "/api/auth/register",
+            None,
+            None,
+            Some(serde_json::json!({
+                "username": "prior-invite-user",
+                "password": "secret123456",
+                "invite_code": invite.payload["code"].as_str().expect("prior invite code should exist")
+            })),
+        )
+        .await;
         let invited_user = json_request(
             &app,
             Method::POST,
@@ -1874,8 +1896,44 @@ mod tests {
             Some(serde_json::json!({
                 "username": "bob",
                 "password": "secret123456",
-                "invite_code": invite.payload["code"].as_str().expect("invite code should exist")
+                "invite_code": rotated_invite.payload["code"].as_str().expect("replacement invite code should exist")
             })),
+        )
+        .await;
+        let exhausted_invite = json_request(
+            &app,
+            Method::GET,
+            "/api/auth/invite-code",
+            None,
+            Some(&session_cookie),
+            None,
+        )
+        .await;
+        let revoked_invite = json_request(
+            &app,
+            Method::DELETE,
+            "/api/auth/invite-code",
+            None,
+            Some(&session_cookie),
+            None,
+        )
+        .await;
+        let revoked_invite_lookup = json_request(
+            &app,
+            Method::GET,
+            "/api/auth/invite-code",
+            None,
+            Some(&session_cookie),
+            None,
+        )
+        .await;
+        let repeated_invite_revoke = json_request(
+            &app,
+            Method::DELETE,
+            "/api/auth/invite-code",
+            None,
+            Some(&session_cookie),
+            None,
         )
         .await;
         let bad_password_change = json_request(
@@ -1969,9 +2027,23 @@ mod tests {
         assert_eq!(deleted_token.payload["ok"], true);
         assert_eq!(invite.status, StatusCode::OK);
         assert_eq!(invite_lookup.payload["id"], invite.payload["id"]);
+        assert_eq!(invite.payload["status"], "active");
+        assert_eq!(invite.payload["max_uses"], 1);
+        assert_eq!(invite.payload["use_count"], 0);
+        assert!(invite.payload["expires_at"].as_f64().is_some());
+        assert_eq!(rotated_invite.status, StatusCode::OK);
+        assert_ne!(rotated_invite.payload["id"], invite.payload["id"]);
+        assert_eq!(rotated_invite.payload["status"], "active");
+        assert_eq!(rejected_prior_invite.status, StatusCode::BAD_REQUEST);
         assert_eq!(invited_user.status, StatusCode::OK);
         assert_eq!(invited_user.payload["username"], "bob");
         assert_eq!(invited_user.payload["is_admin"], false);
+        assert_eq!(exhausted_invite.payload["status"], "exhausted");
+        assert_eq!(exhausted_invite.payload["use_count"], 1);
+        assert_eq!(revoked_invite.status, StatusCode::OK);
+        assert_eq!(revoked_invite.payload["ok"], true);
+        assert_eq!(revoked_invite_lookup.payload["status"], "revoked");
+        assert_eq!(repeated_invite_revoke.status, StatusCode::NOT_FOUND);
         assert_eq!(bad_password_change.status, StatusCode::BAD_REQUEST);
         assert_eq!(password_change.status, StatusCode::OK);
         assert_eq!(password_change.payload["ok"], true);
@@ -3114,6 +3186,32 @@ mod tests {
             None,
         )
         .await;
+        let custom_invite_expiry = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should follow the Unix epoch")
+            .as_secs_f64()
+            + 3_600.0;
+        let custom_invite = json_request(
+            &app,
+            Method::POST,
+            "/api/admin/invite-codes",
+            Some(&admin_auth),
+            None,
+            Some(serde_json::json!({
+                "expires_at": custom_invite_expiry,
+                "max_uses": 2
+            })),
+        )
+        .await;
+        let invalid_invite_policy = json_request(
+            &app,
+            Method::POST,
+            "/api/admin/invite-codes",
+            Some(&admin_auth),
+            None,
+            Some(serde_json::json!({ "max_uses": 0 })),
+        )
+        .await;
         let runtime_settings = json_request(
             &app,
             Method::GET,
@@ -3560,6 +3658,14 @@ mod tests {
         assert_eq!(invite_codes.payload[0]["id"], invite.payload["id"]);
         assert_eq!(deleted_invite.status, StatusCode::OK);
         assert_eq!(missing_invite.status, StatusCode::NOT_FOUND);
+        assert_eq!(custom_invite.status, StatusCode::OK);
+        assert_eq!(custom_invite.payload["status"], "active");
+        assert_eq!(custom_invite.payload["max_uses"], 2);
+        assert_eq!(
+            custom_invite.payload["expires_at"].as_f64(),
+            Some(custom_invite_expiry)
+        );
+        assert_eq!(invalid_invite_policy.status, StatusCode::BAD_REQUEST);
         assert_eq!(runtime_settings.status, StatusCode::OK);
         let runtime_setting_items = runtime_settings
             .payload

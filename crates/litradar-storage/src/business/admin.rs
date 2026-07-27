@@ -134,6 +134,12 @@ pub fn delete_user_with_audit(
     if was_admin {
         require_another_administrator(&transaction)?;
     }
+    let now = now_seconds();
+    transaction.execute(
+        "UPDATE invite_codes SET revoked_at = MAX(?1, created_at)
+         WHERE created_by = ?2 AND revoked_at IS NULL",
+        params![now, user_id.value()],
+    )?;
     let deleted = transaction.execute("DELETE FROM users WHERE id = ?1", [user_id.value()])?;
     if deleted != 1 {
         return Err(BusinessRepositoryError::AdministratorTargetNotFound);
@@ -201,9 +207,11 @@ pub fn list_all_invite_codes(
     auth_db_path: impl AsRef<Path>,
 ) -> Result<Vec<AdminInviteCodeInfo>, BusinessRepositoryError> {
     let connection = open_business_connection(auth_db_path)?;
+    let now = now_seconds();
     let mut statement = connection.prepare(
-        "SELECT ic.id, ic.code, ic.created_by, ic.used_by, ic.used_at, ic.created_at, \
-         uc.username AS created_by_name, uu.username AS used_by_name \
+        "SELECT ic.id, ic.code, ic.created_by, ic.used_by, ic.used_at, ic.created_at,
+                uc.username AS created_by_name, uu.username AS used_by_name,
+                ic.expires_at, ic.revoked_at, ic.max_uses, ic.use_count
          FROM invite_codes ic \
          LEFT JOIN users uc ON ic.created_by = uc.id \
          LEFT JOIN users uu ON ic.used_by = uu.id \
@@ -219,6 +227,17 @@ pub fn list_all_invite_codes(
             created_at: row.get(5)?,
             created_by_name: row.get(6)?,
             used_by_name: row.get(7)?,
+            expires_at: row.get(8)?,
+            revoked_at: row.get(9)?,
+            max_uses: row.get(10)?,
+            use_count: row.get(11)?,
+            status: InviteCodeStatus::from_lifecycle(
+                row.get(8)?,
+                row.get(9)?,
+                row.get(10)?,
+                row.get(11)?,
+                now,
+            ),
         })
     })?;
     collect_rows(rows)
@@ -244,14 +263,38 @@ pub fn admin_create_invite_code_with_audit(
     auth_db_path: impl AsRef<Path>,
     audit: Option<&SecurityAuditEvent>,
 ) -> Result<AdminInviteCodeInfo, BusinessRepositoryError> {
+    admin_create_invite_code_with_policy_and_audit(auth_db_path, None, None, audit)
+}
+
+/// Create an administrator invite with bounded policy overrides and atomic audit persistence.
+///
+/// # Arguments
+///
+/// * `auth_db_path` - Path to `auth.sqlite`.
+/// * `expires_at` - Optional absolute expiration timestamp.
+/// * `max_uses` - Optional registration quota.
+/// * `audit` - Optional required completion audit event.
+///
+/// # Returns
+///
+/// Created invite code payload.
+pub fn admin_create_invite_code_with_policy_and_audit(
+    auth_db_path: impl AsRef<Path>,
+    expires_at: Option<f64>,
+    max_uses: Option<i64>,
+    audit: Option<&SecurityAuditEvent>,
+) -> Result<AdminInviteCodeInfo, BusinessRepositoryError> {
     let code = random_hex(ADMIN_INVITE_CODE_BYTES)
         .map_err(|error| BusinessRepositoryError::Sqlite(error.into_sqlite_error()))?;
     let mut connection = open_business_connection(auth_db_path)?;
     let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
     let now = now_seconds();
+    let (expires_at, max_uses) = resolve_invite_policy(now, expires_at, max_uses)?;
     transaction.execute(
-        "INSERT INTO invite_codes (code, created_by, created_at) VALUES (?1, NULL, ?2)",
-        params![code, now],
+        "INSERT INTO invite_codes
+             (code, created_by, created_at, expires_at, max_uses, use_count)
+         VALUES (?1, NULL, ?2, ?3, ?4, 0)",
+        params![code, now, expires_at, max_uses],
     )?;
     let invite = AdminInviteCodeInfo {
         id: transaction.last_insert_rowid(),
@@ -261,6 +304,11 @@ pub fn admin_create_invite_code_with_audit(
         used_by: None,
         used_by_name: None,
         used_at: None,
+        status: InviteCodeStatus::Active,
+        expires_at,
+        revoked_at: None,
+        max_uses,
+        use_count: 0,
         created_at: now,
     };
     if let Some(audit) = audit {
@@ -273,7 +321,7 @@ pub fn admin_create_invite_code_with_audit(
     Ok(invite)
 }
 
-/// Delete an unused invite code.
+/// Irreversibly revoke an administrator-selected invite code.
 ///
 /// # Arguments
 ///
@@ -282,16 +330,26 @@ pub fn admin_create_invite_code_with_audit(
 ///
 /// # Returns
 ///
-/// True when a row was deleted.
-pub fn delete_invite_code(
+/// True when an unrevoked row was updated.
+pub fn revoke_admin_invite_code(
     auth_db_path: impl AsRef<Path>,
     code_id: i64,
 ) -> Result<bool, BusinessRepositoryError> {
-    delete_invite_code_with_audit(auth_db_path, code_id, None)
+    revoke_admin_invite_code_with_audit(auth_db_path, code_id, None)
 }
 
-/// Delete an unused invite and persist a required audit event atomically.
-pub fn delete_invite_code_with_audit(
+/// Revoke an invite and persist a required audit event atomically.
+///
+/// # Arguments
+///
+/// * `auth_db_path` - Path to `auth.sqlite`.
+/// * `code_id` - Invite code row identifier.
+/// * `audit` - Optional required completion audit event.
+///
+/// # Returns
+///
+/// True when an unrevoked row was updated.
+pub fn revoke_admin_invite_code_with_audit(
     auth_db_path: impl AsRef<Path>,
     code_id: i64,
     audit: Option<&SecurityAuditEvent>,
@@ -299,8 +357,9 @@ pub fn delete_invite_code_with_audit(
     let mut connection = open_business_connection(auth_db_path)?;
     let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
     let count = transaction.execute(
-        "DELETE FROM invite_codes WHERE id = ?1 AND used_by IS NULL",
-        [code_id],
+        "UPDATE invite_codes SET revoked_at = MAX(?1, created_at)
+         WHERE id = ?2 AND revoked_at IS NULL",
+        params![now_seconds(), code_id],
     )?;
     if count > 0 {
         if let Some(audit) = audit {
@@ -312,6 +371,19 @@ pub fn delete_invite_code_with_audit(
     }
     transaction.commit()?;
     Ok(count > 0)
+}
+
+fn resolve_invite_policy(
+    now: f64,
+    expires_at: Option<f64>,
+    max_uses: Option<i64>,
+) -> Result<(f64, i64), BusinessRepositoryError> {
+    let expires_at = expires_at.unwrap_or(now + DEFAULT_INVITE_CODE_TTL_SECONDS as f64);
+    let max_uses = max_uses.unwrap_or(DEFAULT_INVITE_CODE_MAX_USES);
+    if !is_valid_invite_code_policy(now, expires_at, max_uses) {
+        return Err(BusinessRepositoryError::InvalidInvitePolicy);
+    }
+    Ok((expires_at, max_uses))
 }
 
 /// Return aggregate admin stats.
@@ -555,7 +627,7 @@ fn get_auth_stats(auth_db_path: impl AsRef<Path>) -> Result<AuthStats, BusinessR
     let total_folders = count_table(&connection, "folders", None)?;
     let total_favorites = count_table(&connection, "favorites", None)?;
     let total_invite_codes = count_table(&connection, "invite_codes", None)?;
-    let used_invite_codes = count_table(&connection, "invite_codes", Some("used_by IS NOT NULL"))?;
+    let used_invite_codes = count_table(&connection, "invite_codes", Some("use_count > 0"))?;
     Ok(AuthStats {
         total_users,
         admin_count,
@@ -874,6 +946,76 @@ mod tests {
                 .expect("announcement count should load"),
             1
         );
+    }
+
+    #[test]
+    fn admin_invite_policy_is_bounded_and_revocation_is_irreversible() {
+        let temp_dir = tempdir().expect("temp dir should be created");
+        let auth_db_path = temp_dir.path().join("auth.sqlite");
+        migrate_auth_database(&auth_db_path).expect("auth database should migrate");
+        let expires_at = now_seconds() + 3_600.0;
+        let invite = admin_create_invite_code_with_policy_and_audit(
+            &auth_db_path,
+            Some(expires_at),
+            Some(2),
+            Some(&SecurityAuditEvent::new("invite_create", "completed")),
+        )
+        .expect("bounded administrator invite should be created");
+        assert_eq!(invite.max_uses, 2);
+        assert_eq!(invite.expires_at, expires_at);
+        assert_eq!(invite.status, InviteCodeStatus::Active);
+
+        assert!(revoke_admin_invite_code_with_audit(
+            &auth_db_path,
+            invite.id,
+            Some(&SecurityAuditEvent::new("invite_revoke", "completed")),
+        )
+        .expect("administrator revocation should commit"));
+        assert!(!revoke_admin_invite_code(&auth_db_path, invite.id)
+            .expect("repeated revocation should be an idempotent no-op"));
+        let stored = list_all_invite_codes(&auth_db_path)
+            .expect("administrator invite list should load")
+            .into_iter()
+            .find(|candidate| candidate.id == invite.id)
+            .expect("revoked invite should remain in history");
+        assert_eq!(stored.status, InviteCodeStatus::Revoked);
+        assert!(stored.revoked_at.is_some());
+
+        assert!(matches!(
+            admin_create_invite_code_with_policy_and_audit(&auth_db_path, Some(0.0), Some(1), None,),
+            Err(BusinessRepositoryError::InvalidInvitePolicy)
+        ));
+        assert!(matches!(
+            admin_create_invite_code_with_policy_and_audit(
+                &auth_db_path,
+                Some(now_seconds() + 3_600.0),
+                Some(litradar_domain::MAX_INVITE_CODE_USES + 1),
+                None,
+            ),
+            Err(BusinessRepositoryError::InvalidInvitePolicy)
+        ));
+    }
+
+    #[test]
+    fn deleting_an_invite_creator_revokes_their_code_before_detaching_history() {
+        let temp_dir = tempdir().expect("temp dir should be created");
+        let auth_db_path = temp_dir.path().join("auth.sqlite");
+        migrate_auth_database(&auth_db_path).expect("auth database should migrate");
+        let administrator = insert_user(&auth_db_path, "administrator", true);
+        let member = insert_user(&auth_db_path, "invite_member", false);
+        let invite = crate::create_invite_code(&auth_db_path, member, "member-invite", 10.0)
+            .expect("member invite should be created");
+
+        delete_user(&auth_db_path, administrator, member).expect("member deletion should commit");
+
+        let stored = list_all_invite_codes(&auth_db_path)
+            .expect("invite history should load")
+            .into_iter()
+            .find(|candidate| candidate.id == invite.id)
+            .expect("detached invite history should remain");
+        assert_eq!(stored.created_by, None);
+        assert_eq!(stored.status, InviteCodeStatus::Revoked);
+        assert!(stored.revoked_at.is_some());
     }
 
     #[test]

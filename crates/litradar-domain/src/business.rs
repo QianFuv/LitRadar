@@ -1054,8 +1054,19 @@ pub struct AdminResetPassword {
     pub new_password: String,
 }
 
+/// Optional administrator overrides for a newly issued invite code.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct AdminInviteCodeCreate {
+    /// Absolute expiration timestamp; omitted values use the seven-day default.
+    pub expires_at: Option<f64>,
+    /// Registration quota; omitted values use one redemption.
+    #[schema(minimum = 1, maximum = 1000)]
+    pub max_uses: Option<i64>,
+}
+
 /// Admin invite code response payload.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+#[derive(Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct AdminInviteCodeInfo {
     /// Invite code row identifier.
     pub id: i64,
@@ -1071,8 +1082,39 @@ pub struct AdminInviteCodeInfo {
     pub used_by_name: Option<String>,
     /// Consumption timestamp.
     pub used_at: Option<f64>,
+    /// Current lifecycle state.
+    pub status: crate::InviteCodeStatus,
+    /// Absolute expiration timestamp.
+    pub expires_at: f64,
+    /// Optional irreversible revocation timestamp.
+    pub revoked_at: Option<f64>,
+    /// Maximum permitted registrations.
+    pub max_uses: i64,
+    /// Number of committed registrations.
+    pub use_count: i64,
     /// Creation timestamp.
     pub created_at: f64,
+}
+
+impl fmt::Debug for AdminInviteCodeInfo {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("AdminInviteCodeInfo")
+            .field("id", &self.id)
+            .field("code", &"[REDACTED]")
+            .field("created_by", &self.created_by)
+            .field("created_by_name", &"[REDACTED]")
+            .field("used_by", &self.used_by)
+            .field("used_by_name", &"[REDACTED]")
+            .field("used_at", &self.used_at)
+            .field("status", &self.status)
+            .field("expires_at", &self.expires_at)
+            .field("revoked_at", &self.revoked_at)
+            .field("max_uses", &self.max_uses)
+            .field("use_count", &self.use_count)
+            .field("created_at", &self.created_at)
+            .finish()
+    }
 }
 
 /// Announcement creation payload.
@@ -1266,8 +1308,8 @@ pub fn default_announcement_priority() -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        validate_scheduled_task_timing, NotificationSettingsResponse, NotificationSettingsUpdate,
-        ScheduledDeliveryJob, ScheduledIndexJob, ScheduledJobSpec,
+        validate_scheduled_task_timing, AdminInviteCodeInfo, NotificationSettingsResponse,
+        NotificationSettingsUpdate, ScheduledDeliveryJob, ScheduledIndexJob, ScheduledJobSpec,
     };
 
     #[test]
@@ -1389,5 +1431,32 @@ mod tests {
         let debug = format!("{response:?}");
 
         assert_eq!(debug, "NotificationSettingsResponse([REDACTED])");
+    }
+
+    #[test]
+    fn administrator_invite_debug_redacts_code_and_usernames() {
+        let debug = format!(
+            "{:?}",
+            AdminInviteCodeInfo {
+                id: 1,
+                code: "invite-code-sentinel".to_string(),
+                created_by: Some(crate::UserId(2)),
+                created_by_name: Some("creator-name-sentinel".to_string()),
+                used_by: Some(crate::UserId(3)),
+                used_by_name: Some("redeemer-name-sentinel".to_string()),
+                used_at: Some(4.0),
+                status: crate::InviteCodeStatus::Exhausted,
+                expires_at: 5.0,
+                revoked_at: None,
+                max_uses: 1,
+                use_count: 1,
+                created_at: 1.0,
+            }
+        );
+
+        assert!(debug.contains("[REDACTED]"));
+        assert!(!debug.contains("invite-code-sentinel"));
+        assert!(!debug.contains("creator-name-sentinel"));
+        assert!(!debug.contains("redeemer-name-sentinel"));
     }
 }

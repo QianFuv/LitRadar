@@ -1,9 +1,16 @@
 'use client';
 
+import { useState } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { Copy, Ticket } from 'lucide-react';
+import { Ban, Copy, RotateCcw, Ticket } from 'lucide-react';
 
-import { generateInviteCode, getInviteCode } from '@/lib/api';
+import {
+  generateInviteCode,
+  getInviteCode,
+  revokeInviteCode,
+  rotateInviteCode,
+  type InviteCodeStatus,
+} from '@/lib/api';
 import {
   SettingsSection,
   SettingsSectionContent,
@@ -11,14 +18,33 @@ import {
   SettingsSectionHeader,
   SettingsSectionTitle,
 } from '@/components/settings/settings-section';
-import { Button } from '@/components/ui/button';
 import type {
   SettingsCopyFeedback,
   SettingsCopyScope,
 } from '@/components/settings/use-settings-copy';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { ConfirmDialog } from '@/components/ui/confirm-dialog';
+
+const INVITE_STATUS_LABELS: Record<InviteCodeStatus, string> = {
+  active: '可用',
+  expired: '已过期',
+  revoked: '已撤销',
+  exhausted: '已用尽',
+};
 
 /**
- * Render and manage the current user's single invite code.
+ * Format a Unix timestamp for invite lifecycle details.
+ *
+ * @param timestamp - Unix timestamp in seconds.
+ * @returns Localized date and time.
+ */
+function formatInviteDate(timestamp: number): string {
+  return new Date(timestamp * 1000).toLocaleString('zh-CN');
+}
+
+/**
+ * Render and manage the current user's invite-code lifecycle.
  *
  * @param props - Shared copy feedback and action.
  * @returns Invite-code settings card.
@@ -30,6 +56,7 @@ export function InviteCodeCard({
   copyFeedback: SettingsCopyFeedback | null;
   handleCopy: (value: string, successMessage: string, scope: SettingsCopyScope) => Promise<void>;
 }) {
+  const [isRevokeOpen, setIsRevokeOpen] = useState(false);
   const { data: inviteCodeData, refetch: refetchInviteCode } = useQuery({
     queryKey: ['invite-code'],
     queryFn: () => getInviteCode(),
@@ -37,8 +64,22 @@ export function InviteCodeCard({
   });
   const generateInviteMut = useMutation({
     mutationFn: () => generateInviteCode(),
-    onSuccess: () => refetchInviteCode(),
+    onSuccess: () => void refetchInviteCode(),
   });
+  const rotateInviteMut = useMutation({
+    mutationFn: () => rotateInviteCode(),
+    onSuccess: () => void refetchInviteCode(),
+  });
+  const revokeInviteMut = useMutation({
+    mutationFn: () => revokeInviteCode(),
+    onSuccess: () => {
+      setIsRevokeOpen(false);
+      void refetchInviteCode();
+    },
+  });
+  const mutationError = generateInviteMut.error ?? rotateInviteMut.error ?? revokeInviteMut.error;
+  const isMutating =
+    generateInviteMut.isPending || rotateInviteMut.isPending || revokeInviteMut.isPending;
 
   return (
     <SettingsSection>
@@ -50,7 +91,7 @@ export function InviteCodeCard({
               邀请码
             </SettingsSectionTitle>
             <SettingsSectionDescription>
-              每个用户可以生成一个邀请码，供他人注册使用
+              邀请码默认有效 7 天且可注册 1 次，可随时轮换或永久撤销
             </SettingsSectionDescription>
           </div>
         </div>
@@ -67,6 +108,7 @@ export function InviteCodeCard({
                 size="icon"
                 className="self-start sm:self-auto"
                 aria-label="复制邀请码"
+                disabled={inviteCodeData.status !== 'active'}
                 onClick={() => void handleCopy(inviteCodeData.code, '邀请码已复制。', 'invite')}
               >
                 <Copy className="h-4 w-4" />
@@ -84,22 +126,79 @@ export function InviteCodeCard({
                 {copyFeedback.message}
               </p>
             )}
-            <p className="text-xs text-muted-foreground">
-              {inviteCodeData.used ? '此邀请码已被使用' : '此邀请码尚未使用'}
-            </p>
+            <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+              <Badge variant={inviteCodeData.status === 'active' ? 'default' : 'secondary'}>
+                {INVITE_STATUS_LABELS[inviteCodeData.status]}
+              </Badge>
+              <span>
+                已使用 {inviteCodeData.use_count}/{inviteCodeData.max_uses} 次
+              </span>
+              <span>有效期至 {formatInviteDate(inviteCodeData.expires_at)}</span>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={isMutating}
+                onClick={() => {
+                  generateInviteMut.reset();
+                  revokeInviteMut.reset();
+                  rotateInviteMut.mutate();
+                }}
+              >
+                <RotateCcw className="h-4 w-4" />
+                轮换邀请码
+              </Button>
+              {inviteCodeData.revoked_at === null && (
+                <Button
+                  variant="destructive"
+                  size="sm"
+                  disabled={isMutating}
+                  onClick={() => {
+                    generateInviteMut.reset();
+                    rotateInviteMut.reset();
+                    revokeInviteMut.reset();
+                    setIsRevokeOpen(true);
+                  }}
+                >
+                  <Ban className="h-4 w-4" />
+                  撤销邀请码
+                </Button>
+              )}
+            </div>
           </div>
         ) : (
-          <Button onClick={() => generateInviteMut.mutate()} disabled={generateInviteMut.isPending}>
+          <Button
+            onClick={() => {
+              rotateInviteMut.reset();
+              revokeInviteMut.reset();
+              generateInviteMut.mutate();
+            }}
+            disabled={isMutating}
+          >
             生成邀请码
           </Button>
         )}
-        {generateInviteMut.isError && (
-          <p role="alert" className="text-sm text-destructive mt-2">
-            {generateInviteMut.error instanceof Error
-              ? generateInviteMut.error.message
-              : '生成失败'}
+        {mutationError && (
+          <p role="alert" className="mt-2 text-sm text-destructive">
+            {mutationError instanceof Error ? mutationError.message : '邀请码操作失败'}
           </p>
         )}
+        <ConfirmDialog
+          open={isRevokeOpen}
+          onOpenChange={(nextOpen) => {
+            if (!revokeInviteMut.isPending) {
+              setIsRevokeOpen(nextOpen);
+            }
+          }}
+          title="撤销邀请码？"
+          description="撤销后该邀请码将永久失效；如需新邀请码，可以随后轮换。"
+          actionLabel="确认撤销"
+          pendingLabel="撤销中…"
+          isPending={revokeInviteMut.isPending}
+          error={revokeInviteMut.error instanceof Error ? revokeInviteMut.error.message : null}
+          onConfirm={() => revokeInviteMut.mutate()}
+        />
       </SettingsSectionContent>
     </SettingsSection>
   );

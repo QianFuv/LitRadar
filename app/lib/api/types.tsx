@@ -185,12 +185,12 @@ export interface CnkiLoginPollResponse {
   status: string;
   session: CnkiSessionStatus;
 }
-export interface InviteCode {
-  id: number;
-  code: string;
-  used: boolean;
-  created_at: number;
-}
+export type {
+  AdminInviteCode,
+  AdminInviteCodeCreate,
+  InviteCode,
+  InviteCodeStatus,
+} from '@/lib/api-contract';
 
 export interface AdminUserInfo {
   id: number;
@@ -201,17 +201,6 @@ export interface AdminUserInfo {
   folder_count: number;
   favorite_count: number;
   notify_enabled: boolean;
-}
-
-export interface AdminInviteCode {
-  id: number;
-  code: string;
-  created_by: number | null;
-  created_by_name: string | null;
-  used_by: number | null;
-  used_by_name: string | null;
-  used_at: number | null;
-  created_at: number;
 }
 
 export interface IndexDbStats {

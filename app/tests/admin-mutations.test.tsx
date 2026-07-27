@@ -365,6 +365,11 @@ async function confirmsAdministratorDeletionTargets(): Promise<void> {
                 used_by: null,
                 used_by_name: null,
                 used_at: null,
+                status: 'active',
+                expires_at: 2_200_000_000,
+                revoked_at: null,
+                max_uses: 1,
+                use_count: 0,
                 created_at: 1,
               },
             ],
@@ -404,13 +409,13 @@ async function confirmsAdministratorDeletionTargets(): Promise<void> {
     </>,
   );
 
-  const inviteDeleteButtons = await screen.findAllByRole('button', {
-    name: '删除邀请码 INVITE-41',
+  const inviteRevokeButtons = await screen.findAllByRole('button', {
+    name: '撤销邀请码 INVITE-41',
   });
-  await user.click(inviteDeleteButtons[0]);
+  await user.click(inviteRevokeButtons[0]);
   expect(deletedInviteIds).toEqual([]);
-  expect(screen.getByRole('alertdialog', { name: '删除邀请码？' })).toHaveTextContent('INVITE-41');
-  await user.click(screen.getByRole('button', { name: '确认删除' }));
+  expect(screen.getByRole('alertdialog', { name: '撤销邀请码？' })).toHaveTextContent('INVITE-41');
+  await user.click(screen.getByRole('button', { name: '确认撤销' }));
   await waitFor(() => expect(deletedInviteIds).toEqual([41]));
 
   await user.click(await screen.findByRole('button', { name: '删除公告 Maintenance' }));
@@ -425,10 +430,12 @@ async function confirmsAdministratorDeletionTargets(): Promise<void> {
  */
 async function createsCopiesAndRetriesInviteCodes(): Promise<void> {
   const inviteCodes: Array<Record<string, unknown>> = [];
+  const creationPayloads: Array<Record<string, unknown>> = [];
   let createRequestCount = 0;
   server.use(
     http.get('http://localhost/api/admin/invite-codes', () => HttpResponse.json(inviteCodes)),
-    http.post('http://localhost/api/admin/invite-codes', () => {
+    http.post('http://localhost/api/admin/invite-codes', async ({ request }) => {
+      creationPayloads.push((await request.json()) as Record<string, unknown>);
       createRequestCount += 1;
       if (createRequestCount === 1) {
         return HttpResponse.json({ detail: 'Invite code limit reached' }, { status: 429 });
@@ -441,6 +448,11 @@ async function createsCopiesAndRetriesInviteCodes(): Promise<void> {
         used_by: null,
         used_by_name: null,
         used_at: null,
+        status: 'active',
+        expires_at: 2_200_000_000,
+        revoked_at: null,
+        max_uses: 3,
+        use_count: 0,
         created_at: 1_900_000_000,
       };
       inviteCodes.push(createdInviteCode);
@@ -455,6 +467,10 @@ async function createsCopiesAndRetriesInviteCodes(): Promise<void> {
   });
   renderWithQuery(<AdminInviteCodesCard isEnabled />);
 
+  await user.clear(screen.getByLabelText('有效天数'));
+  await user.type(screen.getByLabelText('有效天数'), '30');
+  await user.clear(screen.getByLabelText('最多使用次数'));
+  await user.type(screen.getByLabelText('最多使用次数'), '3');
   const createButton = await screen.findByRole('button', { name: '生成邀请码' });
   await user.click(createButton);
   expect(await screen.findByRole('alert')).toHaveTextContent('Invite code limit reached');
@@ -467,6 +483,10 @@ async function createsCopiesAndRetriesInviteCodes(): Promise<void> {
   expect(writeText).toHaveBeenCalledWith('INVITE-42');
   expect(await screen.findByRole('status')).toHaveTextContent('邀请码已复制。');
   expect(createRequestCount).toBe(2);
+  expect(creationPayloads).toHaveLength(2);
+  expect(creationPayloads[1]?.max_uses).toBe(3);
+  expect(creationPayloads[1]?.expires_at).toEqual(expect.any(Number));
+  expect(Number(creationPayloads[1]?.expires_at)).toBeGreaterThan(Date.now() / 1000 + 29 * 86400);
 }
 
 /**

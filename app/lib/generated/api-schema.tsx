@@ -50,7 +50,19 @@ export interface paths {
     /** List invite codes. */
     get: operations['list_invite_codes'];
     put?: never;
-    /** Create an admin-generated invite code. */
+    /**
+     * Create an admin-generated invite code.
+     * @description # Arguments
+     *
+     *     * `state` - Shared API state.
+     *     * `headers` - Request headers.
+     *     * `request_id` - Server-generated request identifier.
+     *     * `body` - Optional bounded lifecycle overrides.
+     *
+     *     # Returns
+     *
+     *     Created invite code metadata.
+     */
     post: operations['create_invite_code'];
     delete?: never;
     options?: never;
@@ -68,8 +80,20 @@ export interface paths {
     get?: never;
     put?: never;
     post?: never;
-    /** Delete an unused invite code. */
-    delete: operations['delete_invite_code'];
+    /**
+     * Irreversibly revoke an invite code.
+     * @description # Arguments
+     *
+     *     * `state` - Shared API state.
+     *     * `headers` - Request headers.
+     *     * `code_id` - Invite code row identifier.
+     *     * `request_id` - Server-generated request identifier.
+     *
+     *     # Returns
+     *
+     *     OK response when an unrevoked invite was changed.
+     */
+    delete: operations['revoke_admin_invite_code'];
     options?: never;
     head?: never;
     patch?: never;
@@ -478,6 +502,46 @@ export interface paths {
      *     Invite code response.
      */
     post: operations['generate_invite_code'];
+    /**
+     * Revoke the current user's unrevoked invite code.
+     * @description # Arguments
+     *
+     *     * `state` - Shared API state.
+     *     * `headers` - Request headers.
+     *     * `request_id` - Server-generated request identifier.
+     *
+     *     # Returns
+     *
+     *     OK response when an invite was revoked.
+     */
+    delete: operations['revoke_invite_code'];
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/auth/invite-code/rotate': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Revoke any prior issuance and create one replacement invite code.
+     * @description # Arguments
+     *
+     *     * `state` - Shared API state.
+     *     * `headers` - Request headers.
+     *     * `request_id` - Server-generated request identifier.
+     *
+     *     # Returns
+     *
+     *     Newly issued replacement invite code.
+     */
+    post: operations['rotate_invite_code'];
     delete?: never;
     options?: never;
     head?: never;
@@ -1438,6 +1502,19 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
   schemas: {
+    /** @description Optional administrator overrides for a newly issued invite code. */
+    AdminInviteCodeCreate: {
+      /**
+       * Format: double
+       * @description Absolute expiration timestamp; omitted values use the seven-day default.
+       */
+      expires_at?: number | null;
+      /**
+       * Format: int64
+       * @description Registration quota; omitted values use one redemption.
+       */
+      max_uses?: number | null;
+    };
     /** @description Admin invite code response payload. */
     AdminInviteCodeInfo: {
       /** @description Raw invite code. */
@@ -1451,10 +1528,32 @@ export interface components {
       /** @description Creator username. */
       created_by_name?: string | null;
       /**
+       * Format: double
+       * @description Absolute expiration timestamp.
+       */
+      expires_at: number;
+      /**
        * Format: int64
        * @description Invite code row identifier.
        */
       id: number;
+      /**
+       * Format: int64
+       * @description Maximum permitted registrations.
+       */
+      max_uses: number;
+      /**
+       * Format: double
+       * @description Optional irreversible revocation timestamp.
+       */
+      revoked_at?: number | null;
+      /** @description Current lifecycle state. */
+      status: components['schemas']['InviteCodeStatus'];
+      /**
+       * Format: int64
+       * @description Number of committed registrations.
+       */
+      use_count: number;
       /**
        * Format: double
        * @description Consumption timestamp.
@@ -2035,13 +2134,40 @@ export interface components {
        */
       created_at: number;
       /**
+       * Format: double
+       * @description Absolute expiration timestamp.
+       */
+      expires_at: number;
+      /**
        * Format: int64
        * @description Invite code row identifier.
        */
       id: number;
+      /**
+       * Format: int64
+       * @description Maximum permitted registrations.
+       */
+      max_uses: number;
+      /**
+       * Format: double
+       * @description Optional irreversible revocation timestamp.
+       */
+      revoked_at?: number | null;
+      /** @description Current lifecycle state. */
+      status: components['schemas']['InviteCodeStatus'];
+      /**
+       * Format: int64
+       * @description Number of committed registrations.
+       */
+      use_count: number;
       /** @description Whether the invite code has been consumed. */
       used: boolean;
     };
+    /**
+     * @description Public lifecycle state for an invite code.
+     * @enum {string}
+     */
+    InviteCodeStatus: 'active' | 'expired' | 'revoked' | 'exhausted';
     /** @description Invite requirement response. */
     InviteRequiredResponse: {
       /** @description Whether a local administrator bootstrap must run before invites can be issued. */
@@ -3002,7 +3128,11 @@ export interface operations {
       path?: never;
       cookie?: never;
     };
-    requestBody?: never;
+    requestBody?: {
+      content: {
+        'application/json': null | components['schemas']['AdminInviteCodeCreate'];
+      };
+    };
     responses: {
       /** @description Created invite code. */
       200: {
@@ -3010,12 +3140,12 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          'application/json': unknown;
+          'application/json': components['schemas']['AdminInviteCodeInfo'];
         };
       };
     };
   };
-  delete_invite_code: {
+  revoke_admin_invite_code: {
     parameters: {
       query?: never;
       header?: never;
@@ -3027,7 +3157,7 @@ export interface operations {
     };
     requestBody?: never;
     responses: {
-      /** @description Invite code deleted. */
+      /** @description Invite code revoked. */
       200: {
         headers: {
           [name: string]: unknown;
@@ -3580,6 +3710,55 @@ export interface operations {
     requestBody?: never;
     responses: {
       /** @description Generated invite code. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['InviteCodeResponse'];
+        };
+      };
+    };
+  };
+  revoke_invite_code: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Invite code revoked. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['OkResponse'];
+        };
+      };
+      /** @description No unrevoked invite code exists. */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorEnvelope'];
+        };
+      };
+    };
+  };
+  rotate_invite_code: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Invite code rotated. */
       200: {
         headers: {
           [name: string]: unknown;

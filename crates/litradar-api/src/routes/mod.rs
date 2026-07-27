@@ -78,7 +78,13 @@ pub fn public_routes() -> Router<ApiState> {
         )
         .route(
             "/auth/invite-code",
-            axum::routing::post(auth::generate_invite_code).get(auth::get_invite_code),
+            axum::routing::post(auth::generate_invite_code)
+                .get(auth::get_invite_code)
+                .delete(auth::revoke_invite_code),
+        )
+        .route(
+            "/auth/invite-code/rotate",
+            axum::routing::post(auth::rotate_invite_code),
         )
         .route(
             "/auth/invite-required",
@@ -183,7 +189,7 @@ pub fn public_routes() -> Router<ApiState> {
         )
         .route(
             "/admin/invite-codes/{code_id}",
-            axum::routing::delete(admin::delete_invite_code),
+            axum::routing::delete(admin::revoke_admin_invite_code),
         )
         .route("/admin/stats", axum::routing::get(admin::stats))
         .route(

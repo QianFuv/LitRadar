@@ -566,6 +566,7 @@ fn business_tool_error_message(error: &BusinessRepositoryError) -> String {
         | BusinessRepositoryError::TargetFolderNotFound
         | BusinessRepositoryError::SourceAndTargetFoldersSame
         | BusinessRepositoryError::InvalidInput(_)
+        | BusinessRepositoryError::InvalidInvitePolicy
         | BusinessRepositoryError::InvalidScheduledJob(_)
         | BusinessRepositoryError::InvalidScheduledTask(_)
         | BusinessRepositoryError::LegacyScheduledTaskCannotBeEnabled => error.to_string(),

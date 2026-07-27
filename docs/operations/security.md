@@ -123,7 +123,10 @@ printf '%s\n' "$ADMIN_PASSWORD" |
 
 ## 注册、密码和令牌
 
-- 公开注册始终需要未使用的邀请码，只创建普通用户。
+- 公开注册始终需要处于 active 状态的邀请码，只创建普通用户；过期、撤销或达到使用上限均在注册事务内拒绝。
+- 普通用户邀请码默认有效 7 天、最多使用 1 次；同一用户最多一个未撤销发行，rotate 会在一个 immediate transaction 中撤销旧码并创建替代码。
+- 管理员可把有效期覆盖为当前时间后最多 365 天，把最大使用次数覆盖为 `1..=1000`；撤销只写 `revoked_at`，不物理删除兑换历史。
+- 注册在同一 immediate transaction 中创建用户、递增 `use_count`、追加 `invite_code_uses` 和安全审计；并发争用最后一个名额时只有一个事务能提交。
 - 用户名长度 `3..32`，只允许字母、数字和下划线。
 - bootstrap、注册、改密和管理员重置的新密码至少 12 个 Unicode 字符。
 - 既有短密码哈希仍可登录，直到下次改密。
@@ -137,7 +140,7 @@ printf '%s\n' "$ADMIN_PASSWORD" |
 - 用户创建的长期令牌只通过 Bearer 请求头用于外部客户端。
 - 令牌不得放入 URL 查询参数。
 - `expires_at <= now` 统一视为已过期；验证路径会拒绝并清理边界时刻的令牌。
-- 含密码、salt、原始 token 或邀请码的认证类型使用脱敏 Debug，避免后续诊断误打印秘密。
+- 含密码、salt、原始 token、邀请码或邀请码关联用户名的认证与管理类型使用脱敏 Debug，避免后续诊断误打印秘密。
 
 注销对 SQLite busy/locked 使用 250 ms busy timeout、25 ms 间隔和最多一次重试。携带浏览器 Cookie 的 `/api/auth/logout` 与 `/api/auth/logout-all` 在所有响应中都清除 Cookie；`logout` 的 `401` 只表示该令牌在请求前已经无效，浏览器可把它视为幂等成功。若数据库删除或必需审计仍无法提交，则返回 `503 session_revocation_unconfirmed` 和 request ID。前端只清理非秘密本地快照，并把未确认标记保存在固定 shape 的 localStorage 元数据中；刷新不能把它改写为成功。恢复操作要求重新认证，再调用 `/api/auth/logout-all` 原子撤销该用户的全部登录令牌和 Personal Access Token。旧 Cookie 已被清除，不存在安全的“重试原注销请求”路径。
 

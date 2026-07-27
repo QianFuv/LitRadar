@@ -33,6 +33,10 @@ fn empty_auth_database_migration_creates_current_schema() {
     assert!(table_exists(&path, "managed_meta_catalogs"));
     assert!(table_exists(&path, "security_audit_events"));
     assert!(table_exists(&path, "security_audit_maintenance"));
+    assert!(table_exists(&path, "invite_code_uses"));
+    for column in ["expires_at", "revoked_at", "max_uses", "use_count"] {
+        assert!(table_columns(&path, "invite_codes").contains(&column.to_string()));
+    }
     for table in [
         "delivery_checkpoints",
         "delivery_runs",
@@ -52,6 +56,8 @@ fn empty_auth_database_migration_creates_current_schema() {
         "idx_delivery_run_items_claim",
         "idx_delivery_dedupe_identity",
         "idx_delivery_leases_scope",
+        "idx_invite_codes_one_unrevoked_creator",
+        "idx_invite_code_uses_code_time",
     ] {
         assert!(index_exists(&path, index));
     }
@@ -62,6 +68,121 @@ fn empty_auth_database_migration_creates_current_schema() {
     ] {
         assert!(runtime_setting(&path, field).is_none());
     }
+}
+
+#[test]
+fn invite_lifecycle_migration_preserves_legacy_rows_and_redemption_history() {
+    let temp_dir = tempdir().expect("temp directory should be created");
+    let path = temp_dir.path().join("invite-lifecycle-v11.sqlite");
+    migrate_auth_database(&path).expect("current auth database should migrate");
+    let connection = Connection::open(&path).expect("auth database should open");
+    replace_invite_lifecycle_with_version_eleven(&connection);
+    connection
+        .execute_batch(
+            "INSERT INTO users
+                 (id, username, password_hash, salt, is_admin, created_at, updated_at)
+             VALUES
+                 (1, 'issuer', 'hash', 'salt', 1, 1.0, 1.0),
+                 (2, 'redeemer', 'hash', 'salt', 0, 1.0, 1.0);
+             INSERT INTO invite_codes
+                 (id, code, created_by, used_by, used_at, created_at)
+             VALUES
+                 (10, 'legacy-used', 1, 2, 5.0, 1.0),
+                 (11, 'legacy-current', 1, NULL, NULL, 2.0),
+                 (12, 'legacy-missing-used-at', NULL, 2, NULL, 3.0);
+             PRAGMA user_version = 11;",
+        )
+        .expect("version eleven invite rows should be created");
+    drop(connection);
+
+    migrate_auth_database(&path).expect("version eleven invite state should migrate");
+
+    assert_eq!(user_version(&path), AUTH_SCHEMA_VERSION);
+    let connection = Connection::open(&path).expect("migrated database should open");
+    let rows = connection
+        .prepare(
+            "SELECT id, use_count, max_uses, revoked_at IS NOT NULL, expires_at > created_at
+             FROM invite_codes ORDER BY id",
+        )
+        .expect("invite lifecycle query should prepare")
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, i64>(1)?,
+                row.get::<_, i64>(2)?,
+                row.get::<_, bool>(3)?,
+                row.get::<_, bool>(4)?,
+            ))
+        })
+        .expect("invite lifecycle rows should query")
+        .collect::<Result<Vec<_>, _>>()
+        .expect("invite lifecycle rows should collect");
+    assert_eq!(
+        rows,
+        [
+            (10, 1, 1, true, true),
+            (11, 0, 1, false, true),
+            (12, 1, 1, false, true),
+        ]
+    );
+    let history = connection
+        .prepare(
+            "SELECT invite_code_id, user_id, used_at FROM invite_code_uses
+             ORDER BY invite_code_id",
+        )
+        .expect("legacy redemption history query should prepare")
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, i64>(1)?,
+                row.get::<_, f64>(2)?,
+            ))
+        })
+        .expect("legacy redemption history should query")
+        .collect::<Result<Vec<_>, _>>()
+        .expect("legacy redemption history should collect");
+    assert_eq!(history, [(10, 2, 5.0), (12, 2, 3.0)]);
+    assert_eq!(foreign_key_violation_count(&path), 0);
+}
+
+#[test]
+fn invite_lifecycle_migration_failure_rolls_back_legacy_schema_and_rows() {
+    let temp_dir = tempdir().expect("temp directory should be created");
+    let path = temp_dir.path().join("invite-lifecycle-v11-conflict.sqlite");
+    migrate_auth_database(&path).expect("current auth database should migrate");
+    let connection = Connection::open(&path).expect("auth database should open");
+    replace_invite_lifecycle_with_version_eleven(&connection);
+    connection
+        .execute_batch(
+            "INSERT INTO users
+                 (id, username, password_hash, salt, is_admin, created_at, updated_at)
+             VALUES (1, 'issuer', 'hash', 'salt', 1, 1.0, 1.0);
+             INSERT INTO invite_codes
+                 (id, code, created_by, used_by, used_at, created_at)
+             VALUES (10, 'legacy-code', 1, NULL, NULL, 1.0);
+             CREATE TABLE invite_codes_v12 (sentinel TEXT NOT NULL);
+             PRAGMA user_version = 11;",
+        )
+        .expect("conflicting version eleven fixture should be created");
+    drop(connection);
+
+    migrate_auth_database(&path).expect_err("conflicting lifecycle table should fail migration");
+
+    assert_eq!(user_version(&path), 11);
+    assert_eq!(
+        table_columns(&path, "invite_codes"),
+        [
+            "id",
+            "code",
+            "created_by",
+            "used_by",
+            "used_at",
+            "created_at"
+        ]
+    );
+    assert_eq!(table_row_count(&path, "invite_codes"), 1);
+    assert!(table_exists(&path, "invite_codes_v12"));
+    assert!(!table_exists(&path, "invite_code_uses"));
 }
 
 #[test]
@@ -717,6 +838,7 @@ fn cancellation_status_migration_preserves_version_four_runs() {
     let temp_dir = tempdir().expect("temp directory should be created");
     let path = temp_dir.path().join("version-four-auth.sqlite");
     let connection = Connection::open(&path).expect("version four database should open");
+    create_version_one_auth_prerequisites(&connection);
     connection
         .execute_batch(
             "
@@ -852,6 +974,7 @@ fn scheduler_migration_disables_and_preserves_legacy_commands() {
     let temp_dir = tempdir().expect("temp directory should be created");
     let path = temp_dir.path().join("auth.sqlite");
     let connection = Connection::open(&path).expect("version one database should open");
+    create_version_one_auth_prerequisites(&connection);
     connection
         .execute_batch(
             "
@@ -925,6 +1048,7 @@ fn scheduler_durable_migration_preserves_tasks_and_adds_safe_defaults() {
     let temp_dir = tempdir().expect("temp directory should be created");
     let path = temp_dir.path().join("auth.sqlite");
     let connection = Connection::open(&path).expect("version two database should open");
+    create_version_one_auth_prerequisites(&connection);
     connection
         .execute_batch(
             r#"
@@ -1694,6 +1818,51 @@ fn remove_current_delivery_schema(connection: &Connection) {
              DROP TABLE delivery_checkpoints;",
         )
         .expect("current delivery schema should be removed from legacy fixture");
+}
+
+fn replace_invite_lifecycle_with_version_eleven(connection: &Connection) {
+    connection
+        .execute_batch(
+            "DROP TABLE invite_code_uses;
+             DROP TABLE invite_codes;
+             CREATE TABLE invite_codes (
+                 id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                 code        TEXT NOT NULL UNIQUE,
+                 created_by  INTEGER REFERENCES users(id) ON DELETE SET NULL,
+                 used_by     INTEGER REFERENCES users(id) ON DELETE SET NULL,
+                 used_at     REAL,
+                 created_at  REAL NOT NULL
+             );
+             CREATE INDEX idx_invite_codes_code ON invite_codes(code);
+             CREATE INDEX idx_invite_codes_created_by ON invite_codes(created_by);",
+        )
+        .expect("current invite lifecycle schema should be replaced by version eleven");
+}
+
+fn create_version_one_auth_prerequisites(connection: &Connection) {
+    connection
+        .execute_batch(
+            "CREATE TABLE users (
+                 id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                 username      TEXT NOT NULL UNIQUE COLLATE NOCASE,
+                 password_hash TEXT NOT NULL,
+                 salt          TEXT NOT NULL,
+                 is_admin      INTEGER NOT NULL DEFAULT 0,
+                 created_at    REAL NOT NULL,
+                 updated_at    REAL NOT NULL
+             );
+             CREATE TABLE invite_codes (
+                 id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                 code        TEXT NOT NULL UNIQUE,
+                 created_by  INTEGER REFERENCES users(id) ON DELETE SET NULL,
+                 used_by     INTEGER REFERENCES users(id) ON DELETE SET NULL,
+                 used_at     REAL,
+                 created_at  REAL NOT NULL
+             );
+             CREATE INDEX idx_invite_codes_code ON invite_codes(code);
+             CREATE INDEX idx_invite_codes_created_by ON invite_codes(created_by);",
+        )
+        .expect("version one auth prerequisites should be created");
 }
 
 fn table_columns(path: &Path, table_name: &str) -> Vec<String> {

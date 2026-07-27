@@ -147,7 +147,7 @@ async function reportsPasswordChangeFailure(): Promise<void> {
 }
 
 /**
- * Verify personal invite generation refetches the committed value and exposes scoped copy.
+ * Verify personal invite generation, rotation, and revocation refetch committed lifecycle state.
  */
 async function generatesAndCopiesPersonalInvite(): Promise<void> {
   let inviteCode: InviteCode | null = null;
@@ -158,9 +158,38 @@ async function generatesAndCopiesPersonalInvite(): Promise<void> {
         id: 41,
         code: 'personal-invite',
         used: false,
+        status: 'active',
+        expires_at: 2_200_000_000,
+        revoked_at: null,
+        max_uses: 1,
+        use_count: 0,
         created_at: 1_900_000_000,
       };
       return HttpResponse.json(inviteCode);
+    }),
+    http.post('http://localhost/api/auth/invite-code/rotate', () => {
+      inviteCode = {
+        id: 42,
+        code: 'rotated-personal-invite',
+        used: false,
+        status: 'active',
+        expires_at: 2_200_100_000,
+        revoked_at: null,
+        max_uses: 1,
+        use_count: 0,
+        created_at: 1_900_100_000,
+      };
+      return HttpResponse.json(inviteCode);
+    }),
+    http.delete('http://localhost/api/auth/invite-code', () => {
+      if (inviteCode) {
+        inviteCode = {
+          ...inviteCode,
+          status: 'revoked',
+          revoked_at: 1_900_200_000,
+        };
+      }
+      return HttpResponse.json({ ok: true });
     }),
   );
   const user = userEvent.setup();
@@ -168,13 +197,22 @@ async function generatesAndCopiesPersonalInvite(): Promise<void> {
 
   await user.click(await screen.findByRole('button', { name: '生成邀请码' }));
   expect(await screen.findByText('personal-invite')).toBeInTheDocument();
-  expect(screen.getByText('此邀请码尚未使用')).toBeInTheDocument();
+  expect(screen.getByText('可用')).toBeInTheDocument();
+  expect(screen.getByText('已使用 0/1 次')).toBeInTheDocument();
   await user.click(screen.getByRole('button', { name: '复制邀请码' }));
   expect(accountSettingsMocks.copy).toHaveBeenCalledWith(
     'personal-invite',
     '邀请码已复制。',
     'invite',
   );
+
+  await user.click(screen.getByRole('button', { name: '轮换邀请码' }));
+  expect(await screen.findByText('rotated-personal-invite')).toBeInTheDocument();
+  await user.click(screen.getByRole('button', { name: '撤销邀请码' }));
+  const confirmation = screen.getByRole('alertdialog', { name: '撤销邀请码？' });
+  await user.click(within(confirmation).getByRole('button', { name: '确认撤销' }));
+  expect(await screen.findByText('已撤销')).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: '复制邀请码' })).toBeDisabled();
 }
 
 /**

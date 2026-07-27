@@ -17,7 +17,7 @@ use crate::business::{import_legacy_delivery_state_files, DeliveryRepositoryErro
 use crate::{DatabaseResolutionError, StorageConfig};
 
 /// Current auth and business database schema version.
-pub const AUTH_SCHEMA_VERSION: i64 = 11;
+pub const AUTH_SCHEMA_VERSION: i64 = 12;
 
 /// Current index database schema version.
 pub const INDEX_SCHEMA_VERSION: i64 = 6;
@@ -280,6 +280,7 @@ fn migrate_auth_database_inner(path: &Path) -> Result<MigrationSummary, Migratio
             9 => apply_auth_version_nine(&transaction)?,
             10 => apply_auth_version_ten(&transaction)?,
             11 => apply_auth_version_eleven(&transaction)?,
+            12 => apply_auth_version_twelve(&transaction)?,
             _ => unreachable!("auth migration version should be implemented"),
         }
         transaction.pragma_update(None, "user_version", next_version)?;
@@ -1382,6 +1383,83 @@ fn apply_auth_version_eleven(transaction: &Transaction<'_>) -> Result<(), Migrat
     Ok(())
 }
 
+fn apply_auth_version_twelve(transaction: &Transaction<'_>) -> Result<(), MigrationError> {
+    let invite_columns = table_columns(transaction, "invite_codes")?;
+    if invite_columns.iter().any(|column| column == "expires_at") {
+        let expected_invite_columns = [
+            "id",
+            "code",
+            "created_by",
+            "used_by",
+            "used_at",
+            "created_at",
+            "expires_at",
+            "revoked_at",
+            "max_uses",
+            "use_count",
+        ];
+        let expected_use_columns = ["id", "invite_code_id", "user_id", "used_at"];
+        if invite_columns != expected_invite_columns
+            || table_columns(transaction, "invite_code_uses")? != expected_use_columns
+        {
+            return Err(MigrationError::Sqlite(rusqlite::Error::InvalidQuery));
+        }
+        transaction.execute_batch(INVITE_LIFECYCLE_INDEXES_SQL)?;
+        return Ok(());
+    }
+
+    let migrated_at = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs_f64();
+    let default_ttl = litradar_domain::DEFAULT_INVITE_CODE_TTL_SECONDS as f64;
+    transaction.execute_batch(INVITE_LIFECYCLE_TABLES_SQL)?;
+    transaction.execute(
+        "INSERT INTO invite_codes_v12 (
+             id, code, created_by, used_by, used_at, created_at, expires_at,
+             revoked_at, max_uses, use_count
+         )
+         SELECT id, code, created_by, used_by,
+                CASE WHEN used_by IS NOT NULL THEN COALESCE(used_at, created_at) ELSE used_at END,
+                created_at,
+                MAX(created_at + ?1, ?2), NULL, 1,
+                CASE WHEN used_by IS NOT NULL OR used_at IS NOT NULL THEN 1 ELSE 0 END
+         FROM invite_codes",
+        params![default_ttl, migrated_at + default_ttl],
+    )?;
+    transaction.execute(
+        "UPDATE invite_codes_v12
+         SET revoked_at = MAX(?1, created_at)
+         WHERE created_by IS NOT NULL
+           AND revoked_at IS NULL
+           AND id NOT IN (
+               SELECT MAX(id) FROM invite_codes_v12
+               WHERE created_by IS NOT NULL GROUP BY created_by
+           )",
+        [migrated_at],
+    )?;
+    transaction.execute(
+        "INSERT INTO invite_code_uses (invite_code_id, user_id, used_at)
+         SELECT id, used_by, COALESCE(used_at, created_at)
+         FROM invite_codes_v12
+         WHERE used_by IS NOT NULL OR used_at IS NOT NULL",
+        [],
+    )?;
+    transaction.execute_batch(
+        "DROP TABLE invite_codes;
+         ALTER TABLE invite_codes_v12 RENAME TO invite_codes;",
+    )?;
+    transaction.execute_batch(INVITE_LIFECYCLE_INDEXES_SQL)?;
+    let foreign_key_violation_count =
+        transaction.query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |row| {
+            row.get::<_, i64>(0)
+        })?;
+    if foreign_key_violation_count != 0 {
+        return Err(MigrationError::Sqlite(rusqlite::Error::InvalidQuery));
+    }
+    Ok(())
+}
+
 fn rewrite_runtime_provider_name_tokens(
     transaction: &Transaction<'_>,
 ) -> Result<(), MigrationError> {
@@ -1701,6 +1779,45 @@ const AUTH_TABLES_SQL: &str = "
         created_at REAL    NOT NULL,
         updated_at REAL    NOT NULL
     );
+";
+
+const INVITE_LIFECYCLE_TABLES_SQL: &str = "
+    CREATE TABLE invite_codes_v12 (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        code        TEXT    NOT NULL UNIQUE,
+        created_by  INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        used_by     INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        used_at     REAL,
+        created_at  REAL    NOT NULL,
+        expires_at  REAL    NOT NULL CHECK (expires_at > created_at),
+        revoked_at  REAL    CHECK (revoked_at IS NULL OR revoked_at >= created_at),
+        max_uses    INTEGER NOT NULL CHECK (max_uses BETWEEN 1 AND 1000),
+        use_count   INTEGER NOT NULL DEFAULT 0 CHECK (
+            use_count >= 0 AND use_count <= max_uses
+        ),
+        CHECK (used_by IS NULL OR used_at IS NOT NULL)
+    );
+
+    CREATE TABLE invite_code_uses (
+        id             INTEGER PRIMARY KEY AUTOINCREMENT,
+        invite_code_id INTEGER NOT NULL REFERENCES invite_codes_v12(id) ON DELETE RESTRICT,
+        user_id        INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        used_at        REAL NOT NULL
+    );
+";
+
+const INVITE_LIFECYCLE_INDEXES_SQL: &str = "
+    CREATE INDEX IF NOT EXISTS idx_invite_codes_code ON invite_codes(code);
+    CREATE INDEX IF NOT EXISTS idx_invite_codes_created_by ON invite_codes(created_by);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_invite_codes_one_unrevoked_creator
+        ON invite_codes(created_by)
+        WHERE created_by IS NOT NULL AND revoked_at IS NULL;
+    CREATE INDEX IF NOT EXISTS idx_invite_codes_lifecycle
+        ON invite_codes(revoked_at, expires_at, use_count, max_uses);
+    CREATE INDEX IF NOT EXISTS idx_invite_code_uses_code_time
+        ON invite_code_uses(invite_code_id, used_at, id);
+    CREATE INDEX IF NOT EXISTS idx_invite_code_uses_user
+        ON invite_code_uses(user_id, used_at, id);
 ";
 
 const AUTH_INDEXES_SQL: &str = "

@@ -730,6 +730,117 @@ pub(crate) async fn get_invite_code(
     Ok(Json(invite))
 }
 
+/// Revoke the current user's unrevoked invite code.
+///
+/// # Arguments
+///
+/// * `state` - Shared API state.
+/// * `headers` - Request headers.
+/// * `request_id` - Server-generated request identifier.
+///
+/// # Returns
+///
+/// OK response when an invite was revoked.
+#[utoipa::path(
+    delete,
+    path = "/api/auth/invite-code",
+    tag = "auth",
+    responses(
+        (status = 200, description = "Invite code revoked.", body = OkResponse),
+        (status = 404, description = "No unrevoked invite code exists.", body = ErrorEnvelope)
+    ),
+    security(("bearer_auth" = []), ("session_cookie" = []))
+)]
+pub(crate) async fn revoke_invite_code(
+    State(state): State<ApiState>,
+    headers: HeaderMap,
+    request_id: Option<Extension<RequestId>>,
+) -> Result<Json<OkResponse>, ApiError> {
+    let mut audit = AuthAudit::new("invite_revoke");
+    let request_id = request_id_text(request_id.as_ref());
+    let (user, _) = match require_current_user(&state, &headers).await {
+        Ok(current) => current,
+        Err(error) => {
+            persist_auth_rejection(&state, &audit, "authentication_required", &request_id).await?;
+            audit.rejected("authentication_required");
+            return Err(error);
+        }
+    };
+    audit.set_actor_id(user.id.0);
+    let completion_audit = auth_security_event(&audit, "completed", "", &request_id);
+    let did_revoke = match run_auth(&state, move |service| {
+        service.revoke_invite_code_with_audit(user.id, completion_audit)
+    })
+    .await
+    {
+        Ok(did_revoke) => did_revoke,
+        Err(error) => {
+            persist_auth_rejection(&state, &audit, "operation_failed", &request_id).await?;
+            audit.rejected("operation_failed");
+            return Err(error);
+        }
+    };
+    if !did_revoke {
+        persist_auth_rejection(&state, &audit, "not_found", &request_id).await?;
+        audit.rejected("not_found");
+        return Err(ApiError::not_found("Unrevoked invite code not found"));
+    }
+    audit.completed();
+    Ok(Json(OkResponse { ok: true }))
+}
+
+/// Revoke any prior issuance and create one replacement invite code.
+///
+/// # Arguments
+///
+/// * `state` - Shared API state.
+/// * `headers` - Request headers.
+/// * `request_id` - Server-generated request identifier.
+///
+/// # Returns
+///
+/// Newly issued replacement invite code.
+#[utoipa::path(
+    post,
+    path = "/api/auth/invite-code/rotate",
+    tag = "auth",
+    responses((status = 200, description = "Invite code rotated.", body = InviteCodeResponse)),
+    security(("bearer_auth" = []), ("session_cookie" = []))
+)]
+pub(crate) async fn rotate_invite_code(
+    State(state): State<ApiState>,
+    headers: HeaderMap,
+    request_id: Option<Extension<RequestId>>,
+) -> Result<Json<InviteCodeResponse>, ApiError> {
+    let mut audit = AuthAudit::new("invite_rotate");
+    let request_id = request_id_text(request_id.as_ref());
+    let (user, _) = match require_current_user(&state, &headers).await {
+        Ok(current) => current,
+        Err(error) => {
+            persist_auth_rejection(&state, &audit, "authentication_required", &request_id).await?;
+            audit.rejected("authentication_required");
+            return Err(error);
+        }
+    };
+    audit.set_actor_id(user.id.0);
+    let completion_audit = auth_security_event(&audit, "completed", "", &request_id);
+    let invite = match run_auth(&state, move |service| {
+        service.rotate_invite_code_with_audit(user.id, completion_audit)
+    })
+    .await
+    {
+        Ok(invite) => invite,
+        Err(error) => {
+            persist_auth_rejection(&state, &audit, "operation_failed", &request_id).await?;
+            audit.rejected("operation_failed");
+            return Err(error);
+        }
+    };
+    audit.set_target_id(invite.id);
+    audit.completed();
+    Ok(Json(invite))
+}
+
 /// Return whether registration requires an invite code.
 ///
 /// # Arguments
@@ -1043,7 +1154,8 @@ pub(crate) fn map_auth_error(error: AuthServiceError) -> ApiError {
         AuthServiceError::Repository(AuthRepositoryError::InviteCodeRequired)
         | AuthServiceError::Repository(AuthRepositoryError::AdministratorBootstrapRequired)
         | AuthServiceError::Repository(AuthRepositoryError::InvalidOrUsedInviteCode)
-        | AuthServiceError::Repository(AuthRepositoryError::UserHasAlreadyGeneratedInviteCode) => {
+        | AuthServiceError::Repository(AuthRepositoryError::ActiveInviteCodeAlreadyExists)
+        | AuthServiceError::Repository(AuthRepositoryError::InvalidInvitePolicy) => {
             ApiError::bad_request(error.to_string())
         }
         AuthServiceError::Repository(AuthRepositoryError::UsernameAlreadyExists) => {

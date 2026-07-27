@@ -7,7 +7,8 @@ use std::path::Path;
 use std::time::Duration;
 
 use litradar_domain::{
-    UserId, ACCESS_TOKEN_ACTIVE_LIMIT, ACCESS_TOKEN_LIMIT_DETAIL, ACCESS_TOKEN_RESERVED_NAME,
+    is_valid_invite_code_policy, UserId, ACCESS_TOKEN_ACTIVE_LIMIT, ACCESS_TOKEN_LIMIT_DETAIL,
+    ACCESS_TOKEN_RESERVED_NAME, DEFAULT_INVITE_CODE_MAX_USES, DEFAULT_INVITE_CODE_TTL_SECONDS,
 };
 use rusqlite::{params, Connection, ErrorCode, OptionalExtension};
 
@@ -96,6 +97,16 @@ pub struct InviteCodeRow {
     pub code: String,
     /// User that consumed the invite code.
     pub used_by: Option<UserId>,
+    /// First consumption timestamp retained for compatibility.
+    pub used_at: Option<f64>,
+    /// Absolute expiration timestamp.
+    pub expires_at: f64,
+    /// Optional irreversible revocation timestamp.
+    pub revoked_at: Option<f64>,
+    /// Maximum permitted registrations.
+    pub max_uses: i64,
+    /// Number of committed registrations.
+    pub use_count: i64,
     /// Creation timestamp.
     pub created_at: f64,
 }
@@ -107,6 +118,11 @@ impl fmt::Debug for InviteCodeRow {
             .field("id", &self.id)
             .field("code", &"[REDACTED]")
             .field("used_by", &self.used_by)
+            .field("used_at", &self.used_at)
+            .field("expires_at", &self.expires_at)
+            .field("revoked_at", &self.revoked_at)
+            .field("max_uses", &self.max_uses)
+            .field("use_count", &self.use_count)
             .field("created_at", &self.created_at)
             .finish()
     }
@@ -125,10 +141,12 @@ pub enum AuthRepositoryError {
     InviteCodeRequired,
     /// Local administrator bootstrap must create the first user.
     AdministratorBootstrapRequired,
-    /// The provided invite code is missing or already used.
+    /// The provided invite code cannot admit another registration.
     InvalidOrUsedInviteCode,
-    /// The user has already generated an invite code.
-    UserHasAlreadyGeneratedInviteCode,
+    /// The user already owns an unrevoked invite issuance.
+    ActiveInviteCodeAlreadyExists,
+    /// Invite expiry or use quota falls outside the managed policy.
+    InvalidInvitePolicy,
     /// The username already exists.
     UsernameAlreadyExists,
     /// Local administrator bootstrap has already completed.
@@ -154,9 +172,14 @@ impl fmt::Display for AuthRepositoryError {
             Self::AdministratorBootstrapRequired => {
                 formatter.write_str("Administrator bootstrap is required")
             }
-            Self::InvalidOrUsedInviteCode => formatter.write_str("Invalid or used invite code"),
-            Self::UserHasAlreadyGeneratedInviteCode => {
-                formatter.write_str("User has already generated an invite code")
+            Self::InvalidOrUsedInviteCode => {
+                formatter.write_str("Invalid, expired, revoked, or exhausted invite code")
+            }
+            Self::ActiveInviteCodeAlreadyExists => {
+                formatter.write_str("An unrevoked invite code already exists; rotate it instead")
+            }
+            Self::InvalidInvitePolicy => {
+                formatter.write_str("Invite code policy is outside the allowed range")
             }
             Self::UsernameAlreadyExists => formatter.write_str("Username already exists"),
             Self::AdministratorBootstrapAlreadyCompleted => {
@@ -334,18 +357,25 @@ pub fn register_user_with_invite_and_audit(
 ) -> Result<AuthUserRow, AuthRepositoryError> {
     let connection = open_auth_connection(auth_db_path)?;
     connection.execute("BEGIN IMMEDIATE", [])?;
-    let result =
-        register_user_in_transaction(&connection, username, password_hash, salt, invite_code, now)
-            .and_then(|user| {
-                if let Some(audit) = audit {
-                    let audit = audit
-                        .clone()
-                        .with_actor_id(user.id.value())
-                        .with_target_id(user.id.value());
-                    insert_required_security_audit_event(&connection, &audit)?;
-                }
-                Ok(user)
-            });
+    let result = register_user_in_transaction(
+        &connection,
+        username,
+        password_hash,
+        salt,
+        invite_code,
+        now,
+        audit,
+    )
+    .and_then(|user| {
+        if let Some(audit) = audit {
+            let audit = audit
+                .clone()
+                .with_actor_id(user.id.value())
+                .with_target_id(user.id.value());
+            insert_required_security_audit_event(&connection, &audit)?;
+        }
+        Ok(user)
+    });
     finish_immediate_transaction(&connection, result)
 }
 
@@ -922,30 +952,167 @@ pub fn create_invite_code_with_audit(
     now: f64,
     audit: Option<&SecurityAuditEvent>,
 ) -> Result<InviteCodeRow, AuthRepositoryError> {
+    issue_invite_code_with_audit(
+        auth_db_path,
+        user_id,
+        code,
+        now,
+        now + DEFAULT_INVITE_CODE_TTL_SECONDS as f64,
+        DEFAULT_INVITE_CODE_MAX_USES,
+        audit,
+    )
+}
+
+/// Issue an invite code with an explicit bounded lifecycle policy and atomic audit event.
+///
+/// # Arguments
+///
+/// * `auth_db_path` - Path to the auth SQLite database.
+/// * `user_id` - User issuing the invite.
+/// * `code` - Raw operating-system-random code.
+/// * `now` - Current Unix timestamp.
+/// * `expires_at` - Absolute expiration timestamp.
+/// * `max_uses` - Maximum permitted registrations.
+/// * `audit` - Optional required completion audit event.
+///
+/// # Returns
+///
+/// Newly issued invite row.
+pub fn issue_invite_code_with_audit(
+    auth_db_path: impl AsRef<Path>,
+    user_id: UserId,
+    code: &str,
+    now: f64,
+    expires_at: f64,
+    max_uses: i64,
+    audit: Option<&SecurityAuditEvent>,
+) -> Result<InviteCodeRow, AuthRepositoryError> {
+    validate_invite_policy(now, expires_at, max_uses)?;
     let connection = open_auth_connection(auth_db_path)?;
     connection.execute("BEGIN IMMEDIATE", [])?;
     let result = (|| {
         let existing = connection
             .query_row(
-                "SELECT id FROM invite_codes WHERE created_by = ?1",
+                "SELECT id FROM invite_codes WHERE created_by = ?1 AND revoked_at IS NULL",
                 [user_id.value()],
                 |row| row.get::<_, i64>(0),
             )
             .optional()?;
         if existing.is_some() {
-            return Err(AuthRepositoryError::UserHasAlreadyGeneratedInviteCode);
+            return Err(AuthRepositoryError::ActiveInviteCodeAlreadyExists);
         }
-        connection.execute(
-            "INSERT INTO invite_codes (code, created_by, created_at) VALUES (?1, ?2, ?3)",
-            params![code, user_id.value(), now],
+        let row = insert_invite_code_in_transaction(
+            &connection,
+            code,
+            Some(user_id),
+            now,
+            expires_at,
+            max_uses,
         )?;
-        let row = InviteCodeRow {
-            id: connection.last_insert_rowid(),
-            code: code.to_string(),
-            used_by: None,
-            created_at: now,
-        };
         if let Some(audit) = audit {
+            insert_required_security_audit_event(
+                &connection,
+                &audit.clone().with_target_id(row.id),
+            )?;
+        }
+        Ok(row)
+    })();
+    finish_immediate_transaction(&connection, result)
+}
+
+/// Revoke the current user's unrevoked invite code and audit the lifecycle change atomically.
+///
+/// # Arguments
+///
+/// * `auth_db_path` - Path to the auth SQLite database.
+/// * `user_id` - Invite creator.
+/// * `now` - Revocation timestamp.
+/// * `audit` - Optional required completion audit event.
+///
+/// # Returns
+///
+/// True when an unrevoked invite was changed.
+pub fn revoke_user_invite_code_with_audit(
+    auth_db_path: impl AsRef<Path>,
+    user_id: UserId,
+    now: f64,
+    audit: Option<&SecurityAuditEvent>,
+) -> Result<bool, AuthRepositoryError> {
+    let connection = open_auth_connection(auth_db_path)?;
+    connection.execute("BEGIN IMMEDIATE", [])?;
+    let result = (|| {
+        let invite_id = connection
+            .query_row(
+                "UPDATE invite_codes SET revoked_at = MAX(?1, created_at)
+                 WHERE created_by = ?2 AND revoked_at IS NULL
+                 RETURNING id",
+                params![now, user_id.value()],
+                |row| row.get::<_, i64>(0),
+            )
+            .optional()?;
+        if let (Some(invite_id), Some(audit)) = (invite_id, audit) {
+            insert_required_security_audit_event(
+                &connection,
+                &audit.clone().with_target_id(invite_id),
+            )?;
+        }
+        Ok(invite_id.is_some())
+    })();
+    finish_immediate_transaction(&connection, result)
+}
+
+/// Revoke any prior issuance and create one replacement invite in the same transaction.
+///
+/// # Arguments
+///
+/// * `auth_db_path` - Path to the auth SQLite database.
+/// * `user_id` - Invite creator.
+/// * `code` - Raw operating-system-random replacement code.
+/// * `now` - Rotation timestamp.
+/// * `expires_at` - Absolute replacement expiration timestamp.
+/// * `max_uses` - Replacement registration quota.
+/// * `audit` - Optional required completion audit event.
+///
+/// # Returns
+///
+/// Newly issued replacement invite row.
+pub fn rotate_user_invite_code_with_audit(
+    auth_db_path: impl AsRef<Path>,
+    user_id: UserId,
+    code: &str,
+    now: f64,
+    expires_at: f64,
+    max_uses: i64,
+    audit: Option<&SecurityAuditEvent>,
+) -> Result<InviteCodeRow, AuthRepositoryError> {
+    validate_invite_policy(now, expires_at, max_uses)?;
+    let connection = open_auth_connection(auth_db_path)?;
+    connection.execute("BEGIN IMMEDIATE", [])?;
+    let result = (|| {
+        let previous_id = connection
+            .query_row(
+                "UPDATE invite_codes SET revoked_at = MAX(?1, created_at)
+                 WHERE created_by = ?2 AND revoked_at IS NULL
+                 RETURNING id",
+                params![now, user_id.value()],
+                |row| row.get::<_, i64>(0),
+            )
+            .optional()?;
+        let row = insert_invite_code_in_transaction(
+            &connection,
+            code,
+            Some(user_id),
+            now,
+            expires_at,
+            max_uses,
+        )?;
+        if let Some(audit) = audit {
+            if let Some(previous_id) = previous_id {
+                insert_required_security_audit_event(
+                    &connection,
+                    &audit.clone().with_target_id(previous_id),
+                )?;
+            }
             insert_required_security_audit_event(
                 &connection,
                 &audit.clone().with_target_id(row.id),
@@ -973,7 +1140,10 @@ pub fn get_user_invite_code(
     let connection = open_auth_connection(auth_db_path)?;
     connection
         .query_row(
-            "SELECT id, code, used_by, created_at FROM invite_codes WHERE created_by = ?1",
+            "SELECT id, code, used_by, used_at, expires_at, revoked_at, max_uses, use_count,
+                    created_at
+             FROM invite_codes WHERE created_by = ?1
+             ORDER BY created_at DESC, id DESC LIMIT 1",
             [user_id.value()],
             invite_from_row,
         )
@@ -1001,6 +1171,7 @@ fn register_user_in_transaction(
     salt: &str,
     invite_code: Option<&str>,
     now: f64,
+    audit: Option<&SecurityAuditEvent>,
 ) -> Result<AuthUserRow, AuthRepositoryError> {
     let user_count: i64 =
         connection.query_row("SELECT COUNT(*) FROM users", [], |row| row.get(0))?;
@@ -1009,16 +1180,81 @@ fn register_user_in_transaction(
     }
     let invite_code = invite_code.ok_or(AuthRepositoryError::InviteCodeRequired)?;
     let user = insert_user_in_transaction(connection, username, password_hash, salt, false, now)?;
-    let count = connection.execute(
-        "UPDATE invite_codes SET used_by = ?1, used_at = ?2 \
-         WHERE code = ?3 AND used_by IS NULL",
-        params![user.id.value(), now, invite_code],
+    let invite_id = connection
+        .query_row(
+            "UPDATE invite_codes
+             SET used_by = CASE WHEN use_count = 0 THEN ?1 ELSE used_by END,
+                 used_at = CASE WHEN use_count = 0 THEN ?2 ELSE used_at END,
+                 use_count = use_count + 1
+             WHERE code = ?3
+               AND revoked_at IS NULL
+               AND expires_at > ?2
+               AND use_count < max_uses
+             RETURNING id",
+            params![user.id.value(), now, invite_code],
+            |row| row.get::<_, i64>(0),
+        )
+        .optional()?
+        .ok_or(AuthRepositoryError::InvalidOrUsedInviteCode)?;
+    connection.execute(
+        "INSERT INTO invite_code_uses (invite_code_id, user_id, used_at)
+         VALUES (?1, ?2, ?3)",
+        params![invite_id, user.id.value(), now],
     )?;
-    if count == 0 {
-        return Err(AuthRepositoryError::InvalidOrUsedInviteCode);
+    let mut redemption_audit = SecurityAuditEvent::new("invite_redeem", "completed")
+        .with_actor_id(user.id.value())
+        .with_target_id(invite_id);
+    redemption_audit.occurred_at = now;
+    if let Some(audit) = audit {
+        redemption_audit.request_id.clone_from(&audit.request_id);
     }
+    insert_required_security_audit_event(connection, &redemption_audit)?;
     create_default_folder(connection, user.id, now)?;
     Ok(user)
+}
+
+fn validate_invite_policy(
+    now: f64,
+    expires_at: f64,
+    max_uses: i64,
+) -> Result<(), AuthRepositoryError> {
+    if !is_valid_invite_code_policy(now, expires_at, max_uses) {
+        return Err(AuthRepositoryError::InvalidInvitePolicy);
+    }
+    Ok(())
+}
+
+fn insert_invite_code_in_transaction(
+    connection: &Connection,
+    code: &str,
+    created_by: Option<UserId>,
+    now: f64,
+    expires_at: f64,
+    max_uses: i64,
+) -> Result<InviteCodeRow, AuthRepositoryError> {
+    connection.execute(
+        "INSERT INTO invite_codes
+             (code, created_by, created_at, expires_at, max_uses, use_count)
+         VALUES (?1, ?2, ?3, ?4, ?5, 0)",
+        params![
+            code,
+            created_by.map(UserId::value),
+            now,
+            expires_at,
+            max_uses
+        ],
+    )?;
+    Ok(InviteCodeRow {
+        id: connection.last_insert_rowid(),
+        code: code.to_string(),
+        used_by: None,
+        used_at: None,
+        expires_at,
+        revoked_at: None,
+        max_uses,
+        use_count: 0,
+        created_at: now,
+    })
 }
 
 fn bootstrap_admin_in_transaction(
@@ -1206,7 +1442,12 @@ fn invite_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<InviteCodeRow> {
         id: row.get(0)?,
         code: row.get(1)?,
         used_by: row.get::<_, Option<i64>>(2)?.map(UserId),
-        created_at: row.get(3)?,
+        used_at: row.get(3)?,
+        expires_at: row.get(4)?,
+        revoked_at: row.get(5)?,
+        max_uses: row.get(6)?,
+        use_count: row.get(7)?,
+        created_at: row.get(8)?,
     })
 }
 
@@ -1246,12 +1487,14 @@ mod tests {
     use tempfile::{tempdir, TempDir};
 
     use super::{
-        bootstrap_admin, compare_and_swap_legacy_password_hash, delete_access_token,
-        find_user_credentials_by_id, initialize_auth_database, insert_personal_access_token,
-        list_access_tokens, open_auth_connection, random_hex, replace_login_access_token,
-        update_user_password_and_delete_tokens, update_user_password_and_delete_tokens_with_audit,
-        verify_access_token_hash, AuthRepositoryError, AuthUserRow, InviteCodeRow,
-        UserCredentialRow,
+        bootstrap_admin, compare_and_swap_legacy_password_hash, create_invite_code,
+        delete_access_token, find_user_credentials_by_id, get_user_invite_code,
+        initialize_auth_database, insert_personal_access_token, issue_invite_code_with_audit,
+        list_access_tokens, open_auth_connection, random_hex, register_user_with_invite,
+        replace_login_access_token, revoke_user_invite_code_with_audit,
+        rotate_user_invite_code_with_audit, update_user_password_and_delete_tokens,
+        update_user_password_and_delete_tokens_with_audit, verify_access_token_hash,
+        AuthRepositoryError, AuthUserRow, InviteCodeRow, UserCredentialRow,
     };
     use crate::{list_security_audit_events, SecurityAuditEvent};
 
@@ -1699,6 +1942,369 @@ mod tests {
     }
 
     #[test]
+    fn invite_registration_rejects_expired_revoked_and_exhausted_codes() {
+        let (_temp_dir, auth_db_path, issuer_id) = access_token_fixture();
+        issue_invite_code_with_audit(
+            &auth_db_path,
+            issuer_id,
+            "expired-code",
+            10.0,
+            20.0,
+            1,
+            None,
+        )
+        .expect("expiring invite should be issued");
+        let expired = register_user_with_invite(
+            &auth_db_path,
+            "expired_user",
+            "password-hash",
+            "salt",
+            Some("expired-code"),
+            20.0,
+        )
+        .expect_err("invite expiring at registration time should be rejected");
+        assert!(matches!(
+            expired,
+            AuthRepositoryError::InvalidOrUsedInviteCode
+        ));
+
+        rotate_user_invite_code_with_audit(
+            &auth_db_path,
+            issuer_id,
+            "revoked-code",
+            30.0,
+            100.0,
+            1,
+            None,
+        )
+        .expect("replacement invite should be issued");
+        assert!(
+            revoke_user_invite_code_with_audit(&auth_db_path, issuer_id, 40.0, None,)
+                .expect("invite revocation should commit")
+        );
+        let revoked = register_user_with_invite(
+            &auth_db_path,
+            "revoked_user",
+            "password-hash",
+            "salt",
+            Some("revoked-code"),
+            50.0,
+        )
+        .expect_err("revoked invite should be rejected");
+        assert!(matches!(
+            revoked,
+            AuthRepositoryError::InvalidOrUsedInviteCode
+        ));
+
+        issue_invite_code_with_audit(
+            &auth_db_path,
+            issuer_id,
+            "exhausted-code",
+            60.0,
+            100.0,
+            1,
+            None,
+        )
+        .expect("quota fixture invite should be issued");
+        register_user_with_invite(
+            &auth_db_path,
+            "first_redeemer",
+            "password-hash",
+            "salt",
+            Some("exhausted-code"),
+            70.0,
+        )
+        .expect("first redemption should commit");
+        let exhausted = register_user_with_invite(
+            &auth_db_path,
+            "second_redeemer",
+            "password-hash",
+            "salt",
+            Some("exhausted-code"),
+            80.0,
+        )
+        .expect_err("exhausted invite should be rejected");
+        assert!(matches!(
+            exhausted,
+            AuthRepositoryError::InvalidOrUsedInviteCode
+        ));
+        let connection = open_auth_connection(&auth_db_path).expect("auth connection should open");
+        assert_eq!(
+            connection
+                .query_row("SELECT COUNT(*) FROM users", [], |row| row.get::<_, i64>(0))
+                .expect("user count should load"),
+            2
+        );
+        assert_eq!(
+            connection
+                .query_row("SELECT COUNT(*) FROM invite_code_uses", [], |row| {
+                    row.get::<_, i64>(0)
+                })
+                .expect("redemption count should load"),
+            1
+        );
+    }
+
+    #[test]
+    fn invite_rotation_irreversibly_replaces_the_prior_code() {
+        let (_temp_dir, auth_db_path, issuer_id) = access_token_fixture();
+        create_invite_code(&auth_db_path, issuer_id, "prior-code", 10.0)
+            .expect("prior invite should be issued");
+        let replacement = rotate_user_invite_code_with_audit(
+            &auth_db_path,
+            issuer_id,
+            "replacement-code",
+            20.0,
+            100.0,
+            1,
+            Some(
+                &SecurityAuditEvent::new("invite_rotate", "completed")
+                    .with_actor_id(issuer_id.value()),
+            ),
+        )
+        .expect("invite rotation should commit");
+
+        let prior_result = register_user_with_invite(
+            &auth_db_path,
+            "prior_redeemer",
+            "password-hash",
+            "salt",
+            Some("prior-code"),
+            30.0,
+        );
+        assert!(matches!(
+            prior_result,
+            Err(AuthRepositoryError::InvalidOrUsedInviteCode)
+        ));
+        register_user_with_invite(
+            &auth_db_path,
+            "replacement_redeemer",
+            "password-hash",
+            "salt",
+            Some("replacement-code"),
+            30.0,
+        )
+        .expect("replacement invite should remain usable");
+        let current = get_user_invite_code(&auth_db_path, issuer_id)
+            .expect("current invite should load")
+            .expect("replacement invite should exist");
+        assert_eq!(current.id, replacement.id);
+        assert_eq!(current.code, "replacement-code");
+        assert_eq!(current.use_count, 1);
+        let audits =
+            list_security_audit_events(&auth_db_path).expect("invite lifecycle audits should load");
+        assert_eq!(
+            audits
+                .iter()
+                .filter(|event| event.action == "invite_rotate")
+                .count(),
+            2
+        );
+        assert_eq!(
+            audits
+                .iter()
+                .filter(|event| event.action == "invite_redeem")
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn invite_redemption_and_rotation_roll_back_when_required_audit_fails() {
+        let (_temp_dir, auth_db_path, issuer_id) = access_token_fixture();
+        create_invite_code(&auth_db_path, issuer_id, "rollback-prior-code", 10.0)
+            .expect("prior invite should be issued");
+        let connection = open_auth_connection(&auth_db_path).expect("auth connection should open");
+        connection
+            .execute_batch(
+                "CREATE TRIGGER fail_invite_lifecycle_audit
+                 BEFORE INSERT ON security_audit_events
+                 WHEN NEW.action IN ('invite_redeem', 'invite_rotate')
+                 BEGIN SELECT RAISE(ABORT, 'injected invite audit failure'); END;",
+            )
+            .expect("invite audit fault trigger should install");
+        drop(connection);
+
+        let redemption_error = register_user_with_invite(
+            &auth_db_path,
+            "rollback_redeemer",
+            "password-hash",
+            "salt",
+            Some("rollback-prior-code"),
+            20.0,
+        )
+        .expect_err("required redemption audit failure should abort registration");
+        assert!(matches!(
+            redemption_error,
+            AuthRepositoryError::AuditPersistence(_)
+        ));
+        let rotation_error = rotate_user_invite_code_with_audit(
+            &auth_db_path,
+            issuer_id,
+            "rollback-replacement-code",
+            30.0,
+            100.0,
+            1,
+            Some(
+                &SecurityAuditEvent::new("invite_rotate", "completed")
+                    .with_actor_id(issuer_id.value()),
+            ),
+        )
+        .expect_err("required rotation audit failure should abort replacement");
+        assert!(matches!(
+            rotation_error,
+            AuthRepositoryError::AuditPersistence(_)
+        ));
+
+        let connection = open_auth_connection(&auth_db_path).expect("auth connection should open");
+        let prior_state = connection
+            .query_row(
+                "SELECT use_count, revoked_at FROM invite_codes WHERE code = 'rollback-prior-code'",
+                [],
+                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, Option<f64>>(1)?)),
+            )
+            .expect("prior invite state should load");
+        assert_eq!(prior_state, (0, None));
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT COUNT(*) FROM invite_codes WHERE code = 'rollback-replacement-code'",
+                    [],
+                    |row| row.get::<_, i64>(0),
+                )
+                .expect("replacement count should load"),
+            0
+        );
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT COUNT(*) FROM users WHERE username = 'rollback_redeemer'",
+                    [],
+                    |row| row.get::<_, i64>(0),
+                )
+                .expect("rolled-back user count should load"),
+            0
+        );
+        assert_eq!(
+            connection
+                .query_row("SELECT COUNT(*) FROM invite_code_uses", [], |row| {
+                    row.get::<_, i64>(0)
+                })
+                .expect("rolled-back redemption count should load"),
+            0
+        );
+    }
+
+    #[test]
+    fn concurrent_invite_issuance_admits_only_one_unrevoked_code() {
+        let (_temp_dir, auth_db_path, issuer_id) = access_token_fixture();
+        let barrier = Arc::new(Barrier::new(2));
+        let handles = (0..2)
+            .map(|index| {
+                let auth_db_path = auth_db_path.clone();
+                let barrier = Arc::clone(&barrier);
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    create_invite_code(
+                        auth_db_path,
+                        issuer_id,
+                        &format!("concurrent-code-{index}"),
+                        10.0 + index as f64,
+                    )
+                })
+            })
+            .collect::<Vec<_>>();
+        let results = handles
+            .into_iter()
+            .map(|handle| handle.join().expect("issuance thread should finish"))
+            .collect::<Vec<_>>();
+
+        assert_eq!(results.iter().filter(|result| result.is_ok()).count(), 1);
+        assert_eq!(
+            results
+                .iter()
+                .filter(|result| matches!(
+                    result,
+                    Err(AuthRepositoryError::ActiveInviteCodeAlreadyExists)
+                ))
+                .count(),
+            1
+        );
+        let connection = open_auth_connection(&auth_db_path).expect("auth connection should open");
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT COUNT(*) FROM invite_codes
+                     WHERE created_by = ?1 AND revoked_at IS NULL",
+                    [issuer_id.value()],
+                    |row| row.get::<_, i64>(0),
+                )
+                .expect("active invite count should load"),
+            1
+        );
+    }
+
+    #[test]
+    fn concurrent_final_invite_redemption_commits_exactly_once() {
+        let (_temp_dir, auth_db_path, issuer_id) = access_token_fixture();
+        issue_invite_code_with_audit(
+            &auth_db_path,
+            issuer_id,
+            "last-use-code",
+            10.0,
+            100.0,
+            1,
+            None,
+        )
+        .expect("single-use invite should be issued");
+        let barrier = Arc::new(Barrier::new(2));
+        let handles = (0..2)
+            .map(|index| {
+                let auth_db_path = auth_db_path.clone();
+                let barrier = Arc::clone(&barrier);
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    register_user_with_invite(
+                        auth_db_path,
+                        &format!("concurrent_redeemer_{index}"),
+                        "password-hash",
+                        "salt",
+                        Some("last-use-code"),
+                        20.0,
+                    )
+                })
+            })
+            .collect::<Vec<_>>();
+        let results = handles
+            .into_iter()
+            .map(|handle| handle.join().expect("redemption thread should finish"))
+            .collect::<Vec<_>>();
+
+        assert_eq!(results.iter().filter(|result| result.is_ok()).count(), 1);
+        assert_eq!(
+            results
+                .iter()
+                .filter(|result| matches!(
+                    result,
+                    Err(AuthRepositoryError::InvalidOrUsedInviteCode)
+                ))
+                .count(),
+            1
+        );
+        let connection = open_auth_connection(&auth_db_path).expect("auth connection should open");
+        let state = connection
+            .query_row(
+                "SELECT use_count,
+                        (SELECT COUNT(*) FROM invite_code_uses WHERE invite_code_id = ic.id)
+                 FROM invite_codes ic WHERE code = 'last-use-code'",
+                [],
+                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
+            )
+            .expect("invite quota state should load");
+        assert_eq!(state, (1, 1));
+    }
+
+    #[test]
     fn os_random_hex_and_auth_row_debug_keep_secret_boundaries() {
         let first = random_hex(32).expect("OS randomness should be available");
         let second = random_hex(32).expect("OS randomness should remain available");
@@ -1729,6 +2335,11 @@ mod tests {
                     id: 2,
                     code: "invite-code-sentinel".to_string(),
                     used_by: None,
+                    used_at: None,
+                    expires_at: 3.0,
+                    revoked_at: None,
+                    max_uses: 1,
+                    use_count: 0,
                     created_at: 2.0,
                 },
             )

@@ -175,7 +175,7 @@ users
   +-- access_tokens
   +-- cnki_sessions
   +-- folders -- favorites
-  +-- invite_codes
+  +-- invite_codes -- invite_code_uses
   +-- notification_settings
 
 scheduled_tasks -- scheduled_task_runs
@@ -202,7 +202,11 @@ delivery_runs -- delivery_run_items
 
 `access_tokens` 保存唯一 token hash，不保存明文 token。`name='login'` 是浏览器 Cookie 会话的保留行；其他 active personal token 每用户最多 50 个。达到上限只阻止新建，不删除历史行。所有读取路径统一以 `expires_at <= now` 判定过期并清理；salt、原始 token 和邀请码由操作系统 CSPRNG 生成。
 
-`invite_codes` 记录创建、使用者和时间；普通用户最多创建一个邀请码。
+认证库 v12 的 `invite_codes` 除兼容字段 `used_by`/`used_at` 外，还保存 `expires_at`、不可逆 `revoked_at`、`max_uses` 和 `use_count`。`invite_code_uses` 为每次已提交兑换保存邀请码、用户和时间；删除用户只把历史中的用户引用设为 `NULL`，不能删除邀请码历史。`used_by`/`used_at` 表示首位兑换者，仅为旧客户端兼容。
+
+普通用户由部分唯一索引保证最多一个 `revoked_at IS NULL` 的发行记录；过期或用尽后可以通过 rotate 原子撤销旧记录并签发新码。注册在 `BEGIN IMMEDIATE` 事务中以 `revoked_at IS NULL AND expires_at > now AND use_count < max_uses` 条件递增计数，同时插入用户、兑换历史、默认文件夹和审计事件，因此并发争用最后一个名额时最多一个事务成功。管理员生成的 `created_by IS NULL` 邀请码不受单发行索引限制，但有效期最多 365 天且用量上限为 1000。
+
+v11 升级保留旧 ID、code、创建者、首位使用者和使用时间；已使用行补入一条 `invite_code_uses` 历史，同一普通创建者的旧重复行只保留最高 ID 为未撤销状态。迁移后的旧码至少获得迁移时起 7 天的兼容有效期。
 
 ### CNKI 会话
 
