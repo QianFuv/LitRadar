@@ -5,7 +5,8 @@ use std::fmt;
 use std::path::{Path, PathBuf};
 
 use litradar_storage::{
-    load_runtime_logging_settings, DEFAULT_RUNTIME_LOG_FILTER, DEFAULT_RUNTIME_LOG_FORMAT,
+    load_runtime_logging_settings, parse_runtime_setting, ParsedRuntimeSettingValue,
+    RuntimeSettingKey, DEFAULT_RUNTIME_LOG_FILTER, DEFAULT_RUNTIME_LOG_FORMAT,
 };
 use tracing_appender::non_blocking::{ErrorCounter, NonBlockingBuilder, WorkerGuard};
 use tracing_subscriber::util::SubscriberInitExt;
@@ -82,12 +83,29 @@ enum LogFormat {
 
 impl LogFormat {
     fn parse(value: Option<&str>) -> Result<Self, ObservabilityError> {
-        match value.unwrap_or(DEFAULT_RUNTIME_LOG_FORMAT) {
-            "json" => Ok(Self::Json),
-            "compact" => Ok(Self::Compact),
+        let parsed = parse_runtime_setting(
+            RuntimeSettingKey::LogFormat,
+            value.unwrap_or(DEFAULT_RUNTIME_LOG_FORMAT),
+        )
+        .map_err(|_| ObservabilityError::InvalidFormat)?;
+        match parsed {
+            ParsedRuntimeSettingValue::Text(value) if value == "json" => Ok(Self::Json),
+            ParsedRuntimeSettingValue::Text(value) if value == "compact" => Ok(Self::Compact),
             _ => Err(ObservabilityError::InvalidFormat),
         }
     }
+}
+
+fn parse_log_filter(value: Option<&str>) -> Result<EnvFilter, ObservabilityError> {
+    let parsed = parse_runtime_setting(
+        RuntimeSettingKey::LogFilter,
+        value.unwrap_or(DEFAULT_RUNTIME_LOG_FILTER),
+    )
+    .map_err(|_| ObservabilityError::InvalidFilter)?;
+    let ParsedRuntimeSettingValue::Text(value) = parsed else {
+        return Err(ObservabilityError::InvalidFilter);
+    };
+    EnvFilter::try_new(value).map_err(|_| ObservabilityError::InvalidFilter)
 }
 
 struct ObservabilityConfig {
@@ -113,8 +131,7 @@ impl ObservabilityConfig {
     }
 
     fn from_values(filter: Option<&str>, format: Option<&str>) -> Result<Self, ObservabilityError> {
-        let filter = EnvFilter::try_new(filter.unwrap_or(DEFAULT_RUNTIME_LOG_FILTER))
-            .map_err(|_| ObservabilityError::InvalidFilter)?;
+        let filter = parse_log_filter(filter)?;
         let format = LogFormat::parse(format)?;
         Ok(Self { filter, format })
     }

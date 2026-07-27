@@ -41,6 +41,8 @@ manifest 存在时，`serve` 和普通 `index` 会在认证库迁移后验证整
 
 管理员通过 `GET/PUT /api/admin/runtime-settings` 或前端管理页维护以下 13 项。响应中的 group、control、apply mode、allowed values 和秘密标记是前端控件的权威元数据；管理页必须逐项呈现，不能用硬编码字段子集代替。
 
+这 13 项的字段名、默认值、parser/serializer、秘密标记和 UI 元数据由 storage 层同一 registry 定义。管理 API 写入、`serve` 启动、命令启动和 observability 初始化都调用该 registry；不存在“保存成功但下次启动才发现语法无效”的第二套校验。registry 的所有默认值和往返序列化均由穷举测试覆盖。
+
 | 字段                               | 默认值                    | 秘密 | 前端控件                          | 生效时机 | 使用者                            |
 | ---------------------------------- | ------------------------- | ---: | --------------------------------- | -------- | --------------------------------- |
 | `openalex_api_key_pool`            | 空                        |   是 | 可逐项增删的掩码秘密池            | 下一命令 | scholarly 索引                    |
@@ -145,6 +147,8 @@ Scholarly 的 `workers` 只控制每个期刊子进程内 OpenAlex DOI 子批的
 不接受 `*` wildcard、裸主机名、非 HTTP(S) scheme、user-info、尾随 `/` 或其他 path、query、fragment。`cors_allowed_origins` 也不接受 `null`；`mcp_allowed_origins` 额外保留精确字面量 `null`，用于现有 opaque Origin MCP 客户端兼容。
 
 管理员提交包含无效 Origin 的 `PUT /api/admin/runtime-settings` 时，API 在写入前返回 `400`，同一请求中的其他字段也不会保存。有效设置不会热加载，在下次 `litradar serve` 启动时生效。
+
+`mcp_allowed_hosts` 的每个非空项还必须是合法 HTTP Header 值，不能包含换行等控制字符。`secure_cookies` 接受大小写不敏感的 `true/false`、`1/0`、`yes/no`、`on/off`，保存时规范化为 `true` 或 `false`；其他值返回 `400`。这两项与 Origin、日志格式和日志 filter 一样，在写入与启动时使用完全相同的 parser，失败的多字段更新整体回滚。
 
 旧版本或库外修改留下的无效 Origin 行会让应用在绑定端口前以明确配置错误拒绝启动，不会忽略、自动删除或降级该策略。升级前应通过当前运行的管理 API 修正；若新版本已经无法启动，应在维护窗口恢复可验证备份或纠正该非秘密行，再重新启动。
 

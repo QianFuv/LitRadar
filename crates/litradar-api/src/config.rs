@@ -4,11 +4,10 @@ use std::error::Error;
 use std::fmt;
 use std::path::PathBuf;
 
-use axum::http::{HeaderValue, Uri};
 use litradar_domain::{RuntimeSettingValue, RuntimeSettingsUpdate};
-use tracing_subscriber::EnvFilter;
-
-const DEFAULT_MCP_HOSTS: [&str; 3] = ["localhost", "127.0.0.1", "::1"];
+use litradar_storage::{
+    parse_runtime_setting, runtime_setting_default, ParsedRuntimeSettingValue, RuntimeSettingKey,
+};
 
 /// Rust API runtime configuration.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -55,10 +54,12 @@ impl ApiConfig {
             host,
             port,
             secret_key_file,
-            cors_allowed_origins: Vec::new(),
-            mcp_allowed_hosts: default_mcp_allowed_hosts(),
-            mcp_allowed_origins: Vec::new(),
-            are_session_cookies_secure: false,
+            cors_allowed_origins: default_runtime_string_list(
+                RuntimeSettingKey::CorsAllowedOrigins,
+            ),
+            mcp_allowed_hosts: default_runtime_string_list(RuntimeSettingKey::McpAllowedHosts),
+            mcp_allowed_origins: default_runtime_string_list(RuntimeSettingKey::McpAllowedOrigins),
+            are_session_cookies_secure: default_runtime_boolean(RuntimeSettingKey::SecureCookies),
             are_secure_cookies_required: false,
         }
     }
@@ -77,19 +78,26 @@ impl ApiConfig {
         settings: &[RuntimeSettingValue],
     ) -> Result<(), ApiConfigError> {
         for setting in settings {
-            match setting.field.as_str() {
-                "cors_allowed_origins" => {
-                    self.cors_allowed_origins = parse_cors_allowed_origins(&setting.value)?;
-                }
-                "mcp_allowed_hosts" => {
-                    self.mcp_allowed_hosts = parse_mcp_allowed_hosts(&setting.value)?;
-                }
-                "mcp_allowed_origins" => {
-                    self.mcp_allowed_origins = parse_mcp_allowed_origins(&setting.value)?;
-                }
-                "secure_cookies" => {
-                    self.are_session_cookies_secure =
-                        parse_runtime_bool(&setting.field, &setting.value)?;
+            let Some(key) = RuntimeSettingKey::from_field(&setting.field) else {
+                continue;
+            };
+            let parsed = parse_runtime_setting(key, &setting.value)
+                .map_err(|error| ApiConfigError::InvalidRuntimeSetting(error.to_string()))?;
+            match (key, parsed) {
+                (
+                    RuntimeSettingKey::CorsAllowedOrigins,
+                    ParsedRuntimeSettingValue::StringList(values),
+                ) => self.cors_allowed_origins = values,
+                (
+                    RuntimeSettingKey::McpAllowedHosts,
+                    ParsedRuntimeSettingValue::StringList(values),
+                ) => self.mcp_allowed_hosts = values,
+                (
+                    RuntimeSettingKey::McpAllowedOrigins,
+                    ParsedRuntimeSettingValue::StringList(values),
+                ) => self.mcp_allowed_origins = values,
+                (RuntimeSettingKey::SecureCookies, ParsedRuntimeSettingValue::Boolean(value)) => {
+                    self.are_session_cookies_secure = value
                 }
                 _ => {}
             }
@@ -112,18 +120,8 @@ impl ApiConfig {
 
 /// Configuration loading error.
 pub enum ApiConfigError {
-    /// A configured CORS origin is not a valid HTTP header value.
-    InvalidCorsOrigin(String),
-    /// A configured MCP host is not a valid HTTP header value.
-    InvalidMcpAllowedHost(String),
-    /// A configured MCP origin is not a valid Origin value.
-    InvalidMcpAllowedOrigin(String),
-    /// A configured boolean runtime setting is not valid.
-    InvalidRuntimeBoolean { field: String, value: String },
-    /// The configured process log format is unsupported.
-    InvalidLogFormat,
-    /// The configured process log filter has invalid directive syntax.
-    InvalidLogFilter,
+    /// A managed runtime setting failed its registry parser.
+    InvalidRuntimeSetting(String),
     /// Production startup requires secure session cookies.
     SecureCookiesRequired,
 }
@@ -139,23 +137,7 @@ impl fmt::Display for ApiConfigError {
     /// Format the configuration error.
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::InvalidCorsOrigin(value) => {
-                write!(formatter, "Invalid CORS origin: {value}")
-            }
-            Self::InvalidMcpAllowedHost(value) => {
-                write!(formatter, "Invalid MCP allowed host: {value}")
-            }
-            Self::InvalidMcpAllowedOrigin(value) => {
-                write!(formatter, "Invalid MCP allowed origin: {value}")
-            }
-            Self::InvalidRuntimeBoolean { field, value } => {
-                write!(
-                    formatter,
-                    "Invalid boolean runtime setting {field}: {value}"
-                )
-            }
-            Self::InvalidLogFormat => formatter.write_str("Invalid LitRadar log format"),
-            Self::InvalidLogFilter => formatter.write_str("Invalid LitRadar log filter"),
+            Self::InvalidRuntimeSetting(detail) => formatter.write_str(detail),
             Self::SecureCookiesRequired => formatter.write_str(
                 "Secure session cookies are required; set secure_cookies to true before startup",
             ),
@@ -181,123 +163,34 @@ pub(crate) fn validate_runtime_settings_update(
         let Some(value) = value else {
             continue;
         };
-        match field.as_str() {
-            "cors_allowed_origins" => {
-                parse_cors_allowed_origins(value)?;
-            }
-            "mcp_allowed_origins" => {
-                parse_mcp_allowed_origins(value)?;
-            }
-            "log_format" => {
-                parse_log_format(value)?;
-            }
-            "log_filter" => {
-                parse_log_filter(value)?;
-            }
-            _ => {}
+        let Some(key) = RuntimeSettingKey::from_field(field) else {
+            continue;
+        };
+        if let Err(error) = parse_runtime_setting(key, value) {
+            return Err(ApiConfigError::InvalidRuntimeSetting(error.to_string()));
         }
     }
     Ok(())
 }
 
-fn parse_log_format(value: &str) -> Result<(), ApiConfigError> {
-    match value {
-        "json" | "compact" => Ok(()),
-        _ => Err(ApiConfigError::InvalidLogFormat),
-    }
-}
-
-fn parse_log_filter(value: &str) -> Result<(), ApiConfigError> {
-    EnvFilter::try_new(value)
-        .map(|_| ())
-        .map_err(|_| ApiConfigError::InvalidLogFilter)
-}
-
-/// Parse credentialed CORS origins as exact HTTP(S) Origins.
-fn parse_cors_allowed_origins(value: &str) -> Result<Vec<String>, ApiConfigError> {
-    parse_exact_origin_list(value, false, ApiConfigError::InvalidCorsOrigin)
-}
-
-fn parse_mcp_allowed_hosts(value: &str) -> Result<Vec<String>, ApiConfigError> {
-    parse_header_value_list(value, ApiConfigError::InvalidMcpAllowedHost)
-}
-
-/// Parse MCP origins as exact HTTP(S) Origins plus the opaque `null` value.
-fn parse_mcp_allowed_origins(value: &str) -> Result<Vec<String>, ApiConfigError> {
-    parse_exact_origin_list(value, true, ApiConfigError::InvalidMcpAllowedOrigin)
-}
-
-/// Parse a comma-separated exact-Origin list with one optional `null` exception.
-fn parse_exact_origin_list(
-    value: &str,
-    is_null_allowed: bool,
-    error: fn(String) -> ApiConfigError,
-) -> Result<Vec<String>, ApiConfigError> {
-    let origins = parse_header_value_list(value, error)?;
-    for origin in &origins {
-        if is_null_allowed && origin == "null" {
-            continue;
-        }
-        if !is_exact_http_origin(origin) {
-            return Err(error(origin.clone()));
-        }
-    }
-    Ok(origins)
-}
-
-fn parse_header_value_list(
-    value: &str,
-    error: impl Fn(String) -> ApiConfigError,
-) -> Result<Vec<String>, ApiConfigError> {
-    let mut values = Vec::new();
-    for entry in value
-        .split(',')
-        .map(str::trim)
-        .filter(|entry| !entry.is_empty())
+fn default_runtime_string_list(key: RuntimeSettingKey) -> Vec<String> {
+    match parse_runtime_setting(key, runtime_setting_default(key))
+        .expect("runtime setting defaults must pass their registry parser")
     {
-        HeaderValue::from_str(entry).map_err(|_| error(entry.to_string()))?;
-        values.push(entry.to_string());
+        ParsedRuntimeSettingValue::StringList(values) => values,
+        _ => panic!(
+            "runtime setting {} must use a string-list parser",
+            key.as_str()
+        ),
     }
-    Ok(values)
 }
 
-/// Return whether a value is an exact HTTP(S) Origin without user-info or URL suffixes.
-fn is_exact_http_origin(origin: &str) -> bool {
-    let Some((scheme, authority_text)) = origin.split_once("://") else {
-        return false;
-    };
-    if !(scheme.eq_ignore_ascii_case("http") || scheme.eq_ignore_ascii_case("https"))
-        || authority_text.is_empty()
-        || authority_text.contains(['/', '?', '#', '@'])
+fn default_runtime_boolean(key: RuntimeSettingKey) -> bool {
+    match parse_runtime_setting(key, runtime_setting_default(key))
+        .expect("runtime setting defaults must pass their registry parser")
     {
-        return false;
-    }
-    let Ok(uri) = origin.parse::<Uri>() else {
-        return false;
-    };
-    uri.scheme_str()
-        .is_some_and(|value| value.eq_ignore_ascii_case(scheme))
-        && uri.authority().is_some()
-        && uri.host().is_some_and(|host| !host.is_empty())
-        && uri.path() == "/"
-        && uri.query().is_none()
-}
-
-fn default_mcp_allowed_hosts() -> Vec<String> {
-    DEFAULT_MCP_HOSTS
-        .iter()
-        .map(|host| (*host).to_string())
-        .collect()
-}
-
-fn parse_runtime_bool(field: &str, value: &str) -> Result<bool, ApiConfigError> {
-    match value.trim().to_ascii_lowercase().as_str() {
-        "1" | "true" | "yes" | "on" => Ok(true),
-        "0" | "false" | "no" | "off" | "" => Ok(false),
-        _ => Err(ApiConfigError::InvalidRuntimeBoolean {
-            field: field.to_string(),
-            value: value.to_string(),
-        }),
+        ParsedRuntimeSettingValue::Boolean(value) => value,
+        _ => panic!("runtime setting {} must use a boolean parser", key.as_str()),
     }
 }
 
@@ -308,95 +201,7 @@ mod tests {
 
     use litradar_domain::{RuntimeSettingValue, RuntimeSettingsUpdate};
 
-    use super::{
-        parse_cors_allowed_origins, parse_mcp_allowed_origins, validate_runtime_settings_update,
-        ApiConfig, ApiConfigError,
-    };
-
-    #[test]
-    fn parses_python_style_cors_origin_list() {
-        let origins = parse_cors_allowed_origins(" https://a.example,https://b.example ")
-            .expect("origins should parse");
-
-        assert_eq!(origins, ["https://a.example", "https://b.example"]);
-    }
-
-    #[test]
-    fn runtime_origin_parsers_accept_exact_compatibility_values() {
-        let cors = parse_cors_allowed_origins(
-            " ,https://paper.example,http://localhost:3000,http://[::1]:3000,https://paper.example, ",
-        )
-        .expect("exact CORS origins should parse");
-        let mcp = parse_mcp_allowed_origins(
-            "null,https://paper.example,http://localhost:3000,http://[::1]:3000",
-        )
-        .expect("exact MCP origins and null should parse");
-
-        assert_eq!(
-            cors,
-            [
-                "https://paper.example",
-                "http://localhost:3000",
-                "http://[::1]:3000",
-                "https://paper.example"
-            ]
-        );
-        assert_eq!(
-            mcp,
-            [
-                "null",
-                "https://paper.example",
-                "http://localhost:3000",
-                "http://[::1]:3000"
-            ]
-        );
-        assert!(parse_cors_allowed_origins(" , ").is_ok());
-        assert!(parse_mcp_allowed_origins("").is_ok());
-    }
-
-    #[test]
-    fn runtime_origin_parsers_reject_unsafe_forms() {
-        let rejected_cors = [
-            "*",
-            "null",
-            "paper.example",
-            "ftp://paper.example",
-            "https://user@paper.example",
-            "https://paper.example/",
-            "https://paper.example/path",
-            "https://paper.example?mode=admin",
-            "https://paper.example#admin",
-        ];
-        let rejected_mcp = [
-            "*",
-            "paper.example",
-            "ftp://paper.example",
-            "https://user@paper.example",
-            "https://paper.example/",
-            "https://paper.example/path",
-            "https://paper.example?mode=admin",
-            "https://paper.example#admin",
-        ];
-
-        for origin in rejected_cors {
-            assert!(
-                matches!(
-                    parse_cors_allowed_origins(origin),
-                    Err(ApiConfigError::InvalidCorsOrigin(value)) if value == origin
-                ),
-                "CORS origin should be rejected: {origin}"
-            );
-        }
-        for origin in rejected_mcp {
-            assert!(
-                matches!(
-                    parse_mcp_allowed_origins(origin),
-                    Err(ApiConfigError::InvalidMcpAllowedOrigin(value)) if value == origin
-                ),
-                "MCP origin should be rejected: {origin}"
-            );
-        }
-    }
+    use super::{validate_runtime_settings_update, ApiConfig, ApiConfigError};
 
     #[test]
     fn new_uses_defaults_and_builds_bind_address() {
@@ -496,9 +301,11 @@ mod tests {
             )])
             .expect_err("invalid CORS origin should fail");
 
-        assert!(
-            matches!(&error, ApiConfigError::InvalidCorsOrigin(value) if value == "bad\norigin")
-        );
+        assert!(matches!(
+            &error,
+            ApiConfigError::InvalidRuntimeSetting(detail)
+                if detail == "Invalid CORS origin: bad\norigin"
+        ));
         assert_eq!(error.to_string(), "Invalid CORS origin: bad\norigin");
     }
 
@@ -515,9 +322,11 @@ mod tests {
             .apply_runtime_settings(&[runtime_setting("mcp_allowed_hosts", "localhost,bad\nhost")])
             .expect_err("invalid MCP host should fail");
 
-        assert!(
-            matches!(&error, ApiConfigError::InvalidMcpAllowedHost(value) if value == "bad\nhost")
-        );
+        assert!(matches!(
+            &error,
+            ApiConfigError::InvalidRuntimeSetting(detail)
+                if detail == "Invalid MCP allowed host: bad\nhost"
+        ));
         assert_eq!(error.to_string(), "Invalid MCP allowed host: bad\nhost");
     }
 
@@ -537,9 +346,11 @@ mod tests {
             )])
             .expect_err("invalid MCP origin should fail");
 
-        assert!(
-            matches!(&error, ApiConfigError::InvalidMcpAllowedOrigin(value) if value == "localhost")
-        );
+        assert!(matches!(
+            &error,
+            ApiConfigError::InvalidRuntimeSetting(detail)
+                if detail == "Invalid MCP allowed origin: localhost"
+        ));
         assert_eq!(error.to_string(), "Invalid MCP allowed origin: localhost");
     }
 
@@ -559,15 +370,18 @@ mod tests {
         .expect("strict filter directives should be valid");
         assert!(matches!(
             validate_runtime_settings_update(&update("log_format", "pretty")),
-            Err(ApiConfigError::InvalidLogFormat)
+            Err(ApiConfigError::InvalidRuntimeSetting(detail))
+                if detail == "Invalid LitRadar log format"
         ));
         assert!(matches!(
             validate_runtime_settings_update(&update("log_format", " compact ")),
-            Err(ApiConfigError::InvalidLogFormat)
+            Err(ApiConfigError::InvalidRuntimeSetting(detail))
+                if detail == "Invalid LitRadar log format"
         ));
         assert!(matches!(
             validate_runtime_settings_update(&update("log_filter", "[")),
-            Err(ApiConfigError::InvalidLogFilter)
+            Err(ApiConfigError::InvalidRuntimeSetting(detail))
+                if detail == "Invalid LitRadar log filter"
         ));
     }
 

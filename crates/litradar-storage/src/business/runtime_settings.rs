@@ -2,11 +2,139 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use http::{HeaderValue, Uri};
 use litradar_domain::{RuntimeSettingApplyMode, RuntimeSettingControl, RuntimeSettingGroup};
 use rusqlite::OpenFlags;
+use tracing_subscriber::EnvFilter;
 
 use super::shared::*;
 use super::*;
+
+/// Stable key for one managed runtime setting.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum RuntimeSettingKey {
+    /// OpenAlex authenticated request key pool.
+    OpenAlexApiKeyPool,
+    /// Semantic Scholar authenticated request key pool.
+    SemanticScholarApiKeyPool,
+    /// Domestic CNKI captcha solver token.
+    CnkiCaptchaToken,
+    /// Crossref polite contact email pool.
+    CrossrefMailtoPool,
+    /// Credentialed API CORS origins.
+    CorsAllowedOrigins,
+    /// Hosts accepted by the MCP endpoint.
+    McpAllowedHosts,
+    /// Browser origins accepted by the MCP endpoint.
+    McpAllowedOrigins,
+    /// Secure session-cookie switch.
+    SecureCookies,
+    /// Catalog-to-index-Provider routes.
+    IndexProviderRoutes,
+    /// Article abstract Provider orders.
+    ArticleAbstractProviderOrders,
+    /// Article full-text Provider orders.
+    ArticleFullTextProviderOrders,
+    /// Process log output format.
+    LogFormat,
+    /// Process tracing filter directives.
+    LogFilter,
+}
+
+impl RuntimeSettingKey {
+    /// All managed runtime setting keys in administrator display order.
+    pub const ALL: [Self; 13] = [
+        Self::OpenAlexApiKeyPool,
+        Self::SemanticScholarApiKeyPool,
+        Self::CnkiCaptchaToken,
+        Self::CrossrefMailtoPool,
+        Self::CorsAllowedOrigins,
+        Self::McpAllowedHosts,
+        Self::McpAllowedOrigins,
+        Self::SecureCookies,
+        Self::IndexProviderRoutes,
+        Self::ArticleAbstractProviderOrders,
+        Self::ArticleFullTextProviderOrders,
+        Self::LogFormat,
+        Self::LogFilter,
+    ];
+
+    /// Return the persisted field name for this setting.
+    ///
+    /// # Returns
+    ///
+    /// Stable database and API field name.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::OpenAlexApiKeyPool => "openalex_api_key_pool",
+            Self::SemanticScholarApiKeyPool => "semantic_scholar_api_key_pool",
+            Self::CnkiCaptchaToken => "cnki_captcha_token",
+            Self::CrossrefMailtoPool => "crossref_mailto_pool",
+            Self::CorsAllowedOrigins => "cors_allowed_origins",
+            Self::McpAllowedHosts => "mcp_allowed_hosts",
+            Self::McpAllowedOrigins => "mcp_allowed_origins",
+            Self::SecureCookies => "secure_cookies",
+            Self::IndexProviderRoutes => "index_provider_routes",
+            Self::ArticleAbstractProviderOrders => "article_abstract_provider_orders",
+            Self::ArticleFullTextProviderOrders => "article_fulltext_provider_orders",
+            Self::LogFormat => "log_format",
+            Self::LogFilter => "log_filter",
+        }
+    }
+
+    /// Resolve a managed setting key from its persisted field name.
+    ///
+    /// # Arguments
+    ///
+    /// * `field` - Database or API field name.
+    ///
+    /// # Returns
+    ///
+    /// Matching managed key, or `None` for unmanaged fields.
+    pub fn from_field(field: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|key| key.as_str() == field)
+    }
+}
+
+/// Typed value produced by the shared runtime-setting parser.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ParsedRuntimeSettingValue {
+    /// Canonical boolean value.
+    Boolean(bool),
+    /// Ordered canonical string-list value.
+    StringList(Vec<String>),
+    /// Canonical scalar or structured text value.
+    Text(String),
+}
+
+impl ParsedRuntimeSettingValue {
+    /// Serialize a parsed value for database persistence.
+    ///
+    /// # Returns
+    ///
+    /// Canonical textual representation.
+    pub fn into_text(self) -> String {
+        match self {
+            Self::Boolean(value) => value.to_string(),
+            Self::StringList(values) => values.join(","),
+            Self::Text(value) => value,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+enum RuntimeSettingParser {
+    SecretPool,
+    TrimmedText,
+    ValuePool,
+    ExactOriginList { is_null_allowed: bool },
+    HeaderValueList,
+    Boolean,
+    IndexProviderRoutes,
+    ProviderOrder,
+    LogFormat,
+    LogFilter,
+}
 
 #[derive(Debug, Clone, Copy)]
 struct RuntimeConfigDefinition {
@@ -20,6 +148,7 @@ struct RuntimeConfigDefinition {
     is_secret: bool,
     description: &'static str,
     default_value: &'static str,
+    parser: RuntimeSettingParser,
 }
 
 /// Default strict tracing filter used before an administrator stores an override.
@@ -71,6 +200,7 @@ const RUNTIME_CONFIG_DEFINITIONS: [RuntimeConfigDefinition; 13] = [
         is_secret: true,
         description: "OpenAlex authenticated request key pool.",
         default_value: "",
+        parser: RuntimeSettingParser::SecretPool,
     },
     RuntimeConfigDefinition {
         field: "semantic_scholar_api_key_pool",
@@ -83,6 +213,7 @@ const RUNTIME_CONFIG_DEFINITIONS: [RuntimeConfigDefinition; 13] = [
         is_secret: true,
         description: "Comma- or semicolon-separated Semantic Scholar REST API keys.",
         default_value: "",
+        parser: RuntimeSettingParser::SecretPool,
     },
     RuntimeConfigDefinition {
         field: "cnki_captcha_token",
@@ -95,6 +226,7 @@ const RUNTIME_CONFIG_DEFINITIONS: [RuntimeConfigDefinition; 13] = [
         is_secret: true,
         description: "jfbym dual-image token used by domestic CNKI index and abstract captcha solving. Probe override: LITRADAR_CNKI_CAPTCHA_TOKEN.",
         default_value: "",
+        parser: RuntimeSettingParser::TrimmedText,
     },
     RuntimeConfigDefinition {
         field: "crossref_mailto_pool",
@@ -107,6 +239,7 @@ const RUNTIME_CONFIG_DEFINITIONS: [RuntimeConfigDefinition; 13] = [
         is_secret: false,
         description: "Comma- or semicolon-separated Crossref contact emails.",
         default_value: "",
+        parser: RuntimeSettingParser::ValuePool,
     },
     RuntimeConfigDefinition {
         field: "cors_allowed_origins",
@@ -119,6 +252,9 @@ const RUNTIME_CONFIG_DEFINITIONS: [RuntimeConfigDefinition; 13] = [
         is_secret: false,
         description: "Comma-separated exact HTTP(S) origins for credentialed API requests; paths, wildcard, user-info, query, fragment, and null are rejected. Changes apply after API restart.",
         default_value: "",
+        parser: RuntimeSettingParser::ExactOriginList {
+            is_null_allowed: false,
+        },
     },
     RuntimeConfigDefinition {
         field: "mcp_allowed_hosts",
@@ -131,6 +267,7 @@ const RUNTIME_CONFIG_DEFINITIONS: [RuntimeConfigDefinition; 13] = [
         is_secret: false,
         description: "Comma-separated hosts accepted by the Streamable HTTP MCP endpoint.",
         default_value: "localhost,127.0.0.1,::1",
+        parser: RuntimeSettingParser::HeaderValueList,
     },
     RuntimeConfigDefinition {
         field: "mcp_allowed_origins",
@@ -143,6 +280,9 @@ const RUNTIME_CONFIG_DEFINITIONS: [RuntimeConfigDefinition; 13] = [
         is_secret: false,
         description: "Comma-separated exact HTTP(S) origins accepted by the Streamable HTTP MCP endpoint; null is also supported. Changes apply after API restart.",
         default_value: "",
+        parser: RuntimeSettingParser::ExactOriginList {
+            is_null_allowed: true,
+        },
     },
     RuntimeConfigDefinition {
         field: "secure_cookies",
@@ -155,6 +295,7 @@ const RUNTIME_CONFIG_DEFINITIONS: [RuntimeConfigDefinition; 13] = [
         is_secret: false,
         description: "Whether session cookies include the Secure attribute.",
         default_value: "false",
+        parser: RuntimeSettingParser::Boolean,
     },
     RuntimeConfigDefinition {
         field: "index_provider_routes",
@@ -167,6 +308,7 @@ const RUNTIME_CONFIG_DEFINITIONS: [RuntimeConfigDefinition; 13] = [
         is_secret: false,
         description: "JSON object mapping each catalog stem to one registered indexing provider.",
         default_value: "{\"ccf_computer_journals\":\"scholarly\",\"chinese_journals\":\"cnki\",\"english_journals\":\"scholarly\"}",
+        parser: RuntimeSettingParser::IndexProviderRoutes,
     },
     RuntimeConfigDefinition {
         field: "article_abstract_provider_orders",
@@ -179,6 +321,7 @@ const RUNTIME_CONFIG_DEFINITIONS: [RuntimeConfigDefinition; 13] = [
         is_secret: false,
         description: "JSON default and per-catalog Provider orders for live article abstract-page resolution.",
         default_value: "{\"default\":[\"scholarly\",\"cnki\"],\"catalogs\":{}}",
+        parser: RuntimeSettingParser::ProviderOrder,
     },
     RuntimeConfigDefinition {
         field: "article_fulltext_provider_orders",
@@ -191,6 +334,7 @@ const RUNTIME_CONFIG_DEFINITIONS: [RuntimeConfigDefinition; 13] = [
         is_secret: false,
         description: "JSON default and per-catalog Provider orders for live article full-text resolution.",
         default_value: "{\"default\":[\"zjlib\"],\"catalogs\":{}}",
+        parser: RuntimeSettingParser::ProviderOrder,
     },
     RuntimeConfigDefinition {
         field: "log_format",
@@ -203,6 +347,7 @@ const RUNTIME_CONFIG_DEFINITIONS: [RuntimeConfigDefinition; 13] = [
         is_secret: false,
         description: "Structured process log output format. Changes apply after process restart.",
         default_value: DEFAULT_RUNTIME_LOG_FORMAT,
+        parser: RuntimeSettingParser::LogFormat,
     },
     RuntimeConfigDefinition {
         field: "log_filter",
@@ -215,8 +360,159 @@ const RUNTIME_CONFIG_DEFINITIONS: [RuntimeConfigDefinition; 13] = [
         is_secret: false,
         description: "Strict tracing-subscriber EnvFilter directives. Changes apply after process restart.",
         default_value: DEFAULT_RUNTIME_LOG_FILTER,
+        parser: RuntimeSettingParser::LogFilter,
     },
 ];
+
+/// Return the declared default text for a managed runtime setting.
+///
+/// # Arguments
+///
+/// * `key` - Managed setting key.
+///
+/// # Returns
+///
+/// Canonical default text owned by the runtime-setting registry.
+pub fn runtime_setting_default(key: RuntimeSettingKey) -> &'static str {
+    runtime_definition_by_key(key).default_value
+}
+
+/// Parse and canonicalize one managed runtime setting.
+///
+/// # Arguments
+///
+/// * `key` - Managed setting key.
+/// * `value` - Submitted or persisted textual value.
+///
+/// # Returns
+///
+/// Typed canonical value, or a safe validation error.
+pub fn parse_runtime_setting(
+    key: RuntimeSettingKey,
+    value: &str,
+) -> Result<ParsedRuntimeSettingValue, BusinessRepositoryError> {
+    let definition = runtime_definition_by_key(key);
+    match definition.parser {
+        RuntimeSettingParser::SecretPool | RuntimeSettingParser::ValuePool => Ok(
+            ParsedRuntimeSettingValue::StringList(runtime_pool_from_text(value)),
+        ),
+        RuntimeSettingParser::TrimmedText => {
+            Ok(ParsedRuntimeSettingValue::Text(value.trim().to_string()))
+        }
+        RuntimeSettingParser::ExactOriginList { is_null_allowed } => {
+            parse_exact_origin_list(key, value, is_null_allowed)
+                .map(ParsedRuntimeSettingValue::StringList)
+        }
+        RuntimeSettingParser::HeaderValueList => {
+            parse_header_value_list(key, value).map(ParsedRuntimeSettingValue::StringList)
+        }
+        RuntimeSettingParser::Boolean => {
+            parse_runtime_bool(key, value).map(ParsedRuntimeSettingValue::Boolean)
+        }
+        RuntimeSettingParser::IndexProviderRoutes => {
+            normalize_index_provider_routes(value).map(ParsedRuntimeSettingValue::Text)
+        }
+        RuntimeSettingParser::ProviderOrder => {
+            normalize_provider_order_configuration(definition.field, value)
+                .map(ParsedRuntimeSettingValue::Text)
+        }
+        RuntimeSettingParser::LogFormat if LOG_FORMAT_ALLOWED_VALUES.contains(&value) => {
+            Ok(ParsedRuntimeSettingValue::Text(value.to_string()))
+        }
+        RuntimeSettingParser::LogFormat => Err(BusinessRepositoryError::InvalidRuntimeSetting(
+            "Invalid LitRadar log format".to_string(),
+        )),
+        RuntimeSettingParser::LogFilter => EnvFilter::try_new(value)
+            .map(|_| ParsedRuntimeSettingValue::Text(value.to_string()))
+            .map_err(|_| {
+                BusinessRepositoryError::InvalidRuntimeSetting(
+                    "Invalid LitRadar log filter".to_string(),
+                )
+            }),
+    }
+}
+
+fn parse_exact_origin_list(
+    key: RuntimeSettingKey,
+    value: &str,
+    is_null_allowed: bool,
+) -> Result<Vec<String>, BusinessRepositoryError> {
+    let origins = parse_header_value_list(key, value)?;
+    for origin in &origins {
+        if is_null_allowed && origin == "null" {
+            continue;
+        }
+        if !is_exact_http_origin(origin) {
+            return Err(invalid_runtime_list_entry(key, origin));
+        }
+    }
+    Ok(origins)
+}
+
+fn parse_header_value_list(
+    key: RuntimeSettingKey,
+    value: &str,
+) -> Result<Vec<String>, BusinessRepositoryError> {
+    let mut values = Vec::new();
+    for entry in value
+        .split(',')
+        .map(str::trim)
+        .filter(|entry| !entry.is_empty())
+    {
+        HeaderValue::from_str(entry).map_err(|_| invalid_runtime_list_entry(key, entry))?;
+        values.push(entry.to_string());
+    }
+    Ok(values)
+}
+
+fn invalid_runtime_list_entry(key: RuntimeSettingKey, value: &str) -> BusinessRepositoryError {
+    let label = match key {
+        RuntimeSettingKey::CorsAllowedOrigins => "CORS origin",
+        RuntimeSettingKey::McpAllowedHosts => "MCP allowed host",
+        RuntimeSettingKey::McpAllowedOrigins => "MCP allowed origin",
+        _ => "runtime setting list entry",
+    };
+    BusinessRepositoryError::InvalidRuntimeSetting(format!("Invalid {label}: {value}"))
+}
+
+fn is_exact_http_origin(origin: &str) -> bool {
+    let Some((scheme, authority_text)) = origin.split_once("://") else {
+        return false;
+    };
+    if !(scheme.eq_ignore_ascii_case("http") || scheme.eq_ignore_ascii_case("https"))
+        || authority_text.is_empty()
+        || authority_text.contains(['/', '?', '#', '@'])
+    {
+        return false;
+    }
+    let Ok(uri) = origin.parse::<Uri>() else {
+        return false;
+    };
+    uri.scheme_str()
+        .is_some_and(|value| value.eq_ignore_ascii_case(scheme))
+        && uri.authority().is_some()
+        && uri.host().is_some_and(|host| !host.is_empty())
+        && uri.path() == "/"
+        && uri.query().is_none()
+}
+
+fn parse_runtime_bool(
+    key: RuntimeSettingKey,
+    value: &str,
+) -> Result<bool, BusinessRepositoryError> {
+    let definition = runtime_definition_by_key(key);
+    let default = definition.default_value.trim().eq_ignore_ascii_case("true");
+    match value.trim().to_ascii_lowercase().as_str() {
+        "" => Ok(default),
+        "1" | "true" | "yes" | "on" => Ok(true),
+        "0" | "false" | "no" | "off" => Ok(false),
+        _ => Err(BusinessRepositoryError::InvalidRuntimeSetting(format!(
+            "Invalid boolean runtime setting {}: {value}",
+            key.as_str()
+        ))),
+    }
+}
+
 /// List managed runtime settings.
 ///
 /// # Arguments
@@ -366,7 +662,6 @@ pub fn upsert_runtime_settings(
                                 field.clone(),
                             )
                         })?
-                        .trim()
                         .to_string()
                 }
             } else {
@@ -374,10 +669,6 @@ pub fn upsert_runtime_settings(
             };
             if let Some(pool_update) = secret_pool_updates.get(&field) {
                 value = apply_secret_pool_update(definition, &value, pool_update, codec)?;
-            }
-            if !definition.is_secret && definition.input_type == "boolean" {
-                let default = definition.default_value.trim().eq_ignore_ascii_case("true");
-                value = runtime_bool_to_text(&value, default)?;
             }
             if !definition.is_secret {
                 value = normalize_runtime_setting_value(definition, &value)?;
@@ -575,38 +866,18 @@ fn runtime_definition_by_field(field: &str) -> Option<&'static RuntimeConfigDefi
         .find(|definition| definition.field == field)
 }
 
-fn runtime_bool_to_text(value: &str, default: bool) -> Result<String, BusinessRepositoryError> {
-    let text = value.trim().to_ascii_lowercase();
-    if text.is_empty() {
-        return Ok(default.to_string());
-    }
-    if matches!(text.as_str(), "1" | "true" | "yes" | "on") {
-        return Ok("true".to_string());
-    }
-    if matches!(text.as_str(), "0" | "false" | "no" | "off") {
-        return Ok("false".to_string());
-    }
-    Err(BusinessRepositoryError::InvalidRuntimeBoolean(
-        value.to_string(),
-    ))
+fn runtime_definition_by_key(key: RuntimeSettingKey) -> &'static RuntimeConfigDefinition {
+    runtime_definition_by_field(key.as_str())
+        .expect("every RuntimeSettingKey must have one registry definition")
 }
 
 fn normalize_runtime_setting_value(
     definition: &RuntimeConfigDefinition,
     value: &str,
 ) -> Result<String, BusinessRepositoryError> {
-    match definition.field {
-        "index_provider_routes" => normalize_index_provider_routes(value),
-        "article_abstract_provider_orders" | "article_fulltext_provider_orders" => {
-            normalize_provider_order_configuration(definition.field, value)
-        }
-        "log_format" if LOG_FORMAT_ALLOWED_VALUES.contains(&value) => Ok(value.to_string()),
-        "log_format" => Err(invalid_runtime_setting(
-            "log_format",
-            "value must be json or compact",
-        )),
-        _ => Ok(value.to_string()),
-    }
+    let key = RuntimeSettingKey::from_field(definition.field)
+        .expect("every registry definition must have one RuntimeSettingKey");
+    parse_runtime_setting(key, value).map(ParsedRuntimeSettingValue::into_text)
 }
 
 fn normalize_index_provider_routes(value: &str) -> Result<String, BusinessRepositoryError> {
@@ -900,6 +1171,129 @@ mod tests {
                     .map(|value| (*value).to_string())
                     .collect::<Vec<_>>()
             );
+        }
+    }
+
+    #[test]
+    fn runtime_setting_registry_defaults_are_exhaustive_and_parseable() {
+        let fields = RUNTIME_CONFIG_DEFINITIONS
+            .iter()
+            .map(|definition| definition.field)
+            .collect::<BTreeSet<_>>();
+
+        assert_eq!(fields.len(), RUNTIME_CONFIG_DEFINITIONS.len());
+        assert_eq!(
+            RuntimeSettingKey::ALL.len(),
+            RUNTIME_CONFIG_DEFINITIONS.len()
+        );
+        for key in RuntimeSettingKey::ALL {
+            let definition = runtime_definition_by_key(key);
+            assert_eq!(definition.field, key.as_str());
+            assert!(!definition.label.is_empty());
+            assert!(!definition.description.is_empty());
+            assert!(!definition.input_type.is_empty());
+            let canonical = parse_runtime_setting(key, definition.default_value)
+                .expect("every registry default should parse")
+                .into_text();
+            assert_eq!(canonical, definition.default_value);
+        }
+    }
+
+    #[test]
+    fn runtime_setting_registry_parses_exact_origins_and_header_lists() {
+        let cors = parse_runtime_setting(
+            RuntimeSettingKey::CorsAllowedOrigins,
+            " ,https://paper.example,http://localhost:3000,http://[::1]:3000,https://paper.example, ",
+        )
+        .expect("exact CORS origins should parse");
+        let mcp = parse_runtime_setting(
+            RuntimeSettingKey::McpAllowedOrigins,
+            "null,https://paper.example,http://localhost:3000,http://[::1]:3000",
+        )
+        .expect("exact MCP origins and null should parse");
+
+        assert_eq!(
+            cors,
+            ParsedRuntimeSettingValue::StringList(vec![
+                "https://paper.example".to_string(),
+                "http://localhost:3000".to_string(),
+                "http://[::1]:3000".to_string(),
+                "https://paper.example".to_string(),
+            ])
+        );
+        assert_eq!(
+            mcp,
+            ParsedRuntimeSettingValue::StringList(vec![
+                "null".to_string(),
+                "https://paper.example".to_string(),
+                "http://localhost:3000".to_string(),
+                "http://[::1]:3000".to_string(),
+            ])
+        );
+
+        for origin in [
+            "*",
+            "null",
+            "paper.example",
+            "ftp://paper.example",
+            "https://user@paper.example",
+            "https://paper.example/",
+            "https://paper.example/path",
+            "https://paper.example?mode=admin",
+            "https://paper.example#admin",
+        ] {
+            assert!(
+                parse_runtime_setting(RuntimeSettingKey::CorsAllowedOrigins, origin).is_err(),
+                "CORS origin should be rejected: {origin}"
+            );
+        }
+        assert!(parse_runtime_setting(RuntimeSettingKey::CorsAllowedOrigins, " , ").is_ok());
+        assert!(parse_runtime_setting(RuntimeSettingKey::McpAllowedOrigins, "").is_ok());
+    }
+
+    #[test]
+    fn runtime_setting_write_and_startup_use_the_same_registry_parser() {
+        let invalid_values = [
+            (RuntimeSettingKey::McpAllowedHosts, "localhost,bad\nhost"),
+            (RuntimeSettingKey::SecureCookies, "sometimes"),
+            (RuntimeSettingKey::CorsAllowedOrigins, "*"),
+            (RuntimeSettingKey::LogFormat, "pretty"),
+            (RuntimeSettingKey::LogFilter, "["),
+        ];
+
+        for (key, invalid_value) in invalid_values {
+            let temp_dir = tempdir().expect("temp dir should be created");
+            let auth_db_path = temp_dir.path().join("auth.sqlite");
+            migrate_auth_database(&auth_db_path).expect("auth database should migrate");
+            let codec = SecretCodec::from_key([49_u8; 32]);
+            let values = HashMap::from([
+                (key.as_str().to_string(), Some(invalid_value.to_string())),
+                (
+                    "crossref_mailto_pool".to_string(),
+                    Some("admin@example.com".to_string()),
+                ),
+            ]);
+
+            assert!(parse_runtime_setting(key, invalid_value).is_err());
+            upsert_runtime_settings(&auth_db_path, &codec, &values, &HashMap::new())
+                .expect_err("write-time parser should reject the invalid value");
+            let connection = Connection::open(&auth_db_path).expect("auth database should open");
+            let stored_count: i64 = connection
+                .query_row(
+                    "SELECT COUNT(*) FROM runtime_settings WHERE key IN (?1, 'crossref_mailto_pool')",
+                    [key.as_str()],
+                    |row| row.get(0),
+                )
+                .expect("runtime setting rows should be countable");
+            assert_eq!(stored_count, 0, "failed update must roll back every field");
+            connection
+                .execute(
+                    "INSERT INTO runtime_settings (key, value, updated_at) VALUES (?1, ?2, 1.0)",
+                    (key.as_str(), invalid_value),
+                )
+                .expect("invalid startup fixture should insert directly");
+            load_runtime_settings(&auth_db_path, &codec)
+                .expect_err("startup parser should reject the same invalid value");
         }
     }
 

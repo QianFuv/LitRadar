@@ -2171,8 +2171,37 @@ mod tests {
             Some(serde_json::json!({
                 "values": {
                     "cors_allowed_origins": "https://paper.example,http://[::1]:3000",
+                    "mcp_allowed_hosts": "localhost,127.0.0.1",
                     "mcp_allowed_origins": "null,http://localhost:3000",
                     "secure_cookies": "false"
+                }
+            })),
+        )
+        .await;
+        let invalid_mcp_host = json_request(
+            &app,
+            Method::PUT,
+            "/api/admin/runtime-settings",
+            Some(&admin_auth),
+            None,
+            Some(serde_json::json!({
+                "values": {
+                    "mcp_allowed_hosts": "localhost,bad\nhost",
+                    "secure_cookies": "true"
+                }
+            })),
+        )
+        .await;
+        let invalid_secure_cookies = json_request(
+            &app,
+            Method::PUT,
+            "/api/admin/runtime-settings",
+            Some(&admin_auth),
+            None,
+            Some(serde_json::json!({
+                "values": {
+                    "mcp_allowed_hosts": "changed.example",
+                    "secure_cookies": "sometimes"
                 }
             })),
         )
@@ -2254,6 +2283,16 @@ mod tests {
             invalid_mcp.payload["detail"],
             "Invalid MCP allowed origin: https://paper.example/path"
         );
+        assert_eq!(invalid_mcp_host.status, StatusCode::BAD_REQUEST);
+        assert_eq!(
+            invalid_mcp_host.payload["detail"],
+            "Invalid MCP allowed host: bad\nhost"
+        );
+        assert_eq!(invalid_secure_cookies.status, StatusCode::BAD_REQUEST);
+        assert_eq!(
+            invalid_secure_cookies.payload["detail"],
+            "Invalid boolean runtime setting secure_cookies: sometimes"
+        );
         assert_eq!(
             stored_value("cors_allowed_origins"),
             "https://paper.example,http://[::1]:3000"
@@ -2262,6 +2301,7 @@ mod tests {
             stored_value("mcp_allowed_origins"),
             "null,http://localhost:3000"
         );
+        assert_eq!(stored_value("mcp_allowed_hosts"), "localhost,127.0.0.1");
         assert_eq!(stored_value("secure_cookies"), "false");
     }
 

@@ -7,6 +7,7 @@ rust-version.workspace = true
 [dependencies]
 base64.workspace = true
 chacha20poly1305.workspace = true
+http.workspace = true
 litradar-domain = { path = "../litradar-domain" }
 rusqlite.workspace = true
 serde.workspace = true
@@ -14,7 +15,5 @@ serde_json.workspace = true
 sha2.workspace = true
 tempfile.workspace = true
 tracing.workspace = true
-zeroize.workspace = true
-
-[dev-dependencies]
 tracing-subscriber.workspace = true
+zeroize.workspace = true
