@@ -47,6 +47,10 @@ pub const MAX_ANNOUNCEMENT_PRIORITY_CHARS: usize = 16;
 pub const MAX_MCP_TEXT_CHARS: usize = 2_048;
 /// Maximum number of values accepted from one MCP array argument.
 pub const MAX_MCP_ARRAY_ITEMS: usize = 500;
+/// Maximum text length accepted by article-search filters.
+pub const MAX_SEARCH_TEXT_CHARS: usize = MAX_MCP_TEXT_CHARS;
+/// Maximum number of values accepted by one repeated article-search filter.
+pub const MAX_SEARCH_FILTER_ITEMS: usize = MAX_MCP_ARRAY_ITEMS;
 
 /// A stable, user-correctable business-input validation failure.
 #[derive(Debug, Clone, PartialEq, Eq)]

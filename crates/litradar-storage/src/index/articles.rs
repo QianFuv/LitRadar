@@ -28,6 +28,8 @@ pub struct ArticleListParams {
     pub pmid: Option<String>,
     /// FTS query.
     pub q: Option<String>,
+    /// FTS query interpretation mode.
+    pub search_mode: ArticleSearchMode,
     /// Sort string.
     pub sort: Option<String>,
     /// Limit.
@@ -36,8 +38,8 @@ pub struct ArticleListParams {
     pub offset: i64,
     /// Cursor string.
     pub cursor: Option<String>,
-    /// Whether to include total count.
-    pub include_total: bool,
+    /// Whether to include total count, with a mode-specific default when absent.
+    pub include_total: Option<bool>,
 }
 
 impl Default for ArticleListParams {
@@ -55,11 +57,12 @@ impl Default for ArticleListParams {
             doi: None,
             pmid: None,
             q: None,
+            search_mode: ArticleSearchMode::default(),
             sort: Some("date:desc".to_string()),
             limit: 50,
             offset: 0,
             cursor: None,
-            include_total: true,
+            include_total: None,
         }
     }
 }
@@ -213,55 +216,160 @@ pub fn list_articles(
     params: &ArticleListParams,
 ) -> Result<ArticlePage, IndexRepositoryError> {
     validate_limit_offset(params.limit, params.offset)?;
+    validate_article_list_input(db_name, params)?;
     let connection = open_index_connection(config, db_name)?;
-    let mut clauses = Vec::new();
-    let mut values = Vec::new();
+    let mut base_clauses = Vec::new();
+    let mut base_values = Vec::new();
     push_int_list_filter(
-        &mut clauses,
-        &mut values,
+        &mut base_clauses,
+        &mut base_values,
         "l.journal_id",
         &params.journal_id,
     );
-    push_optional_int_filter(&mut clauses, &mut values, "l.issue_id = ?", params.issue_id);
-    push_string_list_filter(&mut clauses, &mut values, "l.area", &params.area);
-    push_optional_bool_filter(&mut clauses, &mut values, "l.in_press = ?", params.in_press);
+    push_optional_int_filter(
+        &mut base_clauses,
+        &mut base_values,
+        "l.issue_id = ?",
+        params.issue_id,
+    );
+    push_string_list_filter(&mut base_clauses, &mut base_values, "l.area", &params.area);
     push_optional_bool_filter(
-        &mut clauses,
-        &mut values,
+        &mut base_clauses,
+        &mut base_values,
+        "l.in_press = ?",
+        params.in_press,
+    );
+    push_optional_bool_filter(
+        &mut base_clauses,
+        &mut base_values,
         "l.open_access = ?",
         params.open_access,
     );
-    push_optional_text_filter(&mut clauses, &mut values, "l.date >= ?", &params.date_from);
-    push_optional_text_filter(&mut clauses, &mut values, "l.date <= ?", &params.date_to);
-    push_optional_text_filter(&mut clauses, &mut values, "l.doi = ?", &params.doi);
-    push_optional_text_filter(&mut clauses, &mut values, "l.pmid = ?", &params.pmid);
+    push_optional_text_filter(
+        &mut base_clauses,
+        &mut base_values,
+        "l.date >= ?",
+        &params.date_from,
+    );
+    push_optional_text_filter(
+        &mut base_clauses,
+        &mut base_values,
+        "l.date <= ?",
+        &params.date_to,
+    );
+    push_optional_text_filter(
+        &mut base_clauses,
+        &mut base_values,
+        "l.doi = ?",
+        &params.doi,
+    );
+    push_optional_text_filter(
+        &mut base_clauses,
+        &mut base_values,
+        "l.pmid = ?",
+        &params.pmid,
+    );
     push_optional_int_filter(
-        &mut clauses,
-        &mut values,
+        &mut base_clauses,
+        &mut base_values,
         "l.publication_year = ?",
         params.year,
     );
-    push_fts_filter(&mut clauses, &mut values, "l.article_id", &params.q);
+    push_fts_filter(
+        &mut base_clauses,
+        &mut base_values,
+        "l.article_id",
+        &params.q,
+        params.search_mode,
+    );
     let direction = article_sort_direction(params.sort.as_deref().unwrap_or("date:desc"))?;
-    push_cursor_filter(
-        &mut clauses,
-        &mut values,
-        "l",
-        direction,
-        params.cursor.as_deref(),
-    )?;
-    let where_sql = where_sql(&clauses);
-    let total = if params.include_total {
-        Some(connection.query_row(
-            &format!("SELECT COUNT(*) FROM article_listing l {where_sql}"),
-            params_from_iter(values.iter()),
-            |row| row.get(0),
+    let base_where_sql = where_sql(&base_clauses);
+    let total = if should_include_total(params) {
+        Some(article_total(
+            &connection,
+            &base_where_sql,
+            &base_values,
+            params,
         )?)
     } else {
         None
     };
-    let id_rows = article_id_rows(&connection, &where_sql, direction, &values, params)?;
+    let mut page_clauses = base_clauses;
+    let mut page_values = base_values;
+    push_cursor_filter(
+        &mut page_clauses,
+        &mut page_values,
+        "l",
+        direction,
+        params.cursor.as_deref(),
+    )?;
+    let page_where_sql = where_sql(&page_clauses);
+    let id_rows = article_id_rows(
+        &connection,
+        &page_where_sql,
+        direction,
+        &page_values,
+        params,
+    )?;
     article_page_from_ids(&connection, id_rows, total, params)
+}
+
+fn validate_article_list_input(
+    db_name: Option<&str>,
+    params: &ArticleListParams,
+) -> Result<(), IndexRepositoryError> {
+    let validation_result = (|| {
+        if let Some(db_name) = db_name {
+            validate_characters("db", db_name, MAX_DATABASE_NAME_CHARS)?;
+        }
+        validate_item_count(
+            "search filters",
+            params.journal_id.len().saturating_add(params.area.len()),
+            MAX_SEARCH_FILTER_ITEMS,
+        )?;
+        for area in &params.area {
+            validate_characters("area", area, MAX_SEARCH_TEXT_CHARS)?;
+        }
+        for (label, value) in [
+            ("date_from", params.date_from.as_deref()),
+            ("date_to", params.date_to.as_deref()),
+            ("doi", params.doi.as_deref()),
+            ("pmid", params.pmid.as_deref()),
+            ("q", params.q.as_deref()),
+            ("sort", params.sort.as_deref()),
+            ("cursor", params.cursor.as_deref()),
+        ] {
+            if let Some(value) = value {
+                validate_characters(label, value, MAX_SEARCH_TEXT_CHARS)?;
+            }
+        }
+        Ok::<(), litradar_domain::InputValidationError>(())
+    })();
+    validation_result.map_err(|error| IndexRepositoryError::InvalidInput(error.to_string()))
+}
+
+fn should_include_total(params: &ArticleListParams) -> bool {
+    params
+        .include_total
+        .unwrap_or_else(|| params.cursor.is_none())
+}
+
+fn article_total(
+    connection: &Connection,
+    where_sql: &str,
+    values: &[SqlValue],
+    params: &ArticleListParams,
+) -> Result<i64, IndexRepositoryError> {
+    #[cfg(test)]
+    ARTICLE_TOTAL_QUERY_COUNT.with(|count| count.set(count.get() + 1));
+    connection
+        .query_row(
+            &format!("SELECT COUNT(*) FROM article_listing l {where_sql}"),
+            params_from_iter(values.iter()),
+            |row| row.get(0),
+        )
+        .map_err(IndexRepositoryError::from)
+        .map_err(|error| classify_article_query_error(error, params))
 }
 
 /// Get one article.
@@ -295,7 +403,7 @@ fn article_id_rows(
     params: &ArticleListParams,
 ) -> Result<Vec<(i64, Option<String>)>, IndexRepositoryError> {
     let mut page_values = values.to_vec();
-    page_values.push(SqlValue::Integer(params.limit));
+    page_values.push(SqlValue::Integer(params.limit + 1));
     let pagination_sql = if params.cursor.is_none() {
         page_values.push(SqlValue::Integer(params.offset));
         "LIMIT ? OFFSET ?"
@@ -303,27 +411,35 @@ fn article_id_rows(
         "LIMIT ?"
     };
     let order_direction = direction.sql();
-    let mut statement = connection.prepare(&format!(
-        "SELECT l.article_id, l.date FROM article_listing l {where_sql} \
-         ORDER BY l.date {order_direction}, l.article_id {order_direction} {pagination_sql}"
-    ))?;
-    let rows = statement.query_map(params_from_iter(page_values.iter()), |row| {
-        Ok((row.get(0)?, row.get(1)?))
-    })?;
-    collect_rows(rows)
+    let mut statement = connection
+        .prepare(&format!(
+            "SELECT l.article_id, l.date FROM article_listing l {where_sql} \
+         ORDER BY COALESCE(l.date, '') {order_direction}, \
+         l.article_id {order_direction} {pagination_sql}"
+        ))
+        .map_err(IndexRepositoryError::from)
+        .map_err(|error| classify_article_query_error(error, params))?;
+    let rows = statement
+        .query_map(params_from_iter(page_values.iter()), |row| {
+            Ok((row.get(0)?, row.get(1)?))
+        })
+        .map_err(IndexRepositoryError::from)
+        .map_err(|error| classify_article_query_error(error, params))?;
+    collect_rows(rows).map_err(|error| classify_article_query_error(error, params))
 }
 
 fn article_page_from_ids(
     connection: &Connection,
-    id_rows: Vec<(i64, Option<String>)>,
+    mut id_rows: Vec<(i64, Option<String>)>,
     total: Option<i64>,
     params: &ArticleListParams,
 ) -> Result<ArticlePage, IndexRepositoryError> {
-    let has_more = id_rows.len() as i64 == params.limit;
+    let has_more = id_rows.len() as i64 > params.limit;
+    id_rows.truncate(params.limit as usize);
     let next_cursor = if has_more {
-        id_rows
-            .last()
-            .and_then(|(article_id, date)| date.as_ref().map(|date| format!("{date}|{article_id}")))
+        id_rows.last().map(|(article_id, date)| {
+            format!("{}|{article_id}", date.as_deref().unwrap_or_default())
+        })
     } else {
         None
     };
@@ -338,9 +454,42 @@ fn article_page_from_ids(
             params.limit,
             params.offset,
             next_cursor.clone(),
-            Some(has_more && next_cursor.is_some()),
+            Some(has_more),
         ),
     })
+}
+
+fn classify_article_query_error(
+    error: IndexRepositoryError,
+    params: &ArticleListParams,
+) -> IndexRepositoryError {
+    if params.search_mode == ArticleSearchMode::Advanced
+        && params
+            .q
+            .as_deref()
+            .is_some_and(|query| !query.trim().is_empty())
+        && matches!(&error, IndexRepositoryError::Sqlite(error) if is_fts_expression_error(error))
+    {
+        IndexRepositoryError::InvalidSearchExpression
+    } else {
+        error
+    }
+}
+
+fn is_fts_expression_error(error: &rusqlite::Error) -> bool {
+    let rusqlite::Error::SqliteFailure(_, Some(message)) = error else {
+        return false;
+    };
+    let message = message.to_ascii_lowercase();
+    message.contains("fts5: syntax error")
+        || message.contains("malformed match expression")
+        || message.contains("unterminated string")
+        || message.starts_with("no such column:")
+}
+
+#[cfg(test)]
+thread_local! {
+    static ARTICLE_TOTAL_QUERY_COUNT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 fn fetch_articles_by_ids(
@@ -647,6 +796,182 @@ mod tests {
                 .get("1"),
             Some(&1)
         );
+    }
+
+    #[test]
+    fn article_listing_uses_a_sentinel_and_full_filter_total() {
+        let fixture = IndexFixture::new(true);
+        let exact_page = list_articles(
+            &fixture.config,
+            Some(&fixture.db_name),
+            &ArticleListParams {
+                limit: 6,
+                ..article_filter_params()
+            },
+        )
+        .expect("an exact-limit page should query");
+        assert_eq!(exact_page.items.len(), 6);
+        assert_eq!(exact_page.page.has_more, Some(false));
+        assert_eq!(exact_page.page.next_cursor, None);
+
+        ARTICLE_TOTAL_QUERY_COUNT.with(|count| count.set(0));
+        let first_page = list_articles(
+            &fixture.config,
+            Some(&fixture.db_name),
+            &ArticleListParams {
+                limit: 2,
+                ..article_filter_params()
+            },
+        )
+        .expect("the first cursor page should query");
+        assert_eq!(first_page.page.total, Some(6));
+        assert_eq!(first_page.page.has_more, Some(true));
+        assert_eq!(ARTICLE_TOTAL_QUERY_COUNT.with(std::cell::Cell::get), 1);
+
+        let cursor = first_page
+            .page
+            .next_cursor
+            .clone()
+            .expect("the first page should provide a cursor");
+        ARTICLE_TOTAL_QUERY_COUNT.with(|count| count.set(0));
+        let default_cursor_page = list_articles(
+            &fixture.config,
+            Some(&fixture.db_name),
+            &ArticleListParams {
+                cursor: Some(cursor.clone()),
+                limit: 2,
+                ..article_filter_params()
+            },
+        )
+        .expect("the default cursor page should query");
+        assert_eq!(default_cursor_page.page.total, None);
+        assert_eq!(ARTICLE_TOTAL_QUERY_COUNT.with(std::cell::Cell::get), 0);
+
+        ARTICLE_TOTAL_QUERY_COUNT.with(|count| count.set(0));
+        let explicit_total_page = list_articles(
+            &fixture.config,
+            Some(&fixture.db_name),
+            &ArticleListParams {
+                cursor: Some(cursor),
+                include_total: Some(true),
+                limit: 2,
+                ..article_filter_params()
+            },
+        )
+        .expect("an explicit cursor total should query");
+        assert_eq!(explicit_total_page.page.total, Some(6));
+        assert_eq!(ARTICLE_TOTAL_QUERY_COUNT.with(std::cell::Cell::get), 1);
+    }
+
+    #[test]
+    fn article_cursor_pages_are_non_repeating() {
+        let fixture = IndexFixture::new(true);
+        let mut cursor = None;
+        let mut collected_ids = Vec::new();
+        loop {
+            let page = list_articles(
+                &fixture.config,
+                Some(&fixture.db_name),
+                &ArticleListParams {
+                    cursor,
+                    limit: 2,
+                    ..article_filter_params()
+                },
+            )
+            .expect("each cursor page should query");
+            collected_ids.extend(article_ids(&page));
+            if page.page.has_more != Some(true) {
+                break;
+            }
+            cursor = page.page.next_cursor;
+        }
+        assert_eq!(collected_ids, [1003, 1004, 1001, 1002, 1005, 1008]);
+        let unique_ids = collected_ids.iter().copied().collect::<HashSet<_>>();
+        assert_eq!(unique_ids.len(), collected_ids.len());
+    }
+
+    #[test]
+    fn article_search_modes_separate_literal_text_from_fts_syntax() {
+        let fixture = IndexFixture::new(true);
+        assert_eq!(
+            quote_fts_phrase("genome \"methods\""),
+            "\"genome \"\"methods\"\"\""
+        );
+
+        let simple = list_articles(
+            &fixture.config,
+            Some(&fixture.db_name),
+            &ArticleListParams {
+                q: Some("genome OR clinical".to_string()),
+                ..article_filter_params()
+            },
+        )
+        .expect("simple search punctuation should be escaped");
+        assert!(simple.items.is_empty());
+
+        let advanced = list_articles(
+            &fixture.config,
+            Some(&fixture.db_name),
+            &ArticleListParams {
+                q: Some("genome OR clinical".to_string()),
+                search_mode: ArticleSearchMode::Advanced,
+                ..article_filter_params()
+            },
+        )
+        .expect("valid advanced syntax should query");
+        assert_eq!(article_ids(&advanced), [1004, 1001, 1002]);
+
+        let malformed = list_articles(
+            &fixture.config,
+            Some(&fixture.db_name),
+            &ArticleListParams {
+                q: Some("\"".to_string()),
+                search_mode: ArticleSearchMode::Advanced,
+                ..article_filter_params()
+            },
+        )
+        .expect_err("malformed advanced syntax should fail safely");
+        assert!(matches!(
+            malformed,
+            IndexRepositoryError::InvalidSearchExpression
+        ));
+    }
+
+    #[test]
+    fn article_search_input_bounds_apply_before_sql() {
+        let fixture = IndexFixture::new(true);
+        let accepted = list_articles(
+            &fixture.config,
+            Some(&fixture.db_name),
+            &ArticleListParams {
+                area: vec!["Medicine".to_string(); MAX_SEARCH_FILTER_ITEMS],
+                ..article_filter_params()
+            },
+        )
+        .expect("the repeated-filter boundary should query");
+        assert_eq!(accepted.items.len(), 5);
+
+        let too_many = list_articles(
+            &fixture.config,
+            Some(&fixture.db_name),
+            &ArticleListParams {
+                area: vec!["Medicine".to_string(); MAX_SEARCH_FILTER_ITEMS + 1],
+                ..article_filter_params()
+            },
+        )
+        .expect_err("one repeated filter over the boundary should fail");
+        assert!(matches!(too_many, IndexRepositoryError::InvalidInput(_)));
+
+        let too_long = list_articles(
+            &fixture.config,
+            Some(&fixture.db_name),
+            &ArticleListParams {
+                q: Some("文".repeat(MAX_SEARCH_TEXT_CHARS + 1)),
+                ..article_filter_params()
+            },
+        )
+        .expect_err("one search character over the boundary should fail");
+        assert!(matches!(too_long, IndexRepositoryError::InvalidInput(_)));
     }
 
     #[test]

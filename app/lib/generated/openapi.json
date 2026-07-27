@@ -755,32 +755,35 @@
             "description": "Database name or filename under data/index.",
             "required": false,
             "schema": {
-              "type": "string"
+              "type": "string",
+              "maxLength": 255
             }
           },
           {
             "name": "journal_id",
             "in": "query",
             "description": "Repeated journal identifier filters.",
-            "required": true,
+            "required": false,
             "schema": {
               "type": "array",
               "items": {
                 "type": "integer",
                 "format": "int64"
-              }
+              },
+              "maxItems": 500
             }
           },
           {
             "name": "area",
             "in": "query",
             "description": "Repeated area filters.",
-            "required": true,
+            "required": false,
             "schema": {
               "type": "array",
               "items": {
                 "type": "string"
-              }
+              },
+              "maxItems": 500
             }
           },
           {
@@ -827,7 +830,8 @@
             "description": "Start date filter.",
             "required": false,
             "schema": {
-              "type": "string"
+              "type": "string",
+              "maxLength": 2048
             }
           },
           {
@@ -836,7 +840,8 @@
             "description": "End date filter.",
             "required": false,
             "schema": {
-              "type": "string"
+              "type": "string",
+              "maxLength": 2048
             }
           },
           {
@@ -845,7 +850,8 @@
             "description": "DOI filter.",
             "required": false,
             "schema": {
-              "type": "string"
+              "type": "string",
+              "maxLength": 2048
             }
           },
           {
@@ -854,7 +860,8 @@
             "description": "PubMed identifier filter.",
             "required": false,
             "schema": {
-              "type": "string"
+              "type": "string",
+              "maxLength": 2048
             }
           },
           {
@@ -863,7 +870,17 @@
             "description": "Full-text query.",
             "required": false,
             "schema": {
-              "type": "string"
+              "type": "string",
+              "maxLength": 2048
+            }
+          },
+          {
+            "name": "search_mode",
+            "in": "query",
+            "description": "Full-text query interpretation mode; defaults to simple.",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/ArticleSearchMode"
             }
           },
           {
@@ -872,7 +889,8 @@
             "description": "Sort expression.",
             "required": false,
             "schema": {
-              "type": "string"
+              "type": "string",
+              "maxLength": 2048
             }
           },
           {
@@ -901,13 +919,14 @@
             "description": "Keyset cursor.",
             "required": false,
             "schema": {
-              "type": "string"
+              "type": "string",
+              "maxLength": 2048
             }
           },
           {
             "name": "include_total",
             "in": "query",
-            "description": "Whether to include total row count.",
+            "description": "Whether to include the full filtered row count; defaults to true without a cursor and false with a cursor.",
             "required": false,
             "schema": {
               "type": "boolean"
@@ -921,6 +940,16 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ArticlePage"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid filters or advanced search expression.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
                 }
               }
             }
@@ -3515,6 +3544,11 @@
             "description": "Issue volume."
           }
         }
+      },
+      "ArticleSearchMode": {
+        "type": "string",
+        "description": "Full-text search interpretation mode.",
+        "enum": ["simple", "advanced"]
       },
       "AuthStats": {
         "type": "object",

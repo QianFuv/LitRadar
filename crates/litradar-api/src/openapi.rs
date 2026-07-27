@@ -115,6 +115,7 @@ pub const OPENAPI_JSON_PATH: &str = "/openapi.json";
         litradar_domain::ArticleId,
         litradar_domain::ArticlePage,
         litradar_domain::ArticleRecord,
+        litradar_domain::ArticleSearchMode,
         litradar_domain::AuthStats,
         litradar_domain::ChangePasswordRequest,
         litradar_domain::CnkiErrorDetail,
@@ -466,6 +467,48 @@ mod tests {
         assert_eq!(
             schemas["AnnouncementCreate"]["properties"]["message"]["maxLength"],
             serde_json::json!(litradar_domain::MAX_ANNOUNCEMENT_MESSAGE_CHARS)
+        );
+    }
+
+    #[test]
+    fn openapi_documents_article_search_modes_and_limits() {
+        let document =
+            serde_json::to_value(ApiDoc::openapi()).expect("OpenAPI document should serialize");
+        let parameters = document["paths"]["/api/articles"]["get"]["parameters"]
+            .as_array()
+            .expect("article query parameters should be an array");
+        let parameter = |name: &str| {
+            parameters
+                .iter()
+                .find(|parameter| parameter["name"] == name)
+                .unwrap_or_else(|| panic!("missing article query parameter {name}"))
+        };
+
+        assert_eq!(
+            document["components"]["schemas"]["ArticleSearchMode"]["enum"],
+            serde_json::json!(["simple", "advanced"])
+        );
+        assert_eq!(
+            parameter("search_mode")["schema"]["$ref"],
+            "#/components/schemas/ArticleSearchMode"
+        );
+        assert_eq!(
+            parameter("q")["schema"]["maxLength"],
+            serde_json::json!(litradar_domain::MAX_SEARCH_TEXT_CHARS)
+        );
+        assert_eq!(
+            parameter("area")["schema"]["maxItems"],
+            serde_json::json!(litradar_domain::MAX_SEARCH_FILTER_ITEMS)
+        );
+        assert_eq!(parameter("area")["required"], false);
+        assert!(parameter("include_total")["description"]
+            .as_str()
+            .expect("include_total description should exist")
+            .contains("false with a cursor"));
+        assert_eq!(
+            document["paths"]["/api/articles"]["get"]["responses"]["400"]["content"]
+                ["application/json"]["schema"]["$ref"],
+            "#/components/schemas/ErrorEnvelope"
         );
     }
 

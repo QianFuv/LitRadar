@@ -46,9 +46,10 @@ pub use cnki::{
 pub use health::HealthResponse;
 pub use ids::{stable_sqlite_id, ArticleId, JournalId, UserId};
 pub use index::{
-    ArticleAccessAction, ArticleAccessResponse, ArticlePage, ArticleRecord, IssuePage, IssueRecord,
-    JournalOption, JournalPage, JournalRecord, PageMeta, ValueCount, WeeklyArticleRecord,
-    WeeklyDatabaseUpdate, WeeklyJournalUpdate, WeeklyUpdatesResponse, YearSummary,
+    ArticleAccessAction, ArticleAccessResponse, ArticlePage, ArticleRecord, ArticleSearchMode,
+    IssuePage, IssueRecord, JournalOption, JournalPage, JournalRecord, PageMeta, ValueCount,
+    WeeklyArticleRecord, WeeklyDatabaseUpdate, WeeklyJournalUpdate, WeeklyUpdatesResponse,
+    YearSummary,
 };
 pub use index_contract::{
     normalize_bibliographic_label, normalize_bibliographic_text, normalize_contract_doi,
@@ -72,6 +73,6 @@ pub use validation::{
     MAX_MCP_TEXT_CHARS, MAX_NOTIFICATION_DIRECTIONS, MAX_NOTIFICATION_KEYWORDS,
     MAX_NOTIFICATION_MODEL_CHARS, MAX_NOTIFICATION_PREFERENCE_CHARS, MAX_NOTIFICATION_PROMPT_CHARS,
     MAX_NOTIFICATION_SECRET_CHARS, MAX_NOTIFICATION_URL_CHARS, MAX_PUSHPLUS_CHANNEL_CHARS,
-    MAX_PUSHPLUS_TEMPLATE_CHARS, MAX_PUSHPLUS_TOPIC_CHARS, MAX_SELECTED_DATABASES,
-    SQLITE_IN_QUERY_CHUNK_SIZE,
+    MAX_PUSHPLUS_TEMPLATE_CHARS, MAX_PUSHPLUS_TOPIC_CHARS, MAX_SEARCH_FILTER_ITEMS,
+    MAX_SEARCH_TEXT_CHARS, MAX_SELECTED_DATABASES, SQLITE_IN_QUERY_CHUNK_SIZE,
 };

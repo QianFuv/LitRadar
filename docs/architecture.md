@@ -219,7 +219,7 @@ browser -> stable LitRadar action URL -> load ArticleLocator
 1. 浏览器加载 Rust 提供的静态前端，并通过 `app/lib/api/` 同源调用 `/api/*`。
 2. API 根据可选 `db` 选择一个 `data/index/*.sqlite`。
 3. 列表与过滤使用 `article_listing`，详情从规范关系表读取。
-4. `q` 使用 `article_search MATCH`。
+4. `q` 默认先转义为一个 FTS5 字面短语再使用 `article_search MATCH`；只有显式 `search_mode=advanced` 才解释 FTS5 运算符，非法表达式作为可纠正的 400 输入错误返回。
 5. API 把 64 位文章和期刊 ID 序列化为十进制字符串。
 
 ### 认证

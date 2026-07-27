@@ -8,10 +8,11 @@ use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use litradar_domain::{
-    ArticleCandidateInfo, ArticleId, ArticleLocator, ArticlePage, ArticleRecord, IssuePage,
-    IssueRecord, JournalId, JournalOption, JournalPage, JournalRecord, PageMeta, ValueCount,
-    WeeklyArticleRecord, WeeklyDatabaseUpdate, WeeklyJournalUpdate, WeeklyUpdatesResponse,
-    YearSummary,
+    validate_characters, validate_item_count, ArticleCandidateInfo, ArticleId, ArticleLocator,
+    ArticlePage, ArticleRecord, ArticleSearchMode, IssuePage, IssueRecord, JournalId,
+    JournalOption, JournalPage, JournalRecord, PageMeta, ValueCount, WeeklyArticleRecord,
+    WeeklyDatabaseUpdate, WeeklyJournalUpdate, WeeklyUpdatesResponse, YearSummary,
+    MAX_DATABASE_NAME_CHARS, MAX_SEARCH_FILTER_ITEMS, MAX_SEARCH_TEXT_CHARS,
 };
 use rusqlite::types::Value as SqlValue;
 use rusqlite::{params_from_iter, Connection, OptionalExtension};
@@ -41,6 +42,10 @@ pub enum IndexRepositoryError {
     InvalidCursor,
     /// Pagination input is outside the supported range.
     InvalidPagination(&'static str),
+    /// Query input is outside the supported bounds.
+    InvalidInput(String),
+    /// An advanced FTS5 expression is malformed.
+    InvalidSearchExpression,
     /// Requested row was not found.
     NotFound(&'static str),
 }
@@ -61,6 +66,8 @@ impl fmt::Display for IndexRepositoryError {
             }
             Self::InvalidCursor => formatter.write_str("Invalid cursor"),
             Self::InvalidPagination(message) => formatter.write_str(message),
+            Self::InvalidInput(message) => formatter.write_str(message),
+            Self::InvalidSearchExpression => formatter.write_str("Invalid search expression"),
             Self::NotFound(message) => formatter.write_str(message),
         }
     }

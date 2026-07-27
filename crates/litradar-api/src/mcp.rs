@@ -430,6 +430,7 @@ struct SearchArticlesInput {
     open_access: Option<bool>,
     pmid: Option<String>,
     q: Option<String>,
+    search_mode: Option<String>,
     sort: Option<String>,
     year: Option<i64>,
 }
@@ -499,11 +500,16 @@ fn article_list_params(
     params.doi = optional_text("doi", input.doi)?;
     params.pmid = optional_text("pmid", input.pmid)?;
     params.q = optional_text("q", input.q)?;
+    params.search_mode = match optional_text("search_mode", input.search_mode)? {
+        Some(value) => litradar_domain::ArticleSearchMode::parse(&value)
+            .ok_or_else(|| "search_mode must be simple or advanced".to_string())?,
+        None => litradar_domain::ArticleSearchMode::default(),
+    };
     params.sort = optional_text("sort", input.sort)?.or(params.sort);
     params.limit = limit_or_default(input.limit)?;
     params.offset = offset_or_default(input.offset)?;
     params.cursor = optional_text("cursor", input.cursor)?;
-    params.include_total = input.include_total.unwrap_or(params.include_total);
+    params.include_total = input.include_total;
     Ok((optional_text("db", input.db)?, params))
 }
 
@@ -545,6 +551,9 @@ fn index_tool_error_message(error: &IndexRepositoryError) -> String {
         | IndexRepositoryError::Sqlite(_)
         | IndexRepositoryError::Io(_)
         | IndexRepositoryError::Json(_) => "Internal Server Error".to_string(),
+        IndexRepositoryError::InvalidInput(_) | IndexRepositoryError::InvalidSearchExpression => {
+            error.to_string()
+        }
         _ => error.to_string(),
     }
 }
@@ -901,7 +910,8 @@ mod tests {
                 "include_total": true,
                 "journal_id": ["101"],
                 "limit": 1,
-                "q": "Fixture"
+                "q": "Fixture",
+                "search_mode": "simple"
             }),
         )
         .await;
@@ -971,6 +981,38 @@ mod tests {
         .await;
         assert_eq!(invalid_id["result"]["isError"], true);
         assert!(tool_text(&invalid_id).contains("article_id must be a positive integer"));
+
+        let invalid_mode = call_mcp_tool(
+            &app,
+            &authorization,
+            &session_id,
+            22,
+            "search_articles",
+            json!({
+                "db": "first.sqlite",
+                "q": "Fixture",
+                "search_mode": "raw"
+            }),
+        )
+        .await;
+        assert_eq!(invalid_mode["result"]["isError"], true);
+        assert!(tool_text(&invalid_mode).contains("search_mode must be simple or advanced"));
+
+        let invalid_expression = call_mcp_tool(
+            &app,
+            &authorization,
+            &session_id,
+            23,
+            "search_articles",
+            json!({
+                "db": "first.sqlite",
+                "q": "\"",
+                "search_mode": "advanced"
+            }),
+        )
+        .await;
+        assert_eq!(invalid_expression["result"]["isError"], true);
+        assert!(tool_text(&invalid_expression).contains("Invalid search expression"));
     }
 
     #[tokio::test]

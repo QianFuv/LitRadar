@@ -49,9 +49,13 @@ Rust handler 上的 OpenAPI 注解是 REST 契约的实现来源。修改 REST �
 
 列表接口通常采用 `limit` + `offset`。`GET /api/articles` 还支持游标分页：
 
-- `cursor` 格式为 `{date}|{article_id}`。
-- `include_total=false` 会跳过总数查询，此时 `page.total` 可以为 `null`。
+- `cursor` 格式为 `{date}|{article_id}`；无日期记录使用空的 `{date}` 部分。
+- 查询读取 `limit + 1` 条并移除哨兵行，因此结果恰好等于 `limit` 时 `has_more=false` 且没有 `next_cursor`。
+- 未显式传 `include_total` 时，offset/首屏请求默认为 `true`，cursor 请求默认为 `false`；`false` 会跳过总数查询，此时 `page.total` 为 `null`。
+- cursor 请求显式传 `include_total=true` 时，`total` 是不含 cursor/offset 条件的完整过滤结果总数。
 - 精确的默认值、上限和过滤字段以 OpenAPI schema 为准。
+
+全文查询 `q` 默认使用 `search_mode=simple`，把完整输入转义为一个 FTS5 字面短语，引号和 `OR` 等符号不会被解释为运算符。只有显式设置 `search_mode=advanced` 才启用 FTS5 查询语法；非法高级表达式返回 `400 Invalid search expression`。REST、MCP 与 storage 均限制搜索文本最多 2048 个 Unicode 字符、重复 `journal_id`/`area` 过滤值合计最多 500 项。
 
 ### 错误
 

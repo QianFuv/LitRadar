@@ -5,6 +5,36 @@ use utoipa::ToSchema;
 
 use crate::{ArticleId, JournalId};
 
+/// Full-text search interpretation mode.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ArticleSearchMode {
+    /// Treat the complete query as one escaped literal phrase.
+    #[default]
+    Simple,
+    /// Interpret the query using SQLite FTS5 syntax.
+    Advanced,
+}
+
+impl ArticleSearchMode {
+    /// Parse a public search-mode value.
+    ///
+    /// # Arguments
+    ///
+    /// * `value` - Case-insensitive mode name.
+    ///
+    /// # Returns
+    ///
+    /// The matching mode, or `None` for an unsupported value.
+    pub fn parse(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "simple" => Some(Self::Simple),
+            "advanced" => Some(Self::Advanced),
+            _ => None,
+        }
+    }
+}
+
 /// Provider-neutral journal record.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct JournalRecord {
@@ -271,4 +301,23 @@ pub struct WeeklyUpdatesResponse {
     pub window_end: String,
     /// Database update groups.
     pub databases: Vec<WeeklyDatabaseUpdate>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ArticleSearchMode;
+
+    #[test]
+    fn article_search_mode_uses_stable_public_names() {
+        assert_eq!(ArticleSearchMode::default(), ArticleSearchMode::Simple);
+        assert_eq!(
+            ArticleSearchMode::parse(" SIMPLE "),
+            Some(ArticleSearchMode::Simple)
+        );
+        assert_eq!(
+            ArticleSearchMode::parse("advanced"),
+            Some(ArticleSearchMode::Advanced)
+        );
+        assert_eq!(ArticleSearchMode::parse("raw"), None);
+    }
 }

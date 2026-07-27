@@ -16,11 +16,14 @@ import type {
   ArticleAccessResponse,
   ArticleId,
   ArticlePage,
+  ArticleSearchMode,
   JournalOption,
   ValueCount,
   WeeklyUpdatesResponse,
   YearSummary,
 } from '@/lib/api/types';
+
+const DEFAULT_ARTICLE_SEARCH_MODE: ArticleSearchMode = 'simple';
 
 /**
  * List available index databases.
@@ -107,6 +110,9 @@ export function getArticles(
   }
   if (typeof pageParam === 'number') {
     nextParams.set('offset', String(pageParam));
+  }
+  if (nextParams.has('q') && !nextParams.has('search_mode')) {
+    nextParams.set('search_mode', DEFAULT_ARTICLE_SEARCH_MODE);
   }
   nextParams.set('include_total', includeTotal ? '1' : '0');
   return requestJson<ArticlePage>(

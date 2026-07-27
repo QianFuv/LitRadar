@@ -103,6 +103,7 @@ async function serializesArticleQuery(): Promise<void> {
   const url = new URL(capturedArticleUrl);
   expect(url.searchParams.getAll('area')).toEqual(['systems', 'security']);
   expect(url.searchParams.get('q')).toBe('rust async');
+  expect(url.searchParams.get('search_mode')).toBe('simple');
   expect(url.searchParams.get('cursor')).toBe('cursor-token');
   expect(url.searchParams.get('include_total')).toBe('1');
   expect(url.searchParams.get('db')).toBe('fixture.sqlite');

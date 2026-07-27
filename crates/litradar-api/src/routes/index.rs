@@ -397,25 +397,29 @@ pub(crate) async fn get_weekly_updates(
     path = "/api/articles",
     tag = "index",
     params(
-        ("db" = Option<String>, Query, description = "Database name or filename under data/index."),
-        ("journal_id" = Vec<i64>, Query, description = "Repeated journal identifier filters."),
-        ("area" = Vec<String>, Query, description = "Repeated area filters."),
+        ("db" = Option<String>, Query, description = "Database name or filename under data/index.", max_length = 255),
+        ("journal_id" = Option<Vec<i64>>, Query, description = "Repeated journal identifier filters.", max_items = 500),
+        ("area" = Option<Vec<String>>, Query, description = "Repeated area filters.", max_items = 500),
         ("issue_id" = Option<i64>, Query, description = "Issue identifier filter."),
         ("year" = Option<i64>, Query, description = "Publication year filter."),
         ("in_press" = Option<bool>, Query, description = "In-press filter."),
         ("open_access" = Option<bool>, Query, description = "Open-access filter."),
-        ("date_from" = Option<String>, Query, description = "Start date filter."),
-        ("date_to" = Option<String>, Query, description = "End date filter."),
-        ("doi" = Option<String>, Query, description = "DOI filter."),
-        ("pmid" = Option<String>, Query, description = "PubMed identifier filter."),
-        ("q" = Option<String>, Query, description = "Full-text query."),
-        ("sort" = Option<String>, Query, description = "Sort expression."),
+        ("date_from" = Option<String>, Query, description = "Start date filter.", max_length = 2048),
+        ("date_to" = Option<String>, Query, description = "End date filter.", max_length = 2048),
+        ("doi" = Option<String>, Query, description = "DOI filter.", max_length = 2048),
+        ("pmid" = Option<String>, Query, description = "PubMed identifier filter.", max_length = 2048),
+        ("q" = Option<String>, Query, description = "Full-text query.", max_length = 2048),
+        ("search_mode" = Option<litradar_domain::ArticleSearchMode>, Query, description = "Full-text query interpretation mode; defaults to simple."),
+        ("sort" = Option<String>, Query, description = "Sort expression.", max_length = 2048),
         ("limit" = Option<i64>, Query, description = "Page size."),
         ("offset" = Option<i64>, Query, description = "Offset row count."),
-        ("cursor" = Option<String>, Query, description = "Keyset cursor."),
-        ("include_total" = Option<bool>, Query, description = "Whether to include total row count.")
+        ("cursor" = Option<String>, Query, description = "Keyset cursor.", max_length = 2048),
+        ("include_total" = Option<bool>, Query, description = "Whether to include the full filtered row count; defaults to true without a cursor and false with a cursor.")
     ),
-    responses((status = 200, description = "Paginated articles.", body = litradar_domain::ArticlePage)),
+    responses(
+        (status = 200, description = "Paginated articles.", body = litradar_domain::ArticlePage),
+        (status = 400, description = "Invalid filters or advanced search expression.", body = litradar_domain::ErrorEnvelope)
+    ),
     security(("bearer_auth" = []), ("session_cookie" = []))
 )]
 pub(crate) async fn list_articles(
@@ -649,6 +653,7 @@ fn parse_article_query(
     raw_query: Option<&str>,
 ) -> Result<(Option<String>, ArticleListParams), ApiError> {
     let pairs = parse_query_pairs(raw_query)?;
+    validate_article_query_pairs(&pairs)?;
     let mut params = ArticleListParams::default();
     params.journal_id = parse_i64_values(&pairs, "journal_id")?;
     params.area = query_values(&pairs, "area");
@@ -661,13 +666,43 @@ fn parse_article_query(
     params.doi = query_value(&pairs, "doi");
     params.pmid = query_value(&pairs, "pmid");
     params.q = query_value(&pairs, "q");
+    params.search_mode = query_value(&pairs, "search_mode")
+        .map(|value| {
+            litradar_domain::ArticleSearchMode::parse(&value)
+                .ok_or_else(|| ApiError::bad_request("search_mode must be simple or advanced"))
+        })
+        .transpose()?
+        .unwrap_or_default();
     params.sort = query_value(&pairs, "sort").or(params.sort);
     params.limit = parse_optional_i64(&pairs, "limit")?.unwrap_or(params.limit);
     params.offset = parse_optional_i64(&pairs, "offset")?.unwrap_or(params.offset);
     params.cursor = query_value(&pairs, "cursor");
-    params.include_total =
-        parse_optional_bool(&pairs, "include_total")?.unwrap_or(params.include_total);
+    params.include_total = parse_optional_bool(&pairs, "include_total")?;
     Ok((query_value(&pairs, "db"), params))
+}
+
+fn validate_article_query_pairs(pairs: &[(String, String)]) -> Result<(), ApiError> {
+    let repeated_filter_count = pairs
+        .iter()
+        .filter(|(name, _)| matches!(name.as_str(), "journal_id" | "area"))
+        .count();
+    litradar_domain::validate_item_count(
+        "search filters",
+        repeated_filter_count,
+        litradar_domain::MAX_SEARCH_FILTER_ITEMS,
+    )
+    .map_err(|error| ApiError::bad_request(error.to_string()))?;
+    for (name, value) in pairs {
+        let maximum = match name.as_str() {
+            "db" => litradar_domain::MAX_DATABASE_NAME_CHARS,
+            "journal_id" | "area" | "date_from" | "date_to" | "doi" | "pmid" | "q"
+            | "search_mode" | "sort" | "cursor" => litradar_domain::MAX_SEARCH_TEXT_CHARS,
+            _ => continue,
+        };
+        litradar_domain::validate_characters(name, value, maximum)
+            .map_err(|error| ApiError::bad_request(error.to_string()))?;
+    }
+    Ok(())
 }
 
 fn parse_query_pairs(raw_query: Option<&str>) -> Result<Vec<(String, String)>, ApiError> {
@@ -807,7 +842,9 @@ fn map_index_error(error: IndexRepositoryError) -> ApiError {
         | IndexRepositoryError::UnsupportedSortField(_)
         | IndexRepositoryError::UnsupportedArticleSort
         | IndexRepositoryError::InvalidCursor
-        | IndexRepositoryError::InvalidPagination(_) => ApiError::bad_request(error.to_string()),
+        | IndexRepositoryError::InvalidPagination(_)
+        | IndexRepositoryError::InvalidInput(_)
+        | IndexRepositoryError::InvalidSearchExpression => ApiError::bad_request(error.to_string()),
         IndexRepositoryError::DatabaseResolution(DatabaseResolutionError::Io(_))
         | IndexRepositoryError::Sqlite(_)
         | IndexRepositoryError::Io(_)
@@ -831,15 +868,16 @@ where
 mod tests {
     use std::io;
 
-    use axum::http::StatusCode;
+    use axum::http::{Method, StatusCode};
     use rusqlite::Error as SqliteError;
 
     use super::*;
+    use crate::test_support::{json_request, TestBackend};
 
     #[test]
     fn parses_article_query_repeated_values_and_last_scalar_values() {
         let (db, params) = parse_article_query(Some(
-            "db=first.sqlite&db=fixture.sqlite&journal_id=1&journal_id=2&journal_id=&area=Medicine&area=Data+Science&issue_id=10&year=2026&in_press=yes&open_access=1&date_from=2026-01-01&date_to=2026-02-01&doi=10.1000%2Fabc&pmid=PMID%2B42&q=genome+search&sort=date%3Aasc&limit=25&offset=5&cursor=2026-01-05%7C1001&include_total=false",
+            "db=first.sqlite&db=fixture.sqlite&journal_id=1&journal_id=2&journal_id=&area=Medicine&area=Data+Science&issue_id=10&year=2026&in_press=yes&open_access=1&date_from=2026-01-01&date_to=2026-02-01&doi=10.1000%2Fabc&pmid=PMID%2B42&q=genome+search&search_mode=advanced&sort=date%3Aasc&limit=25&offset=5&cursor=2026-01-05%7C1001&include_total=false",
         ))
         .expect("query should parse");
 
@@ -855,11 +893,91 @@ mod tests {
         assert_eq!(params.doi.as_deref(), Some("10.1000/abc"));
         assert_eq!(params.pmid.as_deref(), Some("PMID+42"));
         assert_eq!(params.q.as_deref(), Some("genome search"));
+        assert_eq!(
+            params.search_mode,
+            litradar_domain::ArticleSearchMode::Advanced
+        );
         assert_eq!(params.sort.as_deref(), Some("date:asc"));
         assert_eq!(params.limit, 25);
         assert_eq!(params.offset, 5);
         assert_eq!(params.cursor.as_deref(), Some("2026-01-05|1001"));
-        assert!(!params.include_total);
+        assert_eq!(params.include_total, Some(false));
+    }
+
+    #[test]
+    fn article_query_defaults_and_bounds_are_explicit() {
+        let (_, cursor_params) = parse_article_query(Some("cursor=2026-01-05%7C1001"))
+            .expect("a default cursor query should parse");
+        assert_eq!(
+            cursor_params.search_mode,
+            litradar_domain::ArticleSearchMode::Simple
+        );
+        assert_eq!(cursor_params.include_total, None);
+
+        assert_bad_request_detail(
+            parse_article_query(Some("search_mode=raw"))
+                .expect_err("an unsupported search mode should fail"),
+            "search_mode must be simple or advanced",
+        );
+        let too_many_filters = std::iter::repeat_n("area=Medicine", 501)
+            .collect::<Vec<_>>()
+            .join("&");
+        assert_bad_request_detail(
+            parse_article_query(Some(&too_many_filters))
+                .expect_err("one repeated filter over the boundary should fail"),
+            "search filters must contain at most 500 items",
+        );
+        let too_long_query = format!("q={}", "文".repeat(2049));
+        assert_bad_request_detail(
+            parse_article_query(Some(&too_long_query))
+                .expect_err("one search character over the boundary should fail"),
+            "q must be at most 2048 characters",
+        );
+    }
+
+    #[tokio::test]
+    async fn article_route_maps_advanced_fts_errors_to_bad_request() {
+        let backend = TestBackend::new();
+        let user = backend.authenticated_user("advanced_search_user", false);
+        backend.create_index_database("fixture.sqlite");
+        let app = backend.router();
+        let authorization = user.authorization_header();
+
+        let simple = json_request(
+            &app,
+            Method::GET,
+            "/api/articles?db=fixture.sqlite&q=Fixture+OR+missing",
+            Some(&authorization),
+            None,
+            None,
+        )
+        .await;
+        assert_eq!(simple.status, StatusCode::OK);
+        assert_eq!(simple.payload["items"], serde_json::json!([]));
+
+        let advanced = json_request(
+            &app,
+            Method::GET,
+            "/api/articles?db=fixture.sqlite&q=Fixture+OR+missing&search_mode=advanced",
+            Some(&authorization),
+            None,
+            None,
+        )
+        .await;
+        assert_eq!(advanced.status, StatusCode::OK);
+        assert_eq!(advanced.payload["items"][0]["article_id"], "9001");
+
+        let malformed = json_request(
+            &app,
+            Method::GET,
+            "/api/articles?db=fixture.sqlite&q=%22&search_mode=advanced",
+            Some(&authorization),
+            None,
+            None,
+        )
+        .await;
+        assert_eq!(malformed.status, StatusCode::BAD_REQUEST);
+        assert_eq!(malformed.payload["detail"], "Invalid search expression");
     }
 
     #[test]
@@ -950,6 +1068,11 @@ mod tests {
             map_index_error(IndexRepositoryError::UnsupportedArticleSort),
             StatusCode::BAD_REQUEST,
             "Articles only support sort=date:desc or date:asc",
+        );
+        assert_api_error(
+            map_index_error(IndexRepositoryError::InvalidSearchExpression),
+            StatusCode::BAD_REQUEST,
+            "Invalid search expression",
         );
         assert_api_error(
             map_index_error(IndexRepositoryError::Sqlite(SqliteError::InvalidQuery)),

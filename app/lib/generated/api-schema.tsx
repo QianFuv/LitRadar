@@ -1606,6 +1606,11 @@ export interface components {
       /** @description Issue volume. */
       volume?: string | null;
     };
+    /**
+     * @description Full-text search interpretation mode.
+     * @enum {string}
+     */
+    ArticleSearchMode: 'simple' | 'advanced';
     /** @description Auth database statistics payload. */
     AuthStats: {
       /**
@@ -3308,9 +3313,9 @@ export interface operations {
   };
   list_articles: {
     parameters: {
-      query: {
+      query?: {
         /** @description Repeated area filters. */
-        area: string[];
+        area?: string[];
         /** @description Keyset cursor. */
         cursor?: string;
         /** @description Start date filter. */
@@ -3323,12 +3328,12 @@ export interface operations {
         doi?: string;
         /** @description In-press filter. */
         in_press?: boolean;
-        /** @description Whether to include total row count. */
+        /** @description Whether to include the full filtered row count; defaults to true without a cursor and false with a cursor. */
         include_total?: boolean;
         /** @description Issue identifier filter. */
         issue_id?: number;
         /** @description Repeated journal identifier filters. */
-        journal_id: number[];
+        journal_id?: number[];
         /** @description Page size. */
         limit?: number;
         /** @description Offset row count. */
@@ -3339,6 +3344,8 @@ export interface operations {
         pmid?: string;
         /** @description Full-text query. */
         q?: string;
+        /** @description Full-text query interpretation mode; defaults to simple. */
+        search_mode?: components['schemas']['ArticleSearchMode'];
         /** @description Sort expression. */
         sort?: string;
         /** @description Publication year filter. */
@@ -3357,6 +3364,15 @@ export interface operations {
         };
         content: {
           'application/json': components['schemas']['ArticlePage'];
+        };
+      };
+      /** @description Invalid filters or advanced search expression. */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorEnvelope'];
         };
       };
     };

@@ -6,6 +6,8 @@ export type ArticleId = string;
 
 export type JournalId = string;
 
+export type ArticleSearchMode = 'simple' | 'advanced';
+
 export interface PageMeta {
   total: number | null;
   limit: number;

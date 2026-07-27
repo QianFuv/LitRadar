@@ -98,8 +98,9 @@ pub(super) fn push_cursor_filter(
     } else {
         ">"
     };
+    let date_column = format!("COALESCE({alias}.date, '')");
     clauses.push(format!(
-        "({alias}.date {operator} ? OR ({alias}.date = ? AND {alias}.article_id {operator} ?))"
+        "({date_column} {operator} ? OR ({date_column} = ? AND {alias}.article_id {operator} ?))"
     ));
     values.push(SqlValue::Text(date.clone()));
     values.push(SqlValue::Text(date));
@@ -111,9 +112,6 @@ pub(super) fn parse_article_cursor(cursor: &str) -> Result<(String, i64), IndexR
     let Some((date, article_id)) = cursor.split_once('|') else {
         return Err(IndexRepositoryError::InvalidCursor);
     };
-    if date.is_empty() {
-        return Err(IndexRepositoryError::InvalidCursor);
-    }
     let article_id = article_id
         .parse::<i64>()
         .map_err(|_| IndexRepositoryError::InvalidCursor)?;
@@ -125,13 +123,22 @@ pub(super) fn push_fts_filter(
     values: &mut Vec<SqlValue>,
     column: &str,
     q: &Option<String>,
+    search_mode: ArticleSearchMode,
 ) {
     if let Some(query) = nonempty(q.as_deref()) {
         clauses.push(format!(
             "{column} IN (SELECT rowid FROM article_search WHERE article_search MATCH ?)"
         ));
-        values.push(SqlValue::Text(query.to_string()));
+        let query = match search_mode {
+            ArticleSearchMode::Simple => quote_fts_phrase(query),
+            ArticleSearchMode::Advanced => query.to_string(),
+        };
+        values.push(SqlValue::Text(query));
     }
+}
+
+pub(super) fn quote_fts_phrase(value: &str) -> String {
+    format!("\"{}\"", value.replace('"', "\"\""))
 }
 
 pub(super) fn push_int_list_filter(
