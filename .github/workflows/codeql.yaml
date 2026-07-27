@@ -39,9 +39,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        language:
-          - rust
-          - javascript-typescript
+        include:
+          - language: rust
+            build_mode: manual
+          - language: javascript-typescript
+            build_mode: none
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -51,8 +53,18 @@ jobs:
         uses: github/codeql-action/init@e4fba868fa4b1b91e1fdab776edc8cfbe6e9fb81 # v4.37.3
         with:
           languages: ${{ matrix.language }}
-          build-mode: none
+          build-mode: ${{ matrix.build_mode }}
           queries: security-extended
+
+      - name: Install Rust toolchain
+        if: matrix.language == 'rust'
+        run: |
+          rustup toolchain install 1.96 --profile minimal
+          rustup default 1.96
+
+      - name: Build production Rust targets for CodeQL
+        if: matrix.language == 'rust'
+        run: cargo build --workspace --locked
 
       - name: Analyze source
         id: analysis

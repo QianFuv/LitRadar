@@ -20,6 +20,8 @@ const REPORT_ROOT = path.join(
 );
 const SUMMARY_PATH = path.join(REPORT_ROOT, "summary.json");
 const FAILURE_LOG_PATH = path.join(REPORT_ROOT, "failure.log");
+const FAILURE_LOG_MESSAGE =
+  "Container smoke failed; inspect the redacted workflow stderr for details.\n";
 const COMMAND_TIMEOUT_MS = 60_000;
 const IMAGE_PULL_TIMEOUT_MS = 300_000;
 const READY_TIMEOUT_MS = 60_000;
@@ -892,7 +894,7 @@ await fs.writeFile(
 
 if (failure) {
   const safeFailure = failure.stack ?? failure.message;
-  await fs.writeFile(FAILURE_LOG_PATH, `${safeFailure}\n`, "utf8");
+  await fs.writeFile(FAILURE_LOG_PATH, FAILURE_LOG_MESSAGE, "utf8");
   process.stderr.write(`[container-smoke] ${safeFailure}\n`);
   process.exitCode =
     shutdownSignal === "SIGINT" ? 130 : shutdownSignal === "SIGTERM" ? 143 : 1;

@@ -289,13 +289,21 @@ async function removeFixtureRoot() {
     throw new Error('refusing to remove a fixture root outside the OS temporary directory');
   }
   const markerPath = path.join(realRoot, MARKER_FILE);
-  const markerMetadata = await fs.lstat(markerPath);
-  if (!markerMetadata.isFile() || markerMetadata.isSymbolicLink()) {
-    throw new Error('refusing to remove a fixture root without a regular marker file');
-  }
-  const markerContent = await fs.readFile(markerPath, 'utf8');
-  if (markerContent !== MARKER_CONTENT) {
-    throw new Error('refusing to remove a fixture root with an invalid marker');
+  const markerHandle = await fs.open(
+    markerPath,
+    fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0),
+  );
+  try {
+    const markerMetadata = await markerHandle.stat();
+    if (!markerMetadata.isFile()) {
+      throw new Error('refusing to remove a fixture root without a regular marker file');
+    }
+    const markerContent = await markerHandle.readFile('utf8');
+    if (markerContent !== MARKER_CONTENT) {
+      throw new Error('refusing to remove a fixture root with an invalid marker');
+    }
+  } finally {
+    await markerHandle.close();
   }
   await fs.rm(realRoot, { recursive: true, force: false });
   fixtureRoot = undefined;

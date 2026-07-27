@@ -209,11 +209,12 @@ impl AuthService {
     ) -> Result<UserResponse, AuthServiceError> {
         validate_new_credentials(username, password)?;
         let password_hash = hash_password(password)?;
+        let legacy_salt = String::new();
         let user = register_user_with_invite_and_audit(
             &self.auth_db_path,
             username,
             &password_hash,
-            "",
+            &legacy_salt,
             invite_code,
             now_seconds(),
             Some(&audit),
@@ -252,11 +253,12 @@ impl AuthService {
     ) -> Result<UserResponse, AuthServiceError> {
         validate_new_credentials(username, password)?;
         let password_hash = hash_password(password)?;
+        let legacy_salt = String::new();
         let user = bootstrap_admin_with_audit(
             &self.auth_db_path,
             username,
             &password_hash,
-            "",
+            &legacy_salt,
             now_seconds(),
             Some(&audit),
         )?;
@@ -611,11 +613,12 @@ impl AuthService {
             return Ok(false);
         }
         let password_hash = hash_password(new_password)?;
+        let legacy_salt = String::new();
         let did_update = update_user_password_and_delete_tokens_with_audit(
             &self.auth_db_path,
             user_id,
             &password_hash,
-            "",
+            &legacy_salt,
             now_seconds(),
             Some(&audit),
         )?;
@@ -654,11 +657,12 @@ impl AuthService {
     ) -> Result<bool, AuthServiceError> {
         validate_new_password(new_password)?;
         let password_hash = hash_password(new_password)?;
+        let legacy_salt = String::new();
         Ok(update_user_password_and_delete_tokens_with_audit(
             &self.auth_db_path,
             user_id,
             &password_hash,
-            "",
+            &legacy_salt,
             now_seconds(),
             Some(&audit),
         )?)
