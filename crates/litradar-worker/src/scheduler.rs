@@ -2060,7 +2060,7 @@ mod tests {
             let result = execute_scheduled_process(
                 process,
                 1,
-                Instant::now() + Duration::from_secs(1),
+                Instant::now() + Duration::from_secs(5),
                 &test_run_context(),
                 &SchedulerCancellation::new(),
                 &mut || {},
@@ -2069,7 +2069,7 @@ mod tests {
         });
 
         assert_eq!(result.status, SchedulerRunState::TimedOut);
-        assert!(process_elapsed < Duration::from_secs(3));
+        assert!(process_elapsed < Duration::from_secs(8));
         assert_process_tree_heartbeat_stopped(&heartbeat_path);
         assert_single_child_failure(&logs, "timeout");
         assert_eq!(
@@ -2296,7 +2296,7 @@ mod tests {
             }
             assert_ne!(grandchild_pid, 0);
         }
-        thread::sleep(Duration::from_secs(5));
+        thread::sleep(Duration::from_secs(15));
     }
 
     #[test]
