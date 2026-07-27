@@ -334,7 +334,7 @@ impl std::fmt::Debug for NotificationSettingsUpdate {
 }
 
 /// Notification settings response payload.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+#[derive(Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct NotificationSettingsResponse {
     /// Settings row identifier.
     pub id: i64,
@@ -388,6 +388,13 @@ pub struct NotificationSettingsResponse {
     pub created_at: f64,
     /// Last update timestamp.
     pub updated_at: f64,
+}
+
+impl std::fmt::Debug for NotificationSettingsResponse {
+    /// Format a response without exposing prompts or preference content.
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("NotificationSettingsResponse([REDACTED])")
+    }
 }
 
 /// Internal notification settings with decrypted credentials.
@@ -1231,8 +1238,8 @@ pub fn default_announcement_priority() -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        validate_scheduled_task_timing, NotificationSettingsUpdate, ScheduledDeliveryJob,
-        ScheduledIndexJob, ScheduledJobSpec,
+        validate_scheduled_task_timing, NotificationSettingsResponse, NotificationSettingsUpdate,
+        ScheduledDeliveryJob, ScheduledIndexJob, ScheduledJobSpec,
     };
 
     #[test]
@@ -1317,5 +1324,42 @@ mod tests {
             replace.pushplus_token,
             Some(Some("replacement".to_string()))
         );
+    }
+
+    #[test]
+    fn notification_response_debug_redacts_user_configuration() {
+        let response = serde_json::from_value::<NotificationSettingsResponse>(serde_json::json!({
+            "id": 1,
+            "user_id": 1,
+            "keywords": ["keyword-sentinel"],
+            "directions": ["direction-sentinel"],
+            "selected_databases": [],
+            "delivery_method": "folder",
+            "has_pushplus_token": false,
+            "pushplus_token_mask": "",
+            "pushplus_template": "markdown",
+            "pushplus_topic": "topic-sentinel",
+            "pushplus_channel": "wechat",
+            "sync_to_tracking_folder": false,
+            "ai_base_url": "https://endpoint-sentinel.example/v1/",
+            "has_ai_api_key": false,
+            "ai_api_key_mask": "",
+            "ai_model": "model-sentinel",
+            "ai_system_prompt": "prompt-sentinel",
+            "ai_backup_base_url": "",
+            "has_ai_backup_api_key": false,
+            "ai_backup_api_key_mask": "",
+            "ai_backup_model": "",
+            "ai_backup_system_prompt": "",
+            "ai_retry_attempts": 1,
+            "enabled": true,
+            "created_at": 1.0,
+            "updated_at": 1.0
+        }))
+        .expect("notification response fixture should deserialize");
+
+        let debug = format!("{response:?}");
+
+        assert_eq!(debug, "NotificationSettingsResponse([REDACTED])");
     }
 }

@@ -67,6 +67,7 @@ function installTrackingHandlers(): void {
       ]),
     ),
     http.get('http://localhost/api/tracking/notification-settings', () => HttpResponse.json(null)),
+    http.get('http://localhost/api/tracking/ai-endpoints', () => HttpResponse.json([])),
     http.get('http://localhost/api/auth/invite-code', () => HttpResponse.json(null)),
   );
 }

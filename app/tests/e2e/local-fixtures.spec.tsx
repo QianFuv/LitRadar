@@ -318,6 +318,10 @@ async function serveTrackingApi(route: Route): Promise<void> {
     await fulfillJson(route, null);
     return;
   }
+  if (pathname === '/api/tracking/ai-endpoints') {
+    await fulfillJson(route, []);
+    return;
+  }
   if (pathname === '/api/tracking/push-weekly' && request.method() === 'POST') {
     await fulfillJson(route, {
       job_id: 'browser-job',

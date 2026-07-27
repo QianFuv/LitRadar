@@ -22,7 +22,11 @@ pub fn run_recommendation_delivery(
     config: &RecommendationRunConfig,
 ) -> Result<RecommendationRunOutcome, DeliveryError> {
     let timeout_seconds = config.timeout_seconds.max(1);
-    let mut ai_selector = DefaultDeliveryAiSelector::live(timeout_seconds, config.retry_attempts);
+    let mut ai_selector = DefaultDeliveryAiSelector::live(
+        timeout_seconds,
+        config.retry_attempts,
+        config.auth_db_path.clone(),
+    );
     let mut pushplus_sender =
         LiveDeliveryPushPlusSender::new(timeout_seconds, config.retry_attempts)?;
     run_recommendation_delivery_with_services_for_user(
@@ -48,7 +52,11 @@ pub fn run_recommendation_delivery_for_user(
     user_id: UserId,
 ) -> Result<RecommendationRunOutcome, DeliveryError> {
     let timeout_seconds = config.timeout_seconds.max(1);
-    let mut ai_selector = DefaultDeliveryAiSelector::live(timeout_seconds, config.retry_attempts);
+    let mut ai_selector = DefaultDeliveryAiSelector::live(
+        timeout_seconds,
+        config.retry_attempts,
+        config.auth_db_path.clone(),
+    );
     let mut pushplus_sender =
         LiveDeliveryPushPlusSender::new(timeout_seconds, config.retry_attempts)?;
     run_recommendation_delivery_with_services_for_user(
@@ -369,7 +377,7 @@ fn execute_recommendation_delivery_with_services_for_user(
         ));
     }
 
-    let global_config = load_global_config();
+    let global_config = load_global_config(config)?;
     let mut defaults = load_defaults();
     if let Some(max_candidates) = config.max_candidates {
         defaults.max_candidates = max_candidates.max(1);
@@ -892,16 +900,19 @@ fn outcome(
     }
 }
 
-fn load_global_config() -> NotificationGlobalConfig {
-    NotificationGlobalConfig {
-        ai_base_url: DEFAULT_OPENAI_BASE_URL.to_string(),
+fn load_global_config(
+    config: &RecommendationRunConfig,
+) -> Result<NotificationGlobalConfig, DeliveryError> {
+    Ok(NotificationGlobalConfig {
+        ai_base_url: litradar_storage::canonicalize_outbound_base_url(DEFAULT_OPENAI_BASE_URL)?,
+        ai_allowed_base_urls: litradar_storage::load_ai_allowed_base_urls(&config.auth_db_path)?,
         ai_api_key: String::new(),
         pushplus_channel: PUSHPLUS_CHANNEL.to_string(),
         pushplus_template: "markdown".to_string(),
         pushplus_topic: None,
         pushplus_option: None,
         ai_system_prompt: None,
-    }
+    })
 }
 
 fn load_defaults() -> NotificationDefaults {
@@ -914,6 +925,7 @@ fn load_defaults() -> NotificationDefaults {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
     use std::fs;
     use std::path::{Path, PathBuf};
 
@@ -1421,6 +1433,16 @@ mod tests {
             let secret_codec = litradar_storage::SecretCodec::from_key([17_u8; 32]);
             litradar_storage::initialize_auth_database(&auth_db_path)
                 .expect("auth database should initialize");
+            litradar_storage::upsert_runtime_settings(
+                &auth_db_path,
+                &secret_codec,
+                &HashMap::from([(
+                    "ai_allowed_base_urls".to_string(),
+                    Some("https://api.siliconflow.cn/v1/".to_string()),
+                )]),
+                &HashMap::new(),
+            )
+            .expect("AI endpoint catalog should persist");
             let user =
                 litradar_storage::bootstrap_admin(&auth_db_path, "alice", "hash", "salt", 1.0)
                     .expect("fixture administrator should be bootstrapped");

@@ -193,6 +193,8 @@ pub struct ChangeManifest {
 pub struct NotificationGlobalConfig {
     /// Default OpenAI-compatible API base URL.
     pub ai_base_url: String,
+    /// Exact administrator-approved OpenAI-compatible base URLs.
+    pub ai_allowed_base_urls: Vec<String>,
     /// Default OpenAI-compatible API key.
     pub ai_api_key: String,
     /// Default PushPlus channel.
@@ -212,13 +214,26 @@ impl fmt::Debug for NotificationGlobalConfig {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("NotificationGlobalConfig")
-            .field("ai_base_url", &self.ai_base_url)
+            .field("ai_base_url", &"[REDACTED]")
+            .field(
+                "ai_allowed_base_url_count",
+                &self.ai_allowed_base_urls.len(),
+            )
             .field("ai_api_key", &"[REDACTED]")
             .field("pushplus_channel", &self.pushplus_channel)
             .field("pushplus_template", &self.pushplus_template)
-            .field("pushplus_topic", &self.pushplus_topic)
-            .field("pushplus_option", &self.pushplus_option)
-            .field("ai_system_prompt", &self.ai_system_prompt)
+            .field(
+                "pushplus_topic",
+                &self.pushplus_topic.as_ref().map(|_| "[REDACTED]"),
+            )
+            .field(
+                "pushplus_option",
+                &self.pushplus_option.as_ref().map(|_| "[REDACTED]"),
+            )
+            .field(
+                "ai_system_prompt",
+                &self.ai_system_prompt.as_ref().map(|_| "[REDACTED]"),
+            )
             .finish()
     }
 }
@@ -252,10 +267,10 @@ impl fmt::Debug for AiRuntimeConfig {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("AiRuntimeConfig")
-            .field("base_url", &self.base_url)
+            .field("base_url", &"[REDACTED]")
             .field("api_key", &"[REDACTED]")
             .field("model", &self.model)
-            .field("system_prompt", &self.system_prompt)
+            .field("system_prompt", &"[REDACTED]")
             .finish()
     }
 }
@@ -975,10 +990,9 @@ pub fn extract_response_payload(
         })?;
     if let Some(refusal) = message.get("refusal").and_then(Value::as_str) {
         if !refusal.trim().is_empty() {
-            return Err(RecommendationError::InvalidAiPayload(format!(
-                "AI model refused structured output: {}",
-                refusal.trim()
-            )));
+            return Err(RecommendationError::InvalidAiPayload(
+                "AI model refused structured output".to_string(),
+            ));
         }
     }
     if let Some(parsed) = message.get("parsed") {
@@ -1063,11 +1077,19 @@ fn resolve_ai_runtime_config(
     if resolved_api_key.is_empty() || resolved_model.is_empty() {
         return None;
     }
+    let resolved_base_url = base_url
+        .unwrap_or(global_config.ai_base_url.as_str())
+        .trim()
+        .to_string();
+    if !global_config
+        .ai_allowed_base_urls
+        .iter()
+        .any(|allowed| allowed == &resolved_base_url)
+    {
+        return None;
+    }
     Some(AiRuntimeConfig {
-        base_url: base_url
-            .unwrap_or(global_config.ai_base_url.as_str())
-            .trim()
-            .to_string(),
+        base_url: resolved_base_url,
         api_key: resolved_api_key,
         model: resolved_model,
         system_prompt: system_prompt
@@ -1383,24 +1405,29 @@ mod tests {
 
         assert!(debug.contains("[REDACTED]"));
         assert!(!debug.contains("ai-secret"));
+        assert!(!debug.contains("ai.example.com"));
+        assert!(!debug.contains("fixture prompt"));
     }
 
     #[test]
     fn notification_global_config_debug_redacts_api_key() {
         let config = NotificationGlobalConfig {
             ai_base_url: "https://ai.example.com".to_string(),
+            ai_allowed_base_urls: vec!["https://ai.example.com".to_string()],
             ai_api_key: "global-ai-secret".to_string(),
             pushplus_channel: "wechat".to_string(),
             pushplus_template: "markdown".to_string(),
             pushplus_topic: None,
             pushplus_option: None,
-            ai_system_prompt: None,
+            ai_system_prompt: Some("global prompt secret".to_string()),
         };
 
         let debug = format!("{config:?}");
 
         assert!(debug.contains("[REDACTED]"));
         assert!(!debug.contains("global-ai-secret"));
+        assert!(!debug.contains("ai.example.com"));
+        assert!(!debug.contains("global prompt secret"));
     }
 
     #[test]
@@ -1565,6 +1592,7 @@ mod tests {
         subscriber.ai_backup_model = Some("subscriber-model".to_string());
         let global_config = NotificationGlobalConfig {
             ai_base_url: "https://global.test".to_string(),
+            ai_allowed_base_urls: vec!["https://primary.test".to_string()],
             ai_api_key: "global-key".to_string(),
             pushplus_channel: "wechat".to_string(),
             pushplus_template: "markdown".to_string(),
@@ -1585,6 +1613,33 @@ mod tests {
         assert_eq!(configs[0].base_url, "https://primary.test");
         assert_eq!(configs[0].api_key, "subscriber-key");
         assert_eq!(configs[0].model, "override");
+    }
+
+    #[test]
+    fn stale_subscriber_endpoints_are_revalidated_against_the_runtime_catalog() {
+        let mut subscriber = subscriber();
+        subscriber.ai_base_url = Some("https://removed.test/v1/".to_string());
+        subscriber.ai_api_key = Some("subscriber-key".to_string());
+        subscriber.ai_model = Some("subscriber-model".to_string());
+        let global_config = NotificationGlobalConfig {
+            ai_base_url: "https://global.test/v1/".to_string(),
+            ai_allowed_base_urls: vec!["https://approved.test/v1/".to_string()],
+            ai_api_key: "global-key".to_string(),
+            pushplus_channel: "wechat".to_string(),
+            pushplus_template: "markdown".to_string(),
+            pushplus_topic: None,
+            pushplus_option: None,
+            ai_system_prompt: None,
+        };
+        let defaults = NotificationDefaults {
+            ai_model: "default-model".to_string(),
+            temperature: 0.2,
+            max_candidates: 20,
+        };
+
+        assert!(
+            resolve_ai_runtime_configs(&subscriber, &global_config, &defaults, None).is_empty()
+        );
     }
 
     #[test]

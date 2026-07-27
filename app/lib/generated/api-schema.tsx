@@ -1183,6 +1183,23 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  '/api/tracking/ai-endpoints': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Get the administrator-approved AI endpoint catalog. */
+    get: operations['get_ai_endpoints'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   '/api/tracking/notification-settings': {
     parameters: {
       query?: never;
@@ -4345,6 +4362,26 @@ export interface operations {
         };
         content: {
           'application/json': components['schemas']['JournalOption'][];
+        };
+      };
+    };
+  };
+  get_ai_endpoints: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Approved AI base URLs. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': string[];
         };
       };
     };

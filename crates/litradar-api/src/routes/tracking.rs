@@ -248,6 +248,26 @@ pub(crate) async fn get_notification_settings(
     ))
 }
 
+/// Get the administrator-approved AI endpoint catalog.
+#[utoipa::path(
+    get,
+    path = "/api/tracking/ai-endpoints",
+    tag = "tracking",
+    responses((status = 200, description = "Approved AI base URLs.", body = Vec<String>)),
+    security(("bearer_auth" = []), ("session_cookie" = []))
+)]
+pub(crate) async fn get_ai_endpoints(
+    State(state): State<ApiState>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<String>>, ApiError> {
+    require_current_user(&state, &headers).await?;
+    let endpoints = run_storage(&state, move |storage| {
+        litradar_storage::load_ai_allowed_base_urls(storage.auth_db_path())
+    })
+    .await?;
+    Ok(Json(endpoints))
+}
+
 /// Create or update the user's notification settings.
 #[utoipa::path(
     put,
@@ -338,6 +358,13 @@ pub(crate) async fn update_notification_settings(
             "A tracking folder is required before enabling PushPlus sync to tracking",
         ));
     }
+    let allowed_ai_endpoints = run_storage(&state, move |storage| {
+        litradar_storage::load_ai_allowed_base_urls(storage.auth_db_path())
+    })
+    .await?;
+    let ai_base_url = normalize_selected_ai_endpoint(&body.ai_base_url, &allowed_ai_endpoints)?;
+    let ai_backup_base_url =
+        normalize_selected_ai_endpoint(&body.ai_backup_base_url, &allowed_ai_endpoints)?;
     let normalized = NotificationSettingsUpdate {
         keywords: trim_nonempty(body.keywords),
         directions: trim_nonempty(body.directions),
@@ -348,11 +375,11 @@ pub(crate) async fn update_notification_settings(
         pushplus_topic: body.pushplus_topic.trim().to_string(),
         pushplus_channel: body.pushplus_channel.trim().to_string(),
         sync_to_tracking_folder: body.sync_to_tracking_folder,
-        ai_base_url: body.ai_base_url.trim().to_string(),
+        ai_base_url,
         ai_api_key: normalize_secret_update(body.ai_api_key),
         ai_model: body.ai_model.trim().to_string(),
         ai_system_prompt: body.ai_system_prompt.trim().to_string(),
-        ai_backup_base_url: body.ai_backup_base_url.trim().to_string(),
+        ai_backup_base_url,
         ai_backup_api_key: normalize_secret_update(body.ai_backup_api_key),
         ai_backup_model: body.ai_backup_model.trim().to_string(),
         ai_backup_system_prompt: body.ai_backup_system_prompt.trim().to_string(),
@@ -360,16 +387,40 @@ pub(crate) async fn update_notification_settings(
         enabled: body.enabled,
     };
     let secret_codec = state.secret_codec().clone();
-    let settings = run_storage(&state, move |storage| {
-        litradar_storage::upsert_notification_settings(
-            storage.auth_db_path(),
-            &secret_codec,
-            user.id,
-            &normalized,
-        )
-    })
-    .await?;
+    let storage = state.storage_config().clone();
+    let settings = state
+        .run_blocking(move || {
+            litradar_storage::upsert_notification_settings(
+                storage.auth_db_path(),
+                &secret_codec,
+                user.id,
+                &normalized,
+            )
+        })
+        .await?
+        .map_err(|error| match error {
+            litradar_storage::BusinessRepositoryError::OutboundEndpointNotAllowed => {
+                ApiError::bad_request("AI endpoint is not available")
+            }
+            _ => ApiError::internal_server_error(),
+        })?;
     Ok(Json(NotificationSettingsResponse::from(&settings)))
+}
+
+fn normalize_selected_ai_endpoint(
+    value: &str,
+    allowed_endpoints: &[String],
+) -> Result<String, ApiError> {
+    if value.trim().is_empty() {
+        return Ok(String::new());
+    }
+    let endpoint = litradar_storage::canonicalize_outbound_base_url(value)
+        .map_err(|_| ApiError::bad_request("AI endpoint is not available"))?;
+    if allowed_endpoints.contains(&endpoint) {
+        Ok(endpoint)
+    } else {
+        Err(ApiError::bad_request("AI endpoint is not available"))
+    }
 }
 
 fn normalize_secret_update(update: Option<Option<String>>) -> Option<Option<String>> {

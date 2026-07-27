@@ -5,6 +5,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import {
   createFolder,
+  getAiEndpoints,
   getDatabases,
   getFolders,
   getNotificationSettings,
@@ -19,6 +20,7 @@ import {
 } from '@/lib/api';
 
 const EMPTY_DATABASES: string[] = [];
+const EMPTY_AI_ENDPOINTS: string[] = [];
 
 /**
  * Own tracking queries, draft state, push polling, and cache invalidation.
@@ -61,6 +63,12 @@ export function useTrackingPage(userId: number) {
     enabled: true,
   });
   const notifySettings = notificationSettingsQuery.data;
+  const aiEndpointsQuery = useQuery({
+    queryKey: ['ai-endpoints', userId],
+    queryFn: () => getAiEndpoints(),
+    enabled: true,
+  });
+  const availableAiEndpoints = aiEndpointsQuery.data ?? EMPTY_AI_ENDPOINTS;
 
   const normalizeSettings = useCallback(
     (settings: NotificationSettings | null | undefined): NotificationSettingsUpdate => ({
@@ -254,6 +262,15 @@ export function useTrackingPage(userId: number) {
       updateNotificationSettings({
         ...formSettings,
         selected_databases: effectiveSelectedDatabases,
+        ai_base_url:
+          aiEndpointsQuery.isSuccess && !availableAiEndpoints.includes(formSettings.ai_base_url)
+            ? ''
+            : formSettings.ai_base_url,
+        ai_backup_base_url:
+          aiEndpointsQuery.isSuccess &&
+          !availableAiEndpoints.includes(formSettings.ai_backup_base_url)
+            ? ''
+            : formSettings.ai_backup_base_url,
       }),
     onSuccess: (savedSettings) => {
       queryClient.setQueryData(['notification-settings', userId], savedSettings);
@@ -361,6 +378,10 @@ export function useTrackingPage(userId: number) {
           systemPrompt: aiSystemPrompt,
         },
         retryAttempts: aiRetryAttempts,
+        endpoints: {
+          available: availableAiEndpoints,
+          query: aiEndpointsQuery,
+        },
       },
       databaseSelection: {
         allSelected: allDatabasesSelected,

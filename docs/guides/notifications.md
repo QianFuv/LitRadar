@@ -39,6 +39,8 @@
 
 `selected_databases=[]` 表示所有数据库。没有非空 keyword/direction、设置未启用、数据库未被选中或没有可用 AI key/model 时，该用户会被跳过。
 
+普通用户不能输入任意 base URL。设置页只展示管理员运行配置 `ai_allowed_base_urls` 中的准确 HTTPS Endpoint；目录默认为空。API 保存时在事务内复核目录，worker 在每次实际 AI 请求前重新读取目录，因此运行中被管理员移除的 Endpoint 不会用于后续尝试。
+
 `ai_retry_attempts` 的写入范围为 `1..=10`；超出范围的 API 更新会被拒绝。历史或被手工修改的值在读取时归一到该范围，不会触发自动数据库更新。
 
 秘密字段以 `litradarenc:v1:` 密文保存。读取 API 只返回 `has_*` 和固定掩码；更新时：
@@ -53,14 +55,14 @@
 
 投递不读取进程环境变量中的 AI 或 PushPlus 凭据。有效 AI 配置来自用户设置：
 
-- base URL 未填写时使用代码默认 `https://api.siliconflow.cn/v1`
+- base URL 未填写时考虑代码默认 `https://api.siliconflow.cn/v1/`，但只有管理员已把它加入 Endpoint 目录时才可用
 - model 未填写时使用 `deepseek-ai/DeepSeek-V3`，也可由 CLI `--ai-model` 覆盖
 - API key 没有可用的全局 fallback，用户必须配置
 - 只有用户填写了任一备用字段时才构建备用 endpoint
 
 CLI `--retries` 的范围是 `0..=10`、默认值是 3；用户 `ai_retry_attempts` 的范围是 `1..=10`。两者分别受限后，每个 endpoint 的实际 AI 重试次数仍取两者较大值。该次数分别应用于 `json_schema`、`json_object` 和无 `response_format` 三种兼容形式：值为 N 时，每种形式最多执行一次初始请求和 N 次重试，并按 `1/2/4/8/8...` 秒等待。它不是完整作业时限或所有 endpoint 的请求总数。
 
-请求超时、三种响应格式的顺序和主 endpoint 完整失败后再尝试备用 endpoint 的行为保持不变；`--dry-run` 仍会执行 AI 请求。
+每次请求都会在总截止时间内通过有界解析器重新解析 DNS，并拒绝 loopback、RFC1918、link-local、unspecified、multicast、IPv6 ULA、NAT64/6to4 和其他特殊用途地址；只允许 HTTPS，禁用环境代理和自动重定向。成功响应必须是未压缩 JSON，最大 2 MiB；非 2xx 响应体不会读取、记录或进入用户可见任务状态。`--dry-run` 仍会执行符合这些边界的 AI 请求。
 
 模型输出还会经过本地约束：
 
@@ -166,7 +168,7 @@ PushPlus 传输使用受限后的 CLI `--retries`，并以相同的 `1/2/4/8/8..
 1. `data/push_state/*.changes.json` 是否存在且 `notifiable_article_ids` 非空。
 2. 用户设置是否启用，数据库是否被选中。
 3. keyword 或 direction 是否至少有一个非空值。
-4. AI key/model 是否可解析，主备 endpoint 是否可访问。
+4. AI key/model 是否可解析，主备 endpoint 是否仍在管理员目录且可访问。
 5. `delivery_method=folder` 时是否设置追踪文件夹。
 6. `delivery_method=pushplus` 时 token 是否存在。
 7. 对应状态目录中的 run/error 是否说明已去重、跳过或传输失败。

@@ -81,6 +81,15 @@ function notificationSettingsResponse(): Response {
 }
 
 /**
+ * Return an empty administrator-approved AI endpoint catalog.
+ *
+ * @returns Empty AI endpoint list response.
+ */
+function aiEndpointsResponse(): Response {
+  return HttpResponse.json([]);
+}
+
+/**
  * Start a running background push fixture.
  *
  * @returns Running status response.
@@ -122,6 +131,7 @@ async function pollsUntilCompleted(): Promise<void> {
     http.get('http://localhost/api/meta/databases', databasesResponse),
     http.get('http://localhost/api/favorites/folders', foldersResponse),
     http.get('http://localhost/api/tracking/notification-settings', notificationSettingsResponse),
+    http.get('http://localhost/api/tracking/ai-endpoints', aiEndpointsResponse),
     http.post('http://localhost/api/tracking/push-weekly', startPushResponse),
     http.get('http://localhost/api/tracking/push-weekly/status', pollPushResponse),
   );
@@ -149,6 +159,7 @@ async function displaysCapacityErrorWithoutPolling(): Promise<void> {
     http.get('http://localhost/api/meta/databases', databasesResponse),
     http.get('http://localhost/api/favorites/folders', foldersResponse),
     http.get('http://localhost/api/tracking/notification-settings', notificationSettingsResponse),
+    http.get('http://localhost/api/tracking/ai-endpoints', aiEndpointsResponse),
     http.post('http://localhost/api/tracking/push-weekly', saturatedPushResponse),
     http.get('http://localhost/api/tracking/push-weekly/status', pollPushResponse),
   );
@@ -170,6 +181,7 @@ async function discardsUnsavedSettings(): Promise<void> {
     http.get('http://localhost/api/meta/databases', databasesResponse),
     http.get('http://localhost/api/favorites/folders', foldersResponse),
     http.get('http://localhost/api/tracking/notification-settings', notificationSettingsResponse),
+    http.get('http://localhost/api/tracking/ai-endpoints', aiEndpointsResponse),
   );
   const user = userEvent.setup();
   renderWithQuery(<TrackingSettingsContent userId={33} section="tracking" />);
@@ -197,6 +209,7 @@ async function recoversAfterPollingFailure(): Promise<void> {
     http.get('http://localhost/api/meta/databases', databasesResponse),
     http.get('http://localhost/api/favorites/folders', foldersResponse),
     http.get('http://localhost/api/tracking/notification-settings', notificationSettingsResponse),
+    http.get('http://localhost/api/tracking/ai-endpoints', aiEndpointsResponse),
     http.post('http://localhost/api/tracking/push-weekly', () => {
       startRequestCount += 1;
       return HttpResponse.json(
@@ -233,6 +246,7 @@ async function stopsPollingAfterUnmount(): Promise<void> {
     http.get('http://localhost/api/meta/databases', databasesResponse),
     http.get('http://localhost/api/favorites/folders', foldersResponse),
     http.get('http://localhost/api/tracking/notification-settings', notificationSettingsResponse),
+    http.get('http://localhost/api/tracking/ai-endpoints', aiEndpointsResponse),
     http.post('http://localhost/api/tracking/push-weekly', startPushResponse),
     http.get('http://localhost/api/tracking/push-weekly/status', () => {
       statusRequestCount += 1;

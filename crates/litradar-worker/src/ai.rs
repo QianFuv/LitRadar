@@ -2,6 +2,7 @@
 
 use std::error::Error;
 use std::fmt;
+use std::path::{Path, PathBuf};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -11,9 +12,10 @@ use litradar_domain::{
 use litradar_recommend::{
     extract_response_payload, AiPayloadKind, AiRuntimeConfig, NotificationDefaults,
 };
-use reqwest::blocking::Client;
+use reqwest::Url;
 use serde_json::{json, Value};
 
+use crate::http::{redacted_url, BoundedHttpClient};
 use crate::retry::{bounded_retry_attempts, retry_backoff_delay};
 
 const CHAT_COMPLETIONS_PATH: &str = "chat/completions";
@@ -36,8 +38,10 @@ pub enum AiClientError {
     HttpStatus {
         /// HTTP status code.
         status_code: u16,
-        /// Parsed response payload or raw body wrapper.
-        body: Value,
+        /// Safe upstream request identifier when supplied.
+        request_id: Option<String>,
+        /// Numeric Retry-After delay when supplied.
+        retry_after_seconds: Option<u64>,
     },
     /// Upstream response could not be parsed into the expected payload.
     InvalidResponse(String),
@@ -48,12 +52,19 @@ impl fmt::Display for AiClientError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Transport(message) => formatter.write_str(message),
-            Self::HttpStatus { status_code, body } => {
-                write!(
-                    formatter,
-                    "AI request failed with HTTP {status_code}: {body}"
-                )
-            }
+            Self::HttpStatus {
+                status_code,
+                request_id: Some(request_id),
+                ..
+            } => write!(
+                formatter,
+                "AI request failed with HTTP {status_code} (request ID: {request_id})"
+            ),
+            Self::HttpStatus {
+                status_code,
+                request_id: None,
+                ..
+            } => write!(formatter, "AI request failed with HTTP {status_code}"),
             Self::InvalidResponse(message) => formatter.write_str(message),
         }
     }
@@ -82,7 +93,7 @@ impl fmt::Debug for AiHttpHeader {
 }
 
 /// HTTP request sent to an OpenAI-compatible endpoint.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Clone, PartialEq)]
 pub struct AiHttpRequest {
     /// Request URL.
     pub url: String,
@@ -92,13 +103,43 @@ pub struct AiHttpRequest {
     pub body: Value,
 }
 
+impl fmt::Debug for AiHttpRequest {
+    /// Format an AI request without exposing prompts, articles, or credentials.
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("AiHttpRequest")
+            .field("endpoint", &redacted_url(&self.url))
+            .field("headers", &self.headers)
+            .field("payload_bytes", &self.body.to_string().len())
+            .field("body", &"[REDACTED]")
+            .finish()
+    }
+}
+
 /// HTTP response returned by an AI transport.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Clone, PartialEq)]
 pub struct AiHttpResponse {
     /// HTTP status code.
     pub status_code: u16,
+    /// Safe upstream request identifier when supplied.
+    pub request_id: Option<String>,
+    /// Numeric Retry-After delay when supplied.
+    pub retry_after_seconds: Option<u64>,
     /// JSON response body.
     pub body: Value,
+}
+
+impl fmt::Debug for AiHttpResponse {
+    /// Format an AI response without exposing model output.
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("AiHttpResponse")
+            .field("status_code", &self.status_code)
+            .field("request_id", &self.request_id)
+            .field("retry_after_seconds", &self.retry_after_seconds)
+            .field("body", &"[REDACTED]")
+            .finish()
+    }
 }
 
 struct AiCompletionResponse {
@@ -126,9 +167,20 @@ pub trait AiTransport {
 }
 
 /// Reqwest-backed AI transport.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct ReqwestAiTransport {
-    client: Client,
+    client: BoundedHttpClient,
+    auth_db_path: PathBuf,
+}
+
+impl fmt::Debug for ReqwestAiTransport {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("ReqwestAiTransport")
+            .field("client", &self.client)
+            .field("endpoint_catalog", &"[CONFIGURED]")
+            .finish()
+    }
 }
 
 impl ReqwestAiTransport {
@@ -137,37 +189,45 @@ impl ReqwestAiTransport {
     /// # Arguments
     ///
     /// * `timeout_seconds` - Request timeout in seconds.
+    /// * `auth_db_path` - Database containing the current AI endpoint catalog.
     ///
     /// # Returns
     ///
     /// Reqwest AI transport.
-    pub fn new(timeout_seconds: u64) -> Result<Self, AiClientError> {
-        let client = Client::builder()
-            .timeout(Duration::from_secs(timeout_seconds.max(1)))
-            .build()
-            .map_err(|error| AiClientError::Transport(error.to_string()))?;
-        Ok(Self { client })
+    pub fn new(
+        timeout_seconds: u64,
+        auth_db_path: impl Into<PathBuf>,
+    ) -> Result<Self, AiClientError> {
+        Ok(Self {
+            client: BoundedHttpClient::new(timeout_seconds),
+            auth_db_path: auth_db_path.into(),
+        })
+    }
+
+    fn ensure_request_is_allowed(&self, request_url: &str) -> Result<(), AiClientError> {
+        ensure_ai_request_is_allowed(&self.auth_db_path, request_url)
     }
 }
 
 impl AiTransport for ReqwestAiTransport {
     /// Send one JSON POST request through reqwest.
     fn post_json(&mut self, request: AiHttpRequest) -> Result<AiHttpResponse, AiClientError> {
-        let mut builder = self.client.post(&request.url);
-        for header in &request.headers {
-            builder = builder.header(header.name.as_str(), header.value.as_str());
-        }
-        let response = builder
-            .json(&request.body)
-            .send()
+        self.ensure_request_is_allowed(&request.url)?;
+        let headers = request
+            .headers
+            .iter()
+            .map(|header| (header.name.clone(), header.value.clone()))
+            .collect::<Vec<_>>();
+        let response = self
+            .client
+            .post_json(&request.url, &headers, &request.body)
             .map_err(|error| AiClientError::Transport(error.to_string()))?;
-        let status_code = response.status().as_u16();
-        let text = response
-            .text()
-            .map_err(|error| AiClientError::Transport(error.to_string()))?;
-        let body =
-            serde_json::from_str::<Value>(&text).unwrap_or_else(|_| json!({ "error": text }));
-        Ok(AiHttpResponse { status_code, body })
+        Ok(AiHttpResponse {
+            status_code: response.status_code,
+            request_id: response.request_id,
+            retry_after_seconds: response.retry_after_seconds,
+            body: response.body.unwrap_or(Value::Null),
+        })
     }
 }
 
@@ -456,6 +516,7 @@ impl<T: AiTransport> AiCompletionClient<T> {
     ) -> Result<Value, AiClientError> {
         let mut last_error = AiClientError::InvalidResponse("AI request was not attempted".into());
         let response_formats = response_format_variants(schema_name, &schema);
+        let completion_url = chat_completions_url(&config.base_url)?;
         for (format_index, response_format) in response_formats.iter().enumerate() {
             if format_index > 0 {
                 tracing::warn!(
@@ -474,7 +535,7 @@ impl<T: AiTransport> AiCompletionClient<T> {
                     response_format.value.clone(),
                 );
                 let request = AiHttpRequest {
-                    url: chat_completions_url(&config.base_url),
+                    url: completion_url.clone(),
                     headers: ai_headers(&config.api_key),
                     body,
                 };
@@ -526,7 +587,8 @@ impl<T: AiTransport> AiCompletionClient<T> {
         if !(200..300).contains(&response.status_code) {
             return Err(AiClientError::HttpStatus {
                 status_code: response.status_code,
-                body: response.body,
+                request_id: response.request_id,
+                retry_after_seconds: response.retry_after_seconds,
             });
         }
         let payload = extract_response_payload(&response.body, payload_kind)
@@ -545,6 +607,7 @@ impl<T: AiTransport> AiCompletionClient<T> {
 /// * `timeout_seconds` - Request timeout in seconds.
 /// * `retry_attempts` - Retry attempts per response format variant.
 /// * `temperature` - Model temperature.
+/// * `auth_db_path` - Database containing the current AI endpoint catalog.
 ///
 /// # Returns
 ///
@@ -553,9 +616,10 @@ pub fn live_ai_client(
     timeout_seconds: u64,
     retry_attempts: usize,
     temperature: f64,
+    auth_db_path: impl AsRef<Path>,
 ) -> Result<AiCompletionClient<ReqwestAiTransport>, AiClientError> {
     Ok(AiCompletionClient::new(
-        ReqwestAiTransport::new(timeout_seconds)?,
+        ReqwestAiTransport::new(timeout_seconds, auth_db_path.as_ref().to_path_buf())?,
         retry_attempts,
         temperature,
     ))
@@ -686,12 +750,33 @@ fn elapsed_millis(started_at: Instant) -> u64 {
     started_at.elapsed().as_millis().min(u128::from(u64::MAX)) as u64
 }
 
-fn chat_completions_url(base_url: &str) -> String {
-    format!(
-        "{}/{}",
-        base_url.trim_end_matches('/'),
-        CHAT_COMPLETIONS_PATH
-    )
+fn ensure_ai_request_is_allowed(
+    auth_db_path: &Path,
+    request_url: &str,
+) -> Result<(), AiClientError> {
+    let request_url = Url::parse(request_url)
+        .map_err(|_| AiClientError::Transport("AI endpoint is not approved".to_string()))?;
+    let allowed_base_urls = litradar_storage::load_ai_allowed_base_urls(auth_db_path)
+        .map_err(|_| AiClientError::Transport("AI endpoint is not approved".to_string()))?;
+    let is_allowed = allowed_base_urls.iter().any(|base_url| {
+        Url::parse(base_url)
+            .and_then(|url| url.join(CHAT_COMPLETIONS_PATH))
+            .is_ok_and(|allowed_url| allowed_url == request_url)
+    });
+    if is_allowed {
+        Ok(())
+    } else {
+        Err(AiClientError::Transport(
+            "AI endpoint is not approved".to_string(),
+        ))
+    }
+}
+
+fn chat_completions_url(base_url: &str) -> Result<String, AiClientError> {
+    Url::parse(base_url)
+        .and_then(|url| url.join(CHAT_COMPLETIONS_PATH))
+        .map(|url| url.to_string())
+        .map_err(|_| AiClientError::Transport("AI endpoint URL is invalid".to_string()))
 }
 
 fn ai_headers(api_key: &str) -> Vec<AiHttpHeader> {
@@ -903,6 +988,10 @@ pub(crate) mod test_support {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+
+    use tempfile::tempdir;
+
     use super::test_support::CapturedLogs;
     use super::*;
 
@@ -955,6 +1044,63 @@ mod tests {
 
         assert!(debug.contains("[REDACTED]"));
         assert!(!debug.contains("ai-request-secret"));
+        assert!(!debug.contains("fixture-model"));
+    }
+
+    #[test]
+    fn response_debug_redacts_model_output() {
+        let response = AiHttpResponse {
+            status_code: 200,
+            request_id: Some("request-123".to_string()),
+            retry_after_seconds: None,
+            body: json!({"choices": [{"message": {"content": "response-sentinel"}}]}),
+        };
+
+        let debug = format!("{response:?}");
+
+        assert!(debug.contains("[REDACTED]"));
+        assert!(!debug.contains("response-sentinel"));
+    }
+
+    #[test]
+    fn live_transport_reloads_endpoint_approval_before_each_attempt() {
+        let temp_dir = tempdir().expect("temporary directory should be created");
+        let auth_db_path = temp_dir.path().join("auth.sqlite");
+        let secret_codec = litradar_storage::SecretCodec::from_key([53_u8; 32]);
+        litradar_storage::initialize_auth_database(&auth_db_path)
+            .expect("auth database should initialize");
+        let persist_catalog = |value: &str| {
+            litradar_storage::upsert_runtime_settings(
+                &auth_db_path,
+                &secret_codec,
+                &HashMap::from([("ai_allowed_base_urls".to_string(), Some(value.to_string()))]),
+                &HashMap::new(),
+            )
+            .expect("AI endpoint catalog should persist");
+        };
+        persist_catalog("https://127.0.0.1/v1/");
+        let mut transport =
+            ReqwestAiTransport::new(1, auth_db_path.clone()).expect("transport should initialize");
+        let request = AiHttpRequest {
+            url: "https://127.0.0.1/v1/chat/completions".to_string(),
+            headers: Vec::new(),
+            body: json!({}),
+        };
+
+        assert_eq!(
+            transport.post_json(request.clone()).unwrap_err(),
+            AiClientError::Transport(
+                "Outbound endpoint resolved to a disallowed address".to_string()
+            )
+        );
+        persist_catalog("");
+        assert_eq!(
+            transport.post_json(request).unwrap_err(),
+            AiClientError::Transport("AI endpoint is not approved".to_string())
+        );
+
+        let debug = format!("{transport:?}");
+        assert!(!debug.contains("auth.sqlite"));
     }
 
     #[test]
@@ -993,7 +1139,8 @@ mod tests {
         let responses = vec![
             Err(AiClientError::HttpStatus {
                 status_code: 400,
-                body: json!({"error": "schema unsupported"}),
+                request_id: None,
+                retry_after_seconds: None,
             }),
             ok_response(json!({
                 "choices": [{
@@ -1058,7 +1205,8 @@ mod tests {
             .map(|_| {
                 Err(AiClientError::HttpStatus {
                     status_code: 503,
-                    body: json!({"error": sentinel}),
+                    request_id: Some("request-123".to_string()),
+                    retry_after_seconds: Some(7),
                 })
             })
             .collect::<Vec<_>>();
@@ -1080,7 +1228,7 @@ mod tests {
             .capture(|| client.select_articles(&config, &subscriber, &defaults(), &[article]))
             .expect_err("all response format attempts should fail");
 
-        assert!(error.to_string().contains(sentinel));
+        assert!(!error.to_string().contains(sentinel));
         let events = logs.events();
         let attempts = events
             .iter()
@@ -1167,6 +1315,8 @@ mod tests {
     fn ok_response(body: Value) -> Result<AiHttpResponse, AiClientError> {
         Ok(AiHttpResponse {
             status_code: 200,
+            request_id: None,
+            retry_after_seconds: None,
             body,
         })
     }

@@ -6,6 +6,7 @@ use http::{HeaderValue, Uri};
 use litradar_domain::{RuntimeSettingApplyMode, RuntimeSettingControl, RuntimeSettingGroup};
 use rusqlite::OpenFlags;
 use tracing_subscriber::EnvFilter;
+use url::Url;
 
 use super::shared::*;
 use super::*;
@@ -29,6 +30,8 @@ pub enum RuntimeSettingKey {
     McpAllowedOrigins,
     /// Secure session-cookie switch.
     SecureCookies,
+    /// OpenAI-compatible base URLs available to ordinary users.
+    AiAllowedBaseUrls,
     /// Catalog-to-index-Provider routes.
     IndexProviderRoutes,
     /// Article abstract Provider orders.
@@ -43,7 +46,7 @@ pub enum RuntimeSettingKey {
 
 impl RuntimeSettingKey {
     /// All managed runtime setting keys in administrator display order.
-    pub const ALL: [Self; 13] = [
+    pub const ALL: [Self; 14] = [
         Self::OpenAlexApiKeyPool,
         Self::SemanticScholarApiKeyPool,
         Self::CnkiCaptchaToken,
@@ -52,6 +55,7 @@ impl RuntimeSettingKey {
         Self::McpAllowedHosts,
         Self::McpAllowedOrigins,
         Self::SecureCookies,
+        Self::AiAllowedBaseUrls,
         Self::IndexProviderRoutes,
         Self::ArticleAbstractProviderOrders,
         Self::ArticleFullTextProviderOrders,
@@ -74,6 +78,7 @@ impl RuntimeSettingKey {
             Self::McpAllowedHosts => "mcp_allowed_hosts",
             Self::McpAllowedOrigins => "mcp_allowed_origins",
             Self::SecureCookies => "secure_cookies",
+            Self::AiAllowedBaseUrls => "ai_allowed_base_urls",
             Self::IndexProviderRoutes => "index_provider_routes",
             Self::ArticleAbstractProviderOrders => "article_abstract_provider_orders",
             Self::ArticleFullTextProviderOrders => "article_fulltext_provider_orders",
@@ -130,6 +135,7 @@ enum RuntimeSettingParser {
     ExactOriginList { is_null_allowed: bool },
     HeaderValueList,
     Boolean,
+    HttpsBaseUrlList,
     IndexProviderRoutes,
     ProviderOrder,
     LogFormat,
@@ -188,7 +194,7 @@ impl Default for RuntimeLoggingSettings {
     }
 }
 
-const RUNTIME_CONFIG_DEFINITIONS: [RuntimeConfigDefinition; 13] = [
+const RUNTIME_CONFIG_DEFINITIONS: [RuntimeConfigDefinition; 14] = [
     RuntimeConfigDefinition {
         field: "openalex_api_key_pool",
         label: "OpenAlex API key pool",
@@ -296,6 +302,19 @@ const RUNTIME_CONFIG_DEFINITIONS: [RuntimeConfigDefinition; 13] = [
         description: "Whether session cookies include the Secure attribute.",
         default_value: "false",
         parser: RuntimeSettingParser::Boolean,
+    },
+    RuntimeConfigDefinition {
+        field: "ai_allowed_base_urls",
+        label: "AI allowed base URLs",
+        group: RuntimeSettingGroup::ServerSecurity,
+        control: RuntimeSettingControl::StringList,
+        apply_mode: RuntimeSettingApplyMode::NextRequest,
+        allowed_values: &[],
+        input_type: "url",
+        is_secret: false,
+        description: "Comma-separated exact HTTPS base URLs ordinary users may select for OpenAI-compatible requests. Empty disables AI delivery.",
+        default_value: "",
+        parser: RuntimeSettingParser::HttpsBaseUrlList,
     },
     RuntimeConfigDefinition {
         field: "index_provider_routes",
@@ -409,6 +428,9 @@ pub fn parse_runtime_setting(
         RuntimeSettingParser::Boolean => {
             parse_runtime_bool(key, value).map(ParsedRuntimeSettingValue::Boolean)
         }
+        RuntimeSettingParser::HttpsBaseUrlList => {
+            parse_https_base_url_list(value).map(ParsedRuntimeSettingValue::StringList)
+        }
         RuntimeSettingParser::IndexProviderRoutes => {
             normalize_index_provider_routes(value).map(ParsedRuntimeSettingValue::Text)
         }
@@ -430,6 +452,73 @@ pub fn parse_runtime_setting(
                 )
             }),
     }
+}
+
+/// Parse and canonicalize one HTTPS outbound base URL.
+///
+/// # Arguments
+///
+/// * `value` - Candidate base URL.
+///
+/// # Returns
+///
+/// Canonical URL with a trailing path separator, or a safe validation error.
+pub fn canonicalize_outbound_base_url(value: &str) -> Result<String, BusinessRepositoryError> {
+    let value = value.trim();
+    let url = Url::parse(value).map_err(|_| invalid_ai_base_url())?;
+    if url.scheme() != "https"
+        || url.host_str().is_none()
+        || outbound_authority_has_userinfo(value)
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.port() == Some(0)
+        || url.query().is_some()
+        || url.fragment().is_some()
+        || url.cannot_be_a_base()
+    {
+        return Err(invalid_ai_base_url());
+    }
+    let canonical = url.to_string();
+    if url.path().ends_with('/') {
+        Ok(canonical)
+    } else {
+        Ok(format!("{canonical}/"))
+    }
+}
+
+fn outbound_authority_has_userinfo(value: &str) -> bool {
+    value
+        .split_once("://")
+        .map(|(_, remainder)| {
+            remainder
+                .split(['/', '?', '#'])
+                .next()
+                .is_some_and(|authority| authority.contains('@'))
+        })
+        .unwrap_or(false)
+}
+
+fn parse_https_base_url_list(value: &str) -> Result<Vec<String>, BusinessRepositoryError> {
+    let mut endpoints = Vec::new();
+    let mut seen = BTreeSet::new();
+    for entry in value
+        .split(',')
+        .map(str::trim)
+        .filter(|entry| !entry.is_empty())
+    {
+        let endpoint = canonicalize_outbound_base_url(entry)?;
+        if seen.insert(endpoint.clone()) {
+            endpoints.push(endpoint);
+        }
+    }
+    Ok(endpoints)
+}
+
+fn invalid_ai_base_url() -> BusinessRepositoryError {
+    BusinessRepositoryError::InvalidRuntimeSetting(
+        "AI allowed base URLs must be exact HTTPS base URLs without credentials, query, fragment, or port zero"
+            .to_string(),
+    )
 }
 
 fn parse_exact_origin_list(
@@ -470,6 +559,7 @@ fn invalid_runtime_list_entry(key: RuntimeSettingKey, value: &str) -> BusinessRe
         RuntimeSettingKey::CorsAllowedOrigins => "CORS origin",
         RuntimeSettingKey::McpAllowedHosts => "MCP allowed host",
         RuntimeSettingKey::McpAllowedOrigins => "MCP allowed origin",
+        RuntimeSettingKey::AiAllowedBaseUrls => "AI allowed base URL",
         _ => "runtime setting list entry",
     };
     BusinessRepositoryError::InvalidRuntimeSetting(format!("Invalid {label}: {value}"))
@@ -583,6 +673,42 @@ pub fn load_runtime_logging_settings(
         }
     }
     Ok(settings)
+}
+
+/// Load the administrator-approved AI endpoint catalog.
+///
+/// # Arguments
+///
+/// * `auth_db_path` - Path to `auth.sqlite`.
+///
+/// # Returns
+///
+/// Canonical exact HTTPS base URLs in administrator order.
+pub fn load_ai_allowed_base_urls(
+    auth_db_path: impl AsRef<Path>,
+) -> Result<Vec<String>, BusinessRepositoryError> {
+    let connection = open_business_connection(auth_db_path)?;
+    ai_allowed_base_urls_from_connection(&connection)
+}
+
+/// Load approved AI endpoints through an existing business transaction.
+pub(super) fn ai_allowed_base_urls_from_connection(
+    connection: &Connection,
+) -> Result<Vec<String>, BusinessRepositoryError> {
+    let stored = connection
+        .query_row(
+            "SELECT value FROM runtime_settings WHERE key = ?1",
+            [RuntimeSettingKey::AiAllowedBaseUrls.as_str()],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()?;
+    let value = stored
+        .as_deref()
+        .unwrap_or_else(|| runtime_setting_default(RuntimeSettingKey::AiAllowedBaseUrls));
+    match parse_runtime_setting(RuntimeSettingKey::AiAllowedBaseUrls, value)? {
+        ParsedRuntimeSettingValue::StringList(endpoints) => Ok(endpoints),
+        _ => unreachable!("AI endpoint registry parser must return a string list"),
+    }
 }
 
 /// Load managed runtime settings for trusted backend consumers.
@@ -1037,7 +1163,7 @@ mod tests {
             .map(|setting| setting.field.as_str())
             .collect::<Vec<_>>();
 
-        assert_eq!(settings.len(), 13);
+        assert_eq!(settings.len(), 14);
         assert!(fields.contains(&"openalex_api_key_pool"));
         assert!(fields.contains(&"cnki_captcha_token"));
         assert!(fields.contains(&"secure_cookies"));
@@ -1117,6 +1243,13 @@ mod tests {
                 RuntimeSettingControl::Boolean,
                 RuntimeSettingApplyMode::RestartRequired,
                 &["true", "false"][..],
+            ),
+            (
+                "ai_allowed_base_urls",
+                RuntimeSettingGroup::ServerSecurity,
+                RuntimeSettingControl::StringList,
+                RuntimeSettingApplyMode::NextRequest,
+                &[][..],
             ),
             (
                 "index_provider_routes",
@@ -1249,6 +1382,37 @@ mod tests {
         }
         assert!(parse_runtime_setting(RuntimeSettingKey::CorsAllowedOrigins, " , ").is_ok());
         assert!(parse_runtime_setting(RuntimeSettingKey::McpAllowedOrigins, "").is_ok());
+    }
+
+    #[test]
+    fn ai_endpoint_catalog_accepts_only_canonical_https_base_urls() {
+        let parsed = parse_runtime_setting(
+            RuntimeSettingKey::AiAllowedBaseUrls,
+            "https://api.example/v1, https://backup.example:8443/openai/,https://api.example/v1/",
+        )
+        .expect("valid HTTPS base URLs should parse");
+
+        assert_eq!(
+            parsed,
+            ParsedRuntimeSettingValue::StringList(vec![
+                "https://api.example/v1/".to_string(),
+                "https://backup.example:8443/openai/".to_string(),
+            ])
+        );
+        for endpoint in [
+            "http://api.example/v1",
+            "https://user:secret@api.example/v1",
+            "https://@api.example/v1",
+            "https://api.example:0/v1",
+            "https://api.example/v1?tenant=admin",
+            "https://api.example/v1#fragment",
+            "not-a-url",
+        ] {
+            assert!(
+                parse_runtime_setting(RuntimeSettingKey::AiAllowedBaseUrls, endpoint).is_err(),
+                "unsafe endpoint should be rejected"
+            );
+        }
     }
 
     #[test]

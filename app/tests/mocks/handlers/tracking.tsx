@@ -24,6 +24,9 @@ export function createTrackingScenarioHandlers(
     http.get(`${API_URL}/tracking/notification-settings`, () =>
       HttpResponse.json(createMaskedNotificationSettingsScenario(settingsOverrides)),
     ),
+    http.get(`${API_URL}/tracking/ai-endpoints`, () =>
+      HttpResponse.json(['https://ai.invalid/v1/', 'https://backup.invalid/v1/']),
+    ),
   ];
 }
 

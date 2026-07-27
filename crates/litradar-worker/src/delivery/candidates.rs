@@ -61,9 +61,12 @@ pub(super) struct DefaultDeliveryAiSelector<F: AiSelectionClientFactory> {
 }
 
 impl DefaultDeliveryAiSelector<LiveAiSelectionClientFactory> {
-    pub(super) fn live(timeout_seconds: u64, retry_attempts: usize) -> Self {
+    pub(super) fn live(timeout_seconds: u64, retry_attempts: usize, auth_db_path: PathBuf) -> Self {
         Self {
-            factory: LiveAiSelectionClientFactory { timeout_seconds },
+            factory: LiveAiSelectionClientFactory {
+                timeout_seconds,
+                auth_db_path,
+            },
             retry_attempts,
             max_rounds: MAX_AI_SELECTION_ROUNDS,
         }
@@ -167,6 +170,7 @@ impl<F: AiSelectionClientFactory> DeliveryAiSelector for DefaultDeliveryAiSelect
 
 pub(super) struct LiveAiSelectionClientFactory {
     timeout_seconds: u64,
+    auth_db_path: PathBuf,
 }
 
 impl AiSelectionClientFactory for LiveAiSelectionClientFactory {
@@ -176,8 +180,13 @@ impl AiSelectionClientFactory for LiveAiSelectionClientFactory {
         retry_attempts: usize,
         temperature: f64,
     ) -> Result<Box<dyn AiSelectionClient>, String> {
-        let client = live_ai_client(self.timeout_seconds, retry_attempts, temperature)
-            .map_err(|error| error.to_string())?;
+        let client = live_ai_client(
+            self.timeout_seconds,
+            retry_attempts,
+            temperature,
+            &self.auth_db_path,
+        )
+        .map_err(|error| error.to_string())?;
         Ok(Box::new(LiveAiSelectionClient {
             config: config.clone(),
             client,
@@ -523,6 +532,10 @@ mod tests {
     fn global_config() -> NotificationGlobalConfig {
         NotificationGlobalConfig {
             ai_base_url: "https://primary.test/v1".to_string(),
+            ai_allowed_base_urls: vec![
+                "https://primary.test/v1".to_string(),
+                "https://backup.test/v1".to_string(),
+            ],
             ai_api_key: "global-key".to_string(),
             pushplus_channel: "wechat".to_string(),
             pushplus_template: "markdown".to_string(),

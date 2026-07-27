@@ -163,6 +163,21 @@ MCP 的 `Host` 防护与浏览器 CORS 分开：
 
 `/api`、`/mcp`、`/docs` 和 `/openapi.json` 始终由后端路由优先处理，未知路径不会借静态 fallback 读取项目数据或密钥。
 
+## 服务器出站请求
+
+普通用户不能配置任意 AI URL。管理员通过 `ai_allowed_base_urls` 维护准确 HTTPS base URL 目录，默认空目录会禁用 AI 投递；用户只从 `GET /api/tracking/ai-endpoints` 返回值中选择。API 与 storage 写入事务做准确成员校验，worker 在每次实际 AI 请求前再次读取目录，避免运行中撤销的配置用于后续重试、格式回退或摘要请求。
+
+AI 与 PushPlus 共用以下出站边界：
+
+- DNS 查询在请求总截止时间内通过固定并发解析器执行，并把已校验地址固定到本次 client
+- 任一解析结果为 loopback、RFC1918、link-local、unspecified、multicast、IPv6 ULA、NAT64/6to4 或其他特殊用途地址时整次请求失败
+- 禁用环境代理和自动重定向，不会跟随公网 URL 跳转到内网
+- 只接受未压缩 JSON 成功响应，响应体硬上限为 2 MiB
+- 非 2xx 响应不读取 body；错误只保留固定分类、HTTP 状态和可选上游 request ID
+- 请求对象的 Debug 输出不包含 API key、prompt、文章、通知正文或 URL query
+
+应用层策略不能替代基础设施隔离。公网部署仍应在容器、主机或云网络层设置 egress ACL，只放行确有需要的 AI/PushPlus 目标和 DNS/TLS 基础设施。
+
 ## 网络暴露
 
 根 Compose 仅发布：

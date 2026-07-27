@@ -5,9 +5,9 @@ use std::fmt;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use reqwest::blocking::Client;
 use serde_json::{json, Value};
 
+use crate::http::{redacted_url, BoundedHttpClient};
 use crate::retry::{bounded_retry_attempts, retry_backoff_delay};
 
 /// PushPlus send endpoint.
@@ -24,15 +24,15 @@ pub enum PushPlusError {
     HttpStatus {
         /// HTTP status code.
         status_code: u16,
-        /// Parsed response payload or raw body wrapper.
-        body: Value,
+        /// Safe upstream request identifier when supplied.
+        request_id: Option<String>,
+        /// Numeric Retry-After delay when supplied.
+        retry_after_seconds: Option<u64>,
     },
     /// PushPlus returned an application-level failure.
     Api {
         /// PushPlus response code.
         code: Option<i64>,
-        /// PushPlus response message.
-        message: String,
     },
     /// PushPlus response could not be parsed.
     InvalidResponse(String),
@@ -43,15 +43,20 @@ impl fmt::Display for PushPlusError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Transport(message) => formatter.write_str(message),
-            Self::HttpStatus { status_code, body } => {
-                write!(
-                    formatter,
-                    "PushPlus request failed with HTTP {status_code}: {body}"
-                )
-            }
-            Self::Api { code, message } => {
-                write!(formatter, "PushPlus failed with code {code:?}: {message}")
-            }
+            Self::HttpStatus {
+                status_code,
+                request_id: Some(request_id),
+                ..
+            } => write!(
+                formatter,
+                "PushPlus request failed with HTTP {status_code} (request ID: {request_id})"
+            ),
+            Self::HttpStatus {
+                status_code,
+                request_id: None,
+                ..
+            } => write!(formatter, "PushPlus request failed with HTTP {status_code}"),
+            Self::Api { code } => write!(formatter, "PushPlus failed with code {code:?}"),
             Self::InvalidResponse(message) => formatter.write_str(message),
         }
     }
@@ -81,16 +86,18 @@ pub struct PushPlusMessage {
 }
 
 impl fmt::Debug for PushPlusMessage {
-    /// Format a message without exposing the PushPlus token.
+    /// Format a message without exposing tokens or user-controlled content.
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("PushPlusMessage")
             .field("token", &"[REDACTED]")
-            .field("title", &self.title)
-            .field("content", &self.content)
+            .field("title_bytes", &self.title.len())
+            .field("content_bytes", &self.content.len())
             .field("channel", &self.channel)
             .field("template", &self.template)
-            .field("topic", &self.topic)
+            .field("topic", &self.topic.as_ref().map(|_| "[REDACTED]"))
+            .field("option", &self.option.as_ref().map(|_| "[REDACTED]"))
+            .field("to", &self.to.as_ref().map(|_| "[REDACTED]"))
             .finish()
     }
 }
@@ -109,19 +116,37 @@ impl fmt::Debug for PushPlusHttpRequest {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("PushPlusHttpRequest")
-            .field("url", &self.url)
+            .field("endpoint", &redacted_url(&self.url))
+            .field("payload_bytes", &self.body.to_string().len())
             .field("body", &"[REDACTED]")
             .finish()
     }
 }
 
 /// HTTP response returned by a PushPlus transport.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Clone, PartialEq)]
 pub struct PushPlusHttpResponse {
     /// HTTP status code.
     pub status_code: u16,
+    /// Safe upstream request identifier when supplied.
+    pub request_id: Option<String>,
+    /// Numeric Retry-After delay when supplied.
+    pub retry_after_seconds: Option<u64>,
     /// JSON response body.
     pub body: Value,
+}
+
+impl fmt::Debug for PushPlusHttpResponse {
+    /// Format a PushPlus response without exposing upstream content.
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("PushPlusHttpResponse")
+            .field("status_code", &self.status_code)
+            .field("request_id", &self.request_id)
+            .field("retry_after_seconds", &self.retry_after_seconds)
+            .field("body", &"[REDACTED]")
+            .finish()
+    }
 }
 
 struct PushPlusSendResponse {
@@ -149,7 +174,7 @@ pub trait PushPlusTransport {
 /// Reqwest-backed PushPlus transport.
 #[derive(Debug, Clone)]
 pub struct ReqwestPushPlusTransport {
-    client: Client,
+    client: BoundedHttpClient,
 }
 
 impl ReqwestPushPlusTransport {
@@ -163,11 +188,9 @@ impl ReqwestPushPlusTransport {
     ///
     /// PushPlus transport.
     pub fn new(timeout_seconds: u64) -> Result<Self, PushPlusError> {
-        let client = Client::builder()
-            .timeout(Duration::from_secs(timeout_seconds.max(1)))
-            .build()
-            .map_err(|error| PushPlusError::Transport(error.to_string()))?;
-        Ok(Self { client })
+        Ok(Self {
+            client: BoundedHttpClient::new(timeout_seconds),
+        })
     }
 }
 
@@ -179,17 +202,14 @@ impl PushPlusTransport for ReqwestPushPlusTransport {
     ) -> Result<PushPlusHttpResponse, PushPlusError> {
         let response = self
             .client
-            .post(&request.url)
-            .json(&request.body)
-            .send()
+            .post_json(&request.url, &[], &request.body)
             .map_err(|error| PushPlusError::Transport(error.to_string()))?;
-        let status_code = response.status().as_u16();
-        let text = response
-            .text()
-            .map_err(|error| PushPlusError::Transport(error.to_string()))?;
-        let body =
-            serde_json::from_str::<Value>(&text).unwrap_or_else(|_| json!({ "error": text }));
-        Ok(PushPlusHttpResponse { status_code, body })
+        Ok(PushPlusHttpResponse {
+            status_code: response.status_code,
+            request_id: response.request_id,
+            retry_after_seconds: response.retry_after_seconds,
+            body: response.body.unwrap_or(Value::Null),
+        })
     }
 }
 
@@ -347,7 +367,8 @@ impl<T: PushPlusTransport> PushPlusClient<T> {
         if !(200..300).contains(&response.status_code) {
             return Err(PushPlusError::HttpStatus {
                 status_code: response.status_code,
-                body: response.body,
+                request_id: response.request_id,
+                retry_after_seconds: response.retry_after_seconds,
             });
         }
         let object = response.body.as_object().ok_or_else(|| {
@@ -355,12 +376,7 @@ impl<T: PushPlusTransport> PushPlusClient<T> {
         })?;
         let code = object.get("code").and_then(json_i64);
         if code != Some(200) {
-            let message = object
-                .get("msg")
-                .and_then(Value::as_str)
-                .unwrap_or("Unknown PushPlus error")
-                .to_string();
-            return Err(PushPlusError::Api { code, message });
+            return Err(PushPlusError::Api { code });
         }
         Ok(PushPlusSendResponse {
             message_id: object.get("data").map(json_string).unwrap_or_default(),
@@ -555,6 +571,8 @@ mod tests {
         let responses = vec![
             Ok(PushPlusHttpResponse {
                 status_code: 503,
+                request_id: None,
+                retry_after_seconds: Some(1),
                 body: json!({"error": "busy"}),
             }),
             ok_response(json!({
@@ -578,6 +596,8 @@ mod tests {
         let responses = vec![
             Ok(PushPlusHttpResponse {
                 status_code: 503,
+                request_id: Some("request-456".to_string()),
+                retry_after_seconds: Some(2),
                 body: json!({"error": sentinel}),
             }),
             ok_response(json!({
@@ -634,12 +654,14 @@ mod tests {
             .expect_err("PushPlus API error should fail");
 
         assert!(error.to_string().contains("PushPlus request failed"));
-        assert!(error.to_string().contains("bad token"));
+        assert!(!error.to_string().contains("bad token"));
     }
 
     fn ok_response(body: Value) -> Result<PushPlusHttpResponse, PushPlusError> {
         Ok(PushPlusHttpResponse {
             status_code: 200,
+            request_id: None,
+            retry_after_seconds: None,
             body,
         })
     }
@@ -658,14 +680,18 @@ mod tests {
     }
 
     #[test]
-    fn message_debug_redacts_token() {
+    fn message_debug_redacts_token_and_user_content() {
         let mut message = message();
         message.token = "pushplus-secret".to_string();
+        message.title = "sensitive-title".to_string();
+        message.content = "sensitive-content".to_string();
 
         let debug = format!("{message:?}");
 
         assert!(debug.contains("[REDACTED]"));
         assert!(!debug.contains("pushplus-secret"));
+        assert!(!debug.contains("sensitive-title"));
+        assert!(!debug.contains("sensitive-content"));
     }
 
     #[test]
@@ -679,5 +705,20 @@ mod tests {
 
         assert!(debug.contains("[REDACTED]"));
         assert!(!debug.contains("request-secret"));
+    }
+
+    #[test]
+    fn response_debug_redacts_upstream_content() {
+        let response = PushPlusHttpResponse {
+            status_code: 200,
+            request_id: Some("request-456".to_string()),
+            retry_after_seconds: None,
+            body: json!({"msg": "response-sentinel"}),
+        };
+
+        let debug = format!("{response:?}");
+
+        assert!(debug.contains("[REDACTED]"));
+        assert!(!debug.contains("response-sentinel"));
     }
 }

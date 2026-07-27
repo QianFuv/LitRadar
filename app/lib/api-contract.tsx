@@ -816,6 +816,16 @@ export function parseNotificationSettings(value: unknown): NotificationSettings 
 }
 
 /**
+ * Parse the administrator-approved AI endpoint catalog.
+ *
+ * @param value - Unknown JSON payload.
+ * @returns Validated exact AI base URLs.
+ */
+export function parseAiEndpointCatalog(value: unknown): string[] {
+  return parseContract(value, 'AI endpoint catalog', isStringArray);
+}
+
+/**
  * Parse a list of runtime setting descriptors.
  *
  * @param value - Unknown JSON payload.

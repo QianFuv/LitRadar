@@ -24,12 +24,12 @@ const NOTIFICATION_SETTINGS_FIXTURE = {
   pushplus_topic: '',
   pushplus_channel: 'wechat',
   sync_to_tracking_folder: false,
-  ai_base_url: 'https://primary.example/v1',
+  ai_base_url: 'https://primary.example/v1/',
   has_ai_api_key: true,
   ai_api_key_mask: '••••',
   ai_model: 'primary-model',
   ai_system_prompt: 'Primary prompt',
-  ai_backup_base_url: 'https://backup.example/v1',
+  ai_backup_base_url: 'https://backup.example/v1/',
   has_ai_backup_api_key: true,
   ai_backup_api_key_mask: '••••',
   ai_backup_model: 'backup-model',
@@ -86,6 +86,20 @@ function notificationSettingsResponse(): Response {
 }
 
 /**
+ * Return the administrator-approved AI endpoint catalog.
+ *
+ * @returns AI endpoint list response.
+ */
+function aiEndpointsResponse(): Response {
+  return HttpResponse.json([
+    'https://primary.example/v1/',
+    'https://backup.example/v1/',
+    'https://new-primary.example/v1/',
+    'https://new-backup.example/v1/',
+  ]);
+}
+
+/**
  * Capture a notification update without echoing plaintext secrets.
  *
  * @param context - MSW request context.
@@ -113,6 +127,7 @@ function installTrackingPageHandlers(): void {
     http.get('http://localhost/api/meta/databases', databasesResponse),
     http.get('http://localhost/api/favorites/folders', foldersResponse),
     http.get('http://localhost/api/tracking/notification-settings', notificationSettingsResponse),
+    http.get('http://localhost/api/tracking/ai-endpoints', aiEndpointsResponse),
     http.put(
       'http://localhost/api/tracking/notification-settings',
       updateNotificationSettingsResponse,
@@ -240,11 +255,9 @@ async function savesCompleteRecommendationAndDeliverySettings(): Promise<void> {
   await user.click(screen.getByRole('button', { name: '添加研究方向' }));
 
   const fieldUpdates: Array<[string, string]> = [
-    ['Base URL', 'https://new-primary.example/v1'],
     ['Model', 'primary-next'],
     ['API Key', 'primary-secret'],
     ['System Prompt', 'Primary updated'],
-    ['Backup Base URL', 'https://new-backup.example/v1'],
     ['Backup Model', 'backup-next'],
     ['Backup API Key', 'backup-secret'],
     ['Backup System Prompt', 'Backup updated'],
@@ -254,6 +267,20 @@ async function savesCompleteRecommendationAndDeliverySettings(): Promise<void> {
     await user.clear(field);
     await user.type(field, value);
   }
+  const primaryEndpoint = screen.getByRole('combobox', { name: 'Base URL' });
+  primaryEndpoint.focus();
+  await user.keyboard('{ArrowDown}');
+  expect(
+    await screen.findByRole('option', { name: 'https://new-primary.example/v1/' }),
+  ).toBeInTheDocument();
+  await user.keyboard('{ArrowDown}{ArrowDown}{Enter}');
+  const backupEndpoint = screen.getByRole('combobox', { name: 'Backup Base URL' });
+  backupEndpoint.focus();
+  await user.keyboard('{ArrowDown}');
+  expect(
+    await screen.findByRole('option', { name: 'https://new-backup.example/v1/' }),
+  ).toBeInTheDocument();
+  await user.keyboard('{ArrowDown}{ArrowDown}{Enter}');
   const retryAttempts = screen.getByLabelText('失败重试次数');
   await user.click(retryAttempts);
   await user.keyboard('{Control>}a{/Control}5');
@@ -290,11 +317,11 @@ async function savesCompleteRecommendationAndDeliverySettings(): Promise<void> {
     pushplus_topic: 'Weekly digest',
     pushplus_channel: 'email',
     sync_to_tracking_folder: true,
-    ai_base_url: 'https://new-primary.example/v1',
+    ai_base_url: 'https://new-primary.example/v1/',
     ai_api_key: 'primary-secret',
     ai_model: 'primary-next',
     ai_system_prompt: 'Primary updated',
-    ai_backup_base_url: 'https://new-backup.example/v1',
+    ai_backup_base_url: 'https://new-backup.example/v1/',
     ai_backup_api_key: 'backup-secret',
     ai_backup_model: 'backup-next',
     ai_backup_system_prompt: 'Backup updated',
@@ -327,6 +354,7 @@ async function selectsAndCreatesTrackingFolders(): Promise<void> {
     http.get('http://localhost/api/meta/databases', databasesResponse),
     http.get('http://localhost/api/favorites/folders', () => HttpResponse.json(folders)),
     http.get('http://localhost/api/tracking/notification-settings', notificationSettingsResponse),
+    http.get('http://localhost/api/tracking/ai-endpoints', aiEndpointsResponse),
     http.put('http://localhost/api/favorites/tracking', async ({ request }) => {
       const payload = (await request.json()) as { folder_id: number };
       setPayloads.push(payload);
@@ -355,7 +383,7 @@ async function selectsAndCreatesTrackingFolders(): Promise<void> {
   renderWithQuery(<TrackingSettingsContent userId={51} section="tracking" />);
 
   expect(await screen.findByText('当前追踪: Tracking')).toBeInTheDocument();
-  const folderSelect = screen.getByRole('combobox');
+  const folderSelect = screen.getAllByRole('combobox')[0];
   folderSelect.focus();
   await user.keyboard('{ArrowDown}');
   expect(await screen.findByRole('option', { name: 'Archive (0)' })).toBeInTheDocument();
@@ -386,6 +414,7 @@ async function reportsTrackingFolderFailure(): Promise<void> {
       ]),
     ),
     http.get('http://localhost/api/tracking/notification-settings', notificationSettingsResponse),
+    http.get('http://localhost/api/tracking/ai-endpoints', aiEndpointsResponse),
     http.put('http://localhost/api/favorites/tracking', () =>
       HttpResponse.json({ detail: 'Tracking folder unavailable' }, { status: 503 }),
     ),
@@ -393,7 +422,7 @@ async function reportsTrackingFolderFailure(): Promise<void> {
   const user = userEvent.setup();
   renderWithQuery(<TrackingSettingsContent userId={51} section="tracking" />);
 
-  const folderSelect = await screen.findByRole('combobox');
+  const folderSelect = (await screen.findAllByRole('combobox'))[0];
   folderSelect.focus();
   await user.keyboard('{ArrowDown}{ArrowDown}{Enter}');
   expect(await screen.findByRole('alert')).toHaveTextContent('Tracking folder unavailable');

@@ -163,6 +163,7 @@ CNKI 会话按 LitRadar 用户隔离；状态接口只返回安全元数据，�
 | `POST`           | `/api/favorites/check/batch`                               | 批量查询收藏状态           |
 | `GET`            | `/api/tracking/status`                                     | 当前追踪状态               |
 | `GET` / `PUT`    | `/api/tracking/notification-settings`                      | 当前用户通知设置           |
+| `GET`            | `/api/tracking/ai-endpoints`                               | 管理员批准的 AI Endpoint   |
 | `POST`           | `/api/tracking/push-weekly`                                | 启动当前用户的手动周报任务 |
 | `GET`            | `/api/tracking/push-weekly/status`                         | 查询手动周报任务状态       |
 
@@ -171,6 +172,8 @@ CNKI 会话按 LitRadar 用户隔离；状态接口只返回安全元数据，�
 同一 `litradar serve` 进程对每个 storage instance 同时只接纳一个 running manual `push-weekly` job。同一用户重复启动返回现有状态；另一用户竞争该 slot 时，`POST /api/tracking/push-weekly` 返回通用 `503` ErrorEnvelope，不创建该用户的 job。当前 job 完成或失败后可以重试；该限制不是队列或 `cross-process` 锁。
 
 `PUT /api/tracking/notification-settings` 的 `ai_retry_attempts` 只接受 `1..=10`。超出范围时返回 `400`，且不会替换已有设置。历史或被手工修改的数据库值在读取时会归一到该范围，但服务不会因此自动改写数据库。
+
+`GET /api/tracking/ai-endpoints` 需要登录，返回管理员当前批准的规范 HTTPS base URL 数组。通知设置中的非空主备 base URL 必须准确匹配该数组；不合法、未批准或已撤销的值返回固定 `400`，不会回显所提交 URL，也不会写入其他字段。
 
 ### 管理接口
 

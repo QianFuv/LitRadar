@@ -151,6 +151,10 @@ pub fn public_routes() -> Router<ApiState> {
             axum::routing::get(tracking::get_notification_settings)
                 .put(tracking::update_notification_settings),
         )
+        .route(
+            "/tracking/ai-endpoints",
+            axum::routing::get(tracking::get_ai_endpoints),
+        )
         .route("/admin/users", axum::routing::get(admin::list_users))
         .route(
             "/admin/users/{user_id}/admin",

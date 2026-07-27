@@ -2716,6 +2716,36 @@
         ]
       }
     },
+    "/api/tracking/ai-endpoints": {
+      "get": {
+        "tags": ["tracking"],
+        "summary": "Get the administrator-approved AI endpoint catalog.",
+        "operationId": "get_ai_endpoints",
+        "responses": {
+          "200": {
+            "description": "Approved AI base URLs.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          },
+          {
+            "session_cookie": []
+          }
+        ]
+      }
+    },
     "/api/tracking/notification-settings": {
       "get": {
         "tags": ["tracking"],

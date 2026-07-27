@@ -3615,6 +3615,16 @@ mod tests {
     )]
     async fn tracking_routes_cover_status_and_notification_settings_validation() {
         let backend = TestBackend::new();
+        litradar_storage::upsert_runtime_settings(
+            backend.auth_db_path(),
+            backend.secret_codec(),
+            &HashMap::from([(
+                "ai_allowed_base_urls".to_string(),
+                Some("https://api.example/v1,https://backup.example/openai/".to_string()),
+            )]),
+            &HashMap::new(),
+        )
+        .expect("AI endpoint catalog should persist");
         let user = backend.authenticated_user("tracker", false);
         let index_database = backend.create_index_database("fixture.sqlite");
         let push_state_dir = backend.project_root().join("data").join("push_state");
@@ -3648,6 +3658,43 @@ mod tests {
             Some(&auth),
             None,
             None,
+        )
+        .await;
+        let ai_endpoints = json_request(
+            &app,
+            Method::GET,
+            "/api/tracking/ai-endpoints",
+            Some(&auth),
+            None,
+            None,
+        )
+        .await;
+        let blocked_ai_endpoint = json_request(
+            &app,
+            Method::PUT,
+            "/api/tracking/notification-settings",
+            Some(&auth),
+            None,
+            Some(serde_json::json!({
+                "delivery_method": "folder",
+                "ai_base_url": "https://blocked.example/v1",
+                "ai_api_key": "secret",
+                "ai_model": "fixture-model"
+            })),
+        )
+        .await;
+        let allowed_ai_endpoint = json_request(
+            &app,
+            Method::PUT,
+            "/api/tracking/notification-settings",
+            Some(&auth),
+            None,
+            Some(serde_json::json!({
+                "delivery_method": "folder",
+                "ai_base_url": "https://api.example/v1",
+                "ai_api_key": "secret",
+                "ai_model": "fixture-model"
+            })),
         )
         .await;
         let invalid_delivery = json_request(
@@ -3827,6 +3874,21 @@ mod tests {
         assert_eq!(initial_status.payload["notification_configured"], false);
         assert_eq!(empty_settings.status, StatusCode::OK);
         assert!(empty_settings.payload.is_null());
+        assert_eq!(ai_endpoints.status, StatusCode::OK);
+        assert_eq!(
+            ai_endpoints.payload,
+            serde_json::json!(["https://api.example/v1/", "https://backup.example/openai/"])
+        );
+        assert_eq!(blocked_ai_endpoint.status, StatusCode::BAD_REQUEST);
+        assert_eq!(
+            blocked_ai_endpoint.payload["detail"],
+            "AI endpoint is not available"
+        );
+        assert_eq!(allowed_ai_endpoint.status, StatusCode::OK);
+        assert_eq!(
+            allowed_ai_endpoint.payload["ai_base_url"],
+            "https://api.example/v1/"
+        );
         assert_eq!(invalid_delivery.status, StatusCode::BAD_REQUEST);
         assert_eq!(missing_pushplus_token.status, StatusCode::BAD_REQUEST);
         assert_eq!(unknown_database.status, StatusCode::BAD_REQUEST);

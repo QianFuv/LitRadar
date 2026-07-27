@@ -5,4 +5,5 @@ pub mod delivery;
 pub mod pushplus;
 pub mod scheduler;
 
+mod http;
 mod retry;

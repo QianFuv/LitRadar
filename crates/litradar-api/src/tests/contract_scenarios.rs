@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use axum::http::{Method, StatusCode};
 use serde_json::json;
 
@@ -52,6 +54,16 @@ async fn article_page_matches_shared_scenario() {
 #[tokio::test]
 async fn masked_notification_settings_match_shared_scenario() {
     let backend = TestBackend::new();
+    litradar_storage::upsert_runtime_settings(
+        backend.auth_db_path(),
+        backend.secret_codec(),
+        &HashMap::from([(
+            "ai_allowed_base_urls".to_string(),
+            Some("https://ai.invalid/v1/,https://backup.invalid/v1/".to_string()),
+        )]),
+        &HashMap::new(),
+    )
+    .expect("AI endpoint catalog should persist");
     let user = backend.authenticated_user("scenario_reader", false);
     let response = json_request(
         &backend.router(),

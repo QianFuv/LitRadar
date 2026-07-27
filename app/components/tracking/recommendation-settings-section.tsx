@@ -19,8 +19,17 @@ import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
+
+const DEFAULT_AI_ENDPOINT_VALUE = '__default__';
 
 type RecommendationSettingsSectionProps = {
   model: TrackingPageViewModel['recommendation'];
@@ -33,7 +42,7 @@ type RecommendationSettingsSectionProps = {
  * @returns Recommendation settings section.
  */
 export function RecommendationSettingsSection({ model }: RecommendationSettingsSectionProps) {
-  const { backup, primary, retryAttempts } = model.ai;
+  const { backup, endpoints, primary, retryAttempts } = model.ai;
   const { directions, keywords } = model.preferences;
   const databaseSelection = model.databaseSelection;
 
@@ -260,21 +269,45 @@ export function RecommendationSettingsSection({ model }: RecommendationSettingsS
           <div className="grid gap-3 md:grid-cols-2">
             <div className="space-y-1">
               <Label htmlFor="ai-base-url">Base URL</Label>
-              <Input
-                id="ai-base-url"
-                name="ai_base_url"
-                type="url"
-                autoComplete="off"
-                spellCheck={false}
-                value={primary.baseUrl}
-                onChange={(event) =>
+              <Select
+                value={
+                  endpoints.available.includes(primary.baseUrl)
+                    ? primary.baseUrl
+                    : DEFAULT_AI_ENDPOINT_VALUE
+                }
+                onValueChange={(value) =>
                   model.updateSettings((current) => ({
                     ...current,
-                    ai_base_url: event.target.value,
+                    ai_base_url: value === DEFAULT_AI_ENDPOINT_VALUE ? '' : value,
                   }))
                 }
-                placeholder="https://api.openai.com/v1"
-              />
+                disabled={endpoints.query.isPending || endpoints.query.isError}
+              >
+                <SelectTrigger id="ai-base-url" className="w-full">
+                  <SelectValue placeholder="选择管理员批准的 Endpoint" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={DEFAULT_AI_ENDPOINT_VALUE}>
+                    使用服务端默认 Endpoint（若已批准）
+                  </SelectItem>
+                  {endpoints.available.map((endpoint) => (
+                    <SelectItem key={endpoint} value={endpoint}>
+                      {endpoint}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {endpoints.query.isError ? (
+                <p role="alert" className="text-xs text-destructive">
+                  {endpoints.query.error instanceof Error
+                    ? endpoints.query.error.message
+                    : '加载 AI Endpoint 列表失败'}
+                </p>
+              ) : endpoints.available.length === 0 ? (
+                <p className="text-xs text-muted-foreground">
+                  管理员尚未批准任何 AI Endpoint，AI 推荐将保持禁用。
+                </p>
+              ) : null}
             </div>
             <div className="space-y-1">
               <Label htmlFor="ai-model">Model</Label>
@@ -385,21 +418,34 @@ export function RecommendationSettingsSection({ model }: RecommendationSettingsS
             <div className="grid gap-3 md:grid-cols-2">
               <div className="space-y-1">
                 <Label htmlFor="ai-backup-base-url">Backup Base URL</Label>
-                <Input
-                  id="ai-backup-base-url"
-                  name="ai_backup_base_url"
-                  type="url"
-                  autoComplete="off"
-                  spellCheck={false}
-                  value={backup.baseUrl}
-                  onChange={(event) =>
+                <Select
+                  value={
+                    endpoints.available.includes(backup.baseUrl)
+                      ? backup.baseUrl
+                      : DEFAULT_AI_ENDPOINT_VALUE
+                  }
+                  onValueChange={(value) =>
                     model.updateSettings((current) => ({
                       ...current,
-                      ai_backup_base_url: event.target.value,
+                      ai_backup_base_url: value === DEFAULT_AI_ENDPOINT_VALUE ? '' : value,
                     }))
                   }
-                  placeholder="https://api.openai.com/v1"
-                />
+                  disabled={endpoints.query.isPending || endpoints.query.isError}
+                >
+                  <SelectTrigger id="ai-backup-base-url" className="w-full">
+                    <SelectValue placeholder="选择备用 Endpoint" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value={DEFAULT_AI_ENDPOINT_VALUE}>
+                      使用服务端默认 Endpoint（若已批准）
+                    </SelectItem>
+                    {endpoints.available.map((endpoint) => (
+                      <SelectItem key={endpoint} value={endpoint}>
+                        {endpoint}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
               <div className="space-y-1">
                 <Label htmlFor="ai-backup-model">Backup Model</Label>

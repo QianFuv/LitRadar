@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
 /// Candidate article used by notification and tracking delivery.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ArticleCandidateInfo {
     /// Article identifier.
     pub article_id: i64,
@@ -26,6 +26,21 @@ pub struct ArticleCandidateInfo {
     pub open_access: bool,
     /// Whether the article is in press.
     pub in_press: bool,
+}
+
+impl std::fmt::Debug for ArticleCandidateInfo {
+    /// Format candidate metadata without exposing article content.
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("ArticleCandidateInfo")
+            .field("article_id", &self.article_id)
+            .field("journal_id", &self.journal_id)
+            .field("issue_id", &self.issue_id)
+            .field("content", &"[REDACTED]")
+            .field("open_access", &self.open_access)
+            .field("in_press", &self.in_press)
+            .finish()
+    }
 }
 
 /// Notification subscriber row with tracking-folder metadata.
@@ -84,7 +99,7 @@ impl std::fmt::Debug for NotificationSubscriberInfo {
             .debug_struct("NotificationSubscriberInfo")
             .field("subscriber_id", &self.subscriber_id)
             .field("user_id", &self.user_id)
-            .field("name", &self.name)
+            .field("name", &"[REDACTED]")
             .field("credentials", &"[REDACTED]")
             .finish_non_exhaustive()
     }
@@ -100,12 +115,23 @@ pub struct RankedSelectionInfo {
 }
 
 /// Structured article selection result.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub struct SelectionResultInfo {
     /// Selection summary.
     pub summary: String,
     /// Ranked selections.
     pub selections: Vec<RankedSelectionInfo>,
+}
+
+impl std::fmt::Debug for SelectionResultInfo {
+    /// Format a selection without exposing model-generated summary content.
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("SelectionResultInfo")
+            .field("summary", &"[REDACTED]")
+            .field("selection_count", &self.selections.len())
+            .finish()
+    }
 }
 
 /// Manual weekly push job status payload.
@@ -133,4 +159,76 @@ pub struct ManualWeeklyPushStatus {
     pub folder_id: Option<i64>,
     /// Tracking folder name when applicable.
     pub folder_name: Option<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn recommendation_debug_omits_user_article_and_model_content() {
+        let candidate = ArticleCandidateInfo {
+            article_id: 1,
+            journal_id: 2,
+            issue_id: Some(3),
+            title: "article-title-sentinel".to_string(),
+            abstract_text: "article-abstract-sentinel".to_string(),
+            date: Some("2026-07-27".to_string()),
+            journal_title: "journal-title-sentinel".to_string(),
+            doi: Some("doi-sentinel".to_string()),
+            open_access: true,
+            in_press: false,
+        };
+        let subscriber = NotificationSubscriberInfo {
+            subscriber_id: "subscriber-1".to_string(),
+            user_id: 1,
+            name: "subscriber-name-sentinel".to_string(),
+            pushplus_token: "pushplus-sentinel".to_string(),
+            channel: None,
+            keywords: vec!["keyword-sentinel".to_string()],
+            directions: vec!["direction-sentinel".to_string()],
+            selected_databases: Vec::new(),
+            topic: None,
+            template: None,
+            delivery_method: "folder".to_string(),
+            tracking_folder_id: None,
+            sync_to_tracking_folder: false,
+            ai_base_url: None,
+            ai_api_key: Some("ai-key-sentinel".to_string()),
+            ai_model: None,
+            ai_system_prompt: Some("prompt-sentinel".to_string()),
+            ai_backup_base_url: None,
+            ai_backup_api_key: None,
+            ai_backup_model: None,
+            ai_backup_system_prompt: Some("backup-prompt-sentinel".to_string()),
+            ai_retry_attempts: 1,
+        };
+        let selection = SelectionResultInfo {
+            summary: "model-summary-sentinel".to_string(),
+            selections: vec![RankedSelectionInfo {
+                article_id: 1,
+                score: 90.0,
+            }],
+        };
+
+        let debug = format!("{candidate:?} {subscriber:?} {selection:?}");
+
+        for sentinel in [
+            "article-title-sentinel",
+            "article-abstract-sentinel",
+            "journal-title-sentinel",
+            "doi-sentinel",
+            "subscriber-name-sentinel",
+            "pushplus-sentinel",
+            "keyword-sentinel",
+            "direction-sentinel",
+            "ai-key-sentinel",
+            "prompt-sentinel",
+            "backup-prompt-sentinel",
+            "model-summary-sentinel",
+        ] {
+            assert!(!debug.contains(sentinel));
+        }
+        assert!(debug.contains("[REDACTED]"));
+    }
 }

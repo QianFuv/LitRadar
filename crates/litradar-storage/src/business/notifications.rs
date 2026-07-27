@@ -1,5 +1,6 @@
 //! Notification settings and subscriber repositories.
 
+use super::runtime_settings::ai_allowed_base_urls_from_connection;
 use super::shared::*;
 use super::*;
 
@@ -119,12 +120,17 @@ pub fn upsert_notification_settings(
     user_id: UserId,
     settings: &NotificationSettingsUpdate,
 ) -> Result<NotificationSettings, BusinessRepositoryError> {
-    let connection = open_business_connection(auth_db_path.as_ref())?;
+    let mut connection = open_business_connection(auth_db_path.as_ref())?;
     let now = now_seconds();
     let keywords = serde_json::to_string(&settings.keywords)?;
     let directions = serde_json::to_string(&settings.directions)?;
     let selected_databases = serde_json::to_string(&settings.selected_databases)?;
-    let current_secrets = connection
+    let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    let allowed_endpoints = ai_allowed_base_urls_from_connection(&transaction)?;
+    let ai_base_url = canonicalize_selected_ai_endpoint(&settings.ai_base_url, &allowed_endpoints)?;
+    let ai_backup_base_url =
+        canonicalize_selected_ai_endpoint(&settings.ai_backup_base_url, &allowed_endpoints)?;
+    let current_secrets = transaction
         .query_row(
             "SELECT pushplus_token, ai_api_key, ai_backup_api_key \
              FROM notification_settings WHERE user_id = ?1",
@@ -173,7 +179,7 @@ pub fn upsert_notification_settings(
         &settings.ai_backup_api_key,
         current_secrets.as_ref().map(|values| values.2.as_str()),
     )?;
-    connection.execute(
+    transaction.execute(
         "INSERT INTO notification_settings \
          (user_id, keywords, directions, selected_databases, delivery_method, \
           pushplus_token, pushplus_template, pushplus_topic, pushplus_channel, \
@@ -206,11 +212,11 @@ pub fn upsert_notification_settings(
             settings.pushplus_topic,
             settings.pushplus_channel,
             settings.sync_to_tracking_folder as i64,
-            settings.ai_base_url,
+            ai_base_url,
             ai_api_key,
             settings.ai_model,
             settings.ai_system_prompt,
-            settings.ai_backup_base_url,
+            ai_backup_base_url,
             ai_backup_api_key,
             settings.ai_backup_model,
             settings.ai_backup_system_prompt,
@@ -220,8 +226,34 @@ pub fn upsert_notification_settings(
             now
         ],
     )?;
-    get_notification_settings(auth_db_path, codec, user_id)?
-        .ok_or_else(|| rusqlite::Error::QueryReturnedNoRows.into())
+    let stored = transaction.query_row(
+        "SELECT id, user_id, keywords, directions, selected_databases, delivery_method, \
+         pushplus_token, pushplus_template, pushplus_topic, pushplus_channel, \
+         sync_to_tracking_folder, ai_base_url, ai_api_key, ai_model, ai_system_prompt, \
+         ai_backup_base_url, ai_backup_api_key, ai_backup_model, ai_backup_system_prompt, \
+         ai_retry_attempts, enabled, created_at, updated_at \
+         FROM notification_settings WHERE user_id = ?1",
+        [user_id.value()],
+        |row| notification_settings_from_row(row, codec),
+    )??;
+    transaction.commit()?;
+    Ok(stored)
+}
+
+fn canonicalize_selected_ai_endpoint(
+    value: &str,
+    allowed_endpoints: &[String],
+) -> Result<String, BusinessRepositoryError> {
+    if value.trim().is_empty() {
+        return Ok(String::new());
+    }
+    let endpoint = canonicalize_outbound_base_url(value)
+        .map_err(|_| BusinessRepositoryError::OutboundEndpointNotAllowed)?;
+    if allowed_endpoints.contains(&endpoint) {
+        Ok(endpoint)
+    } else {
+        Err(BusinessRepositoryError::OutboundEndpointNotAllowed)
+    }
 }
 
 fn resolve_notification_secret(
@@ -368,6 +400,7 @@ mod tests {
         let temp_dir = tempdir().expect("temp dir should be created");
         let auth_db_path = temp_dir.path().join("auth.sqlite");
         migrate_auth_database(&auth_db_path).expect("auth database should migrate");
+        allow_test_ai_endpoints(&auth_db_path);
         let user = crate::bootstrap_admin(&auth_db_path, "secret-user", "hash", "salt", 1.0)
             .expect("fixture user should bootstrap");
         let codec = SecretCodec::from_key([19_u8; 32]);
@@ -487,6 +520,7 @@ mod tests {
         let temp_dir = tempdir().expect("temp dir should be created");
         let auth_db_path = temp_dir.path().join("auth.sqlite");
         migrate_auth_database(&auth_db_path).expect("auth database should migrate");
+        allow_test_ai_endpoints(&auth_db_path);
         let target_user = crate::bootstrap_admin(&auth_db_path, "target-user", "hash", "salt", 1.0)
             .expect("target user should bootstrap");
         let connection = Connection::open(&auth_db_path).expect("auth database should open");
@@ -569,6 +603,36 @@ mod tests {
         ));
     }
 
+    #[test]
+    fn notification_endpoint_must_match_the_current_catalog_atomically() {
+        let temp_dir = tempdir().expect("temp dir should be created");
+        let auth_db_path = temp_dir.path().join("auth.sqlite");
+        migrate_auth_database(&auth_db_path).expect("auth database should migrate");
+        allow_test_ai_endpoints(&auth_db_path);
+        let user = crate::bootstrap_admin(&auth_db_path, "endpoint-user", "hash", "salt", 1.0)
+            .expect("fixture user should bootstrap");
+        let codec = SecretCodec::from_key([31_u8; 32]);
+        let mut settings = notification_subscriber_settings();
+        settings.ai_backup_base_url.clear();
+        super::upsert_notification_settings(&auth_db_path, &codec, user.id, &settings)
+            .expect("allowed endpoint should persist");
+
+        settings.ai_base_url = "https://blocked.example/v1".to_string();
+        settings.ai_model = "must-not-persist".to_string();
+        let error = super::upsert_notification_settings(&auth_db_path, &codec, user.id, &settings)
+            .expect_err("unlisted endpoint should be rejected");
+
+        assert!(matches!(
+            error,
+            BusinessRepositoryError::OutboundEndpointNotAllowed
+        ));
+        let stored = super::get_notification_settings(&auth_db_path, &codec, user.id)
+            .expect("notification settings should load")
+            .expect("notification settings should remain present");
+        assert_eq!(stored.ai_base_url, "https://ai.example/v1/");
+        assert_eq!(stored.ai_model, "fixture-model");
+    }
+
     fn notification_subscriber_settings() -> NotificationSettingsUpdate {
         NotificationSettingsUpdate {
             keywords: vec!["systems".to_string()],
@@ -591,5 +655,18 @@ mod tests {
             ai_retry_attempts: 3,
             enabled: true,
         }
+    }
+
+    fn allow_test_ai_endpoints(auth_db_path: &Path) {
+        let connection = Connection::open(auth_db_path).expect("auth database should open");
+        connection
+            .execute(
+                "INSERT INTO runtime_settings (key, value, updated_at) VALUES (?1, ?2, 1.0)",
+                params![
+                    RuntimeSettingKey::AiAllowedBaseUrls.as_str(),
+                    "https://ai.example/v1/,https://backup.example/v1/"
+                ],
+            )
+            .expect("AI endpoint catalog should persist");
     }
 }

@@ -47,10 +47,11 @@ pub use notifications::{
     upsert_notification_settings,
 };
 pub use runtime_settings::{
-    list_runtime_settings, load_runtime_logging_settings, load_runtime_settings,
-    parse_runtime_setting, runtime_setting_default, upsert_runtime_settings,
-    ParsedRuntimeSettingValue, RuntimeLoggingSettings, RuntimeSettingKey,
-    DEFAULT_RUNTIME_LOG_FILTER, DEFAULT_RUNTIME_LOG_FORMAT,
+    canonicalize_outbound_base_url, list_runtime_settings, load_ai_allowed_base_urls,
+    load_runtime_logging_settings, load_runtime_settings, parse_runtime_setting,
+    runtime_setting_default, upsert_runtime_settings, ParsedRuntimeSettingValue,
+    RuntimeLoggingSettings, RuntimeSettingKey, DEFAULT_RUNTIME_LOG_FILTER,
+    DEFAULT_RUNTIME_LOG_FORMAT,
 };
 pub use scheduled_tasks::{
     claim_ready_scheduled_runs, create_scheduled_task, delete_scheduled_task,
@@ -89,6 +90,8 @@ pub enum BusinessRepositoryError {
     InvalidRuntimeBoolean(String),
     /// A managed runtime setting failed structural validation.
     InvalidRuntimeSetting(String),
+    /// A user-selected outbound endpoint is not in the administrator allowlist.
+    OutboundEndpointNotAllowed,
     /// A null update attempted to clear a non-secret runtime setting.
     NonSecretRuntimeSettingCannotBeCleared(String),
     /// A secret-pool mutation contained an invalid field or item reference.
@@ -123,6 +126,9 @@ impl fmt::Display for BusinessRepositoryError {
                 write!(formatter, "Invalid boolean value: {value}")
             }
             Self::InvalidRuntimeSetting(message) => formatter.write_str(message),
+            Self::OutboundEndpointNotAllowed => {
+                formatter.write_str("Outbound endpoint is not allowed")
+            }
             Self::NonSecretRuntimeSettingCannotBeCleared(field) => {
                 write!(formatter, "Only secret runtime settings may be cleared: {field}")
             }

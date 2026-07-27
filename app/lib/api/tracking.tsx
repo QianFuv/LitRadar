@@ -3,6 +3,7 @@
  */
 
 import {
+  parseAiEndpointCatalog,
   parseManualPushStatus,
   parseNotificationSettings,
   parseNullableNotificationSettings,
@@ -71,6 +72,21 @@ export function getNotificationSettings(): Promise<NotificationSettings | null> 
     undefined,
     '获取通知设置失败',
     parseNullableNotificationSettings,
+  );
+}
+
+/**
+ * Fetch the administrator-approved AI endpoint catalog.
+ *
+ * @returns Exact selectable AI base URLs.
+ */
+export function getAiEndpoints(): Promise<string[]> {
+  return requestJson<string[]>(
+    buildApiUrl('/api/tracking/ai-endpoints'),
+    null,
+    undefined,
+    '获取 AI Endpoint 列表失败',
+    parseAiEndpointCatalog,
   );
 }
 
