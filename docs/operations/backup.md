@@ -6,7 +6,7 @@
 
 当前创建格式为 v2。每个 v2 备份始终包含 `data/auth.sqlite` 和 `data/meta` 的完整普通文件树，包括清单管理的 CSV、用户新增文件和嵌套文件；这两组不受可选 flag 控制：
 
-`auth.sqlite` 快照包含安全审计事件和保留 maintenance 标记；不需要也不能通过额外 flag 排除。恢复认证库会把审计历史与用户、令牌和安全变更一起恢复到同一个时间点，避免只恢复业务状态而保留来自另一时间线的审计记录。
+`auth.sqlite` 快照包含安全审计事件、保留 maintenance 标记，以及投递 checkpoint、run、item、dedupe 和 lease；不需要也不能通过额外 flag 排除。恢复认证库会把审计历史、用户、令牌、安全变更和投递状态恢复到同一个时间点，避免恢复出跨时间线的去重或任务状态。
 
 | 范围或选项             | 内容                                            |
 | ---------------------- | ----------------------------------------------- |
@@ -16,6 +16,8 @@
 | 始终排除               | `data/index-control/` Provider checkpoint/lease |
 
 未选择的索引和状态组不会在恢复时修改。v2 Meta 和选择的可选组按精确快照恢复，包括“备份时为空”的情况。
+
+`--include-push-state` 中的 `.changes.json` 是 Provider-neutral 候选变更清单；其余 `<db>.json` 是启动迁移保留的旧投递导入源。持久投递权威状态已经包含在固定的 `auth.sqlite` 快照中，但若部署仍保留旧文件，建议同时选择该选项，以保留导入 hash 的来源证据和未消费的变更清单。恢复不会自动删除或改写这些源文件。
 
 `--include-indexes` 只选择 Provider-neutral v4 内容库。`data/index-control` 是可重建的运行控制状态，即使目录位于项目根下也不会进入 manifest、备份树或恢复目标。Provider 切换不需要复制旧 checkpoint；恢复后首次索引会重新创建控制库，并通过内容 identity alias 幂等收敛。
 
@@ -27,8 +29,9 @@ SQLite 使用 online backup API，可在 WAL 数据库仍有已提交写入时�
 
 - 创建 v2 备份时，认证库的 `BEGIN IMMEDIATE` 写锁覆盖认证库快照和 Meta 目录复制；Meta 在复制前后扫描文件集、大小和 hash，确保受管状态与复制期间稳定的目录一起捕获
 - 安全变更及其必需审计行位于同一认证库事务，online backup 不会捕获其中一半；认证拒绝、限流和保留清理也以完整事务进入快照
+- 投递 checkpoint、run、item、dedupe 和 lease 位于同一认证库；各状态转换使用事务、唯一约束和 revision CAS，认证库快照不会捕获单次转换的一半
 - 多个 SQLite 文件之间不是同一事务
-- 索引数据库和 push 状态与认证库/Meta 快照之间不是同一事务
+- 索引数据库、`.changes.json` 和保留的旧导入源与认证库/Meta 快照之间不是同一事务
 - 控制库不参与快照；活跃索引仍可能向内容库提交，因此严格时间点备份应停止索引命令
 - Meta 和状态目录在复制前后各扫描并计算 hash；期间新增、删除或变化会使创建失败
 

@@ -133,22 +133,19 @@ PushPlus 传输使用受限后的 CLI `--retries`，并以相同的 `1/2/4/8/8..
 
 该 API 使用与 CLI 相同的选择、投递和状态逻辑，但工作流由当前用户的 `delivery_method` 决定。单槽 admission 只约束当前 `litradar serve` 进程，不提供 `cross-process` 协调；独立调用的投递子命令、计划任务子进程或其他应用实例不受它协调。API 契约见 [API 参考](../reference/api.md)和运行时 OpenAPI。
 
-## 状态文件
+## 持久状态与旧文件
 
-| 路径                                | 用途                          |
-| ----------------------------------- | ----------------------------- |
-| `data/push_state/<db>.changes.json` | 所有入口的增量候选输入        |
-| `data/push_state/<db>.json`         | `notify` 和手动 PushPlus 状态 |
-| `data/folder_push_state/<db>.json`  | `push` 状态                   |
+认证库 v10 提供 `delivery_checkpoints`、`delivery_runs`、`delivery_run_items`、`delivery_dedupe` 和 `delivery_leases`。这些表通过唯一约束、owner lease 和单调 revision 为多进程投递提供事务边界；外部发送已经开始但结果不明确时使用 `unknown`，不能自动重放。
 
-状态通常包含：
+文件边界如下：
 
-- 顶层 `status`、`updated_at`、`last_completed_run_at`
-- `snapshot` 与当前 `run`
-- `delivery_dedupe`
-- run 的 pending/done keys、已投递文章、用户结果和错误
+| 路径                                | 用途                                      |
+| ----------------------------------- | ----------------------------------------- |
+| `data/push_state/<db>.changes.json` | 保持文件形式的增量候选输入                |
+| `data/push_state/<db>.json`         | 保留的旧 notify/手动 PushPlus 状态导入源  |
+| `data/folder_push_state/<db>.json`  | 保留的旧 push 状态导入源                  |
 
-状态文件由原子写入路径维护，不应手工编辑。
+启动时会先读取并校验全部旧 `<db>.json`，再在一个 transaction 中导入。相同 SHA-256 重复导入会跳过；任何文件损坏都使整批零写入，已导入文件内容变化会拒绝启动。导入不会删除源文件，也不会读取或改写 `.changes.json`。不要手工编辑保留的旧源文件。
 
 ## 与内嵌调度的关系
 

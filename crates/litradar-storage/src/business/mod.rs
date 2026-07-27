@@ -25,6 +25,7 @@ use crate::secrets::{notification_context, runtime_context};
 use crate::{open_sqlite_connection, random_hex, SecretCodec, SecretError, StorageConfig};
 
 mod admin;
+mod delivery;
 mod favorites;
 mod notifications;
 mod runtime_settings;
@@ -39,6 +40,21 @@ pub use admin::{
     get_admin_stats, get_announcement, list_all_announcements, list_all_invite_codes,
     list_all_users, set_user_admin, set_user_admin_with_audit, update_announcement,
     update_announcement_with_audit,
+};
+pub use delivery::{
+    acquire_delivery_lease, claim_delivery_run, claim_next_delivery_run_item,
+    compare_and_swap_delivery_checkpoint, enqueue_delivery_run, finalize_delivery_run,
+    finalize_delivery_run_item, import_legacy_delivery_state_files, insert_delivery_run_items,
+    list_delivery_run_items, load_delivery_checkpoint, load_delivery_dedupe, load_delivery_lease,
+    load_delivery_run, mark_delivery_run_item_sending, release_delivery_dedupe_reservation,
+    release_delivery_lease, renew_delivery_lease, renew_delivery_run, renew_delivery_run_item,
+    request_delivery_run_cancellation, reserve_delivery_dedupe, resolve_delivery_dedupe,
+    start_delivery_run, DeliveryCheckpointRecord, DeliveryCheckpointStatus,
+    DeliveryCheckpointUpdate, DeliveryDedupeRecord, DeliveryDedupeReserveOutcome,
+    DeliveryDedupeStatus, DeliveryItemKind, DeliveryItemStatus, DeliveryLeaseAcquireOutcome,
+    DeliveryLeaseRecord, DeliveryRepositoryError, DeliveryRunClaimOutcome, DeliveryRunCreate,
+    DeliveryRunItemCreate, DeliveryRunItemRecord, DeliveryRunMode, DeliveryRunRecord,
+    DeliveryRunStatus, DeliveryTriggerKind, DeliveryWorkflow, LegacyDeliveryImportResult,
 };
 pub use favorites::{
     add_favorite, batch_is_favorited, bulk_add_favorites, bulk_move_favorites,

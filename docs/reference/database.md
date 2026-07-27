@@ -8,9 +8,9 @@ LitRadar 把规范内容、可丢弃索引控制状态和用户业务数据放�
 | ------------------------------------- | ---------------: | -------------------------------------------------- |
 | `data/index/<catalog>.sqlite`         |     每个目录一个 | 需要备份的 Provider-neutral 内容库                 |
 | `data/index-control/<catalog>.sqlite` | 每个活动目录一个 | 可删除的 Provider checkpoint/lease 控制库          |
-| `data/auth.sqlite`                    |             一个 | 用户、收藏、会话、配置、任务、公告和受管 Meta 状态 |
-| `data/push_state/`                    |        多个 JSON | 变更清单、notify 和手动推送状态                    |
-| `data/folder_push_state/`             |        多个 JSON | push 追踪文件夹状态                                |
+| `data/auth.sqlite`                    |             一个 | 用户、收藏、会话、配置、任务、公告、审计、投递状态和受管 Meta 状态 |
+| `data/push_state/`                    |        多个 JSON | Provider-neutral 变更清单和保留的旧 notify 导入源  |
+| `data/folder_push_state/`             |        多个 JSON | 保留的旧 push 导入源                               |
 
 目录 stem 是内容边界：`data/meta/chinese_journals.csv`、内容库和控制库都使用 `chinese_journals`。Provider 名称不参与文件名。
 
@@ -18,7 +18,7 @@ LitRadar 把规范内容、可丢弃索引控制状态和用户业务数据放�
 
 | 数据库      | `PRAGMA user_version` | 升级策略                              |
 | ----------- | --------------------: | ------------------------------------- |
-| 认证/业务库 |                     6 | 版本化 migration                      |
+| 认证/业务库 |                    10 | 版本化 migration                      |
 | 内容索引库  |                     6 | 新建/验证精确 v6；精确 v4/v5 原子迁移到 v6 |
 | 索引控制库  |                     1 | 可删除后按 v1 重建                    |
 
@@ -186,6 +186,12 @@ runtime_settings
 managed_meta_catalogs
 announcements
 security_audit_events -- security_audit_maintenance
+
+delivery_checkpoints
+delivery_runs -- delivery_run_items
+      |
+      +-- delivery_dedupe
+      +-- delivery_leases
 ```
 
 时间字段大多是 Rust 生成的 Unix 秒数 `REAL`；`scheduled_for` 是按分钟对齐的 UTC Unix 秒数。
@@ -213,6 +219,20 @@ v1–v3 的破坏性重建不会重映射旧 favorite 的 article ID；精确 v4
 ### 用户通知配置
 
 `notification_settings` 每用户一行，保存数据库、关键词、方向、投递方式、PushPlus 和主备 AI 配置。PushPlus token 与 AI key 加密。业务语义见[通知与追踪](../guides/notifications.md)。
+
+### 持久投递状态
+
+认证库 v10 新增五张投递表，所有应用自有状态都受 `CHECK` 约束并使用类型化枚举读取：
+
+- `delivery_checkpoints` 以 `(workflow, db_name)` 唯一，保存规范 snapshot、最后完成时间、旧状态导入 hash 和单调 `revision`；
+- `delivery_runs` 保存外部任务 ID、触发来源、模式、用户、deadline、取消位、owner lease、终态和 `revision`；同一 `(workflow, db_name)` 只能有一个 active run，同一用户只能有一个 queued/active manual run；
+- `delivery_run_items` 以 `(delivery_run_id, item_kind, item_key)` 唯一，区分 `pending`、可过期接管的 `claimed`、不可自动重放的 `sending` 及终态；
+- `delivery_dedupe` 以 `(workflow, db_name, user_id, article_id)` 唯一，在外部副作用前建立 `reserved` 行，再明确落为 `confirmed` 或 `unknown`；
+- `delivery_leases` 以 `(workflow, db_name)` 唯一，释放时保留行并递增 `revision`，防止删除重建造成 ABA。
+
+run、item、checkpoint 和 lease 的变更都使用 owner/revision compare-and-swap。只有租约已过期的 run、pre-send item 或 workflow lease 可被新 owner 接管；进入 `sending` 后若结果不确定，必须记录 `unknown`，不得自动重新投递。
+
+启动迁移会先读取 `data/push_state/<db>.json` 和 `data/folder_push_state/<db>.json`，校验所有文件后再用一个 immediate transaction 导入。每个源文件的 SHA-256 保存在 checkpoint 中：相同 hash 重启时跳过，已导入文件内容变化则拒绝启动，损坏文件使整批零写入。源文件和 `.changes.json` 都不会被导入器删除；未知旧状态只映射为固定 `unknown`/`unrecognized` 分类，不把原始状态或错误内容写入数据库。
 
 ### 调度和活动门禁
 
@@ -245,11 +265,11 @@ v1–v3 的破坏性重建不会重映射旧 favorite 的 article ID；精确 v4
 ### 变更与投递状态
 
 - `data/push_state/<db>.changes.json`：索引 update 的 Provider-neutral 变更清单；
-- `data/push_state/<db>.json`：notify/手动 PushPlus 状态；
-- `data/folder_push_state/<db>.json`：push 状态。
+- `data/push_state/<db>.json`：旧 notify/手动 PushPlus 状态导入源；
+- `data/folder_push_state/<db>.json`：旧 push 状态导入源。
 
-清单的 `db_name` 是目标内容库身份；读取方不使用历史文件系统路径或 Provider 名称回退。
+可变 checkpoint、run、item、dedupe 和 lease 的目标权威存储是 `auth.sqlite`。清单的 `db_name` 是目标内容库身份；读取方不使用历史文件系统路径或 Provider 名称回退。旧导入源会原样保留，不能在导入后手工修改；`.changes.json` 始终保持文件契约，不进入认证库。
 
 ## 备份边界
 
-v2 备份固定包含 `auth.sqlite` 和完整 `data/meta`。`--include-indexes` 只包含 `data/index/*.sqlite` 内容库；`data/index-control` 永远排除。push 状态需要 `--include-push-state`。部署密钥始终单独保存。
+v2 备份固定包含 `auth.sqlite` 和完整 `data/meta`，因此持久投递状态总在认证库快照中。`--include-indexes` 只包含 `data/index/*.sqlite` 内容库；`data/index-control` 永远排除。Provider-neutral `.changes.json` 和保留的旧导入源需要 `--include-push-state`。部署密钥始终单独保存。

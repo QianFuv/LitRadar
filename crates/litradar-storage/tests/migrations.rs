@@ -33,6 +33,27 @@ fn empty_auth_database_migration_creates_current_schema() {
     assert!(table_exists(&path, "managed_meta_catalogs"));
     assert!(table_exists(&path, "security_audit_events"));
     assert!(table_exists(&path, "security_audit_maintenance"));
+    for table in [
+        "delivery_checkpoints",
+        "delivery_runs",
+        "delivery_run_items",
+        "delivery_dedupe",
+        "delivery_leases",
+    ] {
+        assert!(table_exists(&path, table));
+        assert!(table_columns(&path, table).contains(&"revision".to_string()));
+    }
+    for index in [
+        "idx_delivery_checkpoints_scope",
+        "idx_delivery_runs_external_scope",
+        "idx_delivery_runs_active_scope",
+        "idx_delivery_runs_active_manual_user",
+        "idx_delivery_run_items_claim",
+        "idx_delivery_dedupe_identity",
+        "idx_delivery_leases_scope",
+    ] {
+        assert!(index_exists(&path, index));
+    }
     for field in [
         "index_provider_routes",
         "article_abstract_provider_orders",
@@ -40,6 +61,132 @@ fn empty_auth_database_migration_creates_current_schema() {
     ] {
         assert!(runtime_setting(&path, field).is_none());
     }
+}
+
+#[test]
+fn delivery_migration_upgrades_version_nine_without_changing_audit_rows() {
+    let temp_dir = tempdir().expect("temp directory should be created");
+    let path = temp_dir.path().join("delivery-v9.sqlite");
+    migrate_auth_database(&path).expect("current auth database should migrate");
+    let connection = Connection::open(&path).expect("auth database should open");
+    connection
+        .execute(
+            "INSERT INTO security_audit_events
+             (actor_id, action, outcome, occurred_at)
+             VALUES (17, 'login', 'completed', 123.0)",
+            [],
+        )
+        .expect("version nine audit row should insert");
+    remove_current_delivery_schema(&connection);
+    connection
+        .execute_batch("PRAGMA user_version = 9;")
+        .expect("version nine fixture should be created");
+    drop(connection);
+
+    migrate_auth_database(&path).expect("version nine database should migrate");
+
+    assert_eq!(user_version(&path), AUTH_SCHEMA_VERSION);
+    assert!(table_exists(&path, "delivery_runs"));
+    let connection = Connection::open(&path).expect("migrated database should open");
+    let audit_row: (i64, String, String, f64) = connection
+        .query_row(
+            "SELECT actor_id, action, outcome, occurred_at
+             FROM security_audit_events WHERE id = 1",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )
+        .expect("audit row should remain readable");
+    assert_eq!(
+        audit_row,
+        (17, "login".to_string(), "completed".to_string(), 123.0)
+    );
+}
+
+#[test]
+fn delivery_migration_failure_keeps_version_nine_state() {
+    let temp_dir = tempdir().expect("temp directory should be created");
+    let path = temp_dir.path().join("delivery-v9-conflict.sqlite");
+    migrate_auth_database(&path).expect("current auth database should migrate");
+    let connection = Connection::open(&path).expect("auth database should open");
+    remove_current_delivery_schema(&connection);
+    connection
+        .execute_batch(
+            "CREATE TABLE delivery_runs (sentinel TEXT NOT NULL);
+             INSERT INTO delivery_runs (sentinel) VALUES ('keep');
+             PRAGMA user_version = 9;",
+        )
+        .expect("conflicting version nine fixture should be created");
+    drop(connection);
+
+    migrate_auth_database(&path).expect_err("conflicting delivery schema should fail migration");
+
+    assert_eq!(user_version(&path), 9);
+    assert_eq!(table_columns(&path, "delivery_runs"), ["sentinel"]);
+    let sentinel: String = Connection::open(&path)
+        .expect("failed migration database should reopen")
+        .query_row("SELECT sentinel FROM delivery_runs", [], |row| row.get(0))
+        .expect("preexisting sentinel should remain");
+    assert_eq!(sentinel, "keep");
+    assert!(!table_exists(&path, "delivery_checkpoints"));
+    assert!(!table_exists(&path, "delivery_run_items"));
+    assert!(!table_exists(&path, "delivery_dedupe"));
+    assert!(!table_exists(&path, "delivery_leases"));
+}
+
+#[test]
+fn delivery_schema_rejects_incomplete_owner_and_terminal_state() {
+    let temp_dir = tempdir().expect("temp directory should be created");
+    let path = temp_dir.path().join("delivery-checks.sqlite");
+    migrate_auth_database(&path).expect("auth database should migrate");
+    let connection = Connection::open(&path).expect("auth database should open");
+
+    connection
+        .execute(
+            "INSERT INTO delivery_runs
+             (external_id, workflow, scope_key, db_name, trigger_kind, mode, status,
+              created_at, updated_at)
+             VALUES ('missing-owner', 'notify', 'main.sqlite', 'main.sqlite',
+                     'scheduled', 'execute', 'running', 1.0, 1.0)",
+            [],
+        )
+        .expect_err("active run without owner lease should be rejected");
+    connection
+        .execute(
+            "INSERT INTO delivery_runs
+             (external_id, workflow, scope_key, trigger_kind, mode, status,
+              created_at, updated_at)
+             VALUES ('manual-without-user', 'notify', 'manual', 'manual',
+                     'execute', 'queued', 1.0, 1.0)",
+            [],
+        )
+        .expect_err("manual run without user should be rejected");
+    connection
+        .execute(
+            "INSERT INTO delivery_runs
+             (external_id, workflow, scope_key, db_name, trigger_kind, mode, status,
+              created_at, updated_at)
+             VALUES ('valid-run', 'notify', 'main.sqlite', 'main.sqlite',
+                     'scheduled', 'execute', 'queued', 1.0, 1.0)",
+            [],
+        )
+        .expect("valid queued run should insert");
+    connection
+        .execute(
+            "INSERT INTO delivery_run_items
+             (delivery_run_id, item_kind, item_key, status, created_at, updated_at)
+             VALUES (1, 'article', '41', 'sending', 1.0, 1.0)",
+            [],
+        )
+        .expect_err("sending item without owner lease should be rejected");
+    connection
+        .execute(
+            "INSERT INTO delivery_dedupe
+             (workflow, db_name, user_id, article_id, delivery_run_id, status,
+              revision, reserved_at, updated_at)
+             VALUES ('notify', 'main.sqlite', 7, 41, 1, 'reserved', 0, 1.0, 1.0)",
+            [],
+        )
+        .expect_err("reservation without owner should be rejected");
 }
 
 #[test]
@@ -1243,6 +1390,76 @@ fn storage_migration_discovers_existing_index_databases() {
 }
 
 #[test]
+fn storage_migration_imports_legacy_delivery_state_on_startup() {
+    let temp_dir = tempdir().expect("temp directory should be created");
+    let config = StorageConfig::from_project_root(temp_dir.path());
+    let state_dir = temp_dir.path().join("data/push_state");
+    fs::create_dir_all(&state_dir).expect("legacy state directory should be created");
+    let state_path = state_dir.join("fixture.json");
+    let state = serde_json::json!({
+        "db_name": "fixture.sqlite",
+        "status": "completed",
+        "snapshot": {
+            "issue_article_counts": {"1:2": 3},
+            "inpress_article_counts": {}
+        },
+        "delivery_dedupe": {"7:31": "2026-07-27T00:00:00Z"}
+    });
+    let original = serde_json::to_vec(&state).expect("legacy state should encode");
+    fs::write(&state_path, &original).expect("legacy state should be written");
+
+    migrate_storage(&config).expect("startup should import legacy delivery state");
+
+    assert_eq!(
+        table_row_count(config.auth_db_path(), "delivery_checkpoints"),
+        1
+    );
+    assert_eq!(table_row_count(config.auth_db_path(), "delivery_dedupe"), 1);
+    assert_eq!(
+        fs::read(&state_path).expect("legacy state should remain"),
+        original
+    );
+    migrate_storage(&config).expect("same legacy hash should be idempotent");
+    assert_eq!(
+        table_row_count(config.auth_db_path(), "delivery_checkpoints"),
+        1
+    );
+    assert_eq!(table_row_count(config.auth_db_path(), "delivery_dedupe"), 1);
+}
+
+#[test]
+fn storage_migration_rejects_corrupt_legacy_delivery_state_without_partial_import() {
+    let temp_dir = tempdir().expect("temp directory should be created");
+    let config = StorageConfig::from_project_root(temp_dir.path());
+    let state_dir = temp_dir.path().join("data/push_state");
+    fs::create_dir_all(&state_dir).expect("legacy state directory should be created");
+    let valid_path = state_dir.join("alpha.json");
+    let corrupt_path = state_dir.join("beta.json");
+    fs::write(
+        &valid_path,
+        serde_json::to_vec(&serde_json::json!({
+            "db_name": "alpha.sqlite",
+            "status": "completed"
+        }))
+        .expect("valid legacy state should encode"),
+    )
+    .expect("valid legacy state should be written");
+    fs::write(&corrupt_path, b"{").expect("corrupt legacy state should be written");
+
+    let error = migrate_storage(&config).expect_err("corrupt legacy state should stop startup");
+
+    assert!(matches!(error, MigrationError::DeliveryState(_)));
+    assert_eq!(user_version(config.auth_db_path()), AUTH_SCHEMA_VERSION);
+    assert_eq!(
+        table_row_count(config.auth_db_path(), "delivery_checkpoints"),
+        0
+    );
+    assert_eq!(table_row_count(config.auth_db_path(), "delivery_runs"), 0);
+    assert!(valid_path.exists());
+    assert!(corrupt_path.exists());
+}
+
+#[test]
 fn repository_reads_do_not_run_migrations() {
     let temp_dir = tempdir().expect("temp directory should be created");
     let config = StorageConfig::from_project_root(temp_dir.path());
@@ -1344,6 +1561,7 @@ fn schema_object_exists(path: &Path, object_type: &str, object_name: &str) -> bo
 }
 
 fn remove_current_security_audit_schema(connection: &Connection) {
+    remove_current_delivery_schema(connection);
     connection
         .execute_batch(
             "DROP TRIGGER security_audit_events_no_update;
@@ -1351,6 +1569,18 @@ fn remove_current_security_audit_schema(connection: &Connection) {
              DROP TABLE security_audit_events;",
         )
         .expect("current security audit schema should be removed from legacy fixture");
+}
+
+fn remove_current_delivery_schema(connection: &Connection) {
+    connection
+        .execute_batch(
+            "DROP TABLE delivery_leases;
+             DROP TABLE delivery_dedupe;
+             DROP TABLE delivery_run_items;
+             DROP TABLE delivery_runs;
+             DROP TABLE delivery_checkpoints;",
+        )
+        .expect("current delivery schema should be removed from legacy fixture");
 }
 
 fn table_columns(path: &Path, table_name: &str) -> Vec<String> {

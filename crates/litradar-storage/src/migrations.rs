@@ -13,10 +13,11 @@ use rusqlite::{
 
 use litradar_domain::{normalize_contract_issn, ProviderOrderConfiguration};
 
+use crate::business::{import_legacy_delivery_state_files, DeliveryRepositoryError};
 use crate::{DatabaseResolutionError, StorageConfig};
 
 /// Current auth and business database schema version.
-pub const AUTH_SCHEMA_VERSION: i64 = 9;
+pub const AUTH_SCHEMA_VERSION: i64 = 10;
 
 /// Current index database schema version.
 pub const INDEX_SCHEMA_VERSION: i64 = 6;
@@ -64,6 +65,8 @@ pub enum MigrationError {
     IndexIdentityConflict,
     /// Legacy Provider order settings cannot be migrated without changing their meaning.
     InvalidRuntimeProviderOrderState,
+    /// Legacy mutable delivery state could not be imported safely.
+    DeliveryState(DeliveryRepositoryError),
 }
 
 impl fmt::Display for MigrationError {
@@ -100,6 +103,7 @@ impl fmt::Display for MigrationError {
             Self::InvalidRuntimeProviderOrderState => {
                 formatter.write_str("legacy runtime Provider order state is invalid for migration")
             }
+            Self::DeliveryState(error) => write!(formatter, "{error}"),
         }
     }
 }
@@ -111,6 +115,7 @@ impl Error for MigrationError {
             Self::Io(error) => Some(error),
             Self::Sqlite(error) => Some(error),
             Self::DatabaseResolution(error) => Some(error),
+            Self::DeliveryState(error) => Some(error),
             Self::UnsupportedSchemaVersion { .. }
             | Self::IndexRebuildRequired { .. }
             | Self::InvalidIndexIdentityState
@@ -141,6 +146,13 @@ impl From<DatabaseResolutionError> for MigrationError {
     }
 }
 
+impl From<DeliveryRepositoryError> for MigrationError {
+    /// Convert durable delivery import errors into startup migration errors.
+    fn from(error: DeliveryRepositoryError) -> Self {
+        Self::DeliveryState(error)
+    }
+}
+
 /// Migrate the configured auth database and every existing index database.
 ///
 /// # Arguments
@@ -152,6 +164,11 @@ impl From<DatabaseResolutionError> for MigrationError {
 /// Empty result after every configured database reaches its current version.
 pub fn migrate_storage(config: &StorageConfig) -> Result<(), MigrationError> {
     migrate_auth_database(config.auth_db_path())?;
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs_f64();
+    import_legacy_delivery_state_files(config, now)?;
     migrate_existing_index_databases(config)
 }
 
@@ -261,6 +278,7 @@ fn migrate_auth_database_inner(path: &Path) -> Result<MigrationSummary, Migratio
             7 => apply_auth_version_seven(&transaction)?,
             8 => apply_auth_version_eight(&transaction, from_version)?,
             9 => apply_auth_version_nine(&transaction)?,
+            10 => apply_auth_version_ten(&transaction)?,
             _ => unreachable!("auth migration version should be implemented"),
         }
         transaction.pragma_update(None, "user_version", next_version)?;
@@ -412,6 +430,7 @@ fn migration_error_kind(error: &MigrationError) -> &'static str {
         MigrationError::InvalidIndexIdentityState => "invalid_index_identity_state",
         MigrationError::IndexIdentityConflict => "index_identity_conflict",
         MigrationError::InvalidRuntimeProviderOrderState => "invalid_runtime_provider_order_state",
+        MigrationError::DeliveryState(_) => "delivery_state",
     }
 }
 
@@ -421,7 +440,8 @@ fn migration_error_database_version(error: &MigrationError) -> i64 {
         | MigrationError::IndexRebuildRequired { found, .. } => *found,
         MigrationError::Io(_)
         | MigrationError::Sqlite(_)
-        | MigrationError::DatabaseResolution(_) => -1,
+        | MigrationError::DatabaseResolution(_)
+        | MigrationError::DeliveryState(_) => -1,
         MigrationError::InvalidIndexIdentityState | MigrationError::IndexIdentityConflict => 4,
         MigrationError::InvalidRuntimeProviderOrderState => 6,
     }
@@ -1128,6 +1148,221 @@ fn apply_auth_version_nine(transaction: &Transaction<'_>) -> Result<(), Migratio
              last_retention_at REAL
          );
          INSERT INTO security_audit_maintenance (id, last_retention_at) VALUES (1, NULL);",
+    )?;
+    Ok(())
+}
+
+fn apply_auth_version_ten(transaction: &Transaction<'_>) -> Result<(), MigrationError> {
+    transaction.execute_batch(
+        "CREATE TABLE delivery_checkpoints (
+             id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+             workflow              TEXT NOT NULL CHECK (workflow IN ('notify', 'push')),
+             db_name               TEXT NOT NULL CHECK (length(db_name) BETWEEN 1 AND 255),
+             status                TEXT NOT NULL DEFAULT 'idle' CHECK (
+                 status IN ('idle', 'running', 'completed', 'failed', 'skipped', 'unknown')
+             ),
+             legacy_status         TEXT CHECK (
+                 legacy_status IS NULL OR length(legacy_status) BETWEEN 1 AND 128
+             ),
+             snapshot_json         TEXT NOT NULL,
+             last_completed_run_at TEXT,
+             revision              INTEGER NOT NULL DEFAULT 0 CHECK (revision >= 0),
+             legacy_source_hash    TEXT CHECK (
+                 legacy_source_hash IS NULL OR (
+                     length(legacy_source_hash) = 64
+                     AND legacy_source_hash NOT GLOB '*[^0-9a-f]*'
+                 )
+             ),
+             legacy_source_name    TEXT CHECK (
+                 legacy_source_name IS NULL OR length(legacy_source_name) BETWEEN 1 AND 255
+             ),
+             legacy_imported_at    REAL,
+             created_at            REAL NOT NULL,
+             updated_at            REAL NOT NULL,
+             CHECK (
+                 (legacy_source_hash IS NULL AND legacy_source_name IS NULL
+                  AND legacy_imported_at IS NULL)
+                 OR (legacy_source_hash IS NOT NULL AND legacy_source_name IS NOT NULL
+                     AND legacy_imported_at IS NOT NULL)
+             )
+         );
+         CREATE UNIQUE INDEX idx_delivery_checkpoints_scope
+             ON delivery_checkpoints(workflow, db_name);
+
+         CREATE TABLE delivery_runs (
+             id                     INTEGER PRIMARY KEY AUTOINCREMENT,
+             external_id            TEXT NOT NULL CHECK (length(external_id) BETWEEN 1 AND 128),
+             workflow               TEXT NOT NULL CHECK (workflow IN ('notify', 'push')),
+             scope_key              TEXT NOT NULL CHECK (length(scope_key) BETWEEN 1 AND 255),
+             db_name                TEXT CHECK (db_name IS NULL OR length(db_name) BETWEEN 1 AND 255),
+             trigger_kind           TEXT NOT NULL CHECK (
+                 trigger_kind IN ('scheduled', 'manual', 'legacy')
+             ),
+             mode                   TEXT NOT NULL CHECK (mode IN ('dry_run', 'execute')),
+             user_id                INTEGER CHECK (user_id IS NULL OR user_id > 0),
+             status                 TEXT NOT NULL CHECK (
+                 status IN (
+                     'queued', 'claimed', 'running', 'cancelling', 'completed', 'failed',
+                     'cancelled', 'timed_out', 'skipped', 'unknown'
+                 )
+             ),
+             legacy_status          TEXT CHECK (
+                 legacy_status IS NULL OR length(legacy_status) BETWEEN 1 AND 128
+             ),
+             owner_id               TEXT CHECK (
+                 owner_id IS NULL OR length(owner_id) BETWEEN 1 AND 128
+             ),
+             lease_expires_at       REAL,
+             deadline_at            REAL,
+             cancellation_requested INTEGER NOT NULL DEFAULT 0 CHECK (
+                 cancellation_requested IN (0, 1)
+             ),
+             result_json            TEXT,
+             error_code             TEXT CHECK (
+                 error_code IS NULL OR length(error_code) BETWEEN 1 AND 64
+             ),
+             revision               INTEGER NOT NULL DEFAULT 0 CHECK (revision >= 0),
+             created_at             REAL NOT NULL,
+             started_at             REAL,
+             updated_at             REAL NOT NULL,
+             finished_at            REAL,
+             CHECK (
+                 (status = 'queued' AND owner_id IS NULL AND lease_expires_at IS NULL
+                  AND finished_at IS NULL)
+                 OR (status IN ('claimed', 'running', 'cancelling')
+                     AND owner_id IS NOT NULL AND lease_expires_at IS NOT NULL
+                     AND finished_at IS NULL)
+                 OR (status IN ('completed', 'failed', 'cancelled', 'timed_out', 'skipped', 'unknown')
+                     AND owner_id IS NULL AND lease_expires_at IS NULL
+                     AND finished_at IS NOT NULL)
+             ),
+             CHECK (
+                 (trigger_kind = 'manual' AND user_id IS NOT NULL)
+                 OR (trigger_kind <> 'manual' AND db_name IS NOT NULL)
+             ),
+             CHECK (deadline_at IS NULL OR deadline_at > created_at)
+         );
+         CREATE UNIQUE INDEX idx_delivery_runs_external_scope
+             ON delivery_runs(workflow, scope_key, external_id);
+         CREATE UNIQUE INDEX idx_delivery_runs_active_scope
+             ON delivery_runs(workflow, db_name)
+             WHERE db_name IS NOT NULL
+               AND status IN ('claimed', 'running', 'cancelling');
+         CREATE UNIQUE INDEX idx_delivery_runs_active_manual_user
+             ON delivery_runs(user_id)
+             WHERE trigger_kind = 'manual'
+               AND user_id IS NOT NULL
+               AND status IN ('queued', 'claimed', 'running', 'cancelling');
+         CREATE INDEX idx_delivery_runs_queue
+             ON delivery_runs(status, created_at, id);
+         CREATE INDEX idx_delivery_runs_owner_lease
+             ON delivery_runs(owner_id, lease_expires_at)
+             WHERE owner_id IS NOT NULL;
+
+         CREATE TABLE delivery_run_items (
+             id               INTEGER PRIMARY KEY AUTOINCREMENT,
+             delivery_run_id  INTEGER NOT NULL REFERENCES delivery_runs(id) ON DELETE CASCADE,
+             item_kind        TEXT NOT NULL CHECK (
+                 item_kind IN ('issue', 'inpress', 'article', 'subscriber')
+             ),
+             item_key         TEXT NOT NULL CHECK (length(item_key) BETWEEN 1 AND 512),
+             user_id          INTEGER CHECK (user_id IS NULL OR user_id > 0),
+             article_id       INTEGER CHECK (article_id IS NULL OR article_id > 0),
+             status           TEXT NOT NULL CHECK (
+                 status IN (
+                     'pending', 'claimed', 'sending', 'succeeded', 'failed', 'skipped',
+                     'cancelled', 'unknown'
+                 )
+             ),
+             legacy_status    TEXT CHECK (
+                 legacy_status IS NULL OR length(legacy_status) BETWEEN 1 AND 128
+             ),
+             owner_id         TEXT CHECK (
+                 owner_id IS NULL OR length(owner_id) BETWEEN 1 AND 128
+             ),
+             lease_expires_at REAL,
+             attempt_count    INTEGER NOT NULL DEFAULT 0 CHECK (attempt_count >= 0),
+             result_json      TEXT,
+             error_code       TEXT CHECK (
+                 error_code IS NULL OR length(error_code) BETWEEN 1 AND 64
+             ),
+             revision         INTEGER NOT NULL DEFAULT 0 CHECK (revision >= 0),
+             created_at       REAL NOT NULL,
+             started_at       REAL,
+             updated_at       REAL NOT NULL,
+             finished_at      REAL,
+             UNIQUE(delivery_run_id, item_kind, item_key),
+             CHECK (
+                 (status = 'pending' AND owner_id IS NULL AND lease_expires_at IS NULL
+                  AND finished_at IS NULL)
+                 OR (status IN ('claimed', 'sending')
+                     AND owner_id IS NOT NULL AND lease_expires_at IS NOT NULL
+                     AND finished_at IS NULL)
+                 OR (status IN ('succeeded', 'failed', 'skipped', 'cancelled', 'unknown')
+                     AND owner_id IS NULL AND lease_expires_at IS NULL
+                     AND finished_at IS NOT NULL)
+             )
+         );
+         CREATE INDEX idx_delivery_run_items_claim
+             ON delivery_run_items(delivery_run_id, status, lease_expires_at, id);
+
+         CREATE TABLE delivery_dedupe (
+             id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+             workflow            TEXT NOT NULL CHECK (workflow IN ('notify', 'push')),
+             db_name             TEXT NOT NULL CHECK (length(db_name) BETWEEN 1 AND 255),
+             user_id             INTEGER NOT NULL CHECK (user_id > 0),
+             article_id          INTEGER NOT NULL CHECK (article_id > 0),
+             delivery_run_id     INTEGER REFERENCES delivery_runs(id) ON DELETE SET NULL,
+             status              TEXT NOT NULL CHECK (status IN ('reserved', 'confirmed', 'unknown')),
+             message_id          TEXT CHECK (
+                 message_id IS NULL OR length(message_id) BETWEEN 1 AND 256
+             ),
+             reservation_owner   TEXT CHECK (
+                 reservation_owner IS NULL OR length(reservation_owner) BETWEEN 1 AND 128
+             ),
+             legacy_delivered_at TEXT,
+             revision            INTEGER NOT NULL DEFAULT 0 CHECK (revision >= 0),
+             reserved_at         REAL NOT NULL,
+             delivered_at        REAL,
+             updated_at          REAL NOT NULL,
+             CHECK (
+                 (status = 'reserved' AND delivery_run_id IS NOT NULL
+                  AND reservation_owner IS NOT NULL AND delivered_at IS NULL)
+                 OR (status IN ('confirmed', 'unknown')
+                     AND reservation_owner IS NULL AND delivered_at IS NOT NULL)
+             )
+         );
+         CREATE UNIQUE INDEX idx_delivery_dedupe_identity
+             ON delivery_dedupe(workflow, db_name, user_id, article_id);
+         CREATE INDEX idx_delivery_dedupe_status_time
+             ON delivery_dedupe(status, updated_at, id);
+
+         CREATE TABLE delivery_leases (
+             id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+             workflow            TEXT NOT NULL CHECK (workflow IN ('notify', 'push')),
+             db_name             TEXT NOT NULL CHECK (length(db_name) BETWEEN 1 AND 255),
+             delivery_run_id     INTEGER REFERENCES delivery_runs(id) ON DELETE SET NULL,
+             owner_id            TEXT CHECK (
+                 owner_id IS NULL OR length(owner_id) BETWEEN 1 AND 128
+             ),
+             revision            INTEGER NOT NULL DEFAULT 0 CHECK (revision >= 0),
+             acquired_at         REAL,
+             heartbeat_at        REAL,
+             expires_at          REAL,
+             updated_at          REAL NOT NULL,
+             CHECK (
+                 (owner_id IS NULL AND delivery_run_id IS NULL AND acquired_at IS NULL
+                  AND heartbeat_at IS NULL AND expires_at IS NULL)
+                 OR (owner_id IS NOT NULL AND delivery_run_id IS NOT NULL
+                     AND acquired_at IS NOT NULL AND heartbeat_at IS NOT NULL
+                     AND expires_at IS NOT NULL)
+             )
+         );
+         CREATE UNIQUE INDEX idx_delivery_leases_scope
+             ON delivery_leases(workflow, db_name);
+         CREATE INDEX idx_delivery_leases_expiration
+             ON delivery_leases(expires_at)
+             WHERE owner_id IS NOT NULL;",
     )?;
     Ok(())
 }
