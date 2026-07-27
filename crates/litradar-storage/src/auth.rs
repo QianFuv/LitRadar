@@ -13,7 +13,7 @@ use rusqlite::{params, Connection, ErrorCode, OptionalExtension};
 use crate::{migrate_auth_database, open_sqlite_connection, MigrationError};
 
 /// Stored user row returned by auth repository queries.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Clone, PartialEq)]
 pub struct AuthUserRow {
     /// User identifier.
     pub id: UserId,
@@ -25,8 +25,20 @@ pub struct AuthUserRow {
     pub created_at: f64,
 }
 
+impl fmt::Debug for AuthUserRow {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("AuthUserRow")
+            .field("id", &self.id)
+            .field("username", &"[REDACTED]")
+            .field("is_admin", &self.is_admin)
+            .field("created_at", &self.created_at)
+            .finish()
+    }
+}
+
 /// Stored user credential row.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Clone, PartialEq)]
 pub struct UserCredentialRow {
     /// User identifier.
     pub id: UserId,
@@ -40,6 +52,20 @@ pub struct UserCredentialRow {
     pub is_admin: bool,
     /// Creation timestamp.
     pub created_at: f64,
+}
+
+impl fmt::Debug for UserCredentialRow {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("UserCredentialRow")
+            .field("id", &self.id)
+            .field("username", &"[REDACTED]")
+            .field("password_hash", &"[REDACTED]")
+            .field("salt", &"[REDACTED]")
+            .field("is_admin", &self.is_admin)
+            .field("created_at", &self.created_at)
+            .finish()
+    }
 }
 
 /// Stored access token metadata.
@@ -56,7 +82,7 @@ pub struct AccessTokenRow {
 }
 
 /// Stored invite code metadata.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Clone, PartialEq)]
 pub struct InviteCodeRow {
     /// Invite row identifier.
     pub id: i64,
@@ -66,6 +92,18 @@ pub struct InviteCodeRow {
     pub used_by: Option<UserId>,
     /// Creation timestamp.
     pub created_at: f64,
+}
+
+impl fmt::Debug for InviteCodeRow {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("InviteCodeRow")
+            .field("id", &self.id)
+            .field("code", &"[REDACTED]")
+            .field("used_by", &self.used_by)
+            .field("created_at", &self.created_at)
+            .finish()
+    }
 }
 
 /// Repository errors for auth database operations.
@@ -91,6 +129,10 @@ pub enum AuthRepositoryError {
     AdministratorBootstrapAlreadyCompleted,
     /// The user already owns the maximum active personal access tokens.
     AccessTokenLimitReached,
+    /// Operating-system cryptographic randomness was unavailable.
+    EntropyUnavailable,
+    /// A credential mutation violated its exact-row invariant.
+    CredentialMutationInvariant,
 }
 
 impl fmt::Display for AuthRepositoryError {
@@ -113,6 +155,12 @@ impl fmt::Display for AuthRepositoryError {
                 formatter.write_str("Administrator bootstrap is already complete")
             }
             Self::AccessTokenLimitReached => formatter.write_str(ACCESS_TOKEN_LIMIT_DETAIL),
+            Self::EntropyUnavailable => {
+                formatter.write_str("Operating-system cryptographic randomness is unavailable")
+            }
+            Self::CredentialMutationInvariant => {
+                formatter.write_str("Credential update affected an unexpected number of users")
+            }
         }
     }
 }
@@ -163,26 +211,19 @@ pub fn initialize_auth_database(auth_db_path: impl AsRef<Path>) -> Result<(), Au
     migrate_auth_database(auth_db_path).map_err(AuthRepositoryError::from)
 }
 
-/// Generate lowercase random hex using SQLite `randomblob`.
+/// Generate lowercase random hex using the operating-system CSPRNG.
 ///
 /// # Arguments
 ///
-/// * `auth_db_path` - Path to the auth SQLite database.
 /// * `byte_count` - Number of random bytes to generate.
 ///
 /// # Returns
 ///
 /// Lowercase random hex string.
-pub fn random_hex(
-    auth_db_path: impl AsRef<Path>,
-    byte_count: i64,
-) -> Result<String, AuthRepositoryError> {
-    let connection = open_auth_connection(auth_db_path)?;
-    Ok(
-        connection.query_row("SELECT lower(hex(randomblob(?1)))", [byte_count], |row| {
-            row.get(0)
-        })?,
-    )
+pub fn random_hex(byte_count: usize) -> Result<String, AuthRepositoryError> {
+    let mut bytes = vec![0_u8; byte_count];
+    getrandom::fill(&mut bytes).map_err(|_| AuthRepositoryError::EntropyUnavailable)?;
+    Ok(hex::encode(bytes))
 }
 
 /// Count registered users.
@@ -428,7 +469,7 @@ pub fn verify_access_token_hash(
     let Some((user_id, expires_at, username, is_admin, created_at)) = row else {
         return Ok(None);
     };
-    if expires_at < now {
+    if expires_at <= now {
         connection.execute(
             "DELETE FROM access_tokens WHERE token_hash = ?1",
             [token_hash],
@@ -528,24 +569,56 @@ pub fn delete_access_token_by_hash(
 ///
 /// # Returns
 ///
-/// Empty result on success.
+/// True when the target user existed and the credential rotation committed.
 pub fn update_user_password_and_delete_tokens(
     auth_db_path: impl AsRef<Path>,
     user_id: UserId,
     password_hash: &str,
     salt: &str,
     now: f64,
-) -> Result<(), AuthRepositoryError> {
+) -> Result<bool, AuthRepositoryError> {
     let connection = open_auth_connection(auth_db_path)?;
-    connection.execute(
+    connection.execute("BEGIN IMMEDIATE", [])?;
+    let result = update_user_password_and_delete_tokens_in_transaction(
+        &connection,
+        user_id,
+        password_hash,
+        salt,
+        now,
+    );
+    finish_immediate_transaction(&connection, result)
+}
+
+fn update_user_password_and_delete_tokens_in_transaction(
+    connection: &Connection,
+    user_id: UserId,
+    password_hash: &str,
+    salt: &str,
+    now: f64,
+) -> Result<bool, AuthRepositoryError> {
+    let exists = connection
+        .query_row(
+            "SELECT 1 FROM users WHERE id = ?1",
+            [user_id.value()],
+            |_| Ok(()),
+        )
+        .optional()?
+        .is_some();
+    if !exists {
+        return Ok(false);
+    }
+    let updated = connection.execute(
         "UPDATE users SET password_hash = ?1, salt = ?2, updated_at = ?3 WHERE id = ?4",
         params![password_hash, salt, now, user_id.value()],
     )?;
+    if updated != 1 {
+        return Err(AuthRepositoryError::CredentialMutationInvariant);
+    }
     connection.execute(
         "DELETE FROM access_tokens WHERE user_id = ?1",
         [user_id.value()],
     )?;
-    Ok(())
+    Ok(true)
 }
 
 /// Create an invite code for a user.
@@ -871,9 +944,11 @@ mod tests {
     use tempfile::{tempdir, TempDir};
 
     use super::{
-        bootstrap_admin, delete_access_token, initialize_auth_database,
-        insert_personal_access_token, list_access_tokens, open_auth_connection,
-        replace_login_access_token, verify_access_token_hash, AuthRepositoryError,
+        bootstrap_admin, delete_access_token, find_user_credentials_by_id,
+        initialize_auth_database, insert_personal_access_token, list_access_tokens,
+        open_auth_connection, random_hex, replace_login_access_token,
+        update_user_password_and_delete_tokens, verify_access_token_hash, AuthRepositoryError,
+        AuthUserRow, InviteCodeRow, UserCredentialRow,
     };
 
     fn access_token_fixture() -> (TempDir, PathBuf, UserId) {
@@ -1167,5 +1242,147 @@ mod tests {
             hashes[0].as_str(),
             "concurrent-login-hash-0" | "concurrent-login-hash-1"
         ));
+    }
+
+    #[test]
+    fn access_token_expiring_at_now_is_rejected_and_removed() {
+        let (_temp_dir, auth_db_path, user_id) = access_token_fixture();
+        insert_raw_access_token(
+            &auth_db_path,
+            user_id,
+            "boundary-token-hash",
+            "boundary",
+            100.0,
+            2.0,
+        );
+
+        let verified = verify_access_token_hash(&auth_db_path, "boundary-token-hash", 100.0)
+            .expect("boundary token verification should run");
+
+        assert_eq!(verified, None);
+        assert_eq!(
+            count_tokens_by_hash(&auth_db_path, "boundary-token-hash"),
+            0
+        );
+    }
+
+    #[test]
+    fn credential_rotation_rolls_back_when_token_revocation_fails() {
+        let (_temp_dir, auth_db_path, user_id) = access_token_fixture();
+        insert_raw_access_token(
+            &auth_db_path,
+            user_id,
+            "rotation-token-hash",
+            "integration",
+            4_000_000_000.0,
+            2.0,
+        );
+        let original = find_user_credentials_by_id(&auth_db_path, user_id)
+            .expect("credentials should load")
+            .expect("fixture user should exist");
+        let connection = open_auth_connection(&auth_db_path).expect("auth connection should open");
+        connection
+            .execute_batch(&format!(
+                "CREATE TRIGGER fail_credential_token_revoke \
+                 BEFORE DELETE ON access_tokens \
+                 WHEN OLD.user_id = {} \
+                 BEGIN SELECT RAISE(ABORT, 'injected token revoke failure'); END;",
+                user_id.value()
+            ))
+            .expect("fault trigger should install");
+        drop(connection);
+
+        let error = update_user_password_and_delete_tokens(
+            &auth_db_path,
+            user_id,
+            "replacement-password-hash",
+            "replacement-salt",
+            3.0,
+        )
+        .expect_err("injected token deletion failure should abort rotation");
+        let after_failure = find_user_credentials_by_id(&auth_db_path, user_id)
+            .expect("credentials should reload")
+            .expect("fixture user should remain");
+
+        assert!(matches!(error, AuthRepositoryError::Sqlite(_)));
+        assert_eq!(after_failure, original);
+        assert_eq!(
+            count_tokens_by_hash(&auth_db_path, "rotation-token-hash"),
+            1
+        );
+
+        let connection = open_auth_connection(&auth_db_path).expect("auth connection should open");
+        connection
+            .execute("DROP TRIGGER fail_credential_token_revoke", [])
+            .expect("fault trigger should drop");
+        drop(connection);
+        assert!(update_user_password_and_delete_tokens(
+            &auth_db_path,
+            user_id,
+            "replacement-password-hash",
+            "replacement-salt",
+            4.0,
+        )
+        .expect("credential rotation should commit"));
+        let after_success = find_user_credentials_by_id(&auth_db_path, user_id)
+            .expect("credentials should reload")
+            .expect("fixture user should remain");
+        assert_eq!(after_success.password_hash, "replacement-password-hash");
+        assert_eq!(after_success.salt, "replacement-salt");
+        assert_eq!(
+            count_tokens_by_hash(&auth_db_path, "rotation-token-hash"),
+            0
+        );
+        assert!(!update_user_password_and_delete_tokens(
+            &auth_db_path,
+            UserId(i64::MAX),
+            "unused-password-hash",
+            "unused-salt",
+            5.0,
+        )
+        .expect("missing-user rotation should be a committed no-op"));
+    }
+
+    #[test]
+    fn os_random_hex_and_auth_row_debug_keep_secret_boundaries() {
+        let first = random_hex(32).expect("OS randomness should be available");
+        let second = random_hex(32).expect("OS randomness should remain available");
+        assert_eq!(first.len(), 64);
+        assert!(first
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)));
+        assert_ne!(first, second);
+
+        let debug = format!(
+            "{:?}",
+            (
+                AuthUserRow {
+                    id: UserId(1),
+                    username: "auth-user-name-sentinel".to_string(),
+                    is_admin: true,
+                    created_at: 1.0,
+                },
+                UserCredentialRow {
+                    id: UserId(1),
+                    username: "credential-name-sentinel".to_string(),
+                    password_hash: "password-hash-sentinel".to_string(),
+                    salt: "password-salt-sentinel".to_string(),
+                    is_admin: true,
+                    created_at: 1.0,
+                },
+                InviteCodeRow {
+                    id: 2,
+                    code: "invite-code-sentinel".to_string(),
+                    used_by: None,
+                    created_at: 2.0,
+                },
+            )
+        );
+        assert!(debug.contains("[REDACTED]"));
+        assert!(!debug.contains("auth-user-name-sentinel"));
+        assert!(!debug.contains("credential-name-sentinel"));
+        assert!(!debug.contains("password-hash-sentinel"));
+        assert!(!debug.contains("password-salt-sentinel"));
+        assert!(!debug.contains("invite-code-sentinel"));
     }
 }

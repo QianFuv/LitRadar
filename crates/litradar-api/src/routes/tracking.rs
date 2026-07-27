@@ -116,10 +116,7 @@ pub(crate) async fn push_weekly_to_tracking(
 ) -> Result<Json<ManualWeeklyPushStatus>, ApiError> {
     let (user, _) = require_current_user(&state, &headers).await?;
     let key = manual_push_key(&state, user.id);
-    let job_id = run_storage(&state, move |storage| {
-        litradar_storage::random_hex(storage.auth_db_path(), 16)
-    })
-    .await?;
+    let job_id = run_storage(&state, move |_| litradar_storage::random_hex(16)).await?;
     let started_at = current_epoch_seconds();
     let status = manual_push_status(
         Some(job_id.clone()),

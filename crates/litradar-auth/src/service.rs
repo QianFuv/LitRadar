@@ -25,9 +25,9 @@ use crate::{
 /// Python-compatible default access token TTL in seconds.
 pub const ACCESS_TOKEN_DEFAULT_TTL: i64 = 7 * 24 * 3600;
 
-const ACCESS_TOKEN_BYTES: i64 = 32;
-const PASSWORD_SALT_BYTES: i64 = 16;
-const INVITE_CODE_BYTES: i64 = 8;
+const ACCESS_TOKEN_BYTES: usize = 32;
+const PASSWORD_SALT_BYTES: usize = 16;
+const INVITE_CODE_BYTES: usize = 8;
 const MIN_USERNAME_LENGTH: usize = 3;
 const MAX_USERNAME_LENGTH: usize = 32;
 
@@ -93,7 +93,7 @@ impl From<AuthRepositoryError> for AuthServiceError {
 }
 
 /// Created login session with the raw token kept out of JSON responses.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Clone, PartialEq)]
 pub struct LoginSession {
     /// Authenticated user.
     pub user: UserResponse,
@@ -101,6 +101,17 @@ pub struct LoginSession {
     pub token: String,
     /// Token expiration timestamp.
     pub expires_at: f64,
+}
+
+impl fmt::Debug for LoginSession {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("LoginSession")
+            .field("user", &self.user)
+            .field("token", &"[REDACTED]")
+            .field("expires_at", &self.expires_at)
+            .finish()
+    }
 }
 
 /// Authentication service bound to one auth database.
@@ -153,7 +164,7 @@ impl AuthService {
         invite_code: Option<&str>,
     ) -> Result<UserResponse, AuthServiceError> {
         validate_new_credentials(username, password)?;
-        let salt = random_hex(&self.auth_db_path, PASSWORD_SALT_BYTES)?;
+        let salt = random_hex(PASSWORD_SALT_BYTES)?;
         let password_hash = hash_password(password, &salt);
         let user = register_user_with_invite(
             &self.auth_db_path,
@@ -182,7 +193,7 @@ impl AuthService {
         password: &str,
     ) -> Result<UserResponse, AuthServiceError> {
         validate_new_credentials(username, password)?;
-        let salt = random_hex(&self.auth_db_path, PASSWORD_SALT_BYTES)?;
+        let salt = random_hex(PASSWORD_SALT_BYTES)?;
         let password_hash = hash_password(password, &salt);
         let user = bootstrap_admin(
             &self.auth_db_path,
@@ -236,7 +247,7 @@ impl AuthService {
         let user = self
             .verify_user(username, password)?
             .ok_or(AuthServiceError::InvalidCredentials)?;
-        let token = random_hex(&self.auth_db_path, ACCESS_TOKEN_BYTES)?;
+        let token = random_hex(ACCESS_TOKEN_BYTES)?;
         let token_hash = hash_token(&token);
         let created_at = now_seconds();
         let expires_at = created_at + ACCESS_TOKEN_DEFAULT_TTL as f64;
@@ -281,7 +292,7 @@ impl AuthService {
         if !(ACCESS_TOKEN_TTL_MIN_SECONDS..=ACCESS_TOKEN_TTL_MAX_SECONDS).contains(&ttl) {
             return Err(AuthServiceError::AccessTokenTtlOutOfRange);
         }
-        let token = random_hex(&self.auth_db_path, ACCESS_TOKEN_BYTES)?;
+        let token = random_hex(ACCESS_TOKEN_BYTES)?;
         let token_hash = hash_token(&token);
         let created_at = now_seconds();
         let expires_at = created_at + ttl as f64;
@@ -400,16 +411,16 @@ impl AuthService {
         if !verify_password(old_password, &row.salt, &row.password_hash) {
             return Ok(false);
         }
-        let salt = random_hex(&self.auth_db_path, PASSWORD_SALT_BYTES)?;
+        let salt = random_hex(PASSWORD_SALT_BYTES)?;
         let password_hash = hash_password(new_password, &salt);
-        update_user_password_and_delete_tokens(
+        let did_update = update_user_password_and_delete_tokens(
             &self.auth_db_path,
             user_id,
             &password_hash,
             &salt,
             now_seconds(),
         )?;
-        Ok(true)
+        Ok(did_update)
     }
 
     /// Reset a user's password without requiring the old password.
@@ -428,19 +439,15 @@ impl AuthService {
         new_password: &str,
     ) -> Result<bool, AuthServiceError> {
         validate_new_password(new_password)?;
-        if find_user_credentials_by_id(&self.auth_db_path, user_id)?.is_none() {
-            return Ok(false);
-        }
-        let salt = random_hex(&self.auth_db_path, PASSWORD_SALT_BYTES)?;
+        let salt = random_hex(PASSWORD_SALT_BYTES)?;
         let password_hash = hash_password(new_password, &salt);
-        update_user_password_and_delete_tokens(
+        Ok(update_user_password_and_delete_tokens(
             &self.auth_db_path,
             user_id,
             &password_hash,
             &salt,
             now_seconds(),
-        )?;
-        Ok(true)
+        )?)
     }
 
     /// Create a one-time invite code for a user.
@@ -456,7 +463,7 @@ impl AuthService {
         &self,
         user_id: UserId,
     ) -> Result<InviteCodeResponse, AuthServiceError> {
-        let code = random_hex(&self.auth_db_path, INVITE_CODE_BYTES)?;
+        let code = random_hex(INVITE_CODE_BYTES)?;
         let row = create_invite_code(&self.auth_db_path, user_id, &code, now_seconds())?;
         Ok(invite_response(row))
     }
@@ -554,6 +561,7 @@ fn now_seconds() -> f64 {
 mod tests {
     use std::sync::{Arc, Barrier};
 
+    use litradar_domain::UserId;
     use litradar_storage::{bootstrap_admin, count_users, migrate_auth_database};
     use tempfile::tempdir;
 
@@ -753,5 +761,49 @@ mod tests {
             .verify_access_token(&previous.token)
             .expect("previous session should resolve")
             .is_none());
+    }
+
+    #[test]
+    fn credential_rotation_revokes_tokens_and_redacts_session_debug() {
+        let temp_dir = tempdir().expect("temporary directory should be created");
+        let auth_db_path = temp_dir.path().join("auth.sqlite");
+        migrate_auth_database(&auth_db_path).expect("auth database should migrate");
+        let service = AuthService::new(&auth_db_path);
+        let user = service
+            .bootstrap_admin("rotation_admin", STRONG_PASSWORD)
+            .expect("fixture administrator should bootstrap");
+        let session = service
+            .login("rotation_admin", STRONG_PASSWORD)
+            .expect("fixture login should succeed");
+        let personal = service
+            .create_access_token(user.id, "integration", ACCESS_TOKEN_TTL_MIN_SECONDS)
+            .expect("fixture personal token should be created");
+        let session_debug = format!("{session:?}");
+
+        assert!(service
+            .change_password(user.id, STRONG_PASSWORD, "replacement-password")
+            .expect("password change should run"));
+        assert!(service
+            .verify_access_token(&session.token)
+            .expect("old session should resolve")
+            .is_none());
+        assert!(service
+            .verify_access_token(&personal.token)
+            .expect("old personal token should resolve")
+            .is_none());
+        assert!(service
+            .verify_user("rotation_admin", STRONG_PASSWORD)
+            .expect("old password verification should run")
+            .is_none());
+        assert!(service
+            .verify_user("rotation_admin", "replacement-password")
+            .expect("new password verification should run")
+            .is_some());
+        assert!(session_debug.contains("[REDACTED]"));
+        assert!(!session_debug.contains(&session.token));
+        assert!(!session_debug.contains("rotation_admin"));
+        assert!(!service
+            .reset_password(UserId(i64::MAX), "unused-password")
+            .expect("missing-user reset should run"));
     }
 }

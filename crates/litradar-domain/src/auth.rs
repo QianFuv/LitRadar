@@ -1,5 +1,7 @@
 //! Authentication request and response models.
 
+use std::fmt;
+
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
@@ -40,7 +42,7 @@ pub const ACCESS_TOKEN_VALIDATION_ORDER: &str =
     "authentication, raw name length, normalized reserved name, TTL, then quota";
 
 /// User profile returned by auth endpoints.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct UserResponse {
     /// User identifier.
     pub id: UserId,
@@ -50,8 +52,19 @@ pub struct UserResponse {
     pub is_admin: bool,
 }
 
+impl fmt::Debug for UserResponse {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("UserResponse")
+            .field("id", &self.id)
+            .field("username", &"[REDACTED]")
+            .field("is_admin", &self.is_admin)
+            .finish()
+    }
+}
+
 /// Account registration request.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct RegisterRequest {
     /// Requested username.
     pub username: String,
@@ -61,13 +74,34 @@ pub struct RegisterRequest {
     pub invite_code: String,
 }
 
+impl fmt::Debug for RegisterRequest {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("RegisterRequest")
+            .field("username", &"[REDACTED]")
+            .field("password", &"[REDACTED]")
+            .field("invite_code", &"[REDACTED]")
+            .finish()
+    }
+}
+
 /// Login request.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct LoginRequest {
     /// Username.
     pub username: String,
     /// Password.
     pub password: String,
+}
+
+impl fmt::Debug for LoginRequest {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("LoginRequest")
+            .field("username", &"[REDACTED]")
+            .field("password", &"[REDACTED]")
+            .finish()
+    }
 }
 
 /// Login response that intentionally omits the raw session token.
@@ -93,7 +127,7 @@ pub struct TokenCreateRequest {
 }
 
 /// Access token creation response.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+#[derive(Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct TokenCreateResponse {
     /// Token row identifier.
     pub id: i64,
@@ -103,6 +137,18 @@ pub struct TokenCreateResponse {
     pub name: String,
     /// Token expiration timestamp.
     pub expires_at: f64,
+}
+
+impl fmt::Debug for TokenCreateResponse {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("TokenCreateResponse")
+            .field("id", &self.id)
+            .field("token", &"[REDACTED]")
+            .field("name", &"[REDACTED]")
+            .field("expires_at", &self.expires_at)
+            .finish()
+    }
 }
 
 /// Access token metadata response.
@@ -119,7 +165,7 @@ pub struct TokenInfo {
 }
 
 /// Password change request.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct ChangePasswordRequest {
     /// Current password.
     pub old_password: String,
@@ -127,8 +173,18 @@ pub struct ChangePasswordRequest {
     pub new_password: String,
 }
 
+impl fmt::Debug for ChangePasswordRequest {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("ChangePasswordRequest")
+            .field("old_password", &"[REDACTED]")
+            .field("new_password", &"[REDACTED]")
+            .finish()
+    }
+}
+
 /// Invite code response.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+#[derive(Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct InviteCodeResponse {
     /// Invite code row identifier.
     pub id: i64,
@@ -138,6 +194,18 @@ pub struct InviteCodeResponse {
     pub used: bool,
     /// Invite code creation timestamp.
     pub created_at: f64,
+}
+
+impl fmt::Debug for InviteCodeResponse {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("InviteCodeResponse")
+            .field("id", &self.id)
+            .field("code", &"[REDACTED]")
+            .field("used", &self.used)
+            .field("created_at", &self.created_at)
+            .finish()
+    }
 }
 
 /// Boolean ok response.
@@ -176,7 +244,10 @@ pub fn default_token_ttl() -> i64 {
 
 #[cfg(test)]
 mod tests {
-    use super::{default_token_ttl, InviteRequiredResponse, TokenCreateRequest};
+    use super::{
+        default_token_ttl, ChangePasswordRequest, InviteCodeResponse, InviteRequiredResponse,
+        LoginRequest, RegisterRequest, TokenCreateRequest, TokenCreateResponse, UserResponse,
+    };
 
     #[test]
     fn token_create_request_keeps_python_default_ttl() {
@@ -198,5 +269,61 @@ mod tests {
             serde_json::to_value(response).expect("response should serialize"),
             serde_json::json!({"required": true, "bootstrap_required": true})
         );
+    }
+
+    #[test]
+    fn auth_debug_output_redacts_credentials_and_raw_tokens() {
+        let debug = format!(
+            "{:?}",
+            (
+                UserResponse {
+                    id: crate::UserId(1),
+                    username: "user-name-sentinel".to_string(),
+                    is_admin: true,
+                },
+                RegisterRequest {
+                    username: "register-name-sentinel".to_string(),
+                    password: "register-password-sentinel".to_string(),
+                    invite_code: "register-invite-sentinel".to_string(),
+                },
+                LoginRequest {
+                    username: "login-name-sentinel".to_string(),
+                    password: "login-password-sentinel".to_string(),
+                },
+                TokenCreateResponse {
+                    id: 1,
+                    token: "access-token-sentinel".to_string(),
+                    name: "token-name-sentinel".to_string(),
+                    expires_at: 2.0,
+                },
+                ChangePasswordRequest {
+                    old_password: "old-password-sentinel".to_string(),
+                    new_password: "new-password-sentinel".to_string(),
+                },
+                InviteCodeResponse {
+                    id: 2,
+                    code: "invite-code-sentinel".to_string(),
+                    used: false,
+                    created_at: 3.0,
+                },
+            )
+        );
+
+        assert!(debug.contains("[REDACTED]"));
+        for sentinel in [
+            "user-name-sentinel",
+            "register-name-sentinel",
+            "register-password-sentinel",
+            "register-invite-sentinel",
+            "login-name-sentinel",
+            "login-password-sentinel",
+            "access-token-sentinel",
+            "token-name-sentinel",
+            "old-password-sentinel",
+            "new-password-sentinel",
+            "invite-code-sentinel",
+        ] {
+            assert!(!debug.contains(sentinel));
+        }
     }
 }

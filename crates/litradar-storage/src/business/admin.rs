@@ -3,7 +3,7 @@
 use super::shared::*;
 use super::*;
 
-const ADMIN_INVITE_CODE_BYTES: i64 = 8;
+const ADMIN_INVITE_CODE_BYTES: usize = 8;
 
 /// List all users with admin dashboard counts.
 ///
@@ -132,7 +132,7 @@ pub fn list_all_invite_codes(
 pub fn admin_create_invite_code(
     auth_db_path: impl AsRef<Path>,
 ) -> Result<AdminInviteCodeInfo, BusinessRepositoryError> {
-    let code = random_hex(auth_db_path.as_ref(), ADMIN_INVITE_CODE_BYTES)
+    let code = random_hex(ADMIN_INVITE_CODE_BYTES)
         .map_err(|error| BusinessRepositoryError::Sqlite(error.into_sqlite_error()))?;
     let connection = open_business_connection(auth_db_path)?;
     let now = now_seconds();

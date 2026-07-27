@@ -7,6 +7,8 @@ rust-version.workspace = true
 [dependencies]
 base64.workspace = true
 chacha20poly1305.workspace = true
+getrandom.workspace = true
+hex.workspace = true
 http.workspace = true
 litradar-domain = { path = "../litradar-domain" }
 rusqlite.workspace = true

@@ -112,9 +112,13 @@ printf '%s\n' "$ADMIN_PASSWORD" |
 - bootstrap、注册、改密和管理员重置的新密码至少 12 个 Unicode 字符。
 - 既有短密码哈希仍可登录，直到下次改密。
 - 密码使用 PBKDF2-HMAC-SHA256 hash 和独立 salt。
+- 密码变更和管理员重置在一个 `BEGIN IMMEDIATE` 事务内更新 hash/salt 并撤销该用户全部令牌；任一步失败都会整体回滚。
+- salt、浏览器会话、Personal Access Token、邀请码和手动作业 ID 均由操作系统 CSPRNG 生成，不依赖 SQLite `randomblob()`。
 - 浏览器登录令牌只通过 `HttpOnly`、`SameSite=Lax` 的 `litradar_session` Cookie 传输。
 - 用户创建的长期令牌只通过 Bearer 请求头用于外部客户端。
 - 令牌不得放入 URL 查询参数。
+- `expires_at <= now` 统一视为已过期；验证路径会拒绝并清理边界时刻的令牌。
+- 含密码、salt、原始 token 或邀请码的认证类型使用脱敏 Debug，避免后续诊断误打印秘密。
 
 ## 登录和注册限流
 
