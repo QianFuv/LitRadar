@@ -2,6 +2,11 @@
 
 use super::shared::*;
 use super::*;
+use litradar_domain::{
+    validate_characters, validate_favorite_add, validate_favorite_article_ref,
+    validate_folder_name, validate_item_count, validate_positive_id, MAX_BATCH_ARTICLE_IDS,
+    MAX_DATABASE_NAME_CHARS, SQLITE_IN_QUERY_CHUNK_SIZE,
+};
 
 /// Create a folder for a user.
 ///
@@ -23,26 +28,33 @@ pub fn create_folder(
     name: &str,
     is_tracking: bool,
 ) -> Result<FolderResponse, BusinessRepositoryError> {
-    let connection = open_business_connection(auth_db_path)?;
+    let name = name.trim();
+    validate_folder_name(name)?;
+    let mut connection = open_business_connection(auth_db_path)?;
+    let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
     let now = now_seconds();
     if is_tracking {
-        connection.execute(
+        transaction.execute(
             "UPDATE folders SET is_tracking = 0, updated_at = ?1 WHERE user_id = ?2",
             params![now, user_id.value()],
         )?;
     }
-    match connection.execute(
+    match transaction.execute(
         "INSERT INTO folders (user_id, name, is_tracking, created_at, updated_at) \
          VALUES (?1, ?2, ?3, ?4, ?5)",
         params![user_id.value(), name, is_tracking as i64, now, now],
     ) {
-        Ok(_) => Ok(FolderResponse {
-            id: connection.last_insert_rowid(),
-            name: name.to_string(),
-            is_tracking,
-            article_count: 0,
-            created_at: now,
-        }),
+        Ok(_) => {
+            let folder = FolderResponse {
+                id: transaction.last_insert_rowid(),
+                name: name.to_string(),
+                is_tracking,
+                article_count: 0,
+                created_at: now,
+            };
+            transaction.commit()?;
+            Ok(folder)
+        }
         Err(error) if is_constraint_error(&error) => {
             Err(BusinessRepositoryError::DuplicateFolderName)
         }
@@ -92,6 +104,8 @@ pub fn rename_folder(
     folder_id: i64,
     name: &str,
 ) -> Result<bool, BusinessRepositoryError> {
+    let name = name.trim();
+    validate_folder_name(name)?;
     let connection = open_business_connection(auth_db_path)?;
     match connection.execute(
         "UPDATE folders SET name = ?1, updated_at = ?2 WHERE id = ?3 AND user_id = ?4",
@@ -121,6 +135,7 @@ pub fn delete_folder(
     user_id: UserId,
     folder_id: i64,
 ) -> Result<bool, BusinessRepositoryError> {
+    validate_positive_id("folder_id", folder_id)?;
     let connection = open_business_connection(auth_db_path)?;
     let count = connection.execute(
         "DELETE FROM folders WHERE id = ?1 AND user_id = ?2",
@@ -171,8 +186,10 @@ pub fn set_tracking_folder(
     user_id: UserId,
     folder_id: i64,
 ) -> Result<bool, BusinessRepositoryError> {
-    let connection = open_business_connection(auth_db_path)?;
-    let target = connection
+    validate_positive_id("folder_id", folder_id)?;
+    let mut connection = open_business_connection(auth_db_path)?;
+    let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    let target = transaction
         .query_row(
             "SELECT id FROM folders WHERE id = ?1 AND user_id = ?2",
             params![folder_id, user_id.value()],
@@ -183,14 +200,18 @@ pub fn set_tracking_folder(
         return Ok(false);
     }
     let now = now_seconds();
-    connection.execute(
+    transaction.execute(
         "UPDATE folders SET is_tracking = 0, updated_at = ?1 WHERE user_id = ?2",
         params![now, user_id.value()],
     )?;
-    connection.execute(
+    let updated = transaction.execute(
         "UPDATE folders SET is_tracking = 1, updated_at = ?1 WHERE id = ?2 AND user_id = ?3",
         params![now, folder_id, user_id.value()],
     )?;
+    if updated != 1 {
+        return Ok(false);
+    }
+    transaction.commit()?;
     Ok(true)
 }
 
@@ -212,35 +233,53 @@ pub fn add_favorite(
     folder_id: i64,
     favorite: &FavoriteAdd,
 ) -> Result<FavoriteResponse, BusinessRepositoryError> {
-    let connection = open_business_connection(auth_db_path)?;
+    validate_positive_id("folder_id", folder_id)?;
+    validate_favorite_add(favorite)?;
+    let mut connection = open_business_connection(auth_db_path)?;
+    let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
     ensure_folder_exists(
-        &connection,
+        &transaction,
         user_id,
         folder_id,
         BusinessRepositoryError::FolderNotFound,
     )?;
     let now = now_seconds();
-    connection.execute(
-        "INSERT OR IGNORE INTO favorites \
+    let inserted = transaction
+        .query_row(
+            "INSERT INTO favorites \
          (user_id, folder_id, article_id, db_name, note, created_at) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-        params![
-            user_id.value(),
-            folder_id,
-            favorite.article_id.value(),
-            favorite.db_name,
-            favorite.note,
-            now
-        ],
-    )?;
-    Ok(FavoriteResponse {
-        id: connection.last_insert_rowid(),
-        folder_id,
-        article_id: favorite.article_id,
-        db_name: favorite.db_name.clone(),
-        note: favorite.note.clone(),
-        created_at: now,
-    })
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6) \
+         ON CONFLICT(user_id, folder_id, article_id, db_name) DO NOTHING \
+         RETURNING id, folder_id, article_id, db_name, note, created_at",
+            params![
+                user_id.value(),
+                folder_id,
+                favorite.article_id.value(),
+                favorite.db_name,
+                favorite.note,
+                now
+            ],
+            favorite_from_row,
+        )
+        .optional()?;
+    let stored = if let Some(inserted) = inserted {
+        inserted
+    } else {
+        transaction.query_row(
+            "SELECT id, folder_id, article_id, db_name, note, created_at \
+             FROM favorites WHERE user_id = ?1 AND folder_id = ?2 \
+             AND article_id = ?3 AND db_name = ?4",
+            params![
+                user_id.value(),
+                folder_id,
+                favorite.article_id.value(),
+                favorite.db_name
+            ],
+            favorite_from_row,
+        )?
+    };
+    transaction.commit()?;
+    Ok(stored)
 }
 
 /// Remove one favorite row.
@@ -263,6 +302,9 @@ pub fn remove_favorite(
     article_id: i64,
     db_name: &str,
 ) -> Result<bool, BusinessRepositoryError> {
+    validate_positive_id("folder_id", folder_id)?;
+    validate_positive_id("article_id", article_id)?;
+    validate_characters("db_name", db_name, MAX_DATABASE_NAME_CHARS)?;
     let connection = open_business_connection(auth_db_path)?;
     let count = connection.execute(
         "DELETE FROM favorites WHERE user_id = ?1 AND folder_id = ?2 \
@@ -414,6 +456,8 @@ pub fn is_favorited(
     article_id: i64,
     db_name: &str,
 ) -> Result<Vec<FavoriteCheckResponse>, BusinessRepositoryError> {
+    validate_positive_id("article_id", article_id)?;
+    validate_characters("db_name", db_name, MAX_DATABASE_NAME_CHARS)?;
     let connection = open_business_connection(auth_db_path)?;
     let mut statement = connection.prepare(
         "SELECT fav.folder_id, f.name AS folder_name \
@@ -447,40 +491,45 @@ pub fn batch_is_favorited(
     article_ids: &[i64],
     db_name: &str,
 ) -> Result<Vec<FavoriteBatchCheckResponse>, BusinessRepositoryError> {
+    validate_item_count("article_ids", article_ids.len(), MAX_BATCH_ARTICLE_IDS)?;
+    validate_characters("db_name", db_name, MAX_DATABASE_NAME_CHARS)?;
     let article_ids = normalize_article_ids(article_ids);
     if article_ids.is_empty() {
         return Ok(Vec::new());
     }
     let connection = open_business_connection(auth_db_path)?;
-    let placeholders = repeat_placeholders(article_ids.len(), 3);
-    let sql = format!(
-        "SELECT fav.article_id, fav.folder_id, f.name AS folder_name \
-         FROM favorites fav JOIN folders f ON fav.folder_id = f.id \
-         WHERE fav.user_id = ?1 AND fav.db_name = ?2 AND fav.article_id IN ({placeholders}) \
-         ORDER BY fav.article_id, fav.created_at"
-    );
-    let mut values: Vec<&dyn rusqlite::ToSql> = Vec::with_capacity(article_ids.len() + 2);
-    values.push(&user_id.0);
-    values.push(&db_name);
-    for article_id in &article_ids {
-        values.push(article_id);
-    }
-    let mut statement = connection.prepare(&sql)?;
-    let mut rows = statement.query(values.as_slice())?;
     let mut by_article: HashMap<i64, Vec<FavoriteCheckResponse>> = article_ids
         .iter()
         .copied()
         .map(|id| (id, Vec::new()))
         .collect();
-    while let Some(row) = rows.next()? {
-        let article_id = row.get::<_, i64>(0)?;
-        by_article
-            .entry(article_id)
-            .or_default()
-            .push(FavoriteCheckResponse {
-                folder_id: row.get(1)?,
-                folder_name: row.get(2)?,
-            });
+    for chunk in article_ids.chunks(SQLITE_IN_QUERY_CHUNK_SIZE) {
+        let placeholders = repeat_placeholders(chunk.len(), 3);
+        let sql = format!(
+            "SELECT fav.article_id, fav.folder_id, f.name AS folder_name \
+             FROM favorites fav JOIN folders f ON fav.folder_id = f.id \
+             WHERE fav.user_id = ?1 AND fav.db_name = ?2 \
+             AND fav.article_id IN ({placeholders}) \
+             ORDER BY fav.article_id, fav.created_at"
+        );
+        let mut values: Vec<&dyn rusqlite::ToSql> = Vec::with_capacity(chunk.len() + 2);
+        values.push(&user_id.0);
+        values.push(&db_name);
+        for article_id in chunk {
+            values.push(article_id);
+        }
+        let mut statement = connection.prepare(&sql)?;
+        let mut rows = statement.query(values.as_slice())?;
+        while let Some(row) = rows.next()? {
+            let article_id = row.get::<_, i64>(0)?;
+            by_article
+                .entry(article_id)
+                .or_default()
+                .push(FavoriteCheckResponse {
+                    folder_id: row.get(1)?,
+                    folder_name: row.get(2)?,
+                });
+        }
     }
     Ok(article_ids
         .into_iter()
@@ -509,33 +558,40 @@ pub fn bulk_add_favorites(
     folder_id: i64,
     articles: &[FavoriteAdd],
 ) -> Result<i64, BusinessRepositoryError> {
-    let connection = open_business_connection(auth_db_path)?;
+    validate_positive_id("folder_id", folder_id)?;
+    validate_item_count("articles", articles.len(), MAX_BATCH_ARTICLE_IDS)?;
+    for article in articles {
+        validate_favorite_add(article)?;
+    }
+    let mut connection = open_business_connection(auth_db_path)?;
+    let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
     ensure_folder_exists(
-        &connection,
+        &transaction,
         user_id,
         folder_id,
         BusinessRepositoryError::FolderNotFound,
     )?;
     let now = now_seconds();
-    let before = connection.total_changes();
+    let mut added = 0_i64;
     {
-        let mut statement = connection.prepare(
+        let mut statement = transaction.prepare(
             "INSERT OR IGNORE INTO favorites \
              (user_id, folder_id, article_id, db_name, note, created_at) \
              VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
         )?;
         for article in articles {
-            statement.execute(params![
+            added += statement.execute(params![
                 user_id.value(),
                 folder_id,
                 article.article_id.value(),
                 article.db_name,
                 article.note,
                 now
-            ])?;
+            ])? as i64;
         }
     }
-    Ok((connection.total_changes() - before) as i64)
+    transaction.commit()?;
+    Ok(added)
 }
 
 /// Bulk remove favorites.
@@ -556,28 +612,36 @@ pub fn bulk_remove_favorites(
     folder_id: i64,
     articles: &[FavoriteArticleRef],
 ) -> Result<i64, BusinessRepositoryError> {
+    validate_positive_id("folder_id", folder_id)?;
+    validate_item_count("articles", articles.len(), MAX_BATCH_ARTICLE_IDS)?;
+    for article in articles {
+        validate_favorite_article_ref(article)?;
+    }
     let normalized = normalize_favorite_articles(articles);
     if normalized.is_empty() {
         return Ok(0);
     }
-    let connection = open_business_connection(auth_db_path)?;
+    let mut connection = open_business_connection(auth_db_path)?;
+    let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
     ensure_folder_exists(
-        &connection,
+        &transaction,
         user_id,
         folder_id,
         BusinessRepositoryError::FolderNotFound,
     )?;
-    let before = connection.total_changes();
+    let mut removed = 0_i64;
     {
-        let mut statement = connection.prepare(
+        let mut statement = transaction.prepare(
             "DELETE FROM favorites WHERE user_id = ?1 AND folder_id = ?2 \
              AND article_id = ?3 AND db_name = ?4",
         )?;
         for (article_id, db_name) in normalized {
-            statement.execute(params![user_id.value(), folder_id, article_id, db_name])?;
+            removed +=
+                statement.execute(params![user_id.value(), folder_id, article_id, db_name])? as i64;
         }
     }
-    Ok((connection.total_changes() - before) as i64)
+    transaction.commit()?;
+    Ok(removed)
 }
 
 /// Bulk move favorites.
@@ -600,27 +664,33 @@ pub fn bulk_move_favorites(
     target_folder_id: i64,
     articles: &[FavoriteArticleRef],
 ) -> Result<i64, BusinessRepositoryError> {
+    validate_positive_id("source_folder_id", source_folder_id)?;
+    validate_positive_id("target_folder_id", target_folder_id)?;
     if source_folder_id == target_folder_id {
         return Err(BusinessRepositoryError::SourceAndTargetFoldersSame);
+    }
+    validate_item_count("articles", articles.len(), MAX_BATCH_ARTICLE_IDS)?;
+    for article in articles {
+        validate_favorite_article_ref(article)?;
     }
     let normalized = normalize_favorite_articles(articles);
     if normalized.is_empty() {
         return Ok(0);
     }
     let mut connection = open_business_connection(auth_db_path)?;
+    let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
     ensure_folder_exists(
-        &connection,
+        &transaction,
         user_id,
         source_folder_id,
         BusinessRepositoryError::SourceFolderNotFound,
     )?;
     ensure_folder_exists(
-        &connection,
+        &transaction,
         user_id,
         target_folder_id,
         BusinessRepositoryError::TargetFolderNotFound,
     )?;
-    let transaction = connection.transaction()?;
     let now = now_seconds();
     {
         let mut insert = transaction.prepare(
@@ -695,54 +765,57 @@ fn load_metadata_from_index(
     if unique_ids.is_empty() {
         return Ok(HashMap::new());
     }
-    let placeholders = repeat_placeholders(unique_ids.len(), 1);
-    let sql = format!(
-        "SELECT a.article_id, a.journal_id, a.issue_id, a.title, a.publication_year, \
-         a.date, a.authors_json, a.abstract_text, a.doi, a.open_access, a.in_press, \
-         j.title AS journal_title, j.issn, j.eissn, i.volume, i.number \
-         FROM articles a LEFT JOIN issues i ON i.issue_id = a.issue_id \
-         JOIN journals j ON j.journal_id = a.journal_id \
-         WHERE a.article_id IN ({placeholders})"
-    );
     let connection = Connection::open(db_path)?;
-    let mut values: Vec<&dyn rusqlite::ToSql> = Vec::with_capacity(unique_ids.len());
-    for article_id in &unique_ids {
-        values.push(article_id);
+    let mut result = HashMap::new();
+    for chunk in unique_ids.chunks(SQLITE_IN_QUERY_CHUNK_SIZE) {
+        let placeholders = repeat_placeholders(chunk.len(), 1);
+        let sql = format!(
+            "SELECT a.article_id, a.journal_id, a.issue_id, a.title, a.publication_year, \
+             a.date, a.authors_json, a.abstract_text, a.doi, a.open_access, a.in_press, \
+             j.title AS journal_title, j.issn, j.eissn, i.volume, i.number \
+             FROM articles a LEFT JOIN issues i ON i.issue_id = a.issue_id \
+             JOIN journals j ON j.journal_id = a.journal_id \
+             WHERE a.article_id IN ({placeholders})"
+        );
+        let values = chunk
+            .iter()
+            .map(|article_id| article_id as &dyn rusqlite::ToSql)
+            .collect::<Vec<_>>();
+        let mut statement = connection.prepare(&sql)?;
+        let rows = statement.query_map(values.as_slice(), |row| {
+            let article_id = row.get::<_, i64>(0)?;
+            Ok((
+                (db_name.to_string(), article_id),
+                FavoriteArticleResponse {
+                    id: 0,
+                    folder_id: 0,
+                    article_id: litradar_domain::ArticleId(article_id),
+                    db_name: db_name.to_string(),
+                    note: String::new(),
+                    created_at: 0.0,
+                    journal_id: row
+                        .get::<_, Option<i64>>(1)?
+                        .map(litradar_domain::JournalId),
+                    issue_id: row.get(2)?,
+                    title: row.get(3)?,
+                    publication_year: row.get(4)?,
+                    date: row.get(5)?,
+                    authors: Some(json_string_vec_from_business_row(row, 6)?),
+                    abstract_text: row.get(7)?,
+                    doi: row.get(8)?,
+                    open_access: row.get::<_, Option<i64>>(9)?.map(|value| value != 0),
+                    in_press: row.get::<_, Option<i64>>(10)?.map(|value| value != 0),
+                    journal_title: row.get(11)?,
+                    issn: row.get(12)?,
+                    eissn: row.get(13)?,
+                    volume: row.get(14)?,
+                    number: row.get(15)?,
+                },
+            ))
+        })?;
+        result.extend(collect_rows(rows)?);
     }
-    let mut statement = connection.prepare(&sql)?;
-    let rows = statement.query_map(values.as_slice(), |row| {
-        let article_id = row.get::<_, i64>(0)?;
-        Ok((
-            (db_name.to_string(), article_id),
-            FavoriteArticleResponse {
-                id: 0,
-                folder_id: 0,
-                article_id: litradar_domain::ArticleId(article_id),
-                db_name: db_name.to_string(),
-                note: String::new(),
-                created_at: 0.0,
-                journal_id: row
-                    .get::<_, Option<i64>>(1)?
-                    .map(litradar_domain::JournalId),
-                issue_id: row.get(2)?,
-                title: row.get(3)?,
-                publication_year: row.get(4)?,
-                date: row.get(5)?,
-                authors: Some(json_string_vec_from_business_row(row, 6)?),
-                abstract_text: row.get(7)?,
-                doi: row.get(8)?,
-                open_access: row.get::<_, Option<i64>>(9)?.map(|value| value != 0),
-                in_press: row.get::<_, Option<i64>>(10)?.map(|value| value != 0),
-                journal_title: row.get(11)?,
-                issn: row.get(12)?,
-                eissn: row.get(13)?,
-                volume: row.get(14)?,
-                number: row.get(15)?,
-            },
-        ))
-    })?;
-    collect_rows(rows)
-        .map(|items: Vec<((String, i64), FavoriteArticleResponse)>| items.into_iter().collect())
+    Ok(result)
 }
 
 fn json_string_vec_from_business_row(
@@ -840,4 +913,294 @@ fn is_constraint_error(error: &rusqlite::Error) -> bool {
         rusqlite::Error::SqliteFailure(failure, _)
             if failure.code == ErrorCode::ConstraintViolation
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use litradar_domain::ArticleId;
+    use tempfile::{tempdir, TempDir};
+
+    use super::*;
+    use crate::migrate_auth_database;
+
+    #[test]
+    fn favorites_tracking_mutations_preserve_the_previous_selection_on_failure() {
+        let (_temp_dir, auth_db_path, user_id) = favorite_test_database();
+        let original = create_folder(&auth_db_path, user_id, "Original", true)
+            .expect("original tracking folder should be created");
+
+        assert!(matches!(
+            create_folder(&auth_db_path, user_id, "Original", true),
+            Err(BusinessRepositoryError::DuplicateFolderName)
+        ));
+        assert_eq!(
+            get_tracking_folder(&auth_db_path, user_id)
+                .expect("tracking folder should load")
+                .expect("tracking folder should remain")
+                .id,
+            original.id
+        );
+
+        let replacement = create_folder(&auth_db_path, user_id, "Replacement", false)
+            .expect("replacement folder should be created");
+        assert!(!set_tracking_folder(&auth_db_path, user_id, 99_999)
+            .expect("missing tracking target should be reported"));
+        assert_eq!(
+            get_tracking_folder(&auth_db_path, user_id)
+                .expect("tracking folder should load")
+                .expect("tracking folder should remain")
+                .id,
+            original.id
+        );
+
+        let connection = Connection::open(&auth_db_path).expect("auth database should open");
+        connection
+            .execute_batch(&format!(
+                "CREATE TRIGGER fail_tracking_selection
+                 BEFORE UPDATE OF is_tracking ON folders
+                 WHEN NEW.id = {} AND NEW.is_tracking = 1
+                 BEGIN SELECT RAISE(ABORT, 'injected tracking selection failure'); END;",
+                replacement.id
+            ))
+            .expect("tracking fault trigger should be created");
+        drop(connection);
+        assert!(set_tracking_folder(&auth_db_path, user_id, replacement.id).is_err());
+        assert_eq!(
+            get_tracking_folder(&auth_db_path, user_id)
+                .expect("tracking folder should load after failure")
+                .expect("tracking folder should survive failure")
+                .id,
+            original.id
+        );
+        Connection::open(&auth_db_path)
+            .expect("auth database should reopen")
+            .execute_batch("DROP TRIGGER fail_tracking_selection;")
+            .expect("tracking fault trigger should be removed");
+
+        assert!(set_tracking_folder(&auth_db_path, user_id, replacement.id)
+            .expect("replacement tracking folder should be selected"));
+        let folders = list_folders(&auth_db_path, user_id).expect("folders should load");
+        let tracked = folders
+            .iter()
+            .filter(|folder| folder.is_tracking)
+            .collect::<Vec<_>>();
+        assert_eq!(tracked.len(), 1);
+        assert_eq!(tracked[0].id, replacement.id);
+    }
+
+    #[test]
+    fn favorites_repeated_add_returns_the_exact_existing_row() {
+        let (_temp_dir, auth_db_path, user_id) = favorite_test_database();
+        let folder = create_folder(&auth_db_path, user_id, "Reading", false)
+            .expect("folder should be created");
+        let first_payload = FavoriteAdd {
+            article_id: ArticleId(41),
+            db_name: "fixture.sqlite".to_string(),
+            note: "first note".to_string(),
+        };
+        let repeated_payload = FavoriteAdd {
+            note: "replacement note".to_string(),
+            ..first_payload.clone()
+        };
+
+        let first = add_favorite(&auth_db_path, user_id, folder.id, &first_payload)
+            .expect("favorite should be inserted");
+        let repeated = add_favorite(&auth_db_path, user_id, folder.id, &repeated_payload)
+            .expect("duplicate favorite should return the stored row");
+
+        assert_eq!(repeated.id, first.id);
+        assert_eq!(repeated.created_at, first.created_at);
+        assert_eq!(repeated.note, "first note");
+    }
+
+    #[test]
+    fn favorites_bulk_add_and_remove_roll_back_after_injected_failures() {
+        let (_temp_dir, auth_db_path, user_id) = favorite_test_database();
+        let folder = create_folder(&auth_db_path, user_id, "Atomic", false)
+            .expect("folder should be created");
+        let additions = (1..=3)
+            .map(|article_id| FavoriteAdd {
+                article_id: ArticleId(article_id),
+                db_name: "fixture.sqlite".to_string(),
+                note: String::new(),
+            })
+            .collect::<Vec<_>>();
+        let connection = Connection::open(&auth_db_path).expect("auth database should open");
+        connection
+            .execute_batch(
+                "CREATE TRIGGER fail_favorite_insert
+                 BEFORE INSERT ON favorites WHEN NEW.article_id = 2
+                 BEGIN SELECT RAISE(ABORT, 'injected favorite insert failure'); END;",
+            )
+            .expect("insert fault trigger should be created");
+        drop(connection);
+
+        assert!(bulk_add_favorites(&auth_db_path, user_id, folder.id, &additions).is_err());
+        assert_eq!(
+            count_favorites(&auth_db_path, user_id, Some(folder.id))
+                .expect("favorite count should load"),
+            0
+        );
+
+        let connection = Connection::open(&auth_db_path).expect("auth database should reopen");
+        connection
+            .execute_batch(
+                "DROP TRIGGER fail_favorite_insert;
+                 CREATE TRIGGER fail_favorite_delete
+                 BEFORE DELETE ON favorites WHEN OLD.article_id = 2
+                 BEGIN SELECT RAISE(ABORT, 'injected favorite delete failure'); END;",
+            )
+            .expect("delete fault trigger should be created");
+        drop(connection);
+        assert_eq!(
+            bulk_add_favorites(&auth_db_path, user_id, folder.id, &additions)
+                .expect("favorites should be inserted"),
+            3
+        );
+        let removals = additions
+            .iter()
+            .map(|favorite| FavoriteArticleRef {
+                article_id: favorite.article_id,
+                db_name: favorite.db_name.clone(),
+            })
+            .collect::<Vec<_>>();
+
+        assert!(bulk_remove_favorites(&auth_db_path, user_id, folder.id, &removals).is_err());
+        assert_eq!(
+            count_favorites(&auth_db_path, user_id, Some(folder.id))
+                .expect("favorite count should load"),
+            3
+        );
+    }
+
+    #[test]
+    fn favorites_batch_boundary_accepts_five_hundred_and_rejects_one_more() {
+        let (_temp_dir, auth_db_path, user_id) = favorite_test_database();
+        let folder = create_folder(&auth_db_path, user_id, "Boundary", false)
+            .expect("folder should be created");
+        let additions = (1..=MAX_BATCH_ARTICLE_IDS as i64)
+            .map(|article_id| FavoriteAdd {
+                article_id: ArticleId(article_id),
+                db_name: "fixture.sqlite".to_string(),
+                note: String::new(),
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            bulk_add_favorites(&auth_db_path, user_id, folder.id, &additions)
+                .expect("boundary favorites should be inserted"),
+            MAX_BATCH_ARTICLE_IDS as i64
+        );
+        let mut oversized_additions = additions.clone();
+        oversized_additions.push(FavoriteAdd {
+            article_id: ArticleId(MAX_BATCH_ARTICLE_IDS as i64 + 1),
+            db_name: "fixture.sqlite".to_string(),
+            note: String::new(),
+        });
+        assert!(matches!(
+            bulk_add_favorites(&auth_db_path, user_id, folder.id, &oversized_additions),
+            Err(BusinessRepositoryError::InvalidInput(_))
+        ));
+        assert_eq!(
+            count_favorites(&auth_db_path, user_id, Some(folder.id))
+                .expect("favorite count should remain readable"),
+            MAX_BATCH_ARTICLE_IDS as i64
+        );
+        let article_ids = additions
+            .iter()
+            .map(|favorite| favorite.article_id.value())
+            .collect::<Vec<_>>();
+
+        let checked = batch_is_favorited(&auth_db_path, user_id, &article_ids, "fixture.sqlite")
+            .expect("boundary batch should be checked");
+        assert_eq!(checked.len(), MAX_BATCH_ARTICLE_IDS);
+        assert!(checked.iter().all(|item| item.folders.len() == 1));
+
+        let mut oversized = article_ids;
+        oversized.push(MAX_BATCH_ARTICLE_IDS as i64 + 1);
+        assert!(matches!(
+            batch_is_favorited(&auth_db_path, user_id, &oversized, "fixture.sqlite"),
+            Err(BusinessRepositoryError::InvalidInput(_))
+        ));
+    }
+
+    #[test]
+    fn favorites_metadata_queries_chunk_more_than_five_hundred_ids() {
+        let temp_dir = tempdir().expect("temp directory should be created");
+        let index_db_path = temp_dir.path().join("fixture.sqlite");
+        let mut connection = Connection::open(&index_db_path).expect("index database should open");
+        connection
+            .execute_batch(
+                "CREATE TABLE journals (
+                     journal_id INTEGER PRIMARY KEY,
+                     title TEXT NOT NULL,
+                     issn TEXT,
+                     eissn TEXT
+                 );
+                 CREATE TABLE issues (
+                     issue_id INTEGER PRIMARY KEY,
+                     volume TEXT,
+                     number TEXT
+                 );
+                 CREATE TABLE articles (
+                     article_id INTEGER PRIMARY KEY,
+                     journal_id INTEGER NOT NULL,
+                     issue_id INTEGER,
+                     title TEXT,
+                     publication_year INTEGER,
+                     date TEXT,
+                     authors_json TEXT NOT NULL,
+                     abstract_text TEXT,
+                     doi TEXT,
+                     open_access INTEGER,
+                     in_press INTEGER
+                 );
+                 INSERT INTO journals (journal_id, title) VALUES (1, 'Fixture Journal');",
+            )
+            .expect("minimal index schema should be created");
+        let transaction = connection
+            .transaction()
+            .expect("article fixture transaction should start");
+        {
+            let mut statement = transaction
+                .prepare(
+                    "INSERT INTO articles
+                     (article_id, journal_id, title, publication_year, authors_json)
+                     VALUES (?1, 1, ?2, 2026, '[]')",
+                )
+                .expect("article insert should prepare");
+            for article_id in 1..=SQLITE_IN_QUERY_CHUNK_SIZE as i64 + 1 {
+                statement
+                    .execute(params![article_id, format!("Article {article_id}")])
+                    .expect("article fixture should insert");
+            }
+        }
+        transaction
+            .commit()
+            .expect("article fixture transaction should commit");
+        let article_ids = (1..=SQLITE_IN_QUERY_CHUNK_SIZE as i64 + 1).collect::<Vec<_>>();
+
+        let metadata = load_metadata_from_index(&index_db_path, "fixture.sqlite", &article_ids)
+            .expect("chunked metadata query should load");
+
+        assert_eq!(metadata.len(), SQLITE_IN_QUERY_CHUNK_SIZE + 1);
+    }
+
+    fn favorite_test_database() -> (TempDir, PathBuf, UserId) {
+        let temp_dir = tempdir().expect("temp directory should be created");
+        let auth_db_path = temp_dir.path().join("auth.sqlite");
+        migrate_auth_database(&auth_db_path).expect("auth database should migrate");
+        let connection = Connection::open(&auth_db_path).expect("auth database should open");
+        connection
+            .execute(
+                "INSERT INTO users
+                 (username, password_hash, salt, is_admin, created_at, updated_at)
+                 VALUES ('favorite-owner', 'hash', 'salt', 1, 1.0, 1.0)",
+                [],
+            )
+            .expect("favorite owner should insert");
+        let user_id = UserId(connection.last_insert_rowid());
+        (temp_dir, auth_db_path, user_id)
+    }
 }

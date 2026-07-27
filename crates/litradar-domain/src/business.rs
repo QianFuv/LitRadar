@@ -13,6 +13,7 @@ use crate::{ArticleId, JournalId, UserId};
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct FolderCreate {
     /// Folder display name.
+    #[schema(min_length = 1, max_length = 100)]
     pub name: String,
     /// Whether the folder should become the user's tracking folder.
     #[serde(default)]
@@ -23,6 +24,7 @@ pub struct FolderCreate {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct FolderRename {
     /// Replacement folder display name.
+    #[schema(min_length = 1, max_length = 100)]
     pub name: String,
 }
 
@@ -48,9 +50,11 @@ pub struct FavoriteAdd {
     pub article_id: ArticleId,
     /// Source index database name.
     #[serde(default)]
+    #[schema(max_length = 255)]
     pub db_name: String,
     /// User note text.
     #[serde(default)]
+    #[schema(max_length = 2000)]
     pub note: String,
 }
 
@@ -61,6 +65,7 @@ pub struct FavoriteArticleRef {
     pub article_id: ArticleId,
     /// Source index database name.
     #[serde(default)]
+    #[schema(max_length = 255)]
     pub db_name: String,
 }
 
@@ -171,9 +176,11 @@ pub struct FavoriteCheckResponse {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct FavoriteBatchCheckRequest {
     /// Article identifiers to check.
+    #[schema(max_items = 500)]
     pub article_ids: Vec<ArticleId>,
     /// Source index database name.
     #[serde(default)]
+    #[schema(max_length = 255)]
     pub db_name: String,
 }
 
@@ -190,6 +197,7 @@ pub struct FavoriteBatchCheckResponse {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct FavoriteBulkAdd {
     /// Favorite articles to add.
+    #[schema(max_items = 500)]
     pub articles: Vec<FavoriteAdd>,
 }
 
@@ -197,6 +205,7 @@ pub struct FavoriteBulkAdd {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct FavoriteBulkRemove {
     /// Favorite articles to remove.
+    #[schema(max_items = 500)]
     pub articles: Vec<FavoriteArticleRef>,
 }
 
@@ -206,6 +215,7 @@ pub struct FavoriteBulkMove {
     /// Target folder row identifier.
     pub target_folder_id: i64,
     /// Favorite articles to move.
+    #[schema(max_items = 500)]
     pub articles: Vec<FavoriteArticleRef>,
 }
 
@@ -256,12 +266,15 @@ pub const NOTIFICATION_AI_RETRY_ATTEMPTS_MAX: i64 = DELIVERY_RETRY_ATTEMPTS_MAX 
 pub struct NotificationSettingsUpdate {
     /// Keyword preferences.
     #[serde(default)]
+    #[schema(max_items = 100)]
     pub keywords: Vec<String>,
     /// Research direction preferences.
     #[serde(default)]
+    #[schema(max_items = 100)]
     pub directions: Vec<String>,
     /// Selected index database names.
     #[serde(default)]
+    #[schema(max_items = 500)]
     pub selected_databases: Vec<String>,
     /// Delivery method.
     #[serde(default = "default_delivery_method")]
@@ -275,18 +288,22 @@ pub struct NotificationSettingsUpdate {
     pub pushplus_token: Option<Option<String>>,
     /// PushPlus template.
     #[serde(default = "default_pushplus_template")]
+    #[schema(max_length = 64)]
     pub pushplus_template: String,
     /// PushPlus topic.
     #[serde(default)]
+    #[schema(max_length = 200)]
     pub pushplus_topic: String,
     /// PushPlus channel.
     #[serde(default = "default_pushplus_channel")]
+    #[schema(max_length = 64)]
     pub pushplus_channel: String,
     /// Whether PushPlus delivery also syncs to the tracking folder.
     #[serde(default)]
     pub sync_to_tracking_folder: bool,
     /// Primary AI endpoint base URL.
     #[serde(default)]
+    #[schema(max_length = 2048)]
     pub ai_base_url: String,
     /// Primary AI API key update: omitted preserves, null clears, and non-empty replaces.
     #[serde(
@@ -297,12 +314,15 @@ pub struct NotificationSettingsUpdate {
     pub ai_api_key: Option<Option<String>>,
     /// Primary AI model.
     #[serde(default)]
+    #[schema(max_length = 200)]
     pub ai_model: String,
     /// Primary AI system prompt.
     #[serde(default)]
+    #[schema(max_length = 10000)]
     pub ai_system_prompt: String,
     /// Backup AI endpoint base URL.
     #[serde(default)]
+    #[schema(max_length = 2048)]
     pub ai_backup_base_url: String,
     /// Backup AI API key update: omitted preserves, null clears, and non-empty replaces.
     #[serde(
@@ -313,9 +333,11 @@ pub struct NotificationSettingsUpdate {
     pub ai_backup_api_key: Option<Option<String>>,
     /// Backup AI model.
     #[serde(default)]
+    #[schema(max_length = 200)]
     pub ai_backup_model: String,
     /// Backup AI system prompt.
     #[serde(default)]
+    #[schema(max_length = 10000)]
     pub ai_backup_system_prompt: String,
     /// Retry attempts per AI endpoint.
     #[serde(default = "default_ai_retry_attempts")]
@@ -1057,11 +1079,14 @@ pub struct AdminInviteCodeInfo {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct AnnouncementCreate {
     /// Announcement title.
+    #[schema(min_length = 1, max_length = 200)]
     pub title: String,
     /// Announcement message body.
+    #[schema(min_length = 1, max_length = 10000)]
     pub message: String,
     /// Priority label.
     #[serde(default = "default_announcement_priority")]
+    #[schema(min_length = 1, max_length = 16)]
     pub priority: String,
     /// Whether the announcement is visible.
     #[serde(default = "default_enabled")]
@@ -1072,10 +1097,13 @@ pub struct AnnouncementCreate {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct AnnouncementUpdate {
     /// Optional replacement title.
+    #[schema(min_length = 1, max_length = 200)]
     pub title: Option<String>,
     /// Optional replacement message.
+    #[schema(min_length = 1, max_length = 10000)]
     pub message: Option<String>,
     /// Optional replacement priority.
+    #[schema(min_length = 1, max_length = 16)]
     pub priority: Option<String>,
     /// Optional enabled flag.
     pub enabled: Option<bool>,

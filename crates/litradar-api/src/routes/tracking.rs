@@ -264,6 +264,7 @@ pub(crate) async fn update_notification_settings(
     Json(body): Json<NotificationSettingsUpdate>,
 ) -> Result<Json<NotificationSettingsResponse>, ApiError> {
     let (user, _) = require_current_user(&state, &headers).await?;
+    validate_notification_update(&body)?;
     if !(NOTIFICATION_AI_RETRY_ATTEMPTS_MIN..=NOTIFICATION_AI_RETRY_ATTEMPTS_MAX)
         .contains(&body.ai_retry_attempts)
     {
@@ -383,9 +384,17 @@ pub(crate) async fn update_notification_settings(
             litradar_storage::BusinessRepositoryError::OutboundEndpointNotAllowed => {
                 ApiError::bad_request("AI endpoint is not available")
             }
+            litradar_storage::BusinessRepositoryError::InvalidInput(error) => {
+                ApiError::bad_request(error.to_string())
+            }
             _ => ApiError::internal_server_error(),
         })?;
     Ok(Json(NotificationSettingsResponse::from(&settings)))
+}
+
+fn validate_notification_update(body: &NotificationSettingsUpdate) -> Result<(), ApiError> {
+    litradar_domain::validate_notification_settings(body)
+        .map_err(|error| ApiError::bad_request(error.to_string()))
 }
 
 fn normalize_selected_ai_endpoint(
@@ -567,12 +576,28 @@ fn current_epoch_seconds() -> f64 {
 
 #[cfg(test)]
 mod tests {
+    use litradar_domain::NotificationSettingsUpdate;
     use litradar_storage::{
         DeliveryRunMode, DeliveryRunRecord, DeliveryRunStatus, DeliveryTriggerKind,
         DeliveryWorkflow,
     };
 
-    use super::manual_push_status;
+    use super::{manual_push_status, validate_notification_update};
+
+    #[test]
+    fn notification_route_validation_uses_shared_unicode_and_item_limits() {
+        let mut settings = serde_json::from_str::<NotificationSettingsUpdate>("{}")
+            .expect("default notification settings should deserialize");
+        settings.keywords = vec!["keyword".to_string(); litradar_domain::MAX_NOTIFICATION_KEYWORDS];
+        settings.ai_system_prompt = "文".repeat(litradar_domain::MAX_NOTIFICATION_PROMPT_CHARS);
+        validate_notification_update(&settings).expect("notification boundaries should pass");
+
+        settings.keywords.push("overflow".to_string());
+        assert!(validate_notification_update(&settings).is_err());
+        settings.keywords.pop();
+        settings.ai_system_prompt.push('文');
+        assert!(validate_notification_update(&settings).is_err());
+    }
 
     #[test]
     fn manual_push_status_maps_durable_states_and_safe_actions() {

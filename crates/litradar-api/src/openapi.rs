@@ -442,6 +442,34 @@ mod tests {
     }
 
     #[test]
+    fn openapi_documents_business_input_limits() {
+        let document =
+            serde_json::to_value(ApiDoc::openapi()).expect("OpenAPI document should serialize");
+        let schemas = &document["components"]["schemas"];
+
+        assert_eq!(
+            schemas["FolderCreate"]["properties"]["name"]["maxLength"],
+            serde_json::json!(litradar_domain::MAX_FOLDER_NAME_CHARS)
+        );
+        assert_eq!(
+            schemas["FavoriteBatchCheckRequest"]["properties"]["article_ids"]["maxItems"],
+            serde_json::json!(litradar_domain::MAX_BATCH_ARTICLE_IDS)
+        );
+        assert_eq!(
+            schemas["FavoriteAdd"]["properties"]["note"]["maxLength"],
+            serde_json::json!(litradar_domain::MAX_FAVORITE_NOTE_CHARS)
+        );
+        assert_eq!(
+            schemas["NotificationSettingsUpdate"]["properties"]["ai_system_prompt"]["maxLength"],
+            serde_json::json!(litradar_domain::MAX_NOTIFICATION_PROMPT_CHARS)
+        );
+        assert_eq!(
+            schemas["AnnouncementCreate"]["properties"]["message"]["maxLength"],
+            serde_json::json!(litradar_domain::MAX_ANNOUNCEMENT_MESSAGE_CHARS)
+        );
+    }
+
+    #[test]
     fn openapi_document_generation_is_deterministic() {
         let first = serde_json::to_string_pretty(&document())
             .expect("first OpenAPI document should serialize");

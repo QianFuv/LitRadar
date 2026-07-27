@@ -10,6 +10,7 @@ pub mod index;
 pub mod index_contract;
 pub mod recommend;
 pub mod response;
+pub mod validation;
 
 pub use announcements::AnnouncementInfo;
 pub use auth::{
@@ -61,3 +62,16 @@ pub use recommend::{
     SelectionResultInfo,
 };
 pub use response::ErrorEnvelope;
+pub use validation::{
+    validate_announcement_fields, validate_characters, validate_favorite_add,
+    validate_favorite_article_ref, validate_folder_name, validate_item_count, validate_mcp_array,
+    validate_mcp_text, validate_notification_settings, validate_positive_id,
+    validate_required_characters, InputValidationError, MAX_ANNOUNCEMENT_MESSAGE_CHARS,
+    MAX_ANNOUNCEMENT_PRIORITY_CHARS, MAX_ANNOUNCEMENT_TITLE_CHARS, MAX_BATCH_ARTICLE_IDS,
+    MAX_DATABASE_NAME_CHARS, MAX_FAVORITE_NOTE_CHARS, MAX_FOLDER_NAME_CHARS, MAX_MCP_ARRAY_ITEMS,
+    MAX_MCP_TEXT_CHARS, MAX_NOTIFICATION_DIRECTIONS, MAX_NOTIFICATION_KEYWORDS,
+    MAX_NOTIFICATION_MODEL_CHARS, MAX_NOTIFICATION_PREFERENCE_CHARS, MAX_NOTIFICATION_PROMPT_CHARS,
+    MAX_NOTIFICATION_SECRET_CHARS, MAX_NOTIFICATION_URL_CHARS, MAX_PUSHPLUS_CHANNEL_CHARS,
+    MAX_PUSHPLUS_TEMPLATE_CHARS, MAX_PUSHPLUS_TOPIC_CHARS, MAX_SELECTED_DATABASES,
+    SQLITE_IN_QUERY_CHUNK_SIZE,
+};

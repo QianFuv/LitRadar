@@ -238,6 +238,8 @@ CNKI overseas 元数据索引不使用这三个设置，也不读取代理配置
 
 AI 凭据和 PushPlus 是用户级设置。每个用户在 `notification_settings` 中保存从全局 `ai_allowed_base_urls` 目录选择的主备 OpenAI 兼容 endpoint、key、model、prompt、PushPlus token 和偏好。
 
+写入限制由 REST 与 storage 共用：最多 100 个关键词、100 个研究方向、500 个数据库；单个偏好最多 500 个 Unicode 字符；URL 2,048、model 200、system prompt 10,000、PushPlus template/topic/channel 64/200/64。越界更新返回 `400` 且不会部分覆盖旧设置。
+
 代码只为 base URL 和 model 提供非秘密默认值；默认 base URL 也必须存在于管理员目录中才可执行。没有全局 AI key 或 PushPlus token。CLI `--ai-model` 可以覆盖 model，但不能补 API key。详见[通知与追踪](../guides/notifications.md)。
 
 `delivery_worker_concurrency` 控制单个 `litradar serve` 实例同时监管的手动投递子进程数，默认 2、范围 `1..=16`，保存后重启生效。每个用户仍由 SQLite 唯一约束限制为一个 queued/active run；该池只决定并行执行量，不替代跨实例 lease、revision 或 dedupe。

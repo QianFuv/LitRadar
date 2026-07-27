@@ -17,7 +17,7 @@ use crate::business::{import_legacy_delivery_state_files, DeliveryRepositoryErro
 use crate::{DatabaseResolutionError, StorageConfig};
 
 /// Current auth and business database schema version.
-pub const AUTH_SCHEMA_VERSION: i64 = 10;
+pub const AUTH_SCHEMA_VERSION: i64 = 11;
 
 /// Current index database schema version.
 pub const INDEX_SCHEMA_VERSION: i64 = 6;
@@ -279,6 +279,7 @@ fn migrate_auth_database_inner(path: &Path) -> Result<MigrationSummary, Migratio
             8 => apply_auth_version_eight(&transaction, from_version)?,
             9 => apply_auth_version_nine(&transaction)?,
             10 => apply_auth_version_ten(&transaction)?,
+            11 => apply_auth_version_eleven(&transaction)?,
             _ => unreachable!("auth migration version should be implemented"),
         }
         transaction.pragma_update(None, "user_version", next_version)?;
@@ -1363,6 +1364,20 @@ fn apply_auth_version_ten(transaction: &Transaction<'_>) -> Result<(), Migration
          CREATE INDEX idx_delivery_leases_expiration
              ON delivery_leases(expires_at)
              WHERE owner_id IS NOT NULL;",
+    )?;
+    Ok(())
+}
+
+fn apply_auth_version_eleven(transaction: &Transaction<'_>) -> Result<(), MigrationError> {
+    transaction.execute_batch(
+        "UPDATE folders
+         SET is_tracking = 0
+         WHERE is_tracking = 1
+           AND id NOT IN (
+               SELECT MIN(id) FROM folders WHERE is_tracking = 1 GROUP BY user_id
+           );
+         CREATE UNIQUE INDEX idx_folders_one_tracking_per_user
+             ON folders(user_id) WHERE is_tracking = 1;",
     )?;
     Ok(())
 }

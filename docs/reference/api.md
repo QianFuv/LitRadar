@@ -169,6 +169,8 @@ CNKI 会话按 LitRadar 用户隔离；状态接口只返回安全元数据，�
 | `GET`            | `/api/tracking/push-weekly/runs/{run_id}`                  | 按 ID 查询 owner/admin 任务 |
 | `POST`           | `/api/tracking/push-weekly/runs/{run_id}/cancel`           | 请求取消 owner/admin 任务   |
 
+收藏文件夹名称按 Unicode scalar value 计数，最多 100 个字符；note 最多 2,000 个字符，`db_name` 最多 255 个字符。批量添加、删除、移动和检查每次最多提交 500 个 article item/ID；501 个及以上在构造 SQL 前返回 `400`。动态 `IN` 查询固定按 500 个 ID 分块，HTTP JSON body 超过框架的 2 MiB 上限仍返回 `413`。
+
 手动周报是 SQLite 持久化异步任务。启动接口返回 `202`；`pending/running` 状态应继续轮询，服务重启后仍可通过 latest 或 run-id 接口恢复。公开终态为 `completed`、`failed`、`cancelled`、`timed_out` 或 `unknown`，并返回 `deadline_at`、`cancellation_requested`、`can_cancel` 和 `can_retry`。完整通知链路见[通知指南](../guides/notifications.md)。
 
 SQLite 保证每个用户最多一个 queued/active 手动任务；同一用户重复启动返回现有 job，不同用户可以同时排队或在实例有界池中并行。普通用户只能查询和取消自己的 run；管理员可按不可猜测的 job id 管理任意用户 run。`unknown` 表示外部结果可能已发生，`can_retry=false`，客户端不得把它当普通失败自动重放。
@@ -176,6 +178,8 @@ SQLite 保证每个用户最多一个 queued/active 手动任务；同一用户�
 `PUT /api/tracking/notification-settings` 的 `ai_retry_attempts` 只接受 `1..=10`。超出范围时返回 `400`，且不会替换已有设置。历史或被手工修改的数据库值在读取时会归一到该范围，但服务不会因此自动改写数据库。
 
 `GET /api/tracking/ai-endpoints` 需要登录，返回管理员当前批准的规范 HTTPS base URL 数组。通知设置中的非空主备 base URL 必须准确匹配该数组；不合法、未批准或已撤销的值返回固定 `400`，不会回显所提交 URL，也不会写入其他字段。
+
+通知设置最多包含 100 个关键词、100 个研究方向和 500 个数据库；单个偏好最多 500 个字符，URL 最多 2,048，model 最多 200，system prompt 最多 10,000，PushPlus template/topic/channel 分别最多 64/200/64 个字符。公告 title/message 分别最多 200/10,000 个字符。REST 与 storage 使用同一组 Unicode 字符和 item-count 校验。
 
 ### 管理接口
 
@@ -264,6 +268,6 @@ Pragma: no-cache
 | 更新   | `get_weekly_updates`                                                 |
 | 收藏   | `list_folders`、`add_favorite`、`remove_favorite`                    |
 
-工具结果的 text content 是 JSON 字符串。收藏工具始终使用当前认证用户 ID，不能访问其他用户的数据。
+工具结果的 text content 是 JSON 字符串。收藏工具始终使用当前认证用户 ID，不能访问其他用户的数据。所有 MCP 字符串参数最多 2,048 个 Unicode 字符，数组参数最多 500 项；超限作为 tool-level error 返回，不进入 SQLite 查询。
 
 `mcp_allowed_hosts` 默认只允许本机 host；经公网域名、局域网地址或反向代理访问时必须显式配置。浏览器跨源调用 MCP 时再设置 `mcp_allowed_origins`。详见[配置参考](configuration.md)。

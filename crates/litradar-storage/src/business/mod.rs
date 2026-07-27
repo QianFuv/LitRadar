@@ -11,10 +11,11 @@ use litradar_domain::{
     validate_scheduled_task_timing, AdminInviteCodeInfo, AdminStatsResponse, AdminUserInfo,
     AnnouncementInfo, AuthStats, FavoriteAdd, FavoriteArticleRef, FavoriteArticleResponse,
     FavoriteBatchCheckResponse, FavoriteCheckResponse, FavoriteResponse, FolderResponse,
-    IndexDatabaseStats, IndexStats, NotificationSettings, NotificationSettingsUpdate,
-    NotificationSubscriberInfo, ProviderOrderConfiguration, PushStats, RuntimeSecretItemInfo,
-    RuntimeSecretPoolUpdate, RuntimeSettingInfo, RuntimeSettingValue, ScheduledJobSpec,
-    ScheduledTaskInfo, ScheduledTaskRunInfo, SchedulerStatusResponse, SchedulerWorkerInfo, UserId,
+    IndexDatabaseStats, IndexStats, InputValidationError, NotificationSettings,
+    NotificationSettingsUpdate, NotificationSubscriberInfo, ProviderOrderConfiguration, PushStats,
+    RuntimeSecretItemInfo, RuntimeSecretPoolUpdate, RuntimeSettingInfo, RuntimeSettingValue,
+    ScheduledJobSpec, ScheduledTaskInfo, ScheduledTaskRunInfo, SchedulerStatusResponse,
+    SchedulerWorkerInfo, UserId,
 };
 use rusqlite::types::Type;
 use rusqlite::{params, Connection, ErrorCode, OptionalExtension, TransactionBehavior};
@@ -116,6 +117,8 @@ pub enum BusinessRepositoryError {
     DuplicateFolderName,
     /// Folder does not exist for the user.
     FolderNotFound,
+    /// A shared business-input bound was violated.
+    InvalidInput(InputValidationError),
     /// Source and target folder are identical.
     SourceAndTargetFoldersSame,
     /// Source folder does not exist for the user.
@@ -160,6 +163,7 @@ impl fmt::Display for BusinessRepositoryError {
             Self::Secret(error) => write!(formatter, "{error}"),
             Self::DuplicateFolderName => formatter.write_str("Folder name already exists"),
             Self::FolderNotFound => formatter.write_str("Folder not found"),
+            Self::InvalidInput(error) => write!(formatter, "{error}"),
             Self::SourceAndTargetFoldersSame => {
                 formatter.write_str("Source and target folders must be different")
             }
@@ -204,6 +208,7 @@ impl Error for BusinessRepositoryError {
             Self::Io(error) => Some(error),
             Self::Json(error) => Some(error),
             Self::Secret(error) => Some(error),
+            Self::InvalidInput(error) => Some(error),
             Self::AuditPersistence(error) => Some(error),
             _ => None,
         }
@@ -235,6 +240,13 @@ impl From<SecretError> for BusinessRepositoryError {
     /// Convert secret errors into repository errors.
     fn from(error: SecretError) -> Self {
         Self::Secret(error)
+    }
+}
+
+impl From<InputValidationError> for BusinessRepositoryError {
+    /// Convert shared input validation errors into repository errors.
+    fn from(error: InputValidationError) -> Self {
+        Self::InvalidInput(error)
     }
 }
 

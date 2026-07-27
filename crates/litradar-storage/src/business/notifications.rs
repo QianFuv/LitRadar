@@ -120,6 +120,7 @@ pub fn upsert_notification_settings(
     user_id: UserId,
     settings: &NotificationSettingsUpdate,
 ) -> Result<NotificationSettings, BusinessRepositoryError> {
+    litradar_domain::validate_notification_settings(settings)?;
     let mut connection = open_business_connection(auth_db_path.as_ref())?;
     let now = now_seconds();
     let keywords = serde_json::to_string(&settings.keywords)?;
@@ -631,6 +632,32 @@ mod tests {
             .expect("notification settings should remain present");
         assert_eq!(stored.ai_base_url, "https://ai.example/v1/");
         assert_eq!(stored.ai_model, "fixture-model");
+    }
+
+    #[test]
+    fn notification_storage_rejects_shared_limits_before_writing() {
+        let temp_dir = tempdir().expect("temp dir should be created");
+        let auth_db_path = temp_dir.path().join("auth.sqlite");
+        migrate_auth_database(&auth_db_path).expect("auth database should migrate");
+        let user = crate::bootstrap_admin(&auth_db_path, "bounded-user", "hash", "salt", 1.0)
+            .expect("fixture user should bootstrap");
+        let codec = SecretCodec::from_key([37_u8; 32]);
+        let mut settings = notification_subscriber_settings();
+        settings.ai_base_url.clear();
+        settings.ai_backup_base_url.clear();
+        settings.ai_system_prompt = "文".repeat(litradar_domain::MAX_NOTIFICATION_PROMPT_CHARS + 1);
+
+        let error = super::upsert_notification_settings(&auth_db_path, &codec, user.id, &settings)
+            .expect_err("oversized prompt should be rejected");
+
+        assert!(matches!(error, BusinessRepositoryError::InvalidInput(_)));
+        let connection = Connection::open(&auth_db_path).expect("auth database should open");
+        let count = connection
+            .query_row("SELECT COUNT(*) FROM notification_settings", [], |row| {
+                row.get::<_, i64>(0)
+            })
+            .expect("notification row count should load");
+        assert_eq!(count, 0);
     }
 
     fn notification_subscriber_settings() -> NotificationSettingsUpdate {

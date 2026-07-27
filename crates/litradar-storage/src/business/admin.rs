@@ -403,6 +403,10 @@ pub fn create_announcement_with_audit(
     enabled: bool,
     audit: Option<&SecurityAuditEvent>,
 ) -> Result<AnnouncementInfo, BusinessRepositoryError> {
+    let title = title.trim();
+    let message = message.trim();
+    let priority = priority.trim().to_ascii_lowercase();
+    litradar_domain::validate_announcement_fields(Some(title), Some(message), Some(&priority))?;
     let mut connection = open_business_connection(auth_db_path)?;
     let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
     let now = now_seconds();
@@ -467,6 +471,10 @@ pub fn update_announcement_with_audit(
     enabled: Option<bool>,
     audit: Option<&SecurityAuditEvent>,
 ) -> Result<Option<AnnouncementInfo>, BusinessRepositoryError> {
+    let title = title.map(str::trim);
+    let message = message.map(str::trim);
+    let priority = priority.map(|value| value.trim().to_ascii_lowercase());
+    litradar_domain::validate_announcement_fields(title, message, priority.as_deref())?;
     let mut connection = open_business_connection(auth_db_path)?;
     let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
     let Some(current) = get_announcement_from_connection(&transaction, announcement_id)? else {
@@ -478,7 +486,7 @@ pub fn update_announcement_with_audit(
         params![
             title.unwrap_or(&current.title),
             message.unwrap_or(&current.message),
-            priority.unwrap_or(&current.priority),
+            priority.as_deref().unwrap_or(&current.priority),
             enabled.unwrap_or(current.enabled) as i64,
             now_seconds(),
             announcement_id
@@ -816,6 +824,56 @@ mod tests {
         assert_eq!(stats.push[0].status, "completed");
         assert_eq!(stats.push[0].delivered_count, Some(2));
         assert_eq!(stats.push[0].user_results, Some(1));
+    }
+
+    #[test]
+    fn announcement_storage_rejects_shared_character_limits_atomically() {
+        let temp_dir = tempdir().expect("temp dir should be created");
+        let auth_db_path = temp_dir.path().join("auth.sqlite");
+        migrate_auth_database(&auth_db_path).expect("auth database should migrate");
+
+        let create_error = create_announcement(
+            &auth_db_path,
+            &"文".repeat(litradar_domain::MAX_ANNOUNCEMENT_TITLE_CHARS + 1),
+            "message",
+            "normal",
+            true,
+        )
+        .expect_err("oversized title should be rejected");
+        assert!(matches!(
+            create_error,
+            BusinessRepositoryError::InvalidInput(_)
+        ));
+        let announcement =
+            create_announcement(&auth_db_path, "Title", "Original message", "normal", true)
+                .expect("valid announcement should be created");
+
+        let update_error = update_announcement(
+            &auth_db_path,
+            announcement.id,
+            None,
+            Some(&"文".repeat(litradar_domain::MAX_ANNOUNCEMENT_MESSAGE_CHARS + 1)),
+            None,
+            None,
+        )
+        .expect_err("oversized message should be rejected");
+        assert!(matches!(
+            update_error,
+            BusinessRepositoryError::InvalidInput(_)
+        ));
+        let stored = get_announcement(&auth_db_path, announcement.id)
+            .expect("announcement should load")
+            .expect("announcement should remain present");
+        assert_eq!(stored.message, "Original message");
+        assert_eq!(
+            Connection::open(&auth_db_path)
+                .expect("auth database should open")
+                .query_row("SELECT COUNT(*) FROM announcements", [], |row| {
+                    row.get::<_, i64>(0)
+                })
+                .expect("announcement count should load"),
+            1
+        );
     }
 
     #[test]

@@ -1101,19 +1101,12 @@ fn validate_announcement_payload<'a>(
     let clean_title = title.map(str::trim);
     let clean_message = message.map(str::trim);
     let clean_priority = priority.map(|value| value.trim().to_ascii_lowercase());
-    if clean_title == Some("") {
-        return Err(ApiError::bad_request("Title must not be empty"));
-    }
-    if clean_message == Some("") {
-        return Err(ApiError::bad_request("Message must not be empty"));
-    }
-    if let Some(priority) = clean_priority.as_deref() {
-        if !matches!(priority, "high" | "normal" | "low") {
-            return Err(ApiError::bad_request(
-                "Priority must be high, normal, or low",
-            ));
-        }
-    }
+    litradar_domain::validate_announcement_fields(
+        clean_title,
+        clean_message,
+        clean_priority.as_deref(),
+    )
+    .map_err(|error| ApiError::bad_request(error.to_string()))?;
     Ok((clean_title, clean_message, clean_priority))
 }
 
@@ -1162,6 +1155,7 @@ fn map_business_error(error: BusinessRepositoryError) -> ApiError {
         BusinessRepositoryError::UnknownRuntimeSetting(_)
         | BusinessRepositoryError::InvalidRuntimeBoolean(_)
         | BusinessRepositoryError::InvalidRuntimeSetting(_)
+        | BusinessRepositoryError::InvalidInput(_)
         | BusinessRepositoryError::InvalidRuntimeSecretPoolUpdate(_)
         | BusinessRepositoryError::InvalidScheduledJob(_)
         | BusinessRepositoryError::InvalidScheduledTask(_)
@@ -1190,6 +1184,7 @@ fn business_rejection_reason(error: &BusinessRepositoryError) -> &'static str {
         BusinessRepositoryError::UnknownRuntimeSetting(_)
         | BusinessRepositoryError::InvalidRuntimeBoolean(_)
         | BusinessRepositoryError::InvalidRuntimeSetting(_)
+        | BusinessRepositoryError::InvalidInput(_)
         | BusinessRepositoryError::InvalidRuntimeSecretPoolUpdate(_)
         | BusinessRepositoryError::InvalidScheduledJob(_)
         | BusinessRepositoryError::InvalidScheduledTask(_)
@@ -1330,9 +1325,25 @@ mod tests {
     use rusqlite::Connection;
     use serde_json::json;
 
-    use super::map_business_error;
+    use super::{map_business_error, validate_announcement_payload};
     use crate::state::tracing_test_support::CapturedLogs;
     use crate::test_support::{json_request, TestBackend};
+
+    #[test]
+    fn announcement_route_validation_uses_shared_unicode_limits() {
+        validate_announcement_payload(
+            Some(&"文".repeat(litradar_domain::MAX_ANNOUNCEMENT_TITLE_CHARS)),
+            Some(&"文".repeat(litradar_domain::MAX_ANNOUNCEMENT_MESSAGE_CHARS)),
+            Some("normal"),
+        )
+        .expect("announcement boundaries should pass");
+        assert!(validate_announcement_payload(
+            Some(&"文".repeat(litradar_domain::MAX_ANNOUNCEMENT_TITLE_CHARS + 1,)),
+            Some("message"),
+            Some("normal"),
+        )
+        .is_err());
+    }
 
     #[tokio::test]
     async fn admin_audit_events_are_durable_and_exclude_request_content() {

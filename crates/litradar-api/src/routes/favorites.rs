@@ -9,7 +9,8 @@ use litradar_domain::{
     FavoriteAdd, FavoriteArticleResponse, FavoriteBatchCheckRequest, FavoriteBulkAdd,
     FavoriteBulkAddResult, FavoriteBulkMove, FavoriteBulkRemove, FavoriteBulkResult,
     FavoriteCheckResponse, FavoriteResponse, FavoriteTrackingResponse, FolderCreate, FolderRename,
-    FolderResponse, OkResponse, TrackingSetRequest,
+    FolderResponse, InputValidationError, OkResponse, TrackingSetRequest, MAX_BATCH_ARTICLE_IDS,
+    MAX_DATABASE_NAME_CHARS,
 };
 use litradar_storage::{BusinessRepositoryError, StorageConfig};
 use serde::Deserialize;
@@ -193,6 +194,8 @@ pub(crate) async fn set_tracking(
 ) -> Result<Json<OkResponse>, ApiError> {
     let (user, _) = require_current_user(&state, &headers).await?;
     let folder_id = body.folder_id;
+    litradar_domain::validate_positive_id("folder_id", folder_id)
+        .map_err(map_input_validation_error)?;
     let did_set = run_business(&state, move |storage| {
         litradar_storage::set_tracking_folder(storage.auth_db_path(), user.id, folder_id)
     })
@@ -336,6 +339,9 @@ pub(crate) async fn add_favorite(
     Json(body): Json<FavoriteAdd>,
 ) -> Result<Json<FavoriteResponse>, ApiError> {
     let (user, _) = require_current_user(&state, &headers).await?;
+    litradar_domain::validate_positive_id("folder_id", folder_id)
+        .map_err(map_input_validation_error)?;
+    litradar_domain::validate_favorite_add(&body).map_err(map_input_validation_error)?;
     let favorite = run_business(&state, move |storage| {
         litradar_storage::add_favorite(storage.auth_db_path(), user.id, folder_id, &body)
     })
@@ -364,6 +370,12 @@ pub(crate) async fn remove_favorite(
 ) -> Result<Json<OkResponse>, ApiError> {
     let (user, _) = require_current_user(&state, &headers).await?;
     let db_name = query.db_name.unwrap_or_default();
+    litradar_domain::validate_positive_id("folder_id", folder_id)
+        .map_err(map_input_validation_error)?;
+    litradar_domain::validate_positive_id("article_id", article_id)
+        .map_err(map_input_validation_error)?;
+    litradar_domain::validate_characters("db_name", &db_name, MAX_DATABASE_NAME_CHARS)
+        .map_err(map_input_validation_error)?;
     let did_remove = run_business(&state, move |storage| {
         litradar_storage::remove_favorite(
             storage.auth_db_path(),
@@ -398,6 +410,12 @@ pub(crate) async fn bulk_add(
 ) -> Result<Json<FavoriteBulkAddResult>, ApiError> {
     let (user, _) = require_current_user(&state, &headers).await?;
     let articles = body.articles;
+    litradar_domain::validate_positive_id("folder_id", folder_id)
+        .map_err(map_input_validation_error)?;
+    validate_batch_count("articles", articles.len())?;
+    for article in &articles {
+        litradar_domain::validate_favorite_add(article).map_err(map_input_validation_error)?;
+    }
     let added = run_business(&state, move |storage| {
         litradar_storage::bulk_add_favorites(storage.auth_db_path(), user.id, folder_id, &articles)
     })
@@ -423,6 +441,13 @@ pub(crate) async fn bulk_remove(
 ) -> Result<Json<FavoriteBulkResult>, ApiError> {
     let (user, _) = require_current_user(&state, &headers).await?;
     let articles = body.articles;
+    litradar_domain::validate_positive_id("folder_id", folder_id)
+        .map_err(map_input_validation_error)?;
+    validate_batch_count("articles", articles.len())?;
+    for article in &articles {
+        litradar_domain::validate_favorite_article_ref(article)
+            .map_err(map_input_validation_error)?;
+    }
     let count = run_business(&state, move |storage| {
         litradar_storage::bulk_remove_favorites(
             storage.auth_db_path(),
@@ -454,6 +479,15 @@ pub(crate) async fn bulk_move(
     let (user, _) = require_current_user(&state, &headers).await?;
     let target_folder_id = body.target_folder_id;
     let articles = body.articles;
+    litradar_domain::validate_positive_id("source_folder_id", folder_id)
+        .map_err(map_input_validation_error)?;
+    litradar_domain::validate_positive_id("target_folder_id", target_folder_id)
+        .map_err(map_input_validation_error)?;
+    validate_batch_count("articles", articles.len())?;
+    for article in &articles {
+        litradar_domain::validate_favorite_article_ref(article)
+            .map_err(map_input_validation_error)?;
+    }
     let count = run_business(&state, move |storage| {
         litradar_storage::bulk_move_favorites(
             storage.auth_db_path(),
@@ -484,6 +518,10 @@ pub(crate) async fn check_favorite(
     let (user, _) = require_current_user(&state, &headers).await?;
     let article_id = query.article_id;
     let db_name = query.db_name.unwrap_or_default();
+    litradar_domain::validate_positive_id("article_id", article_id)
+        .map_err(map_input_validation_error)?;
+    litradar_domain::validate_characters("db_name", &db_name, MAX_DATABASE_NAME_CHARS)
+        .map_err(map_input_validation_error)?;
     let rows = run_business(&state, move |storage| {
         litradar_storage::is_favorited(storage.auth_db_path(), user.id, article_id, &db_name)
     })
@@ -506,6 +544,9 @@ pub(crate) async fn check_favorites_batch(
     Json(body): Json<FavoriteBatchCheckRequest>,
 ) -> Result<Json<Vec<litradar_domain::FavoriteBatchCheckResponse>>, ApiError> {
     let (user, _) = require_current_user(&state, &headers).await?;
+    validate_batch_count("article_ids", body.article_ids.len())?;
+    litradar_domain::validate_characters("db_name", &body.db_name, MAX_DATABASE_NAME_CHARS)
+        .map_err(map_input_validation_error)?;
     let article_ids = body
         .article_ids
         .iter()
@@ -525,12 +566,16 @@ pub(crate) async fn check_favorites_batch(
 }
 
 fn validate_folder_name(name: &str) -> Result<(), ApiError> {
-    if name.is_empty() || name.len() > 100 {
-        return Err(ApiError::bad_request(
-            "Folder name must be 1-100 characters",
-        ));
-    }
-    Ok(())
+    litradar_domain::validate_folder_name(name).map_err(map_input_validation_error)
+}
+
+fn validate_batch_count(label: &str, count: usize) -> Result<(), ApiError> {
+    litradar_domain::validate_item_count(label, count, MAX_BATCH_ARTICLE_IDS)
+        .map_err(map_input_validation_error)
+}
+
+fn map_input_validation_error(error: InputValidationError) -> ApiError {
+    ApiError::bad_request(error.to_string())
 }
 
 fn map_business_error(error: BusinessRepositoryError) -> ApiError {
@@ -544,6 +589,7 @@ fn map_business_error(error: BusinessRepositoryError) -> ApiError {
         BusinessRepositoryError::SourceAndTargetFoldersSame => {
             ApiError::bad_request(error.to_string())
         }
+        BusinessRepositoryError::InvalidInput(_) => ApiError::bad_request(error.to_string()),
         _ => ApiError::internal_server_error(),
     }
 }
@@ -678,13 +724,21 @@ fn escape_xml(value: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    use axum::body::{to_bytes, Body};
+    use axum::http::header::{AUTHORIZATION, CONTENT_TYPE};
+    use axum::http::{Request, StatusCode};
     use litradar_domain::{ArticleId, JournalId};
+    use serde_json::json;
+    use tower::ServiceExt;
 
     use super::*;
+    use crate::test_support::TestBackend;
 
     #[test]
     fn validates_folder_names_and_maps_known_business_errors() {
         validate_folder_name("Inbox").expect("valid folder name should pass");
+        validate_folder_name(&"文".repeat(100))
+            .expect("one hundred Unicode characters should pass");
 
         assert_bad_request_detail(
             validate_folder_name("").expect_err("empty folder should fail"),
@@ -702,6 +756,65 @@ mod tests {
             map_business_error(BusinessRepositoryError::SourceAndTargetFoldersSame),
             "Source and target folders must be different",
         );
+        validate_batch_count("article_ids", MAX_BATCH_ARTICLE_IDS)
+            .expect("the favorite batch boundary should pass");
+        assert_bad_request_detail(
+            validate_batch_count("article_ids", MAX_BATCH_ARTICLE_IDS + 1)
+                .expect_err("one item over the favorite batch boundary should fail"),
+            "article_ids must contain at most 500 items",
+        );
+    }
+
+    #[tokio::test]
+    async fn favorite_batch_route_rejects_oversized_items_and_body() {
+        let backend = TestBackend::new();
+        let user = backend.authenticated_user("favorite_bounds_user", false);
+        let app = backend.router();
+        let authorization = user.authorization_header();
+        let oversized_items = json!({
+            "article_ids": (1..=MAX_BATCH_ARTICLE_IDS + 1).collect::<Vec<_>>(),
+            "db_name": "fixture.sqlite"
+        });
+        let item_response = app
+            .clone()
+            .oneshot(
+                Request::post("/api/favorites/check/batch")
+                    .header(AUTHORIZATION, &authorization)
+                    .header(CONTENT_TYPE, "application/json")
+                    .body(Body::from(oversized_items.to_string()))
+                    .expect("item-bound request should build"),
+            )
+            .await
+            .expect("item-bound response should return");
+        let item_status = item_response.status();
+        let item_payload: serde_json::Value = serde_json::from_slice(
+            &to_bytes(item_response.into_body(), 4_096)
+                .await
+                .expect("item-bound response body should load"),
+        )
+        .expect("item-bound response should be JSON");
+
+        let oversized_body = format!(
+            r#"{{"article_ids":[],"db_name":"","padding":"{}"}}"#,
+            "x".repeat(2_100_000)
+        );
+        let body_response = app
+            .oneshot(
+                Request::post("/api/favorites/check/batch")
+                    .header(AUTHORIZATION, authorization)
+                    .header(CONTENT_TYPE, "application/json")
+                    .body(Body::from(oversized_body))
+                    .expect("body-bound request should build"),
+            )
+            .await
+            .expect("body-bound response should return");
+
+        assert_eq!(item_status, StatusCode::BAD_REQUEST);
+        assert_eq!(
+            item_payload["detail"],
+            "article_ids must contain at most 500 items"
+        );
+        assert_eq!(body_response.status(), StatusCode::PAYLOAD_TOO_LARGE);
     }
 
     #[test]

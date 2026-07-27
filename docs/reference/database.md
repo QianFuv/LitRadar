@@ -212,7 +212,9 @@ delivery_runs -- delivery_run_items
 
 ### 收藏
 
-`folders` 以用户和名称唯一；`favorites` 保存 `user_id`、`folder_id`、稳定 `article_id`、内容库 `db_name`、note 和时间。`db_name` 是内容库文件名，不是 Provider 或 SQLite 外键。
+`folders` 以用户和名称唯一；auth schema v11 还通过 `idx_folders_one_tracking_per_user` 部分唯一索引保证每个用户最多一个 `is_tracking = 1` 文件夹。v10 升级时若发现多个旧 tracking folder，会按最低 folder ID 保留一个并在同一迁移事务内清除其余标记。`favorites` 保存 `user_id`、`folder_id`、稳定 `article_id`、内容库 `db_name`、note 和时间。`db_name` 是内容库文件名，不是 Provider 或 SQLite 外键。
+
+创建 tracking folder、切换 tracking folder、单条幂等收藏以及批量添加/删除/移动都使用 `BEGIN IMMEDIATE`。重复收藏由 `ON CONFLICT DO NOTHING RETURNING id` 与精确既有行查询返回真实 ID；批量中途失败会整体回滚。动态 favorite `IN` 查询每块最多 500 个 ID。
 
 v1–v3 的破坏性重建不会重映射旧 favorite 的 article ID；精确 v4/v5 到 v6 的迁移保留 ID。无法解析的旧引用由运维人员或用户清理。
 

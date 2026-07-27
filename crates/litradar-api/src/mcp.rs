@@ -556,6 +556,7 @@ fn business_tool_error_message(error: &BusinessRepositoryError) -> String {
         | BusinessRepositoryError::SourceFolderNotFound
         | BusinessRepositoryError::TargetFolderNotFound
         | BusinessRepositoryError::SourceAndTargetFoldersSame
+        | BusinessRepositoryError::InvalidInput(_)
         | BusinessRepositoryError::InvalidScheduledJob(_)
         | BusinessRepositoryError::InvalidScheduledTask(_)
         | BusinessRepositoryError::LegacyScheduledTaskCannotBeEnabled => error.to_string(),
@@ -583,6 +584,8 @@ fn optional_text(name: &str, value: Option<String>) -> Result<Option<String>, St
             if trimmed.is_empty() {
                 Err(format!("{name} must not be empty"))
             } else {
+                litradar_domain::validate_mcp_text(name, trimmed)
+                    .map_err(|error| error.to_string())?;
                 Ok(Some(trimmed.to_string()))
             }
         }
@@ -592,11 +595,15 @@ fn optional_text(name: &str, value: Option<String>) -> Result<Option<String>, St
 
 fn text_vec(name: &str, value: Option<StringOrStrings>) -> Result<Vec<String>, String> {
     match value {
-        Some(value) => value
-            .into_vec()
-            .into_iter()
-            .map(|entry| required_text(name, entry))
-            .collect(),
+        Some(value) => {
+            let values = value.into_vec();
+            litradar_domain::validate_mcp_array(name, values.len())
+                .map_err(|error| error.to_string())?;
+            values
+                .into_iter()
+                .map(|entry| required_text(name, entry))
+                .collect()
+        }
         None => Ok(Vec::new()),
     }
 }
@@ -606,6 +613,7 @@ fn required_text(name: &str, value: String) -> Result<String, String> {
     if trimmed.is_empty() {
         Err(format!("{name} must not be empty"))
     } else {
+        litradar_domain::validate_mcp_text(name, trimmed).map_err(|error| error.to_string())?;
         Ok(trimmed.to_string())
     }
 }
@@ -632,11 +640,15 @@ fn positive_i64(name: &str, value: i64) -> Result<i64, String> {
 
 fn positive_id_vec(name: &str, value: Option<StringOrStrings>) -> Result<Vec<i64>, String> {
     match value {
-        Some(value) => value
-            .into_vec()
-            .into_iter()
-            .map(|entry| required_positive_id(name, entry))
-            .collect(),
+        Some(value) => {
+            let values = value.into_vec();
+            litradar_domain::validate_mcp_array(name, values.len())
+                .map_err(|error| error.to_string())?;
+            values
+                .into_iter()
+                .map(|entry| required_positive_id(name, entry))
+                .collect()
+        }
         None => Ok(Vec::new()),
     }
 }
@@ -677,11 +689,43 @@ mod tests {
     use serde_json::{json, Value};
     use tower::ServiceExt;
 
+    use super::{optional_text, text_vec, StringOrStrings};
     use crate::test_support::TestBackend;
 
     const INITIALIZE_BODY: &str = r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"litradar-api-test","version":"0.1.0"}}}"#;
     const INITIALIZED_BODY: &str = r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#;
     const TOOLS_LIST_BODY: &str = r#"{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}"#;
+
+    #[test]
+    fn mcp_argument_bounds_count_unicode_characters_and_array_items() {
+        optional_text("q", Some("文".repeat(litradar_domain::MAX_MCP_TEXT_CHARS)))
+            .expect("the MCP text boundary should pass");
+        assert!(optional_text(
+            "q",
+            Some("文".repeat(litradar_domain::MAX_MCP_TEXT_CHARS + 1)),
+        )
+        .expect_err("one Unicode character over the MCP text boundary should fail")
+        .contains("1-2048 characters"));
+
+        text_vec(
+            "area",
+            Some(StringOrStrings::Multiple(vec![
+                "Medicine".to_string();
+                litradar_domain::MAX_MCP_ARRAY_ITEMS
+            ])),
+        )
+        .expect("the MCP array boundary should pass");
+        assert!(text_vec(
+            "area",
+            Some(StringOrStrings::Multiple(vec![
+                "Medicine".to_string();
+                litradar_domain::MAX_MCP_ARRAY_ITEMS
+                    + 1
+            ])),
+        )
+        .expect_err("one item over the MCP array boundary should fail")
+        .contains("at most 500 items"));
+    }
 
     #[tokio::test]
     #[cfg_attr(
@@ -1129,6 +1173,22 @@ mod tests {
         .await;
         assert_eq!(invalid_article["result"]["isError"], true);
         assert!(tool_text(&invalid_article).contains("article_id must be a positive integer"));
+
+        let oversized_database = call_mcp_tool(
+            &app,
+            &authorization,
+            &session_id,
+            42,
+            "add_favorite",
+            json!({
+                "article_id": "9001",
+                "db_name": "x".repeat(litradar_domain::MAX_DATABASE_NAME_CHARS + 1),
+                "folder_id": 1
+            }),
+        )
+        .await;
+        assert_eq!(oversized_database["result"]["isError"], true);
+        assert!(tool_text(&oversized_database).contains("db_name must be at most 255 characters"));
     }
 
     async fn initialize_mcp_session(app: &Router, authorization: &str) -> String {

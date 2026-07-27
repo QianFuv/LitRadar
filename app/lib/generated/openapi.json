@@ -3278,15 +3278,21 @@
           },
           "message": {
             "type": "string",
-            "description": "Announcement message body."
+            "description": "Announcement message body.",
+            "maxLength": 10000,
+            "minLength": 1
           },
           "priority": {
             "type": "string",
-            "description": "Priority label."
+            "description": "Priority label.",
+            "maxLength": 16,
+            "minLength": 1
           },
           "title": {
             "type": "string",
-            "description": "Announcement title."
+            "description": "Announcement title.",
+            "maxLength": 200,
+            "minLength": 1
           }
         }
       },
@@ -3338,15 +3344,21 @@
           },
           "message": {
             "type": ["string", "null"],
-            "description": "Optional replacement message."
+            "description": "Optional replacement message.",
+            "maxLength": 10000,
+            "minLength": 1
           },
           "priority": {
             "type": ["string", "null"],
-            "description": "Optional replacement priority."
+            "description": "Optional replacement priority.",
+            "maxLength": 16,
+            "minLength": 1
           },
           "title": {
             "type": ["string", "null"],
-            "description": "Optional replacement title."
+            "description": "Optional replacement title.",
+            "maxLength": 200,
+            "minLength": 1
           }
         }
       },
@@ -3734,11 +3746,13 @@
           },
           "db_name": {
             "type": "string",
-            "description": "Source index database name."
+            "description": "Source index database name.",
+            "maxLength": 255
           },
           "note": {
             "type": "string",
-            "description": "User note text."
+            "description": "User note text.",
+            "maxLength": 2000
           }
         }
       },
@@ -3753,7 +3767,8 @@
           },
           "db_name": {
             "type": "string",
-            "description": "Source index database name."
+            "description": "Source index database name.",
+            "maxLength": 255
           }
         }
       },
@@ -3873,11 +3888,13 @@
             "items": {
               "$ref": "#/components/schemas/ArticleId"
             },
-            "description": "Article identifiers to check."
+            "description": "Article identifiers to check.",
+            "maxItems": 500
           },
           "db_name": {
             "type": "string",
-            "description": "Source index database name."
+            "description": "Source index database name.",
+            "maxLength": 255
           }
         }
       },
@@ -3909,7 +3926,8 @@
             "items": {
               "$ref": "#/components/schemas/FavoriteAdd"
             },
-            "description": "Favorite articles to add."
+            "description": "Favorite articles to add.",
+            "maxItems": 500
           }
         }
       },
@@ -3935,7 +3953,8 @@
             "items": {
               "$ref": "#/components/schemas/FavoriteArticleRef"
             },
-            "description": "Favorite articles to move."
+            "description": "Favorite articles to move.",
+            "maxItems": 500
           },
           "target_folder_id": {
             "type": "integer",
@@ -3954,7 +3973,8 @@
             "items": {
               "$ref": "#/components/schemas/FavoriteArticleRef"
             },
-            "description": "Favorite articles to remove."
+            "description": "Favorite articles to remove.",
+            "maxItems": 500
           }
         }
       },
@@ -4046,7 +4066,9 @@
           },
           "name": {
             "type": "string",
-            "description": "Folder display name."
+            "description": "Folder display name.",
+            "maxLength": 100,
+            "minLength": 1
           }
         }
       },
@@ -4057,7 +4079,9 @@
         "properties": {
           "name": {
             "type": "string",
-            "description": "Replacement folder display name."
+            "description": "Replacement folder display name.",
+            "maxLength": 100,
+            "minLength": 1
           }
         }
       },
@@ -4663,23 +4687,28 @@
           },
           "ai_backup_base_url": {
             "type": "string",
-            "description": "Backup AI endpoint base URL."
+            "description": "Backup AI endpoint base URL.",
+            "maxLength": 2048
           },
           "ai_backup_model": {
             "type": "string",
-            "description": "Backup AI model."
+            "description": "Backup AI model.",
+            "maxLength": 200
           },
           "ai_backup_system_prompt": {
             "type": "string",
-            "description": "Backup AI system prompt."
+            "description": "Backup AI system prompt.",
+            "maxLength": 10000
           },
           "ai_base_url": {
             "type": "string",
-            "description": "Primary AI endpoint base URL."
+            "description": "Primary AI endpoint base URL.",
+            "maxLength": 2048
           },
           "ai_model": {
             "type": "string",
-            "description": "Primary AI model."
+            "description": "Primary AI model.",
+            "maxLength": 200
           },
           "ai_retry_attempts": {
             "type": "integer",
@@ -4690,7 +4719,8 @@
           },
           "ai_system_prompt": {
             "type": "string",
-            "description": "Primary AI system prompt."
+            "description": "Primary AI system prompt.",
+            "maxLength": 10000
           },
           "delivery_method": {
             "type": "string",
@@ -4701,7 +4731,8 @@
             "items": {
               "type": "string"
             },
-            "description": "Research direction preferences."
+            "description": "Research direction preferences.",
+            "maxItems": 100
           },
           "enabled": {
             "type": "boolean",
@@ -4712,15 +4743,18 @@
             "items": {
               "type": "string"
             },
-            "description": "Keyword preferences."
+            "description": "Keyword preferences.",
+            "maxItems": 100
           },
           "pushplus_channel": {
             "type": "string",
-            "description": "PushPlus channel."
+            "description": "PushPlus channel.",
+            "maxLength": 64
           },
           "pushplus_template": {
             "type": "string",
-            "description": "PushPlus template."
+            "description": "PushPlus template.",
+            "maxLength": 64
           },
           "pushplus_token": {
             "type": ["string", "null"],
@@ -4728,14 +4762,16 @@
           },
           "pushplus_topic": {
             "type": "string",
-            "description": "PushPlus topic."
+            "description": "PushPlus topic.",
+            "maxLength": 200
           },
           "selected_databases": {
             "type": "array",
             "items": {
               "type": "string"
             },
-            "description": "Selected index database names."
+            "description": "Selected index database names.",
+            "maxItems": 500
           },
           "sync_to_tracking_folder": {
             "type": "boolean",

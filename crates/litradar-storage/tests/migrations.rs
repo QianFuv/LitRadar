@@ -44,6 +44,7 @@ fn empty_auth_database_migration_creates_current_schema() {
         assert!(table_columns(&path, table).contains(&"revision".to_string()));
     }
     for index in [
+        "idx_folders_one_tracking_per_user",
         "idx_delivery_checkpoints_scope",
         "idx_delivery_runs_external_scope",
         "idx_delivery_runs_active_scope",
@@ -61,6 +62,90 @@ fn empty_auth_database_migration_creates_current_schema() {
     ] {
         assert!(runtime_setting(&path, field).is_none());
     }
+}
+
+#[test]
+fn favorite_tracking_migration_keeps_the_lowest_legacy_folder_per_user() {
+    let temp_dir = tempdir().expect("temp directory should be created");
+    let path = temp_dir.path().join("favorite-tracking-v10.sqlite");
+    migrate_auth_database(&path).expect("current auth database should migrate");
+    let connection = Connection::open(&path).expect("auth database should open");
+    connection
+        .execute_batch(
+            "DROP INDEX idx_folders_one_tracking_per_user;
+             PRAGMA user_version = 10;
+             INSERT INTO users
+                 (id, username, password_hash, salt, is_admin, created_at, updated_at)
+             VALUES
+                 (1, 'first', 'hash', 'salt', 1, 1.0, 1.0),
+                 (2, 'second', 'hash', 'salt', 0, 1.0, 1.0);
+             INSERT INTO folders
+                 (id, user_id, name, is_tracking, created_at, updated_at)
+             VALUES
+                 (10, 1, 'first-low', 1, 1.0, 1.0),
+                 (11, 1, 'first-high', 1, 2.0, 2.0),
+                 (20, 2, 'second-low', 1, 1.0, 1.0),
+                 (21, 2, 'second-high', 1, 2.0, 2.0);",
+        )
+        .expect("legacy duplicate tracking folders should be created");
+    drop(connection);
+
+    migrate_auth_database(&path).expect("version ten favorite state should migrate");
+
+    assert_eq!(user_version(&path), AUTH_SCHEMA_VERSION);
+    assert!(index_exists(&path, "idx_folders_one_tracking_per_user"));
+    let connection = Connection::open(&path).expect("migrated database should open");
+    let tracked = connection
+        .prepare("SELECT user_id, id FROM folders WHERE is_tracking = 1 ORDER BY user_id")
+        .expect("tracking query should prepare")
+        .query_map([], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)))
+        .expect("tracking rows should query")
+        .collect::<Result<Vec<_>, _>>()
+        .expect("tracking rows should collect");
+    assert_eq!(tracked, [(1, 10), (2, 20)]);
+    assert!(connection
+        .execute("UPDATE folders SET is_tracking = 1 WHERE id = 11", [],)
+        .is_err());
+}
+
+#[test]
+fn favorite_tracking_migration_failure_rolls_back_normalization() {
+    let temp_dir = tempdir().expect("temp directory should be created");
+    let path = temp_dir
+        .path()
+        .join("favorite-tracking-v10-conflict.sqlite");
+    migrate_auth_database(&path).expect("current auth database should migrate");
+    let connection = Connection::open(&path).expect("auth database should open");
+    connection
+        .execute_batch(
+            "DROP INDEX idx_folders_one_tracking_per_user;
+             PRAGMA user_version = 10;
+             INSERT INTO users
+                 (id, username, password_hash, salt, is_admin, created_at, updated_at)
+             VALUES (1, 'owner', 'hash', 'salt', 1, 1.0, 1.0);
+             INSERT INTO folders
+                 (id, user_id, name, is_tracking, created_at, updated_at)
+             VALUES
+                 (10, 1, 'first', 1, 1.0, 1.0),
+                 (11, 1, 'second', 1, 2.0, 2.0);
+             CREATE TABLE idx_folders_one_tracking_per_user (sentinel TEXT NOT NULL);",
+        )
+        .expect("conflicting version ten fixture should be created");
+    drop(connection);
+
+    migrate_auth_database(&path).expect_err("conflicting favorite index should fail migration");
+
+    assert_eq!(user_version(&path), 10);
+    let connection = Connection::open(&path).expect("failed migration database should reopen");
+    let tracked_count = connection
+        .query_row(
+            "SELECT COUNT(*) FROM folders WHERE user_id = 1 AND is_tracking = 1",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+        .expect("legacy tracking rows should remain readable");
+    assert_eq!(tracked_count, 2);
+    assert!(table_exists(&path, "idx_folders_one_tracking_per_user"));
 }
 
 #[test]
@@ -635,6 +720,15 @@ fn cancellation_status_migration_preserves_version_four_runs() {
     connection
         .execute_batch(
             "
+            CREATE TABLE folders (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id     INTEGER NOT NULL,
+                name        TEXT NOT NULL,
+                is_tracking INTEGER NOT NULL DEFAULT 0,
+                created_at  REAL NOT NULL,
+                updated_at  REAL NOT NULL,
+                UNIQUE(user_id, name)
+            );
             CREATE TABLE scheduled_task_runs (
                 id               INTEGER PRIMARY KEY AUTOINCREMENT,
                 task_id          INTEGER NOT NULL,
@@ -761,6 +855,15 @@ fn scheduler_migration_disables_and_preserves_legacy_commands() {
     connection
         .execute_batch(
             "
+            CREATE TABLE folders (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id     INTEGER NOT NULL,
+                name        TEXT NOT NULL,
+                is_tracking INTEGER NOT NULL DEFAULT 0,
+                created_at  REAL NOT NULL,
+                updated_at  REAL NOT NULL,
+                UNIQUE(user_id, name)
+            );
             CREATE TABLE scheduled_tasks (
                 id          INTEGER PRIMARY KEY AUTOINCREMENT,
                 name        TEXT    NOT NULL,
@@ -825,6 +928,15 @@ fn scheduler_durable_migration_preserves_tasks_and_adds_safe_defaults() {
     connection
         .execute_batch(
             r#"
+            CREATE TABLE folders (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id     INTEGER NOT NULL,
+                name        TEXT NOT NULL,
+                is_tracking INTEGER NOT NULL DEFAULT 0,
+                created_at  REAL NOT NULL,
+                updated_at  REAL NOT NULL,
+                UNIQUE(user_id, name)
+            );
             CREATE TABLE scheduled_tasks (
                 id             INTEGER PRIMARY KEY AUTOINCREMENT,
                 name           TEXT NOT NULL,
@@ -1574,7 +1686,8 @@ fn remove_current_security_audit_schema(connection: &Connection) {
 fn remove_current_delivery_schema(connection: &Connection) {
     connection
         .execute_batch(
-            "DROP TABLE delivery_leases;
+            "DROP INDEX idx_folders_one_tracking_per_user;
+             DROP TABLE delivery_leases;
              DROP TABLE delivery_dedupe;
              DROP TABLE delivery_run_items;
              DROP TABLE delivery_runs;
