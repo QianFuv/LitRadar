@@ -133,10 +133,13 @@ printf '%s\n' "$ADMIN_PASSWORD" |
 - 密码变更和管理员重置在一个 `BEGIN IMMEDIATE` 事务内更新 hash/salt 并撤销该用户全部令牌；任一步失败都会整体回滚。
 - salt、浏览器会话、Personal Access Token、邀请码和手动作业 ID 均由操作系统 CSPRNG 生成，不依赖 SQLite `randomblob()`。
 - 浏览器登录令牌只通过 `HttpOnly`、`SameSite=Lax` 的 `litradar_session` Cookie 传输。
+- 浏览器会话固定 7 天到期、登录时轮换且不滚动续期；Personal Access Token 的有效期由创建时显式选择。
 - 用户创建的长期令牌只通过 Bearer 请求头用于外部客户端。
 - 令牌不得放入 URL 查询参数。
 - `expires_at <= now` 统一视为已过期；验证路径会拒绝并清理边界时刻的令牌。
 - 含密码、salt、原始 token 或邀请码的认证类型使用脱敏 Debug，避免后续诊断误打印秘密。
+
+注销对 SQLite busy/locked 使用 250 ms busy timeout、25 ms 间隔和最多一次重试。携带浏览器 Cookie 的 `/api/auth/logout` 与 `/api/auth/logout-all` 在所有响应中都清除 Cookie；`logout` 的 `401` 只表示该令牌在请求前已经无效，浏览器可把它视为幂等成功。若数据库删除或必需审计仍无法提交，则返回 `503 session_revocation_unconfirmed` 和 request ID。前端只清理非秘密本地快照，并把未确认标记保存在固定 shape 的 localStorage 元数据中；刷新不能把它改写为成功。恢复操作要求重新认证，再调用 `/api/auth/logout-all` 原子撤销该用户的全部登录令牌和 Personal Access Token。旧 Cookie 已被清除，不存在安全的“重试原注销请求”路径。
 
 ## 登录和注册限流
 

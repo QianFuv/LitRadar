@@ -224,6 +224,24 @@ pub struct LogoutResponse {
     pub user_id: UserId,
 }
 
+/// Stable detail returned when durable session revocation cannot be confirmed.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct SessionRevocationErrorDetail {
+    /// Stable client classification.
+    pub code: String,
+    /// Safe user-facing failure summary.
+    pub message: String,
+    /// Server-generated request identifier for audit correlation.
+    pub request_id: String,
+}
+
+/// Error envelope for an unconfirmed session revocation.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct SessionRevocationErrorResponse {
+    /// Structured revocation failure detail.
+    pub detail: SessionRevocationErrorDetail,
+}
+
 /// Invite requirement response.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct InviteRequiredResponse {

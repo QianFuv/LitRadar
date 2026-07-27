@@ -1,11 +1,11 @@
 //! Authentication route handlers.
 
 use std::net::SocketAddr;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use axum::extract::{ConnectInfo, Extension, Path, State};
 use axum::http::header::{AUTHORIZATION, COOKIE, SET_COOKIE};
-use axum::http::{HeaderMap, HeaderValue};
+use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::Json;
 use litradar_auth::{
@@ -14,8 +14,9 @@ use litradar_auth::{
 };
 use litradar_domain::{
     ChangePasswordRequest, ErrorEnvelope, InviteCodeResponse, InviteRequiredResponse, LoginRequest,
-    LoginResponse, LogoutResponse, OkResponse, RegisterRequest, TokenCreateRequest,
-    TokenCreateResponse, TokenInfo, UserResponse,
+    LoginResponse, LogoutResponse, OkResponse, RegisterRequest, SessionRevocationErrorDetail,
+    SessionRevocationErrorResponse, TokenCreateRequest, TokenCreateResponse, TokenInfo,
+    UserResponse,
 };
 use litradar_storage::{AuthRepositoryError, SecurityAuditEvent};
 use tower_http::request_id::RequestId;
@@ -25,6 +26,9 @@ use crate::response::ApiError;
 use crate::state::{ApiState, AuthAttemptKind, AuthRateLimitRejection};
 
 const AUTH_RATE_LIMIT_DETAIL: &str = "Too many authentication attempts; try again later";
+const SESSION_REVOCATION_ERROR_CODE: &str = "session_revocation_unconfirmed";
+const SESSION_REVOCATION_ERROR_MESSAGE: &str = "Session revocation could not be confirmed";
+const SESSION_REVOCATION_RETRY_DELAY: Duration = Duration::from_millis(25);
 
 struct AuthAudit {
     action: &'static str,
@@ -385,7 +389,10 @@ pub(crate) async fn change_password(
     post,
     path = "/api/auth/logout",
     tag = "auth",
-    responses((status = 200, description = "Logged out.", body = LogoutResponse)),
+    responses(
+        (status = 200, description = "Logged out.", body = LogoutResponse),
+        (status = 503, description = "The browser cookie was cleared but durable token revocation was not confirmed.", body = SessionRevocationErrorResponse)
+    ),
     security(("bearer_auth" = []), ("session_cookie" = []))
 )]
 pub(crate) async fn logout(
@@ -395,40 +402,102 @@ pub(crate) async fn logout(
 ) -> Result<Response, ApiError> {
     let mut audit = AuthAudit::new("logout");
     let request_id = request_id_text(request_id.as_ref());
+    let should_clear_cookie = session_cookie(&headers).is_some();
     let (user, token) = match require_current_user(&state, &headers).await {
         Ok(current) => current,
         Err(error) => {
-            persist_auth_rejection(&state, &audit, "authentication_required", &request_id).await?;
+            let audit_result =
+                persist_auth_rejection(&state, &audit, "authentication_required", &request_id)
+                    .await;
             audit.rejected("authentication_required");
-            return Err(error);
+            let response = match audit_result {
+                Ok(()) => error.into_response(),
+                Err(error) => error.into_response(),
+            };
+            return clear_browser_session_cookie(&state, response, should_clear_cookie);
         }
     };
     audit.set_actor_id(user.id.0);
     let token_to_revoke = token.clone();
     let completion_audit = auth_security_event(&audit, "completed", "", &request_id);
-    if let Err(error) = run_auth(&state, move |service| {
-        service.revoke_access_token_value_with_audit(&token_to_revoke, completion_audit)
+    let revoke_result = run_auth_revocation(&state, move |service| {
+        service.revoke_access_token_value_with_audit(&token_to_revoke, completion_audit.clone())
     })
-    .await
-    {
-        persist_auth_rejection(&state, &audit, "operation_failed", &request_id).await?;
-        audit.rejected("operation_failed");
-        return Err(error);
+    .await;
+    if !matches!(revoke_result, Ok(Ok(_))) {
+        return failed_revocation_response(&state, &mut audit, &request_id, should_clear_cookie)
+            .await;
     }
-    let mut response = Json(LogoutResponse {
+    let response = Json(LogoutResponse {
         ok: true,
         user_id: user.id,
     })
     .into_response();
-    response.headers_mut().append(
-        SET_COOKIE,
-        HeaderValue::from_str(&clear_session_cookie_header(
-            state.are_session_cookies_secure(),
-        ))
-        .map_err(|_| ApiError::internal_server_error())?,
-    );
     audit.completed();
-    Ok(response)
+    clear_browser_session_cookie(&state, response, should_clear_cookie)
+}
+
+/// Revoke every session and personal access token for the current user.
+///
+/// # Arguments
+///
+/// * `state` - Shared API state.
+/// * `headers` - Request headers.
+/// * `request_id` - Server-generated request identifier.
+///
+/// # Returns
+///
+/// Logout response after every token is durably revoked.
+#[utoipa::path(
+    post,
+    path = "/api/auth/logout-all",
+    tag = "auth",
+    responses(
+        (status = 200, description = "All sessions and personal access tokens were revoked.", body = LogoutResponse),
+        (status = 503, description = "The browser cookie was cleared but durable token revocation was not confirmed.", body = SessionRevocationErrorResponse)
+    ),
+    security(("bearer_auth" = []), ("session_cookie" = []))
+)]
+pub(crate) async fn logout_all(
+    State(state): State<ApiState>,
+    headers: HeaderMap,
+    request_id: Option<Extension<RequestId>>,
+) -> Result<Response, ApiError> {
+    let mut audit = AuthAudit::new("logout_all");
+    let request_id = request_id_text(request_id.as_ref());
+    let should_clear_cookie = session_cookie(&headers).is_some();
+    let (user, _) = match require_current_user(&state, &headers).await {
+        Ok(current) => current,
+        Err(error) => {
+            let audit_result =
+                persist_auth_rejection(&state, &audit, "authentication_required", &request_id)
+                    .await;
+            audit.rejected("authentication_required");
+            let response = match audit_result {
+                Ok(()) => error.into_response(),
+                Err(error) => error.into_response(),
+            };
+            return clear_browser_session_cookie(&state, response, should_clear_cookie);
+        }
+    };
+    audit.set_actor_id(user.id.0);
+    audit.set_target_id(user.id.0);
+    let completion_audit = auth_security_event(&audit, "completed", "", &request_id);
+    let revoke_result = run_auth_revocation(&state, move |service| {
+        service.revoke_all_access_tokens_with_audit(user.id, completion_audit.clone())
+    })
+    .await;
+    if !matches!(revoke_result, Ok(Ok(_))) {
+        return failed_revocation_response(&state, &mut audit, &request_id, should_clear_cookie)
+            .await;
+    }
+    let response = Json(LogoutResponse {
+        ok: true,
+        user_id: user.id,
+    })
+    .into_response();
+    audit.completed();
+    clear_browser_session_cookie(&state, response, should_clear_cookie)
 }
 
 /// Create an access token for the current user.
@@ -757,6 +826,34 @@ where
         .map_err(map_auth_error)
 }
 
+async fn run_auth_revocation<Output, Work>(
+    state: &ApiState,
+    mut work: Work,
+) -> Result<Result<Output, AuthServiceError>, ApiError>
+where
+    Work: FnMut(&AuthService) -> Result<Output, AuthServiceError> + Send + 'static,
+    Output: Send + 'static,
+{
+    let service = auth_service(state);
+    state
+        .run_blocking(move || retry_transient_revocation(|| work(&service)))
+        .await
+        .map_err(ApiError::from)
+}
+
+fn retry_transient_revocation<Output, Work>(mut work: Work) -> Result<Output, AuthServiceError>
+where
+    Work: FnMut() -> Result<Output, AuthServiceError>,
+{
+    match work() {
+        Err(error) if error.is_transient_sqlite_contention() => {
+            std::thread::sleep(SESSION_REVOCATION_RETRY_DELAY);
+            work()
+        }
+        result => result,
+    }
+}
+
 fn resolve_auth_token(headers: &HeaderMap) -> Result<Option<String>, ApiError> {
     if let Some(authorization) = headers.get(AUTHORIZATION) {
         let value = authorization
@@ -803,6 +900,62 @@ fn clear_session_cookie_header(is_secure: bool) -> String {
         value.push_str("; Secure");
     }
     value
+}
+
+fn clear_browser_session_cookie(
+    state: &ApiState,
+    mut response: Response,
+    should_clear_cookie: bool,
+) -> Result<Response, ApiError> {
+    if should_clear_cookie {
+        response.headers_mut().append(
+            SET_COOKIE,
+            HeaderValue::from_str(&clear_session_cookie_header(
+                state.are_session_cookies_secure(),
+            ))
+            .map_err(|_| ApiError::internal_server_error())?,
+        );
+    }
+    Ok(response)
+}
+
+async fn failed_revocation_response(
+    state: &ApiState,
+    audit: &mut AuthAudit,
+    request_id: &str,
+    should_clear_cookie: bool,
+) -> Result<Response, ApiError> {
+    tracing::warn!(
+        event = "security.auth.revocation_unconfirmed",
+        component = "security",
+        action = audit.action,
+        actor_id = audit.actor_id,
+        request_id,
+    );
+    if persist_auth_rejection(state, audit, "operation_failed", request_id)
+        .await
+        .is_err()
+    {
+        tracing::error!(
+            event = "security.audit.persistence_failed",
+            component = "security",
+            action = audit.action,
+            request_id,
+        );
+    }
+    audit.rejected("operation_failed");
+    let response = (
+        StatusCode::SERVICE_UNAVAILABLE,
+        Json(SessionRevocationErrorResponse {
+            detail: SessionRevocationErrorDetail {
+                code: SESSION_REVOCATION_ERROR_CODE.to_string(),
+                message: SESSION_REVOCATION_ERROR_MESSAGE.to_string(),
+                request_id: request_id.to_string(),
+            },
+        }),
+    )
+        .into_response();
+    clear_browser_session_cookie(state, response, should_clear_cookie)
 }
 
 fn current_unix_time() -> f64 {
@@ -909,13 +1062,57 @@ pub(crate) fn map_auth_error(error: AuthServiceError) -> ApiError {
 
 #[cfg(test)]
 mod tests {
+    use std::cell::Cell;
+
     use axum::http::{Method, StatusCode};
-    use litradar_auth::{AuthService, ACCESS_TOKEN_DEFAULT_TTL};
-    use litradar_storage::list_security_audit_events;
+    use litradar_auth::{AuthService, AuthServiceError, ACCESS_TOKEN_DEFAULT_TTL};
+    use litradar_storage::{list_security_audit_events, AuthRepositoryError};
     use serde_json::json;
 
     use crate::state::tracing_test_support::CapturedLogs;
     use crate::test_support::{json_request, TestBackend};
+
+    use super::retry_transient_revocation;
+
+    #[test]
+    fn logout_retry_runs_once_only_for_transient_sqlite_contention() {
+        let attempts = Cell::new(0_u8);
+        let result = retry_transient_revocation(|| {
+            let attempt = attempts.get() + 1;
+            attempts.set(attempt);
+            if attempt == 1 {
+                return Err(AuthServiceError::Repository(AuthRepositoryError::Sqlite(
+                    rusqlite::Error::SqliteFailure(
+                        rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_BUSY),
+                        None,
+                    ),
+                )));
+            }
+            Ok(true)
+        });
+
+        assert!(matches!(result, Ok(true)));
+        assert_eq!(attempts.get(), 2);
+    }
+
+    #[test]
+    fn logout_retry_does_not_repeat_non_transient_failures() {
+        let attempts = Cell::new(0_u8);
+        let result = retry_transient_revocation(|| -> Result<(), AuthServiceError> {
+            attempts.set(attempts.get() + 1);
+            Err(AuthServiceError::Repository(
+                AuthRepositoryError::CredentialMutationInvariant,
+            ))
+        });
+
+        assert!(matches!(
+            result,
+            Err(AuthServiceError::Repository(
+                AuthRepositoryError::CredentialMutationInvariant
+            ))
+        ));
+        assert_eq!(attempts.get(), 1);
+    }
 
     #[tokio::test]
     async fn auth_audit_events_are_durable_and_exclude_credentials_or_names() {

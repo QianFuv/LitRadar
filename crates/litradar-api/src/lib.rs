@@ -1988,6 +1988,128 @@ mod tests {
         miri,
         ignore = "Miri does not support Tokio's Windows IOCP runtime initialization"
     )]
+    async fn logout_failure_clears_cookie_and_reports_request_id() {
+        let backend = TestBackend::new();
+        let user = backend.authenticated_user("logout_failure", false);
+        let app = backend.router();
+        Connection::open(backend.auth_db_path())
+            .expect("auth database should open")
+            .execute_batch(
+                "CREATE TRIGGER fail_logout_revoke \
+                 BEFORE DELETE ON access_tokens \
+                 BEGIN SELECT RAISE(ABORT, 'forced logout failure'); END;",
+            )
+            .expect("logout fault trigger should install");
+        let cookie = user.cookie_header();
+
+        let logout = json_request(
+            &app,
+            Method::POST,
+            "/api/auth/logout",
+            None,
+            Some(&cookie),
+            None,
+        )
+        .await;
+        let still_authenticated =
+            json_request(&app, Method::GET, "/api/auth/me", None, Some(&cookie), None).await;
+        let response_request_id = logout
+            .headers
+            .get("x-request-id")
+            .and_then(|value| value.to_str().ok())
+            .expect("failed logout should expose a request id");
+        let audit_events = litradar_storage::list_security_audit_events(backend.auth_db_path())
+            .expect("logout rejection audit events should load");
+
+        assert_eq!(logout.status, StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(
+            logout.payload["detail"]["code"],
+            "session_revocation_unconfirmed"
+        );
+        assert_eq!(logout.payload["detail"]["request_id"], response_request_id);
+        assert!(set_cookie_header(&logout).contains("Max-Age=0"));
+        assert_eq!(still_authenticated.status, StatusCode::OK);
+        assert!(audit_events.iter().any(|event| {
+            event.action == "logout"
+                && event.outcome == "rejected"
+                && event.reason == "operation_failed"
+                && event.request_id == response_request_id
+        }));
+    }
+
+    #[tokio::test]
+    #[cfg_attr(
+        miri,
+        ignore = "Miri does not support Tokio's Windows IOCP runtime initialization"
+    )]
+    async fn logout_expired_or_invalid_browser_session_still_clears_cookie() {
+        let backend = TestBackend::new();
+        let app = backend.router();
+        let invalid_cookie = format!("{SESSION_COOKIE_NAME}=invalid-session-token");
+
+        let logout = json_request(
+            &app,
+            Method::POST,
+            "/api/auth/logout",
+            None,
+            Some(&invalid_cookie),
+            None,
+        )
+        .await;
+
+        assert_eq!(logout.status, StatusCode::UNAUTHORIZED);
+        assert!(set_cookie_header(&logout).contains("Max-Age=0"));
+    }
+
+    #[tokio::test]
+    #[cfg_attr(
+        miri,
+        ignore = "Miri does not support Tokio's Windows IOCP runtime initialization"
+    )]
+    async fn logout_all_revokes_login_and_personal_access_tokens() {
+        let backend = TestBackend::new();
+        let user = backend.authenticated_user("logout_all", false);
+        let additional_token = AuthService::new(backend.auth_db_path())
+            .create_access_token(user.user_id(), "additional", ACCESS_TOKEN_TTL_MIN_SECONDS)
+            .expect("additional token should be created")
+            .token;
+        let app = backend.router();
+        let cookie = user.cookie_header();
+        let additional_bearer = format!("Bearer {additional_token}");
+
+        let logout = json_request(
+            &app,
+            Method::POST,
+            "/api/auth/logout-all",
+            None,
+            Some(&cookie),
+            None,
+        )
+        .await;
+        let former_session =
+            json_request(&app, Method::GET, "/api/auth/me", None, Some(&cookie), None).await;
+        let former_personal_token = json_request(
+            &app,
+            Method::GET,
+            "/api/auth/me",
+            Some(&additional_bearer),
+            None,
+            None,
+        )
+        .await;
+
+        assert_eq!(logout.status, StatusCode::OK);
+        assert_eq!(logout.payload["ok"], true);
+        assert!(set_cookie_header(&logout).contains("Max-Age=0"));
+        assert_eq!(former_session.status, StatusCode::UNAUTHORIZED);
+        assert_eq!(former_personal_token.status, StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    #[cfg_attr(
+        miri,
+        ignore = "Miri does not support Tokio's Windows IOCP runtime initialization"
+    )]
     async fn access_token_route_enforces_authentication_before_creation_validation() {
         let backend = TestBackend::new();
         let user = backend.authenticated_user("token_boundary", false);

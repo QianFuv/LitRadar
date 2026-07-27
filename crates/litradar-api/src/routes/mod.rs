@@ -67,6 +67,7 @@ pub fn public_routes() -> Router<ApiState> {
             axum::routing::post(auth::change_password),
         )
         .route("/auth/logout", axum::routing::post(auth::logout))
+        .route("/auth/logout-all", axum::routing::post(auth::logout_all))
         .route(
             "/auth/tokens",
             axum::routing::post(auth::create_token).get(auth::get_tokens),

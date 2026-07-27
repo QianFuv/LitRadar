@@ -21,6 +21,7 @@ const userMenuMocks = vi.hoisted(() => ({
   auth: {
     loading: false,
     logout: vi.fn().mockResolvedValue(undefined),
+    logoutWarning: null as { occurredAt: number; requestId: string | null } | null,
     user: {
       id: 21,
       username: 'menu_user',
@@ -64,6 +65,7 @@ vi.mock('nuqs/adapters/next/app', () => ({
  */
 function resetUserMenuMocks(): void {
   userMenuMocks.auth.loading = false;
+  userMenuMocks.auth.logoutWarning = null;
   userMenuMocks.auth.user = {
     id: 21,
     username: 'menu_user',
@@ -72,6 +74,26 @@ function resetUserMenuMocks(): void {
   userMenuMocks.pathname = '/';
   userMenuMocks.searchParams = new URLSearchParams('view=favorites&folder=4');
   userMenuMocks.theme = 'system';
+}
+
+/**
+ * Verify an anonymous client retains a visible recovery action after failed revocation.
+ */
+function exposesLogoutRecoveryAfterLocalCleanup(): void {
+  userMenuMocks.auth.user = null;
+  userMenuMocks.auth.logoutWarning = {
+    occurredAt: 1234,
+    requestId: 'logout-request-2',
+  };
+  render(<UserMenu />);
+
+  const warning = screen.getByRole('alert');
+  expect(warning).toHaveTextContent('服务端会话撤销未确认');
+  expect(warning).toHaveTextContent('请求 ID：logout-request-2');
+  expect(screen.getByRole('link', { name: '重新认证并撤销全部会话' })).toHaveAttribute(
+    'href',
+    '/login?logout_recovery=1',
+  );
 }
 
 /**
@@ -216,6 +238,7 @@ beforeEach(resetUserMenuMocks);
 
 describe('UserMenu', () => {
   test('stays hidden before authentication completes', hidesMenuWithoutAuthenticatedUser);
+  test('exposes logout recovery after local cleanup', exposesLogoutRecoveryAfterLocalCleanup);
   test('exposes account actions and admin gating', exposesAccountActions);
   test('restores trigger focus after Escape', restoresTriggerFocusAfterEscape);
   test(

@@ -1,6 +1,7 @@
 'use client';
 
 import { Eye, EyeOff } from 'lucide-react';
+import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useEffect, useState, type FormEvent } from 'react';
 import { Button } from '@/components/ui/button';
@@ -19,9 +20,10 @@ import { useAuth } from '@/lib/auth-context';
 export default function LoginClient() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const { loading, login, register, user } = useAuth();
+  const { loading, login, logoutWarning, recoverLogout, register, user } = useAuth();
   const nextParam = searchParams.get('next') || '';
   const nextPath = nextParam.startsWith('/') && !nextParam.startsWith('//') ? nextParam : '/';
+  const isLogoutRecovery = searchParams.get('logout_recovery') === '1';
 
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
@@ -32,15 +34,16 @@ export default function LoginClient() {
   const [mode, setMode] = useState<AuthFormMode>('login');
   const [inviteRequired, setInviteRequired] = useState(true);
   const [bootstrapRequired, setBootstrapRequired] = useState(false);
+  const [isRecoveryComplete, setIsRecoveryComplete] = useState(false);
 
   useEffect(() => {
-    if (!loading && user) {
+    if (!loading && user && !isLogoutRecovery) {
       router.replace(nextPath);
     }
-  }, [loading, nextPath, router, user]);
+  }, [isLogoutRecovery, loading, nextPath, router, user]);
 
   useEffect(() => {
-    if (loading || user) {
+    if (loading || user || isLogoutRecovery) {
       return;
     }
     let didCancel = false;
@@ -55,20 +58,26 @@ export default function LoginClient() {
     return () => {
       didCancel = true;
     };
-  }, [loading, user]);
+  }, [isLogoutRecovery, loading, user]);
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setError(null);
     setIsSubmitting(true);
+    setIsRecoveryComplete(false);
 
     try {
-      if (mode === 'register') {
+      if (isLogoutRecovery) {
+        await recoverLogout(username.trim(), password);
+        setIsRecoveryComplete(true);
+      } else if (mode === 'register') {
         await register(username.trim(), password, inviteCode.trim());
       } else {
         await login(username.trim(), password);
       }
-      router.replace(nextPath);
+      if (!isLogoutRecovery) {
+        router.replace(nextPath);
+      }
     } catch (err) {
       setError(getAuthErrorMessage(err, mode));
     } finally {
@@ -76,7 +85,7 @@ export default function LoginClient() {
     }
   };
 
-  if (loading || user) {
+  if (loading || (user && !isLogoutRecovery)) {
     return (
       <main
         id="main-content"
@@ -96,144 +105,201 @@ export default function LoginClient() {
     >
       <Card className="w-full max-w-md">
         <CardHeader>
-          <CardTitle>{mode === 'login' ? '登录' : '注册'}</CardTitle>
+          <CardTitle>
+            {isLogoutRecovery ? '撤销全部会话' : mode === 'login' ? '登录' : '注册'}
+          </CardTitle>
           <CardDescription>
-            {mode === 'login' ? '输入账号和密码登录' : '创建一个新账号'}
+            {isLogoutRecovery
+              ? '重新验证账号后，撤销该账号的所有登录令牌和个人访问令牌'
+              : mode === 'login'
+                ? '输入账号和密码登录'
+                : '创建一个新账号'}
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <form
-            onSubmit={handleSubmit}
-            className="space-y-4"
-            aria-describedby={error ? 'login-error' : undefined}
-          >
-            <div className="space-y-2">
-              <Label htmlFor="username">用户名</Label>
-              <Input
-                id="username"
-                name="username"
-                type="text"
-                value={username}
-                autoComplete="username"
-                autoFocus
-                spellCheck={false}
-                onChange={(event) => setUsername(event.target.value)}
-                placeholder="3-32位字母数字下划线"
-                aria-invalid={Boolean(error)}
-                aria-describedby={error ? 'login-error' : undefined}
-                required
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="password">密码</Label>
-              <div className="relative">
-                <Input
-                  id="password"
-                  name="password"
-                  type={isPasswordVisible ? 'text' : 'password'}
-                  value={password}
-                  autoComplete={mode === 'register' ? 'new-password' : 'current-password'}
-                  onChange={(event) => setPassword(event.target.value)}
-                  placeholder={mode === 'register' ? '至少12位' : '输入当前密码'}
-                  minLength={mode === 'register' ? 12 : undefined}
-                  className="pr-10"
-                  aria-invalid={Boolean(error)}
-                  aria-describedby={error ? 'login-error' : undefined}
-                  required
-                />
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  className="absolute inset-y-0 right-0 h-full rounded-l-none text-muted-foreground hover:text-foreground"
-                  aria-label={isPasswordVisible ? '隐藏密码' : '显示密码'}
-                  aria-pressed={isPasswordVisible}
-                  onClick={() => setIsPasswordVisible((current) => !current)}
+          {logoutWarning && !isRecoveryComplete && (
+            <div
+              role="alert"
+              className="mb-4 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-foreground"
+            >
+              <p className="font-medium">服务端会话撤销未确认</p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                本地会话信息已清除，但旧令牌可能仍有效。
+                {isLogoutRecovery
+                  ? ' 请重新输入账号密码以撤销全部会话。'
+                  : ' 请重新认证后撤销全部会话。'}
+              </p>
+              {logoutWarning.requestId && (
+                <p className="mt-1 break-all text-xs text-muted-foreground">
+                  请求 ID：{logoutWarning.requestId}
+                </p>
+              )}
+              {!isLogoutRecovery && (
+                <Link
+                  href="/login?logout_recovery=1"
+                  className="mt-2 inline-flex h-8 items-center rounded-md border border-input bg-background px-3 text-xs font-medium hover:bg-accent hover:text-accent-foreground"
                 >
-                  {isPasswordVisible ? (
-                    <EyeOff className="h-4 w-4" aria-hidden="true" />
-                  ) : (
-                    <Eye className="h-4 w-4" aria-hidden="true" />
-                  )}
-                </Button>
-              </div>
+                  重新认证并撤销全部会话
+                </Link>
+              )}
             </div>
-            {mode === 'register' && inviteRequired && (
-              <div className="space-y-2">
-                <Label htmlFor="invite-code">邀请码</Label>
-                <Input
-                  id="invite-code"
-                  name="invite_code"
-                  type="text"
-                  value={inviteCode}
-                  autoComplete="one-time-code"
-                  spellCheck={false}
-                  onChange={(event) => setInviteCode(event.target.value)}
-                  placeholder="输入邀请码"
-                  aria-invalid={Boolean(error)}
-                  aria-describedby={error ? 'login-error' : undefined}
-                  required
-                />
-              </div>
-            )}
-            {mode === 'register' && bootstrapRequired && (
+          )}
+          {isRecoveryComplete ? (
+            <div className="space-y-4">
               <div
                 role="status"
-                className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-foreground"
+                className="rounded-md border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-sm text-foreground"
               >
-                系统管理员尚未完成本机初始化。请先在服务器上运行{' '}
-                <code>admin bootstrap --username NAME --password-stdin</code>
-                ，再使用管理员生成的邀请码注册。
+                全部会话和个人访问令牌已撤销。现在可以重新登录。
               </div>
-            )}
-            {error && (
-              <div
-                id="login-error"
-                role="alert"
-                className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive"
-              >
-                {error}
-              </div>
-            )}
-            <Button
-              type="submit"
-              className="w-full"
-              disabled={isSubmitting || (mode === 'register' && bootstrapRequired)}
+              <Button asChild className="w-full">
+                <Link href="/login">返回登录</Link>
+              </Button>
+            </div>
+          ) : (
+            <form
+              onSubmit={handleSubmit}
+              className="space-y-4"
+              aria-describedby={error ? 'login-error' : undefined}
             >
-              {isSubmitting ? '请稍候…' : mode === 'login' ? '登录' : '注册'}
-            </Button>
-          </form>
-          <div className="mt-4 text-center text-sm text-muted-foreground">
-            {mode === 'login' ? (
-              <>
-                没有账号？{' '}
-                <button
-                  type="button"
-                  className="underline text-primary hover:text-primary/80"
-                  onClick={() => {
-                    setMode('register');
-                    setError(null);
-                  }}
+              <div className="space-y-2">
+                <Label htmlFor="username">用户名</Label>
+                <Input
+                  id="username"
+                  name="username"
+                  type="text"
+                  value={username}
+                  autoComplete="username"
+                  autoFocus
+                  spellCheck={false}
+                  onChange={(event) => setUsername(event.target.value)}
+                  placeholder="3-32位字母数字下划线"
+                  aria-invalid={Boolean(error)}
+                  aria-describedby={error ? 'login-error' : undefined}
+                  required
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="password">密码</Label>
+                <div className="relative">
+                  <Input
+                    id="password"
+                    name="password"
+                    type={isPasswordVisible ? 'text' : 'password'}
+                    value={password}
+                    autoComplete={mode === 'register' ? 'new-password' : 'current-password'}
+                    onChange={(event) => setPassword(event.target.value)}
+                    placeholder={mode === 'register' ? '至少12位' : '输入当前密码'}
+                    minLength={mode === 'register' ? 12 : undefined}
+                    className="pr-10"
+                    aria-invalid={Boolean(error)}
+                    aria-describedby={error ? 'login-error' : undefined}
+                    required
+                  />
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="absolute inset-y-0 right-0 h-full rounded-l-none text-muted-foreground hover:text-foreground"
+                    aria-label={isPasswordVisible ? '隐藏密码' : '显示密码'}
+                    aria-pressed={isPasswordVisible}
+                    onClick={() => setIsPasswordVisible((current) => !current)}
+                  >
+                    {isPasswordVisible ? (
+                      <EyeOff className="h-4 w-4" aria-hidden="true" />
+                    ) : (
+                      <Eye className="h-4 w-4" aria-hidden="true" />
+                    )}
+                  </Button>
+                </div>
+              </div>
+              {!isLogoutRecovery && mode === 'register' && inviteRequired && (
+                <div className="space-y-2">
+                  <Label htmlFor="invite-code">邀请码</Label>
+                  <Input
+                    id="invite-code"
+                    name="invite_code"
+                    type="text"
+                    value={inviteCode}
+                    autoComplete="one-time-code"
+                    spellCheck={false}
+                    onChange={(event) => setInviteCode(event.target.value)}
+                    placeholder="输入邀请码"
+                    aria-invalid={Boolean(error)}
+                    aria-describedby={error ? 'login-error' : undefined}
+                    required
+                  />
+                </div>
+              )}
+              {!isLogoutRecovery && mode === 'register' && bootstrapRequired && (
+                <div
+                  role="status"
+                  className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-foreground"
                 >
-                  注册
-                </button>
-              </>
-            ) : (
-              <>
-                已有账号？{' '}
-                <button
-                  type="button"
-                  className="underline text-primary hover:text-primary/80"
-                  onClick={() => {
-                    setMode('login');
-                    setError(null);
-                  }}
+                  系统管理员尚未完成本机初始化。请先在服务器上运行{' '}
+                  <code>admin bootstrap --username NAME --password-stdin</code>
+                  ，再使用管理员生成的邀请码注册。
+                </div>
+              )}
+              {error && (
+                <div
+                  id="login-error"
+                  role="alert"
+                  className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive"
                 >
-                  登录
-                </button>
-              </>
-            )}
-          </div>
+                  {error}
+                </div>
+              )}
+              <Button
+                type="submit"
+                className="w-full"
+                disabled={
+                  isSubmitting || (!isLogoutRecovery && mode === 'register' && bootstrapRequired)
+                }
+              >
+                {isSubmitting
+                  ? '请稍候…'
+                  : isLogoutRecovery
+                    ? '重新认证并撤销全部会话'
+                    : mode === 'login'
+                      ? '登录'
+                      : '注册'}
+              </Button>
+            </form>
+          )}
+          {!isLogoutRecovery && !isRecoveryComplete && (
+            <div className="mt-4 text-center text-sm text-muted-foreground">
+              {mode === 'login' ? (
+                <>
+                  没有账号？{' '}
+                  <button
+                    type="button"
+                    className="underline text-primary hover:text-primary/80"
+                    onClick={() => {
+                      setMode('register');
+                      setError(null);
+                    }}
+                  >
+                    注册
+                  </button>
+                </>
+              ) : (
+                <>
+                  已有账号？{' '}
+                  <button
+                    type="button"
+                    className="underline text-primary hover:text-primary/80"
+                    onClick={() => {
+                      setMode('login');
+                      setError(null);
+                    }}
+                  >
+                    登录
+                  </button>
+                </>
+              )}
+            </div>
+          )}
         </CardContent>
       </Card>
     </main>

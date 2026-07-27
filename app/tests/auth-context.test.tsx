@@ -2,7 +2,7 @@
  * Authentication restore coverage using the real provider and MSW transport.
  */
 
-import { screen } from '@testing-library/react';
+import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
 import { describe, expect, test } from 'vitest';
@@ -29,11 +29,14 @@ function currentUserResponse(): Response {
  * @returns Authentication state probe.
  */
 function AuthProbe() {
-  const { loading, user } = useAuth();
+  const { loading, logoutWarning, user } = useAuth();
   return (
     <div>
       <span>{loading ? 'loading' : 'ready'}</span>
       <span>{user?.username ?? 'anonymous'}</span>
+      <span>
+        {logoutWarning ? `warning:${logoutWarning.requestId ?? 'unknown'}` : 'no-warning'}
+      </span>
     </div>
   );
 }
@@ -44,11 +47,14 @@ function AuthProbe() {
  * @returns Authentication action probe.
  */
 function AuthActionProbe() {
-  const { loading, login, logout, register, user } = useAuth();
+  const { loading, login, logout, logoutWarning, recoverLogout, register, user } = useAuth();
   return (
     <div>
       <span>{loading ? 'loading' : 'ready'}</span>
       <span>{user?.username ?? 'anonymous'}</span>
+      <span>
+        {logoutWarning ? `warning:${logoutWarning.requestId ?? 'unknown'}` : 'no-warning'}
+      </span>
       <button type="button" onClick={() => void login('login_user', 'login-password')}>
         Login action
       </button>
@@ -58,8 +64,16 @@ function AuthActionProbe() {
       >
         Register action
       </button>
-      <button type="button" onClick={() => void logout()}>
+      <button type="button" onClick={() => void logout().catch(() => undefined)}>
         Logout action
+      </button>
+      <button
+        type="button"
+        onClick={() =>
+          void recoverLogout('recovery_user', 'recovery-password').catch(() => undefined)
+        }
+      >
+        Recover logout action
       </button>
     </div>
   );
@@ -185,31 +199,130 @@ async function registersThenAuthenticates(): Promise<void> {
 }
 
 /**
- * Verify logout clears authoritative and cached state even when the server returns an error.
+ * Verify failed logout preserves an explicit warning across a simulated page refresh.
  */
-async function clearsSessionWhenLogoutFails(): Promise<void> {
+async function preservesLogoutFailureAcrossRefresh(): Promise<void> {
   server.use(
     http.get('http://localhost/api/auth/me', currentUserResponse),
     http.post('http://localhost/api/auth/logout', () =>
-      HttpResponse.json({ detail: 'logout unavailable' }, { status: 500 }),
+      HttpResponse.json(
+        {
+          detail: {
+            code: 'session_revocation_unconfirmed',
+            message: 'Session revocation could not be confirmed',
+            request_id: 'logout-request-1',
+          },
+        },
+        { status: 503, headers: { 'X-Request-Id': 'logout-request-1' } },
+      ),
     ),
   );
   window.sessionStorage.setItem('litradar:v1:session_access_token', 'stale-secret');
   const user = userEvent.setup();
-  const { queryClient } = renderWithQuery(
+  const view = renderWithQuery(
     <AuthProvider>
       <AuthActionProbe />
     </AuthProvider>,
   );
+  const { queryClient } = view;
   queryClient.setQueryData(['private-query'], 'private-data');
 
   expect(await screen.findByText('restored_admin')).toBeInTheDocument();
   await user.click(screen.getByRole('button', { name: 'Logout action' }));
 
   expect(await screen.findByText('anonymous')).toBeInTheDocument();
+  expect(screen.getByText('warning:logout-request-1')).toBeInTheDocument();
   expect(window.localStorage.getItem('litradar:v1:user')).toBeNull();
   expect(window.sessionStorage.getItem('litradar:v1:session_access_token')).toBeNull();
   expect(queryClient.getQueryData(['private-query'])).toBeUndefined();
+  expect(
+    JSON.parse(window.localStorage.getItem('litradar:v1:logout_revocation_unconfirmed') ?? '{}'),
+  ).toEqual(expect.objectContaining({ requestId: 'logout-request-1' }));
+
+  view.unmount();
+  server.use(
+    http.get('http://localhost/api/auth/me', () =>
+      HttpResponse.json({ detail: 'Authentication required' }, { status: 401 }),
+    ),
+  );
+  renderWithQuery(
+    <AuthProvider>
+      <AuthProbe />
+    </AuthProvider>,
+  );
+
+  expect(await screen.findByText('warning:logout-request-1')).toBeInTheDocument();
+  expect(screen.getByText('anonymous')).toBeInTheDocument();
+}
+
+/**
+ * Verify a session that expired before logout is treated as an idempotent local logout.
+ */
+async function acceptsAlreadyExpiredSessionLogout(): Promise<void> {
+  server.use(
+    http.get('http://localhost/api/auth/me', currentUserResponse),
+    http.post('http://localhost/api/auth/logout', () =>
+      HttpResponse.json({ detail: 'Authentication required' }, { status: 401 }),
+    ),
+  );
+  const user = userEvent.setup();
+  renderWithQuery(
+    <AuthProvider>
+      <AuthActionProbe />
+    </AuthProvider>,
+  );
+
+  expect(await screen.findByText('restored_admin')).toBeInTheDocument();
+  await user.click(screen.getByRole('button', { name: 'Logout action' }));
+
+  expect(await screen.findByText('anonymous')).toBeInTheDocument();
+  expect(screen.getByText('no-warning')).toBeInTheDocument();
+  expect(window.localStorage.getItem('litradar:v1:logout_revocation_unconfirmed')).toBeNull();
+}
+
+/**
+ * Verify fresh reauthentication revokes all sessions and clears the persisted warning.
+ */
+async function recoversLogoutAfterFreshAuthentication(): Promise<void> {
+  let loginPayload: unknown;
+  let logoutAllCalls = 0;
+  window.localStorage.setItem(
+    'litradar:v1:logout_revocation_unconfirmed',
+    JSON.stringify({ occurredAt: 1234, requestId: 'previous-request' }),
+  );
+  server.use(
+    http.get('http://localhost/api/auth/me', () =>
+      HttpResponse.json({ detail: 'Authentication required' }, { status: 401 }),
+    ),
+    http.post('http://localhost/api/auth/login', async ({ request }) => {
+      loginPayload = await request.json();
+      return HttpResponse.json(
+        createLoginScenario({ user: { id: 19, username: 'recovery_user', is_admin: false } }),
+      );
+    }),
+    http.post('http://localhost/api/auth/logout-all', () => {
+      logoutAllCalls += 1;
+      return HttpResponse.json({ ok: true, user_id: 19 });
+    }),
+  );
+  const user = userEvent.setup();
+  renderWithQuery(
+    <AuthProvider>
+      <AuthActionProbe />
+    </AuthProvider>,
+  );
+
+  expect(await screen.findByText('warning:previous-request')).toBeInTheDocument();
+  await user.click(screen.getByRole('button', { name: 'Recover logout action' }));
+
+  await waitFor(() => expect(screen.getByText('no-warning')).toBeInTheDocument());
+  expect(loginPayload).toEqual({
+    username: 'recovery_user',
+    password: 'recovery-password',
+  });
+  expect(logoutAllCalls).toBe(1);
+  expect(window.localStorage.getItem('litradar:v1:logout_revocation_unconfirmed')).toBeNull();
+  expect(screen.getByText('anonymous')).toBeInTheDocument();
 }
 
 describe('AuthProvider restore', () => {
@@ -217,5 +330,7 @@ describe('AuthProvider restore', () => {
   test('requires an authoritative server session', requiresAuthoritativeServerSession);
   test('logs in and clears stale client state', logsInAndClearsStaleClientState);
   test('registers an invited user and authenticates it', registersThenAuthenticates);
-  test('clears session state when logout fails', clearsSessionWhenLogoutFails);
+  test('preserves logout failure across refresh', preservesLogoutFailureAcrossRefresh);
+  test('accepts an already expired session logout', acceptsAlreadyExpiredSessionLogout);
+  test('recovers logout after fresh authentication', recoversLogoutAfterFreshAuthentication);
 });

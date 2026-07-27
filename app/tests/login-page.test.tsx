@@ -20,17 +20,24 @@ const loginPageMocks = vi.hoisted(() => ({
   auth: {
     loading: false,
     login: vi.fn(),
+    logoutWarning: null as { occurredAt: number; requestId: string | null } | null,
+    recoverLogout: vi.fn(),
     register: vi.fn(),
     user: null as MockUser | null,
   },
   getInviteRequirement: vi.fn(),
+  logoutRecoveryParam: '',
   nextParam: '',
   replace: vi.fn(),
 }));
 
 vi.mock('next/navigation', () => ({
   useRouter: () => ({ replace: loginPageMocks.replace }),
-  useSearchParams: () => new URLSearchParams({ next: loginPageMocks.nextParam }),
+  useSearchParams: () =>
+    new URLSearchParams({
+      logout_recovery: loginPageMocks.logoutRecoveryParam,
+      next: loginPageMocks.nextParam,
+    }),
 }));
 
 vi.mock('@/lib/auth-context', () => ({
@@ -46,13 +53,16 @@ vi.mock('@/lib/api', () => ({
  */
 function resetLoginPageMocks(): void {
   loginPageMocks.auth.loading = false;
+  loginPageMocks.auth.logoutWarning = null;
   loginPageMocks.auth.login.mockReset().mockResolvedValue(undefined);
+  loginPageMocks.auth.recoverLogout.mockReset().mockResolvedValue(undefined);
   loginPageMocks.auth.register.mockReset().mockResolvedValue(undefined);
   loginPageMocks.auth.user = null;
   loginPageMocks.getInviteRequirement
     .mockReset()
     .mockResolvedValue({ required: true, bootstrap_required: false });
   loginPageMocks.nextParam = '';
+  loginPageMocks.logoutRecoveryParam = '';
   loginPageMocks.replace.mockReset();
 }
 
@@ -181,6 +191,25 @@ async function announcesLoginFailures(): Promise<void> {
 }
 
 /**
+ * Verify the public login route exposes a persisted logout warning and recovery entry.
+ */
+function exposesPersistedLogoutWarning(): void {
+  loginPageMocks.auth.logoutWarning = {
+    occurredAt: 1234,
+    requestId: 'logout-request-3',
+  };
+  render(<LoginClient />);
+
+  const warning = screen.getByRole('alert');
+  expect(warning).toHaveTextContent('服务端会话撤销未确认');
+  expect(warning).toHaveTextContent('请求 ID：logout-request-3');
+  expect(screen.getByRole('link', { name: '重新认证并撤销全部会话' })).toHaveAttribute(
+    'href',
+    '/login?logout_recovery=1',
+  );
+}
+
+/**
  * Verify a successful login trims identity input, blocks duplicate submission, and returns safely.
  */
 async function submitsLoginOnceAndReturnsToProtectedPath(): Promise<void> {
@@ -233,6 +262,33 @@ async function registersInvitedUserAndReturnsToRequestedPath(): Promise<void> {
   expect(loginPageMocks.replace).toHaveBeenCalledWith('/tracking');
 }
 
+/**
+ * Verify logout recovery reauthenticates, revokes every session, and stays logged out.
+ */
+async function reauthenticatesForLogoutRecovery(): Promise<void> {
+  loginPageMocks.logoutRecoveryParam = '1';
+  const user = userEvent.setup();
+  render(<LoginClient />);
+
+  expect(screen.getByRole('heading', { name: '撤销全部会话' })).toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: '注册' })).not.toBeInTheDocument();
+  await user.type(screen.getByLabelText('用户名'), '  recovery_user  ');
+  await user.type(screen.getByLabelText('密码'), 'recovery-password');
+  await user.click(screen.getByRole('button', { name: '重新认证并撤销全部会话' }));
+
+  await waitFor(() =>
+    expect(loginPageMocks.auth.recoverLogout).toHaveBeenCalledWith(
+      'recovery_user',
+      'recovery-password',
+    ),
+  );
+  expect(screen.getByRole('status')).toHaveTextContent(
+    '全部会话和个人访问令牌已撤销。现在可以重新登录。',
+  );
+  expect(screen.getByRole('link', { name: '返回登录' })).toHaveAttribute('href', '/login');
+  expect(loginPageMocks.replace).not.toHaveBeenCalled();
+}
+
 beforeEach(resetLoginPageMocks);
 
 describe('login page', () => {
@@ -241,6 +297,7 @@ describe('login page', () => {
   test('focuses username and toggles password visibility safely', focusesAndRevealsPasswordSafely);
   test('maps known authentication errors and preserves unknown details', mapsAuthenticationErrors);
   test('announces mapped login failures', announcesLoginFailures);
+  test('exposes a persisted logout warning', exposesPersistedLogoutWarning);
   test(
     'submits a successful login once and returns to the protected path',
     submitsLoginOnceAndReturnsToProtectedPath,
@@ -249,4 +306,5 @@ describe('login page', () => {
     'registers an invited user and returns to the requested path',
     registersInvitedUserAndReturnsToRequestedPath,
   );
+  test('reauthenticates for logout recovery', reauthenticatesForLogoutRecovery);
 });

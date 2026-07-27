@@ -1325,6 +1325,54 @@
                 }
               }
             }
+          },
+          "503": {
+            "description": "The browser cookie was cleared but durable token revocation was not confirmed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionRevocationErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          },
+          {
+            "session_cookie": []
+          }
+        ]
+      }
+    },
+    "/api/auth/logout-all": {
+      "post": {
+        "tags": ["auth"],
+        "summary": "Revoke every session and personal access token for the current user.",
+        "description": "# Arguments\n\n* `state` - Shared API state.\n* `headers` - Request headers.\n* `request_id` - Server-generated request identifier.\n\n# Returns\n\nLogout response after every token is durably revoked.",
+        "operationId": "logout_all",
+        "responses": {
+          "200": {
+            "description": "All sessions and personal access tokens were revoked.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LogoutResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The browser cookie was cleared but durable token revocation was not confirmed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionRevocationErrorResponse"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -5531,6 +5579,36 @@
           "worker_id": {
             "type": "string",
             "description": "Stable worker process identifier."
+          }
+        }
+      },
+      "SessionRevocationErrorDetail": {
+        "type": "object",
+        "description": "Stable detail returned when durable session revocation cannot be confirmed.",
+        "required": ["code", "message", "request_id"],
+        "properties": {
+          "code": {
+            "type": "string",
+            "description": "Stable client classification."
+          },
+          "message": {
+            "type": "string",
+            "description": "Safe user-facing failure summary."
+          },
+          "request_id": {
+            "type": "string",
+            "description": "Server-generated request identifier for audit correlation."
+          }
+        }
+      },
+      "SessionRevocationErrorResponse": {
+        "type": "object",
+        "description": "Error envelope for an unconfirmed session revocation.",
+        "required": ["detail"],
+        "properties": {
+          "detail": {
+            "$ref": "#/components/schemas/SessionRevocationErrorDetail",
+            "description": "Structured revocation failure detail."
           }
         }
       },

@@ -10,7 +10,7 @@ import {
   type InviteRequirement,
   type LoginResponse,
 } from '@/lib/api-contract';
-import { buildApiUrl, requestJson } from '@/lib/api/client';
+import { ApiError, buildApiUrl, requestJson } from '@/lib/api/client';
 import type {
   AccessToken,
   CnkiLoginPollResponse,
@@ -85,11 +85,33 @@ export async function registerUser(
  * @param token - Optional explicit bearer access token.
  */
 export async function logoutUser(token?: string | null): Promise<void> {
-  await fetch(buildApiUrl('/api/auth/logout'), {
-    method: 'POST',
-    credentials: 'include',
-    headers: token ? { Authorization: `Bearer ${token}` } : undefined,
-  }).catch(() => undefined);
+  try {
+    await requestJson<unknown>(
+      buildApiUrl('/api/auth/logout'),
+      token,
+      { method: 'POST' },
+      '服务端会话撤销未确认',
+    );
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 401) {
+      return;
+    }
+    throw error;
+  }
+}
+
+/**
+ * Revoke every login session and personal access token for the authenticated user.
+ *
+ * @returns Empty promise after durable revocation is confirmed.
+ */
+export async function logoutAllSessions(): Promise<void> {
+  await requestJson<unknown>(
+    buildApiUrl('/api/auth/logout-all'),
+    null,
+    { method: 'POST' },
+    '撤销全部会话失败',
+  );
 }
 
 /**

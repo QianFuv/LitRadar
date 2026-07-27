@@ -4,6 +4,7 @@ use std::error::Error;
 use std::fmt;
 use std::fs;
 use std::path::Path;
+use std::time::Duration;
 
 use litradar_domain::{
     UserId, ACCESS_TOKEN_ACTIVE_LIMIT, ACCESS_TOKEN_LIMIT_DETAIL, ACCESS_TOKEN_RESERVED_NAME,
@@ -14,6 +15,8 @@ use crate::business::{
     insert_required_security_audit_event, SecurityAuditError, SecurityAuditEvent,
 };
 use crate::{migrate_auth_database, open_sqlite_connection, MigrationError};
+
+const SESSION_REVOCATION_BUSY_TIMEOUT: Duration = Duration::from_millis(250);
 
 /// Stored user row returned by auth repository queries.
 #[derive(Clone, PartialEq)]
@@ -180,6 +183,23 @@ impl Error for AuthRepositoryError {
             Self::Migration(error) => Some(error),
             Self::AuditPersistence(error) => Some(error),
             _ => None,
+        }
+    }
+}
+
+impl AuthRepositoryError {
+    /// Return whether a repository failure is transient SQLite lock contention.
+    ///
+    /// # Returns
+    ///
+    /// True only for SQLite busy or locked failures that are safe to retry once.
+    pub fn is_transient_sqlite_contention(&self) -> bool {
+        match self {
+            Self::Sqlite(error) => is_transient_sqlite_contention(error),
+            Self::AuditPersistence(SecurityAuditError::Sqlite(error)) => {
+                is_transient_sqlite_contention(error)
+            }
+            _ => false,
         }
     }
 }
@@ -688,6 +708,7 @@ pub fn delete_access_token_by_hash_with_audit(
     audit: Option<&SecurityAuditEvent>,
 ) -> Result<bool, AuthRepositoryError> {
     let connection = open_auth_connection(auth_db_path)?;
+    connection.busy_timeout(SESSION_REVOCATION_BUSY_TIMEOUT)?;
     connection.execute("BEGIN IMMEDIATE", [])?;
     let result = (|| {
         let token_id = connection
@@ -707,6 +728,36 @@ pub fn delete_access_token_by_hash_with_audit(
             insert_required_security_audit_event(&connection, &audit)?;
         }
         Ok(count > 0)
+    })();
+    finish_immediate_transaction(&connection, result)
+}
+
+/// Delete every access token owned by a user and persist a required audit event atomically.
+///
+/// # Arguments
+///
+/// * `auth_db_path` - Path to the auth SQLite database.
+/// * `user_id` - User whose login and personal access tokens must be revoked.
+/// * `audit` - Required terminal security audit event.
+///
+/// # Returns
+///
+/// Number of revoked access tokens.
+pub fn delete_all_access_tokens_with_audit(
+    auth_db_path: impl AsRef<Path>,
+    user_id: UserId,
+    audit: &SecurityAuditEvent,
+) -> Result<usize, AuthRepositoryError> {
+    let connection = open_auth_connection(auth_db_path)?;
+    connection.busy_timeout(SESSION_REVOCATION_BUSY_TIMEOUT)?;
+    connection.execute("BEGIN IMMEDIATE", [])?;
+    let result = (|| {
+        let count = connection.execute(
+            "DELETE FROM access_tokens WHERE user_id = ?1",
+            [user_id.value()],
+        )?;
+        insert_required_security_audit_event(&connection, audit)?;
+        Ok(count)
     })();
     finish_immediate_transaction(&connection, result)
 }
@@ -1174,6 +1225,14 @@ fn is_constraint_error(error: &rusqlite::Error) -> bool {
         error,
         rusqlite::Error::SqliteFailure(failure, _)
             if failure.code == ErrorCode::ConstraintViolation
+    )
+}
+
+fn is_transient_sqlite_contention(error: &rusqlite::Error) -> bool {
+    matches!(
+        error,
+        rusqlite::Error::SqliteFailure(failure, _)
+            if matches!(failure.code, ErrorCode::DatabaseBusy | ErrorCode::DatabaseLocked)
     )
 }
 

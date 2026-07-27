@@ -564,6 +564,34 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  '/api/auth/logout-all': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Revoke every session and personal access token for the current user.
+     * @description # Arguments
+     *
+     *     * `state` - Shared API state.
+     *     * `headers` - Request headers.
+     *     * `request_id` - Server-generated request identifier.
+     *
+     *     # Returns
+     *
+     *     Logout response after every token is durably revoked.
+     */
+    post: operations['logout_all'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   '/api/auth/me': {
     parameters: {
       query?: never;
@@ -2641,6 +2669,20 @@ export interface components {
       /** @description Stable worker process identifier. */
       worker_id: string;
     };
+    /** @description Stable detail returned when durable session revocation cannot be confirmed. */
+    SessionRevocationErrorDetail: {
+      /** @description Stable client classification. */
+      code: string;
+      /** @description Safe user-facing failure summary. */
+      message: string;
+      /** @description Server-generated request identifier for audit correlation. */
+      request_id: string;
+    };
+    /** @description Error envelope for an unconfirmed session revocation. */
+    SessionRevocationErrorResponse: {
+      /** @description Structured revocation failure detail. */
+      detail: components['schemas']['SessionRevocationErrorDetail'];
+    };
     /** @description Access token creation request. */
     TokenCreateRequest: {
       /** @description Token display name. */
@@ -3617,6 +3659,44 @@ export interface operations {
         };
         content: {
           'application/json': components['schemas']['LogoutResponse'];
+        };
+      };
+      /** @description The browser cookie was cleared but durable token revocation was not confirmed. */
+      503: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['SessionRevocationErrorResponse'];
+        };
+      };
+    };
+  };
+  logout_all: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description All sessions and personal access tokens were revoked. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['LogoutResponse'];
+        };
+      };
+      /** @description The browser cookie was cleared but durable token revocation was not confirmed. */
+      503: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['SessionRevocationErrorResponse'];
         };
       };
     };

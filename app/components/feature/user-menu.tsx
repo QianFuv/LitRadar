@@ -6,6 +6,7 @@
 
 import * as DropdownMenuPrimitive from '@radix-ui/react-dropdown-menu';
 import {
+  AlertTriangle,
   Check,
   ChevronRight,
   ChevronUp,
@@ -26,7 +27,7 @@ import { useRef, useSyncExternalStore, type CSSProperties, type MouseEvent } fro
 import { Button } from '@/components/ui/button';
 import { SECTIONED_DIALOG_RETURN_FOCUS_ATTRIBUTE } from '@/components/feature/sectioned-dialog';
 import { buildAdminCenterHref, parseAdminSection } from '@/lib/admin-center';
-import { useAuth } from '@/lib/auth-context';
+import { useAuth, type LogoutRevocationWarning } from '@/lib/auth-context';
 import { buildSettingsCenterHref } from '@/lib/settings-center';
 import { cn } from '@/lib/utils';
 
@@ -83,12 +84,46 @@ function getServerEnvironmentSnapshot(): boolean {
 }
 
 /**
+ * Render durable warning metadata when server-side logout was not confirmed.
+ *
+ * @param props - Persisted warning metadata.
+ * @returns Recovery notice linking to fresh reauthentication.
+ */
+function LogoutRevocationNotice({ warning }: { warning: LogoutRevocationWarning }) {
+  return (
+    <div
+      role="alert"
+      className="w-[min(24rem,calc(100vw-2rem))] rounded-lg border border-destructive/30 bg-popover p-3 text-sm text-popover-foreground shadow-lg"
+    >
+      <div className="flex items-start gap-2">
+        <AlertTriangle className="mt-0.5 size-4 shrink-0 text-destructive" aria-hidden="true" />
+        <div className="min-w-0 space-y-2">
+          <p className="font-medium">服务端会话撤销未确认</p>
+          <p className="text-xs text-muted-foreground">
+            本地会话信息已清除，但旧令牌可能仍有效。请重新认证后撤销全部会话。
+          </p>
+          {warning.requestId && (
+            <p className="break-all text-xs text-muted-foreground">请求 ID：{warning.requestId}</p>
+          )}
+          <Link
+            href="/login?logout_recovery=1"
+            className="inline-flex h-8 items-center rounded-md border border-input bg-background px-3 text-xs font-medium hover:bg-accent hover:text-accent-foreground"
+          >
+            重新认证并撤销全部会话
+          </Link>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/**
  * Render the authenticated account trigger and account-only menu.
  *
  * @returns Account menu or null while authentication is unresolved.
  */
 export function UserMenu() {
-  const { user, loading, logout } = useAuth();
+  const { user, loading, logout, logoutWarning } = useAuth();
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const { setTheme, theme } = useTheme();
@@ -99,8 +134,16 @@ export function UserMenu() {
     getServerEnvironmentSnapshot,
   );
 
-  if (loading || !user) {
+  if (loading) {
     return null;
+  }
+
+  if (!user) {
+    return logoutWarning ? (
+      <div data-slot="user-menu-position" className="fixed z-40" style={USER_MENU_POSITION_STYLE}>
+        <LogoutRevocationNotice warning={logoutWarning} />
+      </div>
+    ) : null;
   }
 
   const selectedTheme = isMounted ? (theme ?? 'system') : 'system';
@@ -139,7 +182,12 @@ export function UserMenu() {
   }
 
   return (
-    <div data-slot="user-menu-position" className="fixed z-40" style={USER_MENU_POSITION_STYLE}>
+    <div
+      data-slot="user-menu-position"
+      className="fixed z-40 flex flex-col items-end gap-2"
+      style={USER_MENU_POSITION_STYLE}
+    >
+      {logoutWarning && <LogoutRevocationNotice warning={logoutWarning} />}
       <DropdownMenuPrimitive.Root>
         <DropdownMenuPrimitive.Trigger asChild>
           <Button

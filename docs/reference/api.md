@@ -120,6 +120,7 @@ Rust handler 上的 OpenAPI 注解是 REST 契约的实现来源。修改 REST �
 | `GET`            | `/api/auth/me`                | 当前用户                         |
 | `POST`           | `/api/auth/change-password`   | 修改当前用户密码                 |
 | `POST`           | `/api/auth/logout`            | 注销当前会话                     |
+| `POST`           | `/api/auth/logout-all`        | 撤销当前用户的全部会话与访问令牌 |
 | `GET` / `POST`   | `/api/auth/tokens`            | 列出或创建访问令牌               |
 | `DELETE`         | `/api/auth/tokens/{token_id}` | 吊销访问令牌                     |
 | `GET` / `POST`   | `/api/auth/invite-code`       | 查看或生成当前用户的一次性邀请码 |
@@ -128,6 +129,20 @@ Rust handler 上的 OpenAPI 注解是 REST 契约的实现来源。修改 REST �
 | `POST`           | `/api/cnki/login/poll`        | 轮询扫码登录状态                 |
 
 公开注册始终要求有效邀请码，且只能创建非管理员。首个管理员必须在本机通过 `litradar admin bootstrap` 创建，API 不提供远程引导端点。新密码至少为 12 个 Unicode 字符。
+
+浏览器登录 Cookie 使用固定 7 天有效期，每次登录轮换，不因普通 API 访问而滚动延长。`POST /api/auth/logout` 只撤销当前凭据；`POST /api/auth/logout-all` 在一个事务中撤销该用户的浏览器登录令牌和全部 Personal Access Token。两个端点对携带 `litradar_session` 的请求无论成功或失败都返回清除 Cookie 的 `Set-Cookie`；`logout` 返回 `401` 表示请求到达前令牌已失效，第一方浏览器将其视为幂等注销完成。SQLite busy/locked 只执行一次短时重试；若持久删除仍未确认，返回 `503`：
+
+```json
+{
+  "detail": {
+    "code": "session_revocation_unconfirmed",
+    "message": "Session revocation could not be confirmed",
+    "request_id": "server-generated-request-id"
+  }
+}
+```
+
+浏览器此时必须清除非秘密本地用户快照，但不能声称服务端令牌已经撤销；第一方界面会保留跨刷新的警告和 request ID，并要求重新输入账号密码。重新认证取得一个新 Cookie 后，界面立即调用 `/api/auth/logout-all`，而不是尝试重放已清除的旧 Cookie。只有该请求成功后才清除警告。
 
 CNKI 会话按 LitRadar 用户隔离；状态接口只返回安全元数据，不返回 token 或 Cookie 值。
 

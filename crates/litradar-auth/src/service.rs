@@ -9,12 +9,12 @@ use litradar_domain::{InviteCodeResponse, TokenCreateResponse, TokenInfo, UserId
 use litradar_storage::{
     bootstrap_admin_with_audit, compare_and_swap_legacy_password_hash, count_users,
     create_invite_code_with_audit, delete_access_token_by_hash_with_audit,
-    delete_access_token_with_audit, find_user_credentials_by_id, find_user_credentials_by_username,
-    get_user_invite_code, initialize_auth_database, insert_personal_access_token_with_audit,
-    list_access_tokens, random_hex, register_user_with_invite_and_audit,
-    replace_login_access_token_with_audit, update_user_password_and_delete_tokens_with_audit,
-    verify_access_token_hash, AuthRepositoryError, AuthUserRow, InviteCodeRow, SecurityAuditEvent,
-    UserCredentialRow,
+    delete_access_token_with_audit, delete_all_access_tokens_with_audit,
+    find_user_credentials_by_id, find_user_credentials_by_username, get_user_invite_code,
+    initialize_auth_database, insert_personal_access_token_with_audit, list_access_tokens,
+    random_hex, register_user_with_invite_and_audit, replace_login_access_token_with_audit,
+    update_user_password_and_delete_tokens_with_audit, verify_access_token_hash,
+    AuthRepositoryError, AuthUserRow, InviteCodeRow, SecurityAuditEvent, UserCredentialRow,
 };
 
 use crate::password::verify_dummy_password;
@@ -88,6 +88,17 @@ impl Error for AuthServiceError {
             | Self::AccessTokenNameReserved
             | Self::AccessTokenTtlOutOfRange => None,
         }
+    }
+}
+
+impl AuthServiceError {
+    /// Return whether an authentication operation hit transient SQLite lock contention.
+    ///
+    /// # Returns
+    ///
+    /// True only when one bounded retry is appropriate.
+    pub fn is_transient_sqlite_contention(&self) -> bool {
+        matches!(self, Self::Repository(error) if error.is_transient_sqlite_contention())
     }
 }
 
@@ -526,6 +537,28 @@ impl AuthService {
             &self.auth_db_path,
             &token_hash,
             Some(&audit),
+        )?)
+    }
+
+    /// Revoke every login and personal access token for one user with an atomic audit event.
+    ///
+    /// # Arguments
+    ///
+    /// * `user_id` - User whose sessions and personal access tokens must be revoked.
+    /// * `audit` - Required terminal security audit event.
+    ///
+    /// # Returns
+    ///
+    /// Number of revoked tokens.
+    pub fn revoke_all_access_tokens_with_audit(
+        &self,
+        user_id: UserId,
+        audit: SecurityAuditEvent,
+    ) -> Result<usize, AuthServiceError> {
+        Ok(delete_all_access_tokens_with_audit(
+            &self.auth_db_path,
+            user_id,
+            &audit,
         )?)
     }
 
