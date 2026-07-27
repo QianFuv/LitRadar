@@ -1,0 +1,290 @@
+name: Supply Chain Security
+
+on:
+  workflow_call:
+  push:
+    branches-ignore:
+      - "main"
+  pull_request:
+  schedule:
+    - cron: "15 3 * * 1"
+  workflow_dispatch:
+
+concurrency:
+  group: supply-chain-security-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  ACTIONLINT_VERSION: 1.7.12
+  CARGO_AUDIT_VERSION: 0.22.2
+  CARGO_DENY_VERSION: 0.20.2
+  GITLEAKS_VERSION: 8.30.1
+  OSV_SCANNER_VERSION: 2.3.8
+
+jobs:
+  rust-policy:
+    name: Rust advisories, licenses, bans, and sources
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install Rust toolchain
+        run: |
+          rustup toolchain install 1.96 --profile minimal
+          rustup default 1.96
+
+      - name: Install pinned cargo-audit
+        uses: taiki-e/install-action@41049aa56687c35e0afa74eed4f09cec4f9afabf # v2.85.2
+        with:
+          tool: cargo-audit@0.22.2
+
+      - name: Install pinned cargo-deny
+        uses: taiki-e/install-action@41049aa56687c35e0afa74eed4f09cec4f9afabf # v2.85.2
+        with:
+          tool: cargo-deny@0.20.2
+
+      - name: Verify policy tool versions
+        run: |
+          cargo audit --version | grep -q "${CARGO_AUDIT_VERSION}"
+          cargo deny --version | grep -q "${CARGO_DENY_VERSION}"
+
+      - name: Audit RustSec advisories
+        id: cargo_audit
+        run: |
+          mkdir -p security-results
+          set -o pipefail
+          cargo audit --deny warnings --json | tee security-results/cargo-audit.json
+
+      - name: Enforce dependency policy
+        id: cargo_deny
+        if: always()
+        run: |
+          mkdir -p security-results
+          set -o pipefail
+          cargo deny check 2>&1 | tee security-results/cargo-deny.txt
+
+      - name: Upload Rust policy results
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: rust-supply-chain-results
+          path: security-results/
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Write Rust policy summary
+        if: always()
+        env:
+          AUDIT_RESULT: ${{ steps.cargo_audit.outcome }}
+          DENY_RESULT: ${{ steps.cargo_deny.outcome }}
+        run: |
+          {
+            echo "## Rust supply-chain policy"
+            echo
+            echo "- cargo-audit ${CARGO_AUDIT_VERSION}: ${AUDIT_RESULT:-not run}"
+            echo "- cargo-deny ${CARGO_DENY_VERSION}: ${DENY_RESULT:-not run}"
+            echo "- Exceptions: deny.toml entries must include an owner, rationale, and review date."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  osv-lockfiles:
+    name: OSV lockfile scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install checksum-verified OSV-Scanner
+        run: |
+          asset="osv-scanner_linux_amd64"
+          sums="osv-scanner_SHA256SUMS"
+          release="https://github.com/google/osv-scanner/releases/download/v${OSV_SCANNER_VERSION}"
+          curl --fail --location --retry 3 --output "$asset" "$release/$asset"
+          curl --fail --location --retry 3 --output "$sums" "$release/$sums"
+          grep "  ${asset}$" "$sums" | sha256sum --check -
+          install -m 0755 "$asset" "$RUNNER_TEMP/osv-scanner"
+          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
+
+      - name: Verify OSV-Scanner version
+        run: |
+          osv-scanner --version | grep -q "version: ${OSV_SCANNER_VERSION}"
+
+      - name: Scan committed lockfiles
+        id: osv
+        run: |
+          mkdir -p security-results
+          osv-scanner scan source \
+            --config=./osv-scanner.toml \
+            --lockfile=./Cargo.lock \
+            --lockfile=./app/pnpm-lock.yaml \
+            --format=json \
+            --output-file=security-results/osv-results.json \
+            --verbosity=info
+
+      - name: Upload OSV results
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: osv-lockfile-results
+          path: security-results/
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Write OSV summary
+        if: always()
+        env:
+          OSV_RESULT: ${{ steps.osv.outcome }}
+        run: |
+          {
+            echo "## OSV lockfile scan"
+            echo
+            echo "- OSV-Scanner ${OSV_SCANNER_VERSION}: ${OSV_RESULT:-not run}"
+            echo "- Inputs: Cargo.lock and app/pnpm-lock.yaml"
+            echo "- Time-bounded exceptions: osv-scanner.toml"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  secrets:
+    name: Full-history secret scan
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install checksum-verified Gitleaks
+        run: |
+          asset="gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          sums="gitleaks_${GITLEAKS_VERSION}_checksums.txt"
+          release="https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}"
+          curl --fail --location --retry 3 --output "$asset" "$release/$asset"
+          curl --fail --location --retry 3 --output "$sums" "$release/$sums"
+          grep "  ${asset}$" "$sums" | sha256sum --check -
+          tar -xzf "$asset" gitleaks
+          install -m 0755 gitleaks "$RUNNER_TEMP/gitleaks"
+          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
+
+      - name: Verify Gitleaks version
+        run: gitleaks version | grep -q "${GITLEAKS_VERSION}"
+
+      - name: Scan complete Git history
+        id: gitleaks
+        run: |
+          mkdir -p security-results
+          gitleaks git \
+            --redact \
+            --report-format sarif \
+            --report-path security-results/gitleaks.sarif \
+            --exit-code 1 \
+            --verbose \
+            .
+
+      - name: Upload Gitleaks SARIF to code scanning
+        if: ${{ always() && hashFiles('security-results/gitleaks.sarif') != '' }}
+        uses: github/codeql-action/upload-sarif@e4fba868fa4b1b91e1fdab776edc8cfbe6e9fb81 # v4.37.3
+        with:
+          sarif_file: security-results/gitleaks.sarif
+          category: gitleaks-full-history
+
+      - name: Upload Gitleaks results
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: gitleaks-results
+          path: security-results/
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Write secret-scan summary
+        if: always()
+        env:
+          GITLEAKS_RESULT: ${{ steps.gitleaks.outcome }}
+        run: |
+          {
+            echo "## Full-history secret scan"
+            echo
+            echo "- Gitleaks ${GITLEAKS_VERSION}: ${GITLEAKS_RESULT:-not run}"
+            echo "- Scope: every reachable commit from the full checkout"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  workflow-policy:
+    name: Workflow syntax and immutable actions
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install checksum-verified actionlint
+        run: |
+          asset="actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
+          sums="actionlint_${ACTIONLINT_VERSION}_checksums.txt"
+          release="https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}"
+          curl --fail --location --retry 3 --output "$asset" "$release/$asset"
+          curl --fail --location --retry 3 --output "$sums" "$release/$sums"
+          grep "  ${asset}$" "$sums" | sha256sum --check -
+          tar -xzf "$asset" actionlint
+          install -m 0755 actionlint "$RUNNER_TEMP/actionlint"
+          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
+
+      - name: Lint workflow syntax
+        run: |
+          actionlint -version | grep -q "${ACTIONLINT_VERSION}"
+          actionlint
+
+      - name: Enforce immutable third-party action references
+        run: |
+          mkdir -p security-results
+          : > security-results/action-pins.txt
+          failed=0
+          while IFS= read -r match; do
+            content="${match#*:*:}"
+            reference="$(printf '%s\n' "$content" | sed -E 's/^[[:space:]-]*uses:[[:space:]]*([^[:space:]#]+).*/\1/')"
+            if [[ "$reference" == ./* ]]; then
+              continue
+            fi
+            if [[ ! "$reference" =~ @[0-9a-f]{40}$ ]]; then
+              echo "Unpinned action: $match" >&2
+              failed=1
+              continue
+            fi
+            if [[ ! "$content" =~ \#[[:space:]]+v[0-9] ]]; then
+              echo "Pinned action lacks a version comment: $match" >&2
+              failed=1
+              continue
+            fi
+            printf '%s\n' "$reference ${content##*# }" >> security-results/action-pins.txt
+          done < <(grep -R -n -E '^[[:space:]]*(-[[:space:]]+)?uses:[[:space:]]+' .github/workflows --include='*.yaml' --include='*.yml')
+          test "$failed" -eq 0
+
+      - name: Reject expired reviewed exceptions
+        run: |
+          today="$(date -u +%Y-%m-%d)"
+          review_count=0
+          for policy_file in deny.toml .gitleaksignore; do
+            while IFS= read -r review_date; do
+              review_count="$((review_count + 1))"
+              if [[ "$review_date" < "$today" ]]; then
+                echo "Expired exception review in ${policy_file}: ${review_date}" >&2
+                exit 1
+              fi
+            done < <(sed -n -E 's/^#[[:space:]]*Review by:[[:space:]]*([0-9]{4}-[0-9]{2}-[0-9]{2})[[:space:]]*$/\1/p' "$policy_file")
+          done
+          test "$review_count" -gt 0
+
+      - name: Upload immutable-action inventory
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: immutable-action-inventory
+          path: security-results/action-pins.txt
+          if-no-files-found: error
+          retention-days: 14

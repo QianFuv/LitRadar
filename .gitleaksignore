@@ -1,0 +1,17 @@
+# Owner: LitRadar security maintainers
+# Rationale: deterministic CNKI/JFBYM and legacy full-text test fixtures; these
+# values cannot authorize any account or external service operation.
+# Review by: 2027-01-31
+9c63b1ac1c2b399c84895ec20301806c9f396540:crates/litradar-sources/src/cnki_domestic.rs:generic-api-key:2497
+e0458d402b46975605851364d1b62f0bfaa3277a:crates/litradar-sources/src/cnki_domestic.rs:generic-api-key:1565
+e0458d402b46975605851364d1b62f0bfaa3277a:crates/litradar-sources/src/cnki_domestic.rs:generic-api-key:1622
+e0458d402b46975605851364d1b62f0bfaa3277a:crates/litradar-sources/src/jfbym.rs:generic-api-key:386
+117692141775fe63a454c0ef664c9ecb36c32380:crates/ps-storage/src/index/fulltext.rs:generic-api-key:415
+27e7b4ade842a092fb77e7ea966193ef2ce2c3a4:crates/ps-api/src/lib.rs:generic-api-key:1791
+ee1de0891e743f975bdfee4ddc24411f119bf15e:crates/ps-storage/src/index.rs:generic-api-key:2722
+
+# Owner: LitRadar security maintainers
+# Rationale: removed CQVIP utility code embedded a shared public-client request
+# signing protocol constant, not a user credential or authorization secret.
+# Review by: 2026-09-30
+19e9d62e27cd55a003e9ead29cff53fdaf9490b2:scripts/utility/weipu_api.py:generic-api-key:40

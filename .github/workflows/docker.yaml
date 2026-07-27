@@ -6,6 +6,9 @@ on:
     paths:
       - "Cargo.toml"
       - "Cargo.lock"
+      - "deny.toml"
+      - "osv-scanner.toml"
+      - ".gitleaksignore"
       - ".config/nextest.toml"
       - "crates/**"
       - "libs/**"
@@ -15,8 +18,11 @@ on:
       - "app/**"
       - "scripts/**"
       - ".github/workflows/backend.yaml"
+      - ".github/workflows/codeql.yaml"
       - ".github/workflows/frontend.yaml"
+      - ".github/workflows/security.yaml"
       - ".github/workflows/docker.yaml"
+      - ".github/dependabot.yml"
 
 env:
   REGISTRY: ghcr.io
@@ -28,10 +34,14 @@ jobs:
       runtime_image: ${{ steps.filter.outputs.runtime_image }}
       backend_workflow: ${{ steps.filter.outputs.backend_workflow }}
       frontend_workflow: ${{ steps.filter.outputs.frontend_workflow }}
+      security_workflow: ${{ steps.filter.outputs.security_workflow }}
+      codeql_workflow: ${{ steps.filter.outputs.codeql_workflow }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
-      - uses: dorny/paths-filter@v4
+      - uses: dorny/paths-filter@7b450fff21473bca461d4b92ce414b9d0420d706 # v4.0.2
         id: filter
         with:
           filters: |
@@ -52,6 +62,23 @@ jobs:
             frontend_workflow:
               - "scripts/test.mjs"
               - ".github/workflows/frontend.yaml"
+            security_workflow:
+              - "Cargo.toml"
+              - "Cargo.lock"
+              - "crates/**/Cargo.toml"
+              - "app/package.json"
+              - "app/pnpm-lock.yaml"
+              - "deny.toml"
+              - "osv-scanner.toml"
+              - ".gitleaksignore"
+              - ".github/dependabot.yml"
+              - ".github/workflows/**"
+            codeql_workflow:
+              - "Cargo.toml"
+              - "Cargo.lock"
+              - "crates/**"
+              - "app/**"
+              - ".github/workflows/codeql.yaml"
 
   backend-quality:
     needs: changes
@@ -63,14 +90,35 @@ jobs:
     if: needs.changes.outputs.runtime_image == 'true' || needs.changes.outputs.frontend_workflow == 'true'
     uses: ./.github/workflows/frontend.yaml
 
+  security-quality:
+    needs: changes
+    if: needs.changes.outputs.runtime_image == 'true' || needs.changes.outputs.security_workflow == 'true'
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+    uses: ./.github/workflows/security.yaml
+
+  codeql-quality:
+    needs: changes
+    if: needs.changes.outputs.runtime_image == 'true' || needs.changes.outputs.codeql_workflow == 'true'
+    permissions:
+      actions: read
+      contents: read
+      packages: read
+      security-events: write
+    uses: ./.github/workflows/codeql.yaml
+
   build-image:
-    needs: [changes, backend-quality, frontend-quality]
+    needs: [changes, backend-quality, frontend-quality, security-quality, codeql-quality]
     if: |
       always() &&
       needs.changes.result == 'success' &&
       needs.changes.outputs.runtime_image == 'true' &&
       needs.backend-quality.result == 'success' &&
-      needs.frontend-quality.result == 'success'
+      needs.frontend-quality.result == 'success' &&
+      needs.security-quality.result == 'success' &&
+      needs.codeql-quality.result == 'success'
     runs-on: ubuntu-latest
     outputs:
       image_digest: ${{ steps.push.outputs.digest }}
@@ -81,16 +129,18 @@ jobs:
     env:
       LOCAL_IMAGE: litradar-ci:${{ github.sha }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
-      - uses: docker/setup-buildx-action@v4
+      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
 
       - name: Install Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
           node-version: 24
 
-      - uses: docker/metadata-action@v6
+      - uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
         id: meta
         with:
           images: ${{ env.REGISTRY }}/${{ github.repository }}
@@ -100,7 +150,7 @@ jobs:
 
       - name: Build and load exact image
         id: build
-        uses: docker/build-push-action@v7
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
         env:
           DOCKER_BUILD_SUMMARY: "false"
         with:
@@ -125,7 +175,7 @@ jobs:
           echo "duration_seconds=$(( $(date +%s) - started_at ))" >> "$GITHUB_OUTPUT"
           exit "$status"
 
-      - uses: docker/login-action@v4
+      - uses: docker/login-action@abd2ef45e78c5afb21d64d4ca52ee8550d9572c7 # v4.5.1
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
@@ -153,7 +203,7 @@ jobs:
 
       - name: Upload container smoke diagnostics
         if: always()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: container-smoke-diagnostics
           path: test-results/container-smoke/
@@ -178,7 +228,7 @@ jobs:
 
   workflow-summary:
     name: LitRadar workflow summary
-    needs: [changes, backend-quality, frontend-quality, build-image]
+    needs: [changes, backend-quality, frontend-quality, security-quality, codeql-quality, build-image]
     if: always()
     runs-on: ubuntu-latest
     permissions:
@@ -189,6 +239,7 @@ jobs:
           BACKEND_RESULT: ${{ needs.backend-quality.result }}
           BUILD_RESULT: ${{ needs.build-image.result }}
           CHANGES_RESULT: ${{ needs.changes.result }}
+          CODEQL_RESULT: ${{ needs.codeql-quality.result }}
           COMMIT_SHA: ${{ github.sha }}
           EVENT_NAME: ${{ github.event_name }}
           FRONTEND_RESULT: ${{ needs.frontend-quality.result }}
@@ -200,6 +251,7 @@ jobs:
           RUN_ID: ${{ github.run_id }}
           RUN_NUMBER: ${{ github.run_number }}
           SERVER_URL: ${{ github.server_url }}
+          SECURITY_RESULT: ${{ needs.security-quality.result }}
         run: |
           status_label() {
             case "$1" in
@@ -227,6 +279,8 @@ jobs:
             echo "| Change detection | $(status_label "$CHANGES_RESULT") |"
             echo "| Backend quality | $(status_label "$BACKEND_RESULT") |"
             echo "| Frontend quality | $(status_label "$FRONTEND_RESULT") |"
+            echo "| Supply-chain security | $(status_label "$SECURITY_RESULT") |"
+            echo "| CodeQL security analysis | $(status_label "$CODEQL_RESULT") |"
             echo "| Build, smoke, and push exact image | $(status_label "$BUILD_RESULT") |"
             echo
             echo "## Run"

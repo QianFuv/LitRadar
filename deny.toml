@@ -1,0 +1,67 @@
+# Dependency policy for LitRadar release and pull-request gates.
+#
+# Any exception added below must name an owner, explain the exact dependency
+# constraint, and include a YYYY-MM-DD review deadline. Blanket ignores are not
+# permitted.
+
+[graph]
+all-features = true
+targets = [
+    "x86_64-pc-windows-msvc",
+    "x86_64-unknown-linux-gnu",
+]
+
+[advisories]
+ignore = []
+
+[licenses]
+allow = [
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "MIT",
+    "Unicode-3.0",
+    "Zlib",
+]
+confidence-threshold = 0.93
+# Owner: LitRadar security maintainers
+# Rationale: webpki-roots packages the Mozilla-derived TLS trust data used by
+# reqwest; CDLA-Permissive-2.0 applies only to that exact data crate release.
+# Review by: 2027-01-31
+exceptions = [
+    { allow = ["CDLA-Permissive-2.0"], crate = "webpki-roots@1.0.8" },
+]
+unused-allowed-license = "allow"
+unused-license-exception = "deny"
+
+[licenses.private]
+ignore = false
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+allow-wildcard-paths = true
+highlight = "simplest-path"
+allow = []
+deny = []
+skip = []
+skip-tree = []
+
+[bans.workspace-dependencies]
+duplicates = "allow"
+include-path-dependencies = true
+unused = "allow"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []
+unused-allowed-source = "deny"
+
+[sources.allow-org]
+github = []
+gitlab = []
+bitbucket = []

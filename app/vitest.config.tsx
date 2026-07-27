@@ -53,6 +53,9 @@ export default defineConfig({
           clearMocks: true,
           restoreMocks: true,
           browser: {
+            api: {
+              port: 46115,
+            },
             enabled: true,
             headless: true,
             provider: playwright({

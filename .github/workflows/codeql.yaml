@@ -1,0 +1,93 @@
+name: CodeQL Security Analysis
+
+on:
+  workflow_call:
+  push:
+    branches-ignore:
+      - "main"
+    paths:
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "crates/**"
+      - "app/**"
+      - ".github/workflows/codeql.yaml"
+  pull_request:
+    paths:
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "crates/**"
+      - "app/**"
+      - ".github/workflows/codeql.yaml"
+  schedule:
+    - cron: "45 3 * * 1"
+  workflow_dispatch:
+
+concurrency:
+  group: codeql-security-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  actions: read
+  contents: read
+  packages: read
+  security-events: write
+
+jobs:
+  analyze:
+    name: Analyze (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        language:
+          - rust
+          - javascript-typescript
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@e4fba868fa4b1b91e1fdab776edc8cfbe6e9fb81 # v4.37.3
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: none
+          queries: security-extended
+
+      - name: Analyze source
+        id: analysis
+        uses: github/codeql-action/analyze@e4fba868fa4b1b91e1fdab776edc8cfbe6e9fb81 # v4.37.3
+        with:
+          category: "/language:${{ matrix.language }}"
+          output: codeql-results/${{ matrix.language }}
+          upload: always
+
+      - name: Fail on CodeQL alerts
+        env:
+          MATRIX_LANGUAGE: ${{ matrix.language }}
+          SARIF_DIRECTORY: ${{ steps.analysis.outputs.sarif-output }}
+        run: |
+          test -n "$SARIF_DIRECTORY"
+          mapfile -d '' sarif_files < <(find "$SARIF_DIRECTORY" -type f -name '*.sarif' -print0)
+          test "${#sarif_files[@]}" -gt 0
+          alert_count=0
+          for sarif_file in "${sarif_files[@]}"; do
+            file_count="$(jq '[.runs[]?.results[]?] | length' "$sarif_file")"
+            alert_count="$((alert_count + file_count))"
+          done
+          {
+            echo "## CodeQL ${MATRIX_LANGUAGE}"
+            echo
+            echo "- SARIF files: ${#sarif_files[@]}"
+            echo "- Alerts: $alert_count"
+          } >> "$GITHUB_STEP_SUMMARY"
+          test "$alert_count" -eq 0
+
+      - name: Upload CodeQL SARIF artifact
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: codeql-${{ matrix.language }}-sarif
+          path: codeql-results/${{ matrix.language }}/
+          if-no-files-found: error
+          retention-days: 14

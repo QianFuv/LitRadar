@@ -1,0 +1,34 @@
+# Temporary, advisory-specific exceptions for packages constrained by current
+# upstream development and static-build tooling. Each exception expires and
+# becomes blocking automatically. Runtime dependencies and broad package or
+# ecosystem ignores are prohibited.
+
+[[IgnoredVulns]]
+id = "GHSA-mh99-v99m-4gvg"
+ignoreUntil = 2026-09-30
+reason = "Owner: LitRadar security maintainers. brace-expansion 1/2 is constrained by ESLint and OpenAPI generation, receives only repository-controlled patterns, and cannot be replaced by v5 without crossing the callers' declared major ranges."
+
+[[IgnoredVulns]]
+id = "GHSA-52cp-r559-cp3m"
+ignoreUntil = 2026-09-30
+reason = "Owner: LitRadar security maintainers. js-yaml 4.2.0 is constrained by OpenAPI generation and parses only the repository-generated API contract."
+
+[[IgnoredVulns]]
+id = "GHSA-6g55-p6wh-862q"
+ignoreUntil = 2026-09-30
+reason = "Owner: LitRadar security maintainers. Next.js constrains PostCSS 8.4.31 to the static build pipeline, which processes repository-controlled CSS and is absent from the shipped Rust service."
+
+[[IgnoredVulns]]
+id = "GHSA-qx2v-qp2m-jg93"
+ignoreUntil = 2026-09-30
+reason = "Owner: LitRadar security maintainers. Next.js constrains PostCSS 8.4.31 to the static build pipeline, which processes repository-controlled CSS and is absent from the shipped Rust service."
+
+[[IgnoredVulns]]
+id = "GHSA-r28c-9q8g-f849"
+ignoreUntil = 2026-09-30
+reason = "Owner: LitRadar security maintainers. Next.js constrains PostCSS 8.4.31 to the static build pipeline, which processes repository-controlled CSS and source maps and is absent from the shipped Rust service."
+
+[[IgnoredVulns]]
+id = "GHSA-f88m-g3jw-g9cj"
+ignoreUntil = 2026-09-30
+reason = "Owner: LitRadar security maintainers. Next.js constrains sharp 0.34.5 to repository-controlled static image generation; LitRadar does not ship or run a Node.js image-optimization service."

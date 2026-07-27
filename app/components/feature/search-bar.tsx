@@ -5,7 +5,7 @@ import { Input } from '@/components/ui/input';
 import { Search, X, Clock, HelpCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Popover, PopoverAnchor, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
-import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from 'react';
+import { useRef, useState, type FormEvent, type KeyboardEvent } from 'react';
 import {
   readLocalStorageValue,
   removeLocalStorageValue,
@@ -120,18 +120,16 @@ type SearchBarProps = {
 export function SearchBar({ className, queryParam = 'q' }: SearchBarProps) {
   const [q, setQ] = useQueryState(queryParam, parseAsString.withDefault(''));
   const [inputValue, setInputValue] = useState(q);
+  const [previousQuery, setPreviousQuery] = useState(q);
   const [searchHistory, setSearchHistory] = useState<string[]>([]);
   const [showHistory, setShowHistory] = useState(false);
   const [activeHistoryIndex, setActiveHistoryIndex] = useState(-1);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  useEffect(() => {
-    setSearchHistory(getSearchHistory());
-  }, []);
-
-  useEffect(() => {
+  if (q !== previousQuery) {
+    setPreviousQuery(q);
     setInputValue(q);
-  }, [q]);
+  }
 
   /**
    * Close the history popup and clear its active descendant.
@@ -173,19 +171,22 @@ export function SearchBar({ className, queryParam = 'q' }: SearchBarProps) {
    * @param event - Search input keyboard event.
    */
   const handleKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
-    if (event.key === 'ArrowDown' && searchHistory.length > 0) {
+    const availableHistory = searchHistory.length > 0 ? searchHistory : getSearchHistory();
+    if (event.key === 'ArrowDown' && availableHistory.length > 0) {
       event.preventDefault();
+      setSearchHistory(availableHistory);
       setShowHistory(true);
       setActiveHistoryIndex((current) =>
-        current < 0 ? 0 : Math.min(current + 1, searchHistory.length - 1),
+        current < 0 ? 0 : Math.min(current + 1, availableHistory.length - 1),
       );
       return;
     }
-    if (event.key === 'ArrowUp' && searchHistory.length > 0) {
+    if (event.key === 'ArrowUp' && availableHistory.length > 0) {
       event.preventDefault();
+      setSearchHistory(availableHistory);
       setShowHistory(true);
       setActiveHistoryIndex((current) =>
-        current < 0 ? searchHistory.length - 1 : Math.max(current - 1, 0),
+        current < 0 ? availableHistory.length - 1 : Math.max(current - 1, 0),
       );
       return;
     }
@@ -263,7 +264,9 @@ export function SearchBar({ className, queryParam = 'q' }: SearchBarProps) {
               }}
               onKeyDown={handleKeyDown}
               onClick={() => {
-                if (searchHistory.length > 0 && !showHistory) {
+                const availableHistory = getSearchHistory();
+                setSearchHistory(availableHistory);
+                if (availableHistory.length > 0 && !showHistory) {
                   setShowHistory(true);
                 }
               }}

@@ -231,6 +231,23 @@ AI/PushPlus 只重试连接失败、timeout 和 `429/502/503/504`；数值 `Retr
 
 应用层策略不能替代基础设施隔离。公网部署仍应在容器、主机或云网络层设置 egress ACL，只放行确有需要的 AI/PushPlus 目标和 DNS/TLS 基础设施。
 
+## 供应链门禁
+
+所有 pull request、非 `main` 分支推送和每周计划任务运行 `.github/workflows/security.yaml` 与 `.github/workflows/codeql.yaml`。`main` 的镜像发布工作流复用这两个工作流；RustSec、cargo-deny、OSV、完整 Git 历史 Gitleaks、workflow pin 检查或任一语言 CodeQL 非零告警失败时，不会进入镜像构建与推送。
+
+执行边界如下：
+
+- `cargo-audit 0.22.2` 使用 `--deny warnings` 检查 `Cargo.lock`；`cargo-deny 0.20.2` 同时执行 advisory、license、ban 和 source policy。
+- `OSV-Scanner 2.3.8` 只读取已提交的 `Cargo.lock` 与 `app/pnpm-lock.yaml`；发行二进制先按上游 SHA-256 清单验证。
+- `Gitleaks 8.30.1` 在 `fetch-depth: 0` checkout 上扫描所有可达提交，SARIF 同时进入 artifact 和 GitHub code scanning。
+- CodeQL 使用 `security-extended` 分别分析 Rust 与 JavaScript/TypeScript；SARIF 上传后，本工作流统计结果并要求零告警。
+- `actionlint 1.7.12` 校验所有 workflow。第三方 `uses:` 必须是 40 位小写提交 SHA，并保留已审核版本注释；同仓库 `./.github/workflows/...` 是唯一不需要 SHA 的引用。
+- GitHub Action、Cargo、pnpm 和 Docker 更新由 `.github/dependabot.yml` 每周提出；更新 pull request 必须重新通过上述门禁，不能把执行引用改回 tag 或 branch。
+
+`deny.toml` 默认拒绝未允许的许可证、未知 registry/git source、wildcard 外部依赖和任何 advisory。`osv-scanner.toml` 只允许逐 advisory 例外。每个例外必须包含 owner、具体不可利用理由和到期日；版本或作用域扩大时必须新审，过期后扫描自动恢复阻断。当前没有 RustSec/source 忽略，唯一 cargo-deny 许可证例外精确限定到 `webpki-roots@1.0.8` 的 TLS 根数据许可证。`.gitleaksignore` 只能保存逐 commit/path/rule/line fingerprint，并同样记录 owner、非凭据证据和复审日期；禁止按整条规则或路径排除。
+
+仓库管理员还必须在 GitHub ruleset 中把四个 supply-chain job 和两个 CodeQL language job 设为 required checks，并启用 code-scanning merge protection、secret scanning 与 push protection。workflow 文件不能替代这些仓库级设置；Gitleaks 是独立的纵深防御，而不是关闭 GitHub secret scanning 的理由。
+
 ## 网络暴露
 
 根 Compose 仅发布：

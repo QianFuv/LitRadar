@@ -60,6 +60,21 @@ function QueryProbe({ parameter, testId }: { parameter: string; testId: string }
 }
 
 /**
+ * Replace one query parameter from outside the search form.
+ *
+ * @param props - Query parameter name and replacement value.
+ * @returns Query-state update control.
+ */
+function QuerySetter({ parameter, value }: { parameter: string; value: string }) {
+  const [, setValue] = useQueryState(parameter, parseAsString);
+  return (
+    <button type="button" onClick={() => void setValue(value)}>
+      Replace query
+    </button>
+  );
+}
+
+/**
  * Return an authenticated fixture user.
  *
  * @returns Current-user response.
@@ -120,6 +135,27 @@ async function keepsSearchDraftSeparate(): Promise<void> {
   await user.type(input, 'new query');
   await user.keyboard('{Enter}');
   await waitFor(() => expect(screen.getByTestId('query-value')).toHaveTextContent('new query'));
+}
+
+/**
+ * Verify an external URL query change replaces a stale local draft.
+ */
+async function synchronizesExternalSearchQuery(): Promise<void> {
+  const user = userEvent.setup();
+  renderWithQuery(
+    <NuqsTestingAdapter searchParams="?q=applied" hasMemory>
+      <SearchBar />
+      <QuerySetter parameter="q" value="external" />
+    </NuqsTestingAdapter>,
+  );
+  const input = screen.getByRole('combobox', { name: '搜索文章' });
+
+  await user.clear(input);
+  await user.type(input, 'draft');
+  expect(input).toHaveValue('draft');
+
+  await user.click(screen.getByRole('button', { name: 'Replace query' }));
+  await waitFor(() => expect(input).toHaveValue('external'));
 }
 
 /**
@@ -303,6 +339,7 @@ async function rendersRecentRangeShortcuts(): Promise<void> {
 describe('search and filter UI', () => {
   test('normalizes month range values and recent shortcuts', normalizesMonthRanges);
   test('keeps draft clearing separate from query submission', keepsSearchDraftSeparate);
+  test('synchronizes external query changes without an effect', synchronizesExternalSearchQuery);
   test(
     'operates search history with Arrow keys, Enter, and Escape',
     operatesSearchHistoryFromKeyboard,

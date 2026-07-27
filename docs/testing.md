@@ -144,6 +144,28 @@ node scripts/container-smoke.mjs litradar:test
 
 探针要求 readiness、根页和 OpenAPI 成功，镜像 ID 不变，用户非 root，根文件系统只读，drop 全部 capability，启用 no-new-privileges，使用 tmpfs、可写数据卷和只读密钥挂载；成功或失败后都要删除容器、卷、监听端口和 marker 保护的密钥临时根。
 
+## 供应链与静态安全
+
+发布前的本地依赖门禁使用固定工具版本：
+
+```bash
+cargo install cargo-audit --version 0.22.2 --locked
+cargo install cargo-deny --version 0.20.2 --locked
+
+cargo audit --deny warnings
+cargo deny check
+osv-scanner scan source \
+  --config=./osv-scanner.toml \
+  --lockfile=./Cargo.lock \
+  --lockfile=./app/pnpm-lock.yaml
+actionlint
+gitleaks git --redact .
+```
+
+OSV-Scanner、actionlint 和 Gitleaks 在 CI 中下载固定版本发行包，并用同一 release 的 SHA-256 清单验证后执行；本地安装也应遵循同样校验。任何新 advisory、未允许许可证/来源、过期例外、secret、非 SHA Action 引用或 CodeQL 告警都使门禁失败。不要通过通配 ignore、整组 dev dependency 排除、降低 severity 或 `continue-on-error` 恢复绿色状态。
+
+`.github/workflows/security.yaml` 上传 cargo-audit JSON、cargo-deny 输出、OSV JSON、Gitleaks SARIF 和 Action pin 清单；`.github/workflows/codeql.yaml` 为 Rust 与 JavaScript/TypeScript 分别上传 SARIF。`docker.yaml` 仅在 backend、frontend、supply-chain 和 CodeQL 四类前置工作流全部成功后构建镜像。
+
 ## 报告与失败诊断
 
 `--ci` 使用以下固定路径：
@@ -161,6 +183,10 @@ node scripts/container-smoke.mjs litradar:test
 | Rust coverage                                      | `target/llvm-cov/html/`、`target/llvm-cov/lcov.info`                 |
 | Frontend coverage                                  | `app/coverage/`、`app/coverage/lcov.info`                            |
 | Container smoke                                    | `test-results/container-smoke/summary.json` 和失败时的 `failure.log` |
+| Rust/OSV supply chain                              | workflow artifacts `rust-supply-chain-results`、`osv-lockfile-results` |
+| Secret scanning                                    | workflow artifact `gitleaks-results` 与 GitHub code scanning SARIF  |
+| CodeQL                                             | workflow artifacts `codeql-<language>-sarif` 与 Security 页面       |
+| Immutable Action inventory                         | workflow artifact `immutable-action-inventory`                       |
 
 CI 的 artifact upload 使用 `if: always()`。失败时先看 workflow summary 的层级状态和时长，再看 JUnit 的失败 owner；浏览器问题打开对应 HTML，并使用失败截图、第一次重试的 trace/video。容器问题先看安全清理摘要，再看已脱敏的尾部日志。报告目录均为生成物，不应提交。
 
