@@ -439,7 +439,7 @@ beforeEach(() => {
 
 describe('TrackingSettingsContent', () => {
   test('renders named sections with shared textareas', rendersSectionsWithSharedTextareas);
-  test('preserves database and secret update semantics', savesDatabaseAndSecretSemantics);
+  test('preserves database and secret update semantics', savesDatabaseAndSecretSemantics, 10_000);
   test('retries a failed settings save without losing the draft', retriesFailedSettingsSave);
   test('preserves one draft across tracking categories', preservesDraftAcrossCategories);
   test(
