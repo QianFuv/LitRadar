@@ -168,9 +168,11 @@ jobs:
           image_name="${REGISTRY}/${SOURCE_REPOSITORY,,}"
           release_tag="${image_name}:sha-${GITHUB_SHA}"
           created_at="$(git show -s --format=%cI "$GITHUB_SHA")"
-          echo "image_name=$image_name" >> "$GITHUB_OUTPUT"
-          echo "release_tag=$release_tag" >> "$GITHUB_OUTPUT"
-          echo "created_at=$created_at" >> "$GITHUB_OUTPUT"
+          {
+            echo "image_name=$image_name"
+            echo "release_tag=$release_tag"
+            echo "created_at=$created_at"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Validate the digest-only production profile
         run: |
