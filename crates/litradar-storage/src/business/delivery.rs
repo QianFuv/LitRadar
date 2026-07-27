@@ -547,6 +547,17 @@ pub enum DeliveryRunClaimOutcome {
     Unavailable(DeliveryRunRecord),
 }
 
+/// Outcome of idempotently admitting one durable delivery run.
+#[derive(Debug, Clone, PartialEq)]
+pub enum DeliveryRunAdmissionOutcome {
+    /// A new queued run was inserted.
+    Enqueued(DeliveryRunRecord),
+    /// The same workflow, scope, and external identifier already exists.
+    Existing(DeliveryRunRecord),
+    /// Another manual run is already queued or active for the same user.
+    Busy(DeliveryRunRecord),
+}
+
 /// Input used to create one run item.
 #[derive(Debug, Clone, PartialEq)]
 pub struct DeliveryRunItemCreate {
@@ -643,6 +654,15 @@ pub enum DeliveryDedupeReserveOutcome {
     Existing(DeliveryDedupeRecord),
 }
 
+/// One dedupe row and revision expected by an atomic delivery transition.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DeliveryDedupeResolution {
+    /// Durable dedupe row identifier.
+    pub id: i64,
+    /// Exact reservation revision.
+    pub expected_revision: i64,
+}
+
 /// Durable workflow/database lease.
 #[derive(Debug, Clone, PartialEq)]
 pub struct DeliveryLeaseRecord {
@@ -690,6 +710,30 @@ pub struct LegacyDeliveryImportResult {
     pub item_count: usize,
     /// Dedupe rows imported.
     pub dedupe_count: usize,
+}
+
+/// Aggregate rows reconciled after an expired run owner is replaced.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DeliveryRecoveryResult {
+    /// Pre-send item claims returned to pending.
+    pub reset_item_count: usize,
+    /// Sending items finalized with an ambiguous outcome.
+    pub unknown_item_count: usize,
+    /// Pre-send dedupe reservations released for safe retry.
+    pub released_dedupe_count: usize,
+    /// Sending dedupe reservations finalized as ambiguous.
+    pub unknown_dedupe_count: usize,
+}
+
+/// Rows committed by one atomic run/checkpoint/lease finalization.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DeliveryRunFinalization {
+    /// Terminal delivery run.
+    pub run: DeliveryRunRecord,
+    /// Updated workflow checkpoint.
+    pub checkpoint: DeliveryCheckpointRecord,
+    /// Released workflow lease with its incremented revision.
+    pub lease: DeliveryLeaseRecord,
 }
 
 /// Load a workflow checkpoint by its stable scope.
@@ -807,16 +851,39 @@ pub fn enqueue_delivery_run(
     auth_db_path: impl AsRef<Path>,
     run: &DeliveryRunCreate,
 ) -> Result<DeliveryRunRecord, DeliveryRepositoryError> {
+    match admit_delivery_run(auth_db_path, run)? {
+        DeliveryRunAdmissionOutcome::Enqueued(record) => Ok(record),
+        DeliveryRunAdmissionOutcome::Existing(_) | DeliveryRunAdmissionOutcome::Busy(_) => {
+            Err(DeliveryRepositoryError::Conflict)
+        }
+    }
+}
+
+/// Idempotently enqueue or load one delivery run identity.
+///
+/// # Arguments
+///
+/// * `auth_db_path` - Path to the migrated authentication database.
+/// * `run` - Bounded run identity, scope, mode, and deadline.
+///
+/// # Returns
+///
+/// A newly queued run, the exact existing run, or the conflicting active manual run.
+pub fn admit_delivery_run(
+    auth_db_path: impl AsRef<Path>,
+    run: &DeliveryRunCreate,
+) -> Result<DeliveryRunAdmissionOutcome, DeliveryRepositoryError> {
     validate_run_create(run)?;
     let mut connection = open_delivery_connection(auth_db_path)?;
     let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-    transaction.execute(
+    let inserted = transaction.execute(
         "INSERT INTO delivery_runs
          (external_id, workflow, scope_key, db_name, trigger_kind, mode, user_id, status,
           legacy_status, owner_id, lease_expires_at, deadline_at, cancellation_requested,
           result_json, error_code, revision, created_at, started_at, updated_at, finished_at)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'queued', NULL, NULL, NULL, ?8, 0,
-                 NULL, NULL, 0, ?9, NULL, ?10, NULL)",
+                 NULL, NULL, 0, ?9, NULL, ?10, NULL)
+         ON CONFLICT DO NOTHING",
         params![
             run.external_id,
             run.workflow.as_str(),
@@ -830,11 +897,31 @@ pub fn enqueue_delivery_run(
             run.created_at,
         ],
     )?;
-    let id = transaction.last_insert_rowid();
-    let record = load_delivery_run_from_connection(&transaction, id)?
-        .ok_or(DeliveryRepositoryError::NotFound)?;
+    let outcome = if inserted == 1 {
+        let id = transaction.last_insert_rowid();
+        DeliveryRunAdmissionOutcome::Enqueued(
+            load_delivery_run_from_connection(&transaction, id)?
+                .ok_or(DeliveryRepositoryError::NotFound)?,
+        )
+    } else if let Some(existing) = load_delivery_run_by_external_id_from_connection(
+        &transaction,
+        run.workflow,
+        &run.scope_key,
+        &run.external_id,
+    )? {
+        DeliveryRunAdmissionOutcome::Existing(existing)
+    } else if run.trigger_kind == DeliveryTriggerKind::Manual {
+        let user_id = run.user_id.ok_or(DeliveryRepositoryError::InvalidInput(
+            "Manual delivery runs require a user",
+        ))?;
+        let existing = load_active_manual_delivery_run_from_connection(&transaction, user_id)?
+            .ok_or(DeliveryRepositoryError::Conflict)?;
+        DeliveryRunAdmissionOutcome::Busy(existing)
+    } else {
+        return Err(DeliveryRepositoryError::Conflict);
+    };
     transaction.commit()?;
-    Ok(record)
+    Ok(outcome)
 }
 
 /// Load one delivery run by its internal identifier.
@@ -872,6 +959,67 @@ pub fn list_delivery_run_items(
         .map_err(DeliveryRepositoryError::from)
 }
 
+/// Ensure a bounded set of run item identities exists without resetting progress.
+pub fn ensure_delivery_run_items(
+    auth_db_path: impl AsRef<Path>,
+    delivery_run_id: i64,
+    items: &[DeliveryRunItemCreate],
+    now: f64,
+) -> Result<Vec<DeliveryRunItemRecord>, DeliveryRepositoryError> {
+    validate_positive_id(delivery_run_id, "Delivery run id is invalid")?;
+    validate_time(now, "Delivery item creation time is invalid")?;
+    let mut identities = HashSet::new();
+    for item in items {
+        validate_item_create(item)?;
+        if !identities.insert((item.item_kind, item.item_key.as_str())) {
+            return Err(DeliveryRepositoryError::InvalidInput(
+                "Delivery run items contain duplicate identities",
+            ));
+        }
+    }
+    let mut connection = open_delivery_connection(auth_db_path)?;
+    let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    let run = load_delivery_run_from_connection(&transaction, delivery_run_id)?
+        .ok_or(DeliveryRepositoryError::NotFound)?;
+    if run.status.is_terminal() {
+        return Err(DeliveryRepositoryError::Conflict);
+    }
+    let mut records = Vec::with_capacity(items.len());
+    for item in items {
+        transaction.execute(
+            "INSERT INTO delivery_run_items
+             (delivery_run_id, item_kind, item_key, user_id, article_id, status,
+              legacy_status, owner_id, lease_expires_at, attempt_count, result_json,
+              error_code, revision, created_at, started_at, updated_at, finished_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, 'pending', NULL, NULL, NULL, 0,
+                     NULL, NULL, 0, ?6, NULL, ?7, NULL)
+             ON CONFLICT(delivery_run_id, item_kind, item_key) DO NOTHING",
+            params![
+                delivery_run_id,
+                item.item_kind.as_str(),
+                item.item_key,
+                item.user_id,
+                item.article_id,
+                now,
+                now,
+            ],
+        )?;
+        let record = load_delivery_run_item_by_identity_from_connection(
+            &transaction,
+            delivery_run_id,
+            item.item_kind,
+            &item.item_key,
+        )?
+        .ok_or(DeliveryRepositoryError::NotFound)?;
+        if record.user_id != item.user_id || record.article_id != item.article_id {
+            return Err(DeliveryRepositoryError::Conflict);
+        }
+        records.push(record);
+    }
+    transaction.commit()?;
+    Ok(records)
+}
+
 /// Load one dedupe identity if it has ever been reserved or completed.
 pub fn load_delivery_dedupe(
     auth_db_path: impl AsRef<Path>,
@@ -885,6 +1033,46 @@ pub fn load_delivery_dedupe(
     validate_positive_id(article_id, "Delivery dedupe article id is invalid")?;
     let connection = open_delivery_connection(auth_db_path)?;
     load_delivery_dedupe_from_connection(&connection, workflow, db_name, user_id, article_id)
+}
+
+/// List all dedupe rows for one workflow/database scope.
+pub fn list_delivery_dedupe_for_scope(
+    auth_db_path: impl AsRef<Path>,
+    workflow: DeliveryWorkflow,
+    db_name: &str,
+) -> Result<Vec<DeliveryDedupeRecord>, DeliveryRepositoryError> {
+    validate_db_name(db_name)?;
+    let connection = open_delivery_connection(auth_db_path)?;
+    let mut statement = connection.prepare(&format!(
+        "SELECT {DEDUPE_COLUMNS} FROM delivery_dedupe
+         WHERE workflow = ?1 AND db_name = ?2 ORDER BY user_id, article_id"
+    ))?;
+    let rows = statement.query_map(params![workflow.as_str(), db_name], dedupe_from_row)?;
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(DeliveryRepositoryError::from)
+}
+
+/// Delete confirmed dedupe rows older than a retention cutoff.
+pub fn cleanup_confirmed_delivery_dedupe(
+    auth_db_path: impl AsRef<Path>,
+    workflow: DeliveryWorkflow,
+    db_name: &str,
+    delivered_before: f64,
+) -> Result<usize, DeliveryRepositoryError> {
+    validate_db_name(db_name)?;
+    validate_time(
+        delivered_before,
+        "Delivery dedupe retention cutoff is invalid",
+    )?;
+    let connection = open_delivery_connection(auth_db_path)?;
+    connection
+        .execute(
+            "DELETE FROM delivery_dedupe
+             WHERE workflow = ?1 AND db_name = ?2 AND status = 'confirmed'
+               AND delivered_at < ?3",
+            params![workflow.as_str(), db_name, delivered_before],
+        )
+        .map_err(DeliveryRepositoryError::from)
 }
 
 /// Load the persistent workflow/database lease row.
@@ -1127,6 +1315,141 @@ pub fn finalize_delivery_run(
     Ok(record)
 }
 
+/// Atomically finalize a run, compare-and-swap its checkpoint, and release its lease.
+#[allow(clippy::too_many_arguments)]
+pub fn finalize_delivery_run_with_checkpoint(
+    auth_db_path: impl AsRef<Path>,
+    delivery_run_id: i64,
+    owner_id: &str,
+    expected_run_revision: i64,
+    terminal_status: DeliveryRunStatus,
+    result_json: Option<&str>,
+    error_code: Option<&str>,
+    workflow: DeliveryWorkflow,
+    db_name: &str,
+    expected_checkpoint_revision: Option<i64>,
+    checkpoint_update: &DeliveryCheckpointUpdate,
+    expected_lease_revision: i64,
+) -> Result<DeliveryRunFinalization, DeliveryRepositoryError> {
+    validate_positive_id(delivery_run_id, "Delivery run id is invalid")?;
+    validate_identifier(owner_id, "Delivery owner id is invalid")?;
+    validate_db_name(db_name)?;
+    validate_revision_and_time(expected_run_revision, checkpoint_update.updated_at)?;
+    if expected_lease_revision < 0
+        || expected_checkpoint_revision.is_some_and(|revision| revision < 0)
+    {
+        return Err(DeliveryRepositoryError::InvalidInput(
+            "Delivery revision is invalid",
+        ));
+    }
+    if !terminal_status.is_terminal() {
+        return Err(DeliveryRepositoryError::InvalidInput(
+            "Delivery terminal status is invalid",
+        ));
+    }
+    validate_json(&checkpoint_update.snapshot_json)?;
+    validate_optional_json(result_json)?;
+    validate_optional_symbol(error_code, "Delivery error code is invalid")?;
+    let mut connection = open_delivery_connection(auth_db_path)?;
+    let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    match expected_checkpoint_revision {
+        None => {
+            if transaction.execute(
+                "INSERT INTO delivery_checkpoints
+                 (workflow, db_name, status, legacy_status, snapshot_json,
+                  last_completed_run_at, revision, legacy_source_hash, legacy_source_name,
+                  legacy_imported_at, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, NULL, ?4, ?5, 0, NULL, NULL, NULL, ?6, ?7)
+                 ON CONFLICT(workflow, db_name) DO NOTHING",
+                params![
+                    workflow.as_str(),
+                    db_name,
+                    checkpoint_update.status.as_str(),
+                    checkpoint_update.snapshot_json,
+                    checkpoint_update.last_completed_run_at,
+                    checkpoint_update.updated_at,
+                    checkpoint_update.updated_at,
+                ],
+            )? != 1
+            {
+                return Err(DeliveryRepositoryError::Conflict);
+            }
+        }
+        Some(revision) => {
+            if transaction.execute(
+                "UPDATE delivery_checkpoints
+                 SET status = ?1, legacy_status = NULL, snapshot_json = ?2,
+                     last_completed_run_at = ?3, revision = revision + 1, updated_at = ?4
+                 WHERE workflow = ?5 AND db_name = ?6 AND revision = ?7",
+                params![
+                    checkpoint_update.status.as_str(),
+                    checkpoint_update.snapshot_json,
+                    checkpoint_update.last_completed_run_at,
+                    checkpoint_update.updated_at,
+                    workflow.as_str(),
+                    db_name,
+                    revision,
+                ],
+            )? != 1
+            {
+                return Err(DeliveryRepositoryError::Conflict);
+            }
+        }
+    }
+    if transaction.execute(
+        "UPDATE delivery_runs
+         SET status = ?1, owner_id = NULL, lease_expires_at = NULL, result_json = ?2,
+             error_code = ?3, updated_at = ?4, finished_at = ?5, revision = revision + 1
+         WHERE id = ?6 AND workflow = ?7 AND db_name = ?8 AND owner_id = ?9
+           AND revision = ?10 AND status IN ('claimed', 'running', 'cancelling')",
+        params![
+            terminal_status.as_str(),
+            result_json,
+            error_code,
+            checkpoint_update.updated_at,
+            checkpoint_update.updated_at,
+            delivery_run_id,
+            workflow.as_str(),
+            db_name,
+            owner_id,
+            expected_run_revision,
+        ],
+    )? != 1
+    {
+        return Err(DeliveryRepositoryError::Conflict);
+    }
+    if transaction.execute(
+        "UPDATE delivery_leases
+         SET delivery_run_id = NULL, owner_id = NULL, acquired_at = NULL,
+             heartbeat_at = NULL, expires_at = NULL, updated_at = ?1, revision = revision + 1
+         WHERE workflow = ?2 AND db_name = ?3 AND delivery_run_id = ?4
+           AND owner_id = ?5 AND revision = ?6",
+        params![
+            checkpoint_update.updated_at,
+            workflow.as_str(),
+            db_name,
+            delivery_run_id,
+            owner_id,
+            expected_lease_revision,
+        ],
+    )? != 1
+    {
+        return Err(DeliveryRepositoryError::Conflict);
+    }
+    let run = load_delivery_run_from_connection(&transaction, delivery_run_id)?
+        .ok_or(DeliveryRepositoryError::NotFound)?;
+    let checkpoint = load_delivery_checkpoint_from_connection(&transaction, workflow, db_name)?
+        .ok_or(DeliveryRepositoryError::NotFound)?;
+    let lease = load_delivery_lease_from_connection(&transaction, workflow, db_name)?
+        .ok_or(DeliveryRepositoryError::NotFound)?;
+    transaction.commit()?;
+    Ok(DeliveryRunFinalization {
+        run,
+        checkpoint,
+        lease,
+    })
+}
+
 /// Insert a bounded set of unique items for one queued or active run.
 ///
 /// # Arguments
@@ -1248,6 +1571,73 @@ pub fn claim_next_delivery_run_item(
         .ok_or(DeliveryRepositoryError::NotFound)?;
     transaction.commit()?;
     Ok(Some(item))
+}
+
+/// Claim one known pending item or take over its expired pre-send claim.
+#[allow(clippy::too_many_arguments)]
+pub fn claim_delivery_run_item(
+    auth_db_path: impl AsRef<Path>,
+    delivery_run_id: i64,
+    run_owner_id: &str,
+    run_revision: i64,
+    item_id: i64,
+    item_owner_id: &str,
+    now: f64,
+    lease_seconds: f64,
+) -> Result<DeliveryRunItemRecord, DeliveryRepositoryError> {
+    validate_positive_id(delivery_run_id, "Delivery run id is invalid")?;
+    validate_positive_id(item_id, "Delivery item id is invalid")?;
+    validate_identifier(run_owner_id, "Delivery run owner id is invalid")?;
+    validate_identifier(item_owner_id, "Delivery item owner id is invalid")?;
+    validate_revision_and_lease(run_revision, now, lease_seconds)?;
+    let mut connection = open_delivery_connection(auth_db_path)?;
+    let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    let run = load_delivery_run_from_connection(&transaction, delivery_run_id)?
+        .ok_or(DeliveryRepositoryError::NotFound)?;
+    if run.revision != run_revision
+        || run.owner_id.as_deref() != Some(run_owner_id)
+        || !run.status.is_active()
+        || !run
+            .lease_expires_at
+            .is_some_and(|expires_at| expires_at > now)
+    {
+        return Err(DeliveryRepositoryError::Conflict);
+    }
+    let item = load_delivery_run_item_from_connection(&transaction, item_id)?
+        .ok_or(DeliveryRepositoryError::NotFound)?;
+    if item.delivery_run_id != delivery_run_id
+        || !(item.status == DeliveryItemStatus::Pending
+            || (item.status == DeliveryItemStatus::Claimed
+                && item
+                    .lease_expires_at
+                    .is_some_and(|expires_at| expires_at <= now)))
+    {
+        return Err(DeliveryRepositoryError::Conflict);
+    }
+    if transaction.execute(
+        "UPDATE delivery_run_items
+         SET status = 'claimed', owner_id = ?1, lease_expires_at = ?2,
+             attempt_count = attempt_count + 1, started_at = COALESCE(started_at, ?3),
+             updated_at = ?4, revision = revision + 1
+         WHERE id = ?5 AND delivery_run_id = ?6 AND revision = ?7
+           AND (status = 'pending' OR (status = 'claimed' AND lease_expires_at <= ?3))",
+        params![
+            item_owner_id,
+            now + lease_seconds,
+            now,
+            now,
+            item_id,
+            delivery_run_id,
+            item.revision,
+        ],
+    )? != 1
+    {
+        return Err(DeliveryRepositoryError::Conflict);
+    }
+    let claimed = load_delivery_run_item_from_connection(&transaction, item_id)?
+        .ok_or(DeliveryRepositoryError::NotFound)?;
+    transaction.commit()?;
+    Ok(claimed)
 }
 
 /// Renew a claimed or sending item lease with owner and revision CAS.
@@ -1489,6 +1879,118 @@ pub fn release_delivery_dedupe_reservation(
     Ok(())
 }
 
+/// Atomically release multiple pre-send reservations owned by one run attempt.
+pub fn release_delivery_dedupe_reservations(
+    auth_db_path: impl AsRef<Path>,
+    delivery_run_id: i64,
+    owner_id: &str,
+    reservations: &[DeliveryDedupeResolution],
+) -> Result<usize, DeliveryRepositoryError> {
+    validate_positive_id(delivery_run_id, "Delivery run id is invalid")?;
+    validate_identifier(owner_id, "Delivery dedupe owner id is invalid")?;
+    validate_dedupe_resolutions(reservations)?;
+    let mut connection = open_delivery_connection(auth_db_path)?;
+    let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    for reservation in reservations {
+        if transaction.execute(
+            "DELETE FROM delivery_dedupe
+             WHERE id = ?1 AND delivery_run_id = ?2 AND reservation_owner = ?3
+               AND revision = ?4 AND status = 'reserved'",
+            params![
+                reservation.id,
+                delivery_run_id,
+                owner_id,
+                reservation.expected_revision,
+            ],
+        )? != 1
+        {
+            return Err(DeliveryRepositoryError::Conflict);
+        }
+    }
+    transaction.commit()?;
+    Ok(reservations.len())
+}
+
+/// Atomically finalize one subscriber item and all of its dedupe reservations.
+#[allow(clippy::too_many_arguments)]
+pub fn finalize_delivery_attempt(
+    auth_db_path: impl AsRef<Path>,
+    item_id: i64,
+    item_owner_id: &str,
+    expected_item_revision: i64,
+    item_status: DeliveryItemStatus,
+    item_result_json: Option<&str>,
+    item_error_code: Option<&str>,
+    delivery_run_id: i64,
+    reservations: &[DeliveryDedupeResolution],
+    dedupe_status: DeliveryDedupeStatus,
+    message_id: Option<&str>,
+    now: f64,
+) -> Result<DeliveryRunItemRecord, DeliveryRepositoryError> {
+    validate_positive_id(item_id, "Delivery item id is invalid")?;
+    validate_positive_id(delivery_run_id, "Delivery run id is invalid")?;
+    validate_identifier(item_owner_id, "Delivery item owner id is invalid")?;
+    validate_revision_and_time(expected_item_revision, now)?;
+    if !item_status.is_terminal() || dedupe_status == DeliveryDedupeStatus::Reserved {
+        return Err(DeliveryRepositoryError::InvalidInput(
+            "Delivery attempt terminal status is invalid",
+        ));
+    }
+    validate_optional_json(item_result_json)?;
+    validate_optional_symbol(item_error_code, "Delivery item error code is invalid")?;
+    validate_optional_text(message_id, 256, "Delivery message id is invalid")?;
+    validate_dedupe_resolutions(reservations)?;
+    let mut connection = open_delivery_connection(auth_db_path)?;
+    let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    for reservation in reservations {
+        if transaction.execute(
+            "UPDATE delivery_dedupe
+             SET status = ?1, message_id = ?2, reservation_owner = NULL,
+                 delivered_at = ?3, updated_at = ?4, revision = revision + 1
+             WHERE id = ?5 AND delivery_run_id = ?6 AND reservation_owner = ?7
+               AND revision = ?8 AND status = 'reserved'",
+            params![
+                dedupe_status.as_str(),
+                message_id,
+                now,
+                now,
+                reservation.id,
+                delivery_run_id,
+                item_owner_id,
+                reservation.expected_revision,
+            ],
+        )? != 1
+        {
+            return Err(DeliveryRepositoryError::Conflict);
+        }
+    }
+    if transaction.execute(
+        "UPDATE delivery_run_items
+         SET status = ?1, owner_id = NULL, lease_expires_at = NULL, result_json = ?2,
+             error_code = ?3, updated_at = ?4, finished_at = ?5, revision = revision + 1
+         WHERE id = ?6 AND delivery_run_id = ?7 AND owner_id = ?8 AND revision = ?9
+           AND status IN ('claimed', 'sending')",
+        params![
+            item_status.as_str(),
+            item_result_json,
+            item_error_code,
+            now,
+            now,
+            item_id,
+            delivery_run_id,
+            item_owner_id,
+            expected_item_revision,
+        ],
+    )? != 1
+    {
+        return Err(DeliveryRepositoryError::Conflict);
+    }
+    let item = load_delivery_run_item_from_connection(&transaction, item_id)?
+        .ok_or(DeliveryRepositoryError::NotFound)?;
+    transaction.commit()?;
+    Ok(item)
+}
+
 /// Acquire a free workflow/database lease or take it over after expiration.
 #[allow(clippy::too_many_arguments)]
 pub fn acquire_delivery_lease(
@@ -1655,6 +2157,76 @@ pub fn release_delivery_lease(
     Ok(record)
 }
 
+/// Reconcile item and dedupe rows after an expired run owner is replaced.
+///
+/// Claimed items have not crossed the external side-effect boundary and return
+/// to pending. Sending items and their reservations become terminal unknown so
+/// a replacement owner cannot replay an ambiguous notification.
+#[allow(clippy::too_many_arguments)]
+pub fn reconcile_delivery_run_after_takeover(
+    auth_db_path: impl AsRef<Path>,
+    delivery_run_id: i64,
+    owner_id: &str,
+    expected_run_revision: i64,
+    now: f64,
+) -> Result<DeliveryRecoveryResult, DeliveryRepositoryError> {
+    validate_positive_id(delivery_run_id, "Delivery run id is invalid")?;
+    validate_identifier(owner_id, "Delivery run owner id is invalid")?;
+    validate_revision_and_time(expected_run_revision, now)?;
+    let mut connection = open_delivery_connection(auth_db_path)?;
+    let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    let run = load_delivery_run_from_connection(&transaction, delivery_run_id)?
+        .ok_or(DeliveryRepositoryError::NotFound)?;
+    if run.owner_id.as_deref() != Some(owner_id)
+        || run.revision != expected_run_revision
+        || !run.status.is_active()
+        || !run
+            .lease_expires_at
+            .is_some_and(|expires_at| expires_at > now)
+    {
+        return Err(DeliveryRepositoryError::Conflict);
+    }
+    let unknown_dedupe_count = transaction.execute(
+        "UPDATE delivery_dedupe
+         SET status = 'unknown', reservation_owner = NULL, delivered_at = ?1,
+             updated_at = ?2, revision = revision + 1
+         WHERE delivery_run_id = ?3 AND status = 'reserved'
+           AND user_id IN (
+               SELECT user_id FROM delivery_run_items
+               WHERE delivery_run_id = ?3 AND item_kind = 'subscriber'
+                 AND status = 'sending' AND user_id IS NOT NULL
+           )",
+        params![now, now, delivery_run_id],
+    )?;
+    let unknown_item_count = transaction.execute(
+        "UPDATE delivery_run_items
+         SET status = 'unknown', owner_id = NULL, lease_expires_at = NULL,
+             error_code = 'abandoned_sending', updated_at = ?1, finished_at = ?2,
+             revision = revision + 1
+         WHERE delivery_run_id = ?3 AND status = 'sending'",
+        params![now, now, delivery_run_id],
+    )?;
+    let released_dedupe_count = transaction.execute(
+        "DELETE FROM delivery_dedupe
+         WHERE delivery_run_id = ?1 AND status = 'reserved'",
+        [delivery_run_id],
+    )?;
+    let reset_item_count = transaction.execute(
+        "UPDATE delivery_run_items
+         SET status = 'pending', owner_id = NULL, lease_expires_at = NULL,
+             updated_at = ?1, revision = revision + 1
+         WHERE delivery_run_id = ?2 AND status = 'claimed'",
+        params![now, delivery_run_id],
+    )?;
+    transaction.commit()?;
+    Ok(DeliveryRecoveryResult {
+        reset_item_count,
+        unknown_item_count,
+        released_dedupe_count,
+        unknown_dedupe_count,
+    })
+}
+
 /// Import all legacy mutable state files in one all-or-nothing transaction.
 ///
 /// # Arguments
@@ -1787,6 +2359,44 @@ fn load_delivery_run_from_connection(
         .map_err(DeliveryRepositoryError::from)
 }
 
+fn load_delivery_run_by_external_id_from_connection(
+    connection: &Connection,
+    workflow: DeliveryWorkflow,
+    scope_key: &str,
+    external_id: &str,
+) -> Result<Option<DeliveryRunRecord>, DeliveryRepositoryError> {
+    connection
+        .query_row(
+            &format!(
+                "SELECT {RUN_COLUMNS} FROM delivery_runs
+                 WHERE workflow = ?1 AND scope_key = ?2 AND external_id = ?3"
+            ),
+            params![workflow.as_str(), scope_key, external_id],
+            run_from_row,
+        )
+        .optional()
+        .map_err(DeliveryRepositoryError::from)
+}
+
+fn load_active_manual_delivery_run_from_connection(
+    connection: &Connection,
+    user_id: i64,
+) -> Result<Option<DeliveryRunRecord>, DeliveryRepositoryError> {
+    connection
+        .query_row(
+            &format!(
+                "SELECT {RUN_COLUMNS} FROM delivery_runs
+                 WHERE trigger_kind = 'manual' AND user_id = ?1
+                   AND status IN ('queued', 'claimed', 'running', 'cancelling')
+                 ORDER BY id LIMIT 1"
+            ),
+            [user_id],
+            run_from_row,
+        )
+        .optional()
+        .map_err(DeliveryRepositoryError::from)
+}
+
 fn load_competing_active_run(
     connection: &Connection,
     delivery_run_id: i64,
@@ -1816,6 +2426,25 @@ fn load_delivery_run_item_from_connection(
         .query_row(
             &format!("SELECT {ITEM_COLUMNS} FROM delivery_run_items WHERE id = ?1"),
             [item_id],
+            item_from_row,
+        )
+        .optional()
+        .map_err(DeliveryRepositoryError::from)
+}
+
+fn load_delivery_run_item_by_identity_from_connection(
+    connection: &Connection,
+    delivery_run_id: i64,
+    item_kind: DeliveryItemKind,
+    item_key: &str,
+) -> Result<Option<DeliveryRunItemRecord>, DeliveryRepositoryError> {
+    connection
+        .query_row(
+            &format!(
+                "SELECT {ITEM_COLUMNS} FROM delivery_run_items
+                 WHERE delivery_run_id = ?1 AND item_kind = ?2 AND item_key = ?3"
+            ),
+            params![delivery_run_id, item_kind.as_str(), item_key],
             item_from_row,
         )
         .optional()
@@ -2559,6 +3188,21 @@ fn validate_item_create(item: &DeliveryRunItemCreate) -> Result<(), DeliveryRepo
     Ok(())
 }
 
+fn validate_dedupe_resolutions(
+    reservations: &[DeliveryDedupeResolution],
+) -> Result<(), DeliveryRepositoryError> {
+    let mut ids = HashSet::new();
+    for reservation in reservations {
+        validate_positive_id(reservation.id, "Delivery dedupe id is invalid")?;
+        if reservation.expected_revision < 0 || !ids.insert(reservation.id) {
+            return Err(DeliveryRepositoryError::InvalidInput(
+                "Delivery dedupe resolutions are invalid",
+            ));
+        }
+    }
+    Ok(())
+}
+
 fn validate_db_name(db_name: &str) -> Result<(), DeliveryRepositoryError> {
     if db_name.is_empty()
         || db_name.len() > MAX_DB_NAME_BYTES
@@ -3251,6 +3895,304 @@ mod tests {
             DeliveryDedupeReserveOutcome::Existing(record)
                 if record.status == DeliveryDedupeStatus::Unknown
         ));
+    }
+
+    #[test]
+    fn idempotent_admission_and_atomic_finalization_preserve_all_revisions() {
+        let (_temp_dir, path) = migrated_auth_database();
+        let create = scheduled_run("atomic-run", "main.sqlite", 1.0);
+        let enqueued =
+            match admit_delivery_run(&path, &create).expect("first admission should succeed") {
+                DeliveryRunAdmissionOutcome::Enqueued(record) => record,
+                other => panic!("first admission should enqueue, got {other:?}"),
+            };
+        assert!(matches!(
+            admit_delivery_run(&path, &create).expect("repeated admission should load"),
+            DeliveryRunAdmissionOutcome::Existing(record) if record.id == enqueued.id
+        ));
+        let claimed = expect_claimed(
+            claim_delivery_run(&path, enqueued.id, "owner-a", enqueued.revision, 2.0, 100.0)
+                .expect("run should claim"),
+        );
+        let lease = match acquire_delivery_lease(
+            &path,
+            DeliveryWorkflow::Notify,
+            "main.sqlite",
+            enqueued.id,
+            "owner-a",
+            2.0,
+            100.0,
+        )
+        .expect("workflow lease should acquire")
+        {
+            DeliveryLeaseAcquireOutcome::Acquired(record) => record,
+            other => panic!("workflow lease should acquire, got {other:?}"),
+        };
+        let running = start_delivery_run(&path, enqueued.id, "owner-a", claimed.revision, 3.0)
+            .expect("run should start");
+        let item_create = DeliveryRunItemCreate {
+            item_kind: DeliveryItemKind::Subscriber,
+            item_key: "7".to_string(),
+            user_id: Some(7),
+            article_id: None,
+        };
+        let first_items =
+            ensure_delivery_run_items(&path, enqueued.id, std::slice::from_ref(&item_create), 3.0)
+                .expect("item should be ensured");
+        let repeated_items = ensure_delivery_run_items(&path, enqueued.id, &[item_create], 4.0)
+            .expect("item ensure should be idempotent");
+        assert_eq!(first_items[0].id, repeated_items[0].id);
+        assert_eq!(first_items[0].revision, repeated_items[0].revision);
+        let claimed_item = claim_delivery_run_item(
+            &path,
+            enqueued.id,
+            "owner-a",
+            running.revision,
+            first_items[0].id,
+            "owner-a",
+            4.0,
+            100.0,
+        )
+        .expect("subscriber item should claim");
+        let sending = mark_delivery_run_item_sending(
+            &path,
+            claimed_item.id,
+            "owner-a",
+            claimed_item.revision,
+            5.0,
+        )
+        .expect("subscriber item should enter sending");
+        let reservation = match reserve_delivery_dedupe(
+            &path,
+            DeliveryWorkflow::Notify,
+            "main.sqlite",
+            7,
+            41,
+            enqueued.id,
+            "owner-a",
+            5.0,
+        )
+        .expect("dedupe should reserve")
+        {
+            DeliveryDedupeReserveOutcome::Reserved(record) => record,
+            other => panic!("dedupe should reserve, got {other:?}"),
+        };
+        let terminal_item = finalize_delivery_attempt(
+            &path,
+            sending.id,
+            "owner-a",
+            sending.revision,
+            DeliveryItemStatus::Unknown,
+            Some(r#"{"selected_article_ids":[41]}"#),
+            Some("ambiguous_delivery"),
+            enqueued.id,
+            &[DeliveryDedupeResolution {
+                id: reservation.id,
+                expected_revision: reservation.revision,
+            }],
+            DeliveryDedupeStatus::Unknown,
+            None,
+            6.0,
+        )
+        .expect("item and dedupe should finalize atomically");
+        assert_eq!(terminal_item.status, DeliveryItemStatus::Unknown);
+        let update = DeliveryCheckpointUpdate {
+            status: DeliveryCheckpointStatus::Unknown,
+            snapshot_json: "{}".to_string(),
+            last_completed_run_at: None,
+            updated_at: 7.0,
+        };
+        assert!(matches!(
+            finalize_delivery_run_with_checkpoint(
+                &path,
+                enqueued.id,
+                "owner-a",
+                running.revision,
+                DeliveryRunStatus::Unknown,
+                Some(r#"{"subscriber_count":1}"#),
+                Some("ambiguous_delivery"),
+                DeliveryWorkflow::Notify,
+                "main.sqlite",
+                None,
+                &update,
+                lease.revision + 1,
+            ),
+            Err(DeliveryRepositoryError::Conflict)
+        ));
+        assert!(
+            load_delivery_checkpoint(&path, DeliveryWorkflow::Notify, "main.sqlite")
+                .expect("checkpoint lookup should succeed")
+                .is_none()
+        );
+        assert_eq!(
+            load_delivery_run(&path, enqueued.id)
+                .expect("run should load")
+                .expect("run should exist")
+                .status,
+            DeliveryRunStatus::Running
+        );
+        let finalization = finalize_delivery_run_with_checkpoint(
+            &path,
+            enqueued.id,
+            "owner-a",
+            running.revision,
+            DeliveryRunStatus::Unknown,
+            Some(r#"{"subscriber_count":1}"#),
+            Some("ambiguous_delivery"),
+            DeliveryWorkflow::Notify,
+            "main.sqlite",
+            None,
+            &update,
+            lease.revision,
+        )
+        .expect("run checkpoint and lease should finalize atomically");
+        assert_eq!(finalization.run.status, DeliveryRunStatus::Unknown);
+        assert_eq!(
+            finalization.checkpoint.status,
+            DeliveryCheckpointStatus::Unknown
+        );
+        assert!(finalization.lease.owner_id.is_none());
+    }
+
+    #[test]
+    fn takeover_recovery_retries_claimed_and_quarantines_sending_items() {
+        let (_temp_dir, path) = migrated_auth_database();
+        let run = enqueue_delivery_run(&path, &scheduled_run("recovery-run", "main.sqlite", 1.0))
+            .expect("run should enqueue");
+        let claimed = expect_claimed(
+            claim_delivery_run(&path, run.id, "owner-a", run.revision, 2.0, 1.0)
+                .expect("run should claim"),
+        );
+        match acquire_delivery_lease(
+            &path,
+            DeliveryWorkflow::Notify,
+            "main.sqlite",
+            run.id,
+            "owner-a",
+            2.0,
+            1.0,
+        )
+        .expect("workflow lease should acquire")
+        {
+            DeliveryLeaseAcquireOutcome::Acquired(_) => {}
+            other => panic!("workflow lease should acquire, got {other:?}"),
+        }
+        let running = start_delivery_run(&path, run.id, "owner-a", claimed.revision, 2.1)
+            .expect("run should start");
+        let items = ensure_delivery_run_items(
+            &path,
+            run.id,
+            &[
+                DeliveryRunItemCreate {
+                    item_kind: DeliveryItemKind::Subscriber,
+                    item_key: "7".to_string(),
+                    user_id: Some(7),
+                    article_id: None,
+                },
+                DeliveryRunItemCreate {
+                    item_kind: DeliveryItemKind::Subscriber,
+                    item_key: "8".to_string(),
+                    user_id: Some(8),
+                    article_id: None,
+                },
+            ],
+            2.1,
+        )
+        .expect("subscriber items should insert");
+        let claimed_before_send = claim_delivery_run_item(
+            &path,
+            run.id,
+            "owner-a",
+            running.revision,
+            items[0].id,
+            "owner-a",
+            2.2,
+            100.0,
+        )
+        .expect("first item should claim");
+        let sending = claim_delivery_run_item(
+            &path,
+            run.id,
+            "owner-a",
+            running.revision,
+            items[1].id,
+            "owner-a",
+            2.2,
+            100.0,
+        )
+        .and_then(|item| {
+            mark_delivery_run_item_sending(&path, item.id, "owner-a", item.revision, 2.3)
+        })
+        .expect("second item should enter sending");
+        for (user_id, article_id) in [(7, 41), (8, 42)] {
+            assert!(matches!(
+                reserve_delivery_dedupe(
+                    &path,
+                    DeliveryWorkflow::Notify,
+                    "main.sqlite",
+                    user_id,
+                    article_id,
+                    run.id,
+                    "owner-a",
+                    2.4,
+                )
+                .expect("dedupe should reserve"),
+                DeliveryDedupeReserveOutcome::Reserved(_)
+            ));
+        }
+        let takeover = expect_claimed(
+            claim_delivery_run(&path, run.id, "owner-b", running.revision, 4.0, 100.0)
+                .expect("expired run should be reclaimed"),
+        );
+        assert!(matches!(
+            acquire_delivery_lease(
+                &path,
+                DeliveryWorkflow::Notify,
+                "main.sqlite",
+                run.id,
+                "owner-b",
+                4.0,
+                100.0,
+            )
+            .expect("expired workflow lease should be reclaimed"),
+            DeliveryLeaseAcquireOutcome::Acquired(_)
+        ));
+        let recovery =
+            reconcile_delivery_run_after_takeover(&path, run.id, "owner-b", takeover.revision, 4.0)
+                .expect("expired item state should reconcile");
+        assert_eq!(recovery.reset_item_count, 1);
+        assert_eq!(recovery.unknown_item_count, 1);
+        assert_eq!(recovery.released_dedupe_count, 1);
+        assert_eq!(recovery.unknown_dedupe_count, 1);
+        let stored_items = list_delivery_run_items(&path, run.id).expect("items should load");
+        assert_eq!(
+            stored_items
+                .iter()
+                .find(|item| item.id == claimed_before_send.id)
+                .expect("claimed item should remain")
+                .status,
+            DeliveryItemStatus::Pending
+        );
+        assert_eq!(
+            stored_items
+                .iter()
+                .find(|item| item.id == sending.id)
+                .expect("sending item should remain")
+                .status,
+            DeliveryItemStatus::Unknown
+        );
+        assert!(
+            load_delivery_dedupe(&path, DeliveryWorkflow::Notify, "main.sqlite", 7, 41,)
+                .expect("released dedupe should load")
+                .is_none()
+        );
+        assert_eq!(
+            load_delivery_dedupe(&path, DeliveryWorkflow::Notify, "main.sqlite", 8, 42,)
+                .expect("unknown dedupe should load")
+                .expect("unknown dedupe should exist")
+                .status,
+            DeliveryDedupeStatus::Unknown
+        );
     }
 
     #[test]

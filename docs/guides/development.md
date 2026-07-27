@@ -244,7 +244,7 @@ pwsh ./scripts/profile_logging.ps1 -DataPath ./output/logging-fixture -Rounds 3 
 ## 常见误区
 
 - `--notify-dry-run` 只决定 `index --notify` 的下游模式；要发生 handoff，必须同时使用 `--update --notify`。
-- `push` 的默认状态目录是 `data/folder_push_state`，不是 `data/push_state`。
+- notify/push 的可变状态都在 `data/auth.sqlite`；`data/push_state/*.changes.json` 只是候选输入，两个旧状态目录只用于一次性只读导入。
 - 每周更新和投递依赖 `*.changes.json`，不是按文章日期实时扫描。
 - 前端 API 入口是 `app/lib/api.tsx` 和 `app/lib/api/`。
 - 前端 API 始终同源；本地 Rust 服务需要监听固定的 `127.0.0.1:8001` 才能被 `pnpm dev` 代理。

@@ -455,4 +455,4 @@ MCP 端点内置于统一应用的 `/mcp`，不需要单独服务：
 
 ### 通知没有结果
 
-检查变更清单、用户偏好、AI/PushPlus 凭据和正确的状态目录，详见[通知与追踪](../guides/notifications.md)。
+检查 `.changes.json`、用户偏好、AI/PushPlus 凭据，以及认证库中的 `delivery_runs`、`delivery_run_items`、`delivery_dedupe` 和 `delivery_leases`。不要通过修改旧状态 JSON 来清除 busy/unknown；详见[通知与追踪](../guides/notifications.md)。

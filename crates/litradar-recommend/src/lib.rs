@@ -6,7 +6,7 @@ use std::fmt;
 use std::fs;
 use std::io::{BufRead, BufReader};
 use std::path::Path;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use litradar_domain::{
     ArticleCandidateInfo, NotificationSubscriberInfo, RankedSelectionInfo, SelectionResultInfo,
@@ -32,8 +32,6 @@ pub enum RecommendationError {
     Io(std::io::Error),
     /// JSON parsing or encoding failed.
     Json(serde_json::Error),
-    /// State file belongs to a different database.
-    StateDatabaseMismatch,
     /// Change manifest is invalid.
     InvalidManifest(String),
     /// AI payload cannot be normalized.
@@ -46,9 +44,6 @@ impl fmt::Display for RecommendationError {
         match self {
             Self::Io(error) => write!(formatter, "{error}"),
             Self::Json(error) => write!(formatter, "{error}"),
-            Self::StateDatabaseMismatch => {
-                formatter.write_str("State file does not match selected database")
-            }
             Self::InvalidManifest(message) => formatter.write_str(message),
             Self::InvalidAiPayload(message) => formatter.write_str(message),
         }
@@ -99,80 +94,6 @@ impl Default for RecommendationSnapshot {
             inpress_article_counts: BTreeMap::new(),
         }
     }
-}
-
-/// Persisted notification state.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct RecommendationState {
-    /// Source database file name.
-    pub db_name: String,
-    /// Current state status.
-    #[serde(default = "default_idle_status")]
-    pub status: String,
-    /// Last completed run timestamp.
-    #[serde(default)]
-    pub last_completed_run_at: Option<String>,
-    /// Last known article-count snapshot.
-    #[serde(default)]
-    pub snapshot: RecommendationSnapshot,
-    /// Current run state.
-    #[serde(default)]
-    pub run: Option<RecommendationRunState>,
-    /// Per-subscriber delivery dedupe map.
-    #[serde(default)]
-    pub delivery_dedupe: BTreeMap<String, String>,
-    /// Last state update timestamp.
-    #[serde(default)]
-    pub updated_at: String,
-}
-
-/// Current notification run state.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct RecommendationRunState {
-    /// Stable run identifier.
-    pub run_id: String,
-    /// Run status.
-    pub status: String,
-    /// Start timestamp.
-    pub started_at: String,
-    /// Completion timestamp.
-    pub completed_at: Option<String>,
-    /// Last update timestamp.
-    pub updated_at: String,
-    /// Issue keys still pending.
-    pub pending_issue_keys: Vec<String>,
-    /// Completed issue keys.
-    pub done_issue_keys: Vec<String>,
-    /// In-press journal keys still pending.
-    pub pending_inpress_keys: Vec<String>,
-    /// Completed in-press journal keys.
-    pub done_inpress_keys: Vec<String>,
-    /// Candidate article ids considered by the run.
-    pub delivered_article_ids: Vec<i64>,
-    /// Run-level error messages.
-    pub errors: Vec<String>,
-    /// Per-subscriber delivery results.
-    pub user_results: Vec<RecommendationUserResult>,
-}
-
-/// Per-subscriber run result stored in the state file.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct RecommendationUserResult {
-    /// Subscriber identifier.
-    pub subscriber_id: String,
-    /// Number of selected articles.
-    pub selected_count: usize,
-    /// Number of pushed articles.
-    pub pushed_count: usize,
-    /// Tracking-folder sync count when the workflow records it.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub folder_synced_count: Option<usize>,
-    /// PushPlus message id.
-    pub message_id: Option<String>,
-    /// Result status.
-    pub status: String,
-    /// Error or skip reason.
-    pub error: Option<String>,
 }
 
 /// Parsed change manifest.
@@ -282,126 +203,6 @@ pub enum AiPayloadKind {
     Selection,
     /// Summary payload.
     Summary,
-}
-
-/// Build the default recommendation state.
-///
-/// # Arguments
-///
-/// * `db_name` - Database filename.
-/// * `now` - Current timestamp.
-///
-/// # Returns
-///
-/// Initial state payload.
-pub fn build_default_state(db_name: &str, now: &str) -> RecommendationState {
-    RecommendationState {
-        db_name: db_name.to_string(),
-        status: "idle".to_string(),
-        last_completed_run_at: None,
-        snapshot: RecommendationSnapshot::default(),
-        run: None,
-        delivery_dedupe: BTreeMap::new(),
-        updated_at: now.to_string(),
-    }
-}
-
-/// Load and normalize a recommendation state file.
-///
-/// # Arguments
-///
-/// * `path` - State JSON path.
-/// * `db_name` - Selected database filename.
-/// * `now` - Current timestamp.
-///
-/// # Returns
-///
-/// Loaded or default state.
-pub fn load_state(
-    path: &Path,
-    db_name: &str,
-    now: &str,
-) -> Result<RecommendationState, RecommendationError> {
-    if !path.exists() {
-        return Ok(build_default_state(db_name, now));
-    }
-    let mut state: RecommendationState = serde_json::from_str(&fs::read_to_string(path)?)?;
-    if state.db_name != db_name {
-        return Err(RecommendationError::StateDatabaseMismatch);
-    }
-    if state.status.trim().is_empty() {
-        state.status = "idle".to_string();
-    }
-    if state.updated_at.trim().is_empty() {
-        state.updated_at = now.to_string();
-    }
-    if let Some(run) = state.run.as_mut() {
-        run.delivered_article_ids
-            .retain(|article_id| *article_id > 0);
-    }
-    Ok(state)
-}
-
-/// Save a recommendation state file atomically.
-///
-/// # Arguments
-///
-/// * `path` - Destination state path.
-/// * `state` - State payload.
-///
-/// # Returns
-///
-/// Empty result on success.
-pub fn save_state_atomic(
-    path: &Path,
-    state: &RecommendationState,
-) -> Result<(), RecommendationError> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)?;
-    }
-    let temp_path = path.with_file_name(format!(
-        "{}.tmp",
-        path.file_name()
-            .and_then(|value| value.to_str())
-            .unwrap_or("state.json")
-    ));
-    fs::write(&temp_path, serde_json::to_string_pretty(state)?)?;
-    fs::rename(temp_path, path)?;
-    Ok(())
-}
-
-/// Build a run state for pending issue and in-press keys.
-///
-/// # Arguments
-///
-/// * `run_id` - Stable run identifier.
-/// * `pending_issue_keys` - Pending issue keys.
-/// * `pending_inpress_keys` - Pending in-press keys.
-/// * `now` - Current timestamp.
-///
-/// # Returns
-///
-/// New run state.
-pub fn create_run_state(
-    run_id: &str,
-    pending_issue_keys: Vec<String>,
-    pending_inpress_keys: Vec<String>,
-    now: &str,
-) -> RecommendationRunState {
-    RecommendationRunState {
-        run_id: run_id.to_string(),
-        status: "running".to_string(),
-        started_at: now.to_string(),
-        completed_at: None,
-        updated_at: now.to_string(),
-        pending_issue_keys,
-        done_issue_keys: Vec::new(),
-        pending_inpress_keys,
-        done_inpress_keys: Vec::new(),
-        delivered_article_ids: Vec::new(),
-        errors: Vec::new(),
-        user_results: Vec::new(),
-    }
 }
 
 /// Build an ISO-like UTC timestamp without external time dependencies.
@@ -617,39 +418,6 @@ where
     Ok(value
         .as_array()
         .map(|items| items.iter().filter_map(json_i64).collect()))
-}
-
-/// Prune old delivery dedupe entries.
-///
-/// # Arguments
-///
-/// * `delivery_dedupe` - Dedupe map.
-/// * `retention_days` - Retention days.
-/// * `now` - Current timestamp.
-///
-/// # Returns
-///
-/// Pruned dedupe map.
-pub fn prune_delivery_dedupe(
-    delivery_dedupe: &BTreeMap<String, String>,
-    retention_days: i64,
-    now: SystemTime,
-) -> BTreeMap<String, String> {
-    if retention_days <= 0 {
-        return BTreeMap::new();
-    }
-    let cutoff = now
-        .checked_sub(Duration::from_secs((retention_days as u64) * 86_400))
-        .unwrap_or(UNIX_EPOCH);
-    delivery_dedupe
-        .iter()
-        .filter_map(|(key, value)| {
-            parse_iso_utc_seconds(value)
-                .and_then(|seconds| UNIX_EPOCH.checked_add(Duration::from_secs(seconds as u64)))
-                .filter(|timestamp| *timestamp >= cutoff)
-                .map(|_| (key.clone(), value.clone()))
-        })
-        .collect()
 }
 
 /// Check whether a subscriber selected a database.
@@ -1018,10 +786,6 @@ pub fn extract_response_payload(
     ))
 }
 
-fn default_idle_status() -> String {
-    "idle".to_string()
-}
-
 fn parse_issue_key(key: &str) -> Option<(i64, i64)> {
     let (journal_id, issue_id) = key.split_once(':')?;
     Some((journal_id.parse().ok()?, issue_id.parse().ok()?))
@@ -1313,48 +1077,6 @@ fn format_unix_seconds(seconds: i64) -> String {
     format!("{year:04}-{month:02}-{day:02}T{hour:02}:{minute:02}:{second:02}Z")
 }
 
-fn parse_iso_utc_seconds(value: &str) -> Option<i64> {
-    let text = value
-        .trim()
-        .strip_suffix('Z')
-        .unwrap_or_else(|| value.trim())
-        .strip_suffix("+00:00")
-        .unwrap_or_else(|| {
-            value
-                .trim()
-                .strip_suffix('Z')
-                .unwrap_or_else(|| value.trim())
-        });
-    let (date, time) = text.split_once('T')?;
-    let mut date_parts = date.split('-');
-    let year = date_parts.next()?.parse::<i64>().ok()?;
-    let month = date_parts.next()?.parse::<i64>().ok()?;
-    let day = date_parts.next()?.parse::<i64>().ok()?;
-    let mut time_parts = time.split(':');
-    let hour = time_parts.next()?.parse::<i64>().ok()?;
-    let minute = time_parts.next()?.parse::<i64>().ok()?;
-    let second_text = time_parts.next()?;
-    if time_parts.next().is_some() {
-        return None;
-    }
-    let second = second_text
-        .split_once('.')
-        .map_or(second_text, |(seconds, _)| seconds)
-        .parse::<i64>()
-        .ok()?;
-    Some(days_from_civil(year, month, day) * 86_400 + hour * 3_600 + minute * 60 + second)
-}
-
-fn days_from_civil(year: i64, month: i64, day: i64) -> i64 {
-    let year = year - i64::from(month <= 2);
-    let era = year.div_euclid(400);
-    let year_of_era = year - era * 400;
-    let month_prime = month + if month > 2 { -3 } else { 9 };
-    let day_of_year = (153 * month_prime + 2) / 5 + day - 1;
-    let day_of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
-    era * 146_097 + day_of_era - 719_468
-}
-
 fn civil_from_days(days: i64) -> (i64, i64, i64) {
     let days = days + 719_468;
     let era = days.div_euclid(146_097);
@@ -1374,7 +1096,6 @@ fn civil_from_days(days: i64) -> (i64, i64, i64) {
 mod tests {
     use std::collections::BTreeMap;
     use std::fs;
-    use std::time::{Duration, UNIX_EPOCH};
 
     use litradar_domain::{
         ArticleCandidateInfo, NotificationSubscriberInfo, RankedSelectionInfo, SelectionResultInfo,
@@ -1383,13 +1104,12 @@ mod tests {
     use tempfile::{Builder, TempDir};
 
     use super::{
-        apply_selection_rules, build_default_state, build_markdown_content, candidate_match_score,
-        compute_changed_inpress_keys, compute_changed_issue_keys, create_run_state,
-        deduplicate_candidates, extract_response_payload, has_selection_preferences,
-        is_database_selected, load_change_manifest, load_state, prune_delivery_dedupe,
-        resolve_ai_runtime_configs, save_state_atomic, utc_now_iso, AiPayloadKind, AiRuntimeConfig,
-        NotificationDefaults, NotificationGlobalConfig, RecommendationError, MAX_ARTICLES_PER_PUSH,
-        MAX_PUSH_CONTENT_LENGTH,
+        apply_selection_rules, build_markdown_content, candidate_match_score,
+        compute_changed_inpress_keys, compute_changed_issue_keys, deduplicate_candidates,
+        extract_response_payload, has_selection_preferences, is_database_selected,
+        load_change_manifest, resolve_ai_runtime_configs, utc_now_iso, AiPayloadKind,
+        AiRuntimeConfig, NotificationDefaults, NotificationGlobalConfig, RecommendationError,
+        MAX_ARTICLES_PER_PUSH, MAX_PUSH_CONTENT_LENGTH,
     };
 
     #[test]
@@ -1702,60 +1422,6 @@ mod tests {
     }
 
     #[test]
-    fn state_load_save_and_normalization_cover_defaults_mismatch_and_corrupt_json() {
-        let root = temp_root("litradar-recommend-state");
-        let state_path = root.path().join("nested").join("state.json");
-        let now = "2026-07-05T00:00:00Z";
-
-        let default_state =
-            load_state(&state_path, "fixture.sqlite", now).expect("missing state should default");
-        assert_eq!(default_state.db_name, "fixture.sqlite");
-        assert_eq!(default_state.status, "idle");
-        assert_eq!(default_state.updated_at, now);
-
-        let mut state = build_default_state("fixture.sqlite", "");
-        state.status = String::new();
-        state.updated_at = String::new();
-        state.run = Some(create_run_state(
-            "run-1",
-            vec!["1:10".to_string()],
-            vec![],
-            "",
-        ));
-        state
-            .run
-            .as_mut()
-            .expect("run state should exist")
-            .delivered_article_ids = vec![1, 0, -1, 2];
-        save_state_atomic(&state_path, &state).expect("state should save atomically");
-
-        let loaded = load_state(&state_path, "fixture.sqlite", now)
-            .expect("saved state should load and normalize");
-        assert_eq!(loaded.status, "idle");
-        assert_eq!(loaded.updated_at, now);
-        assert_eq!(
-            loaded
-                .run
-                .expect("run state should load")
-                .delivered_article_ids,
-            vec![1, 2]
-        );
-        assert!(!state_path.with_file_name("state.json.tmp").exists());
-
-        let mismatch = load_state(&state_path, "other.sqlite", now)
-            .expect_err("state db mismatch should fail");
-        assert!(matches!(
-            mismatch,
-            RecommendationError::StateDatabaseMismatch
-        ));
-
-        fs::write(&state_path, "{").expect("corrupt state should be written");
-        let corrupt =
-            load_state(&state_path, "fixture.sqlite", now).expect_err("corrupt state should fail");
-        assert!(matches!(corrupt, RecommendationError::Json(_)));
-    }
-
-    #[test]
     fn change_manifest_loader_sorts_dedupes_and_fails_loud() {
         let root = temp_root("litradar-recommend-manifest");
         let manifest_path = root.path().join("changes.json");
@@ -1808,7 +1474,7 @@ mod tests {
     }
 
     #[test]
-    fn change_detection_and_dedupe_pruning_cover_date_edges() {
+    fn change_detection_covers_count_edges() {
         let previous_issue_counts =
             BTreeMap::from([("2:20".to_string(), 1), ("3:30".to_string(), 3)]);
         let current_issue_counts = BTreeMap::from([
@@ -1828,19 +1494,6 @@ mod tests {
             vec!["1", "2"]
         );
 
-        let now = UNIX_EPOCH + Duration::from_secs(10 * 86_400);
-        let dedupe = BTreeMap::from([
-            ("fresh".to_string(), "1970-01-10T00:00:00Z".to_string()),
-            ("old".to_string(), "1970-01-01T00:00:00Z".to_string()),
-            ("bad".to_string(), "not-a-date".to_string()),
-        ]);
-        let pruned = prune_delivery_dedupe(&dedupe, 2, now);
-
-        assert_eq!(
-            pruned.keys().cloned().collect::<Vec<_>>(),
-            vec!["fresh".to_string()]
-        );
-        assert!(prune_delivery_dedupe(&dedupe, 0, now).is_empty());
         assert!(utc_now_iso().ends_with('Z'));
     }
 

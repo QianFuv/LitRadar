@@ -37,6 +37,8 @@ SQLite 使用 online backup API，可在 WAL 数据库仍有已提交写入时�
 
 需要严格时间点一致性时，先停止 `litradar serve`，并确认没有独立的索引或投递子命令仍在写入。
 
+恢复可能包含备份时正在运行的 delivery run/lease。应用不会立即重放未过期 owner 的工作；租约按备份中的绝对 Unix 时间自然到期后，新进程接管。接管会安全重试 `claimed` 的 pre-send 工作，并把 `sending` 的不确定外部结果收敛为 `unknown`。不要手工删除 `unknown` dedupe 来强制重发。
+
 ## 创建
 
 输出必须是不存在的新目录，且不能位于被选择的索引或状态目录内部：

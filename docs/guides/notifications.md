@@ -89,7 +89,7 @@ cargo run --bin litradar -- notify \
   --no-dry-run
 ```
 
-`notify` 默认处理 `data/index/*.sqlite`，状态目录为 `data/push_state`。只有 token 非空、设置启用且投递方式为 `pushplus` 的用户进入执行。
+`notify` 默认处理 `data/index/*.sqlite`，并把运行、进度、去重和 lease 写入 `data/auth.sqlite`。`data/push_state` 只保留 `.changes.json` 输入及不会被自动删除的旧导入源。只有 token 非空、设置启用且投递方式为 `pushplus` 的用户进入执行。
 
 ### 追踪文件夹
 
@@ -105,17 +105,18 @@ cargo run --bin litradar -- push \
   --no-dry-run
 ```
 
-`push` 默认状态目录为 `data/folder_push_state`。目标用户还必须已经设置追踪文件夹。
+`push` 与 `notify` 共享认证库中的持久状态表；`data/folder_push_state` 仅可能包含保留的旧导入源。目标用户还必须已经设置追踪文件夹。
 
 ## 副作用顺序
 
-执行模式先计算全部计划，再按以下顺序产生副作用：
+执行模式按 subscriber item 逐个推进，并按以下顺序产生副作用：
 
-1. 若工作流需要文件夹写入，先添加收藏。
-2. `notify` 再发送 PushPlus。
-3. 所有当前副作用成功后写入 `delivery_dedupe`。
+1. 在外部副作用前，用 SQLite 唯一约束建立每篇文章的 `reserved` dedupe。
+2. 若工作流需要文件夹写入，先添加收藏；该写入依赖收藏唯一约束，可在 pre-send 崩溃后幂等重试。
+3. `notify` 把 subscriber item 标记为 `sending` 后再发送 PushPlus。
+4. 已知成功时，在一个 transaction 中把 subscriber item 与全部 dedupe 落为 `succeeded`/`confirmed`；请求已开始但结果不明确时，同一 transaction 落为 `unknown`。
 
-PushPlus 失败时，本次用户结果失败且不会写入去重记录。若在发送前已经执行了可选文件夹同步，该收藏写入不会被自动回滚；后续重试仍需以最终状态和去重记录为准。
+PushPlus 请求开始后的失败按不确定结果处理：不会回显上游 body，不会释放 dedupe，也不会自动重发。进程在 `claimed` 阶段退出时，过期 owner 的 reservation 会释放并安全重试；在 `sending` 阶段退出时，新 owner 会把 item/dedupe 固定收敛到 `unknown`。若发送前已经执行可选文件夹同步，收藏不会回滚，但其唯一约束确保恢复不会重复创建。
 
 PushPlus 传输使用受限后的 CLI `--retries`，并以相同的 `1/2/4/8/8...` 秒封顶退避对网络错误以及 `429`、`500`、`502`、`503`、`504` 重试。响应 JSON 必须满足 `code=200`，`data` 记录为 message ID。
 
@@ -168,5 +169,5 @@ PushPlus 传输使用受限后的 CLI `--retries`，并以相同的 `1/2/4/8/8..
 4. AI key/model 是否可解析，主备 endpoint 是否仍在管理员目录且可访问。
 5. `delivery_method=folder` 时是否设置追踪文件夹。
 6. `delivery_method=pushplus` 时 token 是否存在。
-7. 对应状态目录中的 run/error 是否说明已去重、跳过或传输失败。
+7. 认证库 `delivery_runs`、`delivery_run_items`、`delivery_dedupe` 和 `delivery_leases` 是否显示 busy、skipped、failed 或 unknown；不要修改保留的旧 JSON 来修复运行状态。
 8. 调度执行时查看管理后台 scheduler 状态；管理 API 不返回内部 stdout/stderr 摘要。

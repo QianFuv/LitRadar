@@ -166,19 +166,20 @@ Provider 只能返回规范 `JournalDraft`、`IssueDraft`、`ArticleDraft` 和 o
 - 通知/追踪设置
 - 全局运行配置，包括 Provider 路由、服务器安全和日志设置
 - 类型化定时任务、运行槽和心跳
+- 投递 checkpoint、run、item、dedupe 和 workflow lease
 - 系统公告
 
 该库不保存 32 字节部署密钥；受保护的集成凭据以认证密文写入数据库，密钥通过文件单独提供。
 
-### 外部状态文件
+### 外部变更清单与旧导入源
 
 | 路径                                | 所有者                                                       |
 | ----------------------------------- | ------------------------------------------------------------ |
 | `data/push_state/<db>.changes.json` | `litradar index --update` 生成；每周更新、通知和追踪共同读取 |
-| `data/push_state/<db>.json`         | `litradar notify` 和手动 PushPlus 投递状态                   |
-| `data/folder_push_state/<db>.json`  | `litradar push` 的追踪文件夹投递状态                         |
+| `data/push_state/<db>.json`         | 启动时只读导入并原样保留的旧 notify 状态                    |
+| `data/folder_push_state/<db>.json`  | 启动时只读导入并原样保留的旧 push 状态                      |
 
-变更清单是新文章分发的输入，不是可从文章日期实时重建的视图。读取方只以必填的 `db_name` 识别目标数据库，不使用保存的文件系统路径作为身份回退。
+变更清单是新文章分发的输入，不是可从文章日期实时重建的视图。读取方只以必填的 `db_name` 识别目标数据库，不使用保存的文件系统路径作为身份回退。可变投递状态只存在于 `auth.sqlite`；运行时不会写 `<db>.json` 或固定 `.tmp`。
 
 ## 主要数据流
 
@@ -227,11 +228,12 @@ browser -> stable LitRadar action URL -> load ArticleLocator
 
 ### 通知和追踪
 
-1. 从变更清单或状态快照差异得到候选文章。
-2. 按用户的数据库、关键词和方向偏好缩小候选。
-3. 使用用户级 OpenAI 兼容凭据做主备 AI 选择。
-4. 根据 `delivery_method` 发送 PushPlus 或写入追踪文件夹。
-5. 成功副作用完成后更新 `delivery_dedupe`。
+1. 以 `(workflow, db_name)` 认领 SQLite run 与 workflow lease；旧 owner 未过期时另一个进程不能进入候选选择。
+2. 从 `.changes.json` 或 `delivery_checkpoints.snapshot_json` 差异建立持久 run item，再读取候选文章。
+3. 按用户的数据库、关键词和方向偏好缩小候选，并使用用户级 OpenAI 兼容凭据做主备 AI 选择。
+4. 在副作用前以唯一约束建立 article dedupe reservation；文件夹写入保持幂等，PushPlus 前把 subscriber item 标记为 `sending`。
+5. 已知结果把 subscriber item 与全部 dedupe 在同一 transaction 中落为 success/confirmed；不确定结果落为 unknown，禁止自动重放。
+6. run 终态、checkpoint CAS 和 lease 释放在同一 transaction 中提交；崩溃后的新 owner 只重试 pre-send claimed 工作。
 
 完整行为见[通知与追踪](guides/notifications.md)。
 

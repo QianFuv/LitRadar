@@ -161,7 +161,6 @@ fn run_manual_weekly_push_inner(
     } else {
         DeliveryWorkflow::Push
     };
-    let state_dir = manual_delivery_state_dir(config.storage_config.project_root(), workflow);
     let mut outcomes = Vec::new();
     for manifest in manifests {
         let index_db_path = config
@@ -174,7 +173,6 @@ fn run_manual_weekly_push_inner(
                 secret_codec: config.secret_codec.clone(),
                 index_db_path,
                 db_name: manifest.db_name,
-                state_dir: state_dir.clone(),
                 changes_file: Some(manifest.path),
                 ai_model: config.ai_model.clone(),
                 max_candidates: config.max_candidates,
@@ -245,111 +243,155 @@ fn execute_recommendation_delivery_with_services_for_user(
     ai_selector: &mut impl DeliveryAiSelector,
     pushplus_sender: &mut impl DeliveryPushPlusSender,
 ) -> Result<RecommendationRunOutcome, DeliveryError> {
-    let now = utc_now_iso();
-    let state_path = state_path(&config.state_dir, &config.db_name);
-    let mut state = load_state(&state_path, &config.db_name, &now)?;
-    let current_issue_counts =
-        litradar_storage::collect_issue_article_counts(&config.index_db_path)?;
-    let current_inpress_counts =
-        litradar_storage::collect_inpress_article_counts(&config.index_db_path)?;
-
-    let (pending_issue_keys, pending_inpress_keys, pending_article_ids, manifest_run_id) =
-        if let Some(changes_file) = &config.changes_file {
-            let manifest = load_change_manifest(changes_file, &config.db_name)?;
-            (
-                manifest.pending_issue_keys,
-                manifest.pending_inpress_keys,
-                manifest.pending_article_ids,
-                manifest.run_id,
-            )
-        } else {
-            (
-                compute_changed_issue_keys(
-                    &state.snapshot.issue_article_counts,
-                    &current_issue_counts,
-                ),
-                compute_changed_inpress_keys(
-                    &state.snapshot.inpress_article_counts,
-                    &current_inpress_counts,
-                ),
-                Vec::new(),
-                None,
-            )
-        };
-
-    if pending_issue_keys.is_empty()
-        && pending_inpress_keys.is_empty()
-        && pending_article_ids.is_empty()
-    {
-        state.status = "idle".to_string();
-        state.run = None;
-        state.updated_at = now.clone();
-        save_state_atomic(&state_path, &state)?;
-        return Ok(outcome(config, state_path, "idle", Vec::new(), Vec::new()));
-    }
-
-    let run_id = manifest_run_id.unwrap_or_else(|| now.clone());
-    let mut run_state = create_run_state(
-        &run_id,
-        pending_issue_keys.clone(),
-        pending_inpress_keys.clone(),
-        &now,
-    );
-    state.status = "running".to_string();
-    state.run = Some(run_state.clone());
-    state.updated_at = now.clone();
-    save_state_atomic(&state_path, &state)?;
-
-    let candidates = if pending_issue_keys.is_empty() && pending_inpress_keys.is_empty() {
-        litradar_storage::fetch_candidates_for_article_ids(
-            &config.index_db_path,
-            &pending_article_ids,
-        )?
-    } else {
-        let mut candidates = litradar_storage::fetch_candidates_for_issue_keys(
-            &config.index_db_path,
-            &pending_issue_keys,
-        )?;
-        candidates.extend(litradar_storage::fetch_candidates_for_inpress_keys(
-            &config.index_db_path,
-            &pending_inpress_keys,
-        )?);
-        candidates
+    let manifest = config
+        .changes_file
+        .as_ref()
+        .map(|path| load_change_manifest(path, &config.db_name))
+        .transpose()?;
+    let external_id = match manifest.as_ref().and_then(|value| value.run_id.clone()) {
+        Some(run_id) => run_id,
+        None => format!("run-{}", litradar_storage::random_hex(16)?),
     };
-    let mut candidates = deduplicate_candidates(candidates);
-    if config.changes_file.is_some() {
-        let pending_article_ids = pending_article_ids.into_iter().collect::<BTreeSet<_>>();
-        candidates.retain(|candidate| pending_article_ids.contains(&candidate.article_id));
+    let mut context = match admit_durable_delivery_run(config, subscriber_user_id, &external_id)? {
+        DurableDeliveryAdmission::Terminal(run) => {
+            return Ok(outcome(
+                config,
+                run.id,
+                terminal_status_text(run.status),
+                Vec::new(),
+                Vec::new(),
+            ));
+        }
+        DurableDeliveryAdmission::Owned(context) => *context,
+    };
+    let run_label = context.run.external_id.clone();
+    let result = execute_owned_delivery(
+        config,
+        subscriber_user_id,
+        manifest,
+        &run_label,
+        &mut context,
+        ai_selector,
+        pushplus_sender,
+    );
+    if let Err(error) = &result {
+        context.fail_best_effort(&config.auth_db_path, delivery_error_kind(error));
     }
+    result
+}
 
-    if candidates.is_empty() {
-        complete_without_candidates(
-            &mut state,
-            &mut run_state,
-            &current_issue_counts,
-            &current_inpress_counts,
-            &pending_issue_keys,
-            &pending_inpress_keys,
-            &now,
-        );
-        save_state_atomic(&state_path, &state)?;
+#[allow(clippy::too_many_arguments)]
+fn execute_owned_delivery(
+    config: &RecommendationRunConfig,
+    subscriber_user_id: Option<UserId>,
+    manifest: Option<litradar_recommend::ChangeManifest>,
+    run_label: &str,
+    context: &mut DurableDeliveryRun,
+    ai_selector: &mut impl DeliveryAiSelector,
+    pushplus_sender: &mut impl DeliveryPushPlusSender,
+) -> Result<RecommendationRunOutcome, DeliveryError> {
+    let previous_snapshot = checkpoint_snapshot(context)?;
+    let previous_completed_at = context
+        .checkpoint
+        .as_ref()
+        .and_then(|checkpoint| checkpoint.last_completed_run_at.clone());
+    let current_snapshot = RecommendationSnapshot {
+        issue_article_counts: litradar_storage::collect_issue_article_counts(
+            &config.index_db_path,
+        )?,
+        inpress_article_counts: litradar_storage::collect_inpress_article_counts(
+            &config.index_db_path,
+        )?,
+    };
+    let existing_items =
+        litradar_storage::list_delivery_run_items(&config.auth_db_path, context.run.id)?;
+    if context.did_take_over_competing_run
+        && !existing_items
+            .iter()
+            .any(|item| item.item_kind != litradar_storage::DeliveryItemKind::Subscriber)
+    {
+        return Err(DeliveryError::Manual(
+            "Recovered delivery run has no durable input items".to_string(),
+        ));
+    }
+    let input = if existing_items
+        .iter()
+        .any(|item| item.item_kind != litradar_storage::DeliveryItemKind::Subscriber)
+    {
+        delivery_input_from_items(&existing_items)
+    } else {
+        let input = delivery_input_from_source(manifest, &previous_snapshot, &current_snapshot);
+        litradar_storage::ensure_delivery_run_items(
+            &config.auth_db_path,
+            context.run.id,
+            &input.item_creates(),
+            unix_now(),
+        )?;
+        input
+    };
+    if input.is_empty() {
+        let now = unix_now();
+        context.finalize_with_checkpoint(
+            &config.auth_db_path,
+            litradar_storage::DeliveryRunStatus::Skipped,
+            litradar_storage::DeliveryCheckpointStatus::Idle,
+            &current_snapshot,
+            previous_completed_at,
+            Some(r#"{"candidate_count":0,"subscriber_count":0}"#),
+            None,
+            now,
+        )?;
         return Ok(outcome(
             config,
-            state_path,
-            "completed",
+            context.run.id,
+            "idle",
             Vec::new(),
             Vec::new(),
         ));
     }
 
-    run_state.delivered_article_ids = candidates
+    let candidates = load_durable_candidates(config, &input)?;
+    let candidates = deduplicate_candidates(candidates);
+    let candidate_article_ids = candidates
         .iter()
         .map(|candidate| candidate.article_id)
-        .collect();
-    run_state.updated_at = now.clone();
-    state.run = Some(run_state.clone());
-    state.updated_at = now.clone();
-    save_state_atomic(&state_path, &state)?;
+        .collect::<Vec<_>>();
+    litradar_storage::ensure_delivery_run_items(
+        &config.auth_db_path,
+        context.run.id,
+        &candidate_article_ids
+            .iter()
+            .map(|article_id| litradar_storage::DeliveryRunItemCreate {
+                item_kind: litradar_storage::DeliveryItemKind::Article,
+                item_key: article_id.to_string(),
+                user_id: None,
+                article_id: Some(*article_id),
+            })
+            .collect::<Vec<_>>(),
+        unix_now(),
+    )?;
+    finalize_progress_items(config, context)?;
+
+    if candidates.is_empty() {
+        let completed_at = utc_now_iso();
+        context.finalize_with_checkpoint(
+            &config.auth_db_path,
+            litradar_storage::DeliveryRunStatus::Completed,
+            litradar_storage::DeliveryCheckpointStatus::Completed,
+            &current_snapshot,
+            Some(completed_at),
+            Some(r#"{"candidate_count":0,"subscriber_count":0}"#),
+            None,
+            unix_now(),
+        )?;
+        return Ok(outcome(
+            config,
+            context.run.id,
+            "completed",
+            Vec::new(),
+            Vec::new(),
+        ));
+    }
 
     let subscribers = filtered_subscribers(
         &config.auth_db_path,
@@ -359,24 +401,45 @@ fn execute_recommendation_delivery_with_services_for_user(
         subscriber_user_id,
     )?;
     if subscribers.is_empty() {
-        run_state.status = "skipped".to_string();
-        run_state.updated_at = now.clone();
-        state.status = "skipped".to_string();
-        state.run = Some(run_state);
-        state.updated_at = now.clone();
-        save_state_atomic(&state_path, &state)?;
+        context.finalize_with_checkpoint(
+            &config.auth_db_path,
+            litradar_storage::DeliveryRunStatus::Skipped,
+            litradar_storage::DeliveryCheckpointStatus::Skipped,
+            &previous_snapshot,
+            previous_completed_at,
+            Some(&run_result_json(candidate_article_ids.len(), 0, 0, 0)?),
+            None,
+            unix_now(),
+        )?;
         return Ok(outcome(
             config,
-            state_path,
+            context.run.id,
             "skipped",
-            candidates
-                .iter()
-                .map(|candidate| candidate.article_id)
-                .collect(),
+            candidate_article_ids,
             Vec::new(),
         ));
     }
-
+    let subscriber_items = litradar_storage::ensure_delivery_run_items(
+        &config.auth_db_path,
+        context.run.id,
+        &subscribers
+            .iter()
+            .map(|subscriber| {
+                let user_id = subscriber_id_value(subscriber)?;
+                Ok(litradar_storage::DeliveryRunItemCreate {
+                    item_kind: litradar_storage::DeliveryItemKind::Subscriber,
+                    item_key: subscriber.subscriber_id.clone(),
+                    user_id: Some(user_id),
+                    article_id: None,
+                })
+            })
+            .collect::<Result<Vec<_>, DeliveryError>>()?,
+        unix_now(),
+    )?;
+    let items_by_key = subscriber_items
+        .into_iter()
+        .map(|item| (item.item_key.clone(), item))
+        .collect::<BTreeMap<_, _>>();
     let global_config = load_global_config(config)?;
     let mut defaults = load_defaults();
     if let Some(max_candidates) = config.max_candidates {
@@ -388,91 +451,366 @@ fn execute_recommendation_delivery_with_services_for_user(
         .cloned()
         .collect::<Vec<_>>();
     let candidates_by_id = candidates_by_id(&candidates);
-    let candidate_article_ids = candidates
-        .iter()
-        .map(|candidate| candidate.article_id)
-        .collect::<Vec<_>>();
-    let mut delivery_dedupe = state.delivery_dedupe.clone();
+    let mut delivery_dedupe = delivery_dedupe_map(config, context)?;
     let mut plans = Vec::new();
-    let mut errors = Vec::new();
-
     for subscriber in subscribers {
-        match build_subscriber_plan(
-            SubscriberPlanRequest {
+        context.renew(&config.auth_db_path)?;
+        let item = items_by_key
+            .get(&subscriber.subscriber_id)
+            .ok_or_else(|| DeliveryError::Manual("Subscriber item is unavailable".to_string()))?;
+        let plan = if item.status.is_terminal() {
+            plan_from_terminal_item(config, &subscriber, item)?
+        } else {
+            let claimed_item = litradar_storage::claim_delivery_run_item(
+                &config.auth_db_path,
+                context.run.id,
+                &context.owner_id,
+                context.run.revision,
+                item.id,
+                &context.owner_id,
+                unix_now(),
+                DELIVERY_LEASE_SECONDS,
+            )?;
+            process_subscriber(
                 config,
-                subscriber: &subscriber,
-                global_config: &global_config,
-                defaults: &defaults,
-                run_id: &run_id,
-                candidates_for_model: &candidates_for_model,
-                candidates_by_id: &candidates_by_id,
-                delivery_dedupe: &mut delivery_dedupe,
-            },
-            ai_selector,
-            pushplus_sender,
-        ) {
-            Ok(plan) => {
-                run_state
-                    .user_results
-                    .push(user_result_from_plan(config.workflow, &plan));
-                plans.push(plan);
-            }
-            Err(error) => {
-                let error_message = format!("{}: {error}", subscriber.subscriber_id);
-                errors.push(error_message);
-                run_state.user_results.push(RecommendationUserResult {
-                    subscriber_id: subscriber.subscriber_id,
-                    selected_count: 0,
-                    pushed_count: 0,
-                    folder_synced_count: Some(0),
-                    message_id: None,
-                    status: "error".to_string(),
-                    error: Some(error.to_string()),
-                });
-            }
-        }
-        run_state.updated_at = utc_now_iso();
-        state.updated_at = run_state.updated_at.clone();
-        state.run = Some(run_state.clone());
-        if should_save_subscriber_progress(config) {
-            save_state_atomic(&state_path, &state)?;
-        }
+                context,
+                &claimed_item,
+                &subscriber,
+                &global_config,
+                &defaults,
+                run_label,
+                &candidates_for_model,
+                &candidates_by_id,
+                &mut delivery_dedupe,
+                ai_selector,
+                pushplus_sender,
+            )?
+        };
+        plans.push(plan);
     }
 
-    if errors.is_empty() {
-        let completed_at = utc_now_iso();
-        state.delivery_dedupe = prune_delivery_dedupe(
-            &delivery_dedupe,
-            config.dedupe_retention_days,
-            SystemTime::now(),
-        );
-        complete_successfully(
-            &mut state,
-            &mut run_state,
-            &current_issue_counts,
-            &current_inpress_counts,
-            &pending_issue_keys,
-            &pending_inpress_keys,
-            &completed_at,
-        );
-    } else {
-        run_state.status = "failed".to_string();
-        run_state.errors = errors;
-        run_state.updated_at = utc_now_iso();
-        state.status = "failed".to_string();
-        state.updated_at = run_state.updated_at.clone();
-        state.run = Some(run_state);
-    }
-    save_state_atomic(&state_path, &state)?;
-
+    let has_unknown = plans.iter().any(|plan| plan.status == "unknown");
+    let has_failure = plans.iter().any(|plan| plan.status == "error");
+    let (run_status, checkpoint_status, outcome_status, checkpoint_snapshot, error_code) =
+        if has_unknown {
+            (
+                litradar_storage::DeliveryRunStatus::Unknown,
+                litradar_storage::DeliveryCheckpointStatus::Unknown,
+                "unknown",
+                &previous_snapshot,
+                Some("ambiguous_delivery"),
+            )
+        } else if has_failure {
+            (
+                litradar_storage::DeliveryRunStatus::Failed,
+                litradar_storage::DeliveryCheckpointStatus::Failed,
+                "failed",
+                &previous_snapshot,
+                Some("subscriber_failed"),
+            )
+        } else {
+            (
+                litradar_storage::DeliveryRunStatus::Completed,
+                litradar_storage::DeliveryCheckpointStatus::Completed,
+                "completed",
+                &current_snapshot,
+                None,
+            )
+        };
+    let selected_count = plans
+        .iter()
+        .map(|plan| plan.selected_article_ids.len())
+        .sum();
+    let message_count = plans
+        .iter()
+        .filter(|plan| plan.message_id.is_some())
+        .count();
+    let result_json = run_result_json(
+        candidate_article_ids.len(),
+        plans.len(),
+        selected_count,
+        message_count,
+    )?;
+    context.finalize_with_checkpoint(
+        &config.auth_db_path,
+        run_status,
+        checkpoint_status,
+        checkpoint_snapshot,
+        if run_status == litradar_storage::DeliveryRunStatus::Completed {
+            Some(utc_now_iso())
+        } else {
+            previous_completed_at
+        },
+        Some(&result_json),
+        error_code,
+        unix_now(),
+    )?;
     Ok(outcome(
         config,
-        state_path,
-        state.status.as_str(),
+        context.run.id,
+        outcome_status,
         candidate_article_ids,
         plans,
     ))
 }
+
+struct DeliveryInput {
+    issue_keys: Vec<String>,
+    inpress_keys: Vec<String>,
+    article_ids: Vec<i64>,
+}
+
+impl DeliveryInput {
+    fn is_empty(&self) -> bool {
+        self.issue_keys.is_empty() && self.inpress_keys.is_empty() && self.article_ids.is_empty()
+    }
+
+    fn item_creates(&self) -> Vec<litradar_storage::DeliveryRunItemCreate> {
+        self.issue_keys
+            .iter()
+            .map(|key| litradar_storage::DeliveryRunItemCreate {
+                item_kind: litradar_storage::DeliveryItemKind::Issue,
+                item_key: key.clone(),
+                user_id: None,
+                article_id: None,
+            })
+            .chain(
+                self.inpress_keys
+                    .iter()
+                    .map(|key| litradar_storage::DeliveryRunItemCreate {
+                        item_kind: litradar_storage::DeliveryItemKind::InPress,
+                        item_key: key.clone(),
+                        user_id: None,
+                        article_id: None,
+                    }),
+            )
+            .chain(self.article_ids.iter().map(|article_id| {
+                litradar_storage::DeliveryRunItemCreate {
+                    item_kind: litradar_storage::DeliveryItemKind::Article,
+                    item_key: article_id.to_string(),
+                    user_id: None,
+                    article_id: Some(*article_id),
+                }
+            }))
+            .collect()
+    }
+}
+
+fn delivery_input_from_source(
+    manifest: Option<litradar_recommend::ChangeManifest>,
+    previous_snapshot: &RecommendationSnapshot,
+    current_snapshot: &RecommendationSnapshot,
+) -> DeliveryInput {
+    match manifest {
+        Some(manifest) => DeliveryInput {
+            issue_keys: manifest.pending_issue_keys,
+            inpress_keys: manifest.pending_inpress_keys,
+            article_ids: manifest.pending_article_ids,
+        },
+        None => DeliveryInput {
+            issue_keys: compute_changed_issue_keys(
+                &previous_snapshot.issue_article_counts,
+                &current_snapshot.issue_article_counts,
+            ),
+            inpress_keys: compute_changed_inpress_keys(
+                &previous_snapshot.inpress_article_counts,
+                &current_snapshot.inpress_article_counts,
+            ),
+            article_ids: Vec::new(),
+        },
+    }
+}
+
+fn delivery_input_from_items(items: &[litradar_storage::DeliveryRunItemRecord]) -> DeliveryInput {
+    let mut issue_keys = Vec::new();
+    let mut inpress_keys = Vec::new();
+    let mut article_ids = Vec::new();
+    for item in items {
+        match item.item_kind {
+            litradar_storage::DeliveryItemKind::Issue => issue_keys.push(item.item_key.clone()),
+            litradar_storage::DeliveryItemKind::InPress => {
+                inpress_keys.push(item.item_key.clone());
+            }
+            litradar_storage::DeliveryItemKind::Article => {
+                if let Some(article_id) = item.article_id {
+                    article_ids.push(article_id);
+                }
+            }
+            litradar_storage::DeliveryItemKind::Subscriber => {}
+        }
+    }
+    issue_keys.sort();
+    issue_keys.dedup();
+    inpress_keys.sort();
+    inpress_keys.dedup();
+    article_ids.sort_unstable();
+    article_ids.dedup();
+    DeliveryInput {
+        issue_keys,
+        inpress_keys,
+        article_ids,
+    }
+}
+
+fn load_durable_candidates(
+    config: &RecommendationRunConfig,
+    input: &DeliveryInput,
+) -> Result<Vec<ArticleCandidateInfo>, DeliveryError> {
+    if !input.article_ids.is_empty() {
+        return Ok(litradar_storage::fetch_candidates_for_article_ids(
+            &config.index_db_path,
+            &input.article_ids,
+        )?);
+    }
+    let mut candidates = litradar_storage::fetch_candidates_for_issue_keys(
+        &config.index_db_path,
+        &input.issue_keys,
+    )?;
+    candidates.extend(litradar_storage::fetch_candidates_for_inpress_keys(
+        &config.index_db_path,
+        &input.inpress_keys,
+    )?);
+    Ok(candidates)
+}
+
+fn finalize_progress_items(
+    config: &RecommendationRunConfig,
+    context: &mut DurableDeliveryRun,
+) -> Result<(), DeliveryError> {
+    context.renew(&config.auth_db_path)?;
+    let items = litradar_storage::list_delivery_run_items(&config.auth_db_path, context.run.id)?;
+    for item in items {
+        if item.item_kind == litradar_storage::DeliveryItemKind::Subscriber
+            || item.status.is_terminal()
+        {
+            continue;
+        }
+        let claimed = litradar_storage::claim_delivery_run_item(
+            &config.auth_db_path,
+            context.run.id,
+            &context.owner_id,
+            context.run.revision,
+            item.id,
+            &context.owner_id,
+            unix_now(),
+            DELIVERY_LEASE_SECONDS,
+        )?;
+        litradar_storage::finalize_delivery_run_item(
+            &config.auth_db_path,
+            claimed.id,
+            &context.owner_id,
+            claimed.revision,
+            litradar_storage::DeliveryItemStatus::Succeeded,
+            None,
+            None,
+            unix_now(),
+        )?;
+    }
+    Ok(())
+}
+
+fn subscriber_id_value(subscriber: &NotificationSubscriberInfo) -> Result<i64, DeliveryError> {
+    subscriber.subscriber_id.parse::<i64>().map_err(|_| {
+        DeliveryError::Manual("Subscriber identifier is not a positive integer".to_string())
+    })
+}
+
+#[derive(Deserialize)]
+struct PersistedSubscriberResult {
+    #[serde(default)]
+    selected_article_ids: Vec<i64>,
+    #[serde(default)]
+    folder_synced_count: usize,
+    #[serde(default)]
+    message_id: Option<String>,
+}
+
+fn plan_from_terminal_item(
+    config: &RecommendationRunConfig,
+    subscriber: &NotificationSubscriberInfo,
+    item: &litradar_storage::DeliveryRunItemRecord,
+) -> Result<SubscriberDeliveryPlan, DeliveryError> {
+    let mut result = item
+        .result_json
+        .as_deref()
+        .map(serde_json::from_str::<PersistedSubscriberResult>)
+        .transpose()
+        .map_err(|_| DeliveryError::Manual("Stored subscriber result is invalid".to_string()))?
+        .unwrap_or(PersistedSubscriberResult {
+            selected_article_ids: Vec::new(),
+            folder_synced_count: 0,
+            message_id: None,
+        });
+    if result.selected_article_ids.is_empty()
+        && item.status == litradar_storage::DeliveryItemStatus::Unknown
+    {
+        let dedupe = litradar_storage::list_delivery_dedupe_for_scope(
+            &config.auth_db_path,
+            storage_workflow(config.workflow),
+            &config.db_name,
+        )?;
+        result.selected_article_ids = dedupe
+            .iter()
+            .filter(|row| {
+                row.delivery_run_id == Some(item.delivery_run_id)
+                    && row.user_id == item.user_id.unwrap_or_default()
+            })
+            .map(|row| row.article_id)
+            .collect();
+        result.selected_article_ids.sort_unstable();
+        result.selected_article_ids.dedup();
+        result.message_id = dedupe.into_iter().find_map(|row| row.message_id);
+    }
+    let status = match item.status {
+        litradar_storage::DeliveryItemStatus::Succeeded => "ok",
+        litradar_storage::DeliveryItemStatus::Skipped => "skipped",
+        litradar_storage::DeliveryItemStatus::Unknown => "unknown",
+        litradar_storage::DeliveryItemStatus::Failed
+        | litradar_storage::DeliveryItemStatus::Cancelled => "error",
+        litradar_storage::DeliveryItemStatus::Pending
+        | litradar_storage::DeliveryItemStatus::Claimed
+        | litradar_storage::DeliveryItemStatus::Sending => {
+            return Err(DeliveryError::Manual(
+                "Subscriber item is not terminal".to_string(),
+            ));
+        }
+    };
+    let favorite_writes = favorite_writes(config, subscriber, &result.selected_article_ids);
+    if result.folder_synced_count == 0
+        && item.status == litradar_storage::DeliveryItemStatus::Unknown
+    {
+        result.folder_synced_count = favorite_writes.len();
+    }
+    Ok(SubscriberDeliveryPlan {
+        subscriber_id: subscriber.subscriber_id.clone(),
+        delivery_method: subscriber.delivery_method.clone(),
+        status: status.to_string(),
+        error: item.error_code.clone(),
+        selected_article_ids: result.selected_article_ids.clone(),
+        message_title: None,
+        message_content: None,
+        message_id: result.message_id,
+        favorite_writes,
+        folder_synced_count: result.folder_synced_count,
+        would_send_pushplus: false,
+    })
+}
+
+fn run_result_json(
+    candidate_count: usize,
+    subscriber_count: usize,
+    selected_count: usize,
+    message_count: usize,
+) -> Result<String, DeliveryError> {
+    serde_json::to_string(&serde_json::json!({
+        "candidate_count": candidate_count,
+        "subscriber_count": subscriber_count,
+        "selected_count": selected_count,
+        "message_count": message_count,
+    }))
+    .map_err(|_| DeliveryError::Manual("Delivery result serialization failed".to_string()))
+}
+
 fn filtered_subscribers(
     auth_db_path: &Path,
     secret_codec: &litradar_storage::SecretCodec,
@@ -530,12 +868,12 @@ fn emit_delivery_workflow_terminal(
                 .iter()
                 .filter(|subscriber| subscriber.status == "error")
                 .count();
-            if outcome.status == "failed" {
+            if matches!(outcome.status.as_str(), "failed" | "unknown") {
                 tracing::warn!(
                     event = "delivery.workflow.failed",
                     component = "delivery",
                     outcome = "failure",
-                    status = "failed",
+                    status = delivery_status_kind(&outcome.status),
                     candidate_count = outcome.candidate_article_ids.len(),
                     subscriber_count,
                     selected_count,
@@ -576,11 +914,11 @@ fn emit_manual_delivery_terminal(
     started_at: Instant,
 ) {
     match result {
-        Ok(outcome) if outcome.status == "failed" => tracing::warn!(
+        Ok(outcome) if matches!(outcome.status.as_str(), "failed" | "unknown") => tracing::warn!(
             event = "delivery.manual.failed",
             component = "delivery",
             outcome = "failure",
-            status = "failed",
+            status = delivery_status_kind(&outcome.status),
             selected_count = outcome.selected,
             delivered_count = outcome.pushed,
             candidate_count = outcome.total_candidates.unwrap_or(0),
@@ -611,10 +949,13 @@ fn delivery_error_kind(error: &DeliveryError) -> &'static str {
     match error {
         DeliveryError::Index(_) => "index_storage",
         DeliveryError::Business(_) => "business_storage",
+        DeliveryError::Durable(_) => "delivery_storage",
+        DeliveryError::Auth(_) => "auth_storage",
         DeliveryError::Recommendation(_) => "recommendation",
         DeliveryError::Ai(_) => "ai",
         DeliveryError::PushPlus(_) => "pushplus",
         DeliveryError::Manual(_) => "manual_validation",
+        DeliveryError::Busy => "busy",
     }
 }
 
@@ -638,6 +979,9 @@ fn delivery_status_kind(status: &str) -> &'static str {
         "idle" => "idle",
         "skipped" => "skipped",
         "failed" => "failed",
+        "unknown" => "unknown",
+        "cancelled" => "cancelled",
+        "timed_out" => "timed_out",
         _ => "unknown",
     }
 }
@@ -676,12 +1020,16 @@ fn manual_outcome_from_delivery(
     let mut pushplus_messages = 0_i64;
     let mut selected_databases = BTreeSet::new();
     let mut errors = Vec::new();
+    let mut has_unknown = false;
     let mut skip_messages = Vec::new();
 
     for outcome in outcomes {
         total_candidates += outcome.candidate_article_ids.len() as i64;
         if outcome.status == "failed" {
             errors.push(format!("{} delivery failed", outcome.db_name));
+        } else if outcome.status == "unknown" {
+            has_unknown = true;
+            errors.push(format!("{} delivery outcome is unknown", outcome.db_name));
         }
         for subscriber in &outcome.subscribers {
             selected += subscriber.selected_article_ids.len() as i64;
@@ -700,7 +1048,7 @@ fn manual_outcome_from_delivery(
 
     if !errors.is_empty() {
         return ManualWeeklyPushOutcome {
-            status: "failed".to_string(),
+            status: if has_unknown { "unknown" } else { "failed" }.to_string(),
             message: errors.join("; "),
             pushed,
             selected,
@@ -760,6 +1108,264 @@ fn nonempty_text(value: &str) -> Option<&str> {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
+fn process_subscriber(
+    config: &RecommendationRunConfig,
+    context: &DurableDeliveryRun,
+    item: &litradar_storage::DeliveryRunItemRecord,
+    subscriber: &NotificationSubscriberInfo,
+    global_config: &NotificationGlobalConfig,
+    defaults: &NotificationDefaults,
+    run_label: &str,
+    candidates_for_model: &[ArticleCandidateInfo],
+    candidates_by_id: &BTreeMap<i64, ArticleCandidateInfo>,
+    delivery_dedupe: &mut BTreeMap<String, String>,
+    ai_selector: &mut impl DeliveryAiSelector,
+    pushplus_sender: &mut impl DeliveryPushPlusSender,
+) -> Result<SubscriberDeliveryPlan, DeliveryError> {
+    let mut plan = match build_subscriber_plan(
+        SubscriberPlanRequest {
+            config,
+            subscriber,
+            global_config,
+            defaults,
+            run_id: run_label,
+            candidates_for_model,
+            candidates_by_id,
+            delivery_dedupe,
+        },
+        ai_selector,
+    ) {
+        Ok(plan) => plan,
+        Err(error) => {
+            let result_json = subscriber_result_json(&[], 0, None)?;
+            litradar_storage::finalize_delivery_run_item(
+                &config.auth_db_path,
+                item.id,
+                &context.owner_id,
+                item.revision,
+                litradar_storage::DeliveryItemStatus::Failed,
+                Some(&result_json),
+                Some("selection_failed"),
+                unix_now(),
+            )?;
+            return Ok(failed_plan(subscriber, &error.to_string()));
+        }
+    };
+    if plan.status == "skipped" {
+        let result_json = subscriber_result_json(&[], 0, None)?;
+        litradar_storage::finalize_delivery_run_item(
+            &config.auth_db_path,
+            item.id,
+            &context.owner_id,
+            item.revision,
+            litradar_storage::DeliveryItemStatus::Skipped,
+            Some(&result_json),
+            None,
+            unix_now(),
+        )?;
+        return Ok(plan);
+    }
+    if config.mode == DeliveryMode::DryRun {
+        let result_json =
+            subscriber_result_json(&plan.selected_article_ids, plan.folder_synced_count, None)?;
+        litradar_storage::finalize_delivery_run_item(
+            &config.auth_db_path,
+            item.id,
+            &context.owner_id,
+            item.revision,
+            litradar_storage::DeliveryItemStatus::Succeeded,
+            Some(&result_json),
+            None,
+            unix_now(),
+        )?;
+        return Ok(plan);
+    }
+
+    let user_id = subscriber_id_value(subscriber)?;
+    let mut reservations = Vec::new();
+    for article_id in &plan.selected_article_ids {
+        match litradar_storage::reserve_delivery_dedupe(
+            &config.auth_db_path,
+            context.workflow,
+            &config.db_name,
+            user_id,
+            *article_id,
+            context.run.id,
+            &context.owner_id,
+            unix_now(),
+        )? {
+            litradar_storage::DeliveryDedupeReserveOutcome::Reserved(record) => {
+                reservations.push(record);
+            }
+            litradar_storage::DeliveryDedupeReserveOutcome::Existing(_) => {
+                release_reservations(config, context, &reservations)?;
+                let skipped = skipped_plan(subscriber, "Articles were already delivered");
+                let result_json = subscriber_result_json(&[], 0, None)?;
+                litradar_storage::finalize_delivery_run_item(
+                    &config.auth_db_path,
+                    item.id,
+                    &context.owner_id,
+                    item.revision,
+                    litradar_storage::DeliveryItemStatus::Skipped,
+                    Some(&result_json),
+                    None,
+                    unix_now(),
+                )?;
+                return Ok(skipped);
+            }
+        }
+    }
+    if let Err(error) = execute_favorite_writes(config, &plan.favorite_writes) {
+        release_reservations(config, context, &reservations)?;
+        let result_json =
+            subscriber_result_json(&plan.selected_article_ids, plan.folder_synced_count, None)?;
+        litradar_storage::finalize_delivery_run_item(
+            &config.auth_db_path,
+            item.id,
+            &context.owner_id,
+            item.revision,
+            litradar_storage::DeliveryItemStatus::Failed,
+            Some(&result_json),
+            Some("favorite_write_failed"),
+            unix_now(),
+        )?;
+        plan.status = "error".to_string();
+        plan.error = Some(error.to_string());
+        return Ok(plan);
+    }
+
+    let resolutions = reservations
+        .iter()
+        .map(|record| litradar_storage::DeliveryDedupeResolution {
+            id: record.id,
+            expected_revision: record.revision,
+        })
+        .collect::<Vec<_>>();
+    if config.workflow == DeliveryWorkflow::Notify {
+        let sending = litradar_storage::mark_delivery_run_item_sending(
+            &config.auth_db_path,
+            item.id,
+            &context.owner_id,
+            item.revision,
+            unix_now(),
+        )?;
+        let title = plan
+            .message_title
+            .as_deref()
+            .ok_or_else(|| DeliveryError::PushPlus("PushPlus title is unavailable".into()))?;
+        let content = plan
+            .message_content
+            .as_deref()
+            .ok_or_else(|| DeliveryError::PushPlus("PushPlus content is unavailable".into()))?;
+        match pushplus_sender.send(&pushplus_message(subscriber, global_config, title, content)) {
+            Ok(message_id) => {
+                plan.message_id = Some(message_id.clone());
+                let result_json = subscriber_result_json(
+                    &plan.selected_article_ids,
+                    plan.folder_synced_count,
+                    Some(&message_id),
+                )?;
+                litradar_storage::finalize_delivery_attempt(
+                    &config.auth_db_path,
+                    sending.id,
+                    &context.owner_id,
+                    sending.revision,
+                    litradar_storage::DeliveryItemStatus::Succeeded,
+                    Some(&result_json),
+                    None,
+                    context.run.id,
+                    &resolutions,
+                    litradar_storage::DeliveryDedupeStatus::Confirmed,
+                    Some(&message_id),
+                    unix_now(),
+                )?;
+            }
+            Err(error) => {
+                let result_json = subscriber_result_json(
+                    &plan.selected_article_ids,
+                    plan.folder_synced_count,
+                    None,
+                )?;
+                litradar_storage::finalize_delivery_attempt(
+                    &config.auth_db_path,
+                    sending.id,
+                    &context.owner_id,
+                    sending.revision,
+                    litradar_storage::DeliveryItemStatus::Unknown,
+                    Some(&result_json),
+                    Some("ambiguous_delivery"),
+                    context.run.id,
+                    &resolutions,
+                    litradar_storage::DeliveryDedupeStatus::Unknown,
+                    None,
+                    unix_now(),
+                )?;
+                plan.status = "unknown".to_string();
+                plan.error = Some(error.to_string());
+                return Ok(plan);
+            }
+        }
+    } else {
+        let result_json =
+            subscriber_result_json(&plan.selected_article_ids, plan.folder_synced_count, None)?;
+        litradar_storage::finalize_delivery_attempt(
+            &config.auth_db_path,
+            item.id,
+            &context.owner_id,
+            item.revision,
+            litradar_storage::DeliveryItemStatus::Succeeded,
+            Some(&result_json),
+            None,
+            context.run.id,
+            &resolutions,
+            litradar_storage::DeliveryDedupeStatus::Confirmed,
+            None,
+            unix_now(),
+        )?;
+    }
+    for article_id in &plan.selected_article_ids {
+        delivery_dedupe.insert(
+            format!("{}:{article_id}", subscriber.subscriber_id),
+            utc_now_iso(),
+        );
+    }
+    Ok(plan)
+}
+
+fn release_reservations(
+    config: &RecommendationRunConfig,
+    context: &DurableDeliveryRun,
+    reservations: &[litradar_storage::DeliveryDedupeRecord],
+) -> Result<(), DeliveryError> {
+    litradar_storage::release_delivery_dedupe_reservations(
+        &config.auth_db_path,
+        context.run.id,
+        &context.owner_id,
+        &reservations
+            .iter()
+            .map(|record| litradar_storage::DeliveryDedupeResolution {
+                id: record.id,
+                expected_revision: record.revision,
+            })
+            .collect::<Vec<_>>(),
+    )?;
+    Ok(())
+}
+
+fn subscriber_result_json(
+    selected_article_ids: &[i64],
+    folder_synced_count: usize,
+    message_id: Option<&str>,
+) -> Result<String, DeliveryError> {
+    serde_json::to_string(&serde_json::json!({
+        "selected_article_ids": selected_article_ids,
+        "folder_synced_count": folder_synced_count,
+        "message_id": message_id,
+    }))
+    .map_err(|_| DeliveryError::Manual("Subscriber result serialization failed".to_string()))
+}
+
 struct SubscriberPlanRequest<'a> {
     config: &'a RecommendationRunConfig,
     subscriber: &'a NotificationSubscriberInfo,
@@ -768,13 +1374,12 @@ struct SubscriberPlanRequest<'a> {
     run_id: &'a str,
     candidates_for_model: &'a [ArticleCandidateInfo],
     candidates_by_id: &'a BTreeMap<i64, ArticleCandidateInfo>,
-    delivery_dedupe: &'a mut BTreeMap<String, String>,
+    delivery_dedupe: &'a BTreeMap<String, String>,
 }
 
 fn build_subscriber_plan(
     request: SubscriberPlanRequest<'_>,
     ai_selector: &mut impl DeliveryAiSelector,
-    pushplus_sender: &mut impl DeliveryPushPlusSender,
 ) -> Result<SubscriberDeliveryPlan, DeliveryError> {
     let SubscriberPlanRequest {
         config,
@@ -827,30 +1432,6 @@ fn build_subscriber_plan(
         } else {
             (None, None, false)
         };
-    let mut message_id = None;
-    if config.mode == DeliveryMode::Execute {
-        execute_favorite_writes(config, &favorite_writes)?;
-        if config.workflow == DeliveryWorkflow::Notify {
-            let title = message_title
-                .as_deref()
-                .ok_or_else(|| DeliveryError::PushPlus("PushPlus title is unavailable".into()))?;
-            let content = message_content
-                .as_deref()
-                .ok_or_else(|| DeliveryError::PushPlus("PushPlus content is unavailable".into()))?;
-            message_id = Some(pushplus_sender.send(&pushplus_message(
-                subscriber,
-                global_config,
-                title,
-                content,
-            ))?);
-        }
-        for article_id in &selected_article_ids {
-            delivery_dedupe.insert(
-                format!("{}:{article_id}", subscriber.subscriber_id),
-                utc_now_iso(),
-            );
-        }
-    }
     Ok(SubscriberDeliveryPlan {
         subscriber_id: subscriber.subscriber_id.clone(),
         delivery_method: subscriber.delivery_method.clone(),
@@ -859,11 +1440,27 @@ fn build_subscriber_plan(
         selected_article_ids,
         message_title,
         message_content,
-        message_id,
+        message_id: None,
         folder_synced_count: favorite_writes.len(),
         favorite_writes,
         would_send_pushplus,
     })
+}
+
+fn failed_plan(subscriber: &NotificationSubscriberInfo, reason: &str) -> SubscriberDeliveryPlan {
+    SubscriberDeliveryPlan {
+        subscriber_id: subscriber.subscriber_id.clone(),
+        delivery_method: subscriber.delivery_method.clone(),
+        status: "error".to_string(),
+        error: Some(reason.to_string()),
+        selected_article_ids: Vec::new(),
+        message_title: None,
+        message_content: None,
+        message_id: None,
+        favorite_writes: Vec::new(),
+        folder_synced_count: 0,
+        would_send_pushplus: false,
+    }
 }
 
 fn skipped_plan(subscriber: &NotificationSubscriberInfo, reason: &str) -> SubscriberDeliveryPlan {
@@ -884,7 +1481,7 @@ fn skipped_plan(subscriber: &NotificationSubscriberInfo, reason: &str) -> Subscr
 
 fn outcome(
     config: &RecommendationRunConfig,
-    state_path: PathBuf,
+    delivery_run_id: i64,
     status: &str,
     candidate_article_ids: Vec<i64>,
     subscribers: Vec<SubscriberDeliveryPlan>,
@@ -894,7 +1491,7 @@ fn outcome(
         workflow: config.workflow,
         mode: config.mode,
         status: status.to_string(),
-        state_path,
+        delivery_run_id,
         candidate_article_ids,
         subscribers,
     }
@@ -926,8 +1523,14 @@ fn load_defaults() -> NotificationDefaults {
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
+    use std::env;
     use std::fs;
+    use std::io::{Read, Write};
+    use std::net::{TcpListener, TcpStream};
     use std::path::{Path, PathBuf};
+    use std::process::{Child, Command, Output, Stdio};
+    use std::thread;
+    use std::time::{Duration, Instant};
 
     use litradar_domain::{NotificationSettingsUpdate, RankedSelectionInfo, UserId};
     use tempfile::{tempdir, TempDir};
@@ -961,11 +1564,13 @@ mod tests {
         assert_eq!(plan.favorite_writes.len(), 2);
         assert!(!plan.would_send_pushplus);
         assert_eq!(favorite_count(&fixture.auth_db_path), 0);
-        let state =
-            litradar_recommend::load_state(&outcome.state_path, &fixture.db_name, "ignored")
-                .expect("state should be written");
-        assert_eq!(state.status, "completed");
-        assert!(state.delivery_dedupe.is_empty());
+        let checkpoint = delivery_checkpoint(&fixture, DeliveryWorkflow::Push);
+        assert_eq!(
+            checkpoint.status,
+            litradar_storage::DeliveryCheckpointStatus::Completed
+        );
+        assert!(delivery_dedupe(&fixture, DeliveryWorkflow::Push).is_empty());
+        assert!(!fixture.root.path().join("state/fixture.json").exists());
     }
 
     #[test]
@@ -1068,16 +1673,33 @@ mod tests {
         assert_eq!(pushplus_sender.messages.len(), 1);
         assert_eq!(pushplus_sender.messages[0].token, "token");
         assert_eq!(favorite_count(&fixture.auth_db_path), 2);
-        let state =
-            litradar_recommend::load_state(&outcome.state_path, &fixture.db_name, "ignored")
-                .expect("state should be written");
-        let run = state.run.expect("run state should be recorded");
-        assert_eq!(run.user_results[0].message_id.as_deref(), Some("msg-1"));
-        assert_eq!(state.delivery_dedupe.len(), 2);
+        let items = litradar_storage::list_delivery_run_items(
+            &fixture.auth_db_path,
+            outcome.delivery_run_id,
+        )
+        .expect("run items should load");
+        let subscriber_item = items
+            .iter()
+            .find(|item| item.item_kind == litradar_storage::DeliveryItemKind::Subscriber)
+            .expect("subscriber item should exist");
+        assert_eq!(
+            subscriber_item.status,
+            litradar_storage::DeliveryItemStatus::Succeeded
+        );
+        assert!(subscriber_item
+            .result_json
+            .as_deref()
+            .is_some_and(|result| result.contains("msg-1")));
+        let dedupe = delivery_dedupe(&fixture, DeliveryWorkflow::Notify);
+        assert_eq!(dedupe.len(), 2);
+        assert!(dedupe.iter().all(|row| {
+            row.status == litradar_storage::DeliveryDedupeStatus::Confirmed
+                && row.message_id.as_deref() == Some("msg-1")
+        }));
     }
 
     #[test]
-    fn execute_notify_pushplus_failure_does_not_update_dedupe() {
+    fn execute_notify_pushplus_failure_persists_unknown_without_replay() {
         let fixture = DeliveryFixture::new(notification_settings("pushplus", true, vec![]));
 
         let (outcome, _pushplus_sender) = run_fixture_delivery(
@@ -1087,18 +1709,19 @@ mod tests {
         )
         .expect("notify execute should record PushPlus failure");
 
-        assert_eq!(outcome.status, "failed");
+        assert_eq!(outcome.status, "unknown");
         assert_eq!(favorite_count(&fixture.auth_db_path), 2);
-        let state =
-            litradar_recommend::load_state(&outcome.state_path, &fixture.db_name, "ignored")
-                .expect("state should be written");
-        assert!(state.delivery_dedupe.is_empty());
-        assert!(state
-            .run
-            .expect("run state should be recorded")
-            .errors
+        let dedupe = delivery_dedupe(&fixture, DeliveryWorkflow::Notify);
+        assert_eq!(dedupe.len(), 2);
+        assert!(dedupe
             .iter()
-            .any(|error| error.contains("send failed")));
+            .all(|row| row.status == litradar_storage::DeliveryDedupeStatus::Unknown));
+        let run =
+            litradar_storage::load_delivery_run(&fixture.auth_db_path, outcome.delivery_run_id)
+                .expect("run should load")
+                .expect("run should exist");
+        assert_eq!(run.status, litradar_storage::DeliveryRunStatus::Unknown);
+        assert!(!format!("{run:?}").contains("send failed"));
     }
 
     #[test]
@@ -1115,11 +1738,11 @@ mod tests {
         assert_eq!(outcome.status, "completed");
         assert_eq!(outcome.subscribers[0].favorite_writes.len(), 2);
         assert_eq!(favorite_count(&fixture.auth_db_path), 2);
-        let state =
-            litradar_recommend::load_state(&outcome.state_path, &fixture.db_name, "ignored")
-                .expect("state should be written");
-        assert_eq!(state.delivery_dedupe.len(), 2);
-        assert!(state.delivery_dedupe.contains_key("1:101"));
+        let dedupe = delivery_dedupe(&fixture, DeliveryWorkflow::Push);
+        assert_eq!(dedupe.len(), 2);
+        assert!(dedupe
+            .iter()
+            .any(|row| row.user_id == 1 && row.article_id == 101));
     }
 
     #[test]
@@ -1263,13 +1886,9 @@ mod tests {
                 .expect("unrelated favorites should be counted"),
             0
         );
-        let state =
-            litradar_recommend::load_state(&outcome.state_path, &fixture.db_name, "ignored")
-                .expect("completed state should load");
-        assert!(state
-            .delivery_dedupe
-            .keys()
-            .all(|key| key.starts_with(&format!("{}:", fixture.user_id.value()))));
+        assert!(delivery_dedupe(&fixture, DeliveryWorkflow::Notify)
+            .iter()
+            .all(|row| row.user_id == fixture.user_id.value()));
 
         let missing = filtered_subscribers(
             &fixture.auth_db_path,
@@ -1298,9 +1917,18 @@ mod tests {
         )
         .is_err());
 
-        let mut corrupt_target_config =
-            fixture.config(DeliveryWorkflow::Notify, DeliveryMode::Execute, None, None);
-        corrupt_target_config.state_dir = fixture.root.path().join("corrupt-target-state");
+        let corrupt_manifest = fixture.root.path().join("corrupt-target.changes.json");
+        fs::write(
+            &corrupt_manifest,
+            r#"{"db_name":"fixture.sqlite","run_id":"corrupt-target","notifiable_article_ids":[101]}"#,
+        )
+        .expect("corrupt-target manifest should be written");
+        let corrupt_target_config = fixture.config(
+            DeliveryWorkflow::Notify,
+            DeliveryMode::Execute,
+            Some(corrupt_manifest),
+            None,
+        );
         let mut corrupt_target_ai_selector =
             FixtureDeliveryAiSelector::new(vec![selection_outcome(&[101], "")]);
         let mut corrupt_target_pushplus_sender =
@@ -1324,17 +1952,333 @@ mod tests {
                 .expect("corrupt target favorites should be counted"),
             0
         );
-        let corrupt_target_state = litradar_recommend::load_state(
-            &state_path(
-                &corrupt_target_config.state_dir,
-                &corrupt_target_config.db_name,
-            ),
-            &corrupt_target_config.db_name,
-            "ignored",
+        let connection = litradar_storage::open_sqlite_connection(&fixture.auth_db_path)
+            .expect("auth database should open");
+        let corrupt_run_status: String = connection
+            .query_row(
+                "SELECT status FROM delivery_runs WHERE external_id = 'corrupt-target'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("corrupt target run should persist");
+        assert_eq!(corrupt_run_status, "failed");
+        assert_eq!(
+            delivery_checkpoint(&fixture, DeliveryWorkflow::Notify).status,
+            litradar_storage::DeliveryCheckpointStatus::Failed
+        );
+    }
+
+    #[test]
+    fn two_process_delivery_allows_exactly_one_workflow_owner() {
+        let fixture = DeliveryFixture::new(notification_settings("folder", true, vec![]));
+        let listener = TcpListener::bind("127.0.0.1:0").expect("process listener should bind");
+        listener
+            .set_nonblocking(true)
+            .expect("process listener should be nonblocking");
+        let address = listener
+            .local_addr()
+            .expect("process listener address should resolve");
+        let mut owner = spawn_delivery_process(&fixture, "owner", address);
+        let mut owner_stream = accept_process_connection(&listener, &mut owner);
+        let contender = spawn_delivery_process(&fixture, "contender", address);
+        let contender_output = wait_for_delivery_process(contender);
+        assert_process_success("contender", &contender_output);
+        owner_stream
+            .write_all(&[1])
+            .expect("owner process should be released");
+        let owner_output = wait_for_delivery_process(owner);
+        assert_process_success("owner", &owner_output);
+
+        let connection = litradar_storage::open_sqlite_connection(&fixture.auth_db_path)
+            .expect("auth database should open");
+        let completed_count: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM delivery_runs WHERE status = 'completed'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("completed runs should count");
+        let cancelled_count: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM delivery_runs WHERE status = 'cancelled'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("cancelled runs should count");
+        assert_eq!(completed_count, 1);
+        assert_eq!(cancelled_count, 1);
+        assert_eq!(favorite_count(&fixture.auth_db_path), 1);
+        assert_eq!(delivery_dedupe(&fixture, DeliveryWorkflow::Push).len(), 1);
+        let lease = litradar_storage::load_delivery_lease(
+            &fixture.auth_db_path,
+            litradar_storage::DeliveryWorkflow::Push,
+            &fixture.db_name,
         )
-        .expect("corrupt target state should load");
-        assert_eq!(corrupt_target_state.status, "running");
-        assert!(corrupt_target_state.delivery_dedupe.is_empty());
+        .expect("workflow lease should load")
+        .expect("workflow lease should exist");
+        assert!(lease.owner_id.is_none());
+        assert!(!fixture
+            .root
+            .path()
+            .join("data/folder_push_state/fixture.json")
+            .exists());
+    }
+
+    #[test]
+    fn crashed_sending_process_recovers_as_unknown_without_replay() {
+        let fixture = DeliveryFixture::new(notification_settings("pushplus", true, vec![]));
+        let listener = TcpListener::bind("127.0.0.1:0").expect("process listener should bind");
+        listener
+            .set_nonblocking(true)
+            .expect("process listener should be nonblocking");
+        let address = listener
+            .local_addr()
+            .expect("process listener address should resolve");
+        let mut crashing = spawn_delivery_process(&fixture, "crash-notify", address);
+        let _sending_stream = accept_process_connection(&listener, &mut crashing);
+        crashing
+            .kill()
+            .expect("sending process should be terminated");
+        let crashing_output = wait_for_delivery_process(crashing);
+        assert!(!crashing_output.status.success());
+
+        let connection = litradar_storage::open_sqlite_connection(&fixture.auth_db_path)
+            .expect("auth database should open");
+        connection
+            .execute_batch(
+                "UPDATE delivery_runs SET lease_expires_at = 0
+                 WHERE status IN ('claimed', 'running', 'cancelling');
+                 UPDATE delivery_leases SET expires_at = 0 WHERE owner_id IS NOT NULL;",
+            )
+            .expect("crashed owner leases should expire");
+        drop(connection);
+        let recovery = spawn_delivery_process(&fixture, "recover-notify", address);
+        let recovery_output = wait_for_delivery_process(recovery);
+        assert_process_success("recovery", &recovery_output);
+        thread::sleep(Duration::from_millis(50));
+        assert!(matches!(
+            listener.accept(),
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock
+        ));
+
+        let dedupe = delivery_dedupe(&fixture, DeliveryWorkflow::Notify);
+        assert_eq!(dedupe.len(), 1);
+        assert_eq!(
+            dedupe[0].status,
+            litradar_storage::DeliveryDedupeStatus::Unknown
+        );
+        let connection = litradar_storage::open_sqlite_connection(&fixture.auth_db_path)
+            .expect("auth database should reopen");
+        let unknown_item_count: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM delivery_run_items
+                 WHERE item_kind = 'subscriber' AND status = 'unknown'
+                   AND error_code = 'abandoned_sending'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("unknown subscriber items should count");
+        let unknown_run_count: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM delivery_runs WHERE status = 'unknown'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("unknown runs should count");
+        assert_eq!(unknown_item_count, 1);
+        assert_eq!(unknown_run_count, 1);
+        assert_eq!(favorite_count(&fixture.auth_db_path), 1);
+    }
+
+    #[test]
+    #[ignore = "subprocess helper invoked by delivery process regressions"]
+    fn delivery_process_helper() {
+        let role = env::var("LITRADAR_DELIVERY_TEST_ROLE")
+            .expect("delivery process role should be provided");
+        let auth_db_path = PathBuf::from(
+            env::var_os("LITRADAR_DELIVERY_TEST_AUTH")
+                .expect("delivery process auth path should be provided"),
+        );
+        let index_db_path = PathBuf::from(
+            env::var_os("LITRADAR_DELIVERY_TEST_INDEX")
+                .expect("delivery process index path should be provided"),
+        );
+        let address = env::var("LITRADAR_DELIVERY_TEST_ADDRESS")
+            .expect("delivery process address should be provided");
+        let workflow = if role.ends_with("notify") {
+            DeliveryWorkflow::Notify
+        } else {
+            DeliveryWorkflow::Push
+        };
+        let config = RecommendationRunConfig {
+            auth_db_path,
+            secret_codec: litradar_storage::SecretCodec::from_key([17_u8; 32]),
+            index_db_path,
+            db_name: "fixture.sqlite".to_string(),
+            changes_file: None,
+            ai_model: None,
+            max_candidates: None,
+            timeout_seconds: 60,
+            retry_attempts: 1,
+            dedupe_retention_days: 30,
+            mode: DeliveryMode::Execute,
+            workflow,
+        };
+        let mut ai_selector = ProcessDeliveryAiSelector {
+            role: role.clone(),
+            address: address.clone(),
+        };
+        let mut pushplus_sender = ProcessPushPlusSender {
+            role: role.clone(),
+            address,
+        };
+        let result = run_recommendation_delivery_with_services(
+            &config,
+            &mut ai_selector,
+            &mut pushplus_sender,
+        );
+        match role.as_str() {
+            "owner" => assert_eq!(result.expect("owner should complete").status, "completed"),
+            "contender" => assert!(matches!(result, Err(DeliveryError::Busy))),
+            "recover-notify" => {
+                assert_eq!(result.expect("recovery should complete").status, "unknown");
+            }
+            "crash-notify" => panic!("crash helper should be terminated while sending"),
+            _ => panic!("unknown delivery process role"),
+        }
+    }
+
+    struct ProcessDeliveryAiSelector {
+        role: String,
+        address: String,
+    }
+
+    impl DeliveryAiSelector for ProcessDeliveryAiSelector {
+        fn select_for_subscriber(
+            &mut self,
+            _request: DeliveryAiSelectionRequest<'_>,
+        ) -> Result<AiSelectionOutcome, DeliveryError> {
+            match self.role.as_str() {
+                "owner" => {
+                    wait_for_process_release(&self.address);
+                    Ok(selection_outcome(&[101], ""))
+                }
+                "crash-notify" => Ok(selection_outcome(&[101], "")),
+                "contender" | "recover-notify" => {
+                    panic!("non-owner process must not invoke AI selection")
+                }
+                _ => panic!("unknown process selector role"),
+            }
+        }
+    }
+
+    struct ProcessPushPlusSender {
+        role: String,
+        address: String,
+    }
+
+    impl DeliveryPushPlusSender for ProcessPushPlusSender {
+        fn send(&mut self, _message: &PushPlusMessage) -> Result<String, DeliveryError> {
+            match self.role.as_str() {
+                "crash-notify" => {
+                    wait_for_process_release(&self.address);
+                    Ok("unexpected-message".to_string())
+                }
+                "recover-notify" => panic!("recovery must not replay PushPlus"),
+                _ => panic!("folder workflow must not invoke PushPlus"),
+            }
+        }
+    }
+
+    fn wait_for_process_release(address: &str) {
+        let mut stream = TcpStream::connect(address).expect("process helper should connect");
+        stream
+            .write_all(&[1])
+            .expect("process helper should announce itself");
+        let mut release = [0_u8; 1];
+        stream
+            .read_exact(&mut release)
+            .expect("process helper should receive release");
+    }
+
+    fn spawn_delivery_process(
+        fixture: &DeliveryFixture,
+        role: &str,
+        address: std::net::SocketAddr,
+    ) -> Child {
+        Command::new(env::current_exe().expect("current test executable should resolve"))
+            .arg("delivery::orchestration::tests::delivery_process_helper")
+            .arg("--exact")
+            .arg("--ignored")
+            .arg("--nocapture")
+            .env("LITRADAR_DELIVERY_TEST_ROLE", role)
+            .env("LITRADAR_DELIVERY_TEST_AUTH", &fixture.auth_db_path)
+            .env("LITRADAR_DELIVERY_TEST_INDEX", &fixture.index_db_path)
+            .env("LITRADAR_DELIVERY_TEST_ADDRESS", address.to_string())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("delivery process should spawn")
+    }
+
+    fn accept_process_connection(listener: &TcpListener, child: &mut Child) -> TcpStream {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            match listener.accept() {
+                Ok((mut stream, _)) => {
+                    let mut announcement = [0_u8; 1];
+                    stream
+                        .read_exact(&mut announcement)
+                        .expect("process announcement should be readable");
+                    return stream;
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {}
+                Err(error) => panic!("process listener failed: {error}"),
+            }
+            if Instant::now() >= deadline {
+                panic!("delivery process did not reach its synchronization boundary");
+            }
+            if let Ok(Some(status)) = child.try_wait() {
+                panic!("delivery process exited before synchronization: {status}");
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    fn wait_for_delivery_process(mut child: Child) -> Output {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            if child
+                .try_wait()
+                .expect("delivery process status should be readable")
+                .is_some()
+            {
+                return child
+                    .wait_with_output()
+                    .expect("delivery process output should be collected");
+            }
+            if Instant::now() >= deadline {
+                let _ = child.kill();
+                let output = child
+                    .wait_with_output()
+                    .expect("timed out delivery process output should collect");
+                panic!(
+                    "delivery process timed out: stdout={} stderr={}",
+                    String::from_utf8_lossy(&output.stdout),
+                    String::from_utf8_lossy(&output.stderr)
+                );
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    fn assert_process_success(role: &str, output: &Output) {
+        assert!(
+            output.status.success(),
+            "{role} process failed: stdout={} stderr={}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
     }
 
     struct FixtureDeliveryAiSelector {
@@ -1422,7 +2366,6 @@ mod tests {
         secret_codec: litradar_storage::SecretCodec,
         user_id: UserId,
         index_db_path: PathBuf,
-        state_dir: PathBuf,
         db_name: String,
     }
 
@@ -1457,14 +2400,12 @@ mod tests {
             .expect("notification settings should be saved");
             let index_db_path = root.path().join("fixture.sqlite");
             create_index_database(&index_db_path);
-            let state_dir = root.path().join("state");
             Self {
                 root,
                 auth_db_path,
                 secret_codec,
                 user_id: user.id,
                 index_db_path,
-                state_dir,
                 db_name: "fixture.sqlite".to_string(),
             }
         }
@@ -1481,7 +2422,6 @@ mod tests {
                 secret_codec: self.secret_codec.clone(),
                 index_db_path: self.index_db_path.clone(),
                 db_name: self.db_name.clone(),
-                state_dir: self.state_dir.clone(),
                 changes_file,
                 ai_model: None,
                 max_candidates,
@@ -1597,6 +2537,31 @@ mod tests {
                 "#,
             )
             .expect("index fixture data should be created");
+    }
+
+    fn delivery_checkpoint(
+        fixture: &DeliveryFixture,
+        workflow: DeliveryWorkflow,
+    ) -> litradar_storage::DeliveryCheckpointRecord {
+        litradar_storage::load_delivery_checkpoint(
+            &fixture.auth_db_path,
+            storage_workflow(workflow),
+            &fixture.db_name,
+        )
+        .expect("delivery checkpoint should load")
+        .expect("delivery checkpoint should exist")
+    }
+
+    fn delivery_dedupe(
+        fixture: &DeliveryFixture,
+        workflow: DeliveryWorkflow,
+    ) -> Vec<litradar_storage::DeliveryDedupeRecord> {
+        litradar_storage::list_delivery_dedupe_for_scope(
+            &fixture.auth_db_path,
+            storage_workflow(workflow),
+            &fixture.db_name,
+        )
+        .expect("delivery dedupe should load")
     }
 
     fn favorite_count(auth_db_path: &Path) -> i64 {

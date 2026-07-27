@@ -230,7 +230,7 @@ v1–v3 的破坏性重建不会重映射旧 favorite 的 article ID；精确 v4
 - `delivery_dedupe` 以 `(workflow, db_name, user_id, article_id)` 唯一，在外部副作用前建立 `reserved` 行，再明确落为 `confirmed` 或 `unknown`；
 - `delivery_leases` 以 `(workflow, db_name)` 唯一，释放时保留行并递增 `revision`，防止删除重建造成 ABA。
 
-run、item、checkpoint 和 lease 的变更都使用 owner/revision compare-and-swap。只有租约已过期的 run、pre-send item 或 workflow lease 可被新 owner 接管；进入 `sending` 后若结果不确定，必须记录 `unknown`，不得自动重新投递。
+run、item、checkpoint 和 lease 的变更都使用 owner/revision compare-and-swap。run 终态、checkpoint CAS 和 workflow lease 释放在一个 transaction 中提交；一次 subscriber 外部尝试的 item 终态和全部文章 dedupe 也在一个 transaction 中提交。只有租约已过期的 run、pre-send item 或 workflow lease 可被新 owner 接管；接管时 `claimed` item 回到 pending 并释放 pre-send reservation，`sending` item 与对应 reservation 则固定收敛为 `unknown`，不得自动重新投递。
 
 启动迁移会先读取 `data/push_state/<db>.json` 和 `data/folder_push_state/<db>.json`，校验所有文件后再用一个 immediate transaction 导入。每个源文件的 SHA-256 保存在 checkpoint 中：相同 hash 重启时跳过，已导入文件内容变化则拒绝启动，损坏文件使整批零写入。源文件和 `.changes.json` 都不会被导入器删除；未知旧状态只映射为固定 `unknown`/`unrecognized` 分类，不把原始状态或错误内容写入数据库。
 
@@ -268,7 +268,7 @@ run、item、checkpoint 和 lease 的变更都使用 owner/revision compare-and-
 - `data/push_state/<db>.json`：旧 notify/手动 PushPlus 状态导入源；
 - `data/folder_push_state/<db>.json`：旧 push 状态导入源。
 
-可变 checkpoint、run、item、dedupe 和 lease 的目标权威存储是 `auth.sqlite`。清单的 `db_name` 是目标内容库身份；读取方不使用历史文件系统路径或 Provider 名称回退。旧导入源会原样保留，不能在导入后手工修改；`.changes.json` 始终保持文件契约，不进入认证库。
+可变 checkpoint、run、item、dedupe 和 lease 的唯一权威存储是 `auth.sqlite`。运行时不再创建 `<db>.json` 或固定 `.tmp`，也不接受状态目录参数。清单的 `db_name` 是目标内容库身份；读取方不使用历史文件系统路径或 Provider 名称回退。旧导入源会原样保留，不能在导入后手工修改；`.changes.json` 始终保持文件契约，不进入认证库。
 
 ## 备份边界
 

@@ -5,7 +5,6 @@ use std::error::Error;
 use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::time::SystemTime;
 
 use crate::ai::{live_ai_client, AiClientError, AiCompletionClient, ReqwestAiTransport};
 use crate::pushplus::{
@@ -17,12 +16,11 @@ use litradar_domain::{
 };
 use litradar_recommend::{
     apply_selection_rules, build_markdown_content, build_message_title,
-    compute_changed_inpress_keys, compute_changed_issue_keys, create_run_state,
-    deduplicate_candidates, has_selection_preferences, is_database_selected, load_change_manifest,
-    load_state, prune_delivery_dedupe, resolve_ai_runtime_configs, save_state_atomic, utc_now_iso,
-    AiRuntimeConfig, NotificationDefaults, NotificationGlobalConfig, RecommendationState,
-    RecommendationUserResult, DEFAULT_OPENAI_BASE_URL, DEFAULT_OPENAI_MODEL, MAX_ARTICLES_PER_PUSH,
-    PUSHPLUS_CHANNEL,
+    compute_changed_inpress_keys, compute_changed_issue_keys, deduplicate_candidates,
+    has_selection_preferences, is_database_selected, load_change_manifest,
+    resolve_ai_runtime_configs, utc_now_iso, AiRuntimeConfig, NotificationDefaults,
+    NotificationGlobalConfig, RecommendationSnapshot, DEFAULT_OPENAI_BASE_URL,
+    DEFAULT_OPENAI_MODEL, MAX_ARTICLES_PER_PUSH, PUSHPLUS_CHANNEL,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -45,6 +43,10 @@ pub enum DeliveryError {
     Index(litradar_storage::IndexRepositoryError),
     /// Auth database storage operation failed.
     Business(litradar_storage::BusinessRepositoryError),
+    /// Durable delivery state operation failed.
+    Durable(litradar_storage::DeliveryRepositoryError),
+    /// Authentication storage utility failed.
+    Auth(litradar_storage::AuthRepositoryError),
     /// Recommendation logic failed.
     Recommendation(litradar_recommend::RecommendationError),
     /// AI selection client failed unexpectedly.
@@ -53,6 +55,8 @@ pub enum DeliveryError {
     PushPlus(String),
     /// Manual delivery validation failed.
     Manual(String),
+    /// Another process owns this workflow/database delivery lease.
+    Busy,
 }
 
 impl fmt::Display for DeliveryError {
@@ -61,10 +65,13 @@ impl fmt::Display for DeliveryError {
         match self {
             Self::Index(error) => write!(formatter, "{error}"),
             Self::Business(error) => write!(formatter, "{error}"),
+            Self::Durable(error) => write!(formatter, "{error}"),
+            Self::Auth(error) => write!(formatter, "{error}"),
             Self::Recommendation(error) => write!(formatter, "{error}"),
             Self::Ai(message) => formatter.write_str(message),
             Self::PushPlus(message) => formatter.write_str(message),
             Self::Manual(message) => formatter.write_str(message),
+            Self::Busy => formatter.write_str("Delivery workflow is already running"),
         }
     }
 }
@@ -75,10 +82,10 @@ impl Error for DeliveryError {
         match self {
             Self::Index(error) => Some(error),
             Self::Business(error) => Some(error),
+            Self::Durable(error) => Some(error),
+            Self::Auth(error) => Some(error),
             Self::Recommendation(error) => Some(error),
-            Self::Ai(_) => None,
-            Self::PushPlus(_) => None,
-            Self::Manual(_) => None,
+            Self::Ai(_) | Self::PushPlus(_) | Self::Manual(_) | Self::Busy => None,
         }
     }
 }
@@ -94,6 +101,20 @@ impl From<litradar_storage::BusinessRepositoryError> for DeliveryError {
     /// Convert business repository errors into delivery errors.
     fn from(error: litradar_storage::BusinessRepositoryError) -> Self {
         Self::Business(error)
+    }
+}
+
+impl From<litradar_storage::DeliveryRepositoryError> for DeliveryError {
+    /// Convert durable delivery repository errors into delivery errors.
+    fn from(error: litradar_storage::DeliveryRepositoryError) -> Self {
+        Self::Durable(error)
+    }
+}
+
+impl From<litradar_storage::AuthRepositoryError> for DeliveryError {
+    /// Convert authentication repository errors into delivery errors.
+    fn from(error: litradar_storage::AuthRepositoryError) -> Self {
+        Self::Auth(error)
     }
 }
 
@@ -142,8 +163,6 @@ pub struct RecommendationRunConfig {
     pub index_db_path: PathBuf,
     /// Selected database filename.
     pub db_name: String,
-    /// State directory.
-    pub state_dir: PathBuf,
     /// Optional change manifest path.
     pub changes_file: Option<PathBuf>,
     /// Optional model override.
@@ -213,8 +232,8 @@ pub struct RecommendationRunOutcome {
     pub mode: DeliveryMode,
     /// Final run status.
     pub status: String,
-    /// State file path.
-    pub state_path: PathBuf,
+    /// Durable SQLite delivery run identifier.
+    pub delivery_run_id: i64,
     /// Candidate article ids considered by the run.
     pub candidate_article_ids: Vec<i64>,
     /// Per-subscriber delivery plans.

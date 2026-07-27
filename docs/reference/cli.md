@@ -233,7 +233,6 @@ litradar notify --secret-key-file PATH
     [--project-root PATH]
     [--auth-db PATH]
     [--db NAME]
-    [--state-dir PATH]
     [--changes-file PATH]
     [--ai-model MODEL]
     [--max-candidates N]
@@ -246,7 +245,6 @@ litradar push --secret-key-file PATH
     [--project-root PATH]
     [--auth-db PATH]
     [--db NAME]
-    [--state-dir PATH]
     [--changes-file PATH]
     [--ai-model MODEL]
     [--max-candidates N]
@@ -263,25 +261,19 @@ parser 还接受 `--index-db PATH` 直接指定索引文件；普通使用优先
 | `--secret-key-file PATH`     | 必填               | 解密用户投递凭据                |
 | `--index-db PATH`            | 空                 | 直接指定一个索引 SQLite         |
 | `--db NAME`                  | 全部索引库         | 数据库文件名或 stem             |
-| `--state-dir PATH`           | 见下表             | 覆盖状态目录                    |
-| `--changes-file PATH`        | 自动解析/状态差异  | 指定变更清单                    |
+| `--changes-file PATH`        | SQLite checkpoint 差异 | 指定 Provider-neutral 变更清单 |
 | `--ai-model MODEL`           | 用户设置或代码默认 | 覆盖模型名，不提供 API key      |
 | `--max-candidates N`         | `120`              | 进入模型前的候选上限            |
 | `--timeout N`                | `60`               | AI/PushPlus HTTP 超时秒数       |
 | `--retries N`                | `3`                | CLI 级重试次数，范围 `0..=10`   |
-| `--dedupe-retention-days N`  | `60`               | 去重记录保留天数                |
+| `--dedupe-retention-days N`  | `60`               | 已确认去重记录保留天数          |
 | `--dry-run` / `--no-dry-run` | 执行模式           | 是否禁止外部发送和收藏/去重写入 |
 
-默认状态目录：
-
-| 子命令   | 目录                     |
-| -------- | ------------------------ |
-| `notify` | `data/push_state`        |
-| `push`   | `data/folder_push_state` |
+checkpoint、run、item、dedupe 和 workflow lease 统一写入 `--auth-db` 指向的认证 SQLite，不再接受状态目录覆盖。启动时会安全导入项目根下保留的旧 `<db>.json`，但运行过程中只读取 `.changes.json`，不会创建或更新投递状态 JSON。
 
 `--db` 省略时按名称排序处理全部 `data/index/*.sqlite`。`utd24` 和 `utd24.sqlite` 等价；路径部分会被去掉。
 
-`--retries 0` 表示只执行首次请求、不再重试；默认值为 3。大于 10 的值会在密钥、数据库、目标和传输初始化前被拒绝。该参数是每个适用传输或 AI 响应格式的重试次数，不是作业总时限或全局请求总数。
+`--retries 0` 表示只执行首次请求、不再重试；默认值为 3。大于 10 的值会在密钥、数据库、目标和传输初始化前被拒绝。该参数是每个适用传输或 AI 响应格式的重试次数，不是作业总时限或全局请求总数。`--dedupe-retention-days <= 0` 禁用确认记录清理，而不是立即删除全部记录；`unknown` 代表可能已经发生的外部发送，不受确认记录保留清理影响，也不会自动重放。
 
 ## `scheduler`
 

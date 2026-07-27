@@ -15,7 +15,7 @@ use litradar_index::{
 };
 use litradar_storage::{
     create_backup, migrate_auth_database, migrate_database_secrets,
-    migrate_existing_index_databases, migrate_index_database, restore_backup,
+    migrate_existing_index_databases, migrate_index_database, migrate_storage, restore_backup,
     rotate_database_secrets, verify_backup, verify_database_secrets, BackupCreateOptions,
     BackupRestoreOptions, ManagedMetaAction, ManagedMetaPreparationReport, SecretCodec,
     StorageConfig,
@@ -593,7 +593,6 @@ fn run_delivery_command_inner(
     let secret_key_file = extract_path_option(&mut args, "--secret-key-file")?;
     let index_db_path = extract_path_option(&mut args, "--index-db")?;
     let db_name = extract_string_option(&mut args, "--db")?;
-    let state_dir = extract_path_option(&mut args, "--state-dir")?;
     let changes_file = extract_path_option(&mut args, "--changes-file")?;
     let ai_model = extract_string_option(&mut args, "--ai-model")?;
     let max_candidates = extract_usize_option(&mut args, "--max-candidates")?;
@@ -614,10 +613,6 @@ fn run_delivery_command_inner(
     let changes_file = changes_file
         .filter(|path| !path.as_os_str().is_empty())
         .map(|path| resolve_project_path(&project_root, path));
-    let state_dir = state_dir
-        .filter(|path| !path.as_os_str().is_empty())
-        .map(|path| resolve_project_path(&project_root, path))
-        .unwrap_or_else(|| default_delivery_state_dir(&project_root, workflow));
     let targets = resolve_delivery_targets(
         &project_root,
         index_db_path,
@@ -639,7 +634,6 @@ fn run_delivery_command_inner(
             secret_codec: secret_codec.clone(),
             index_db_path: target.index_db_path,
             db_name: target.db_name,
-            state_dir: state_dir.clone(),
             changes_file: changes_file.clone(),
             ai_model: ai_model.clone(),
             max_candidates,
@@ -654,11 +648,25 @@ fn run_delivery_command_inner(
     let payload = json!({
         "workflow": workflow,
         "mode": mode,
-        "status": if outcomes.iter().all(|outcome| outcome.status == "idle") { "idle" } else { "completed" },
+        "status": aggregate_delivery_status(&outcomes),
         "databases": outcomes,
     });
     print_result(&serde_json::to_string(&payload)?);
     Ok(())
+}
+
+fn aggregate_delivery_status(
+    outcomes: &[litradar_worker::delivery::RecommendationRunOutcome],
+) -> &'static str {
+    if outcomes.iter().any(|outcome| outcome.status == "unknown") {
+        "unknown"
+    } else if outcomes.iter().any(|outcome| outcome.status == "failed") {
+        "failed"
+    } else if outcomes.iter().all(|outcome| outcome.status == "idle") {
+        "idle"
+    } else {
+        "completed"
+    }
 }
 
 fn print_scheduler_load(auth_db_path: &Path) -> Result<(), Box<dyn Error>> {
@@ -671,8 +679,9 @@ fn migrate_command_databases(
     project_root: &Path,
     auth_db_path: &Path,
 ) -> Result<(), Box<dyn Error>> {
-    migrate_auth_database(auth_db_path)?;
-    migrate_existing_index_databases(&StorageConfig::from_project_root(project_root))?;
+    migrate_storage(
+        &StorageConfig::from_project_root(project_root).with_auth_db_path(auth_db_path),
+    )?;
     Ok(())
 }
 
@@ -940,13 +949,6 @@ fn resolve_project_path(project_root: &Path, path: PathBuf) -> PathBuf {
     }
 }
 
-fn default_delivery_state_dir(project_root: &Path, workflow: DeliveryWorkflow) -> PathBuf {
-    match workflow {
-        DeliveryWorkflow::Notify => project_root.join("data").join("push_state"),
-        DeliveryWorkflow::Push => project_root.join("data").join("folder_push_state"),
-    }
-}
-
 type LiveIndexRuntimeConfig = (
     LiveScholarlyConfig,
     BTreeMap<String, String>,
@@ -1031,7 +1033,7 @@ fn delivery_usage(workflow: DeliveryWorkflow) -> String {
         DeliveryWorkflow::Push => "push",
     };
     let payload = json!({
-        "usage": format!("litradar {command_name} --secret-key-file PATH [--project-root PATH] [--auth-db PATH] [--db NAME] [--state-dir PATH] [--changes-file PATH] [--ai-model MODEL] [--max-candidates N] [--timeout N] [--retries N] [--dedupe-retention-days N] [--dry-run|--no-dry-run]")
+        "usage": format!("litradar {command_name} --secret-key-file PATH [--project-root PATH] [--auth-db PATH] [--db NAME] [--changes-file PATH] [--ai-model MODEL] [--max-candidates N] [--timeout N] [--retries N] [--dedupe-retention-days N] [--dry-run|--no-dry-run]")
     });
     payload.to_string()
 }
@@ -1045,7 +1047,7 @@ mod tests {
     use tempfile::{Builder, TempDir};
 
     use super::{
-        admin_usage, default_delivery_state_dir, delivery_usage, extract_auth_db_path,
+        admin_usage, aggregate_delivery_status, delivery_usage, extract_auth_db_path,
         extract_bool_pair, extract_string_option, extract_usize_option, index_usage,
         migrate_command_databases, migrate_index_command_databases, normalize_db_name,
         parse_index_options, prepare_index_managed_meta, resolve_delivery_targets,
@@ -1054,7 +1056,7 @@ mod tests {
         run_scheduler_command, scheduler_usage, serialize_index_outcome,
     };
     use litradar_index::LiveIndexOutcome;
-    use litradar_worker::delivery::DeliveryWorkflow;
+    use litradar_worker::delivery::{DeliveryMode, DeliveryWorkflow, RecommendationRunOutcome};
 
     #[test]
     fn unified_usage_lists_only_supported_commands() {
@@ -1537,6 +1539,47 @@ mod tests {
     }
 
     #[test]
+    fn command_database_migration_imports_legacy_delivery_state() {
+        let root = temp_root("litradar-cli-delivery-import");
+        let project_root = root.path().join("project");
+        let auth_db_path = root.path().join("state/custom-auth.sqlite");
+        let state_dir = project_root.join("data/push_state");
+        fs::create_dir_all(&state_dir).expect("legacy state directory should be created");
+        let state_path = state_dir.join("fixture.json");
+        fs::write(
+            &state_path,
+            r#"{"db_name":"fixture.sqlite","status":"completed","delivery_dedupe":{"7:41":"2026-07-27T00:00:00Z"}}"#,
+        )
+        .expect("legacy state should be written");
+
+        migrate_command_databases(&project_root, &auth_db_path)
+            .expect("command startup should import legacy state");
+
+        let checkpoint = litradar_storage::load_delivery_checkpoint(
+            &auth_db_path,
+            litradar_storage::DeliveryWorkflow::Notify,
+            "fixture.sqlite",
+        )
+        .expect("delivery checkpoint should load")
+        .expect("delivery checkpoint should exist");
+        assert_eq!(
+            checkpoint.status,
+            litradar_storage::DeliveryCheckpointStatus::Completed
+        );
+        assert_eq!(
+            litradar_storage::list_delivery_dedupe_for_scope(
+                &auth_db_path,
+                litradar_storage::DeliveryWorkflow::Notify,
+                "fixture.sqlite",
+            )
+            .expect("delivery dedupe should load")
+            .len(),
+            1
+        );
+        assert!(state_path.exists());
+    }
+
+    #[test]
     fn selected_index_migration_does_not_open_or_modify_a_sibling_database() {
         let root = temp_root("litradar-cli-selected-index-migration");
         let project_root = root.path().join("project");
@@ -1700,6 +1743,34 @@ mod tests {
         assert!(push_usage.contains("push --secret-key-file PATH"));
         assert!(notify_usage.contains("--dry-run|--no-dry-run"));
         assert!(push_usage.contains("--changes-file PATH"));
+        assert!(!notify_usage.contains("--state-dir"));
+    }
+
+    #[test]
+    fn delivery_status_aggregation_preserves_failure_and_unknown() {
+        let outcome = |status: &str| RecommendationRunOutcome {
+            db_name: "fixture.sqlite".to_string(),
+            workflow: DeliveryWorkflow::Notify,
+            mode: DeliveryMode::Execute,
+            status: status.to_string(),
+            delivery_run_id: 1,
+            candidate_article_ids: Vec::new(),
+            subscribers: Vec::new(),
+        };
+
+        assert_eq!(aggregate_delivery_status(&[outcome("idle")]), "idle");
+        assert_eq!(
+            aggregate_delivery_status(&[outcome("idle"), outcome("completed")]),
+            "completed"
+        );
+        assert_eq!(
+            aggregate_delivery_status(&[outcome("completed"), outcome("failed")]),
+            "failed"
+        );
+        assert_eq!(
+            aggregate_delivery_status(&[outcome("failed"), outcome("unknown")]),
+            "unknown"
+        );
     }
 
     #[test]
@@ -1788,18 +1859,8 @@ mod tests {
 
     #[test]
     fn delivery_defaults_match_standalone_commands() {
-        let root = std::path::Path::new("/tmp/project");
-
         assert_eq!(normalize_db_name("utd24"), "utd24.sqlite");
         assert_eq!(normalize_db_name("data/index/utd24.sqlite"), "utd24.sqlite");
-        assert_eq!(
-            default_delivery_state_dir(root, DeliveryWorkflow::Notify),
-            root.join("data").join("push_state")
-        );
-        assert_eq!(
-            default_delivery_state_dir(root, DeliveryWorkflow::Push),
-            root.join("data").join("folder_push_state")
-        );
     }
 
     #[test]

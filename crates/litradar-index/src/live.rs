@@ -2159,7 +2159,6 @@ fn run_notify_for_manifest(
     db_name: &str,
     manifest_path: &Path,
 ) -> Result<i32, LiveIndexError> {
-    let state_dir = config.project_root.join("data").join("push_state");
     let mut command = Command::new(&config.application_executable);
     command
         .arg("notify")
@@ -2169,8 +2168,6 @@ fn run_notify_for_manifest(
         .arg(db_name)
         .arg("--changes-file")
         .arg(manifest_path)
-        .arg("--state-dir")
-        .arg(&state_dir)
         .arg("--project-root")
         .arg(&config.project_root);
     if config.notify_dry_run {
