@@ -17,9 +17,10 @@ use litradar_domain::{
     LoginResponse, LogoutResponse, OkResponse, RegisterRequest, TokenCreateRequest,
     TokenCreateResponse, TokenInfo, UserResponse,
 };
-use litradar_storage::AuthRepositoryError;
+use litradar_storage::{AuthRepositoryError, SecurityAuditEvent};
 use tower_http::request_id::RequestId;
 
+use crate::audit::{persist_security_audit_event, request_id_text};
 use crate::response::ApiError;
 use crate::state::{ApiState, AuthAttemptKind, AuthRateLimitRejection};
 
@@ -144,14 +145,17 @@ pub(crate) async fn register(
     Json(body): Json<RegisterRequest>,
 ) -> Result<Json<UserResponse>, ApiError> {
     let mut audit = AuthAudit::new("register");
+    let request_id = request_id_text(request_id.as_ref());
     let username = body.username.trim().to_string();
     if !is_valid_username(&username) {
+        persist_auth_rejection(&state, &audit, "validation_failed", &request_id).await?;
         audit.rejected("validation_failed");
         return Err(ApiError::bad_request(
             "Username must be 3-32 alphanumeric or underscore characters",
         ));
     }
     if !is_valid_new_password(&body.password) {
+        persist_auth_rejection(&state, &audit, "validation_failed", &request_id).await?;
         audit.rejected("validation_failed");
         return Err(ApiError::bad_request(password_policy_message()));
     }
@@ -163,7 +167,8 @@ pub(crate) async fn register(
         &headers,
     ) {
         let retry_after_seconds = rejection.retry_after_seconds;
-        audit.rate_limited(rejection, request_id_text(request_id.as_ref()));
+        persist_auth_rate_limit(&state, &audit, rejection, &request_id).await?;
+        audit.rate_limited(rejection, &request_id);
         return Err(ApiError::too_many_requests(
             AUTH_RATE_LIMIT_DETAIL,
             retry_after_seconds,
@@ -172,13 +177,20 @@ pub(crate) async fn register(
     let password = body.password;
     let invite_code = (!body.invite_code.is_empty()).then_some(body.invite_code);
     let auth_username = username.clone();
+    let completion_audit = auth_security_event(&audit, "completed", "", &request_id);
     let user = match run_auth_kdf(&state, move |service| {
-        service.register(&auth_username, &password, invite_code.as_deref())
+        service.register_with_audit(
+            &auth_username,
+            &password,
+            invite_code.as_deref(),
+            completion_audit,
+        )
     })
     .await
     {
         Ok(user) => user,
         Err(error) => {
+            persist_auth_rejection(&state, &audit, "registration_failed", &request_id).await?;
             audit.rejected("registration_failed");
             return Err(error);
         }
@@ -217,6 +229,7 @@ pub(crate) async fn login(
     Json(body): Json<LoginRequest>,
 ) -> Result<Response, ApiError> {
     let mut audit = AuthAudit::new("login");
+    let request_id = request_id_text(request_id.as_ref());
     let username = body.username.trim().to_string();
     if let Err(rejection) = check_auth_rate_limit(
         &state,
@@ -226,7 +239,8 @@ pub(crate) async fn login(
         &headers,
     ) {
         let retry_after_seconds = rejection.retry_after_seconds;
-        audit.rate_limited(rejection, request_id_text(request_id.as_ref()));
+        persist_auth_rate_limit(&state, &audit, rejection, &request_id).await?;
+        audit.rate_limited(rejection, &request_id);
         return Err(ApiError::too_many_requests(
             AUTH_RATE_LIMIT_DETAIL,
             retry_after_seconds,
@@ -234,13 +248,15 @@ pub(crate) async fn login(
     }
     let password = body.password;
     let auth_username = username.clone();
+    let completion_audit = auth_security_event(&audit, "completed", "", &request_id);
     let session = match run_auth_kdf(&state, move |service| {
-        service.login(&auth_username, &password)
+        service.login_with_audit(&auth_username, &password, completion_audit)
     })
     .await
     {
         Ok(session) => session,
         Err(error) => {
+            persist_auth_rejection(&state, &audit, "authentication_failed", &request_id).await?;
             audit.rejected("authentication_failed");
             return Err(error);
         }
@@ -312,22 +328,42 @@ pub(crate) async fn get_me(
 pub(crate) async fn change_password(
     State(state): State<ApiState>,
     headers: HeaderMap,
+    request_id: Option<Extension<RequestId>>,
     Json(body): Json<ChangePasswordRequest>,
 ) -> Result<Json<OkResponse>, ApiError> {
     let mut audit = AuthAudit::new("password_change");
+    let request_id = request_id_text(request_id.as_ref());
     if !is_valid_new_password(&body.new_password) {
+        persist_auth_rejection(&state, &audit, "validation_failed", &request_id).await?;
         audit.rejected("validation_failed");
         return Err(ApiError::bad_request(password_policy_message()));
     }
-    let (user, _) = require_current_user(&state, &headers).await?;
+    let (user, _) = match require_current_user(&state, &headers).await {
+        Ok(current) => current,
+        Err(error) => {
+            persist_auth_rejection(&state, &audit, "authentication_required", &request_id).await?;
+            audit.rejected("authentication_required");
+            return Err(error);
+        }
+    };
     audit.set_actor_id(user.id.0);
     let old_password = body.old_password;
     let new_password = body.new_password;
-    let did_change = run_auth_kdf(&state, move |service| {
-        service.change_password(user.id, &old_password, &new_password)
+    let completion_audit = auth_security_event(&audit, "completed", "", &request_id);
+    let did_change = match run_auth_kdf(&state, move |service| {
+        service.change_password_with_audit(user.id, &old_password, &new_password, completion_audit)
     })
-    .await?;
+    .await
+    {
+        Ok(did_change) => did_change,
+        Err(error) => {
+            persist_auth_rejection(&state, &audit, "operation_failed", &request_id).await?;
+            audit.rejected("operation_failed");
+            return Err(error);
+        }
+    };
     if !did_change {
+        persist_auth_rejection(&state, &audit, "authentication_failed", &request_id).await?;
         audit.rejected("authentication_failed");
         return Err(ApiError::bad_request("Old password is incorrect"));
     }
@@ -355,15 +391,30 @@ pub(crate) async fn change_password(
 pub(crate) async fn logout(
     State(state): State<ApiState>,
     headers: HeaderMap,
+    request_id: Option<Extension<RequestId>>,
 ) -> Result<Response, ApiError> {
     let mut audit = AuthAudit::new("logout");
-    let (user, token) = require_current_user(&state, &headers).await?;
+    let request_id = request_id_text(request_id.as_ref());
+    let (user, token) = match require_current_user(&state, &headers).await {
+        Ok(current) => current,
+        Err(error) => {
+            persist_auth_rejection(&state, &audit, "authentication_required", &request_id).await?;
+            audit.rejected("authentication_required");
+            return Err(error);
+        }
+    };
     audit.set_actor_id(user.id.0);
     let token_to_revoke = token.clone();
-    run_auth(&state, move |service| {
-        service.revoke_access_token_value(&token_to_revoke)
+    let completion_audit = auth_security_event(&audit, "completed", "", &request_id);
+    if let Err(error) = run_auth(&state, move |service| {
+        service.revoke_access_token_value_with_audit(&token_to_revoke, completion_audit)
     })
-    .await?;
+    .await
+    {
+        persist_auth_rejection(&state, &audit, "operation_failed", &request_id).await?;
+        audit.rejected("operation_failed");
+        return Err(error);
+    }
     let mut response = Json(LogoutResponse {
         ok: true,
         user_id: user.id,
@@ -414,17 +465,35 @@ pub(crate) async fn logout(
 pub(crate) async fn create_token(
     State(state): State<ApiState>,
     headers: HeaderMap,
+    request_id: Option<Extension<RequestId>>,
     Json(body): Json<TokenCreateRequest>,
 ) -> Result<Json<TokenCreateResponse>, ApiError> {
     let mut audit = AuthAudit::new("token_create");
-    let (user, _) = require_current_user(&state, &headers).await?;
+    let request_id = request_id_text(request_id.as_ref());
+    let (user, _) = match require_current_user(&state, &headers).await {
+        Ok(current) => current,
+        Err(error) => {
+            persist_auth_rejection(&state, &audit, "authentication_required", &request_id).await?;
+            audit.rejected("authentication_required");
+            return Err(error);
+        }
+    };
     audit.set_actor_id(user.id.0);
     let name = body.name;
     let ttl = body.ttl;
-    let token = run_auth(&state, move |service| {
-        service.create_access_token(user.id, &name, ttl)
+    let completion_audit = auth_security_event(&audit, "completed", "", &request_id);
+    let token = match run_auth(&state, move |service| {
+        service.create_access_token_with_audit(user.id, &name, ttl, completion_audit)
     })
-    .await?;
+    .await
+    {
+        Ok(token) => token,
+        Err(error) => {
+            persist_auth_rejection(&state, &audit, "operation_failed", &request_id).await?;
+            audit.rejected("operation_failed");
+            return Err(error);
+        }
+    };
     audit.set_target_id(token.id);
     audit.completed();
     Ok(Json(token))
@@ -478,17 +547,36 @@ pub(crate) async fn get_tokens(
 pub(crate) async fn delete_token(
     State(state): State<ApiState>,
     headers: HeaderMap,
+    request_id: Option<Extension<RequestId>>,
     Path(token_id): Path<i64>,
 ) -> Result<Json<OkResponse>, ApiError> {
     let mut audit = AuthAudit::new("token_revoke");
-    let (user, _) = require_current_user(&state, &headers).await?;
+    let request_id = request_id_text(request_id.as_ref());
+    let (user, _) = match require_current_user(&state, &headers).await {
+        Ok(current) => current,
+        Err(error) => {
+            persist_auth_rejection(&state, &audit, "authentication_required", &request_id).await?;
+            audit.rejected("authentication_required");
+            return Err(error);
+        }
+    };
     audit.set_actor_id(user.id.0);
     audit.set_target_id(token_id);
-    let did_delete = run_auth(&state, move |service| {
-        service.revoke_access_token(user.id, token_id)
+    let completion_audit = auth_security_event(&audit, "completed", "", &request_id);
+    let did_delete = match run_auth(&state, move |service| {
+        service.revoke_access_token_with_audit(user.id, token_id, completion_audit)
     })
-    .await?;
+    .await
+    {
+        Ok(did_delete) => did_delete,
+        Err(error) => {
+            persist_auth_rejection(&state, &audit, "operation_failed", &request_id).await?;
+            audit.rejected("operation_failed");
+            return Err(error);
+        }
+    };
     if !did_delete {
+        persist_auth_rejection(&state, &audit, "not_found", &request_id).await?;
         audit.rejected("not_found");
         return Err(ApiError::not_found("Token not found"));
     }
@@ -516,11 +604,32 @@ pub(crate) async fn delete_token(
 pub(crate) async fn generate_invite_code(
     State(state): State<ApiState>,
     headers: HeaderMap,
+    request_id: Option<Extension<RequestId>>,
 ) -> Result<Json<InviteCodeResponse>, ApiError> {
     let mut audit = AuthAudit::new("invite_create");
-    let (user, _) = require_current_user(&state, &headers).await?;
+    let request_id = request_id_text(request_id.as_ref());
+    let (user, _) = match require_current_user(&state, &headers).await {
+        Ok(current) => current,
+        Err(error) => {
+            persist_auth_rejection(&state, &audit, "authentication_required", &request_id).await?;
+            audit.rejected("authentication_required");
+            return Err(error);
+        }
+    };
     audit.set_actor_id(user.id.0);
-    let invite = run_auth(&state, move |service| service.create_invite_code(user.id)).await?;
+    let completion_audit = auth_security_event(&audit, "completed", "", &request_id);
+    let invite = match run_auth(&state, move |service| {
+        service.create_invite_code_with_audit(user.id, completion_audit)
+    })
+    .await
+    {
+        Ok(invite) => invite,
+        Err(error) => {
+            persist_auth_rejection(&state, &audit, "operation_failed", &request_id).await?;
+            audit.rejected("operation_failed");
+            return Err(error);
+        }
+    };
     audit.set_target_id(invite.id);
     audit.completed();
     Ok(Json(invite))
@@ -717,10 +826,51 @@ fn peer_address(peer: Option<Extension<ConnectInfo<SocketAddr>>>) -> Option<Sock
     peer.map(|Extension(ConnectInfo(address))| address)
 }
 
-fn request_id_text(request_id: Option<&Extension<RequestId>>) -> &str {
-    request_id
-        .and_then(|Extension(request_id)| request_id.header_value().to_str().ok())
-        .unwrap_or("missing")
+fn auth_security_event(
+    audit: &AuthAudit,
+    outcome: &'static str,
+    reason: &'static str,
+    request_id: &str,
+) -> SecurityAuditEvent {
+    let mut event = SecurityAuditEvent::new(audit.action, outcome)
+        .with_reason(reason)
+        .with_request_id(request_id);
+    if audit.actor_id > 0 {
+        event = event.with_actor_id(audit.actor_id);
+    }
+    if audit.target_id > 0 {
+        event = event.with_target_id(audit.target_id);
+    }
+    event
+}
+
+async fn persist_auth_rejection(
+    state: &ApiState,
+    audit: &AuthAudit,
+    reason: &'static str,
+    request_id: &str,
+) -> Result<(), ApiError> {
+    persist_security_audit_event(
+        state,
+        auth_security_event(audit, "rejected", reason, request_id),
+    )
+    .await
+}
+
+async fn persist_auth_rate_limit(
+    state: &ApiState,
+    audit: &AuthAudit,
+    rejection: AuthRateLimitRejection,
+    request_id: &str,
+) -> Result<(), ApiError> {
+    let event = auth_security_event(audit, "rate_limited", "", request_id).with_rate_limit(
+        rejection.reason,
+        rejection.bucket,
+        rejection.source_class,
+        rejection.rejected_count,
+        rejection.retry_after_seconds,
+    );
+    persist_security_audit_event(state, event).await
 }
 
 fn password_policy_message() -> String {
@@ -749,6 +899,9 @@ pub(crate) fn map_auth_error(error: AuthServiceError) -> ApiError {
         AuthServiceError::Repository(AuthRepositoryError::AccessTokenLimitReached) => {
             ApiError::conflict(error.to_string())
         }
+        AuthServiceError::Repository(AuthRepositoryError::AuditPersistence(_)) => {
+            ApiError::service_unavailable()
+        }
         AuthServiceError::Password(_) => ApiError::internal_server_error(),
         AuthServiceError::Repository(_) => ApiError::internal_server_error(),
     }
@@ -758,13 +911,14 @@ pub(crate) fn map_auth_error(error: AuthServiceError) -> ApiError {
 mod tests {
     use axum::http::{Method, StatusCode};
     use litradar_auth::{AuthService, ACCESS_TOKEN_DEFAULT_TTL};
+    use litradar_storage::list_security_audit_events;
     use serde_json::json;
 
     use crate::state::tracing_test_support::CapturedLogs;
     use crate::test_support::{json_request, TestBackend};
 
     #[tokio::test]
-    async fn auth_events_distinguish_outcomes_without_credentials_or_names() {
+    async fn auth_audit_events_are_durable_and_exclude_credentials_or_names() {
         const USERNAME_SENTINEL: &str = "audit_user_sentinel";
         const PASSWORD_SENTINEL: &str = "credential-sentinel-never-log";
         const TOKEN_NAME_SENTINEL: &str = "token-name-sentinel-never-log";
@@ -909,5 +1063,56 @@ mod tests {
                 .as_str()
                 .is_some_and(|name| name.starts_with("security.auth."))
         }));
+
+        let durable = list_security_audit_events(backend.auth_db_path())
+            .expect("durable authentication audit events should load");
+        let login_completion = durable
+            .iter()
+            .find(|event| {
+                event.action == "login"
+                    && event.outcome == "completed"
+                    && !event.request_id.is_empty()
+            })
+            .expect("completed login should persist with a request id");
+        assert_eq!(login_completion.actor_id, Some(user.id.0));
+        assert_eq!(
+            durable
+                .iter()
+                .filter(|event| {
+                    event.action == "login"
+                        && event.outcome == "rejected"
+                        && event.reason == "authentication_failed"
+                })
+                .count(),
+            5
+        );
+        let rate_limit = durable
+            .iter()
+            .find(|event| event.action == "login" && event.outcome == "rate_limited")
+            .expect("login limiter rejection should persist");
+        assert!(!rate_limit.request_id.is_empty());
+        assert!(!rate_limit.source_class.is_empty());
+        assert!(!rate_limit.bucket.is_empty());
+        assert!(rate_limit.rejected_count > 0);
+        assert!(rate_limit.retry_after_seconds > 0);
+        let token_completion = durable
+            .iter()
+            .find(|event| {
+                event.action == "token_create"
+                    && event.outcome == "completed"
+                    && !event.request_id.is_empty()
+            })
+            .expect("request token creation should persist");
+        assert_eq!(token_completion.actor_id, Some(user.id.0));
+        assert_eq!(
+            token_completion.target_id,
+            token_response.payload["id"].as_i64()
+        );
+        let durable_text = format!("{durable:?}");
+        assert!(!durable_text.contains(USERNAME_SENTINEL));
+        assert!(!durable_text.contains(PASSWORD_SENTINEL));
+        assert!(!durable_text.contains(TOKEN_NAME_SENTINEL));
+        assert!(!durable_text.contains(&authorization_token));
+        assert!(!durable_text.contains(created_token));
     }
 }

@@ -32,6 +32,14 @@ wc -c secrets/litradar.key
 
 新增事件或字段必须用唯一 sentinel 覆盖成功与失败路径，验证服务端 JSON、调度子进程 stderr 和浏览器对象都不含秘密或内容。若事故日志发现禁止字段，应立即停止扩大采集、限制证据访问、轮换受影响凭据并按[日志运维](logging.md)的流程处理；不能只依赖后续轮转删除泄漏。
 
+## 持久安全审计
+
+安全审计的权威记录是认证库 v9 的 append-only `security_audit_events`，不是可能丢弃的普通 tracing 队列。认证成功/失败/限流、密码和令牌操作、管理员权限与用户操作、邀请码、调度任务、运行设置和公告变更均使用固定 action/outcome/reason 分类；记录内部 actor/target ID、服务器 request ID 和必要的限流元数据，不记录密码、用户名、token、邀请码、原始 IP、请求体或业务内容。
+
+业务安全变更与必需审计行在同一个 immediate transaction 中提交。审计插入失败时变更整体回滚，API 返回 `503`；认证拒绝和限流在返回前同步追加。失败路径只向 `stderr` 输出固定 `audit.persistence_failed` 分类和进程内计数，不输出 SQLite 原始错误。普通日志过载不会影响已提交审计行。
+
+默认保留 180 天，可通过 `audit_retention_days` 设置 1–3650 天。启动后立即检查并每 24 小时检查一次；跨实例持久窗口和每事务 10,000 行上限避免无界删除。系统不暴露远程审计 API，查询、导出和取证只能使用受控的只读数据库副本；具体 SQL 与告警规则见[日志运维](logging.md)。`auth.sqlite` 固定备份范围包含审计历史和 maintenance 标记。
+
 ## 数据库凭据加密
 
 以下非空字段使用 `litradarenc:v1:` XChaCha20-Poly1305 认证信封：

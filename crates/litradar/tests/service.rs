@@ -16,6 +16,8 @@ use tempfile::tempdir;
 const SERVICE_START_ATTEMPTS: usize = 200;
 const SERVICE_START_RETRY_DELAY: Duration = Duration::from_millis(25);
 const HTTP_TIMEOUT: Duration = Duration::from_secs(2);
+const FRONTEND_HTML: &str = "<!doctype html><main>service-process-marker</main>";
+const FRONTEND_HTML_SHA256: &str = "sha256-8AR9mq3K3C7ZOLWs/6K1xGO5gVvup5qzJObB2JzVfKQ=";
 
 #[test]
 #[cfg_attr(
@@ -29,11 +31,23 @@ fn unified_service_serves_frontend_openapi_and_authenticated_api_then_cleans_up(
     let secret_key_file = root_path.join("secret.key");
     fs::write(&secret_key_file, [31_u8; 32]).expect("secret key should write");
     fs::create_dir_all(root_path.join("web")).expect("web root should be created");
+    fs::write(root_path.join("web").join("index.html"), FRONTEND_HTML)
+        .expect("frontend marker should write");
     fs::write(
-        root_path.join("web").join("index.html"),
-        "<!doctype html><main>service-process-marker</main>",
+        root_path.join("web").join("csp-hashes.json"),
+        serde_json::to_vec_pretty(&serde_json::json!({
+            "version": 1,
+            "algorithm": "sha256",
+            "files": [{
+                "path": "index.html",
+                "html_sha256": FRONTEND_HTML_SHA256,
+                "inline_script_hashes": [],
+            }],
+            "script_hashes": [],
+        }))
+        .expect("CSP manifest should serialize"),
     )
-    .expect("frontend marker should write");
+    .expect("CSP manifest should write");
     litradar_storage::migrate_storage(&storage_config).expect("storage should migrate");
     let auth_service = AuthService::new(storage_config.auth_db_path());
     let administrator = auth_service
@@ -137,6 +151,14 @@ impl ServiceChild {
             .wait_with_output()
             .expect("service process output should be collected")
     }
+
+    fn collect_output(&mut self) -> Output {
+        self.child
+            .take()
+            .expect("service child should exist")
+            .wait_with_output()
+            .expect("exited service output should be collected")
+    }
 }
 
 impl Drop for ServiceChild {
@@ -173,7 +195,12 @@ fn reserve_loopback_port() -> u16 {
 fn wait_for_ready(service: &mut ServiceChild, port: u16) -> HttpResponse {
     for _ in 0..SERVICE_START_ATTEMPTS {
         if let Some(status) = service.try_wait() {
-            panic!("service exited before readiness with {status}");
+            let output = service.collect_output();
+            panic!(
+                "service exited before readiness with {status}; stdout={}; stderr={}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr),
+            );
         }
         if let Ok(response) = http_get(port, "/health/ready", None) {
             if response.status == 200 {

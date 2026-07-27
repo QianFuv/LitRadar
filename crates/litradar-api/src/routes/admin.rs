@@ -3,7 +3,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
-use axum::extract::{Path, State};
+use axum::extract::{Extension, Path, State};
 use axum::http::HeaderMap;
 use axum::Json;
 use litradar_auth::{is_valid_new_password, MIN_PASSWORD_LENGTH};
@@ -14,8 +14,10 @@ use litradar_domain::{
     RuntimeSettingInfo, RuntimeSettingsUpdate, ScheduledJobSpec, ScheduledTaskCreate,
     ScheduledTaskInfo, ScheduledTaskUpdate, SchedulerStatusResponse, UserId,
 };
-use litradar_storage::{BusinessRepositoryError, StorageConfig};
+use litradar_storage::{BusinessRepositoryError, SecurityAuditEvent, StorageConfig};
+use tower_http::request_id::RequestId;
 
+use crate::audit::{persist_security_audit_event, request_id_text};
 use crate::config::validate_runtime_settings_update;
 use crate::response::ApiError;
 use crate::routes::auth::{auth_service, map_auth_error, require_admin_user};
@@ -85,6 +87,81 @@ impl Drop for AdminAudit {
     }
 }
 
+fn admin_security_event(
+    action: &'static str,
+    outcome: &'static str,
+    actor_id: i64,
+    target_id: i64,
+    request_id: &str,
+) -> SecurityAuditEvent {
+    let event = SecurityAuditEvent::new(action, outcome)
+        .with_actor_id(actor_id)
+        .with_request_id(request_id);
+    if target_id > 0 {
+        event.with_target_id(target_id)
+    } else {
+        event
+    }
+}
+
+async fn persist_admin_rejection(
+    state: &ApiState,
+    action: &'static str,
+    actor_id: i64,
+    target_id: i64,
+    request_id: &str,
+    reason: &'static str,
+) -> Result<(), ApiError> {
+    persist_security_audit_event(
+        state,
+        admin_security_event(action, "rejected", actor_id, target_id, request_id)
+            .with_reason(reason),
+    )
+    .await
+}
+
+async fn run_audited_business<Output, Work>(
+    state: &ApiState,
+    action: &'static str,
+    actor_id: i64,
+    target_id: i64,
+    request_id: String,
+    work: Work,
+) -> Result<Output, ApiError>
+where
+    Work: FnOnce(StorageConfig, SecurityAuditEvent) -> Result<Output, BusinessRepositoryError>
+        + Send
+        + 'static,
+    Output: Send + 'static,
+{
+    let storage = state.storage_config().clone();
+    let audit = admin_security_event(action, "completed", actor_id, target_id, &request_id);
+    match state.run_blocking(move || work(storage, audit)).await {
+        Ok(Ok(output)) => Ok(output),
+        Ok(Err(error @ BusinessRepositoryError::AuditPersistence(_))) => {
+            Err(map_business_error(error))
+        }
+        Ok(Err(error)) => {
+            let reason = business_rejection_reason(&error);
+            persist_admin_rejection(state, action, actor_id, target_id, &request_id, reason)
+                .await?;
+            Err(map_business_error(error))
+        }
+        Err(error) => {
+            persist_admin_rejection(
+                state,
+                action,
+                actor_id,
+                target_id,
+                &request_id,
+                "executor_failed",
+            )
+            .await?;
+            Err(error.into())
+        }
+    }
+}
+
 /// List all users with admin dashboard counts.
 #[utoipa::path(
     get,
@@ -119,19 +196,43 @@ pub(crate) async fn set_admin(
     State(state): State<ApiState>,
     headers: HeaderMap,
     Path(user_id): Path<i64>,
+    request_id: Option<Extension<RequestId>>,
     Json(body): Json<AdminSetAdmin>,
 ) -> Result<Json<OkResponse>, ApiError> {
     let (admin, _) = require_admin_user(&state, &headers).await?;
     let mut audit = AdminAudit::new("user_admin_update", admin.id.0, user_id);
+    let request_id = request_id_text(request_id.as_ref());
     let target_id = UserId(user_id);
     if target_id == admin.id && !body.is_admin {
+        persist_admin_rejection(
+            &state,
+            "user_admin_update",
+            admin.id.0,
+            user_id,
+            &request_id,
+            "self_revocation_forbidden",
+        )
+        .await?;
         return Err(ApiError::bad_request("Cannot revoke own admin status"));
     }
     let actor_id = admin.id;
     let is_admin = body.is_admin;
-    run_business(&state, move |storage| {
-        litradar_storage::set_user_admin(storage.auth_db_path(), actor_id, target_id, is_admin)
-    })
+    run_audited_business(
+        &state,
+        "user_admin_update",
+        actor_id.value(),
+        user_id,
+        request_id,
+        move |storage, event| {
+            litradar_storage::set_user_admin_with_audit(
+                storage.auth_db_path(),
+                actor_id,
+                target_id,
+                is_admin,
+                Some(&event),
+            )
+        },
+    )
     .await?;
     audit.completed();
     Ok(Json(OkResponse { ok: true }))
@@ -151,22 +252,82 @@ pub(crate) async fn reset_password(
     State(state): State<ApiState>,
     headers: HeaderMap,
     Path(user_id): Path<i64>,
+    request_id: Option<Extension<RequestId>>,
     Json(body): Json<AdminResetPassword>,
 ) -> Result<Json<OkResponse>, ApiError> {
     let (admin, _) = require_admin_user(&state, &headers).await?;
     let mut audit = AdminAudit::new("user_password_reset", admin.id.0, user_id);
+    let request_id = request_id_text(request_id.as_ref());
     if !is_valid_new_password(&body.new_password) {
+        persist_admin_rejection(
+            &state,
+            "user_password_reset",
+            admin.id.0,
+            user_id,
+            &request_id,
+            "password_policy_failed",
+        )
+        .await?;
         return Err(ApiError::bad_request(format!(
             "Password must be at least {MIN_PASSWORD_LENGTH} characters"
         )));
     }
     let service = auth_service(&state);
     let new_password = body.new_password;
-    let did_reset = state
-        .run_kdf_blocking(move || service.reset_password(UserId(user_id), &new_password))
-        .await?
-        .map_err(map_auth_error)?;
+    let completion = admin_security_event(
+        "user_password_reset",
+        "completed",
+        admin.id.0,
+        user_id,
+        &request_id,
+    );
+    let reset_result = state
+        .run_kdf_blocking(move || {
+            service.reset_password_with_audit(UserId(user_id), &new_password, completion)
+        })
+        .await;
+    let did_reset = match reset_result {
+        Ok(Ok(did_reset)) => did_reset,
+        Ok(Err(
+            error @ litradar_auth::AuthServiceError::Repository(
+                litradar_storage::AuthRepositoryError::AuditPersistence(_),
+            ),
+        )) => return Err(map_auth_error(error)),
+        Ok(Err(error)) => {
+            persist_admin_rejection(
+                &state,
+                "user_password_reset",
+                admin.id.0,
+                user_id,
+                &request_id,
+                "operation_failed",
+            )
+            .await?;
+            return Err(map_auth_error(error));
+        }
+        Err(error) => {
+            persist_admin_rejection(
+                &state,
+                "user_password_reset",
+                admin.id.0,
+                user_id,
+                &request_id,
+                "executor_failed",
+            )
+            .await?;
+            return Err(error.into());
+        }
+    };
     if !did_reset {
+        persist_admin_rejection(
+            &state,
+            "user_password_reset",
+            admin.id.0,
+            user_id,
+            &request_id,
+            "target_not_found",
+        )
+        .await?;
         return Err(ApiError::not_found("User not found"));
     }
     audit.completed();
@@ -186,17 +347,40 @@ pub(crate) async fn delete_user(
     State(state): State<ApiState>,
     headers: HeaderMap,
     Path(user_id): Path<i64>,
+    request_id: Option<Extension<RequestId>>,
 ) -> Result<Json<OkResponse>, ApiError> {
     let (admin, _) = require_admin_user(&state, &headers).await?;
     let mut audit = AdminAudit::new("user_delete", admin.id.0, user_id);
+    let request_id = request_id_text(request_id.as_ref());
     let target_id = UserId(user_id);
     if target_id == admin.id {
+        persist_admin_rejection(
+            &state,
+            "user_delete",
+            admin.id.0,
+            user_id,
+            &request_id,
+            "self_delete_forbidden",
+        )
+        .await?;
         return Err(ApiError::bad_request("Cannot delete yourself"));
     }
     let actor_id = admin.id;
-    run_business(&state, move |storage| {
-        litradar_storage::delete_user(storage.auth_db_path(), actor_id, target_id)
-    })
+    run_audited_business(
+        &state,
+        "user_delete",
+        actor_id.value(),
+        user_id,
+        request_id,
+        move |storage, event| {
+            litradar_storage::delete_user_with_audit(
+                storage.auth_db_path(),
+                actor_id,
+                target_id,
+                Some(&event),
+            )
+        },
+    )
     .await?;
     audit.completed();
     Ok(Json(OkResponse { ok: true }))
@@ -233,12 +417,24 @@ pub(crate) async fn list_invite_codes(
 pub(crate) async fn create_invite_code(
     State(state): State<ApiState>,
     headers: HeaderMap,
+    request_id: Option<Extension<RequestId>>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let (admin, _) = require_admin_user(&state, &headers).await?;
     let mut audit = AdminAudit::new("invite_create", admin.id.0, 0);
-    let code = run_business(&state, move |storage| {
-        litradar_storage::admin_create_invite_code(storage.auth_db_path())
-    })
+    let request_id = request_id_text(request_id.as_ref());
+    let code = run_audited_business(
+        &state,
+        "invite_create",
+        admin.id.0,
+        0,
+        request_id,
+        move |storage, event| {
+            litradar_storage::admin_create_invite_code_with_audit(
+                storage.auth_db_path(),
+                Some(&event),
+            )
+        },
+    )
     .await?;
     audit.set_target_id(code.id);
     audit.completed();
@@ -262,14 +458,36 @@ pub(crate) async fn delete_invite_code(
     State(state): State<ApiState>,
     headers: HeaderMap,
     Path(code_id): Path<i64>,
+    request_id: Option<Extension<RequestId>>,
 ) -> Result<Json<OkResponse>, ApiError> {
     let (admin, _) = require_admin_user(&state, &headers).await?;
     let mut audit = AdminAudit::new("invite_delete", admin.id.0, code_id);
-    let did_delete = run_business(&state, move |storage| {
-        litradar_storage::delete_invite_code(storage.auth_db_path(), code_id)
-    })
+    let request_id = request_id_text(request_id.as_ref());
+    let did_delete = run_audited_business(
+        &state,
+        "invite_delete",
+        admin.id.0,
+        code_id,
+        request_id.clone(),
+        move |storage, event| {
+            litradar_storage::delete_invite_code_with_audit(
+                storage.auth_db_path(),
+                code_id,
+                Some(&event),
+            )
+        },
+    )
     .await?;
     if !did_delete {
+        persist_admin_rejection(
+            &state,
+            "invite_delete",
+            admin.id.0,
+            code_id,
+            &request_id,
+            "target_not_found",
+        )
+        .await?;
         return Err(ApiError::not_found("Code not found or already used"));
     }
     audit.completed();
@@ -328,17 +546,34 @@ pub(crate) async fn list_scheduled_tasks(
 pub(crate) async fn create_scheduled_task(
     State(state): State<ApiState>,
     headers: HeaderMap,
+    request_id: Option<Extension<RequestId>>,
     Json(body): Json<ScheduledTaskCreate>,
 ) -> Result<Json<ScheduledTaskInfo>, ApiError> {
     let (admin, _) = require_admin_user(&state, &headers).await?;
     let mut audit = AdminAudit::new("scheduled_task_create", admin.id.0, 0);
-    let (name, cron, timezone) = validate_scheduled_task_payload(
+    let request_id = request_id_text(request_id.as_ref());
+    let validation = validate_scheduled_task_payload(
         Some(&body.name),
         Some(&body.cron),
         Some(&body.timezone),
         Some(body.timeout_seconds),
         Some(&body.job),
-    )?;
+    );
+    let (name, cron, timezone) = match validation {
+        Ok(payload) => payload,
+        Err(error) => {
+            persist_admin_rejection(
+                &state,
+                "scheduled_task_create",
+                admin.id.0,
+                0,
+                &request_id,
+                "validation_failed",
+            )
+            .await?;
+            return Err(error);
+        }
+    };
     let name = name.unwrap_or_default().to_string();
     let cron = cron.unwrap_or_default().to_string();
     let timezone = timezone.unwrap_or("UTC").to_string();
@@ -346,20 +581,28 @@ pub(crate) async fn create_scheduled_task(
     let timeout_seconds = body.timeout_seconds;
     let coalesce = body.coalesce;
     let enabled = body.enabled;
-    let task = run_business(&state, move |storage| {
-        litradar_storage::create_scheduled_task(
-            storage.auth_db_path(),
-            litradar_storage::ScheduledTaskCreateParams {
-                name: &name,
-                job: &job,
-                cron: &cron,
-                timezone: &timezone,
-                timeout_seconds,
-                coalesce,
-                enabled,
-            },
-        )
-    })
+    let task = run_audited_business(
+        &state,
+        "scheduled_task_create",
+        admin.id.0,
+        0,
+        request_id,
+        move |storage, event| {
+            litradar_storage::create_scheduled_task_with_audit(
+                storage.auth_db_path(),
+                litradar_storage::ScheduledTaskCreateParams {
+                    name: &name,
+                    job: &job,
+                    cron: &cron,
+                    timezone: &timezone,
+                    timeout_seconds,
+                    coalesce,
+                    enabled,
+                },
+                Some(&event),
+            )
+        },
+    )
     .await?;
     audit.set_target_id(task.id);
     audit.completed();
@@ -380,17 +623,34 @@ pub(crate) async fn update_scheduled_task(
     State(state): State<ApiState>,
     headers: HeaderMap,
     Path(task_id): Path<i64>,
+    request_id: Option<Extension<RequestId>>,
     Json(body): Json<ScheduledTaskUpdate>,
 ) -> Result<Json<ScheduledTaskInfo>, ApiError> {
     let (admin, _) = require_admin_user(&state, &headers).await?;
     let mut audit = AdminAudit::new("scheduled_task_update", admin.id.0, task_id);
-    let (name, cron, timezone) = validate_scheduled_task_payload(
+    let request_id = request_id_text(request_id.as_ref());
+    let validation = validate_scheduled_task_payload(
         body.name.as_deref(),
         body.cron.as_deref(),
         body.timezone.as_deref(),
         body.timeout_seconds,
         body.job.as_ref(),
-    )?;
+    );
+    let (name, cron, timezone) = match validation {
+        Ok(payload) => payload,
+        Err(error) => {
+            persist_admin_rejection(
+                &state,
+                "scheduled_task_update",
+                admin.id.0,
+                task_id,
+                &request_id,
+                "validation_failed",
+            )
+            .await?;
+            return Err(error);
+        }
+    };
     let name = name.map(str::to_string);
     let cron = cron.map(str::to_string);
     let timezone = timezone.map(str::to_string);
@@ -398,23 +658,40 @@ pub(crate) async fn update_scheduled_task(
     let timeout_seconds = body.timeout_seconds;
     let coalesce = body.coalesce;
     let enabled = body.enabled;
-    let task = run_business(&state, move |storage| {
-        litradar_storage::update_scheduled_task(
-            storage.auth_db_path(),
-            litradar_storage::ScheduledTaskUpdateParams {
-                task_id,
-                name: name.as_deref(),
-                job: job.as_ref(),
-                cron: cron.as_deref(),
-                timezone: timezone.as_deref(),
-                timeout_seconds,
-                coalesce,
-                enabled,
-            },
-        )
-    })
+    let task = run_audited_business(
+        &state,
+        "scheduled_task_update",
+        admin.id.0,
+        task_id,
+        request_id.clone(),
+        move |storage, event| {
+            litradar_storage::update_scheduled_task_with_audit(
+                storage.auth_db_path(),
+                litradar_storage::ScheduledTaskUpdateParams {
+                    task_id,
+                    name: name.as_deref(),
+                    job: job.as_ref(),
+                    cron: cron.as_deref(),
+                    timezone: timezone.as_deref(),
+                    timeout_seconds,
+                    coalesce,
+                    enabled,
+                },
+                Some(&event),
+            )
+        },
+    )
     .await?;
     let Some(task) = task else {
+        persist_admin_rejection(
+            &state,
+            "scheduled_task_update",
+            admin.id.0,
+            task_id,
+            &request_id,
+            "target_not_found",
+        )
+        .await?;
         return Err(ApiError::not_found("Scheduled task not found"));
     };
     audit.completed();
@@ -434,14 +711,36 @@ pub(crate) async fn delete_scheduled_task(
     State(state): State<ApiState>,
     headers: HeaderMap,
     Path(task_id): Path<i64>,
+    request_id: Option<Extension<RequestId>>,
 ) -> Result<Json<OkResponse>, ApiError> {
     let (admin, _) = require_admin_user(&state, &headers).await?;
     let mut audit = AdminAudit::new("scheduled_task_delete", admin.id.0, task_id);
-    let did_delete = run_business(&state, move |storage| {
-        litradar_storage::delete_scheduled_task(storage.auth_db_path(), task_id)
-    })
+    let request_id = request_id_text(request_id.as_ref());
+    let did_delete = run_audited_business(
+        &state,
+        "scheduled_task_delete",
+        admin.id.0,
+        task_id,
+        request_id.clone(),
+        move |storage, event| {
+            litradar_storage::delete_scheduled_task_with_audit(
+                storage.auth_db_path(),
+                task_id,
+                Some(&event),
+            )
+        },
+    )
     .await?;
     if !did_delete {
+        persist_admin_rejection(
+            &state,
+            "scheduled_task_delete",
+            admin.id.0,
+            task_id,
+            &request_id,
+            "target_not_found",
+        )
+        .await?;
         return Err(ApiError::not_found("Scheduled task not found"));
     }
     audit.completed();
@@ -531,24 +830,55 @@ pub(crate) async fn get_provider_catalog(
 pub(crate) async fn update_runtime_settings(
     State(state): State<ApiState>,
     headers: HeaderMap,
+    request_id: Option<Extension<RequestId>>,
     Json(body): Json<RuntimeSettingsUpdate>,
 ) -> Result<Json<Vec<RuntimeSettingInfo>>, ApiError> {
     let (admin, _) = require_admin_user(&state, &headers).await?;
     let mut audit = AdminAudit::new("runtime_settings_update", admin.id.0, 0);
-    validate_runtime_settings_update(&body)
-        .map_err(|error| ApiError::bad_request(error.to_string()))?;
-    validate_runtime_provider_settings_update(&body)?;
+    let request_id = request_id_text(request_id.as_ref());
+    if let Err(error) = validate_runtime_settings_update(&body) {
+        persist_admin_rejection(
+            &state,
+            "runtime_settings_update",
+            admin.id.0,
+            0,
+            &request_id,
+            "validation_failed",
+        )
+        .await?;
+        return Err(ApiError::bad_request(error.to_string()));
+    }
+    if let Err(error) = validate_runtime_provider_settings_update(&body) {
+        persist_admin_rejection(
+            &state,
+            "runtime_settings_update",
+            admin.id.0,
+            0,
+            &request_id,
+            "validation_failed",
+        )
+        .await?;
+        return Err(error);
+    }
     let values = body.values;
     let secret_pool_updates = body.secret_pool_updates;
     let secret_codec = state.secret_codec().clone();
-    let settings = run_business(&state, move |storage| {
-        litradar_storage::upsert_runtime_settings(
-            storage.auth_db_path(),
-            &secret_codec,
-            &values,
-            &secret_pool_updates,
-        )
-    })
+    let settings = run_audited_business(
+        &state,
+        "runtime_settings_update",
+        admin.id.0,
+        0,
+        request_id,
+        move |storage, event| {
+            litradar_storage::upsert_runtime_settings_with_audit(
+                storage.auth_db_path(),
+                &secret_codec,
+                &values,
+                &secret_pool_updates,
+                Some(&event),
+            )
+        },
+    )
     .await?;
     audit.completed();
     Ok(Json(settings))
@@ -586,28 +916,50 @@ pub(crate) async fn list_announcements(
 pub(crate) async fn create_announcement(
     State(state): State<ApiState>,
     headers: HeaderMap,
+    request_id: Option<Extension<RequestId>>,
     Json(body): Json<AnnouncementCreate>,
 ) -> Result<Json<AnnouncementInfo>, ApiError> {
     let (admin, _) = require_admin_user(&state, &headers).await?;
     let mut audit = AdminAudit::new("announcement_create", admin.id.0, 0);
-    let (title, message, priority) = validate_announcement_payload(
-        Some(&body.title),
-        Some(&body.message),
-        Some(&body.priority),
-    )?;
+    let request_id = request_id_text(request_id.as_ref());
+    let validation =
+        validate_announcement_payload(Some(&body.title), Some(&body.message), Some(&body.priority));
+    let (title, message, priority) = match validation {
+        Ok(payload) => payload,
+        Err(error) => {
+            persist_admin_rejection(
+                &state,
+                "announcement_create",
+                admin.id.0,
+                0,
+                &request_id,
+                "validation_failed",
+            )
+            .await?;
+            return Err(error);
+        }
+    };
     let title = title.unwrap_or_default().to_string();
     let message = message.unwrap_or_default().to_string();
     let priority = priority.unwrap_or_else(|| "normal".to_string());
     let enabled = body.enabled;
-    let announcement = run_business(&state, move |storage| {
-        litradar_storage::create_announcement(
-            storage.auth_db_path(),
-            &title,
-            &message,
-            &priority,
-            enabled,
-        )
-    })
+    let announcement = run_audited_business(
+        &state,
+        "announcement_create",
+        admin.id.0,
+        0,
+        request_id,
+        move |storage, event| {
+            litradar_storage::create_announcement_with_audit(
+                storage.auth_db_path(),
+                &title,
+                &message,
+                &priority,
+                enabled,
+                Some(&event),
+            )
+        },
+    )
     .await?;
     audit.set_target_id(announcement.id);
     audit.completed();
@@ -628,30 +980,64 @@ pub(crate) async fn update_announcement(
     State(state): State<ApiState>,
     headers: HeaderMap,
     Path(announcement_id): Path<i64>,
+    request_id: Option<Extension<RequestId>>,
     Json(body): Json<AnnouncementUpdate>,
 ) -> Result<Json<AnnouncementInfo>, ApiError> {
     let (admin, _) = require_admin_user(&state, &headers).await?;
     let mut audit = AdminAudit::new("announcement_update", admin.id.0, announcement_id);
-    let (title, message, priority) = validate_announcement_payload(
+    let request_id = request_id_text(request_id.as_ref());
+    let validation = validate_announcement_payload(
         body.title.as_deref(),
         body.message.as_deref(),
         body.priority.as_deref(),
-    )?;
+    );
+    let (title, message, priority) = match validation {
+        Ok(payload) => payload,
+        Err(error) => {
+            persist_admin_rejection(
+                &state,
+                "announcement_update",
+                admin.id.0,
+                announcement_id,
+                &request_id,
+                "validation_failed",
+            )
+            .await?;
+            return Err(error);
+        }
+    };
     let title = title.map(str::to_string);
     let message = message.map(str::to_string);
     let enabled = body.enabled;
-    let announcement = run_business(&state, move |storage| {
-        litradar_storage::update_announcement(
-            storage.auth_db_path(),
-            announcement_id,
-            title.as_deref(),
-            message.as_deref(),
-            priority.as_deref(),
-            enabled,
-        )
-    })
+    let announcement = run_audited_business(
+        &state,
+        "announcement_update",
+        admin.id.0,
+        announcement_id,
+        request_id.clone(),
+        move |storage, event| {
+            litradar_storage::update_announcement_with_audit(
+                storage.auth_db_path(),
+                announcement_id,
+                title.as_deref(),
+                message.as_deref(),
+                priority.as_deref(),
+                enabled,
+                Some(&event),
+            )
+        },
+    )
     .await?;
     let Some(announcement) = announcement else {
+        persist_admin_rejection(
+            &state,
+            "announcement_update",
+            admin.id.0,
+            announcement_id,
+            &request_id,
+            "target_not_found",
+        )
+        .await?;
         return Err(ApiError::not_found("Announcement not found"));
     };
     audit.completed();
@@ -671,14 +1057,36 @@ pub(crate) async fn delete_announcement(
     State(state): State<ApiState>,
     headers: HeaderMap,
     Path(announcement_id): Path<i64>,
+    request_id: Option<Extension<RequestId>>,
 ) -> Result<Json<OkResponse>, ApiError> {
     let (admin, _) = require_admin_user(&state, &headers).await?;
     let mut audit = AdminAudit::new("announcement_delete", admin.id.0, announcement_id);
-    let did_delete = run_business(&state, move |storage| {
-        litradar_storage::delete_announcement(storage.auth_db_path(), announcement_id)
-    })
+    let request_id = request_id_text(request_id.as_ref());
+    let did_delete = run_audited_business(
+        &state,
+        "announcement_delete",
+        admin.id.0,
+        announcement_id,
+        request_id.clone(),
+        move |storage, event| {
+            litradar_storage::delete_announcement_with_audit(
+                storage.auth_db_path(),
+                announcement_id,
+                Some(&event),
+            )
+        },
+    )
     .await?;
     if !did_delete {
+        persist_admin_rejection(
+            &state,
+            "announcement_delete",
+            admin.id.0,
+            announcement_id,
+            &request_id,
+            "target_not_found",
+        )
+        .await?;
         return Err(ApiError::not_found("Announcement not found"));
     }
     audit.completed();
@@ -769,7 +1177,26 @@ fn map_business_error(error: BusinessRepositoryError) -> ApiError {
         BusinessRepositoryError::AdministratorInvariantViolation => {
             ApiError::conflict(error.to_string())
         }
+        BusinessRepositoryError::AuditPersistence(_) => ApiError::service_unavailable(),
         _ => ApiError::internal_server_error(),
+    }
+}
+
+fn business_rejection_reason(error: &BusinessRepositoryError) -> &'static str {
+    match error {
+        BusinessRepositoryError::AdministratorActorForbidden => "actor_forbidden",
+        BusinessRepositoryError::AdministratorTargetNotFound => "target_not_found",
+        BusinessRepositoryError::AdministratorInvariantViolation => "administrator_invariant",
+        BusinessRepositoryError::UnknownRuntimeSetting(_)
+        | BusinessRepositoryError::InvalidRuntimeBoolean(_)
+        | BusinessRepositoryError::InvalidRuntimeSetting(_)
+        | BusinessRepositoryError::InvalidRuntimeSecretPoolUpdate(_)
+        | BusinessRepositoryError::InvalidScheduledJob(_)
+        | BusinessRepositoryError::InvalidScheduledTask(_)
+        | BusinessRepositoryError::LegacyScheduledTaskCannotBeEnabled => "validation_failed",
+        BusinessRepositoryError::OutboundEndpointNotAllowed => "endpoint_not_allowed",
+        BusinessRepositoryError::AuditPersistence(_) => "audit_persistence_failed",
+        _ => "operation_failed",
     }
 }
 
@@ -896,7 +1323,11 @@ fn current_unix_time() -> f64 {
 mod tests {
     use axum::http::{Method, StatusCode};
     use axum::response::IntoResponse;
-    use litradar_storage::BusinessRepositoryError;
+    use litradar_storage::{
+        list_security_audit_events, security_audit_persistence_failure_count,
+        BusinessRepositoryError,
+    };
+    use rusqlite::Connection;
     use serde_json::json;
 
     use super::map_business_error;
@@ -904,7 +1335,7 @@ mod tests {
     use crate::test_support::{json_request, TestBackend};
 
     #[tokio::test]
-    async fn admin_write_events_include_safe_ids_without_request_content() {
+    async fn admin_audit_events_are_durable_and_exclude_request_content() {
         const TITLE_SENTINEL: &str = "announcement-title-sentinel-never-log";
         const MESSAGE_SENTINEL: &str = "announcement-message-sentinel-never-log";
         const REJECTED_SENTINEL: &str = "rejected-message-sentinel-never-log";
@@ -977,6 +1408,37 @@ mod tests {
         assert_eq!(rejected_event["target_id"], 999999);
         assert!(!rejected_logs.text().contains(REJECTED_SENTINEL));
 
+        let durable = list_security_audit_events(backend.auth_db_path())
+            .expect("durable administrator audit events should load");
+        let create_record = durable
+            .iter()
+            .find(|event| {
+                event.action == "announcement_create"
+                    && event.outcome == "completed"
+                    && !event.request_id.is_empty()
+            })
+            .expect("announcement creation should persist");
+        assert_eq!(create_record.actor_id, Some(admin.user_id().0));
+        assert_eq!(
+            create_record.target_id,
+            create_response.payload["id"].as_i64()
+        );
+        let rejected_record = durable
+            .iter()
+            .find(|event| {
+                event.action == "announcement_update"
+                    && event.outcome == "rejected"
+                    && event.target_id == Some(999999)
+            })
+            .expect("missing announcement rejection should persist");
+        assert_eq!(rejected_record.reason, "target_not_found");
+        assert!(!rejected_record.request_id.is_empty());
+        let durable_text = format!("{durable:?}");
+        assert!(!durable_text.contains(TITLE_SENTINEL));
+        assert!(!durable_text.contains(MESSAGE_SENTINEL));
+        assert!(!durable_text.contains(REJECTED_SENTINEL));
+        assert!(!durable_text.contains(&authorization));
+
         let read_logs = CapturedLogs::default();
         let list_response = read_logs
             .capture_async(json_request(
@@ -994,6 +1456,60 @@ mod tests {
                 .as_str()
                 .is_some_and(|name| name.starts_with("security.admin."))
         }));
+    }
+
+    #[tokio::test]
+    async fn admin_audit_failure_returns_service_unavailable_and_rolls_back_mutation() {
+        let backend = TestBackend::new();
+        let admin = backend.authenticated_user("audit_failure_admin", true);
+        let member = backend.authenticated_user("audit_failure_member", false);
+        let completion_count_before = list_security_audit_events(backend.auth_db_path())
+            .expect("fixture audit rows should load")
+            .into_iter()
+            .filter(|event| event.action == "user_admin_update" && event.outcome == "completed")
+            .count();
+        let failures_before = security_audit_persistence_failure_count();
+        let connection =
+            Connection::open(backend.auth_db_path()).expect("authentication database should open");
+        connection
+            .execute_batch(
+                "CREATE TRIGGER fail_api_security_audit \
+                 BEFORE INSERT ON security_audit_events \
+                 BEGIN SELECT RAISE(ABORT, 'injected API audit failure'); END;",
+            )
+            .expect("audit fault trigger should install");
+        drop(connection);
+        let router = backend.router();
+        let authorization = admin.authorization_header();
+        let logs = CapturedLogs::default();
+
+        let response = logs
+            .capture_async(json_request(
+                &router,
+                Method::PUT,
+                &format!("/api/admin/users/{}/admin", member.user_id().value()),
+                Some(&authorization),
+                None,
+                Some(json!({"is_admin": true})),
+            ))
+            .await;
+
+        assert_eq!(response.status, StatusCode::SERVICE_UNAVAILABLE);
+        let stored_member = litradar_storage::list_all_users(backend.auth_db_path())
+            .expect("users should remain readable")
+            .into_iter()
+            .find(|user| user.id == member.user_id())
+            .expect("member should remain present");
+        assert!(!stored_member.is_admin);
+        let completion_count_after = list_security_audit_events(backend.auth_db_path())
+            .expect("audit rows should remain readable")
+            .into_iter()
+            .filter(|event| event.action == "user_admin_update" && event.outcome == "completed")
+            .count();
+        assert_eq!(completion_count_after, completion_count_before);
+        assert!(security_audit_persistence_failure_count() > failures_before);
+        assert!(logs.text().contains("audit.persistence_failed"));
+        assert!(!logs.text().contains("injected API audit failure"));
     }
 
     #[tokio::test]

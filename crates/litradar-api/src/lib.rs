@@ -1,6 +1,7 @@
 //! Rust API server and static frontend host.
 
 mod article_access;
+mod audit;
 pub mod config;
 mod http_observability;
 mod mcp;

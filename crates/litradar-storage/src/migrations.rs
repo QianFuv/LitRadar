@@ -16,7 +16,7 @@ use litradar_domain::{normalize_contract_issn, ProviderOrderConfiguration};
 use crate::{DatabaseResolutionError, StorageConfig};
 
 /// Current auth and business database schema version.
-pub const AUTH_SCHEMA_VERSION: i64 = 8;
+pub const AUTH_SCHEMA_VERSION: i64 = 9;
 
 /// Current index database schema version.
 pub const INDEX_SCHEMA_VERSION: i64 = 6;
@@ -260,6 +260,7 @@ fn migrate_auth_database_inner(path: &Path) -> Result<MigrationSummary, Migratio
             6 => apply_auth_version_six(&transaction)?,
             7 => apply_auth_version_seven(&transaction)?,
             8 => apply_auth_version_eight(&transaction, from_version)?,
+            9 => apply_auth_version_nine(&transaction)?,
             _ => unreachable!("auth migration version should be implemented"),
         }
         transaction.pragma_update(None, "user_version", next_version)?;
@@ -1075,6 +1076,59 @@ fn apply_auth_version_eight(
         }
     }
     rewrite_runtime_provider_name_tokens(transaction)?;
+    Ok(())
+}
+
+fn apply_auth_version_nine(transaction: &Transaction<'_>) -> Result<(), MigrationError> {
+    transaction.execute_batch(
+        "CREATE TABLE security_audit_events (
+             id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+             actor_id            INTEGER CHECK (actor_id IS NULL OR actor_id > 0),
+             target_id           INTEGER CHECK (target_id IS NULL OR target_id > 0),
+             action              TEXT NOT NULL CHECK (
+                 length(action) BETWEEN 1 AND 64 AND action NOT GLOB '*[^a-z0-9_]*'
+             ),
+             outcome             TEXT NOT NULL CHECK (
+                 length(outcome) BETWEEN 1 AND 64 AND outcome NOT GLOB '*[^a-z0-9_]*'
+             ),
+             reason              TEXT NOT NULL DEFAULT '' CHECK (
+                 length(reason) <= 64 AND reason NOT GLOB '*[^a-z0-9_]*'
+             ),
+             request_id          TEXT NOT NULL DEFAULT '' CHECK (
+                 length(request_id) <= 128 AND request_id NOT GLOB '*[^A-Za-z0-9_.:-]*'
+             ),
+             source_class        TEXT NOT NULL DEFAULT '' CHECK (
+                 length(source_class) <= 64 AND source_class NOT GLOB '*[^a-z0-9_]*'
+             ),
+             bucket              TEXT NOT NULL DEFAULT '' CHECK (
+                 length(bucket) <= 64 AND bucket NOT GLOB '*[^a-z0-9_]*'
+             ),
+             rejected_count      INTEGER NOT NULL DEFAULT 0 CHECK (rejected_count >= 0),
+             retry_after_seconds INTEGER NOT NULL DEFAULT 0 CHECK (retry_after_seconds >= 0),
+             occurred_at         REAL NOT NULL
+         );
+
+         CREATE INDEX idx_security_audit_events_occurred
+             ON security_audit_events(occurred_at, id);
+         CREATE INDEX idx_security_audit_events_action_outcome
+             ON security_audit_events(action, outcome, occurred_at DESC);
+         CREATE INDEX idx_security_audit_events_actor
+             ON security_audit_events(actor_id, occurred_at DESC);
+         CREATE INDEX idx_security_audit_events_request
+             ON security_audit_events(request_id) WHERE request_id <> '';
+
+         CREATE TRIGGER security_audit_events_no_update
+         BEFORE UPDATE ON security_audit_events
+         BEGIN
+             SELECT RAISE(ABORT, 'security audit events are append-only');
+         END;
+
+         CREATE TABLE security_audit_maintenance (
+             id                INTEGER PRIMARY KEY CHECK (id = 1),
+             last_retention_at REAL
+         );
+         INSERT INTO security_audit_maintenance (id, last_retention_at) VALUES (1, NULL);",
+    )?;
     Ok(())
 }
 

@@ -39,9 +39,9 @@ manifest 存在时，`serve` 和普通 `index` 会在认证库迁移后验证整
 
 ## 全局运行设置
 
-管理员通过 `GET/PUT /api/admin/runtime-settings` 或前端管理页维护以下 16 项。响应中的 group、control、apply mode、allowed values 和秘密标记是前端控件的权威元数据；管理页必须逐项呈现，不能用硬编码字段子集代替。
+管理员通过 `GET/PUT /api/admin/runtime-settings` 或前端管理页维护以下 17 项。响应中的 group、control、apply mode、allowed values 和秘密标记是前端控件的权威元数据；管理页必须逐项呈现，不能用硬编码字段子集代替。
 
-这 16 项的字段名、默认值、parser/serializer、秘密标记和 UI 元数据由 storage 层同一 registry 定义。管理 API 写入、`serve` 启动、命令启动和 observability 初始化都调用该 registry；不存在“保存成功但下次启动才发现语法无效”的第二套校验。registry 的所有默认值和往返序列化均由穷举测试覆盖。
+这 17 项的字段名、默认值、parser/serializer、秘密标记和 UI 元数据由 storage 层同一 registry 定义。管理 API 写入、`serve` 启动、命令启动和 observability 初始化都调用该 registry；不存在“保存成功但下次启动才发现语法无效”的第二套校验。registry 的所有默认值和往返序列化均由穷举测试覆盖。
 
 | 字段                               | 默认值                    | 秘密 | 前端控件                          | 生效时机 | 使用者                            |
 | ---------------------------------- | ------------------------- | ---: | --------------------------------- | -------- | --------------------------------- |
@@ -55,6 +55,7 @@ manifest 存在时，`serve` 和普通 `index` 会在认证库迁移后验证整
 | `secure_cookies`                   | `false`                   |   否 | 布尔开关                          | 重启进程 | `litradar_session` 的 Secure 标志 |
 | `trusted_proxy_cidrs`              | 空                        |   否 | IPv4/IPv6 CIDR 列表               | 重启进程 | 可信反向代理直连网络              |
 | `auth_rate_limit_policy`           | 见下文                    |   否 | 严格 JSON 文本                    | 重启进程 | 登录/注册分层 token bucket        |
+| `audit_retention_days`             | `180`                     |   否 | `1..=3650` 的整数                 | 下一检查 | 持久安全审计保留                  |
 | `ai_allowed_base_urls`             | 空                        |   否 | 有序 HTTPS URL 列表               | 下一请求 | 用户可选择的 AI Endpoint 目录     |
 | `index_provider_routes`            | 三个官方目录的默认映射    |   否 | 每个 catalog 的能力过滤单选       | 下一命令 | CSV stem 到索引 Provider          |
 | `article_abstract_provider_orders` | 见下文                    |   否 | 默认顺序 + catalog 继承/排序/禁用 | 下一请求 | 在线摘要页 fallback               |
@@ -162,6 +163,8 @@ Scholarly 的 `workers` 只控制每个期刊子进程内 OpenAlex DOI 子批的
 ```
 
 所有 capacity/refill/key limit 必须为正并处于固定上限内；全局熔断器的容量必须大于每个前置桶，补充速率不得低于前置桶，防止管理员配置重新引入单一来源耗尽全局额度的问题。该字段规范化为紧凑 JSON；未知、缺失、零值、越界或不满足层级关系时返回 `400`，同一更新整体回滚。
+
+`audit_retention_days` 只接受 `1..=3650` 的十进制整数，默认 `180`。统一服务启动后立即执行一次保留检查，之后每 24 小时检查一次；数据库中的持久 maintenance 标记让共享认证库的多个实例在任意 24 小时窗口内最多有一个实例执行删除。每次事务最多删除 10,000 条过期记录，下一次检查继续处理剩余记录。设置更新在下一次检查读取，不需要重启。
 
 `ai_allowed_base_urls` 只接受准确 HTTPS base URL；拒绝 HTTP、凭据、query、fragment 和端口 0，并统一补全 path 尾随 `/`、按首次出现顺序去重。默认空列表会禁用所有 AI 出站请求。普通用户从 `GET /api/tracking/ai-endpoints` 返回的目录中选择，保存时 API 和 storage 事务都会再次做准确成员校验；worker 在每次实际 AI 请求前重新读取当前目录，因此删除目录项会阻止后续尝试继续使用旧配置。
 

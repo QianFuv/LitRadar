@@ -123,12 +123,22 @@ pub fn create_scheduled_task(
     auth_db_path: impl AsRef<Path>,
     task: ScheduledTaskCreateParams<'_>,
 ) -> Result<ScheduledTaskInfo, BusinessRepositoryError> {
+    create_scheduled_task_with_audit(auth_db_path, task, None)
+}
+
+/// Create a scheduled task and persist a required audit event atomically.
+pub fn create_scheduled_task_with_audit(
+    auth_db_path: impl AsRef<Path>,
+    task: ScheduledTaskCreateParams<'_>,
+    audit: Option<&SecurityAuditEvent>,
+) -> Result<ScheduledTaskInfo, BusinessRepositoryError> {
     validate_scheduled_job(task.job)?;
     validate_scheduled_timing(task.timezone, task.timeout_seconds)?;
-    let connection = open_business_connection(auth_db_path)?;
+    let mut connection = open_business_connection(auth_db_path)?;
+    let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
     let now = now_seconds();
     let job_spec = serde_json::to_string(task.job)?;
-    connection.execute(
+    transaction.execute(
         "INSERT INTO scheduled_tasks \
          (name, job_spec, legacy_command, cron, timezone, timeout_seconds, coalesce, enabled, \
           last_run_at, last_status, created_at, updated_at) \
@@ -145,8 +155,14 @@ pub fn create_scheduled_task(
             now
         ],
     )?;
-    get_scheduled_task_from_connection(&connection, connection.last_insert_rowid())?
-        .ok_or_else(|| rusqlite::Error::QueryReturnedNoRows.into())
+    let task_id = transaction.last_insert_rowid();
+    let created = get_scheduled_task_from_connection(&transaction, task_id)?
+        .ok_or_else(|| BusinessRepositoryError::from(rusqlite::Error::QueryReturnedNoRows))?;
+    if let Some(audit) = audit {
+        insert_required_security_audit_event(&transaction, &audit.clone().with_target_id(task_id))?;
+    }
+    transaction.commit()?;
+    Ok(created)
 }
 
 /// Update a scheduled task.
@@ -163,8 +179,18 @@ pub fn update_scheduled_task(
     auth_db_path: impl AsRef<Path>,
     task: ScheduledTaskUpdateParams<'_>,
 ) -> Result<Option<ScheduledTaskInfo>, BusinessRepositoryError> {
-    let connection = open_business_connection(auth_db_path)?;
-    let Some(current) = get_scheduled_task_from_connection(&connection, task.task_id)? else {
+    update_scheduled_task_with_audit(auth_db_path, task, None)
+}
+
+/// Update a scheduled task and persist a required audit event atomically.
+pub fn update_scheduled_task_with_audit(
+    auth_db_path: impl AsRef<Path>,
+    task: ScheduledTaskUpdateParams<'_>,
+    audit: Option<&SecurityAuditEvent>,
+) -> Result<Option<ScheduledTaskInfo>, BusinessRepositoryError> {
+    let mut connection = open_business_connection(auth_db_path)?;
+    let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    let Some(current) = get_scheduled_task_from_connection(&transaction, task.task_id)? else {
         return Ok(None);
     };
     let next_job = task.job.or(current.job.as_ref());
@@ -184,7 +210,7 @@ pub fn update_scheduled_task(
     } else {
         current.legacy_command.as_deref()
     };
-    connection.execute(
+    transaction.execute(
         "UPDATE scheduled_tasks SET name = ?1, job_spec = ?2, legacy_command = ?3, cron = ?4, \
          timezone = ?5, timeout_seconds = ?6, coalesce = ?7, enabled = ?8, \
          updated_at = ?9 WHERE id = ?10",
@@ -201,7 +227,17 @@ pub fn update_scheduled_task(
             task.task_id
         ],
     )?;
-    get_scheduled_task_from_connection(&connection, task.task_id)
+    let updated = get_scheduled_task_from_connection(&transaction, task.task_id)?;
+    if updated.is_some() {
+        if let Some(audit) = audit {
+            insert_required_security_audit_event(
+                &transaction,
+                &audit.clone().with_target_id(task.task_id),
+            )?;
+        }
+    }
+    transaction.commit()?;
+    Ok(updated)
 }
 
 /// Delete a scheduled task.
@@ -218,8 +254,27 @@ pub fn delete_scheduled_task(
     auth_db_path: impl AsRef<Path>,
     task_id: i64,
 ) -> Result<bool, BusinessRepositoryError> {
-    let connection = open_business_connection(auth_db_path)?;
-    let count = connection.execute("DELETE FROM scheduled_tasks WHERE id = ?1", [task_id])?;
+    delete_scheduled_task_with_audit(auth_db_path, task_id, None)
+}
+
+/// Delete a scheduled task and persist a required audit event atomically.
+pub fn delete_scheduled_task_with_audit(
+    auth_db_path: impl AsRef<Path>,
+    task_id: i64,
+    audit: Option<&SecurityAuditEvent>,
+) -> Result<bool, BusinessRepositoryError> {
+    let mut connection = open_business_connection(auth_db_path)?;
+    let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    let count = transaction.execute("DELETE FROM scheduled_tasks WHERE id = ?1", [task_id])?;
+    if count > 0 {
+        if let Some(audit) = audit {
+            insert_required_security_audit_event(
+                &transaction,
+                &audit.clone().with_target_id(task_id),
+            )?;
+        }
+    }
+    transaction.commit()?;
     Ok(count > 0)
 }
 

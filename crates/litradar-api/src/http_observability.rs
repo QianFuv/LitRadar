@@ -200,6 +200,7 @@ mod tests {
     use axum::Router;
     use litradar_storage::{SecretCodec, StorageConfig};
     use serde_json::Value;
+    use tempfile::tempdir;
     use tower::ServiceExt;
     use tracing::instrument::WithSubscriber;
     use tracing::Instrument;
@@ -418,8 +419,9 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn blocking_and_background_events_keep_the_request_span() {
+        let temp_dir = tempdir().expect("observability state root should be created");
         let state = ApiState::new(
-            StorageConfig::from_project_root("http-observability-state-root"),
+            StorageConfig::from_project_root(temp_dir.path()),
             SecretCodec::from_key([9_u8; 32]),
             false,
         );

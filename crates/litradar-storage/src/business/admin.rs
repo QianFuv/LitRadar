@@ -59,6 +59,17 @@ pub fn set_user_admin(
     user_id: UserId,
     is_admin: bool,
 ) -> Result<(), BusinessRepositoryError> {
+    set_user_admin_with_audit(auth_db_path, actor_id, user_id, is_admin, None)
+}
+
+/// Update administrator status and persist a required audit event atomically.
+pub fn set_user_admin_with_audit(
+    auth_db_path: impl AsRef<Path>,
+    actor_id: UserId,
+    user_id: UserId,
+    is_admin: bool,
+    audit: Option<&SecurityAuditEvent>,
+) -> Result<(), BusinessRepositoryError> {
     let mut connection = open_business_connection(auth_db_path)?;
     let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
     require_administrator_actor(&transaction, actor_id)?;
@@ -74,6 +85,15 @@ pub fn set_user_admin(
     )?;
     if updated != 1 {
         return Err(BusinessRepositoryError::AdministratorTargetNotFound);
+    }
+    if let Some(audit) = audit {
+        insert_required_security_audit_event(
+            &transaction,
+            &audit
+                .clone()
+                .with_actor_id(actor_id.value())
+                .with_target_id(user_id.value()),
+        )?;
     }
     transaction.commit()?;
     Ok(())
@@ -95,6 +115,16 @@ pub fn delete_user(
     actor_id: UserId,
     user_id: UserId,
 ) -> Result<(), BusinessRepositoryError> {
+    delete_user_with_audit(auth_db_path, actor_id, user_id, None)
+}
+
+/// Delete a user and persist a required audit event atomically.
+pub fn delete_user_with_audit(
+    auth_db_path: impl AsRef<Path>,
+    actor_id: UserId,
+    user_id: UserId,
+    audit: Option<&SecurityAuditEvent>,
+) -> Result<(), BusinessRepositoryError> {
     let mut connection = open_business_connection(auth_db_path)?;
     let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
     require_administrator_actor(&transaction, actor_id)?;
@@ -107,6 +137,15 @@ pub fn delete_user(
     let deleted = transaction.execute("DELETE FROM users WHERE id = ?1", [user_id.value()])?;
     if deleted != 1 {
         return Err(BusinessRepositoryError::AdministratorTargetNotFound);
+    }
+    if let Some(audit) = audit {
+        insert_required_security_audit_event(
+            &transaction,
+            &audit
+                .clone()
+                .with_actor_id(actor_id.value())
+                .with_target_id(user_id.value()),
+        )?;
     }
     transaction.commit()?;
     Ok(())
@@ -197,16 +236,25 @@ pub fn list_all_invite_codes(
 pub fn admin_create_invite_code(
     auth_db_path: impl AsRef<Path>,
 ) -> Result<AdminInviteCodeInfo, BusinessRepositoryError> {
+    admin_create_invite_code_with_audit(auth_db_path, None)
+}
+
+/// Create an administrator invite and persist a required audit event atomically.
+pub fn admin_create_invite_code_with_audit(
+    auth_db_path: impl AsRef<Path>,
+    audit: Option<&SecurityAuditEvent>,
+) -> Result<AdminInviteCodeInfo, BusinessRepositoryError> {
     let code = random_hex(ADMIN_INVITE_CODE_BYTES)
         .map_err(|error| BusinessRepositoryError::Sqlite(error.into_sqlite_error()))?;
-    let connection = open_business_connection(auth_db_path)?;
+    let mut connection = open_business_connection(auth_db_path)?;
+    let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
     let now = now_seconds();
-    connection.execute(
+    transaction.execute(
         "INSERT INTO invite_codes (code, created_by, created_at) VALUES (?1, NULL, ?2)",
         params![code, now],
     )?;
-    Ok(AdminInviteCodeInfo {
-        id: connection.last_insert_rowid(),
+    let invite = AdminInviteCodeInfo {
+        id: transaction.last_insert_rowid(),
         code,
         created_by: None,
         created_by_name: None,
@@ -214,7 +262,15 @@ pub fn admin_create_invite_code(
         used_by_name: None,
         used_at: None,
         created_at: now,
-    })
+    };
+    if let Some(audit) = audit {
+        insert_required_security_audit_event(
+            &transaction,
+            &audit.clone().with_target_id(invite.id),
+        )?;
+    }
+    transaction.commit()?;
+    Ok(invite)
 }
 
 /// Delete an unused invite code.
@@ -231,11 +287,30 @@ pub fn delete_invite_code(
     auth_db_path: impl AsRef<Path>,
     code_id: i64,
 ) -> Result<bool, BusinessRepositoryError> {
-    let connection = open_business_connection(auth_db_path)?;
-    let count = connection.execute(
+    delete_invite_code_with_audit(auth_db_path, code_id, None)
+}
+
+/// Delete an unused invite and persist a required audit event atomically.
+pub fn delete_invite_code_with_audit(
+    auth_db_path: impl AsRef<Path>,
+    code_id: i64,
+    audit: Option<&SecurityAuditEvent>,
+) -> Result<bool, BusinessRepositoryError> {
+    let mut connection = open_business_connection(auth_db_path)?;
+    let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    let count = transaction.execute(
         "DELETE FROM invite_codes WHERE id = ?1 AND used_by IS NULL",
         [code_id],
     )?;
+    if count > 0 {
+        if let Some(audit) = audit {
+            insert_required_security_audit_event(
+                &transaction,
+                &audit.clone().with_target_id(code_id),
+            )?;
+        }
+    }
+    transaction.commit()?;
     Ok(count > 0)
 }
 
@@ -316,15 +391,37 @@ pub fn create_announcement(
     priority: &str,
     enabled: bool,
 ) -> Result<AnnouncementInfo, BusinessRepositoryError> {
-    let connection = open_business_connection(auth_db_path)?;
+    create_announcement_with_audit(auth_db_path, title, message, priority, enabled, None)
+}
+
+/// Create an announcement and persist a required audit event atomically.
+pub fn create_announcement_with_audit(
+    auth_db_path: impl AsRef<Path>,
+    title: &str,
+    message: &str,
+    priority: &str,
+    enabled: bool,
+    audit: Option<&SecurityAuditEvent>,
+) -> Result<AnnouncementInfo, BusinessRepositoryError> {
+    let mut connection = open_business_connection(auth_db_path)?;
+    let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
     let now = now_seconds();
-    connection.execute(
+    transaction.execute(
         "INSERT INTO announcements (title, message, priority, enabled, created_at, updated_at) \
          VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
         params![title, message, priority, enabled as i64, now, now],
     )?;
-    get_announcement_from_connection(&connection, connection.last_insert_rowid())?
-        .ok_or_else(|| rusqlite::Error::QueryReturnedNoRows.into())
+    let announcement_id = transaction.last_insert_rowid();
+    let announcement = get_announcement_from_connection(&transaction, announcement_id)?
+        .ok_or_else(|| BusinessRepositoryError::from(rusqlite::Error::QueryReturnedNoRows))?;
+    if let Some(audit) = audit {
+        insert_required_security_audit_event(
+            &transaction,
+            &audit.clone().with_target_id(announcement_id),
+        )?;
+    }
+    transaction.commit()?;
+    Ok(announcement)
 }
 
 /// Update an announcement.
@@ -349,11 +446,33 @@ pub fn update_announcement(
     priority: Option<&str>,
     enabled: Option<bool>,
 ) -> Result<Option<AnnouncementInfo>, BusinessRepositoryError> {
-    let connection = open_business_connection(auth_db_path)?;
-    let Some(current) = get_announcement_from_connection(&connection, announcement_id)? else {
+    update_announcement_with_audit(
+        auth_db_path,
+        announcement_id,
+        title,
+        message,
+        priority,
+        enabled,
+        None,
+    )
+}
+
+/// Update an announcement and persist a required audit event atomically.
+pub fn update_announcement_with_audit(
+    auth_db_path: impl AsRef<Path>,
+    announcement_id: i64,
+    title: Option<&str>,
+    message: Option<&str>,
+    priority: Option<&str>,
+    enabled: Option<bool>,
+    audit: Option<&SecurityAuditEvent>,
+) -> Result<Option<AnnouncementInfo>, BusinessRepositoryError> {
+    let mut connection = open_business_connection(auth_db_path)?;
+    let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    let Some(current) = get_announcement_from_connection(&transaction, announcement_id)? else {
         return Ok(None);
     };
-    connection.execute(
+    transaction.execute(
         "UPDATE announcements SET title = ?1, message = ?2, priority = ?3, enabled = ?4, \
          updated_at = ?5 WHERE id = ?6",
         params![
@@ -365,7 +484,17 @@ pub fn update_announcement(
             announcement_id
         ],
     )?;
-    get_announcement_from_connection(&connection, announcement_id)
+    let announcement = get_announcement_from_connection(&transaction, announcement_id)?;
+    if announcement.is_some() {
+        if let Some(audit) = audit {
+            insert_required_security_audit_event(
+                &transaction,
+                &audit.clone().with_target_id(announcement_id),
+            )?;
+        }
+    }
+    transaction.commit()?;
+    Ok(announcement)
 }
 
 /// Delete an announcement.
@@ -382,8 +511,28 @@ pub fn delete_announcement(
     auth_db_path: impl AsRef<Path>,
     announcement_id: i64,
 ) -> Result<bool, BusinessRepositoryError> {
-    let connection = open_business_connection(auth_db_path)?;
-    let count = connection.execute("DELETE FROM announcements WHERE id = ?1", [announcement_id])?;
+    delete_announcement_with_audit(auth_db_path, announcement_id, None)
+}
+
+/// Delete an announcement and persist a required audit event atomically.
+pub fn delete_announcement_with_audit(
+    auth_db_path: impl AsRef<Path>,
+    announcement_id: i64,
+    audit: Option<&SecurityAuditEvent>,
+) -> Result<bool, BusinessRepositoryError> {
+    let mut connection = open_business_connection(auth_db_path)?;
+    let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    let count =
+        transaction.execute("DELETE FROM announcements WHERE id = ?1", [announcement_id])?;
+    if count > 0 {
+        if let Some(audit) = audit {
+            insert_required_security_audit_event(
+                &transaction,
+                &audit.clone().with_target_id(announcement_id),
+            )?;
+        }
+    }
+    transaction.commit()?;
     Ok(count > 0)
 }
 fn get_auth_stats(auth_db_path: impl AsRef<Path>) -> Result<AuthStats, BusinessRepositoryError> {

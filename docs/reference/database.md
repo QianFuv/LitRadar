@@ -185,6 +185,7 @@ service_heartbeats
 runtime_settings
 managed_meta_catalogs
 announcements
+security_audit_events -- security_audit_maintenance
 ```
 
 时间字段大多是 Rust 生成的 Unix 秒数 `REAL`；`scheduled_for` 是按分钟对齐的 UTC Unix 秒数。
@@ -223,9 +224,17 @@ v1–v3 的破坏性重建不会重映射旧 favorite 的 article ID；精确 v4
 
 `litradar admin backup restore` 在替换前后检查最近 90 秒的心跳，目标仍活动时拒绝恢复。
 
+### 持久安全审计
+
+认证库 v9 新增 `security_audit_events`。每行包含可空 `actor_id`/`target_id`、固定 `action`/`outcome`/`reason`、服务器 `request_id`、限流 `source_class`/`bucket`/计数以及 `occurred_at`。这些字段只保存分类和内部 ID，不保存用户名、密码、原始 token、邀请码、IP、Header 或请求内容。
+
+索引覆盖 `(occurred_at, id)`、`(action, outcome, occurred_at)`、`(actor_id, occurred_at)` 和非空 `request_id`。触发器拒绝 `UPDATE`，从而保持追加语义；受控保留任务仍可 `DELETE`。安全变更 repository 在业务事务提交前插入必需审计行，插入失败会回滚业务变更。认证拒绝与限流通过独立 immediate transaction 同步追加。
+
+`security_audit_maintenance` 只包含 `id=1` 和可空 `last_retention_at`。保留任务在同一 immediate transaction 中检查/更新该时间并删除最多 10,000 条过期记录，因此失败不会留下部分删除或错误推进窗口。默认保留 180 天，配置范围为 1–3650 天。
+
 ### `runtime_settings`
 
-只接受[运行配置](configuration.md)列出的 11 个字段。两个 key pool 的非空值加密；Provider 路由和顺序是非秘密运行配置，不进入内容库。
+只接受[运行配置](configuration.md)列出的 17 个字段。两个 key pool 的非空值加密；Provider 路由、顺序和审计保留天数是非秘密运行配置，不进入内容库。
 
 ### `managed_meta_catalogs` 和 `announcements`
 

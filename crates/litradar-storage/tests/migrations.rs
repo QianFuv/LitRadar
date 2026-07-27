@@ -31,6 +31,8 @@ fn empty_auth_database_migration_creates_current_schema() {
     assert!(table_exists(&path, "scheduler_workers"));
     assert!(table_exists(&path, "service_heartbeats"));
     assert!(table_exists(&path, "managed_meta_catalogs"));
+    assert!(table_exists(&path, "security_audit_events"));
+    assert!(table_exists(&path, "security_audit_maintenance"));
     for field in [
         "index_provider_routes",
         "article_abstract_provider_orders",
@@ -41,11 +43,108 @@ fn empty_auth_database_migration_creates_current_schema() {
 }
 
 #[test]
+fn security_audit_migration_upgrades_version_eight_with_append_only_indexes() {
+    let temp_dir = tempdir().expect("temp directory should be created");
+    let path = temp_dir.path().join("audit-v8.sqlite");
+    migrate_auth_database(&path).expect("current auth database should migrate");
+    let connection = Connection::open(&path).expect("auth database should open");
+    remove_current_security_audit_schema(&connection);
+    connection
+        .execute_batch("PRAGMA user_version = 8;")
+        .expect("version eight fixture should be created");
+    drop(connection);
+
+    migrate_auth_database(&path).expect("version eight database should migrate");
+
+    assert_eq!(user_version(&path), AUTH_SCHEMA_VERSION);
+    assert_eq!(
+        table_columns(&path, "security_audit_events"),
+        [
+            "id",
+            "actor_id",
+            "target_id",
+            "action",
+            "outcome",
+            "reason",
+            "request_id",
+            "source_class",
+            "bucket",
+            "rejected_count",
+            "retry_after_seconds",
+            "occurred_at",
+        ]
+    );
+    for index in [
+        "idx_security_audit_events_occurred",
+        "idx_security_audit_events_action_outcome",
+        "idx_security_audit_events_actor",
+        "idx_security_audit_events_request",
+    ] {
+        assert!(index_exists(&path, index));
+    }
+    assert!(schema_object_exists(
+        &path,
+        "trigger",
+        "security_audit_events_no_update"
+    ));
+    let connection = Connection::open(&path).expect("migrated audit database should open");
+    connection
+        .execute(
+            "INSERT INTO security_audit_events (action, outcome, occurred_at) VALUES ('login', 'completed', 1.0)",
+            [],
+        )
+        .expect("audit row should insert");
+    connection
+        .execute(
+            "UPDATE security_audit_events SET outcome = 'changed' WHERE id = 1",
+            [],
+        )
+        .expect_err("audit rows should reject updates");
+    connection
+        .execute(
+            "INSERT INTO security_audit_events (action, outcome, occurred_at) VALUES ('unsafe action', 'completed', 2.0)",
+            [],
+        )
+        .expect_err("audit symbols should reject content-bearing values");
+}
+
+#[test]
+fn security_audit_migration_failure_keeps_version_eight_state() {
+    let temp_dir = tempdir().expect("temp directory should be created");
+    let path = temp_dir.path().join("audit-v8-conflict.sqlite");
+    migrate_auth_database(&path).expect("current auth database should migrate");
+    let connection = Connection::open(&path).expect("auth database should open");
+    remove_current_security_audit_schema(&connection);
+    connection
+        .execute_batch(
+            "CREATE TABLE security_audit_events (sentinel TEXT NOT NULL);
+             INSERT INTO security_audit_events (sentinel) VALUES ('keep');
+             PRAGMA user_version = 8;",
+        )
+        .expect("conflicting version eight fixture should be created");
+    drop(connection);
+
+    migrate_auth_database(&path).expect_err("conflicting audit schema should fail migration");
+
+    assert_eq!(user_version(&path), 8);
+    assert_eq!(table_columns(&path, "security_audit_events"), ["sentinel"]);
+    let sentinel: String = Connection::open(&path)
+        .expect("failed migration database should reopen")
+        .query_row("SELECT sentinel FROM security_audit_events", [], |row| {
+            row.get(0)
+        })
+        .expect("preexisting sentinel should remain");
+    assert_eq!(sentinel, "keep");
+    assert!(!table_exists(&path, "security_audit_maintenance"));
+}
+
+#[test]
 fn managed_meta_migration_preserves_version_five_rows() {
     let temp_dir = tempdir().expect("temp directory should be created");
     let path = temp_dir.path().join("version-five-auth.sqlite");
     migrate_auth_database(&path).expect("current auth database should migrate");
     let connection = Connection::open(&path).expect("auth database should open");
+    remove_current_security_audit_schema(&connection);
     connection
         .execute_batch(
             "
@@ -85,6 +184,7 @@ fn provider_order_migration_prefers_abstract_and_preserves_empty_fulltext() {
     let path = temp_dir.path().join("provider-orders.sqlite");
     migrate_auth_database(&path).expect("current auth database should migrate");
     let connection = Connection::open(&path).expect("auth database should open");
+    remove_current_security_audit_schema(&connection);
     connection
         .execute_batch(
             "PRAGMA user_version = 6;
@@ -125,6 +225,7 @@ fn provider_order_migration_uses_detail_when_abstract_is_absent() {
     let path = temp_dir.path().join("detail-fallback.sqlite");
     migrate_auth_database(&path).expect("current auth database should migrate");
     let connection = Connection::open(&path).expect("auth database should open");
+    remove_current_security_audit_schema(&connection);
     connection
         .execute_batch(
             "PRAGMA user_version = 6;
@@ -151,6 +252,7 @@ fn malformed_provider_order_rolls_back_version_six_migration() {
     let path = temp_dir.path().join("invalid-provider-orders.sqlite");
     migrate_auth_database(&path).expect("current auth database should migrate");
     let connection = Connection::open(&path).expect("auth database should open");
+    remove_current_security_audit_schema(&connection);
     connection
         .execute_batch(
             "PRAGMA user_version = 6;
@@ -182,6 +284,7 @@ fn provider_runtime_name_migration_rewrites_cnki_and_zjlib_tokens() {
     let path = temp_dir.path().join("provider-name-rewrite.sqlite");
     migrate_auth_database(&path).expect("current auth database should migrate");
     let connection = Connection::open(&path).expect("auth database should open");
+    remove_current_security_audit_schema(&connection);
     connection
         .execute_batch(
             r#"
@@ -240,6 +343,7 @@ fn provider_runtime_name_migration_materializes_implicit_legacy_defaults() {
     let path = temp_dir.path().join("provider-implicit-defaults.sqlite");
     migrate_auth_database(&path).expect("current auth database should migrate");
     let connection = Connection::open(&path).expect("auth database should open");
+    remove_current_security_audit_schema(&connection);
     connection
         .pragma_update(None, "user_version", 7)
         .expect("version seven fixture should write");
@@ -273,6 +377,7 @@ fn provider_runtime_name_migration_materializes_only_missing_defaults() {
     let path = temp_dir.path().join("provider-partial-defaults.sqlite");
     migrate_auth_database(&path).expect("current auth database should migrate");
     let connection = Connection::open(&path).expect("auth database should open");
+    remove_current_security_audit_schema(&connection);
     connection
         .execute_batch(
             r#"
@@ -317,6 +422,7 @@ fn malformed_provider_runtime_name_migration_rolls_back_materialized_defaults() 
     let path = temp_dir.path().join("provider-invalid-v8.sqlite");
     migrate_auth_database(&path).expect("current auth database should migrate");
     let connection = Connection::open(&path).expect("auth database should open");
+    remove_current_security_audit_schema(&connection);
     connection
         .execute_batch(
             "PRAGMA user_version = 7;
@@ -347,6 +453,7 @@ fn service_heartbeat_migration_preserves_version_three_scheduler_rows() {
     let path = temp_dir.path().join("auth.sqlite");
     migrate_auth_database(&path).expect("current auth database should migrate");
     let connection = Connection::open(&path).expect("auth database should open");
+    remove_current_security_audit_schema(&connection);
     connection
         .execute_batch(
             "DROP TABLE managed_meta_catalogs;
@@ -1223,6 +1330,27 @@ fn index_exists(path: &Path, index_name: &str) -> bool {
             |row| row.get(0),
         )
         .expect("index existence should be readable")
+}
+
+fn schema_object_exists(path: &Path, object_type: &str, object_name: &str) -> bool {
+    let connection = Connection::open(path).expect("database should open for schema query");
+    connection
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = ?1 AND name = ?2)",
+            (object_type, object_name),
+            |row| row.get(0),
+        )
+        .expect("schema object existence should be readable")
+}
+
+fn remove_current_security_audit_schema(connection: &Connection) {
+    connection
+        .execute_batch(
+            "DROP TRIGGER security_audit_events_no_update;
+             DROP TABLE security_audit_maintenance;
+             DROP TABLE security_audit_events;",
+        )
+        .expect("current security audit schema should be removed from legacy fixture");
 }
 
 fn table_columns(path: &Path, table_name: &str) -> Vec<String> {

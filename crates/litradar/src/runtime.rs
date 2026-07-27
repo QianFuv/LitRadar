@@ -3,9 +3,14 @@
 use std::error::Error;
 use std::future::Future;
 use std::io;
-use std::time::{Duration, Instant};
+use std::path::PathBuf;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use litradar_api::PreparedApiService;
+use litradar_storage::{
+    cleanup_security_audit_events, load_audit_retention_days,
+    report_security_audit_persistence_failure, SecurityAuditRetentionResult,
+};
 use litradar_worker::scheduler::{
     run_due_scheduler_once, scheduler_worker_id, SchedulerCancellation, SchedulerExecutionResult,
 };
@@ -13,6 +18,8 @@ use tokio::sync::watch;
 use tracing::Instrument;
 
 use crate::config::ServeConfig;
+
+const AUDIT_RETENTION_INTERVAL: Duration = Duration::from_secs(86_400);
 
 /// Run HTTP and scheduling under one coordinated lifecycle.
 ///
@@ -51,20 +58,150 @@ async fn run_service_inner(config: ServeConfig) -> Result<(), Box<dyn Error>> {
     let cancellation = SchedulerCancellation::new();
     let (shutdown_sender, shutdown_receiver) = watch::channel(false);
     let api_future = api_service.run(wait_for_shutdown(shutdown_receiver.clone()));
-    let scheduler_future = run_scheduler_loop(config, shutdown_receiver, cancellation.clone());
+    let scheduler_future = run_scheduler_loop(
+        config.clone(),
+        shutdown_receiver.clone(),
+        cancellation.clone(),
+    );
+    let audit_retention_future =
+        run_audit_retention_loop(config.auth_db_path.clone(), shutdown_receiver);
     tracing::info!(
         event = "service.ready",
         component = "runtime",
-        component_count = 2,
+        component_count = 3,
     );
     coordinate_components(
         api_future,
         scheduler_future,
+        audit_retention_future,
         termination_signal(),
         shutdown_sender,
         cancellation,
     )
     .await
+}
+
+async fn run_audit_retention_loop(
+    auth_db_path: PathBuf,
+    shutdown: watch::Receiver<bool>,
+) -> Result<(), Box<dyn Error>> {
+    run_audit_retention_loop_with(
+        AUDIT_RETENTION_INTERVAL,
+        shutdown,
+        move || {
+            let auth_db_path = auth_db_path.clone();
+            async move { run_audit_retention_tick(auth_db_path).await }
+        },
+        tokio::time::sleep,
+    )
+    .await
+}
+
+async fn run_audit_retention_tick(
+    auth_db_path: PathBuf,
+) -> Result<SecurityAuditRetentionResult, AuditRetentionTickError> {
+    match tokio::task::spawn_blocking(move || {
+        let retention_days = load_audit_retention_days(&auth_db_path).map_err(|_| {
+            report_security_audit_persistence_failure("retention_setting");
+            AuditRetentionTickError {
+                error_kind: "setting_error",
+            }
+        })?;
+        cleanup_security_audit_events(&auth_db_path, retention_days, unix_time()).map_err(|_| {
+            AuditRetentionTickError {
+                error_kind: "persistence_error",
+            }
+        })
+    })
+    .await
+    {
+        Ok(result) => result,
+        Err(_) => {
+            report_security_audit_persistence_failure("retention_join");
+            Err(AuditRetentionTickError {
+                error_kind: "join_error",
+            })
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct AuditRetentionTickError {
+    error_kind: &'static str,
+}
+
+async fn run_audit_retention_loop_with<Tick, TickFuture, Delay, DelayFuture>(
+    interval: Duration,
+    mut shutdown: watch::Receiver<bool>,
+    mut run_tick: Tick,
+    mut delay: Delay,
+) -> Result<(), Box<dyn Error>>
+where
+    Tick: FnMut() -> TickFuture,
+    TickFuture: Future<Output = Result<SecurityAuditRetentionResult, AuditRetentionTickError>>,
+    Delay: FnMut(Duration) -> DelayFuture,
+    DelayFuture: Future<Output = ()>,
+{
+    loop {
+        if *shutdown.borrow() {
+            return Ok(());
+        }
+        let started_at = Instant::now();
+        match run_tick().await {
+            Ok(result) => emit_audit_retention_completed(&result, started_at),
+            Err(error) => emit_audit_retention_failed(started_at, error.error_kind),
+        }
+        if *shutdown.borrow() {
+            return Ok(());
+        }
+        tokio::select! {
+            () = delay(interval) => {}
+            changed = shutdown.changed() => {
+                let _ = changed;
+                return Ok(());
+            }
+        }
+    }
+}
+
+fn emit_audit_retention_completed(result: &SecurityAuditRetentionResult, started_at: Instant) {
+    if result.did_run {
+        tracing::info!(
+            event = "audit.retention.completed",
+            component = "security",
+            outcome = "success",
+            deleted_count = result.deleted_count,
+            has_more_expired = result.has_more_expired,
+            cutoff = result.cutoff,
+            duration_ms = elapsed_millis(started_at),
+        );
+    } else {
+        tracing::debug!(
+            event = "audit.retention.skipped",
+            component = "security",
+            outcome = "success",
+            reason = "daily_window_not_due",
+            cutoff = result.cutoff,
+            duration_ms = elapsed_millis(started_at),
+        );
+    }
+}
+
+fn emit_audit_retention_failed(started_at: Instant, error_kind: &'static str) {
+    tracing::error!(
+        event = "audit.retention.failed",
+        component = "security",
+        outcome = "failure",
+        error_kind,
+        duration_ms = elapsed_millis(started_at),
+    );
+}
+
+fn unix_time() -> f64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system time should be after Unix epoch")
+        .as_secs_f64()
 }
 
 async fn run_scheduler_loop(
@@ -232,9 +369,10 @@ fn elapsed_millis(started_at: Instant) -> u64 {
     started_at.elapsed().as_millis().min(u128::from(u64::MAX)) as u64
 }
 
-async fn coordinate_components<ApiFuture, SchedulerFuture, SignalFuture>(
+async fn coordinate_components<ApiFuture, SchedulerFuture, AuditFuture, SignalFuture>(
     api_future: ApiFuture,
     scheduler_future: SchedulerFuture,
+    audit_future: AuditFuture,
     signal_future: SignalFuture,
     shutdown_sender: watch::Sender<bool>,
     cancellation: SchedulerCancellation,
@@ -242,15 +380,18 @@ async fn coordinate_components<ApiFuture, SchedulerFuture, SignalFuture>(
 where
     ApiFuture: Future<Output = Result<(), Box<dyn Error>>>,
     SchedulerFuture: Future<Output = Result<(), Box<dyn Error>>>,
+    AuditFuture: Future<Output = Result<(), Box<dyn Error>>>,
     SignalFuture: Future<Output = ()>,
 {
     tokio::pin!(api_future);
     tokio::pin!(scheduler_future);
+    tokio::pin!(audit_future);
     tokio::pin!(signal_future);
 
     let first = tokio::select! {
         result = &mut api_future => FirstCompletion::Api(result),
         result = &mut scheduler_future => FirstCompletion::Scheduler(result),
+        result = &mut audit_future => FirstCompletion::Audit(result),
         () = &mut signal_future => FirstCompletion::Signal,
     };
     match &first {
@@ -287,15 +428,31 @@ where
                 "unexpected_stop"
             },
         ),
+        FirstCompletion::Audit(result) => tracing::error!(
+            event = "service.component.failed",
+            component = "audit_retention",
+            outcome = if result.is_err() {
+                "failure"
+            } else {
+                "unexpected_stop"
+            },
+            error_kind = if result.is_err() {
+                "component_failure"
+            } else {
+                "unexpected_stop"
+            },
+        ),
     }
     cancellation.cancel();
     let _ = shutdown_sender.send(true);
 
     match first {
         FirstCompletion::Signal => {
-            let (api_result, scheduler_result) = tokio::join!(api_future, scheduler_future);
+            let (api_result, scheduler_result, audit_result) =
+                tokio::join!(api_future, scheduler_future, audit_future);
             api_result?;
             scheduler_result?;
+            audit_result?;
             tracing::info!(
                 event = "service.shutdown.completed",
                 component = "runtime",
@@ -304,16 +461,25 @@ where
             Ok(())
         }
         FirstCompletion::Api(api_result) => {
-            let scheduler_result = scheduler_future.await;
+            let (scheduler_result, audit_result) = tokio::join!(scheduler_future, audit_future);
             api_result?;
             scheduler_result?;
+            audit_result?;
             Err(io::Error::other("HTTP service stopped unexpectedly").into())
         }
         FirstCompletion::Scheduler(scheduler_result) => {
-            let api_result = api_future.await;
+            let (api_result, audit_result) = tokio::join!(api_future, audit_future);
             scheduler_result?;
             api_result?;
+            audit_result?;
             Err(io::Error::other("scheduler stopped unexpectedly").into())
+        }
+        FirstCompletion::Audit(audit_result) => {
+            let (api_result, scheduler_result) = tokio::join!(api_future, scheduler_future);
+            audit_result?;
+            api_result?;
+            scheduler_result?;
+            Err(io::Error::other("audit retention stopped unexpectedly").into())
         }
     }
 }
@@ -321,6 +487,7 @@ where
 enum FirstCompletion {
     Api(Result<(), Box<dyn Error>>),
     Scheduler(Result<(), Box<dyn Error>>),
+    Audit(Result<(), Box<dyn Error>>),
     Signal,
 }
 
@@ -426,8 +593,94 @@ mod tests {
     use tracing_subscriber::fmt::MakeWriter;
 
     use super::{
-        coordinate_components, run_scheduler_loop_with, wait_for_shutdown, SchedulerTickError,
+        coordinate_components, run_audit_retention_loop_with, run_scheduler_loop_with,
+        wait_for_shutdown, AuditRetentionTickError, SchedulerTickError,
     };
+
+    #[tokio::test]
+    async fn audit_retention_runs_immediately_and_records_observability() {
+        let logs = CapturedLogs::default();
+        let tick_count = Arc::new(AtomicUsize::new(0));
+        let tick_count_for_work = Arc::clone(&tick_count);
+        let (shutdown_sender, shutdown_receiver) = watch::channel(false);
+
+        run_audit_retention_loop_with(
+            Duration::from_secs(86_400),
+            shutdown_receiver,
+            move || {
+                tick_count_for_work.fetch_add(1, Ordering::SeqCst);
+                shutdown_sender
+                    .send(true)
+                    .expect("retention receiver should remain open");
+                async {
+                    Ok(litradar_storage::SecurityAuditRetentionResult {
+                        did_run: true,
+                        deleted_count: 3,
+                        has_more_expired: false,
+                        cutoff: 1_000.0,
+                    })
+                }
+            },
+            |_| pending(),
+        )
+        .with_subscriber(logs.subscriber())
+        .await
+        .expect("retention loop should stop after immediate cleanup");
+
+        assert_eq!(tick_count.load(Ordering::SeqCst), 1);
+        let events = logs.events();
+        let completed = events
+            .iter()
+            .find(|event| event["event"] == "audit.retention.completed")
+            .expect("completed retention event should be emitted");
+        assert_eq!(completed["deleted_count"], 3);
+        assert_eq!(completed["outcome"], "success");
+    }
+
+    #[tokio::test]
+    async fn audit_retention_failure_observability_does_not_stop_the_loop() {
+        let logs = CapturedLogs::default();
+        let tick_count = Arc::new(AtomicUsize::new(0));
+        let tick_count_for_work = Arc::clone(&tick_count);
+        let (shutdown_sender, shutdown_receiver) = watch::channel(false);
+
+        run_audit_retention_loop_with(
+            Duration::from_secs(1),
+            shutdown_receiver,
+            move || {
+                let sequence = tick_count_for_work.fetch_add(1, Ordering::SeqCst);
+                if sequence == 0 {
+                    return std::future::ready(Err(AuditRetentionTickError {
+                        error_kind: "persistence_error",
+                    }));
+                }
+                shutdown_sender
+                    .send(true)
+                    .expect("retention receiver should remain open");
+                std::future::ready(Ok(litradar_storage::SecurityAuditRetentionResult {
+                    did_run: false,
+                    deleted_count: 0,
+                    has_more_expired: false,
+                    cutoff: 2_000.0,
+                }))
+            },
+            |_| async {},
+        )
+        .with_subscriber(logs.subscriber())
+        .await
+        .expect("retention loop should continue after a failed tick");
+
+        assert_eq!(tick_count.load(Ordering::SeqCst), 2);
+        let failures = logs
+            .events()
+            .into_iter()
+            .filter(|event| event["event"] == "audit.retention.failed")
+            .collect::<Vec<_>>();
+        assert_eq!(failures.len(), 1);
+        assert_eq!(failures[0]["error_kind"], "persistence_error");
+        assert!(!logs.text().contains("password_sentinel"));
+        assert!(!logs.text().contains("token_sentinel"));
+    }
 
     #[tokio::test]
     async fn component_failure_cancels_and_drains_its_sibling() {
@@ -437,6 +690,7 @@ mod tests {
         let did_drain_scheduler = Arc::new(AtomicBool::new(false));
         let scheduler_drain_assertion = Arc::clone(&did_drain_scheduler);
         let (shutdown_sender, shutdown_receiver) = watch::channel(false);
+        let audit_receiver = shutdown_receiver.clone();
         let api =
             async { Err::<(), Box<dyn Error>>(io::Error::other("fixture API failure").into()) };
         let scheduler = async move {
@@ -444,11 +698,22 @@ mod tests {
             scheduler_drain_assertion.store(true, Ordering::SeqCst);
             Ok::<(), Box<dyn Error>>(())
         };
+        let audit = async move {
+            wait_for_shutdown(audit_receiver).await;
+            Ok::<(), Box<dyn Error>>(())
+        };
 
-        let error = coordinate_components(api, scheduler, pending(), shutdown_sender, cancellation)
-            .with_subscriber(logs.subscriber())
-            .await
-            .expect_err("component failure should fail the service");
+        let error = coordinate_components(
+            api,
+            scheduler,
+            audit,
+            pending(),
+            shutdown_sender,
+            cancellation,
+        )
+        .with_subscriber(logs.subscriber())
+        .await
+        .expect_err("component failure should fail the service");
 
         assert_eq!(error.to_string(), "fixture API failure");
         assert!(assertion_handle.is_cancelled());
@@ -472,6 +737,7 @@ mod tests {
         let did_drain_api = Arc::new(AtomicBool::new(false));
         let api_drain_assertion = Arc::clone(&did_drain_api);
         let (shutdown_sender, shutdown_receiver) = watch::channel(false);
+        let audit_receiver = shutdown_receiver.clone();
         let api = async move {
             wait_for_shutdown(shutdown_receiver).await;
             api_drain_assertion.store(true, Ordering::SeqCst);
@@ -480,11 +746,22 @@ mod tests {
         let scheduler = async {
             Err::<(), Box<dyn Error>>(io::Error::other("fixture scheduler failure").into())
         };
+        let audit = async move {
+            wait_for_shutdown(audit_receiver).await;
+            Ok::<(), Box<dyn Error>>(())
+        };
 
-        let error = coordinate_components(api, scheduler, pending(), shutdown_sender, cancellation)
-            .with_subscriber(logs.subscriber())
-            .await
-            .expect_err("scheduler failure should fail the service");
+        let error = coordinate_components(
+            api,
+            scheduler,
+            audit,
+            pending(),
+            shutdown_sender,
+            cancellation,
+        )
+        .with_subscriber(logs.subscriber())
+        .await
+        .expect_err("scheduler failure should fail the service");
 
         assert_eq!(error.to_string(), "fixture scheduler failure");
         assert!(assertion_handle.is_cancelled());
@@ -577,6 +854,7 @@ mod tests {
         let did_drain_api_assertion = Arc::clone(&did_drain_api);
         let (shutdown_sender, shutdown_receiver) = watch::channel(false);
         let api_receiver = shutdown_receiver.clone();
+        let audit_receiver = shutdown_receiver.clone();
         let api = async move {
             wait_for_shutdown(api_receiver).await;
             did_drain_api_assertion.store(true, Ordering::SeqCst);
@@ -605,8 +883,12 @@ mod tests {
         let signal = async move {
             tick_started.notified().await;
         };
+        let audit = async move {
+            wait_for_shutdown(audit_receiver).await;
+            Ok::<(), Box<dyn Error>>(())
+        };
 
-        coordinate_components(api, scheduler, signal, shutdown_sender, cancellation)
+        coordinate_components(api, scheduler, audit, signal, shutdown_sender, cancellation)
             .await
             .expect("termination should drain work in progress");
 
@@ -616,12 +898,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn termination_drains_both_components_successfully() {
+    async fn termination_drains_all_components_successfully() {
         let logs = CapturedLogs::default();
         let cancellation = SchedulerCancellation::new();
         let assertion_handle = cancellation.clone();
         let (shutdown_sender, shutdown_receiver) = watch::channel(false);
         let api_receiver = shutdown_receiver.clone();
+        let audit_receiver = shutdown_receiver.clone();
         let api = async move {
             wait_for_shutdown(api_receiver).await;
             Ok::<(), Box<dyn Error>>(())
@@ -630,11 +913,22 @@ mod tests {
             wait_for_shutdown(shutdown_receiver).await;
             Ok::<(), Box<dyn Error>>(())
         };
+        let audit = async move {
+            wait_for_shutdown(audit_receiver).await;
+            Ok::<(), Box<dyn Error>>(())
+        };
 
-        coordinate_components(api, scheduler, async {}, shutdown_sender, cancellation)
-            .with_subscriber(logs.subscriber())
-            .await
-            .expect("termination should drain cleanly");
+        coordinate_components(
+            api,
+            scheduler,
+            audit,
+            async {},
+            shutdown_sender,
+            cancellation,
+        )
+        .with_subscriber(logs.subscriber())
+        .await
+        .expect("termination should drain cleanly");
 
         assert!(assertion_handle.is_cancelled());
         let events = logs.events();

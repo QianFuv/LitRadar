@@ -178,6 +178,44 @@ compact 只改变显示形式，不改变事件选择或隐私规则。一次本
 
 该关闭兜底事件不经过已经关闭的队列，因此只保证上述字段。`SIGKILL`、OOM、宿主机崩溃或无法写入 `stderr` 时，进程没有机会报告精确丢失数；此时应结合 Docker 状态、时间缺口和上游事件判断。正常预期负载的门禁是 `dropped_count=0`。
 
+## 持久安全审计
+
+普通 tracing 队列不是安全审计的权威记录。认证结果、认证限流和安全敏感变更会同步追加到 `data/auth.sqlite` 的 `security_audit_events`；普通日志过载不会删除或跳过这些数据库行。固定字段为：
+
+- `actor_id`、`target_id`：可空内部数值 ID；
+- `action`、`outcome`、`reason`：固定小写分类；
+- `request_id`：服务器生成的关联 ID；
+- `source_class`、`bucket`、`rejected_count`、`retry_after_seconds`：限流分类与计数；
+- `occurred_at`：Unix 秒数。
+
+表禁止 `UPDATE`，只允许追加和受控保留删除。密码、用户名、token、邀请码、原始 IP、Header、请求/响应 body、公告或文章内容不得进入任何字段。安全变更尽可能在同一个 `BEGIN IMMEDIATE` 事务内写业务行和审计行；所需审计写入失败时业务事务回滚并向客户端返回 `503`。认证拒绝和限流没有业务写入，但仍在响应前同步落库。
+
+持久写入失败会增加进程内计数并直接产生固定 `audit.persistence_failed` 事件；该事件只包含 `error_kind` 与 `failure_count`，不包含底层 SQLite 文本。还会产生 `audit.retention.completed|skipped|failed` 维护事件。应对任何 `audit.persistence_failed` 告警；它表示审计完整性已无法保证，不能只依赖普通日志补齐记录。
+
+系统不提供远程审计 API。运维查询必须在受控主机上使用只读 SQLite 连接，并限制数据库副本权限：
+
+```bash
+sqlite3 -readonly data/auth.sqlite \
+  "SELECT id, action, outcome, reason, request_id, occurred_at
+   FROM security_audit_events
+   ORDER BY id DESC LIMIT 100;"
+
+sqlite3 -readonly data/auth.sqlite \
+  "SELECT id, actor_id, target_id, action, outcome, reason, occurred_at
+   FROM security_audit_events
+   WHERE request_id = 'SERVER_REQUEST_ID'
+   ORDER BY id;"
+
+sqlite3 -readonly data/auth.sqlite \
+  "SELECT action, outcome, reason, COUNT(*)
+   FROM security_audit_events
+   WHERE occurred_at >= unixepoch('now', '-24 hours')
+   GROUP BY action, outcome, reason
+   ORDER BY COUNT(*) DESC;"
+```
+
+`audit_retention_days` 默认 180 天，可配置为 1–3650 天。服务启动后立即检查，之后每 24 小时检查；认证库中的 maintenance 行跨实例声明每日窗口，每次事务最多删除 10,000 条过期记录。保留失败会整体回滚，且不会推进 maintenance 时间。
+
 ## Docker 保留策略
 
 根 Compose 使用 Docker `local` 日志驱动：

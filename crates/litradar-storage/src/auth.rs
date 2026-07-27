@@ -10,6 +10,9 @@ use litradar_domain::{
 };
 use rusqlite::{params, Connection, ErrorCode, OptionalExtension};
 
+use crate::business::{
+    insert_required_security_audit_event, SecurityAuditError, SecurityAuditEvent,
+};
 use crate::{migrate_auth_database, open_sqlite_connection, MigrationError};
 
 /// Stored user row returned by auth repository queries.
@@ -133,6 +136,8 @@ pub enum AuthRepositoryError {
     EntropyUnavailable,
     /// A credential mutation violated its exact-row invariant.
     CredentialMutationInvariant,
+    /// A required durable security audit row could not be persisted.
+    AuditPersistence(SecurityAuditError),
 }
 
 impl fmt::Display for AuthRepositoryError {
@@ -161,6 +166,7 @@ impl fmt::Display for AuthRepositoryError {
             Self::CredentialMutationInvariant => {
                 formatter.write_str("Credential update affected an unexpected number of users")
             }
+            Self::AuditPersistence(_) => formatter.write_str("Security audit persistence failed"),
         }
     }
 }
@@ -172,6 +178,7 @@ impl Error for AuthRepositoryError {
             Self::Sqlite(error) => Some(error),
             Self::Io(error) => Some(error),
             Self::Migration(error) => Some(error),
+            Self::AuditPersistence(error) => Some(error),
             _ => None,
         }
     }
@@ -195,6 +202,13 @@ impl From<MigrationError> for AuthRepositoryError {
     /// Convert migration errors into repository errors.
     fn from(error: MigrationError) -> Self {
         Self::Migration(error)
+    }
+}
+
+impl From<SecurityAuditError> for AuthRepositoryError {
+    /// Convert required audit persistence errors into fail-closed auth errors.
+    fn from(error: SecurityAuditError) -> Self {
+        Self::AuditPersistence(error)
     }
 }
 
@@ -260,19 +274,59 @@ pub fn bootstrap_admin(
     salt: &str,
     now: f64,
 ) -> Result<AuthUserRow, AuthRepositoryError> {
+    bootstrap_admin_with_audit(auth_db_path, username, password_hash, salt, now, None)
+}
+
+/// Create the first administrator and persist a required audit event atomically.
+pub fn bootstrap_admin_with_audit(
+    auth_db_path: impl AsRef<Path>,
+    username: &str,
+    password_hash: &str,
+    salt: &str,
+    now: f64,
+    audit: Option<&SecurityAuditEvent>,
+) -> Result<AuthUserRow, AuthRepositoryError> {
     let connection = open_auth_connection(auth_db_path)?;
     connection.execute("BEGIN IMMEDIATE", [])?;
-    let result = bootstrap_admin_in_transaction(&connection, username, password_hash, salt, now);
-    match result {
-        Ok(user) => {
-            connection.execute("COMMIT", [])?;
+    let result = bootstrap_admin_in_transaction(&connection, username, password_hash, salt, now)
+        .and_then(|user| {
+            if let Some(audit) = audit {
+                let audit = audit
+                    .clone()
+                    .with_actor_id(user.id.value())
+                    .with_target_id(user.id.value());
+                insert_required_security_audit_event(&connection, &audit)?;
+            }
             Ok(user)
-        }
-        Err(error) => {
-            let _ = connection.execute("ROLLBACK", []);
-            Err(error)
-        }
-    }
+        });
+    finish_immediate_transaction(&connection, result)
+}
+
+/// Register a user and persist a required audit event atomically.
+pub fn register_user_with_invite_and_audit(
+    auth_db_path: impl AsRef<Path>,
+    username: &str,
+    password_hash: &str,
+    salt: &str,
+    invite_code: Option<&str>,
+    now: f64,
+    audit: Option<&SecurityAuditEvent>,
+) -> Result<AuthUserRow, AuthRepositoryError> {
+    let connection = open_auth_connection(auth_db_path)?;
+    connection.execute("BEGIN IMMEDIATE", [])?;
+    let result =
+        register_user_in_transaction(&connection, username, password_hash, salt, invite_code, now)
+            .and_then(|user| {
+                if let Some(audit) = audit {
+                    let audit = audit
+                        .clone()
+                        .with_actor_id(user.id.value())
+                        .with_target_id(user.id.value());
+                    insert_required_security_audit_event(&connection, &audit)?;
+                }
+                Ok(user)
+            });
+    finish_immediate_transaction(&connection, result)
 }
 
 /// Register a non-administrator using a required one-time invite code.
@@ -297,20 +351,15 @@ pub fn register_user_with_invite(
     invite_code: Option<&str>,
     now: f64,
 ) -> Result<AuthUserRow, AuthRepositoryError> {
-    let connection = open_auth_connection(auth_db_path)?;
-    connection.execute("BEGIN IMMEDIATE", [])?;
-    let result =
-        register_user_in_transaction(&connection, username, password_hash, salt, invite_code, now);
-    match result {
-        Ok(user) => {
-            connection.execute("COMMIT", [])?;
-            Ok(user)
-        }
-        Err(error) => {
-            let _ = connection.execute("ROLLBACK", []);
-            Err(error)
-        }
-    }
+    register_user_with_invite_and_audit(
+        auth_db_path,
+        username,
+        password_hash,
+        salt,
+        invite_code,
+        now,
+        None,
+    )
 }
 
 /// Find one user's stored credentials by username.
@@ -387,6 +436,27 @@ pub fn insert_personal_access_token(
     expires_at: f64,
     created_at: f64,
 ) -> Result<AccessTokenRow, AuthRepositoryError> {
+    insert_personal_access_token_with_audit(
+        auth_db_path,
+        user_id,
+        token_hash,
+        name,
+        expires_at,
+        created_at,
+        None,
+    )
+}
+
+/// Insert a personal access token and required audit event atomically.
+pub fn insert_personal_access_token_with_audit(
+    auth_db_path: impl AsRef<Path>,
+    user_id: UserId,
+    token_hash: &str,
+    name: &str,
+    expires_at: f64,
+    created_at: f64,
+    audit: Option<&SecurityAuditEvent>,
+) -> Result<AccessTokenRow, AuthRepositoryError> {
     let connection = open_auth_connection(auth_db_path)?;
     connection.execute("BEGIN IMMEDIATE", [])?;
     let result = insert_personal_access_token_in_transaction(
@@ -396,7 +466,16 @@ pub fn insert_personal_access_token(
         name,
         expires_at,
         created_at,
-    );
+    )
+    .and_then(|row| {
+        if let Some(audit) = audit {
+            insert_required_security_audit_event(
+                &connection,
+                &audit.clone().with_target_id(row.id),
+            )?;
+        }
+        Ok(row)
+    });
     finish_immediate_transaction(&connection, result)
 }
 
@@ -420,6 +499,25 @@ pub fn replace_login_access_token(
     expires_at: f64,
     created_at: f64,
 ) -> Result<AccessTokenRow, AuthRepositoryError> {
+    replace_login_access_token_with_audit(
+        auth_db_path,
+        user_id,
+        token_hash,
+        expires_at,
+        created_at,
+        None,
+    )
+}
+
+/// Replace a browser login token and required audit event atomically.
+pub fn replace_login_access_token_with_audit(
+    auth_db_path: impl AsRef<Path>,
+    user_id: UserId,
+    token_hash: &str,
+    expires_at: f64,
+    created_at: f64,
+    audit: Option<&SecurityAuditEvent>,
+) -> Result<AccessTokenRow, AuthRepositoryError> {
     let connection = open_auth_connection(auth_db_path)?;
     connection.execute("BEGIN IMMEDIATE", [])?;
     let result = replace_login_access_token_in_transaction(
@@ -428,7 +526,16 @@ pub fn replace_login_access_token(
         token_hash,
         expires_at,
         created_at,
-    );
+    )
+    .and_then(|row| {
+        if let Some(audit) = audit {
+            insert_required_security_audit_event(
+                &connection,
+                &audit.clone().with_target_id(row.id),
+            )?;
+        }
+        Ok(row)
+    });
     finish_immediate_transaction(&connection, result)
 }
 
@@ -527,12 +634,34 @@ pub fn delete_access_token(
     user_id: UserId,
     token_id: i64,
 ) -> Result<bool, AuthRepositoryError> {
+    delete_access_token_with_audit(auth_db_path, user_id, token_id, None)
+}
+
+/// Delete an access token and required audit event atomically.
+pub fn delete_access_token_with_audit(
+    auth_db_path: impl AsRef<Path>,
+    user_id: UserId,
+    token_id: i64,
+    audit: Option<&SecurityAuditEvent>,
+) -> Result<bool, AuthRepositoryError> {
     let connection = open_auth_connection(auth_db_path)?;
-    let count = connection.execute(
-        "DELETE FROM access_tokens WHERE id = ?1 AND user_id = ?2",
-        params![token_id, user_id.value()],
-    )?;
-    Ok(count > 0)
+    connection.execute("BEGIN IMMEDIATE", [])?;
+    let result = (|| {
+        let count = connection.execute(
+            "DELETE FROM access_tokens WHERE id = ?1 AND user_id = ?2",
+            params![token_id, user_id.value()],
+        )?;
+        if count > 0 {
+            if let Some(audit) = audit {
+                insert_required_security_audit_event(
+                    &connection,
+                    &audit.clone().with_target_id(token_id),
+                )?;
+            }
+        }
+        Ok(count > 0)
+    })();
+    finish_immediate_transaction(&connection, result)
 }
 
 /// Delete an access token row by token hash.
@@ -549,12 +678,37 @@ pub fn delete_access_token_by_hash(
     auth_db_path: impl AsRef<Path>,
     token_hash: &str,
 ) -> Result<bool, AuthRepositoryError> {
+    delete_access_token_by_hash_with_audit(auth_db_path, token_hash, None)
+}
+
+/// Delete an access token by hash and persist a required audit event atomically.
+pub fn delete_access_token_by_hash_with_audit(
+    auth_db_path: impl AsRef<Path>,
+    token_hash: &str,
+    audit: Option<&SecurityAuditEvent>,
+) -> Result<bool, AuthRepositoryError> {
     let connection = open_auth_connection(auth_db_path)?;
-    let count = connection.execute(
-        "DELETE FROM access_tokens WHERE token_hash = ?1",
-        [token_hash],
-    )?;
-    Ok(count > 0)
+    connection.execute("BEGIN IMMEDIATE", [])?;
+    let result = (|| {
+        let token_id = connection
+            .query_row(
+                "SELECT id FROM access_tokens WHERE token_hash = ?1",
+                [token_hash],
+                |row| row.get::<_, i64>(0),
+            )
+            .optional()?;
+        let count = connection.execute(
+            "DELETE FROM access_tokens WHERE token_hash = ?1",
+            [token_hash],
+        )?;
+        if let Some(audit) = audit {
+            let audit =
+                token_id.map_or_else(|| audit.clone(), |id| audit.clone().with_target_id(id));
+            insert_required_security_audit_event(&connection, &audit)?;
+        }
+        Ok(count > 0)
+    })();
+    finish_immediate_transaction(&connection, result)
 }
 
 /// Update a user's password and revoke all existing tokens.
@@ -577,6 +731,25 @@ pub fn update_user_password_and_delete_tokens(
     salt: &str,
     now: f64,
 ) -> Result<bool, AuthRepositoryError> {
+    update_user_password_and_delete_tokens_with_audit(
+        auth_db_path,
+        user_id,
+        password_hash,
+        salt,
+        now,
+        None,
+    )
+}
+
+/// Rotate credentials, revoke tokens, and persist a required audit event atomically.
+pub fn update_user_password_and_delete_tokens_with_audit(
+    auth_db_path: impl AsRef<Path>,
+    user_id: UserId,
+    password_hash: &str,
+    salt: &str,
+    now: f64,
+    audit: Option<&SecurityAuditEvent>,
+) -> Result<bool, AuthRepositoryError> {
     let connection = open_auth_connection(auth_db_path)?;
     connection.execute("BEGIN IMMEDIATE", [])?;
     let result = update_user_password_and_delete_tokens_in_transaction(
@@ -585,7 +758,15 @@ pub fn update_user_password_and_delete_tokens(
         password_hash,
         salt,
         now,
-    );
+    )
+    .and_then(|did_update| {
+        if did_update {
+            if let Some(audit) = audit {
+                insert_required_security_audit_event(&connection, audit)?;
+            }
+        }
+        Ok(did_update)
+    });
     finish_immediate_transaction(&connection, result)
 }
 
@@ -679,27 +860,49 @@ pub fn create_invite_code(
     code: &str,
     now: f64,
 ) -> Result<InviteCodeRow, AuthRepositoryError> {
+    create_invite_code_with_audit(auth_db_path, user_id, code, now, None)
+}
+
+/// Create an invite code and persist a required audit event atomically.
+pub fn create_invite_code_with_audit(
+    auth_db_path: impl AsRef<Path>,
+    user_id: UserId,
+    code: &str,
+    now: f64,
+    audit: Option<&SecurityAuditEvent>,
+) -> Result<InviteCodeRow, AuthRepositoryError> {
     let connection = open_auth_connection(auth_db_path)?;
-    let existing = connection
-        .query_row(
-            "SELECT id FROM invite_codes WHERE created_by = ?1",
-            [user_id.value()],
-            |row| row.get::<_, i64>(0),
-        )
-        .optional()?;
-    if existing.is_some() {
-        return Err(AuthRepositoryError::UserHasAlreadyGeneratedInviteCode);
-    }
-    connection.execute(
-        "INSERT INTO invite_codes (code, created_by, created_at) VALUES (?1, ?2, ?3)",
-        params![code, user_id.value(), now],
-    )?;
-    Ok(InviteCodeRow {
-        id: connection.last_insert_rowid(),
-        code: code.to_string(),
-        used_by: None,
-        created_at: now,
-    })
+    connection.execute("BEGIN IMMEDIATE", [])?;
+    let result = (|| {
+        let existing = connection
+            .query_row(
+                "SELECT id FROM invite_codes WHERE created_by = ?1",
+                [user_id.value()],
+                |row| row.get::<_, i64>(0),
+            )
+            .optional()?;
+        if existing.is_some() {
+            return Err(AuthRepositoryError::UserHasAlreadyGeneratedInviteCode);
+        }
+        connection.execute(
+            "INSERT INTO invite_codes (code, created_by, created_at) VALUES (?1, ?2, ?3)",
+            params![code, user_id.value(), now],
+        )?;
+        let row = InviteCodeRow {
+            id: connection.last_insert_rowid(),
+            code: code.to_string(),
+            used_by: None,
+            created_at: now,
+        };
+        if let Some(audit) = audit {
+            insert_required_security_audit_event(
+                &connection,
+                &audit.clone().with_target_id(row.id),
+            )?;
+        }
+        Ok(row)
+    })();
+    finish_immediate_transaction(&connection, result)
 }
 
 /// Return the invite code created by a user.
@@ -987,9 +1190,11 @@ mod tests {
         bootstrap_admin, compare_and_swap_legacy_password_hash, delete_access_token,
         find_user_credentials_by_id, initialize_auth_database, insert_personal_access_token,
         list_access_tokens, open_auth_connection, random_hex, replace_login_access_token,
-        update_user_password_and_delete_tokens, verify_access_token_hash, AuthRepositoryError,
-        AuthUserRow, InviteCodeRow, UserCredentialRow,
+        update_user_password_and_delete_tokens, update_user_password_and_delete_tokens_with_audit,
+        verify_access_token_hash, AuthRepositoryError, AuthUserRow, InviteCodeRow,
+        UserCredentialRow,
     };
+    use crate::{list_security_audit_events, SecurityAuditEvent};
 
     fn access_token_fixture() -> (TempDir, PathBuf, UserId) {
         let temp_dir = tempdir().expect("temporary directory should be created");
@@ -1381,6 +1586,57 @@ mod tests {
             5.0,
         )
         .expect("missing-user rotation should be a committed no-op"));
+    }
+
+    #[test]
+    fn credential_rotation_rolls_back_when_required_security_audit_insert_fails() {
+        let (_temp_dir, auth_db_path, user_id) = access_token_fixture();
+        insert_raw_access_token(
+            &auth_db_path,
+            user_id,
+            "audit-rollback-token-hash",
+            "integration",
+            4_000_000_000.0,
+            2.0,
+        );
+        let original = find_user_credentials_by_id(&auth_db_path, user_id)
+            .expect("credentials should load")
+            .expect("fixture user should exist");
+        let connection = open_auth_connection(&auth_db_path).expect("auth connection should open");
+        connection
+            .execute_batch(
+                "CREATE TRIGGER fail_required_security_audit \
+                 BEFORE INSERT ON security_audit_events \
+                 BEGIN SELECT RAISE(ABORT, 'injected audit failure'); END;",
+            )
+            .expect("audit fault trigger should install");
+        drop(connection);
+
+        let error = update_user_password_and_delete_tokens_with_audit(
+            &auth_db_path,
+            user_id,
+            "replacement-password-hash",
+            "replacement-salt",
+            3.0,
+            Some(
+                &SecurityAuditEvent::new("password_change", "completed")
+                    .with_actor_id(user_id.value()),
+            ),
+        )
+        .expect_err("required audit failure should abort credential rotation");
+        let after_failure = find_user_credentials_by_id(&auth_db_path, user_id)
+            .expect("credentials should reload")
+            .expect("fixture user should remain");
+
+        assert!(matches!(error, AuthRepositoryError::AuditPersistence(_)));
+        assert_eq!(after_failure, original);
+        assert_eq!(
+            count_tokens_by_hash(&auth_db_path, "audit-rollback-token-hash"),
+            1
+        );
+        assert!(list_security_audit_events(&auth_db_path)
+            .expect("audit rows should remain readable")
+            .is_empty());
     }
 
     #[test]

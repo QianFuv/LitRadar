@@ -29,12 +29,16 @@ mod favorites;
 mod notifications;
 mod runtime_settings;
 mod scheduled_tasks;
+mod security_audit;
 mod shared;
 
 pub use admin::{
-    admin_create_invite_code, create_announcement, delete_announcement, delete_invite_code,
-    delete_user, get_admin_stats, get_announcement, list_all_announcements, list_all_invite_codes,
-    list_all_users, set_user_admin, update_announcement,
+    admin_create_invite_code, admin_create_invite_code_with_audit, create_announcement,
+    create_announcement_with_audit, delete_announcement, delete_announcement_with_audit,
+    delete_invite_code, delete_invite_code_with_audit, delete_user, delete_user_with_audit,
+    get_admin_stats, get_announcement, list_all_announcements, list_all_invite_codes,
+    list_all_users, set_user_admin, set_user_admin_with_audit, update_announcement,
+    update_announcement_with_audit,
 };
 pub use favorites::{
     add_favorite, batch_is_favorited, bulk_add_favorites, bulk_move_favorites,
@@ -48,19 +52,27 @@ pub use notifications::{
 };
 pub use runtime_settings::{
     canonicalize_outbound_base_url, list_runtime_settings, load_ai_allowed_base_urls,
-    load_runtime_logging_settings, load_runtime_settings, parse_runtime_setting,
-    runtime_setting_default, upsert_runtime_settings, AuthRateLimitPolicy,
-    ParsedRuntimeSettingValue, RuntimeLoggingSettings, RuntimeSettingKey, TokenBucketPolicy,
-    TrustedProxyCidr, DEFAULT_AUTH_RATE_LIMIT_POLICY_JSON, DEFAULT_RUNTIME_LOG_FILTER,
-    DEFAULT_RUNTIME_LOG_FORMAT,
+    load_audit_retention_days, load_runtime_logging_settings, load_runtime_settings,
+    parse_runtime_setting, runtime_setting_default, upsert_runtime_settings,
+    upsert_runtime_settings_with_audit, AuthRateLimitPolicy, ParsedRuntimeSettingValue,
+    RuntimeLoggingSettings, RuntimeSettingKey, TokenBucketPolicy, TrustedProxyCidr,
+    DEFAULT_AUTH_RATE_LIMIT_POLICY_JSON, DEFAULT_RUNTIME_LOG_FILTER, DEFAULT_RUNTIME_LOG_FORMAT,
 };
 pub use scheduled_tasks::{
-    claim_ready_scheduled_runs, create_scheduled_task, delete_scheduled_task,
-    enqueue_scheduled_runs, finish_scheduled_run, get_scheduled_task,
-    get_scheduler_last_checked_at, get_scheduler_status, heartbeat_scheduled_run,
-    list_scheduled_tasks, record_scheduled_task_run, record_scheduler_check,
-    record_scheduler_heartbeat, start_scheduled_run, update_scheduled_task, ScheduledRunClaim,
-    ScheduledTaskCreateParams, ScheduledTaskUpdateParams,
+    claim_ready_scheduled_runs, create_scheduled_task, create_scheduled_task_with_audit,
+    delete_scheduled_task, delete_scheduled_task_with_audit, enqueue_scheduled_runs,
+    finish_scheduled_run, get_scheduled_task, get_scheduler_last_checked_at, get_scheduler_status,
+    heartbeat_scheduled_run, list_scheduled_tasks, record_scheduled_task_run,
+    record_scheduler_check, record_scheduler_heartbeat, start_scheduled_run, update_scheduled_task,
+    update_scheduled_task_with_audit, ScheduledRunClaim, ScheduledTaskCreateParams,
+    ScheduledTaskUpdateParams,
+};
+pub(crate) use security_audit::insert_required_security_audit_event;
+pub use security_audit::{
+    append_security_audit_event, cleanup_security_audit_events, list_security_audit_events,
+    report_security_audit_persistence_failure, security_audit_persistence_failure_count,
+    SecurityAuditError, SecurityAuditEvent, SecurityAuditRecord, SecurityAuditRetentionResult,
+    DEFAULT_AUDIT_RETENTION_DAYS, MAX_AUDIT_RETENTION_DAYS, MIN_AUDIT_RETENTION_DAYS,
 };
 pub use shared::{count_weekly_articles, list_available_database_names, normalize_database_names};
 
@@ -109,6 +121,8 @@ pub enum BusinessRepositoryError {
     AdministratorTargetNotFound,
     /// A mutation would remove the final administrator.
     AdministratorInvariantViolation,
+    /// A required durable security audit row could not be persisted.
+    AuditPersistence(SecurityAuditError),
 }
 
 impl fmt::Display for BusinessRepositoryError {
@@ -152,6 +166,7 @@ impl fmt::Display for BusinessRepositoryError {
             Self::AdministratorInvariantViolation => {
                 formatter.write_str("At least one administrator is required")
             }
+            Self::AuditPersistence(_) => formatter.write_str("Security audit persistence failed"),
         }
     }
 }
@@ -164,6 +179,7 @@ impl Error for BusinessRepositoryError {
             Self::Io(error) => Some(error),
             Self::Json(error) => Some(error),
             Self::Secret(error) => Some(error),
+            Self::AuditPersistence(error) => Some(error),
             _ => None,
         }
     }
@@ -194,5 +210,12 @@ impl From<SecretError> for BusinessRepositoryError {
     /// Convert secret errors into repository errors.
     fn from(error: SecretError) -> Self {
         Self::Secret(error)
+    }
+}
+
+impl From<SecurityAuditError> for BusinessRepositoryError {
+    /// Convert required audit persistence failures into fail-closed business errors.
+    fn from(error: SecurityAuditError) -> Self {
+        Self::AuditPersistence(error)
     }
 }

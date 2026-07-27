@@ -37,6 +37,8 @@ pub enum RuntimeSettingKey {
     TrustedProxyCidrs,
     /// Process-local authentication limiter policy.
     AuthRateLimitPolicy,
+    /// Durable security audit retention period in days.
+    AuditRetentionDays,
     /// OpenAI-compatible base URLs available to ordinary users.
     AiAllowedBaseUrls,
     /// Catalog-to-index-Provider routes.
@@ -53,7 +55,7 @@ pub enum RuntimeSettingKey {
 
 impl RuntimeSettingKey {
     /// All managed runtime setting keys in administrator display order.
-    pub const ALL: [Self; 16] = [
+    pub const ALL: [Self; 17] = [
         Self::OpenAlexApiKeyPool,
         Self::SemanticScholarApiKeyPool,
         Self::CnkiCaptchaToken,
@@ -64,6 +66,7 @@ impl RuntimeSettingKey {
         Self::SecureCookies,
         Self::TrustedProxyCidrs,
         Self::AuthRateLimitPolicy,
+        Self::AuditRetentionDays,
         Self::AiAllowedBaseUrls,
         Self::IndexProviderRoutes,
         Self::ArticleAbstractProviderOrders,
@@ -89,6 +92,7 @@ impl RuntimeSettingKey {
             Self::SecureCookies => "secure_cookies",
             Self::TrustedProxyCidrs => "trusted_proxy_cidrs",
             Self::AuthRateLimitPolicy => "auth_rate_limit_policy",
+            Self::AuditRetentionDays => "audit_retention_days",
             Self::AiAllowedBaseUrls => "ai_allowed_base_urls",
             Self::IndexProviderRoutes => "index_provider_routes",
             Self::ArticleAbstractProviderOrders => "article_abstract_provider_orders",
@@ -123,6 +127,8 @@ pub enum ParsedRuntimeSettingValue {
     TrustedProxyCidrs(Vec<TrustedProxyCidr>),
     /// Parsed process-local authentication limiter policy.
     AuthRateLimitPolicy(AuthRateLimitPolicy),
+    /// Parsed bounded unsigned integer value.
+    UnsignedInteger(u32),
     /// Canonical scalar or structured text value.
     Text(String),
 }
@@ -144,6 +150,7 @@ impl ParsedRuntimeSettingValue {
                 .join(","),
             Self::AuthRateLimitPolicy(value) => serde_json::to_string(&value)
                 .expect("authentication rate-limit policy serialization should be infallible"),
+            Self::UnsignedInteger(value) => value.to_string(),
             Self::Text(value) => value,
         }
     }
@@ -262,6 +269,7 @@ enum RuntimeSettingParser {
     Boolean,
     TrustedProxyCidrs,
     AuthRateLimitPolicy,
+    AuditRetentionDays,
     HttpsBaseUrlList,
     IndexProviderRoutes,
     ProviderOrder,
@@ -331,7 +339,7 @@ impl Default for RuntimeLoggingSettings {
     }
 }
 
-const RUNTIME_CONFIG_DEFINITIONS: [RuntimeConfigDefinition; 16] = [
+const RUNTIME_CONFIG_DEFINITIONS: [RuntimeConfigDefinition; 17] = [
     RuntimeConfigDefinition {
         field: "openalex_api_key_pool",
         label: "OpenAlex API key pool",
@@ -467,6 +475,19 @@ const RUNTIME_CONFIG_DEFINITIONS: [RuntimeConfigDefinition; 16] = [
         parser: RuntimeSettingParser::AuthRateLimitPolicy,
     },
     RuntimeConfigDefinition {
+        field: "audit_retention_days",
+        label: "Security audit retention days",
+        group: RuntimeSettingGroup::Observability,
+        control: RuntimeSettingControl::Text,
+        apply_mode: RuntimeSettingApplyMode::NextRequest,
+        allowed_values: &[],
+        input_type: "number",
+        is_secret: false,
+        description: "Number of days retained in the durable security audit table; the runtime applies changes at the next bounded maintenance check.",
+        default_value: "180",
+        parser: RuntimeSettingParser::AuditRetentionDays,
+    },
+    RuntimeConfigDefinition {
         field: "ai_allowed_base_urls",
         label: "AI allowed base URLs",
         group: RuntimeSettingGroup::ServerSecurity,
@@ -597,6 +618,19 @@ pub fn parse_runtime_setting(
         RuntimeSettingParser::AuthRateLimitPolicy => {
             parse_auth_rate_limit_policy(value).map(ParsedRuntimeSettingValue::AuthRateLimitPolicy)
         }
+        RuntimeSettingParser::AuditRetentionDays => value
+            .trim()
+            .parse::<u32>()
+            .ok()
+            .filter(|days| {
+                (MIN_AUDIT_RETENTION_DAYS..=MAX_AUDIT_RETENTION_DAYS).contains(days)
+            })
+            .map(ParsedRuntimeSettingValue::UnsignedInteger)
+            .ok_or_else(|| {
+                BusinessRepositoryError::InvalidRuntimeSetting(format!(
+                    "Security audit retention days must be between {MIN_AUDIT_RETENTION_DAYS} and {MAX_AUDIT_RETENTION_DAYS}"
+                ))
+            }),
         RuntimeSettingParser::HttpsBaseUrlList => {
             parse_https_base_url_list(value).map(ParsedRuntimeSettingValue::StringList)
         }
@@ -976,6 +1010,35 @@ pub fn load_ai_allowed_base_urls(
     ai_allowed_base_urls_from_connection(&connection)
 }
 
+/// Load the effective durable security audit retention period.
+///
+/// # Arguments
+///
+/// * `auth_db_path` - Path to the migrated authentication database.
+///
+/// # Returns
+///
+/// Validated retention period in days.
+pub fn load_audit_retention_days(
+    auth_db_path: impl AsRef<Path>,
+) -> Result<u32, BusinessRepositoryError> {
+    let connection = open_business_connection(auth_db_path)?;
+    let stored = connection
+        .query_row(
+            "SELECT value FROM runtime_settings WHERE key = ?1",
+            [RuntimeSettingKey::AuditRetentionDays.as_str()],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()?;
+    let value = stored
+        .as_deref()
+        .unwrap_or_else(|| runtime_setting_default(RuntimeSettingKey::AuditRetentionDays));
+    match parse_runtime_setting(RuntimeSettingKey::AuditRetentionDays, value)? {
+        ParsedRuntimeSettingValue::UnsignedInteger(days) => Ok(days),
+        _ => unreachable!("audit retention parser must return an unsigned integer"),
+    }
+}
+
 /// Load approved AI endpoints through an existing business transaction.
 pub(super) fn ai_allowed_base_urls_from_connection(
     connection: &Connection,
@@ -1038,6 +1101,17 @@ pub fn upsert_runtime_settings(
     values: &HashMap<String, Option<String>>,
     secret_pool_updates: &HashMap<String, RuntimeSecretPoolUpdate>,
 ) -> Result<Vec<RuntimeSettingInfo>, BusinessRepositoryError> {
+    upsert_runtime_settings_with_audit(auth_db_path, codec, values, secret_pool_updates, None)
+}
+
+/// Upsert managed runtime settings and persist a required audit event atomically.
+pub fn upsert_runtime_settings_with_audit(
+    auth_db_path: impl AsRef<Path>,
+    codec: &SecretCodec,
+    values: &HashMap<String, Option<String>>,
+    secret_pool_updates: &HashMap<String, RuntimeSecretPoolUpdate>,
+    audit: Option<&SecurityAuditEvent>,
+) -> Result<Vec<RuntimeSettingInfo>, BusinessRepositoryError> {
     let mut connection = open_business_connection(auth_db_path.as_ref())?;
     let now = now_seconds();
     let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
@@ -1091,6 +1165,9 @@ pub fn upsert_runtime_settings(
             };
             statement.execute(params![definition.field, stored_value, now])?;
         }
+    }
+    if let Some(audit) = audit {
+        insert_required_security_audit_event(&transaction, audit)?;
     }
     transaction.commit()?;
     list_runtime_settings(auth_db_path, codec)
@@ -1448,12 +1525,13 @@ mod tests {
             .map(|setting| setting.field.as_str())
             .collect::<Vec<_>>();
 
-        assert_eq!(settings.len(), 16);
+        assert_eq!(settings.len(), 17);
         assert!(fields.contains(&"openalex_api_key_pool"));
         assert!(fields.contains(&"cnki_captcha_token"));
         assert!(fields.contains(&"secure_cookies"));
         assert!(fields.contains(&"trusted_proxy_cidrs"));
         assert!(fields.contains(&"auth_rate_limit_policy"));
+        assert!(fields.contains(&"audit_retention_days"));
         assert!(!fields.contains(&"proxy_pool"));
         assert!(settings
             .iter()
@@ -1546,6 +1624,13 @@ mod tests {
                 &[][..],
             ),
             (
+                "audit_retention_days",
+                RuntimeSettingGroup::Observability,
+                RuntimeSettingControl::Text,
+                RuntimeSettingApplyMode::NextRequest,
+                &[][..],
+            ),
+            (
                 "ai_allowed_base_urls",
                 RuntimeSettingGroup::ServerSecurity,
                 RuntimeSettingControl::StringList,
@@ -1630,6 +1715,26 @@ mod tests {
                 .expect("every registry default should parse")
                 .into_text();
             assert_eq!(canonical, definition.default_value);
+        }
+    }
+
+    #[test]
+    fn audit_retention_setting_accepts_only_managed_day_bounds() {
+        for value in ["1", "180", "3650"] {
+            let parsed = parse_runtime_setting(RuntimeSettingKey::AuditRetentionDays, value)
+                .expect("managed retention bound should parse");
+            assert!(matches!(
+                parsed,
+                ParsedRuntimeSettingValue::UnsignedInteger(_)
+            ));
+        }
+        for value in ["0", "3651", "-1", "not-a-number"] {
+            let error = parse_runtime_setting(RuntimeSettingKey::AuditRetentionDays, value)
+                .expect_err("out-of-range retention should fail");
+            assert!(matches!(
+                error,
+                BusinessRepositoryError::InvalidRuntimeSetting(_)
+            ));
         }
     }
 

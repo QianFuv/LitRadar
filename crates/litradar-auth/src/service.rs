@@ -7,12 +7,14 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use litradar_domain::{InviteCodeResponse, TokenCreateResponse, TokenInfo, UserId, UserResponse};
 use litradar_storage::{
-    bootstrap_admin, compare_and_swap_legacy_password_hash, count_users, create_invite_code,
-    delete_access_token, delete_access_token_by_hash, find_user_credentials_by_id,
-    find_user_credentials_by_username, get_user_invite_code, initialize_auth_database,
-    insert_personal_access_token, list_access_tokens, random_hex, register_user_with_invite,
-    replace_login_access_token, update_user_password_and_delete_tokens, verify_access_token_hash,
-    AuthRepositoryError, AuthUserRow, InviteCodeRow, UserCredentialRow,
+    bootstrap_admin_with_audit, compare_and_swap_legacy_password_hash, count_users,
+    create_invite_code_with_audit, delete_access_token_by_hash_with_audit,
+    delete_access_token_with_audit, find_user_credentials_by_id, find_user_credentials_by_username,
+    get_user_invite_code, initialize_auth_database, insert_personal_access_token_with_audit,
+    list_access_tokens, random_hex, register_user_with_invite_and_audit,
+    replace_login_access_token_with_audit, update_user_password_and_delete_tokens_with_audit,
+    verify_access_token_hash, AuthRepositoryError, AuthUserRow, InviteCodeRow, SecurityAuditEvent,
+    UserCredentialRow,
 };
 
 use crate::password::verify_dummy_password;
@@ -174,15 +176,32 @@ impl AuthService {
         password: &str,
         invite_code: Option<&str>,
     ) -> Result<UserResponse, AuthServiceError> {
+        self.register_with_audit(
+            username,
+            password,
+            invite_code,
+            SecurityAuditEvent::new("register", "completed"),
+        )
+    }
+
+    /// Register a user and persist the supplied completion audit atomically.
+    pub fn register_with_audit(
+        &self,
+        username: &str,
+        password: &str,
+        invite_code: Option<&str>,
+        audit: SecurityAuditEvent,
+    ) -> Result<UserResponse, AuthServiceError> {
         validate_new_credentials(username, password)?;
         let password_hash = hash_password(password)?;
-        let user = register_user_with_invite(
+        let user = register_user_with_invite_and_audit(
             &self.auth_db_path,
             username,
             &password_hash,
             "",
             invite_code,
             now_seconds(),
+            Some(&audit),
         )?;
         Ok(user_response(user))
     }
@@ -202,14 +221,29 @@ impl AuthService {
         username: &str,
         password: &str,
     ) -> Result<UserResponse, AuthServiceError> {
+        self.bootstrap_admin_with_audit(
+            username,
+            password,
+            SecurityAuditEvent::new("admin_bootstrap", "completed"),
+        )
+    }
+
+    /// Create the first administrator with an atomic completion audit.
+    pub fn bootstrap_admin_with_audit(
+        &self,
+        username: &str,
+        password: &str,
+        audit: SecurityAuditEvent,
+    ) -> Result<UserResponse, AuthServiceError> {
         validate_new_credentials(username, password)?;
         let password_hash = hash_password(password)?;
-        let user = bootstrap_admin(
+        let user = bootstrap_admin_with_audit(
             &self.auth_db_path,
             username,
             &password_hash,
             "",
             now_seconds(),
+            Some(&audit),
         )?;
         Ok(user_response(user))
     }
@@ -285,6 +319,20 @@ impl AuthService {
     ///
     /// Created login session.
     pub fn login(&self, username: &str, password: &str) -> Result<LoginSession, AuthServiceError> {
+        self.login_with_audit(
+            username,
+            password,
+            SecurityAuditEvent::new("login", "completed"),
+        )
+    }
+
+    /// Authenticate credentials and atomically audit the login token mutation.
+    pub fn login_with_audit(
+        &self,
+        username: &str,
+        password: &str,
+        audit: SecurityAuditEvent,
+    ) -> Result<LoginSession, AuthServiceError> {
         let user = self
             .verify_user(username, password)?
             .ok_or(AuthServiceError::InvalidCredentials)?;
@@ -292,12 +340,14 @@ impl AuthService {
         let token_hash = hash_token(&token);
         let created_at = now_seconds();
         let expires_at = created_at + ACCESS_TOKEN_DEFAULT_TTL as f64;
-        let row = replace_login_access_token(
+        let audit = audit.with_actor_id(user.id.value());
+        let row = replace_login_access_token_with_audit(
             &self.auth_db_path,
             user.id,
             &token_hash,
             expires_at,
             created_at,
+            Some(&audit),
         )?;
         Ok(LoginSession {
             user,
@@ -323,6 +373,22 @@ impl AuthService {
         name: &str,
         ttl: i64,
     ) -> Result<TokenCreateResponse, AuthServiceError> {
+        self.create_access_token_with_audit(
+            user_id,
+            name,
+            ttl,
+            SecurityAuditEvent::new("token_create", "completed").with_actor_id(user_id.value()),
+        )
+    }
+
+    /// Create a personal access token with an atomic completion audit.
+    pub fn create_access_token_with_audit(
+        &self,
+        user_id: UserId,
+        name: &str,
+        ttl: i64,
+        audit: SecurityAuditEvent,
+    ) -> Result<TokenCreateResponse, AuthServiceError> {
         if name.chars().count() > ACCESS_TOKEN_NAME_MAX_CODE_POINTS {
             return Err(AuthServiceError::AccessTokenNameTooLong);
         }
@@ -337,13 +403,14 @@ impl AuthService {
         let token_hash = hash_token(&token);
         let created_at = now_seconds();
         let expires_at = created_at + ttl as f64;
-        let row = insert_personal_access_token(
+        let row = insert_personal_access_token_with_audit(
             &self.auth_db_path,
             user_id,
             &token_hash,
             name,
             expires_at,
             created_at,
+            Some(&audit),
         )?;
         Ok(TokenCreateResponse {
             id: row.id,
@@ -408,7 +475,28 @@ impl AuthService {
         user_id: UserId,
         token_id: i64,
     ) -> Result<bool, AuthServiceError> {
-        Ok(delete_access_token(&self.auth_db_path, user_id, token_id)?)
+        self.revoke_access_token_with_audit(
+            user_id,
+            token_id,
+            SecurityAuditEvent::new("token_revoke", "completed")
+                .with_actor_id(user_id.value())
+                .with_target_id(token_id),
+        )
+    }
+
+    /// Revoke a personal token with an atomic completion audit.
+    pub fn revoke_access_token_with_audit(
+        &self,
+        user_id: UserId,
+        token_id: i64,
+        audit: SecurityAuditEvent,
+    ) -> Result<bool, AuthServiceError> {
+        Ok(delete_access_token_with_audit(
+            &self.auth_db_path,
+            user_id,
+            token_id,
+            Some(&audit),
+        )?)
     }
 
     /// Revoke one token by raw token value.
@@ -421,10 +509,23 @@ impl AuthService {
     ///
     /// True when a token was revoked.
     pub fn revoke_access_token_value(&self, token: &str) -> Result<bool, AuthServiceError> {
+        self.revoke_access_token_value_with_audit(
+            token,
+            SecurityAuditEvent::new("logout", "completed"),
+        )
+    }
+
+    /// Revoke a raw token with an atomic completion audit.
+    pub fn revoke_access_token_value_with_audit(
+        &self,
+        token: &str,
+        audit: SecurityAuditEvent,
+    ) -> Result<bool, AuthServiceError> {
         let token_hash = hash_token(token);
-        Ok(delete_access_token_by_hash(
+        Ok(delete_access_token_by_hash_with_audit(
             &self.auth_db_path,
             &token_hash,
+            Some(&audit),
         )?)
     }
 
@@ -445,6 +546,24 @@ impl AuthService {
         old_password: &str,
         new_password: &str,
     ) -> Result<bool, AuthServiceError> {
+        self.change_password_with_audit(
+            user_id,
+            old_password,
+            new_password,
+            SecurityAuditEvent::new("password_change", "completed")
+                .with_actor_id(user_id.value())
+                .with_target_id(user_id.value()),
+        )
+    }
+
+    /// Change a password and atomically audit credential rotation.
+    pub fn change_password_with_audit(
+        &self,
+        user_id: UserId,
+        old_password: &str,
+        new_password: &str,
+        audit: SecurityAuditEvent,
+    ) -> Result<bool, AuthServiceError> {
         validate_new_password(new_password)?;
         let Some(row) = find_user_credentials_by_id(&self.auth_db_path, user_id)? else {
             return Ok(false);
@@ -455,12 +574,13 @@ impl AuthService {
             return Ok(false);
         }
         let password_hash = hash_password(new_password)?;
-        let did_update = update_user_password_and_delete_tokens(
+        let did_update = update_user_password_and_delete_tokens_with_audit(
             &self.auth_db_path,
             user_id,
             &password_hash,
             "",
             now_seconds(),
+            Some(&audit),
         )?;
         Ok(did_update)
     }
@@ -480,14 +600,30 @@ impl AuthService {
         user_id: UserId,
         new_password: &str,
     ) -> Result<bool, AuthServiceError> {
+        self.reset_password_with_audit(
+            user_id,
+            new_password,
+            SecurityAuditEvent::new("user_password_reset", "completed")
+                .with_target_id(user_id.value()),
+        )
+    }
+
+    /// Reset a password and atomically audit credential rotation.
+    pub fn reset_password_with_audit(
+        &self,
+        user_id: UserId,
+        new_password: &str,
+        audit: SecurityAuditEvent,
+    ) -> Result<bool, AuthServiceError> {
         validate_new_password(new_password)?;
         let password_hash = hash_password(new_password)?;
-        Ok(update_user_password_and_delete_tokens(
+        Ok(update_user_password_and_delete_tokens_with_audit(
             &self.auth_db_path,
             user_id,
             &password_hash,
             "",
             now_seconds(),
+            Some(&audit),
         )?)
     }
 
@@ -504,8 +640,26 @@ impl AuthService {
         &self,
         user_id: UserId,
     ) -> Result<InviteCodeResponse, AuthServiceError> {
+        self.create_invite_code_with_audit(
+            user_id,
+            SecurityAuditEvent::new("invite_create", "completed").with_actor_id(user_id.value()),
+        )
+    }
+
+    /// Create an invite code with an atomic completion audit.
+    pub fn create_invite_code_with_audit(
+        &self,
+        user_id: UserId,
+        audit: SecurityAuditEvent,
+    ) -> Result<InviteCodeResponse, AuthServiceError> {
         let code = random_hex(INVITE_CODE_BYTES)?;
-        let row = create_invite_code(&self.auth_db_path, user_id, &code, now_seconds())?;
+        let row = create_invite_code_with_audit(
+            &self.auth_db_path,
+            user_id,
+            &code,
+            now_seconds(),
+            Some(&audit),
+        )?;
         Ok(invite_response(row))
     }
 
