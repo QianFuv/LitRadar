@@ -46,7 +46,7 @@ pub(crate) async fn ready(State(state): State<ApiState>) -> (StatusCode, Json<He
     let auth_db_path = state.storage_config().auth_db_path().to_path_buf();
     let now = current_unix_time();
     let status = state
-        .run_blocking_with_timeout(Duration::from_secs(1), move || {
+        .run_blocking_with_queue_timeout(Duration::from_secs(1), move || {
             litradar_storage::get_scheduler_status(
                 &auth_db_path,
                 now,

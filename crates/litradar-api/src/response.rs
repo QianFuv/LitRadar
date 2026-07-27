@@ -149,7 +149,9 @@ impl ApiError {
 impl From<BlockingTaskError> for ApiError {
     fn from(error: BlockingTaskError) -> Self {
         match error {
-            BlockingTaskError::Closed | BlockingTaskError::TimedOut => Self::service_unavailable(),
+            BlockingTaskError::Closed | BlockingTaskError::QueueTimedOut => {
+                Self::service_unavailable()
+            }
             BlockingTaskError::Join => Self::unexpected(
                 "blocking_task_join_failed",
                 "blocking task failed to join",

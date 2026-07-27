@@ -30,6 +30,8 @@ const REPLAY_START_FAILURE: &str = "start_failure";
 const DEFAULT_QR_UUID: &str = "qr-rust-offline";
 const DEFAULT_QR_STATUS: &str = "WAITING_SCAN";
 const DEFAULT_QR_CODE: &str = "https://qr.test/qr-rust-offline.png";
+const CNKI_NETWORK_QUEUE_TIMEOUT: Duration = Duration::from_secs(30);
+const CNKI_NETWORK_TRANSPORT_TIMEOUT_SECONDS: u64 = 30;
 
 #[cfg(test)]
 #[derive(Default)]
@@ -128,7 +130,7 @@ pub(crate) async fn start_login(
             let user_id = user.id;
             let fixture_mode = zjlib_fixture_mode();
             let login_result = state
-                .run_blocking_with_timeout(Duration::from_secs(30), move || {
+                .run_blocking_with_queue_timeout(CNKI_NETWORK_QUEUE_TIMEOUT, move || {
                     start_zjlib_login(fixture_mode)
                 })
                 .await?;
@@ -282,9 +284,8 @@ pub(crate) async fn poll_login(
             let fixture_mode = zjlib_fixture_mode();
             let timeout_seconds = body.timeout_seconds;
             let interval_seconds = body.interval_seconds;
-            let poll_deadline = Duration::from_secs(timeout_seconds as u64 + 5);
             let poll_result = state
-                .run_blocking_with_timeout(poll_deadline, move || {
+                .run_blocking_with_queue_timeout(CNKI_NETWORK_QUEUE_TIMEOUT, move || {
                     poll_zjlib_login(
                         fixture_mode,
                         &session_data,
@@ -486,7 +487,7 @@ fn start_zjlib_login(
         let session_data = client.to_state_data();
         return Ok((qr_login, session_data));
     }
-    let transport = LiveZjlibCnkiTransport::new(LiveZjlibCnkiConfig::default())?;
+    let transport = LiveZjlibCnkiTransport::new(live_zjlib_config())?;
     let mut client = ZhejiangLibraryCnkiClient::new(transport);
     let qr_login = client.start_qr_login()?;
     let session_data = client.to_state_data();
@@ -512,8 +513,8 @@ fn poll_zjlib_login(
             .map_err(ZjlibPollError::Warmup)?;
         return Ok(client.to_state_data());
     }
-    let transport = LiveZjlibCnkiTransport::new(LiveZjlibCnkiConfig::default())
-        .map_err(ZjlibPollError::Login)?;
+    let transport =
+        LiveZjlibCnkiTransport::new(live_zjlib_config()).map_err(ZjlibPollError::Login)?;
     let mut client = ZhejiangLibraryCnkiClient::from_state_data(transport, session_data);
     client
         .poll_qr_login(timeout_seconds, interval_seconds)
@@ -522,6 +523,13 @@ fn poll_zjlib_login(
         .warm_up_fulltext_session()
         .map_err(ZjlibPollError::Warmup)?;
     Ok(client.to_state_data())
+}
+
+fn live_zjlib_config() -> LiveZjlibCnkiConfig {
+    LiveZjlibCnkiConfig {
+        timeout_seconds: CNKI_NETWORK_TRANSPORT_TIMEOUT_SECONDS,
+        ..LiveZjlibCnkiConfig::default()
+    }
 }
 
 enum ZjlibPollError {

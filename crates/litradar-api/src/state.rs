@@ -11,10 +11,10 @@ use litradar_provider::ProviderRegistry;
 use litradar_storage::{
     AuthRateLimitPolicy, SecretCodec, StorageConfig, TokenBucketPolicy, TrustedProxyCidr,
 };
-use tokio::sync::Semaphore;
+use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
 const DEFAULT_BLOCKING_CONCURRENCY: usize = 8;
-const DEFAULT_BLOCKING_TIMEOUT: Duration = Duration::from_secs(30);
+const DEFAULT_BLOCKING_QUEUE_TIMEOUT: Duration = Duration::from_secs(30);
 const DEFAULT_KDF_CONCURRENCY: usize = 2;
 
 /// State shared by API route handlers.
@@ -54,7 +54,7 @@ impl ApiState {
             Vec::new(),
             AuthRateLimitPolicy::default(),
             DEFAULT_BLOCKING_CONCURRENCY,
-            DEFAULT_BLOCKING_TIMEOUT,
+            DEFAULT_BLOCKING_QUEUE_TIMEOUT,
         )
     }
 
@@ -85,7 +85,7 @@ impl ApiState {
             trusted_proxy_cidrs,
             auth_rate_limit_policy,
             DEFAULT_BLOCKING_CONCURRENCY,
-            DEFAULT_BLOCKING_TIMEOUT,
+            DEFAULT_BLOCKING_QUEUE_TIMEOUT,
         )
     }
 
@@ -96,7 +96,7 @@ impl ApiState {
         trusted_proxy_cidrs: Vec<TrustedProxyCidr>,
         auth_rate_limit_policy: AuthRateLimitPolicy,
         blocking_concurrency: usize,
-        blocking_timeout: Duration,
+        blocking_queue_timeout: Duration,
     ) -> Self {
         let article_providers = crate::article_access::build_article_provider_registry(
             storage_config.clone(),
@@ -109,8 +109,8 @@ impl ApiState {
             are_session_cookies_secure,
             auth_rate_limiter: Arc::new(Mutex::new(AuthRateLimiter::new(auth_rate_limit_policy))),
             trusted_proxy_cidrs: trusted_proxy_cidrs.into(),
-            blocking_executor: BlockingExecutor::new(blocking_concurrency, blocking_timeout),
-            kdf_executor: BlockingExecutor::new(DEFAULT_KDF_CONCURRENCY, blocking_timeout),
+            blocking_executor: BlockingExecutor::new(blocking_concurrency, blocking_queue_timeout),
+            kdf_executor: BlockingExecutor::new(DEFAULT_KDF_CONCURRENCY, blocking_queue_timeout),
             article_providers: Arc::new(article_providers),
         }
     }
@@ -123,7 +123,7 @@ impl ApiState {
     /// * `secret_codec` - Deployment secret codec.
     /// * `are_session_cookies_secure` - Whether session cookies include Secure.
     /// * `concurrency` - Maximum simultaneously running blocking jobs.
-    /// * `timeout` - Default permit-and-result deadline.
+    /// * `queue_timeout` - Default permit acquisition deadline.
     ///
     /// # Returns
     ///
@@ -134,7 +134,7 @@ impl ApiState {
         secret_codec: SecretCodec,
         are_session_cookies_secure: bool,
         concurrency: usize,
-        timeout: Duration,
+        queue_timeout: Duration,
     ) -> Self {
         Self::build(
             storage_config,
@@ -143,7 +143,7 @@ impl ApiState {
             Vec::new(),
             AuthRateLimitPolicy::default(),
             concurrency,
-            timeout,
+            queue_timeout,
         )
     }
 
@@ -237,19 +237,19 @@ impl ApiState {
             .await
     }
 
-    /// Run synchronous work with an operation-specific total deadline.
+    /// Run synchronous work with an operation-specific queue deadline.
     ///
     /// # Arguments
     ///
-    /// * `timeout` - Maximum time spent waiting for a permit and task result.
+    /// * `queue_timeout` - Maximum time spent waiting for an executor permit.
     /// * `work` - Owned synchronous operation to execute.
     ///
     /// # Returns
     ///
     /// Completed output or a bounded-executor failure.
-    pub(crate) async fn run_blocking_with_timeout<Work, Output>(
+    pub(crate) async fn run_blocking_with_queue_timeout<Work, Output>(
         &self,
-        timeout: Duration,
+        queue_timeout: Duration,
         work: Work,
     ) -> Result<Output, BlockingTaskError>
     where
@@ -259,7 +259,7 @@ impl ApiState {
         let span = tracing::Span::current();
         let subscriber = tracing::dispatcher::get_default(Clone::clone);
         self.blocking_executor
-            .run_with_timeout(timeout, move || {
+            .run_with_queue_timeout(queue_timeout, move || {
                 tracing::dispatcher::with_default(&subscriber, || span.in_scope(work))
             })
             .await
@@ -286,7 +286,7 @@ impl ApiState {
         let span = tracing::Span::current();
         let subscriber = tracing::dispatcher::get_default(Clone::clone);
         self.blocking_executor
-            .run_without_timeout(move || {
+            .run_without_queue_timeout(move || {
                 tracing::dispatcher::with_default(&subscriber, || span.in_scope(work))
             })
             .await
@@ -371,8 +371,8 @@ impl fmt::Debug for ApiState {
 pub(crate) enum BlockingTaskError {
     /// The executor was closed during server shutdown.
     Closed,
-    /// The permit wait or blocking task exceeded its request deadline.
-    TimedOut,
+    /// The executor permit could not be acquired before the queue deadline.
+    QueueTimedOut,
     /// The blocking task panicked or was cancelled by the runtime.
     Join,
 }
@@ -381,7 +381,7 @@ impl fmt::Display for BlockingTaskError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Closed => formatter.write_str("blocking executor is closed"),
-            Self::TimedOut => formatter.write_str("blocking operation timed out"),
+            Self::QueueTimedOut => formatter.write_str("blocking executor queue timed out"),
             Self::Join => formatter.write_str("blocking operation failed to join"),
         }
     }
@@ -392,15 +392,15 @@ impl std::error::Error for BlockingTaskError {}
 #[derive(Debug, Clone)]
 struct BlockingExecutor {
     semaphore: Arc<Semaphore>,
-    default_timeout: Duration,
+    default_queue_timeout: Duration,
 }
 
 impl BlockingExecutor {
-    fn new(concurrency: usize, default_timeout: Duration) -> Self {
+    fn new(concurrency: usize, default_queue_timeout: Duration) -> Self {
         assert!(concurrency > 0, "blocking concurrency must be positive");
         Self {
             semaphore: Arc::new(Semaphore::new(concurrency)),
-            default_timeout,
+            default_queue_timeout,
         }
     }
 
@@ -409,24 +409,29 @@ impl BlockingExecutor {
         Work: FnOnce() -> Output + Send + 'static,
         Output: Send + 'static,
     {
-        self.run_with_timeout(self.default_timeout, work).await
+        self.run_with_queue_timeout(self.default_queue_timeout, work)
+            .await
     }
 
-    async fn run_with_timeout<Work, Output>(
+    async fn run_with_queue_timeout<Work, Output>(
         &self,
-        timeout: Duration,
+        queue_timeout: Duration,
         work: Work,
     ) -> Result<Output, BlockingTaskError>
     where
         Work: FnOnce() -> Output + Send + 'static,
         Output: Send + 'static,
     {
-        tokio::time::timeout(timeout, self.run_without_timeout(work))
-            .await
-            .map_err(|_| BlockingTaskError::TimedOut)?
+        let permit =
+            tokio::time::timeout(queue_timeout, Arc::clone(&self.semaphore).acquire_owned())
+                .await
+                .map_err(|_| BlockingTaskError::QueueTimedOut)?
+                .map_err(|_| BlockingTaskError::Closed)?;
+        Self::run_with_permit(permit, work).await
     }
 
-    async fn run_without_timeout<Work, Output>(
+    #[cfg(test)]
+    async fn run_without_queue_timeout<Work, Output>(
         &self,
         work: Work,
     ) -> Result<Output, BlockingTaskError>
@@ -438,6 +443,17 @@ impl BlockingExecutor {
             .acquire_owned()
             .await
             .map_err(|_| BlockingTaskError::Closed)?;
+        Self::run_with_permit(permit, work).await
+    }
+
+    async fn run_with_permit<Work, Output>(
+        permit: OwnedSemaphorePermit,
+        work: Work,
+    ) -> Result<Output, BlockingTaskError>
+    where
+        Work: FnOnce() -> Output + Send + 'static,
+        Output: Send + 'static,
+    {
         tokio::task::spawn_blocking(move || {
             let _permit = permit;
             work()
@@ -1397,12 +1413,13 @@ mod tests {
             Duration::from_millis(50),
         );
         let should_release = Arc::new(AtomicBool::new(false));
+        let queued_started = Arc::new(AtomicBool::new(false));
         let worker_release = Arc::clone(&should_release);
         let (started_sender, started_receiver) = tokio::sync::oneshot::channel();
         let first_state = state.clone();
         let first = tokio::spawn(async move {
             first_state
-                .run_blocking_with_timeout(Duration::from_secs(2), move || {
+                .run_blocking_with_queue_timeout(Duration::from_secs(2), move || {
                     let _ = started_sender.send(());
                     while !worker_release.load(Ordering::Acquire) {
                         std::thread::yield_now();
@@ -1416,7 +1433,15 @@ mod tests {
             .expect("first blocking job should start");
 
         let queued_state = state.clone();
-        let queued = tokio::spawn(async move { queued_state.run_blocking(|| "queued").await });
+        let queued_started_in_work = Arc::clone(&queued_started);
+        let queued = tokio::spawn(async move {
+            queued_state
+                .run_blocking(move || {
+                    queued_started_in_work.store(true, Ordering::Release);
+                    "queued"
+                })
+                .await
+        });
         let router = crate::routes::public_routes()
             .merge(crate::routes::health_routes())
             .with_state(state.clone());
@@ -1463,8 +1488,117 @@ mod tests {
             saturated_payload["detail"],
             "Service temporarily unavailable"
         );
-        assert_eq!(queued_result, Err(BlockingTaskError::TimedOut));
+        assert_eq!(queued_result, Err(BlockingTaskError::QueueTimedOut));
+        assert!(!queued_started.load(Ordering::Acquire));
         assert_eq!(state.run_blocking(|| "available").await, Ok("available"));
+        assert!(!queued_started.load(Ordering::Acquire));
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn blocking_executor_does_not_return_timeout_after_http_work_starts() {
+        let temp_dir = tempdir().expect("temporary directory should be created");
+        let state = ApiState::new_with_blocking_limits(
+            StorageConfig::from_project_root(temp_dir.path()),
+            SecretCodec::from_key([1_u8; 32]),
+            false,
+            1,
+            Duration::from_millis(25),
+        );
+        let should_release = Arc::new(AtomicBool::new(false));
+        let did_mutate = Arc::new(AtomicBool::new(false));
+        let did_start = Arc::new(tokio::sync::Notify::new());
+        let route_state = state.clone();
+        let route_release = Arc::clone(&should_release);
+        let route_mutation = Arc::clone(&did_mutate);
+        let route_started = Arc::clone(&did_start);
+        let router = axum::Router::new().route(
+            "/started",
+            axum::routing::get(move || {
+                let state = route_state.clone();
+                let worker_release = Arc::clone(&route_release);
+                let worker_mutation = Arc::clone(&route_mutation);
+                let worker_started = Arc::clone(&route_started);
+                async move {
+                    match state
+                        .run_blocking_with_queue_timeout(Duration::from_millis(25), move || {
+                            worker_started.notify_one();
+                            while !worker_release.load(Ordering::Acquire) {
+                                std::thread::yield_now();
+                            }
+                            worker_mutation.store(true, Ordering::Release);
+                        })
+                        .await
+                    {
+                        Ok(()) => StatusCode::NO_CONTENT,
+                        Err(_) => StatusCode::SERVICE_UNAVAILABLE,
+                    }
+                }
+            }),
+        );
+        let response_task = tokio::spawn(
+            router.oneshot(
+                Request::get("/started")
+                    .body(Body::empty())
+                    .expect("request"),
+            ),
+        );
+        did_start.notified().await;
+        tokio::time::sleep(Duration::from_millis(75)).await;
+
+        assert!(!response_task.is_finished());
+        assert!(!did_mutate.load(Ordering::Acquire));
+        assert_eq!(state.blocking_executor.semaphore.available_permits(), 0);
+
+        should_release.store(true, Ordering::Release);
+        let response = response_task
+            .await
+            .expect("HTTP task should join")
+            .expect("HTTP route should respond");
+        assert_eq!(response.status(), StatusCode::NO_CONTENT);
+        assert!(did_mutate.load(Ordering::Acquire));
+        assert_eq!(state.blocking_executor.semaphore.available_permits(), 1);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn blocking_executor_holds_permit_until_cancelled_waiter_work_finishes() {
+        let executor = BlockingExecutor::new(1, Duration::from_millis(25));
+        let cancelled_executor = executor.clone();
+        let should_release = Arc::new(AtomicBool::new(false));
+        let worker_release = Arc::clone(&should_release);
+        let (started_sender, started_receiver) = tokio::sync::oneshot::channel();
+        let (finished_sender, finished_receiver) = tokio::sync::oneshot::channel();
+        let task = tokio::spawn(async move {
+            cancelled_executor
+                .run(move || {
+                    let _ = started_sender.send(());
+                    while !worker_release.load(Ordering::Acquire) {
+                        std::thread::yield_now();
+                    }
+                    let _ = finished_sender.send(());
+                })
+                .await
+        });
+        started_receiver
+            .await
+            .expect("blocking work should acquire a permit and start");
+
+        task.abort();
+        assert!(task
+            .await
+            .expect_err("waiter should be cancelled")
+            .is_cancelled());
+        assert_eq!(
+            executor
+                .run_with_queue_timeout(Duration::from_millis(25), || "queued")
+                .await,
+            Err(BlockingTaskError::QueueTimedOut)
+        );
+
+        should_release.store(true, Ordering::Release);
+        finished_receiver
+            .await
+            .expect("cancelled waiter's blocking work should finish");
+        assert_eq!(executor.run(|| "available").await, Ok("available"));
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

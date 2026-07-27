@@ -34,8 +34,8 @@ use serde_json::json;
 use crate::response::ApiError;
 use crate::state::{ApiState, BlockingTaskError};
 
-const ARTICLE_ACTION_TIMEOUT: Duration = Duration::from_secs(30);
-const ZJLIB_FULL_TEXT_TIMEOUT: Duration = Duration::from_secs(120);
+const ARTICLE_ACTION_QUEUE_TIMEOUT: Duration = Duration::from_secs(30);
+const ARTICLE_TRANSPORT_TIMEOUT_SECONDS: u64 = 30;
 #[cfg(test)]
 static FULL_TEXT_FIXTURE_MODE: OnceLock<Mutex<Option<FixtureZjlibCnkiMode>>> = OnceLock::new();
 
@@ -153,14 +153,14 @@ pub(crate) async fn resolve_article_abstract(
         let provider_name = name.to_string();
         let request_article = article.clone();
         let result = state
-            .run_blocking_with_timeout(ARTICLE_ACTION_TIMEOUT, move || {
+            .run_blocking_with_queue_timeout(ARTICLE_ACTION_QUEUE_TIMEOUT, move || {
                 provider.resolve_abstract(&request_article, context)
             })
             .await;
         let result = match result {
             Ok(result) => result,
-            Err(BlockingTaskError::TimedOut) => {
-                log_fallback(&provider_name, "abstract", "timeout");
+            Err(BlockingTaskError::QueueTimedOut) => {
+                log_fallback(&provider_name, "abstract", "queue_timeout");
                 continue;
             }
             Err(error) => return Err(error.into()),
@@ -230,14 +230,14 @@ pub(crate) async fn resolve_article_full_text(
         let provider_name = name.to_string();
         let request_article = article.clone();
         let result = state
-            .run_blocking_with_timeout(ZJLIB_FULL_TEXT_TIMEOUT, move || {
+            .run_blocking_with_queue_timeout(ARTICLE_ACTION_QUEUE_TIMEOUT, move || {
                 provider.resolve_full_text(&request_article, context)
             })
             .await;
         let result = match result {
             Ok(result) => result,
-            Err(BlockingTaskError::TimedOut) => {
-                log_fallback(&provider_name, "fulltext", "timeout");
+            Err(BlockingTaskError::QueueTimedOut) => {
+                log_fallback(&provider_name, "fulltext", "queue_timeout");
                 continue;
             }
             Err(error) => return Err(error.into()),
@@ -422,7 +422,7 @@ impl ArticleAbstractProvider for LiveCnkiAccessProvider {
 fn live_cnki_oversea_access_registration() -> Result<ProviderRegistration, ProviderRegistryError> {
     let provider = Arc::new(LiveCnkiAccessProvider {
         config: LiveCnkiConfig {
-            timeout_seconds: ARTICLE_ACTION_TIMEOUT.as_secs(),
+            timeout_seconds: ARTICLE_TRANSPORT_TIMEOUT_SECONDS,
         },
     });
     ProviderRegistration::try_new(
@@ -500,7 +500,7 @@ fn live_cnki_access_registration(
 ) -> Result<ProviderRegistration, ProviderRegistryError> {
     let provider = Arc::new(LiveDomesticCnkiAccessProvider {
         config: LiveDomesticCnkiConfig {
-            timeout_seconds: ARTICLE_ACTION_TIMEOUT.as_secs(),
+            timeout_seconds: ARTICLE_TRANSPORT_TIMEOUT_SECONDS,
             captcha_token,
         },
     });
@@ -582,7 +582,10 @@ fn download_zjlib_full_text(
         client.warm_up_fulltext_session()?;
         return client.download_matching_pdf(&expected, 10);
     }
-    let transport = LiveZjlibCnkiTransport::new(LiveZjlibCnkiConfig::default())?;
+    let transport = LiveZjlibCnkiTransport::new(LiveZjlibCnkiConfig {
+        timeout_seconds: ARTICLE_TRANSPORT_TIMEOUT_SECONDS,
+        ..LiveZjlibCnkiConfig::default()
+    })?;
     let mut client = ZhejiangLibraryCnkiClient::from_state_data(transport, &session_data);
     client.warm_up_fulltext_session()?;
     client.download_matching_pdf(&expected, 10)
