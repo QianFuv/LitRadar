@@ -209,9 +209,12 @@ Scholarly 的 `workers` 只控制每个期刊子进程内 OpenAlex DOI 子批的
 5. 加载全局运行设置。
 6. 应用 CORS、MCP、Cookie、可信代理和认证限流策略。
 7. 若启用 `--require-secure-cookies` 但设置仍为 `false`，拒绝启动。
-8. 绑定监听端口并并发启动 HTTP 与立即执行的调度 tick。
+8. 重新散列 `web/` 下全部 HTML，并要求 `web/csp-hashes.json` 与静态导出完全一致后构造 CSP。
+9. 绑定监听端口并并发启动 HTTP 与立即执行的调度 tick。
 
 默认调度间隔为 30 秒，可用 `--scheduler-interval-seconds N` 覆盖；N 必须大于 0。任一组件意外失败都会使整个 `serve` 调用失败。
+
+`--require-secure-cookies` 同时选择 hardened HTTPS 响应模式：在 Secure Cookie 启动门通过后，应用为所有响应增加 `Strict-Transport-Security: max-age=31536000`。未传该参数的 loopback HTTP 模式不发送 HSTS。CSP 清单由 `pnpm --dir app build` 自动生成；打包或部署不得绕过该构建步骤，也不得把不同构建的 HTML 与清单混用。
 
 ## 索引进程
 

@@ -164,6 +164,22 @@ MCP 的 `Host` 防护与浏览器 CORS 分开：
 
 全局配置详见[运行配置参考](../reference/configuration.md)。
 
+### 响应安全策略
+
+生产前端构建在 `next build` 后生成 `web/csp-hashes.json`，记录每个导出 HTML 的完整 SHA-256 和所有内联脚本的 CSP SHA-256。服务启动时会递归重新读取全部 HTML，并要求文件集合、文件摘要、脚本顺序和全局哈希集合与清单完全一致；清单缺失、损坏、过大、过期，静态目录缺少 HTML 或包含符号链接都会在绑定端口前失败。部署时必须把同一次构建产生的 `web/` 作为整体复制，不能单独替换 HTML。
+
+所有静态与后端响应统一包含：
+
+- `Content-Security-Policy`：脚本只允许同源外部文件和已复算的精确 SHA-256，不包含脚本 `unsafe-inline`；样式暂时保留 `style-src 'self' 'unsafe-inline'` 以兼容当前 Next.js 静态导出。
+- `X-Content-Type-Options: nosniff`
+- `Referrer-Policy: same-origin`
+- `Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=(), usb=()`
+- `X-Frame-Options: DENY`，并同时使用 CSP `frame-ancestors 'none'`。
+
+`Strict-Transport-Security: max-age=31536000` 只在使用 `--require-secure-cookies` 的 hardened 模式下由应用发送。该模式同时要求数据库中的 `secure_cookies=true`；仅在确认外部入口始终使用 HTTPS 后启用。TLS 反向代理不得删除或用更宽松策略覆盖这些 Header。
+
+所有 `/api/auth` 和 `/api/auth/*` 响应无论状态或是否携带凭据，都强制使用 `Cache-Control: no-store` 与 `Pragma: no-cache`。这包括成功、输入错误、认证失败、限流和内部失败，避免浏览器或中间缓存保存认证状态。
+
 ### 静态 Web 缓存
 
 生产导出的 Web 文件是公开构建产物，不得包含部署密钥或用户秘密。Rust 按以下边界设置缓存：
@@ -171,6 +187,7 @@ MCP 的 `Host` 防护与浏览器 CORS 分开：
 - 成功的 `/_next/static/*` 哈希资源使用 `public, max-age=31536000, immutable`，即使请求携带会话 Cookie 也不会变成用户专属内容。
 - 页面、导航 payload 和导出的 404 使用 `no-cache`，以便浏览器重新验证版本。
 - 受保护 API、携带 Bearer/Cookie 的非静态响应和 `401` 继续使用 `private, no-store`。
+- 所有认证路径使用更严格且状态无关的 `no-store` 与 `Pragma: no-cache`。
 - 支持 gzip 的客户端读取镜像内预压缩兄弟文件；不支持的客户端读取原文件。
 
 `/api`、`/mcp`、`/docs` 和 `/openapi.json` 始终由后端路由优先处理，未知路径不会借静态 fallback 读取项目数据或密钥。

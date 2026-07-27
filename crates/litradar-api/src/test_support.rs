@@ -18,6 +18,7 @@ use serde_json::Value;
 use tempfile::{tempdir, TempDir};
 use tower::ServiceExt;
 
+use crate::security_headers::write_test_web_root;
 use crate::{build_router, ApiConfig};
 
 const TEST_HOST: &str = "127.0.0.1";
@@ -44,6 +45,7 @@ impl TestBackend {
         fs::write(&secret_key_file, [42_u8; 32]).expect("secret key should write");
         fs::create_dir_all(storage_config.index_dir()).expect("index dir should be created");
         migrate_storage(&storage_config).expect("test databases should migrate");
+        write_test_web_root(temp_dir.path());
         Self {
             temp_dir,
             storage_config,
@@ -94,6 +96,7 @@ impl TestBackend {
     ///
     /// Axum router ready for one-shot test requests.
     pub(crate) fn router(&self) -> Router {
+        write_test_web_root(self.project_root());
         let mut config = ApiConfig::new(
             self.project_root().to_path_buf(),
             TEST_HOST.to_string(),

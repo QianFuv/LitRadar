@@ -159,6 +159,55 @@ function assertInvariant(condition, message) {
 }
 
 /**
+ * Assert the baseline response security policy without weakening inline scripts.
+ *
+ * @param {Response} response - Runtime response to inspect.
+ * @param {boolean} isHstsExpected - Whether hardened HTTPS mode should emit HSTS.
+ * @returns {void}
+ */
+function assertSecurityHeaders(response, isHstsExpected) {
+  const contentSecurityPolicy = response.headers.get("content-security-policy");
+  assertInvariant(
+    contentSecurityPolicy?.includes("default-src 'self'"),
+    "response omitted the default CSP policy",
+  );
+  assertInvariant(
+    contentSecurityPolicy.includes("frame-ancestors 'none'"),
+    "response omitted CSP frame denial",
+  );
+  const scriptDirective = contentSecurityPolicy
+    .split(";")
+    .map((directive) => directive.trim())
+    .find((directive) => directive.startsWith("script-src"));
+  assertInvariant(
+    scriptDirective?.includes("'self'") &&
+      !scriptDirective.includes("'unsafe-inline'"),
+    "response CSP weakened inline script protection",
+  );
+  assertInvariant(
+    response.headers.get("x-content-type-options") === "nosniff",
+    "response omitted nosniff",
+  );
+  assertInvariant(
+    response.headers.get("referrer-policy") === "same-origin",
+    "response returned an unexpected referrer policy",
+  );
+  assertInvariant(
+    response.headers.get("permissions-policy") ===
+      "camera=(), microphone=(), geolocation=(), payment=(), usb=()",
+    "response returned an unexpected permissions policy",
+  );
+  assertInvariant(
+    response.headers.get("x-frame-options") === "DENY",
+    "response omitted frame denial",
+  );
+  assertInvariant(
+    response.headers.has("strict-transport-security") === isHstsExpected,
+    "response returned an unexpected HSTS mode",
+  );
+}
+
+/**
  * Fetch one runtime endpoint with a short per-request timeout.
  *
  * @param {string} url - Loopback URL.
@@ -434,11 +483,13 @@ async function runSmoke(imageReference) {
     "-c",
     "test -f /app/data/meta/ccf_computer_journals.csv && test -f /app/data/meta/chinese_journals.csv && test -f /app/data/meta/english_journals.csv",
   ]);
-  const [rootResponse, openApiResponse, inspectResult] = await Promise.all([
-    fetchRuntime(`${baseUrl}/`),
-    fetchRuntime(`${baseUrl}/openapi.json`),
-    runDocker(["inspect", containerName]),
-  ]);
+  const [rootResponse, openApiResponse, authResponse, inspectResult] =
+    await Promise.all([
+      fetchRuntime(`${baseUrl}/`),
+      fetchRuntime(`${baseUrl}/openapi.json`),
+      fetchRuntime(`${baseUrl}/api/auth/me`),
+      runDocker(["inspect", containerName]),
+    ]);
   assertInvariant(
     rootResponse.ok,
     `root endpoint returned ${rootResponse.status}`,
@@ -446,6 +497,22 @@ async function runSmoke(imageReference) {
   assertInvariant(
     openApiResponse.ok,
     `OpenAPI endpoint returned ${openApiResponse.status}`,
+  );
+  assertInvariant(
+    authResponse.status === 401,
+    `anonymous auth endpoint returned ${authResponse.status}`,
+  );
+  for (const response of [rootResponse, openApiResponse, authResponse]) {
+    assertSecurityHeaders(response, false);
+  }
+  assertInvariant(
+    rootResponse.headers.get("content-security-policy")?.includes("sha256-"),
+    "root CSP omitted exported inline script hashes",
+  );
+  assertInvariant(
+    authResponse.headers.get("cache-control") === "no-store" &&
+      authResponse.headers.get("pragma") === "no-cache",
+    "auth response was cacheable",
   );
   const rootBody = await rootResponse.text();
   const openApi = await openApiResponse.json();
@@ -516,7 +583,7 @@ async function runSmoke(imageReference) {
     imageReference,
     imageId,
     containerUser: inspection.Config.User,
-    endpoints: ["/", "/health/ready", "/openapi.json"],
+    endpoints: ["/", "/health/ready", "/openapi.json", "/api/auth/me"],
     managedMetaPrepared: true,
     removedEnvironmentOverrides: [],
     security: {
@@ -526,6 +593,7 @@ async function runSmoke(imageReference) {
       temporaryFilesystem: true,
       writableDataVolume: true,
       readOnlySecretMount: true,
+      responseHeaders: true,
     },
   };
 }

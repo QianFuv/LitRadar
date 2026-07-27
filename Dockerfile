@@ -18,6 +18,7 @@ WORKDIR /app
 
 COPY --from=frontend-deps /app/node_modules node_modules/
 COPY app/ ./
+COPY scripts/generate-csp.mjs /scripts/generate-csp.mjs
 COPY testdata /testdata
 
 RUN corepack enable pnpm && pnpm build

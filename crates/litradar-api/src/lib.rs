@@ -7,6 +7,7 @@ mod mcp;
 mod openapi;
 mod response;
 pub mod routes;
+mod security_headers;
 pub mod state;
 #[cfg(test)]
 pub(crate) mod test_support;
@@ -20,10 +21,10 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use axum::body::Body;
 use axum::extract::Request;
-use axum::http::header::{AUTHORIZATION, CACHE_CONTROL, COOKIE, LOCATION};
+use axum::http::header::{AUTHORIZATION, CACHE_CONTROL, COOKIE, LOCATION, PRAGMA};
 use axum::http::uri::PathAndQuery;
 use axum::http::{HeaderValue, Method, StatusCode};
-use axum::middleware::{from_fn, Next};
+use axum::middleware::{from_fn, from_fn_with_state, Next};
 use axum::response::{IntoResponse, Response};
 use axum::Router;
 use config::ApiConfig;
@@ -43,6 +44,9 @@ pub const API_PREFIX: &str = "/api";
 
 /// Cache-Control header for credentialed requests and unauthorized responses.
 pub const AUTHENTICATED_CACHE_CONTROL: &str = "private, no-store";
+
+/// Cache-Control header for every authentication endpoint response.
+pub const AUTH_API_CACHE_CONTROL: &str = "no-store";
 
 /// Cache-Control header for immutable Next.js build assets.
 pub const STATIC_ASSET_CACHE_CONTROL: &str = "public, max-age=31536000, immutable";
@@ -212,6 +216,10 @@ fn try_build_router_with_state(
     let runtime_settings =
         litradar_storage::load_runtime_settings(storage_config.auth_db_path(), &secret_codec)?;
     config.apply_runtime_settings(&runtime_settings)?;
+    let security_header_policy = security_headers::load_security_header_policy(
+        &web_root,
+        config.are_secure_cookies_required,
+    )?;
     let state = ApiState::new_with_auth_policy(
         storage_config,
         secret_codec,
@@ -228,7 +236,12 @@ fn try_build_router_with_state(
         .fallback_service(static_frontend_service(web_root))
         .layer(from_fn(cache_control_middleware))
         .layer(cors_layer(&config));
-    let router = http_observability::instrument_router(router).with_state(state.clone());
+    let router = http_observability::instrument_router(router)
+        .with_state(state.clone())
+        .layer(from_fn_with_state(
+            security_header_policy,
+            security_headers::security_header_middleware,
+        ));
     Ok((router, state))
 }
 
@@ -367,9 +380,12 @@ async fn cache_control_middleware(request: Request, next: Next) -> Response {
             .is_some_and(has_session_cookie);
     let mut response = next.run(request).await;
 
-    let cache_control = if is_static_asset_path(&path)
-        && is_successful_static_response(response.status())
-    {
+    let cache_control = if is_auth_api_path(&path) {
+        response
+            .headers_mut()
+            .insert(PRAGMA, HeaderValue::from_static("no-cache"));
+        Some(AUTH_API_CACHE_CONTROL)
+    } else if is_static_asset_path(&path) && is_successful_static_response(response.status()) {
         Some(STATIC_ASSET_CACHE_CONTROL)
     } else if has_auth_credentials || response.status() == StatusCode::UNAUTHORIZED {
         Some(AUTHENTICATED_CACHE_CONTROL)
@@ -386,6 +402,10 @@ async fn cache_control_middleware(request: Request, next: Next) -> Response {
     }
 
     response
+}
+
+fn is_auth_api_path(path: &str) -> bool {
+    path == "/api/auth" || path.starts_with("/api/auth/")
 }
 
 fn frontend_redirect_location(request: &Request) -> Option<HeaderValue> {
@@ -502,10 +522,13 @@ mod tests {
     use axum::body::{to_bytes, Body};
     use axum::http::header::{
         ACCEPT_ENCODING, ACCEPT_RANGES, AUTHORIZATION, CACHE_CONTROL, CONTENT_DISPOSITION,
-        CONTENT_ENCODING, CONTENT_RANGE, CONTENT_TYPE, COOKIE, IF_MODIFIED_SINCE, LAST_MODIFIED,
-        LOCATION, RANGE, RETRY_AFTER, SET_COOKIE, VARY,
+        CONTENT_ENCODING, CONTENT_RANGE, CONTENT_SECURITY_POLICY, CONTENT_TYPE, COOKIE,
+        IF_MODIFIED_SINCE, LAST_MODIFIED, LOCATION, PRAGMA, RANGE, REFERRER_POLICY, RETRY_AFTER,
+        SET_COOKIE, STRICT_TRANSPORT_SECURITY, VARY, X_CONTENT_TYPE_OPTIONS, X_FRAME_OPTIONS,
     };
-    use axum::http::{HeaderMap, Method, Request, StatusCode};
+    use axum::http::{HeaderMap, HeaderName, Method, Request, StatusCode};
+    use axum::middleware::{from_fn, from_fn_with_state};
+    use axum::routing::get;
     use axum::Router;
     use litradar_auth::{
         AuthService, ACCESS_TOKEN_ACTIVE_LIMIT, ACCESS_TOKEN_LIMIT_DETAIL,
@@ -518,12 +541,16 @@ mod tests {
     use serde_json::Value;
     use tower::ServiceExt;
 
+    use crate::security_headers::{
+        load_security_header_policy, security_header_middleware, write_test_web_root,
+    };
     use crate::state::tracing_test_support::CapturedLogs;
     use crate::state::ApiState;
     use crate::test_support::{json_request, FixtureIndexDatabase, JsonTestResponse, TestBackend};
     use crate::{
-        api_heartbeat_loop_with_interval, try_build_router, ApiConfig, AUTHENTICATED_CACHE_CONTROL,
-        FRONTEND_CACHE_CONTROL, STATIC_ASSET_CACHE_CONTROL,
+        api_heartbeat_loop_with_interval, cache_control_middleware, try_build_router, ApiConfig,
+        AUTHENTICATED_CACHE_CONTROL, AUTH_API_CACHE_CONTROL, FRONTEND_CACHE_CONTROL,
+        STATIC_ASSET_CACHE_CONTROL,
     };
 
     static TEST_CONFIG_LOCK: AtomicBool = AtomicBool::new(false);
@@ -719,7 +746,7 @@ mod tests {
         miri,
         ignore = "Miri does not support Tokio's Windows IOCP runtime initialization"
     )]
-    async fn static_frontend_redirects_ui_paths_and_preserves_backend_precedence() {
+    async fn static_frontend_redirects_ui_paths_and_fails_closed_without_export() {
         let fixture = StaticFrontendFixture::new();
         let app = fixture.router();
 
@@ -764,13 +791,19 @@ mod tests {
         }
 
         let backend_without_web = TestBackend::new();
-        let app_without_web = backend_without_web.router();
-        let health_without_web =
-            static_frontend_request(&app_without_web, Method::GET, "/health/live", &[]).await;
-        assert_eq!(health_without_web.status, StatusCode::OK);
-        let root_without_web =
-            static_frontend_request(&app_without_web, Method::GET, "/", &[]).await;
-        assert_eq!(root_without_web.status, StatusCode::NOT_FOUND);
+        fs::remove_dir_all(backend_without_web.project_root().join("web"))
+            .expect("test web root should be removed");
+        let config = ApiConfig::new(
+            backend_without_web.project_root().to_path_buf(),
+            "127.0.0.1".to_string(),
+            0,
+            backend_without_web.project_root().join("secret.key"),
+        );
+        let error =
+            try_build_router(config).expect_err("missing static export should fail startup");
+        assert!(error
+            .to_string()
+            .contains("Unable to traverse static export"));
     }
 
     #[tokio::test]
@@ -1057,12 +1090,158 @@ mod tests {
         assert!(public_health.headers.get(CACHE_CONTROL).is_none());
     }
 
+    #[tokio::test]
+    #[cfg_attr(
+        miri,
+        ignore = "Miri does not support Tokio's Windows IOCP runtime initialization"
+    )]
+    async fn security_headers_apply_baseline_and_authorize_deployed_inline_scripts() {
+        let backend = TestBackend::new();
+        let app = backend.router();
+        let manifest: Value = serde_json::from_slice(
+            &fs::read(backend.project_root().join("web/csp-hashes.json"))
+                .expect("test CSP manifest should read"),
+        )
+        .expect("test CSP manifest should decode");
+
+        for uri in ["/", "/health/live", "/api/does-not-exist", "/docs/"] {
+            let response = static_frontend_request(&app, Method::GET, uri, &[]).await;
+            assert_security_header_baseline(&response.headers, false);
+        }
+
+        let root = static_frontend_request(&app, Method::GET, "/", &[]).await;
+        let csp = root
+            .headers
+            .get(CONTENT_SECURITY_POLICY)
+            .expect("CSP header should exist")
+            .to_str()
+            .expect("CSP header should be ASCII");
+        let script_directive = csp
+            .split(';')
+            .map(str::trim)
+            .find(|directive| directive.starts_with("script-src"))
+            .expect("script-src directive should exist");
+        assert!(!script_directive.contains("'unsafe-inline'"));
+        for hash in manifest["script_hashes"]
+            .as_array()
+            .expect("script hashes should be an array")
+        {
+            let hash = hash.as_str().expect("script hash should be a string");
+            assert!(script_directive.contains(&format!("'{hash}'")));
+        }
+    }
+
+    #[tokio::test]
+    #[cfg_attr(
+        miri,
+        ignore = "Miri does not support Tokio's Windows IOCP runtime initialization"
+    )]
+    async fn security_headers_enable_hsts_only_for_hardened_mode() {
+        let default_backend = TestBackend::new();
+        let default_response =
+            static_frontend_request(&default_backend.router(), Method::GET, "/", &[]).await;
+        assert_security_header_baseline(&default_response.headers, false);
+
+        let hardened_backend = TestBackend::new();
+        litradar_storage::upsert_runtime_settings(
+            hardened_backend.auth_db_path(),
+            hardened_backend.secret_codec(),
+            &HashMap::from([("secure_cookies".to_string(), Some("true".to_string()))]),
+            &HashMap::new(),
+        )
+        .expect("secure cookie runtime setting should persist");
+        let mut config = ApiConfig::new(
+            hardened_backend.project_root().to_path_buf(),
+            "127.0.0.1".to_string(),
+            0,
+            hardened_backend.project_root().join("secret.key"),
+        );
+        config.are_secure_cookies_required = true;
+        let hardened_app = try_build_router(config).expect("hardened router should build");
+        let hardened_response = static_frontend_request(&hardened_app, Method::GET, "/", &[]).await;
+        assert_security_header_baseline(&hardened_response.headers, true);
+    }
+
+    #[tokio::test]
+    async fn security_headers_and_auth_cache_policy_cover_all_outcomes() {
+        let backend = TestBackend::new();
+        let policy = load_security_header_policy(&backend.project_root().join("web"), false)
+            .expect("test security policy should load");
+        let app = Router::new()
+            .route("/api/auth/ok", get(|| async { StatusCode::OK }))
+            .route(
+                "/api/auth/bad-request",
+                get(|| async { StatusCode::BAD_REQUEST }),
+            )
+            .route(
+                "/api/auth/unauthorized",
+                get(|| async { StatusCode::UNAUTHORIZED }),
+            )
+            .route(
+                "/api/auth/rate-limited",
+                get(|| async { StatusCode::TOO_MANY_REQUESTS }),
+            )
+            .route(
+                "/api/auth/failure",
+                get(|| async { StatusCode::INTERNAL_SERVER_ERROR }),
+            )
+            .layer(from_fn(cache_control_middleware))
+            .layer(from_fn_with_state(policy, security_header_middleware));
+
+        for (uri, expected_status) in [
+            ("/api/auth/ok", StatusCode::OK),
+            ("/api/auth/bad-request", StatusCode::BAD_REQUEST),
+            ("/api/auth/unauthorized", StatusCode::UNAUTHORIZED),
+            ("/api/auth/rate-limited", StatusCode::TOO_MANY_REQUESTS),
+            ("/api/auth/failure", StatusCode::INTERNAL_SERVER_ERROR),
+        ] {
+            let response = static_frontend_request(&app, Method::GET, uri, &[]).await;
+            assert_eq!(response.status, expected_status, "GET {uri}");
+            assert_security_header_baseline(&response.headers, false);
+            assert_eq!(
+                response.headers.get(CACHE_CONTROL).unwrap(),
+                AUTH_API_CACHE_CONTROL
+            );
+            assert_eq!(response.headers.get(PRAGMA).unwrap(), "no-cache");
+        }
+    }
+
+    fn assert_security_header_baseline(headers: &HeaderMap, is_hsts_expected: bool) {
+        let csp = headers
+            .get(CONTENT_SECURITY_POLICY)
+            .expect("CSP header should exist")
+            .to_str()
+            .expect("CSP header should be ASCII");
+        assert!(csp.starts_with("default-src 'self';"));
+        assert!(csp.contains("base-uri 'self'"));
+        assert!(csp.contains("object-src 'none'"));
+        assert!(csp.contains("frame-ancestors 'none'"));
+        assert!(csp.contains("form-action 'self'"));
+        assert!(csp.contains("style-src 'self' 'unsafe-inline'"));
+        assert_eq!(headers.get(X_CONTENT_TYPE_OPTIONS).unwrap(), "nosniff");
+        assert_eq!(headers.get(REFERRER_POLICY).unwrap(), "same-origin");
+        assert_eq!(
+            headers
+                .get(HeaderName::from_static("permissions-policy"))
+                .unwrap(),
+            "camera=(), microphone=(), geolocation=(), payment=(), usb=()"
+        );
+        assert_eq!(headers.get(X_FRAME_OPTIONS).unwrap(), "DENY");
+        assert_eq!(
+            headers
+                .get(STRICT_TRANSPORT_SECURITY)
+                .and_then(|value| value.to_str().ok()),
+            is_hsts_expected.then_some("max-age=31536000")
+        );
+    }
+
     #[test]
     fn router_startup_migration_runs_before_business_settings_load() {
         let temp_dir = tempfile::tempdir().expect("temporary project should be created");
         let storage_config = litradar_storage::StorageConfig::from_project_root(temp_dir.path());
         let secret_key_file = temp_dir.path().join("secret.key");
         fs::write(&secret_key_file, [6_u8; 32]).expect("secret key should write");
+        write_test_web_root(temp_dir.path());
         fs::create_dir_all(storage_config.index_dir()).expect("index directory should be created");
         let index_path = storage_config.index_dir().join("startup.sqlite");
         Connection::open(&index_path).expect("empty index database should be created");
@@ -1097,6 +1276,7 @@ mod tests {
         let storage_config = litradar_storage::StorageConfig::from_project_root(temp_dir.path());
         let secret_key_file = temp_dir.path().join("secret.key");
         fs::write(&secret_key_file, [6_u8; 32]).expect("secret key should write");
+        write_test_web_root(temp_dir.path());
         let mut config = ApiConfig::new(
             temp_dir.path().to_path_buf(),
             "127.0.0.1".to_string(),
@@ -1150,6 +1330,7 @@ mod tests {
         let temp_dir = tempfile::tempdir().expect("temporary project should be created");
         let secret_key_file = temp_dir.path().join("secret.key");
         fs::write(&secret_key_file, [6_u8; 32]).expect("secret key should write");
+        write_test_web_root(temp_dir.path());
         let mut required = ApiConfig::new(
             temp_dir.path().to_path_buf(),
             "127.0.0.1".to_string(),

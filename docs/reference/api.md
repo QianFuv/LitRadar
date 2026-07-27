@@ -227,10 +227,19 @@ CNKI 会话按 LitRadar 用户隔离；状态接口只返回安全元数据，�
 
 ## 缓存与 CORS
 
+所有 HTML、REST、健康检查、Swagger/OpenAPI 和 MCP 响应都带有同一基线安全 Header：严格 CSP、`nosniff`、`Referrer-Policy: same-origin`、禁用敏感浏览器能力以及双重 frame denial。CSP 的 `script-src` 只包含 `'self'` 与启动时从部署 HTML 复算并核对构建清单的 SHA-256，不允许任意内联脚本；当前静态样式保留最小的 `style-src 'self' 'unsafe-inline'`。hardened HTTPS 启动模式额外返回一年 HSTS，普通 loopback HTTP 不返回 HSTS。
+
 `/api/articles*`、`/api/meta*` 及其他受保护路由需要普通用户或管理员身份，不能作为匿名共享缓存内容。请求带有 `Authorization` 或 `litradar_session` 时，以及任何返回 `401 Unauthorized` 的响应，后端都会设置：
 
 ```http
 Cache-Control: private, no-store
+```
+
+认证命名空间采用独立且更严格的路径规则。`/api/auth` 与 `/api/auth/*` 的所有响应（包括 `200`、`400`、`401`、`429` 和 `500`）都会覆盖为：
+
+```http
+Cache-Control: no-store
+Pragma: no-cache
 ```
 
 前文列出的免认证端点在成功响应时保持现有缓存头行为；本策略不会为它们新增共享缓存 TTL。
