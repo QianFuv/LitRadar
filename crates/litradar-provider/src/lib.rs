@@ -273,6 +273,13 @@ impl ProviderRegistration {
 /// Provider registry construction failure.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ProviderRegistryError {
+    /// Provider runtime configuration is outside its declared safe range.
+    InvalidConfiguration {
+        /// Stable provider name.
+        provider: String,
+        /// Safe configuration detail.
+        detail: String,
+    },
     /// Provider name does not satisfy the stable runtime format.
     InvalidName(String),
     /// Provider declares no usable capability.
@@ -293,6 +300,12 @@ impl fmt::Display for ProviderRegistryError {
     /// Format the registry failure.
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::InvalidConfiguration { provider, detail } => {
+                write!(
+                    formatter,
+                    "invalid configuration for provider {provider}: {detail}"
+                )
+            }
             Self::InvalidName(name) => write!(formatter, "invalid provider name: {name}"),
             Self::NoCapabilities(name) => {
                 write!(formatter, "provider declares no capabilities: {name}")

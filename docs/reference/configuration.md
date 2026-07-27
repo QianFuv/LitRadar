@@ -94,6 +94,8 @@ key/mailto 池按逗号、分号或换行拆分，去除空项并按首次出现
 
 Scholarly 的 `workers` 只控制每个期刊子进程内 OpenAlex DOI 子批的在途上限，范围 `1..=6`；`processes` 范围 `1..=3`。OpenAlex 的全局在途上限为 `workers × processes`。调度器根据响应的剩余额度、reset 和单次 credit cost，为所有可能在途响应保留 `workers × processes × 最大已知单次 cost` 的每日 headroom；额度未知时，每个 key/进程只允许一个探测请求。OpenAlex 请求不再发送 Crossref mailto。
 
+索引 CLI 的通用 `workers`、`processes` 范围都是 `1..=32`，且二者乘积不得超过 32；Scholarly 再应用上述 6/3 上限。国内 CNKI 的 `workers` 范围为 `1..=32`，直接 Provider 构造、CLI 和 live runtime 都调用同一组限制。每个国内 CNKI 子进程只在 Provider 构造时创建一个固定、带有界 `sync_channel` 队列的详情池，后续 papers 页和 transient batch replay 复用它；任务按原 article ordinal 排序回收，Provider Drop 会关闭队列并 join 全部线程。结构化并发事件记录 configured/effective workers、创建线程数和观测峰值，不包含 captcha 或请求内容。
+
 实际吞吐同时受 Provider 速率、可用在途数、响应延迟和待处理工作量约束，可近似看作 `min(Provider 预算, 在途容量 / 响应延迟, 产生工作速率)`。增加 `workers` 或 `processes` 不能突破每 key 预算；它只在延迟或工作并行度成为瓶颈时提高可达吞吐。
 
 ### Provider 路由语法

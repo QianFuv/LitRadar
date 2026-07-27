@@ -16,7 +16,7 @@ use serde_json::{json, Value};
 pub const SEMANTIC_SCHOLAR_BATCH_SIZE: usize = 500;
 
 /// Maximum OpenAlex DOI requests allowed in flight per process.
-pub const OPENALEX_MAX_WORKERS_PER_PROCESS: usize = 6;
+pub const OPENALEX_MAX_WORKERS_PER_PROCESS: usize = litradar_domain::SCHOLARLY_WORKER_COUNT_MAX;
 
 const CROSSREF_BASE_URL: &str = "https://api.crossref.org/v1";
 const CROSSREF_SOURCE: &str = "crossref";
@@ -2132,8 +2132,14 @@ impl LiveScholarlyTransport {
         config: LiveScholarlyConfig,
         openalex_worker_count: usize,
     ) -> Result<Self, SourceError> {
-        let openalex_worker_count =
-            openalex_worker_count.clamp(1, OPENALEX_MAX_WORKERS_PER_PROCESS);
+        if !(litradar_domain::INDEX_WORKER_COUNT_MIN..=OPENALEX_MAX_WORKERS_PER_PROCESS)
+            .contains(&openalex_worker_count)
+        {
+            return Err(SourceError::Configuration(format!(
+                "scholarly worker_count must be between {} and {OPENALEX_MAX_WORKERS_PER_PROCESS}",
+                litradar_domain::INDEX_WORKER_COUNT_MIN
+            )));
+        }
         let client = Client::builder()
             .timeout(Duration::from_secs(config.timeout_seconds.max(1)))
             .user_agent(DEFAULT_USER_AGENT)
@@ -5087,6 +5093,24 @@ mod tests {
                 .expect("worst-case batch URL should build");
             assert!(url.as_str().len() <= OPENALEX_DOI_REQUEST_URL_BUDGET);
             assert!(!url.as_str().contains(&long_mailto));
+        }
+    }
+
+    #[test]
+    fn scholarly_workers_reject_out_of_range_direct_transport_configuration() {
+        let config = LiveScholarlyConfig::from_value_pools(2, "", "", "");
+        for worker_count in [0, OPENALEX_MAX_WORKERS_PER_PROCESS + 1] {
+            let error = match LiveScholarlyTransport::new_with_openalex_workers(
+                config.clone(),
+                worker_count,
+            ) {
+                Ok(_) => panic!("out-of-range Scholarly workers should fail"),
+                Err(error) => error,
+            };
+            assert_eq!(
+                error.to_string(),
+                "scholarly worker_count must be between 1 and 6"
+            );
         }
     }
 

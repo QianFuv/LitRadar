@@ -18,8 +18,7 @@ use litradar_sources::{
     cnki_index_registration_with_workers, cnki_oversea_index_registration,
     scholarly_index_registration, LiveCnkiConfig, LiveCnkiTransport, LiveDomesticCnkiConfig,
     LiveDomesticCnkiTransport, LiveScholarlyConfig, LiveScholarlyTransport,
-    CNKI_OVERSEA_PROVIDER_NAME, CNKI_PROVIDER_NAME, OPENALEX_MAX_WORKERS_PER_PROCESS,
-    SCHOLARLY_PROVIDER_NAME,
+    CNKI_OVERSEA_PROVIDER_NAME, CNKI_PROVIDER_NAME, SCHOLARLY_PROVIDER_NAME,
 };
 use litradar_worker::process_supervisor::SupervisedChild;
 use rusqlite::{Connection, ErrorCode};
@@ -50,7 +49,6 @@ use crate::worker_protocol::{
 
 const LIVE_INDEX_HEARTBEAT_INTERVAL_SECONDS: u64 = 30;
 const MAX_PROVIDER_PAGES_PER_JOURNAL: usize = 100_000;
-const SCHOLARLY_MAX_PROCESS_COUNT: usize = 3;
 const WORKER_PROTOCOL_FAILURE_MESSAGE: &str = "worker protocol operation failed";
 const LEGACY_ALIAS_CHECKPOINT_MESSAGE: &str = "legacy catalog alias has provider checkpoint state";
 
@@ -669,26 +667,12 @@ fn validate_live_config(config: &LiveIndexConfig) -> Result<(), LiveIndexError> 
         .index_provider_routes
         .values()
         .any(|provider| provider == SCHOLARLY_PROVIDER_NAME);
-    if config.worker_count == 0 {
-        return Err(LiveIndexError::InvalidConfig(
-            "worker_count must be greater than zero".to_string(),
-        ));
-    }
-    if config.worker_count > OPENALEX_MAX_WORKERS_PER_PROCESS && has_scholarly_route {
-        return Err(LiveIndexError::InvalidConfig(format!(
-            "worker_count must be at most {OPENALEX_MAX_WORKERS_PER_PROCESS} for scholarly indexing"
-        )));
-    }
-    if config.process_count == 0 {
-        return Err(LiveIndexError::InvalidConfig(
-            "process_count must be greater than zero".to_string(),
-        ));
-    }
-    if config.process_count > SCHOLARLY_MAX_PROCESS_COUNT && has_scholarly_route {
-        return Err(LiveIndexError::InvalidConfig(format!(
-            "process_count must be at most {SCHOLARLY_MAX_PROCESS_COUNT} for scholarly indexing"
-        )));
-    }
+    let concurrency = litradar_domain::validate_index_concurrency(
+        config.worker_count,
+        config.process_count,
+        has_scholarly_route,
+    )
+    .map_err(|error| LiveIndexError::InvalidConfig(error.to_string()))?;
     if config.issue_batch_size == 0 {
         return Err(LiveIndexError::InvalidConfig(
             "issue_batch_size must be greater than zero".to_string(),
@@ -726,6 +710,15 @@ fn validate_live_config(config: &LiveIndexConfig) -> Result<(), LiveIndexError> 
             ));
         }
     }
+    tracing::info!(
+        event = "index.concurrency.configured",
+        component = "index",
+        configured_workers = concurrency.worker_count,
+        configured_processes = concurrency.process_count,
+        configured_aggregate_capacity = concurrency.aggregate_capacity,
+        aggregate_limit = litradar_domain::INDEX_AGGREGATE_CONCURRENCY_MAX,
+        has_scholarly_route,
+    );
     Ok(())
 }
 
@@ -775,6 +768,27 @@ fn run_catalog(
         })?
         .clone();
     let entries = read_catalog_csv(csv_path)?;
+    let effective_process_count = config.process_count.min(entries.len());
+    let effective_source_worker_count = if matches!(
+        provider_name.as_str(),
+        SCHOLARLY_PROVIDER_NAME | CNKI_PROVIDER_NAME
+    ) {
+        config.worker_count
+    } else {
+        1
+    };
+    tracing::info!(
+        event = "index.concurrency.effective",
+        component = "index",
+        provider = provider_name,
+        configured_workers = config.worker_count,
+        configured_processes = config.process_count,
+        effective_source_workers = effective_source_worker_count,
+        effective_processes = effective_process_count,
+        effective_aggregate_capacity =
+            effective_source_worker_count.saturating_mul(effective_process_count),
+        aggregate_limit = litradar_domain::INDEX_AGGREGATE_CONCURRENCY_MAX,
+    );
     let index_dir = config.project_root.join("data").join("index");
     let control_dir = config.project_root.join("data").join("index-control");
     std::fs::create_dir_all(&index_dir)?;
@@ -1835,6 +1849,12 @@ fn fetch_worker_assignments(
             "worker protocol request is invalid".to_string(),
         ));
     }
+    litradar_domain::validate_index_concurrency(
+        request.source_worker_count,
+        request.process_count,
+        request.provider_name == SCHOLARLY_PROVIDER_NAME,
+    )
+    .map_err(|error| LiveIndexError::InvalidConfig(error.to_string()))?;
     let unique_ordinals = request
         .assignments
         .iter()
@@ -2188,7 +2208,8 @@ mod tests {
 
     use litradar_domain::{
         ArticleAuthorDraft, ArticleDraft, IssueDraft, JournalCatalogEntry, JournalDraft,
-        JournalRankings, ProviderBatch,
+        JournalRankings, ProviderBatch, INDEX_AGGREGATE_CONCURRENCY_MAX,
+        SCHOLARLY_WORKER_COUNT_MAX,
     };
     use litradar_provider::conformance::ContractViolation;
     use litradar_provider::{IndexContentProvider, ProviderError, ProviderErrorKind};
@@ -2205,7 +2226,7 @@ mod tests {
         LaunchedWorkerProcess, LeaseHeartbeat, LiveIndexConfig, LiveIndexError,
         LiveIndexWorkerBootstrap, LiveIndexWorkerFailure, LiveIndexWorkerFailureClass,
         LiveIndexWorkerOperation, LiveIndexWorkerRequest, LiveRunTime, ParentWriterContext,
-        StoredCheckpoint, SupervisedChild, OPENALEX_MAX_WORKERS_PER_PROCESS,
+        StoredCheckpoint, SupervisedChild, CNKI_PROVIDER_NAME,
     };
     use crate::control::{
         acquire_lease, commit_content_then_checkpoint, open_control_db, read_checkpoint,
@@ -2955,7 +2976,7 @@ mod tests {
     }
 
     #[test]
-    fn worker_partitioning_preserves_every_catalog_entry_once() {
+    fn worker_partitioning_and_concurrency_validation_are_bounded() {
         let config = LiveIndexConfig {
             application_executable: "litradar".into(),
             project_root: ".".into(),
@@ -3003,7 +3024,7 @@ mod tests {
             .iter()
             .all(|request| request.schedule_epoch_unix_millis == 123_456));
         let mut excessive_workers = config.clone();
-        excessive_workers.worker_count = OPENALEX_MAX_WORKERS_PER_PROCESS + 1;
+        excessive_workers.worker_count = SCHOLARLY_WORKER_COUNT_MAX + 1;
         assert!(matches!(
             validate_live_config(&excessive_workers),
             Err(LiveIndexError::InvalidConfig(message))
@@ -3024,6 +3045,16 @@ mod tests {
                 if message == "process_count must be at most 3 for scholarly indexing"
         ));
         assert!(!directory.path().join("data").exists());
+        let mut excessive_aggregate = config.clone();
+        excessive_aggregate.worker_count = INDEX_AGGREGATE_CONCURRENCY_MAX / 2 + 1;
+        excessive_aggregate.process_count = 2;
+        excessive_aggregate.index_provider_routes =
+            BTreeMap::from([("catalog".to_string(), CNKI_PROVIDER_NAME.to_string())]);
+        assert!(matches!(
+            validate_live_config(&excessive_aggregate),
+            Err(LiveIndexError::InvalidConfig(message))
+                if message == "process_count * worker_count must be at most 32"
+        ));
         let ids = requests
             .iter()
             .flat_map(|request| request.assignments.iter())

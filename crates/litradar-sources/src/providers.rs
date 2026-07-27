@@ -1,8 +1,11 @@
 //! Built-in canonical indexing and request-time article access provider adapters.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::panic::{catch_unwind, AssertUnwindSafe};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::mpsc::{self, Receiver, Sender, SyncSender};
 use std::sync::{Arc, Mutex};
-use std::thread;
+use std::thread::{self, JoinHandle};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use litradar_domain::{
@@ -438,11 +441,11 @@ where
 /// Canonical domestic CNKI indexing provider backed by one source transport.
 pub struct DomesticCnkiIndexProvider<T> {
     state: Mutex<DomesticCnkiIndexState<T>>,
-    worker_count: usize,
 }
 
 struct DomesticCnkiIndexState<T> {
     client: DomesticCnkiClient<T>,
+    detail_pool: DomesticCnkiDetailPool,
     journal_snapshots: BTreeMap<String, DomesticCnkiJournalSnapshot>,
 }
 
@@ -453,7 +456,7 @@ struct DomesticCnkiJournalSnapshot {
 
 impl<T> DomesticCnkiIndexProvider<T>
 where
-    T: DomesticCnkiTransport,
+    T: DomesticCnkiTransport + Clone + Send + 'static,
 {
     /// Build a canonical domestic CNKI provider.
     ///
@@ -464,7 +467,7 @@ where
     /// # Returns
     ///
     /// Provider adapter that emits only canonical content batches.
-    pub fn new(transport: T) -> Self {
+    pub fn new(transport: T) -> Result<Self, ProviderRegistryError> {
         Self::with_worker_count(transport, 1)
     }
 
@@ -477,15 +480,25 @@ where
     ///
     /// # Returns
     ///
-    /// Provider adapter with at least one detail worker.
-    pub fn with_worker_count(transport: T, worker_count: usize) -> Self {
-        Self {
+    /// Provider adapter with an exact validated detail-worker count.
+    pub fn with_worker_count(
+        transport: T,
+        worker_count: usize,
+    ) -> Result<Self, ProviderRegistryError> {
+        let worker_count = litradar_domain::validate_domestic_cnki_worker_count(worker_count)
+            .map_err(|error| ProviderRegistryError::InvalidConfiguration {
+                provider: CNKI_PROVIDER_NAME.to_string(),
+                detail: error.to_string(),
+            })?;
+        let client = DomesticCnkiClient::new(transport);
+        let detail_pool = DomesticCnkiDetailPool::new(&client, worker_count)?;
+        Ok(Self {
             state: Mutex::new(DomesticCnkiIndexState {
-                client: DomesticCnkiClient::new(transport),
+                client,
+                detail_pool,
                 journal_snapshots: BTreeMap::new(),
             }),
-            worker_count: worker_count.max(1),
-        }
+        })
     }
 }
 
@@ -511,6 +524,7 @@ where
             let result = {
                 let DomesticCnkiIndexState {
                     client,
+                    detail_pool,
                     journal_snapshots,
                 } = &mut *state;
                 fetch_domestic_cnki_batch(
@@ -518,7 +532,7 @@ where
                     journal_snapshots,
                     catalog,
                     checkpoint,
-                    self.worker_count,
+                    detail_pool,
                     &mut detail_attempts,
                 )
             };
@@ -614,7 +628,7 @@ where
             index_content: Some(Arc::new(DomesticCnkiIndexProvider::with_worker_count(
                 transport,
                 worker_count,
-            ))),
+            )?)),
             ..ProviderImplementations::default()
         },
     )
@@ -1734,62 +1748,199 @@ struct DomesticCnkiDetailOutcome {
     attempts: Vec<SourceAttempt>,
 }
 
-fn fetch_domestic_cnki_details<T>(
-    client: &mut DomesticCnkiClient<T>,
-    tasks: Vec<DomesticCnkiDetailTask>,
+struct DomesticCnkiDetailJob {
+    task: DomesticCnkiDetailTask,
+    result_sender: Sender<Result<DomesticCnkiDetailOutcome, ProviderError>>,
+}
+
+struct DomesticCnkiDetailPool {
+    sender: Option<SyncSender<DomesticCnkiDetailJob>>,
+    workers: Vec<JoinHandle<()>>,
     worker_count: usize,
-) -> Result<Vec<DomesticCnkiDetailOutcome>, ProviderError>
-where
-    T: DomesticCnkiTransport + Clone + Send,
+    active_requests: Arc<AtomicUsize>,
+    peak_requests: Arc<AtomicUsize>,
+}
+
+impl DomesticCnkiDetailPool {
+    fn new<T>(
+        client: &DomesticCnkiClient<T>,
+        worker_count: usize,
+    ) -> Result<Self, ProviderRegistryError>
+    where
+        T: DomesticCnkiTransport + Clone + Send + 'static,
+    {
+        let (sender, receiver) = mpsc::sync_channel(worker_count);
+        let receiver = Arc::new(Mutex::new(receiver));
+        let active_requests = Arc::new(AtomicUsize::new(0));
+        let peak_requests = Arc::new(AtomicUsize::new(0));
+        let mut workers = Vec::with_capacity(worker_count);
+        for worker_id in 0..worker_count {
+            let worker_client = client.clone();
+            let worker_receiver = Arc::clone(&receiver);
+            let worker_active_requests = Arc::clone(&active_requests);
+            let worker_peak_requests = Arc::clone(&peak_requests);
+            match thread::Builder::new()
+                .name(format!("litradar-cnki-detail-{worker_id}"))
+                .spawn(move || {
+                    run_domestic_cnki_detail_worker(
+                        worker_client,
+                        worker_receiver,
+                        worker_active_requests,
+                        worker_peak_requests,
+                    );
+                }) {
+                Ok(worker) => workers.push(worker),
+                Err(_) => {
+                    drop(sender);
+                    for worker in workers {
+                        let _ = worker.join();
+                    }
+                    return Err(ProviderRegistryError::InvalidConfiguration {
+                        provider: CNKI_PROVIDER_NAME.to_string(),
+                        detail: "domestic CNKI detail worker could not start".to_string(),
+                    });
+                }
+            }
+        }
+        Ok(Self {
+            sender: Some(sender),
+            workers,
+            worker_count,
+            active_requests,
+            peak_requests,
+        })
+    }
+
+    fn execute(
+        &self,
+        tasks: Vec<DomesticCnkiDetailTask>,
+    ) -> Result<Vec<DomesticCnkiDetailOutcome>, ProviderError> {
+        if tasks.is_empty() {
+            return Ok(Vec::new());
+        }
+        let task_count = tasks.len();
+        let (result_sender, result_receiver) = mpsc::channel();
+        let sender = self.sender.as_ref().ok_or_else(detail_pool_unavailable)?;
+        for task in tasks {
+            sender
+                .send(DomesticCnkiDetailJob {
+                    task,
+                    result_sender: result_sender.clone(),
+                })
+                .map_err(|_| detail_pool_unavailable())?;
+        }
+        drop(result_sender);
+        let mut outcomes = Vec::with_capacity(task_count);
+        let mut first_error = None;
+        for _ in 0..task_count {
+            match result_receiver.recv() {
+                Ok(Ok(outcome)) => outcomes.push(outcome),
+                Ok(Err(error)) => {
+                    if first_error.is_none() {
+                        first_error = Some(error);
+                    }
+                }
+                Err(_) => {
+                    if first_error.is_none() {
+                        first_error = Some(detail_pool_unavailable());
+                    }
+                }
+            }
+        }
+        let peak_requests = self.peak_requests.load(Ordering::SeqCst);
+        let active_requests = self.active_requests.load(Ordering::SeqCst);
+        tracing::info!(
+            event = "index.provider.concurrency",
+            component = "index",
+            provider = CNKI_PROVIDER_NAME,
+            configured_workers = self.worker_count,
+            effective_workers = self.worker_count.min(task_count),
+            worker_threads_created = self.workers.len(),
+            active_detail_requests = active_requests,
+            peak_detail_requests = peak_requests,
+            aggregate_limit = litradar_domain::INDEX_AGGREGATE_CONCURRENCY_MAX,
+        );
+        if let Some(error) = first_error {
+            return Err(error);
+        }
+        outcomes.sort_by_key(|outcome| outcome.article_index);
+        Ok(outcomes)
+    }
+}
+
+impl Drop for DomesticCnkiDetailPool {
+    fn drop(&mut self) {
+        drop(self.sender.take());
+        for worker in self.workers.drain(..) {
+            let _ = worker.join();
+        }
+    }
+}
+
+struct ActiveDomesticCnkiDetail {
+    active_requests: Arc<AtomicUsize>,
+}
+
+impl ActiveDomesticCnkiDetail {
+    fn start(active_requests: Arc<AtomicUsize>, peak_requests: &AtomicUsize) -> Self {
+        let active = active_requests.fetch_add(1, Ordering::SeqCst) + 1;
+        peak_requests.fetch_max(active, Ordering::SeqCst);
+        Self { active_requests }
+    }
+}
+
+impl Drop for ActiveDomesticCnkiDetail {
+    fn drop(&mut self) {
+        self.active_requests.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
+fn run_domestic_cnki_detail_worker<T>(
+    mut client: DomesticCnkiClient<T>,
+    receiver: Arc<Mutex<Receiver<DomesticCnkiDetailJob>>>,
+    active_requests: Arc<AtomicUsize>,
+    peak_requests: Arc<AtomicUsize>,
+) where
+    T: DomesticCnkiTransport,
 {
-    if worker_count <= 1 || tasks.len() <= 1 {
-        return Ok(tasks
-            .into_iter()
-            .map(|task| DomesticCnkiDetailOutcome {
-                article_index: task.article_index,
-                detail: client.article_detail(&task.article_url, task.platform_id.as_deref()),
-                summary: task.summary,
-                attempts: Vec::new(),
-            })
-            .collect());
+    loop {
+        let job = match receiver.lock() {
+            Ok(receiver) => receiver.recv(),
+            Err(_) => return,
+        };
+        let Ok(job) = job else {
+            return;
+        };
+        client.drain_attempts();
+        let result = catch_unwind(AssertUnwindSafe(|| {
+            let _active_detail = ActiveDomesticCnkiDetail::start(
+                Arc::clone(&active_requests),
+                peak_requests.as_ref(),
+            );
+            let detail =
+                client.article_detail(&job.task.article_url, job.task.platform_id.as_deref());
+            DomesticCnkiDetailOutcome {
+                article_index: job.task.article_index,
+                summary: job.task.summary,
+                detail,
+                attempts: client.drain_attempts(),
+            }
+        }))
+        .map_err(|_| {
+            ProviderError::new(
+                ProviderErrorKind::Internal,
+                "domestic CNKI detail worker panicked",
+            )
+        });
+        let _ = job.result_sender.send(result);
     }
-    let worker_count = worker_count.max(1);
-    let mut outcomes = Vec::with_capacity(tasks.len());
-    for chunk in tasks.chunks(worker_count) {
-        let chunk_outcomes = thread::scope(|scope| {
-            let handles = chunk
-                .iter()
-                .cloned()
-                .map(|task| {
-                    let mut worker_client = client.clone();
-                    worker_client.drain_attempts();
-                    scope.spawn(move || {
-                        let detail = worker_client
-                            .article_detail(&task.article_url, task.platform_id.as_deref());
-                        DomesticCnkiDetailOutcome {
-                            article_index: task.article_index,
-                            summary: task.summary,
-                            detail,
-                            attempts: worker_client.drain_attempts(),
-                        }
-                    })
-                })
-                .collect::<Vec<_>>();
-            handles
-                .into_iter()
-                .map(|handle| {
-                    handle.join().map_err(|_| {
-                        ProviderError::new(
-                            ProviderErrorKind::Internal,
-                            "domestic CNKI detail worker panicked",
-                        )
-                    })
-                })
-                .collect::<Result<Vec<_>, _>>()
-        })?;
-        outcomes.extend(chunk_outcomes);
-    }
-    Ok(outcomes)
+}
+
+fn detail_pool_unavailable() -> ProviderError {
+    ProviderError::new(
+        ProviderErrorKind::Internal,
+        "domestic CNKI detail worker pool is unavailable",
+    )
 }
 
 fn fetch_domestic_cnki_batch<T>(
@@ -1797,7 +1948,7 @@ fn fetch_domestic_cnki_batch<T>(
     journal_snapshots: &mut BTreeMap<String, DomesticCnkiJournalSnapshot>,
     catalog: &JournalCatalogEntry,
     checkpoint: Option<&str>,
-    worker_count: usize,
+    detail_pool: &DomesticCnkiDetailPool,
     detail_attempts: &mut Vec<SourceAttempt>,
 ) -> Result<ProviderBatch, ProviderError>
 where
@@ -1932,7 +2083,7 @@ where
             })
         })
         .collect::<Result<Vec<_>, ProviderError>>()?;
-    let mut detail_outcomes = fetch_domestic_cnki_details(client, detail_tasks, worker_count)?;
+    let mut detail_outcomes = detail_pool.execute(detail_tasks)?;
     for outcome in &mut detail_outcomes {
         detail_attempts.append(&mut outcome.attempts);
     }
@@ -2215,21 +2366,23 @@ mod tests {
 
     use litradar_domain::{
         ArticleAccessContext, ArticleId, ArticleLocator, JournalCatalogEntry, JournalRankings,
-        ProviderBatch, ProviderCapabilityKind,
+        ProviderBatch, ProviderCapabilityKind, DOMESTIC_CNKI_WORKER_COUNT_MAX,
     };
-    use litradar_provider::{ProviderError, ProviderErrorKind, ProviderRegistry};
+    use litradar_provider::{
+        IndexContentProvider, ProviderError, ProviderErrorKind, ProviderRegistry,
+        ProviderRegistryError,
+    };
     use serde_json::{json, Value};
 
     use super::{
         built_in_provider_capabilities, cnki_access_registration, cnki_article_draft,
-        cnki_index_registration, cnki_index_registration_with_workers, cnki_issue_draft,
-        cnki_oversea_access_registration, cnki_oversea_index_registration,
-        crossref_cursor_is_fresh, fetch_scholarly_batch_with_clock,
-        fetch_scholarly_batch_with_clock_and_restart, next_scholarly_checkpoint,
-        scholarly_access_registration, scholarly_article_draft, scholarly_index_registration,
-        CnkiIndexProvider, ScholarlyCheckpoint, ScholarlyIndexProvider, CNKI_PROVIDER_NAME,
-        CNKI_REDIRECT_HOSTS, CROSSREF_CURSOR_REUSE_SECONDS, DOMESTIC_CNKI_REDIRECT_HOSTS,
-        SCHOLARLY_REDIRECT_HOSTS,
+        cnki_index_registration, cnki_issue_draft, cnki_oversea_access_registration,
+        cnki_oversea_index_registration, crossref_cursor_is_fresh,
+        fetch_scholarly_batch_with_clock, fetch_scholarly_batch_with_clock_and_restart,
+        next_scholarly_checkpoint, scholarly_access_registration, scholarly_article_draft,
+        scholarly_index_registration, CnkiIndexProvider, DomesticCnkiIndexProvider,
+        ScholarlyCheckpoint, ScholarlyIndexProvider, CNKI_PROVIDER_NAME, CNKI_REDIRECT_HOSTS,
+        CROSSREF_CURSOR_REUSE_SECONDS, DOMESTIC_CNKI_REDIRECT_HOSTS, SCHOLARLY_REDIRECT_HOSTS,
     };
     use crate::scholarly::test_support::CapturedLogs;
     use crate::{
@@ -2240,11 +2393,31 @@ mod tests {
         SourceAttempt, SourceError,
     };
 
-    #[derive(Clone)]
     struct ConcurrentDomesticTransport {
         inner: FixtureDomesticCnkiTransport,
         active_requests: Arc<AtomicUsize>,
         peak_requests: Arc<AtomicUsize>,
+        clone_count: Arc<AtomicUsize>,
+        drop_count: Arc<AtomicUsize>,
+    }
+
+    impl Clone for ConcurrentDomesticTransport {
+        fn clone(&self) -> Self {
+            self.clone_count.fetch_add(1, Ordering::SeqCst);
+            Self {
+                inner: self.inner.clone(),
+                active_requests: Arc::clone(&self.active_requests),
+                peak_requests: Arc::clone(&self.peak_requests),
+                clone_count: Arc::clone(&self.clone_count),
+                drop_count: Arc::clone(&self.drop_count),
+            }
+        }
+    }
+
+    impl Drop for ConcurrentDomesticTransport {
+        fn drop(&mut self) {
+            self.drop_count.fetch_add(1, Ordering::SeqCst);
+        }
     }
 
     impl DomesticCnkiTransport for ConcurrentDomesticTransport {
@@ -3975,38 +4148,83 @@ mod tests {
     }
 
     #[test]
-    fn domestic_cnki_workers_bound_parallel_details_and_preserve_order() {
-        let entries = (0..6)
-            .map(|index| {
-                (
-                    format!("PARALLEL{index}"),
-                    format!("Parallel article {index}"),
-                )
-            })
+    fn domestic_cnki_concurrency_pool_is_bounded_reused_and_ordered() {
+        let first_entries = (0..10)
+            .map(|index| (format!("FIRST{index}"), format!("First article {index}")))
+            .collect::<Vec<_>>();
+        let second_entries = (0..6)
+            .map(|index| (format!("SECOND{index}"), format!("Second article {index}")))
             .collect::<Vec<_>>();
         let active_requests = Arc::new(AtomicUsize::new(0));
         let peak_requests = Arc::new(AtomicUsize::new(0));
+        let clone_count = Arc::new(AtomicUsize::new(0));
+        let drop_count = Arc::new(AtomicUsize::new(0));
         let transport = ConcurrentDomesticTransport {
             inner: FixtureDomesticCnkiTransport::new(domestic_paged_fixture(vec![(
                 "202601".to_string(),
-                vec![entries],
+                vec![first_entries, second_entries],
             )])),
             active_requests,
             peak_requests: Arc::clone(&peak_requests),
+            clone_count: Arc::clone(&clone_count),
+            drop_count: Arc::clone(&drop_count),
         };
-        let registration = cnki_index_registration_with_workers(transport, 3)
-            .expect("parallel domestic registration");
+        let provider = DomesticCnkiIndexProvider::with_worker_count(transport, 3)
+            .expect("parallel domestic provider");
 
-        let batch = registration
-            .index_content()
-            .expect("parallel domestic index")
+        let first_batch = provider
             .fetch(&domestic_test_catalog(), None)
             .expect("parallel details should complete");
+        let checkpoint = first_batch
+            .next_checkpoint
+            .as_deref()
+            .expect("the first papers page should continue");
+        let second_batch = provider
+            .fetch(&domestic_test_catalog(), Some(checkpoint))
+            .expect("the reused pool should complete a second page");
 
         assert_eq!(peak_requests.load(Ordering::SeqCst), 3);
-        assert_eq!(batch.articles.len(), 6);
-        assert_eq!(batch.articles[0].title, "Parallel article 0");
-        assert_eq!(batch.articles[5].title, "Parallel article 5");
+        assert_eq!(clone_count.load(Ordering::SeqCst), 3);
+        assert_eq!(first_batch.articles.len(), 10);
+        assert_eq!(first_batch.articles[0].title, "First article 0");
+        assert_eq!(first_batch.articles[9].title, "First article 9");
+        assert_eq!(second_batch.articles.len(), 6);
+        assert_eq!(second_batch.articles[0].title, "Second article 0");
+        assert_eq!(second_batch.articles[5].title, "Second article 5");
+        let state = provider.state.lock().expect("provider state should lock");
+        assert_eq!(state.detail_pool.workers.len(), 3);
+        assert_eq!(state.detail_pool.peak_requests.load(Ordering::SeqCst), 3);
+        assert_eq!(state.detail_pool.active_requests.load(Ordering::SeqCst), 0);
+        drop(state);
+        drop(provider);
+        assert_eq!(drop_count.load(Ordering::SeqCst), 4);
+    }
+
+    #[test]
+    fn domestic_cnki_concurrency_rejects_invalid_direct_pool_sizes_before_cloning() {
+        for worker_count in [0, DOMESTIC_CNKI_WORKER_COUNT_MAX + 1] {
+            let clone_count = Arc::new(AtomicUsize::new(0));
+            let drop_count = Arc::new(AtomicUsize::new(0));
+            let transport = ConcurrentDomesticTransport {
+                inner: FixtureDomesticCnkiTransport::new(domestic_paged_fixture(vec![])),
+                active_requests: Arc::new(AtomicUsize::new(0)),
+                peak_requests: Arc::new(AtomicUsize::new(0)),
+                clone_count: Arc::clone(&clone_count),
+                drop_count: Arc::clone(&drop_count),
+            };
+            let error = match DomesticCnkiIndexProvider::with_worker_count(transport, worker_count)
+            {
+                Ok(_) => panic!("invalid direct workers should fail"),
+                Err(error) => error,
+            };
+            assert!(matches!(
+                error,
+                ProviderRegistryError::InvalidConfiguration { provider, .. }
+                    if provider == CNKI_PROVIDER_NAME
+            ));
+            assert_eq!(clone_count.load(Ordering::SeqCst), 0);
+            assert_eq!(drop_count.load(Ordering::SeqCst), 1);
+        }
     }
 
     #[test]

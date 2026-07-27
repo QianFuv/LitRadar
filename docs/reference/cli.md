@@ -168,9 +168,9 @@ litradar index --secret-key-file PATH
 
 约束：
 
-- `workers`、`processes`、`issue-batch` 必须至少为 1。
-- 只要选中的目录路由到 Scholarly，`workers` 最多为 6，`processes` 最多为 3；超限会在上游请求前失败。CNKI 路由不受这两个 Scholarly 上限约束。
-- 国内 CNKI 中，`processes` 并行不同期刊，`workers` 在每个期刊子进程内并行当前 papers 页的文章详情请求；期刊定位、刊期树、papers 页、checkpoint 和 SQLite 提交仍保持有序。实际详情在途量不超过 `workers × min(processes, 期刊数)`，也不会超过各当前 papers 页的文章数。
+- `workers` 与 `processes` 的通用范围均为 `1..=32`，并且 `workers × processes` 不得超过 32；`issue-batch` 必须至少为 1。通用参数在认证库迁移、Provider 构造和子进程创建前校验。
+- 只要选中的目录路由到 Scholarly，`workers` 进一步限制为最多 6、`processes` 最多为 3；超限会在上游请求前失败。国内 CNKI 使用通用 `workers <= 32` 和聚合 32 上限。
+- 国内 CNKI 中，`processes` 并行不同期刊，`workers` 是每个期刊子进程在 Provider 构造时创建一次的固定详情线程池；所有 papers 页复用该池，Provider 释放时关闭并等待全部线程。期刊定位、刊期树、papers 页、checkpoint 和 SQLite 提交仍保持有序。实际详情在途量不超过 `workers × min(processes, 期刊数)`、聚合上限 32 和各当前 papers 页的文章数。
 - 只要选中的目录路由到 Scholarly，OpenAlex key、Semantic Scholar key 和 Crossref mailto 都必须存在；缺少任一类会在创建内容库、控制库或其他索引状态前失败。
 - `--notify` 必须和 `--update` 同时使用。
 - 单独传 `--notify-dry-run` 不会启动 notify；它只修改 `--notify` handoff 的模式。
@@ -183,7 +183,7 @@ litradar index --secret-key-file PATH
 
 索引多进程也通过当前可执行路径启动 `litradar index` 的内部工作请求；不依赖另一个程序名。每个 worker 都在独立的 Unix process group 或 Windows Job Object 中启动，父进程错误、协议失败和清理路径会终止并等待整个进程树。调度父进程同样通过当前二进制启动类型化子命令，并用经过校验的隐藏内部参数关联 `parent_run_id`。手动投递 dispatcher 还会启动私有 `delivery-run --run-id ... --owner-id ...`，child 只从认证 SQLite 和部署密钥加载权威配置。私有命令必须同时携带内部 parent marker，不出现在 `--help`，也不是用户可配置的 CLI。同步公共 CLI 命令不创建 Tokio 工作线程池，只有 `serve` 使用固定为 2 个工作线程的小型异步运行时。
 
-命令结果保持原有顶层 `status`、`message` 和 `csvs` 字段，并新增不含密钥的 `effective_concurrency`，记录本次实际使用的 `workers`、`processes` 和 `issue_batch`。每个 CSV 结果使用定长的 `written_article_count`；旧的 `written_article_ids` 列表不再返回。内部索引工作进程同样只返回计数，避免结果大小随文章数量增长。
+命令结果保持原有顶层 `status`、`message` 和 `csvs` 字段；不含密钥的 `effective_concurrency` 保留 `workers`、`processes` 和 `issue_batch`，并明确给出 configured/effective workers、processes、aggregate capacity 以及固定 aggregate limit。国内 CNKI 每批还记录 `index.provider.concurrency` 结构化事件，其中包含实际创建线程数和本次运行观测到的详情请求峰值。每个 CSV 结果使用定长的 `written_article_count`；旧的 `written_article_ids` 列表不再返回。内部索引工作进程同样只返回计数，避免结果大小随文章数量增长。
 
 发布镜像把 bundle 固定放在 `/usr/share/litradar/meta`。普通 `index` 仅在精确的 `bundle-manifest.json` 存在时，于认证库迁移后、读取密钥和运行设置前准备持久的 `<project-root>/data/meta`，再进入下述规范目录校验；内部多进程 worker 请求不会重复准备。准备结果产生 `storage.managed_meta.prepared` 聚合事件，不改变上述 stdout JSON。该路径不接受环境变量或 CLI 覆盖；本地构建通常发现不到 manifest，因此执行 no-op。运行目录缺失会明确失败，存在但没有选中 CSV 时返回 `skipped`。
 

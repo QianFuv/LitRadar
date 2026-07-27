@@ -4,6 +4,7 @@ pub mod announcements;
 pub mod auth;
 pub mod business;
 pub mod cnki;
+pub mod concurrency;
 pub mod health;
 pub mod ids;
 pub mod index;
@@ -42,6 +43,12 @@ pub use business::{
 pub use cnki::{
     CnkiErrorDetail, CnkiLoginPollRequest, CnkiLoginPollResponse, CnkiLoginStartResponse,
     CnkiSessionStatusResponse,
+};
+pub use concurrency::{
+    validate_domestic_cnki_worker_count, validate_index_concurrency, IndexConcurrency,
+    IndexConcurrencyError, DOMESTIC_CNKI_WORKER_COUNT_MAX, INDEX_AGGREGATE_CONCURRENCY_MAX,
+    INDEX_PROCESS_COUNT_MAX, INDEX_PROCESS_COUNT_MIN, INDEX_WORKER_COUNT_MAX,
+    INDEX_WORKER_COUNT_MIN, SCHOLARLY_PROCESS_COUNT_MAX, SCHOLARLY_WORKER_COUNT_MAX,
 };
 pub use health::HealthResponse;
 pub use ids::{stable_sqlite_id, ArticleId, JournalId, UserId};
