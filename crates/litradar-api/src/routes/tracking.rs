@@ -6,7 +6,7 @@ use axum::extract::{Path, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::Json;
 use litradar_domain::{
-    ErrorEnvelope, ManualWeeklyPushStatus, NotificationSettingsResponse,
+    ErrorEnvelope, ManualPushState, ManualWeeklyPushStatus, NotificationSettingsResponse,
     NotificationSettingsUpdate, TrackingFolderSummary, TrackingStatusResponse,
     NOTIFICATION_AI_RETRY_ATTEMPTS_MAX, NOTIFICATION_AI_RETRY_ATTEMPTS_MIN,
 };
@@ -437,7 +437,7 @@ fn nonempty_or_default(value: String, default: &str) -> String {
 fn idle_manual_push_status() -> ManualWeeklyPushStatus {
     ManualWeeklyPushStatus {
         job_id: None,
-        status: "idle".to_string(),
+        status: ManualPushState::Idle,
         message: MANUAL_PUSH_IDLE_MESSAGE.to_string(),
         started_at: None,
         finished_at: None,
@@ -483,7 +483,7 @@ fn manual_push_status(run: &DeliveryRunRecord) -> ManualWeeklyPushStatus {
         .unwrap_or_else(|| manual_status_message(run).to_string());
     ManualWeeklyPushStatus {
         job_id: Some(run.external_id.clone()),
-        status: public_status.to_string(),
+        status: public_status,
         message,
         started_at: run.started_at,
         finished_at: run.finished_at,
@@ -505,17 +505,17 @@ fn manual_push_status(run: &DeliveryRunRecord) -> ManualWeeklyPushStatus {
     }
 }
 
-fn public_manual_status(status: DeliveryRunStatus) -> &'static str {
+fn public_manual_status(status: DeliveryRunStatus) -> ManualPushState {
     match status {
-        DeliveryRunStatus::Queued => "pending",
+        DeliveryRunStatus::Queued => ManualPushState::Pending,
         DeliveryRunStatus::Claimed | DeliveryRunStatus::Running | DeliveryRunStatus::Cancelling => {
-            "running"
+            ManualPushState::Running
         }
-        DeliveryRunStatus::Completed | DeliveryRunStatus::Skipped => "completed",
-        DeliveryRunStatus::Failed => "failed",
-        DeliveryRunStatus::Cancelled => "cancelled",
-        DeliveryRunStatus::TimedOut => "timed_out",
-        DeliveryRunStatus::Unknown => "unknown",
+        DeliveryRunStatus::Completed | DeliveryRunStatus::Skipped => ManualPushState::Completed,
+        DeliveryRunStatus::Failed => ManualPushState::Failed,
+        DeliveryRunStatus::Cancelled => ManualPushState::Cancelled,
+        DeliveryRunStatus::TimedOut => ManualPushState::TimedOut,
+        DeliveryRunStatus::Unknown => ManualPushState::Unknown,
     }
 }
 
@@ -576,7 +576,7 @@ fn current_epoch_seconds() -> f64 {
 
 #[cfg(test)]
 mod tests {
-    use litradar_domain::NotificationSettingsUpdate;
+    use litradar_domain::{ManualPushState, NotificationSettingsUpdate};
     use litradar_storage::{
         DeliveryRunMode, DeliveryRunRecord, DeliveryRunStatus, DeliveryTriggerKind,
         DeliveryWorkflow,
@@ -603,7 +603,7 @@ mod tests {
     fn manual_push_status_maps_durable_states_and_safe_actions() {
         let queued = fixture_run(DeliveryRunStatus::Queued);
         let pending = manual_push_status(&queued);
-        assert_eq!(pending.status, "pending");
+        assert_eq!(pending.status, ManualPushState::Pending);
         assert!(pending.can_cancel);
         assert!(!pending.can_retry);
 
@@ -611,7 +611,7 @@ mod tests {
         unknown.cancellation_requested = true;
         unknown.finished_at = Some(3.0);
         let unknown = manual_push_status(&unknown);
-        assert_eq!(unknown.status, "unknown");
+        assert_eq!(unknown.status, ManualPushState::Unknown);
         assert!(!unknown.can_cancel);
         assert!(!unknown.can_retry);
         assert!(!unknown.message.contains("upstream"));

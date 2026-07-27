@@ -8,7 +8,7 @@ import { http, HttpResponse } from 'msw';
 import { describe, expect, test } from 'vitest';
 
 import { TrackingSettingsContent } from '@/components/tracking/tracking-settings-content';
-import type { ManualPushStatus } from '@/lib/api';
+import type { ManualPushState, ManualPushStatus } from '@/lib/api';
 import { server } from '@/tests/mocks/server';
 import { renderWithQuery } from '@/tests/render';
 
@@ -22,7 +22,11 @@ let statusRequestCount = 0;
  * @param pushed - Delivered article count.
  * @returns Manual push status payload.
  */
-function manualPushStatus(status: string, message: string, pushed: number): ManualPushStatus {
+function manualPushStatus(
+  status: ManualPushState,
+  message: string,
+  pushed: number,
+): ManualPushStatus {
   const isActive = status === 'pending' || status === 'running';
   const isIdle = status === 'idle';
   const isUnknown = status === 'unknown';

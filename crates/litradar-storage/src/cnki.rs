@@ -5,7 +5,7 @@ use std::fmt;
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use litradar_domain::{CnkiSessionStatusResponse, UserId};
+use litradar_domain::{CnkiSessionStatusResponse, CnkiStatus, UserId};
 use rusqlite::{params, OptionalExtension};
 use serde_json::Value as JsonValue;
 
@@ -21,7 +21,7 @@ pub struct CnkiSessionData {
     /// Stored QR UUID.
     pub qr_uuid: String,
     /// Stored status label.
-    pub status: String,
+    pub status: CnkiStatus,
 }
 
 impl fmt::Debug for CnkiSessionData {
@@ -142,7 +142,7 @@ pub fn get_cnki_session_data(
         Ok(CnkiSessionData {
             session_data: serde_json::from_str(&row.session_json)?,
             qr_uuid: row.qr_uuid,
-            status: row.status,
+            status: CnkiStatus::from(row.status),
         })
     })
     .transpose()
@@ -167,7 +167,7 @@ pub fn upsert_cnki_session(
     codec: &SecretCodec,
     user_id: UserId,
     session_data: &JsonValue,
-    status: &str,
+    status: &CnkiStatus,
     qr_uuid: Option<&str>,
 ) -> Result<CnkiSessionStatusResponse, CnkiRepositoryError> {
     let now = current_unix_time();
@@ -209,7 +209,7 @@ pub fn upsert_cnki_session(
             user_id.value(),
             session_json,
             resolved_qr_uuid,
-            status,
+            status.as_str(),
             token_expires_at,
             created_at,
             now,
@@ -218,7 +218,7 @@ pub fn upsert_cnki_session(
     let row = CnkiSessionRow {
         session_json: plaintext_session_json,
         qr_uuid: resolved_qr_uuid,
-        status: status.to_string(),
+        status: status.as_str().to_string(),
         updated_at: Some(now),
         last_used_at: None,
     };
@@ -303,7 +303,7 @@ fn summarize_cnki_session(row: Option<&CnkiSessionRow>, now: f64) -> CnkiSession
     let Some(row) = row else {
         return CnkiSessionStatusResponse {
             configured: false,
-            status: "empty".to_string(),
+            status: CnkiStatus::Empty,
             has_bff_user_token: false,
             expires_at: None,
             seconds_remaining: None,
@@ -322,17 +322,17 @@ fn summarize_cnki_session(row: Option<&CnkiSessionRow>, now: f64) -> CnkiSession
     let seconds_remaining = expires_at.map(|value| (value - now).max(0.0).floor() as i64);
     let status = if has_bff_user_token {
         if expires_at.is_some_and(|value| value <= now) {
-            "expired".to_string()
+            CnkiStatus::Expired
         } else {
-            "active".to_string()
+            CnkiStatus::Active
         }
     } else if nonempty(&row.qr_uuid).is_some() {
-        "waiting_scan".to_string()
+        CnkiStatus::WaitingScan
     } else {
-        nonempty(&row.status).unwrap_or("empty").to_string()
+        CnkiStatus::from(nonempty(&row.status).unwrap_or("empty"))
     };
     CnkiSessionStatusResponse {
-        configured: status != "empty",
+        configured: status != CnkiStatus::Empty,
         status,
         has_bff_user_token,
         expires_at,
@@ -415,7 +415,7 @@ struct CnkiSessionRow {
 
 #[cfg(test)]
 mod tests {
-    use litradar_domain::UserId;
+    use litradar_domain::{CnkiStatus, UserId};
     use rusqlite::Connection;
     use serde_json::json;
     use tempfile::tempdir;
@@ -453,7 +453,7 @@ mod tests {
             &codec,
             user_id,
             &session_data,
-            "active",
+            &CnkiStatus::Active,
             Some("qr-fixture"),
         )
         .expect("session should upsert");

@@ -705,11 +705,12 @@ fn get_push_stats(config: &StorageConfig) -> Result<Vec<PushStats>, BusinessRepo
                         .and_then(|value| value.to_str())
                         .unwrap_or_default()
                         .to_string(),
-                    status: value
-                        .get("status")
-                        .and_then(Value::as_str)
-                        .unwrap_or("unknown")
-                        .to_string(),
+                    status: PushStatsState::from_legacy(
+                        value
+                            .get("status")
+                            .and_then(Value::as_str)
+                            .unwrap_or("unknown"),
+                    ),
                     last_completed: value
                         .get("last_completed_run_at")
                         .and_then(Value::as_str)
@@ -730,7 +731,7 @@ fn get_push_stats(config: &StorageConfig) -> Result<Vec<PushStats>, BusinessRepo
                     .and_then(|value| value.to_str())
                     .unwrap_or_default()
                     .to_string(),
-                status: "error".to_string(),
+                status: PushStatsState::Error,
                 last_completed: None,
                 delivered_count: None,
                 user_results: None,
@@ -893,7 +894,7 @@ mod tests {
 
         assert_eq!(stats.push.len(), 1);
         assert_eq!(stats.push[0].db_name, "runtime");
-        assert_eq!(stats.push[0].status, "completed");
+        assert_eq!(stats.push[0].status, PushStatsState::Completed);
         assert_eq!(stats.push[0].delivered_count, Some(2));
         assert_eq!(stats.push[0].user_results, Some(1));
     }

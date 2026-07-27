@@ -195,12 +195,15 @@ fn finalize_manual_outcome(
     owner_id: &str,
     outcome: &ManualWeeklyPushOutcome,
 ) -> Result<DeliveryRunRecord, DeliveryError> {
-    let status = match outcome.status.as_str() {
-        "completed" => DeliveryRunStatus::Completed,
-        "skipped" => DeliveryRunStatus::Skipped,
-        "unknown" => DeliveryRunStatus::Unknown,
-        "failed" => DeliveryRunStatus::Failed,
-        _ => DeliveryRunStatus::Failed,
+    let status = match outcome.status {
+        litradar_domain::ManualPushState::Completed => DeliveryRunStatus::Completed,
+        litradar_domain::ManualPushState::Unknown => DeliveryRunStatus::Unknown,
+        litradar_domain::ManualPushState::Failed => DeliveryRunStatus::Failed,
+        litradar_domain::ManualPushState::Cancelled => DeliveryRunStatus::Cancelled,
+        litradar_domain::ManualPushState::TimedOut => DeliveryRunStatus::TimedOut,
+        litradar_domain::ManualPushState::Idle
+        | litradar_domain::ManualPushState::Pending
+        | litradar_domain::ManualPushState::Running => DeliveryRunStatus::Failed,
     };
     let error_code = match status {
         DeliveryRunStatus::Unknown => Some("ambiguous_delivery"),

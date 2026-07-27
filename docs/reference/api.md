@@ -110,6 +110,10 @@ Rust handler 上的 OpenAPI 注解是 REST 契约的实现来源。修改 REST �
 
 `weekly-updates` 读取 `data/push_state/*.changes.json` 中的可通知文章，不会临时重新抓取数据。
 
+期次、文章和 weekly article 的 `date` 只使用经真实日历校验的 `YYYY`、`YYYY-MM` 或 `YYYY-MM-DD`；配套 `date_precision` 为 `year`、`month`、`day` 或 `null`。只有年份的上游元数据保持如 `2026`，不会补成 `2026-01-01`。历史库中无法通过日历校验的旧日期仍原样可读，但其 precision 为 `null`。
+
+健康响应的 `status` 只可能是 `ok` 或 `unhealthy`。应用自有 manual、scheduler 和 push-stat 状态同样由 OpenAPI enum 约束；服务不会返回任意拼写。CNKI 上游状态不属于该封闭集合，未知字符串会原样返回，客户端必须保留兼容分支。
+
 ### 认证与 CNKI 会话
 
 | 方法             | 路径                          | 作用                             |
@@ -227,6 +231,8 @@ SQLite 保证每个用户最多一个 queued/active 手动任务；同一用户�
 管理员创建邀请码的 JSON body 可省略；可选字段为绝对 Unix 秒 `expires_at`（必须晚于当前时间且最多 365 天）和 `max_uses`（`1..=1000`）。省略时仍使用 7 天、1 次。删除路由保留 HTTP `DELETE` 兼容性，但只写入 `revoked_at`，不会物理删除兑换历史。
 
 计划任务只接受固定的类型化 job。内嵌调度器将已验证字段转换为当前可执行文件加 `index`、`notify` 或 `push` 子命令的完整 argv，不会执行 shell 命令。应用终止时，活动子进程会被结束并等待，运行状态保存为 `cancelled`。旧 `legacy_command` 只供审阅，不能启用或执行。
+
+`last_status` 和近期 run 的状态使用同一封闭枚举：`idle`、`pending`、`claimed`、`running`、`success`、`failed`、`timed_out`、`error`、`unknown`、`cancelled`。旧数据库中的空值映射为 `idle`，未识别旧值显式映射为 `unknown`；新的写入只能使用声明值，终结接口还会拒绝非终态。
 
 `GET /api/admin/runtime-settings` 为每个字段返回 group、control、apply mode、allowed values、秘密状态和值来源；前端据此覆盖全部后端设置，而不是维护第二份字段清单。`GET /api/admin/provider-catalog` 按逻辑 Provider 名称聚合索引、摘要页和全文 capability，并列出从 `data/meta/*.csv` 与 `data/index/*.sqlite` 发现的安全 catalog stem/文件名。它不返回上游 URL、凭据或文件路径。
 

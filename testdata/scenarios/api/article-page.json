@@ -7,6 +7,7 @@
       "title": "Fixture Article",
       "publication_year": 2024,
       "date": "2024-01-16",
+      "date_precision": "day",
       "authors": ["Ada Lovelace", "Grace Hopper"],
       "start_page": "1",
       "end_page": "9",

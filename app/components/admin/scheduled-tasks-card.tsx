@@ -11,6 +11,7 @@ import {
   adminGetScheduledTasks,
   adminUpdateScheduledTask,
   type ScheduledJobSpec,
+  type SchedulerRunState,
   type ScheduledTaskCreate,
   type ScheduledTaskInfo,
 } from '@/lib/api';
@@ -268,6 +269,41 @@ function formatDateTime(value: number | null): string {
     day: '2-digit',
     year: 'numeric',
   });
+}
+
+/**
+ * Format every generated scheduler state for administrator display.
+ *
+ * @param status - Generated scheduler state.
+ * @returns Stable localized state label.
+ */
+function formatSchedulerState(status: SchedulerRunState): string {
+  switch (status) {
+    case 'idle':
+      return '未运行';
+    case 'pending':
+      return '等待中';
+    case 'claimed':
+      return '已领取';
+    case 'running':
+      return '运行中';
+    case 'success':
+      return '成功';
+    case 'failed':
+      return '失败';
+    case 'timed_out':
+      return '超时';
+    case 'error':
+      return '执行错误';
+    case 'unknown':
+      return '结果未知';
+    case 'cancelled':
+      return '已取消';
+    default: {
+      const unreachable: never = status;
+      return unreachable;
+    }
+  }
 }
 
 /**
@@ -698,7 +734,7 @@ export function ScheduledTasksCard() {
                     )}
                     <div className="text-xs text-muted-foreground">
                       最近执行: {formatDateTime(task.last_run_at)}
-                      {task.last_status && ` · ${task.last_status}`}
+                      {` · ${formatSchedulerState(task.last_status)}`}
                     </div>
                   </div>
                   <div className="flex w-full flex-wrap items-center justify-end gap-2 sm:w-auto sm:flex-nowrap">
@@ -758,7 +794,7 @@ export function ScheduledTasksCard() {
                   >
                     <span className="min-w-0 truncate">{run.task_name}</span>
                     <span className="text-xs text-muted-foreground">
-                      {run.status} · {formatDateTime(run.scheduled_for)}
+                      {formatSchedulerState(run.status)} · {formatDateTime(run.scheduled_for)}
                     </span>
                   </div>
                 ))}

@@ -519,7 +519,10 @@ fn scheduler_dry_run_and_run_once_use_the_real_child_boundary() {
     assert_eq!(dry_payload["found"], true);
     assert_eq!(dry_payload["did_execute"], false);
     assert_eq!(dry_payload["status"], Value::Null);
-    assert_eq!(unchanged.last_status, "");
+    assert_eq!(
+        unchanged.last_status,
+        litradar_domain::SchedulerRunState::Idle
+    );
     assert!(unchanged.last_run_at.is_none());
 
     let executed = run_litradar_in(
@@ -544,7 +547,10 @@ fn scheduler_dry_run_and_run_once_use_the_real_child_boundary() {
     assert_eq!(executed_payload["found"], true);
     assert_eq!(executed_payload["did_execute"], true);
     assert_eq!(executed_payload["status"], "success");
-    assert_eq!(updated.last_status, "success");
+    assert_eq!(
+        updated.last_status,
+        litradar_domain::SchedulerRunState::Success
+    );
     assert!(updated.last_run_at.is_some());
     assert!(!storage_config
         .project_root()

@@ -5,7 +5,6 @@ use std::error::Error;
 use std::fmt;
 use std::fs;
 use std::path::Path;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use litradar_domain::{
     validate_characters, validate_item_count, ArticleCandidateInfo, ArticleId, ArticleLocator,

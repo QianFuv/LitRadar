@@ -3657,6 +3657,17 @@
             "type": ["string", "null"],
             "description": "Article date."
           },
+          "date_precision": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/DatePrecision",
+                "description": "Precision represented by the article date."
+              }
+            ]
+          },
           "doi": {
             "type": ["string", "null"],
             "description": "DOI."
@@ -3932,6 +3943,11 @@
             "description": "Row update timestamp."
           }
         }
+      },
+      "DatePrecision": {
+        "type": "string",
+        "description": "Precision retained by one canonical partial publication date.",
+        "enum": ["year", "month", "day"]
       },
       "ErrorEnvelope": {
         "type": "object",
@@ -4330,10 +4346,15 @@
         "required": ["status"],
         "properties": {
           "status": {
-            "type": "string",
+            "$ref": "#/components/schemas/HealthStatus",
             "description": "Service status value."
           }
         }
+      },
+      "HealthStatus": {
+        "type": "string",
+        "description": "Application-owned service health state.",
+        "enum": ["ok", "unhealthy"]
       },
       "IndexDatabaseStats": {
         "type": "object",
@@ -4493,6 +4514,17 @@
           "date": {
             "type": ["string", "null"],
             "description": "Issue date."
+          },
+          "date_precision": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/DatePrecision",
+                "description": "Precision represented by the issue date."
+              }
+            ]
           },
           "issue_id": {
             "type": "integer",
@@ -4686,6 +4718,20 @@
           }
         }
       },
+      "ManualPushState": {
+        "type": "string",
+        "description": "Application-owned state of a manual weekly push.",
+        "enum": [
+          "idle",
+          "pending",
+          "running",
+          "completed",
+          "failed",
+          "cancelled",
+          "timed_out",
+          "unknown"
+        ]
+      },
       "ManualWeeklyPushStatus": {
         "type": "object",
         "description": "Manual weekly push job status payload.",
@@ -4755,7 +4801,7 @@
             "description": "Unix timestamp when the job started."
           },
           "status": {
-            "type": "string",
+            "$ref": "#/components/schemas/ManualPushState",
             "description": "Durable job status."
           },
           "summary": {
@@ -5177,7 +5223,7 @@
             "description": "Last completed run timestamp."
           },
           "status": {
-            "type": "string",
+            "$ref": "#/components/schemas/PushStatsState",
             "description": "Push state status."
           },
           "user_results": {
@@ -5186,6 +5232,11 @@
             "minimum": 0
           }
         }
+      },
+      "PushStatsState": {
+        "type": "string",
+        "description": "Application-owned state exposed for legacy push statistics.",
+        "enum": ["idle", "running", "completed", "failed", "skipped", "unknown", "error"]
       },
       "RegisterRequest": {
         "type": "object",
@@ -5574,7 +5625,7 @@
             "description": "Last run timestamp."
           },
           "last_status": {
-            "type": "string",
+            "$ref": "#/components/schemas/SchedulerRunState",
             "description": "Last run status."
           },
           "legacy_command": {
@@ -5633,7 +5684,7 @@
             "description": "Execution start timestamp."
           },
           "status": {
-            "type": "string",
+            "$ref": "#/components/schemas/SchedulerRunState",
             "description": "Durable run status."
           },
           "task_id": {
@@ -5695,6 +5746,22 @@
           }
         },
         "additionalProperties": false
+      },
+      "SchedulerRunState": {
+        "type": "string",
+        "description": "Application-owned durable scheduler run state.",
+        "enum": [
+          "idle",
+          "pending",
+          "claimed",
+          "running",
+          "success",
+          "failed",
+          "timed_out",
+          "error",
+          "unknown",
+          "cancelled"
+        ]
       },
       "SchedulerStatusResponse": {
         "type": "object",
@@ -5969,6 +6036,17 @@
           "date": {
             "type": ["string", "null"],
             "description": "Article date."
+          },
+          "date_precision": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/DatePrecision",
+                "description": "Precision represented by the article date."
+              }
+            ]
           },
           "doi": {
             "type": ["string", "null"],

@@ -1698,6 +1698,7 @@ export interface components {
       authors: string[];
       /** @description Article date. */
       date?: string | null;
+      date_precision?: null | components['schemas']['DatePrecision'];
       /** @description DOI. */
       doi?: string | null;
       /** @description End page. */
@@ -1874,6 +1875,11 @@ export interface components {
        */
       updated_at?: number | null;
     };
+    /**
+     * @description Precision retained by one canonical partial publication date.
+     * @enum {string}
+     */
+    DatePrecision: 'year' | 'month' | 'day';
     /** @description FastAPI-compatible error envelope. */
     ErrorEnvelope: {
       /** @description Error detail payload. */
@@ -2085,8 +2091,13 @@ export interface components {
     /** @description Health check payload returned by the API. */
     HealthResponse: {
       /** @description Service status value. */
-      status: string;
+      status: components['schemas']['HealthStatus'];
     };
+    /**
+     * @description Application-owned service health state.
+     * @enum {string}
+     */
+    HealthStatus: 'ok' | 'unhealthy';
     /** @description Per-index database statistics payload. */
     IndexDatabaseStats: {
       /**
@@ -2186,6 +2197,7 @@ export interface components {
     IssueRecord: {
       /** @description Issue date. */
       date?: string | null;
+      date_precision?: null | components['schemas']['DatePrecision'];
       /**
        * Format: int64
        * @description Issue identifier.
@@ -2282,6 +2294,19 @@ export interface components {
       /** @description Authenticated user identifier. */
       user_id: components['schemas']['UserId'];
     };
+    /**
+     * @description Application-owned state of a manual weekly push.
+     * @enum {string}
+     */
+    ManualPushState:
+      | 'idle'
+      | 'pending'
+      | 'running'
+      | 'completed'
+      | 'failed'
+      | 'cancelled'
+      | 'timed_out'
+      | 'unknown';
     /** @description Manual weekly push job status payload. */
     ManualWeeklyPushStatus: {
       /** @description Whether the current job still accepts cancellation. */
@@ -2327,7 +2352,7 @@ export interface components {
        */
       started_at?: number | null;
       /** @description Durable job status. */
-      status: string;
+      status: components['schemas']['ManualPushState'];
       /** @description AI-generated summary text when available. */
       summary: string;
       /**
@@ -2519,10 +2544,15 @@ export interface components {
       /** @description Last completed run timestamp. */
       last_completed?: string | null;
       /** @description Push state status. */
-      status: string;
+      status: components['schemas']['PushStatsState'];
       /** @description User result count. */
       user_results?: number | null;
     };
+    /**
+     * @description Application-owned state exposed for legacy push statistics.
+     * @enum {string}
+     */
+    PushStatsState: 'idle' | 'running' | 'completed' | 'failed' | 'skipped' | 'unknown' | 'error';
     /** @description Account registration request. */
     RegisterRequest: {
       /** @description Invite code text required for every public registration. */
@@ -2690,7 +2720,7 @@ export interface components {
        */
       last_run_at?: number | null;
       /** @description Last run status. */
-      last_status: string;
+      last_status: components['schemas']['SchedulerRunState'];
       /** @description Read-only command text retained from a legacy row for administrator review. */
       legacy_command?: string | null;
       /** @description Display name. */
@@ -2736,7 +2766,7 @@ export interface components {
        */
       started_at?: number | null;
       /** @description Durable run status. */
-      status: string;
+      status: components['schemas']['SchedulerRunState'];
       /**
        * Format: int64
        * @description Scheduled task row identifier.
@@ -2766,6 +2796,21 @@ export interface components {
       /** @description Optional replacement IANA time zone. */
       timezone?: string | null;
     };
+    /**
+     * @description Application-owned durable scheduler run state.
+     * @enum {string}
+     */
+    SchedulerRunState:
+      | 'idle'
+      | 'pending'
+      | 'claimed'
+      | 'running'
+      | 'success'
+      | 'failed'
+      | 'timed_out'
+      | 'error'
+      | 'unknown'
+      | 'cancelled';
     /** @description Administrator scheduler status response. */
     SchedulerStatusResponse: {
       /**
@@ -2918,6 +2963,7 @@ export interface components {
       authors: string[];
       /** @description Article date. */
       date?: string | null;
+      date_precision?: null | components['schemas']['DatePrecision'];
       /** @description DOI. */
       doi?: string | null;
       /** @description In-press flag. */

@@ -118,7 +118,7 @@ fn run_manual_weekly_push_inner(
     )?;
     let Some(settings) = settings.filter(|item| item.enabled) else {
         return Ok(manual_outcome(
-            "completed",
+            ManualPushState::Completed,
             "Recommendation settings are not enabled; skipped push",
             None,
             None,
@@ -149,7 +149,7 @@ fn run_manual_weekly_push_inner(
             "No new weekly articles available in selected databases"
         };
         return Ok(manual_outcome(
-            "completed",
+            ManualPushState::Completed,
             message,
             folder.as_ref().map(|item| item.id),
             folder.as_ref().map(|item| item.name.clone()),
@@ -158,7 +158,7 @@ fn run_manual_weekly_push_inner(
 
     if settings.keywords.is_empty() && settings.directions.is_empty() {
         return Ok(manual_outcome(
-            "completed",
+            ManualPushState::Completed,
             "No keywords or directions configured; skipped push",
             folder.as_ref().map(|item| item.id),
             folder.as_ref().map(|item| item.name.clone()),
@@ -384,7 +384,7 @@ fn execute_owned_delivery(
         return Ok(outcome(
             config,
             context.run.id,
-            "idle",
+            DeliveryOutcomeState::Idle,
             Vec::new(),
             Vec::new(),
         ));
@@ -427,7 +427,7 @@ fn execute_owned_delivery(
         return Ok(outcome(
             config,
             context.run.id,
-            "completed",
+            DeliveryOutcomeState::Completed,
             Vec::new(),
             Vec::new(),
         ));
@@ -454,7 +454,7 @@ fn execute_owned_delivery(
         return Ok(outcome(
             config,
             context.run.id,
-            "skipped",
+            DeliveryOutcomeState::Skipped,
             candidate_article_ids,
             Vec::new(),
         ));
@@ -530,14 +530,18 @@ fn execute_owned_delivery(
         plans.push(plan);
     }
 
-    let has_unknown = plans.iter().any(|plan| plan.status == "unknown");
-    let has_failure = plans.iter().any(|plan| plan.status == "error");
+    let has_unknown = plans
+        .iter()
+        .any(|plan| plan.status == SubscriberDeliveryState::Unknown);
+    let has_failure = plans
+        .iter()
+        .any(|plan| plan.status == SubscriberDeliveryState::Error);
     let (run_status, checkpoint_status, outcome_status, checkpoint_snapshot, error_code) =
         if has_unknown {
             (
                 litradar_storage::DeliveryRunStatus::Unknown,
                 litradar_storage::DeliveryCheckpointStatus::Unknown,
-                "unknown",
+                DeliveryOutcomeState::Unknown,
                 &previous_snapshot,
                 Some("ambiguous_delivery"),
             )
@@ -545,7 +549,7 @@ fn execute_owned_delivery(
             (
                 litradar_storage::DeliveryRunStatus::Failed,
                 litradar_storage::DeliveryCheckpointStatus::Failed,
-                "failed",
+                DeliveryOutcomeState::Failed,
                 &previous_snapshot,
                 Some("subscriber_failed"),
             )
@@ -553,7 +557,7 @@ fn execute_owned_delivery(
             (
                 litradar_storage::DeliveryRunStatus::Completed,
                 litradar_storage::DeliveryCheckpointStatus::Completed,
-                "completed",
+                DeliveryOutcomeState::Completed,
                 &current_snapshot,
                 None,
             )
@@ -803,11 +807,11 @@ fn plan_from_terminal_item(
         result.message_id = dedupe.into_iter().find_map(|row| row.message_id);
     }
     let status = match item.status {
-        litradar_storage::DeliveryItemStatus::Succeeded => "ok",
-        litradar_storage::DeliveryItemStatus::Skipped => "skipped",
-        litradar_storage::DeliveryItemStatus::Unknown => "unknown",
+        litradar_storage::DeliveryItemStatus::Succeeded => SubscriberDeliveryState::Ok,
+        litradar_storage::DeliveryItemStatus::Skipped => SubscriberDeliveryState::Skipped,
+        litradar_storage::DeliveryItemStatus::Unknown => SubscriberDeliveryState::Unknown,
         litradar_storage::DeliveryItemStatus::Failed
-        | litradar_storage::DeliveryItemStatus::Cancelled => "error",
+        | litradar_storage::DeliveryItemStatus::Cancelled => SubscriberDeliveryState::Error,
         litradar_storage::DeliveryItemStatus::Pending
         | litradar_storage::DeliveryItemStatus::Claimed
         | litradar_storage::DeliveryItemStatus::Sending => {
@@ -825,7 +829,7 @@ fn plan_from_terminal_item(
     Ok(SubscriberDeliveryPlan {
         subscriber_id: subscriber.subscriber_id.clone(),
         delivery_method: subscriber.delivery_method.clone(),
-        status: status.to_string(),
+        status,
         error: item.error_code.clone(),
         selected_article_ids: result.selected_article_ids.clone(),
         message_title: None,
@@ -907,14 +911,17 @@ fn emit_delivery_workflow_terminal(
             let failed_subscriber_count = outcome
                 .subscribers
                 .iter()
-                .filter(|subscriber| subscriber.status == "error")
+                .filter(|subscriber| subscriber.status == SubscriberDeliveryState::Error)
                 .count();
-            if matches!(outcome.status.as_str(), "failed" | "unknown") {
+            if matches!(
+                outcome.status,
+                DeliveryOutcomeState::Failed | DeliveryOutcomeState::Unknown
+            ) {
                 tracing::warn!(
                     event = "delivery.workflow.failed",
                     component = "delivery",
                     outcome = "failure",
-                    status = delivery_status_kind(&outcome.status),
+                    status = outcome.status.as_str(),
                     candidate_count = outcome.candidate_article_ids.len(),
                     subscriber_count,
                     selected_count,
@@ -928,7 +935,7 @@ fn emit_delivery_workflow_terminal(
                     event = "delivery.workflow.completed",
                     component = "delivery",
                     outcome = "success",
-                    status = delivery_status_kind(&outcome.status),
+                    status = outcome.status.as_str(),
                     candidate_count = outcome.candidate_article_ids.len(),
                     subscriber_count,
                     selected_count,
@@ -955,21 +962,28 @@ fn emit_manual_delivery_terminal(
     started_at: Instant,
 ) {
     match result {
-        Ok(outcome) if matches!(outcome.status.as_str(), "failed" | "unknown") => tracing::warn!(
-            event = "delivery.manual.failed",
-            component = "delivery",
-            outcome = "failure",
-            status = delivery_status_kind(&outcome.status),
-            selected_count = outcome.selected,
-            delivered_count = outcome.pushed,
-            candidate_count = outcome.total_candidates.unwrap_or(0),
-            duration_ms = elapsed_millis(started_at),
-        ),
+        Ok(outcome)
+            if matches!(
+                outcome.status,
+                ManualPushState::Failed | ManualPushState::Unknown
+            ) =>
+        {
+            tracing::warn!(
+                event = "delivery.manual.failed",
+                component = "delivery",
+                outcome = "failure",
+                status = outcome.status.as_str(),
+                selected_count = outcome.selected,
+                delivered_count = outcome.pushed,
+                candidate_count = outcome.total_candidates.unwrap_or(0),
+                duration_ms = elapsed_millis(started_at),
+            )
+        }
         Ok(outcome) => tracing::info!(
             event = "delivery.manual.completed",
             component = "delivery",
             outcome = "success",
-            status = delivery_status_kind(&outcome.status),
+            status = outcome.status.as_str(),
             selected_count = outcome.selected,
             delivered_count = outcome.pushed,
             candidate_count = outcome.total_candidates.unwrap_or(0),
@@ -1015,31 +1029,18 @@ fn delivery_mode_kind(mode: DeliveryMode) -> &'static str {
     }
 }
 
-fn delivery_status_kind(status: &str) -> &'static str {
-    match status {
-        "completed" => "completed",
-        "idle" => "idle",
-        "skipped" => "skipped",
-        "failed" => "failed",
-        "unknown" => "unknown",
-        "cancelled" => "cancelled",
-        "timed_out" => "timed_out",
-        _ => "unknown",
-    }
-}
-
 fn elapsed_millis(started_at: Instant) -> u64 {
     started_at.elapsed().as_millis().min(u128::from(u64::MAX)) as u64
 }
 
 fn manual_outcome(
-    status: &str,
+    status: ManualPushState,
     message: &str,
     folder_id: Option<i64>,
     folder_name: Option<String>,
 ) -> ManualWeeklyPushOutcome {
     ManualWeeklyPushOutcome {
-        status: status.to_string(),
+        status,
         message: message.to_string(),
         pushed: 0,
         selected: 0,
@@ -1067,9 +1068,9 @@ fn manual_outcome_from_delivery(
 
     for outcome in outcomes {
         total_candidates += outcome.candidate_article_ids.len() as i64;
-        if outcome.status == "failed" {
+        if outcome.status == DeliveryOutcomeState::Failed {
             errors.push(format!("{} delivery failed", outcome.db_name));
-        } else if outcome.status == "unknown" {
+        } else if outcome.status == DeliveryOutcomeState::Unknown {
             has_unknown = true;
             errors.push(format!("{} delivery outcome is unknown", outcome.db_name));
         }
@@ -1090,7 +1091,11 @@ fn manual_outcome_from_delivery(
 
     if !errors.is_empty() {
         return ManualWeeklyPushOutcome {
-            status: if has_unknown { "unknown" } else { "failed" }.to_string(),
+            status: if has_unknown {
+                ManualPushState::Unknown
+            } else {
+                ManualPushState::Failed
+            },
             message: errors.join("; "),
             pushed,
             selected,
@@ -1130,7 +1135,7 @@ fn manual_outcome_from_delivery(
     };
 
     ManualWeeklyPushOutcome {
-        status: "completed".to_string(),
+        status: ManualPushState::Completed,
         message,
         pushed,
         selected,
@@ -1194,7 +1199,7 @@ fn process_subscriber(
             return Ok(failed_plan(subscriber, &error.to_string()));
         }
     };
-    if plan.status == "skipped" {
+    if plan.status == SubscriberDeliveryState::Skipped {
         let result_json = subscriber_result_json(&[], 0, None)?;
         litradar_storage::finalize_delivery_run_item(
             &config.auth_db_path,
@@ -1274,7 +1279,7 @@ fn process_subscriber(
             Some("favorite_write_failed"),
             unix_now(),
         )?;
-        plan.status = "error".to_string();
+        plan.status = SubscriberDeliveryState::Error;
         plan.error = Some(error.to_string());
         return Ok(plan);
     }
@@ -1346,7 +1351,7 @@ fn process_subscriber(
                     None,
                     unix_now(),
                 )?;
-                plan.status = "unknown".to_string();
+                plan.status = SubscriberDeliveryState::Unknown;
                 plan.error = Some(error.to_string());
                 return Ok(plan);
             }
@@ -1480,7 +1485,7 @@ fn build_subscriber_plan(
     Ok(SubscriberDeliveryPlan {
         subscriber_id: subscriber.subscriber_id.clone(),
         delivery_method: subscriber.delivery_method.clone(),
-        status: "ok".to_string(),
+        status: SubscriberDeliveryState::Ok,
         error: None,
         selected_article_ids,
         message_title,
@@ -1496,7 +1501,7 @@ fn failed_plan(subscriber: &NotificationSubscriberInfo, reason: &str) -> Subscri
     SubscriberDeliveryPlan {
         subscriber_id: subscriber.subscriber_id.clone(),
         delivery_method: subscriber.delivery_method.clone(),
-        status: "error".to_string(),
+        status: SubscriberDeliveryState::Error,
         error: Some(reason.to_string()),
         selected_article_ids: Vec::new(),
         message_title: None,
@@ -1512,7 +1517,7 @@ fn skipped_plan(subscriber: &NotificationSubscriberInfo, reason: &str) -> Subscr
     SubscriberDeliveryPlan {
         subscriber_id: subscriber.subscriber_id.clone(),
         delivery_method: subscriber.delivery_method.clone(),
-        status: "skipped".to_string(),
+        status: SubscriberDeliveryState::Skipped,
         error: Some(reason.to_string()),
         selected_article_ids: Vec::new(),
         message_title: None,
@@ -1527,7 +1532,7 @@ fn skipped_plan(subscriber: &NotificationSubscriberInfo, reason: &str) -> Subscr
 fn outcome(
     config: &RecommendationRunConfig,
     delivery_run_id: i64,
-    status: &str,
+    status: DeliveryOutcomeState,
     candidate_article_ids: Vec<i64>,
     subscribers: Vec<SubscriberDeliveryPlan>,
 ) -> RecommendationRunOutcome {
@@ -1535,7 +1540,7 @@ fn outcome(
         db_name: config.db_name.clone(),
         workflow: config.workflow,
         mode: config.mode,
-        status: status.to_string(),
+        status,
         delivery_run_id,
         candidate_article_ids,
         subscribers,
@@ -1599,11 +1604,11 @@ mod tests {
         )
         .expect("push dry-run should build a plan");
 
-        assert_eq!(outcome.status, "completed");
+        assert_eq!(outcome.status, DeliveryOutcomeState::Completed);
         assert_eq!(outcome.candidate_article_ids, vec![102, 101]);
         assert_eq!(outcome.subscribers.len(), 1);
         let plan = &outcome.subscribers[0];
-        assert_eq!(plan.status, "ok");
+        assert_eq!(plan.status, SubscriberDeliveryState::Ok);
         assert_eq!(plan.selected_article_ids, vec![101, 102]);
         assert_eq!(plan.folder_synced_count, 2);
         assert_eq!(plan.favorite_writes.len(), 2);
@@ -1634,10 +1639,10 @@ mod tests {
         )
         .expect("notify dry-run should build a PushPlus plan");
 
-        assert_eq!(outcome.status, "completed");
+        assert_eq!(outcome.status, DeliveryOutcomeState::Completed);
         assert_eq!(outcome.subscribers.len(), 1);
         let plan = &outcome.subscribers[0];
-        assert_eq!(plan.status, "ok");
+        assert_eq!(plan.status, SubscriberDeliveryState::Ok);
         assert_eq!(plan.selected_article_ids, vec![102]);
         assert_eq!(plan.folder_synced_count, 1);
         assert!(plan.would_send_pushplus);
@@ -1681,7 +1686,7 @@ mod tests {
             })
             .expect("dry-run delivery should complete");
 
-        assert_eq!(outcome.status, "completed");
+        assert_eq!(outcome.status, DeliveryOutcomeState::Completed);
         assert!(pushplus_sender.messages.is_empty());
         let events = logs.events();
         let completed = events
@@ -1713,7 +1718,7 @@ mod tests {
         )
         .expect("notify execute should send PushPlus");
 
-        assert_eq!(outcome.status, "completed");
+        assert_eq!(outcome.status, DeliveryOutcomeState::Completed);
         assert_eq!(outcome.subscribers[0].message_id.as_deref(), Some("msg-1"));
         assert_eq!(pushplus_sender.messages.len(), 1);
         assert_eq!(pushplus_sender.messages[0].token, "token");
@@ -1754,7 +1759,7 @@ mod tests {
         )
         .expect("notify execute should record PushPlus failure");
 
-        assert_eq!(outcome.status, "unknown");
+        assert_eq!(outcome.status, DeliveryOutcomeState::Unknown);
         assert_eq!(favorite_count(&fixture.auth_db_path), 2);
         let dedupe = delivery_dedupe(&fixture, DeliveryWorkflow::Notify);
         assert_eq!(dedupe.len(), 2);
@@ -1780,7 +1785,7 @@ mod tests {
         )
         .expect("push execute should write favorites");
 
-        assert_eq!(outcome.status, "completed");
+        assert_eq!(outcome.status, DeliveryOutcomeState::Completed);
         assert_eq!(outcome.subscribers[0].favorite_writes.len(), 2);
         assert_eq!(favorite_count(&fixture.auth_db_path), 2);
         let dedupe = delivery_dedupe(&fixture, DeliveryWorkflow::Push);
@@ -1869,7 +1874,7 @@ mod tests {
         )
         .expect("disabled subscriber run should complete");
 
-        assert_eq!(disabled_outcome.status, "skipped");
+        assert_eq!(disabled_outcome.status, DeliveryOutcomeState::Skipped);
         assert!(disabled_outcome.subscribers.is_empty());
 
         let unselected_fixture = DeliveryFixture::new(notification_settings(
@@ -1885,7 +1890,7 @@ mod tests {
         )
         .expect("unselected database run should complete");
 
-        assert_eq!(unselected_outcome.status, "skipped");
+        assert_eq!(unselected_outcome.status, DeliveryOutcomeState::Skipped);
         assert!(unselected_outcome.subscribers.is_empty());
     }
 
@@ -1913,7 +1918,7 @@ mod tests {
         )
         .expect("healthy target should not decrypt an unrelated subscriber");
 
-        assert_eq!(outcome.status, "completed");
+        assert_eq!(outcome.status, DeliveryOutcomeState::Completed);
         assert_eq!(outcome.subscribers.len(), 1);
         assert_eq!(
             outcome.subscribers[0].subscriber_id,
@@ -2187,10 +2192,16 @@ mod tests {
             &mut pushplus_sender,
         );
         match role.as_str() {
-            "owner" => assert_eq!(result.expect("owner should complete").status, "completed"),
+            "owner" => assert_eq!(
+                result.expect("owner should complete").status,
+                DeliveryOutcomeState::Completed
+            ),
             "contender" => assert!(matches!(result, Err(DeliveryError::Busy))),
             "recover-notify" => {
-                assert_eq!(result.expect("recovery should complete").status, "unknown");
+                assert_eq!(
+                    result.expect("recovery should complete").status,
+                    DeliveryOutcomeState::Unknown
+                );
             }
             "crash-notify" => panic!("crash helper should be terminated while sending"),
             _ => panic!("unknown delivery process role"),

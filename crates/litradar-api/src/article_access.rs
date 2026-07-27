@@ -354,8 +354,13 @@ async fn has_active_cnki_session(state: &ApiState, user_id: UserId) -> Result<bo
     let secret_codec = state.secret_codec().clone();
     state
         .run_blocking(move || {
-            litradar_storage::get_cnki_session_data(auth_db_path, &secret_codec, user_id)
-                .map(|session| session.is_some_and(|session| session.status == "active"))
+            litradar_storage::get_cnki_session_data(auth_db_path, &secret_codec, user_id).map(
+                |session| {
+                    session.is_some_and(|session| {
+                        session.status == litradar_domain::CnkiStatus::Active
+                    })
+                },
+            )
         })
         .await?
         .map_err(|_| ApiError::internal_server_error())
@@ -541,7 +546,7 @@ impl ArticleFullTextProvider for ZjlibCnkiFullTextProvider {
             user_id,
         )
         .map_err(|_| ProviderError::new(ProviderErrorKind::Internal, "CNKI session unavailable"))?
-        .filter(|session| session.status == "active")
+        .filter(|session| session.status == litradar_domain::CnkiStatus::Active)
         .ok_or_else(|| {
             ProviderError::new(
                 ProviderErrorKind::AuthenticationRequired,

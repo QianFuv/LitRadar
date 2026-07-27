@@ -21,6 +21,7 @@
               "title": "Fixture Article",
               "publication_year": 2024,
               "date": "2024-01-16",
+              "date_precision": "day",
               "authors": ["Ada Lovelace", "Grace Hopper"],
               "abstract": "Fixture abstract for route and storage tests.",
               "doi": "10.1234/fixture",

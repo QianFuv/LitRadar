@@ -21,8 +21,8 @@ use litradar_storage::{
     StorageConfig,
 };
 use litradar_worker::delivery::{
-    run_manual_delivery_job, run_recommendation_delivery, DeliveryMode, DeliveryWorkflow,
-    RecommendationRunConfig,
+    run_manual_delivery_job, run_recommendation_delivery, DeliveryMode, DeliveryOutcomeState,
+    DeliveryWorkflow, RecommendationRunConfig,
 };
 use litradar_worker::scheduler::{load_scheduler_jobs, run_task_now, SchedulerMode};
 use serde_json::json;
@@ -756,15 +756,24 @@ fn run_delivery_command_inner(
 
 fn aggregate_delivery_status(
     outcomes: &[litradar_worker::delivery::RecommendationRunOutcome],
-) -> &'static str {
-    if outcomes.iter().any(|outcome| outcome.status == "unknown") {
-        "unknown"
-    } else if outcomes.iter().any(|outcome| outcome.status == "failed") {
-        "failed"
-    } else if outcomes.iter().all(|outcome| outcome.status == "idle") {
-        "idle"
+) -> DeliveryOutcomeState {
+    if outcomes
+        .iter()
+        .any(|outcome| outcome.status == DeliveryOutcomeState::Unknown)
+    {
+        DeliveryOutcomeState::Unknown
+    } else if outcomes
+        .iter()
+        .any(|outcome| outcome.status == DeliveryOutcomeState::Failed)
+    {
+        DeliveryOutcomeState::Failed
+    } else if outcomes
+        .iter()
+        .all(|outcome| outcome.status == DeliveryOutcomeState::Idle)
+    {
+        DeliveryOutcomeState::Idle
     } else {
-        "completed"
+        DeliveryOutcomeState::Completed
     }
 }
 
@@ -1164,7 +1173,9 @@ mod tests {
         run_scheduler_command, scheduler_usage, serialize_index_outcome, IndexOptions,
     };
     use litradar_index::{LiveCsvIndexOutcome, LiveIndexOutcome};
-    use litradar_worker::delivery::{DeliveryMode, DeliveryWorkflow, RecommendationRunOutcome};
+    use litradar_worker::delivery::{
+        DeliveryMode, DeliveryOutcomeState, DeliveryWorkflow, RecommendationRunOutcome,
+    };
 
     #[test]
     fn unified_usage_lists_only_supported_commands() {
@@ -1937,28 +1948,40 @@ mod tests {
 
     #[test]
     fn delivery_status_aggregation_preserves_failure_and_unknown() {
-        let outcome = |status: &str| RecommendationRunOutcome {
+        let outcome = |status: DeliveryOutcomeState| RecommendationRunOutcome {
             db_name: "fixture.sqlite".to_string(),
             workflow: DeliveryWorkflow::Notify,
             mode: DeliveryMode::Execute,
-            status: status.to_string(),
+            status,
             delivery_run_id: 1,
             candidate_article_ids: Vec::new(),
             subscribers: Vec::new(),
         };
 
-        assert_eq!(aggregate_delivery_status(&[outcome("idle")]), "idle");
         assert_eq!(
-            aggregate_delivery_status(&[outcome("idle"), outcome("completed")]),
-            "completed"
+            aggregate_delivery_status(&[outcome(DeliveryOutcomeState::Idle)]),
+            DeliveryOutcomeState::Idle
         );
         assert_eq!(
-            aggregate_delivery_status(&[outcome("completed"), outcome("failed")]),
-            "failed"
+            aggregate_delivery_status(&[
+                outcome(DeliveryOutcomeState::Idle),
+                outcome(DeliveryOutcomeState::Completed)
+            ]),
+            DeliveryOutcomeState::Completed
         );
         assert_eq!(
-            aggregate_delivery_status(&[outcome("failed"), outcome("unknown")]),
-            "unknown"
+            aggregate_delivery_status(&[
+                outcome(DeliveryOutcomeState::Completed),
+                outcome(DeliveryOutcomeState::Failed)
+            ]),
+            DeliveryOutcomeState::Failed
+        );
+        assert_eq!(
+            aggregate_delivery_status(&[
+                outcome(DeliveryOutcomeState::Failed),
+                outcome(DeliveryOutcomeState::Unknown)
+            ]),
+            DeliveryOutcomeState::Unknown
         );
     }
 

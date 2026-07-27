@@ -1,7 +1,80 @@
 //! Zhejiang Library CNKI session API models.
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use utoipa::ToSchema;
+
+/// Known CNKI session states with a lossless branch for upstream additions.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CnkiStatus {
+    /// No session material is configured.
+    Empty,
+    /// A QR challenge is waiting to be scanned.
+    WaitingScan,
+    /// The stored session is active.
+    Active,
+    /// The stored session has expired.
+    Expired,
+    /// Upstream or legacy state not owned by LitRadar.
+    Unknown(String),
+}
+
+impl CnkiStatus {
+    /// Return the original or canonical wire value.
+    pub fn as_str(&self) -> &str {
+        match self {
+            Self::Empty => "empty",
+            Self::WaitingScan => "waiting_scan",
+            Self::Active => "active",
+            Self::Expired => "expired",
+            Self::Unknown(value) => value,
+        }
+    }
+}
+
+impl From<String> for CnkiStatus {
+    /// Classify a status while retaining unrecognized upstream text.
+    fn from(value: String) -> Self {
+        match value.as_str() {
+            "empty" => Self::Empty,
+            "waiting_scan" => Self::WaitingScan,
+            "active" => Self::Active,
+            "expired" => Self::Expired,
+            _ => Self::Unknown(value),
+        }
+    }
+}
+
+impl From<&str> for CnkiStatus {
+    /// Classify borrowed status text.
+    fn from(value: &str) -> Self {
+        Self::from(value.to_string())
+    }
+}
+
+impl Serialize for CnkiStatus {
+    /// Serialize the status as its stable or original string value.
+    fn serialize<SerializerType>(
+        &self,
+        serializer: SerializerType,
+    ) -> Result<SerializerType::Ok, SerializerType::Error>
+    where
+        SerializerType: Serializer,
+    {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for CnkiStatus {
+    /// Deserialize a known state or retain the exact unknown string.
+    fn deserialize<DeserializerType>(
+        deserializer: DeserializerType,
+    ) -> Result<Self, DeserializerType::Error>
+    where
+        DeserializerType: Deserializer<'de>,
+    {
+        String::deserialize(deserializer).map(Self::from)
+    }
+}
 
 /// Safe per-user Zhejiang Library CNKI session status.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
@@ -9,7 +82,8 @@ pub struct CnkiSessionStatusResponse {
     /// Whether a session-like row is configured.
     pub configured: bool,
     /// Safe status label.
-    pub status: String,
+    #[schema(value_type = String)]
+    pub status: CnkiStatus,
     /// Whether a BFF user token is present.
     pub has_bff_user_token: bool,
     /// Token expiration timestamp.
@@ -30,7 +104,8 @@ pub struct CnkiLoginStartResponse {
     /// QR UUID.
     pub uuid: String,
     /// Upstream login status.
-    pub status: String,
+    #[schema(value_type = String)]
+    pub status: CnkiStatus,
     /// QR code URL or payload.
     pub qr_code: String,
     /// Safe session status.
@@ -66,7 +141,8 @@ impl Default for CnkiLoginPollRequest {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct CnkiLoginPollResponse {
     /// Poll status.
-    pub status: String,
+    #[schema(value_type = String)]
+    pub status: CnkiStatus,
     /// Safe session status.
     pub session: CnkiSessionStatusResponse,
 }
@@ -92,7 +168,7 @@ fn default_interval_seconds() -> f64 {
 
 #[cfg(test)]
 mod tests {
-    use super::CnkiLoginPollRequest;
+    use super::{CnkiLoginPollRequest, CnkiStatus};
 
     #[test]
     fn login_poll_request_uses_python_compatible_defaults() {
@@ -108,5 +184,18 @@ mod tests {
             serde_json::from_str("{}").expect("request should deserialize");
 
         assert_eq!(request, CnkiLoginPollRequest::default());
+    }
+
+    #[test]
+    fn unknown_cnki_status_round_trips_without_coercion() {
+        let status = serde_json::from_str::<CnkiStatus>(r#""等待确认""#)
+            .expect("unknown upstream state should deserialize");
+
+        assert_eq!(status, CnkiStatus::Unknown("等待确认".to_string()));
+        assert_eq!(status.as_str(), "等待确认");
+        assert_eq!(
+            serde_json::to_string(&status).expect("unknown state should serialize"),
+            r#""等待确认""#
+        );
     }
 }

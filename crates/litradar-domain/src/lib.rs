@@ -34,18 +34,19 @@ pub use business::{
     FavoriteTrackingResponse, FolderCreate, FolderRename, FolderResponse, IndexDatabaseStats,
     IndexStats, NotificationSettings, NotificationSettingsResponse, NotificationSettingsUpdate,
     ProviderCapabilityInfo, ProviderCatalogInfo, ProviderCatalogResponse,
-    ProviderOrderConfiguration, PushStats, RuntimeSecretItemInfo, RuntimeSecretPoolUpdate,
-    RuntimeSettingApplyMode, RuntimeSettingControl, RuntimeSettingGroup, RuntimeSettingInfo,
-    RuntimeSettingValue, RuntimeSettingsUpdate, ScheduledDeliveryJob, ScheduledIndexJob,
-    ScheduledJobSpec, ScheduledJobValidationError, ScheduledTaskCreate, ScheduledTaskInfo,
-    ScheduledTaskRunInfo, ScheduledTaskUpdate, ScheduledTaskValidationError,
-    SchedulerStatusResponse, SchedulerWorkerInfo, TrackingFolderSummary, TrackingSetRequest,
-    TrackingStatusResponse, DELIVERY_RETRY_ATTEMPTS_MAX, DELIVERY_RETRY_ATTEMPTS_MIN,
-    NOTIFICATION_AI_RETRY_ATTEMPTS_MAX, NOTIFICATION_AI_RETRY_ATTEMPTS_MIN,
+    ProviderOrderConfiguration, PushStats, PushStatsState, RuntimeSecretItemInfo,
+    RuntimeSecretPoolUpdate, RuntimeSettingApplyMode, RuntimeSettingControl, RuntimeSettingGroup,
+    RuntimeSettingInfo, RuntimeSettingValue, RuntimeSettingsUpdate, ScheduledDeliveryJob,
+    ScheduledIndexJob, ScheduledJobSpec, ScheduledJobValidationError, ScheduledTaskCreate,
+    ScheduledTaskInfo, ScheduledTaskRunInfo, ScheduledTaskUpdate, ScheduledTaskValidationError,
+    SchedulerRunState, SchedulerStatusResponse, SchedulerWorkerInfo, TrackingFolderSummary,
+    TrackingSetRequest, TrackingStatusResponse, DELIVERY_RETRY_ATTEMPTS_MAX,
+    DELIVERY_RETRY_ATTEMPTS_MIN, NOTIFICATION_AI_RETRY_ATTEMPTS_MAX,
+    NOTIFICATION_AI_RETRY_ATTEMPTS_MIN,
 };
 pub use cnki::{
     CnkiErrorDetail, CnkiLoginPollRequest, CnkiLoginPollResponse, CnkiLoginStartResponse,
-    CnkiSessionStatusResponse,
+    CnkiSessionStatusResponse, CnkiStatus,
 };
 pub use concurrency::{
     validate_domestic_cnki_worker_count, validate_index_concurrency, IndexConcurrency,
@@ -53,7 +54,7 @@ pub use concurrency::{
     INDEX_PROCESS_COUNT_MAX, INDEX_PROCESS_COUNT_MIN, INDEX_WORKER_COUNT_MAX,
     INDEX_WORKER_COUNT_MIN, SCHOLARLY_PROCESS_COUNT_MAX, SCHOLARLY_WORKER_COUNT_MAX,
 };
-pub use health::HealthResponse;
+pub use health::{HealthResponse, HealthStatus};
 pub use ids::{stable_sqlite_id, ArticleId, JournalId, UserId};
 pub use index::{
     ArticleAccessAction, ArticleAccessResponse, ArticlePage, ArticleRecord, ArticleSearchMode,
@@ -62,15 +63,16 @@ pub use index::{
     YearSummary,
 };
 pub use index_contract::{
-    normalize_bibliographic_label, normalize_bibliographic_text, normalize_contract_doi,
-    normalize_contract_issn, normalize_contract_pmid, normalize_contract_text,
-    ArticleAccessContext, ArticleAuthorDraft, ArticleDraft, ArticleFullTextDocument,
-    ArticleFullTextResolution, ArticleLocator, ArticleRedirect, IssueDraft, JournalCatalogEntry,
+    date_precision, normalize_bibliographic_label, normalize_bibliographic_text,
+    normalize_contract_date, normalize_contract_doi, normalize_contract_issn,
+    normalize_contract_pmid, normalize_contract_text, ArticleAccessContext, ArticleAuthorDraft,
+    ArticleDraft, ArticleFullTextDocument, ArticleFullTextResolution, ArticleLocator,
+    ArticleRedirect, CanonicalPartialDate, DatePrecision, IssueDraft, JournalCatalogEntry,
     JournalDraft, JournalRankings, ProviderBatch, ProviderCapabilityKind, INDEX_CONTRACT_VERSION,
 };
 pub use recommend::{
-    ArticleCandidateInfo, ManualWeeklyPushStatus, NotificationSubscriberInfo, RankedSelectionInfo,
-    SelectionResultInfo,
+    ArticleCandidateInfo, ManualPushState, ManualWeeklyPushStatus, NotificationSubscriberInfo,
+    RankedSelectionInfo, SelectionResultInfo,
 };
 pub use response::ErrorEnvelope;
 pub use validation::{

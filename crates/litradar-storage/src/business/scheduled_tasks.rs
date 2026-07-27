@@ -142,7 +142,7 @@ pub fn create_scheduled_task_with_audit(
         "INSERT INTO scheduled_tasks \
          (name, job_spec, legacy_command, cron, timezone, timeout_seconds, coalesce, enabled, \
           last_run_at, last_status, created_at, updated_at) \
-         VALUES (?1, ?2, NULL, ?3, ?4, ?5, ?6, ?7, NULL, '', ?8, ?9)",
+         VALUES (?1, ?2, NULL, ?3, ?4, ?5, ?6, ?7, NULL, 'idle', ?8, ?9)",
         params![
             task.name,
             job_spec,
@@ -284,7 +284,7 @@ pub fn delete_scheduled_task_with_audit(
 ///
 /// * `auth_db_path` - Path to `auth.sqlite`.
 /// * `task_id` - Scheduled task row identifier.
-/// * `status` - Python-compatible status string.
+/// * `status` - Typed terminal scheduler result.
 /// * `ran_at` - Unix timestamp when the job started.
 ///
 /// # Returns
@@ -293,14 +293,19 @@ pub fn delete_scheduled_task_with_audit(
 pub fn record_scheduled_task_run(
     auth_db_path: impl AsRef<Path>,
     task_id: i64,
-    status: &str,
+    status: SchedulerRunState,
     ran_at: f64,
 ) -> Result<bool, BusinessRepositoryError> {
+    if !status.is_terminal() {
+        return Err(BusinessRepositoryError::InvalidScheduledTask(
+            "Scheduled task result must be terminal".to_string(),
+        ));
+    }
     let connection = open_business_connection(auth_db_path)?;
     let count = connection.execute(
         "UPDATE scheduled_tasks SET last_run_at = ?1, last_status = ?2, \
          updated_at = ?3 WHERE id = ?4",
-        rusqlite::params![ran_at, status, now_seconds(), task_id],
+        rusqlite::params![ran_at, status.as_str(), now_seconds(), task_id],
     )?;
     Ok(count > 0)
 }
@@ -656,10 +661,15 @@ pub fn heartbeat_scheduled_run(
 pub fn finish_scheduled_run(
     auth_db_path: impl AsRef<Path>,
     claim: &ScheduledRunClaim,
-    status: &str,
+    status: SchedulerRunState,
     output_summary: &str,
     finished_at: f64,
 ) -> Result<bool, BusinessRepositoryError> {
+    if !status.is_terminal() {
+        return Err(BusinessRepositoryError::InvalidScheduledTask(
+            "Scheduled run result must be terminal".to_string(),
+        ));
+    }
     let mut connection = open_business_connection(auth_db_path)?;
     let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
     let count = transaction.execute(
@@ -668,7 +678,7 @@ pub fn finish_scheduled_run(
              output_summary = ?3
          WHERE id = ?4 AND worker_id = ?5 AND status IN ('claimed', 'running')",
         params![
-            status,
+            status.as_str(),
             finished_at,
             output_summary,
             claim.run_id,
@@ -680,7 +690,7 @@ pub fn finish_scheduled_run(
             "UPDATE scheduled_tasks
              SET last_run_at = ?1, last_status = ?2, updated_at = ?1
              WHERE id = ?3",
-            params![finished_at, status, claim.task.id],
+            params![finished_at, status.as_str(), claim.task.id],
         )?;
     }
     transaction.commit()?;
@@ -771,6 +781,7 @@ fn scheduled_task_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Schedule
             })
         })
         .transpose()?;
+    let last_status = row.get::<_, String>(10)?;
     Ok(ScheduledTaskInfo {
         id: row.get(0)?,
         name: row.get(1)?,
@@ -782,19 +793,20 @@ fn scheduled_task_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Schedule
         coalesce: row.get::<_, i64>(7)? != 0,
         enabled: row.get::<_, i64>(8)? != 0,
         last_run_at: row.get(9)?,
-        last_status: row.get(10)?,
+        last_status: SchedulerRunState::from_persisted(&last_status),
         created_at: row.get(11)?,
         updated_at: row.get(12)?,
     })
 }
 
 fn scheduled_task_run_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ScheduledTaskRunInfo> {
+    let status = row.get::<_, String>(4)?;
     Ok(ScheduledTaskRunInfo {
         id: row.get(0)?,
         task_id: row.get(1)?,
         task_name: row.get(2)?,
         scheduled_for: row.get(3)?,
-        status: row.get(4)?,
+        status: SchedulerRunState::from_persisted(&status),
         worker_id: row.get(5)?,
         claimed_at: row.get(6)?,
         started_at: row.get(7)?,
@@ -856,6 +868,7 @@ mod tests {
 
         assert_eq!(created.job.as_ref(), Some(&valid_job));
         assert_eq!(created.legacy_command, None);
+        assert_eq!(created.last_status, SchedulerRunState::Idle);
 
         let invalid_job = ScheduledJobSpec::Index(ScheduledIndexJob {
             metadata_file: Some("../journals.csv".to_string()),
@@ -883,6 +896,12 @@ mod tests {
         let connection = Connection::open(&auth_db_path).expect("auth database should open");
         connection
             .execute(
+                "UPDATE scheduled_tasks SET last_status = 'legacy-spelling' WHERE id = ?1",
+                [created.id],
+            )
+            .expect("legacy status should update");
+        connection
+            .execute(
                 "INSERT INTO scheduled_tasks
                  (name, job_spec, legacy_command, cron, enabled, last_status, created_at, updated_at)
                  VALUES ('Legacy', NULL, 'index --update && push', '0 2 * * *', 0, '', 1.0, 1.0)",
@@ -891,6 +910,10 @@ mod tests {
             .expect("legacy fixture should insert");
         let legacy_id = connection.last_insert_rowid();
         drop(connection);
+        let legacy_status = get_scheduled_task(&auth_db_path, created.id)
+            .expect("legacy status should load")
+            .expect("task should exist");
+        assert_eq!(legacy_status.last_status, SchedulerRunState::Unknown);
 
         let error = update_scheduled_task(
             &auth_db_path,
@@ -993,7 +1016,7 @@ mod tests {
         assert!(after_running_expiry.is_empty());
         let status = get_scheduler_status(&auth_db_path, 123.0, 90.0, 10)
             .expect("scheduler status should load");
-        assert_eq!(status.recent_runs[0].status, "unknown");
+        assert_eq!(status.recent_runs[0].status, SchedulerRunState::Unknown);
         assert_eq!(status.recent_runs[0].id, original_run_id);
     }
 

@@ -540,13 +540,15 @@ fn fetch_articles_by_ids(
 }
 
 fn article_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ArticleRecord> {
+    let date = row.get::<_, Option<String>>(5)?;
     Ok(ArticleRecord {
         article_id: ArticleId(row.get(0)?),
         journal_id: JournalId(row.get(1)?),
         issue_id: row.get(2)?,
         title: row.get(3)?,
         publication_year: row.get(4)?,
-        date: row.get(5)?,
+        date_precision: date.as_deref().and_then(litradar_domain::date_precision),
+        date,
         authors: json_string_vec_from_row(row, 6)?,
         start_page: row.get(7)?,
         end_page: row.get(8)?,
@@ -984,6 +986,42 @@ mod tests {
             article.retraction_dois,
             ["10.1000/retraction-a", "10.1000/retraction-b"]
         );
+        assert_eq!(article.date.as_deref(), Some("2026-01-05"));
+        assert_eq!(
+            article.date_precision,
+            Some(litradar_domain::DatePrecision::Day)
+        );
+    }
+
+    #[test]
+    fn article_date_precision_is_derived_without_a_content_migration() {
+        let fixture = IndexFixture::new(true);
+        let connection = open_sqlite_connection(fixture_db_path(&fixture))
+            .expect("fixture database should open");
+        connection
+            .execute(
+                "UPDATE articles SET date = '2026' WHERE article_id = 1001",
+                [],
+            )
+            .expect("partial date should update");
+
+        let year_only = get_article(&fixture.config, Some(&fixture.db_name), 1001)
+            .expect("year-only article should load");
+        assert_eq!(year_only.date.as_deref(), Some("2026"));
+        assert_eq!(
+            year_only.date_precision,
+            Some(litradar_domain::DatePrecision::Year)
+        );
+
+        connection
+            .execute(
+                "UPDATE articles SET date = '2026-02-31' WHERE article_id = 1001",
+                [],
+            )
+            .expect("legacy invalid date should update");
+        let legacy_invalid = get_article(&fixture.config, Some(&fixture.db_name), 1001)
+            .expect("legacy article should remain readable");
+        assert_eq!(legacy_invalid.date_precision, None);
     }
 
     #[test]

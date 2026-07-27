@@ -134,13 +134,51 @@ impl std::fmt::Debug for SelectionResultInfo {
     }
 }
 
+/// Application-owned state of a manual weekly push.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ManualPushState {
+    /// No manual run exists for the current user.
+    Idle,
+    /// The run is waiting for an execution slot.
+    Pending,
+    /// The run is currently executing or draining cancellation.
+    Running,
+    /// The run completed successfully, including no-op completion.
+    Completed,
+    /// The run failed with a known terminal outcome.
+    Failed,
+    /// The run was cancelled.
+    Cancelled,
+    /// The run exceeded its absolute deadline.
+    TimedOut,
+    /// The external delivery outcome cannot be determined safely.
+    Unknown,
+}
+
+impl ManualPushState {
+    /// Return the stable serialized state name.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Idle => "idle",
+            Self::Pending => "pending",
+            Self::Running => "running",
+            Self::Completed => "completed",
+            Self::Failed => "failed",
+            Self::Cancelled => "cancelled",
+            Self::TimedOut => "timed_out",
+            Self::Unknown => "unknown",
+        }
+    }
+}
+
 /// Manual weekly push job status payload.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct ManualWeeklyPushStatus {
     /// Background job identifier.
     pub job_id: Option<String>,
     /// Durable job status.
-    pub status: String,
+    pub status: ManualPushState,
     /// Human-readable status message.
     pub message: String,
     /// Unix timestamp when the job started.
@@ -238,5 +276,14 @@ mod tests {
             assert!(!debug.contains(sentinel));
         }
         assert!(debug.contains("[REDACTED]"));
+    }
+
+    #[test]
+    fn manual_push_status_rejects_undeclared_spellings() {
+        assert_eq!(
+            serde_json::to_string(&ManualPushState::TimedOut).expect("state should serialize"),
+            r#""timed_out""#
+        );
+        assert!(serde_json::from_str::<ManualPushState>(r#""timeout""#).is_err());
     }
 }

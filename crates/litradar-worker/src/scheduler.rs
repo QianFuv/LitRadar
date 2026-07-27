@@ -14,6 +14,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use chrono::{DateTime, Datelike, Timelike, Utc};
 use litradar_domain::{
     validate_scheduled_task_timing, ScheduledDeliveryJob, ScheduledJobSpec, ScheduledTaskInfo,
+    SchedulerRunState,
 };
 use litradar_storage::ScheduledRunClaim;
 use serde::Serialize;
@@ -175,8 +176,10 @@ pub struct RunTaskOutcome {
     pub found: bool,
     /// Whether a typed job was executed.
     pub did_execute: bool,
-    /// Execution status or a reason the task could not execute.
-    pub status: Option<String>,
+    /// Execution status when the task ran or was blocked.
+    pub status: Option<SchedulerRunState>,
+    /// Human-readable reason when the task could not execute.
+    pub message: Option<String>,
 }
 
 /// One scheduled task execution record.
@@ -189,7 +192,7 @@ pub struct ScheduledTaskExecution {
     /// Display name.
     pub name: String,
     /// Stored execution status.
-    pub status: String,
+    pub status: SchedulerRunState,
 }
 
 /// One scheduler execute-loop tick result.
@@ -198,7 +201,7 @@ pub struct SchedulerExecutionResult {
     /// Scheduler mode.
     pub mode: SchedulerMode,
     /// Tick status.
-    pub status: String,
+    pub status: SchedulerRunState,
     /// Current Unix minute bucket.
     pub minute_epoch: i64,
     /// Beginning of the evaluated persisted interval.
@@ -223,7 +226,7 @@ pub struct SchedulerExecutionResult {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ProcessExecution {
-    status: String,
+    status: SchedulerRunState,
     output_summary: String,
 }
 
@@ -294,7 +297,7 @@ impl ScheduledJobRunner for ProcessScheduledJobRunner {
     ) -> ProcessExecution {
         task.job.as_ref().map_or_else(
             || ProcessExecution {
-                status: "error".to_string(),
+                status: SchedulerRunState::Error,
                 output_summary: "Legacy task requires a typed job".to_string(),
             },
             |job| {
@@ -441,6 +444,7 @@ fn run_task_now_with_runner(
             found: false,
             did_execute: false,
             status: None,
+            message: None,
         });
     };
     if mode != SchedulerMode::Execute {
@@ -448,24 +452,27 @@ fn run_task_now_with_runner(
             found: true,
             did_execute: false,
             status: None,
+            message: None,
         });
     }
     if task.job.is_none() {
         return Ok(RunTaskOutcome {
             found: true,
             did_execute: false,
-            status: Some("blocked: legacy task requires a typed job".to_string()),
+            status: Some(SchedulerRunState::Error),
+            message: Some("Legacy task requires a typed job".to_string()),
         });
     };
     validate_task(&task)?;
     let ran_at = current_unix_time();
     let context = ScheduledRunContext::for_manual_run(task.id);
     let execution = runner.run(auth_db_path, &task, &context, &mut || {});
-    litradar_storage::record_scheduled_task_run(auth_db_path, task.id, &execution.status, ran_at)?;
+    litradar_storage::record_scheduled_task_run(auth_db_path, task.id, execution.status, ran_at)?;
     Ok(RunTaskOutcome {
         found: true,
         did_execute: true,
         status: Some(execution.status),
+        message: None,
     })
 }
 
@@ -633,7 +640,7 @@ fn prepare_scheduler_tick(
     Ok((
         SchedulerExecutionResult {
             mode: SchedulerMode::Execute,
-            status: "running".to_string(),
+            status: SchedulerRunState::Running,
             minute_epoch: (now as i64).div_euclid(60),
             checked_from,
             checked_to: now,
@@ -705,7 +712,7 @@ fn execute_scheduled_claim_in_span(
             task_id: claim.task.id,
             job_id: context.job_id,
             name: claim.task.name,
-            status: "unknown".to_string(),
+            status: SchedulerRunState::Unknown,
         });
     }
     let mut heartbeat_error = None;
@@ -732,7 +739,7 @@ fn execute_scheduled_claim_in_span(
     let did_finish = match litradar_storage::finish_scheduled_run(
         auth_db_path,
         &claim,
-        &execution.status,
+        execution.status,
         &execution.output_summary,
         finished_at,
     ) {
@@ -760,7 +767,7 @@ fn execute_scheduled_claim_in_span(
 }
 
 fn emit_scheduler_claim_terminal(execution: &ProcessExecution, started_at: Instant) {
-    if execution.status == "success" {
+    if execution.status == SchedulerRunState::Success {
         tracing::info!(
             event = "scheduler.claim.completed",
             component = "scheduler",
@@ -773,8 +780,8 @@ fn emit_scheduler_claim_terminal(execution: &ProcessExecution, started_at: Insta
             event = "scheduler.claim.failed",
             component = "scheduler",
             outcome = "failure",
-            status = execution.status,
-            error_kind = scheduler_status_error_kind(&execution.status),
+            status = execution.status.as_str(),
+            error_kind = scheduler_status_error_kind(execution.status),
             duration_ms = elapsed_millis(started_at),
         );
     }
@@ -905,7 +912,7 @@ fn execute_scheduled_job_in_span(
         Ok(processes) => processes,
         Err(_) => {
             return ProcessExecution {
-                status: "error".to_string(),
+                status: SchedulerRunState::Error,
                 output_summary: "scheduler: invalid job".to_string(),
             };
         }
@@ -916,7 +923,7 @@ fn execute_scheduled_job_in_span(
         if context.cancellation.is_cancelled() {
             summaries.push("scheduler: cancelled".to_string());
             return ProcessExecution {
-                status: "cancelled".to_string(),
+                status: SchedulerRunState::Cancelled,
                 output_summary: bounded_output_summary(&summaries.join("\n")),
             };
         }
@@ -931,7 +938,7 @@ fn execute_scheduled_job_in_span(
         if !execution.output_summary.is_empty() {
             summaries.push(execution.output_summary);
         }
-        if execution.status != "success" {
+        if execution.status != SchedulerRunState::Success {
             return ProcessExecution {
                 status: execution.status,
                 output_summary: bounded_output_summary(&summaries.join("\n")),
@@ -939,7 +946,7 @@ fn execute_scheduled_job_in_span(
         }
     }
     ProcessExecution {
-        status: "success".to_string(),
+        status: SchedulerRunState::Success,
         output_summary: bounded_output_summary(&summaries.join("\n")),
     }
 }
@@ -1053,11 +1060,11 @@ fn process_execution(
     stdout: Vec<u8>,
 ) -> ProcessExecution {
     let status = match terminal {
-        ProcessTerminal::Success => "success",
-        ProcessTerminal::Cancelled => "cancelled",
-        ProcessTerminal::TimedOut => "timed_out",
-        ProcessTerminal::SupervisorFailed(_) => "error",
-        ProcessTerminal::ExitFailed(_) => "failed",
+        ProcessTerminal::Success => SchedulerRunState::Success,
+        ProcessTerminal::Cancelled => SchedulerRunState::Cancelled,
+        ProcessTerminal::TimedOut => SchedulerRunState::TimedOut,
+        ProcessTerminal::SupervisorFailed(_) => SchedulerRunState::Error,
+        ProcessTerminal::ExitFailed(_) => SchedulerRunState::Failed,
     };
     let mut summary = match terminal {
         ProcessTerminal::Success => String::new(),
@@ -1076,7 +1083,7 @@ fn process_execution(
     };
     append_captured_output(&mut summary, "stdout", &stdout);
     ProcessExecution {
-        status: status.to_string(),
+        status,
         output_summary: bounded_output_summary(&summary),
     }
 }
@@ -1171,7 +1178,7 @@ fn bounded_output_summary(summary: &str) -> String {
 }
 
 fn emit_scheduler_run_terminal(execution: &ProcessExecution, started_at: Instant) {
-    if execution.status == "success" {
+    if execution.status == SchedulerRunState::Success {
         tracing::info!(
             event = "scheduler.run.completed",
             component = "scheduler",
@@ -1184,19 +1191,19 @@ fn emit_scheduler_run_terminal(execution: &ProcessExecution, started_at: Instant
             event = "scheduler.run.failed",
             component = "scheduler",
             outcome = "failure",
-            status = execution.status,
-            error_kind = scheduler_status_error_kind(&execution.status),
+            status = execution.status.as_str(),
+            error_kind = scheduler_status_error_kind(execution.status),
             duration_ms = elapsed_millis(started_at),
         );
     }
 }
 
-fn scheduler_status_error_kind(status: &str) -> &'static str {
+fn scheduler_status_error_kind(status: SchedulerRunState) -> &'static str {
     match status {
-        "cancelled" => "cancelled",
-        "timed_out" => "timeout",
-        "failed" => "child_failed",
-        "error" => "execution_error",
+        SchedulerRunState::Cancelled => "cancelled",
+        SchedulerRunState::TimedOut => "timeout",
+        SchedulerRunState::Failed => "child_failed",
+        SchedulerRunState::Error => "execution_error",
         _ => "unknown",
     }
 }
@@ -1592,7 +1599,7 @@ mod tests {
         let auth_db_path = temp_dir.path().join("auth.sqlite");
         initialize_auth_database(&auth_db_path).expect("auth database should initialize");
         let task = create_index_task(&auth_db_path, "failing", "* * * * *", true);
-        let mut runner = FixtureRunner::new(["failed (7)"]);
+        let mut runner = FixtureRunner::new([SchedulerRunState::Failed]);
 
         let outcome =
             run_task_now_with_runner(&auth_db_path, task.id, SchedulerMode::Execute, &mut runner)
@@ -1603,8 +1610,8 @@ mod tests {
 
         assert!(outcome.found);
         assert!(outcome.did_execute);
-        assert_eq!(outcome.status.as_deref(), Some("failed (7)"));
-        assert_eq!(updated.last_status, "failed (7)");
+        assert_eq!(outcome.status, Some(SchedulerRunState::Failed));
+        assert_eq!(updated.last_status, SchedulerRunState::Failed);
         assert!(updated.last_run_at.is_some());
         assert_eq!(runner.jobs, vec![index_job()]);
     }
@@ -1615,7 +1622,7 @@ mod tests {
         let auth_db_path = temp_dir.path().join("auth.sqlite");
         initialize_auth_database(&auth_db_path).expect("auth database should initialize");
         let task = create_index_task(&auth_db_path, "dry-run", "* * * * *", true);
-        let mut runner = FixtureRunner::new(["unexpected"]);
+        let mut runner = FixtureRunner::new([SchedulerRunState::Unknown]);
 
         let outcome =
             run_task_now_with_runner(&auth_db_path, task.id, SchedulerMode::DryRun, &mut runner)
@@ -1627,7 +1634,7 @@ mod tests {
         assert!(outcome.found);
         assert!(!outcome.did_execute);
         assert_eq!(outcome.status, None);
-        assert_eq!(updated.last_status, "");
+        assert_eq!(updated.last_status, SchedulerRunState::Idle);
         assert_eq!(updated.last_run_at, None);
         assert!(runner.jobs.is_empty());
     }
@@ -1640,7 +1647,7 @@ mod tests {
         let due = create_index_task(&auth_db_path, "due", "* * * * *", true);
         let not_due = create_index_task(&auth_db_path, "not-due", "31 10 6 7 *", true);
         let invalid = create_index_task(&auth_db_path, "invalid", "bad", true);
-        let mut runner = FixtureRunner::new(["success"]);
+        let mut runner = FixtureRunner::new([SchedulerRunState::Success]);
         set_task_created_at(&auth_db_path, unix_seconds(2026, 7, 6, 9, 0, 0) as f64);
         litradar_storage::record_scheduler_check(
             &auth_db_path,
@@ -1673,10 +1680,10 @@ mod tests {
         assert_eq!(result.executed.len(), 1);
         assert_eq!(result.executed[0].task_id, due.id);
         assert_eq!(runner.jobs, vec![index_job()]);
-        assert_eq!(updated_due.last_status, "success");
+        assert_eq!(updated_due.last_status, SchedulerRunState::Success);
         assert!(updated_due.last_run_at.is_some());
-        assert_eq!(updated_not_due.last_status, "");
-        assert_eq!(updated_invalid.last_status, "");
+        assert_eq!(updated_not_due.last_status, SchedulerRunState::Idle);
+        assert_eq!(updated_invalid.last_status, SchedulerRunState::Idle);
     }
 
     #[test]
@@ -1685,7 +1692,8 @@ mod tests {
         let auth_db_path = temp_dir.path().join("auth.sqlite");
         initialize_auth_database(&auth_db_path).expect("auth database should initialize");
         let task = create_index_task(&auth_db_path, "due", "* * * * *", true);
-        let mut runner = FixtureRunner::new(["success", "unexpected"]);
+        let mut runner =
+            FixtureRunner::new([SchedulerRunState::Success, SchedulerRunState::Unknown]);
         let now = unix_seconds(2026, 7, 6, 10, 30, 0) as f64;
         set_task_created_at(&auth_db_path, unix_seconds(2026, 7, 6, 9, 0, 0) as f64);
         litradar_storage::record_scheduler_check(&auth_db_path, now - 60.0)
@@ -1721,7 +1729,8 @@ mod tests {
         set_task_created_at(&auth_db_path, now - 3_600.0);
         litradar_storage::record_scheduler_check(&auth_db_path, now - 60.0)
             .expect("scheduler cursor should be set");
-        let mut runner = FixtureRunner::new(["timed_out", "success"]);
+        let mut runner =
+            FixtureRunner::new([SchedulerRunState::TimedOut, SchedulerRunState::Success]);
 
         let result =
             run_due_scheduler_once_at_with_runner(&auth_db_path, "worker-test", now, &mut runner)
@@ -1729,9 +1738,9 @@ mod tests {
 
         assert_eq!(result.executed.len(), 2);
         assert_eq!(result.executed[0].task_id, timed_out.id);
-        assert_eq!(result.executed[0].status, "timed_out");
+        assert_eq!(result.executed[0].status, SchedulerRunState::TimedOut);
         assert_eq!(result.executed[1].task_id, successful.id);
-        assert_eq!(result.executed[1].status, "success");
+        assert_eq!(result.executed[1].status, SchedulerRunState::Success);
     }
 
     #[test]
@@ -1744,7 +1753,7 @@ mod tests {
         set_task_created_at(&auth_db_path, now - 3_600.0);
         litradar_storage::record_scheduler_check(&auth_db_path, now - 60.0)
             .expect("scheduler cursor should be set");
-        let mut runner = FixtureRunner::new(["cancelled"]);
+        let mut runner = FixtureRunner::new([SchedulerRunState::Cancelled]);
 
         let result =
             run_due_scheduler_once_at_with_runner(&auth_db_path, "worker-test", now, &mut runner)
@@ -1753,8 +1762,8 @@ mod tests {
             .expect("task lookup should succeed")
             .expect("task should exist");
 
-        assert_eq!(result.executed[0].status, "cancelled");
-        assert_eq!(updated.last_status, "cancelled");
+        assert_eq!(result.executed[0].status, SchedulerRunState::Cancelled);
+        assert_eq!(updated.last_status, SchedulerRunState::Cancelled);
         assert!(updated.last_run_at.is_some());
     }
 
@@ -1768,7 +1777,7 @@ mod tests {
         set_task_created_at(&auth_db_path, now - 3_600.0);
         litradar_storage::record_scheduler_check(&auth_db_path, now - 60.0)
             .expect("scheduler cursor should be set");
-        let mut runner = FixtureRunner::new(["success"]);
+        let mut runner = FixtureRunner::new([SchedulerRunState::Success]);
         let logs = CapturedLogs::default();
 
         let result = logs
@@ -1966,7 +1975,7 @@ mod tests {
         );
         assert_eq!(side_effects.load(Ordering::SeqCst), 1);
         assert_eq!(status.recent_runs.len(), 1);
-        assert_eq!(status.recent_runs[0].status, "success");
+        assert_eq!(status.recent_runs[0].status, SchedulerRunState::Success);
     }
 
     #[test]
@@ -1981,7 +1990,7 @@ mod tests {
             unix_seconds(2026, 7, 6, 9, 59, 30) as f64,
         )
         .expect("scheduler cursor should be set");
-        let mut runner = FixtureRunner::new(["success"]);
+        let mut runner = FixtureRunner::new([SchedulerRunState::Success]);
 
         let result = run_due_scheduler_once_at_with_runner(
             &auth_db_path,
@@ -1995,7 +2004,7 @@ mod tests {
         assert_eq!(result.queued, 1);
         assert_eq!(result.claimed, 1);
         assert_eq!(result.executed[0].task_id, task.id);
-        assert_eq!(result.executed[0].status, "success");
+        assert_eq!(result.executed[0].status, SchedulerRunState::Success);
     }
 
     #[test]
@@ -2059,7 +2068,7 @@ mod tests {
             (result, started_at.elapsed())
         });
 
-        assert_eq!(result.status, "timed_out");
+        assert_eq!(result.status, SchedulerRunState::TimedOut);
         assert!(process_elapsed < Duration::from_secs(3));
         assert_process_tree_heartbeat_stopped(&heartbeat_path);
         assert_single_child_failure(&logs, "timeout");
@@ -2114,7 +2123,7 @@ mod tests {
             (result, process_elapsed)
         });
 
-        assert_eq!(result.status, "cancelled");
+        assert_eq!(result.status, SchedulerRunState::Cancelled);
         assert!(result.output_summary.contains("cancelled"));
         assert!(process_elapsed < Duration::from_secs(3));
         assert_process_tree_heartbeat_stopped(&heartbeat_path);
@@ -2134,7 +2143,7 @@ mod tests {
             let terminal = ProcessTerminal::SupervisorFailed(error_kind);
             let execution = process_execution(terminal, "test-process", Vec::new());
 
-            assert_eq!(execution.status, "error");
+            assert_eq!(execution.status, SchedulerRunState::Error);
             assert_eq!(process_terminal_status(terminal), "error");
             assert_eq!(process_terminal_error_kind(terminal), error_kind.as_str());
             assert_eq!(
@@ -2174,7 +2183,7 @@ mod tests {
             )
         });
 
-        assert_eq!(result.status, "success");
+        assert_eq!(result.status, SchedulerRunState::Success);
         assert!(result.output_summary.contains("parent_run_id=run-test"));
         assert!(!result
             .output_summary
@@ -2211,7 +2220,7 @@ mod tests {
             )
         });
 
-        assert_eq!(result.status, "error");
+        assert_eq!(result.status, SchedulerRunState::Error);
         assert_eq!(
             result.output_summary,
             "test-spawn: process supervision failed (spawn_or_assign_failed)"
@@ -2247,7 +2256,7 @@ mod tests {
             )
         });
 
-        assert_eq!(result.status, "failed");
+        assert_eq!(result.status, SchedulerRunState::Failed);
         assert!(result.output_summary.contains("exit code 7"));
         let failed = assert_single_child_failure(&logs, "nonzero_exit");
         assert_eq!(failed["exit_code"], 7);
@@ -2369,7 +2378,7 @@ mod tests {
             .expect("legacy fixture should insert");
         let task_id = connection.last_insert_rowid();
         drop(connection);
-        let mut runner = FixtureRunner::new(["unexpected"]);
+        let mut runner = FixtureRunner::new([SchedulerRunState::Unknown]);
 
         let outcome =
             run_task_now_with_runner(&auth_db_path, task_id, SchedulerMode::Execute, &mut runner)
@@ -2377,9 +2386,10 @@ mod tests {
 
         assert!(outcome.found);
         assert!(!outcome.did_execute);
+        assert_eq!(outcome.status, Some(SchedulerRunState::Error));
         assert_eq!(
-            outcome.status.as_deref(),
-            Some("blocked: legacy task requires a typed job")
+            outcome.message.as_deref(),
+            Some("Legacy task requires a typed job")
         );
         assert!(runner.jobs.is_empty());
     }
@@ -2460,13 +2470,13 @@ mod tests {
     }
 
     struct FixtureRunner {
-        statuses: Vec<String>,
+        statuses: Vec<SchedulerRunState>,
         jobs: Vec<ScheduledJobSpec>,
     }
 
     impl FixtureRunner {
-        fn new(statuses: impl IntoIterator<Item = &'static str>) -> Self {
-            let mut statuses = statuses.into_iter().map(str::to_string).collect::<Vec<_>>();
+        fn new(statuses: impl IntoIterator<Item = SchedulerRunState>) -> Self {
+            let mut statuses = statuses.into_iter().collect::<Vec<_>>();
             statuses.reverse();
             Self {
                 statuses,
@@ -2487,7 +2497,7 @@ mod tests {
                 .push(task.job.clone().expect("fixture task should have a job"));
             on_heartbeat();
             ProcessExecution {
-                status: self.statuses.pop().unwrap_or_else(|| "success".to_string()),
+                status: self.statuses.pop().unwrap_or(SchedulerRunState::Success),
                 output_summary: "fixture output".to_string(),
             }
         }
@@ -2508,7 +2518,7 @@ mod tests {
             self.side_effects.fetch_add(1, Ordering::SeqCst);
             on_heartbeat();
             ProcessExecution {
-                status: "success".to_string(),
+                status: SchedulerRunState::Success,
                 output_summary: "fixture output".to_string(),
             }
         }
@@ -2535,7 +2545,7 @@ mod tests {
                 .expect("running claim should be invalidated");
             on_heartbeat();
             ProcessExecution {
-                status: "success".to_string(),
+                status: SchedulerRunState::Success,
                 output_summary: String::new(),
             }
         }
@@ -2581,7 +2591,7 @@ mod tests {
             coalesce: true,
             enabled: true,
             last_run_at: None,
-            last_status: String::new(),
+            last_status: SchedulerRunState::Idle,
             created_at: 0.0,
             updated_at: 0.0,
         }

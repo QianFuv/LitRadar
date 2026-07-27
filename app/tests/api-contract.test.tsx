@@ -204,7 +204,7 @@ function acceptsSchedulerStatusContract(): void {
         task_id: 2,
         task_name: 'daily',
         scheduled_for: 40,
-        status: 'success',
+        status: 'cancelled',
         worker_id: 'worker-1',
         claimed_at: 40,
         started_at: 40,

@@ -9,6 +9,7 @@ use axum::http::{HeaderMap, StatusCode};
 use axum::Json;
 use litradar_domain::{
     CnkiLoginPollRequest, CnkiLoginPollResponse, CnkiLoginStartResponse, CnkiSessionStatusResponse,
+    CnkiStatus,
 };
 use litradar_sources::{
     FixtureZjlibCnkiMode, FixtureZjlibCnkiTransport, LiveZjlibCnkiConfig, LiveZjlibCnkiTransport,
@@ -108,14 +109,14 @@ pub(crate) async fn start_login(
                     &secret_codec,
                     user.id,
                     &session_data,
-                    "waiting_scan",
+                    &CnkiStatus::WaitingScan,
                     Some(DEFAULT_QR_UUID),
                 )
             })
             .await?;
             Ok(Json(CnkiLoginStartResponse {
                 uuid: DEFAULT_QR_UUID.to_string(),
-                status: DEFAULT_QR_STATUS.to_string(),
+                status: CnkiStatus::from(DEFAULT_QR_STATUS),
                 qr_code: DEFAULT_QR_CODE.to_string(),
                 session,
             }))
@@ -149,14 +150,14 @@ pub(crate) async fn start_login(
                     &secret_codec,
                     user_id,
                     &session_data,
-                    "waiting_scan",
+                    &CnkiStatus::WaitingScan,
                     Some(&qr_uuid),
                 )
             })
             .await?;
             Ok(Json(CnkiLoginStartResponse {
                 uuid: qr_login.uuid,
-                status: qr_login.status,
+                status: CnkiStatus::from(qr_login.status),
                 qr_code: qr_login.qr_code,
                 session,
             }))
@@ -194,7 +195,7 @@ pub(crate) async fn poll_login(
         litradar_storage::get_cnki_session_status(storage.auth_db_path(), &secret_codec, user.id)
     })
     .await?;
-    if !current.configured || current.status == "empty" {
+    if !current.configured || current.status == CnkiStatus::Empty {
         return Err(cnki_json_error(
             StatusCode::BAD_REQUEST,
             "cnki_login_not_started",
@@ -220,13 +221,13 @@ pub(crate) async fn poll_login(
                     &secret_codec,
                     user.id,
                     &session_data,
-                    "active",
+                    &CnkiStatus::Active,
                     Some(DEFAULT_QR_UUID),
                 )
             })
             .await?;
             Ok(Json(CnkiLoginPollResponse {
-                status: "COMPLETE".to_string(),
+                status: CnkiStatus::from("COMPLETE"),
                 session,
             }))
         }
@@ -327,7 +328,7 @@ pub(crate) async fn poll_login(
                     &secret_codec,
                     user_id,
                     &session_data,
-                    "active",
+                    &CnkiStatus::Active,
                     session_data
                         .get("qr_uuid")
                         .and_then(JsonValue::as_str)
@@ -336,7 +337,7 @@ pub(crate) async fn poll_login(
             })
             .await?;
             Ok(Json(CnkiLoginPollResponse {
-                status: "COMPLETE".to_string(),
+                status: CnkiStatus::from("COMPLETE"),
                 session,
             }))
         }

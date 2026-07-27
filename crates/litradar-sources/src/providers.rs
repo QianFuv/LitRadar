@@ -9,10 +9,10 @@ use std::thread::{self, JoinHandle};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use litradar_domain::{
-    normalize_bibliographic_label, normalize_bibliographic_text, normalize_contract_doi,
-    normalize_contract_pmid, normalize_contract_text, ArticleAccessContext, ArticleAuthorDraft,
-    ArticleDraft, ArticleLocator, ArticleRedirect, IssueDraft, JournalCatalogEntry, JournalDraft,
-    ProviderBatch, ProviderCapabilityInfo,
+    normalize_bibliographic_label, normalize_bibliographic_text, normalize_contract_date,
+    normalize_contract_doi, normalize_contract_pmid, normalize_contract_text, ArticleAccessContext,
+    ArticleAuthorDraft, ArticleDraft, ArticleLocator, ArticleRedirect, IssueDraft,
+    JournalCatalogEntry, JournalDraft, ProviderBatch, ProviderCapabilityInfo,
 };
 use litradar_provider::{
     ArticleAbstractProvider, IndexContentProvider, ProviderCapabilities, ProviderDescriptor,
@@ -1352,7 +1352,11 @@ fn cnki_article_draft(
 
 fn canonical_article(mut article: ArticleDraft) -> Option<ArticleDraft> {
     article.title = normalize_contract_text(&article.title)?;
-    article.date = article.date.as_deref().and_then(normalize_partial_date);
+    article.date = article
+        .date
+        .as_deref()
+        .and_then(normalize_contract_date)
+        .map(|date| date.value);
     article.issue_title = canonical_optional_text(article.issue_title);
     article.volume = canonical_optional_text(article.volume);
     article.issue_number = canonical_optional_text(article.issue_number);
@@ -1386,35 +1390,6 @@ fn canonical_optional_text(value: Option<String>) -> Option<String> {
     value.as_deref().and_then(normalize_contract_text)
 }
 
-fn normalize_partial_date(value: &str) -> Option<String> {
-    let value = normalize_contract_text(value)?;
-    let prefix = if value.len() >= 10 && value.as_bytes().get(4) == Some(&b'-') {
-        &value[..10]
-    } else if value.len() >= 7 && value.as_bytes().get(4) == Some(&b'-') {
-        &value[..7]
-    } else if value.len() >= 4 {
-        &value[..4]
-    } else {
-        return None;
-    };
-    let parts = prefix.split('-').collect::<Vec<_>>();
-    if parts[0].len() != 4 || !parts[0].bytes().all(|value| value.is_ascii_digit()) {
-        return None;
-    }
-    if parts.get(1).is_some_and(|value| {
-        value
-            .parse::<u8>()
-            .map_or(true, |month| !(1..=12).contains(&month))
-    }) || parts.get(2).is_some_and(|value| {
-        value
-            .parse::<u8>()
-            .map_or(true, |day| !(1..=31).contains(&day))
-    }) {
-        return None;
-    }
-    Some(prefix.to_string())
-}
-
 fn catalog_issns(catalog: &JournalCatalogEntry) -> Vec<String> {
     let mut values = catalog.all_issns.clone();
     for value in [catalog.issn.as_ref(), catalog.eissn.as_ref()]
@@ -1440,9 +1415,14 @@ fn crossref_date(work: &Value) -> Option<String> {
             continue;
         };
         if let Some(year) = parts.first().and_then(Value::as_i64) {
-            let month = parts.get(1).and_then(Value::as_i64).unwrap_or(1);
-            let day = parts.get(2).and_then(Value::as_i64).unwrap_or(1);
-            return Some(format!("{year:04}-{month:02}-{day:02}"));
+            let month = parts.get(1).and_then(Value::as_i64);
+            let day = parts.get(2).and_then(Value::as_i64);
+            let candidate = match (month, day) {
+                (Some(month), Some(day)) => format!("{year:04}-{month:02}-{day:02}"),
+                (Some(month), None) => format!("{year:04}-{month:02}"),
+                (None, _) => format!("{year:04}"),
+            };
+            return normalize_contract_date(&candidate).map(|date| date.value);
         }
     }
     None
@@ -2379,10 +2359,11 @@ mod tests {
         cnki_index_registration, cnki_issue_draft, cnki_oversea_access_registration,
         cnki_oversea_index_registration, crossref_cursor_is_fresh,
         fetch_scholarly_batch_with_clock, fetch_scholarly_batch_with_clock_and_restart,
-        next_scholarly_checkpoint, scholarly_access_registration, scholarly_article_draft,
-        scholarly_index_registration, CnkiIndexProvider, DomesticCnkiIndexProvider,
-        ScholarlyCheckpoint, ScholarlyIndexProvider, CNKI_PROVIDER_NAME, CNKI_REDIRECT_HOSTS,
-        CROSSREF_CURSOR_REUSE_SECONDS, DOMESTIC_CNKI_REDIRECT_HOSTS, SCHOLARLY_REDIRECT_HOSTS,
+        next_scholarly_checkpoint, openalex_article_draft, scholarly_access_registration,
+        scholarly_article_draft, scholarly_index_registration, CnkiIndexProvider,
+        DomesticCnkiIndexProvider, ScholarlyCheckpoint, ScholarlyIndexProvider, CNKI_PROVIDER_NAME,
+        CNKI_REDIRECT_HOSTS, CROSSREF_CURSOR_REUSE_SECONDS, DOMESTIC_CNKI_REDIRECT_HOSTS,
+        SCHOLARLY_REDIRECT_HOSTS,
     };
     use crate::scholarly::test_support::CapturedLogs;
     use crate::{
@@ -2947,6 +2928,43 @@ mod tests {
         assert_eq!(scholarly.start_page, cnki.start_page);
         assert_eq!(scholarly.end_page, cnki.end_page);
         assert_eq!(scholarly.authors, cnki.authors);
+    }
+
+    #[test]
+    fn provider_dates_preserve_partial_precision_and_reject_impossible_days() {
+        let catalog = catalog();
+        for (parts, expected) in [
+            (json!([2026]), Some("2026")),
+            (json!([2026, 2]), Some("2026-02")),
+            (json!([2024, 2, 29]), Some("2024-02-29")),
+            (json!([2026, 2, 29]), None),
+            (json!([2026, 2, 31]), None),
+        ] {
+            let article = scholarly_article_draft(
+                &catalog,
+                &json!({
+                    "DOI": "10.1000/partial-date",
+                    "title": ["Partial date"],
+                    "published": {"date-parts": [parts]}
+                }),
+                None,
+                None,
+            )
+            .expect("DOI should keep the article identifiable");
+            assert_eq!(article.date.as_deref(), expected);
+        }
+
+        let invalid_openalex = openalex_article_draft(
+            &catalog,
+            &json!({
+                "doi": "10.1000/invalid-openalex-date",
+                "display_name": "Invalid OpenAlex date",
+                "publication_year": 2026,
+                "publication_date": "2026-02-31"
+            }),
+        )
+        .expect("DOI should keep the article identifiable");
+        assert_eq!(invalid_openalex.date, None);
     }
 
     #[test]

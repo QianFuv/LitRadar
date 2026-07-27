@@ -1,12 +1,35 @@
 //! Provider-neutral indexing and live article access contracts.
 
+use chrono::NaiveDate;
 use serde::{Deserialize, Serialize};
 use unicode_normalization::UnicodeNormalization;
+use utoipa::ToSchema;
 
 use crate::{ArticleId, UserId};
 
 /// Current canonical provider contract version.
 pub const INDEX_CONTRACT_VERSION: u32 = 2;
+
+/// Precision retained by one canonical partial publication date.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum DatePrecision {
+    /// Only the publication year is known.
+    Year,
+    /// The publication year and month are known.
+    Month,
+    /// The complete calendar date is known.
+    Day,
+}
+
+/// Calendar-validated canonical partial publication date.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CanonicalPartialDate {
+    /// Canonical `YYYY`, `YYYY-MM`, or `YYYY-MM-DD` text.
+    pub value: String,
+    /// Precision represented by `value`.
+    pub precision: DatePrecision,
+}
 
 /// Normalize a contract string to trimmed Unicode NFC form.
 ///
@@ -21,6 +44,60 @@ pub fn normalize_contract_text(value: &str) -> Option<String> {
     let normalized = value.nfc().collect::<String>();
     let trimmed = normalized.trim();
     (!trimmed.is_empty()).then(|| trimmed.to_string())
+}
+
+/// Normalize and calendar-validate a partial publication date.
+///
+/// # Arguments
+///
+/// * `value` - Candidate `YYYY`, `YYYY-MM`, or `YYYY-MM-DD` text.
+///
+/// # Returns
+///
+/// Canonical text and its real precision, or `None` for invalid syntax or calendar dates.
+pub fn normalize_contract_date(value: &str) -> Option<CanonicalPartialDate> {
+    let value = normalize_contract_text(value)?;
+    let bytes = value.as_bytes();
+    let precision = match bytes.len() {
+        4 if bytes.iter().all(u8::is_ascii_digit) => {
+            let year = value.parse::<i32>().ok()?;
+            NaiveDate::from_ymd_opt(year, 1, 1)?;
+            DatePrecision::Year
+        }
+        7 if bytes.get(4) == Some(&b'-')
+            && bytes[..4].iter().all(u8::is_ascii_digit)
+            && bytes[5..].iter().all(u8::is_ascii_digit) =>
+        {
+            let year = value[..4].parse::<i32>().ok()?;
+            let month = value[5..].parse::<u32>().ok()?;
+            NaiveDate::from_ymd_opt(year, month, 1)?;
+            DatePrecision::Month
+        }
+        10 if bytes.get(4) == Some(&b'-')
+            && bytes.get(7) == Some(&b'-')
+            && bytes[..4].iter().all(u8::is_ascii_digit)
+            && bytes[5..7].iter().all(u8::is_ascii_digit)
+            && bytes[8..].iter().all(u8::is_ascii_digit) =>
+        {
+            NaiveDate::parse_from_str(&value, "%Y-%m-%d").ok()?;
+            DatePrecision::Day
+        }
+        _ => return None,
+    };
+    Some(CanonicalPartialDate { value, precision })
+}
+
+/// Derive precision from an already canonical partial publication date.
+///
+/// # Arguments
+///
+/// * `value` - Stored partial publication date.
+///
+/// # Returns
+///
+/// The validated precision, or `None` when legacy data is not a valid canonical date.
+pub fn date_precision(value: &str) -> Option<DatePrecision> {
+    normalize_contract_date(value).map(|date| date.precision)
 }
 
 /// Normalize a DOI to lowercase identifier form without a URL or prefix.
@@ -373,7 +450,37 @@ pub enum ArticleFullTextResolution {
 
 #[cfg(test)]
 mod tests {
-    use super::{ArticleDraft, JournalCatalogEntry, JournalRankings, INDEX_CONTRACT_VERSION};
+    use super::{
+        date_precision, normalize_contract_date, ArticleDraft, DatePrecision, JournalCatalogEntry,
+        JournalRankings, INDEX_CONTRACT_VERSION,
+    };
+
+    #[test]
+    fn canonical_partial_dates_preserve_precision_and_validate_the_calendar() {
+        for (input, canonical, precision) in [
+            (" 2026 ", "2026", DatePrecision::Year),
+            ("2026-02", "2026-02", DatePrecision::Month),
+            ("2024-02-29", "2024-02-29", DatePrecision::Day),
+        ] {
+            let date = normalize_contract_date(input).expect("date should be valid");
+            assert_eq!(date.value, canonical);
+            assert_eq!(date.precision, precision);
+            assert_eq!(date_precision(canonical), Some(precision));
+        }
+
+        for invalid in [
+            "2026-02-29",
+            "2026-02-31",
+            "2026-13",
+            "2026-00",
+            "2026-2",
+            "2026-02-01T00:00:00Z",
+            "not-a-date",
+        ] {
+            assert_eq!(normalize_contract_date(invalid), None, "accepted {invalid}");
+            assert_eq!(date_precision(invalid), None, "classified {invalid}");
+        }
+    }
 
     #[test]
     fn canonical_content_serialization_has_no_provider_or_link_fields() {

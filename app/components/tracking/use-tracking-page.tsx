@@ -15,6 +15,7 @@ import {
   pushWeeklyToTracking,
   setTrackingFolder,
   updateNotificationSettings,
+  type ManualPushState,
   type ManualPushStatus,
   type NotificationSettings,
   type NotificationSettingsUpdate,
@@ -22,6 +23,38 @@ import {
 
 const EMPTY_DATABASES: string[] = [];
 const EMPTY_AI_ENDPOINTS: string[] = [];
+
+/**
+ * Return a fallback label for every declared manual-push state.
+ *
+ * @param status - Generated manual-push state.
+ * @param pushed - Number of delivered articles.
+ * @returns User-facing fallback text.
+ */
+function manualPushFallbackMessage(status: ManualPushState, pushed: number): string {
+  switch (status) {
+    case 'idle':
+      return '暂无手动推送任务';
+    case 'pending':
+      return '推送任务正在排队';
+    case 'running':
+      return '推送任务正在执行';
+    case 'completed':
+      return `成功推送 ${pushed} 篇文章`;
+    case 'failed':
+      return '推送失败';
+    case 'cancelled':
+      return '推送已取消';
+    case 'timed_out':
+      return '推送已超时';
+    case 'unknown':
+      return '推送结果未知，请先检查投递状态';
+    default: {
+      const unreachable: never = status;
+      return unreachable;
+    }
+  }
+}
 
 /**
  * Own tracking queries, draft state, push polling, and cache invalidation.
@@ -221,10 +254,7 @@ export function useTrackingPage(userId: number) {
     if (data.message) {
       return data.pushed > 0 ? `${data.message}（已推送 ${data.pushed} 篇）` : data.message;
     }
-    if (data.status === 'failed') {
-      return '推送失败';
-    }
-    return `成功推送 ${data.pushed} 篇文章`;
+    return manualPushFallbackMessage(data.status, data.pushed);
   }, []);
   const manualPushError = pushMut.error ?? cancelPushMut.error ?? manualPushQuery.error;
   const pushResult = manualPushError

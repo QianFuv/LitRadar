@@ -8,6 +8,8 @@ export type JournalId = string;
 
 export type ArticleSearchMode = 'simple' | 'advanced';
 
+export type { DatePrecision, PushStatsState } from '@/lib/api-contract';
+
 export interface PageMeta {
   total: number | null;
   limit: number;
@@ -23,6 +25,7 @@ export interface Article {
   title?: string | null;
   publication_year?: number | null;
   date?: string | null;
+  date_precision?: import('@/lib/api-contract').DatePrecision | null;
   authors?: string[] | null;
   abstract?: string | null;
   doi?: string | null;
@@ -213,7 +216,7 @@ export interface IndexDbStats {
 
 export interface PushDbStats {
   db_name: string;
-  status: string;
+  status: import('@/lib/api-contract').PushStatsState;
   last_completed?: string | null;
   delivered_count?: number;
   user_results?: number;

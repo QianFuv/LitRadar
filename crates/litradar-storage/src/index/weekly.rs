@@ -1,5 +1,9 @@
 //! Weekly update manifest loading and article grouping.
 
+use std::time::SystemTime;
+
+use chrono::{DateTime, SecondsFormat, TimeDelta, Utc};
+
 use super::shared::*;
 use super::*;
 
@@ -248,13 +252,15 @@ where
 }
 
 fn weekly_article_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<WeeklyArticleRecord> {
+    let date = row.get::<_, Option<String>>(5)?;
     Ok(WeeklyArticleRecord {
         article_id: ArticleId(row.get(0)?),
         journal_id: JournalId(row.get(1)?),
         issue_id: row.get(2)?,
         title: row.get(3)?,
         publication_year: row.get(4)?,
-        date: row.get(5)?,
+        date_precision: date.as_deref().and_then(litradar_domain::date_precision),
+        date,
         authors: json_string_vec_from_row(row, 6)?,
         abstract_text: row.get(7)?,
         doi: row.get(8)?,
@@ -278,97 +284,28 @@ fn normalize_db_name(value: &str) -> Option<String> {
 }
 
 fn current_utc_iso_text() -> String {
-    let seconds = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("system time should be after Unix epoch")
-        .as_secs() as i64;
-    format_unix_seconds(seconds)
+    format_utc_datetime(DateTime::<Utc>::from(SystemTime::now()))
 }
 
 fn normalize_iso_datetime(value: &str) -> Option<String> {
-    parse_iso_utc_seconds(value).map(format_unix_seconds)
+    parse_iso_datetime(value).map(format_utc_datetime)
 }
 
 fn iso_minus_days(value: &str, days: i64) -> Option<String> {
-    parse_iso_utc_seconds(value).map(|seconds| format_unix_seconds(seconds - days * 86_400))
+    let days = TimeDelta::try_days(days)?;
+    parse_iso_datetime(value)
+        .and_then(|date| date.checked_sub_signed(days))
+        .map(format_utc_datetime)
 }
 
-fn parse_iso_utc_seconds(value: &str) -> Option<i64> {
-    let text = value
-        .trim()
-        .strip_suffix('Z')
-        .unwrap_or_else(|| value.trim())
-        .strip_suffix("+00:00")
-        .unwrap_or_else(|| {
-            value
-                .trim()
-                .strip_suffix('Z')
-                .unwrap_or_else(|| value.trim())
-        });
-    let (date, time) = text.split_once('T')?;
-    let mut date_parts = date.split('-');
-    let year = date_parts.next()?.parse::<i64>().ok()?;
-    let month = date_parts.next()?.parse::<i64>().ok()?;
-    let day = date_parts.next()?.parse::<i64>().ok()?;
-    if date_parts.next().is_some() {
-        return None;
-    }
-    let mut time_parts = time.split(':');
-    let hour = time_parts.next()?.parse::<i64>().ok()?;
-    let minute = time_parts.next()?.parse::<i64>().ok()?;
-    let second_text = time_parts.next()?;
-    if time_parts.next().is_some() {
-        return None;
-    }
-    let second = second_text
-        .split_once('.')
-        .map_or(second_text, |(seconds, _)| seconds)
-        .parse::<i64>()
-        .ok()?;
-    if !(1..=12).contains(&month)
-        || !(1..=31).contains(&day)
-        || !(0..=23).contains(&hour)
-        || !(0..=59).contains(&minute)
-        || !(0..=59).contains(&second)
-    {
-        return None;
-    }
-    Some(days_from_civil(year, month, day) * 86_400 + hour * 3_600 + minute * 60 + second)
+fn parse_iso_datetime(value: &str) -> Option<DateTime<Utc>> {
+    DateTime::parse_from_rfc3339(value.trim())
+        .ok()
+        .map(|date| date.with_timezone(&Utc))
 }
 
-fn format_unix_seconds(seconds: i64) -> String {
-    let days = seconds.div_euclid(86_400);
-    let day_seconds = seconds.rem_euclid(86_400);
-    let (year, month, day) = civil_from_days(days);
-    let hour = day_seconds / 3_600;
-    let minute = (day_seconds % 3_600) / 60;
-    let second = day_seconds % 60;
-    format!("{year:04}-{month:02}-{day:02}T{hour:02}:{minute:02}:{second:02}Z")
-}
-
-fn days_from_civil(year: i64, month: i64, day: i64) -> i64 {
-    let year = year - i64::from(month <= 2);
-    let era = year.div_euclid(400);
-    let year_of_era = year - era * 400;
-    let month_prime = month + if month > 2 { -3 } else { 9 };
-    let day_of_year = (153 * month_prime + 2) / 5 + day - 1;
-    let day_of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
-    era * 146_097 + day_of_era - 719_468
-}
-
-fn civil_from_days(days: i64) -> (i64, i64, i64) {
-    let days = days + 719_468;
-    let era = days.div_euclid(146_097);
-    let day_of_era = days - era * 146_097;
-    let year_of_era =
-        (day_of_era - day_of_era / 1_460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
-    let year = year_of_era + era * 400;
-    let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
-    let month_prime = (5 * day_of_year + 2) / 153;
-    let day = day_of_year - (153 * month_prime + 2) / 5 + 1;
-    let month = month_prime + if month_prime < 10 { 3 } else { -9 };
-    let year = year + i64::from(month <= 2);
-    (year, month, day)
+fn format_utc_datetime(value: DateTime<Utc>) -> String {
+    value.to_rfc3339_opts(SecondsFormat::Secs, true)
 }
 
 #[derive(Debug, Clone)]
@@ -468,6 +405,10 @@ mod tests {
             weekly_article_ids(&database.journals[0].articles),
             vec![1002, 1001]
         );
+        assert!(database.journals[0]
+            .articles
+            .iter()
+            .all(|article| article.date_precision == Some(litradar_domain::DatePrecision::Day)));
 
         assert_eq!(database.journals[1].journal_id.value(), 2);
         assert_eq!(
@@ -568,10 +509,23 @@ mod tests {
             normalize_iso_datetime("2026-07-05T10:11:12+00:00"),
             Some("2026-07-05T10:11:12Z".to_string())
         );
+        assert_eq!(
+            normalize_iso_datetime("2026-07-05T18:11:12+08:00"),
+            Some("2026-07-05T10:11:12Z".to_string())
+        );
         assert_eq!(normalize_iso_datetime("2026-99-05T10:11:12Z"), None);
+        assert_eq!(normalize_iso_datetime("2026-02-29T10:11:12Z"), None);
+        assert_eq!(
+            normalize_iso_datetime("2024-02-29T10:11:12Z"),
+            Some("2024-02-29T10:11:12Z".to_string())
+        );
         assert_eq!(
             iso_minus_days("2026-07-06T10:00:00Z", 7),
             Some("2026-06-29T10:00:00Z".to_string())
+        );
+        assert_eq!(
+            iso_minus_days("2024-03-01T10:00:00Z", 1),
+            Some("2024-02-29T10:00:00Z".to_string())
         );
     }
 

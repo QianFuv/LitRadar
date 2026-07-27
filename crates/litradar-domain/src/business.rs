@@ -688,6 +688,87 @@ fn scheduled_task_error(message: &str) -> ScheduledTaskValidationError {
     }
 }
 
+/// Application-owned durable scheduler run state.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum SchedulerRunState {
+    /// No execution has been recorded for the task.
+    Idle,
+    /// Waiting for a scheduler worker.
+    Pending,
+    /// Claimed by one scheduler worker.
+    Claimed,
+    /// The task process is running.
+    Running,
+    /// The task completed successfully.
+    Success,
+    /// The task process returned a known failure.
+    Failed,
+    /// The task exceeded its deadline.
+    TimedOut,
+    /// The scheduler could not execute the task safely.
+    Error,
+    /// A legacy or interrupted result cannot be classified further.
+    Unknown,
+    /// The task was cancelled.
+    Cancelled,
+}
+
+impl SchedulerRunState {
+    /// Return the stable SQLite and JSON value.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Idle => "idle",
+            Self::Pending => "pending",
+            Self::Claimed => "claimed",
+            Self::Running => "running",
+            Self::Success => "success",
+            Self::Failed => "failed",
+            Self::TimedOut => "timed_out",
+            Self::Error => "error",
+            Self::Unknown => "unknown",
+            Self::Cancelled => "cancelled",
+        }
+    }
+
+    /// Parse one canonical persisted state.
+    ///
+    /// # Arguments
+    ///
+    /// * `value` - SQLite state text.
+    ///
+    /// # Returns
+    ///
+    /// A declared state, or `Unknown` for legacy and otherwise unrecognized values.
+    pub fn from_persisted(value: &str) -> Self {
+        match value {
+            "" | "idle" => Self::Idle,
+            "pending" => Self::Pending,
+            "claimed" => Self::Claimed,
+            "running" => Self::Running,
+            "success" => Self::Success,
+            "failed" => Self::Failed,
+            "timed_out" => Self::TimedOut,
+            "error" => Self::Error,
+            "cancelled" => Self::Cancelled,
+            _ => Self::Unknown,
+        }
+    }
+
+    /// Return whether the state may finish a claimed scheduler run.
+    pub fn is_terminal(self) -> bool {
+        matches!(
+            self,
+            Self::Success
+                | Self::Failed
+                | Self::TimedOut
+                | Self::Error
+                | Self::Unknown
+                | Self::Cancelled
+        )
+    }
+}
+
 /// Scheduled task response payload.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct ScheduledTaskInfo {
@@ -712,7 +793,7 @@ pub struct ScheduledTaskInfo {
     /// Last run timestamp.
     pub last_run_at: Option<f64>,
     /// Last run status.
-    pub last_status: String,
+    pub last_status: SchedulerRunState,
     /// Creation timestamp.
     pub created_at: f64,
     /// Last update timestamp.
@@ -777,7 +858,7 @@ pub struct ScheduledTaskRunInfo {
     /// Scheduled UTC Unix timestamp aligned to a minute.
     pub scheduled_for: i64,
     /// Durable run status.
-    pub status: String,
+    pub status: SchedulerRunState,
     /// Worker identifier currently owning the run.
     pub worker_id: Option<String>,
     /// Claim timestamp.
@@ -1227,13 +1308,56 @@ pub struct IndexStats {
     pub total_journals: i64,
 }
 
+/// Application-owned state exposed for legacy push statistics.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum PushStatsState {
+    /// No delivery run has started.
+    Idle,
+    /// A legacy delivery run was active when observed.
+    Running,
+    /// Delivery completed successfully.
+    Completed,
+    /// Delivery failed.
+    Failed,
+    /// Delivery was intentionally skipped.
+    Skipped,
+    /// Legacy state cannot be classified safely.
+    Unknown,
+    /// The legacy state file could not be read.
+    Error,
+}
+
+impl PushStatsState {
+    /// Classify a legacy delivery-state string without creating new spellings.
+    ///
+    /// # Arguments
+    ///
+    /// * `value` - Legacy JSON state text.
+    ///
+    /// # Returns
+    ///
+    /// A declared status, with unsupported values mapped to `Unknown`.
+    pub fn from_legacy(value: &str) -> Self {
+        match value {
+            "idle" => Self::Idle,
+            "running" => Self::Running,
+            "completed" => Self::Completed,
+            "failed" => Self::Failed,
+            "skipped" => Self::Skipped,
+            "error" => Self::Error,
+            _ => Self::Unknown,
+        }
+    }
+}
+
 /// Push-state statistics payload.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct PushStats {
     /// State file stem.
     pub db_name: String,
     /// Push state status.
-    pub status: String,
+    pub status: PushStatsState,
     /// Last completed run timestamp.
     pub last_completed: Option<String>,
     /// Delivered article count.
@@ -1309,8 +1433,37 @@ pub fn default_announcement_priority() -> String {
 mod tests {
     use super::{
         validate_scheduled_task_timing, AdminInviteCodeInfo, NotificationSettingsResponse,
-        NotificationSettingsUpdate, ScheduledDeliveryJob, ScheduledIndexJob, ScheduledJobSpec,
+        NotificationSettingsUpdate, PushStatsState, ScheduledDeliveryJob, ScheduledIndexJob,
+        ScheduledJobSpec, SchedulerRunState,
     };
+
+    #[test]
+    fn scheduler_status_serialization_and_legacy_mapping_are_explicit() {
+        assert_eq!(
+            serde_json::to_string(&SchedulerRunState::TimedOut)
+                .expect("scheduler state should serialize"),
+            r#""timed_out""#
+        );
+        assert!(serde_json::from_str::<SchedulerRunState>(r#""timeout""#).is_err());
+        assert_eq!(
+            SchedulerRunState::from_persisted("legacy-result"),
+            SchedulerRunState::Unknown
+        );
+        assert!(SchedulerRunState::Cancelled.is_terminal());
+        assert!(!SchedulerRunState::Running.is_terminal());
+    }
+
+    #[test]
+    fn push_status_maps_unrecognized_legacy_values_to_unknown() {
+        assert_eq!(
+            PushStatsState::from_legacy("private-legacy-state"),
+            PushStatsState::Unknown
+        );
+        assert_eq!(
+            serde_json::to_string(&PushStatsState::Completed).expect("push state should serialize"),
+            r#""completed""#
+        );
+    }
 
     #[test]
     fn scheduler_job_spec_accepts_allowlisted_arguments() {

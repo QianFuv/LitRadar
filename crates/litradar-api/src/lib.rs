@@ -3380,7 +3380,7 @@ mod tests {
         litradar_storage::finish_scheduled_run(
             backend.storage_config().auth_db_path(),
             &fixture_claim,
-            "success",
+            litradar_domain::SchedulerRunState::Success,
             "internal fixture output",
             scheduler_now,
         )
@@ -4919,7 +4919,7 @@ mod tests {
                     {"name": "userToken", "value": "SECRET_TOKEN_COOKIE"}
                 ]
             }),
-            "active",
+            &litradar_domain::CnkiStatus::Active,
             Some("qr-fulltext-fixture"),
         )
         .expect("CNKI session should upsert");
@@ -5186,7 +5186,7 @@ mod tests {
             .contains("SECRET_VPN_VALUE"));
         assert_eq!(active_session.status, StatusCode::OK);
         assert_eq!(active_session.payload["has_bff_user_token"], true);
-        assert_eq!(storage_session.status, "active");
+        assert_eq!(storage_session.status, litradar_domain::CnkiStatus::Active);
         assert_eq!(storage_session.cookie_names, ["userToken", "vpn358_sid"]);
         assert_eq!(cleared.status, StatusCode::OK);
         assert_eq!(cleared.payload["status"], "empty");

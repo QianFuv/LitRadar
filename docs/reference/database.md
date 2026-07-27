@@ -91,7 +91,7 @@ article_change_events (transactional content outbox)
 
 ### `issues`
 
-字段为 `issue_id`、`journal_id`、`publication_year`、`title`、`volume`、`number` 和 `date`。`issue_id` 只使用规范出版身份，不使用 Provider issue ID。
+字段为 `issue_id`、`journal_id`、`publication_year`、`title`、`volume`、`number` 和 `date`。`date` 原样保存真实的 `YYYY`、`YYYY-MM` 或 `YYYY-MM-DD` 精度；API 从该值派生 `date_precision`，不新增冗余列。`issue_id` 只使用规范出版身份，不使用 Provider issue ID。
 
 文章可以没有 `issue_id`，例如上游只能确认 in-press 内容时。
 
@@ -106,6 +106,8 @@ article_change_events (transactional content outbox)
 | 内容状态     | 可空布尔 `open_access`、`in_press`                   |
 
 没有 `platform_id`、`permalink`、`content_location`、`full_text_file`、Provider/source、馆藏或订阅列。API 把 64 位 article/journal ID 序列化为十进制字符串，避免 JavaScript 精度损失。
+
+Provider 写入前使用真实 Gregorian 日历校验日期，年/月信息不会被补成虚假的月/日。旧版本已经写入的 `YYYY-01-01` 无法与真实 1 月 1 日可靠区分，因此迁移不会猜测降级；重新索引获得原始精度后才会自然纠正。其他无法通过日历校验的历史文本仍可读取，但 API 的 `date_precision` 为 `null`。
 
 ### `article_identity_keys`
 
@@ -249,6 +251,8 @@ run、item、checkpoint 和 lease 的变更都使用 owner/revision compare-and-
 - `service_heartbeats` 保存统一进程 HTTP 组件的活动记录。
 
 `litradar admin backup restore` 在替换前后检查最近 90 秒的心跳，目标仍活动时拒绝恢复。
+
+调度 repository 的新写入口接收 `SchedulerRunState`，不能持久化自由字符串；完成路径只接受终态。历史 `last_status = ''` 在读取时变为 `idle`，其他未识别旧值变为 `unknown`。delivery run/item/checkpoint/dedupe 已分别使用类型化状态与数据库 CHECK；worker 结果 JSON 和公开 manual/push statistics 也只序列化声明枚举。CNKI 状态来自上游，采用可保留原始字符串的 unknown 分支而不是拒绝或静默改写。
 
 ### 持久安全审计
 

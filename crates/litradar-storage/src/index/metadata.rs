@@ -356,6 +356,7 @@ fn journal_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<JournalRecord> 
 }
 
 fn issue_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<IssueRecord> {
+    let date = row.get::<_, Option<String>>(6)?;
     Ok(IssueRecord {
         issue_id: row.get(0)?,
         journal_id: JournalId(row.get(1)?),
@@ -363,7 +364,8 @@ fn issue_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<IssueRecord> {
         title: row.get(3)?,
         volume: row.get(4)?,
         number: row.get(5)?,
-        date: row.get(6)?,
+        date_precision: date.as_deref().and_then(litradar_domain::date_precision),
+        date,
     })
 }
 
@@ -429,5 +431,9 @@ mod tests {
         .expect("issue filters should apply");
         assert_eq!(issue_page.page.total, Some(1));
         assert_eq!(issue_page.items[0].issue_id, 10);
+        assert_eq!(
+            issue_page.items[0].date_precision,
+            Some(litradar_domain::DatePrecision::Day)
+        );
     }
 }

@@ -127,6 +127,7 @@ pub const OPENAPI_JSON_PATH: &str = "/openapi.json";
         litradar_domain::CnkiLoginPollResponse,
         litradar_domain::CnkiLoginStartResponse,
         litradar_domain::CnkiSessionStatusResponse,
+        litradar_domain::DatePrecision,
         litradar_domain::ErrorEnvelope,
         litradar_domain::FavoriteAdd,
         litradar_domain::FavoriteArticleRef,
@@ -145,6 +146,7 @@ pub const OPENAPI_JSON_PATH: &str = "/openapi.json";
         litradar_domain::FolderRename,
         litradar_domain::FolderResponse,
         litradar_domain::HealthResponse,
+        litradar_domain::HealthStatus,
         litradar_domain::IndexDatabaseStats,
         litradar_domain::IndexStats,
         litradar_domain::InviteCodeResponse,
@@ -160,6 +162,7 @@ pub const OPENAPI_JSON_PATH: &str = "/openapi.json";
         litradar_domain::LoginResponse,
         litradar_domain::LogoutResponse,
         litradar_domain::ManualWeeklyPushStatus,
+        litradar_domain::ManualPushState,
         litradar_domain::NotificationSettingsResponse,
         litradar_domain::NotificationSettingsUpdate,
         litradar_domain::OkResponse,
@@ -169,6 +172,7 @@ pub const OPENAPI_JSON_PATH: &str = "/openapi.json";
         litradar_domain::ProviderCatalogResponse,
         litradar_domain::ProviderOrderConfiguration,
         litradar_domain::PushStats,
+        litradar_domain::PushStatsState,
         litradar_domain::RegisterRequest,
         litradar_domain::RuntimeSecretItemInfo,
         litradar_domain::RuntimeSecretPoolUpdate,
@@ -184,6 +188,7 @@ pub const OPENAPI_JSON_PATH: &str = "/openapi.json";
         litradar_domain::ScheduledTaskInfo,
         litradar_domain::ScheduledTaskRunInfo,
         litradar_domain::ScheduledTaskUpdate,
+        litradar_domain::SchedulerRunState,
         litradar_domain::SchedulerStatusResponse,
         litradar_domain::SchedulerWorkerInfo,
         litradar_domain::TokenCreateRequest,
@@ -517,6 +522,38 @@ mod tests {
             document["paths"]["/api/articles"]["get"]["responses"]["400"]["content"]
                 ["application/json"]["schema"]["$ref"],
             "#/components/schemas/ErrorEnvelope"
+        );
+    }
+
+    #[test]
+    fn openapi_documents_date_precision_and_application_status_enums() {
+        let document =
+            serde_json::to_value(ApiDoc::openapi()).expect("OpenAPI document should serialize");
+        let schemas = &document["components"]["schemas"];
+
+        assert_eq!(
+            schemas["DatePrecision"]["enum"],
+            serde_json::json!(["year", "month", "day"])
+        );
+        assert_eq!(
+            schemas["ArticleRecord"]["properties"]["date_precision"]["oneOf"][1]["$ref"],
+            "#/components/schemas/DatePrecision"
+        );
+        assert_eq!(
+            schemas["ManualWeeklyPushStatus"]["properties"]["status"]["$ref"],
+            "#/components/schemas/ManualPushState"
+        );
+        assert_eq!(
+            schemas["ScheduledTaskInfo"]["properties"]["last_status"]["$ref"],
+            "#/components/schemas/SchedulerRunState"
+        );
+        assert_eq!(
+            schemas["HealthResponse"]["properties"]["status"]["$ref"],
+            "#/components/schemas/HealthStatus"
+        );
+        assert_eq!(
+            schemas["PushStats"]["properties"]["status"]["$ref"],
+            "#/components/schemas/PushStatsState"
         );
     }
 

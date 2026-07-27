@@ -5,7 +5,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum::Json;
-use litradar_domain::HealthResponse;
+use litradar_domain::{HealthResponse, HealthStatus};
 
 use crate::state::ApiState;
 
@@ -65,7 +65,7 @@ pub(crate) async fn ready(State(state): State<ApiState>) -> (StatusCode, Json<He
         (
             StatusCode::SERVICE_UNAVAILABLE,
             Json(HealthResponse {
-                status: "unhealthy".to_string(),
+                status: HealthStatus::Unhealthy,
             }),
         )
     }

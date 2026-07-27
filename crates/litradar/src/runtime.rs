@@ -1028,7 +1028,7 @@ mod tests {
     fn fixture_scheduler_result() -> SchedulerExecutionResult {
         SchedulerExecutionResult {
             mode: SchedulerMode::Execute,
-            status: "completed".to_string(),
+            status: litradar_domain::SchedulerRunState::Success,
             minute_epoch: 0,
             checked_from: 0.0,
             checked_to: 0.0,

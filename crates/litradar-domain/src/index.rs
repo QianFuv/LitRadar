@@ -3,7 +3,7 @@
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
-use crate::{ArticleId, JournalId};
+use crate::{ArticleId, DatePrecision, JournalId};
 
 /// Full-text search interpretation mode.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
@@ -91,6 +91,8 @@ pub struct IssueRecord {
     pub number: Option<String>,
     /// Issue date.
     pub date: Option<String>,
+    /// Precision represented by the issue date.
+    pub date_precision: Option<DatePrecision>,
 }
 
 /// Article record.
@@ -108,6 +110,8 @@ pub struct ArticleRecord {
     pub publication_year: Option<i64>,
     /// Article date.
     pub date: Option<String>,
+    /// Precision represented by the article date.
+    pub date_precision: Option<DatePrecision>,
     /// Authors text.
     pub authors: Vec<String>,
     /// Start page.
@@ -243,6 +247,8 @@ pub struct WeeklyArticleRecord {
     pub publication_year: Option<i64>,
     /// Article date.
     pub date: Option<String>,
+    /// Precision represented by the article date.
+    pub date_precision: Option<DatePrecision>,
     /// Authors text.
     pub authors: Vec<String>,
     /// Abstract text.

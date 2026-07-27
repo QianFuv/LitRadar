@@ -360,18 +360,18 @@ pub(super) fn delivery_dedupe_map(
         .collect())
 }
 
-pub(super) fn terminal_status_text(status: DeliveryRunStatus) -> &'static str {
+pub(super) fn terminal_status_text(status: DeliveryRunStatus) -> DeliveryOutcomeState {
     match status {
-        DeliveryRunStatus::Completed => "completed",
-        DeliveryRunStatus::Failed => "failed",
-        DeliveryRunStatus::Cancelled => "cancelled",
-        DeliveryRunStatus::TimedOut => "timed_out",
-        DeliveryRunStatus::Skipped => "skipped",
-        DeliveryRunStatus::Unknown => "unknown",
+        DeliveryRunStatus::Completed => DeliveryOutcomeState::Completed,
+        DeliveryRunStatus::Failed => DeliveryOutcomeState::Failed,
+        DeliveryRunStatus::Cancelled => DeliveryOutcomeState::Cancelled,
+        DeliveryRunStatus::TimedOut => DeliveryOutcomeState::TimedOut,
+        DeliveryRunStatus::Skipped => DeliveryOutcomeState::Skipped,
+        DeliveryRunStatus::Unknown => DeliveryOutcomeState::Unknown,
         DeliveryRunStatus::Queued
         | DeliveryRunStatus::Claimed
         | DeliveryRunStatus::Running
-        | DeliveryRunStatus::Cancelling => "running",
+        | DeliveryRunStatus::Cancelling => DeliveryOutcomeState::Running,
     }
 }
 

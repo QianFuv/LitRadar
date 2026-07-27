@@ -52,6 +52,25 @@ function paginatedArticleResponse(context: { request: Request }): Response {
 }
 
 /**
+ * Return one article whose source exposed only a publication year.
+ *
+ * @returns Article page with explicit year precision.
+ */
+function partialDateArticleResponse(): Response {
+  return HttpResponse.json({
+    items: [
+      {
+        article_id: 'article-year-only',
+        title: 'Year-only metadata',
+        date: '2026',
+        date_precision: 'year',
+      },
+    ],
+    page: { total: 1, limit: 20, offset: 0, next_cursor: null, has_more: false },
+  });
+}
+
+/**
  * Render the production article fetcher through an infinite-query harness.
  *
  * @returns Pagination test UI.
@@ -126,7 +145,22 @@ async function loadsInfinitePages(): Promise<void> {
   expect(paginationRequestCount).toBe(2);
 }
 
+/**
+ * Verify the browser contract retains canonical partial-date precision.
+ *
+ * @returns Promise resolved after the contract assertion.
+ */
+async function preservesPartialDatePrecision(): Promise<void> {
+  server.use(http.get('http://localhost/api/articles', partialDateArticleResponse));
+
+  const page = await getArticles(new URLSearchParams(), null, true, 'fixture.sqlite');
+
+  expect(page.items[0]?.date).toBe('2026');
+  expect(page.items[0]?.date_precision).toBe('year');
+}
+
 describe('article query flows', () => {
   test('serializes filters and cursor parameters', serializesArticleQuery);
   test('loads cursor pages through an infinite query', loadsInfinitePages);
+  test('preserves partial publication-date precision', preservesPartialDatePrecision);
 });

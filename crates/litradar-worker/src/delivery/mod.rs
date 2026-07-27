@@ -13,8 +13,8 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use crate::ai::{AiClientError, AiCompletionClient, ReqwestAiTransport};
 use crate::pushplus::{PushPlusClient, PushPlusError, PushPlusMessage, ReqwestPushPlusTransport};
 use litradar_domain::{
-    ArticleCandidateInfo, FavoriteAdd, NotificationSubscriberInfo, RankedSelectionInfo,
-    SelectionResultInfo, UserId,
+    ArticleCandidateInfo, FavoriteAdd, ManualPushState, NotificationSubscriberInfo,
+    RankedSelectionInfo, SelectionResultInfo, UserId,
 };
 use litradar_recommend::{
     apply_selection_rules, build_markdown_content, build_message_title,
@@ -417,6 +417,70 @@ pub struct FavoriteWritePlan {
     pub db_name: String,
 }
 
+/// Application-owned result state for one subscriber delivery plan.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SubscriberDeliveryState {
+    /// The subscriber plan completed successfully.
+    Ok,
+    /// The subscriber plan failed before an ambiguous external result.
+    Error,
+    /// The subscriber plan was intentionally skipped.
+    Skipped,
+    /// The external delivery result cannot be determined.
+    Unknown,
+}
+
+impl SubscriberDeliveryState {
+    /// Return the stable serialized state name.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Ok => "ok",
+            Self::Error => "error",
+            Self::Skipped => "skipped",
+            Self::Unknown => "unknown",
+        }
+    }
+}
+
+/// Application-owned result state for one recommendation delivery run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DeliveryOutcomeState {
+    /// No candidates were available.
+    Idle,
+    /// A previously admitted run is still active.
+    Running,
+    /// The run completed successfully.
+    Completed,
+    /// The run intentionally skipped delivery.
+    Skipped,
+    /// The run failed with a known terminal outcome.
+    Failed,
+    /// The run was cancelled.
+    Cancelled,
+    /// The run exceeded its deadline.
+    TimedOut,
+    /// The external delivery result cannot be determined.
+    Unknown,
+}
+
+impl DeliveryOutcomeState {
+    /// Return the stable serialized state name.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Idle => "idle",
+            Self::Running => "running",
+            Self::Completed => "completed",
+            Self::Skipped => "skipped",
+            Self::Failed => "failed",
+            Self::Cancelled => "cancelled",
+            Self::TimedOut => "timed_out",
+            Self::Unknown => "unknown",
+        }
+    }
+}
+
 /// Per-subscriber delivery plan.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct SubscriberDeliveryPlan {
@@ -425,7 +489,7 @@ pub struct SubscriberDeliveryPlan {
     /// Delivery method.
     pub delivery_method: String,
     /// Result status.
-    pub status: String,
+    pub status: SubscriberDeliveryState,
     /// Skip or error reason.
     pub error: Option<String>,
     /// Accepted article ids.
@@ -454,7 +518,7 @@ pub struct RecommendationRunOutcome {
     /// Delivery mode.
     pub mode: DeliveryMode,
     /// Final run status.
-    pub status: String,
+    pub status: DeliveryOutcomeState,
     /// Durable SQLite delivery run identifier.
     pub delivery_run_id: i64,
     /// Candidate article ids considered by the run.
@@ -490,7 +554,7 @@ pub struct ManualWeeklyPushConfig {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ManualWeeklyPushOutcome {
     /// Final run status.
-    pub status: String,
+    pub status: ManualPushState,
     /// Human-readable status message.
     pub message: String,
     /// Number of pushed or tracking-folder-synced articles.
@@ -512,4 +576,25 @@ fn unix_time() -> f64 {
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs_f64()
+}
+
+#[cfg(test)]
+mod status_tests {
+    use super::{DeliveryOutcomeState, SubscriberDeliveryState};
+
+    #[test]
+    fn serialized_delivery_statuses_reject_invalid_spellings() {
+        assert_eq!(
+            serde_json::to_string(&DeliveryOutcomeState::TimedOut)
+                .expect("delivery state should serialize"),
+            r#""timed_out""#
+        );
+        assert_eq!(
+            serde_json::to_string(&SubscriberDeliveryState::Unknown)
+                .expect("subscriber state should serialize"),
+            r#""unknown""#
+        );
+        assert!(serde_json::from_str::<DeliveryOutcomeState>(r#""timeout""#).is_err());
+        assert!(serde_json::from_str::<SubscriberDeliveryState>(r#""sent""#).is_err());
+    }
 }

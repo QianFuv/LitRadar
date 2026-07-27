@@ -39,7 +39,7 @@ function scheduledTaskFixture() {
     coalesce: true,
     enabled: isTaskEnabled,
     last_run_at: null,
-    last_status: '',
+    last_status: 'idle',
     created_at: 1,
     updated_at: 2,
   };
@@ -62,7 +62,7 @@ function legacyScheduledTaskFixture() {
     coalesce: true,
     enabled: false,
     last_run_at: null,
-    last_status: '',
+    last_status: 'idle',
     created_at: 1,
     updated_at: 2,
   };
@@ -162,7 +162,8 @@ async function updatesAndDeletesTask(): Promise<void> {
   renderWithQuery(<ScheduledTasksCard />);
 
   expect(await screen.findByText('健康 worker：1/1')).toBeInTheDocument();
-  expect(screen.getByText(/success/)).toBeInTheDocument();
+  expect(screen.getByText(/成功/)).toBeInTheDocument();
+  expect(screen.getByText(/未运行/)).toBeInTheDocument();
 
   await user.click(await screen.findByRole('switch', { name: '停用定时任务 Weekly index' }));
   await waitFor(() => expect(taskPatch).toEqual({ enabled: false }));

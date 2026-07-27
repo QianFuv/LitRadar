@@ -11,6 +11,7 @@ import maskedNotificationSettingsJson from '../../../testdata/scenarios/api/mask
 import weeklyUpdatesJson from '../../../testdata/scenarios/api/weekly-updates.json';
 
 type ApiSchemas = components['schemas'];
+type DatePrecision = ApiSchemas['DatePrecision'];
 
 export type LoginScenario = ApiSchemas['LoginResponse'];
 export type ArticlePageScenario = ApiSchemas['ArticlePage'];
@@ -19,9 +20,43 @@ export type MaskedNotificationSettingsScenario = ApiSchemas['NotificationSetting
 export type ErrorScenario = ApiSchemas['ErrorEnvelope'];
 
 const LOGIN_SCENARIO: LoginScenario = loginJson satisfies LoginScenario;
-const ARTICLE_PAGE_SCENARIO: ArticlePageScenario = articlePageJson satisfies ArticlePageScenario;
-const WEEKLY_UPDATES_SCENARIO: WeeklyUpdatesScenario =
-  weeklyUpdatesJson satisfies WeeklyUpdatesScenario;
+/**
+ * Narrow a JSON-imported date precision to the generated enum.
+ *
+ * @param value - JSON scenario value.
+ * @returns Valid generated date precision.
+ */
+function parseDatePrecision(value: string): DatePrecision {
+  switch (value) {
+    case 'year':
+    case 'month':
+    case 'day':
+      return value;
+    default:
+      throw new Error(`Invalid date precision fixture: ${value}`);
+  }
+}
+
+const ARTICLE_PAGE_SCENARIO: ArticlePageScenario = {
+  ...articlePageJson,
+  items: articlePageJson.items.map((article) => ({
+    ...article,
+    date_precision: parseDatePrecision(article.date_precision),
+  })),
+} satisfies ArticlePageScenario;
+const WEEKLY_UPDATES_SCENARIO: WeeklyUpdatesScenario = {
+  ...weeklyUpdatesJson,
+  databases: weeklyUpdatesJson.databases.map((database) => ({
+    ...database,
+    journals: database.journals.map((journal) => ({
+      ...journal,
+      articles: journal.articles.map((article) => ({
+        ...article,
+        date_precision: parseDatePrecision(article.date_precision),
+      })),
+    })),
+  })),
+} satisfies WeeklyUpdatesScenario;
 const MASKED_NOTIFICATION_SETTINGS_SCENARIO: MaskedNotificationSettingsScenario =
   maskedNotificationSettingsJson satisfies MaskedNotificationSettingsScenario;
 const ERROR_SCENARIO: ErrorScenario = errorJson satisfies ErrorScenario;

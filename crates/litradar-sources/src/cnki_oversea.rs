@@ -1094,7 +1094,7 @@ fn parse_article_row(row_html: &str, issue: &Value, section: &str) -> Option<Val
         "pages": span_title(row_html, "company"),
         "section": section,
         "is_free": if strip_tags(row_html).contains("免费") || row_html.contains("Free") { 1 } else { 0 },
-        "date": format!("{year:04}-01-01"),
+        "date": format!("{year:04}"),
     }))
 }
 
@@ -1592,6 +1592,7 @@ mod tests {
         assert_eq!(journal["pykm"], "TEST");
         assert_eq!(issues[0]["year"], 2026);
         assert_eq!(articles[0]["is_free"], 1);
+        assert_eq!(articles[0]["date"], "2026");
         assert_eq!(detail["platform_id"], "CNKI202601001");
         assert_eq!(detail["authors"], "Test Author");
     }
@@ -1866,6 +1867,24 @@ mod tests {
         .expect("empty section should parse");
 
         assert!(articles.is_empty());
+    }
+
+    #[test]
+    fn year_only_cnki_date_does_not_synthesize_january_first() {
+        let articles = parse_issue_articles(
+            r#"
+            <dt class="tit">Articles</dt>
+            <dd class="row">
+              <a href="/kcms2/article/abstract?v=1&filename=YEARONLY">Year-only article</a>
+              <b name="encrypt" id="YEARONLY"></b>
+            </dd>
+            "#,
+            &json!({"year": 2026, "number": "1"}),
+        )
+        .expect("year-only article should parse");
+
+        assert_eq!(articles[0]["date"], "2026");
+        assert_ne!(articles[0]["date"], "2026-01-01");
     }
 
     #[test]
