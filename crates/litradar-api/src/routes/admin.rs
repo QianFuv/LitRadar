@@ -127,14 +127,12 @@ pub(crate) async fn set_admin(
     if target_id == admin.id && !body.is_admin {
         return Err(ApiError::bad_request("Cannot revoke own admin status"));
     }
+    let actor_id = admin.id;
     let is_admin = body.is_admin;
-    let did_update = run_business(&state, move |storage| {
-        litradar_storage::set_user_admin(storage.auth_db_path(), target_id, is_admin)
+    run_business(&state, move |storage| {
+        litradar_storage::set_user_admin(storage.auth_db_path(), actor_id, target_id, is_admin)
     })
     .await?;
-    if !did_update {
-        return Err(ApiError::not_found("User not found"));
-    }
     audit.completed();
     Ok(Json(OkResponse { ok: true }))
 }
@@ -195,13 +193,11 @@ pub(crate) async fn delete_user(
     if target_id == admin.id {
         return Err(ApiError::bad_request("Cannot delete yourself"));
     }
-    let did_delete = run_business(&state, move |storage| {
-        litradar_storage::delete_user(storage.auth_db_path(), target_id)
+    let actor_id = admin.id;
+    run_business(&state, move |storage| {
+        litradar_storage::delete_user(storage.auth_db_path(), actor_id, target_id)
     })
     .await?;
-    if !did_delete {
-        return Err(ApiError::not_found("User not found"));
-    }
     audit.completed();
     Ok(Json(OkResponse { ok: true }))
 }
@@ -764,6 +760,15 @@ fn map_business_error(error: BusinessRepositoryError) -> ApiError {
         | BusinessRepositoryError::LegacyScheduledTaskCannotBeEnabled => {
             ApiError::bad_request(error.to_string())
         }
+        BusinessRepositoryError::AdministratorActorForbidden => {
+            ApiError::forbidden(error.to_string())
+        }
+        BusinessRepositoryError::AdministratorTargetNotFound => {
+            ApiError::not_found(error.to_string())
+        }
+        BusinessRepositoryError::AdministratorInvariantViolation => {
+            ApiError::conflict(error.to_string())
+        }
         _ => ApiError::internal_server_error(),
     }
 }
@@ -890,8 +895,11 @@ fn current_unix_time() -> f64 {
 #[cfg(test)]
 mod tests {
     use axum::http::{Method, StatusCode};
+    use axum::response::IntoResponse;
+    use litradar_storage::BusinessRepositoryError;
     use serde_json::json;
 
+    use super::map_business_error;
     use crate::state::tracing_test_support::CapturedLogs;
     use crate::test_support::{json_request, TestBackend};
 
@@ -986,5 +994,106 @@ mod tests {
                 .as_str()
                 .is_some_and(|name| name.starts_with("security.admin."))
         }));
+    }
+
+    #[tokio::test]
+    async fn admin_users_concurrent_cross_demotion_preserves_one_administrator() {
+        let backend = TestBackend::new();
+        let first = backend.authenticated_user("first_admin", true);
+        let second = backend.authenticated_user("second_admin", true);
+        let router = backend.router();
+        let first_authorization = first.authorization_header();
+        let second_authorization = second.authorization_header();
+        let first_path = format!("/api/admin/users/{}/admin", second.user_id().value());
+        let second_path = format!("/api/admin/users/{}/admin", first.user_id().value());
+        let first_request = json_request(
+            &router,
+            Method::PUT,
+            &first_path,
+            Some(&first_authorization),
+            None,
+            Some(json!({"is_admin": false})),
+        );
+        let second_request = json_request(
+            &router,
+            Method::PUT,
+            &second_path,
+            Some(&second_authorization),
+            None,
+            Some(json!({"is_admin": false})),
+        );
+        let (first_response, second_response) = tokio::join!(first_request, second_request);
+        let mut statuses = [first_response.status, second_response.status];
+        statuses.sort();
+        let administrator_count = litradar_storage::list_all_users(backend.auth_db_path())
+            .expect("users should list")
+            .into_iter()
+            .filter(|user| user.is_admin)
+            .count();
+
+        assert_eq!(statuses, [StatusCode::OK, StatusCode::FORBIDDEN]);
+        assert_eq!(administrator_count, 1);
+    }
+
+    #[tokio::test]
+    async fn admin_users_stale_actor_and_missing_target_return_distinct_errors() {
+        let backend = TestBackend::new();
+        let first = backend.authenticated_user("first_admin", true);
+        let second = backend.authenticated_user("second_admin", true);
+        let member = backend.authenticated_user("member", false);
+        litradar_storage::set_user_admin(
+            backend.auth_db_path(),
+            first.user_id(),
+            second.user_id(),
+            false,
+        )
+        .expect("first administrator should demote the second");
+        let router = backend.router();
+        let forbidden = json_request(
+            &router,
+            Method::PUT,
+            &format!("/api/admin/users/{}/admin", member.user_id().value()),
+            Some(&second.authorization_header()),
+            None,
+            Some(json!({"is_admin": true})),
+        )
+        .await;
+        let missing = json_request(
+            &router,
+            Method::PUT,
+            "/api/admin/users/999999/admin",
+            Some(&first.authorization_header()),
+            None,
+            Some(json!({"is_admin": true})),
+        )
+        .await;
+
+        assert_eq!(forbidden.status, StatusCode::FORBIDDEN);
+        assert_eq!(forbidden.payload["detail"], "Admin access required");
+        assert_eq!(missing.status, StatusCode::NOT_FOUND);
+        assert_eq!(missing.payload["detail"], "User not found");
+    }
+
+    #[test]
+    fn admin_users_storage_error_mapping_preserves_distinct_statuses() {
+        for (error, expected_status) in [
+            (
+                BusinessRepositoryError::AdministratorActorForbidden,
+                StatusCode::FORBIDDEN,
+            ),
+            (
+                BusinessRepositoryError::AdministratorTargetNotFound,
+                StatusCode::NOT_FOUND,
+            ),
+            (
+                BusinessRepositoryError::AdministratorInvariantViolation,
+                StatusCode::CONFLICT,
+            ),
+        ] {
+            assert_eq!(
+                map_business_error(error).into_response().status(),
+                expected_status
+            );
+        }
     }
 }

@@ -10,7 +10,8 @@ use axum::Router;
 use litradar_auth::{AuthService, ACCESS_TOKEN_DEFAULT_TTL, SESSION_COOKIE_NAME};
 use litradar_domain::{UserId, UserResponse};
 use litradar_storage::{
-    admin_create_invite_code, count_users, migrate_storage, SecretCodec, StorageConfig,
+    admin_create_invite_code, count_users, list_all_users, migrate_storage, set_user_admin,
+    SecretCodec, StorageConfig,
 };
 use rusqlite::Connection;
 use serde_json::Value;
@@ -115,10 +116,30 @@ impl TestBackend {
     /// Authenticated user fixture.
     pub(crate) fn authenticated_user(&self, username: &str, is_admin: bool) -> TestUser {
         let service = AuthService::new(self.auth_db_path());
-        let mut user = if count_users(self.auth_db_path()).expect("user count should load") == 0 {
-            service
+        let is_empty = count_users(self.auth_db_path()).expect("user count should load") == 0;
+        let mut user = if is_empty {
+            let mut first_user = service
                 .bootstrap_admin(username, TEST_PASSWORD)
-                .expect("first fixture administrator should bootstrap")
+                .expect("first fixture administrator should bootstrap");
+            if !is_admin {
+                let fixture_admin_name = if username == "fixture_root" {
+                    "fixture_root_2"
+                } else {
+                    "fixture_root"
+                };
+                let invite_code = admin_create_invite_code(self.auth_db_path())
+                    .expect("fixture administrator invite should be created")
+                    .code;
+                let fixture_admin = service
+                    .register(fixture_admin_name, TEST_PASSWORD, Some(&invite_code))
+                    .expect("fixture administrator should register");
+                set_user_admin(self.auth_db_path(), first_user.id, fixture_admin.id, true)
+                    .expect("fixture administrator should be promoted");
+                set_user_admin(self.auth_db_path(), fixture_admin.id, first_user.id, false)
+                    .expect("requested fixture user should be demoted");
+                first_user.is_admin = false;
+            }
+            first_user
         } else {
             let invite_code = admin_create_invite_code(self.auth_db_path())
                 .expect("invite code should be created")
@@ -128,7 +149,13 @@ impl TestBackend {
                 .expect("invited fixture user should register")
         };
         if user.is_admin != is_admin {
-            litradar_storage::set_user_admin(self.auth_db_path(), user.id, is_admin)
+            let actor_id = list_all_users(self.auth_db_path())
+                .expect("fixture users should list")
+                .into_iter()
+                .find(|candidate| candidate.is_admin && candidate.id != user.id)
+                .expect("a separate fixture administrator should exist")
+                .id;
+            set_user_admin(self.auth_db_path(), actor_id, user.id, is_admin)
                 .expect("admin flag should update");
             user.is_admin = is_admin;
         }

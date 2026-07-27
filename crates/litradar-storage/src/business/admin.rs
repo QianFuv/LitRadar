@@ -46,23 +46,37 @@ pub fn list_all_users(
 /// # Arguments
 ///
 /// * `auth_db_path` - Path to `auth.sqlite`.
+/// * `actor_id` - Administrator requesting the mutation.
 /// * `user_id` - Target user identifier.
 /// * `is_admin` - Replacement admin flag.
 ///
 /// # Returns
 ///
-/// True when a row was updated.
+/// Empty result when the actor, target, and administrator invariant permit the update.
 pub fn set_user_admin(
     auth_db_path: impl AsRef<Path>,
+    actor_id: UserId,
     user_id: UserId,
     is_admin: bool,
-) -> Result<bool, BusinessRepositoryError> {
-    let connection = open_business_connection(auth_db_path)?;
-    let count = connection.execute(
+) -> Result<(), BusinessRepositoryError> {
+    let mut connection = open_business_connection(auth_db_path)?;
+    let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    require_administrator_actor(&transaction, actor_id)?;
+    let Some(was_admin) = user_admin_flag(&transaction, user_id)? else {
+        return Err(BusinessRepositoryError::AdministratorTargetNotFound);
+    };
+    if was_admin && !is_admin {
+        require_another_administrator(&transaction)?;
+    }
+    let updated = transaction.execute(
         "UPDATE users SET is_admin = ?1, updated_at = ?2 WHERE id = ?3",
         params![is_admin as i64, now_seconds(), user_id.value()],
     )?;
-    Ok(count > 0)
+    if updated != 1 {
+        return Err(BusinessRepositoryError::AdministratorTargetNotFound);
+    }
+    transaction.commit()?;
+    Ok(())
 }
 
 /// Delete a user.
@@ -70,18 +84,69 @@ pub fn set_user_admin(
 /// # Arguments
 ///
 /// * `auth_db_path` - Path to `auth.sqlite`.
+/// * `actor_id` - Administrator requesting the mutation.
 /// * `user_id` - Target user identifier.
 ///
 /// # Returns
 ///
-/// True when a row was deleted.
+/// Empty result when the actor, target, and administrator invariant permit deletion.
 pub fn delete_user(
     auth_db_path: impl AsRef<Path>,
+    actor_id: UserId,
     user_id: UserId,
-) -> Result<bool, BusinessRepositoryError> {
-    let connection = open_business_connection(auth_db_path)?;
-    let count = connection.execute("DELETE FROM users WHERE id = ?1", [user_id.value()])?;
-    Ok(count > 0)
+) -> Result<(), BusinessRepositoryError> {
+    let mut connection = open_business_connection(auth_db_path)?;
+    let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    require_administrator_actor(&transaction, actor_id)?;
+    let Some(was_admin) = user_admin_flag(&transaction, user_id)? else {
+        return Err(BusinessRepositoryError::AdministratorTargetNotFound);
+    };
+    if was_admin {
+        require_another_administrator(&transaction)?;
+    }
+    let deleted = transaction.execute("DELETE FROM users WHERE id = ?1", [user_id.value()])?;
+    if deleted != 1 {
+        return Err(BusinessRepositoryError::AdministratorTargetNotFound);
+    }
+    transaction.commit()?;
+    Ok(())
+}
+
+fn require_administrator_actor(
+    connection: &Connection,
+    actor_id: UserId,
+) -> Result<(), BusinessRepositoryError> {
+    if user_admin_flag(connection, actor_id)? == Some(true) {
+        Ok(())
+    } else {
+        Err(BusinessRepositoryError::AdministratorActorForbidden)
+    }
+}
+
+fn user_admin_flag(
+    connection: &Connection,
+    user_id: UserId,
+) -> Result<Option<bool>, BusinessRepositoryError> {
+    connection
+        .query_row(
+            "SELECT is_admin FROM users WHERE id = ?1",
+            [user_id.value()],
+            |row| Ok(row.get::<_, i64>(0)? != 0),
+        )
+        .optional()
+        .map_err(Into::into)
+}
+
+fn require_another_administrator(connection: &Connection) -> Result<(), BusinessRepositoryError> {
+    let administrator_count: i64 =
+        connection.query_row("SELECT COUNT(*) FROM users WHERE is_admin = 1", [], |row| {
+            row.get(0)
+        })?;
+    if administrator_count > 1 {
+        Ok(())
+    } else {
+        Err(BusinessRepositoryError::AdministratorInvariantViolation)
+    }
 }
 
 /// List invite codes for the admin dashboard.
@@ -537,11 +602,36 @@ impl AuthRepositorySqliteError for crate::AuthRepositoryError {
 #[cfg(test)]
 mod tests {
     use std::fs;
+    use std::path::Path;
+    use std::sync::{Arc, Barrier};
 
+    use rusqlite::Connection;
     use tempfile::tempdir;
 
     use super::*;
     use crate::{migrate_auth_database, StorageConfig};
+
+    fn insert_user(auth_db_path: &Path, username: &str, is_admin: bool) -> UserId {
+        let connection = Connection::open(auth_db_path).expect("auth database should open");
+        connection
+            .execute(
+                "INSERT INTO users \
+                 (username, password_hash, salt, is_admin, created_at, updated_at) \
+                 VALUES (?1, 'fixture-hash', 'fixture-salt', ?2, 1.0, 1.0)",
+                params![username, is_admin as i64],
+            )
+            .expect("fixture user should insert");
+        UserId(connection.last_insert_rowid())
+    }
+
+    fn administrator_count(auth_db_path: &Path) -> i64 {
+        Connection::open(auth_db_path)
+            .expect("auth database should open")
+            .query_row("SELECT COUNT(*) FROM users WHERE is_admin = 1", [], |row| {
+                row.get(0)
+            })
+            .expect("administrator count should load")
+    }
 
     #[test]
     fn admin_stats_skip_change_manifests_in_push_state_dir() {
@@ -577,5 +667,136 @@ mod tests {
         assert_eq!(stats.push[0].status, "completed");
         assert_eq!(stats.push[0].delivered_count, Some(2));
         assert_eq!(stats.push[0].user_results, Some(1));
+    }
+
+    #[test]
+    fn administrator_invariant_serializes_concurrent_cross_demotions() {
+        let temp_dir = tempdir().expect("temp dir should be created");
+        let auth_db_path = temp_dir.path().join("auth.sqlite");
+        migrate_auth_database(&auth_db_path).expect("auth database should migrate");
+        let first = insert_user(&auth_db_path, "first_admin", true);
+        let second = insert_user(&auth_db_path, "second_admin", true);
+        let barrier = Arc::new(Barrier::new(2));
+        let handles = [(first, second), (second, first)]
+            .into_iter()
+            .map(|(actor_id, target_id)| {
+                let auth_db_path = auth_db_path.clone();
+                let barrier = Arc::clone(&barrier);
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    set_user_admin(auth_db_path, actor_id, target_id, false)
+                })
+            })
+            .collect::<Vec<_>>();
+        let results = handles
+            .into_iter()
+            .map(|handle| handle.join().expect("demotion thread should finish"))
+            .collect::<Vec<_>>();
+
+        assert_eq!(results.iter().filter(|result| result.is_ok()).count(), 1);
+        assert_eq!(
+            results
+                .iter()
+                .filter(|result| {
+                    matches!(
+                        result,
+                        Err(BusinessRepositoryError::AdministratorActorForbidden)
+                    )
+                })
+                .count(),
+            1
+        );
+        assert_eq!(administrator_count(&auth_db_path), 1);
+    }
+
+    #[test]
+    fn administrator_invariant_serializes_concurrent_cross_deletions() {
+        let temp_dir = tempdir().expect("temp dir should be created");
+        let auth_db_path = temp_dir.path().join("auth.sqlite");
+        migrate_auth_database(&auth_db_path).expect("auth database should migrate");
+        let first = insert_user(&auth_db_path, "first_admin", true);
+        let second = insert_user(&auth_db_path, "second_admin", true);
+        let barrier = Arc::new(Barrier::new(2));
+        let handles = [(first, second), (second, first)]
+            .into_iter()
+            .map(|(actor_id, target_id)| {
+                let auth_db_path = auth_db_path.clone();
+                let barrier = Arc::clone(&barrier);
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    delete_user(auth_db_path, actor_id, target_id)
+                })
+            })
+            .collect::<Vec<_>>();
+        let results = handles
+            .into_iter()
+            .map(|handle| handle.join().expect("deletion thread should finish"))
+            .collect::<Vec<_>>();
+        let user_count: i64 = Connection::open(&auth_db_path)
+            .expect("auth database should open")
+            .query_row("SELECT COUNT(*) FROM users", [], |row| row.get(0))
+            .expect("user count should load");
+
+        assert_eq!(results.iter().filter(|result| result.is_ok()).count(), 1);
+        assert_eq!(
+            results
+                .iter()
+                .filter(|result| {
+                    matches!(
+                        result,
+                        Err(BusinessRepositoryError::AdministratorActorForbidden)
+                    )
+                })
+                .count(),
+            1
+        );
+        assert_eq!(user_count, 1);
+        assert_eq!(administrator_count(&auth_db_path), 1);
+    }
+
+    #[test]
+    fn administrator_invariant_rejects_stale_actors_and_distinguishes_errors() {
+        let temp_dir = tempdir().expect("temp dir should be created");
+        let auth_db_path = temp_dir.path().join("auth.sqlite");
+        migrate_auth_database(&auth_db_path).expect("auth database should migrate");
+        let first = insert_user(&auth_db_path, "first_admin", true);
+        let second = insert_user(&auth_db_path, "second_admin", true);
+        let member = insert_user(&auth_db_path, "member", false);
+        let stale_authorization =
+            Connection::open(&auth_db_path).expect("stale authorization connection should open");
+        assert_eq!(
+            user_admin_flag(&stale_authorization, second)
+                .expect("stale actor flag should load before demotion"),
+            Some(true)
+        );
+        drop(stale_authorization);
+
+        set_user_admin(&auth_db_path, first, second, false)
+            .expect("first administrator should demote the second");
+        assert!(matches!(
+            set_user_admin(&auth_db_path, second, member, true),
+            Err(BusinessRepositoryError::AdministratorActorForbidden)
+        ));
+        assert!(matches!(
+            set_user_admin(&auth_db_path, first, UserId(999_999), true),
+            Err(BusinessRepositoryError::AdministratorTargetNotFound)
+        ));
+        assert!(matches!(
+            set_user_admin(&auth_db_path, first, first, false),
+            Err(BusinessRepositoryError::AdministratorInvariantViolation)
+        ));
+        assert!(matches!(
+            delete_user(&auth_db_path, first, first),
+            Err(BusinessRepositoryError::AdministratorInvariantViolation)
+        ));
+        assert_eq!(administrator_count(&auth_db_path), 1);
+        assert_eq!(
+            user_admin_flag(
+                &Connection::open(&auth_db_path).expect("auth database should open"),
+                member
+            )
+            .expect("member flag should load"),
+            Some(false)
+        );
     }
 }

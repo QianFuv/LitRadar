@@ -568,7 +568,10 @@ fn business_tool_error_message(error: &BusinessRepositoryError) -> String {
         | BusinessRepositoryError::InvalidRuntimeSetting(_)
         | BusinessRepositoryError::OutboundEndpointNotAllowed
         | BusinessRepositoryError::InvalidRuntimeSecretPoolUpdate(_)
-        | BusinessRepositoryError::NonSecretRuntimeSettingCannotBeCleared(_) => {
+        | BusinessRepositoryError::NonSecretRuntimeSettingCannotBeCleared(_)
+        | BusinessRepositoryError::AdministratorActorForbidden
+        | BusinessRepositoryError::AdministratorTargetNotFound
+        | BusinessRepositoryError::AdministratorInvariantViolation => {
             "Internal Server Error".to_string()
         }
     }

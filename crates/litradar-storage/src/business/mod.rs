@@ -103,6 +103,12 @@ pub enum BusinessRepositoryError {
     InvalidScheduledTask(String),
     /// A migrated legacy task was enabled without a typed replacement job.
     LegacyScheduledTaskCannotBeEnabled,
+    /// The administrative actor no longer exists or lacks administrator privileges.
+    AdministratorActorForbidden,
+    /// The target user does not exist.
+    AdministratorTargetNotFound,
+    /// A mutation would remove the final administrator.
+    AdministratorInvariantViolation,
 }
 
 impl fmt::Display for BusinessRepositoryError {
@@ -141,6 +147,11 @@ impl fmt::Display for BusinessRepositoryError {
             Self::LegacyScheduledTaskCannotBeEnabled => formatter.write_str(
                 "A legacy scheduled task must be replaced with a typed job before it can be enabled",
             ),
+            Self::AdministratorActorForbidden => formatter.write_str("Admin access required"),
+            Self::AdministratorTargetNotFound => formatter.write_str("User not found"),
+            Self::AdministratorInvariantViolation => {
+                formatter.write_str("At least one administrator is required")
+            }
         }
     }
 }
