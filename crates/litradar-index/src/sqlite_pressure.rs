@@ -9,16 +9,16 @@ use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use litradar_domain::{
-    ArticleDraft, IssueDraft, JournalCatalogEntry, JournalDraft, JournalRankings, ProviderBatch,
-    ProviderProgress,
+    ArticleDraft, IndexSyncMode, IssueDraft, JournalCatalogEntry, JournalDraft, JournalRankings,
+    ProviderBatch, ProviderProgress,
 };
 use litradar_worker::process_supervisor::SupervisedChild;
 use rusqlite::{Connection, ErrorCode};
 use serde::Serialize;
 
 use crate::control::{
-    acquire_lease, open_control_db, release_lease, ContentCheckpointCommitError,
-    ControlDatabaseError,
+    acquire_lease, open_control_db, prepare_journal_sync, release_lease,
+    ContentCheckpointCommitError, ControlDatabaseError, JournalSyncPreparation,
 };
 use crate::live::{
     run_worker_processes_with_launcher, LaunchedWorkerProcess, LiveIndexError, ParentWriterContext,
@@ -244,7 +244,8 @@ struct DatabaseCounts {
     article_listing: Option<i64>,
     article_search: Option<i64>,
     article_change_events: Option<i64>,
-    provider_checkpoints: Option<i64>,
+    provider_sync_anchors: Option<i64>,
+    provider_run_checkpoints: Option<i64>,
 }
 
 #[derive(Debug, Default, Serialize)]
@@ -379,7 +380,8 @@ fn single_writer_process_lifecycle_fails_closed_and_removes_requests() {
         FixtureBehavior::NonzeroAfterSuccess,
         FixtureBehavior::OutOfOrderBatch,
     ] {
-        let report = run_pressure(PressureConfig::failure(behavior));
+        let config = PressureConfig::failure(behavior);
+        let report = run_pressure(config);
         assert_eq!(report.status, "failed");
         assert_eq!(report.terminal_count, 1);
         assert_eq!(
@@ -395,13 +397,17 @@ fn single_writer_process_lifecycle_fails_closed_and_removes_requests() {
         assert!(report.lifecycle.completed_within_bound);
         if behavior == FixtureBehavior::OutOfOrderBatch {
             assert_eq!(report.database_counts.articles, Some(0));
-            assert_eq!(report.database_counts.provider_checkpoints, Some(0));
+            assert_eq!(report.database_counts.provider_sync_anchors, Some(0));
+            assert_eq!(
+                report.database_counts.provider_run_checkpoints,
+                Some(i64::try_from(config.worker_count).unwrap_or(i64::MAX))
+            );
         }
     }
 }
 
 #[test]
-fn single_writer_ack_failure_retains_durable_content_and_checkpoint() {
+fn single_writer_ack_failure_retains_durable_content_and_anchor() {
     let report = run_pressure(PressureConfig::ack_failure());
 
     assert_eq!(report.status, "failed");
@@ -416,7 +422,8 @@ fn single_writer_ack_failure_retains_durable_content_and_checkpoint() {
     );
     assert_eq!(report.writer_service_ms.sample_count, 0);
     assert_eq!(report.database_counts.articles, Some(1));
-    assert_eq!(report.database_counts.provider_checkpoints, Some(1));
+    assert_eq!(report.database_counts.provider_sync_anchors, Some(1));
+    assert_eq!(report.database_counts.provider_run_checkpoints, Some(0));
     assert!(report.integrity.row_alignment);
     assert!(report.integrity.checkpoint_alignment);
     assert!(report.lifecycle.request_files_removed);
@@ -486,7 +493,16 @@ fn run_pressure(config: PressureConfig) -> PressureReport {
             classify_control_error("acquire_lease", &error),
         );
     }
-    let requests = pressure_requests(config, &context);
+    let requests = match pressure_requests(config, &control, &context) {
+        Ok(requests) => requests,
+        Err(error) => {
+            return failed_setup_report(
+                config,
+                started_at,
+                classify_control_error("prepare_journal_sync", &error),
+            );
+        }
+    };
     let mut observations = Vec::with_capacity(config.expected_pages());
     let execution = run_worker_processes_with_launcher(
         &request_dir,
@@ -602,26 +618,48 @@ fn run_pressure(config: PressureConfig) -> PressureReport {
     }
 }
 
-fn pressure_requests(config: PressureConfig, context: &ParentWriterContext) -> Vec<WorkerRequest> {
+fn pressure_requests(
+    config: PressureConfig,
+    control: &Connection,
+    context: &ParentWriterContext,
+) -> Result<Vec<WorkerRequest>, ControlDatabaseError> {
     (0..config.worker_count)
-        .map(|worker_id| WorkerRequest {
-            protocol_version: PROTOCOL_VERSION,
-            catalog_name: context.catalog_name.clone(),
-            provider_name: context.provider_name.clone(),
-            run_id: context.run_id.clone(),
-            worker_id,
-            process_count: config.worker_count,
-            source_worker_count: 1,
-            schedule_epoch_unix_millis: 0,
-            timeout_seconds: 10,
-            scholarly_config: litradar_sources::LiveScholarlyConfig::from_value_pools(
-                10, "", "", "",
-            ),
-            assignments: vec![WorkerJournalAssignment {
-                journal_ordinal: worker_id,
-                entry: pressure_catalog(worker_id),
-                initial_checkpoint: None,
-            }],
+        .map(|worker_id| {
+            let entry = pressure_catalog(worker_id);
+            let preparation = prepare_journal_sync(
+                control,
+                &context.catalog_name,
+                &context.provider_name,
+                &entry.catalog_id,
+                &context.run_id,
+                IndexSyncMode::Bootstrap,
+                false,
+                &context.timestamp,
+            )?;
+            let JournalSyncPreparation::Run(run) = preparation else {
+                unreachable!("fresh pressure journals cannot be skipped")
+            };
+            Ok(WorkerRequest {
+                protocol_version: PROTOCOL_VERSION,
+                catalog_name: context.catalog_name.clone(),
+                provider_name: context.provider_name.clone(),
+                run_id: context.run_id.clone(),
+                worker_id,
+                process_count: config.worker_count,
+                source_worker_count: 1,
+                schedule_epoch_unix_millis: 0,
+                timeout_seconds: 10,
+                scholarly_config: litradar_sources::LiveScholarlyConfig::from_value_pools(
+                    10, "", "", "",
+                ),
+                assignments: vec![WorkerJournalAssignment {
+                    journal_ordinal: worker_id,
+                    entry,
+                    mode: run.mode,
+                    committed_anchor: run.base_anchor,
+                    traversal_checkpoint: run.traversal_checkpoint,
+                }],
+            })
         })
         .collect()
 }
@@ -980,7 +1018,8 @@ fn inspect_databases(
         failure = Some(classify_sqlite_error("inspect_content", &error));
     }
     let control_result = (|| -> rusqlite::Result<()> {
-        counts.provider_checkpoints = Some(table_count(control, "provider_checkpoints")?);
+        counts.provider_sync_anchors = Some(table_count(control, "provider_sync_anchors")?);
+        counts.provider_run_checkpoints = Some(table_count(control, "provider_run_checkpoints")?);
         let integrity_value =
             control.query_row("PRAGMA integrity_check", [], |row| row.get::<_, String>(0))?;
         integrity.control_integrity = Some(if integrity_value == "ok" {
@@ -998,19 +1037,14 @@ fn inspect_databases(
                 let catalog_id = format!("pressure-journal-{worker_id}");
                 control
                     .query_row(
-                        "SELECT checkpoint FROM provider_checkpoints
+                        "SELECT committed_anchor FROM provider_sync_anchors
                          WHERE catalog_name = 'pressure-catalog'
                            AND provider_name = 'pressure-provider'
-                           AND scope_kind = 'journal'
-                           AND scope_key = ?1",
+                           AND catalog_id = ?1",
                         [&catalog_id],
-                        |row| row.get::<_, String>(0),
+                        |row| row.get::<_, Option<String>>(0),
                     )
-                    .map(|checkpoint| {
-                        serde_json::from_str::<serde_json::Value>(&checkpoint)
-                            .ok()
-                            .is_some_and(|value| value["state"] == "complete")
-                    })
+                    .map(|anchor| anchor.is_none())
             })
             .collect::<Result<Vec<_>, _>>()?;
         integrity.checkpoint_alignment = completed.into_iter().all(|value| value);
@@ -1136,6 +1170,15 @@ fn classify_control_error(operation: &'static str, error: &ControlDatabaseError)
         }
         ControlDatabaseError::OwnershipLost { .. } => {
             safe_failure(operation, "control", "OwnershipLost")
+        }
+        ControlDatabaseError::RunModeMismatch { .. } => {
+            safe_failure(operation, "control", "RunModeMismatch")
+        }
+        ControlDatabaseError::RunOwnershipLost { .. } => {
+            safe_failure(operation, "control", "RunOwnershipLost")
+        }
+        ControlDatabaseError::InvalidSyncState { .. } => {
+            safe_failure(operation, "control", "InvalidSyncState")
         }
     }
 }

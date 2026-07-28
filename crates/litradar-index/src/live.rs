@@ -10,9 +10,7 @@ use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender, SyncSender};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use litradar_domain::{
-    IndexFetchContext, IndexSyncMode, JournalCatalogEntry, ProviderBatch, ProviderProgress,
-};
+use litradar_domain::{IndexFetchContext, IndexSyncMode, JournalCatalogEntry, ProviderProgress};
 use litradar_provider::{
     IndexContentProvider, ProviderError, ProviderRegistration, ProviderRegistryError,
 };
@@ -24,15 +22,15 @@ use litradar_sources::{
 };
 use litradar_worker::process_supervisor::SupervisedChild;
 use rusqlite::{Connection, ErrorCode};
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 
 use crate::changes::{
     discard_content_change_events, write_content_change_manifest, ChangeWriteError,
 };
 use crate::control::{
-    acquire_lease, commit_content_then_checkpoint, has_catalog_alias_checkpoints, heartbeat_lease,
-    open_control_db, read_checkpoint, release_lease, CheckpointScope, ContentCheckpointCommitError,
-    ControlDatabaseError,
+    acquire_lease, commit_content_then_progress, has_catalog_alias_sync_state, heartbeat_lease,
+    open_control_db, prepare_journal_sync, release_lease, ContentCheckpointCommitError,
+    ControlDatabaseError, JournalSyncPreparation,
 };
 use crate::identity::{ArticleIdentityError, ArticleMergeError};
 use crate::schema::{
@@ -52,7 +50,8 @@ use crate::worker_protocol::{
 const LIVE_INDEX_HEARTBEAT_INTERVAL_SECONDS: u64 = 30;
 const MAX_PROVIDER_PAGES_PER_JOURNAL: usize = 100_000;
 const WORKER_PROTOCOL_FAILURE_MESSAGE: &str = "worker protocol operation failed";
-const LEGACY_ALIAS_CHECKPOINT_MESSAGE: &str = "legacy catalog alias has provider checkpoint state";
+const LEGACY_ALIAS_SYNC_STATE_MESSAGE: &str =
+    "legacy catalog alias has provider synchronization state";
 
 /// Live index run configuration.
 #[derive(Clone)]
@@ -290,13 +289,6 @@ impl From<ChangeWriteError> for LiveIndexError {
     }
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(tag = "state", rename_all = "snake_case", deny_unknown_fields)]
-enum StoredCheckpoint {
-    Provider { value: String },
-    Complete,
-}
-
 #[derive(Debug, Clone)]
 struct DirectIndexRequest {
     catalog_name: String,
@@ -305,7 +297,7 @@ struct DirectIndexRequest {
     timestamp: String,
     worker_id: usize,
     resume: bool,
-    update: bool,
+    mode: IndexSyncMode,
     entries: Vec<JournalCatalogEntry>,
 }
 
@@ -489,7 +481,10 @@ impl LiveIndexWorkerFailure {
             ControlDatabaseError::Io(_) => Self::fixed(LiveIndexWorkerFailureClass::Io, operation),
             ControlDatabaseError::UnsupportedVersion { .. }
             | ControlDatabaseError::ActiveLease { .. }
-            | ControlDatabaseError::OwnershipLost { .. } => {
+            | ControlDatabaseError::OwnershipLost { .. }
+            | ControlDatabaseError::RunModeMismatch { .. }
+            | ControlDatabaseError::RunOwnershipLost { .. }
+            | ControlDatabaseError::InvalidSyncState { .. } => {
                 Self::fixed(LiveIndexWorkerFailureClass::Control, operation)
             }
         }
@@ -865,7 +860,7 @@ fn run_catalog(
             timestamp: timestamp.clone(),
             worker_id: 0,
             resume: config.resume,
-            update: config.update,
+            mode: requested_sync_mode(config),
             entries: entries.clone(),
         };
         let execution = run_direct_request(
@@ -953,6 +948,14 @@ fn run_catalog(
     })
 }
 
+fn requested_sync_mode(config: &LiveIndexConfig) -> IndexSyncMode {
+    if config.update {
+        IndexSyncMode::Incremental
+    } else {
+        IndexSyncMode::Bootstrap
+    }
+}
+
 fn prepare_catalog_identities(
     content: &Connection,
     control: &Connection,
@@ -966,9 +969,9 @@ fn prepare_catalog_identities(
         .collect::<BTreeSet<_>>()
         .into_iter()
         .collect::<Vec<_>>();
-    if has_catalog_alias_checkpoints(control, catalog_name, &catalog_aliases)? {
+    if has_catalog_alias_sync_state(control, catalog_name, &catalog_aliases)? {
         return Err(LiveIndexError::InvalidConfig(
-            LEGACY_ALIAS_CHECKPOINT_MESSAGE.to_string(),
+            LEGACY_ALIAS_SYNC_STATE_MESSAGE.to_string(),
         ));
     }
     reconcile_catalog_identities(content, entries).map_err(|source| {
@@ -977,6 +980,25 @@ fn prepare_catalog_identities(
             source,
         }
     })
+}
+
+fn prepare_entry_sync(
+    control: &Connection,
+    context: &ParentWriterContext,
+    entry: &JournalCatalogEntry,
+    mode: IndexSyncMode,
+    should_resume: bool,
+) -> Result<JournalSyncPreparation, LiveIndexError> {
+    Ok(prepare_journal_sync(
+        control,
+        &context.catalog_name,
+        &context.provider_name,
+        &entry.catalog_id,
+        &context.run_id,
+        mode,
+        should_resume,
+        &context.timestamp,
+    )?)
 }
 
 fn prepare_worker_requests(
@@ -991,35 +1013,16 @@ fn prepare_worker_requests(
         ..IndexRunMetrics::default()
     };
     let mut assignments = Vec::with_capacity(entries.len());
+    let mode = requested_sync_mode(config);
     for (journal_ordinal, entry) in entries.iter().cloned().enumerate() {
-        let stored = if config.resume && !config.update {
-            let scope = CheckpointScope::Journal {
-                catalog_id: entry.catalog_id.clone(),
-            };
-            read_checkpoint(
-                control,
-                &context.catalog_name,
-                &context.provider_name,
-                &scope,
-            )?
-            .map(|value| decode_checkpoint(&value))
-            .transpose()?
-        } else {
-            None
-        };
-        match stored {
-            Some(StoredCheckpoint::Complete) => metrics.journals_resumed += 1,
-            Some(StoredCheckpoint::Provider { value }) => {
-                assignments.push(WorkerJournalAssignment {
-                    journal_ordinal,
-                    entry,
-                    initial_checkpoint: Some(value),
-                });
-            }
-            None => assignments.push(WorkerJournalAssignment {
+        match prepare_entry_sync(control, context, &entry, mode, config.resume)? {
+            JournalSyncPreparation::Skip => metrics.journals_resumed += 1,
+            JournalSyncPreparation::Run(run) => assignments.push(WorkerJournalAssignment {
                 journal_ordinal,
                 entry,
-                initial_checkpoint: None,
+                mode: run.mode,
+                committed_anchor: run.base_anchor,
+                traversal_checkpoint: run.traversal_checkpoint,
             }),
         }
     }
@@ -1598,22 +1601,20 @@ fn handle_worker_message(
             {
                 return Err(protocol_failure(pipe_worker_id));
             }
-            let stored_checkpoint = checkpoint_after_batch(&batch)?;
-            let is_complete = matches!(stored_checkpoint, StoredCheckpoint::Complete);
-            let encoded_checkpoint = serde_json::to_string(&stored_checkpoint)?;
-            let scope = CheckpointScope::Journal {
-                catalog_id: assignment.entry.catalog_id.clone(),
-            };
+            let is_complete = matches!(&batch.progress, ProviderProgress::Complete { .. });
             let content_revision = format!(
                 "{}:{}:{}",
                 context.run_id, assignment.entry.catalog_id, page_index
             );
-            let outcome = commit_content_then_checkpoint(
+            let outcome = commit_content_then_progress(
                 control,
                 &context.catalog_name,
                 &context.provider_name,
-                &scope,
-                &encoded_checkpoint,
+                &assignment.entry.catalog_id,
+                &context.run_id,
+                assignment.mode,
+                assignment.committed_anchor.as_deref(),
+                &batch.progress,
                 &context.timestamp,
                 || {
                     write_content_batch(
@@ -1895,7 +1896,7 @@ fn fetch_worker_assignments_with_provider(
     sequence: &mut u64,
 ) -> Result<(), LiveIndexError> {
     for assignment in &request.assignments {
-        let mut provider_checkpoint = assignment.initial_checkpoint.clone();
+        let mut provider_checkpoint = assignment.traversal_checkpoint.clone();
         let mut seen_checkpoints = BTreeSet::new();
         if let Some(value) = &provider_checkpoint {
             seen_checkpoints.insert(value.clone());
@@ -1903,15 +1904,19 @@ fn fetch_worker_assignments_with_provider(
         for page_index in 0..MAX_PROVIDER_PAGES_PER_JOURNAL {
             let batch = provider.fetch(
                 &assignment.entry,
-                bootstrap_fetch_context(provider_checkpoint.as_deref()),
+                IndexFetchContext {
+                    mode: assignment.mode,
+                    committed_anchor: assignment.committed_anchor.as_deref(),
+                    traversal_checkpoint: provider_checkpoint.as_deref(),
+                },
             )?;
             if batch.catalog_id != assignment.entry.catalog_id {
                 return Err(LiveIndexError::InvalidConfig(
                     "provider batch catalog identity is invalid".to_string(),
                 ));
             }
-            let stored_checkpoint = checkpoint_after_batch(&batch)?;
-            let is_complete = matches!(stored_checkpoint, StoredCheckpoint::Complete);
+            let progress = batch.progress.clone();
+            let is_complete = matches!(progress, ProviderProgress::Complete { .. });
             write_message(
                 writer,
                 &WorkerMessage::Batch {
@@ -1952,15 +1957,15 @@ fn fetch_worker_assignments_with_provider(
             if is_complete {
                 break;
             }
-            let StoredCheckpoint::Provider { value } = stored_checkpoint else {
-                unreachable!("complete checkpoint returned above")
+            let ProviderProgress::Continue { checkpoint } = progress else {
+                unreachable!("complete progress returned above")
             };
-            if !seen_checkpoints.insert(value.clone()) {
+            if !seen_checkpoints.insert(checkpoint.clone()) {
                 return Err(LiveIndexError::InvalidConfig(
                     "index provider returned a repeated checkpoint".to_string(),
                 ));
             }
-            provider_checkpoint = Some(value);
+            provider_checkpoint = Some(checkpoint);
             if page_index + 1 == MAX_PROVIDER_PAGES_PER_JOURNAL {
                 return Err(LiveIndexError::InvalidConfig(
                     "provider page limit exceeded".to_string(),
@@ -2035,6 +2040,12 @@ fn index_entries_with_provider(
         journals_total: request.entries.len(),
         ..IndexRunMetrics::default()
     };
+    let writer_context = ParentWriterContext {
+        catalog_name: request.catalog_name.clone(),
+        provider_name: request.provider_name.clone(),
+        run_id: request.run_id.clone(),
+        timestamp: request.timestamp.clone(),
+    };
     for (journal_ordinal, entry) in request.entries.iter().enumerate() {
         heartbeat_lease(
             control,
@@ -2044,29 +2055,20 @@ fn index_entries_with_provider(
             LiveRunTime::now().epoch_seconds,
         )
         .map_err(|error| LiveIndexError::Heartbeat(error.to_string()))?;
-        let scope = CheckpointScope::Journal {
-            catalog_id: entry.catalog_id.clone(),
+        let run = match prepare_entry_sync(
+            control,
+            &writer_context,
+            entry,
+            request.mode,
+            request.resume,
+        )? {
+            JournalSyncPreparation::Skip => {
+                metrics.journals_resumed += 1;
+                continue;
+            }
+            JournalSyncPreparation::Run(run) => run,
         };
-        let stored = if request.resume && !request.update {
-            read_checkpoint(
-                control,
-                &request.catalog_name,
-                &request.provider_name,
-                &scope,
-            )?
-            .map(|value| decode_checkpoint(&value))
-            .transpose()?
-        } else {
-            None
-        };
-        if matches!(stored, Some(StoredCheckpoint::Complete)) {
-            metrics.journals_resumed += 1;
-            continue;
-        }
-        let mut provider_checkpoint = match stored {
-            Some(StoredCheckpoint::Provider { value }) => Some(value),
-            Some(StoredCheckpoint::Complete) | None => None,
-        };
+        let mut provider_checkpoint = run.traversal_checkpoint.clone();
         let mut seen_checkpoints = BTreeSet::new();
         if let Some(value) = &provider_checkpoint {
             seen_checkpoints.insert(value.clone());
@@ -2083,7 +2085,11 @@ fn index_entries_with_provider(
             let batch = provider
                 .fetch(
                     entry,
-                    bootstrap_fetch_context(provider_checkpoint.as_deref()),
+                    IndexFetchContext {
+                        mode: run.mode,
+                        committed_anchor: run.base_anchor.as_deref(),
+                        traversal_checkpoint: provider_checkpoint.as_deref(),
+                    },
                 )
                 .map_err(|error| {
                     tracing::error!(
@@ -2096,16 +2102,18 @@ fn index_entries_with_provider(
                     );
                     LiveIndexError::Provider(error)
                 })?;
-            let stored_checkpoint = checkpoint_after_batch(&batch)?;
-            let encoded_checkpoint = serde_json::to_string(&stored_checkpoint)?;
+            let progress = batch.progress.clone();
             let content_revision =
                 format!("{}:{}:{}", request.run_id, entry.catalog_id, page_index);
-            let outcome = commit_content_then_checkpoint(
+            let outcome = commit_content_then_progress(
                 control,
                 &request.catalog_name,
                 &request.provider_name,
-                &scope,
-                &encoded_checkpoint,
+                &entry.catalog_id,
+                &run.run_id,
+                run.mode,
+                run.base_anchor.as_deref(),
+                &progress,
                 &request.timestamp,
                 || {
                     write_content_batch(
@@ -2118,19 +2126,19 @@ fn index_entries_with_provider(
                 },
             )?;
             metrics.record_write(outcome);
-            if matches!(stored_checkpoint, StoredCheckpoint::Complete) {
+            if matches!(progress, ProviderProgress::Complete { .. }) {
                 metrics.journals_succeeded += 1;
                 break;
             }
-            let StoredCheckpoint::Provider { value } = stored_checkpoint else {
-                unreachable!("complete checkpoint returned above")
+            let ProviderProgress::Continue { checkpoint } = progress else {
+                unreachable!("complete progress returned above")
             };
-            if !seen_checkpoints.insert(value.clone()) {
+            if !seen_checkpoints.insert(checkpoint.clone()) {
                 return Err(LiveIndexError::InvalidConfig(
                     "index provider returned a repeated checkpoint".to_string(),
                 ));
             }
-            provider_checkpoint = Some(value);
+            provider_checkpoint = Some(checkpoint);
             if page_index + 1 == MAX_PROVIDER_PAGES_PER_JOURNAL {
                 return Err(LiveIndexError::InvalidConfig(format!(
                     "provider page limit exceeded for catalog entry {}",
@@ -2147,37 +2155,6 @@ fn index_entries_with_provider(
         "success",
     );
     Ok(metrics)
-}
-
-fn decode_checkpoint(value: &str) -> Result<StoredCheckpoint, LiveIndexError> {
-    serde_json::from_str(value).map_err(|_| {
-        LiveIndexError::InvalidConfig(
-            "provider control checkpoint is invalid; remove the disposable control database"
-                .to_string(),
-        )
-    })
-}
-
-fn checkpoint_after_batch(batch: &ProviderBatch) -> Result<StoredCheckpoint, LiveIndexError> {
-    match &batch.progress {
-        ProviderProgress::Continue { checkpoint } if checkpoint.is_empty() => {
-            Err(LiveIndexError::InvalidConfig(
-                "provider batch checkpoint must not be empty".to_string(),
-            ))
-        }
-        ProviderProgress::Continue { checkpoint } => Ok(StoredCheckpoint::Provider {
-            value: checkpoint.clone(),
-        }),
-        ProviderProgress::Complete { .. } => Ok(StoredCheckpoint::Complete),
-    }
-}
-
-fn bootstrap_fetch_context(traversal_checkpoint: Option<&str>) -> IndexFetchContext<'_> {
-    IndexFetchContext {
-        mode: IndexSyncMode::Bootstrap,
-        committed_anchor: None,
-        traversal_checkpoint,
-    }
 }
 
 fn duration_millis(duration: Duration) -> u64 {
@@ -2220,8 +2197,8 @@ mod tests {
     use std::time::Duration;
 
     use litradar_domain::{
-        ArticleAuthorDraft, ArticleDraft, IndexFetchContext, IssueDraft, JournalCatalogEntry,
-        JournalDraft, JournalRankings, ProviderBatch, ProviderProgress,
+        ArticleAuthorDraft, ArticleDraft, IndexFetchContext, IndexSyncMode, IssueDraft,
+        JournalCatalogEntry, JournalDraft, JournalRankings, ProviderBatch, ProviderProgress,
         INDEX_AGGREGATE_CONCURRENCY_MAX, SCHOLARLY_WORKER_COUNT_MAX,
     };
     use litradar_provider::conformance::ContractViolation;
@@ -2239,11 +2216,12 @@ mod tests {
         LaunchedWorkerProcess, LeaseHeartbeat, LiveIndexConfig, LiveIndexError,
         LiveIndexWorkerBootstrap, LiveIndexWorkerFailure, LiveIndexWorkerFailureClass,
         LiveIndexWorkerOperation, LiveIndexWorkerRequest, LiveRunTime, ParentWriterContext,
-        StoredCheckpoint, SupervisedChild, CNKI_PROVIDER_NAME,
+        SupervisedChild, CNKI_PROVIDER_NAME,
     };
     use crate::control::{
-        acquire_lease, commit_content_then_checkpoint, open_control_db, read_checkpoint,
-        release_lease, write_checkpoint, CheckpointScope, ContentCheckpointCommitError,
+        acquire_lease, advance_run_checkpoint, commit_content_then_progress, complete_sync_run,
+        open_control_db, prepare_journal_sync, read_run_checkpoint, read_sync_anchor,
+        release_lease, ContentCheckpointCommitError, JournalSyncPreparation, ProviderRunCheckpoint,
     };
     use crate::identity::{ArticleIdentityError, ArticleMergeError};
     use crate::schema::{open_content_db, write_content_batch, ContentDatabaseError};
@@ -2395,6 +2373,88 @@ mod tests {
         }
     }
 
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    struct ObservedFetchContext {
+        mode: IndexSyncMode,
+        committed_anchor: Option<String>,
+        traversal_checkpoint: Option<String>,
+    }
+
+    struct RecordingProvider {
+        observations: Mutex<Vec<ObservedFetchContext>>,
+        next_anchor: Option<String>,
+    }
+
+    impl RecordingProvider {
+        fn new(next_anchor: Option<&str>) -> Self {
+            Self {
+                observations: Mutex::new(Vec::new()),
+                next_anchor: next_anchor.map(str::to_string),
+            }
+        }
+    }
+
+    impl IndexContentProvider for RecordingProvider {
+        fn fetch(
+            &self,
+            catalog: &JournalCatalogEntry,
+            context: IndexFetchContext<'_>,
+        ) -> Result<ProviderBatch, ProviderError> {
+            self.observations
+                .lock()
+                .expect("observations should lock")
+                .push(ObservedFetchContext {
+                    mode: context.mode,
+                    committed_anchor: context.committed_anchor.map(str::to_string),
+                    traversal_checkpoint: context.traversal_checkpoint.map(str::to_string),
+                });
+            let mut batch = canonical_batch(catalog);
+            batch.progress = ProviderProgress::Complete {
+                next_anchor: self.next_anchor.clone(),
+            };
+            Ok(batch)
+        }
+    }
+
+    struct InterruptingProvider {
+        call_count: Mutex<usize>,
+    }
+
+    impl InterruptingProvider {
+        fn new() -> Self {
+            Self {
+                call_count: Mutex::new(0),
+            }
+        }
+    }
+
+    impl IndexContentProvider for InterruptingProvider {
+        fn fetch(
+            &self,
+            catalog: &JournalCatalogEntry,
+            context: IndexFetchContext<'_>,
+        ) -> Result<ProviderBatch, ProviderError> {
+            let mut call_count = self.call_count.lock().expect("call count should lock");
+            *call_count += 1;
+            match *call_count {
+                1 => {
+                    assert_eq!(context.committed_anchor, Some("anchor-old"));
+                    assert_eq!(context.traversal_checkpoint, None);
+                    let mut batch = canonical_batch(catalog);
+                    batch.progress = ProviderProgress::Continue {
+                        checkpoint: "cursor-after-head".to_string(),
+                    };
+                    Ok(batch)
+                }
+                2 => Err(ProviderError::new(
+                    ProviderErrorKind::TemporarilyUnavailable,
+                    "fixture interruption",
+                )),
+                _ => panic!("interrupting provider received an unexpected fetch"),
+            }
+        }
+    }
+
     fn catalog(id: &str) -> JournalCatalogEntry {
         JournalCatalogEntry {
             catalog_id: id.to_string(),
@@ -2497,9 +2557,94 @@ mod tests {
             timestamp: "2026-07-18T00:00:00Z".to_string(),
             worker_id: 0,
             resume: true,
-            update: false,
+            mode: IndexSyncMode::Bootstrap,
             entries: vec![catalog("journal-1")],
         }
+    }
+
+    fn prepared_run(preparation: JournalSyncPreparation) -> ProviderRunCheckpoint {
+        match preparation {
+            JournalSyncPreparation::Run(run) => run,
+            JournalSyncPreparation::Skip => panic!("fixture journal should not skip"),
+        }
+    }
+
+    fn seed_completed_sync(
+        control: &Connection,
+        catalog_name: &str,
+        provider_name: &str,
+        catalog_id: &str,
+        committed_anchor: Option<&str>,
+        timestamp: &str,
+    ) {
+        let run = prepared_run(
+            prepare_journal_sync(
+                control,
+                catalog_name,
+                provider_name,
+                catalog_id,
+                "fixture-complete-run",
+                IndexSyncMode::Incremental,
+                false,
+                timestamp,
+            )
+            .expect("fixture completion run should prepare"),
+        );
+        complete_sync_run(
+            control,
+            catalog_name,
+            provider_name,
+            catalog_id,
+            &run.run_id,
+            run.mode,
+            run.base_anchor.as_deref(),
+            committed_anchor,
+            timestamp,
+        )
+        .expect("fixture completion should commit");
+    }
+
+    fn seed_incremental_traversal(
+        control: &Connection,
+        catalog_name: &str,
+        provider_name: &str,
+        catalog_id: &str,
+        cursor: &str,
+        timestamp: &str,
+    ) {
+        seed_completed_sync(
+            control,
+            catalog_name,
+            provider_name,
+            catalog_id,
+            Some("anchor-old"),
+            timestamp,
+        );
+        let run = prepared_run(
+            prepare_journal_sync(
+                control,
+                catalog_name,
+                provider_name,
+                catalog_id,
+                "previous-run",
+                IndexSyncMode::Incremental,
+                true,
+                timestamp,
+            )
+            .expect("incremental traversal should prepare"),
+        );
+        advance_run_checkpoint(
+            control,
+            catalog_name,
+            provider_name,
+            catalog_id,
+            &run.run_id,
+            run.mode,
+            run.base_anchor.as_deref(),
+            cursor,
+            timestamp,
+        )
+        .expect("incremental traversal should advance");
     }
 
     #[test]
@@ -2543,7 +2688,178 @@ mod tests {
     }
 
     #[test]
-    fn complete_checkpoint_reconciles_catalog_identity_without_provider_fetch() {
+    fn direct_and_worker_paths_resume_the_same_incremental_context() {
+        let directory = tempdir().expect("temporary directory should create");
+        let direct_content = open_content_db(directory.path().join("direct-content.sqlite"))
+            .expect("direct content should open");
+        let direct_control = open_control_db(directory.path().join("direct-control.sqlite"))
+            .expect("direct control should open");
+        seed_incremental_traversal(
+            &direct_control,
+            "chinese_journals",
+            "provider-a",
+            "journal-1",
+            "cursor-frozen",
+            "2026-07-18T00:00:00Z",
+        );
+        let mut direct = direct_request("provider-a", "direct-current-run");
+        direct.mode = IndexSyncMode::Incremental;
+        acquire_lease(
+            &direct_control,
+            &direct.catalog_name,
+            &direct.provider_name,
+            &direct.run_id,
+            LiveRunTime::now().epoch_seconds,
+        )
+        .expect("direct lease should acquire");
+        let provider = RecordingProvider::new(Some("anchor-new"));
+        index_entries_with_provider(&direct_content, &direct_control, &provider, &direct)
+            .expect("direct incremental run should complete");
+        let direct_context = provider
+            .observations
+            .lock()
+            .expect("direct observations should lock")[0]
+            .clone();
+
+        let worker_control = open_control_db(directory.path().join("worker-control.sqlite"))
+            .expect("worker control should open");
+        seed_incremental_traversal(
+            &worker_control,
+            "chinese_journals",
+            "provider-a",
+            "journal-1",
+            "cursor-frozen",
+            "2026-07-18T00:00:00Z",
+        );
+        let worker_context = ParentWriterContext {
+            catalog_name: "chinese_journals".to_string(),
+            provider_name: "provider-a".to_string(),
+            run_id: "worker-current-run".to_string(),
+            timestamp: "2026-07-18T00:01:00Z".to_string(),
+        };
+        let mut config = worker_test_config("provider-a", None);
+        config.update = true;
+        let (requests, metrics) = prepare_worker_requests(
+            &config,
+            &worker_control,
+            &worker_context,
+            0,
+            &[catalog("journal-1")],
+        )
+        .expect("worker incremental run should prepare");
+        assert_eq!(metrics.journals_resumed, 0);
+        let assignment = &requests[0].assignments[0];
+        assert_eq!(
+            direct_context,
+            ObservedFetchContext {
+                mode: assignment.mode,
+                committed_anchor: assignment.committed_anchor.clone(),
+                traversal_checkpoint: assignment.traversal_checkpoint.clone(),
+            }
+        );
+        assert_eq!(direct_context.mode, IndexSyncMode::Incremental);
+        assert_eq!(
+            direct_context.committed_anchor.as_deref(),
+            Some("anchor-old")
+        );
+        assert_eq!(
+            direct_context.traversal_checkpoint.as_deref(),
+            Some("cursor-frozen")
+        );
+    }
+
+    #[test]
+    fn interrupted_update_reuses_frozen_anchor_after_new_content_commits() {
+        let directory = tempdir().expect("temporary directory should create");
+        let content =
+            open_content_db(directory.path().join("content.sqlite")).expect("content should open");
+        let control =
+            open_control_db(directory.path().join("control.sqlite")).expect("control should open");
+        seed_completed_sync(
+            &control,
+            "chinese_journals",
+            "provider-a",
+            "journal-1",
+            Some("anchor-old"),
+            "2026-07-18T00:00:00Z",
+        );
+        let mut interrupted = direct_request("provider-a", "interrupted-run");
+        interrupted.mode = IndexSyncMode::Incremental;
+        let now = LiveRunTime::now().epoch_seconds;
+        acquire_lease(
+            &control,
+            &interrupted.catalog_name,
+            &interrupted.provider_name,
+            &interrupted.run_id,
+            now,
+        )
+        .expect("interrupted lease should acquire");
+        let error = index_entries_with_provider(
+            &content,
+            &control,
+            &InterruptingProvider::new(),
+            &interrupted,
+        )
+        .expect_err("second Provider page should interrupt the run");
+        assert!(matches!(error, LiveIndexError::Provider(_)));
+        assert_eq!(
+            content
+                .query_row("SELECT COUNT(*) FROM articles", [], |row| row
+                    .get::<_, i64>(0))
+                .expect("committed article count should read"),
+            1
+        );
+        let frozen = read_run_checkpoint(
+            &control,
+            &interrupted.catalog_name,
+            &interrupted.provider_name,
+            "journal-1",
+        )
+        .expect("frozen run should read")
+        .expect("frozen run should remain");
+        assert_eq!(frozen.base_anchor.as_deref(), Some("anchor-old"));
+        assert_eq!(
+            frozen.traversal_checkpoint.as_deref(),
+            Some("cursor-after-head")
+        );
+        release_lease(
+            &control,
+            &interrupted.catalog_name,
+            &interrupted.provider_name,
+            &interrupted.run_id,
+        )
+        .expect("interrupted lease should release");
+
+        let mut retry = direct_request("provider-a", "retry-run");
+        retry.mode = IndexSyncMode::Incremental;
+        acquire_lease(
+            &control,
+            &retry.catalog_name,
+            &retry.provider_name,
+            &retry.run_id,
+            now,
+        )
+        .expect("retry lease should acquire");
+        let retry_provider = RecordingProvider::new(Some("anchor-new"));
+        index_entries_with_provider(&content, &control, &retry_provider, &retry)
+            .expect("retry should complete from frozen traversal");
+        let observations = retry_provider
+            .observations
+            .lock()
+            .expect("retry observations should lock");
+        assert_eq!(observations.len(), 1);
+        assert_eq!(
+            observations[0].committed_anchor.as_deref(),
+            Some("anchor-old")
+        );
+        assert_eq!(
+            observations[0].traversal_checkpoint.as_deref(),
+            Some("cursor-after-head")
+        );
+    }
+
+    #[test]
+    fn completed_sync_reconciles_catalog_identity_without_provider_fetch() {
         let directory = tempdir().expect("temporary directory should create");
         let content_path = directory.path().join("content.sqlite");
         let control_path = directory.path().join("control.sqlite");
@@ -2571,21 +2887,17 @@ mod tests {
             timestamp: "2026-07-20T00:00:00Z".to_string(),
             worker_id: 0,
             resume: true,
-            update: false,
+            mode: IndexSyncMode::Bootstrap,
             entries: vec![environment_catalog()],
         };
-        write_checkpoint(
+        seed_completed_sync(
             &control,
             &request.catalog_name,
             &request.provider_name,
-            &CheckpointScope::Journal {
-                catalog_id: request.entries[0].catalog_id.clone(),
-            },
-            &serde_json::to_string(&StoredCheckpoint::Complete)
-                .expect("complete checkpoint should serialize"),
+            &request.entries[0].catalog_id,
+            None,
             &request.timestamp,
-        )
-        .expect("complete checkpoint should write");
+        );
         acquire_lease(
             &control,
             &request.catalog_name,
@@ -2641,7 +2953,7 @@ mod tests {
     }
 
     #[test]
-    fn legacy_alias_checkpoint_blocks_content_reconciliation_across_provider_namespaces() {
+    fn legacy_alias_sync_state_blocks_reconciliation_across_provider_namespaces() {
         let directory = tempdir().expect("temporary directory should create");
         let content_path = directory.path().join("content.sqlite");
         let control_path = directory.path().join("control.sqlite");
@@ -2661,13 +2973,27 @@ mod tests {
             "2026-07-20T00:00:00Z",
         )
         .expect("original canonical content should write");
-        write_checkpoint(
+        let alias_run = prepared_run(
+            prepare_journal_sync(
+                &control,
+                "english_journals",
+                "provider-b",
+                "issn-0308-518x",
+                "legacy-alias-run",
+                IndexSyncMode::Bootstrap,
+                false,
+                "2026-07-20T00:00:00Z",
+            )
+            .expect("legacy alias run should prepare"),
+        );
+        advance_run_checkpoint(
             &control,
             "english_journals",
             "provider-b",
-            &CheckpointScope::Journal {
-                catalog_id: "issn-0308-518x".to_string(),
-            },
+            "issn-0308-518x",
+            &alias_run.run_id,
+            alias_run.mode,
+            alias_run.base_anchor.as_deref(),
             "legacy-cursor",
             "2026-07-20T00:00:00Z",
         )
@@ -2693,7 +3019,7 @@ mod tests {
         };
         assert_eq!(
             message,
-            "legacy catalog alias has provider checkpoint state"
+            "legacy catalog alias has provider synchronization state"
         );
         assert_eq!(*provider.calls.lock().expect("call count should lock"), 0);
         assert_eq!(
@@ -2780,7 +3106,9 @@ mod tests {
             assignments: vec![WorkerJournalAssignment {
                 journal_ordinal: 0,
                 entry: catalog("journal-1"),
-                initial_checkpoint: None,
+                mode: IndexSyncMode::Bootstrap,
+                committed_anchor: None,
+                traversal_checkpoint: None,
             }],
         }
     }
@@ -2871,7 +3199,7 @@ mod tests {
     }
 
     #[test]
-    fn provider_switch_uses_new_checkpoint_namespace_and_same_content_ids() {
+    fn provider_switch_uses_new_control_namespace_and_same_content_ids() {
         let directory = tempdir().expect("temporary directory should create");
         let provider = StaticProvider::new();
         let content_path = directory.path().join("content.sqlite");
@@ -2927,17 +3255,14 @@ mod tests {
                 .expect("article count should read"),
             1
         );
-        let scope = CheckpointScope::Journal {
-            catalog_id: "journal-1".to_string(),
-        };
         assert!(
-            read_checkpoint(&control, "chinese_journals", "provider-a", &scope)
-                .expect("provider A checkpoint should read")
+            read_sync_anchor(&control, "chinese_journals", "provider-a", "journal-1")
+                .expect("provider A anchor should read")
                 .is_some()
         );
         assert!(
-            read_checkpoint(&control, "chinese_journals", "provider-b", &scope)
-                .expect("provider B checkpoint should read")
+            read_sync_anchor(&control, "chinese_journals", "provider-b", "journal-1")
+                .expect("provider B anchor should read")
                 .is_some()
         );
     }
@@ -3147,7 +3472,7 @@ mod tests {
     }
 
     #[test]
-    fn single_writer_parent_preloads_complete_and_provider_checkpoints() {
+    fn single_writer_parent_preloads_successful_and_inflight_state() {
         let mut config = LiveIndexConfig {
             application_executable: "litradar".into(),
             project_root: ".".into(),
@@ -3178,31 +3503,36 @@ mod tests {
             run_id: "run".to_string(),
             timestamp: "2026-07-19T00:00:00Z".to_string(),
         };
-        let complete_scope = CheckpointScope::Journal {
-            catalog_id: "complete".to_string(),
-        };
-        let resumable_scope = CheckpointScope::Journal {
-            catalog_id: "resumable".to_string(),
-        };
-        write_checkpoint(
+        seed_completed_sync(
             &control,
             &context.catalog_name,
             &context.provider_name,
-            &complete_scope,
-            &serde_json::to_string(&StoredCheckpoint::Complete)
-                .expect("complete checkpoint should serialize"),
+            "complete",
+            None,
             &context.timestamp,
-        )
-        .expect("complete checkpoint should write");
-        write_checkpoint(
+        );
+        let resumable = prepared_run(
+            prepare_journal_sync(
+                &control,
+                &context.catalog_name,
+                &context.provider_name,
+                "resumable",
+                "previous-run",
+                IndexSyncMode::Bootstrap,
+                false,
+                &context.timestamp,
+            )
+            .expect("resumable run should prepare"),
+        );
+        advance_run_checkpoint(
             &control,
             &context.catalog_name,
             &context.provider_name,
-            &resumable_scope,
-            &serde_json::to_string(&StoredCheckpoint::Provider {
-                value: "cursor-resume".to_string(),
-            })
-            .expect("provider checkpoint should serialize"),
+            "resumable",
+            &resumable.run_id,
+            resumable.mode,
+            resumable.base_anchor.as_deref(),
+            "cursor-resume",
             &context.timestamp,
         )
         .expect("provider checkpoint should write");
@@ -3216,9 +3546,10 @@ mod tests {
         assert_eq!(requests[0].assignments.len(), 1);
         assert_eq!(requests[0].assignments[0].entry.catalog_id, "resumable");
         assert_eq!(
-            requests[0].assignments[0].initial_checkpoint.as_deref(),
+            requests[0].assignments[0].traversal_checkpoint.as_deref(),
             Some("cursor-resume")
         );
+        assert_eq!(requests[0].assignments[0].mode, IndexSyncMode::Bootstrap);
     }
 
     #[test]
@@ -3692,9 +4023,11 @@ mod tests {
             "open_content_db(",
             "open_control_db(",
             "write_content_batch(",
-            "commit_content_then_checkpoint(",
+            "commit_content_then_progress(",
+            "prepare_journal_sync(",
             "heartbeat_lease(",
-            "write_checkpoint(",
+            "advance_run_checkpoint(",
+            "complete_sync_run(",
         ] {
             assert!(
                 !worker_source.contains(forbidden),
@@ -3734,7 +4067,7 @@ mod tests {
     }
 
     #[test]
-    fn single_writer_checkpoint_failure_replays_committed_content_idempotently() {
+    fn single_writer_control_failure_replays_committed_content_idempotently() {
         let directory = tempdir().expect("temporary directory should create");
         let content_path = directory.path().join("content.sqlite");
         let control_path = directory.path().join("control.sqlite");
@@ -3742,23 +4075,36 @@ mod tests {
         let control = open_control_db(&control_path).expect("control should open");
         let catalog = catalog("journal-single-writer-replay");
         let batch = canonical_batch(&catalog);
-        let scope = CheckpointScope::Journal {
-            catalog_id: catalog.catalog_id.clone(),
-        };
+        let run = prepared_run(
+            prepare_journal_sync(
+                &control,
+                "chinese_journals",
+                "provider-a",
+                &catalog.catalog_id,
+                "single-writer-run",
+                IndexSyncMode::Bootstrap,
+                false,
+                "2026-07-18T00:00:00Z",
+            )
+            .expect("single-writer run should prepare"),
+        );
         control
             .execute_batch(
-                "CREATE TRIGGER fail_single_writer_checkpoint
-                 BEFORE INSERT ON provider_checkpoints
-                 BEGIN SELECT RAISE(ABORT, 'forced checkpoint failure'); END;",
+                "CREATE TRIGGER fail_single_writer_control
+                 BEFORE INSERT ON provider_sync_anchors
+                 BEGIN SELECT RAISE(ABORT, 'forced control failure'); END;",
             )
-            .expect("checkpoint failpoint should install");
+            .expect("control failpoint should install");
 
-        let checkpoint_error = commit_content_then_checkpoint(
+        let checkpoint_error = commit_content_then_progress(
             &control,
             "chinese_journals",
             "provider-a",
-            &scope,
-            "complete",
+            &catalog.catalog_id,
+            &run.run_id,
+            run.mode,
+            run.base_anchor.as_deref(),
+            &batch.progress,
             "2026-07-18T00:00:00Z",
             || {
                 write_content_batch(
@@ -3783,20 +4129,36 @@ mod tests {
             1
         );
         assert_eq!(
-            read_checkpoint(&control, "chinese_journals", "provider-a", &scope)
-                .expect("checkpoint should read"),
-            None
+            read_sync_anchor(
+                &control,
+                "chinese_journals",
+                "provider-a",
+                &catalog.catalog_id
+            )
+            .expect("anchor should read"),
+            None,
         );
-        control
-            .execute_batch("DROP TRIGGER fail_single_writer_checkpoint")
-            .expect("checkpoint failpoint should drop");
-
-        let replay = commit_content_then_checkpoint(
+        assert!(read_run_checkpoint(
             &control,
             "chinese_journals",
             "provider-a",
-            &scope,
-            "complete",
+            &catalog.catalog_id
+        )
+        .expect("run should read")
+        .is_some());
+        control
+            .execute_batch("DROP TRIGGER fail_single_writer_control")
+            .expect("control failpoint should drop");
+
+        let replay = commit_content_then_progress(
+            &control,
+            "chinese_journals",
+            "provider-a",
+            &catalog.catalog_id,
+            &run.run_id,
+            run.mode,
+            run.base_anchor.as_deref(),
+            &batch.progress,
             "2026-07-18T00:01:00Z",
             || {
                 write_content_batch(
@@ -3808,15 +4170,17 @@ mod tests {
                 )
             },
         )
-        .expect("single-writer replay should advance the checkpoint");
+        .expect("single-writer replay should advance the anchor");
         assert_eq!(replay.articles_changed, 0);
         assert_eq!(replay.change_events_emitted, 0);
-        assert_eq!(
-            read_checkpoint(&control, "chinese_journals", "provider-a", &scope)
-                .expect("checkpoint should read")
-                .as_deref(),
-            Some("complete")
-        );
+        assert!(read_sync_anchor(
+            &control,
+            "chinese_journals",
+            "provider-a",
+            &catalog.catalog_id
+        )
+        .expect("anchor should read")
+        .is_some());
     }
 
     #[test]
@@ -4101,20 +4465,33 @@ mod tests {
     }
 
     #[test]
-    fn parent_heartbeat_preserves_domestic_cnki_lease_and_checkpoint() {
+    fn parent_heartbeat_preserves_domestic_cnki_lease_and_run_checkpoint() {
         let directory = tempdir().expect("temporary directory should create");
         let control_path = directory.path().join("control.sqlite");
         let control = open_control_db(&control_path).expect("control should open");
         let now = LiveRunTime::now().epoch_seconds;
-        let scope = CheckpointScope::Journal {
-            catalog_id: "journal".to_string(),
-        };
         acquire_lease(&control, "catalog", "cnki", "run", now).expect("lease should acquire");
-        write_checkpoint(
+        let run = prepared_run(
+            prepare_journal_sync(
+                &control,
+                "catalog",
+                "cnki",
+                "journal",
+                "run",
+                IndexSyncMode::Bootstrap,
+                false,
+                "2026-07-24T00:00:00Z",
+            )
+            .expect("run checkpoint should prepare"),
+        );
+        advance_run_checkpoint(
             &control,
             "catalog",
             "cnki",
-            &scope,
+            "journal",
+            &run.run_id,
+            run.mode,
+            run.base_anchor.as_deref(),
             "domestic-cursor",
             "2026-07-24T00:00:00Z",
         )
@@ -4137,8 +4514,10 @@ mod tests {
             .expect("heartbeat timestamp should read");
         assert!(heartbeat_at >= now);
         assert_eq!(
-            read_checkpoint(&control, "catalog", "cnki", &scope)
+            read_run_checkpoint(&control, "catalog", "cnki", "journal")
                 .expect("domestic checkpoint should read")
+                .expect("domestic run should remain")
+                .traversal_checkpoint
                 .as_deref(),
             Some("domestic-cursor")
         );

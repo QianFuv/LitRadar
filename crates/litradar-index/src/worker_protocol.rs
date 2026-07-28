@@ -4,7 +4,7 @@ use std::error::Error;
 use std::fmt;
 use std::io::{Read, Write};
 
-use litradar_domain::{JournalCatalogEntry, ProviderBatch};
+use litradar_domain::{IndexSyncMode, JournalCatalogEntry, ProviderBatch};
 use litradar_sources::LiveScholarlyConfig;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -13,15 +13,36 @@ use serde::{Deserialize, Serialize};
 pub(crate) const PROTOCOL_VERSION: u32 = 5;
 
 /// One journal and optional resume cursor assigned to a fetch worker.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[derive(Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct WorkerJournalAssignment {
     /// Stable ordinal in the selected catalog.
     pub(crate) journal_ordinal: usize,
     /// Provider-free maintained journal contract.
     pub(crate) entry: JournalCatalogEntry,
-    /// Opaque provider cursor read by the parent before spawning workers.
-    pub(crate) initial_checkpoint: Option<String>,
+    /// Synchronization mode frozen by the parent before spawning workers.
+    pub(crate) mode: IndexSyncMode,
+    /// Opaque successful boundary frozen by the parent.
+    pub(crate) committed_anchor: Option<String>,
+    /// Opaque Provider position for the next fetch operation.
+    pub(crate) traversal_checkpoint: Option<String>,
+}
+
+impl fmt::Debug for WorkerJournalAssignment {
+    /// Format assignment metadata without exposing opaque Provider state.
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("WorkerJournalAssignment")
+            .field("journal_ordinal", &self.journal_ordinal)
+            .field("entry", &self.entry)
+            .field("mode", &self.mode)
+            .field("has_committed_anchor", &self.committed_anchor.is_some())
+            .field(
+                "has_traversal_checkpoint",
+                &self.traversal_checkpoint.is_some(),
+            )
+            .finish()
+    }
 }
 
 /// Versioned fetch-only worker request persisted by the parent.
@@ -389,7 +410,56 @@ pub(crate) fn read_message<Message: DeserializeOwned>(
 mod tests {
     use std::io::{BufReader, Cursor};
 
-    use super::{read_message, write_message, ParentMessage, WorkerBootstrap, PROTOCOL_VERSION};
+    use litradar_domain::{IndexSyncMode, JournalCatalogEntry, JournalRankings};
+
+    use super::{
+        read_message, write_message, ParentMessage, WorkerBootstrap, WorkerJournalAssignment,
+        PROTOCOL_VERSION,
+    };
+
+    #[test]
+    fn worker_assignment_debug_redacts_opaque_provider_state() {
+        let anchor = "anchor-secret-sentinel";
+        let checkpoint = "checkpoint-secret-sentinel";
+        let assignment = WorkerJournalAssignment {
+            journal_ordinal: 3,
+            entry: JournalCatalogEntry {
+                catalog_id: "journal-3".to_string(),
+                catalog_aliases: Vec::new(),
+                title: "Canonical Journal".to_string(),
+                issn: None,
+                eissn: None,
+                all_issns: Vec::new(),
+                title_aliases: Vec::new(),
+                area: None,
+                rankings: JournalRankings::default(),
+            },
+            mode: IndexSyncMode::Incremental,
+            committed_anchor: Some(anchor.to_string()),
+            traversal_checkpoint: Some(checkpoint.to_string()),
+        };
+
+        let debug = format!("{assignment:?}");
+
+        assert!(!debug.contains(anchor));
+        assert!(!debug.contains(checkpoint));
+        assert!(debug.contains("has_committed_anchor: true"));
+        assert!(debug.contains("has_traversal_checkpoint: true"));
+
+        let encoded = serde_json::to_value(&assignment).expect("assignment should serialize");
+        let decoded: WorkerJournalAssignment =
+            serde_json::from_value(encoded.clone()).expect("assignment should deserialize");
+        assert_eq!(decoded, assignment);
+        let mut unknown = encoded
+            .as_object()
+            .expect("assignment should serialize as an object")
+            .clone();
+        unknown.insert("unexpected".to_string(), serde_json::Value::Bool(true));
+        assert!(
+            serde_json::from_value::<WorkerJournalAssignment>(serde_json::Value::Object(unknown))
+                .is_err()
+        );
+    }
 
     #[test]
     fn worker_protocol_bootstrap_round_trips_and_redacts_credentials() {
