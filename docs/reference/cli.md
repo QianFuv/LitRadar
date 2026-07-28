@@ -134,7 +134,7 @@ litradar admin backup restore
     [--auth-db PATH]
 ```
 
-备份命令不接收部署密钥。清单格式名固定为 `litradar-backup`；新备份使用 version 2，并始终包含认证库和完整 `data/meta` 普通文件树。`--include-indexes` 只选择 `data/index` 下的 v4 内容库，明确排除可重建的 `data/index-control`；`--include-push-state` 同时选择 `data/push_state` 和 `data/folder_push_state`。验证和恢复仍接受 version 1；v1 恢复不会修改目标 Meta 目录。精确替换和离线门禁见[备份与恢复](../operations/backup.md)。
+备份命令不接收部署密钥。清单格式名固定为 `litradar-backup`；新备份使用 version 2，并始终包含认证库和完整 `data/meta` 普通文件树。`--include-indexes` 只选择 `data/index` 下的 v6 内容库，明确排除可重建的 `data/index-control`；`--include-push-state` 同时选择 `data/push_state` 和 `data/folder_push_state`。验证和恢复仍接受 version 1；v1 恢复不会修改目标 Meta 目录。精确替换和离线门禁见[备份与恢复](../operations/backup.md)。
 
 ## `index`
 
@@ -149,6 +149,7 @@ litradar index --secret-key-file PATH
     [--timeout N]
     [--resume | --no-resume]
     [--update | --no-update]
+    [--full-rescan | --no-full-rescan]
     [--notify | --no-notify]
     [--notify-dry-run | --no-notify-dry-run]
 ```
@@ -161,8 +162,9 @@ litradar index --secret-key-file PATH
 | `--processes N`                            | `1`      | 单个 CSV 的独立期刊子进程数                                  |
 | `--issue-batch N`                          | `8`      | 每轮合并的 CNKI issue 数                                     |
 | `--timeout N`                              | `20`     | 上游 HTTP 超时秒数                                           |
-| `--resume` / `--no-resume`                 | 开启     | 是否跳过已完成期刊/年份                                      |
-| `--update` / `--no-update`                 | 关闭     | 是否生成增量变更清单                                         |
+| `--resume` / `--no-resume`                 | 开启     | 是否跳过已成功的 Bootstrap 或恢复同模式运行窗口              |
+| `--update` / `--no-update`                 | 关闭     | 是否执行成功期次边界增量并生成变更清单                       |
+| `--full-rescan` / `--no-full-rescan`       | 关闭     | 是否扫描完整 Provider 历史且不生成变更清单                   |
 | `--notify` / `--no-notify`                 | 关闭     | 更新成功后启动 `litradar notify`                             |
 | `--notify-dry-run` / `--no-notify-dry-run` | 关闭     | 下游 notify 是否 dry-run                                     |
 
@@ -172,6 +174,7 @@ litradar index --secret-key-file PATH
 - 只要选中的目录路由到 Scholarly，`workers` 进一步限制为最多 6、`processes` 最多为 3；超限会在上游请求前失败。国内 CNKI 使用通用 `workers <= 32` 和聚合 32 上限。
 - 国内 CNKI 中，`processes` 并行不同期刊，`workers` 是每个期刊子进程在 Provider 构造时创建一次的固定详情线程池；所有 papers 页复用该池，Provider 释放时关闭并等待全部线程。期刊定位、刊期树、papers 页、checkpoint 和 SQLite 提交仍保持有序。实际详情在途量不超过 `workers × min(processes, 期刊数)`、聚合上限 32 和各当前 papers 页的文章数。
 - 只要选中的目录路由到 Scholarly，OpenAlex key、Semantic Scholar key 和 Crossref mailto 都必须存在；缺少任一类会在创建内容库、控制库或其他索引状态前失败。
+- `--update` 与 `--full-rescan` 互斥；冲突会在数据库迁移、Provider 构造和 worker 启动前失败。
 - `--notify` 必须和 `--update` 同时使用。
 - 单独传 `--notify-dry-run` 不会启动 notify；它只修改 `--notify` handoff 的模式。
 - Scholarly 中的 `--workers` 只扩大每个期刊子进程的 OpenAlex DOI 子批在途容量；`6 × 3` 因此最多同时保留 18 个这类请求。每个 OpenAlex key 跨全部期刊子进程共享一组 11-ms 相位，约暴露 `90.9 req/s/key`；增加进程只改变相位所有权，不把单 key 速率乘以进程数。调度器使用全部健康 key，并按剩余 daily credits、在途、冷却和认证状态负载均衡。每日安全预留按 `workers × processes × 最大已知单次 credit cost` 计算。
@@ -201,19 +204,27 @@ CSV 使用 LitRadar 维护的 `catalog_id,title,issn,eissn,all_issns,title_alias
 
 `index_provider_routes` 从 `auth.sqlite.runtime_settings` 把 stem 映射到一个已注册 `IndexContentProvider`。缺少 route、Provider 未注册或没有索引 capability 都会在启动 worker 前失败。改变 route 不改目录或内容库身份；在线摘要页和全文使用各自的 default + per-catalog 顺序，和索引 Provider 单选相互独立。
 
-内容库必须是新建/空 v0 或精确 v4。非空 v0 及 v1–v3 会返回包含确切路径的 rebuild-required 错误；命令不自动删除、改名、迁移或降低 `user_version`。先备份，再移动或删除点名文件并重建。
+内容库必须是新建/空 v0、精确 v6，或可事务迁移的精确 v4/v5。非空 v0 及 v1–v3 会返回包含确切路径的 rebuild-required 错误；命令不自动删除、改名或降低 `user_version`。先备份，再移动或删除点名文件并重建。
 
 ### 实时恢复与增量同步
 
 每个目录/Provider 在 `data/index-control/<stem>.sqlite` 取得独立 lease。父进程每 30 秒续期到未来 300 秒；未过期所有者会在调用上游前阻止同一 namespace 的新命令。正常结束释放 lease；进程被强制终止时，确认旧进程已经消失并等待 lease 过期，或在维护窗口删除整个可丢弃控制库后重跑。
 
-Provider checkpoint 以目录、Provider 和 journal/year/listing scope 隔离。普通 `--resume` 可跳过已完成 journal 或从 opaque checkpoint 继续；`--update` 忽略完成 checkpoint 并重新扫描规范内容。切换 Provider 会使用新的 checkpoint namespace，不触碰内容库。
+控制库把成功状态与运行状态分开保存，并以目录、Provider、`catalog_id` 隔离。命令模式如下：
 
-每页先在内容库事务中写入规范 journal/issue/article、identity aliases、投影和 change outbox，再推进控制 checkpoint。内容成功而 checkpoint 失败时，重跑依靠 alias/upsert 去重。删除控制库会失去进度但不会复制文章或改变 ID。
+- 不传 `--update` 或 `--full-rescan` 时使用 Bootstrap。`--resume` 遇到已有成功行会跳过该期刊；即使成功 anchor 为 NULL，也表示一次完整运行已经成功，不等于缺少状态。
+- `--update` 使用 Incremental。从远端当前头部扫描到上一次完整成功 anchor，并完整包含该边界期次；没有成功行或成功 anchor 为 NULL 时安全执行完整覆盖。只有该模式在成功后发布 `.changes.json`。
+- `--full-rescan` 使用 FullRescan，忽略成功 anchor 作为停止边界并核对完整 Provider 历史。它可以恢复同为 FullRescan 的 traversal checkpoint，但不发布 `.changes.json`，因此不能与 `--notify` 组合。
+
+一次运行开始时冻结 `base_anchor`；Provider 在第一个已确认 batch 中冻结自己的 candidate head。`--resume` 只恢复同步模式和 base 都匹配的运行，模式不一致会 fail closed。`--no-resume` 替换当前 traversal checkpoint 并从该模式头部重走，但不会删除或根据内容库重算 committed anchor。
+
+每页先在内容库事务中写入规范 journal/issue/article、identity aliases、投影和 change outbox，再推进 traversal checkpoint。最终内容批次提交后，核心才在一个控制事务中删除运行 checkpoint 并替换 committed anchor。内容成功而控制提交失败时，旧 anchor 不变；重跑冻结窗口并依靠 alias/upsert 去重。
+
+切换 Provider 会使用没有 anchor 的新 namespace；删除控制库也会同时失去成功 anchor 和运行进度。两种情况都安全退回完整覆盖，不触碰内容库，也不会复制文章或改变 ID。
 
 `--update` 从内容库的事务性 `article_change_events` 生成 Provider-neutral changes JSON。worker、上游或清单失败会保留 outbox；文件发布和 SQLite 清理之间是至少一次边界，消费者必须按规范文章身份去重。Provider 请求统计只在终态结构化日志中聚合，不写入内容库。
 
-示例：
+日常增量及可选通知：
 
 ```bash
 litradar index \
@@ -222,6 +233,15 @@ litradar index \
   --update \
   --notify \
   --notify-dry-run
+```
+
+周期性核对历史回填和旧元数据（与 `--update` 互斥，不生成 changes JSON）：
+
+```bash
+litradar index \
+  --secret-key-file secrets/litradar.key \
+  --file english_journals.csv \
+  --full-rescan
 ```
 
 ## `notify` 和 `push`

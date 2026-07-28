@@ -18,7 +18,7 @@ litradar serve  (one long-running process)
    |
    +-- data/auth.sqlite
    +-- data/index/*.sqlite
-   +-- data/index-control/*.sqlite  (disposable provider checkpoints/leases)
+   +-- data/index-control/*.sqlite  (disposable provider anchors/run checkpoints/leases)
    +-- data/push_state/*.json
    +-- data/folder_push_state/*.json
 
@@ -133,28 +133,33 @@ read canonical CSV -> validate catalog contract
         |
         +-- catalog stem -> runtime index_provider_routes -> registered IndexContentProvider
         |
-        +-- data/index/<stem>.sqlite         (content v4)
-        +-- data/index-control/<stem>.sqlite (disposable control v2)
+        +-- data/index/<stem>.sqlite         (content v6)
+        +-- data/index-control/<stem>.sqlite (disposable control v3)
                     |
                     v
-acquire provider-scoped lease -> fetch canonical batches
--> commit canonical content -> commit opaque checkpoint
--> publish provider-neutral change manifest -> release lease
+acquire provider-scoped lease
+-> read committed anchor or resume matching frozen run
+-> Provider fetch(mode, committed anchor, traversal checkpoint)
+-> commit canonical content
+-> Continue: advance traversal checkpoint
+   Complete: atomically remove run and replace committed anchor
+-> --update only: publish provider-neutral change manifest
+-> release lease
 ```
 
 目录验证在 Provider 请求前拒绝未知列、重复/非法 `catalog_id`、非法 ISSN、重复别名和不规范文本。索引路由来自 `auth.sqlite.runtime_settings.index_provider_routes`；摘要页和全文顺序分别来自带 default 与 catalog overrides 的运行设置。内容库和目录都不知道实际 Provider。
 
 “分进程注册”只表示同一个 `litradar` 二进制在不同命令边界构造不同的内存注册表：`index` 进程注册索引实现，`serve` 的 API 进程注册摘要页/全文实现。它不是多服务部署，也不表示 Provider 自动回退。管理 API 按相同逻辑名称聚合这些注册，形成供前端过滤选项的 capability 目录。
 
-多进程索引把调度信息和 journal assignments 写入可丢弃 request JSON。国内 CNKI captcha token 不属于该文件：父进程启动 child 后移除继承的探测环境变量，只为 `provider_name=cnki` 的 worker 通过 stdin 发送一次版本化 bootstrap；worker 在 Provider 构造前验证协议版本和 worker ID，随后同一管道继续接收 parent 的 durable commit ACK。其他 worker 的 bootstrap 不携带该 token，相关 Debug、错误和日志只保留固定脱敏字段。
+多进程索引使用私有 worker protocol v5，把同步模式、Provider-opaque 的 committed anchor 和 traversal checkpoint 随 journal assignment 写入可丢弃 request JSON；worker 不解析这些值，父进程仍独占 SQLite 和提交顺序。国内 CNKI captcha token 不属于该文件：父进程启动 child 后移除继承的探测环境变量，只为 `provider_name=cnki` 的 worker 通过 stdin 发送一次版本化 bootstrap；worker 在 Provider 构造前验证协议版本和 worker ID，随后同一管道继续接收 parent 的 durable commit ACK。其他 worker 的 bootstrap 不携带该 token，相关 Debug、错误和日志只保留固定脱敏字段。
 
-Provider 只能返回规范 `JournalDraft`、`IssueDraft`、`ArticleDraft` 和 opaque checkpoint。`litradar-index` 负责校验、稳定 ID、合并、SQLite 事务和 outbox。内容先提交、checkpoint 后提交；控制提交失败时重跑会依靠规范 alias 幂等收敛。
+Provider 只能返回规范 `JournalDraft`、`IssueDraft`、`ArticleDraft` 和 `ProviderProgress`。`Continue` 携带下一 traversal checkpoint；`Complete` 携带可空的 next anchor。两个字符串都保持 Provider-scoped、opaque，核心不解析 CNKI issue ID、Scholarly fingerprint 或上游 cursor。`litradar-index` 负责校验、稳定 ID、合并、SQLite 事务和 outbox。内容先提交、控制状态后提交；控制提交失败时旧 anchor 保持不变，重跑依靠冻结窗口和规范 alias 幂等收敛。
 
 ### 索引数据库
 
-每个 CSV 对应 `data/index/<csv_stem>.sqlite`。v4 内容库只包含规范期刊、期次、文章、identity aliases、查询/FTS 投影和事务性文章变更 outbox。它不包含 Provider、URL、checkpoint、lease 或运行统计。
+每个 CSV 对应 `data/index/<csv_stem>.sqlite`。v6 内容库只包含规范期刊、期次、文章、identity aliases、撤稿关系、查询/FTS 投影和事务性文章变更 outbox。它不包含 Provider、URL、anchor、checkpoint、lease 或运行统计。
 
-`data/index-control/<csv_stem>.sqlite` 是可丢弃的 Provider-scoped checkpoint/lease 库。删除后会重新抓取，但不会改变内容 ID 或复制已有文章。内容库需要备份，控制库明确不备份。详见[数据库参考](reference/database.md)。
+`data/index-control/<csv_stem>.sqlite` 是可丢弃的 Provider-scoped v3 控制库：成功 anchor 与运行中的 traversal checkpoint 分表保存，lease 仍按目录/Provider 隔离。删除后没有可信成功边界，下一次运行安全退回完整抓取，但不会改变内容 ID 或复制已有文章。切换 Provider 使用新的 namespace，同样从无 anchor 状态开始。内容库需要备份，控制库明确不备份。详见[数据库参考](reference/database.md)。
 
 ### 认证与业务数据库
 
@@ -186,11 +191,12 @@ Provider 只能返回规范 `JournalDraft`、`IssueDraft`、`ArticleDraft` 和 o
 ### Scholarly 索引
 
 1. `index_provider_routes` 为该目录选择 `scholarly` 索引能力。
-2. Provider 接收规范 `JournalCatalogEntry`，Crossref 按 ISSN 提供文章主列表。
+2. Provider 接收 contract v3 的规范 `JournalCatalogEntry` 与同步 context；Crossref 按 ISSN 和出版日期降序提供文章主列表。
 3. Crossref 对所有 ISSN 返回 404 时，OpenAlex 解析 source 并作为文章列表 fallback。
 4. OpenAlex 按 DOI 增强元数据；Semantic Scholar 增强 OA 和缺失摘要；所有上游 URL 在映射边界丢弃。
-5. Provider 返回规范 batch，`litradar-index` 写入关系表、`article_listing` 和 `article_search`。
-6. `--update` 生成变更清单。
+5. 增量运行从远端头部扫描到成功 anchor 的规范期次 fingerprint，并完整包含该边界；日期 filter 只用于缩小候选，不能替代边界证明。
+6. Provider 返回规范 batch 和 Continue/Complete 进度，`litradar-index` 写入关系表、`article_listing` 和 `article_search`，整刊完成后才推进 anchor。
+7. `--update` 生成变更清单；`--full-rescan` 覆盖完整历史但不生成该清单。
 
 具体请求和字段优先级见 [Scholarly 数据源](reference/sources/scholarly.md)。
 
@@ -258,8 +264,8 @@ browser -> stable LitRadar action URL -> load ArticleLocator
 1. 解析路径和参数。
 2. 检查 `PRAGMA user_version`。
 3. 认证库在独立 `BEGIN IMMEDIATE` 事务中逐版本迁移。
-4. 内容索引只接受新建/空 v0 或精确 v4；非空 v0 及 v1–v3 明确要求人工备份、移动或删除点名文件后重建。
-5. 控制库按 v2 创建，可随时删除并重建；已有 v1 只在升级事务中把海外时代的 `cnki` / `zjlib_cnki` key 重写一次，之后重开不会改写当前国内 `cnki` 状态。
+4. 内容索引接受新建/空 v0、精确 v6，或可在事务中迁移的精确 v4/v5；非空 v0 及 v1–v3 明确要求人工备份、移动或删除点名文件后重建。
+5. 控制库按 v3 创建，可随时删除并重建；v0/v1 的旧 Provider 名称先按兼容规则重写，v0/v1/v2 中可证明为 journal complete 的事实迁移为成功但 NULL 的 anchor，无法恢复的旧 traversal 状态丢弃。
 6. 遇到未来版本或失败立即退出，不自动删除或改写文件。
 
 `litradar serve` 先完成一次存储迁移、密钥验证和 HTTP 准备，再启动监听器与立即执行的首个调度 tick。普通查询仓库不负责 DDL。

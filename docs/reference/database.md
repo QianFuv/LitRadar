@@ -7,7 +7,7 @@ LitRadar 把规范内容、可丢弃索引控制状态和用户业务数据放�
 | 路径                                  |             数量 | 生命周期与责任                                     |
 | ------------------------------------- | ---------------: | -------------------------------------------------- |
 | `data/index/<catalog>.sqlite`         |     每个目录一个 | 需要备份的 Provider-neutral 内容库                 |
-| `data/index-control/<catalog>.sqlite` | 每个活动目录一个 | 可删除的 Provider checkpoint/lease 控制库          |
+| `data/index-control/<catalog>.sqlite` | 每个活动目录一个 | 可删除的 Provider anchor/run checkpoint/lease 控制库 |
 | `data/auth.sqlite`                    |             一个 | 用户、收藏、会话、配置、任务、公告、审计、投递状态和受管 Meta 状态 |
 | `data/push_state/`                    |        多个 JSON | Provider-neutral 变更清单和保留的旧 notify 导入源  |
 | `data/folder_push_state/`             |        多个 JSON | 保留的旧 push 导入源                               |
@@ -18,9 +18,9 @@ LitRadar 把规范内容、可丢弃索引控制状态和用户业务数据放�
 
 | 数据库      | `PRAGMA user_version` | 升级策略                              |
 | ----------- | --------------------: | ------------------------------------- |
-| 认证/业务库 |                    10 | 版本化 migration                      |
+| 认证/业务库 |                    12 | 版本化 migration                      |
 | 内容索引库  |                     6 | 新建/验证精确 v6；精确 v4/v5 原子迁移到 v6 |
-| 索引控制库  |                     1 | 可删除后按 v1 重建                    |
+| 索引控制库  |                     3 | v0/v1/v2 安全迁移；也可删除后按 v3 重建 |
 
 可写连接使用 `foreign_keys=ON`、WAL、`synchronous=NORMAL` 和 30 秒 busy timeout。
 
@@ -85,7 +85,7 @@ article_change_events (transactional content outbox)
 - `catalog_aliases` 中所有已退役 catalog ID；
 - `all_issns` 中所有规范 ISSN。
 
-该表故意不使用到 `journals` 的外键，因此空内容库可以先登记完整身份所有权，而不创建未索引的 journal 壳。每次索引在 Provider 分配和请求之前进行目录级事务归并：保留无关历史键、登记当前目录键、刷新已有规范 journal 的维护元数据及 listing/FTS 投影，并且只删除没有 issue、article、listing 或 outbox 历史的旧 alias journal 壳。旧壳仍有内容、身份键属于另一规范期刊，或旧 alias 仍有任何 Provider namespace 的 checkpoint 时，运行在 Provider 请求前固定失败且不做部分归并。
+该表故意不使用到 `journals` 的外键，因此空内容库可以先登记完整身份所有权，而不创建未索引的 journal 壳。每次索引在 Provider 分配和请求之前进行目录级事务归并：保留无关历史键、登记当前目录键、刷新已有规范 journal 的维护元数据及 listing/FTS 投影，并且只删除没有 issue、article、listing 或 outbox 历史的旧 alias journal 壳。旧壳仍有内容、身份键属于另一规范期刊，或旧 alias 仍有任何 Provider namespace 的 anchor/run 状态时，运行在 Provider 请求前固定失败且不做部分归并。
 
 每个内容 batch 的写事务还会重新核对 catalog ID、catalog alias、ISSN 和确定性 `journal_id` 的所有权，防止预检后出现错误改绑。身份键只能新增或由已证明为空的旧 alias 壳释放；不会猜测合并两个已有期刊实体。
 
@@ -152,21 +152,37 @@ FTS5 使用内置 `unicode61 remove_diacritics 2`，字段为：
 - 记录 article/journal/issue 和 in-press membership；
 - revision 唯一索引让 Provider 重试和控制状态丢失重放幂等收敛。
 
-`--update` 把事件生成到 `data/push_state/<db>.changes.json`。文件发布成功后清理已发布 outbox；文件系统替换和 SQLite 提交之间仍是至少一次边界，消费者继续按身份去重。
+`--update` 把事件生成到 `data/push_state/<db>.changes.json`。文件发布成功后清理已发布 outbox；文件系统替换和 SQLite 提交之间仍是至少一次边界，消费者继续按身份去重。Bootstrap 和 `--full-rescan` 不发布该清单，并在成功结束时丢弃本次无需投递的 outbox。
 
-## v1 索引控制库
+## v3 索引控制库
 
-控制库位于 `data/index-control`，与内容发现、REST 查询和备份完全分离。
+控制库位于 `data/index-control`，与内容发现、REST 查询和备份完全分离。所有键都包含 `catalog_name`、`provider_name` 和规范 `catalog_id`；opaque 值非空时最多 65,536 字节，核心从不解析其 Provider 私有结构。
 
 ### `provider_leases`
 
 主键 `(catalog_name, provider_name)`，保存 `run_id`、`heartbeat_at`、`expires_at`。父进程每 30 秒续期；未过期所有者阻止同一目录/Provider 的并发运行，过期 lease 可被后续运行接管。
 
-### `provider_checkpoints`
+### `provider_sync_anchors`
 
-主键 `(catalog_name, provider_name, scope_kind, scope_key)`。scope 只允许 `listing`、`journal`、`year`；`checkpoint` 是 Provider 私有 opaque 文本。
+主键 `(catalog_name, provider_name, catalog_id)`，保存可空 `committed_anchor` 和 `completed_at`。该行只在整本期刊运行 Complete 后创建或替换：
 
-切换 Provider 会自然使用新的 checkpoint namespace，而不修改内容库。删除或丢失控制库后，下一次运行从头抓取并通过 `article_identity_keys` 和 upsert 规则收敛。控制库不需要迁移、恢复或备份。
+- 行不存在：没有可信成功状态；下一次运行必须完整覆盖。
+- 行存在且 `committed_anchor IS NULL`：上次运行完整成功，但该 Provider 没有可复用的增量边界。默认 Bootstrap 可以跳过；`--update` 必须安全完整扫描。
+- 行存在且 anchor 非空：`--update` 把它作为本次冻结 base 原样交给同一 Provider。
+
+内容库“看起来最新”的期次不会用于重算该值。Continue 不能修改 committed anchor；只有最终内容批次已经提交后，Complete 才推进它。
+
+### `provider_run_checkpoints`
+
+主键同样是 `(catalog_name, provider_name, catalog_id)`。每行保存当前 `run_id`、`sync_mode`（`bootstrap` / `incremental` / `full_rescan`）、冻结的可空 `base_anchor`、可空 `traversal_checkpoint`、`started_at` 和 `updated_at`。
+
+`base_anchor` 在运行期间不变；`traversal_checkpoint` 是 Provider 私有的页码、cursor、期次位置或组合状态。`--resume` 只接管 mode 与 base 都匹配的行；模式不匹配或 base 漂移会拒绝。`--no-resume` 替换 run 行并清空 traversal，但保留成功 anchor。每个 Continue 在内容提交之后更新 traversal；Complete 在一个 immediate transaction 中删除 run 行并 upsert 成功 anchor。
+
+### v0/v1/v2 迁移与删除语义
+
+旧 `provider_checkpoints` 只有 journal scope 且 JSON 严格等于 complete marker 的行可以证明“曾完整成功”，因此迁移为 `provider_sync_anchors` 的 NULL anchor。旧分页 cursor、listing/year scope、损坏或未知状态无法证明冻结窗口，全部丢弃；迁移随后删除旧表。v0/v1 还在同一事务中执行一次退役 Provider 名称重写。第一次 post-v2 `--update` 看到 NULL anchor 时会完整扫描，成功后由支持增量的 Provider 建立真实 anchor。
+
+切换 Provider 会自然使用新的 anchor/run namespace，而不修改内容库。删除或丢失控制库后，下一次运行从头抓取并通过 `article_identity_keys` 和 upsert 规则收敛。控制库不需要恢复或备份；删除它不是只清 cursor，而是同时放弃所有成功边界。
 
 ## 认证与业务数据库
 

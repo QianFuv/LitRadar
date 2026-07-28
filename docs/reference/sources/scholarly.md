@@ -19,7 +19,7 @@ Scholarly 是内置 Provider adapter，不是内容 schema。它把 Crossref、O
 | OpenAlex         | DOI 增强；Crossref 全部 404 时解析期刊并提供清单 fallback | 题名、作者、摘要、日期、PMID、OA                |
 | Semantic Scholar | 按 DOI 批量增强                                           | 摘要、OA                                        |
 
-上游 URL、source ID、Crossref cursor、OpenAlex cursor 和 Semantic Scholar PDF/landing-page URL 不进入 `ArticleDraft` 或内容数据库。URL 只允许存在于私有 transport payload 和当前调用内。
+上游 URL、source ID、Crossref cursor、OpenAlex cursor 和 Semantic Scholar PDF/landing-page URL 不进入 `ArticleDraft` 或内容数据库。OpenAlex source ID 与 cursor 只能存在于可丢弃 traversal checkpoint；成功 anchor 只使用规范书目信息和日期，不含 Provider/upstream ID 或 URL。
 
 只要选中的目录被 `index_provider_routes` 路由到 `scholarly`，`openalex_api_key_pool`、`semantic_scholar_api_key_pool` 和 `crossref_mailto_pool` 都必须至少包含一个非空值。缺少任一类会在创建内容库、控制库或其他索引状态前失败。配置见[运行配置](../configuration.md)。
 
@@ -28,11 +28,12 @@ Scholarly 是内置 Provider adapter，不是内容 schema。它把 Crossref、O
 对每个 `JournalCatalogEntry`：
 
 1. 按维护的 `issn`、`eissn`、`all_issns` 构造去重候选。
-2. 依次请求 Crossref `/journals/{issn}/works`；第一个非 404 响应成为主清单。
-3. 只有全部 ISSN 都返回 404 时，才按 ISSN、再按维护标题/别名解析 OpenAlex source，并读取 source works。
-4. 对当前页 DOI 规范化和去重，按最多 100 个 DOI 请求 OpenAlex 增强，并按最多 500 个 DOI 请求 Semantic Scholar batch。
-5. 把上游变体映射到 `JournalDraft`、`IssueDraft` 和 `ArticleDraft`。
-6. 返回一页 `ProviderBatch`；下一页 cursor 编码为 opaque checkpoint，由控制库保存。
+2. 根据 `IndexFetchContext` 建立 Bootstrap、Incremental 或 FullRescan 窗口；Incremental 冻结 committed issue anchor 和日期下界。
+3. 依次请求 Crossref `/journals/{issn}/works`；第一个非 404 响应成为按出版日期降序的主清单。
+4. 只有全部 ISSN 都返回 404 时，才按 ISSN、再按维护标题/别名解析 OpenAlex source，并按出版日期降序读取 source works。
+5. 对当前页 DOI 规范化和去重，按最多 100 个 DOI 请求 OpenAlex 增强，并按最多 500 个 DOI 请求 Semantic Scholar batch。
+6. 把上游变体映射到 `JournalDraft`、`IssueDraft` 和 `ArticleDraft`，再按规范 issue fingerprint 判断边界。
+7. 返回一页 `ProviderBatch`；Continue 把下一页 cursor 与冻结窗口编码为 opaque traversal checkpoint，Complete 返回新的成功 anchor。
 
 Crossref 成功但结果为空不会触发 OpenAlex source fallback。没有 DOI 的记录仍可在具备充分 bibliographic identity 时进入内容库，但不会进入 DOI 增强。
 
@@ -59,11 +60,12 @@ Provider 不返回 PDF URL、landing page、permalink 或 content location。在
 - 基础地址：`https://api.crossref.org/v1`；
 - `type:journal-article`；
 - `rows=225`；
-- `sort=published&order=asc`；
+- `sort=published&order=desc`；
+- Incremental 每页固定使用 anchor 的 `from-update-date` 下界；
 - 从 `cursor=*` 开始并使用 `message.next-cursor`；
 - 少于 225 条或没有下一 cursor 时结束。
 
-Crossref cursor 只作为 Provider checkpoint 内容存于 `data/index-control`，不会进入内容库。
+Crossref cursor 只作为 Provider traversal checkpoint 内容存于 `data/index-control`，不会进入内容库。cursor 在 240 秒复用窗口外或 continuation 返回 HTTP 500 时，Provider 在同一冻结 base/candidate 和同一日期 filter 下从 `cursor=*` 重放一次；重放期间新插入到 candidate 之上的期次被忽略。其他 HTTP/transport 错误不会伪装成 cursor 重启。
 
 当前 [Crossref REST API 访问合同](https://www.crossref.org/documentation/retrieve-metadata/rest-api/access-and-authentication/) 的 polite pool 为 `10 req/s`、并发 `3`。Scholarly 对整个父进程树使用一个公共 epoch，每 110 ms 允许一个请求尝试，约为 `9.09 req/s`；最多三个期刊子进程各有一个请求在途。每次重试也必须取得下一个未来相位，错过的相位不会补发成突发流量。
 
@@ -71,7 +73,9 @@ mailto 是 Crossref 的联系身份，不是独立配额凭据。客户端稳定
 
 ## OpenAlex fallback 与已知限制
 
-OpenAlex `/sources` 以 ISSN 精确查询优先，题名 search 只作为 fallback。source works 使用 `primary_location.source.id`、cursor 和出版日期升序。
+OpenAlex `/sources` 以 ISSN 精确查询优先，题名 search 只作为 fallback。source works 使用 `primary_location.source.id`、cursor 和 `publication_date:desc`；Incremental 每页固定携带 anchor 的 `from_created_date` 下界。
+
+某些 OpenAlex 套餐拒绝 `from_created_date`。客户端只对明确的 plan-restriction 错误启用一次 Provider-local fallback：清除日期 filter 和旧 query cursor，从 source 头部重放；核心模式和控制协议不变化。普通 429 仍然失败，不会被误判为套餐 fallback。
 
 当前 [OpenAlex 认证与计费合同](https://developers.openalex.org/api-reference/authentication) 为每个 API key 最多 `100 req/s`，并为每个 key 独立统计每日 credits。Scholarly 为每个健康 key 建立跨进程公共相位：每 11 ms 一个相位，约为 `90.9 req/s/key`。进程 `p` 拥有 `epoch + p × 11 ms + n × process_count × 11 ms` 的相位；改变进程数只改变所有权，不改变单 key 或 key 池的总速率。
 
@@ -80,6 +84,20 @@ OpenAlex `/sources` 以 ISSN 精确查询优先，题名 search 只作为 fallba
 [OpenAlex deprecation 说明](https://developers.openalex.org/guides/deprecations)记录其自 2026 年 2 月起忽略 mailto。LitRadar 的 source、source search、source works 和 DOI 请求均不发送 Crossref mailto，URL 长度预算也只计入 OpenAlex key。
 
 当前 source-works fallback 仍请求 `per-page=200`，而现有上游文档的公开上限是 100。这只影响 Crossref 对全部 ISSN 返回 404 后的 OpenAlex source 清单路径。代码任务修复该偏差时必须同时调整分页终止条件和 fixtures；本文不把 200 描述为受上游保证的值。
+
+## Issue anchor、fallback 与能力边界
+
+Scholarly anchor v1 使用 Provider 私有 JSON，保存规范 issue fingerprint 和可用的 `from_sync_date`。fingerprint 与内容 issue identity 的优先级一致：
+
+1. publication year + 规范化 volume/issue（至少一个存在）；
+2. 规范日期；
+3. 规范化 issue title，可带 publication year。
+
+Incremental 冻结候选集中的第一个有效 issue 为 candidate head，从新到旧提交文章；观察到 base fingerprint 后仍处理该 fingerprint 的全部记录，直到下一条确定属于更旧 issue 或分页结束才 Complete。next anchor 始终是冻结 candidate，不会因 cursor 重启或运行中新增远端 head 漂移。
+
+日期 filter 只是性能优化。traversal checkpoint v1 保存 source variant/cursor、phase、冻结 base/candidate 和边界观察状态。以下情况会在同一核心运行中切换到无日期的完整 source traversal，然后才允许推进 anchor：有界候选结束但没有观察到 base、candidate 可能早于 base、页面失去可用 fingerprint，或 OpenAlex 拒绝日期 filter。无过滤重放仍保留原 candidate；恢复中的 candidate 在完整 traversal 中消失时 fail closed。旧的无版本 traversal JSON 不会迁移或猜测恢复位置。
+
+这条边界增量能发现新期次和成功边界期次后续追加的文章，但不保证发现更早历史期次的补录，也不保证刷新边界以前文章的摘要、OA、作者或撤稿关系。需要核对历史回填和旧元数据时运行 `--full-rescan`；该模式扫描完整 source 历史且不生成 changes JSON。
 
 ## Semantic Scholar 节流
 
@@ -116,9 +134,12 @@ Crossref journal-list GET 收到 HTTP 响应后仍最多尝试三次；`429/500/
 修改 adapter 时至少覆盖：
 
 - Crossref cursor、多 ISSN 404 和 OpenAlex fallback；
+- 相同日期 filter 贯穿有界分页和 cursor 重启，边界 issue 跨页后才 Complete；
+- Crossref/OpenAlex 规范字段产生相同 issue fingerprint，anchor 不含上游 ID；
+- missing-base 无过滤重放和 OpenAlex 后续页套餐 fallback 保持冻结 candidate；
 - OpenAlex DOI 批量去重、source 匹配和 undated 请求；
 - Semantic Scholar 500 ID 分批、节流和错误分类；
 - 不同上游 payload 产生相同规范文章；
 - 规范 batch 中没有 Provider/source/URL 字段；
 - DOI/PMID 在线动作、缺失标识和 host allowlist；
-- checkpoint 重放不复制内容或改变 ID。
+- traversal checkpoint 重放不复制内容或改变 ID。

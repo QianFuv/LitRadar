@@ -1,6 +1,6 @@
 # LitRadar
 
-LitRadar 是一个面向学术期刊的自托管检索与订阅平台。它从 Crossref、OpenAlex、Semantic Scholar 和 CNKI overseas 获取元数据，构建 SQLite 全文检索库，并通过 Web 界面提供检索、收藏、每周更新、文献追踪和后台管理。
+LitRadar 是一个面向学术期刊的自托管检索与订阅平台。它从 Crossref、OpenAlex、Semantic Scholar 和 CNKI 获取元数据，构建 SQLite 全文检索库，并通过 Web 界面提供检索、收藏、每周更新、文献追踪和后台管理。
 
 ## 能力概览
 
@@ -76,7 +76,7 @@ printf '%s\n' "$ADMIN_PASSWORD" |
 
 ### 4. 准备索引
 
-发布镜像自带上述官方 bundle，并在命令开始时同步到持久的 `data/meta/*.csv`。CNKI 元数据索引不需要 scholarly API key，可先验证完整链路：
+发布镜像自带上述官方 bundle，并在命令开始时同步到持久的 `data/meta/*.csv`。CNKI 元数据索引不需要 scholarly API key，可先执行日常增量更新：
 
 ```bash
 docker compose run --rm litradar index \
@@ -84,6 +84,17 @@ docker compose run --rm litradar index \
   --file chinese_journals.csv \
   --update
 ```
+
+`--update` 从远端当前头部扫描到上一次整刊成功的期次边界，并完整包含该边界期次；首次运行、Provider 切换或没有可复用 anchor 时会安全执行完整覆盖。只有 `--update` 发布 `data/push_state/*.changes.json`。周期性核对历史回填或旧元数据时使用独立的全量模式：
+
+```bash
+docker compose run --rm litradar index \
+  --secret-key-file /run/secrets/litradar_key \
+  --file chinese_journals.csv \
+  --full-rescan
+```
+
+`--update` 与 `--full-rescan` 互斥。两种模式默认都恢复同一模式下的冻结运行窗口；`--no-resume` 只清除本次 traversal checkpoint，保留上一次完整成功 anchor。删除可丢弃的 `data/index-control` 会失去 anchor 和恢复进度，下一次运行安全退回完整扫描，但不会改变内容 ID。
 
 索引默认使用 `--processes 1 --workers 6 --issue-batch 8`，以控制容器峰值内存。`--workers` 限制每个期刊子进程的 CNKI 文章详情工作和 OpenAlex DOI 增强并发；Scholarly 索引最多接受 6 个 worker。`--processes` 启动相互独立的期刊子进程；Scholarly 索引最多接受 3 个进程，并让 Crossref 和 Semantic Scholar 的每次请求尝试（包括重试）按共同调度 epoch 错峰。可以在 Provider 约束内显式覆盖这些参数，但这不保证上游吞吐提升，也不再保证约 100 MiB 的索引内存目标。`admin`、`index`、`notify`、`push`、`scheduler` 和 `openapi` 是同步短生命周期命令，不会创建 Tokio 工作线程池；只有常驻的 `serve` 使用小型异步运行时。
 

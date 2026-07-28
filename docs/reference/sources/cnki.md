@@ -34,9 +34,11 @@ Provider 接收 LitRadar 维护的 `JournalCatalogEntry`，使用 canonical titl
 4. 从匹配详情页读取 `pykm`、`pCode` 和 yearList。
 5. 按稳定 `year_issue_id` 和零基 `pageIdx` 读取 papers；每个 Provider batch 只处理一个经过计数验证的页面。
 6. 页面内文章详情全部成功或仅有明确永久缺失后，映射为 `JournalDraft`、`IssueDraft`、`ArticleDraft`；所有 transport handle 和 URL 都在边界丢弃。
-7. checkpoint 指向下一页或下一稳定期次；它不保存期次/文章数组下标，也不包含 captcha 字段。
+7. traversal checkpoint 保存冻结的 base/head、下一稳定期次和页码；它不保存期次/文章数组下标，也不包含 captcha 字段。
 
 同一索引进程处理一本期刊期间，首次 batch 取得的期刊详情和刊期树作为内存快照复用于后续页面；该刊完成后立即释放。新进程或新一轮已完成期刊索引会重新获取快照，因此 checkpoint 仍只依赖稳定 `year_issue_id`，不持久化上游句柄。
+
+Incremental 从远端当前最新 `year_issue_id` 向旧扫描到 committed anchor，并完整包含 anchor 期次的全部 papers 页。首次确认的远端头部成为本次冻结 candidate；运行期间新增的更高期次留给下一次 update。只有闭区间全部完成后才返回 candidate 作为新 anchor。committed issue 已从 year list 消失时安全完整扫描；恢复中的 candidate/current 消失则 fail closed。FullRescan 忽略 anchor 停止边界并覆盖完整期次树。
 
 基础站点为 `https://navi.cnki.net` 与 `https://kns.cnki.net`。Transport 对初始 URL、Referer、challenge、每个 redirect hop 和最终 URL 使用同一规则：只允许这两个精确主机的 HTTPS 默认端口，拒绝 userinfo、IP literal、自定义端口、协议降级和跨域跳转。当前私有请求路径包括 journal 搜索、详情、year list、papers、article abstract 和 captcha verify API；这些路径不是内容契约。
 
@@ -54,7 +56,7 @@ Provider 接收 LitRadar 维护的 `JournalCatalogEntry`，使用 canonical titl
 
 ## 海外 CNKI 索引流程
 
-海外实现保持 `oversea.cnki.net` 流程：题名优先、ISSN fallback、year tree、articles、详情映射；checkpoint 语义与既有 adapter 一致。海外路径不使用 jfbym captcha secret。
+海外实现保持 `oversea.cnki.net` 流程：题名优先、ISSN fallback、year tree、articles、详情映射。它当前不声明增量窗口能力，也不接受 traversal checkpoint：Bootstrap、Incremental 和 FullRescan 都安全完整扫描，Complete 返回 NULL anchor。海外路径不使用 jfbym captcha secret。
 
 ## 规范字段映射
 
@@ -72,23 +74,29 @@ Provider 接收 LitRadar 维护的 `JournalCatalogEntry`，使用 canonical titl
 
 CNKI filename、`pykm`、`pCode`、数据库代码、详情路径、search URL、Cookie、captcha 和原始 HTML 只存在于私有 client/adapter 内。内容库没有 `platform_id`、`content_location`、`permalink` 或 `full_text_file`。
 
-## Provider checkpoint
+## Provider anchor 与 checkpoint
 
-索引 adapter 可以把分页/年期进度编码为 opaque checkpoint。LitRadar 只把该文本保存在 `data/index-control/<catalog>.sqlite` 的 Provider namespace，并在下一次 `fetch` 原样传回。
+索引 adapter 可以把成功边界和分页/年期进度分别编码为 opaque anchor 与 traversal checkpoint。LitRadar 只把文本保存在 `data/index-control/<catalog>.sqlite` 的 Provider namespace，并在下一次 `fetch` 原样传回；核心不解析 `year_issue_id`。
 
-国内 checkpoint 是指向下一处理位置的版本化 JSON，例如：
+国内成功 anchor v1 只保存已经完整覆盖的最新稳定期次：
 
 ```json
-{"version":1,"year_issue_id":"202512","page_index":1}
+{"version":1,"year_issue_id":"202602"}
 ```
 
-`year_issue_id` 必须精确匹配重新读取的 year list；新期次插到列表前部不会改变恢复目标。保存的期次已经消失时，Provider fail closed 并提示删除对应的可丢弃控制库后重扫，不按旧序号猜测位置。旧 `issue_index` / `article_index` 和任何 captcha 字段都会被拒绝。
+国内 traversal checkpoint v2 指向同一冻结窗口中的下一处理位置，例如：
+
+```json
+{"version":2,"base_anchor_issue_id":"202512","candidate_head_issue_id":"202602","current_issue_id":"202601","page_index":0}
+```
+
+`base_anchor_issue_id` 是运行开始时冻结的成功边界，`candidate_head_issue_id` 是本次可推进的新边界，`current_issue_id/page_index` 是下一页。恢复时这些稳定 ID 必须精确匹配重新读取的 year list；新期次插到 candidate 前部会被忽略，不改变本次窗口。恢复中的 candidate/current 消失时 Provider fail closed，不按旧序号猜测位置。旧 v1、`issue_index` / `article_index` 和任何 captcha 字段都会被拒绝。
 
 papers 页必须含 `articleCount`，其值必须等于解析出的文章行数。计数为 10 时 checkpoint 指向同一期下一页；其他结构完整的计数进入下一稳定期次或完成，因为 CNKI 的历史期次可能在单页返回超过 10 条文章。总数正好为 10 的倍数时，必须再读取一个结构有效的空终止页；后续页的 `该刊数据正在更新中，请耐心等待` 是已确认的越界终止占位响应，可按 0-count 处理，但首个 papers 页出现同一响应仍然失败。空白、登录页、缺 marker 或局部行页面都是失败，不推进 checkpoint。
 
 国内 CNKI Provider 读取详情页后，合并详情与 papers 行的作者字段，并规范化详情 DOI。仅当作者仍为空且 DOI 也为空时才排除该记录；标题和栏目不参与内容类型判断，因此带 DOI 的征稿启事以及有作者的书评会被保留。被排除的行不生成 `ArticleDraft`，但页面计数与 checkpoint 仍按原始响应推进。已有内容库不会因规则变更自动恢复之前排除的记录，应用新规则时应删除对应内容库和控制库再完整重建。
 
-页面是最小提交和重放单元。只有 HTTP 404/410 或明确“记录已删除/文献不存在”的详情页会记录不含 URL/凭据的 ordinal/status 事件并跳过；网络错误、429、5xx、captcha 或结构错误会中止整个 batch，不返回新 checkpoint。控制库删除或更换 Provider 后从头读取，内容 writer 依靠规范 identity alias 幂等复用已有 ID。Provider 不能把 checkpoint 嵌入 `ArticleDraft`。
+页面是最小提交和重放单元。边界期次即使跨页或文章数正好是 10 的倍数，也必须读完其有效空终止页后才能 Complete。只有 HTTP 404/410 或明确“记录已删除/文献不存在”的详情页会记录不含 URL/凭据的 ordinal/status 事件并跳过；网络错误、429、5xx、captcha 或结构错误会中止整个 batch，不返回新 checkpoint。控制库删除或更换 Provider 后没有可信 anchor，会从头读取；内容 writer 依靠规范 identity alias 幂等复用已有 ID。Provider 不能把 anchor/checkpoint 嵌入 `ArticleDraft`。
 
 ## 在线摘要页
 

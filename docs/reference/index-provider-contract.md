@@ -1,11 +1,11 @@
 # 索引与 Provider 契约
 
-本文档是 LitRadar 文章索引 Provider 的规范接入文档。当前契约版本为 `2`，实现来源是 `litradar-domain::index_contract`、`litradar-provider` 和 `litradar-index`。
+本文档是 LitRadar 文章索引 Provider 的规范接入文档。当前契约版本为 `3`，实现来源是 `litradar-domain::index_contract`、`litradar-provider` 和 `litradar-index`；私有多进程 worker wire protocol 当前为 `5`。
 
 核心边界只有三条：
 
 1. LitRadar 维护期刊目录、规范化规则、稳定 ID、合并规则和数据库写入。
-2. Provider 只接收规范目录项并返回规范期刊、期次和文章内容；它不能分配 ID、写数据库或返回持久链接。
+2. Provider 只接收规范目录项与同步 context，并返回规范期刊、期次、文章内容和 Provider 私有进度；它不能分配 ID、写数据库或返回持久链接。
 3. 摘要页和全文是两个独立的可选在线能力，每次点击时解析，结果不写入索引库。
 
 ## 接入最小集合
@@ -91,9 +91,46 @@ Provider 对所请求期刊的观察：
 
 - `catalog_id` 和 `journal.catalog_id` 必须回显请求值；
 - `issues`、`articles` 必须全部属于该目录项；
-- `is_complete=true` 时 `next_checkpoint` 必须为空；
-- `is_complete=false` 时必须返回非空且不超过 65,536 字节的 opaque checkpoint；
-- Provider 不得假定 checkpoint 会永久存在。
+- `ProviderProgress::Continue { checkpoint }` 必须携带非空且不超过 65,536 字节的 traversal checkpoint；
+- `ProviderProgress::Complete { next_anchor }` 不再携带 traversal checkpoint，`next_anchor` 可为空；非空 anchor 同样最多 65,536 字节；
+- Provider 不得假定 anchor 或 checkpoint 会永久存在。
+
+### `IndexFetchContext` 与同步模式
+
+核心每次调用 `IndexContentProvider::fetch(catalog, context)` 时传入：
+
+- `mode`：`Bootstrap`、`Incremental` 或 `FullRescan`；
+- `committed_anchor`：上一次整本期刊完整成功时提交的边界；
+- `traversal_checkpoint`：本次冻结运行下一步要处理的位置。
+
+三个 opaque 值（输入 anchor、输入 traversal、Complete 返回的 next anchor）都属于当前目录、Provider 和 `catalog_id` namespace。核心只检查为空、大小和进度形状，永远不解析 CNKI `year_issue_id`、Scholarly issue fingerprint、Crossref/OpenAlex cursor，也不把它们写入内容库。worker protocol v5 只负责把相同 context 传给子进程；父进程仍独占控制状态和 SQLite 提交。
+
+模式语义：
+
+| 模式 | 核心语义 |
+| --- | --- |
+| `Bootstrap` | 没有可复用成功状态时完整覆盖；默认 `--resume` 遇到已有成功行时可零请求跳过 |
+| `Incremental` | 从远端当前头部扫描到 committed anchor 并包含边界；anchor 为 NULL/缺失时安全完整覆盖 |
+| `FullRescan` | 覆盖完整 Provider 历史，不把 committed anchor 当停止边界；可恢复同模式 traversal |
+
+运行开始时核心把 committed anchor 冻结为 `base_anchor`。Provider 在自己的 traversal 中冻结 candidate head；重试不得根据已写内容重新计算边界。Continue 只推进 traversal。Complete 只有在整本期刊窗口已覆盖后才返回 next anchor。
+
+提交顺序固定为：
+
+```text
+canonical content transaction
+-> Continue: traversal checkpoint transaction
+   Complete: delete run + replace committed anchor in one transaction
+-> --update only: publish provider-neutral changes.json
+```
+
+最终内容已提交而控制事务失败时，旧 anchor 保持不变；下次运行重放冻结窗口并由稳定 identity/upsert 收敛。
+
+### 内置 Provider 的统一语义映射
+
+- 国内 `cnki` 使用稳定期次树：从 candidate head 到 base issue 的闭区间，处理完 base 的全部 papers 页后 Complete。
+- `scholarly` 使用规范字段生成 issue fingerprint，按出版日期降序，并用 anchor 日期过滤缩小 Crossref/OpenAlex 候选；过滤无法证明 base、candidate 可能回退或 OpenAlex 拒绝过滤时，在 Provider 内从无过滤头部重放。
+- `cnki_oversea` 当前明确不支持增量边界；三种模式都完整扫描，成功返回 NULL anchor。核心不会为它解释海外期次句柄。
 
 ## 规范化与稳定身份
 
@@ -162,13 +199,13 @@ API 用 `307 Temporary Redirect` 或文档响应返回结果，并设置 `Cache-
 | 路径                                  | 生命周期 | 内容                                                                               |
 | ------------------------------------- | -------- | ---------------------------------------------------------------------------------- |
 | `data/index/<catalog>.sqlite`         | 需要备份 | v6 规范期刊、期刊/文章 identity aliases、撤稿关系、列表投影、FTS 和文章变更 outbox |
-| `data/index-control/<catalog>.sqlite` | 可丢弃   | v1 Provider-scoped lease 和 opaque checkpoint                                      |
+| `data/index-control/<catalog>.sqlite` | 可丢弃   | v3 Provider-scoped lease、成功 anchor 和运行 traversal checkpoint                  |
 
-内容提交先完成，检查点随后提交。若检查点提交失败，重跑会重新读取已写内容并依靠 alias/upsert 收敛；不会因控制状态丢失而复制文章。删除控制库只会失去恢复进度，不会改变内容身份。
+成功 anchor 与运行 checkpoint 分表保存。成功行存在但 anchor 为 NULL 表示“完整成功但没有可复用边界”，不同于成功行缺失。删除控制库会同时失去成功边界和恢复进度；下一次安全完整覆盖，并依靠 alias/upsert 收敛，不会改变内容身份。
 
-每次目录运行在构造 Provider、分配 worker 或发出请求之前完成期刊身份预检。当前目录的 catalog ID、退役 catalog alias 和全部 ISSN 必须唯一归属于同一个规范 catalog ID；已有规范 journal 的标题、别名、ISSN、领域、排名及 listing/FTS 投影会在同一内容事务中收敛。即使当前 catalog ID 的 checkpoint 已是 `complete`，这一步仍会执行，随后才以零 Provider 请求恢复该期刊。空内容库只登记身份键，不创建 journal 壳。
+每次目录运行在构造 Provider、分配 worker 或发出请求之前完成期刊身份预检。当前目录的 catalog ID、退役 catalog alias 和全部 ISSN 必须唯一归属于同一个规范 catalog ID；已有规范 journal 的标题、别名、ISSN、领域、排名及 listing/FTS 投影会在同一内容事务中收敛。即使当前 catalog ID 已有成功 anchor 行，这一步仍会执行，随后 Bootstrap 才可能以零 Provider 请求跳过该期刊。空内容库只登记身份键，不创建 journal 壳。
 
-旧 catalog alias 若在任意 Provider namespace 下仍有 journal 或 year checkpoint，运行固定失败；系统不会把 opaque checkpoint 搬到当前 catalog ID。旧 alias journal 只有在不存在 issue、article、listing 和 outbox 历史时才可由事务清理。非空旧实体、身份所有权冲突和确定性 ID 冲突都在 Provider 请求前原子失败；内容 batch 写入时还会复核所有权。
+旧 catalog alias 若在任意 Provider namespace 下仍有 anchor 或 run checkpoint，运行固定失败；系统不会把 opaque 状态搬到当前 catalog ID。旧 alias journal 只有在不存在 issue、article、listing 和 outbox 历史时才可由事务清理。非空旧实体、身份所有权冲突和确定性 ID 冲突都在 Provider 请求前原子失败；内容 batch 写入时还会复核所有权。
 
 内容库禁止 Provider 名称、路由、检查点、lease、运行统计、上游 ID 和 URL。控制库禁止规范文章内容。备份明确排除 `data/index-control`。
 
@@ -180,9 +217,9 @@ API 用 `307 Temporary Redirect` 或文档响应返回结果，并设置 `Cache-
 2. 对索引结果运行 `validate_index_provider_fixture`。
 3. 对在线能力分别运行 `validate_abstract_provider_fixture`、`validate_full_text_provider_fixture`。
 4. 覆盖上游字段变体，证明它们产生相同的规范 `ArticleDraft`。
-5. 覆盖错误分类、分页结束、重复 checkpoint、无效重定向、超大文档和秘密脱敏。
+5. 覆盖错误分类、分页结束、重复 traversal checkpoint、无效重定向、超大文档和秘密脱敏。
 6. 运行 Provider 注册矩阵，证明未实现能力不被声明。
-7. 运行 Provider switch fixture，证明共享 alias 复用同一 ID，且新 Provider 使用独立控制 checkpoint。
+7. 运行 Provider switch fixture，证明共享 alias 复用同一 ID，且新 Provider 使用独立 anchor/run namespace。
 
 内置实现的常用检查：
 
@@ -202,7 +239,7 @@ cargo clippy -p litradar-provider -p litradar-sources -p litradar-index --all-ta
 5. 备份内容库；控制库无需迁移。
 6. 运行索引并检查共享 alias 的 ID/count 对比。
 
-不需要替换 v6 内容库；精确 v4/v5 内容库会原子迁移到 v6。不要把旧 Provider checkpoint 复制给新 Provider；两个 namespace 可同时存在于可丢弃控制库。摘要页和全文 Provider 顺序独立配置，不必跟随索引 Provider 一起切换。
+不需要替换 v6 内容库；精确 v4/v5 内容库会原子迁移到 v6。不要把旧 Provider anchor 或 traversal checkpoint 复制给新 Provider；两个 namespace 可同时存在于可丢弃控制库，新 Provider 首次运行安全完整覆盖。摘要页和全文 Provider 顺序独立配置，不必跟随索引 Provider 一起切换。
 
 ## v6 升级与旧版本重建
 
