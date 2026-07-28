@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use litradar_auth::AuthService;
 use litradar_domain::{
     ArticleAuthorDraft, ArticleDraft, IssueDraft, JournalCatalogEntry, JournalDraft,
-    JournalRankings, ProviderBatch,
+    JournalRankings, ProviderBatch, ProviderProgress,
 };
 use litradar_index::schema::{open_content_db, reconcile_catalog_identities, write_content_batch};
 use litradar_storage::StorageConfig;
@@ -213,8 +213,7 @@ fn fixture_batch() -> ProviderBatch {
             in_press: Some(false),
             retraction_dois: Vec::new(),
         }],
-        is_complete: true,
-        next_checkpoint: None,
+        progress: ProviderProgress::Complete { next_anchor: None },
     }
 }
 

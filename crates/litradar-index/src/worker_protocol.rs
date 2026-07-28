@@ -10,7 +10,7 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
 /// Current private worker protocol version.
-pub(crate) const PROTOCOL_VERSION: u32 = 4;
+pub(crate) const PROTOCOL_VERSION: u32 = 5;
 
 /// One journal and optional resume cursor assigned to a fetch worker.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]

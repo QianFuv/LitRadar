@@ -1396,7 +1396,7 @@ fn record_content_change_event(
 mod tests {
     use litradar_domain::{
         ArticleAuthorDraft, ArticleDraft, IssueDraft, JournalCatalogEntry, JournalDraft,
-        JournalRankings, ProviderBatch,
+        JournalRankings, ProviderBatch, ProviderProgress,
     };
     use rusqlite::Connection;
 
@@ -1458,8 +1458,7 @@ mod tests {
                 in_press: Some(false),
                 retraction_dois: Vec::new(),
             }],
-            is_complete: true,
-            next_checkpoint: None,
+            progress: ProviderProgress::Complete { next_anchor: None },
         }
     }
 

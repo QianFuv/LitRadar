@@ -11,8 +11,9 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use litradar_domain::{
     normalize_bibliographic_label, normalize_bibliographic_text, normalize_contract_date,
     normalize_contract_doi, normalize_contract_pmid, normalize_contract_text, ArticleAccessContext,
-    ArticleAuthorDraft, ArticleDraft, ArticleLocator, ArticleRedirect, IssueDraft,
-    JournalCatalogEntry, JournalDraft, ProviderBatch, ProviderCapabilityInfo,
+    ArticleAuthorDraft, ArticleDraft, ArticleLocator, ArticleRedirect, IndexFetchContext,
+    IssueDraft, JournalCatalogEntry, JournalDraft, ProviderBatch, ProviderCapabilityInfo,
+    ProviderProgress,
 };
 use litradar_provider::{
     ArticleAbstractProvider, IndexContentProvider, ProviderCapabilities, ProviderDescriptor,
@@ -189,7 +190,7 @@ where
     fn fetch(
         &self,
         catalog: &JournalCatalogEntry,
-        checkpoint: Option<&str>,
+        context: IndexFetchContext<'_>,
     ) -> Result<ProviderBatch, ProviderError> {
         let mut client = self.client.lock().map_err(|_| {
             ProviderError::new(
@@ -200,7 +201,7 @@ where
         let result = fetch_scholarly_batch(
             &mut client,
             catalog,
-            checkpoint,
+            context.traversal_checkpoint,
             self.has_semantic_scholar_key,
         );
         emit_source_attempt_summary(SCHOLARLY_PROVIDER_NAME, &client.drain_attempts());
@@ -240,9 +241,9 @@ where
     fn fetch(
         &self,
         catalog: &JournalCatalogEntry,
-        checkpoint: Option<&str>,
+        context: IndexFetchContext<'_>,
     ) -> Result<ProviderBatch, ProviderError> {
-        if checkpoint.is_some() {
+        if context.traversal_checkpoint.is_some() {
             return Err(ProviderError::new(
                 ProviderErrorKind::InvalidResponse,
                 "CNKI provider received an unsupported checkpoint",
@@ -509,7 +510,7 @@ where
     fn fetch(
         &self,
         catalog: &JournalCatalogEntry,
-        checkpoint: Option<&str>,
+        context: IndexFetchContext<'_>,
     ) -> Result<ProviderBatch, ProviderError> {
         let mut state = self.state.lock().map_err(|_| {
             ProviderError::new(
@@ -531,7 +532,7 @@ where
                     client,
                     journal_snapshots,
                     catalog,
-                    checkpoint,
+                    context.traversal_checkpoint,
                     detail_pool,
                     &mut detail_attempts,
                 )
@@ -561,7 +562,10 @@ where
             batch_attempt += 1;
         };
         emit_source_attempt_summary(CNKI_PROVIDER_NAME, &attempts);
-        if result.as_ref().is_ok_and(|batch| batch.is_complete) {
+        if result
+            .as_ref()
+            .is_ok_and(|batch| matches!(&batch.progress, ProviderProgress::Complete { .. }))
+        {
             state.journal_snapshots.remove(&catalog.catalog_id);
         }
         result
@@ -1119,8 +1123,7 @@ where
         journal: journal_observation(catalog),
         issues,
         articles,
-        is_complete: true,
-        next_checkpoint: None,
+        progress: ProviderProgress::Complete { next_anchor: None },
     })
 }
 
@@ -1148,8 +1151,10 @@ fn batch_from_articles(
         journal: journal_observation(catalog),
         issues,
         articles,
-        is_complete: next_checkpoint.is_none(),
-        next_checkpoint,
+        progress: match next_checkpoint {
+            Some(checkpoint) => ProviderProgress::Continue { checkpoint },
+            None => ProviderProgress::Complete { next_anchor: None },
+        },
     }
 }
 
@@ -2004,8 +2009,7 @@ where
             journal: journal_observation(catalog),
             issues: Vec::new(),
             articles: Vec::new(),
-            is_complete: true,
-            next_checkpoint: None,
+            progress: ProviderProgress::Complete { next_anchor: None },
         });
     }
     let (issue_index, page_index) = if let Some(resume) = &resume {
@@ -2130,13 +2134,18 @@ where
     } else {
         None
     };
+    let progress = match next {
+        Some(checkpoint) => ProviderProgress::Continue {
+            checkpoint: encode_domestic_checkpoint(&checkpoint)?,
+        },
+        None => ProviderProgress::Complete { next_anchor: None },
+    };
     Ok(ProviderBatch {
         catalog_id: catalog.catalog_id.clone(),
         journal: journal_observation(catalog),
         issues: vec![issue],
         articles,
-        is_complete: next.is_none(),
-        next_checkpoint: next.as_ref().map(encode_domestic_checkpoint).transpose()?,
+        progress,
     })
 }
 
@@ -2345,8 +2354,9 @@ mod tests {
     use std::time::Duration;
 
     use litradar_domain::{
-        ArticleAccessContext, ArticleId, ArticleLocator, JournalCatalogEntry, JournalRankings,
-        ProviderBatch, ProviderCapabilityKind, DOMESTIC_CNKI_WORKER_COUNT_MAX,
+        ArticleAccessContext, ArticleId, ArticleLocator, IndexFetchContext, IndexSyncMode,
+        JournalCatalogEntry, JournalRankings, ProviderBatch, ProviderCapabilityKind,
+        ProviderProgress, DOMESTIC_CNKI_WORKER_COUNT_MAX,
     };
     use litradar_provider::{
         IndexContentProvider, ProviderError, ProviderErrorKind, ProviderRegistry,
@@ -2675,6 +2685,32 @@ mod tests {
             title_aliases: Vec::new(),
             area: None,
             rankings: JournalRankings::default(),
+        }
+    }
+
+    fn fetch_context(traversal_checkpoint: Option<&str>) -> IndexFetchContext<'_> {
+        IndexFetchContext {
+            mode: IndexSyncMode::Bootstrap,
+            committed_anchor: None,
+            traversal_checkpoint,
+        }
+    }
+
+    fn batch_is_complete(batch: &ProviderBatch) -> bool {
+        matches!(&batch.progress, ProviderProgress::Complete { .. })
+    }
+
+    fn batch_checkpoint(batch: &ProviderBatch) -> Option<&str> {
+        match &batch.progress {
+            ProviderProgress::Continue { checkpoint } => Some(checkpoint),
+            ProviderProgress::Complete { .. } => None,
+        }
+    }
+
+    fn into_batch_checkpoint(batch: ProviderBatch) -> Option<String> {
+        match batch.progress {
+            ProviderProgress::Continue { checkpoint } => Some(checkpoint),
+            ProviderProgress::Complete { .. } => None,
         }
     }
 
@@ -3038,10 +3074,10 @@ mod tests {
         let batch = registration
             .index_content()
             .expect("indexing capability should exist")
-            .fetch(&catalog(), None)
+            .fetch(&catalog(), fetch_context(None))
             .expect("Crossref fixture should fetch");
 
-        assert!(batch.is_complete);
+        assert!(batch_is_complete(&batch));
         assert_eq!(batch.articles.len(), 1);
         assert_eq!(batch.articles[0].doi.as_deref(), Some("10.1000/crossref"));
     }
@@ -3071,19 +3107,20 @@ mod tests {
 
         loop {
             let batch = provider
-                .fetch(&catalog, checkpoint.as_deref())
+                .fetch(&catalog, fetch_context(checkpoint.as_deref()))
                 .expect("stateful Crossref page should fetch");
             batch_count += 1;
+            let is_complete = batch_is_complete(&batch);
+            let next_checkpoint = batch_checkpoint(&batch).map(str::to_string);
             for article in batch.articles {
                 dois.insert(article.doi.expect("fixture article should have a DOI"));
             }
-            if batch.is_complete {
-                assert!(batch.next_checkpoint.is_none());
+            if is_complete {
+                assert!(next_checkpoint.is_none());
                 break;
             }
-            let next_checkpoint = batch
-                .next_checkpoint
-                .expect("incomplete batch should have a checkpoint");
+            let next_checkpoint =
+                next_checkpoint.expect("incomplete batch should have a checkpoint");
             checkpoints.push(next_checkpoint.clone());
             checkpoint = Some(next_checkpoint);
         }
@@ -3156,7 +3193,7 @@ mod tests {
                 vec![1_000],
             );
             let batch = result.expect("stale checkpoint should restart successfully");
-            assert!(batch.is_complete);
+            assert!(batch_is_complete(&batch));
             assert_eq!(transport.requested_cursors, vec![None]);
             assert!(transport.responses.is_empty());
         }
@@ -3173,10 +3210,7 @@ mod tests {
         );
         let batch = result.expect("fresh checkpoint should continue");
         let next = serde_json::from_str::<ScholarlyCheckpoint>(
-            batch
-                .next_checkpoint
-                .as_deref()
-                .expect("continued page should retain a checkpoint"),
+            batch_checkpoint(&batch).expect("continued page should retain a checkpoint"),
         )
         .expect("continued checkpoint should decode");
 
@@ -3207,7 +3241,9 @@ mod tests {
             &checkpoint,
             vec![1_000],
         );
-        assert!(success.expect("fresh fallback should succeed").is_complete);
+        assert!(batch_is_complete(
+            &success.expect("fresh fallback should succeed")
+        ));
         assert_eq!(
             success_transport.requested_cursors,
             vec![Some("stored-cursor".to_string()), None]
@@ -3413,7 +3449,7 @@ mod tests {
         let batch = registration
             .index_content()
             .expect("indexing capability should exist")
-            .fetch(&catalog(), Some(&checkpoint))
+            .fetch(&catalog(), fetch_context(Some(&checkpoint)))
             .expect("OpenAlex checkpoint should resume");
 
         assert_eq!(batch.articles.len(), 1);
@@ -3423,10 +3459,7 @@ mod tests {
         );
         assert!(matches!(
             serde_json::from_str::<ScholarlyCheckpoint>(
-                batch
-                    .next_checkpoint
-                    .as_deref()
-                    .expect("resumed OpenAlex page should continue")
+                batch_checkpoint(&batch).expect("resumed OpenAlex page should continue")
             )
             .expect("OpenAlex checkpoint should decode"),
             ScholarlyCheckpoint::OpenAlex { .. }
@@ -3473,7 +3506,7 @@ mod tests {
                 &mut restart,
             ) {
                 Ok(batch) => {
-                    assert!(batch.is_complete);
+                    assert!(batch_is_complete(&batch));
                     successes += 1;
                 }
                 Err(error) => {
@@ -3549,10 +3582,10 @@ mod tests {
         let batch = registration
             .index_content()
             .expect("indexing capability should exist")
-            .fetch(&catalog(), None)
+            .fetch(&catalog(), fetch_context(None))
             .expect("OpenAlex fallback should fetch");
 
-        assert!(batch.is_complete);
+        assert!(batch_is_complete(&batch));
         assert_eq!(batch.articles.len(), 1);
         assert_eq!(batch.articles[0].doi.as_deref(), Some("10.1000/openalex"));
     }
@@ -3605,10 +3638,10 @@ mod tests {
         let batch = registration
             .index_content()
             .expect("indexing capability should exist")
-            .fetch(&cnki_catalog, None)
+            .fetch(&cnki_catalog, fetch_context(None))
             .expect("CNKI fixture should fetch");
 
-        assert!(batch.is_complete);
+        assert!(batch_is_complete(&batch));
         assert_eq!(batch.articles.len(), 1);
         let serialized = serde_json::to_string(&batch).expect("batch should serialize");
         assert!(!serialized.contains("CNKI202601001"));
@@ -3762,22 +3795,22 @@ mod tests {
         let first = index
             .index_content()
             .expect("index")
-            .fetch(&catalog, None)
+            .fetch(&catalog, fetch_context(None))
             .expect("first batch");
-        assert!(!first.is_complete);
-        assert!(first.next_checkpoint.is_some());
+        assert!(!batch_is_complete(&first));
+        assert!(batch_checkpoint(&first).is_some());
         assert_eq!(first.articles.len(), 1);
         assert_eq!(first.articles[0].title, "建立互利共赢的标准化合作伙伴关系");
-        let checkpoint = first.next_checkpoint.as_deref().unwrap();
+        let checkpoint = batch_checkpoint(&first).unwrap();
         assert!(!checkpoint.to_ascii_lowercase().contains("captcha"));
         assert!(!checkpoint.contains("secretKey"));
         let second = index
             .index_content()
             .expect("index")
-            .fetch(&catalog, Some(checkpoint))
+            .fetch(&catalog, fetch_context(Some(checkpoint)))
             .expect("second batch");
-        assert!(second.is_complete);
-        assert!(second.next_checkpoint.is_none());
+        assert!(batch_is_complete(&second));
+        assert!(batch_checkpoint(&second).is_none());
         assert_eq!(second.articles.len(), 1);
         assert_eq!(second.articles[0].title, "第二期文章");
 
@@ -3824,7 +3857,9 @@ mod tests {
             .expect("index")
             .fetch(
                 &catalog(),
-                Some(r#"{"issue_index":0,"article_index":0,"captchaId":"x"}"#),
+                fetch_context(Some(
+                    r#"{"issue_index":0,"article_index":0,"captchaId":"x"}"#,
+                )),
             )
             .expect_err("captcha checkpoint");
         assert_eq!(error.kind(), ProviderErrorKind::InvalidResponse);
@@ -3857,10 +3892,14 @@ mod tests {
         let index = registration.index_content().expect("index provider");
         let catalog = domestic_test_catalog();
 
-        let first = index.fetch(&catalog, None).expect("first page");
+        let first = index
+            .fetch(&catalog, fetch_context(None))
+            .expect("first page");
         assert_eq!(first.articles.len(), 10);
-        assert!(!first.is_complete);
-        let first_checkpoint = first.next_checkpoint.expect("page checkpoint");
+        assert!(!batch_is_complete(&first));
+        let first_checkpoint = batch_checkpoint(&first)
+            .expect("page checkpoint")
+            .to_string();
         assert_eq!(
             serde_json::from_str::<serde_json::Value>(&first_checkpoint).expect("checkpoint JSON"),
             json!({"version": 1, "year_issue_id": "202512", "page_index": 1})
@@ -3878,20 +3917,22 @@ mod tests {
                 .expect("reordered registration");
         let reordered_index = reordered.index_content().expect("reordered index");
         let resumed = reordered_index
-            .fetch(&catalog, Some(&first_checkpoint))
+            .fetch(&catalog, fetch_context(Some(&first_checkpoint)))
             .expect("stable resume");
         assert_eq!(resumed.articles.len(), 2);
         assert_eq!(resumed.articles[0].title, "Paged article 10");
-        let next_issue_checkpoint = resumed.next_checkpoint.expect("next issue checkpoint");
+        let next_issue_checkpoint = batch_checkpoint(&resumed)
+            .expect("next issue checkpoint")
+            .to_string();
         assert_eq!(
             serde_json::from_str::<serde_json::Value>(&next_issue_checkpoint)
                 .expect("next checkpoint JSON"),
             json!({"version": 1, "year_issue_id": "202511", "page_index": 0})
         );
         let final_batch = reordered_index
-            .fetch(&catalog, Some(&next_issue_checkpoint))
+            .fetch(&catalog, fetch_context(Some(&next_issue_checkpoint)))
             .expect("following issue");
-        assert!(final_batch.is_complete);
+        assert!(batch_is_complete(&final_batch));
         assert_eq!(final_batch.articles.len(), 1);
         assert_eq!(final_batch.articles[0].title, "Following issue article");
 
@@ -3908,7 +3949,7 @@ mod tests {
         let error = missing
             .index_content()
             .expect("missing issue index")
-            .fetch(&catalog, Some(&first_checkpoint))
+            .fetch(&catalog, fetch_context(Some(&first_checkpoint)))
             .expect_err("missing checkpoint issue should fail");
         assert_eq!(error.kind(), ProviderErrorKind::InvalidResponse);
         assert!(error.to_string().contains("reset"));
@@ -3940,18 +3981,20 @@ mod tests {
             .expect("metadata cache provider");
         let catalog = domestic_test_catalog();
 
-        let first = index.fetch(&catalog, None).expect("first cached page");
-        let checkpoint = first.next_checkpoint.expect("cached page checkpoint");
+        let first = index
+            .fetch(&catalog, fetch_context(None))
+            .expect("first cached page");
+        let checkpoint = into_batch_checkpoint(first).expect("cached page checkpoint");
         let second = index
-            .fetch(&catalog, Some(&checkpoint))
+            .fetch(&catalog, fetch_context(Some(&checkpoint)))
             .expect("second cached page");
 
-        assert!(second.is_complete);
+        assert!(batch_is_complete(&second));
         assert_eq!(journal_resolution_count.load(Ordering::SeqCst), 1);
         assert_eq!(issue_tree_count.load(Ordering::SeqCst), 1);
 
         index
-            .fetch(&catalog, None)
+            .fetch(&catalog, fetch_context(None))
             .expect("completed journal should load a fresh snapshot");
         assert_eq!(journal_resolution_count.load(Ordering::SeqCst), 2);
         assert_eq!(issue_tree_count.load(Ordering::SeqCst), 2);
@@ -3974,21 +4017,23 @@ mod tests {
         let index = registration.index_content().expect("exact-multiple index");
         let catalog = domestic_test_catalog();
 
-        let articles = index.fetch(&catalog, None).expect("full page");
+        let articles = index
+            .fetch(&catalog, fetch_context(None))
+            .expect("full page");
         assert_eq!(articles.articles.len(), 10);
-        assert!(!articles.is_complete);
-        let checkpoint = articles.next_checkpoint.expect("terminal checkpoint");
+        assert!(!batch_is_complete(&articles));
+        let checkpoint = into_batch_checkpoint(articles).expect("terminal checkpoint");
         assert_eq!(
             serde_json::from_str::<serde_json::Value>(&checkpoint).expect("checkpoint JSON"),
             json!({"version": 1, "year_issue_id": "202512", "page_index": 1})
         );
 
         let terminal = index
-            .fetch(&catalog, Some(&checkpoint))
+            .fetch(&catalog, fetch_context(Some(&checkpoint)))
             .expect("validated empty terminal page");
         assert!(terminal.articles.is_empty());
-        assert!(terminal.is_complete);
-        assert!(terminal.next_checkpoint.is_none());
+        assert!(batch_is_complete(&terminal));
+        assert!(batch_checkpoint(&terminal).is_none());
     }
 
     #[test]
@@ -4013,10 +4058,10 @@ mod tests {
         let batch = registration
             .index_content()
             .expect("recovery index")
-            .fetch(&domestic_test_catalog(), None)
+            .fetch(&domestic_test_catalog(), fetch_context(None))
             .expect("transient batch should replay");
 
-        assert!(batch.is_complete);
+        assert!(batch_is_complete(&batch));
         assert_eq!(batch.articles.len(), 1);
         assert_eq!(batch.articles[0].title, "Recovered article");
         assert!(!is_session_stale.load(Ordering::SeqCst));
@@ -4050,9 +4095,9 @@ mod tests {
         let batch = permanent
             .index_content()
             .expect("permanent index")
-            .fetch(&domestic_test_catalog(), None)
+            .fetch(&domestic_test_catalog(), fetch_context(None))
             .expect("permanent misses should skip");
-        assert!(batch.is_complete);
+        assert!(batch_is_complete(&batch));
         assert_eq!(batch.articles.len(), 1);
         assert_eq!(batch.articles[0].title, "Later article");
 
@@ -4073,7 +4118,7 @@ mod tests {
         let error = temporary
             .index_content()
             .expect("temporary index")
-            .fetch(&domestic_test_catalog(), None)
+            .fetch(&domestic_test_catalog(), fetch_context(None))
             .expect_err("temporary failure should abort the page");
         assert_eq!(error.kind(), ProviderErrorKind::TemporarilyUnavailable);
 
@@ -4084,7 +4129,7 @@ mod tests {
         let replayed = replay
             .index_content()
             .expect("replay index")
-            .fetch(&domestic_test_catalog(), None)
+            .fetch(&domestic_test_catalog(), fetch_context(None))
             .expect("page should replay from its original checkpoint");
         assert_eq!(replayed.articles.len(), 2);
     }
@@ -4156,10 +4201,10 @@ mod tests {
         let batch = registration
             .index_content()
             .expect("filtered index")
-            .fetch(&domestic_test_catalog(), None)
+            .fetch(&domestic_test_catalog(), fetch_context(None))
             .expect("metadata rule should complete");
 
-        assert!(batch.is_complete);
+        assert!(batch_is_complete(&batch));
         assert_eq!(batch.articles.len(), 2);
         assert_eq!(batch.articles[0].title, "《世界经济》征稿启事");
         assert_eq!(batch.articles[1].title, "Reference book review 书评");
@@ -4191,14 +4236,12 @@ mod tests {
             .expect("parallel domestic provider");
 
         let first_batch = provider
-            .fetch(&domestic_test_catalog(), None)
+            .fetch(&domestic_test_catalog(), fetch_context(None))
             .expect("parallel details should complete");
-        let checkpoint = first_batch
-            .next_checkpoint
-            .as_deref()
-            .expect("the first papers page should continue");
+        let checkpoint =
+            batch_checkpoint(&first_batch).expect("the first papers page should continue");
         let second_batch = provider
-            .fetch(&domestic_test_catalog(), Some(checkpoint))
+            .fetch(&domestic_test_catalog(), fetch_context(Some(checkpoint)))
             .expect("the reused pool should complete a second page");
 
         assert_eq!(peak_requests.load(Ordering::SeqCst), 3);

@@ -8,7 +8,7 @@ use utoipa::ToSchema;
 use crate::{ArticleId, UserId};
 
 /// Current canonical provider contract version.
-pub const INDEX_CONTRACT_VERSION: u32 = 2;
+pub const INDEX_CONTRACT_VERSION: u32 = 3;
 
 /// Precision retained by one canonical partial publication date.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
@@ -306,7 +306,7 @@ pub struct IssueDraft {
     pub date: Option<String>,
 }
 
-/// One ordered article author in the canonical v2 contract.
+/// One ordered article author in the canonical provider contract.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ArticleAuthorDraft {
@@ -352,6 +352,46 @@ pub struct ArticleDraft {
     pub retraction_dois: Vec<String>,
 }
 
+/// Index synchronization mode selected by the core orchestrator.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", deny_unknown_fields)]
+pub enum IndexSyncMode {
+    /// Build canonical content without a previously committed successful state.
+    Bootstrap,
+    /// Discover recent content from a committed provider anchor when available.
+    Incremental,
+    /// Revisit the complete provider history regardless of the committed anchor.
+    FullRescan,
+}
+
+/// Borrowed provider synchronization state for one fetch operation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct IndexFetchContext<'a> {
+    /// Synchronization mode selected for the current journal run.
+    pub mode: IndexSyncMode,
+    /// Opaque boundary from the last complete successful journal synchronization.
+    pub committed_anchor: Option<&'a str>,
+    /// Opaque traversal position from the current in-flight journal run.
+    pub traversal_checkpoint: Option<&'a str>,
+}
+
+/// Provider-owned progress returned after one canonical content batch.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "state", rename_all = "snake_case", deny_unknown_fields)]
+pub enum ProviderProgress {
+    /// More content remains in the frozen journal window.
+    Continue {
+        /// Opaque traversal position for the next fetch operation.
+        checkpoint: String,
+    },
+    /// The complete frozen journal window has been covered.
+    Complete {
+        /// Opaque successful boundary to commit for the next incremental run.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        next_anchor: Option<String>,
+    },
+}
+
 /// One provider page of canonical journal, issue, and article content.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -364,10 +404,8 @@ pub struct ProviderBatch {
     pub issues: Vec<IssueDraft>,
     /// Canonical articles returned in this page.
     pub articles: Vec<ArticleDraft>,
-    /// Whether the provider has completed the requested journal scan.
-    pub is_complete: bool,
-    /// Opaque provider checkpoint stored only in the control database.
-    pub next_checkpoint: Option<String>,
+    /// Provider-owned traversal or completion progress for this page.
+    pub progress: ProviderProgress,
 }
 
 /// Provider-neutral article metadata used for request-time access resolution.
@@ -451,8 +489,9 @@ pub enum ArticleFullTextResolution {
 #[cfg(test)]
 mod tests {
     use super::{
-        date_precision, normalize_contract_date, ArticleDraft, DatePrecision, JournalCatalogEntry,
-        JournalRankings, INDEX_CONTRACT_VERSION,
+        date_precision, normalize_contract_date, ArticleDraft, DatePrecision, IndexFetchContext,
+        IndexSyncMode, JournalCatalogEntry, JournalRankings, ProviderProgress,
+        INDEX_CONTRACT_VERSION,
     };
 
     #[test]
@@ -547,6 +586,43 @@ mod tests {
             serde_json::from_value::<ArticleDraft>(serde_json::Value::Object(provider_shaped))
                 .is_err()
         );
-        assert_eq!(INDEX_CONTRACT_VERSION, 2);
+        assert_eq!(INDEX_CONTRACT_VERSION, 3);
+    }
+
+    #[test]
+    fn index_sync_contract_serialization_is_versioned_and_strict() {
+        let context = IndexFetchContext {
+            mode: IndexSyncMode::Incremental,
+            committed_anchor: Some("anchor-a"),
+            traversal_checkpoint: Some("cursor-b"),
+        };
+        assert_eq!(context.mode, IndexSyncMode::Incremental);
+        assert_eq!(context.committed_anchor, Some("anchor-a"));
+        assert_eq!(context.traversal_checkpoint, Some("cursor-b"));
+
+        assert_eq!(
+            serde_json::to_string(&IndexSyncMode::FullRescan).expect("serialize sync mode"),
+            r#""full_rescan""#
+        );
+        assert_eq!(
+            serde_json::to_value(ProviderProgress::Continue {
+                checkpoint: "cursor-c".to_string(),
+            })
+            .expect("serialize continuation"),
+            serde_json::json!({"state": "continue", "checkpoint": "cursor-c"})
+        );
+        assert_eq!(
+            serde_json::to_value(ProviderProgress::Complete { next_anchor: None })
+                .expect("serialize completion"),
+            serde_json::json!({"state": "complete"})
+        );
+        assert!(
+            serde_json::from_value::<ProviderProgress>(serde_json::json!({
+                "state": "continue",
+                "checkpoint": "cursor-c",
+                "unexpected": true
+            }))
+            .is_err()
+        );
     }
 }

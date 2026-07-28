@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use litradar_domain::{
     ArticleAccessContext, ArticleFullTextResolution, ArticleLocator, ArticleRedirect,
-    JournalCatalogEntry, ProviderBatch, ProviderCapabilityKind,
+    IndexFetchContext, JournalCatalogEntry, ProviderBatch, ProviderCapabilityKind,
 };
 
 pub mod conformance;
@@ -78,7 +78,7 @@ pub trait IndexContentProvider: Send + Sync {
     /// # Arguments
     ///
     /// * `catalog` - Provider-free maintained journal entry.
-    /// * `checkpoint` - Opaque provider checkpoint from the control database.
+    /// * `context` - Core-owned mode and opaque provider synchronization state.
     ///
     /// # Returns
     ///
@@ -86,7 +86,7 @@ pub trait IndexContentProvider: Send + Sync {
     fn fetch(
         &self,
         catalog: &JournalCatalogEntry,
-        checkpoint: Option<&str>,
+        context: IndexFetchContext<'_>,
     ) -> Result<ProviderBatch, ProviderError>;
 }
 
@@ -464,7 +464,7 @@ mod tests {
 
     use litradar_domain::{
         ArticleAccessContext, ArticleFullTextResolution, ArticleLocator, ArticleRedirect,
-        JournalCatalogEntry, ProviderBatch, ProviderCapabilityKind,
+        IndexFetchContext, JournalCatalogEntry, ProviderBatch, ProviderCapabilityKind,
     };
 
     use super::{
@@ -479,7 +479,7 @@ mod tests {
         fn fetch(
             &self,
             _catalog: &JournalCatalogEntry,
-            _checkpoint: Option<&str>,
+            _context: IndexFetchContext<'_>,
         ) -> Result<ProviderBatch, ProviderError> {
             unreachable!("registration tests do not fetch")
         }

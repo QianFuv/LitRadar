@@ -67,8 +67,9 @@ pub use index_contract::{
     normalize_contract_date, normalize_contract_doi, normalize_contract_issn,
     normalize_contract_pmid, normalize_contract_text, ArticleAccessContext, ArticleAuthorDraft,
     ArticleDraft, ArticleFullTextDocument, ArticleFullTextResolution, ArticleLocator,
-    ArticleRedirect, CanonicalPartialDate, DatePrecision, IssueDraft, JournalCatalogEntry,
-    JournalDraft, JournalRankings, ProviderBatch, ProviderCapabilityKind, INDEX_CONTRACT_VERSION,
+    ArticleRedirect, CanonicalPartialDate, DatePrecision, IndexFetchContext, IndexSyncMode,
+    IssueDraft, JournalCatalogEntry, JournalDraft, JournalRankings, ProviderBatch,
+    ProviderCapabilityKind, ProviderProgress, INDEX_CONTRACT_VERSION,
 };
 pub use recommend::{
     ArticleCandidateInfo, ManualPushState, ManualWeeklyPushStatus, NotificationSubscriberInfo,

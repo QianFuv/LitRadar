@@ -10,6 +10,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use litradar_domain::{
     ArticleDraft, IssueDraft, JournalCatalogEntry, JournalDraft, JournalRankings, ProviderBatch,
+    ProviderProgress,
 };
 use litradar_worker::process_supervisor::SupervisedChild;
 use rusqlite::{Connection, ErrorCode};
@@ -813,7 +814,7 @@ fn run_process_fixture() -> Result<(), &'static str> {
             pages_per_worker,
             articles_per_page,
         );
-        let is_complete = batch.is_complete;
+        let is_complete = matches!(&batch.progress, ProviderProgress::Complete { .. });
         let emitted_sequence = if behavior == FixtureBehavior::OutOfOrderBatch
             && request.worker_id == target_worker
             && page_index == target_page
@@ -918,6 +919,13 @@ fn pressure_batch(
         .collect();
     let is_complete = page_index + 1 == pages_per_worker;
 
+    let progress = if is_complete {
+        ProviderProgress::Complete { next_anchor: None }
+    } else {
+        ProviderProgress::Continue {
+            checkpoint: format!("page-{}", page_index + 1),
+        }
+    };
     ProviderBatch {
         catalog_id: catalog.catalog_id.clone(),
         journal: JournalDraft {
@@ -935,8 +943,7 @@ fn pressure_batch(
             date: None,
         }],
         articles,
-        is_complete,
-        next_checkpoint: (!is_complete).then(|| format!("page-{}", page_index + 1)),
+        progress,
     }
 }
 

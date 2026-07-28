@@ -6,12 +6,13 @@ use std::fmt;
 use litradar_domain::{
     normalize_bibliographic_text, normalize_contract_doi, normalize_contract_issn,
     normalize_contract_pmid, normalize_contract_text, ArticleAccessContext, ArticleDraft,
-    ArticleFullTextResolution, ArticleLocator, ArticleRedirect, JournalCatalogEntry, ProviderBatch,
+    ArticleFullTextResolution, ArticleLocator, ArticleRedirect, IndexFetchContext,
+    JournalCatalogEntry, ProviderBatch, ProviderProgress,
 };
 
 use crate::{ArticleAbstractProvider, ArticleFullTextProvider, IndexContentProvider};
 
-const MAX_CHECKPOINT_BYTES: usize = 65_536;
+const MAX_OPAQUE_STATE_BYTES: usize = 65_536;
 
 /// Provider contract validation failure.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -53,7 +54,7 @@ impl Error for ContractViolation {}
 ///
 /// # Returns
 ///
-/// Success when every canonical field satisfies contract v2.
+/// Success when every canonical field satisfies the current provider contract.
 pub fn validate_catalog_entry(entry: &JournalCatalogEntry) -> Result<(), ContractViolation> {
     validate_catalog_id(&entry.catalog_id)?;
     let mut catalog_ids = vec![entry.catalog_id.clone()];
@@ -123,7 +124,7 @@ pub fn validate_catalog_entry(entry: &JournalCatalogEntry) -> Result<(), Contrac
 ///
 /// * `provider` - Provider implementation under test.
 /// * `catalog` - Canonical catalog fixture.
-/// * `checkpoint` - Optional opaque checkpoint fixture.
+/// * `context` - Synchronization context supplied to the provider fixture.
 ///
 /// # Returns
 ///
@@ -131,9 +132,11 @@ pub fn validate_catalog_entry(entry: &JournalCatalogEntry) -> Result<(), Contrac
 pub fn validate_index_provider_fixture(
     provider: &dyn IndexContentProvider,
     catalog: &JournalCatalogEntry,
-    checkpoint: Option<&str>,
+    context: IndexFetchContext<'_>,
 ) -> Result<ProviderBatch, ContractViolation> {
-    let batch = provider.fetch(catalog, checkpoint).map_err(|error| {
+    validate_opaque_state(context.committed_anchor, "provider anchor")?;
+    validate_opaque_state(context.traversal_checkpoint, "provider checkpoint")?;
+    let batch = provider.fetch(catalog, context).map_err(|error| {
         ContractViolation::new(format!(
             "index provider fixture failed with {:?}",
             error.kind()
@@ -385,19 +388,30 @@ pub fn validate_provider_batch(
     for article in &batch.articles {
         validate_article(catalog, article)?;
     }
-    if batch
-        .next_checkpoint
-        .as_ref()
-        .is_some_and(|value| value.len() > MAX_CHECKPOINT_BYTES)
-    {
-        return Err(ContractViolation::new(
-            "provider checkpoint exceeds the contract limit",
-        ));
+    match &batch.progress {
+        ProviderProgress::Continue { checkpoint } => {
+            validate_opaque_state(Some(checkpoint), "provider checkpoint")?;
+        }
+        ProviderProgress::Complete { next_anchor } => {
+            validate_opaque_state(next_anchor.as_deref(), "provider anchor")?;
+        }
     }
-    if batch.is_complete && batch.next_checkpoint.is_some() {
-        return Err(ContractViolation::new(
-            "a complete provider batch cannot include a next checkpoint",
-        ));
+    Ok(())
+}
+
+fn validate_opaque_state(value: Option<&str>, field: &str) -> Result<(), ContractViolation> {
+    let Some(value) = value else {
+        return Ok(());
+    };
+    if value.is_empty() {
+        return Err(ContractViolation::new(format!(
+            "{field} must not be empty when present"
+        )));
+    }
+    if value.len() > MAX_OPAQUE_STATE_BYTES {
+        return Err(ContractViolation::new(format!(
+            "{field} exceeds the contract limit"
+        )));
     }
     Ok(())
 }
@@ -668,14 +682,14 @@ fn require_canonical_text(value: &str, field: &str) -> Result<(), ContractViolat
 mod tests {
     use litradar_domain::{
         ArticleAccessContext, ArticleDraft, ArticleFullTextDocument, ArticleFullTextResolution,
-        ArticleId, ArticleLocator, ArticleRedirect, IssueDraft, JournalCatalogEntry, JournalDraft,
-        JournalRankings, ProviderBatch,
+        ArticleId, ArticleLocator, ArticleRedirect, IndexFetchContext, IndexSyncMode, IssueDraft,
+        JournalCatalogEntry, JournalDraft, JournalRankings, ProviderBatch, ProviderProgress,
     };
 
     use super::{
         validate_abstract_provider_fixture, validate_article_redirect, validate_catalog_entry,
         validate_full_text_provider_fixture, validate_full_text_resolution,
-        validate_index_provider_fixture, validate_provider_batch,
+        validate_index_provider_fixture, validate_provider_batch, MAX_OPAQUE_STATE_BYTES,
     };
     use crate::{
         ArticleAbstractProvider, ArticleFullTextProvider, IndexContentProvider, ProviderError,
@@ -687,7 +701,7 @@ mod tests {
         fn fetch(
             &self,
             _catalog: &JournalCatalogEntry,
-            _checkpoint: Option<&str>,
+            _context: IndexFetchContext<'_>,
         ) -> Result<ProviderBatch, ProviderError> {
             Ok(batch())
         }
@@ -770,8 +784,7 @@ mod tests {
                 in_press: Some(false),
                 retraction_dois: Vec::new(),
             }],
-            is_complete: true,
-            next_checkpoint: None,
+            progress: ProviderProgress::Complete { next_anchor: None },
         }
     }
 
@@ -799,6 +812,60 @@ mod tests {
         let catalog = catalog();
         validate_catalog_entry(&catalog).expect("catalog should pass");
         validate_provider_batch(&catalog, &batch()).expect("batch should pass");
+    }
+
+    #[test]
+    fn rejects_empty_or_oversized_provider_progress_values() {
+        let catalog = catalog();
+
+        let mut empty_checkpoint = batch();
+        empty_checkpoint.progress = ProviderProgress::Continue {
+            checkpoint: String::new(),
+        };
+        assert!(validate_provider_batch(&catalog, &empty_checkpoint)
+            .expect_err("empty checkpoint should fail")
+            .to_string()
+            .contains("checkpoint"));
+
+        let mut oversized_anchor = batch();
+        oversized_anchor.progress = ProviderProgress::Complete {
+            next_anchor: Some("a".repeat(MAX_OPAQUE_STATE_BYTES + 1)),
+        };
+        assert!(validate_provider_batch(&catalog, &oversized_anchor)
+            .expect_err("oversized anchor should fail")
+            .to_string()
+            .contains("anchor"));
+    }
+
+    #[test]
+    fn rejects_empty_or_oversized_fetch_context_values() {
+        let provider = FakeProvider;
+        let catalog = catalog();
+
+        let empty_anchor = IndexFetchContext {
+            mode: IndexSyncMode::Incremental,
+            committed_anchor: Some(""),
+            traversal_checkpoint: None,
+        };
+        assert!(
+            validate_index_provider_fixture(&provider, &catalog, empty_anchor)
+                .expect_err("empty anchor should fail")
+                .to_string()
+                .contains("anchor")
+        );
+
+        let oversized_checkpoint = "c".repeat(MAX_OPAQUE_STATE_BYTES + 1);
+        let oversized_context = IndexFetchContext {
+            mode: IndexSyncMode::Incremental,
+            committed_anchor: None,
+            traversal_checkpoint: Some(&oversized_checkpoint),
+        };
+        assert!(
+            validate_index_provider_fixture(&provider, &catalog, oversized_context)
+                .expect_err("oversized checkpoint should fail")
+                .to_string()
+                .contains("checkpoint")
+        );
     }
 
     #[test]
@@ -832,8 +899,16 @@ mod tests {
         let catalog = catalog();
         let article = article_locator();
 
-        validate_index_provider_fixture(&provider, &catalog, None)
-            .expect("index fixture should pass");
+        validate_index_provider_fixture(
+            &provider,
+            &catalog,
+            IndexFetchContext {
+                mode: IndexSyncMode::Bootstrap,
+                committed_anchor: None,
+                traversal_checkpoint: None,
+            },
+        )
+        .expect("index fixture should pass");
         validate_abstract_provider_fixture(&provider, &article, ArticleAccessContext::default())
             .expect("abstract fixture should pass");
         validate_full_text_provider_fixture(

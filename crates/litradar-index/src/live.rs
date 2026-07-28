@@ -10,7 +10,9 @@ use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender, SyncSender};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use litradar_domain::{JournalCatalogEntry, ProviderBatch};
+use litradar_domain::{
+    IndexFetchContext, IndexSyncMode, JournalCatalogEntry, ProviderBatch, ProviderProgress,
+};
 use litradar_provider::{
     IndexContentProvider, ProviderError, ProviderRegistration, ProviderRegistryError,
 };
@@ -1899,7 +1901,10 @@ fn fetch_worker_assignments_with_provider(
             seen_checkpoints.insert(value.clone());
         }
         for page_index in 0..MAX_PROVIDER_PAGES_PER_JOURNAL {
-            let batch = provider.fetch(&assignment.entry, provider_checkpoint.as_deref())?;
+            let batch = provider.fetch(
+                &assignment.entry,
+                bootstrap_fetch_context(provider_checkpoint.as_deref()),
+            )?;
             if batch.catalog_id != assignment.entry.catalog_id {
                 return Err(LiveIndexError::InvalidConfig(
                     "provider batch catalog identity is invalid".to_string(),
@@ -2076,7 +2081,10 @@ fn index_entries_with_provider(
             )
             .map_err(|error| LiveIndexError::Heartbeat(error.to_string()))?;
             let batch = provider
-                .fetch(entry, provider_checkpoint.as_deref())
+                .fetch(
+                    entry,
+                    bootstrap_fetch_context(provider_checkpoint.as_deref()),
+                )
                 .map_err(|error| {
                     tracing::error!(
                         event = "index.provider.failed",
@@ -2151,20 +2159,25 @@ fn decode_checkpoint(value: &str) -> Result<StoredCheckpoint, LiveIndexError> {
 }
 
 fn checkpoint_after_batch(batch: &ProviderBatch) -> Result<StoredCheckpoint, LiveIndexError> {
-    if batch.is_complete {
-        if batch.next_checkpoint.is_some() {
-            return Err(LiveIndexError::InvalidConfig(
-                "complete provider batch must not include a next checkpoint".to_string(),
-            ));
+    match &batch.progress {
+        ProviderProgress::Continue { checkpoint } if checkpoint.is_empty() => {
+            Err(LiveIndexError::InvalidConfig(
+                "provider batch checkpoint must not be empty".to_string(),
+            ))
         }
-        return Ok(StoredCheckpoint::Complete);
+        ProviderProgress::Continue { checkpoint } => Ok(StoredCheckpoint::Provider {
+            value: checkpoint.clone(),
+        }),
+        ProviderProgress::Complete { .. } => Ok(StoredCheckpoint::Complete),
     }
-    let value = batch.next_checkpoint.clone().ok_or_else(|| {
-        LiveIndexError::InvalidConfig(
-            "incomplete provider batch must include a next checkpoint".to_string(),
-        )
-    })?;
-    Ok(StoredCheckpoint::Provider { value })
+}
+
+fn bootstrap_fetch_context(traversal_checkpoint: Option<&str>) -> IndexFetchContext<'_> {
+    IndexFetchContext {
+        mode: IndexSyncMode::Bootstrap,
+        committed_anchor: None,
+        traversal_checkpoint,
+    }
 }
 
 fn duration_millis(duration: Duration) -> u64 {
@@ -2207,9 +2220,9 @@ mod tests {
     use std::time::Duration;
 
     use litradar_domain::{
-        ArticleAuthorDraft, ArticleDraft, IssueDraft, JournalCatalogEntry, JournalDraft,
-        JournalRankings, ProviderBatch, INDEX_AGGREGATE_CONCURRENCY_MAX,
-        SCHOLARLY_WORKER_COUNT_MAX,
+        ArticleAuthorDraft, ArticleDraft, IndexFetchContext, IssueDraft, JournalCatalogEntry,
+        JournalDraft, JournalRankings, ProviderBatch, ProviderProgress,
+        INDEX_AGGREGATE_CONCURRENCY_MAX, SCHOLARLY_WORKER_COUNT_MAX,
     };
     use litradar_provider::conformance::ContractViolation;
     use litradar_provider::{IndexContentProvider, ProviderError, ProviderErrorKind};
@@ -2331,9 +2344,9 @@ mod tests {
         fn fetch(
             &self,
             catalog: &JournalCatalogEntry,
-            checkpoint: Option<&str>,
+            context: IndexFetchContext<'_>,
         ) -> Result<ProviderBatch, ProviderError> {
-            assert!(checkpoint.is_none());
+            assert!(context.traversal_checkpoint.is_none());
             *self.calls.lock().expect("call count should lock") += 1;
             Ok(canonical_batch(catalog))
         }
@@ -2345,7 +2358,7 @@ mod tests {
         fn fetch(
             &self,
             _catalog: &JournalCatalogEntry,
-            _checkpoint: Option<&str>,
+            _context: IndexFetchContext<'_>,
         ) -> Result<ProviderBatch, ProviderError> {
             Err(ProviderError::new(
                 ProviderErrorKind::NotFound,
@@ -2362,13 +2375,14 @@ mod tests {
         fn fetch(
             &self,
             catalog: &JournalCatalogEntry,
-            checkpoint: Option<&str>,
+            context: IndexFetchContext<'_>,
         ) -> Result<ProviderBatch, ProviderError> {
             let mut batch = canonical_batch(catalog);
-            match checkpoint {
+            match context.traversal_checkpoint {
                 None => {
-                    batch.is_complete = false;
-                    batch.next_checkpoint = Some("cursor-1".to_string());
+                    batch.progress = ProviderProgress::Continue {
+                        checkpoint: "cursor-1".to_string(),
+                    };
                 }
                 Some("cursor-1") => {
                     self.second_fetch
@@ -2471,8 +2485,7 @@ mod tests {
                 in_press: Some(false),
                 retraction_dois: Vec::new(),
             }],
-            is_complete: true,
-            next_checkpoint: None,
+            progress: ProviderProgress::Complete { next_anchor: None },
         }
     }
 
@@ -3307,7 +3320,7 @@ mod tests {
         else {
             panic!("worker should emit a batch before waiting")
         };
-        assert!(!batch.is_complete);
+        assert!(matches!(batch.progress, ProviderProgress::Continue { .. }));
         write_message(
             &mut writer,
             &ParentMessage::Committed {
@@ -3336,7 +3349,7 @@ mod tests {
         else {
             panic!("worker should emit the second batch")
         };
-        assert!(batch.is_complete);
+        assert!(matches!(batch.progress, ProviderProgress::Complete { .. }));
         write_message(
             &mut writer,
             &ParentMessage::Committed {
@@ -3616,10 +3629,11 @@ mod tests {
     }
 
     #[test]
-    fn worker_protocol_version_four_rejects_version_one_requests() {
+    fn worker_protocol_version_five_rejects_version_four_requests() {
         let directory = tempdir().expect("temporary directory should create");
         let mut request = fetch_worker_request("scholarly", "run-version-mismatch");
-        request.protocol_version = 1;
+        assert_eq!(PROTOCOL_VERSION, 5);
+        request.protocol_version = 4;
         request.assignments.clear();
         let request_path = directory.path().join("worker-request.json");
         std::fs::write(
