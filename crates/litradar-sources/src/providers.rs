@@ -12,8 +12,8 @@ use litradar_domain::{
     normalize_bibliographic_label, normalize_bibliographic_text, normalize_contract_date,
     normalize_contract_doi, normalize_contract_pmid, normalize_contract_text, ArticleAccessContext,
     ArticleAuthorDraft, ArticleDraft, ArticleLocator, ArticleRedirect, IndexFetchContext,
-    IssueDraft, JournalCatalogEntry, JournalDraft, ProviderBatch, ProviderCapabilityInfo,
-    ProviderProgress,
+    IndexSyncMode, IssueDraft, JournalCatalogEntry, JournalDraft, ProviderBatch,
+    ProviderCapabilityInfo, ProviderProgress,
 };
 use litradar_provider::{
     ArticleAbstractProvider, IndexContentProvider, ProviderCapabilities, ProviderDescriptor,
@@ -23,6 +23,7 @@ use litradar_provider::{
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::cnki_domestic::{DomesticCnkiAnchor, DOMESTIC_CNKI_ANCHOR_VERSION};
 use crate::{
     CnkiClient, CnkiSourceError, CnkiTransport, DomesticCnkiCheckpoint, DomesticCnkiClient,
     DomesticCnkiSourceError, DomesticCnkiTransport, DomesticIssueArticlePage,
@@ -532,7 +533,7 @@ where
                     client,
                     journal_snapshots,
                     catalog,
-                    context.traversal_checkpoint,
+                    context,
                     detail_pool,
                     &mut detail_attempts,
                 )
@@ -1932,43 +1933,42 @@ fn fetch_domestic_cnki_batch<T>(
     client: &mut DomesticCnkiClient<T>,
     journal_snapshots: &mut BTreeMap<String, DomesticCnkiJournalSnapshot>,
     catalog: &JournalCatalogEntry,
-    checkpoint: Option<&str>,
+    context: IndexFetchContext<'_>,
     detail_pool: &DomesticCnkiDetailPool,
     detail_attempts: &mut Vec<SourceAttempt>,
 ) -> Result<ProviderBatch, ProviderError>
 where
     T: DomesticCnkiTransport + Clone + Send,
 {
-    if let Some(raw) = checkpoint {
-        let lowered = raw.to_ascii_lowercase();
-        if lowered.contains("captcha")
-            || raw.contains("secretKey")
-            || raw.contains("pointJson")
-            || raw.contains("jfbym")
-        {
-            return Err(ProviderError::new(
-                ProviderErrorKind::InvalidResponse,
-                "domestic CNKI checkpoint must not contain captcha fields",
-            ));
-        }
-    }
-    let resume = checkpoint
-        .map(|raw| {
-            serde_json::from_str::<DomesticCnkiCheckpoint>(raw).map_err(|_| {
-                ProviderError::new(
-                    ProviderErrorKind::InvalidResponse,
-                    "domestic CNKI checkpoint is invalid",
-                )
-            })
-        })
+    let committed_anchor = context
+        .committed_anchor
+        .map(decode_domestic_anchor)
+        .transpose()?;
+    let committed_issue_id = committed_anchor
+        .as_ref()
+        .map(|anchor| anchor.year_issue_id.clone());
+    let resume = context
+        .traversal_checkpoint
+        .map(decode_domestic_checkpoint)
         .transpose()?;
     if let Some(resume) = &resume {
         if resume.version != crate::DOMESTIC_CNKI_CHECKPOINT_VERSION
-            || !is_stable_domestic_issue_id(&resume.year_issue_id)
+            || resume
+                .base_anchor_issue_id
+                .as_deref()
+                .is_some_and(|value| !is_stable_domestic_issue_id(value))
+            || !is_stable_domestic_issue_id(&resume.candidate_head_issue_id)
+            || !is_stable_domestic_issue_id(&resume.current_issue_id)
         {
             return Err(ProviderError::new(
                 ProviderErrorKind::InvalidResponse,
                 "domestic CNKI checkpoint version or issue id is invalid",
+            ));
+        }
+        if resume.base_anchor_issue_id != committed_issue_id {
+            return Err(ProviderError::new(
+                ProviderErrorKind::InvalidResponse,
+                "domestic CNKI checkpoint does not match the frozen committed anchor",
             ));
         }
     }
@@ -2012,24 +2012,57 @@ where
             progress: ProviderProgress::Complete { next_anchor: None },
         });
     }
-    let (issue_index, page_index) = if let Some(resume) = &resume {
-        let issue_index = issue_payloads
-            .iter()
-            .position(|issue| {
-                domestic_year_issue_id(issue).as_deref() == Some(resume.year_issue_id.as_str())
+    let issue_ids = issue_payloads
+        .iter()
+        .map(|issue| {
+            domestic_year_issue_id(issue).ok_or_else(|| {
+                ProviderError::new(
+                    ProviderErrorKind::InvalidResponse,
+                    "domestic CNKI issue payload omitted its stable year_issue_id",
+                )
             })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    if issue_ids.iter().collect::<BTreeSet<_>>().len() != issue_ids.len() {
+        return Err(ProviderError::new(
+            ProviderErrorKind::InvalidResponse,
+            "domestic CNKI issue tree contains duplicate stable issue ids",
+        ));
+    }
+    let candidate_head_issue_id = resume.as_ref().map_or_else(
+        || issue_ids[0].clone(),
+        |resume| resume.candidate_head_issue_id.clone(),
+    );
+    let candidate_head_index = issue_ids
+        .iter()
+        .position(|issue_id| issue_id == &candidate_head_issue_id)
+        .ok_or_else(missing_domestic_checkpoint_issue_error)?;
+    let window_end_index = if context.mode == IndexSyncMode::Incremental {
+        committed_issue_id
+            .as_ref()
+            .and_then(|base_issue_id| {
+                issue_ids
+                    .iter()
+                    .enumerate()
+                    .skip(candidate_head_index)
+                    .find_map(|(index, issue_id)| (issue_id == base_issue_id).then_some(index))
+            })
+            .unwrap_or(issue_payloads.len() - 1)
+    } else {
+        issue_payloads.len() - 1
+    };
+    let (issue_index, page_index) = if let Some(resume) = &resume {
+        let issue_index = issue_ids
+            .iter()
+            .position(|issue_id| issue_id == &resume.current_issue_id)
+            .filter(|index| *index >= candidate_head_index && *index <= window_end_index)
             .ok_or_else(missing_domestic_checkpoint_issue_error)?;
         (issue_index, resume.page_index)
     } else {
-        (0, 0)
+        (candidate_head_index, 0)
     };
     let issue_payload = &issue_payloads[issue_index];
-    let year_issue_id = domestic_year_issue_id(issue_payload).ok_or_else(|| {
-        ProviderError::new(
-            ProviderErrorKind::InvalidResponse,
-            "domestic CNKI issue payload omitted its stable year_issue_id",
-        )
-    })?;
+    let current_issue_id = issue_ids[issue_index].clone();
     if issue_payload.get("year").and_then(Value::as_i64).is_none() {
         return Err(ProviderError::new(
             ProviderErrorKind::InvalidResponse,
@@ -2112,7 +2145,9 @@ where
     let next = if has_next_page {
         Some(DomesticCnkiCheckpoint {
             version: crate::DOMESTIC_CNKI_CHECKPOINT_VERSION,
-            year_issue_id,
+            base_anchor_issue_id: committed_issue_id.clone(),
+            candidate_head_issue_id: candidate_head_issue_id.clone(),
+            current_issue_id,
             page_index: page_index.checked_add(1).ok_or_else(|| {
                 ProviderError::new(
                     ProviderErrorKind::InvalidResponse,
@@ -2120,15 +2155,12 @@ where
                 )
             })?,
         })
-    } else if let Some(next_issue) = issue_payloads.get(issue_index + 1) {
+    } else if issue_index < window_end_index {
         Some(DomesticCnkiCheckpoint {
             version: crate::DOMESTIC_CNKI_CHECKPOINT_VERSION,
-            year_issue_id: domestic_year_issue_id(next_issue).ok_or_else(|| {
-                ProviderError::new(
-                    ProviderErrorKind::InvalidResponse,
-                    "domestic CNKI next issue omitted its stable year_issue_id",
-                )
-            })?,
+            base_anchor_issue_id: committed_issue_id,
+            candidate_head_issue_id: candidate_head_issue_id.clone(),
+            current_issue_id: issue_ids[issue_index + 1].clone(),
             page_index: 0,
         })
     } else {
@@ -2138,7 +2170,12 @@ where
         Some(checkpoint) => ProviderProgress::Continue {
             checkpoint: encode_domestic_checkpoint(&checkpoint)?,
         },
-        None => ProviderProgress::Complete { next_anchor: None },
+        None => ProviderProgress::Complete {
+            next_anchor: Some(encode_domestic_anchor(&DomesticCnkiAnchor {
+                version: DOMESTIC_CNKI_ANCHOR_VERSION,
+                year_issue_id: candidate_head_issue_id,
+            })?),
+        },
     };
     Ok(ProviderBatch {
         catalog_id: catalog.catalog_id.clone(),
@@ -2158,6 +2195,69 @@ fn encode_domestic_checkpoint(
             "domestic CNKI checkpoint could not be encoded",
         )
     })
+}
+
+fn decode_domestic_checkpoint(raw: &str) -> Result<DomesticCnkiCheckpoint, ProviderError> {
+    reject_domestic_opaque_secrets(raw, "checkpoint")?;
+    serde_json::from_str(raw).map_err(|_| {
+        ProviderError::new(
+            ProviderErrorKind::InvalidResponse,
+            "domestic CNKI checkpoint is invalid",
+        )
+    })
+}
+
+fn encode_domestic_anchor(anchor: &DomesticCnkiAnchor) -> Result<String, ProviderError> {
+    serde_json::to_string(anchor).map_err(|_| {
+        ProviderError::new(
+            ProviderErrorKind::Internal,
+            "domestic CNKI anchor could not be encoded",
+        )
+    })
+}
+
+fn decode_domestic_anchor(raw: &str) -> Result<DomesticCnkiAnchor, ProviderError> {
+    reject_domestic_opaque_secrets(raw, "anchor")?;
+    let anchor = serde_json::from_str::<DomesticCnkiAnchor>(raw).map_err(|_| {
+        ProviderError::new(
+            ProviderErrorKind::InvalidResponse,
+            "domestic CNKI anchor is invalid",
+        )
+    })?;
+    if anchor.version != DOMESTIC_CNKI_ANCHOR_VERSION
+        || !is_stable_domestic_issue_id(&anchor.year_issue_id)
+    {
+        return Err(ProviderError::new(
+            ProviderErrorKind::InvalidResponse,
+            "domestic CNKI anchor version or issue id is invalid",
+        ));
+    }
+    Ok(anchor)
+}
+
+fn reject_domestic_opaque_secrets(raw: &str, state_kind: &str) -> Result<(), ProviderError> {
+    let lowered = raw.to_ascii_lowercase();
+    if [
+        "captcha",
+        "secretkey",
+        "pointjson",
+        "jfbym",
+        "session",
+        "cookie",
+        "token",
+        "http://",
+        "https://",
+        "url",
+    ]
+    .iter()
+    .any(|forbidden| lowered.contains(forbidden))
+    {
+        return Err(ProviderError::new(
+            ProviderErrorKind::InvalidResponse,
+            format!("domestic CNKI {state_kind} must not contain session or transport fields"),
+        ));
+    }
+    Ok(())
 }
 
 fn domestic_year_issue_id(issue: &Value) -> Option<String> {
@@ -2689,9 +2789,17 @@ mod tests {
     }
 
     fn fetch_context(traversal_checkpoint: Option<&str>) -> IndexFetchContext<'_> {
+        sync_context(IndexSyncMode::Bootstrap, None, traversal_checkpoint)
+    }
+
+    fn sync_context<'a>(
+        mode: IndexSyncMode,
+        committed_anchor: Option<&'a str>,
+        traversal_checkpoint: Option<&'a str>,
+    ) -> IndexFetchContext<'a> {
         IndexFetchContext {
-            mode: IndexSyncMode::Bootstrap,
-            committed_anchor: None,
+            mode,
+            committed_anchor,
             traversal_checkpoint,
         }
     }
@@ -2707,10 +2815,61 @@ mod tests {
         }
     }
 
+    fn batch_anchor(batch: &ProviderBatch) -> Option<&str> {
+        match &batch.progress {
+            ProviderProgress::Complete { next_anchor } => next_anchor.as_deref(),
+            ProviderProgress::Continue { .. } => None,
+        }
+    }
+
     fn into_batch_checkpoint(batch: ProviderBatch) -> Option<String> {
         match batch.progress {
             ProviderProgress::Continue { checkpoint } => Some(checkpoint),
             ProviderProgress::Complete { .. } => None,
+        }
+    }
+
+    fn fetch_all_batches(
+        provider: &dyn IndexContentProvider,
+        catalog: &JournalCatalogEntry,
+        mode: IndexSyncMode,
+        committed_anchor: Option<&str>,
+    ) -> Vec<ProviderBatch> {
+        let mut batches = Vec::new();
+        let mut checkpoint = None;
+        for _ in 0..100 {
+            let batch = provider
+                .fetch(
+                    catalog,
+                    sync_context(mode, committed_anchor, checkpoint.as_deref()),
+                )
+                .expect("domestic batch should fetch");
+            checkpoint = batch_checkpoint(&batch).map(str::to_string);
+            let is_complete = batch_is_complete(&batch);
+            batches.push(batch);
+            if is_complete {
+                return batches;
+            }
+        }
+        panic!("domestic fixture exceeded its batch bound")
+    }
+
+    fn assert_domestic_state_is_safe(state: &str) {
+        assert!(state.len() <= 65_536);
+        let lowered = state.to_ascii_lowercase();
+        for forbidden in [
+            "captcha",
+            "secretkey",
+            "pointjson",
+            "jfbym",
+            "session",
+            "cookie",
+            "token",
+            "http://",
+            "https://",
+            "url",
+        ] {
+            assert!(!lowered.contains(forbidden));
         }
     }
 
@@ -3648,6 +3807,52 @@ mod tests {
         assert!(!serialized.contains("/kcms"));
         assert!(!serialized.contains("http"));
     }
+
+    #[test]
+    fn cnki_oversea_all_modes_full_scan_and_return_no_incremental_anchor() {
+        for mode in [
+            IndexSyncMode::Bootstrap,
+            IndexSyncMode::Incremental,
+            IndexSyncMode::FullRescan,
+        ] {
+            let registration =
+                cnki_oversea_index_registration(FixtureCnkiTransport::new(overseas_cnki_fixture()))
+                    .expect("overseas registration");
+            let mut cnki_catalog = catalog();
+            cnki_catalog.title = "CNKI Test Journal".to_string();
+            let batch = registration
+                .index_content()
+                .expect("overseas provider")
+                .fetch(
+                    &cnki_catalog,
+                    sync_context(mode, Some("opaque-ignored-anchor"), None),
+                )
+                .expect("overseas full scan");
+
+            assert!(batch_is_complete(&batch));
+            assert_eq!(batch_anchor(&batch), None);
+            assert_eq!(batch.articles.len(), 1);
+        }
+
+        let registration =
+            cnki_oversea_index_registration(FixtureCnkiTransport::new(overseas_cnki_fixture()))
+                .expect("overseas traversal rejection registration");
+        let mut cnki_catalog = catalog();
+        cnki_catalog.title = "CNKI Test Journal".to_string();
+        let error = registration
+            .index_content()
+            .expect("overseas provider")
+            .fetch(
+                &cnki_catalog,
+                sync_context(
+                    IndexSyncMode::Incremental,
+                    Some("opaque-ignored-anchor"),
+                    Some("unsupported-traversal"),
+                ),
+            )
+            .expect_err("overseas traversal should be rejected");
+        assert_eq!(error.kind(), ProviderErrorKind::InvalidResponse);
+    }
     #[test]
     fn domestic_cnki_journal_locators_keep_all_catalog_and_article_identities() {
         let catalog = JournalCatalogEntry {
@@ -3902,7 +4107,13 @@ mod tests {
             .to_string();
         assert_eq!(
             serde_json::from_str::<serde_json::Value>(&first_checkpoint).expect("checkpoint JSON"),
-            json!({"version": 1, "year_issue_id": "202512", "page_index": 1})
+            json!({
+                "version": 2,
+                "base_anchor_issue_id": null,
+                "candidate_head_issue_id": "202512",
+                "current_issue_id": "202512",
+                "page_index": 1
+            })
         );
         assert!(!first_checkpoint.contains("issue_index"));
         assert!(!first_checkpoint.contains("article_index"));
@@ -3927,7 +4138,13 @@ mod tests {
         assert_eq!(
             serde_json::from_str::<serde_json::Value>(&next_issue_checkpoint)
                 .expect("next checkpoint JSON"),
-            json!({"version": 1, "year_issue_id": "202511", "page_index": 0})
+            json!({
+                "version": 2,
+                "base_anchor_issue_id": null,
+                "candidate_head_issue_id": "202512",
+                "current_issue_id": "202511",
+                "page_index": 0
+            })
         );
         let final_batch = reordered_index
             .fetch(&catalog, fetch_context(Some(&next_issue_checkpoint)))
@@ -3953,6 +4170,327 @@ mod tests {
             .expect_err("missing checkpoint issue should fail");
         assert_eq!(error.kind(), ProviderErrorKind::InvalidResponse);
         assert!(error.to_string().contains("reset"));
+    }
+
+    #[test]
+    fn domestic_cnki_incremental_covers_every_base_page_and_stops_before_older_issues() {
+        let base_entries = (0..10)
+            .map(|index| {
+                (
+                    format!("BASE{index:02}"),
+                    format!("Boundary article {index}"),
+                )
+            })
+            .collect::<Vec<_>>();
+        let mut fixture = domestic_paged_fixture(vec![
+            (
+                "202601".to_string(),
+                vec![vec![("HEAD".to_string(), "Newest article".to_string())]],
+            ),
+            ("202512".to_string(), vec![base_entries, Vec::new()]),
+            (
+                "202511".to_string(),
+                vec![vec![("OLDER".to_string(), "Older article".to_string())]],
+            ),
+        ]);
+        fixture.issue_article_pages.remove("202511");
+        let registration = cnki_index_registration(FixtureDomesticCnkiTransport::new(fixture))
+            .expect("incremental registration");
+        let anchor = json!({"version": 1, "year_issue_id": "202512"}).to_string();
+        let batches = fetch_all_batches(
+            registration
+                .index_content()
+                .expect("incremental provider")
+                .as_ref(),
+            &domestic_test_catalog(),
+            IndexSyncMode::Incremental,
+            Some(&anchor),
+        );
+
+        assert_eq!(batches.len(), 3);
+        for batch in &batches {
+            if let Some(checkpoint) = batch_checkpoint(batch) {
+                assert_domestic_state_is_safe(checkpoint);
+            }
+            if let Some(anchor) = batch_anchor(batch) {
+                assert_domestic_state_is_safe(anchor);
+            }
+        }
+        assert!(batches.last().expect("final batch").articles.is_empty());
+        let titles = batches
+            .iter()
+            .flat_map(|batch| batch.articles.iter().map(|article| article.title.as_str()))
+            .collect::<Vec<_>>();
+        assert_eq!(titles.len(), 11);
+        assert_eq!(titles[0], "Newest article");
+        assert!(!titles.contains(&"Older article"));
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(
+                batch_anchor(batches.last().expect("final batch")).expect("next anchor")
+            )
+            .expect("anchor JSON"),
+            json!({"version": 1, "year_issue_id": "202601"})
+        );
+        let boundary_terminal_checkpoint = batch_checkpoint(&batches[1])
+            .expect("exact boundary page should require its empty terminal page");
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(boundary_terminal_checkpoint)
+                .expect("boundary checkpoint JSON"),
+            json!({
+                "version": 2,
+                "base_anchor_issue_id": "202512",
+                "candidate_head_issue_id": "202601",
+                "current_issue_id": "202512",
+                "page_index": 1
+            })
+        );
+    }
+
+    #[test]
+    fn domestic_cnki_resume_ignores_a_newer_inserted_head_until_the_next_update() {
+        let initial_fixture = domestic_paged_fixture(vec![
+            (
+                "202601".to_string(),
+                vec![vec![("HEAD".to_string(), "Original head".to_string())]],
+            ),
+            (
+                "202512".to_string(),
+                vec![vec![("MIDDLE".to_string(), "Middle article".to_string())]],
+            ),
+            (
+                "202511".to_string(),
+                vec![vec![("BASE".to_string(), "Base article".to_string())]],
+            ),
+        ]);
+        let initial = cnki_index_registration(FixtureDomesticCnkiTransport::new(initial_fixture))
+            .expect("initial registration");
+        let base_anchor = json!({"version": 1, "year_issue_id": "202511"}).to_string();
+        let first = initial
+            .index_content()
+            .expect("initial provider")
+            .fetch(
+                &domestic_test_catalog(),
+                sync_context(IndexSyncMode::Incremental, Some(&base_anchor), None),
+            )
+            .expect("initial head batch");
+        assert_eq!(first.articles[0].title, "Original head");
+        let mut checkpoint = batch_checkpoint(&first)
+            .expect("head batch should continue")
+            .to_string();
+
+        let mut resumed_fixture = domestic_paged_fixture(vec![
+            (
+                "202602".to_string(),
+                vec![vec![("NEW".to_string(), "Inserted head".to_string())]],
+            ),
+            (
+                "202601".to_string(),
+                vec![vec![("HEAD".to_string(), "Original head".to_string())]],
+            ),
+            (
+                "202512".to_string(),
+                vec![vec![("MIDDLE".to_string(), "Middle article".to_string())]],
+            ),
+            (
+                "202511".to_string(),
+                vec![vec![("BASE".to_string(), "Base article".to_string())]],
+            ),
+        ]);
+        resumed_fixture.issue_article_pages.remove("202602");
+        let resumed = cnki_index_registration(FixtureDomesticCnkiTransport::new(resumed_fixture))
+            .expect("resumed registration");
+        let provider = resumed.index_content().expect("resumed provider");
+        let mut resumed_batches = Vec::new();
+        loop {
+            let batch = provider
+                .fetch(
+                    &domestic_test_catalog(),
+                    sync_context(
+                        IndexSyncMode::Incremental,
+                        Some(&base_anchor),
+                        Some(&checkpoint),
+                    ),
+                )
+                .expect("resumed batch");
+            if let Some(next) = batch_checkpoint(&batch) {
+                checkpoint = next.to_string();
+            }
+            let is_complete = batch_is_complete(&batch);
+            resumed_batches.push(batch);
+            if is_complete {
+                break;
+            }
+        }
+        let resumed_titles = resumed_batches
+            .iter()
+            .flat_map(|batch| batch.articles.iter().map(|article| article.title.as_str()))
+            .collect::<Vec<_>>();
+        assert_eq!(resumed_titles, vec!["Middle article", "Base article"]);
+        let frozen_head_anchor = batch_anchor(resumed_batches.last().expect("final resumed batch"))
+            .expect("frozen head anchor")
+            .to_string();
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&frozen_head_anchor)
+                .expect("frozen anchor JSON"),
+            json!({"version": 1, "year_issue_id": "202601"})
+        );
+
+        let mut next_fixture = domestic_paged_fixture(vec![
+            (
+                "202602".to_string(),
+                vec![vec![("NEW".to_string(), "Inserted head".to_string())]],
+            ),
+            (
+                "202601".to_string(),
+                vec![vec![("HEAD".to_string(), "Original head".to_string())]],
+            ),
+            (
+                "202512".to_string(),
+                vec![vec![("MIDDLE".to_string(), "Middle article".to_string())]],
+            ),
+        ]);
+        next_fixture.issue_article_pages.remove("202512");
+        let next = cnki_index_registration(FixtureDomesticCnkiTransport::new(next_fixture))
+            .expect("next registration");
+        let next_batches = fetch_all_batches(
+            next.index_content().expect("next provider").as_ref(),
+            &domestic_test_catalog(),
+            IndexSyncMode::Incremental,
+            Some(&frozen_head_anchor),
+        );
+        let next_titles = next_batches
+            .iter()
+            .flat_map(|batch| batch.articles.iter().map(|article| article.title.as_str()))
+            .collect::<Vec<_>>();
+        assert_eq!(next_titles, vec!["Inserted head", "Original head"]);
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(
+                batch_anchor(next_batches.last().expect("final next batch"))
+                    .expect("new head anchor")
+            )
+            .expect("new anchor JSON"),
+            json!({"version": 1, "year_issue_id": "202602"})
+        );
+    }
+
+    #[test]
+    fn domestic_cnki_missing_base_falls_back_but_malformed_state_fails_closed() {
+        let fixture = domestic_paged_fixture(vec![
+            (
+                "202601".to_string(),
+                vec![vec![("HEAD".to_string(), "Head article".to_string())]],
+            ),
+            (
+                "202512".to_string(),
+                vec![vec![("OLD".to_string(), "Old article".to_string())]],
+            ),
+        ]);
+        let missing_base = json!({"version": 1, "year_issue_id": "199901"}).to_string();
+        let registration =
+            cnki_index_registration(FixtureDomesticCnkiTransport::new(fixture.clone()))
+                .expect("fallback registration");
+        let batches = fetch_all_batches(
+            registration
+                .index_content()
+                .expect("fallback provider")
+                .as_ref(),
+            &domestic_test_catalog(),
+            IndexSyncMode::Incremental,
+            Some(&missing_base),
+        );
+        assert_eq!(
+            batches
+                .iter()
+                .flat_map(|batch| batch.articles.iter())
+                .map(|article| article.title.as_str())
+                .collect::<Vec<_>>(),
+            vec!["Head article", "Old article"]
+        );
+
+        for malformed_anchor in [
+            r#"{"version":2,"year_issue_id":"202512"}"#,
+            r#"{"version":1,"year_issue_id":"https://secret.example"}"#,
+        ] {
+            let invalid =
+                cnki_index_registration(FixtureDomesticCnkiTransport::new(fixture.clone()))
+                    .expect("invalid anchor registration");
+            let error = invalid
+                .index_content()
+                .expect("invalid anchor provider")
+                .fetch(
+                    &domestic_test_catalog(),
+                    sync_context(IndexSyncMode::Incremental, Some(malformed_anchor), None),
+                )
+                .expect_err("malformed anchor should fail");
+            assert_eq!(error.kind(), ProviderErrorKind::InvalidResponse);
+        }
+
+        let valid_anchor = json!({"version": 1, "year_issue_id": "202512"}).to_string();
+        let missing_current = json!({
+            "version": 2,
+            "base_anchor_issue_id": "202512",
+            "candidate_head_issue_id": "202601",
+            "current_issue_id": "202599",
+            "page_index": 0
+        })
+        .to_string();
+        let invalid = cnki_index_registration(FixtureDomesticCnkiTransport::new(fixture))
+            .expect("invalid checkpoint registration");
+        let error = invalid
+            .index_content()
+            .expect("invalid checkpoint provider")
+            .fetch(
+                &domestic_test_catalog(),
+                sync_context(
+                    IndexSyncMode::Incremental,
+                    Some(&valid_anchor),
+                    Some(&missing_current),
+                ),
+            )
+            .expect_err("missing active issue should fail");
+        assert_eq!(error.kind(), ProviderErrorKind::InvalidResponse);
+    }
+
+    #[test]
+    fn domestic_cnki_full_rescan_ignores_the_committed_anchor_boundary() {
+        let fixture = domestic_paged_fixture(vec![
+            (
+                "202601".to_string(),
+                vec![vec![("HEAD".to_string(), "Head article".to_string())]],
+            ),
+            (
+                "202512".to_string(),
+                vec![vec![("OLD".to_string(), "Historical article".to_string())]],
+            ),
+        ]);
+        let anchor = json!({"version": 1, "year_issue_id": "202601"}).to_string();
+        let registration = cnki_index_registration(FixtureDomesticCnkiTransport::new(fixture))
+            .expect("full-rescan registration");
+        let batches = fetch_all_batches(
+            registration
+                .index_content()
+                .expect("full-rescan provider")
+                .as_ref(),
+            &domestic_test_catalog(),
+            IndexSyncMode::FullRescan,
+            Some(&anchor),
+        );
+
+        assert_eq!(
+            batches
+                .iter()
+                .flat_map(|batch| batch.articles.iter())
+                .map(|article| article.title.as_str())
+                .collect::<Vec<_>>(),
+            vec!["Head article", "Historical article"]
+        );
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(
+                batch_anchor(batches.last().expect("final batch")).expect("next anchor")
+            )
+            .expect("anchor JSON"),
+            json!({"version": 1, "year_issue_id": "202601"})
+        );
     }
 
     #[test]
@@ -4025,7 +4563,13 @@ mod tests {
         let checkpoint = into_batch_checkpoint(articles).expect("terminal checkpoint");
         assert_eq!(
             serde_json::from_str::<serde_json::Value>(&checkpoint).expect("checkpoint JSON"),
-            json!({"version": 1, "year_issue_id": "202512", "page_index": 1})
+            json!({
+                "version": 2,
+                "base_anchor_issue_id": null,
+                "candidate_head_issue_id": "202512",
+                "current_issue_id": "202512",
+                "page_index": 1
+            })
         );
 
         let terminal = index
@@ -4326,6 +4870,48 @@ mod tests {
             title_aliases: Vec::new(),
             area: None,
             rankings: JournalRankings::default(),
+        }
+    }
+
+    fn overseas_cnki_fixture() -> CnkiFixtureData {
+        CnkiFixtureData {
+            journal_detail_html: r#"
+                <html><head><title>CNKI Test Journal - 中国知网</title></head>
+                <body>
+                  <input id="pykm" value="TEST" />
+                  <input id="pCode" value="CJFD" />
+                  <input id="shareChName" value="CNKI Test Journal" />
+                </body></html>
+            "#
+            .to_string(),
+            year_issues_html:
+                r#"<div id="YearIssueTree"><a id="yq202601" value="202601">2026 No.01</a></div>"#
+                    .to_string(),
+            issue_articles_html: BTreeMap::from([(
+                "202601".to_string(),
+                r#"
+                <dt class="tit">Articles</dt>
+                <dd class="row">
+                  <a href="/kcms2/article/abstract?v=1&filename=CNKI202601001">CNKI article</a>
+                  <b name="encrypt" id="CNKI202601001"></b>
+                </dd>
+                "#
+                .to_string(),
+            )]),
+            article_detail_html: BTreeMap::from([(
+                "CNKI202601001".to_string(),
+                r#"
+                <html><head><title>CNKI article</title></head>
+                <body>
+                  <input id="paramfilename" value="CNKI202601001" />
+                  <input id="paramdbcode" value="CJFD" />
+                  <input id="paramdbname" value="CJFDLAST2026" />
+                  <p class="title-one">CNKI article</p>
+                </body></html>
+                "#
+                .to_string(),
+            )]),
+            fail_endpoint: None,
         }
     }
 

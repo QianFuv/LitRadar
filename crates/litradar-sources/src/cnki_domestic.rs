@@ -1,7 +1,4 @@
-//! Domestic NZKPT CNKI metadata client parsers, fixtures, and captcha session.
-//!
-//! This module is intentionally unregistered as a product provider until later
-//! tasks wire index and abstract capabilities under the runtime name `cnki`.
+//! Domestic NZKPT CNKI metadata client, parsers, fixtures, and captcha session.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
@@ -42,7 +39,9 @@ const DOMESTIC_REDIRECT_LIMIT: usize = 10;
 const DOMESTIC_REQUEST_ATTEMPT_LIMIT: usize = 5;
 const DOMESTIC_TRANSPORT_ATTEMPT_LIMIT: usize = 8;
 /// Current stable domestic CNKI traversal checkpoint version.
-pub const DOMESTIC_CNKI_CHECKPOINT_VERSION: u32 = 1;
+pub const DOMESTIC_CNKI_CHECKPOINT_VERSION: u32 = 2;
+/// Current stable domestic CNKI successful anchor version.
+pub const DOMESTIC_CNKI_ANCHOR_VERSION: u32 = 1;
 
 #[derive(Debug, Default)]
 struct DomesticRequestBudget {
@@ -2200,15 +2199,29 @@ where
     }
 }
 
-/// Opaque checkpoint for resumable domestic index walks.
+/// Opaque successful boundary for domestic CNKI incremental synchronization.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DomesticCnkiAnchor {
+    /// Anchor schema version.
+    pub version: u32,
+    /// Stable newest year-issue identifier covered by the successful run.
+    pub year_issue_id: String,
+}
+
+/// Opaque checkpoint for one frozen domestic CNKI issue window.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DomesticCnkiCheckpoint {
     /// Checkpoint schema version.
     pub version: u32,
-    /// Stable year-issue identifier for the next page to process.
-    pub year_issue_id: String,
-    /// Zero-based papers page index within the stable issue.
+    /// Stable committed boundary copied when this run began.
+    pub base_anchor_issue_id: Option<String>,
+    /// Stable newest issue frozen by the first acknowledged batch.
+    pub candidate_head_issue_id: String,
+    /// Stable issue whose page must be processed next.
+    pub current_issue_id: String,
+    /// Zero-based papers page index within `current_issue_id`.
     pub page_index: usize,
 }
 
