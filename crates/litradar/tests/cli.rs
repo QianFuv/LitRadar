@@ -6,7 +6,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use litradar_domain::{ScheduledDeliveryJob, ScheduledJobSpec};
+use litradar_domain::{IndexSyncMode, ScheduledDeliveryJob, ScheduledJobSpec};
 use serde_json::Value;
 use tempfile::tempdir;
 
@@ -59,6 +59,44 @@ fn every_supported_subcommand_has_help_and_worker_is_rejected() {
     assert!(log_events(&removed)
         .iter()
         .any(|event| event["event"] == "process.failed"));
+}
+
+#[test]
+fn index_command_help_exposes_full_rescan_defaults_and_mode_relationships() {
+    let output = run_litradar(&["index", "--help"]);
+    let payload: Value = serde_json::from_slice(&output.stdout).expect("index help should be JSON");
+
+    assert!(output.status.success());
+    assert!(payload["usage"]
+        .as_str()
+        .is_some_and(|usage| usage.contains("--full-rescan|--no-full-rescan")));
+    assert_eq!(payload["defaults"]["resume"], true);
+    assert_eq!(payload["defaults"]["update"], false);
+    assert_eq!(payload["defaults"]["full_rescan"], false);
+    assert!(payload["modes"]["full_rescan"]
+        .as_str()
+        .is_some_and(|value| value.contains("mutually exclusive with --update")));
+    assert!(payload["modes"]["resume"]
+        .as_str()
+        .is_some_and(|value| value.contains("committed anchor")));
+}
+
+#[test]
+fn index_command_mode_conflicts_fail_before_project_mutation() {
+    for arguments in [
+        vec!["index", "--project-root", ".", "--update", "--full-rescan"],
+        vec!["index", "--project-root", ".", "--notify"],
+    ] {
+        let root = tempdir().expect("temporary project root should be created");
+        let output = run_litradar_in(root.path(), &arguments);
+
+        assert!(!output.status.success());
+        assert!(output.stdout.is_empty());
+        assert!(!root.path().join("data").exists());
+        assert!(log_events(&output)
+            .iter()
+            .any(|event| event["event"] == "process.failed"));
+    }
 }
 
 #[test]
@@ -358,17 +396,35 @@ fn index_command_resumes_a_local_catalog_without_network_access() {
         storage_config.index_control_dir().join("offline.sqlite"),
     )
     .expect("offline control database should open");
-    litradar_index::control::write_checkpoint(
+    let run = match litradar_index::control::prepare_journal_sync(
         &control,
         "offline",
         "cnki_oversea",
-        &litradar_index::control::CheckpointScope::Journal {
-            catalog_id: "issn-0001-3072".to_string(),
-        },
-        r#"{"state":"complete"}"#,
+        "issn-0001-3072",
+        "offline-complete-run",
+        IndexSyncMode::Bootstrap,
+        false,
         "2026-07-22T00:00:00Z",
     )
-    .expect("complete local checkpoint should write");
+    .expect("offline synchronization should prepare")
+    {
+        litradar_index::control::JournalSyncPreparation::Run(run) => run,
+        litradar_index::control::JournalSyncPreparation::Skip => {
+            panic!("fresh offline synchronization should not skip")
+        }
+    };
+    litradar_index::control::complete_sync_run(
+        &control,
+        "offline",
+        "cnki_oversea",
+        "issn-0001-3072",
+        &run.run_id,
+        run.mode,
+        run.base_anchor.as_deref(),
+        None,
+        "2026-07-22T00:00:00Z",
+    )
+    .expect("offline synchronization should complete");
     drop(control);
 
     let output = run_litradar_in(

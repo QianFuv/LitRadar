@@ -348,6 +348,7 @@ fn run_index_command_with_bundled_meta_dir(
         timeout_seconds: options.timeout_seconds,
         resume: options.resume,
         update: options.update,
+        full_rescan: options.full_rescan,
         notify: options.notify,
         notify_dry_run: options.notify_dry_run,
         scholarly_config,
@@ -419,6 +420,7 @@ struct IndexOptions {
     timeout_seconds: u64,
     resume: bool,
     update: bool,
+    full_rescan: bool,
     notify: bool,
     notify_dry_run: bool,
 }
@@ -441,8 +443,12 @@ fn parse_index_options(args: &mut Vec<String>) -> Result<IndexOptions, Box<dyn E
     litradar_domain::validate_index_concurrency(worker_count, process_count, false)?;
     let resume = extract_bool_pair(args, "--resume", "--no-resume", true);
     let update = extract_bool_pair(args, "--update", "--no-update", false);
+    let full_rescan = extract_bool_pair(args, "--full-rescan", "--no-full-rescan", false);
     let notify = extract_bool_pair(args, "--notify", "--no-notify", false);
     let notify_dry_run = extract_bool_pair(args, "--notify-dry-run", "--no-notify-dry-run", false);
+    if update && full_rescan {
+        return Err("--update cannot be combined with --full-rescan".into());
+    }
     if notify && !update {
         return Err("--notify requires --update".into());
     }
@@ -454,6 +460,7 @@ fn parse_index_options(args: &mut Vec<String>) -> Result<IndexOptions, Box<dyn E
         timeout_seconds,
         resume,
         update,
+        full_rescan,
         notify,
         notify_dry_run,
     })
@@ -1099,11 +1106,19 @@ fn live_index_runtime_config(
 
 fn index_usage() -> String {
     let payload = json!({
-        "usage": "litradar index --secret-key-file PATH [--project-root PATH] [--auth-db PATH] [--file FILE] [--workers N] [--processes N] [--issue-batch N] [--timeout N] [--resume|--no-resume] [--update|--no-update] [--notify] [--notify-dry-run]",
+        "usage": "litradar index --secret-key-file PATH [--project-root PATH] [--auth-db PATH] [--file FILE] [--workers N] [--processes N] [--issue-batch N] [--timeout N] [--resume|--no-resume] [--update|--no-update] [--full-rescan|--no-full-rescan] [--notify] [--notify-dry-run]",
         "defaults": {
             "workers": DEFAULT_INDEX_WORKER_COUNT,
             "processes": DEFAULT_INDEX_PROCESS_COUNT,
             "issue_batch": DEFAULT_INDEX_ISSUE_BATCH_SIZE,
+            "resume": true,
+            "update": false,
+            "full_rescan": false,
+        },
+        "modes": {
+            "update": "incremental synchronization that publishes a change manifest",
+            "full_rescan": "complete historical synchronization without a change manifest; mutually exclusive with --update",
+            "resume": "reuse only a matching in-flight traversal; --no-resume keeps the committed anchor",
         },
         "limits": {
             "workers_min": litradar_domain::INDEX_WORKER_COUNT_MIN,
@@ -1188,12 +1203,22 @@ mod tests {
         assert!(index.contains("--file FILE"));
         assert!(index.contains("--workers N"));
         assert!(index.contains("--processes N"));
+        assert!(index.contains("--full-rescan|--no-full-rescan"));
         assert!(index.contains("--notify-dry-run"));
         let index_payload: serde_json::Value =
             serde_json::from_str(&index).expect("index usage should be JSON");
         assert_eq!(index_payload["defaults"]["workers"], 6);
         assert_eq!(index_payload["defaults"]["processes"], 1);
         assert_eq!(index_payload["defaults"]["issue_batch"], 8);
+        assert_eq!(index_payload["defaults"]["resume"], true);
+        assert_eq!(index_payload["defaults"]["update"], false);
+        assert_eq!(index_payload["defaults"]["full_rescan"], false);
+        assert!(index_payload["modes"]["full_rescan"]
+            .as_str()
+            .is_some_and(|value| value.contains("mutually exclusive with --update")));
+        assert!(index_payload["modes"]["resume"]
+            .as_str()
+            .is_some_and(|value| value.contains("--no-resume keeps the committed anchor")));
         assert_eq!(index_payload["limits"]["workers_max"], 32);
         assert_eq!(index_payload["limits"]["aggregate_max"], 32);
         assert_eq!(index_payload["limits"]["scholarly_workers_max"], 6);
@@ -1509,8 +1534,28 @@ mod tests {
         assert_eq!(options.timeout_seconds, 7);
         assert!(!options.resume);
         assert!(options.update);
+        assert!(!options.full_rescan);
         assert!(options.notify);
         assert!(options.notify_dry_run);
+    }
+
+    #[test]
+    fn index_options_expose_full_rescan_and_reject_update_conflicts() {
+        let mut full_rescan_args = vec!["--full-rescan".to_string()];
+        let full_rescan =
+            parse_index_options(&mut full_rescan_args).expect("full rescan should parse");
+        assert!(full_rescan_args.is_empty());
+        assert!(full_rescan.full_rescan);
+        assert!(!full_rescan.update);
+        assert!(full_rescan.resume);
+
+        let mut conflict_args = vec!["--update".to_string(), "--full-rescan".to_string()];
+        assert_eq!(
+            parse_index_options(&mut conflict_args)
+                .expect_err("update and full rescan must conflict")
+                .to_string(),
+            "--update cannot be combined with --full-rescan"
+        );
     }
 
     #[test]
@@ -1583,6 +1628,7 @@ mod tests {
             timeout_seconds: 20,
             resume: true,
             update: false,
+            full_rescan: false,
             notify: false,
             notify_dry_run: false,
         };
@@ -1666,17 +1712,35 @@ mod tests {
             storage_config.index_control_dir().join("offline.sqlite"),
         )
         .expect("offline control database should open");
-        litradar_index::control::write_checkpoint(
+        let run = match litradar_index::control::prepare_journal_sync(
             &control,
             "offline",
             "cnki_oversea",
-            &litradar_index::control::CheckpointScope::Journal {
-                catalog_id: "issn-0001-3072".to_string(),
-            },
-            r#"{"state":"complete"}"#,
+            "issn-0001-3072",
+            "offline-complete-run",
+            litradar_domain::IndexSyncMode::Bootstrap,
+            false,
             "2026-07-22T00:00:00Z",
         )
-        .expect("complete local checkpoint should write");
+        .expect("offline synchronization should prepare")
+        {
+            litradar_index::control::JournalSyncPreparation::Run(run) => run,
+            litradar_index::control::JournalSyncPreparation::Skip => {
+                panic!("fresh offline synchronization should not skip")
+            }
+        };
+        litradar_index::control::complete_sync_run(
+            &control,
+            "offline",
+            "cnki_oversea",
+            "issn-0001-3072",
+            &run.run_id,
+            run.mode,
+            run.base_anchor.as_deref(),
+            None,
+            "2026-07-22T00:00:00Z",
+        )
+        .expect("offline synchronization should complete");
         drop(control);
 
         run_index_command_with_bundled_meta_dir(
@@ -2190,11 +2254,25 @@ mod tests {
     }
 
     #[test]
-    fn index_notify_requires_update_before_live_execution() {
+    fn index_command_notify_requires_update_before_live_execution() {
         let error = run_index_command(vec!["--notify".to_string()], Path::new("litradar"))
             .expect_err("notify handoff should require update mode");
 
         assert_eq!(error.to_string(), "--notify requires --update");
+    }
+
+    #[test]
+    fn index_command_rejects_update_and_full_rescan_before_live_execution() {
+        let error = run_index_command(
+            vec!["--update".to_string(), "--full-rescan".to_string()],
+            Path::new("litradar"),
+        )
+        .expect_err("conflicting synchronization modes should fail before live execution");
+
+        assert_eq!(
+            error.to_string(),
+            "--update cannot be combined with --full-rescan"
+        );
     }
 
     #[test]

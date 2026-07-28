@@ -74,8 +74,10 @@ pub struct LiveIndexConfig {
     pub timeout_seconds: u64,
     /// Whether a completed provider-scoped journal checkpoint may be skipped.
     pub resume: bool,
-    /// Whether to rescan content and publish a change manifest.
+    /// Whether to run incremental synchronization and publish a change manifest.
     pub update: bool,
+    /// Whether to scan complete Provider history without publishing a change manifest.
+    pub full_rescan: bool,
     /// Whether to run `notify` after an update manifest is written.
     pub notify: bool,
     /// Whether notify handoff should use dry-run mode.
@@ -103,6 +105,7 @@ impl fmt::Debug for LiveIndexConfig {
             .field("timeout_seconds", &self.timeout_seconds)
             .field("resume", &self.resume)
             .field("update", &self.update)
+            .field("full_rescan", &self.full_rescan)
             .field("notify", &self.notify)
             .field("notify_dry_run", &self.notify_dry_run)
             .field("index_provider_routes", &self.index_provider_routes)
@@ -680,6 +683,11 @@ fn validate_live_config(config: &LiveIndexConfig) -> Result<(), LiveIndexError> 
             "timeout_seconds must be greater than zero".to_string(),
         ));
     }
+    if config.update && config.full_rescan {
+        return Err(LiveIndexError::InvalidConfig(
+            "--update cannot be combined with --full-rescan".to_string(),
+        ));
+    }
     if config.notify && !config.update {
         return Err(LiveIndexError::InvalidConfig(
             "--notify requires an update manifest".to_string(),
@@ -894,32 +902,15 @@ fn run_catalog(
         let _ = release_lease(&control, &catalog_name, &provider_name, &run_id);
         return Err(error);
     }
-    let finalization = (|| -> Result<(String, Option<PathBuf>), LiveIndexError> {
-        optimize_content_db(&content).map_err(|source| LiveIndexError::ContentDatabase {
-            path: content_path.clone(),
-            source,
-        })?;
-        let db_name = content_path
-            .file_name()
-            .and_then(|value| value.to_str())
-            .unwrap_or("index.sqlite")
-            .to_string();
-        let manifest_path = config.update.then(|| {
-            config
-                .project_root
-                .join("data")
-                .join("push_state")
-                .join(format!("{catalog_name}.changes.json"))
-        });
-        if let Some(path) = manifest_path.as_deref() {
-            write_content_change_manifest(&content, &db_name, &run_id, &timestamp, path)?;
-        } else {
-            discard_content_change_events(&content).map_err(|error| {
-                LiveIndexError::Worker(format!("content outbox acknowledgement failed: {error}"))
-            })?;
-        }
-        Ok((db_name, manifest_path))
-    })();
+    let finalization = finalize_content_changes(
+        &content,
+        &content_path,
+        &config.project_root,
+        &catalog_name,
+        &run_id,
+        &timestamp,
+        config.update,
+    );
     let release_result = release_lease(&control, &catalog_name, &provider_name, &run_id);
     let (db_name, manifest_path) = finalization?;
     release_result?;
@@ -949,11 +940,48 @@ fn run_catalog(
 }
 
 fn requested_sync_mode(config: &LiveIndexConfig) -> IndexSyncMode {
-    if config.update {
+    if config.full_rescan {
+        IndexSyncMode::FullRescan
+    } else if config.update {
         IndexSyncMode::Incremental
     } else {
         IndexSyncMode::Bootstrap
     }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn finalize_content_changes(
+    content: &Connection,
+    content_path: &Path,
+    project_root: &Path,
+    catalog_name: &str,
+    run_id: &str,
+    timestamp: &str,
+    should_publish_manifest: bool,
+) -> Result<(String, Option<PathBuf>), LiveIndexError> {
+    optimize_content_db(content).map_err(|source| LiveIndexError::ContentDatabase {
+        path: content_path.to_path_buf(),
+        source,
+    })?;
+    let db_name = content_path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or("index.sqlite")
+        .to_string();
+    let manifest_path = should_publish_manifest.then(|| {
+        project_root
+            .join("data")
+            .join("push_state")
+            .join(format!("{catalog_name}.changes.json"))
+    });
+    if let Some(path) = manifest_path.as_deref() {
+        write_content_change_manifest(content, &db_name, run_id, timestamp, path)?;
+    } else {
+        discard_content_change_events(content).map_err(|error| {
+            LiveIndexError::Worker(format!("content outbox acknowledgement failed: {error}"))
+        })?;
+    }
+    Ok((db_name, manifest_path))
 }
 
 fn prepare_catalog_identities(
@@ -2209,19 +2237,21 @@ mod tests {
 
     use super::{
         emit_parent_content_commit_failure, emit_worker_failure,
-        fetch_worker_assignments_with_provider, index_entries_with_provider,
-        prepare_catalog_identities, prepare_worker_requests, run_live_index,
-        run_live_index_worker_with_io, run_worker_processes_with_launcher, validate_live_config,
-        worker_bootstrap, worker_failure_error, ContentCommitErrorKind, DirectIndexRequest,
-        LaunchedWorkerProcess, LeaseHeartbeat, LiveIndexConfig, LiveIndexError,
-        LiveIndexWorkerBootstrap, LiveIndexWorkerFailure, LiveIndexWorkerFailureClass,
-        LiveIndexWorkerOperation, LiveIndexWorkerRequest, LiveRunTime, ParentWriterContext,
-        SupervisedChild, CNKI_PROVIDER_NAME,
+        fetch_worker_assignments_with_provider, finalize_content_changes,
+        index_entries_with_provider, prepare_catalog_identities, prepare_worker_requests,
+        requested_sync_mode, run_live_index, run_live_index_worker_with_io,
+        run_worker_processes_with_launcher, validate_live_config, worker_bootstrap,
+        worker_failure_error, ContentCommitErrorKind, DirectIndexRequest, LaunchedWorkerProcess,
+        LeaseHeartbeat, LiveIndexConfig, LiveIndexError, LiveIndexWorkerBootstrap,
+        LiveIndexWorkerFailure, LiveIndexWorkerFailureClass, LiveIndexWorkerOperation,
+        LiveIndexWorkerRequest, LiveRunTime, ParentWriterContext, SupervisedChild,
+        CNKI_PROVIDER_NAME,
     };
     use crate::control::{
         acquire_lease, advance_run_checkpoint, commit_content_then_progress, complete_sync_run,
         open_control_db, prepare_journal_sync, read_run_checkpoint, read_sync_anchor,
-        release_lease, ContentCheckpointCommitError, JournalSyncPreparation, ProviderRunCheckpoint,
+        release_lease, ContentCheckpointCommitError, ControlDatabaseError, JournalSyncPreparation,
+        ProviderRunCheckpoint,
     };
     use crate::identity::{ArticleIdentityError, ArticleMergeError};
     use crate::schema::{open_content_db, write_content_batch, ContentDatabaseError};
@@ -2612,6 +2642,26 @@ mod tests {
         cursor: &str,
         timestamp: &str,
     ) {
+        seed_traversal(
+            control,
+            catalog_name,
+            provider_name,
+            catalog_id,
+            IndexSyncMode::Incremental,
+            cursor,
+            timestamp,
+        );
+    }
+
+    fn seed_traversal(
+        control: &Connection,
+        catalog_name: &str,
+        provider_name: &str,
+        catalog_id: &str,
+        mode: IndexSyncMode,
+        cursor: &str,
+        timestamp: &str,
+    ) {
         seed_completed_sync(
             control,
             catalog_name,
@@ -2627,11 +2677,11 @@ mod tests {
                 provider_name,
                 catalog_id,
                 "previous-run",
-                IndexSyncMode::Incremental,
+                mode,
                 true,
                 timestamp,
             )
-            .expect("incremental traversal should prepare"),
+            .expect("fixture traversal should prepare"),
         );
         advance_run_checkpoint(
             control,
@@ -2644,7 +2694,7 @@ mod tests {
             cursor,
             timestamp,
         )
-        .expect("incremental traversal should advance");
+        .expect("fixture traversal should advance");
     }
 
     #[test]
@@ -2688,83 +2738,261 @@ mod tests {
     }
 
     #[test]
-    fn direct_and_worker_paths_resume_the_same_incremental_context() {
+    fn direct_and_worker_paths_resume_the_same_frozen_context_for_each_mode() {
         let directory = tempdir().expect("temporary directory should create");
-        let direct_content = open_content_db(directory.path().join("direct-content.sqlite"))
+        for (label, mode) in [
+            ("incremental", IndexSyncMode::Incremental),
+            ("full-rescan", IndexSyncMode::FullRescan),
+        ] {
+            let direct_content = open_content_db(
+                directory
+                    .path()
+                    .join(format!("{label}-direct-content.sqlite")),
+            )
             .expect("direct content should open");
-        let direct_control = open_control_db(directory.path().join("direct-control.sqlite"))
+            let direct_control = open_control_db(
+                directory
+                    .path()
+                    .join(format!("{label}-direct-control.sqlite")),
+            )
             .expect("direct control should open");
+            seed_traversal(
+                &direct_control,
+                "chinese_journals",
+                "provider-a",
+                "journal-1",
+                mode,
+                "cursor-frozen",
+                "2026-07-18T00:00:00Z",
+            );
+            let mut direct = direct_request("provider-a", &format!("{label}-direct-current-run"));
+            direct.mode = mode;
+            acquire_lease(
+                &direct_control,
+                &direct.catalog_name,
+                &direct.provider_name,
+                &direct.run_id,
+                LiveRunTime::now().epoch_seconds,
+            )
+            .expect("direct lease should acquire");
+            let provider = RecordingProvider::new(Some("anchor-new"));
+            index_entries_with_provider(&direct_content, &direct_control, &provider, &direct)
+                .expect("direct frozen run should complete");
+            let direct_context = provider
+                .observations
+                .lock()
+                .expect("direct observations should lock")[0]
+                .clone();
+
+            let worker_control = open_control_db(
+                directory
+                    .path()
+                    .join(format!("{label}-worker-control.sqlite")),
+            )
+            .expect("worker control should open");
+            seed_traversal(
+                &worker_control,
+                "chinese_journals",
+                "provider-a",
+                "journal-1",
+                mode,
+                "cursor-frozen",
+                "2026-07-18T00:00:00Z",
+            );
+            let worker_context = ParentWriterContext {
+                catalog_name: "chinese_journals".to_string(),
+                provider_name: "provider-a".to_string(),
+                run_id: format!("{label}-worker-current-run"),
+                timestamp: "2026-07-18T00:01:00Z".to_string(),
+            };
+            let mut config = worker_test_config("provider-a", None);
+            config.update = mode == IndexSyncMode::Incremental;
+            config.full_rescan = mode == IndexSyncMode::FullRescan;
+            let (requests, metrics) = prepare_worker_requests(
+                &config,
+                &worker_control,
+                &worker_context,
+                0,
+                &[catalog("journal-1")],
+            )
+            .expect("worker frozen run should prepare");
+            assert_eq!(metrics.journals_resumed, 0);
+            let assignment = &requests[0].assignments[0];
+            assert_eq!(
+                direct_context,
+                ObservedFetchContext {
+                    mode: assignment.mode,
+                    committed_anchor: assignment.committed_anchor.clone(),
+                    traversal_checkpoint: assignment.traversal_checkpoint.clone(),
+                }
+            );
+            assert_eq!(direct_context.mode, mode);
+            assert_eq!(
+                direct_context.committed_anchor.as_deref(),
+                Some("anchor-old")
+            );
+            assert_eq!(
+                direct_context.traversal_checkpoint.as_deref(),
+                Some("cursor-frozen")
+            );
+        }
+    }
+
+    #[test]
+    fn live_config_selects_exact_sync_modes_and_rejects_conflicts() {
+        let mut config = worker_test_config("provider-a", None);
+        assert_eq!(requested_sync_mode(&config), IndexSyncMode::Bootstrap);
+
+        config.update = true;
+        assert_eq!(requested_sync_mode(&config), IndexSyncMode::Incremental);
+
+        config.update = false;
+        config.full_rescan = true;
+        assert_eq!(requested_sync_mode(&config), IndexSyncMode::FullRescan);
+
+        config.update = true;
+        assert!(matches!(
+            validate_live_config(&config),
+            Err(LiveIndexError::InvalidConfig(message))
+                if message == "--update cannot be combined with --full-rescan"
+        ));
+    }
+
+    #[test]
+    fn no_resume_replaces_traversal_without_discarding_the_committed_anchor() {
+        let directory = tempdir().expect("temporary directory should create");
+        let content =
+            open_content_db(directory.path().join("content.sqlite")).expect("content should open");
+        let control =
+            open_control_db(directory.path().join("control.sqlite")).expect("control should open");
         seed_incremental_traversal(
-            &direct_control,
+            &control,
             "chinese_journals",
             "provider-a",
             "journal-1",
-            "cursor-frozen",
+            "cursor-discarded",
             "2026-07-18T00:00:00Z",
         );
-        let mut direct = direct_request("provider-a", "direct-current-run");
-        direct.mode = IndexSyncMode::Incremental;
+        let mut request = direct_request("provider-a", "no-resume-run");
+        request.mode = IndexSyncMode::Incremental;
+        request.resume = false;
         acquire_lease(
-            &direct_control,
-            &direct.catalog_name,
-            &direct.provider_name,
-            &direct.run_id,
+            &control,
+            &request.catalog_name,
+            &request.provider_name,
+            &request.run_id,
             LiveRunTime::now().epoch_seconds,
         )
-        .expect("direct lease should acquire");
+        .expect("lease should acquire");
         let provider = RecordingProvider::new(Some("anchor-new"));
-        index_entries_with_provider(&direct_content, &direct_control, &provider, &direct)
-            .expect("direct incremental run should complete");
-        let direct_context = provider
+
+        index_entries_with_provider(&content, &control, &provider, &request)
+            .expect("no-resume run should complete");
+        let observations = provider
             .observations
             .lock()
-            .expect("direct observations should lock")[0]
-            .clone();
+            .expect("observations should lock");
 
-        let worker_control = open_control_db(directory.path().join("worker-control.sqlite"))
-            .expect("worker control should open");
+        assert_eq!(observations.len(), 1);
+        assert_eq!(
+            observations[0].committed_anchor.as_deref(),
+            Some("anchor-old")
+        );
+        assert_eq!(observations[0].traversal_checkpoint, None);
+    }
+
+    #[test]
+    fn matching_resume_rejects_a_different_frozen_sync_mode() {
+        let directory = tempdir().expect("temporary directory should create");
+        let control =
+            open_control_db(directory.path().join("control.sqlite")).expect("control should open");
         seed_incremental_traversal(
-            &worker_control,
+            &control,
             "chinese_journals",
             "provider-a",
             "journal-1",
-            "cursor-frozen",
+            "cursor-incremental",
             "2026-07-18T00:00:00Z",
         );
-        let worker_context = ParentWriterContext {
+        let context = ParentWriterContext {
             catalog_name: "chinese_journals".to_string(),
             provider_name: "provider-a".to_string(),
-            run_id: "worker-current-run".to_string(),
+            run_id: "full-rescan-run".to_string(),
             timestamp: "2026-07-18T00:01:00Z".to_string(),
         };
         let mut config = worker_test_config("provider-a", None);
-        config.update = true;
-        let (requests, metrics) = prepare_worker_requests(
-            &config,
-            &worker_control,
-            &worker_context,
-            0,
-            &[catalog("journal-1")],
+        config.full_rescan = true;
+
+        let error =
+            prepare_worker_requests(&config, &control, &context, 0, &[catalog("journal-1")])
+                .expect_err("different frozen mode must fail closed");
+
+        assert!(matches!(
+            error,
+            LiveIndexError::Control(ControlDatabaseError::RunModeMismatch {
+                stored: IndexSyncMode::Incremental,
+                requested: IndexSyncMode::FullRescan,
+            })
+        ));
+    }
+
+    #[test]
+    fn manifest_failure_retains_outbox_and_full_rescan_acknowledges_without_a_manifest() {
+        let directory = tempdir().expect("temporary directory should create");
+        let content_path = directory.path().join("catalog.sqlite");
+        let content = open_content_db(&content_path).expect("content should open");
+        let entry = catalog("journal-1");
+        write_content_batch(
+            &content,
+            &entry,
+            &canonical_batch(&entry),
+            "fixture-run",
+            "2026-07-18T00:00:00Z",
         )
-        .expect("worker incremental run should prepare");
-        assert_eq!(metrics.journals_resumed, 0);
-        let assignment = &requests[0].assignments[0];
+        .expect("fixture content should write");
+        std::fs::create_dir_all(directory.path().join("data"))
+            .expect("data directory should create");
+        std::fs::write(directory.path().join("data").join("push_state"), b"blocked")
+            .expect("blocking manifest parent should write");
+
+        let error = finalize_content_changes(
+            &content,
+            &content_path,
+            directory.path(),
+            "catalog",
+            "fixture-run",
+            "2026-07-18T00:00:00Z",
+            true,
+        )
+        .expect_err("manifest write should fail");
+        assert!(matches!(error, LiveIndexError::Io(_)));
         assert_eq!(
-            direct_context,
-            ObservedFetchContext {
-                mode: assignment.mode,
-                committed_anchor: assignment.committed_anchor.clone(),
-                traversal_checkpoint: assignment.traversal_checkpoint.clone(),
-            }
+            content
+                .query_row("SELECT COUNT(*) FROM article_change_events", [], |row| {
+                    row.get::<_, i64>(0)
+                })
+                .expect("outbox count should read"),
+            1
         );
-        assert_eq!(direct_context.mode, IndexSyncMode::Incremental);
+
+        let (_, manifest_path) = finalize_content_changes(
+            &content,
+            &content_path,
+            directory.path(),
+            "catalog",
+            "full-rescan-run",
+            "2026-07-18T00:01:00Z",
+            false,
+        )
+        .expect("full rescan finalization should acknowledge without a manifest");
+        assert_eq!(manifest_path, None);
         assert_eq!(
-            direct_context.committed_anchor.as_deref(),
-            Some("anchor-old")
-        );
-        assert_eq!(
-            direct_context.traversal_checkpoint.as_deref(),
-            Some("cursor-frozen")
+            content
+                .query_row("SELECT COUNT(*) FROM article_change_events", [], |row| {
+                    row.get::<_, i64>(0)
+                })
+                .expect("acknowledged outbox count should read"),
+            0
         );
     }
 
@@ -3128,6 +3356,7 @@ mod tests {
             timeout_seconds: 10,
             resume: true,
             update: false,
+            full_rescan: false,
             notify: false,
             notify_dry_run: true,
             scholarly_config: litradar_sources::LiveScholarlyConfig::from_value_pools(
@@ -3326,6 +3555,7 @@ mod tests {
             timeout_seconds: 10,
             resume: true,
             update: false,
+            full_rescan: false,
             notify: false,
             notify_dry_run: true,
             scholarly_config: litradar_sources::LiveScholarlyConfig::from_value_pools(
@@ -3444,6 +3674,7 @@ mod tests {
                 timeout_seconds: 10,
                 resume: true,
                 update: false,
+                full_rescan: false,
                 notify: false,
                 notify_dry_run: true,
                 scholarly_config: litradar_sources::LiveScholarlyConfig::from_value_pools(
@@ -3484,6 +3715,7 @@ mod tests {
             timeout_seconds: 10,
             resume: true,
             update: false,
+            full_rescan: false,
             notify: false,
             notify_dry_run: true,
             scholarly_config: litradar_sources::LiveScholarlyConfig::from_value_pools(
