@@ -253,7 +253,7 @@ AI/PushPlus 只重试连接失败、timeout 和 `429/502/503/504`；数值 `Retr
 - Dockerfile frontend 与 Node/Rust/Debian 基础镜像都固定到 reviewed digest；tag 只保留可读性和 Dependabot 更新入口。
 - Buildx 把一次构建以无 tag digest 推入 GHCR；hardened smoke 必须重新拉取该 `repository@sha256:...`，并验证实际 RepoDigest、固定 UID/GID、只读根、完整 capability drop、no-new-privileges、loopback 端口、Docker health、只读密钥和唯一持久可写数据卷。
 - smoke 成功后才为同一 digest 生成 SPDX SBOM 与 SLSA provenance、写入 GitHub artifact attestations，并用 workflow OIDC 进行 Cosign keyless signing；workflow 随即用精确 certificate identity、issuer 和 digest 重新验证三类证明。
-- 只有上述步骤全部成功，才用 `imagetools create --prefer-index=false` 为同一 digest 创建 `sha-<full commit>` tag。既有 tag 指向其他 digest 时发布失败；不发布 `latest`。
+- 只有上述步骤全部成功，才用 `imagetools create --prefer-index=false` 为同一 digest 创建不可变的 `sha-<full commit>` tag，并更新可变的 `latest` tag。既有 full-commit tag 指向其他 digest 时发布失败；两个发布 tag 都必须解析到经过验证的 digest，生产配置仍不接受 `latest`。
 - `compose.production.yaml` 删除本地 build/ports，要求 64 位 digest 并强制 `--require-secure-cookies`。生产运行仍必须先独立验证 Cosign、provenance 和 SBOM attestation。
 
 ## 网络暴露

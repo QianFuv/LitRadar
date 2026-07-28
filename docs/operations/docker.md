@@ -382,7 +382,7 @@ pwsh ./scripts/profile_docker_memory.ps1 `
 
 ### 1. 取得并验证发布 digest
 
-`Build and Push Docker Image` 工作流只构建并推送一次无 tag 候选。它从 Buildx 捕获 registry digest，重新拉取 `repository@sha256:...` 运行 hardened smoke，随后才为同一 digest 生成 SPDX SBOM、SLSA provenance、GitHub attestation 和 Cosign keyless signature。最后一步在不重建的前提下创建 `sha-<40-character commit>` tag；工作流不发布 `latest`。
+`Build and Push Docker Image` 工作流只构建并推送一次无 tag 候选。它从 Buildx 捕获 registry digest，重新拉取 `repository@sha256:...` 运行 hardened smoke，随后才为同一 digest 生成 SPDX SBOM、SLSA provenance、GitHub attestation 和 Cosign keyless signature。最后一步在不重建的前提下创建 `sha-<40-character commit>` tag，并把 `latest` 更新为同一个已验证 digest。`latest` 只用于本地便利和版本发现；生产部署仍必须从成功的 workflow summary 取得并验证精确 digest。
 
 从成功 workflow summary 复制 64 位 digest，不要从 tag 推测：
 

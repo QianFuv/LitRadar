@@ -141,6 +141,7 @@ jobs:
       image_name: ${{ steps.references.outputs.image_name }}
       image_reference: ${{ steps.exact.outputs.image_reference }}
       image_tag: ${{ steps.publish.outputs.release_tag }}
+      latest_tag: ${{ steps.publish.outputs.latest_tag }}
       provenance_url: ${{ steps.provenance.outputs.attestation-url }}
       sbom_url: ${{ steps.sbom_attestation.outputs.attestation-url }}
     permissions:
@@ -168,10 +169,12 @@ jobs:
         run: |
           image_name="${REGISTRY}/${SOURCE_REPOSITORY,,}"
           release_tag="${image_name}:sha-${GITHUB_SHA}"
+          latest_tag="${image_name}:latest"
           created_at="$(git show -s --format=%cI "$GITHUB_SHA")"
           {
             echo "image_name=$image_name"
             echo "release_tag=$release_tag"
+            echo "latest_tag=$latest_tag"
             echo "created_at=$created_at"
           } >> "$GITHUB_OUTPUT"
 
@@ -358,11 +361,12 @@ jobs:
           jq -e 'length > 0' release-results/provenance-verify.json >/dev/null
           jq -e 'length > 0' release-results/sbom-verify.json >/dev/null
 
-      - name: Publish the immutable commit tag without rebuilding
+      - name: Publish the verified release tags without rebuilding
         id: publish
         env:
           IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
           IMAGE_REFERENCE: ${{ steps.exact.outputs.image_reference }}
+          LATEST_TAG: ${{ steps.references.outputs.latest_tag }}
           RELEASE_TAG: ${{ steps.references.outputs.release_tag }}
         run: |
           set +e
@@ -389,7 +393,16 @@ jobs:
           fi
           published_digest="$(docker buildx imagetools inspect "$RELEASE_TAG" | awk '$1 == "Digest:" { print $2; exit }')"
           test "$published_digest" = "$IMAGE_DIGEST"
-          echo "release_tag=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
+          docker buildx imagetools create \
+            --prefer-index=false \
+            --tag "$LATEST_TAG" \
+            "$IMAGE_REFERENCE"
+          latest_digest="$(docker buildx imagetools inspect "$LATEST_TAG" | awk '$1 == "Digest:" { print $2; exit }')"
+          test "$latest_digest" = "$IMAGE_DIGEST"
+          {
+            echo "release_tag=$RELEASE_TAG"
+            echo "latest_tag=$LATEST_TAG"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Upload exact-release diagnostics
         if: always()
@@ -402,10 +415,11 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
-      - name: Write immutable container summary
+      - name: Write exact-image container summary
         if: always()
         env:
           IMAGE_REFERENCE: ${{ steps.exact.outputs.image_reference }}
+          LATEST_TAG: ${{ steps.publish.outputs.latest_tag }}
           PROVENANCE_RESULT: ${{ steps.provenance.outcome }}
           PROVENANCE_URL: ${{ steps.provenance.outputs.attestation-url }}
           PUBLISH_RESULT: ${{ steps.publish.outcome }}
@@ -416,7 +430,7 @@ jobs:
           SMOKE_RESULT: ${{ steps.smoke.outcome }}
         run: |
           {
-            echo "## Immutable exact-image release"
+            echo "## Exact-image container release"
             echo
             echo "- Exact registry reference: ${IMAGE_REFERENCE:-not available}"
             echo "- Smoke status: ${SMOKE_RESULT:-not run}"
@@ -425,8 +439,9 @@ jobs:
             echo "- Provenance: ${PROVENANCE_URL:-not available}"
             echo "- SBOM status: ${SBOM_RESULT:-not run}"
             echo "- SBOM: ${SBOM_URL:-not available}"
-            echo "- Immutable tag status: ${PUBLISH_RESULT:-not run}"
+            echo "- Tag publication status: ${PUBLISH_RESULT:-not run}"
             echo "- Immutable tag: ${RELEASE_TAG:-not available}"
+            echo "- Latest tag: ${LATEST_TAG:-not available}"
             echo "- Security: fixed UID/GID, read-only root, all capabilities dropped, no-new-privileges, nodev/noexec/nosuid tmpfs, loopback-only publication, writable data only, read-only key mount, Docker health check, and required secure cookies."
           } >> "$GITHUB_STEP_SUMMARY"
 
@@ -459,6 +474,7 @@ jobs:
           IMAGE_NAME: ${{ needs.build-image.outputs.image_name }}
           IMAGE_REFERENCE: ${{ needs.build-image.outputs.image_reference }}
           IMAGE_TAG: ${{ needs.build-image.outputs.image_tag }}
+          LATEST_TAG: ${{ needs.build-image.outputs.latest_tag }}
           PROVENANCE_URL: ${{ needs.build-image.outputs.provenance_url }}
           REF_NAME: ${{ github.ref_name }}
           REPOSITORY: ${{ github.repository }}
@@ -512,6 +528,7 @@ jobs:
               echo "- Tested registry reference: $IMAGE_REFERENCE"
               echo "- Tested digest: $IMAGE_DIGEST"
               echo "- Immutable commit tag: $IMAGE_TAG"
+              echo "- Latest tag: $LATEST_TAG"
               echo "- Provenance: $PROVENANCE_URL"
               echo "- SBOM: $SBOM_URL"
             else

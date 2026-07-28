@@ -183,7 +183,7 @@ OSV-Scanner、actionlint 和 Gitleaks 在 CI 中下载固定版本发行包，�
 3. `actions/attest` 为同一 subject name/digest 生成 SLSA provenance 和 SBOM attestation。
 4. Cosign 对该 digest 进行 keyless signing，并以 workflow 精确 identity 与 GitHub OIDC issuer 验签。
 5. `gh attestation verify` 分别验证 SLSA 与 SPDX predicate。
-6. 最后用 `imagetools create --prefer-index=false` 创建 full-commit SHA tag；已存在但指向其他 digest 时失败，不创建 `latest`。
+6. 最后用 `imagetools create --prefer-index=false` 创建 full-commit SHA tag，并把 `latest` 更新为同一个已验证 digest；已存在但指向其他 digest 的 full-commit tag 会使发布失败，两个标签的最终 digest 都必须与 Buildx 输出一致。
 
 以上 hosted 步骤必须在最终准备发布的同一 commit 上成功；本地 tag smoke 不能替代 registry digest、attestation 或 signature 证据。
 
