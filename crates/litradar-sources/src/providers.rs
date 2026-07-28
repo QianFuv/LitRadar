@@ -27,8 +27,8 @@ use crate::cnki_domestic::{DomesticCnkiAnchor, DOMESTIC_CNKI_ANCHOR_VERSION};
 use crate::{
     CnkiClient, CnkiSourceError, CnkiTransport, DomesticCnkiCheckpoint, DomesticCnkiClient,
     DomesticCnkiSourceError, DomesticCnkiTransport, DomesticIssueArticlePage,
-    DomesticJournalLocator, ScholarlyClient, ScholarlyTransport, SourceAttempt, SourceError,
-    SEMANTIC_SCHOLAR_BATCH_SIZE,
+    DomesticJournalLocator, ScholarlyClient, ScholarlyTransport, ScholarlyWorksPage, SourceAttempt,
+    SourceError, SEMANTIC_SCHOLAR_BATCH_SIZE,
 };
 
 /// Stable runtime name for the built-in Scholarly indexing provider.
@@ -199,12 +199,8 @@ where
                 "scholarly provider state is unavailable",
             )
         })?;
-        let result = fetch_scholarly_batch(
-            &mut client,
-            catalog,
-            context.traversal_checkpoint,
-            self.has_semantic_scholar_key,
-        );
+        let result =
+            fetch_scholarly_batch(&mut client, catalog, context, self.has_semantic_scholar_key);
         emit_source_attempt_summary(SCHOLARLY_PROVIDER_NAME, &client.drain_attempts());
         result
     }
@@ -674,32 +670,91 @@ where
     )
 }
 
+const SCHOLARLY_ANCHOR_VERSION: u32 = 1;
+const SCHOLARLY_CHECKPOINT_VERSION: u32 = 1;
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "mode", rename_all = "snake_case", deny_unknown_fields)]
-enum ScholarlyCheckpoint {
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+enum ScholarlyIssueFingerprint {
+    VolumeIssue {
+        publication_year: i64,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        volume: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        issue: Option<String>,
+    },
+    Date {
+        date: String,
+    },
+    Title {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        publication_year: Option<i64>,
+        title: String,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ScholarlyAnchor {
+    version: u32,
+    issue: ScholarlyIssueFingerprint,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    from_sync_date: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum ScholarlyScanPhase {
+    Bounded,
+    Unbounded,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ScholarlyWindowCheckpoint {
+    sync_mode: IndexSyncMode,
+    phase: ScholarlyScanPhase,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    base_anchor: Option<ScholarlyAnchor>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    candidate_anchor: Option<ScholarlyAnchor>,
+    has_reached_candidate: bool,
+    has_seen_base: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+enum ScholarlySourceCheckpoint {
     Crossref {
         issn: String,
-        cursor: String,
-        #[serde(default)]
+        #[serde(skip_serializing_if = "Option::is_none")]
+        cursor: Option<String>,
         page_index: u64,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[serde(skip_serializing_if = "Option::is_none")]
         cursor_refreshed_at_epoch_seconds: Option<u64>,
     },
     OpenAlex {
         source_id: String,
-        cursor: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        cursor: Option<String>,
     },
 }
 
-enum FirstScholarlyPage {
-    Crossref {
-        works: Vec<Value>,
-        next_checkpoint: Option<String>,
-    },
-    OpenAlex {
-        articles: Vec<ArticleDraft>,
-        next_checkpoint: Option<String>,
-    },
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ScholarlyCheckpoint {
+    version: u32,
+    window: ScholarlyWindowCheckpoint,
+    source: ScholarlySourceCheckpoint,
+}
+
+struct ScholarlyCanonicalPage {
+    articles: Vec<ArticleDraft>,
+    has_unfingerprintable_item: bool,
+    source_head: ScholarlySourceCheckpoint,
+    next_source: Option<ScholarlySourceCheckpoint>,
+    did_restart_from_head: bool,
+    did_fallback_to_unfiltered: bool,
 }
 
 fn current_epoch_seconds() -> Result<u64, ProviderError> {
@@ -758,22 +813,24 @@ fn emit_crossref_cursor_restart(reason: &'static str, prior_page_index: u64) {
 fn fetch_scholarly_batch<T>(
     client: &mut ScholarlyClient<T>,
     catalog: &JournalCatalogEntry,
-    checkpoint: Option<&str>,
+    context: IndexFetchContext<'_>,
     has_semantic_scholar_key: bool,
 ) -> Result<ProviderBatch, ProviderError>
 where
     T: ScholarlyTransport,
 {
     let mut clock = current_epoch_seconds;
-    fetch_scholarly_batch_with_clock(
+    fetch_scholarly_batch_for_context_with_clock_and_restart(
         client,
         catalog,
-        checkpoint,
+        context,
         has_semantic_scholar_key,
         &mut clock,
+        &mut emit_crossref_cursor_restart,
     )
 }
 
+#[cfg(test)]
 fn fetch_scholarly_batch_with_clock<T, F>(
     client: &mut ScholarlyClient<T>,
     catalog: &JournalCatalogEntry,
@@ -786,16 +843,21 @@ where
     F: FnMut() -> Result<u64, ProviderError>,
 {
     let mut restart = emit_crossref_cursor_restart;
-    fetch_scholarly_batch_with_clock_and_restart(
+    fetch_scholarly_batch_for_context_with_clock_and_restart(
         client,
         catalog,
-        checkpoint,
+        IndexFetchContext {
+            mode: IndexSyncMode::Bootstrap,
+            committed_anchor: None,
+            traversal_checkpoint: checkpoint,
+        },
         has_semantic_scholar_key,
         clock,
         &mut restart,
     )
 }
 
+#[cfg(test)]
 fn fetch_scholarly_batch_with_clock_and_restart<T, F, R>(
     client: &mut ScholarlyClient<T>,
     catalog: &JournalCatalogEntry,
@@ -809,166 +871,86 @@ where
     F: FnMut() -> Result<u64, ProviderError>,
     R: FnMut(&'static str, u64),
 {
-    let (works, next_checkpoint) = if let Some(checkpoint) = checkpoint {
-        let checkpoint = serde_json::from_str::<ScholarlyCheckpoint>(checkpoint).map_err(|_| {
-            ProviderError::new(
-                ProviderErrorKind::InvalidResponse,
-                "scholarly checkpoint is invalid",
-            )
-        })?;
-        match checkpoint {
-            ScholarlyCheckpoint::Crossref {
-                issn,
-                cursor,
-                page_index,
-                cursor_refreshed_at_epoch_seconds,
-            } => {
-                if !crossref_cursor_is_fresh(cursor_refreshed_at_epoch_seconds, clock()?) {
-                    restart("expired_or_legacy", page_index);
-                    return fetch_scholarly_batch_with_clock_and_restart(
-                        client,
-                        catalog,
-                        None,
-                        has_semantic_scholar_key,
-                        clock,
-                        restart,
-                    );
-                }
-                let page = match client.fetch_journal_works_page(&issn, None, Some(&cursor)) {
-                    Ok(page) => page,
-                    Err(error) if is_crossref_cursor_http_500(&error) => {
-                        restart("cursor_http_500", page_index);
-                        return fetch_scholarly_batch_with_clock_and_restart(
-                            client,
-                            catalog,
-                            None,
-                            has_semantic_scholar_key,
-                            clock,
-                            restart,
-                        );
-                    }
-                    Err(error) => return Err(map_scholarly_error(error)),
-                };
-                let cursor_refreshed_at_epoch_seconds = crossref_checkpoint_epoch(
-                    page.next_cursor.as_ref(),
-                    page.items.is_empty(),
-                    clock,
-                )?;
-                let next = next_scholarly_checkpoint(
-                    ScholarlyCheckpoint::Crossref {
-                        issn,
-                        cursor: cursor.clone(),
-                        page_index,
-                        cursor_refreshed_at_epoch_seconds,
-                    },
-                    page.next_cursor,
-                    &cursor,
-                    page.items.is_empty(),
-                    cursor_refreshed_at_epoch_seconds,
-                )?;
-                (page.items, next)
-            }
-            ScholarlyCheckpoint::OpenAlex { source_id, cursor } => {
-                let page = client
-                    .fetch_openalex_works_by_source_page(&source_id, None, Some(&cursor))
-                    .map_err(map_scholarly_error)?;
-                let items = page
-                    .items
-                    .iter()
-                    .filter_map(|work| openalex_article_draft(catalog, work))
-                    .collect::<Vec<_>>();
-                let next = next_scholarly_checkpoint(
-                    ScholarlyCheckpoint::OpenAlex {
-                        source_id,
-                        cursor: cursor.clone(),
-                    },
-                    page.next_cursor,
-                    &cursor,
-                    items.is_empty(),
-                    None,
-                )?;
-                return Ok(batch_from_articles(catalog, items, next));
-            }
-        }
-    } else {
-        match first_scholarly_page(client, catalog, clock)? {
-            FirstScholarlyPage::Crossref {
-                works,
-                next_checkpoint,
-            } => (works, next_checkpoint),
-            FirstScholarlyPage::OpenAlex {
-                articles,
-                next_checkpoint,
-            } => return Ok(batch_from_articles(catalog, articles, next_checkpoint)),
-        }
-    };
-
-    let dois = works
-        .iter()
-        .filter_map(|work| normalize_contract_doi(json_text(work.get("DOI"))?.as_str()))
-        .collect::<Vec<_>>();
-    let openalex = if dois.is_empty() {
-        BTreeMap::new()
-    } else {
-        client
-            .fetch_openalex_by_dois(&dois, SCHOLARLY_ENRICHMENT_BATCH_SIZE)
-            .map_err(map_scholarly_error)?
-    };
-    let semantic_scholar = if dois.is_empty() || !has_semantic_scholar_key {
-        BTreeMap::new()
-    } else {
-        client
-            .fetch_semantic_scholar_by_dois(&dois, SEMANTIC_SCHOLAR_BATCH_SIZE)
-            .map_err(map_scholarly_error)?
-    };
-    let articles = works
-        .iter()
-        .filter_map(|work| {
-            let doi = normalize_contract_doi(json_text(work.get("DOI"))?.as_str());
-            scholarly_article_draft(
-                catalog,
-                work,
-                doi.as_ref().and_then(|value| openalex.get(value)),
-                doi.as_ref().and_then(|value| semantic_scholar.get(value)),
-            )
-        })
-        .collect::<Vec<_>>();
-    Ok(batch_from_articles(catalog, articles, next_checkpoint))
+    fetch_scholarly_batch_for_context_with_clock_and_restart(
+        client,
+        catalog,
+        IndexFetchContext {
+            mode: IndexSyncMode::Bootstrap,
+            committed_anchor: None,
+            traversal_checkpoint: checkpoint,
+        },
+        has_semantic_scholar_key,
+        clock,
+        restart,
+    )
 }
 
-fn first_scholarly_page<T>(
+fn fetch_scholarly_batch_for_context_with_clock_and_restart<T, F, R>(
     client: &mut ScholarlyClient<T>,
     catalog: &JournalCatalogEntry,
+    context: IndexFetchContext<'_>,
+    has_semantic_scholar_key: bool,
+    clock: &mut F,
+    restart: &mut R,
+) -> Result<ProviderBatch, ProviderError>
+where
+    T: ScholarlyTransport,
+    F: FnMut() -> Result<u64, ProviderError>,
+    R: FnMut(&'static str, u64),
+{
+    let (mut window, source) = scholarly_window_from_context(context)?;
+    let page = match source {
+        Some(source) => fetch_scholarly_source_page(
+            client,
+            catalog,
+            &window,
+            source,
+            has_semantic_scholar_key,
+            clock,
+            restart,
+        )?,
+        None => {
+            fetch_first_scholarly_page(client, catalog, &window, has_semantic_scholar_key, clock)?
+        }
+    };
+    if page.did_restart_from_head {
+        prepare_scholarly_replay(&mut window);
+    }
+    if page.did_fallback_to_unfiltered {
+        switch_scholarly_window_to_unbounded(&mut window);
+    }
+    apply_scholarly_page(catalog, window, page)
+}
+
+fn fetch_first_scholarly_page<T>(
+    client: &mut ScholarlyClient<T>,
+    catalog: &JournalCatalogEntry,
+    window: &ScholarlyWindowCheckpoint,
+    has_semantic_scholar_key: bool,
     clock: &mut impl FnMut() -> Result<u64, ProviderError>,
-) -> Result<FirstScholarlyPage, ProviderError>
+) -> Result<ScholarlyCanonicalPage, ProviderError>
 where
     T: ScholarlyTransport,
 {
+    let from_sync_date = scholarly_window_filter(window);
     let issns = catalog_issns(catalog);
     for issn in &issns {
-        match client.fetch_journal_works_page(issn, None, None) {
+        match client.fetch_journal_works_page(issn, from_sync_date, None) {
             Ok(page) => {
-                let cursor_refreshed_at_epoch_seconds = crossref_checkpoint_epoch(
-                    page.next_cursor.as_ref(),
-                    page.items.is_empty(),
-                    clock,
-                )?;
-                let next = next_scholarly_checkpoint(
-                    ScholarlyCheckpoint::Crossref {
+                return crossref_canonical_page(
+                    client,
+                    catalog,
+                    ScholarlySourceCheckpoint::Crossref {
                         issn: issn.clone(),
-                        cursor: String::new(),
+                        cursor: None,
                         page_index: 0,
-                        cursor_refreshed_at_epoch_seconds,
+                        cursor_refreshed_at_epoch_seconds: None,
                     },
-                    page.next_cursor,
-                    "",
-                    page.items.is_empty(),
-                    cursor_refreshed_at_epoch_seconds,
-                )?;
-                return Ok(FirstScholarlyPage::Crossref {
-                    works: page.items,
-                    next_checkpoint: next,
-                });
+                    page,
+                    has_semantic_scholar_key,
+                    clock,
+                    false,
+                )
             }
             Err(SourceError::HttpStatus {
                 status_code: 404, ..
@@ -999,45 +981,225 @@ where
         )
     })?;
     let page = client
-        .fetch_openalex_works_by_source_page(&source_id, None, None)
+        .fetch_openalex_works_by_source_page(&source_id, from_sync_date, None)
         .map_err(map_scholarly_error)?;
+    openalex_canonical_page(
+        catalog,
+        ScholarlySourceCheckpoint::OpenAlex {
+            source_id,
+            cursor: None,
+        },
+        page,
+        false,
+    )
+}
+
+fn fetch_scholarly_source_page<T>(
+    client: &mut ScholarlyClient<T>,
+    catalog: &JournalCatalogEntry,
+    window: &ScholarlyWindowCheckpoint,
+    source: ScholarlySourceCheckpoint,
+    has_semantic_scholar_key: bool,
+    clock: &mut impl FnMut() -> Result<u64, ProviderError>,
+    restart: &mut impl FnMut(&'static str, u64),
+) -> Result<ScholarlyCanonicalPage, ProviderError>
+where
+    T: ScholarlyTransport,
+{
+    match source {
+        ScholarlySourceCheckpoint::Crossref {
+            issn,
+            cursor,
+            page_index,
+            cursor_refreshed_at_epoch_seconds,
+        } => {
+            let mut source = ScholarlySourceCheckpoint::Crossref {
+                issn: issn.clone(),
+                cursor: cursor.clone(),
+                page_index,
+                cursor_refreshed_at_epoch_seconds,
+            };
+            let mut did_restart_from_head = false;
+            if cursor.is_some()
+                && !crossref_cursor_is_fresh(cursor_refreshed_at_epoch_seconds, clock()?)
+            {
+                restart("expired_or_legacy", page_index);
+                source = reset_scholarly_source(&source);
+                did_restart_from_head = true;
+            }
+            let (request_cursor, request_page_index) = match &source {
+                ScholarlySourceCheckpoint::Crossref {
+                    cursor, page_index, ..
+                } => (cursor.as_deref(), *page_index),
+                ScholarlySourceCheckpoint::OpenAlex { .. } => unreachable!(),
+            };
+            let from_sync_date = scholarly_window_filter(window);
+            let page = match client.fetch_journal_works_page(&issn, from_sync_date, request_cursor)
+            {
+                Ok(page) => page,
+                Err(error) if request_cursor.is_some() && is_crossref_cursor_http_500(&error) => {
+                    restart("cursor_http_500", request_page_index);
+                    source = reset_scholarly_source(&source);
+                    did_restart_from_head = true;
+                    client
+                        .fetch_journal_works_page(&issn, from_sync_date, None)
+                        .map_err(map_scholarly_error)?
+                }
+                Err(error) => return Err(map_scholarly_error(error)),
+            };
+            crossref_canonical_page(
+                client,
+                catalog,
+                source,
+                page,
+                has_semantic_scholar_key,
+                clock,
+                did_restart_from_head,
+            )
+        }
+        ScholarlySourceCheckpoint::OpenAlex { source_id, cursor } => {
+            let page = client
+                .fetch_openalex_works_by_source_page(
+                    &source_id,
+                    scholarly_window_filter(window),
+                    cursor.as_deref(),
+                )
+                .map_err(map_scholarly_error)?;
+            openalex_canonical_page(
+                catalog,
+                ScholarlySourceCheckpoint::OpenAlex { source_id, cursor },
+                page,
+                false,
+            )
+        }
+    }
+}
+
+fn crossref_canonical_page<T>(
+    client: &mut ScholarlyClient<T>,
+    catalog: &JournalCatalogEntry,
+    source: ScholarlySourceCheckpoint,
+    page: ScholarlyWorksPage,
+    has_semantic_scholar_key: bool,
+    clock: &mut impl FnMut() -> Result<u64, ProviderError>,
+    did_restart_from_head: bool,
+) -> Result<ScholarlyCanonicalPage, ProviderError>
+where
+    T: ScholarlyTransport,
+{
+    let is_empty = page.items.is_empty();
+    let cursor_refreshed_at_epoch_seconds =
+        crossref_checkpoint_epoch(page.next_cursor.as_ref(), is_empty, clock)?;
+    let next_source = next_scholarly_source(
+        &source,
+        page.next_cursor,
+        is_empty,
+        cursor_refreshed_at_epoch_seconds,
+    )?;
+    let articles =
+        enrich_crossref_articles(client, catalog, &page.items, has_semantic_scholar_key)?;
+    let has_unfingerprintable_item = articles.len() != page.items.len()
+        || articles
+            .iter()
+            .any(|article| scholarly_issue_anchor(article).is_none());
+    Ok(ScholarlyCanonicalPage {
+        articles,
+        has_unfingerprintable_item,
+        source_head: reset_scholarly_source(&source),
+        next_source,
+        did_restart_from_head,
+        did_fallback_to_unfiltered: false,
+    })
+}
+
+fn openalex_canonical_page(
+    catalog: &JournalCatalogEntry,
+    source: ScholarlySourceCheckpoint,
+    page: ScholarlyWorksPage,
+    did_restart_from_head: bool,
+) -> Result<ScholarlyCanonicalPage, ProviderError> {
+    let is_empty = page.items.is_empty();
+    let effective_source = if page.did_fallback_to_unfiltered {
+        reset_scholarly_source(&source)
+    } else {
+        source
+    };
+    let next_source = next_scholarly_source(&effective_source, page.next_cursor, is_empty, None)?;
     let articles = page
         .items
         .iter()
         .filter_map(|work| openalex_article_draft(catalog, work))
         .collect::<Vec<_>>();
-    let next = next_scholarly_checkpoint(
-        ScholarlyCheckpoint::OpenAlex {
-            source_id,
-            cursor: String::new(),
-        },
-        page.next_cursor,
-        "",
-        articles.is_empty(),
-        None,
-    )?;
-    Ok(FirstScholarlyPage::OpenAlex {
+    let has_unfingerprintable_item = articles.len() != page.items.len()
+        || articles
+            .iter()
+            .any(|article| scholarly_issue_anchor(article).is_none());
+    Ok(ScholarlyCanonicalPage {
         articles,
-        next_checkpoint: next,
+        has_unfingerprintable_item,
+        source_head: reset_scholarly_source(&effective_source),
+        next_source,
+        did_restart_from_head,
+        did_fallback_to_unfiltered: page.did_fallback_to_unfiltered,
     })
 }
 
-fn next_scholarly_checkpoint(
-    current: ScholarlyCheckpoint,
+fn enrich_crossref_articles<T>(
+    client: &mut ScholarlyClient<T>,
+    catalog: &JournalCatalogEntry,
+    works: &[Value],
+    has_semantic_scholar_key: bool,
+) -> Result<Vec<ArticleDraft>, ProviderError>
+where
+    T: ScholarlyTransport,
+{
+    let dois = works
+        .iter()
+        .filter_map(|work| normalize_contract_doi(json_text(work.get("DOI"))?.as_str()))
+        .collect::<Vec<_>>();
+    let openalex = if dois.is_empty() {
+        BTreeMap::new()
+    } else {
+        client
+            .fetch_openalex_by_dois(&dois, SCHOLARLY_ENRICHMENT_BATCH_SIZE)
+            .map_err(map_scholarly_error)?
+    };
+    let semantic_scholar = if dois.is_empty() || !has_semantic_scholar_key {
+        BTreeMap::new()
+    } else {
+        client
+            .fetch_semantic_scholar_by_dois(&dois, SEMANTIC_SCHOLAR_BATCH_SIZE)
+            .map_err(map_scholarly_error)?
+    };
+    Ok(works
+        .iter()
+        .filter_map(|work| {
+            let doi = normalize_contract_doi(json_text(work.get("DOI"))?.as_str());
+            scholarly_article_draft(
+                catalog,
+                work,
+                doi.as_ref().and_then(|value| openalex.get(value)),
+                doi.as_ref().and_then(|value| semantic_scholar.get(value)),
+            )
+        })
+        .collect())
+}
+
+fn next_scholarly_source(
+    current: &ScholarlySourceCheckpoint,
     next_cursor: Option<String>,
-    previous_cursor: &str,
     is_empty: bool,
     cursor_refreshed_at_epoch_seconds: Option<u64>,
-) -> Result<Option<String>, ProviderError> {
+) -> Result<Option<ScholarlySourceCheckpoint>, ProviderError> {
     let Some(next_cursor) = next_cursor.filter(|_| !is_empty) else {
         return Ok(None);
     };
-    let checkpoint = match current {
-        ScholarlyCheckpoint::Crossref {
+    let next = match current {
+        ScholarlySourceCheckpoint::Crossref {
             issn, page_index, ..
-        } => ScholarlyCheckpoint::Crossref {
-            issn,
-            cursor: next_cursor,
+        } => ScholarlySourceCheckpoint::Crossref {
+            issn: issn.clone(),
+            cursor: Some(next_cursor),
             page_index: page_index.checked_add(1).ok_or_else(|| {
                 ProviderError::new(
                     ProviderErrorKind::InvalidResponse,
@@ -1053,25 +1215,479 @@ fn next_scholarly_checkpoint(
                 },
             )?),
         },
-        ScholarlyCheckpoint::OpenAlex { source_id, .. } => {
-            if next_cursor == previous_cursor {
+        ScholarlySourceCheckpoint::OpenAlex { source_id, cursor } => {
+            if cursor.as_deref() == Some(next_cursor.as_str()) {
                 return Err(ProviderError::new(
                     ProviderErrorKind::InvalidResponse,
                     "scholarly provider returned a repeated cursor",
                 ));
             }
-            ScholarlyCheckpoint::OpenAlex {
-                source_id,
-                cursor: next_cursor,
+            ScholarlySourceCheckpoint::OpenAlex {
+                source_id: source_id.clone(),
+                cursor: Some(next_cursor),
             }
         }
     };
-    serde_json::to_string(&checkpoint).map(Some).map_err(|_| {
+    Ok(Some(next))
+}
+
+fn reset_scholarly_source(source: &ScholarlySourceCheckpoint) -> ScholarlySourceCheckpoint {
+    match source {
+        ScholarlySourceCheckpoint::Crossref { issn, .. } => ScholarlySourceCheckpoint::Crossref {
+            issn: issn.clone(),
+            cursor: None,
+            page_index: 0,
+            cursor_refreshed_at_epoch_seconds: None,
+        },
+        ScholarlySourceCheckpoint::OpenAlex { source_id, .. } => {
+            ScholarlySourceCheckpoint::OpenAlex {
+                source_id: source_id.clone(),
+                cursor: None,
+            }
+        }
+    }
+}
+
+fn scholarly_window_from_context(
+    context: IndexFetchContext<'_>,
+) -> Result<(ScholarlyWindowCheckpoint, Option<ScholarlySourceCheckpoint>), ProviderError> {
+    let committed_anchor = match (context.mode, context.committed_anchor) {
+        (IndexSyncMode::Incremental, Some(anchor)) => Some(decode_scholarly_anchor(anchor)?),
+        _ => None,
+    };
+    if let Some(checkpoint) = context.traversal_checkpoint {
+        let checkpoint = decode_scholarly_checkpoint(checkpoint)?;
+        if checkpoint.window.sync_mode != context.mode
+            || checkpoint.window.base_anchor != committed_anchor
+        {
+            return Err(ProviderError::new(
+                ProviderErrorKind::InvalidResponse,
+                "scholarly checkpoint does not match the frozen synchronization window",
+            ));
+        }
+        return Ok((checkpoint.window, Some(checkpoint.source)));
+    }
+    let phase = if committed_anchor
+        .as_ref()
+        .and_then(|anchor| anchor.from_sync_date.as_ref())
+        .is_some()
+    {
+        ScholarlyScanPhase::Bounded
+    } else {
+        ScholarlyScanPhase::Unbounded
+    };
+    Ok((
+        ScholarlyWindowCheckpoint {
+            sync_mode: context.mode,
+            phase,
+            base_anchor: committed_anchor,
+            candidate_anchor: None,
+            has_reached_candidate: false,
+            has_seen_base: false,
+        },
+        None,
+    ))
+}
+
+fn scholarly_window_filter(window: &ScholarlyWindowCheckpoint) -> Option<&str> {
+    (window.phase == ScholarlyScanPhase::Bounded)
+        .then(|| {
+            window
+                .base_anchor
+                .as_ref()
+                .and_then(|anchor| anchor.from_sync_date.as_deref())
+        })
+        .flatten()
+}
+
+fn prepare_scholarly_replay(window: &mut ScholarlyWindowCheckpoint) {
+    window.has_reached_candidate = window.candidate_anchor.is_none();
+    window.has_seen_base = false;
+}
+
+fn switch_scholarly_window_to_unbounded(window: &mut ScholarlyWindowCheckpoint) {
+    window.phase = ScholarlyScanPhase::Unbounded;
+    prepare_scholarly_replay(window);
+}
+
+fn apply_scholarly_page(
+    catalog: &JournalCatalogEntry,
+    mut window: ScholarlyWindowCheckpoint,
+    page: ScholarlyCanonicalPage,
+) -> Result<ProviderBatch, ProviderError> {
+    if window.phase == ScholarlyScanPhase::Bounded && page.has_unfingerprintable_item {
+        return scholarly_unbounded_replay_batch(catalog, window, page.source_head);
+    }
+    let mut articles = Vec::new();
+    for article in page.articles {
+        let issue_anchor = scholarly_issue_anchor(&article);
+        if window.phase == ScholarlyScanPhase::Bounded && issue_anchor.is_none() {
+            return scholarly_unbounded_replay_batch(catalog, window, page.source_head);
+        }
+        if window.candidate_anchor.is_none() {
+            if let Some(issue_anchor) = issue_anchor.as_ref() {
+                if window.phase == ScholarlyScanPhase::Bounded
+                    && window.base_anchor.as_ref().is_some_and(|base| {
+                        scholarly_issue_is_older(&issue_anchor.issue, &base.issue)
+                    })
+                {
+                    return scholarly_unbounded_replay_batch(catalog, window, page.source_head);
+                }
+                window.candidate_anchor = Some(issue_anchor.clone());
+                window.has_reached_candidate = true;
+            }
+        } else if !window.has_reached_candidate {
+            if issue_anchor.as_ref().is_some_and(|anchor| {
+                window
+                    .candidate_anchor
+                    .as_ref()
+                    .is_some_and(|candidate| anchor.issue == candidate.issue)
+            }) {
+                window.has_reached_candidate = true;
+            } else {
+                continue;
+            }
+        }
+        if window.has_reached_candidate
+            && issue_anchor.as_ref().is_some_and(|anchor| {
+                window.candidate_anchor.as_ref().is_some_and(|candidate| {
+                    anchor.issue != candidate.issue
+                        && scholarly_issue_is_older(&candidate.issue, &anchor.issue)
+                })
+            })
+        {
+            continue;
+        }
+        if window.phase == ScholarlyScanPhase::Bounded {
+            let issue_anchor = issue_anchor.expect("bounded articles require an issue anchor");
+            if window.has_seen_base
+                && window
+                    .base_anchor
+                    .as_ref()
+                    .is_some_and(|base| issue_anchor.issue != base.issue)
+            {
+                return scholarly_complete_batch(catalog, articles, &window);
+            }
+            if window
+                .base_anchor
+                .as_ref()
+                .is_some_and(|base| issue_anchor.issue == base.issue)
+            {
+                window.has_seen_base = true;
+            }
+        }
+        if window.candidate_anchor.is_none() || window.has_reached_candidate {
+            articles.push(article);
+        }
+    }
+    if let Some(next_source) = page.next_source {
+        let checkpoint = encode_scholarly_checkpoint(&ScholarlyCheckpoint {
+            version: SCHOLARLY_CHECKPOINT_VERSION,
+            window,
+            source: next_source,
+        })?;
+        return Ok(batch_from_articles(
+            catalog,
+            articles,
+            ProviderProgress::Continue { checkpoint },
+        ));
+    }
+    match window.phase {
+        ScholarlyScanPhase::Bounded if window.has_seen_base => {
+            scholarly_complete_batch(catalog, articles, &window)
+        }
+        ScholarlyScanPhase::Bounded => {
+            scholarly_unbounded_replay_batch(catalog, window, page.source_head)
+        }
+        ScholarlyScanPhase::Unbounded
+            if window.candidate_anchor.is_some() && !window.has_reached_candidate =>
+        {
+            Err(ProviderError::new(
+                ProviderErrorKind::InvalidResponse,
+                "scholarly frozen candidate issue disappeared during replay",
+            ))
+        }
+        ScholarlyScanPhase::Unbounded => scholarly_complete_batch(catalog, articles, &window),
+    }
+}
+
+fn scholarly_unbounded_replay_batch(
+    catalog: &JournalCatalogEntry,
+    mut window: ScholarlyWindowCheckpoint,
+    source_head: ScholarlySourceCheckpoint,
+) -> Result<ProviderBatch, ProviderError> {
+    switch_scholarly_window_to_unbounded(&mut window);
+    let checkpoint = encode_scholarly_checkpoint(&ScholarlyCheckpoint {
+        version: SCHOLARLY_CHECKPOINT_VERSION,
+        window,
+        source: source_head,
+    })?;
+    Ok(batch_from_articles(
+        catalog,
+        Vec::new(),
+        ProviderProgress::Continue { checkpoint },
+    ))
+}
+
+fn scholarly_complete_batch(
+    catalog: &JournalCatalogEntry,
+    articles: Vec<ArticleDraft>,
+    window: &ScholarlyWindowCheckpoint,
+) -> Result<ProviderBatch, ProviderError> {
+    let next_anchor = window
+        .candidate_anchor
+        .as_ref()
+        .or(window.base_anchor.as_ref())
+        .map(encode_scholarly_anchor)
+        .transpose()?;
+    Ok(batch_from_articles(
+        catalog,
+        articles,
+        ProviderProgress::Complete { next_anchor },
+    ))
+}
+
+fn scholarly_issue_anchor(article: &ArticleDraft) -> Option<ScholarlyAnchor> {
+    let volume = article
+        .volume
+        .as_deref()
+        .map(normalize_bibliographic_label)
+        .filter(|value| !value.is_empty());
+    let issue = article
+        .issue_number
+        .as_deref()
+        .map(normalize_bibliographic_label)
+        .filter(|value| !value.is_empty());
+    let fingerprint = if let Some(publication_year) = article.publication_year.filter(valid_year) {
+        if volume.is_some() || issue.is_some() {
+            Some(ScholarlyIssueFingerprint::VolumeIssue {
+                publication_year,
+                volume,
+                issue,
+            })
+        } else {
+            article
+                .date
+                .as_ref()
+                .map(|date| ScholarlyIssueFingerprint::Date { date: date.clone() })
+                .or_else(|| scholarly_title_fingerprint(article, Some(publication_year)))
+        }
+    } else {
+        article
+            .date
+            .as_ref()
+            .map(|date| ScholarlyIssueFingerprint::Date { date: date.clone() })
+            .or_else(|| scholarly_title_fingerprint(article, None))
+    }?;
+    let from_sync_date = article
+        .publication_year
+        .filter(valid_year)
+        .or_else(|| scholarly_fingerprint_year(&fingerprint))
+        .map(|year| format!("{year:04}-01-01"));
+    Some(ScholarlyAnchor {
+        version: SCHOLARLY_ANCHOR_VERSION,
+        issue: fingerprint,
+        from_sync_date,
+    })
+}
+
+fn scholarly_title_fingerprint(
+    article: &ArticleDraft,
+    publication_year: Option<i64>,
+) -> Option<ScholarlyIssueFingerprint> {
+    let title = normalize_bibliographic_text(article.issue_title.as_deref()?);
+    (!title.is_empty()).then_some(ScholarlyIssueFingerprint::Title {
+        publication_year,
+        title,
+    })
+}
+
+fn scholarly_fingerprint_year(fingerprint: &ScholarlyIssueFingerprint) -> Option<i64> {
+    match fingerprint {
+        ScholarlyIssueFingerprint::VolumeIssue {
+            publication_year, ..
+        } => Some(*publication_year),
+        ScholarlyIssueFingerprint::Date { date } => date.get(..4)?.parse().ok(),
+        ScholarlyIssueFingerprint::Title {
+            publication_year, ..
+        } => *publication_year,
+    }
+}
+
+fn scholarly_issue_is_older(
+    candidate: &ScholarlyIssueFingerprint,
+    base: &ScholarlyIssueFingerprint,
+) -> bool {
+    match (
+        scholarly_fingerprint_year(candidate),
+        scholarly_fingerprint_year(base),
+    ) {
+        (Some(candidate_year), Some(base_year)) if candidate_year != base_year => {
+            return candidate_year < base_year;
+        }
+        _ => {}
+    }
+    match (candidate, base) {
+        (
+            ScholarlyIssueFingerprint::Date {
+                date: candidate_date,
+            },
+            ScholarlyIssueFingerprint::Date { date: base_date },
+        ) => candidate_date < base_date,
+        (
+            ScholarlyIssueFingerprint::VolumeIssue {
+                volume: candidate_volume,
+                issue: candidate_issue,
+                ..
+            },
+            ScholarlyIssueFingerprint::VolumeIssue {
+                volume: base_volume,
+                issue: base_issue,
+                ..
+            },
+        ) => numeric_label_is_older(candidate_volume.as_deref(), base_volume.as_deref())
+            .or_else(|| numeric_label_is_older(candidate_issue.as_deref(), base_issue.as_deref()))
+            .unwrap_or(false),
+        _ => false,
+    }
+}
+
+fn numeric_label_is_older(candidate: Option<&str>, base: Option<&str>) -> Option<bool> {
+    let candidate = candidate?.parse::<u64>().ok()?;
+    let base = base?.parse::<u64>().ok()?;
+    (candidate != base).then_some(candidate < base)
+}
+
+fn valid_year(year: &i64) -> bool {
+    (1..=9_999).contains(year)
+}
+
+fn encode_scholarly_anchor(anchor: &ScholarlyAnchor) -> Result<String, ProviderError> {
+    serde_json::to_string(anchor).map_err(|_| {
+        ProviderError::new(
+            ProviderErrorKind::Internal,
+            "scholarly anchor could not be encoded",
+        )
+    })
+}
+
+fn decode_scholarly_anchor(raw: &str) -> Result<ScholarlyAnchor, ProviderError> {
+    let anchor = serde_json::from_str::<ScholarlyAnchor>(raw).map_err(|_| {
+        ProviderError::new(
+            ProviderErrorKind::InvalidResponse,
+            "scholarly committed anchor is invalid",
+        )
+    })?;
+    if !is_valid_scholarly_anchor(&anchor) {
+        return Err(ProviderError::new(
+            ProviderErrorKind::InvalidResponse,
+            "scholarly committed anchor is invalid",
+        ));
+    }
+    Ok(anchor)
+}
+
+fn is_valid_scholarly_anchor(anchor: &ScholarlyAnchor) -> bool {
+    if anchor.version != SCHOLARLY_ANCHOR_VERSION
+        || anchor.from_sync_date.as_ref().is_some_and(|date| {
+            normalize_contract_date(date)
+                .is_none_or(|normalized| normalized.value != *date || date.len() != 10)
+        })
+    {
+        return false;
+    }
+    match &anchor.issue {
+        ScholarlyIssueFingerprint::VolumeIssue {
+            publication_year,
+            volume,
+            issue,
+        } => {
+            valid_year(publication_year)
+                && (volume.is_some() || issue.is_some())
+                && [volume.as_deref(), issue.as_deref()]
+                    .into_iter()
+                    .flatten()
+                    .all(|value| !value.is_empty() && normalize_bibliographic_label(value) == value)
+        }
+        ScholarlyIssueFingerprint::Date { date } => {
+            normalize_contract_date(date).is_some_and(|normalized| normalized.value == *date)
+        }
+        ScholarlyIssueFingerprint::Title {
+            publication_year,
+            title,
+        } => {
+            publication_year.as_ref().is_none_or(valid_year)
+                && !title.is_empty()
+                && normalize_bibliographic_text(title) == *title
+        }
+    }
+}
+
+fn encode_scholarly_checkpoint(checkpoint: &ScholarlyCheckpoint) -> Result<String, ProviderError> {
+    serde_json::to_string(checkpoint).map_err(|_| {
         ProviderError::new(
             ProviderErrorKind::Internal,
             "scholarly checkpoint could not be encoded",
         )
     })
+}
+
+fn decode_scholarly_checkpoint(raw: &str) -> Result<ScholarlyCheckpoint, ProviderError> {
+    let checkpoint = serde_json::from_str::<ScholarlyCheckpoint>(raw).map_err(|_| {
+        ProviderError::new(
+            ProviderErrorKind::InvalidResponse,
+            "scholarly checkpoint is invalid",
+        )
+    })?;
+    let is_source_valid = match &checkpoint.source {
+        ScholarlySourceCheckpoint::Crossref {
+            issn,
+            cursor,
+            page_index,
+            cursor_refreshed_at_epoch_seconds,
+        } => {
+            !issn.trim().is_empty()
+                && cursor.as_ref().is_none_or(|cursor| !cursor.is_empty())
+                && match cursor {
+                    Some(_) => cursor_refreshed_at_epoch_seconds.is_some(),
+                    None => *page_index == 0 && cursor_refreshed_at_epoch_seconds.is_none(),
+                }
+        }
+        ScholarlySourceCheckpoint::OpenAlex { source_id, cursor } => {
+            !source_id.trim().is_empty() && cursor.as_ref().is_none_or(|cursor| !cursor.is_empty())
+        }
+    };
+    let is_window_valid = checkpoint
+        .window
+        .base_anchor
+        .as_ref()
+        .is_none_or(is_valid_scholarly_anchor)
+        && checkpoint
+            .window
+            .candidate_anchor
+            .as_ref()
+            .is_none_or(is_valid_scholarly_anchor)
+        && (checkpoint.window.phase != ScholarlyScanPhase::Bounded
+            || checkpoint
+                .window
+                .base_anchor
+                .as_ref()
+                .and_then(|anchor| anchor.from_sync_date.as_ref())
+                .is_some())
+        && (checkpoint.window.candidate_anchor.is_some()
+            || (!checkpoint.window.has_reached_candidate && !checkpoint.window.has_seen_base))
+        && (!checkpoint.window.has_reached_candidate
+            || checkpoint.window.candidate_anchor.is_some())
+        && (!checkpoint.window.has_seen_base
+            || (checkpoint.window.phase == ScholarlyScanPhase::Bounded
+                && checkpoint.window.has_reached_candidate));
+    if checkpoint.version != SCHOLARLY_CHECKPOINT_VERSION || !is_source_valid || !is_window_valid {
+        return Err(ProviderError::new(
+            ProviderErrorKind::InvalidResponse,
+            "scholarly checkpoint is invalid",
+        ));
+    }
+    Ok(checkpoint)
 }
 
 fn fetch_cnki_batch<T>(
@@ -1131,7 +1747,7 @@ where
 fn batch_from_articles(
     catalog: &JournalCatalogEntry,
     articles: Vec<ArticleDraft>,
-    next_checkpoint: Option<String>,
+    progress: ProviderProgress,
 ) -> ProviderBatch {
     let mut issue_keys = BTreeSet::new();
     let issues = articles
@@ -1152,10 +1768,7 @@ fn batch_from_articles(
         journal: journal_observation(catalog),
         issues,
         articles,
-        progress: match next_checkpoint {
-            Some(checkpoint) => ProviderProgress::Continue { checkpoint },
-            None => ProviderProgress::Complete { next_anchor: None },
-        },
+        progress,
     }
 }
 
@@ -2467,13 +3080,17 @@ mod tests {
     use super::{
         built_in_provider_capabilities, cnki_access_registration, cnki_article_draft,
         cnki_index_registration, cnki_issue_draft, cnki_oversea_access_registration,
-        cnki_oversea_index_registration, crossref_cursor_is_fresh,
-        fetch_scholarly_batch_with_clock, fetch_scholarly_batch_with_clock_and_restart,
-        next_scholarly_checkpoint, openalex_article_draft, scholarly_access_registration,
-        scholarly_article_draft, scholarly_index_registration, CnkiIndexProvider,
-        DomesticCnkiIndexProvider, ScholarlyCheckpoint, ScholarlyIndexProvider, CNKI_PROVIDER_NAME,
-        CNKI_REDIRECT_HOSTS, CROSSREF_CURSOR_REUSE_SECONDS, DOMESTIC_CNKI_REDIRECT_HOSTS,
-        SCHOLARLY_REDIRECT_HOSTS,
+        cnki_oversea_index_registration, crossref_cursor_is_fresh, decode_scholarly_anchor,
+        encode_scholarly_anchor, encode_scholarly_checkpoint,
+        fetch_scholarly_batch_for_context_with_clock_and_restart, fetch_scholarly_batch_with_clock,
+        fetch_scholarly_batch_with_clock_and_restart, next_scholarly_source,
+        openalex_article_draft, scholarly_access_registration, scholarly_article_draft,
+        scholarly_index_registration, scholarly_issue_anchor, CnkiIndexProvider,
+        DomesticCnkiIndexProvider, ScholarlyAnchor, ScholarlyCheckpoint, ScholarlyIndexProvider,
+        ScholarlyIssueFingerprint, ScholarlyScanPhase, ScholarlySourceCheckpoint,
+        ScholarlyWindowCheckpoint, CNKI_PROVIDER_NAME, CNKI_REDIRECT_HOSTS,
+        CROSSREF_CURSOR_REUSE_SECONDS, DOMESTIC_CNKI_REDIRECT_HOSTS, SCHOLARLY_ANCHOR_VERSION,
+        SCHOLARLY_CHECKPOINT_VERSION, SCHOLARLY_REDIRECT_HOSTS,
     };
     use crate::scholarly::test_support::CapturedLogs;
     use crate::{
@@ -2674,6 +3291,7 @@ mod tests {
         responses: VecDeque<CrossrefFixtureResponse>,
         attempts: Vec<SourceAttempt>,
         requested_cursors: Vec<Option<String>>,
+        requested_sync_dates: Vec<Option<String>>,
     }
 
     impl CursorRecoveryTransport {
@@ -2682,6 +3300,7 @@ mod tests {
                 responses: responses.into(),
                 attempts: Vec::new(),
                 requested_cursors: Vec::new(),
+                requested_sync_dates: Vec::new(),
             }
         }
 
@@ -2708,8 +3327,13 @@ mod tests {
     impl ScholarlyTransport for CursorRecoveryTransport {
         fn request(&mut self, request: ScholarlyRequest) -> Result<serde_json::Value, SourceError> {
             match &request.kind {
-                ScholarlyRequestKind::CrossrefJournalWorks { cursor, .. } => {
+                ScholarlyRequestKind::CrossrefJournalWorks {
+                    from_sync_date,
+                    cursor,
+                    ..
+                } => {
                     self.requested_cursors.push(cursor.clone());
+                    self.requested_sync_dates.push(from_sync_date.clone());
                     match self.responses.pop_front().ok_or_else(|| {
                         SourceError::InvalidFixture(
                             "cursor recovery response script exhausted".to_string(),
@@ -2920,13 +3544,61 @@ mod tests {
         page_index: u64,
         cursor_refreshed_at_epoch_seconds: Option<u64>,
     ) -> String {
-        serde_json::to_string(&ScholarlyCheckpoint::Crossref {
-            issn: "1234-5679".to_string(),
-            cursor: cursor.to_string(),
-            page_index,
-            cursor_refreshed_at_epoch_seconds,
+        encode_scholarly_checkpoint(&ScholarlyCheckpoint {
+            version: SCHOLARLY_CHECKPOINT_VERSION,
+            window: bootstrap_scholarly_window(),
+            source: ScholarlySourceCheckpoint::Crossref {
+                issn: "1234-5679".to_string(),
+                cursor: Some(cursor.to_string()),
+                page_index,
+                cursor_refreshed_at_epoch_seconds,
+            },
         })
         .expect("Crossref checkpoint should encode")
+    }
+
+    fn bootstrap_scholarly_window() -> ScholarlyWindowCheckpoint {
+        ScholarlyWindowCheckpoint {
+            sync_mode: IndexSyncMode::Bootstrap,
+            phase: ScholarlyScanPhase::Unbounded,
+            base_anchor: None,
+            candidate_anchor: None,
+            has_reached_candidate: false,
+            has_seen_base: false,
+        }
+    }
+
+    fn scholarly_volume_anchor(issue: &str) -> String {
+        encode_scholarly_anchor(&ScholarlyAnchor {
+            version: SCHOLARLY_ANCHOR_VERSION,
+            issue: ScholarlyIssueFingerprint::VolumeIssue {
+                publication_year: 2026,
+                volume: Some("1".to_string()),
+                issue: Some(issue.to_string()),
+            },
+            from_sync_date: Some("2026-01-01".to_string()),
+        })
+        .expect("Scholarly anchor should encode")
+    }
+
+    fn crossref_issue_work(issue: &str, suffix: &str) -> Value {
+        json!({
+            "DOI": format!("10.1000/{suffix}"),
+            "title": [format!("Issue {issue} article {suffix}")],
+            "published": {"date-parts": [[2026, 7, 18]]},
+            "volume": "1",
+            "issue": issue
+        })
+    }
+
+    fn openalex_issue_work(issue: &str, suffix: &str) -> Value {
+        json!({
+            "doi": format!("https://doi.org/10.1000/{suffix}"),
+            "display_name": format!("Issue {issue} article {suffix}"),
+            "publication_year": 2026,
+            "publication_date": "2026-07-18",
+            "biblio": {"volume": "1", "issue": issue}
+        })
     }
 
     fn fetch_cursor_recovery(
@@ -3297,11 +3969,16 @@ mod tests {
             .collect::<Vec<_>>();
         let cursor_pages = parsed
             .iter()
-            .map(|checkpoint| match checkpoint {
-                ScholarlyCheckpoint::Crossref {
+            .map(|checkpoint| match &checkpoint.source {
+                ScholarlySourceCheckpoint::Crossref {
                     cursor, page_index, ..
-                } => (cursor.as_str(), *page_index),
-                ScholarlyCheckpoint::OpenAlex { .. } => {
+                } => (
+                    cursor
+                        .as_deref()
+                        .expect("continued page should have a cursor"),
+                    *page_index,
+                ),
+                ScholarlySourceCheckpoint::OpenAlex { .. } => {
                     panic!("Crossref fixture should not emit an OpenAlex checkpoint")
                 }
             })
@@ -3317,6 +3994,468 @@ mod tests {
     }
 
     #[test]
+    fn scholarly_incremental_crossref_keeps_one_filter_and_completes_the_split_base_issue() {
+        let transport = FixtureScholarlyTransport::new(ScholarlyFixtureData {
+            crossref_work_pages: vec![
+                vec![
+                    crossref_issue_work("3", "head"),
+                    crossref_issue_work("2", "base-first"),
+                ],
+                vec![
+                    crossref_issue_work("2", "base-second"),
+                    crossref_issue_work("1", "older"),
+                ],
+            ],
+            ..ScholarlyFixtureData::default()
+        });
+        let mut client = ScholarlyClient::new(transport, false);
+        let base_anchor = scholarly_volume_anchor("2");
+        let mut checkpoint = None;
+        let mut batches = Vec::new();
+        let mut now = 1_000_u64;
+        let mut clock = || {
+            now += 1;
+            Ok(now)
+        };
+        let mut restart = |_: &'static str, _: u64| {};
+        for _ in 0..3 {
+            let batch = fetch_scholarly_batch_for_context_with_clock_and_restart(
+                &mut client,
+                &catalog(),
+                sync_context(
+                    IndexSyncMode::Incremental,
+                    Some(&base_anchor),
+                    checkpoint.as_deref(),
+                ),
+                false,
+                &mut clock,
+                &mut restart,
+            )
+            .expect("bounded Crossref page should fetch");
+            checkpoint = batch_checkpoint(&batch).map(str::to_string);
+            let is_complete = batch_is_complete(&batch);
+            batches.push(batch);
+            if is_complete {
+                break;
+            }
+        }
+        let transport = client.into_transport();
+
+        assert_eq!(batches.len(), 2);
+        assert_eq!(
+            batches
+                .iter()
+                .flat_map(|batch| batch.articles.iter())
+                .filter_map(|article| article.doi.as_deref())
+                .collect::<Vec<_>>(),
+            ["10.1000/head", "10.1000/base-first", "10.1000/base-second"]
+        );
+        assert_eq!(
+            transport.journal_work_requests(),
+            &[
+                ("1234-5679".to_string(), Some("2026-01-01".to_string())),
+                ("1234-5679".to_string(), Some("2026-01-01".to_string()))
+            ]
+        );
+        let anchor = decode_scholarly_anchor(
+            batch_anchor(batches.last().expect("completion batch should exist"))
+                .expect("completion should advance the anchor"),
+        )
+        .expect("next anchor should decode");
+        assert_eq!(
+            anchor.issue,
+            ScholarlyIssueFingerprint::VolumeIssue {
+                publication_year: 2026,
+                volume: Some("1".to_string()),
+                issue: Some("3".to_string()),
+            }
+        );
+    }
+
+    #[test]
+    fn scholarly_missing_bounded_base_replays_once_without_a_date_filter() {
+        let transport = FixtureScholarlyTransport::new(ScholarlyFixtureData {
+            crossref_work_pages: vec![
+                vec![crossref_issue_work("4", "new-head")],
+                vec![crossref_issue_work("3", "new-tail")],
+            ],
+            ..ScholarlyFixtureData::default()
+        });
+        let mut client = ScholarlyClient::new(transport, false);
+        let base_anchor = scholarly_volume_anchor("2");
+        let mut checkpoint = None;
+        let mut batches = Vec::new();
+        let mut now = 2_000_u64;
+        let mut clock = || {
+            now += 1;
+            Ok(now)
+        };
+        let mut restart = |_: &'static str, _: u64| {};
+        for _ in 0..6 {
+            let batch = fetch_scholarly_batch_for_context_with_clock_and_restart(
+                &mut client,
+                &catalog(),
+                sync_context(
+                    IndexSyncMode::Incremental,
+                    Some(&base_anchor),
+                    checkpoint.as_deref(),
+                ),
+                false,
+                &mut clock,
+                &mut restart,
+            )
+            .expect("bounded fallback should remain resumable");
+            checkpoint = batch_checkpoint(&batch).map(str::to_string);
+            let is_complete = batch_is_complete(&batch);
+            batches.push(batch);
+            if is_complete {
+                break;
+            }
+        }
+        let transport = client.into_transport();
+
+        assert_eq!(batches.len(), 4);
+        assert_eq!(
+            transport
+                .journal_work_requests()
+                .iter()
+                .map(|(_, date)| date.as_deref())
+                .collect::<Vec<_>>(),
+            [Some("2026-01-01"), Some("2026-01-01"), None, None]
+        );
+        let anchor = decode_scholarly_anchor(
+            batch_anchor(batches.last().expect("completion batch should exist"))
+                .expect("full replay should establish the new head"),
+        )
+        .expect("next anchor should decode");
+        assert!(matches!(
+            anchor.issue,
+            ScholarlyIssueFingerprint::VolumeIssue {
+                issue: Some(issue),
+                ..
+            } if issue == "4"
+        ));
+    }
+
+    #[test]
+    fn scholarly_crossref_cursor_restart_preserves_the_frozen_window() {
+        let responses = vec![
+            CrossrefFixtureResponse::Page {
+                items: vec![crossref_issue_work("3", "frozen-head")],
+                next_cursor: Some("stateful".to_string()),
+            },
+            CrossrefFixtureResponse::HttpStatus(500),
+            CrossrefFixtureResponse::Page {
+                items: vec![
+                    crossref_issue_work("4", "inserted-head"),
+                    crossref_issue_work("3", "frozen-head"),
+                    crossref_issue_work("2", "base"),
+                ],
+                next_cursor: None,
+            },
+        ];
+        let transport = CursorRecoveryTransport::new(responses);
+        let mut client = ScholarlyClient::new(transport, false);
+        let base_anchor = scholarly_volume_anchor("2");
+        let mut clock_values = VecDeque::from([900_u64, 1_000]);
+        let mut clock = || Ok(clock_values.pop_front().unwrap_or(1_000));
+        let mut restart_count = 0;
+        let mut restart = |_: &'static str, _: u64| restart_count += 1;
+        let first = fetch_scholarly_batch_for_context_with_clock_and_restart(
+            &mut client,
+            &catalog(),
+            sync_context(IndexSyncMode::Incremental, Some(&base_anchor), None),
+            false,
+            &mut clock,
+            &mut restart,
+        )
+        .expect("first bounded page should fetch");
+        let checkpoint = batch_checkpoint(&first)
+            .expect("first page should continue")
+            .to_string();
+        let second = fetch_scholarly_batch_for_context_with_clock_and_restart(
+            &mut client,
+            &catalog(),
+            sync_context(
+                IndexSyncMode::Incremental,
+                Some(&base_anchor),
+                Some(&checkpoint),
+            ),
+            false,
+            &mut clock,
+            &mut restart,
+        )
+        .expect("cursor restart should replay the frozen window");
+        let transport = client.into_transport();
+
+        assert!(batch_is_complete(&second));
+        assert_eq!(restart_count, 1);
+        assert_eq!(
+            transport.requested_cursors,
+            [None, Some("stateful".to_string()), None]
+        );
+        assert_eq!(
+            transport
+                .requested_sync_dates
+                .iter()
+                .map(|date| date.as_deref())
+                .collect::<Vec<_>>(),
+            [Some("2026-01-01"), Some("2026-01-01"), Some("2026-01-01")]
+        );
+        assert_eq!(
+            second
+                .articles
+                .iter()
+                .filter_map(|article| article.doi.as_deref())
+                .collect::<Vec<_>>(),
+            ["10.1000/frozen-head", "10.1000/base"]
+        );
+        let anchor = decode_scholarly_anchor(
+            batch_anchor(&second).expect("completion should retain the frozen head"),
+        )
+        .expect("next anchor should decode");
+        assert!(matches!(
+            anchor.issue,
+            ScholarlyIssueFingerprint::VolumeIssue {
+                issue: Some(issue),
+                ..
+            } if issue == "3"
+        ));
+    }
+
+    #[test]
+    fn scholarly_openalex_plan_restriction_switches_once_to_unfiltered_pages() {
+        let transport = FixtureScholarlyTransport::new(ScholarlyFixtureData {
+            crossref_status: Some(404),
+            openalex_source_by_issns: Some(json!({
+                "id": "https://openalex.org/S1",
+                "display_name": "Canonical Journal",
+                "issn_l": "1234-5679",
+                "issn": ["1234-5679"]
+            })),
+            openalex_source_work_pages: vec![
+                vec![openalex_issue_work("3", "openalex-head")],
+                vec![
+                    openalex_issue_work("2", "openalex-base"),
+                    openalex_issue_work("1", "openalex-older"),
+                ],
+            ],
+            openalex_source_works_plan_restricted_after_page: Some(1),
+            ..ScholarlyFixtureData::default()
+        });
+        let mut client = ScholarlyClient::new(transport, false);
+        let base_anchor = scholarly_volume_anchor("2");
+        let mut checkpoint = None;
+        let mut batches = Vec::new();
+        let mut clock = || Ok(1_000_u64);
+        let mut restart = |_: &'static str, _: u64| {};
+        for _ in 0..4 {
+            let batch = fetch_scholarly_batch_for_context_with_clock_and_restart(
+                &mut client,
+                &catalog(),
+                sync_context(
+                    IndexSyncMode::Incremental,
+                    Some(&base_anchor),
+                    checkpoint.as_deref(),
+                ),
+                false,
+                &mut clock,
+                &mut restart,
+            )
+            .expect("OpenAlex plan fallback should remain provider-local");
+            checkpoint = batch_checkpoint(&batch).map(str::to_string);
+            let is_complete = batch_is_complete(&batch);
+            batches.push(batch);
+            if is_complete {
+                break;
+            }
+        }
+        let transport = client.into_transport();
+
+        assert_eq!(batches.len(), 3);
+        assert!(batch_is_complete(
+            batches.last().expect("completion batch should exist")
+        ));
+        assert_eq!(
+            transport.source_work_requests(),
+            &[
+                (
+                    "https://openalex.org/S1".to_string(),
+                    Some("2026-01-01".to_string())
+                ),
+                (
+                    "https://openalex.org/S1".to_string(),
+                    Some("2026-01-01".to_string())
+                ),
+                ("https://openalex.org/S1".to_string(), None),
+                ("https://openalex.org/S1".to_string(), None)
+            ]
+        );
+        let anchor = decode_scholarly_anchor(
+            batch_anchor(batches.last().expect("completion batch should exist"))
+                .expect("fallback should establish a new anchor"),
+        )
+        .expect("next anchor should decode");
+        assert!(matches!(
+            anchor.issue,
+            ScholarlyIssueFingerprint::VolumeIssue {
+                issue: Some(issue),
+                ..
+            } if issue == "3"
+        ));
+    }
+
+    #[test]
+    fn scholarly_incremental_openalex_keeps_the_anchor_filter_across_pages() {
+        let transport = FixtureScholarlyTransport::new(ScholarlyFixtureData {
+            crossref_status: Some(404),
+            openalex_source_by_issns: Some(json!({
+                "id": "https://openalex.org/S1",
+                "display_name": "Canonical Journal",
+                "issn_l": "1234-5679",
+                "issn": ["1234-5679"]
+            })),
+            openalex_source_work_pages: vec![
+                vec![
+                    openalex_issue_work("3", "openalex-bounded-head"),
+                    openalex_issue_work("2", "openalex-bounded-base-first"),
+                ],
+                vec![
+                    openalex_issue_work("2", "openalex-bounded-base-second"),
+                    openalex_issue_work("1", "openalex-bounded-older"),
+                ],
+            ],
+            ..ScholarlyFixtureData::default()
+        });
+        let mut client = ScholarlyClient::new(transport, false);
+        let base_anchor = scholarly_volume_anchor("2");
+        let mut checkpoint = None;
+        let mut batches = Vec::new();
+        let mut clock = || Ok(1_000_u64);
+        let mut restart = |_: &'static str, _: u64| {};
+        for _ in 0..3 {
+            let batch = fetch_scholarly_batch_for_context_with_clock_and_restart(
+                &mut client,
+                &catalog(),
+                sync_context(
+                    IndexSyncMode::Incremental,
+                    Some(&base_anchor),
+                    checkpoint.as_deref(),
+                ),
+                false,
+                &mut clock,
+                &mut restart,
+            )
+            .expect("bounded OpenAlex page should fetch");
+            checkpoint = batch_checkpoint(&batch).map(str::to_string);
+            let is_complete = batch_is_complete(&batch);
+            batches.push(batch);
+            if is_complete {
+                break;
+            }
+        }
+        let transport = client.into_transport();
+
+        assert_eq!(batches.len(), 2);
+        assert_eq!(
+            transport.source_work_requests(),
+            &[
+                (
+                    "https://openalex.org/S1".to_string(),
+                    Some("2026-01-01".to_string())
+                ),
+                (
+                    "https://openalex.org/S1".to_string(),
+                    Some("2026-01-01".to_string())
+                )
+            ]
+        );
+        assert_eq!(
+            batches
+                .iter()
+                .flat_map(|batch| batch.articles.iter())
+                .filter_map(|article| article.doi.as_deref())
+                .collect::<Vec<_>>(),
+            [
+                "10.1000/openalex-bounded-head",
+                "10.1000/openalex-bounded-base-first",
+                "10.1000/openalex-bounded-base-second"
+            ]
+        );
+        let next_anchor = batch_anchor(batches.last().expect("completion batch should exist"))
+            .expect("completion should advance the anchor");
+        assert!(!next_anchor.contains("openalex"));
+        assert!(!next_anchor.contains("10.1000"));
+        let anchor = decode_scholarly_anchor(next_anchor).expect("next anchor should decode");
+        assert!(matches!(
+            anchor.issue,
+            ScholarlyIssueFingerprint::VolumeIssue {
+                issue: Some(issue),
+                ..
+            } if issue == "3"
+        ));
+    }
+
+    #[test]
+    fn scholarly_crossref_and_openalex_share_canonical_issue_fingerprints() {
+        let crossref = scholarly_article_draft(
+            &catalog(),
+            &json!({
+                "DOI": "10.1000/crossref-fingerprint",
+                "title": ["Crossref fingerprint"],
+                "published": {"date-parts": [[2026, 7, 18]]},
+                "volume": "01",
+                "issue": "002"
+            }),
+            None,
+            None,
+        )
+        .expect("Crossref fixture should map");
+        let openalex = openalex_article_draft(
+            &catalog(),
+            &json!({
+                "doi": "https://doi.org/10.1000/openalex-fingerprint",
+                "display_name": "OpenAlex fingerprint",
+                "publication_year": 2026,
+                "publication_date": "2026-07-18",
+                "biblio": {"volume": "1", "issue": "2"}
+            }),
+        )
+        .expect("OpenAlex fixture should map");
+
+        assert_eq!(
+            scholarly_issue_anchor(&crossref)
+                .expect("Crossref issue should fingerprint")
+                .issue,
+            scholarly_issue_anchor(&openalex)
+                .expect("OpenAlex issue should fingerprint")
+                .issue
+        );
+    }
+
+    #[test]
+    fn scholarly_malformed_anchor_fails_before_any_source_request() {
+        let transport = FixtureScholarlyTransport::new(ScholarlyFixtureData::default());
+        let mut client = ScholarlyClient::new(transport, false);
+        let mut clock = || Ok(1_000_u64);
+        let mut restart = |_: &'static str, _: u64| {};
+        let error = fetch_scholarly_batch_for_context_with_clock_and_restart(
+            &mut client,
+            &catalog(),
+            sync_context(IndexSyncMode::Incremental, Some("{}"), None),
+            false,
+            &mut clock,
+            &mut restart,
+        )
+        .expect_err("malformed anchor must fail closed");
+        let transport = client.into_transport();
+
+        assert_eq!(error.kind(), ProviderErrorKind::InvalidResponse);
+        assert!(transport.journal_work_requests().is_empty());
+        assert!(transport.source_work_requests().is_empty());
+    }
+
+    #[test]
     fn crossref_cursor_freshness_has_an_exact_240_second_boundary() {
         assert_eq!(CROSSREF_CURSOR_REUSE_SECONDS, 240);
         assert!(crossref_cursor_is_fresh(Some(761), 1_000));
@@ -3326,20 +4465,19 @@ mod tests {
     }
 
     #[test]
-    fn legacy_expired_boundary_and_future_crossref_checkpoints_restart_before_use() {
+    fn old_scholarly_checkpoint_is_rejected_and_stale_cursors_restart_before_use() {
         let legacy =
             r#"{"mode":"crossref","issn":"1234-5679","cursor":"legacy-secret"}"#.to_string();
-        let decoded = serde_json::from_str::<ScholarlyCheckpoint>(&legacy)
-            .expect("legacy checkpoint should decode");
-        assert!(matches!(
-            decoded,
-            ScholarlyCheckpoint::Crossref {
-                cursor_refreshed_at_epoch_seconds: None,
-                ..
-            }
-        ));
+        let (legacy_result, legacy_transport) =
+            fetch_cursor_recovery(&catalog(), Vec::new(), &legacy, vec![1_000]);
+        assert_eq!(
+            legacy_result
+                .expect_err("old checkpoint must fail closed")
+                .kind(),
+            ProviderErrorKind::InvalidResponse
+        );
+        assert!(legacy_transport.requested_cursors.is_empty());
         let checkpoints = [
-            legacy,
             crossref_checkpoint("expired-secret", 4, Some(700)),
             crossref_checkpoint("boundary-secret", 5, Some(760)),
             crossref_checkpoint("future-secret", 6, Some(1_001)),
@@ -3377,15 +4515,15 @@ mod tests {
             transport.requested_cursors,
             vec![Some("stateful".to_string())]
         );
-        assert_eq!(
-            next,
-            ScholarlyCheckpoint::Crossref {
-                issn: "1234-5679".to_string(),
-                cursor: "stateful".to_string(),
+        assert!(matches!(
+            next.source,
+            ScholarlySourceCheckpoint::Crossref {
+                issn,
+                cursor: Some(cursor),
                 page_index: 8,
                 cursor_refreshed_at_epoch_seconds: Some(1_001),
-            }
-        );
+            } if issn == "1234-5679" && cursor == "stateful"
+        ));
     }
 
     #[test]
@@ -3523,15 +4661,14 @@ mod tests {
 
     #[test]
     fn scholarly_checkpoint_rejects_overflow_and_repeated_openalex_cursor() {
-        let overflow = next_scholarly_checkpoint(
-            ScholarlyCheckpoint::Crossref {
+        let overflow = next_scholarly_source(
+            &ScholarlySourceCheckpoint::Crossref {
                 issn: "1234-5679".to_string(),
-                cursor: "stateful".to_string(),
+                cursor: Some("stateful".to_string()),
                 page_index: u64::MAX,
                 cursor_refreshed_at_epoch_seconds: Some(1_000),
             },
             Some("stateful".to_string()),
-            "stateful",
             false,
             Some(1_001),
         )
@@ -3542,13 +4679,12 @@ mod tests {
             "scholarly Crossref checkpoint page index overflowed"
         );
 
-        let repeated_openalex = next_scholarly_checkpoint(
-            ScholarlyCheckpoint::OpenAlex {
+        let repeated_openalex = next_scholarly_source(
+            &ScholarlySourceCheckpoint::OpenAlex {
                 source_id: "S1".to_string(),
-                cursor: "fixture-page-1".to_string(),
+                cursor: Some("fixture-page-1".to_string()),
             },
             Some("fixture-page-1".to_string()),
-            "fixture-page-1",
             false,
             None,
         )
@@ -3563,20 +4699,25 @@ mod tests {
     #[test]
     fn crossref_checkpoint_stays_within_the_provider_contract_limit() {
         let cursor = "c".repeat(4_096);
-        let checkpoint = next_scholarly_checkpoint(
-            ScholarlyCheckpoint::Crossref {
+        let source = next_scholarly_source(
+            &ScholarlySourceCheckpoint::Crossref {
                 issn: "1234-5679".to_string(),
-                cursor: "previous".to_string(),
+                cursor: Some("previous".to_string()),
                 page_index: 22,
                 cursor_refreshed_at_epoch_seconds: Some(1_000),
             },
             Some(cursor),
-            "previous",
             false,
             Some(1_001),
         )
-        .expect("Crossref checkpoint should encode")
-        .expect("non-terminal page should have a checkpoint");
+        .expect("Crossref source should advance")
+        .expect("non-terminal page should have a source");
+        let checkpoint = encode_scholarly_checkpoint(&ScholarlyCheckpoint {
+            version: SCHOLARLY_CHECKPOINT_VERSION,
+            window: bootstrap_scholarly_window(),
+            source,
+        })
+        .expect("Crossref checkpoint should encode");
 
         assert!(checkpoint.len() < 65_536);
     }
@@ -3600,9 +4741,13 @@ mod tests {
             false,
         )
         .expect("Scholarly registration should pass");
-        let checkpoint = serde_json::to_string(&ScholarlyCheckpoint::OpenAlex {
-            source_id: "S1".to_string(),
-            cursor: "fixture-page-1".to_string(),
+        let checkpoint = encode_scholarly_checkpoint(&ScholarlyCheckpoint {
+            version: SCHOLARLY_CHECKPOINT_VERSION,
+            window: bootstrap_scholarly_window(),
+            source: ScholarlySourceCheckpoint::OpenAlex {
+                source_id: "S1".to_string(),
+                cursor: Some("fixture-page-1".to_string()),
+            },
         })
         .expect("OpenAlex checkpoint should encode");
         let batch = registration
@@ -3621,7 +4766,10 @@ mod tests {
                 batch_checkpoint(&batch).expect("resumed OpenAlex page should continue")
             )
             .expect("OpenAlex checkpoint should decode"),
-            ScholarlyCheckpoint::OpenAlex { .. }
+            ScholarlyCheckpoint {
+                source: ScholarlySourceCheckpoint::OpenAlex { .. },
+                ..
+            }
         ));
     }
 

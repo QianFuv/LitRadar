@@ -29,6 +29,7 @@ const OPENALEX_SOURCE_FIELDS: &str = "id,display_name,issn_l,issn,works_count";
 const OPENALEX_WORK_FIELDS: &str = "id,doi,title,display_name,publication_year,publication_date,language,cited_by_count,is_retracted,primary_location,locations,open_access,best_oa_location,authorships,ids,biblio,abstract_inverted_index,topics,primary_topic,funders,awards";
 const DEFAULT_USER_AGENT: &str = "LitRadar/0.1";
 const CROSSREF_ATTEMPT_INTERVAL_MS: u64 = 110;
+const CROSSREF_JOURNAL_WORK_ORDER: &str = "desc";
 const SEMANTIC_SCHOLAR_ATTEMPT_INTERVAL_MS: u64 = 1_100;
 const CROSSREF_ROWS: usize = 225;
 const OPENALEX_DOI_FILTER_MAX_VALUES: usize = 100;
@@ -37,6 +38,7 @@ const OPENALEX_DEFAULT_REMAINING_CREDITS: u64 = 100_000;
 const OPENALEX_MAX_CREDITS_PER_REQUEST: u64 = 10;
 const OPENALEX_KEY_START_INTERVAL: Duration = Duration::from_millis(11);
 const OPENALEX_SOURCE_WORK_ROWS: usize = 200;
+const OPENALEX_SOURCE_WORK_SORT: &str = "publication_date:desc";
 const DEFAULT_MAX_RETRIES: usize = 2;
 const CROSSREF_MAX_TRANSPORT_ATTEMPTS: usize = 6;
 const CROSSREF_TRANSPORT_RETRY_BUDGET_SECONDS: u64 = 180;
@@ -1086,6 +1088,8 @@ pub struct ScholarlyWorksPage {
     pub items: Vec<Value>,
     /// Cursor for the next page when one is available.
     pub next_cursor: Option<String>,
+    /// Whether a rejected date filter restarted this page from the unfiltered head.
+    pub did_fallback_to_unfiltered: bool,
 }
 
 /// Request shape sent through a scholarly transport.
@@ -1173,6 +1177,9 @@ pub struct ScholarlyFixtureData {
     /// Whether dated OpenAlex source-work requests require a paid plan.
     #[serde(default)]
     pub openalex_source_works_plan_restricted: bool,
+    /// Optional zero-based page where dated source-work requests become plan-restricted.
+    #[serde(default)]
+    pub openalex_source_works_plan_restricted_after_page: Option<usize>,
     /// Optional OpenAlex source-work status code.
     #[serde(default)]
     pub openalex_source_works_status: Option<u16>,
@@ -2198,7 +2205,7 @@ impl LiveScholarlyTransport {
                 crossref_journal_filter(from_sync_date),
             ),
             ("sort".to_string(), "published".to_string()),
-            ("order".to_string(), "asc".to_string()),
+            ("order".to_string(), CROSSREF_JOURNAL_WORK_ORDER.to_string()),
         ];
         if let Some(mailto) = self.config.crossref_mailtos.first() {
             query.push(("mailto".to_string(), mailto.clone()));
@@ -2270,7 +2277,7 @@ impl LiveScholarlyTransport {
                 OPENALEX_SOURCE_WORK_ROWS.to_string(),
             ),
             ("cursor".to_string(), cursor.unwrap_or("*").to_string()),
-            ("sort".to_string(), "publication_date:asc".to_string()),
+            ("sort".to_string(), OPENALEX_SOURCE_WORK_SORT.to_string()),
             ("select".to_string(), OPENALEX_WORK_FIELDS.to_string()),
         ];
         let mut payload = self.openalex_get_json(
@@ -2940,7 +2947,13 @@ impl ScholarlyTransport for FixtureScholarlyTransport {
             } => {
                 self.source_work_requests
                     .push((source_id.clone(), from_sync_date.clone()));
-                if from_sync_date.is_some() && self.data.openalex_source_works_plan_restricted {
+                let page_index = fixture_page_index(cursor.as_deref());
+                let is_plan_restricted = self.data.openalex_source_works_plan_restricted
+                    || self
+                        .data
+                        .openalex_source_works_plan_restricted_after_page
+                        .is_some_and(|restricted_page| page_index >= restricted_page);
+                if from_sync_date.is_some() && is_plan_restricted {
                     return Err(self.http_error(
                         &request,
                         429,
@@ -2959,7 +2972,6 @@ impl ScholarlyTransport for FixtureScholarlyTransport {
                     ));
                 }
                 self.record_attempt(&request, Some(200), true, None);
-                let page_index = fixture_page_index(cursor.as_deref());
                 let (items, next_cursor) = fixture_page(
                     &self.data.openalex_source_work_pages,
                     &self.data.openalex_source_works,
@@ -3177,7 +3189,11 @@ where
             .and_then(|message| message.get("next-cursor"))
             .and_then(Value::as_str)
             .map(str::to_string);
-        Ok(ScholarlyWorksPage { items, next_cursor })
+        Ok(ScholarlyWorksPage {
+            items,
+            next_cursor,
+            did_fallback_to_unfiltered: false,
+        })
     }
 
     /// Fetch an OpenAlex source matching the provided ISSNs.
@@ -3266,7 +3282,11 @@ where
         } else {
             from_sync_date
         };
-        let request = openalex_source_works_request(source_id, effective_sync_date, cursor);
+        let did_start_unfiltered = from_sync_date.is_some() && effective_sync_date.is_none();
+        let effective_cursor = if did_start_unfiltered { None } else { cursor };
+        let request =
+            openalex_source_works_request(source_id, effective_sync_date, effective_cursor);
+        let mut did_fallback_to_unfiltered = did_start_unfiltered;
         let payload = match self.transport.request(request) {
             Err(error)
                 if effective_sync_date.is_some() && is_openalex_created_date_plan_error(&error) =>
@@ -3280,8 +3300,9 @@ where
                     fallback = "full_source_pages",
                 );
                 self.is_openalex_created_date_filter_unavailable = true;
+                did_fallback_to_unfiltered = true;
                 self.transport
-                    .request(openalex_source_works_request(source_id, None, cursor))?
+                    .request(openalex_source_works_request(source_id, None, None))?
             }
             result => result?,
         };
@@ -3291,7 +3312,11 @@ where
             .and_then(|meta| meta.get("next_cursor"))
             .and_then(Value::as_str)
             .map(str::to_string);
-        Ok(ScholarlyWorksPage { items, next_cursor })
+        Ok(ScholarlyWorksPage {
+            items,
+            next_cursor,
+            did_fallback_to_unfiltered,
+        })
     }
 
     /// Fetch OpenAlex enrichment by DOI.
@@ -3710,9 +3735,10 @@ mod tests {
         OpenAlexScheduleDecision, OpenAlexScheduler, OpenAlexSchedulerState,
         ProviderAttemptSchedule, ScholarlyClient, ScholarlyFixtureData, ScholarlyTransport,
         SemanticScholarHealthOutcome, SemanticScholarScheduleDecision,
-        SemanticScholarSchedulerState, SourceError, CROSSREF_ATTEMPT_INTERVAL_MS, CROSSREF_ROWS,
-        CROSSREF_SOURCE, OPENALEX_DOI_FILTER_MAX_VALUES, OPENALEX_DOI_REQUEST_URL_BUDGET,
-        OPENALEX_KEY_START_INTERVAL, OPENALEX_MAX_WORKERS_PER_PROCESS,
+        SemanticScholarSchedulerState, SourceError, CROSSREF_ATTEMPT_INTERVAL_MS,
+        CROSSREF_JOURNAL_WORK_ORDER, CROSSREF_ROWS, CROSSREF_SOURCE,
+        OPENALEX_DOI_FILTER_MAX_VALUES, OPENALEX_DOI_REQUEST_URL_BUDGET,
+        OPENALEX_KEY_START_INTERVAL, OPENALEX_MAX_WORKERS_PER_PROCESS, OPENALEX_SOURCE_WORK_SORT,
         SEMANTIC_SCHOLAR_ATTEMPT_INTERVAL_MS, SEMANTIC_SCHOLAR_SOURCE,
     };
 
@@ -5878,16 +5904,14 @@ mod tests {
             .fetch_openalex_works_by_source_page("S42", Some("2026-01-01"), None)
             .expect("paid filter error should fall back to a full source page");
         let second_page = client
-            .fetch_openalex_works_by_source_page(
-                "S42",
-                Some("2026-01-01"),
-                first_page.next_cursor.as_deref(),
-            )
+            .fetch_openalex_works_by_source_page("S42", None, first_page.next_cursor.as_deref())
             .expect("later pages should retain the full source fallback");
         let transport = client.into_transport();
 
         assert_eq!(first_page.items[0]["id"], "https://openalex.org/W42");
         assert_eq!(second_page.items[0]["id"], "https://openalex.org/W43");
+        assert!(first_page.did_fallback_to_unfiltered);
+        assert!(!second_page.did_fallback_to_unfiltered);
         assert_eq!(
             transport.source_work_requests(),
             &[
@@ -6252,6 +6276,12 @@ mod tests {
             openalex_source_work_filter("S42", None),
             "primary_location.source.id:S42,type:article"
         );
+    }
+
+    #[test]
+    fn source_list_requests_sort_from_newest_to_oldest() {
+        assert_eq!(CROSSREF_JOURNAL_WORK_ORDER, "desc");
+        assert_eq!(OPENALEX_SOURCE_WORK_SORT, "publication_date:desc");
     }
 
     #[test]
