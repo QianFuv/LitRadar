@@ -502,7 +502,7 @@ where
 
 impl<T> IndexContentProvider for DomesticCnkiIndexProvider<T>
 where
-    T: DomesticCnkiTransport + Clone + Send,
+    T: DomesticCnkiTransport + Clone + Send + 'static,
 {
     fn fetch(
         &self,
@@ -552,8 +552,8 @@ where
                 next_attempt = batch_attempt + 1,
                 failure_kind = ?error.kind(),
             );
-            if let Err(error) = state.client.reset_transient_state() {
-                break Err(map_domestic_cnki_error(error));
+            if let Err(error) = reset_domestic_cnki_batch_state(&mut state) {
+                break Err(error);
             }
             thread::sleep(domestic_batch_retry_delay(batch_attempt));
             batch_attempt += 1;
@@ -567,6 +567,27 @@ where
         }
         result
     }
+}
+
+fn reset_domestic_cnki_batch_state<T>(
+    state: &mut DomesticCnkiIndexState<T>,
+) -> Result<(), ProviderError>
+where
+    T: DomesticCnkiTransport + Clone + Send + 'static,
+{
+    state
+        .client
+        .reset_transient_state()
+        .map_err(map_domestic_cnki_error)?;
+    let detail_pool = DomesticCnkiDetailPool::new(&state.client, state.detail_pool.worker_count)
+        .map_err(|_| {
+            ProviderError::new(
+                ProviderErrorKind::Internal,
+                "domestic CNKI detail worker pool could not restart",
+            )
+        })?;
+    state.detail_pool = detail_pool;
+    Ok(())
 }
 
 fn is_retryable_domestic_batch_error(error: &ProviderError) -> bool {
@@ -3121,7 +3142,7 @@ fn emit_source_attempt_summary(provider: &str, attempts: &[SourceAttempt]) {
 #[cfg(test)]
 mod tests {
     use std::collections::{BTreeMap, BTreeSet, VecDeque};
-    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
     use std::thread;
     use std::time::Duration;
@@ -3139,9 +3160,10 @@ mod tests {
 
     use super::{
         built_in_provider_capabilities, cnki_access_registration, cnki_article_draft,
-        cnki_index_registration, cnki_issue_draft, cnki_oversea_access_registration,
-        cnki_oversea_index_registration, crossref_cursor_is_fresh, decode_scholarly_anchor,
-        decode_scholarly_checkpoint, encode_scholarly_anchor, encode_scholarly_checkpoint,
+        cnki_index_registration, cnki_index_registration_with_workers, cnki_issue_draft,
+        cnki_oversea_access_registration, cnki_oversea_index_registration,
+        crossref_cursor_is_fresh, decode_scholarly_anchor, decode_scholarly_checkpoint,
+        encode_scholarly_anchor, encode_scholarly_checkpoint,
         fetch_scholarly_batch_for_context_with_clock_and_restart, fetch_scholarly_batch_with_clock,
         fetch_scholarly_batch_with_clock_and_restart, next_scholarly_source,
         normalize_empty_unbounded_replay_checkpoint_at, openalex_article_draft,
@@ -3282,14 +3304,14 @@ mod tests {
     #[derive(Clone)]
     struct BatchRecoveryDomesticTransport {
         inner: FixtureDomesticCnkiTransport,
-        is_session_stale: Arc<AtomicBool>,
+        is_session_stale: bool,
         session_reset_count: Arc<AtomicUsize>,
         detail_attempt_count: Arc<AtomicUsize>,
     }
 
     impl DomesticCnkiTransport for BatchRecoveryDomesticTransport {
         fn reset_transient_state(&mut self) -> Result<(), DomesticCnkiSourceError> {
-            self.is_session_stale.store(false, Ordering::SeqCst);
+            self.is_session_stale = false;
             self.session_reset_count.fetch_add(1, Ordering::SeqCst);
             Ok(())
         }
@@ -3320,7 +3342,7 @@ mod tests {
             platform_id: Option<&str>,
         ) -> Result<Value, DomesticCnkiSourceError> {
             self.detail_attempt_count.fetch_add(1, Ordering::SeqCst);
-            if self.is_session_stale.load(Ordering::SeqCst) {
+            if self.is_session_stale {
                 return Err(DomesticCnkiSourceError::Parse(
                     "temporary article detail response".to_string(),
                 ));
@@ -5900,23 +5922,29 @@ mod tests {
     }
 
     #[test]
-    fn domestic_cnki_replays_transient_batch_from_same_checkpoint() {
-        let is_session_stale = Arc::new(AtomicBool::new(true));
+    fn domestic_cnki_rebuilds_detail_workers_before_batch_replay() {
         let session_reset_count = Arc::new(AtomicUsize::new(0));
         let detail_attempt_count = Arc::new(AtomicUsize::new(0));
         let transport = BatchRecoveryDomesticTransport {
             inner: FixtureDomesticCnkiTransport::new(domestic_paged_fixture(vec![(
                 "202512".to_string(),
-                vec![vec![(
-                    "RECOVER".to_string(),
-                    "Recovered article".to_string(),
-                )]],
+                vec![vec![
+                    (
+                        "RECOVER1".to_string(),
+                        "First recovered article".to_string(),
+                    ),
+                    (
+                        "RECOVER2".to_string(),
+                        "Second recovered article".to_string(),
+                    ),
+                ]],
             )])),
-            is_session_stale: Arc::clone(&is_session_stale),
+            is_session_stale: true,
             session_reset_count: Arc::clone(&session_reset_count),
             detail_attempt_count: Arc::clone(&detail_attempt_count),
         };
-        let registration = cnki_index_registration(transport).expect("recovery registration");
+        let registration =
+            cnki_index_registration_with_workers(transport, 2).expect("recovery registration");
 
         let batch = registration
             .index_content()
@@ -5925,11 +5953,11 @@ mod tests {
             .expect("transient batch should replay");
 
         assert!(batch_is_complete(&batch));
-        assert_eq!(batch.articles.len(), 1);
-        assert_eq!(batch.articles[0].title, "Recovered article");
-        assert!(!is_session_stale.load(Ordering::SeqCst));
+        assert_eq!(batch.articles.len(), 2);
+        assert_eq!(batch.articles[0].title, "First recovered article");
+        assert_eq!(batch.articles[1].title, "Second recovered article");
         assert_eq!(session_reset_count.load(Ordering::SeqCst), 1);
-        assert_eq!(detail_attempt_count.load(Ordering::SeqCst), 2);
+        assert_eq!(detail_attempt_count.load(Ordering::SeqCst), 4);
     }
 
     #[test]
