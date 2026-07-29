@@ -1290,6 +1290,14 @@ fn scholarly_window_from_context(
 }
 
 fn scholarly_window_filter(window: &ScholarlyWindowCheckpoint) -> Option<&str> {
+    let current_date = current_utc_date();
+    scholarly_window_filter_at(window, current_date.as_deref())
+}
+
+fn scholarly_window_filter_at<'a>(
+    window: &'a ScholarlyWindowCheckpoint,
+    current_date: Option<&str>,
+) -> Option<&'a str> {
     (window.phase == ScholarlyScanPhase::Bounded)
         .then(|| {
             window
@@ -1298,10 +1306,20 @@ fn scholarly_window_filter(window: &ScholarlyWindowCheckpoint) -> Option<&str> {
                 .and_then(|anchor| anchor.from_sync_date.as_deref())
         })
         .flatten()
+        .filter(|from_sync_date| {
+            current_date.is_none_or(|current_date| *from_sync_date <= current_date)
+        })
+}
+
+fn current_utc_date() -> Option<String> {
+    let epoch_seconds = SystemTime::now().duration_since(UNIX_EPOCH).ok()?.as_secs();
+    let epoch_seconds = i64::try_from(epoch_seconds).ok()?;
+    chrono::DateTime::<chrono::Utc>::from_timestamp(epoch_seconds, 0)
+        .map(|date_time| date_time.date_naive().to_string())
 }
 
 fn prepare_scholarly_replay(window: &mut ScholarlyWindowCheckpoint) {
-    window.has_reached_candidate = window.candidate_anchor.is_none();
+    window.has_reached_candidate = false;
     window.has_seen_base = false;
 }
 
@@ -1633,12 +1651,13 @@ fn encode_scholarly_checkpoint(checkpoint: &ScholarlyCheckpoint) -> Result<Strin
 }
 
 fn decode_scholarly_checkpoint(raw: &str) -> Result<ScholarlyCheckpoint, ProviderError> {
-    let checkpoint = serde_json::from_str::<ScholarlyCheckpoint>(raw).map_err(|_| {
+    let mut checkpoint = serde_json::from_str::<ScholarlyCheckpoint>(raw).map_err(|_| {
         ProviderError::new(
             ProviderErrorKind::InvalidResponse,
             "scholarly checkpoint is invalid",
         )
     })?;
+    normalize_empty_unbounded_replay_checkpoint(&mut checkpoint);
     let is_source_valid = match &checkpoint.source {
         ScholarlySourceCheckpoint::Crossref {
             issn,
@@ -1688,6 +1707,47 @@ fn decode_scholarly_checkpoint(raw: &str) -> Result<ScholarlyCheckpoint, Provide
         ));
     }
     Ok(checkpoint)
+}
+
+fn normalize_empty_unbounded_replay_checkpoint(checkpoint: &mut ScholarlyCheckpoint) {
+    let current_date = current_utc_date();
+    normalize_empty_unbounded_replay_checkpoint_at(checkpoint, current_date.as_deref());
+}
+
+fn normalize_empty_unbounded_replay_checkpoint_at(
+    checkpoint: &mut ScholarlyCheckpoint,
+    current_date: Option<&str>,
+) {
+    let is_source_head = match &checkpoint.source {
+        ScholarlySourceCheckpoint::Crossref {
+            cursor,
+            page_index,
+            cursor_refreshed_at_epoch_seconds,
+            ..
+        } => cursor.is_none() && *page_index == 0 && cursor_refreshed_at_epoch_seconds.is_none(),
+        ScholarlySourceCheckpoint::OpenAlex { cursor, .. } => cursor.is_none(),
+    };
+    if checkpoint.version == SCHOLARLY_CHECKPOINT_VERSION
+        && checkpoint.window.phase == ScholarlyScanPhase::Unbounded
+        && checkpoint.window.base_anchor.is_some()
+        && checkpoint.window.candidate_anchor.is_none()
+        && checkpoint.window.has_reached_candidate
+        && !checkpoint.window.has_seen_base
+        && is_source_head
+    {
+        checkpoint.window.has_reached_candidate = false;
+        if checkpoint
+            .window
+            .base_anchor
+            .as_ref()
+            .and_then(|anchor| anchor.from_sync_date.as_deref())
+            .is_some_and(|from_sync_date| {
+                current_date.is_some_and(|current_date| from_sync_date > current_date)
+            })
+        {
+            checkpoint.window.phase = ScholarlyScanPhase::Bounded;
+        }
+    }
 }
 
 fn fetch_cnki_batch<T>(
@@ -3081,16 +3141,17 @@ mod tests {
         built_in_provider_capabilities, cnki_access_registration, cnki_article_draft,
         cnki_index_registration, cnki_issue_draft, cnki_oversea_access_registration,
         cnki_oversea_index_registration, crossref_cursor_is_fresh, decode_scholarly_anchor,
-        encode_scholarly_anchor, encode_scholarly_checkpoint,
+        decode_scholarly_checkpoint, encode_scholarly_anchor, encode_scholarly_checkpoint,
         fetch_scholarly_batch_for_context_with_clock_and_restart, fetch_scholarly_batch_with_clock,
         fetch_scholarly_batch_with_clock_and_restart, next_scholarly_source,
-        openalex_article_draft, scholarly_access_registration, scholarly_article_draft,
-        scholarly_index_registration, scholarly_issue_anchor, CnkiIndexProvider,
-        DomesticCnkiIndexProvider, ScholarlyAnchor, ScholarlyCheckpoint, ScholarlyIndexProvider,
-        ScholarlyIssueFingerprint, ScholarlyScanPhase, ScholarlySourceCheckpoint,
-        ScholarlyWindowCheckpoint, CNKI_PROVIDER_NAME, CNKI_REDIRECT_HOSTS,
-        CROSSREF_CURSOR_REUSE_SECONDS, DOMESTIC_CNKI_REDIRECT_HOSTS, SCHOLARLY_ANCHOR_VERSION,
-        SCHOLARLY_CHECKPOINT_VERSION, SCHOLARLY_REDIRECT_HOSTS,
+        normalize_empty_unbounded_replay_checkpoint_at, openalex_article_draft,
+        scholarly_access_registration, scholarly_article_draft, scholarly_index_registration,
+        scholarly_issue_anchor, scholarly_window_filter_at, scholarly_window_from_context,
+        CnkiIndexProvider, DomesticCnkiIndexProvider, ScholarlyAnchor, ScholarlyCheckpoint,
+        ScholarlyIndexProvider, ScholarlyIssueFingerprint, ScholarlyScanPhase,
+        ScholarlySourceCheckpoint, ScholarlyWindowCheckpoint, CNKI_PROVIDER_NAME,
+        CNKI_REDIRECT_HOSTS, CROSSREF_CURSOR_REUSE_SECONDS, DOMESTIC_CNKI_REDIRECT_HOSTS,
+        SCHOLARLY_ANCHOR_VERSION, SCHOLARLY_CHECKPOINT_VERSION, SCHOLARLY_REDIRECT_HOSTS,
     };
     use crate::scholarly::test_support::CapturedLogs;
     use crate::{
@@ -4135,6 +4196,116 @@ mod tests {
                 ..
             } if issue == "4"
         ));
+    }
+
+    #[test]
+    fn scholarly_empty_future_window_normalizes_persisted_unbounded_replay() {
+        let future_work = json!({
+            "DOI": "10.1000/future-base",
+            "title": ["Future base article"],
+            "published": {"date-parts": [[2027, 1, 1]]},
+            "volume": "186"
+        });
+        let transport = CursorRecoveryTransport::new(vec![
+            CrossrefFixtureResponse::Page {
+                items: Vec::new(),
+                next_cursor: None,
+            },
+            CrossrefFixtureResponse::Page {
+                items: vec![future_work],
+                next_cursor: None,
+            },
+        ]);
+        let mut client = ScholarlyClient::new(transport, false);
+        let base_anchor = encode_scholarly_anchor(&ScholarlyAnchor {
+            version: SCHOLARLY_ANCHOR_VERSION,
+            issue: ScholarlyIssueFingerprint::VolumeIssue {
+                publication_year: 2027,
+                volume: Some("186".to_string()),
+                issue: None,
+            },
+            from_sync_date: Some("2027-01-01".to_string()),
+        })
+        .expect("future anchor should encode");
+        let (bounded_window, source) = scholarly_window_from_context(sync_context(
+            IndexSyncMode::Incremental,
+            Some(&base_anchor),
+            None,
+        ))
+        .expect("future bounded window should decode");
+        assert!(source.is_none());
+        assert_eq!(
+            scholarly_window_filter_at(&bounded_window, Some("2026-07-29")),
+            None
+        );
+        let mut now = 3_000_u64;
+        let mut clock = || {
+            now += 1;
+            Ok(now)
+        };
+        let mut restart = |_: &'static str, _: u64| {};
+
+        let fallback = fetch_scholarly_batch_for_context_with_clock_and_restart(
+            &mut client,
+            &catalog(),
+            sync_context(IndexSyncMode::Incremental, Some(&base_anchor), None),
+            false,
+            &mut clock,
+            &mut restart,
+        )
+        .expect("empty future window should enter resumable replay");
+        assert!(fallback.articles.is_empty());
+        let checkpoint = batch_checkpoint(&fallback).expect("fallback checkpoint should exist");
+        let decoded = decode_scholarly_checkpoint(checkpoint)
+            .expect("new fallback checkpoint should remain valid");
+        assert_eq!(decoded.window.phase, ScholarlyScanPhase::Unbounded);
+        assert!(decoded.window.candidate_anchor.is_none());
+        assert!(!decoded.window.has_reached_candidate);
+
+        let mut persisted = serde_json::from_str::<Value>(checkpoint)
+            .expect("fallback checkpoint JSON should decode");
+        persisted["window"]["has_reached_candidate"] = Value::Bool(true);
+        let persisted =
+            serde_json::to_string(&persisted).expect("legacy persisted checkpoint should encode");
+        let mut deterministic = serde_json::from_str::<ScholarlyCheckpoint>(&persisted)
+            .expect("legacy persisted checkpoint should decode structurally");
+        normalize_empty_unbounded_replay_checkpoint_at(&mut deterministic, Some("2026-07-29"));
+        assert_eq!(deterministic.window.phase, ScholarlyScanPhase::Bounded);
+        assert!(!deterministic.window.has_reached_candidate);
+        let normalized = decode_scholarly_checkpoint(&persisted)
+            .expect("legacy empty replay checkpoint should normalize");
+        assert!(!normalized.window.has_reached_candidate);
+
+        let completed = fetch_scholarly_batch_for_context_with_clock_and_restart(
+            &mut client,
+            &catalog(),
+            sync_context(
+                IndexSyncMode::Incremental,
+                Some(&base_anchor),
+                Some(&persisted),
+            ),
+            false,
+            &mut clock,
+            &mut restart,
+        )
+        .expect("normalized replay should fetch from the unfiltered head");
+        assert!(batch_is_complete(&completed));
+        assert_eq!(completed.articles.len(), 1);
+        let next_anchor = decode_scholarly_anchor(
+            batch_anchor(&completed).expect("replay should retain the future head"),
+        )
+        .expect("next anchor should decode");
+        assert_eq!(
+            next_anchor.issue,
+            ScholarlyIssueFingerprint::VolumeIssue {
+                publication_year: 2027,
+                volume: Some("186".to_string()),
+                issue: None,
+            }
+        );
+        let requested_sync_dates = client.into_transport().requested_sync_dates;
+        assert_eq!(requested_sync_dates.len(), 2);
+        assert!(requested_sync_dates[1].is_none());
     }
 
     #[test]

@@ -9,6 +9,7 @@ rust-version.workspace = true
 [dependencies]
 aes = "0.8.4"
 base64.workspace = true
+chrono.workspace = true
 litradar-domain = { path = "../litradar-domain" }
 litradar-provider = { path = "../litradar-provider" }
 reqwest.workspace = true

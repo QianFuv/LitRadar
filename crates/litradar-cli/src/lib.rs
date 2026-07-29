@@ -354,9 +354,8 @@ fn run_index_command_with_bundled_meta_dir(
         scholarly_config,
         cnki_captcha_token,
         index_provider_routes: index_provider_routes.clone(),
-    });
+    })?;
     migrate_index_command_databases(&project_root, options.file.as_deref())?;
-    let outcome = outcome?;
     let effective_concurrency =
         index_concurrency_payload(&options, concurrency, &index_provider_routes, &outcome);
     print_result(&serialize_index_outcome(&outcome, effective_concurrency)?);
