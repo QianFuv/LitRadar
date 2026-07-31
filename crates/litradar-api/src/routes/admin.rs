@@ -1254,6 +1254,13 @@ fn validate_runtime_provider_settings_update(
                     ProviderConfigurationCapability::ArticleFullText,
                 )?;
             }
+            "provider_proxy_policy" => {
+                let policy = serde_json::from_str::<BTreeMap<String, bool>>(value)
+                    .map_err(|_| ApiError::bad_request("Invalid Provider proxy policy"))?;
+                for provider in policy.keys() {
+                    validate_provider_exists(&providers, provider)?;
+                }
+            }
             _ => {}
         }
     }
@@ -1316,6 +1323,22 @@ fn validate_provider_capability(
         )));
     }
     Ok(())
+}
+
+fn validate_provider_exists(
+    providers: &[ProviderCapabilityInfo],
+    provider_name: &str,
+) -> Result<(), ApiError> {
+    if providers
+        .iter()
+        .any(|provider| provider.name == provider_name)
+    {
+        Ok(())
+    } else {
+        Err(ApiError::bad_request(format!(
+            "Unknown Provider: {provider_name}"
+        )))
+    }
 }
 
 async fn run_business<Output, Work>(state: &ApiState, work: Work) -> Result<Output, ApiError>

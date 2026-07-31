@@ -925,6 +925,8 @@ pub enum RuntimeSettingControl {
     IndexProviderRoutes,
     /// Default and per-catalog ordered online Provider selection.
     ProviderOrder,
+    /// Per-Provider managed proxy switches.
+    ProviderProxyPolicy,
 }
 
 /// Lifecycle point at which a saved runtime setting becomes effective.

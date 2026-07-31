@@ -13,6 +13,7 @@ use chacha20poly1305::{Key, XChaCha20Poly1305, XNonce};
 use rusqlite::{params, Connection, Transaction, TransactionBehavior};
 use zeroize::Zeroizing;
 
+use crate::business::RuntimeSettingKey;
 use crate::open_sqlite_connection;
 
 const ENVELOPE_PREFIX: &str = "litradarenc:v1:";
@@ -397,13 +398,18 @@ fn query_notification_secrets(
 }
 
 fn query_runtime_secrets(connection: &Connection) -> Result<Vec<(String, String)>, SecretError> {
-    let mut statement = connection.prepare(
-        "SELECT key, value FROM runtime_settings \
-         WHERE key IN ('openalex_api_key_pool', 'semantic_scholar_api_key_pool')",
-    )?;
-    let rows = statement.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?;
-    rows.collect::<Result<Vec<_>, _>>()
-        .map_err(SecretError::from)
+    let mut statement = connection.prepare("SELECT key, value FROM runtime_settings")?;
+    let rows = statement.query_map([], |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+    })?;
+    let mut values = Vec::new();
+    for row in rows {
+        let (field, value) = row?;
+        if RuntimeSettingKey::from_field(&field).is_some_and(RuntimeSettingKey::is_secret) {
+            values.push((field, value));
+        }
+    }
+    Ok(values)
 }
 
 fn query_cnki_secrets(connection: &Connection) -> Result<Vec<(i64, String)>, SecretError> {
@@ -572,6 +578,15 @@ mod tests {
                     7, 'push-plaintext', 'primary-plaintext', 'backup-plaintext'
                 );
                 INSERT INTO runtime_settings VALUES ('openalex_api_key_pool', 'pool-plaintext');
+                INSERT INTO runtime_settings VALUES (
+                    'semantic_scholar_api_key_pool', 'semantic-pool-plaintext'
+                );
+                INSERT INTO runtime_settings VALUES (
+                    'cnki_captcha_token', 'captcha-token-plaintext'
+                );
+                INSERT INTO runtime_settings VALUES (
+                    'provider_proxy_url', 'socks5h://user:proxy-password-plaintext@proxy.example'
+                );
                 INSERT INTO cnki_sessions VALUES (7, '{\"token\":\"cnki-plaintext\"}');",
             )
             .expect("fixture schema should write");
@@ -584,13 +599,13 @@ mod tests {
         ));
         let migrated = super::migrate_database_secrets(&database, &codec)
             .expect("plaintext migration should succeed");
-        assert_eq!(migrated.migrated, 5);
+        assert_eq!(migrated.migrated, 8);
         assert_eq!(migrated.verified, 0);
         let verified = super::verify_database_secrets(&database, &codec)
             .expect("migrated secrets should verify");
-        assert_eq!(verified.verified, 5);
+        assert_eq!(verified.verified, 8);
         let connection = Connection::open(&database).expect("database should reopen");
-        let stored = connection
+        let notification_stored = connection
             .query_row(
                 "SELECT pushplus_token || ai_api_key || ai_backup_api_key \
                  FROM notification_settings WHERE user_id = 7",
@@ -598,7 +613,15 @@ mod tests {
                 |row| row.get::<_, String>(0),
             )
             .expect("encrypted notification values should load");
-        assert!(!stored.contains("plaintext"));
+        let runtime_stored = connection
+            .query_row(
+                "SELECT group_concat(value, '') FROM runtime_settings",
+                [],
+                |row| row.get::<_, String>(0),
+            )
+            .expect("encrypted runtime values should load");
+        assert!(!notification_stored.contains("plaintext"));
+        assert!(!runtime_stored.contains("plaintext"));
         drop(connection);
         assert!(matches!(
             super::verify_database_secrets(&database, &SecretCodec::from_key([5_u8; 32])),
@@ -609,7 +632,7 @@ mod tests {
         assert_eq!(
             super::rotate_database_secrets(&database, &codec, &replacement)
                 .expect("secret rotation should succeed"),
-            5
+            8
         );
         super::verify_database_secrets(&database, &replacement)
             .expect("replacement key should verify");

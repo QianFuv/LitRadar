@@ -3005,12 +3005,31 @@ mod tests {
                     "article_fulltext_provider_orders": serde_json::json!({
                         "default": ["zjlib"],
                         "catalogs": {"csv_only": []}
+                    }).to_string(),
+                    "provider_proxy_url": "socks5h://proxy-user:api-proxy-password-sentinel@proxy.example",
+                    "provider_proxy_policy": serde_json::json!({
+                        "zjlib": false,
+                        "scholarly": true
                     }).to_string()
                 }
             })),
         )
         .await;
         assert_eq!(valid.status, StatusCode::OK);
+        let proxy_url = valid
+            .payload
+            .as_array()
+            .expect("runtime settings should be an array")
+            .iter()
+            .find(|setting| setting["field"] == "provider_proxy_url")
+            .expect("Provider proxy URL should be returned");
+        assert_eq!(proxy_url["value"], "");
+        assert_eq!(proxy_url["has_value"], true);
+        assert_eq!(proxy_url["masked_value"], "••••");
+        assert!(!valid
+            .payload
+            .to_string()
+            .contains("api-proxy-password-sentinel"));
 
         let unknown = json_request(
             &app,
@@ -3058,9 +3077,30 @@ mod tests {
             })),
         )
         .await;
+        let unknown_proxy_provider = json_request(
+            &app,
+            Method::PUT,
+            "/api/admin/runtime-settings",
+            Some(&admin_auth),
+            None,
+            Some(serde_json::json!({
+                "values": {
+                    "secure_cookies": "true",
+                    "provider_proxy_policy": serde_json::json!({
+                        "unknown": true
+                    }).to_string()
+                }
+            })),
+        )
+        .await;
         assert_eq!(unknown.status, StatusCode::BAD_REQUEST);
         assert_eq!(duplicate.status, StatusCode::BAD_REQUEST);
         assert_eq!(mismatch.status, StatusCode::BAD_REQUEST);
+        assert_eq!(unknown_proxy_provider.status, StatusCode::BAD_REQUEST);
+        assert_eq!(
+            unknown_proxy_provider.payload["detail"],
+            "Unknown Provider: unknown"
+        );
         let settings =
             litradar_storage::load_runtime_settings(backend.auth_db_path(), backend.secret_codec())
                 .expect("runtime settings should load");
@@ -3071,6 +3111,14 @@ mod tests {
                 .expect("secure cookie setting should exist")
                 .value,
             "false"
+        );
+        assert_eq!(
+            settings
+                .iter()
+                .find(|setting| setting.field == "provider_proxy_policy")
+                .expect("Provider proxy policy should exist")
+                .value,
+            r#"{"scholarly":true,"zjlib":false}"#
         );
     }
 

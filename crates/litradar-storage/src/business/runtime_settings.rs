@@ -23,6 +23,8 @@ pub enum RuntimeSettingKey {
     SemanticScholarApiKeyPool,
     /// Domestic CNKI captcha solver token.
     CnkiCaptchaToken,
+    /// Encrypted proxy URL shared by enabled Providers.
+    ProviderProxyUrl,
     /// Crossref polite contact email pool.
     CrossrefMailtoPool,
     /// Credentialed API CORS origins.
@@ -43,6 +45,8 @@ pub enum RuntimeSettingKey {
     DeliveryWorkerConcurrency,
     /// OpenAI-compatible base URLs available to ordinary users.
     AiAllowedBaseUrls,
+    /// Per-Provider managed proxy switches.
+    ProviderProxyPolicy,
     /// Catalog-to-index-Provider routes.
     IndexProviderRoutes,
     /// Article abstract Provider orders.
@@ -57,10 +61,11 @@ pub enum RuntimeSettingKey {
 
 impl RuntimeSettingKey {
     /// All managed runtime setting keys in administrator display order.
-    pub const ALL: [Self; 18] = [
+    pub const ALL: [Self; 20] = [
         Self::OpenAlexApiKeyPool,
         Self::SemanticScholarApiKeyPool,
         Self::CnkiCaptchaToken,
+        Self::ProviderProxyUrl,
         Self::CrossrefMailtoPool,
         Self::CorsAllowedOrigins,
         Self::McpAllowedHosts,
@@ -71,6 +76,7 @@ impl RuntimeSettingKey {
         Self::AuditRetentionDays,
         Self::DeliveryWorkerConcurrency,
         Self::AiAllowedBaseUrls,
+        Self::ProviderProxyPolicy,
         Self::IndexProviderRoutes,
         Self::ArticleAbstractProviderOrders,
         Self::ArticleFullTextProviderOrders,
@@ -88,6 +94,7 @@ impl RuntimeSettingKey {
             Self::OpenAlexApiKeyPool => "openalex_api_key_pool",
             Self::SemanticScholarApiKeyPool => "semantic_scholar_api_key_pool",
             Self::CnkiCaptchaToken => "cnki_captcha_token",
+            Self::ProviderProxyUrl => "provider_proxy_url",
             Self::CrossrefMailtoPool => "crossref_mailto_pool",
             Self::CorsAllowedOrigins => "cors_allowed_origins",
             Self::McpAllowedHosts => "mcp_allowed_hosts",
@@ -98,6 +105,7 @@ impl RuntimeSettingKey {
             Self::AuditRetentionDays => "audit_retention_days",
             Self::DeliveryWorkerConcurrency => "delivery_worker_concurrency",
             Self::AiAllowedBaseUrls => "ai_allowed_base_urls",
+            Self::ProviderProxyPolicy => "provider_proxy_policy",
             Self::IndexProviderRoutes => "index_provider_routes",
             Self::ArticleAbstractProviderOrders => "article_abstract_provider_orders",
             Self::ArticleFullTextProviderOrders => "article_fulltext_provider_orders",
@@ -117,6 +125,15 @@ impl RuntimeSettingKey {
     /// Matching managed key, or `None` for unmanaged fields.
     pub fn from_field(field: &str) -> Option<Self> {
         Self::ALL.into_iter().find(|key| key.as_str() == field)
+    }
+
+    /// Return whether this setting is encrypted at rest.
+    ///
+    /// # Returns
+    ///
+    /// True when the registry declares this setting as secret.
+    pub(crate) fn is_secret(self) -> bool {
+        runtime_definition_by_key(self).is_secret
     }
 }
 
@@ -267,6 +284,8 @@ impl Default for AuthRateLimitPolicy {
 enum RuntimeSettingParser {
     SecretPool,
     TrimmedText,
+    ProviderProxyUrl,
+    ProviderProxyPolicy,
     ValuePool,
     ExactOriginList { is_null_allowed: bool },
     HeaderValueList,
@@ -330,6 +349,8 @@ pub const DEFAULT_AUTH_RATE_LIMIT_POLICY_JSON: &str = concat!(
 
 const BOOLEAN_ALLOWED_VALUES: [&str; 2] = ["true", "false"];
 const LOG_FORMAT_ALLOWED_VALUES: [&str; 2] = ["json", "compact"];
+const DEFAULT_PROVIDER_PROXY_POLICY_JSON: &str =
+    "{\"cnki\":false,\"cnki_oversea\":false,\"scholarly\":false,\"zjlib\":false}";
 
 /// Non-secret logging settings loaded before database migrations or command dispatch.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -350,7 +371,7 @@ impl Default for RuntimeLoggingSettings {
     }
 }
 
-const RUNTIME_CONFIG_DEFINITIONS: [RuntimeConfigDefinition; 18] = [
+const RUNTIME_CONFIG_DEFINITIONS: [RuntimeConfigDefinition; 20] = [
     RuntimeConfigDefinition {
         field: "openalex_api_key_pool",
         label: "OpenAlex API key pool",
@@ -389,6 +410,19 @@ const RUNTIME_CONFIG_DEFINITIONS: [RuntimeConfigDefinition; 18] = [
         description: "jfbym dual-image token used by domestic CNKI index and abstract captcha solving. Probe override: LITRADAR_CNKI_CAPTCHA_TOKEN.",
         default_value: "",
         parser: RuntimeSettingParser::TrimmedText,
+    },
+    RuntimeConfigDefinition {
+        field: "provider_proxy_url",
+        label: "Provider proxy URL",
+        group: RuntimeSettingGroup::SourceAccess,
+        control: RuntimeSettingControl::Text,
+        apply_mode: RuntimeSettingApplyMode::RestartRequired,
+        allowed_values: &[],
+        input_type: "password",
+        is_secret: true,
+        description: "Encrypted HTTP, HTTPS, SOCKS5, or SOCKS5h proxy URL used only by enabled Providers. Changes apply after process restart.",
+        default_value: "",
+        parser: RuntimeSettingParser::ProviderProxyUrl,
     },
     RuntimeConfigDefinition {
         field: "crossref_mailto_pool",
@@ -525,6 +559,19 @@ const RUNTIME_CONFIG_DEFINITIONS: [RuntimeConfigDefinition; 18] = [
         parser: RuntimeSettingParser::HttpsBaseUrlList,
     },
     RuntimeConfigDefinition {
+        field: "provider_proxy_policy",
+        label: "Provider proxy policy",
+        group: RuntimeSettingGroup::ProviderRouting,
+        control: RuntimeSettingControl::ProviderProxyPolicy,
+        apply_mode: RuntimeSettingApplyMode::RestartRequired,
+        allowed_values: &[],
+        input_type: "text",
+        is_secret: false,
+        description: "JSON object that independently enables the managed proxy for each Provider. Missing Providers are disabled. Changes apply after process restart.",
+        default_value: DEFAULT_PROVIDER_PROXY_POLICY_JSON,
+        parser: RuntimeSettingParser::ProviderProxyPolicy,
+    },
+    RuntimeConfigDefinition {
         field: "index_provider_routes",
         label: "Index provider routes",
         group: RuntimeSettingGroup::ProviderRouting,
@@ -626,6 +673,12 @@ pub fn parse_runtime_setting(
         RuntimeSettingParser::TrimmedText => {
             Ok(ParsedRuntimeSettingValue::Text(value.trim().to_string()))
         }
+        RuntimeSettingParser::ProviderProxyUrl => {
+            normalize_provider_proxy_url(value).map(ParsedRuntimeSettingValue::Text)
+        }
+        RuntimeSettingParser::ProviderProxyPolicy => {
+            normalize_provider_proxy_policy(value).map(ParsedRuntimeSettingValue::Text)
+        }
         RuntimeSettingParser::ExactOriginList { is_null_allowed } => {
             parse_exact_origin_list(key, value, is_null_allowed)
                 .map(ParsedRuntimeSettingValue::StringList)
@@ -694,6 +747,105 @@ pub fn parse_runtime_setting(
                 )
             }),
     }
+}
+
+fn normalize_provider_proxy_url(value: &str) -> Result<String, BusinessRepositoryError> {
+    let value = value.trim();
+    if value.is_empty() {
+        return Ok(String::new());
+    }
+    let (declared_scheme, remainder) = value
+        .split_once("://")
+        .ok_or_else(invalid_provider_proxy_url)?;
+    let authority = remainder.split(['/', '?', '#']).next().unwrap_or_default();
+    let mut url = Url::parse(value).map_err(|_| invalid_provider_proxy_url())?;
+    let default_port = match url.scheme() {
+        "http" => 80,
+        "https" => 443,
+        "socks5" | "socks5h" => 1080,
+        _ => return Err(invalid_provider_proxy_url()),
+    };
+    let has_userinfo = outbound_authority_has_userinfo(value);
+    let has_complete_userinfo =
+        !url.username().is_empty() && url.password().is_some_and(|password| !password.is_empty());
+    if !url.scheme().eq_ignore_ascii_case(declared_scheme)
+        || authority.is_empty()
+        || url.host_str().is_none()
+        || has_userinfo != has_complete_userinfo
+        || url.port() == Some(0)
+        || !matches!(url.path(), "" | "/")
+        || url.query().is_some()
+        || url.fragment().is_some()
+        || url.cannot_be_a_base()
+    {
+        return Err(invalid_provider_proxy_url());
+    }
+    let username_length = percent_decoded_url_component_length(url.username());
+    let password_length = url
+        .password()
+        .and_then(percent_decoded_url_component_length);
+    if has_userinfo
+        && (username_length.is_none()
+            || password_length.is_none()
+            || (matches!(url.scheme(), "socks5" | "socks5h")
+                && (username_length.is_none_or(|length| length > 255)
+                    || password_length.is_none_or(|length| length > 255))))
+    {
+        return Err(invalid_provider_proxy_url());
+    }
+    let canonical_host = url
+        .host_str()
+        .expect("validated Provider proxy URL must have a host")
+        .to_ascii_lowercase();
+    url.set_host(Some(&canonical_host))
+        .map_err(|_| invalid_provider_proxy_url())?;
+    if url.port().is_none() {
+        url.set_port(Some(default_port))
+            .map_err(|()| invalid_provider_proxy_url())?;
+    }
+    url.set_path("");
+    Ok(url.to_string())
+}
+
+fn normalize_provider_proxy_policy(value: &str) -> Result<String, BusinessRepositoryError> {
+    let policy = serde_json::from_str::<BTreeMap<String, bool>>(value)
+        .map_err(|_| invalid_provider_proxy_policy())?;
+    if policy.keys().any(|provider| !is_runtime_name(provider)) {
+        return Err(invalid_provider_proxy_policy());
+    }
+    serde_json::to_string(&policy).map_err(BusinessRepositoryError::from)
+}
+
+fn percent_decoded_url_component_length(value: &str) -> Option<usize> {
+    let bytes = value.as_bytes();
+    let mut index = 0;
+    let mut length = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'%' {
+            if index + 2 >= bytes.len()
+                || !bytes[index + 1].is_ascii_hexdigit()
+                || !bytes[index + 2].is_ascii_hexdigit()
+            {
+                return None;
+            }
+            index += 3;
+        } else {
+            index += 1;
+        }
+        length += 1;
+    }
+    Some(length)
+}
+
+fn invalid_provider_proxy_url() -> BusinessRepositoryError {
+    BusinessRepositoryError::InvalidRuntimeSetting("Invalid Provider proxy URL".to_string())
+}
+
+fn invalid_provider_proxy_policy() -> BusinessRepositoryError {
+    BusinessRepositoryError::InvalidRuntimeSetting(
+        "Provider proxy policy must be a JSON object with boolean values and lowercase ASCII Provider names"
+            .to_string(),
+    )
 }
 
 /// Parse and canonicalize one HTTPS outbound base URL.
@@ -1192,44 +1344,51 @@ pub fn upsert_runtime_settings_with_audit(
         .keys()
         .chain(secret_pool_updates.keys())
         .cloned()
-        .collect::<HashSet<_>>();
+        .collect::<BTreeSet<_>>();
+    let mut pending_values = BTreeMap::new();
+    for field in fields {
+        let definition = runtime_definition_by_field(&field)
+            .ok_or_else(|| BusinessRepositoryError::UnknownRuntimeSetting(field.clone()))?;
+        let current =
+            internal_runtime_setting_from_definition(definition, existing.get(&field), codec)?
+                .value;
+        let mut value = if let Some(update) = values.get(&field) {
+            if definition.is_secret {
+                match update {
+                    None => String::new(),
+                    Some(raw_value) if raw_value.trim().is_empty() => current,
+                    Some(raw_value) => raw_value.trim().to_string(),
+                }
+            } else {
+                update
+                    .as_deref()
+                    .ok_or_else(|| {
+                        BusinessRepositoryError::NonSecretRuntimeSettingCannotBeCleared(
+                            field.clone(),
+                        )
+                    })?
+                    .to_string()
+            }
+        } else {
+            current
+        };
+        if let Some(pool_update) = secret_pool_updates.get(&field) {
+            value = apply_secret_pool_update(definition, &value, pool_update, codec)?;
+        }
+        if should_normalize_runtime_setting(definition) {
+            value = normalize_runtime_setting_value(definition, &value)?;
+        }
+        pending_values.insert(field, value);
+    }
+    validate_effective_provider_proxy_configuration(&pending_values, &existing, codec)?;
     {
         let mut statement = transaction.prepare(
             "INSERT INTO runtime_settings (key, value, updated_at) VALUES (?1, ?2, ?3) \
              ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
         )?;
-        for field in fields {
+        for (field, value) in pending_values {
             let definition = runtime_definition_by_field(&field)
-                .ok_or_else(|| BusinessRepositoryError::UnknownRuntimeSetting(field.clone()))?;
-            let current =
-                internal_runtime_setting_from_definition(definition, existing.get(&field), codec)?
-                    .value;
-            let mut value = if let Some(update) = values.get(&field) {
-                if definition.is_secret {
-                    match update {
-                        None => String::new(),
-                        Some(raw_value) if raw_value.trim().is_empty() => current,
-                        Some(raw_value) => raw_value.trim().to_string(),
-                    }
-                } else {
-                    update
-                        .as_deref()
-                        .ok_or_else(|| {
-                            BusinessRepositoryError::NonSecretRuntimeSettingCannotBeCleared(
-                                field.clone(),
-                            )
-                        })?
-                        .to_string()
-                }
-            } else {
-                current
-            };
-            if let Some(pool_update) = secret_pool_updates.get(&field) {
-                value = apply_secret_pool_update(definition, &value, pool_update, codec)?;
-            }
-            if !definition.is_secret {
-                value = normalize_runtime_setting_value(definition, &value)?;
-            }
+                .expect("pending runtime values must have registry definitions");
             let stored_value = if definition.is_secret {
                 codec.encrypt(&value, &runtime_context(&field))?
             } else {
@@ -1409,7 +1568,7 @@ fn internal_runtime_setting_from_definition(
     } else {
         stored.to_string()
     };
-    if !definition.is_secret {
+    if should_normalize_runtime_setting(definition) {
         value = normalize_runtime_setting_value(definition, &value)?;
     }
     Ok(RuntimeSettingValue {
@@ -1438,6 +1597,51 @@ fn normalize_runtime_setting_value(
     let key = RuntimeSettingKey::from_field(definition.field)
         .expect("every registry definition must have one RuntimeSettingKey");
     parse_runtime_setting(key, value).map(ParsedRuntimeSettingValue::into_text)
+}
+
+fn should_normalize_runtime_setting(definition: &RuntimeConfigDefinition) -> bool {
+    !definition.is_secret || definition.field == RuntimeSettingKey::ProviderProxyUrl.as_str()
+}
+
+fn validate_effective_provider_proxy_configuration(
+    pending_values: &BTreeMap<String, String>,
+    existing: &HashMap<String, (String, f64)>,
+    codec: &SecretCodec,
+) -> Result<(), BusinessRepositoryError> {
+    let proxy_url = effective_runtime_setting_value(
+        RuntimeSettingKey::ProviderProxyUrl,
+        pending_values,
+        existing,
+        codec,
+    )?;
+    let policy = effective_runtime_setting_value(
+        RuntimeSettingKey::ProviderProxyPolicy,
+        pending_values,
+        existing,
+        codec,
+    )?;
+    let policy = serde_json::from_str::<BTreeMap<String, bool>>(&policy)
+        .map_err(|_| invalid_provider_proxy_policy())?;
+    if proxy_url.is_empty() && policy.values().any(|is_enabled| *is_enabled) {
+        return Err(BusinessRepositoryError::InvalidRuntimeSetting(
+            "Provider proxy URL is required when a Provider proxy is enabled".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+fn effective_runtime_setting_value(
+    key: RuntimeSettingKey,
+    pending_values: &BTreeMap<String, String>,
+    existing: &HashMap<String, (String, f64)>,
+    codec: &SecretCodec,
+) -> Result<String, BusinessRepositoryError> {
+    if let Some(value) = pending_values.get(key.as_str()) {
+        return Ok(value.clone());
+    }
+    let definition = runtime_definition_by_key(key);
+    internal_runtime_setting_from_definition(definition, existing.get(key.as_str()), codec)
+        .map(|setting| setting.value)
 }
 
 fn normalize_index_provider_routes(value: &str) -> Result<String, BusinessRepositoryError> {
@@ -1597,9 +1801,11 @@ mod tests {
             .map(|setting| setting.field.as_str())
             .collect::<Vec<_>>();
 
-        assert_eq!(settings.len(), 18);
+        assert_eq!(settings.len(), 20);
         assert!(fields.contains(&"openalex_api_key_pool"));
         assert!(fields.contains(&"cnki_captcha_token"));
+        assert!(fields.contains(&"provider_proxy_url"));
+        assert!(fields.contains(&"provider_proxy_policy"));
         assert!(fields.contains(&"secure_cookies"));
         assert!(fields.contains(&"trusted_proxy_cidrs"));
         assert!(fields.contains(&"auth_rate_limit_policy"));
@@ -1645,6 +1851,13 @@ mod tests {
                 RuntimeSettingGroup::SourceAccess,
                 RuntimeSettingControl::Text,
                 RuntimeSettingApplyMode::NextCommand,
+                &[][..],
+            ),
+            (
+                "provider_proxy_url",
+                RuntimeSettingGroup::SourceAccess,
+                RuntimeSettingControl::Text,
+                RuntimeSettingApplyMode::RestartRequired,
                 &[][..],
             ),
             (
@@ -1715,6 +1928,13 @@ mod tests {
                 RuntimeSettingGroup::ServerSecurity,
                 RuntimeSettingControl::StringList,
                 RuntimeSettingApplyMode::NextRequest,
+                &[][..],
+            ),
+            (
+                "provider_proxy_policy",
+                RuntimeSettingGroup::ProviderRouting,
+                RuntimeSettingControl::ProviderProxyPolicy,
+                RuntimeSettingApplyMode::RestartRequired,
                 &[][..],
             ),
             (
@@ -1796,6 +2016,300 @@ mod tests {
                 .into_text();
             assert_eq!(canonical, definition.default_value);
         }
+    }
+
+    #[test]
+    fn runtime_provider_proxy_parsers_are_strict_and_canonical() {
+        let valid_urls = [
+            ("http://Proxy.Example", "http://proxy.example/"),
+            ("https://proxy.example:8443/", "https://proxy.example:8443/"),
+            ("socks5://proxy.example", "socks5://proxy.example:1080"),
+            (
+                "socks5h://user:password@Proxy.Example/",
+                "socks5h://user:password@proxy.example:1080",
+            ),
+        ];
+        for (value, expected) in valid_urls {
+            let parsed = parse_runtime_setting(RuntimeSettingKey::ProviderProxyUrl, value)
+                .expect("supported Provider proxy URL should parse")
+                .into_text();
+            assert_eq!(parsed, expected);
+        }
+
+        let invalid_urls = [
+            "socks4://proxy.example",
+            "socks4a://proxy.example",
+            "ftp://proxy.example",
+            "http:proxy.example",
+            "http://",
+            "http://proxy.example:0",
+            "http://proxy.example/path",
+            "http://proxy.example?secret=query",
+            "http://proxy.example#secret-fragment",
+            "http://username@proxy.example",
+            "http://:password@proxy.example",
+            "http://username:@proxy.example",
+            "http://user%:password@proxy.example",
+        ];
+        for value in invalid_urls {
+            let error = parse_runtime_setting(RuntimeSettingKey::ProviderProxyUrl, value)
+                .expect_err("unsupported Provider proxy URL should fail");
+            assert_eq!(error.to_string(), "Invalid Provider proxy URL");
+            assert!(!error.to_string().contains(value));
+        }
+
+        let maximum_username = "a".repeat(255);
+        parse_runtime_setting(
+            RuntimeSettingKey::ProviderProxyUrl,
+            &format!("socks5://{maximum_username}:password@proxy.example"),
+        )
+        .expect("maximum SOCKS5 username should parse");
+        let oversized_username = "a".repeat(256);
+        assert_eq!(
+            parse_runtime_setting(
+                RuntimeSettingKey::ProviderProxyUrl,
+                &format!("socks5h://{oversized_username}:password@proxy.example"),
+            )
+            .expect_err("oversized SOCKS5 username should fail")
+            .to_string(),
+            "Invalid Provider proxy URL"
+        );
+        let encoded_maximum_username = "%41".repeat(255);
+        parse_runtime_setting(
+            RuntimeSettingKey::ProviderProxyUrl,
+            &format!("socks5://{encoded_maximum_username}:password@proxy.example"),
+        )
+        .expect("decoded SOCKS5 username length should be enforced");
+        let encoded_oversized_password = "%42".repeat(256);
+        assert!(parse_runtime_setting(
+            RuntimeSettingKey::ProviderProxyUrl,
+            &format!("socks5://username:{encoded_oversized_password}@proxy.example"),
+        )
+        .is_err());
+
+        let policy = parse_runtime_setting(
+            RuntimeSettingKey::ProviderProxyPolicy,
+            r#"{"zjlib":false,"cnki":true,"scholarly":false}"#,
+        )
+        .expect("Provider proxy policy should parse")
+        .into_text();
+        assert_eq!(policy, r#"{"cnki":true,"scholarly":false,"zjlib":false}"#);
+        for value in [
+            r#"["cnki"]"#,
+            r#"{"cnki":"true"}"#,
+            r#"{"CNKI":true}"#,
+            r#"{"x":true}"#,
+        ] {
+            assert!(parse_runtime_setting(RuntimeSettingKey::ProviderProxyPolicy, value).is_err());
+        }
+    }
+
+    #[test]
+    fn runtime_provider_proxy_updates_are_atomic_encrypted_and_redacted() {
+        let temp_dir = tempdir().expect("temp dir should be created");
+        let auth_db_path = temp_dir.path().join("auth.sqlite");
+        migrate_auth_database(&auth_db_path).expect("auth database should migrate");
+        let codec = SecretCodec::from_key([53_u8; 32]);
+        let defaults =
+            list_runtime_settings(&auth_db_path, &codec).expect("proxy defaults should load");
+        let default_url = defaults
+            .iter()
+            .find(|setting| setting.field == "provider_proxy_url")
+            .expect("default Provider proxy URL should exist");
+        assert_eq!(default_url.input_type, "password");
+        assert!(default_url.is_secret);
+        assert!(!default_url.has_value);
+        assert_eq!(default_url.value, "");
+        let default_policy = defaults
+            .iter()
+            .find(|setting| setting.field == "provider_proxy_policy")
+            .expect("default Provider proxy policy should exist");
+        assert!(!default_policy.is_secret);
+        assert_eq!(default_policy.value, DEFAULT_PROVIDER_PROXY_POLICY_JSON);
+        let audit = SecurityAuditEvent::new("runtime_settings_update", "completed");
+        let enabled_without_url = HashMap::from([
+            (
+                "provider_proxy_policy".to_string(),
+                Some(r#"{"scholarly":true}"#.to_string()),
+            ),
+            ("secure_cookies".to_string(), Some("true".to_string())),
+        ]);
+
+        let error = upsert_runtime_settings_with_audit(
+            &auth_db_path,
+            &codec,
+            &enabled_without_url,
+            &HashMap::new(),
+            Some(&audit),
+        )
+        .expect_err("enabled proxy policy without a URL should fail");
+        assert_eq!(
+            error.to_string(),
+            "Provider proxy URL is required when a Provider proxy is enabled"
+        );
+        let connection = Connection::open(&auth_db_path).expect("auth database should open");
+        let runtime_count: i64 = connection
+            .query_row("SELECT COUNT(*) FROM runtime_settings", [], |row| {
+                row.get(0)
+            })
+            .expect("runtime settings should be countable");
+        let audit_count: i64 = connection
+            .query_row("SELECT COUNT(*) FROM security_audit_events", [], |row| {
+                row.get(0)
+            })
+            .expect("audit events should be countable");
+        assert_eq!(runtime_count, 0);
+        assert_eq!(audit_count, 0);
+        drop(connection);
+
+        let password_sentinel = "provider-proxy-password-sentinel";
+        let public = upsert_runtime_settings(
+            &auth_db_path,
+            &codec,
+            &HashMap::from([
+                (
+                    "provider_proxy_url".to_string(),
+                    Some(format!(
+                        "socks5h://proxy-user:{password_sentinel}@Proxy.Example"
+                    )),
+                ),
+                (
+                    "provider_proxy_policy".to_string(),
+                    Some(r#"{"zjlib":false,"scholarly":true}"#.to_string()),
+                ),
+            ]),
+            &HashMap::new(),
+        )
+        .expect("URL and enabled proxy policy should update atomically");
+        let proxy_url = public
+            .iter()
+            .find(|setting| setting.field == "provider_proxy_url")
+            .expect("Provider proxy URL descriptor should exist");
+        assert_eq!(proxy_url.value, "");
+        assert!(proxy_url.has_value);
+        assert_eq!(proxy_url.masked_value, "••••");
+        assert!(proxy_url.secret_items.is_empty());
+        assert!(!format!("{public:?}").contains(password_sentinel));
+        let proxy_policy = public
+            .iter()
+            .find(|setting| setting.field == "provider_proxy_policy")
+            .expect("Provider proxy policy descriptor should exist");
+        assert_eq!(proxy_policy.value, r#"{"scholarly":true,"zjlib":false}"#);
+
+        let raw: String = Connection::open(&auth_db_path)
+            .expect("auth database should open")
+            .query_row(
+                "SELECT value FROM runtime_settings WHERE key = 'provider_proxy_url'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("encrypted Provider proxy URL should load");
+        assert!(raw.starts_with("litradarenc:v1:"));
+        assert!(!raw.contains(password_sentinel));
+        let internal = load_runtime_settings(&auth_db_path, &codec)
+            .expect("trusted Provider proxy settings should load");
+        assert_eq!(
+            internal
+                .iter()
+                .find(|setting| setting.field == "provider_proxy_url")
+                .expect("internal Provider proxy URL should exist")
+                .value,
+            format!("socks5h://proxy-user:{password_sentinel}@proxy.example:1080")
+        );
+
+        upsert_runtime_settings(
+            &auth_db_path,
+            &codec,
+            &HashMap::from([
+                ("provider_proxy_url".to_string(), Some(" ".to_string())),
+                (
+                    "provider_proxy_policy".to_string(),
+                    Some(r#"{"cnki":true}"#.to_string()),
+                ),
+            ]),
+            &HashMap::new(),
+        )
+        .expect("blank URL should preserve the encrypted proxy");
+        let clear_error = upsert_runtime_settings(
+            &auth_db_path,
+            &codec,
+            &HashMap::from([
+                ("provider_proxy_url".to_string(), None),
+                ("secure_cookies".to_string(), Some("true".to_string())),
+            ]),
+            &HashMap::new(),
+        )
+        .expect_err("clearing an enabled Provider proxy URL should fail");
+        assert_eq!(
+            clear_error.to_string(),
+            "Provider proxy URL is required when a Provider proxy is enabled"
+        );
+        let after_failed_clear = load_runtime_settings(&auth_db_path, &codec)
+            .expect("failed clear should preserve all runtime settings");
+        assert!(after_failed_clear
+            .iter()
+            .find(|setting| setting.field == "provider_proxy_url")
+            .expect("Provider proxy URL should exist")
+            .value
+            .contains(password_sentinel));
+        assert_eq!(
+            after_failed_clear
+                .iter()
+                .find(|setting| setting.field == "secure_cookies")
+                .expect("secure cookie setting should exist")
+                .value,
+            "false"
+        );
+
+        let cleared = upsert_runtime_settings(
+            &auth_db_path,
+            &codec,
+            &HashMap::from([
+                ("provider_proxy_url".to_string(), None),
+                ("provider_proxy_policy".to_string(), Some("{}".to_string())),
+            ]),
+            &HashMap::new(),
+        )
+        .expect("disabling every Provider and clearing the URL should succeed");
+        let cleared_url = cleared
+            .iter()
+            .find(|setting| setting.field == "provider_proxy_url")
+            .expect("cleared Provider proxy URL should exist");
+        assert!(!cleared_url.has_value);
+        assert_eq!(cleared_url.masked_value, "");
+        assert_eq!(
+            cleared
+                .iter()
+                .find(|setting| setting.field == "provider_proxy_policy")
+                .expect("cleared Provider proxy policy should exist")
+                .value,
+            "{}"
+        );
+    }
+
+    #[test]
+    fn runtime_provider_proxy_stored_secret_is_validated_on_load() {
+        let temp_dir = tempdir().expect("temp dir should be created");
+        let auth_db_path = temp_dir.path().join("auth.sqlite");
+        migrate_auth_database(&auth_db_path).expect("auth database should migrate");
+        let codec = SecretCodec::from_key([59_u8; 32]);
+        let password_sentinel = "stored-invalid-password-sentinel";
+        let invalid_url = format!("socks4://user:{password_sentinel}@proxy.example");
+        let stored = codec
+            .encrypt(&invalid_url, "runtime_settings:provider_proxy_url")
+            .expect("invalid fixture should encrypt");
+        Connection::open(&auth_db_path)
+            .expect("auth database should open")
+            .execute(
+                "INSERT INTO runtime_settings (key, value, updated_at) VALUES (?1, ?2, 1.0)",
+                ("provider_proxy_url", stored),
+            )
+            .expect("invalid encrypted fixture should insert");
+
+        let error = load_runtime_settings(&auth_db_path, &codec)
+            .expect_err("trusted load should reject an invalid stored Provider proxy URL");
+        assert_eq!(error.to_string(), "Invalid Provider proxy URL");
+        assert!(!error.to_string().contains(password_sentinel));
     }
 
     #[test]
