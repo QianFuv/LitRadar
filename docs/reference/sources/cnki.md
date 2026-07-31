@@ -4,25 +4,35 @@ CNKI 元数据索引、CNKI 在线摘要页和浙江图书馆全文是独立运�
 
 当前有两套 CNKI 元数据实现：
 
-| 运行时名称 | 角色 | 主机/平台 | 能力 |
-| --- | --- | --- | --- |
-| `cnki` | 国内 NZKPT（默认中文索引） | `navi.cnki.net` / `kns.cnki.net`，`uniplatform=NZKPT` | `index_content` + `article_abstract` |
-| `cnki_oversea` | 海外 CNKI | `oversea.cnki.net` | `index_content` + `article_abstract` |
-| `zjlib` | 浙江图书馆全文 | 用户会话 | `article_full_text` only |
+| 运行时名称     | 角色                       | 主机/平台                                             | 能力                                 |
+| -------------- | -------------------------- | ----------------------------------------------------- | ------------------------------------ |
+| `cnki`         | 国内 NZKPT（默认中文索引） | `navi.cnki.net` / `kns.cnki.net`，`uniplatform=NZKPT` | `index_content` + `article_abstract` |
+| `cnki_oversea` | 海外 CNKI                  | `oversea.cnki.net`                                    | `index_content` + `article_abstract` |
+| `zjlib`        | 浙江图书馆全文             | 用户会话                                              | `article_full_text` only             |
 
 国内与海外页面和内部接口都不是 LitRadar 控制的稳定公共 API。上游页面变化应通过 fixture 和 parser 测试确认，不能通过在内容库新增 transport 字段规避。
 
 ## 能力声明
 
-| 注册/实现 | 能力 | 进程与凭据 |
-| --- | --- | --- |
-| `cnki_index_registration` / live domestic transport | `IndexContentProvider` | `index` 父进程加载 `cnki_captcha_token`；多进程时只通过 stdin bootstrap 交给国内 worker |
-| `cnki_access_registration` / API live domestic adapter | `ArticleAbstractProvider` | `serve` API 每次在线精确定位；读取同一加密 runtime secret |
-| `cnki_oversea_index_registration` | `IndexContentProvider` | `index` 进程直连 CNKI overseas；不使用用户会话 |
-| `cnki_oversea_access_registration` / API live adapter | `ArticleAbstractProvider` | `serve` API 每次在线精确定位；不使用 ZJLib 会话 |
-| `zjlib` API registration | `ArticleFullTextProvider` | `serve` API 只读取当前用户已有的 active ZJLib CNKI 会话 |
+| 注册/实现                                              | 能力                      | 进程与凭据                                                                              |
+| ------------------------------------------------------ | ------------------------- | --------------------------------------------------------------------------------------- |
+| `cnki_index_registration` / live domestic transport    | `IndexContentProvider`    | `index` 父进程加载 `cnki_captcha_token`；多进程时只通过 stdin bootstrap 交给国内 worker |
+| `cnki_access_registration` / API live domestic adapter | `ArticleAbstractProvider` | `serve` API 每次在线精确定位；读取同一加密 runtime secret                               |
+| `cnki_oversea_index_registration`                      | `IndexContentProvider`    | `index` 进程按 `cnki_oversea` 代理开关连接；不使用用户会话                              |
+| `cnki_oversea_access_registration` / API live adapter  | `ArticleAbstractProvider` | `serve` API 每次在线精确定位；不使用 ZJLib 会话                                         |
+| `zjlib` API registration                               | `ArticleFullTextProvider` | `serve` API 只读取当前用户已有的 active ZJLib CNKI 会话                                 |
 
 逻辑名称 `cnki` 与 `cnki_oversea` 在索引与 API 进程分别注册实现，管理端把它们聚合为 `index_content + article_abstract`。国内 `cnki` **没有** fulltext。`zjlib` 是唯一内置全文 Provider。默认 `chinese_journals` 路由到 `cnki`；摘要默认 `scholarly → cnki`；全文默认 `zjlib`。
+
+## 托管代理归属
+
+[运行配置](../configuration.md)中的一个共用 `provider_proxy_url` 由三个逻辑开关覆盖本文的全部出站 HTTP：
+
+- `cnki`：国内索引、在线摘要定位、challenge/verify 流程，以及 JFBYM 双图识别请求。JFBYM 是国内 CNKI 的 captcha 子流程，没有独立 policy key。
+- `cnki_oversea`：海外索引和在线摘要定位，包括年期、文章清单与详情。
+- `zjlib`：扫码开始、扫码状态轮询、会话预热、BFF/Share SSO、搜索、候选验证和 PDF 下载；重定向与禁止重定向的两个 client 使用同一个决定。
+
+每个开关缺省为关闭。关闭时客户端明确忽略系统代理变量并直连；打开时对应流程只走显式代理，代理不可达不会静默直连。保存代理设置不会热加载：`serve` 必须重启，索引由下一条新命令读取。代理 URL 和凭据不会进入 API 响应、CNKI session、内容/控制库、worker request JSON、日志或 Debug。
 
 ## 国内 NZKPT 索引流程
 
@@ -52,7 +62,7 @@ Incremental 从远端当前最新 `year_issue_id` 向旧扫描到 committed anch
 4. AES-128-ECB PKCS7 加密 `pointJson` 后 `verify-api/web/check`；
 5. 内存保留 `captchaId`，重试原请求；即使 challenge 出现在最后一次普通尝试，也会执行一次受预算限制的已认证重放。
 
-密钥通过加密 runtime secret `cnki_captcha_token` 配置；数据库值为空时，单次索引探测可用 `LITRADAR_CNKI_CAPTCHA_TOKEN`。父进程解析该值后会从 child 环境移除变量；worker request JSON 不含 token，只有 `provider_name=cnki` 的 worker 在构造 Provider 前通过版本化 stdin bootstrap 收到它，后续同一管道继续传输 durable ACK。token、secretKey、captchaId 与图片不得进入 request 文件、日志、Debug、内容库或控制库。
+密钥通过加密 runtime secret `cnki_captcha_token` 配置；数据库值为空时，单次索引探测可用 `LITRADAR_CNKI_CAPTCHA_TOKEN`。父进程解析该值后会从 child 环境移除变量；worker request JSON 不含 token 或代理 URL，只有 `provider_name=cnki` 的 worker 在构造 Provider 前通过版本化 stdin bootstrap 收到 captcha token，只有当前 Provider 开关启用的 worker 才在同一 bootstrap 收到代理 URL。后续同一管道继续传输 durable ACK。token、代理 URL、secretKey、captchaId 与图片不得进入 request 文件、参数、环境、日志、Debug、内容库或控制库。
 
 ## 海外 CNKI 索引流程
 
@@ -60,17 +70,17 @@ Incremental 从远端当前最新 `year_issue_id` 向旧扫描到 committed anch
 
 ## 规范字段映射
 
-| 规范字段 | CNKI 页面来源/规则 |
-| --- | --- |
-| journal observation | 详情页标题、别名和 ISSN，仅用于验证维护目录项 |
-| issue | 年期树的年份、卷、期、显示标题和日期 |
-| `title` | 文章列表/详情规范文本 |
-| `authors` | 只保留有序 display name |
-| `abstract_text` | 详情页摘要文本 |
-| `publication_year` / `date` | 年期和在线公开日期 |
-| volume/issue/pages | 年期树、列表和详情页 |
-| `doi` | 规范为小写 DOI 标识符，不保存 URL |
-| `open_access` | 未知；列表的“免费/Free”不等同于规范 OA 结论 |
+| 规范字段                    | CNKI 页面来源/规则                            |
+| --------------------------- | --------------------------------------------- |
+| journal observation         | 详情页标题、别名和 ISSN，仅用于验证维护目录项 |
+| issue                       | 年期树的年份、卷、期、显示标题和日期          |
+| `title`                     | 文章列表/详情规范文本                         |
+| `authors`                   | 只保留有序 display name                       |
+| `abstract_text`             | 详情页摘要文本                                |
+| `publication_year` / `date` | 年期和在线公开日期                            |
+| volume/issue/pages          | 年期树、列表和详情页                          |
+| `doi`                       | 规范为小写 DOI 标识符，不保存 URL             |
+| `open_access`               | 未知；列表的“免费/Free”不等同于规范 OA 结论   |
 
 CNKI filename、`pykm`、`pCode`、数据库代码、详情路径、search URL、Cookie、captcha 和原始 HTML 只存在于私有 client/adapter 内。内容库没有 `platform_id`、`content_location`、`permalink` 或 `full_text_file`。
 
@@ -81,13 +91,19 @@ CNKI filename、`pykm`、`pCode`、数据库代码、详情路径、search URL�
 国内成功 anchor v1 只保存已经完整覆盖的最新稳定期次：
 
 ```json
-{"version":1,"year_issue_id":"202602"}
+{ "version": 1, "year_issue_id": "202602" }
 ```
 
 国内 traversal checkpoint v2 指向同一冻结窗口中的下一处理位置，例如：
 
 ```json
-{"version":2,"base_anchor_issue_id":"202512","candidate_head_issue_id":"202602","current_issue_id":"202601","page_index":0}
+{
+  "version": 2,
+  "base_anchor_issue_id": "202512",
+  "candidate_head_issue_id": "202602",
+  "current_issue_id": "202601",
+  "page_index": 0
+}
 ```
 
 `base_anchor_issue_id` 是运行开始时冻结的成功边界，`candidate_head_issue_id` 是本次可推进的新边界，`current_issue_id/page_index` 是下一页。恢复时这些稳定 ID 必须精确匹配重新读取的 year list；新期次插到 candidate 前部会被忽略，不改变本次窗口。恢复中的 candidate/current 消失时 Provider fail closed，不按旧序号猜测位置。旧 v1、`issue_index` / `article_index` 和任何 captcha 字段都会被拒绝。
@@ -125,9 +141,9 @@ ZJLib 全文能力与 CNKI 索引 Provider 无关：
 
 HTTP 会话路径可能仍使用历史 `/api/cnki/*` 前缀，但 runtime Provider 名称是 `zjlib`。全文动作不会把更新后的 client Cookie 写回 session，不更新 `updated_at`/`last_used_at`，也不缓存 PDF 或新增文件。API 不返回 token、Cookie、代理 URL 或 transport 错误详情。
 
-### 代理重定向安全
+### ZJLib 上游代理跳转安全
 
-ZJLib 客户端手动处理已知的登录/代理主机跳转，只允许 HTTPS、允许主机、有限跳数和有效 `vpn358_sid` 成功门槛。已知双节点循环会有限重取登录地址；其他协议、主机、Location、循环或跳数异常明确失败。
+这里的“代理主机”是浙江图书馆上游 zyproxy 跳转，不是 `provider_proxy_url` 的出站网络代理。ZJLib 客户端手动处理已知的登录/zyproxy 主机跳转，只允许 HTTPS、允许主机、有限跳数和有效 `vpn358_sid` 成功门槛。已知双节点循环会有限重取登录地址；其他协议、主机、Location、循环或跳数异常明确失败。启用 `zjlib` 托管代理不会放宽这些 host、scheme、Cookie 或跳数检查。
 
 reqwest 错误在转换为业务错误前移除完整 URL。需要诊断的自定义地址也必须脱敏查询参数，避免 `enc`、用户标识或 Cookie 信息进入日志/API。
 
@@ -151,4 +167,5 @@ reqwest 错误在转换为业务错误前移除完整 URL。需要诊断的自�
 - 在线摘要每次重新解析全部页面且 host 受限；
 - ZJLib 用户隔离、题名/作者/期刊三项精确匹配和 32 MiB 上限；
 - 成功、无匹配和 fallback 后索引/control/auth 行与文件系统均不变；
-- zyproxy 协议、主机、跳数、循环和 URL 脱敏。
+- zyproxy 协议、主机、跳数、循环和 URL 脱敏；
+- `cnki`、`cnki_oversea`、`zjlib` 代理归属，受管直连，以及多进程秘密只走 stdin bootstrap。

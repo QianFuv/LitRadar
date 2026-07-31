@@ -11,6 +11,12 @@ Scholarly 是内置 Provider adapter，不是内容 schema。它把 Crossref、O
 
 索引进程和 API 进程分别构造所需注册，管理端按相同逻辑名称把两者聚合为 `index_content + article_abstract`。这就是“分进程注册”：同一二进制内的命令边界不同，不是两个常驻服务，也不是自动 fallback。索引能力不会让文章记录携带 `scholarly` provenance；在线能力也不要求文章曾由 Scholarly 索引。
 
+## 托管代理归属
+
+[运行配置](../configuration.md)中的 `scholarly` 代理开关只覆盖索引 adapter 发出的 Crossref、OpenAlex 和 Semantic Scholar HTTP，包括 source 查找、分页、DOI/batch 增强、重试和 Provider-local fallback。关闭时这些 client 明确忽略系统代理变量并受管直连；打开时只使用共用 `provider_proxy_url`，代理失败不会改成直连。
+
+在线摘要 adapter 不发出 HTTP：它只根据已有 DOI 或 PMID 在本地生成受 host allowlist 约束的 HTTPS redirect，再由浏览器访问目的地。因此 `scholarly` 开关不代理该 redirect，也不影响 AI、通知/PushPlus 或其他非 Provider client。多进程索引只通过 protocol-v6 stdin bootstrap 把 URL 交给已启用的 scholarly worker；request JSON、参数、环境、日志和 Debug 均不包含该秘密。
+
 ## 索引上游职责
 
 | 上游             | 请求时职责                                                | 可进入规范内容的字段                            |
@@ -142,4 +148,5 @@ Crossref journal-list GET 收到 HTTP 响应后仍最多尝试三次；`429/500/
 - 不同上游 payload 产生相同规范文章；
 - 规范 batch 中没有 Provider/source/URL 字段；
 - DOI/PMID 在线动作、缺失标识和 host allowlist；
-- traversal checkpoint 重放不复制内容或改变 ID。
+- traversal checkpoint 重放不复制内容或改变 ID；
+- 受管直连、显式代理无直连 fallback，以及多进程代理秘密边界。

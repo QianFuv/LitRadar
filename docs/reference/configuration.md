@@ -4,13 +4,13 @@ LitRadar 不使用单一 `.env` 作为配置中心。不同配置来源服务于
 
 ## 配置来源
 
-| 来源                                | 范围           | 典型内容                                                  |
-| ----------------------------------- | -------------- | --------------------------------------------------------- |
-| CLI 参数                            | 一个子命令调用 | 路径、监听地址、调度间隔、并发、超时、dry-run             |
-| `data/auth.sqlite.runtime_settings` | 后端全局       | key 池、Provider 路由/顺序、CORS、MCP、Cookie、结构化日志 |
-| `notification_settings`             | 单个用户       | AI、PushPlus、偏好、投递方式                              |
-| 固定前端/镜像/进程协议              | 构建与运行时   | 同源 API、开发代理、只读 Meta bundle、父子进程日志关联    |
-| 部署密钥文件                        | 一个部署       | 认证和解密数据库秘密值                                    |
+| 来源                                | 范围           | 典型内容                                                 |
+| ----------------------------------- | -------------- | -------------------------------------------------------- |
+| CLI 参数                            | 一个子命令调用 | 路径、监听地址、调度间隔、并发、超时、dry-run            |
+| `data/auth.sqlite.runtime_settings` | 后端全局       | key 池、Provider 代理/路由/顺序、CORS、MCP、Cookie、日志 |
+| `notification_settings`             | 单个用户       | AI、PushPlus、偏好、投递方式                             |
+| 固定前端/镜像/进程协议              | 构建与运行时   | 同源 API、开发代理、只读 Meta bundle、父子进程日志关联   |
+| 部署密钥文件                        | 一个部署       | 认证和解密数据库秘密值                                   |
 
 生产应用不把 LitRadar 自定义环境变量作为通用配置中心。旧版的前端 API/开发代理、bundle 路径、日志和父子进程环境覆盖均已删除且没有兼容回退；唯一的来源凭据例外是数据库 token 为空时，`litradar index` 可读取 `LITRADAR_CNKI_CAPTCHA_TOKEN` 作为单次国内 CNKI 探测输入。全局可配置业务值通过管理员前端写入数据库，用户级通知/追踪值通过个人设置中心写入数据库。固定打包/进程协议不属于用户设置，标准测试工具和 OS 进程发现仍保留自己的环境输入边界。
 
@@ -39,32 +39,34 @@ manifest 存在时，`serve` 和普通 `index` 会在认证库迁移后验证整
 
 ## 全局运行设置
 
-管理员通过 `GET/PUT /api/admin/runtime-settings` 或前端管理页维护以下 17 项。响应中的 group、control、apply mode、allowed values 和秘密标记是前端控件的权威元数据；管理页必须逐项呈现，不能用硬编码字段子集代替。
+管理员通过 `GET/PUT /api/admin/runtime-settings` 或前端管理页维护以下 20 项。响应中的 group、control、apply mode、allowed values 和秘密标记是前端控件的权威元数据；管理页必须逐项呈现，不能用硬编码字段子集代替。
 
-这 17 项的字段名、默认值、parser/serializer、秘密标记和 UI 元数据由 storage 层同一 registry 定义。管理 API 写入、`serve` 启动、命令启动和 observability 初始化都调用该 registry；不存在“保存成功但下次启动才发现语法无效”的第二套校验。registry 的所有默认值和往返序列化均由穷举测试覆盖。
+这 20 项的字段名、默认值、parser/serializer、秘密标记和 UI 元数据由 storage 层同一 registry 定义。管理 API 写入、`serve` 启动、命令启动和 observability 初始化都调用该 registry；不存在“保存成功但下次启动才发现语法无效”的第二套校验。registry 的所有默认值和往返序列化均由穷举测试覆盖。
 
-| 字段                               | 默认值                    | 秘密 | 前端控件                          | 生效时机 | 使用者                            |
-| ---------------------------------- | ------------------------- | ---: | --------------------------------- | -------- | --------------------------------- |
-| `openalex_api_key_pool`            | 空                        |   是 | 可逐项增删的掩码秘密池            | 下一命令 | scholarly 索引                    |
-| `semantic_scholar_api_key_pool`    | 空                        |   是 | 可逐项增删的掩码秘密池            | 下一命令 | scholarly 索引                    |
-| `cnki_captcha_token`               | 空                        |   是 | 单值密码文本                      | 下一命令 | 国内 CNKI captcha（jfbym）token   |
-| `crossref_mailto_pool`             | 空                        |   否 | 有序字符串列表                    | 下一命令 | Crossref polite 联系邮箱          |
-| `cors_allowed_origins`             | 空                        |   否 | 有序字符串列表                    | 重启进程 | API credentialed CORS             |
-| `mcp_allowed_hosts`                | `localhost,127.0.0.1,::1` |   否 | 有序字符串列表                    | 重启进程 | MCP Host 白名单                   |
-| `mcp_allowed_origins`              | 空                        |   否 | 有序字符串列表                    | 重启进程 | 浏览器 MCP Origin 白名单          |
-| `secure_cookies`                   | `false`                   |   否 | 布尔开关                          | 重启进程 | `litradar_session` 的 Secure 标志 |
-| `trusted_proxy_cidrs`              | 空                        |   否 | IPv4/IPv6 CIDR 列表               | 重启进程 | 可信反向代理直连网络              |
-| `auth_rate_limit_policy`           | 见下文                    |   否 | 严格 JSON 文本                    | 重启进程 | 登录/注册分层 token bucket        |
-| `audit_retention_days`             | `180`                     |   否 | `1..=3650` 的整数                 | 下一检查 | 持久安全审计保留                  |
-| `ai_allowed_base_urls`             | 空                        |   否 | 有序 HTTPS URL 列表               | 下一请求 | 用户可选择的 AI Endpoint 目录     |
-| `delivery_worker_concurrency`      | `2`                       |   否 | `1..=16` 的整数                   | 重启进程 | 手动投递子进程池                  |
-| `index_provider_routes`            | 三个官方目录的默认映射    |   否 | 每个 catalog 的能力过滤单选       | 下一命令 | CSV stem 到索引 Provider          |
-| `article_abstract_provider_orders` | 见下文                    |   否 | 默认顺序 + catalog 继承/排序/禁用 | 下一请求 | 在线摘要页 fallback               |
-| `article_fulltext_provider_orders` | 见下文                    |   否 | 默认顺序 + catalog 继承/排序/禁用 | 下一请求 | 在线全文 fallback                 |
-| `log_format`                       | `json`                    |   否 | `json` / `compact` 单选           | 重启进程 | 结构化日志格式                    |
-| `log_filter`                       | 见[日志设置](#日志设置)   |   否 | 文本                              | 重启进程 | tracing filter                    |
+| 字段                               | 默认值                     | 秘密 | 前端控件                          | 生效时机 | 使用者                            |
+| ---------------------------------- | -------------------------- | ---: | --------------------------------- | -------- | --------------------------------- |
+| `openalex_api_key_pool`            | 空                         |   是 | 可逐项增删的掩码秘密池            | 下一命令 | scholarly 索引                    |
+| `semantic_scholar_api_key_pool`    | 空                         |   是 | 可逐项增删的掩码秘密池            | 下一命令 | scholarly 索引                    |
+| `cnki_captcha_token`               | 空                         |   是 | 单值密码文本                      | 下一命令 | 国内 CNKI captcha（jfbym）token   |
+| `provider_proxy_url`               | 空                         |   是 | 单值密码文本                      | 重启进程 | 启用代理的内置 Provider HTTP      |
+| `crossref_mailto_pool`             | 空                         |   否 | 有序字符串列表                    | 下一命令 | Crossref polite 联系邮箱          |
+| `cors_allowed_origins`             | 空                         |   否 | 有序字符串列表                    | 重启进程 | API credentialed CORS             |
+| `mcp_allowed_hosts`                | `localhost,127.0.0.1,::1`  |   否 | 有序字符串列表                    | 重启进程 | MCP Host 白名单                   |
+| `mcp_allowed_origins`              | 空                         |   否 | 有序字符串列表                    | 重启进程 | 浏览器 MCP Origin 白名单          |
+| `secure_cookies`                   | `false`                    |   否 | 布尔开关                          | 重启进程 | `litradar_session` 的 Secure 标志 |
+| `trusted_proxy_cidrs`              | 空                         |   否 | IPv4/IPv6 CIDR 列表               | 重启进程 | 可信反向代理直连网络              |
+| `auth_rate_limit_policy`           | 见下文                     |   否 | 严格 JSON 文本                    | 重启进程 | 登录/注册分层 token bucket        |
+| `audit_retention_days`             | `180`                      |   否 | `1..=3650` 的整数                 | 下一检查 | 持久安全审计保留                  |
+| `ai_allowed_base_urls`             | 空                         |   否 | 有序 HTTPS URL 列表               | 下一请求 | 用户可选择的 AI Endpoint 目录     |
+| `delivery_worker_concurrency`      | `2`                        |   否 | `1..=16` 的整数                   | 重启进程 | 手动投递子进程池                  |
+| `provider_proxy_policy`            | 四个 Provider 均为 `false` |   否 | 按能力目录生成的独立开关          | 重启进程 | 逻辑 Provider 到代理启用状态      |
+| `index_provider_routes`            | 三个官方目录的默认映射     |   否 | 每个 catalog 的能力过滤单选       | 下一命令 | CSV stem 到索引 Provider          |
+| `article_abstract_provider_orders` | 见下文                     |   否 | 默认顺序 + catalog 继承/排序/禁用 | 下一请求 | 在线摘要页 fallback               |
+| `article_fulltext_provider_orders` | 见下文                     |   否 | 默认顺序 + catalog 继承/排序/禁用 | 下一请求 | 在线全文 fallback                 |
+| `log_format`                       | `json`                     |   否 | `json` / `compact` 单选           | 重启进程 | 结构化日志格式                    |
+| `log_filter`                       | 见[日志设置](#日志设置)    |   否 | 文本                              | 重启进程 | tracing filter                    |
 
-`cnki_captcha_token` 是 scalar secret，不是 secret pool。公开 GET/PUT 响应始终返回 `value=""` 和 `secret_items=[]`；已配置时只通过 `has_value=true`、`masked_value="••••"` 表示存在。管理页的空密码框表示保留，非空文本表示加密替换，显式“清除”提交 JSON `null`。数据库值为空时，`LITRADAR_CNKI_CAPTCHA_TOKEN` 仅作为当前 `index` 父进程的探测回退；它不会进入 worker request 文件或非国内 worker。
+`cnki_captcha_token` 和 `provider_proxy_url` 都是 scalar secret，不是 secret pool。公开 GET/PUT 响应始终返回 `value=""` 和 `secret_items=[]`；已配置时只通过 `has_value=true`、`masked_value="••••"` 表示存在。管理页的空密码框表示保留，非空文本表示加密替换，显式“清除”提交 JSON `null`。数据库值为空时，只有 `cnki_captcha_token` 具有 `LITRADAR_CNKI_CAPTCHA_TOKEN` 单次索引探测回退；代理 URL 没有环境变量或 CLI 回退。
 
 默认 `index_provider_routes` 为：
 
@@ -81,6 +83,42 @@ manifest 存在时，`serve` 和普通 `index` 会在认证库迁移后验证整
 key/mailto 池按逗号、分号或换行拆分，去除空项并按首次出现顺序去重。Crossref 始终使用第一个稳定 mailto；更多 mailto 只是备用配置，不增加、拆分或轮转 Crossref 容量。OpenAlex 和 Semantic Scholar 会使用池中全部合法 key，并按各 key 自己的相位、剩余额度、冷却和认证状态选择 slot；这不是忽略健康状态的逐请求简单轮转。
 
 池中的每个 API key 都必须是为该部署合法签发和允许使用的凭据；不要为了规避 Provider 限流、许可或身份规则而创建或收集额外 key。
+
+### Provider 托管代理
+
+`provider_proxy_url` 是所有内置 Provider 共用的唯一代理 authority；`provider_proxy_policy` 决定每个逻辑 Provider 是否使用它。系统不接受每个 Provider 单独的 URL。URL 只允许以下四种 scheme，省略端口时会保存为对应的规范默认端口：
+
+| Scheme    | 默认端口 | 目的地主机解析                                      |
+| --------- | -------: | --------------------------------------------------- |
+| `http`    |     `80` | 普通 HTTP 代理语义                                  |
+| `https`   |    `443` | TLS 连接到代理                                      |
+| `socks5`  |   `1080` | LitRadar 所在主机先解析目的地主机，再把 IP 交给代理 |
+| `socks5h` |   `1080` | 把原始目的地主机名交给代理解析                      |
+
+值必须是 authority-only URL，例如 `http://proxy.example:8080` 或 `socks5h://user:password@proxy.example:1080`。主机必填，端口不能为 0；只允许空 path 或 `/`，不允许 query、fragment。认证要么完全省略，要么同时提供非空 username 和 password；保留字符应进行 URL percent-encoding。SOCKS5/SOCKS5h 的 username 和 password 解码后各不能超过 255 字节。SOCKS4、SOCKS4a、PAC、SSH、Shadowsocks 及其他 scheme 均被拒绝。
+
+`socks5` 会在应用主机上产生目的地 DNS 查询，可能向本地解析器暴露域名；需要代理侧 DNS 时应选 `socks5h`。这里的区别只影响目的地主机解析，不改变代理 authority 本身的解析和连接。
+
+默认策略为：
+
+```json
+{ "cnki": false, "cnki_oversea": false, "scholarly": false, "zjlib": false }
+```
+
+策略必须是 Provider 名称到布尔值的严格 JSON object。缺少的当前或未来 Provider 一律视为 `false`；管理 API 拒绝未知名称、非布尔值和不安全名称，管理页按当前 Provider capability 目录呈现四个独立开关并以稳定名称顺序保存。
+
+URL 与策略在同一个 `PUT /api/admin/runtime-settings` 中按更新后的有效状态一起校验和提交。任何开关为 `true` 时 URL 必须存在；要清除 URL，必须在同一请求中先把所有开关关闭并对 URL 提交 JSON `null`。空白秘密输入保留已有密文，非空输入加密替换。任一字段或同一请求中的其他运行设置无效时，全部设置和必需审计写入一起回滚。
+
+`serve` 在启动时加载一次代理选择；保存后必须重启服务。`index` 在每条新命令启动时读取选择，已经运行的命令和它的 worker 不会热更新。所有受管 Provider 客户端都会明确忽略 `HTTP_PROXY`、`HTTPS_PROXY`、`ALL_PROXY` 等系统代理发现：关闭开关时确定性直连；打开时只走所配置的代理，代理连接或请求失败会返回有界错误，绝不静默直连重试。
+
+开关的网络所有权如下：
+
+- `scholarly`：索引中的 Crossref、OpenAlex 和 Semantic Scholar HTTP；在线摘要只是本地生成受限 DOI/PubMed redirect，不发出 Provider HTTP。
+- `cnki`：国内 CNKI 索引和在线摘要的全部 HTTP，以及其 JFBYM captcha 请求；JFBYM 没有独立开关。
+- `cnki_oversea`：海外 CNKI 索引和在线摘要的全部 HTTP。
+- `zjlib`：扫码开始/轮询、会话预热、BFF/Share SSO、搜索和全文下载的全部 HTTP，包括重定向与非重定向客户端。
+
+这两个设置不影响 AI、通知、PushPlus、MCP、浏览器访问返回的 redirect，也不替代 `trusted_proxy_cidrs` 的入站反向代理信任策略。旧 `proxy_pool` 不是兼容别名，提交时仍按未知字段拒绝。代理 URL、userinfo 和 worker bootstrap 都是秘密数据，不得放入参数、环境变量、请求文件、日志、Debug、API 响应或运维工单。
 
 ### Scholarly 请求预算
 
@@ -162,7 +200,23 @@ Scholarly 的 `workers` 只控制每个期刊子进程内 OpenAlex DOI 子批的
 `auth_rate_limit_policy` 使用 `deny_unknown_fields` 的严格 JSON。默认值为：
 
 ```json
-{"login_ip":{"capacity":30,"refill_tokens":1,"refill_seconds":1},"username":{"capacity":5,"refill_tokens":1,"refill_seconds":60},"register_ip":{"capacity":5,"refill_tokens":1,"refill_seconds":60},"global_login":{"capacity":1000,"refill_tokens":100,"refill_seconds":1},"global_register":{"capacity":250,"refill_tokens":25,"refill_seconds":1},"ip_key_limit":8192,"username_key_limit":4096}
+{
+  "login_ip": { "capacity": 30, "refill_tokens": 1, "refill_seconds": 1 },
+  "username": { "capacity": 5, "refill_tokens": 1, "refill_seconds": 60 },
+  "register_ip": { "capacity": 5, "refill_tokens": 1, "refill_seconds": 60 },
+  "global_login": {
+    "capacity": 1000,
+    "refill_tokens": 100,
+    "refill_seconds": 1
+  },
+  "global_register": {
+    "capacity": 250,
+    "refill_tokens": 25,
+    "refill_seconds": 1
+  },
+  "ip_key_limit": 8192,
+  "username_key_limit": 4096
+}
 ```
 
 所有 capacity/refill/key limit 必须为正并处于固定上限内；全局熔断器的容量必须大于每个前置桶，补充速率不得低于前置桶，防止管理员配置重新引入单一来源耗尽全局额度的问题。该字段规范化为紧凑 JSON；未知、缺失、零值、越界或不满足层级关系时返回 `400`，同一更新整体回滚。
@@ -212,8 +266,8 @@ Scholarly 的 `workers` 只控制每个期刊子进程内 OpenAlex DOI 子批的
 2. 迁移 `auth.sqlite`，并验证现有索引库是精确 v4；旧库要求显式重建。
 3. 若固定打包路径存在精确 manifest，准备持久 Meta 目录。
 4. 用密钥验证数据库秘密。
-5. 加载全局运行设置。
-6. 应用 CORS、MCP、Cookie、可信代理和认证限流策略。
+5. 加载全局运行设置并构造受管 Provider 代理选择。
+6. 应用 Provider 代理、CORS、MCP、Cookie、可信代理和认证限流策略。
 7. 若启用 `--require-secure-cookies` 但设置仍为 `false`，拒绝启动。
 8. 重新散列 `web/` 下全部 HTML，并要求 `web/csp-hashes.json` 与静态导出完全一致后构造 CSP。
 9. 绑定监听端口并并发启动 HTTP 与立即执行的调度 tick。
@@ -224,17 +278,17 @@ Scholarly 的 `workers` 只控制每个期刊子进程内 OpenAlex DOI 子批的
 
 ## 索引进程
 
-`litradar index` 的一次运行参数由 CLI 决定；scholarly transport 的 key/mailto 从全局运行设置读取：
+`litradar index` 的一次运行参数由 CLI 决定；scholarly transport 的 key/mailto 和当前 Provider 代理选择从全局运行设置读取：
 
 普通索引先迁移认证库并验证现有内容库，再执行固定 manifest 发现和可选的官方 Meta 准备，然后验证部署密钥、读取运行设置、校验规范目录，并按 `index_provider_routes` 构造 Provider。内部索引 worker 不重复准备。准备只管理 manifest 声明的持久文件，不替代目录契约校验。
 
-多进程国内 CNKI 索引把调度数据写入可丢弃 worker request JSON，但该 JSON 没有 `cnki_captcha_token` 字段。父进程启动 child 后，从 child 环境删除探测变量，并通过现有 stdin 管道发送一次带协议版本和 worker ID 的 bootstrap；只有 `provider_name=cnki` 的 bootstrap 可以携带 token。worker 在 Provider 构造前验证并消费它，随后同一 stdin 流只接收 durable commit ACK。bootstrap/协议失败使用固定错误分类并清理 request 文件和 child 进程。
+直接模式把当前逻辑 Provider 的受管代理选择只在内存中交给注册构造。多进程索引把调度数据写入可丢弃 worker request JSON，但该 JSON 不含 `cnki_captcha_token` 或 `provider_proxy_url`。父进程启动 child 后，从 child 环境删除探测变量，并通过现有 stdin 管道发送一次带协议版本和 worker ID 的 bootstrap；只有 `provider_name=cnki` 的 bootstrap 可以携带 captcha token，只有策略中已启用的当前 `provider_name` 可以携带共用代理 URL。worker 在 Provider 构造前验证并消费 bootstrap，随后同一 stdin 流只接收 durable commit ACK。bootstrap/协议失败使用固定错误分类并清理 request 文件和 child 进程；命令行、环境、request JSON、日志和 Debug 都不暴露代理秘密。
 
 - OpenAlex key：请求 `/sources` 和 `/works`
 - Semantic Scholar key：`x-api-key` 请求头
 - Crossref mailto：只作为 Crossref query 参数；不传给 OpenAlex
 
-CNKI overseas 元数据索引不使用这三个设置，也不读取代理配置。
+CNKI overseas 元数据索引不使用这三个 scholarly key/mailto 设置；它根据 `cnki_oversea` 代理开关使用共用代理或受管直连。
 
 ## 用户通知配置
 

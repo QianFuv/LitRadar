@@ -4,23 +4,23 @@ LitRadar 把规范内容、可丢弃索引控制状态和用户业务数据放�
 
 ## 文件布局
 
-| 路径                                  |             数量 | 生命周期与责任                                     |
-| ------------------------------------- | ---------------: | -------------------------------------------------- |
-| `data/index/<catalog>.sqlite`         |     每个目录一个 | 需要备份的 Provider-neutral 内容库                 |
-| `data/index-control/<catalog>.sqlite` | 每个活动目录一个 | 可删除的 Provider anchor/run checkpoint/lease 控制库 |
+| 路径                                  |             数量 | 生命周期与责任                                                     |
+| ------------------------------------- | ---------------: | ------------------------------------------------------------------ |
+| `data/index/<catalog>.sqlite`         |     每个目录一个 | 需要备份的 Provider-neutral 内容库                                 |
+| `data/index-control/<catalog>.sqlite` | 每个活动目录一个 | 可删除的 Provider anchor/run checkpoint/lease 控制库               |
 | `data/auth.sqlite`                    |             一个 | 用户、收藏、会话、配置、任务、公告、审计、投递状态和受管 Meta 状态 |
-| `data/push_state/`                    |        多个 JSON | Provider-neutral 变更清单和保留的旧 notify 导入源  |
-| `data/folder_push_state/`             |        多个 JSON | 保留的旧 push 导入源                               |
+| `data/push_state/`                    |        多个 JSON | Provider-neutral 变更清单和保留的旧 notify 导入源                  |
+| `data/folder_push_state/`             |        多个 JSON | 保留的旧 push 导入源                                               |
 
 目录 stem 是内容边界：`data/meta/chinese_journals.csv`、内容库和控制库都使用 `chinese_journals`。Provider 名称不参与文件名。
 
 ## 连接和版本
 
-| 数据库      | `PRAGMA user_version` | 升级策略                              |
-| ----------- | --------------------: | ------------------------------------- |
-| 认证/业务库 |                    12 | 版本化 migration                      |
+| 数据库      | `PRAGMA user_version` | 升级策略                                   |
+| ----------- | --------------------: | ------------------------------------------ |
+| 认证/业务库 |                    12 | 版本化 migration                           |
 | 内容索引库  |                     6 | 新建/验证精确 v6；精确 v4/v5 原子迁移到 v6 |
-| 索引控制库  |                     3 | v0/v1/v2 安全迁移；也可删除后按 v3 重建 |
+| 索引控制库  |                     3 | v0/v1/v2 安全迁移；也可删除后按 v3 重建    |
 
 可写连接使用 `foreign_keys=ON`、WAL、`synchronous=NORMAL` 和 30 秒 busy timeout。
 
@@ -102,7 +102,7 @@ article_change_events (transactional content outbox)
 | 关系/身份    | `article_id`、`journal_id`、可空 `issue_id`          |
 | 内容         | `title`、`authors_json`、`abstract_text`             |
 | 出版         | `publication_year`、`date`、`start_page`、`end_page` |
-| 外部规范标识 | `doi`、`pmid`                                       |
+| 外部规范标识 | `doi`、`pmid`                                        |
 | 内容状态     | 可空布尔 `open_access`、`in_press`                   |
 
 没有 `platform_id`、`permalink`、`content_location`、`full_text_file`、Provider/source、馆藏或订阅列。API 把 64 位 article/journal ID 序列化为十进制字符串，避免 JavaScript 精度损失。
@@ -280,7 +280,9 @@ run、item、checkpoint 和 lease 的变更都使用 owner/revision compare-and-
 
 ### `runtime_settings`
 
-只接受[运行配置](configuration.md)列出的 17 个字段。两个 key pool 的非空值加密；Provider 路由、顺序和审计保留天数是非秘密运行配置，不进入内容库。
+只接受[运行配置](configuration.md)列出的 20 个字段。四个字段的非空值以 `litradarenc:v1:` 密文保存：`openalex_api_key_pool`、`semantic_scholar_api_key_pool`、`cnki_captcha_token` 和 `provider_proxy_url`。它们都由同一秘密 registry 纳入迁移、验证和轮换；公开运行设置响应不会返回明文或持久密文。
+
+`provider_proxy_policy`、Provider 路由/顺序和审计保留天数是非秘密运行配置。代理策略只保存逻辑 Provider 的布尔选择，代理 URL 只存在于认证库密文和当前进程受限内存，不进入内容库、索引控制库、worker request JSON、日志或审计 payload。
 
 ### `managed_meta_catalogs` 和 `announcements`
 

@@ -151,7 +151,7 @@ acquire provider-scoped lease
 
 “分进程注册”只表示同一个 `litradar` 二进制在不同命令边界构造不同的内存注册表：`index` 进程注册索引实现，`serve` 的 API 进程注册摘要页/全文实现。它不是多服务部署，也不表示 Provider 自动回退。管理 API 按相同逻辑名称聚合这些注册，形成供前端过滤选项的 capability 目录。
 
-多进程索引使用私有 worker protocol v5，把同步模式、Provider-opaque 的 committed anchor 和 traversal checkpoint 随 journal assignment 写入可丢弃 request JSON；worker 不解析这些值，父进程仍独占 SQLite 和提交顺序。国内 CNKI captcha token 不属于该文件：父进程启动 child 后移除继承的探测环境变量，只为 `provider_name=cnki` 的 worker 通过 stdin 发送一次版本化 bootstrap；worker 在 Provider 构造前验证协议版本和 worker ID，随后同一管道继续接收 parent 的 durable commit ACK。其他 worker 的 bootstrap 不携带该 token，相关 Debug、错误和日志只保留固定脱敏字段。
+多进程索引使用私有 worker protocol v6，把同步模式、Provider-opaque 的 committed anchor 和 traversal checkpoint 随 journal assignment 写入可丢弃 request JSON；worker 不解析这些值，父进程仍独占 SQLite 和提交顺序。国内 CNKI captcha token 和共用 Provider 代理 URL 都不属于该文件、进程参数或 child 环境：父进程启动 child 后移除继承的探测环境变量，再通过 stdin 发送一次版本化 bootstrap。只有 `provider_name=cnki` 的 worker 可以收到 captcha token，只有自身逻辑 Provider 的代理开关已启用时才能收到代理 URL。worker 在 Provider 构造前验证协议版本和 worker ID，随后同一管道继续接收 parent 的 durable commit ACK；相关 Debug、错误和日志只保留固定脱敏字段。
 
 Provider 只能返回规范 `JournalDraft`、`IssueDraft`、`ArticleDraft` 和 `ProviderProgress`。`Continue` 携带下一 traversal checkpoint；`Complete` 携带可空的 next anchor。两个字符串都保持 Provider-scoped、opaque，核心不解析 CNKI issue ID、Scholarly fingerprint 或上游 cursor。`litradar-index` 负责校验、稳定 ID、合并、SQLite 事务和 outbox。内容先提交、控制状态后提交；控制提交失败时旧 anchor 保持不变，重跑依靠冻结窗口和规范 alias 幂等收敛。
 

@@ -1,6 +1,6 @@
 # 索引与 Provider 契约
 
-本文档是 LitRadar 文章索引 Provider 的规范接入文档。当前契约版本为 `3`，实现来源是 `litradar-domain::index_contract`、`litradar-provider` 和 `litradar-index`；私有多进程 worker wire protocol 当前为 `5`。
+本文档是 LitRadar 文章索引 Provider 的规范接入文档。当前契约版本为 `3`，实现来源是 `litradar-domain::index_contract`、`litradar-provider` 和 `litradar-index`；私有多进程 worker wire protocol 当前为 `6`。
 
 核心边界只有三条：
 
@@ -103,15 +103,15 @@ Provider 对所请求期刊的观察：
 - `committed_anchor`：上一次整本期刊完整成功时提交的边界；
 - `traversal_checkpoint`：本次冻结运行下一步要处理的位置。
 
-三个 opaque 值（输入 anchor、输入 traversal、Complete 返回的 next anchor）都属于当前目录、Provider 和 `catalog_id` namespace。核心只检查为空、大小和进度形状，永远不解析 CNKI `year_issue_id`、Scholarly issue fingerprint、Crossref/OpenAlex cursor，也不把它们写入内容库。worker protocol v5 只负责把相同 context 传给子进程；父进程仍独占控制状态和 SQLite 提交。
+三个 opaque 值（输入 anchor、输入 traversal、Complete 返回的 next anchor）都属于当前目录、Provider 和 `catalog_id` namespace。核心只检查为空、大小和进度形状，永远不解析 CNKI `year_issue_id`、Scholarly issue fingerprint、Crossref/OpenAlex cursor，也不把它们写入内容库。worker protocol v6 把相同 context 放在可丢弃 request JSON 中，并把当前 worker 所需的秘密单独通过 stdin bootstrap 传入；父进程仍独占控制状态和 SQLite 提交。
 
 模式语义：
 
-| 模式 | 核心语义 |
-| --- | --- |
-| `Bootstrap` | 没有可复用成功状态时完整覆盖；默认 `--resume` 遇到已有成功行时可零请求跳过 |
+| 模式          | 核心语义                                                                            |
+| ------------- | ----------------------------------------------------------------------------------- |
+| `Bootstrap`   | 没有可复用成功状态时完整覆盖；默认 `--resume` 遇到已有成功行时可零请求跳过          |
 | `Incremental` | 从远端当前头部扫描到 committed anchor 并包含边界；anchor 为 NULL/缺失时安全完整覆盖 |
-| `FullRescan` | 覆盖完整 Provider 历史，不把 committed anchor 当停止边界；可恢复同模式 traversal |
+| `FullRescan`  | 覆盖完整 Provider 历史，不把 committed anchor 当停止边界；可恢复同模式 traversal    |
 
 运行开始时核心把 committed anchor 冻结为 `base_anchor`。Provider 在自己的 traversal 中冻结 candidate head；重试不得根据已写内容重新计算边界。Continue 只推进 traversal。Complete 只有在整本期刊窗口已覆盖后才返回 next anchor。
 
@@ -164,6 +164,26 @@ bibliographic fingerprint 包含目录、规范题名、由 `publication_year` �
 声明必须与实际提供的 trait object 完全一致；空能力、虚假声明、重复名称会拒绝注册。跳转域名必须是去重的小写规范主机名，且只能由声明了在线能力的 Provider 配置。域名列表不序列化到文章或数据库。
 
 一个逻辑 Provider 可以在不同命令进程中分别注册实现。例如 `scholarly` 的索引实现只在 `index` 命令构造，摘要实现只在 `serve` 的 API 注册表构造；管理 API 再按同名 descriptor 聚合 capability。这里的“分进程注册”不增加常驻服务，也不表示不同 Provider 之间自动回退。
+
+## Provider 托管代理边界
+
+`provider_proxy_url` 提供一个加密的全局 HTTP、HTTPS、SOCKS5 或 SOCKS5h authority，`provider_proxy_policy` 按逻辑 Provider 名称独立选择是否使用。它们是运行配置，不是 Provider descriptor、目录、`IndexFetchContext`、batch、anchor 或 checkpoint 的一部分。完整 URL 语法、DNS 差异、启用/清除步骤和流量归属见[运行配置](configuration.md)。
+
+每个 Provider client 都从一个显式决定构造：
+
+- 关闭开关时使用受管直连，并明确禁用 `HTTP_PROXY`、`HTTPS_PROXY`、`ALL_PROXY` 等环境发现。
+- 打开开关时，所有匹配请求只使用配置的显式代理；代理不可达或请求失败会按现有有界错误/重试规则失败，不会改成直连。
+- URL 和 policy 在进程启动时一起验证；任一启用项没有 URL、未知 Provider 或无效 URL 都会在 Provider 请求前失败。
+
+直接索引模式在父进程内按所选 `provider_name` 取得决定，并只通过内存交给该注册。多进程模式则遵守 protocol v6 的秘密边界：
+
+1. 父进程按 worker request 中的 `provider_name` 选择代理；未启用时选择为空。
+2. 可丢弃 worker request JSON、进程参数和 child 环境都不含代理 URL。
+3. 父进程启动 child 后，通过 stdin 发送一次带 protocol version、worker ID 和可选 `provider_proxy_url` 的 bootstrap；URL 只会发给自身逻辑 Provider 已启用的 worker。
+4. child 在构造 Provider 前验证 protocol version 与 worker ID，并消费该值；后续同一 stdin 流只传 durable commit ACK。
+5. bootstrap、Provider proxy selection、错误和 Debug 只暴露 direct/explicit 或固定脱敏状态，不暴露 authority、userinfo 或完整 URL。
+
+该 stdin 字段是内部秘密传输，不是公共配置、可日志化诊断字段或向第三方 Provider 开放的扩展点。AI、通知/PushPlus、MCP 和 API 返回给浏览器的 HTTPS redirect 不进入这条代理链路。
 
 ## 在线文章能力
 
@@ -220,6 +240,7 @@ API 用 `307 Temporary Redirect` 或文档响应返回结果，并设置 `Cache-
 5. 覆盖错误分类、分页结束、重复 traversal checkpoint、无效重定向、超大文档和秘密脱敏。
 6. 运行 Provider 注册矩阵，证明未实现能力不被声明。
 7. 运行 Provider switch fixture，证明共享 alias 复用同一 ID，且新 Provider 使用独立 anchor/run namespace。
+8. 对发出 HTTP 的实现覆盖受管直连、显式代理失败不直连回退，以及多进程 request/参数/环境/日志不含代理秘密。
 
 内置实现的常用检查：
 
