@@ -10,6 +10,7 @@ import {
   parseManualPushStatus,
   parseNotificationSettings,
   parseProviderCatalogResponse,
+  parseProviderProxyPolicy,
   parseRuntimeSettingList,
   parseSchedulerStatus,
 } from '@/lib/api-contract';
@@ -147,7 +148,32 @@ function acceptsRuntimeMetadataAndProviderCatalog(): void {
     input_type: 'text',
     value: 'value',
   };
-  const runtimeSettings = [booleanSetting, futureControl];
+  const providerProxyUrl = {
+    ...booleanSetting,
+    field: 'provider_proxy_url',
+    label: 'Provider proxy URL',
+    description: 'Encrypted Provider proxy URL.',
+    group: 'source_access',
+    control: 'text',
+    input_type: 'password',
+    allowed_values: [],
+    is_secret: true,
+    value: '',
+    has_value: true,
+    masked_value: '••••',
+  };
+  const providerProxyPolicy = {
+    ...booleanSetting,
+    field: 'provider_proxy_policy',
+    label: 'Provider proxy policy',
+    description: 'Per-Provider proxy decisions.',
+    group: 'provider_routing',
+    control: 'provider_proxy_policy',
+    input_type: 'text',
+    allowed_values: [],
+    value: '{"cnki":true}',
+  };
+  const runtimeSettings = [booleanSetting, futureControl, providerProxyUrl, providerProxyPolicy];
   const providerCatalog = {
     providers: [
       {
@@ -182,6 +208,73 @@ function acceptsRuntimeMetadataAndProviderCatalog(): void {
       },
     ]),
   ).toThrow(ApiContractError);
+}
+
+/**
+ * Verify proxy policy JSON and its specialized metadata fail closed.
+ */
+function validatesProviderProxyPolicyContract(): void {
+  expect(parseProviderProxyPolicy('{}')).toEqual({});
+  expect(parseProviderProxyPolicy('{"cnki":true,"zjlib":false}')).toEqual({
+    cnki: true,
+    zjlib: false,
+  });
+  for (const invalid of ['[]', '{"cnki":"true"}', '{"unsafe provider":true}', '{"x":true}', '{']) {
+    expect(() => parseProviderProxyPolicy(invalid)).toThrow(ApiContractError);
+  }
+
+  const policy = {
+    field: 'provider_proxy_policy',
+    label: 'Provider proxy policy',
+    description: 'Per-Provider proxy decisions.',
+    group: 'provider_routing',
+    control: 'provider_proxy_policy',
+    apply_mode: 'restart_required',
+    allowed_values: [],
+    input_type: 'text',
+    is_secret: false,
+    value: '{"cnki":true}',
+    has_value: true,
+    masked_value: '',
+    secret_items: [],
+    source: 'default',
+    updated_at: null,
+  };
+  expect(parseRuntimeSettingList([policy])).toEqual([policy]);
+  for (const invalid of [
+    { ...policy, control: 'text' },
+    { ...policy, field: 'different_policy' },
+    { ...policy, group: 'source_access' },
+    { ...policy, apply_mode: 'next_command' },
+    { ...policy, input_type: 'password' },
+    { ...policy, is_secret: true, value: '', has_value: false },
+  ]) {
+    expect(() => parseRuntimeSettingList([invalid])).toThrow(ApiContractError);
+  }
+
+  const proxyUrl = {
+    ...policy,
+    field: 'provider_proxy_url',
+    label: 'Provider proxy URL',
+    description: 'Encrypted Provider proxy URL.',
+    group: 'source_access',
+    control: 'text',
+    input_type: 'password',
+    is_secret: true,
+    value: '',
+    has_value: true,
+    masked_value: '••••',
+  };
+  expect(parseRuntimeSettingList([proxyUrl])).toEqual([proxyUrl]);
+  for (const invalid of [
+    { ...proxyUrl, group: 'provider_routing' },
+    { ...proxyUrl, control: 'provider_proxy_policy' },
+    { ...proxyUrl, apply_mode: 'next_command' },
+    { ...proxyUrl, input_type: 'text' },
+    { ...proxyUrl, is_secret: false, value: 'socks5h://plaintext.example' },
+  ]) {
+    expect(() => parseRuntimeSettingList([invalid])).toThrow(ApiContractError);
+  }
 }
 
 /**
@@ -264,6 +357,7 @@ describe('generated API runtime contracts', () => {
     'accepts strong runtime metadata and safe Provider catalogs',
     acceptsRuntimeMetadataAndProviderCatalog,
   );
+  test('validates Provider proxy policy metadata and JSON', validatesProviderProxyPolicyContract);
   test('accepts only the masked notification response contract', acceptsMaskedNotificationContract);
   test('rejects malformed control-plane responses', rejectsMalformedControlPlaneContracts);
   test(

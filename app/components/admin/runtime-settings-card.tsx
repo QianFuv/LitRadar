@@ -41,6 +41,7 @@ const RUNTIME_GROUP_LABELS: Record<RuntimeSettingGroup, string> = {
   observability: '可观测性',
 };
 const PROVIDER_SETTING_FIELDS = new Set([
+  'provider_proxy_policy',
   'index_provider_routes',
   'article_abstract_provider_orders',
   'article_fulltext_provider_orders',
@@ -193,8 +194,8 @@ function normalizePoolValues(value: string): string[] {
  */
 function getPoolInputType(
   inputType: RuntimeSettingInfo['input_type'],
-): 'email' | 'password' | 'text' {
-  if (inputType === 'email' || inputType === 'password') {
+): 'email' | 'password' | 'text' | 'url' {
+  if (inputType === 'email' || inputType === 'password' || inputType === 'url') {
     return inputType;
   }
   return 'text';

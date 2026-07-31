@@ -2592,7 +2592,8 @@ export interface components {
       | 'boolean'
       | 'select'
       | 'index_provider_routes'
-      | 'provider_order';
+      | 'provider_order'
+      | 'provider_proxy_policy';
     /**
      * @description Functional section used to group runtime settings in administrator clients.
      * @enum {string}

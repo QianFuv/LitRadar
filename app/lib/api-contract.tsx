@@ -40,7 +40,7 @@ export type RuntimeSettingInfo = Omit<
   'control' | 'input_type' | 'secret_items' | 'source' | 'updated_at'
 > & {
   control: RuntimeSettingControl;
-  input_type: 'text' | 'password' | 'email' | 'boolean';
+  input_type: 'text' | 'password' | 'email' | 'boolean' | 'number' | 'url';
   secret_items: RuntimeSecretItemInfo[];
   source: 'database' | 'default';
   updated_at: number | null;
@@ -57,6 +57,7 @@ export type ProviderCatalogResponse = {
   providers: ProviderCapabilityInfo[];
   catalogs: ProviderCatalogInfo[];
 };
+export type ProviderProxyPolicy = Record<string, boolean>;
 export type ProviderOrderConfiguration = ApiSchemas['ProviderOrderConfiguration'];
 export type IndexProviderRoutes = Record<string, string>;
 export type RuntimeSettingsUpdate = {
@@ -259,6 +260,21 @@ function isIndexProviderRoutes(value: unknown): value is Record<string, string> 
     Object.keys(value).length > 0 &&
     Object.entries(value).every(
       ([catalog, provider]) => isSafeRuntimeName(catalog) && isSafeRuntimeName(provider),
+    )
+  );
+}
+
+/**
+ * Return whether a value is a structurally valid Provider proxy policy.
+ *
+ * @param value - Value to inspect.
+ * @returns Whether every safe Provider name maps to one boolean decision.
+ */
+function isProviderProxyPolicy(value: unknown): value is ProviderProxyPolicy {
+  return (
+    isRecord(value) &&
+    Object.entries(value).every(
+      ([provider, isEnabled]) => isSafeRuntimeName(provider) && typeof isEnabled === 'boolean',
     )
   );
 }
@@ -490,14 +506,21 @@ function isRuntimeControlValue(control: string, value: string): boolean {
   if (control === 'boolean') {
     return value === 'true' || value === 'false';
   }
-  if (control !== 'index_provider_routes' && control !== 'provider_order') {
+  if (
+    control !== 'index_provider_routes' &&
+    control !== 'provider_order' &&
+    control !== 'provider_proxy_policy'
+  ) {
     return true;
   }
   try {
     const parsed = JSON.parse(value) as unknown;
-    return control === 'index_provider_routes'
-      ? isIndexProviderRoutes(parsed)
-      : isProviderOrderConfiguration(parsed);
+    if (control === 'index_provider_routes') {
+      return isIndexProviderRoutes(parsed);
+    }
+    return control === 'provider_order'
+      ? isProviderOrderConfiguration(parsed)
+      : isProviderProxyPolicy(parsed);
   } catch {
     return false;
   }
@@ -517,18 +540,42 @@ function isConsistentRuntimeMetadata(value: Record<string, unknown>): boolean {
   const hasValue = value.has_value === true;
   const allowedValues = value.allowed_values as string[];
   const secretItems = value.secret_items as RuntimeSecretItemInfo[];
-  const isProviderControl = control === 'index_provider_routes' || control === 'provider_order';
+  const isProviderControl =
+    control === 'index_provider_routes' ||
+    control === 'provider_order' ||
+    control === 'provider_proxy_policy';
 
   if (
     (field === 'index_provider_routes' && control !== 'index_provider_routes') ||
     ((field === 'article_abstract_provider_orders' ||
       field === 'article_fulltext_provider_orders') &&
-      control !== 'provider_order')
+      control !== 'provider_order') ||
+    (field === 'provider_proxy_policy' && control !== 'provider_proxy_policy') ||
+    (control === 'provider_proxy_policy' && field !== 'provider_proxy_policy')
   ) {
     return false;
   }
 
   if (isProviderControl && value.group !== 'provider_routing') {
+    return false;
+  }
+  if (
+    field === 'provider_proxy_url' &&
+    (control !== 'text' ||
+      value.group !== 'source_access' ||
+      value.apply_mode !== 'restart_required' ||
+      inputType !== 'password' ||
+      !isSecret)
+  ) {
+    return false;
+  }
+  if (
+    control === 'provider_proxy_policy' &&
+    (value.apply_mode !== 'restart_required' ||
+      inputType !== 'text' ||
+      isSecret ||
+      allowedValues.length !== 0)
+  ) {
     return false;
   }
   if ((control === 'boolean') !== (inputType === 'boolean')) {
@@ -585,7 +632,7 @@ function isRuntimeSettingInfo(value: unknown): value is RuntimeSettingInfo {
     isRuntimeSettingApplyMode(value.apply_mode) &&
     isStringArray(value.allowed_values) &&
     new Set(value.allowed_values).size === value.allowed_values.length &&
-    ['text', 'password', 'email', 'boolean'].includes(String(value.input_type)) &&
+    ['text', 'password', 'email', 'boolean', 'number', 'url'].includes(String(value.input_type)) &&
     typeof value.is_secret === 'boolean' &&
     typeof value.value === 'string' &&
     typeof value.has_value === 'boolean' &&
@@ -909,6 +956,20 @@ export function parseIndexProviderRoutes(value: string): IndexProviderRoutes {
     parseContractJson(value, 'index_provider_routes'),
     'index_provider_routes',
     isIndexProviderRoutes,
+  );
+}
+
+/**
+ * Parse a canonical per-Provider proxy policy stored in a runtime setting value.
+ *
+ * @param value - JSON object text.
+ * @returns Validated Provider-to-boolean decisions.
+ */
+export function parseProviderProxyPolicy(value: string): ProviderProxyPolicy {
+  return parseContract(
+    parseContractJson(value, 'ProviderProxyPolicy'),
+    'ProviderProxyPolicy',
+    isProviderProxyPolicy,
   );
 }
 

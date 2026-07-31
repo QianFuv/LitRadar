@@ -16,7 +16,12 @@ import {
   type RuntimeSettingApplyMode,
   type RuntimeSettingInfo,
 } from '@/lib/api';
-import { parseIndexProviderRoutes, parseProviderOrderConfiguration } from '@/lib/api-contract';
+import {
+  parseIndexProviderRoutes,
+  parseProviderOrderConfiguration,
+  parseProviderProxyPolicy,
+  type ProviderProxyPolicy,
+} from '@/lib/api-contract';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
@@ -29,6 +34,7 @@ import {
 } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
 
+const PROVIDER_PROXY_POLICY_FIELD = 'provider_proxy_policy';
 const INDEX_PROVIDER_FIELD = 'index_provider_routes';
 const ABSTRACT_PROVIDER_FIELD = 'article_abstract_provider_orders';
 const FULLTEXT_PROVIDER_FIELD = 'article_fulltext_provider_orders';
@@ -41,9 +47,11 @@ type ProviderConfigurationEditorProps = {
 };
 
 type ParsedProviderConfiguration = {
+  proxySetting: RuntimeSettingInfo;
   indexSetting: RuntimeSettingInfo;
   abstractSetting: RuntimeSettingInfo;
   fulltextSetting: RuntimeSettingInfo;
+  proxyPolicy: ProviderProxyPolicy;
   indexRoutes: IndexProviderRoutes;
   abstractOrders: ProviderOrderConfiguration;
   fulltextOrders: ProviderOrderConfiguration;
@@ -96,6 +104,26 @@ function serializeIndexRoutes(values: IndexProviderRoutes): string {
 }
 
 /**
+ * Serialize one explicit boolean decision for every current Provider.
+ *
+ * @param providers - Current capability catalog.
+ * @param values - Parsed and edited proxy decisions.
+ * @returns Canonical JSON text with every Provider name sorted.
+ */
+function serializeProviderProxyPolicy(
+  providers: ProviderCapabilityInfo[],
+  values: ProviderProxyPolicy,
+): string {
+  return JSON.stringify(
+    Object.fromEntries(
+      [...providers]
+        .sort((left, right) => left.name.localeCompare(right.name))
+        .map((provider) => [provider.name, values[provider.name] === true]),
+    ),
+  );
+}
+
+/**
  * Serialize Provider orders with deterministic catalog ordering and preserved arrays.
  *
  * @param configuration - Default and per-catalog Provider orders.
@@ -142,7 +170,7 @@ function hasCapableProviderOrders(
 }
 
 /**
- * Parse and capability-check the three grouped Provider settings.
+ * Parse and capability-check the four grouped Provider settings.
  *
  * @param settings - Provider runtime descriptors.
  * @param values - Effective form values.
@@ -154,13 +182,16 @@ function parseProviderConfiguration(
   values: Record<string, string>,
   catalog: ProviderCatalogResponse,
 ): ParsedProviderConfiguration | null {
+  const proxySetting = settings.find((setting) => setting.field === PROVIDER_PROXY_POLICY_FIELD);
   const indexSetting = settings.find((setting) => setting.field === INDEX_PROVIDER_FIELD);
   const abstractSetting = settings.find((setting) => setting.field === ABSTRACT_PROVIDER_FIELD);
   const fulltextSetting = settings.find((setting) => setting.field === FULLTEXT_PROVIDER_FIELD);
   if (
+    !proxySetting ||
     !indexSetting ||
     !abstractSetting ||
     !fulltextSetting ||
+    proxySetting.control !== 'provider_proxy_policy' ||
     indexSetting.control !== 'index_provider_routes' ||
     abstractSetting.control !== 'provider_order' ||
     fulltextSetting.control !== 'provider_order'
@@ -169,6 +200,7 @@ function parseProviderConfiguration(
   }
 
   try {
+    const proxyPolicy = parseProviderProxyPolicy(getSettingValue(proxySetting, values));
     const indexRoutes = parseIndexProviderRoutes(getSettingValue(indexSetting, values));
     const abstractOrders = parseProviderOrderConfiguration(
       getSettingValue(abstractSetting, values),
@@ -177,10 +209,12 @@ function parseProviderConfiguration(
       getSettingValue(fulltextSetting, values),
     );
     const providers = new Map(catalog.providers.map((provider) => [provider.name, provider]));
+    const hasKnownProxyProviders = Object.keys(proxyPolicy).every((name) => providers.has(name));
     const hasCapableIndexRoutes = Object.values(indexRoutes).every(
       (name) => providers.get(name)?.index_content === true,
     );
     if (
+      !hasKnownProxyProviders ||
       !hasCapableIndexRoutes ||
       !hasCapableProviderOrders(providers, abstractOrders, 'article_abstract') ||
       !hasCapableProviderOrders(providers, fulltextOrders, 'article_full_text')
@@ -188,9 +222,11 @@ function parseProviderConfiguration(
       return null;
     }
     return {
+      proxySetting,
       indexSetting,
       abstractSetting,
       fulltextSetting,
+      proxyPolicy,
       indexRoutes,
       abstractOrders,
       fulltextOrders,
@@ -198,6 +234,30 @@ function parseProviderConfiguration(
   } catch {
     return null;
   }
+}
+
+/**
+ * Render the capabilities associated with one Provider proxy switch.
+ *
+ * @param provider - Provider capability descriptor.
+ * @returns Capability badges for the Provider row.
+ */
+function ProviderCapabilityBadges({ provider }: { provider: ProviderCapabilityInfo }) {
+  const capabilities = [
+    provider.index_content ? '索引' : null,
+    provider.article_abstract ? '摘要页' : null,
+    provider.article_full_text ? '全文' : null,
+  ].filter((capability): capability is string => capability !== null);
+
+  return (
+    <div className="flex flex-wrap items-center gap-1">
+      {capabilities.map((capability) => (
+        <Badge key={capability} variant="secondary">
+          {capability}
+        </Badge>
+      ))}
+    </div>
+  );
 }
 
 /**
@@ -484,6 +544,16 @@ export function ProviderConfigurationEditor({
     );
   };
 
+  const updateProxyDecision = (providerName: string, isEnabled: boolean) => {
+    onChange(
+      configuration.proxySetting.field,
+      serializeProviderProxyPolicy(catalog.providers, {
+        ...configuration.proxyPolicy,
+        [providerName]: isEnabled,
+      }),
+    );
+  };
+
   const updateDefaultOrder = (
     setting: RuntimeSettingInfo,
     orders: ProviderOrderConfiguration,
@@ -509,6 +579,49 @@ export function ProviderConfigurationEditor({
 
   return (
     <section className="space-y-4" aria-labelledby="provider-configuration-title">
+      <div
+        data-runtime-setting-field={configuration.proxySetting.field}
+        className="space-y-3 rounded-lg border p-3 sm:p-4"
+      >
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="space-y-1">
+            <h3 className="text-base font-semibold">{configuration.proxySetting.label}</h3>
+            <p className="text-sm text-muted-foreground">
+              {configuration.proxySetting.description}
+            </p>
+          </div>
+          <Badge variant="outline">
+            {getApplyModeLabel(configuration.proxySetting.apply_mode)}
+          </Badge>
+        </div>
+        <div className="grid gap-2 lg:grid-cols-2">
+          {catalog.providers.map((provider) => (
+            <div
+              key={provider.name}
+              role="group"
+              aria-labelledby={`provider-proxy-label-${provider.name}`}
+              className="flex flex-wrap items-center justify-between gap-3 rounded-md bg-muted/30 px-3 py-2"
+            >
+              <div className="space-y-1">
+                <Label
+                  id={`provider-proxy-label-${provider.name}`}
+                  htmlFor={`provider-proxy-${provider.name}`}
+                >
+                  {provider.name}
+                </Label>
+                <ProviderCapabilityBadges provider={provider} />
+              </div>
+              <Switch
+                id={`provider-proxy-${provider.name}`}
+                aria-label={`${provider.name} 使用 Provider 代理`}
+                checked={configuration.proxyPolicy[provider.name] === true}
+                onCheckedChange={(checked: boolean) => updateProxyDecision(provider.name, checked)}
+              />
+            </div>
+          ))}
+        </div>
+      </div>
+
       <div className="space-y-1">
         <h3 id="provider-configuration-title" className="text-base font-semibold">
           Provider 路由

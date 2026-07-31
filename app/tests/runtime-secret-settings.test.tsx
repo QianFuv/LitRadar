@@ -95,25 +95,44 @@ function runtimeSettingsFixture() {
 }
 
 /**
- * Capture a runtime settings update.
+ * Return one masked scalar Provider proxy URL.
  *
- * @param context - MSW request context.
- * @returns Masked runtime settings response.
+ * @returns Secret-safe scalar proxy descriptor.
  */
-async function updateRuntimeSettings(context: { request: Request }): Promise<Response> {
-  updatePayload = await context.request.json();
-  return HttpResponse.json(runtimeSettingsFixture());
+function providerProxyUrlFixture() {
+  return {
+    field: 'provider_proxy_url',
+    label: 'Provider proxy URL',
+    description: 'Encrypted HTTP, HTTPS, SOCKS5, or SOCKS5h Provider proxy URL.',
+    group: 'source_access',
+    control: 'text',
+    apply_mode: 'restart_required',
+    allowed_values: [],
+    input_type: 'password',
+    is_secret: true,
+    value: '',
+    has_value: true,
+    masked_value: '••••',
+    secret_items: [],
+    source: 'database',
+    updated_at: 1,
+  };
 }
 
 /**
  * Render the runtime settings card with mock API handlers.
+ *
+ * @param runtimeSettings - Runtime descriptors returned by the mock API.
  */
-function renderRuntimeSettings(): void {
+function renderRuntimeSettings(runtimeSettings = runtimeSettingsFixture()): void {
   server.use(
     http.get('http://localhost/api/admin/runtime-settings', () =>
-      HttpResponse.json(runtimeSettingsFixture()),
+      HttpResponse.json(runtimeSettings),
     ),
-    http.put('http://localhost/api/admin/runtime-settings', updateRuntimeSettings),
+    http.put('http://localhost/api/admin/runtime-settings', async ({ request }) => {
+      updatePayload = await request.json();
+      return HttpResponse.json(runtimeSettings);
+    }),
   );
   renderWithQuery(<RuntimeSettingsCard />);
 }
@@ -243,6 +262,44 @@ async function editsRuntimeLoggingSettings(): Promise<void> {
   );
 }
 
+/**
+ * Verify a scalar proxy URL remains masked and uses preserve, replace, and clear semantics.
+ */
+async function managesScalarProviderProxyUrl(): Promise<void> {
+  const secretSentinel = 'socks5h://proxy-user:runtime-proxy-secret-sentinel@proxy.example:1080';
+  updatePayload = null;
+  renderRuntimeSettings([providerProxyUrlFixture()]);
+  const user = userEvent.setup();
+
+  const input = await screen.findByLabelText('Provider proxy URL');
+  expect(input).toHaveAttribute('type', 'password');
+  expect(input).toHaveValue('');
+  expect(screen.getByText(/已安全保存/)).toBeInTheDocument();
+  await user.click(screen.getByRole('button', { name: '保存配置' }));
+  await waitFor(() => expect(updatePayload).toEqual({ values: {}, secret_pool_updates: {} }));
+
+  await user.type(screen.getByLabelText('Provider proxy URL'), secretSentinel);
+  await user.click(screen.getByRole('button', { name: '保存配置' }));
+  await waitFor(() =>
+    expect(updatePayload).toEqual({
+      values: { provider_proxy_url: secretSentinel },
+      secret_pool_updates: {},
+    }),
+  );
+  await waitFor(() => expect(screen.getByLabelText('Provider proxy URL')).toHaveValue(''));
+  expect(document.body.textContent).not.toContain(secretSentinel);
+
+  await user.click(screen.getByRole('button', { name: '清除全部密钥' }));
+  await user.click(screen.getByRole('button', { name: '保存配置' }));
+  await waitFor(() =>
+    expect(updatePayload).toEqual({
+      values: { provider_proxy_url: null },
+      secret_pool_updates: {},
+    }),
+  );
+  expect(document.body.textContent).not.toContain(secretSentinel);
+}
+
 beforeEach(() => {
   Object.defineProperty(Element.prototype, 'scrollIntoView', {
     configurable: true,
@@ -256,4 +313,5 @@ describe('runtime secret settings', () => {
   test('clears the complete secret pool only through null', clearsSecretPoolWithNull);
   test('keeps the non-secret pool row editor', editsNonSecretPool);
   test('edits persisted logging controls', editsRuntimeLoggingSettings);
+  test('manages the masked scalar Provider proxy URL', managesScalarProviderProxyUrl);
 });

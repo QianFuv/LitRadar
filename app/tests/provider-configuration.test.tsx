@@ -2,7 +2,7 @@
  * Capability-aware Provider configuration component coverage.
  */
 
-import { screen, waitFor } from '@testing-library/react';
+import { fireEvent, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
@@ -16,14 +16,32 @@ import { renderWithQuery } from '@/tests/render';
 let updatePayload: RuntimeSettingsUpdate | null = null;
 
 const SCALAR_SECRET_SENTINEL = 'captcha-secret-sentinel';
+const PROXY_SECRET_SENTINEL = 'socks5h://proxy-user:ui-proxy-secret-sentinel@proxy.example:1080';
 
 /**
- * Return the three backend-declared Provider runtime settings.
+ * Return the four backend-declared Provider runtime settings.
  *
  * @returns Canonical Provider setting descriptors.
  */
 function providerSettingsFixture(): RuntimeSettingInfo[] {
   return [
+    {
+      field: 'provider_proxy_policy',
+      label: 'Provider proxy policy',
+      description: 'Independently enable the managed proxy for each Provider.',
+      group: 'provider_routing',
+      control: 'provider_proxy_policy',
+      apply_mode: 'restart_required',
+      allowed_values: [],
+      input_type: 'text',
+      is_secret: false,
+      value: '{"cnki":true}',
+      has_value: true,
+      masked_value: '',
+      secret_items: [],
+      source: 'default',
+      updated_at: null,
+    },
     {
       field: 'index_provider_routes',
       label: '索引 Provider',
@@ -136,6 +154,29 @@ function scalarSecretSettingFixture(hasValue = true): RuntimeSettingInfo {
 }
 
 /**
+ * Build the scalar Provider proxy URL descriptor without exposing its value.
+ *
+ * @param hasValue - Whether the backend reports one configured URL.
+ * @returns Secret-safe proxy URL metadata.
+ */
+function providerProxyUrlSettingFixture(hasValue = true): RuntimeSettingInfo {
+  return runtimeSettingFixture({
+    field: 'provider_proxy_url',
+    label: 'Provider proxy URL',
+    description: 'Encrypted HTTP, HTTPS, SOCKS5, or SOCKS5h Provider proxy URL.',
+    group: 'source_access',
+    control: 'text',
+    apply_mode: 'restart_required',
+    input_type: 'password',
+    value: '',
+    is_secret: true,
+    has_value: hasValue,
+    masked_value: hasValue ? '••••' : '',
+    secret_items: [],
+  });
+}
+
+/**
  * Return every runtime descriptor currently declared by the backend.
  *
  * @returns Complete metadata parity fixture.
@@ -165,6 +206,7 @@ function allRuntimeSettingsFixture(): RuntimeSettingInfo[] {
       is_secret: true,
     }),
     scalarSecretSettingFixture(),
+    providerProxyUrlSettingFixture(),
     runtimeSettingFixture({
       field: 'crossref_mailto_pool',
       label: 'Crossref mailto pool',
@@ -215,6 +257,56 @@ function allRuntimeSettingsFixture(): RuntimeSettingInfo[] {
       allowed_values: ['true', 'false'],
       input_type: 'boolean',
       value: 'false',
+    }),
+    runtimeSettingFixture({
+      field: 'trusted_proxy_cidrs',
+      label: 'Trusted proxy CIDRs',
+      description: 'Trusted forwarding peers.',
+      group: 'server_security',
+      control: 'string_list',
+      apply_mode: 'restart_required',
+      input_type: 'text',
+      value: '',
+    }),
+    runtimeSettingFixture({
+      field: 'auth_rate_limit_policy',
+      label: 'Authentication rate-limit policy',
+      description: 'Strict authentication token-bucket policy.',
+      group: 'server_security',
+      control: 'text',
+      apply_mode: 'restart_required',
+      input_type: 'text',
+      value: '{"login_ip":{"capacity":30}}',
+    }),
+    runtimeSettingFixture({
+      field: 'audit_retention_days',
+      label: 'Security audit retention days',
+      description: 'Number of retained security-audit days.',
+      group: 'observability',
+      control: 'text',
+      apply_mode: 'next_request',
+      input_type: 'number',
+      value: '180',
+    }),
+    runtimeSettingFixture({
+      field: 'delivery_worker_concurrency',
+      label: 'Delivery worker concurrency',
+      description: 'Maximum supervised delivery child processes.',
+      group: 'server_security',
+      control: 'text',
+      apply_mode: 'restart_required',
+      input_type: 'number',
+      value: '2',
+    }),
+    runtimeSettingFixture({
+      field: 'ai_allowed_base_urls',
+      label: 'AI allowed base URLs',
+      description: 'Allowed OpenAI-compatible HTTPS base URLs.',
+      group: 'server_security',
+      control: 'string_list',
+      apply_mode: 'next_request',
+      input_type: 'url',
+      value: '',
     }),
     ...providerSettingsFixture(),
     runtimeSettingFixture({
@@ -356,13 +448,13 @@ async function rendersRuntimeDescriptorParityAndCatalogMatrix(): Promise<void> {
   const runtimeSettings = allRuntimeSettingsFixture();
   renderProviderConfiguration(runtimeSettings);
 
-  expect(runtimeSettings).toHaveLength(13);
+  expect(runtimeSettings).toHaveLength(20);
   expect(await screen.findByText('ccf_computer_journals')).toBeInTheDocument();
   expect(screen.getByText('chinese_journals')).toBeInTheDocument();
   expect(screen.getByText('legacy_journals')).toBeInTheDocument();
-  expect(screen.getAllByText('下次请求生效')).toHaveLength(2);
+  expect(screen.getAllByText('下次请求生效')).toHaveLength(4);
   expect(screen.getAllByText('下次命令生效')).toHaveLength(5);
-  expect(screen.getAllByText('重启后生效')).toHaveLength(6);
+  expect(screen.getAllByText('重启后生效')).toHaveLength(11);
   expect(document.querySelectorAll('[data-runtime-setting-field]')).toHaveLength(
     runtimeSettings.length,
   );
@@ -428,7 +520,11 @@ async function serializesScalarSecretLifecycle(): Promise<void> {
   await waitFor(() => expect(screen.getByLabelText('CNKI captcha solver token')).toHaveValue(''));
   expect(document.body.textContent).not.toContain(SCALAR_SECRET_SENTINEL);
 
-  await user.click(screen.getByRole('button', { name: '清除全部密钥' }));
+  const tokenSetting = document.querySelector('[data-runtime-setting-field="cnki_captcha_token"]');
+  expect(tokenSetting).not.toBeNull();
+  await user.click(
+    within(tokenSetting as HTMLElement).getByRole('button', { name: '清除全部密钥' }),
+  );
   await user.click(screen.getByRole('button', { name: '保存配置' }));
   await waitFor(() =>
     expect(updatePayload).toEqual({
@@ -438,6 +534,91 @@ async function serializesScalarSecretLifecycle(): Promise<void> {
   );
   expect(screen.getByLabelText('CNKI captcha solver token')).toHaveValue('');
   expect(document.body.textContent).not.toContain(SCALAR_SECRET_SENTINEL);
+}
+
+/**
+ * Verify proxy switches default missing Providers off and save with the URL atomically.
+ */
+async function serializesProviderProxyUrlAndPolicyAtomically(): Promise<void> {
+  renderProviderConfiguration(allRuntimeSettingsFixture());
+  const user = userEvent.setup();
+
+  const cnkiSwitch = await screen.findByRole('switch', {
+    name: 'cnki 使用 Provider 代理',
+  });
+  expect(cnkiSwitch).toBeChecked();
+  expect(screen.getByRole('switch', { name: 'cnki_oversea 使用 Provider 代理' })).not.toBeChecked();
+  expect(screen.getByRole('switch', { name: 'scholarly 使用 Provider 代理' })).not.toBeChecked();
+  expect(screen.getByRole('switch', { name: 'zjlib 使用 Provider 代理' })).not.toBeChecked();
+
+  const cnkiGroup = screen.getByRole('group', { name: 'cnki' });
+  expect(within(cnkiGroup).getByText('索引')).toBeInTheDocument();
+  expect(within(cnkiGroup).getByText('摘要页')).toBeInTheDocument();
+  const zjlibGroup = screen.getByRole('group', { name: 'zjlib' });
+  expect(within(zjlibGroup).getByText('全文')).toBeInTheDocument();
+  expect(within(zjlibGroup).queryByText('索引')).not.toBeInTheDocument();
+
+  const proxyUrl = screen.getByLabelText('Provider proxy URL');
+  expect(proxyUrl).toHaveAttribute('type', 'password');
+  expect(proxyUrl).toHaveValue('');
+  fireEvent.change(proxyUrl, { target: { value: PROXY_SECRET_SENTINEL } });
+  await user.click(screen.getByRole('switch', { name: 'zjlib 使用 Provider 代理' }));
+  await user.click(screen.getByRole('button', { name: '保存配置' }));
+
+  await waitFor(() =>
+    expect(updatePayload).toEqual({
+      values: {
+        provider_proxy_url: PROXY_SECRET_SENTINEL,
+        provider_proxy_policy: '{"cnki":true,"cnki_oversea":false,"scholarly":false,"zjlib":true}',
+      },
+      secret_pool_updates: {},
+    }),
+  );
+  await waitFor(() => expect(screen.getByLabelText('Provider proxy URL')).toHaveValue(''));
+  expect(document.body.textContent).not.toContain(PROXY_SECRET_SENTINEL);
+}
+
+/**
+ * Verify an empty policy defaults every switch off and edits remain independent.
+ */
+async function defaultsProviderProxySwitchesOffIndependently(): Promise<void> {
+  const settings = providerSettingsFixture().map((setting) =>
+    setting.field === 'provider_proxy_policy' ? { ...setting, value: '{}' } : setting,
+  );
+  renderProviderConfiguration(settings);
+  const user = userEvent.setup();
+
+  const switches = await Promise.all(
+    ['cnki', 'cnki_oversea', 'scholarly', 'zjlib'].map((provider) =>
+      screen.findByRole('switch', { name: `${provider} 使用 Provider 代理` }),
+    ),
+  );
+  for (const providerSwitch of switches) {
+    expect(providerSwitch).not.toBeChecked();
+  }
+
+  await user.click(switches[0]);
+  expect(switches[0]).toBeChecked();
+  for (const providerSwitch of switches.slice(1)) {
+    expect(providerSwitch).not.toBeChecked();
+  }
+}
+
+/**
+ * Verify policy names absent from the current Provider catalog stop specialized editing.
+ */
+async function rejectsProviderProxyPolicyCatalogMismatch(): Promise<void> {
+  const settings = providerSettingsFixture().map((setting) =>
+    setting.field === 'provider_proxy_policy'
+      ? { ...setting, value: '{"retired_provider":true}' }
+      : setting,
+  );
+  renderProviderConfiguration(settings);
+
+  expect(
+    await screen.findByText('Provider 配置与后端能力目录不一致，已停止编辑以避免覆盖有效配置。'),
+  ).toBeInTheDocument();
+  expect(screen.queryByRole('switch', { name: 'cnki 使用 Provider 代理' })).not.toBeInTheDocument();
 }
 
 /**
@@ -618,6 +799,19 @@ describe('Provider configuration', () => {
     'preserves, replaces, and clears a scalar secret safely',
     serializesScalarSecretLifecycle,
     20_000,
+  );
+  test(
+    'saves the Provider proxy URL and deterministic policy atomically',
+    serializesProviderProxyUrlAndPolicyAtomically,
+    20_000,
+  );
+  test(
+    'defaults Provider proxy switches off and edits them independently',
+    defaultsProviderProxySwitchesOffIndependently,
+  );
+  test(
+    'rejects Provider proxy names missing from the capability catalog',
+    rejectsProviderProxyPolicyCatalogMismatch,
   );
   test('renders one safe fallback for a future backend control', rendersFutureGenericControlOnce);
 });
