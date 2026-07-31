@@ -12,6 +12,8 @@ use reqwest::{blocking::Client, header::HeaderMap, Url};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
+use crate::provider_proxy::ProviderProxy;
+
 /// Maximum DOI IDs accepted by one Semantic Scholar batch request.
 pub const SEMANTIC_SCHOLAR_BATCH_SIZE: usize = 500;
 
@@ -2122,7 +2124,24 @@ impl LiveScholarlyTransport {
     ///
     /// Live transport or a request configuration error.
     pub fn new(config: LiveScholarlyConfig) -> Result<Self, SourceError> {
-        Self::new_with_openalex_workers(config, 1)
+        Self::new_with_proxy(config, ProviderProxy::direct())
+    }
+
+    /// Build a live Scholarly transport with a managed proxy decision.
+    ///
+    /// # Arguments
+    ///
+    /// * `config` - Live source configuration.
+    /// * `provider_proxy` - Direct or explicit Scholarly proxy decision.
+    ///
+    /// # Returns
+    ///
+    /// Live transport or a request configuration error.
+    pub fn new_with_proxy(
+        config: LiveScholarlyConfig,
+        provider_proxy: ProviderProxy,
+    ) -> Result<Self, SourceError> {
+        Self::new_with_openalex_workers_and_proxy(config, 1, provider_proxy)
     }
 
     /// Build a live Scholarly transport with bounded OpenAlex enrichment workers.
@@ -2139,6 +2158,29 @@ impl LiveScholarlyTransport {
         config: LiveScholarlyConfig,
         openalex_worker_count: usize,
     ) -> Result<Self, SourceError> {
+        Self::new_with_openalex_workers_and_proxy(
+            config,
+            openalex_worker_count,
+            ProviderProxy::direct(),
+        )
+    }
+
+    /// Build a live Scholarly transport with bounded workers and a managed proxy decision.
+    ///
+    /// # Arguments
+    ///
+    /// * `config` - Live source configuration.
+    /// * `openalex_worker_count` - Requested OpenAlex DOI requests in flight.
+    /// * `provider_proxy` - Direct or explicit Scholarly proxy decision.
+    ///
+    /// # Returns
+    ///
+    /// Live transport or a request configuration error.
+    pub fn new_with_openalex_workers_and_proxy(
+        config: LiveScholarlyConfig,
+        openalex_worker_count: usize,
+        provider_proxy: ProviderProxy,
+    ) -> Result<Self, SourceError> {
         if !(litradar_domain::INDEX_WORKER_COUNT_MIN..=OPENALEX_MAX_WORKERS_PER_PROCESS)
             .contains(&openalex_worker_count)
         {
@@ -2147,9 +2189,13 @@ impl LiveScholarlyTransport {
                 litradar_domain::INDEX_WORKER_COUNT_MIN
             )));
         }
-        let client = Client::builder()
-            .timeout(Duration::from_secs(config.timeout_seconds.max(1)))
-            .user_agent(DEFAULT_USER_AGENT)
+        let client = provider_proxy
+            .apply(
+                Client::builder()
+                    .timeout(Duration::from_secs(config.timeout_seconds.max(1)))
+                    .user_agent(DEFAULT_USER_AGENT),
+            )
+            .map_err(|error| SourceError::Configuration(error.to_string()))?
             .build()
             .map_err(|error| SourceError::Request {
                 service: "http".to_string(),

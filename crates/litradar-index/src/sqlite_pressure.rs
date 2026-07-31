@@ -511,6 +511,7 @@ fn run_pressure(config: PressureConfig) -> PressureReport {
         &context,
         requests,
         None,
+        &crate::live::ProviderProxySelection::default(),
         IndexRunMetrics {
             journals_total: config.worker_count,
             ..IndexRunMetrics::default()

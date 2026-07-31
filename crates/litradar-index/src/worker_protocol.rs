@@ -10,7 +10,7 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
 /// Current private worker protocol version.
-pub(crate) const PROTOCOL_VERSION: u32 = 5;
+pub(crate) const PROTOCOL_VERSION: u32 = 6;
 
 /// One journal and optional resume cursor assigned to a fetch worker.
 #[derive(Clone, PartialEq, Eq, Deserialize, Serialize)]
@@ -107,6 +107,9 @@ pub(crate) struct WorkerBootstrap {
     /// Domestic CNKI captcha solver token, present only for domestic workers.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) cnki_captcha_token: Option<String>,
+    /// Selected Provider proxy URL, present only for an enabled worker Provider.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) provider_proxy_url: Option<String>,
 }
 
 impl fmt::Debug for WorkerBootstrap {
@@ -464,10 +467,12 @@ mod tests {
     #[test]
     fn worker_protocol_bootstrap_round_trips_and_redacts_credentials() {
         let sentinel = "captcha-secret-sentinel";
+        let proxy_sentinel = "socks5h://user:proxy-secret-sentinel@proxy.example:1080";
         let bootstrap = WorkerBootstrap {
             protocol_version: PROTOCOL_VERSION,
             worker_id: 2,
             cnki_captcha_token: Some(sentinel.to_string()),
+            provider_proxy_url: Some(proxy_sentinel.to_string()),
         };
         let mut bytes = Vec::new();
 
@@ -479,7 +484,9 @@ mod tests {
         assert_eq!(decoded.protocol_version, PROTOCOL_VERSION);
         assert_eq!(decoded.worker_id, 2);
         assert_eq!(decoded.cnki_captcha_token.as_deref(), Some(sentinel));
+        assert_eq!(decoded.provider_proxy_url.as_deref(), Some(proxy_sentinel));
         assert!(!debug.contains(sentinel));
+        assert!(!debug.contains(proxy_sentinel));
         assert!(debug.contains("[REDACTED]"));
     }
 

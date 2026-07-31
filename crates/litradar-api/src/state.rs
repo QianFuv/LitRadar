@@ -8,6 +8,7 @@ use std::time::{Duration, Instant};
 
 use axum::http::HeaderMap;
 use litradar_provider::ProviderRegistry;
+use litradar_sources::ProviderProxySelection;
 use litradar_storage::{
     AuthRateLimitPolicy, SecretCodec, StorageConfig, TokenBucketPolicy, TrustedProxyCidr,
 };
@@ -28,6 +29,7 @@ pub struct ApiState {
     blocking_executor: BlockingExecutor,
     kdf_executor: BlockingExecutor,
     article_providers: Arc<ProviderRegistry>,
+    provider_proxy_selection: ProviderProxySelection,
 }
 
 impl ApiState {
@@ -53,6 +55,7 @@ impl ApiState {
             are_session_cookies_secure,
             Vec::new(),
             AuthRateLimitPolicy::default(),
+            ProviderProxySelection::default(),
             DEFAULT_BLOCKING_CONCURRENCY,
             DEFAULT_BLOCKING_QUEUE_TIMEOUT,
         )
@@ -67,6 +70,7 @@ impl ApiState {
     /// * `are_session_cookies_secure` - Whether session cookies include Secure.
     /// * `trusted_proxy_cidrs` - Direct peer networks allowed to supply forwarding chains.
     /// * `auth_rate_limit_policy` - Process-local token-bucket policy.
+    /// * `provider_proxy_selection` - Startup-validated Provider proxy decisions.
     ///
     /// # Returns
     ///
@@ -77,6 +81,7 @@ impl ApiState {
         are_session_cookies_secure: bool,
         trusted_proxy_cidrs: Vec<TrustedProxyCidr>,
         auth_rate_limit_policy: AuthRateLimitPolicy,
+        provider_proxy_selection: ProviderProxySelection,
     ) -> Self {
         Self::build(
             storage_config,
@@ -84,23 +89,27 @@ impl ApiState {
             are_session_cookies_secure,
             trusted_proxy_cidrs,
             auth_rate_limit_policy,
+            provider_proxy_selection,
             DEFAULT_BLOCKING_CONCURRENCY,
             DEFAULT_BLOCKING_QUEUE_TIMEOUT,
         )
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn build(
         storage_config: StorageConfig,
         secret_codec: SecretCodec,
         are_session_cookies_secure: bool,
         trusted_proxy_cidrs: Vec<TrustedProxyCidr>,
         auth_rate_limit_policy: AuthRateLimitPolicy,
+        provider_proxy_selection: ProviderProxySelection,
         blocking_concurrency: usize,
         blocking_queue_timeout: Duration,
     ) -> Self {
         let article_providers = crate::article_access::build_article_provider_registry(
             storage_config.clone(),
             secret_codec.clone(),
+            provider_proxy_selection.clone(),
         )
         .expect("built-in article provider registry should be valid");
         Self {
@@ -112,6 +121,7 @@ impl ApiState {
             blocking_executor: BlockingExecutor::new(blocking_concurrency, blocking_queue_timeout),
             kdf_executor: BlockingExecutor::new(DEFAULT_KDF_CONCURRENCY, blocking_queue_timeout),
             article_providers: Arc::new(article_providers),
+            provider_proxy_selection,
         }
     }
 
@@ -142,6 +152,7 @@ impl ApiState {
             are_session_cookies_secure,
             Vec::new(),
             AuthRateLimitPolicy::default(),
+            ProviderProxySelection::default(),
             concurrency,
             queue_timeout,
         )
@@ -187,6 +198,15 @@ impl ApiState {
     /// Provider registry shared by all action handlers.
     pub(crate) fn article_providers(&self) -> &ProviderRegistry {
         &self.article_providers
+    }
+
+    /// Return startup-validated Provider proxy decisions.
+    ///
+    /// # Returns
+    ///
+    /// Proxy selection shared by request-time Provider transports.
+    pub(crate) fn provider_proxy_selection(&self) -> &ProviderProxySelection {
+        &self.provider_proxy_selection
     }
 
     /// Run synchronous work on Tokio's blocking pool behind the shared concurrency limit.
@@ -362,6 +382,7 @@ impl fmt::Debug for ApiState {
             )
             .field("trusted_proxy_count", &self.trusted_proxy_cidrs.len())
             .field("article_providers", &"[REGISTERED]")
+            .field("provider_proxy_selection", &self.provider_proxy_selection)
             .finish_non_exhaustive()
     }
 }

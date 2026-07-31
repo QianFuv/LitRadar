@@ -13,7 +13,7 @@ use litradar_domain::{
 };
 use litradar_sources::{
     FixtureZjlibCnkiMode, FixtureZjlibCnkiTransport, LiveZjlibCnkiConfig, LiveZjlibCnkiTransport,
-    ZhejiangLibraryCnkiClient, ZjlibCnkiError,
+    ProviderProxy, ZhejiangLibraryCnkiClient, ZjlibCnkiError, ZJLIB_PROVIDER_NAME,
 };
 use litradar_storage::{CnkiRepositoryError, StorageConfig};
 use serde_json::json;
@@ -130,9 +130,12 @@ pub(crate) async fn start_login(
         None => {
             let user_id = user.id;
             let fixture_mode = zjlib_fixture_mode();
+            let provider_proxy = state
+                .provider_proxy_selection()
+                .for_provider(ZJLIB_PROVIDER_NAME);
             let login_result = state
                 .run_blocking_with_queue_timeout(CNKI_NETWORK_QUEUE_TIMEOUT, move || {
-                    start_zjlib_login(fixture_mode)
+                    start_zjlib_login(fixture_mode, provider_proxy)
                 })
                 .await?;
             let (qr_login, session_data) = login_result.map_err(|error| {
@@ -283,6 +286,9 @@ pub(crate) async fn poll_login(
                     .or_insert_with(|| JsonValue::String(qr_uuid.clone()));
             }
             let fixture_mode = zjlib_fixture_mode();
+            let provider_proxy = state
+                .provider_proxy_selection()
+                .for_provider(ZJLIB_PROVIDER_NAME);
             let timeout_seconds = body.timeout_seconds;
             let interval_seconds = body.interval_seconds;
             let poll_result = state
@@ -292,6 +298,7 @@ pub(crate) async fn poll_login(
                         &session_data,
                         timeout_seconds,
                         interval_seconds,
+                        provider_proxy,
                     )
                 })
                 .await?;
@@ -481,6 +488,7 @@ pub(crate) fn set_fixture_mode_for_tests(mode: Option<FixtureZjlibCnkiMode>) {
 
 fn start_zjlib_login(
     fixture_mode: Option<FixtureZjlibCnkiMode>,
+    provider_proxy: ProviderProxy,
 ) -> Result<(litradar_sources::ZjlibCnkiQrLogin, JsonValue), ZjlibCnkiError> {
     if let Some(mode) = fixture_mode {
         let mut client = ZhejiangLibraryCnkiClient::new(FixtureZjlibCnkiTransport::new(mode));
@@ -488,7 +496,7 @@ fn start_zjlib_login(
         let session_data = client.to_state_data();
         return Ok((qr_login, session_data));
     }
-    let transport = LiveZjlibCnkiTransport::new(live_zjlib_config())?;
+    let transport = LiveZjlibCnkiTransport::new_with_proxy(live_zjlib_config(), provider_proxy)?;
     let mut client = ZhejiangLibraryCnkiClient::new(transport);
     let qr_login = client.start_qr_login()?;
     let session_data = client.to_state_data();
@@ -500,6 +508,7 @@ fn poll_zjlib_login(
     session_data: &JsonValue,
     timeout_seconds: i64,
     interval_seconds: f64,
+    provider_proxy: ProviderProxy,
 ) -> Result<JsonValue, ZjlibPollError> {
     if let Some(mode) = fixture_mode {
         let mut client = ZhejiangLibraryCnkiClient::from_state_data(
@@ -514,8 +523,8 @@ fn poll_zjlib_login(
             .map_err(ZjlibPollError::Warmup)?;
         return Ok(client.to_state_data());
     }
-    let transport =
-        LiveZjlibCnkiTransport::new(live_zjlib_config()).map_err(ZjlibPollError::Login)?;
+    let transport = LiveZjlibCnkiTransport::new_with_proxy(live_zjlib_config(), provider_proxy)
+        .map_err(ZjlibPollError::Login)?;
     let mut client = ZhejiangLibraryCnkiClient::from_state_data(transport, session_data);
     client
         .poll_qr_login(timeout_seconds, interval_seconds)

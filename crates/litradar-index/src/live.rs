@@ -14,10 +14,11 @@ use litradar_domain::{IndexFetchContext, IndexSyncMode, JournalCatalogEntry, Pro
 use litradar_provider::{
     IndexContentProvider, ProviderError, ProviderRegistration, ProviderRegistryError,
 };
+pub use litradar_sources::ProviderProxySelection;
 use litradar_sources::{
     cnki_index_registration_with_workers, cnki_oversea_index_registration,
     scholarly_index_registration, LiveCnkiConfig, LiveCnkiTransport, LiveDomesticCnkiConfig,
-    LiveDomesticCnkiTransport, LiveScholarlyConfig, LiveScholarlyTransport,
+    LiveDomesticCnkiTransport, LiveScholarlyConfig, LiveScholarlyTransport, ProviderProxy,
     CNKI_OVERSEA_PROVIDER_NAME, CNKI_PROVIDER_NAME, SCHOLARLY_PROVIDER_NAME,
 };
 use litradar_worker::process_supervisor::SupervisedChild;
@@ -86,6 +87,8 @@ pub struct LiveIndexConfig {
     pub scholarly_config: LiveScholarlyConfig,
     /// Domestic CNKI captcha solver token loaded from runtime secrets or probe env.
     pub cnki_captcha_token: Option<String>,
+    /// Validated per-Provider direct-or-explicit proxy selection.
+    pub provider_proxy_selection: ProviderProxySelection,
     /// Validated catalog-stem to indexing-provider routes loaded outside index databases.
     pub index_provider_routes: BTreeMap<String, String>,
 }
@@ -109,6 +112,7 @@ impl fmt::Debug for LiveIndexConfig {
             .field("notify", &self.notify)
             .field("notify_dry_run", &self.notify_dry_run)
             .field("index_provider_routes", &self.index_provider_routes)
+            .field("provider_proxy_selection", &self.provider_proxy_selection)
             .field("provider_credentials", &"[REDACTED]")
             .finish()
     }
@@ -1102,6 +1106,7 @@ fn run_worker_processes(
         context,
         requests,
         config.cnki_captcha_token.as_deref(),
+        &config.provider_proxy_selection,
         metrics,
         Duration::from_secs(LIVE_INDEX_HEARTBEAT_INTERVAL_SECONDS),
         |request_path, worker_id| {
@@ -1310,6 +1315,7 @@ impl WorkerProgress {
 /// * `context` - Stable commit and lease context.
 /// * `requests` - Versioned worker assignments.
 /// * `cnki_captcha_token` - Memory-only domestic CNKI credential.
+/// * `provider_proxy_selection` - Memory-only per-Provider proxy selection.
 /// * `metrics` - Aggregate metrics prepared from parent checkpoint reads.
 /// * `heartbeat_interval` - Lease renewal interval.
 /// * `launcher` - Production or test-only child process launcher.
@@ -1326,6 +1332,7 @@ pub(crate) fn run_worker_processes_with_launcher<Launcher, Observer>(
     context: &ParentWriterContext,
     requests: Vec<LiveIndexWorkerRequest>,
     cnki_captcha_token: Option<&str>,
+    provider_proxy_selection: &ProviderProxySelection,
     metrics: IndexRunMetrics,
     heartbeat_interval: Duration,
     mut launcher: Launcher,
@@ -1386,7 +1393,14 @@ where
                 break;
             }
         };
-        let launched = match bootstrap_worker_process(launched, request, cnki_captcha_token) {
+        let provider_proxy_url =
+            provider_proxy_selection.proxy_url_for_provider(&request.provider_name);
+        let launched = match bootstrap_worker_process(
+            launched,
+            request,
+            cnki_captcha_token,
+            provider_proxy_url.as_deref(),
+        ) {
             Ok(launched) => launched,
             Err(error) => {
                 let _ = std::fs::remove_file(&request_path);
@@ -1434,6 +1448,7 @@ where
 fn worker_bootstrap(
     request: &LiveIndexWorkerRequest,
     cnki_captcha_token: Option<&str>,
+    provider_proxy_url: Option<&str>,
 ) -> LiveIndexWorkerBootstrap {
     LiveIndexWorkerBootstrap {
         protocol_version: PROTOCOL_VERSION,
@@ -1443,6 +1458,7 @@ fn worker_bootstrap(
         } else {
             None
         },
+        provider_proxy_url: provider_proxy_url.map(str::to_owned),
     }
 }
 
@@ -1450,8 +1466,9 @@ fn bootstrap_worker_process(
     mut launched: LaunchedWorkerProcess,
     request: &LiveIndexWorkerRequest,
     cnki_captcha_token: Option<&str>,
+    provider_proxy_url: Option<&str>,
 ) -> Result<LaunchedWorkerProcess, LiveIndexError> {
-    let bootstrap = worker_bootstrap(request, cnki_captcha_token);
+    let bootstrap = worker_bootstrap(request, cnki_captcha_token, provider_proxy_url);
     if write_message(&mut launched.writer, &bootstrap).is_err() {
         let _ = launched.child.force_kill_and_wait();
         return Err(protocol_failure(request.worker_id));
@@ -1812,6 +1829,9 @@ fn run_direct_request(
         config.worker_count,
         config.timeout_seconds,
         config.cnki_captcha_token.clone(),
+        config
+            .provider_proxy_selection
+            .for_provider(&request.provider_name),
     )?;
     let provider = registration.index_content().cloned().ok_or_else(|| {
         LiveIndexError::InvalidConfig(format!(
@@ -1828,9 +1848,17 @@ fn run_fetch_worker_stream(
     writer: &mut impl Write,
 ) -> Result<(), LiveIndexError> {
     let mut sequence = 0_u64;
-    let execution = read_worker_bootstrap(request, reader).and_then(|cnki_captcha_token| {
-        fetch_worker_assignments(request, cnki_captcha_token, reader, writer, &mut sequence)
-    });
+    let execution =
+        read_worker_bootstrap(request, reader).and_then(|(cnki_captcha_token, provider_proxy)| {
+            fetch_worker_assignments(
+                request,
+                cnki_captcha_token,
+                provider_proxy,
+                reader,
+                writer,
+                &mut sequence,
+            )
+        });
     let message = match execution {
         Ok(()) => WorkerMessage::Succeeded {
             protocol_version: PROTOCOL_VERSION,
@@ -1851,7 +1879,7 @@ fn run_fetch_worker_stream(
 fn read_worker_bootstrap(
     request: &LiveIndexWorkerRequest,
     reader: &mut impl Read,
-) -> Result<Option<String>, LiveIndexError> {
+) -> Result<(Option<String>, ProviderProxy), LiveIndexError> {
     let bootstrap: LiveIndexWorkerBootstrap = read_message(reader)
         .map_err(|_| LiveIndexError::Worker(WORKER_PROTOCOL_FAILURE_MESSAGE.to_string()))?;
     if bootstrap.protocol_version != PROTOCOL_VERSION
@@ -1862,12 +1890,19 @@ fn read_worker_bootstrap(
             "worker bootstrap is invalid".to_string(),
         ));
     }
-    Ok(bootstrap.cnki_captcha_token)
+    let provider_proxy = bootstrap
+        .provider_proxy_url
+        .map(ProviderProxy::explicit)
+        .transpose()
+        .map_err(|_| LiveIndexError::InvalidConfig("worker bootstrap is invalid".to_string()))?
+        .unwrap_or_else(ProviderProxy::direct);
+    Ok((bootstrap.cnki_captcha_token, provider_proxy))
 }
 
 fn fetch_worker_assignments(
     request: &LiveIndexWorkerRequest,
     cnki_captcha_token: Option<String>,
+    provider_proxy: ProviderProxy,
     reader: &mut impl Read,
     writer: &mut impl Write,
     sequence: &mut u64,
@@ -1906,6 +1941,7 @@ fn fetch_worker_assignments(
         request.source_worker_count,
         request.timeout_seconds,
         cnki_captcha_token,
+        provider_proxy,
     )?;
     let provider = registration.index_content().cloned().ok_or_else(|| {
         LiveIndexError::InvalidConfig(format!(
@@ -2010,13 +2046,15 @@ fn build_index_registration(
     source_worker_count: usize,
     timeout_seconds: u64,
     cnki_captcha_token: Option<String>,
+    provider_proxy: ProviderProxy,
 ) -> Result<ProviderRegistration, LiveIndexError> {
     match provider_name {
         SCHOLARLY_PROVIDER_NAME => {
             let has_semantic_scholar_key = scholarly_config.has_semantic_scholar_key();
-            let transport = LiveScholarlyTransport::new_with_openalex_workers(
+            let transport = LiveScholarlyTransport::new_with_openalex_workers_and_proxy(
                 scholarly_config,
                 source_worker_count,
+                provider_proxy,
             )
             .map_err(|_| {
                 LiveIndexError::ProviderSetup(
@@ -2029,19 +2067,25 @@ fn build_index_registration(
             )?)
         }
         CNKI_OVERSEA_PROVIDER_NAME => {
-            let transport =
-                LiveCnkiTransport::new(LiveCnkiConfig { timeout_seconds }).map_err(|_| {
-                    LiveIndexError::ProviderSetup(
-                        "CNKI indexing provider could not initialize".to_string(),
-                    )
-                })?;
+            let transport = LiveCnkiTransport::new_with_proxy(
+                LiveCnkiConfig { timeout_seconds },
+                provider_proxy,
+            )
+            .map_err(|_| {
+                LiveIndexError::ProviderSetup(
+                    "CNKI indexing provider could not initialize".to_string(),
+                )
+            })?;
             Ok(cnki_oversea_index_registration(transport)?)
         }
         CNKI_PROVIDER_NAME => {
-            let transport = LiveDomesticCnkiTransport::new(LiveDomesticCnkiConfig {
-                timeout_seconds,
-                captcha_token: cnki_captcha_token,
-            })
+            let transport = LiveDomesticCnkiTransport::new_with_proxy(
+                LiveDomesticCnkiConfig {
+                    timeout_seconds,
+                    captcha_token: cnki_captcha_token,
+                },
+                provider_proxy,
+            )
             .map_err(|_| {
                 LiveIndexError::ProviderSetup(
                     "domestic CNKI indexing provider could not initialize".to_string(),
@@ -2239,13 +2283,13 @@ mod tests {
         emit_parent_content_commit_failure, emit_worker_failure,
         fetch_worker_assignments_with_provider, finalize_content_changes,
         index_entries_with_provider, prepare_catalog_identities, prepare_worker_requests,
-        requested_sync_mode, run_live_index, run_live_index_worker_with_io,
+        read_worker_bootstrap, requested_sync_mode, run_live_index, run_live_index_worker_with_io,
         run_worker_processes_with_launcher, validate_live_config, worker_bootstrap,
         worker_failure_error, ContentCommitErrorKind, DirectIndexRequest, LaunchedWorkerProcess,
         LeaseHeartbeat, LiveIndexConfig, LiveIndexError, LiveIndexWorkerBootstrap,
         LiveIndexWorkerFailure, LiveIndexWorkerFailureClass, LiveIndexWorkerOperation,
-        LiveIndexWorkerRequest, LiveRunTime, ParentWriterContext, SupervisedChild,
-        CNKI_PROVIDER_NAME,
+        LiveIndexWorkerRequest, LiveRunTime, ParentWriterContext, ProviderProxySelection,
+        SupervisedChild, CNKI_PROVIDER_NAME,
     };
     use crate::control::{
         acquire_lease, advance_run_checkpoint, commit_content_then_progress, complete_sync_run,
@@ -3363,6 +3407,7 @@ mod tests {
                 10, "", "", "",
             ),
             cnki_captcha_token,
+            provider_proxy_selection: ProviderProxySelection::default(),
             index_provider_routes: BTreeMap::from([(
                 "chinese_journals".to_string(),
                 provider_name.to_string(),
@@ -3373,34 +3418,87 @@ mod tests {
     #[test]
     fn worker_boundary_redacts_provider_credentials() {
         let sentinel = "captcha-secret-sentinel";
-        let config = worker_test_config("cnki", Some(sentinel.to_string()));
+        let proxy_sentinel = "socks5h://user:worker-proxy-sentinel@proxy.example:1080";
+        let mut config = worker_test_config("cnki", Some(sentinel.to_string()));
+        config.provider_proxy_selection =
+            ProviderProxySelection::new(proxy_sentinel, r#"{"cnki":true}"#)
+                .expect("worker proxy selection should validate");
         let cnki_request = fetch_worker_request("cnki", "run-cnki-bootstrap");
-        let cnki_bootstrap = worker_bootstrap(&cnki_request, Some(sentinel));
+        let cnki_proxy_url = config
+            .provider_proxy_selection
+            .proxy_url_for_provider(&cnki_request.provider_name);
+        let cnki_bootstrap =
+            worker_bootstrap(&cnki_request, Some(sentinel), cnki_proxy_url.as_deref());
+        let scholarly_request = fetch_worker_request("scholarly", "run-scholarly-bootstrap");
+        let scholarly_proxy_url = config
+            .provider_proxy_selection
+            .proxy_url_for_provider(&scholarly_request.provider_name);
         let scholarly_bootstrap = worker_bootstrap(
-            &fetch_worker_request("scholarly", "run-scholarly-bootstrap"),
+            &scholarly_request,
             Some(sentinel),
+            scholarly_proxy_url.as_deref(),
         );
+        let overseas_request = fetch_worker_request("cnki_oversea", "run-overseas-bootstrap");
+        let overseas_proxy_url = config
+            .provider_proxy_selection
+            .proxy_url_for_provider(&overseas_request.provider_name);
         let overseas_bootstrap = worker_bootstrap(
-            &fetch_worker_request("cnki_oversea", "run-overseas-bootstrap"),
+            &overseas_request,
             Some(sentinel),
+            overseas_proxy_url.as_deref(),
         );
 
         let debug = format!("{config:?}");
         let bootstrap_debug = format!("{cnki_bootstrap:?}");
 
         assert!(!debug.contains(sentinel));
+        assert!(!debug.contains(proxy_sentinel));
         assert!(debug.contains("[REDACTED]"));
         assert!(!bootstrap_debug.contains(sentinel));
+        assert!(!bootstrap_debug.contains(proxy_sentinel));
         assert!(bootstrap_debug.contains("[REDACTED]"));
         assert_eq!(cnki_bootstrap.cnki_captcha_token.as_deref(), Some(sentinel));
+        assert_eq!(
+            cnki_bootstrap.provider_proxy_url.as_deref(),
+            Some(proxy_sentinel)
+        );
         assert!(scholarly_bootstrap.cnki_captcha_token.is_none());
+        assert!(scholarly_bootstrap.provider_proxy_url.is_none());
         assert!(overseas_bootstrap.cnki_captcha_token.is_none());
+        assert!(overseas_bootstrap.provider_proxy_url.is_none());
     }
 
     #[test]
-    fn worker_request_file_excludes_cnki_secret() {
+    fn worker_protocol_proxy_selection_matches_direct_and_multiprocess_paths() {
+        let proxy_sentinel = "socks5h://user:worker-equivalence-sentinel@proxy.example:1080";
+        let selection =
+            ProviderProxySelection::new(proxy_sentinel, r#"{"cnki":true,"scholarly":false}"#)
+                .expect("worker proxy selection should validate");
+
+        for provider_name in ["cnki", "scholarly", "cnki_oversea"] {
+            let request = fetch_worker_request(provider_name, "run-proxy-equivalence");
+            let direct_proxy = selection.for_provider(provider_name);
+            let proxy_url = selection.proxy_url_for_provider(provider_name);
+            let bootstrap = worker_bootstrap(&request, None, proxy_url.as_deref());
+            let mut input = Vec::new();
+            write_message(&mut input, &bootstrap).expect("worker bootstrap should serialize");
+            let (_, multiprocess_proxy) = read_worker_bootstrap(&request, &mut Cursor::new(input))
+                .expect("worker bootstrap should select a proxy");
+
+            assert_eq!(multiprocess_proxy, direct_proxy);
+            assert_eq!(multiprocess_proxy.url(), direct_proxy.url());
+            assert!(!format!("{multiprocess_proxy:?}").contains(proxy_sentinel));
+        }
+    }
+
+    #[test]
+    fn worker_request_file_excludes_runtime_secrets() {
         let sentinel = "captcha-secret-sentinel";
-        let config = worker_test_config("cnki", Some(sentinel.to_string()));
+        let proxy_sentinel = "socks5h://user:worker-request-proxy-sentinel@proxy.example:1080";
+        let mut config = worker_test_config("cnki", Some(sentinel.to_string()));
+        config.provider_proxy_selection =
+            ProviderProxySelection::new(proxy_sentinel, r#"{"cnki":true}"#)
+                .expect("worker proxy selection should validate");
         let directory = tempdir().expect("temporary control directory should create");
         let control = open_control_db(directory.path().join("control.sqlite"))
             .expect("control database should open");
@@ -3424,7 +3522,9 @@ mod tests {
             std::fs::read_to_string(request_path).expect("worker request should read");
 
         assert!(!request_json.contains(sentinel));
+        assert!(!request_json.contains(proxy_sentinel));
         assert!(!request_json.contains("cnki_captcha_token"));
+        assert!(!request_json.contains("provider_proxy"));
     }
 
     #[test]
@@ -3562,6 +3662,7 @@ mod tests {
                 10, "", "", "",
             ),
             cnki_captcha_token: None,
+            provider_proxy_selection: ProviderProxySelection::default(),
             index_provider_routes: BTreeMap::from([(
                 "catalog".to_string(),
                 "scholarly".to_string(),
@@ -3684,6 +3785,7 @@ mod tests {
                     crossref_mailtos,
                 ),
                 cnki_captcha_token: None,
+                provider_proxy_selection: ProviderProxySelection::default(),
                 index_provider_routes: BTreeMap::from([(
                     "catalog".to_string(),
                     "scholarly".to_string(),
@@ -3722,6 +3824,7 @@ mod tests {
                 10, "", "", "",
             ),
             cnki_captcha_token: None,
+            provider_proxy_selection: ProviderProxySelection::default(),
             index_provider_routes: BTreeMap::new(),
         };
         let entries = vec![catalog("complete"), catalog("resumable")];
@@ -3810,6 +3913,7 @@ mod tests {
             &context,
             vec![first, second],
             None,
+            &ProviderProxySelection::default(),
             IndexRunMetrics::default(),
             Duration::from_secs(1),
             |_, _| panic!("invalid assignments must fail before process launch"),
@@ -3999,7 +4103,7 @@ mod tests {
         let captured = CapturedLogs::default();
         let mut output = Vec::new();
         let mut input = Vec::new();
-        write_message(&mut input, &worker_bootstrap(&request, None))
+        write_message(&mut input, &worker_bootstrap(&request, None, None))
             .expect("worker bootstrap should serialize");
         tracing::subscriber::with_default(captured.subscriber(), || {
             run_live_index_worker_with_io(&request_path, Cursor::new(input), &mut output)
@@ -4024,6 +4128,7 @@ mod tests {
     #[test]
     fn worker_protocol_domestic_bootstrap_completes_handshake() {
         let sentinel = "captcha-secret-sentinel";
+        let proxy_sentinel = "socks5h://user:domestic-worker-proxy-sentinel@proxy.example:1080";
         let directory = tempdir().expect("temporary directory should create");
         let mut request = fetch_worker_request("cnki", "run-domestic-bootstrap");
         request.assignments.clear();
@@ -4034,12 +4139,16 @@ mod tests {
         )
         .expect("worker request should write");
         let mut input = Vec::new();
-        write_message(&mut input, &worker_bootstrap(&request, Some(sentinel)))
-            .expect("domestic bootstrap should serialize");
+        write_message(
+            &mut input,
+            &worker_bootstrap(&request, Some(sentinel), Some(proxy_sentinel)),
+        )
+        .expect("domestic bootstrap should serialize");
         let mut output = Vec::new();
 
         run_live_index_worker_with_io(&request_path, Cursor::new(input), &mut output)
             .expect("domestic worker handshake should complete");
+        let output_text = String::from_utf8(output.clone()).expect("worker output should be UTF-8");
         let message: WorkerMessage = read_message(&mut Cursor::new(output))
             .expect("terminal worker message should deserialize");
 
@@ -4051,6 +4160,8 @@ mod tests {
                 sequence: 0,
             }
         ));
+        assert!(!output_text.contains(sentinel));
+        assert!(!output_text.contains(proxy_sentinel));
     }
 
     #[test]
@@ -4069,6 +4180,7 @@ mod tests {
             protocol_version: PROTOCOL_VERSION,
             worker_id: 0,
             cnki_captcha_token: Some(sentinel.to_string()),
+            provider_proxy_url: None,
         };
         let mut input = Vec::new();
         write_message(&mut input, &bootstrap).expect("invalid bootstrap should serialize");
@@ -4112,11 +4224,13 @@ mod tests {
                 protocol_version: PROTOCOL_VERSION - 1,
                 worker_id: 0,
                 cnki_captcha_token: None,
+                provider_proxy_url: None,
             },
             LiveIndexWorkerBootstrap {
                 protocol_version: PROTOCOL_VERSION,
                 worker_id: 1,
                 cnki_captcha_token: None,
+                provider_proxy_url: None,
             },
         ];
 
@@ -4167,6 +4281,7 @@ mod tests {
                 &context,
                 vec![request],
                 Some(sentinel),
+                &ProviderProxySelection::default(),
                 IndexRunMetrics::default(),
                 Duration::from_secs(1),
                 |_, _| {
@@ -4192,11 +4307,11 @@ mod tests {
     }
 
     #[test]
-    fn worker_protocol_version_five_rejects_version_four_requests() {
+    fn worker_protocol_version_six_rejects_version_five_requests() {
         let directory = tempdir().expect("temporary directory should create");
         let mut request = fetch_worker_request("scholarly", "run-version-mismatch");
-        assert_eq!(PROTOCOL_VERSION, 5);
-        request.protocol_version = 4;
+        assert_eq!(PROTOCOL_VERSION, 6);
+        request.protocol_version = 5;
         request.assignments.clear();
         let request_path = directory.path().join("worker-request.json");
         std::fs::write(
@@ -4207,7 +4322,7 @@ mod tests {
 
         let mut output = Vec::new();
         let mut input = Vec::new();
-        write_message(&mut input, &worker_bootstrap(&request, None))
+        write_message(&mut input, &worker_bootstrap(&request, None, None))
             .expect("worker bootstrap should serialize");
         run_live_index_worker_with_io(&request_path, Cursor::new(input), &mut output)
             .expect("worker entrypoint should emit a redacted terminal failure");

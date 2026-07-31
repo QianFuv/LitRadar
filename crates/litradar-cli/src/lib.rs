@@ -9,6 +9,7 @@ use std::time::Instant;
 
 use litradar_auth::AuthService;
 use litradar_domain::{DELIVERY_RETRY_ATTEMPTS_MAX, DELIVERY_RETRY_ATTEMPTS_MIN};
+use litradar_index::live::ProviderProxySelection;
 use litradar_index::{
     run_live_index, run_live_index_worker_from_file_path, LiveIndexConfig, LiveIndexOutcome,
     LiveScholarlyConfig,
@@ -327,7 +328,7 @@ fn run_index_command_with_bundled_meta_dir(
     prepare_index_managed_meta(&storage_config, bundled_meta_dir.as_deref())?;
     let secret_codec = SecretCodec::load(&secret_key_file)?;
     verify_database_secrets(&auth_db_path, &secret_codec)?;
-    let (scholarly_config, index_provider_routes, cnki_captcha_token) =
+    let (scholarly_config, index_provider_routes, cnki_captcha_token, provider_proxy_selection) =
         live_index_runtime_config(&auth_db_path, &secret_codec, options.timeout_seconds)?;
     let has_scholarly_route = index_provider_routes
         .values()
@@ -353,6 +354,7 @@ fn run_index_command_with_bundled_meta_dir(
         notify_dry_run: options.notify_dry_run,
         scholarly_config,
         cnki_captcha_token,
+        provider_proxy_selection,
         index_provider_routes: index_provider_routes.clone(),
     })?;
     migrate_index_command_databases(&project_root, options.file.as_deref())?;
@@ -1067,6 +1069,7 @@ type LiveIndexRuntimeConfig = (
     LiveScholarlyConfig,
     BTreeMap<String, String>,
     Option<String>,
+    ProviderProxySelection,
 );
 
 fn live_index_runtime_config(
@@ -1100,7 +1103,13 @@ fn live_index_runtime_config(
                 .filter(|value| !value.trim().is_empty())
         }
     };
-    Ok((scholarly_config, index_provider_routes, cnki_captcha_token))
+    let provider_proxy_selection = ProviderProxySelection::from_runtime_settings(&settings)?;
+    Ok((
+        scholarly_config,
+        index_provider_routes,
+        cnki_captcha_token,
+        provider_proxy_selection,
+    ))
 }
 
 fn index_usage() -> String {
@@ -1180,11 +1189,12 @@ mod tests {
     use super::{
         admin_usage, aggregate_delivery_status, delivery_usage, extract_auth_db_path,
         extract_bool_pair, extract_string_option, extract_usize_option, index_concurrency_payload,
-        index_usage, migrate_command_databases, migrate_index_command_databases, normalize_db_name,
-        parse_index_options, prepare_index_managed_meta, resolve_delivery_targets,
-        resolve_project_path, run_admin_command_with_reader, run_index_command,
-        run_index_command_with_bundled_meta_dir, run_notify_command, run_push_command,
-        run_scheduler_command, scheduler_usage, serialize_index_outcome, IndexOptions,
+        index_usage, live_index_runtime_config, migrate_command_databases,
+        migrate_index_command_databases, normalize_db_name, parse_index_options,
+        prepare_index_managed_meta, resolve_delivery_targets, resolve_project_path,
+        run_admin_command_with_reader, run_index_command, run_index_command_with_bundled_meta_dir,
+        run_notify_command, run_push_command, run_scheduler_command, scheduler_usage,
+        serialize_index_outcome, IndexOptions,
     };
     use litradar_index::{LiveCsvIndexOutcome, LiveIndexOutcome};
     use litradar_worker::delivery::{
@@ -1413,6 +1423,75 @@ mod tests {
             "rotation-fixture-secret"
         );
         assert!(litradar_storage::load_runtime_settings(&auth_db_path, &old_codec).is_err());
+    }
+
+    #[test]
+    fn live_index_runtime_config_loads_provider_proxy_and_rejects_inconsistent_state() {
+        let root = temp_root("litradar-cli-provider-proxy");
+        let auth_db_path = root.path().join("auth.sqlite");
+        let secret_key_file = root.path().join("secret.key");
+        let password_sentinel = "cli-provider-proxy-password-sentinel";
+        fs::write(&secret_key_file, [19_u8; 32]).expect("secret key should write");
+        litradar_storage::migrate_auth_database(&auth_db_path)
+            .expect("auth database should migrate");
+        let codec =
+            litradar_storage::SecretCodec::load(&secret_key_file).expect("codec should load");
+        litradar_storage::upsert_runtime_settings(
+            &auth_db_path,
+            &codec,
+            &HashMap::from([
+                (
+                    "provider_proxy_url".to_string(),
+                    Some(format!(
+                        "socks5h://proxy-user:{password_sentinel}@127.0.0.1:1081"
+                    )),
+                ),
+                (
+                    "provider_proxy_policy".to_string(),
+                    Some(r#"{"cnki":true,"scholarly":false}"#.to_string()),
+                ),
+            ]),
+            &HashMap::new(),
+        )
+        .expect("Provider proxy settings should write");
+
+        let (_, _, _, selection) = live_index_runtime_config(&auth_db_path, &codec, 30)
+            .expect("valid Provider proxy state should load for each index command");
+        assert!(selection.for_provider("cnki").is_explicit());
+        assert!(!selection.for_provider("scholarly").is_explicit());
+        assert!(!format!("{selection:?}").contains(password_sentinel));
+
+        let connection = litradar_storage::open_sqlite_connection(&auth_db_path)
+            .expect("auth database should open");
+        connection
+            .execute(
+                "UPDATE runtime_settings SET value = ?1 WHERE key = 'provider_proxy_policy'",
+                [r#"{"unknown-provider":true}"#],
+            )
+            .expect("unknown Provider policy fixture should write");
+        let invalid_error = live_index_runtime_config(&auth_db_path, &codec, 30)
+            .expect_err("unknown Provider policy should fail at command startup");
+        assert!(invalid_error.to_string().contains("Unknown Provider"));
+        assert!(!invalid_error.to_string().contains(password_sentinel));
+
+        connection
+            .execute(
+                "UPDATE runtime_settings SET value = ?1 WHERE key = 'provider_proxy_policy'",
+                [r#"{"cnki":true}"#],
+            )
+            .expect("enabled Provider policy fixture should write");
+        connection
+            .execute(
+                "UPDATE runtime_settings SET value = '' WHERE key = 'provider_proxy_url'",
+                [],
+            )
+            .expect("missing proxy URL fixture should write");
+        let inconsistent_error = live_index_runtime_config(&auth_db_path, &codec, 30)
+            .expect_err("enabled Provider without a URL should fail at command startup");
+        assert!(inconsistent_error
+            .to_string()
+            .contains("Provider proxy URL is required"));
+        assert!(!inconsistent_error.to_string().contains(password_sentinel));
     }
 
     #[test]

@@ -3,6 +3,7 @@
 pub mod cnki_domestic;
 pub mod cnki_oversea;
 pub mod jfbym;
+pub mod provider_proxy;
 pub mod providers;
 pub mod scholarly;
 pub mod zjlib;
@@ -28,6 +29,7 @@ pub use jfbym::{
     FixtureJfbymSolver, JfbymError, JfbymSolver, LiveJfbymSolver, JFBYM_API_URL,
     JFBYM_DUAL_SLIDER_TYPE, JFBYM_SUCCESS_CODE,
 };
+pub use provider_proxy::{ProviderProxy, ProviderProxyError, ProviderProxySelection};
 pub use providers::{
     built_in_provider_capabilities, cnki_access_registration, cnki_index_registration,
     cnki_index_registration_with_workers, cnki_oversea_access_registration,

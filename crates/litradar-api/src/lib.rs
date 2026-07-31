@@ -218,6 +218,8 @@ fn try_build_router_with_state(
     let runtime_settings =
         litradar_storage::load_runtime_settings(storage_config.auth_db_path(), &secret_codec)?;
     config.apply_runtime_settings(&runtime_settings)?;
+    let provider_proxy_selection =
+        litradar_sources::ProviderProxySelection::from_runtime_settings(&runtime_settings)?;
     let security_header_policy = security_headers::load_security_header_policy(
         &web_root,
         config.are_secure_cookies_required,
@@ -228,6 +230,7 @@ fn try_build_router_with_state(
         config.are_session_cookies_secure,
         config.trusted_proxy_cidrs.clone(),
         config.auth_rate_limit_policy,
+        provider_proxy_selection,
     );
 
     let router = Router::new()
@@ -550,9 +553,9 @@ mod tests {
     use crate::state::ApiState;
     use crate::test_support::{json_request, FixtureIndexDatabase, JsonTestResponse, TestBackend};
     use crate::{
-        api_heartbeat_loop_with_interval, cache_control_middleware, try_build_router, ApiConfig,
-        AUTHENTICATED_CACHE_CONTROL, AUTH_API_CACHE_CONTROL, FRONTEND_CACHE_CONTROL,
-        STATIC_ASSET_CACHE_CONTROL,
+        api_heartbeat_loop_with_interval, cache_control_middleware, try_build_router,
+        try_build_router_with_state, ApiConfig, AUTHENTICATED_CACHE_CONTROL,
+        AUTH_API_CACHE_CONTROL, FRONTEND_CACHE_CONTROL, STATIC_ASSET_CACHE_CONTROL,
     };
 
     static TEST_CONFIG_LOCK: AtomicBool = AtomicBool::new(false);
@@ -1461,6 +1464,90 @@ mod tests {
         ))
         .expect_err("tampered ciphertext should fail startup");
         assert_eq!(tampered.to_string(), "Stored secret authentication failed");
+    }
+
+    #[test]
+    fn provider_proxy_startup_selection_is_validated_and_redacted() {
+        let backend = TestBackend::new();
+        let password_sentinel = "api-provider-proxy-password-sentinel";
+        litradar_storage::upsert_runtime_settings(
+            backend.auth_db_path(),
+            backend.secret_codec(),
+            &HashMap::from([
+                (
+                    "provider_proxy_url".to_string(),
+                    Some(format!(
+                        "socks5h://proxy-user:{password_sentinel}@127.0.0.1:1081"
+                    )),
+                ),
+                (
+                    "provider_proxy_policy".to_string(),
+                    Some(r#"{"cnki":true,"zjlib":false}"#.to_string()),
+                ),
+            ]),
+            &HashMap::new(),
+        )
+        .expect("Provider proxy settings should persist");
+        let config = ApiConfig::new(
+            backend.project_root().to_path_buf(),
+            "127.0.0.1".to_string(),
+            0,
+            backend.project_root().join("secret.key"),
+        );
+        let (_, state) =
+            try_build_router_with_state(config).expect("valid proxy selection should start");
+
+        assert!(state
+            .provider_proxy_selection()
+            .for_provider("cnki")
+            .is_explicit());
+        assert!(!state
+            .provider_proxy_selection()
+            .for_provider("zjlib")
+            .is_explicit());
+        assert!(!format!("{state:?}").contains(password_sentinel));
+
+        let connection = Connection::open(backend.auth_db_path())
+            .expect("auth database should open for malformed startup fixtures");
+        connection
+            .execute(
+                "UPDATE runtime_settings SET value = ?1 WHERE key = 'provider_proxy_policy'",
+                [r#"{"unknown-provider":true}"#],
+            )
+            .expect("unknown Provider policy fixture should write");
+        let invalid = try_build_router(ApiConfig::new(
+            backend.project_root().to_path_buf(),
+            "127.0.0.1".to_string(),
+            0,
+            backend.project_root().join("secret.key"),
+        ))
+        .expect_err("unknown Provider proxy policy should fail startup");
+        assert!(invalid.to_string().contains("Unknown Provider"));
+        assert!(!invalid.to_string().contains(password_sentinel));
+
+        connection
+            .execute(
+                "UPDATE runtime_settings SET value = ?1 WHERE key = 'provider_proxy_policy'",
+                [r#"{"cnki":true}"#],
+            )
+            .expect("enabled Provider policy fixture should write");
+        connection
+            .execute(
+                "UPDATE runtime_settings SET value = '' WHERE key = 'provider_proxy_url'",
+                [],
+            )
+            .expect("missing Provider proxy URL fixture should write");
+        let inconsistent = try_build_router(ApiConfig::new(
+            backend.project_root().to_path_buf(),
+            "127.0.0.1".to_string(),
+            0,
+            backend.project_root().join("secret.key"),
+        ))
+        .expect_err("enabled Provider without a URL should fail startup");
+        assert!(inconsistent
+            .to_string()
+            .contains("Provider proxy URL is required"));
+        assert!(!inconsistent.to_string().contains(password_sentinel));
     }
 
     #[tokio::test]

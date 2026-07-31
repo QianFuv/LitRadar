@@ -17,6 +17,7 @@ use std::time::Duration;
 use crate::jfbym::{
     encrypt_point_json, point_x_candidates, strip_data_url_base64, JfbymError, JfbymSolver,
 };
+use crate::provider_proxy::ProviderProxy;
 use crate::scholarly::{SourceAttempt, SourceError};
 use litradar_domain::{
     normalize_bibliographic_text, normalize_contract_issn, normalize_contract_text,
@@ -2324,6 +2325,7 @@ impl fmt::Debug for LiveDomesticCnkiConfig {
 pub struct LiveDomesticCnkiTransport {
     client: Client,
     timeout_seconds: u64,
+    provider_proxy: ProviderProxy,
     captcha_token: Option<String>,
     captcha_session: SharedDomesticCaptchaSession,
     attempts: Vec<SourceAttempt>,
@@ -2404,6 +2406,7 @@ impl fmt::Debug for LiveDomesticCnkiTransport {
         formatter
             .debug_struct("LiveDomesticCnkiTransport")
             .field("timeout_seconds", &self.timeout_seconds)
+            .field("provider_proxy", &self.provider_proxy)
             .field(
                 "captcha_token",
                 &self.captcha_token.as_ref().map(|_| "[REDACTED]"),
@@ -2416,19 +2419,28 @@ impl fmt::Debug for LiveDomesticCnkiTransport {
 
 fn build_live_domestic_http_client(
     timeout_seconds: u64,
+    provider_proxy: &ProviderProxy,
 ) -> Result<Client, DomesticCnkiSourceError> {
-    Client::builder()
-        .timeout(Duration::from_secs(timeout_seconds))
-        .cookie_store(true)
-        .redirect(Policy::custom(|attempt| {
-            if attempt.previous().len() >= DOMESTIC_REDIRECT_LIMIT {
-                attempt.error("domestic CNKI redirect limit exceeded")
-            } else if is_allowed_domestic_url(attempt.url()) {
-                attempt.follow()
-            } else {
-                attempt.error("domestic CNKI redirect URL rejected")
-            }
-        }))
+    provider_proxy
+        .apply(
+            Client::builder()
+                .timeout(Duration::from_secs(timeout_seconds))
+                .cookie_store(true)
+                .redirect(Policy::custom(|attempt| {
+                    if attempt.previous().len() >= DOMESTIC_REDIRECT_LIMIT {
+                        attempt.error("domestic CNKI redirect limit exceeded")
+                    } else if is_allowed_domestic_url(attempt.url()) {
+                        attempt.follow()
+                    } else {
+                        attempt.error("domestic CNKI redirect URL rejected")
+                    }
+                })),
+        )
+        .map_err(|_| {
+            DomesticCnkiSourceError::Request(
+                "domestic CNKI HTTP client initialization failed".to_string(),
+            )
+        })?
         .build()
         .map_err(|_| {
             DomesticCnkiSourceError::Request(
@@ -2448,11 +2460,29 @@ impl LiveDomesticCnkiTransport {
     ///
     /// Live domestic transport.
     pub fn new(config: LiveDomesticCnkiConfig) -> Result<Self, DomesticCnkiSourceError> {
+        Self::new_with_proxy(config, ProviderProxy::direct())
+    }
+
+    /// Build a live domestic CNKI transport with a managed proxy decision.
+    ///
+    /// # Arguments
+    ///
+    /// * `config` - Live source configuration.
+    /// * `provider_proxy` - Direct or explicit domestic CNKI proxy decision.
+    ///
+    /// # Returns
+    ///
+    /// Live domestic transport.
+    pub fn new_with_proxy(
+        config: LiveDomesticCnkiConfig,
+        provider_proxy: ProviderProxy,
+    ) -> Result<Self, DomesticCnkiSourceError> {
         let timeout_seconds = config.timeout_seconds.max(1);
-        let client = build_live_domestic_http_client(timeout_seconds)?;
+        let client = build_live_domestic_http_client(timeout_seconds, &provider_proxy)?;
         Ok(Self {
             client,
             timeout_seconds,
+            provider_proxy,
             captcha_token: config
                 .captcha_token
                 .filter(|value| !value.trim().is_empty()),
@@ -2693,9 +2723,11 @@ impl LiveDomesticCnkiTransport {
             DomesticCnkiSourceError::Request("domestic CNKI captcha token is required".to_string())
         })?;
         let client = self.client.clone();
+        let provider_proxy = self.provider_proxy.clone();
         self.captcha_session.refresh(observed_generation, |session| {
             let mut solver =
-                crate::jfbym::LiveJfbymSolver::new(token, 30).map_err(map_jfbym_error)?;
+                crate::jfbym::LiveJfbymSolver::new_with_proxy(token, 30, provider_proxy)
+                    .map_err(map_jfbym_error)?;
             session.ensure_access(
                 response_text,
                 response_url,
@@ -2757,7 +2789,7 @@ impl LiveDomesticCnkiTransport {
 
 impl DomesticCnkiTransport for LiveDomesticCnkiTransport {
     fn reset_transient_state(&mut self) -> Result<(), DomesticCnkiSourceError> {
-        let client = build_live_domestic_http_client(self.timeout_seconds)?;
+        let client = build_live_domestic_http_client(self.timeout_seconds, &self.provider_proxy)?;
         self.captcha_session.reset()?;
         self.client = client;
         Ok(())

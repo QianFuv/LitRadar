@@ -11,6 +11,7 @@ use reqwest::redirect::Policy;
 use serde::Deserialize;
 use serde_json::{json, Value};
 
+use crate::provider_proxy::ProviderProxy;
 use crate::scholarly::{SourceAttempt, SourceError};
 
 const BASE_URL: &str = "https://oversea.cnki.net";
@@ -335,9 +336,30 @@ impl LiveCnkiTransport {
     ///
     /// Live CNKI transport.
     pub fn new(config: LiveCnkiConfig) -> Result<Self, CnkiSourceError> {
-        let client = Client::builder()
-            .timeout(Duration::from_secs(config.timeout_seconds.max(1)))
-            .redirect(Policy::none())
+        Self::new_with_proxy(config, ProviderProxy::direct())
+    }
+
+    /// Build a live CNKI transport with a managed proxy decision.
+    ///
+    /// # Arguments
+    ///
+    /// * `config` - Live source configuration.
+    /// * `provider_proxy` - Direct or explicit CNKI Overseas proxy decision.
+    ///
+    /// # Returns
+    ///
+    /// Live CNKI transport.
+    pub fn new_with_proxy(
+        config: LiveCnkiConfig,
+        provider_proxy: ProviderProxy,
+    ) -> Result<Self, CnkiSourceError> {
+        let client = provider_proxy
+            .apply(
+                Client::builder()
+                    .timeout(Duration::from_secs(config.timeout_seconds.max(1)))
+                    .redirect(Policy::none()),
+            )
+            .map_err(|error| CnkiSourceError::Request(error.to_string()))?
             .build()
             .map_err(|error| CnkiSourceError::Request(error.to_string()))?;
         Ok(Self {

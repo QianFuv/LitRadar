@@ -18,6 +18,8 @@ use reqwest::redirect::Policy;
 use reqwest::Url;
 use serde_json::{json, Value};
 
+use crate::provider_proxy::ProviderProxy;
+
 const WWW_BASE_URL: &str = "https://www.zjlib.cn";
 const SHARE_BASE_URL: &str = "https://share.zjlib.cn";
 const ZYPROXY_BASE_URL: &str = "https://http-10--18--17--173.elib.zyproxy.zjlib.cn";
@@ -1095,25 +1097,51 @@ impl LiveZjlibCnkiTransport {
     ///
     /// Live transport.
     pub fn new(config: LiveZjlibCnkiConfig) -> Result<Self, ZjlibCnkiError> {
-        Self::new_with_endpoints(config, LiveZjlibCnkiEndpoints::default())
+        Self::new_with_proxy(config, ProviderProxy::direct())
+    }
+
+    /// Build a live transport with a managed proxy decision.
+    ///
+    /// # Arguments
+    ///
+    /// * `config` - Live transport configuration.
+    /// * `provider_proxy` - Direct or explicit ZJLib proxy decision.
+    ///
+    /// # Returns
+    ///
+    /// Live transport.
+    pub fn new_with_proxy(
+        config: LiveZjlibCnkiConfig,
+        provider_proxy: ProviderProxy,
+    ) -> Result<Self, ZjlibCnkiError> {
+        Self::new_with_endpoints(config, LiveZjlibCnkiEndpoints::default(), provider_proxy)
     }
 
     fn new_with_endpoints(
         config: LiveZjlibCnkiConfig,
         endpoints: LiveZjlibCnkiEndpoints,
+        provider_proxy: ProviderProxy,
     ) -> Result<Self, ZjlibCnkiError> {
         let cookie_jar = Arc::new(Jar::default());
         let timeout = Duration::from_secs(config.timeout_seconds.max(1));
-        let redirect_client = Client::builder()
-            .timeout(timeout)
-            .cookie_provider(cookie_jar.clone())
-            .redirect(Policy::limited(10))
+        let redirect_client = provider_proxy
+            .apply(
+                Client::builder()
+                    .timeout(timeout)
+                    .cookie_provider(cookie_jar.clone())
+                    .redirect(Policy::limited(10)),
+            )
+            .map_err(|error| ZjlibCnkiError::Request(error.to_string()))?
             .build()
             .map_err(request_error)?;
-        let no_redirect_client = Client::builder()
-            .timeout(timeout)
-            .cookie_provider(cookie_jar.clone())
-            .redirect(Policy::none())
+        let no_redirect_client = provider_proxy
+            .apply(
+                Client::builder()
+                    .timeout(timeout)
+                    .cookie_provider(cookie_jar.clone())
+                    .redirect(Policy::none()),
+            )
+            .map_err(|error| ZjlibCnkiError::Request(error.to_string()))?
             .build()
             .map_err(request_error)?;
         Ok(Self {
@@ -1131,7 +1159,11 @@ impl LiveZjlibCnkiTransport {
         config: LiveZjlibCnkiConfig,
         base_url: &str,
     ) -> Result<Self, ZjlibCnkiError> {
-        Self::new_with_endpoints(config, LiveZjlibCnkiEndpoints::loopback(base_url)?)
+        Self::new_with_endpoints(
+            config,
+            LiveZjlibCnkiEndpoints::loopback(base_url)?,
+            ProviderProxy::direct(),
+        )
     }
 
     fn build_share_sso_url(&mut self, token: &str) -> Result<String, ZjlibCnkiError> {

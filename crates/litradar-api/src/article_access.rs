@@ -22,10 +22,10 @@ use litradar_provider::{
 use litradar_sources::{
     scholarly_access_registration, CnkiArticleAccessProvider, DomesticCnkiArticleAccessProvider,
     LiveCnkiConfig, LiveCnkiTransport, LiveDomesticCnkiConfig, LiveDomesticCnkiTransport,
-    LiveZjlibCnkiConfig, LiveZjlibCnkiTransport, ZhejiangLibraryCnkiClient,
-    ZjlibCnkiArticleIdentity, ZjlibCnkiDownloadedPdf, ZjlibCnkiError, CNKI_OVERSEA_PROVIDER_NAME,
-    CNKI_PROVIDER_NAME, CNKI_REDIRECT_HOSTS, DEFAULT_FULL_TEXT_MAXIMUM_BYTES,
-    DOMESTIC_CNKI_REDIRECT_HOSTS, ZJLIB_PROVIDER_NAME,
+    LiveZjlibCnkiConfig, LiveZjlibCnkiTransport, ProviderProxy, ProviderProxySelection,
+    ZhejiangLibraryCnkiClient, ZjlibCnkiArticleIdentity, ZjlibCnkiDownloadedPdf, ZjlibCnkiError,
+    CNKI_OVERSEA_PROVIDER_NAME, CNKI_PROVIDER_NAME, CNKI_REDIRECT_HOSTS,
+    DEFAULT_FULL_TEXT_MAXIMUM_BYTES, DOMESTIC_CNKI_REDIRECT_HOSTS, ZJLIB_PROVIDER_NAME,
 };
 #[cfg(test)]
 use litradar_sources::{FixtureZjlibCnkiMode, FixtureZjlibCnkiTransport};
@@ -45,6 +45,7 @@ static FULL_TEXT_FIXTURE_MODE: OnceLock<Mutex<Option<FixtureZjlibCnkiMode>>> = O
 ///
 /// * `storage_config` - Storage paths used to read authenticated session context.
 /// * `secret_codec` - Codec used to read the user's CNKI session.
+/// * `provider_proxy_selection` - Startup-validated Provider proxy decisions.
 ///
 /// # Returns
 ///
@@ -52,13 +53,23 @@ static FULL_TEXT_FIXTURE_MODE: OnceLock<Mutex<Option<FixtureZjlibCnkiMode>>> = O
 pub(crate) fn build_article_provider_registry(
     storage_config: litradar_storage::StorageConfig,
     secret_codec: litradar_storage::SecretCodec,
+    provider_proxy_selection: ProviderProxySelection,
 ) -> Result<ProviderRegistry, ProviderRegistryError> {
     let captcha_token = load_cnki_captcha_token(&storage_config, &secret_codec);
     let mut registry = ProviderRegistry::default();
     registry.register(scholarly_access_registration()?)?;
-    registry.register(live_cnki_oversea_access_registration()?)?;
-    registry.register(live_cnki_access_registration(captcha_token)?)?;
-    registry.register(zjlib_full_text_registration(storage_config, secret_codec)?)?;
+    registry.register(live_cnki_oversea_access_registration(
+        provider_proxy_selection.for_provider(CNKI_OVERSEA_PROVIDER_NAME),
+    )?)?;
+    registry.register(live_cnki_access_registration(
+        captcha_token,
+        provider_proxy_selection.for_provider(CNKI_PROVIDER_NAME),
+    )?)?;
+    registry.register(zjlib_full_text_registration(
+        storage_config,
+        secret_codec,
+        provider_proxy_selection.for_provider(ZJLIB_PROVIDER_NAME),
+    )?)?;
     Ok(registry)
 }
 
@@ -369,6 +380,7 @@ async fn has_active_cnki_session(state: &ApiState, user_id: UserId) -> Result<bo
 fn zjlib_full_text_registration(
     storage_config: litradar_storage::StorageConfig,
     secret_codec: litradar_storage::SecretCodec,
+    provider_proxy: ProviderProxy,
 ) -> Result<ProviderRegistration, ProviderRegistryError> {
     ProviderRegistration::try_new(
         ProviderDescriptor {
@@ -383,6 +395,7 @@ fn zjlib_full_text_registration(
             article_full_text: Some(Arc::new(ZjlibCnkiFullTextProvider {
                 storage_config,
                 secret_codec,
+                provider_proxy,
             })),
             ..ProviderImplementations::default()
         },
@@ -392,10 +405,12 @@ fn zjlib_full_text_registration(
 struct ZjlibCnkiFullTextProvider {
     storage_config: litradar_storage::StorageConfig,
     secret_codec: litradar_storage::SecretCodec,
+    provider_proxy: ProviderProxy,
 }
 
 struct LiveCnkiAccessProvider {
     config: LiveCnkiConfig,
+    provider_proxy: ProviderProxy,
 }
 
 impl LiveCnkiAccessProvider {
@@ -404,12 +419,14 @@ impl LiveCnkiAccessProvider {
         article: &ArticleLocator,
         context: ArticleAccessContext,
     ) -> Result<ArticleRedirect, ProviderError> {
-        let transport = LiveCnkiTransport::new(self.config.clone()).map_err(|_| {
-            ProviderError::new(
-                ProviderErrorKind::TemporarilyUnavailable,
-                "CNKI transport is unavailable",
-            )
-        })?;
+        let transport =
+            LiveCnkiTransport::new_with_proxy(self.config.clone(), self.provider_proxy.clone())
+                .map_err(|_| {
+                    ProviderError::new(
+                        ProviderErrorKind::TemporarilyUnavailable,
+                        "CNKI transport is unavailable",
+                    )
+                })?;
         CnkiArticleAccessProvider::new(transport).resolve_abstract(article, context)
     }
 }
@@ -424,11 +441,14 @@ impl ArticleAbstractProvider for LiveCnkiAccessProvider {
     }
 }
 
-fn live_cnki_oversea_access_registration() -> Result<ProviderRegistration, ProviderRegistryError> {
+fn live_cnki_oversea_access_registration(
+    provider_proxy: ProviderProxy,
+) -> Result<ProviderRegistration, ProviderRegistryError> {
     let provider = Arc::new(LiveCnkiAccessProvider {
         config: LiveCnkiConfig {
             timeout_seconds: ARTICLE_TRANSPORT_TIMEOUT_SECONDS,
         },
+        provider_proxy,
     });
     ProviderRegistration::try_new(
         ProviderDescriptor {
@@ -451,6 +471,7 @@ fn live_cnki_oversea_access_registration() -> Result<ProviderRegistration, Provi
 
 struct LiveDomesticCnkiAccessProvider {
     config: LiveDomesticCnkiConfig,
+    provider_proxy: ProviderProxy,
 }
 
 impl LiveDomesticCnkiAccessProvider {
@@ -459,7 +480,11 @@ impl LiveDomesticCnkiAccessProvider {
         article: &ArticleLocator,
         context: ArticleAccessContext,
     ) -> Result<ArticleRedirect, ProviderError> {
-        let transport = LiveDomesticCnkiTransport::new(self.config.clone()).map_err(|_| {
+        let transport = LiveDomesticCnkiTransport::new_with_proxy(
+            self.config.clone(),
+            self.provider_proxy.clone(),
+        )
+        .map_err(|_| {
             ProviderError::new(
                 ProviderErrorKind::TemporarilyUnavailable,
                 "domestic CNKI transport is unavailable",
@@ -502,12 +527,14 @@ fn load_cnki_captcha_token(
 
 fn live_cnki_access_registration(
     captcha_token: Option<String>,
+    provider_proxy: ProviderProxy,
 ) -> Result<ProviderRegistration, ProviderRegistryError> {
     let provider = Arc::new(LiveDomesticCnkiAccessProvider {
         config: LiveDomesticCnkiConfig {
             timeout_seconds: ARTICLE_TRANSPORT_TIMEOUT_SECONDS,
             captcha_token,
         },
+        provider_proxy,
     });
     ProviderRegistration::try_new(
         ProviderDescriptor {
@@ -558,8 +585,9 @@ impl ArticleFullTextProvider for ZjlibCnkiFullTextProvider {
             authors: article.authors.join("; "),
             journal_title: article.journal_title.clone(),
         };
-        let downloaded = download_zjlib_full_text(expected, session.session_data)
-            .map_err(map_zjlib_provider_error)?;
+        let downloaded =
+            download_zjlib_full_text(expected, session.session_data, self.provider_proxy.clone())
+                .map_err(map_zjlib_provider_error)?;
         Ok(ArticleFullTextResolution::Document(
             ArticleFullTextDocument {
                 content_type: downloaded.content_type.to_ascii_lowercase(),
@@ -573,6 +601,7 @@ impl ArticleFullTextProvider for ZjlibCnkiFullTextProvider {
 fn download_zjlib_full_text(
     expected: ZjlibCnkiArticleIdentity,
     session_data: serde_json::Value,
+    provider_proxy: ProviderProxy,
 ) -> Result<ZjlibCnkiDownloadedPdf, ZjlibCnkiError> {
     #[cfg(test)]
     if let Some(mode) = full_text_fixture_mode()
@@ -587,10 +616,13 @@ fn download_zjlib_full_text(
         client.warm_up_fulltext_session()?;
         return client.download_matching_pdf(&expected, 10);
     }
-    let transport = LiveZjlibCnkiTransport::new(LiveZjlibCnkiConfig {
-        timeout_seconds: ARTICLE_TRANSPORT_TIMEOUT_SECONDS,
-        ..LiveZjlibCnkiConfig::default()
-    })?;
+    let transport = LiveZjlibCnkiTransport::new_with_proxy(
+        LiveZjlibCnkiConfig {
+            timeout_seconds: ARTICLE_TRANSPORT_TIMEOUT_SECONDS,
+            ..LiveZjlibCnkiConfig::default()
+        },
+        provider_proxy,
+    )?;
     let mut client = ZhejiangLibraryCnkiClient::from_state_data(transport, &session_data);
     client.warm_up_fulltext_session()?;
     client.download_matching_pdf(&expected, 10)

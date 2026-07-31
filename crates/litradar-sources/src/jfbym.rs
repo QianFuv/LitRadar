@@ -14,6 +14,8 @@ use reqwest::blocking::Client;
 use reqwest::redirect::Policy;
 use serde_json::Value;
 
+use crate::provider_proxy::ProviderProxy;
+
 /// Official jfbym dual-image slider type used for CNKI `blockPuzzle`.
 pub const JFBYM_DUAL_SLIDER_TYPE: &str = "20111";
 /// Verified HTTPS jfbym custom API endpoint.
@@ -163,15 +165,38 @@ impl LiveJfbymSolver {
     ///
     /// Live solver, or a configuration error when the token is empty.
     pub fn new(token: impl Into<String>, timeout_seconds: u64) -> Result<Self, JfbymError> {
+        Self::new_with_proxy(token, timeout_seconds, ProviderProxy::direct())
+    }
+
+    /// Build a live jfbym solver with a managed CNKI proxy decision.
+    ///
+    /// # Arguments
+    ///
+    /// * `token` - jfbym API token.
+    /// * `timeout_seconds` - HTTP timeout.
+    /// * `provider_proxy` - Direct or explicit domestic CNKI proxy decision.
+    ///
+    /// # Returns
+    ///
+    /// Live solver, or a configuration error when the token is empty.
+    pub fn new_with_proxy(
+        token: impl Into<String>,
+        timeout_seconds: u64,
+        provider_proxy: ProviderProxy,
+    ) -> Result<Self, JfbymError> {
         let token = token.into();
         if token.trim().is_empty() {
             return Err(JfbymError::Configuration(
                 "jfbym token is required".to_string(),
             ));
         }
-        let client = Client::builder()
-            .timeout(Duration::from_secs(timeout_seconds.max(1)))
-            .redirect(Policy::none())
+        let client = provider_proxy
+            .apply(
+                Client::builder()
+                    .timeout(Duration::from_secs(timeout_seconds.max(1)))
+                    .redirect(Policy::none()),
+            )
+            .map_err(|error| JfbymError::Request(error.to_string()))?
             .build()
             .map_err(|error| JfbymError::Request(error.to_string()))?;
         Ok(Self {
