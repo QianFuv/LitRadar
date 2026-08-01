@@ -12,6 +12,29 @@ use serde_json::json;
 
 const OUTBOX_PAGE_SIZE: usize = 1_000;
 
+/// Exact provider-neutral manifest bytes prepared from one bounded outbox snapshot.
+#[derive(Clone, PartialEq, Eq)]
+pub(crate) struct PreparedContentChangeManifest {
+    /// Exact JSON bytes, including the terminal newline.
+    pub(crate) payload: Vec<u8>,
+    /// Inclusive outbox cursor represented by the payload, when any event exists.
+    pub(crate) through_event_id: Option<i64>,
+    /// Number of outbox events represented by the payload.
+    pub(crate) event_count: usize,
+}
+
+impl fmt::Debug for PreparedContentChangeManifest {
+    /// Format prepared metadata without exposing manifest payload bytes.
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("PreparedContentChangeManifest")
+            .field("payload_bytes", &self.payload.len())
+            .field("through_event_id", &self.through_event_id)
+            .field("event_count", &self.event_count)
+            .finish()
+    }
+}
+
 /// One provider-neutral canonical content outbox event.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ContentChangeEvent {
@@ -168,7 +191,69 @@ impl From<serde_json::Error> for ChangeWriteError {
     }
 }
 
-/// Publish all currently committed content events and acknowledge them atomically after rename.
+/// Prepare exact manifest bytes for all currently committed content events.
+///
+/// # Arguments
+///
+/// * `connection` - Open provider-neutral content database.
+/// * `db_name` - Stable catalog-derived content database filename.
+/// * `run_id` - Current core-owned run identifier.
+/// * `generated_at` - Safe manifest generation timestamp.
+///
+/// # Returns
+///
+/// Exact bytes and the inclusive outbox cursor they represent.
+pub(crate) fn prepare_content_change_manifest(
+    connection: &Connection,
+    db_name: &str,
+    run_id: &str,
+    generated_at: &str,
+) -> Result<PreparedContentChangeManifest, ChangeWriteError> {
+    let events = read_all_pending_events(connection)?;
+    let event_count = events.len();
+    let through_event_id = events.last().map(|event| event.event_id);
+    let payload = build_manifest_payload(db_name, run_id, generated_at, &events);
+    let mut payload = serde_json::to_vec(&payload)?;
+    payload.push(b'\n');
+    Ok(PreparedContentChangeManifest {
+        payload,
+        through_event_id,
+        event_count,
+    })
+}
+
+/// Publish exact prepared manifest bytes through a durable atomic rename.
+///
+/// # Arguments
+///
+/// * `path` - Final manifest path.
+/// * `payload` - Exact prepared bytes, including the terminal newline.
+///
+/// # Returns
+///
+/// Success after the final path contains the exact bytes.
+pub(crate) fn publish_content_change_manifest(
+    path: &Path,
+    payload: &[u8],
+) -> Result<(), ChangeWriteError> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let temp_path = manifest_temp_path(path);
+    let mut pending = PendingManifest::new(temp_path.clone());
+    let file = File::create(&temp_path)?;
+    let mut writer = BufWriter::new(file);
+    writer.write_all(payload)?;
+    writer.flush()?;
+    writer.get_ref().sync_all()?;
+    drop(writer);
+    fs::rename(&temp_path, path)?;
+    pending.did_publish = true;
+    sync_manifest_directory(path)?;
+    Ok(())
+}
+
+/// Publish all currently committed content events and acknowledge them after rename.
 ///
 /// # Arguments
 ///
@@ -188,14 +273,12 @@ pub fn write_content_change_manifest(
     generated_at: &str,
     path: &Path,
 ) -> Result<usize, ChangeWriteError> {
-    let events = read_all_pending_events(connection)?;
-    let through_event_id = events.last().map(|event| event.event_id);
-    let payload = build_manifest_payload(db_name, run_id, generated_at, &events);
-    publish_json_atomically(path, &payload)?;
-    if let Some(through_event_id) = through_event_id {
+    let prepared = prepare_content_change_manifest(connection, db_name, run_id, generated_at)?;
+    publish_content_change_manifest(path, &prepared.payload)?;
+    if let Some(through_event_id) = prepared.through_event_id {
         acknowledge_content_change_events(connection, through_event_id)?;
     }
-    Ok(events.len())
+    Ok(prepared.event_count)
 }
 
 fn read_all_pending_events(
@@ -270,24 +353,16 @@ fn build_manifest_payload(
     })
 }
 
-fn publish_json_atomically(
-    path: &Path,
-    payload: &serde_json::Value,
-) -> Result<(), ChangeWriteError> {
+#[cfg(unix)]
+fn sync_manifest_directory(path: &Path) -> std::io::Result<()> {
     if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)?;
+        File::open(parent)?.sync_all()?;
     }
-    let temp_path = manifest_temp_path(path);
-    let mut pending = PendingManifest::new(temp_path.clone());
-    let file = File::create(&temp_path)?;
-    let mut writer = BufWriter::new(file);
-    serde_json::to_writer(&mut writer, payload)?;
-    writer.write_all(b"\n")?;
-    writer.flush()?;
-    writer.get_ref().sync_all()?;
-    drop(writer);
-    fs::rename(&temp_path, path)?;
-    pending.did_publish = true;
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn sync_manifest_directory(_path: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
@@ -327,7 +402,11 @@ mod tests {
     use serde_json::json;
     use tempfile::tempdir;
 
-    use super::{list_content_change_events, write_content_change_manifest, ContentChangeEvent};
+    use super::{
+        acknowledge_content_change_events, list_content_change_events,
+        prepare_content_change_manifest, publish_content_change_manifest,
+        write_content_change_manifest, ContentChangeEvent,
+    };
     use crate::schema::init_content_db;
 
     fn insert_event(connection: &Connection, event: &ContentChangeEvent) {
@@ -424,5 +503,52 @@ mod tests {
                 .len(),
             1
         );
+    }
+
+    #[test]
+    fn prepared_manifest_republishes_exact_bytes_after_acknowledgement() {
+        let connection = Connection::open_in_memory().expect("database should open");
+        init_content_db(&connection).expect("content schema should initialize");
+        insert_event(
+            &connection,
+            &ContentChangeEvent {
+                event_id: 1,
+                content_revision: "revision-1".to_string(),
+                article_id: 101,
+                change_kind: "upsert".to_string(),
+                journal_id: 10,
+                issue_id: Some(20),
+                in_press: false,
+                created_at: "2026-07-18T00:00:00Z".to_string(),
+            },
+        );
+        let prepared = prepare_content_change_manifest(
+            &connection,
+            "catalog.sqlite",
+            "run-1",
+            "2026-07-18T00:00:01Z",
+        )
+        .expect("manifest should prepare");
+        assert_eq!(prepared.event_count, 1);
+        assert_eq!(prepared.through_event_id, Some(1));
+        assert!(!format!("{prepared:?}").contains("notifiable_article_ids"));
+
+        let directory = tempdir().expect("temporary directory should create");
+        let path = directory.path().join("changes.json");
+        publish_content_change_manifest(&path, &prepared.payload)
+            .expect("prepared manifest should publish");
+        acknowledge_content_change_events(&connection, 1)
+            .expect("prepared cursor should acknowledge");
+        std::fs::write(&path, b"stale").expect("stale manifest should write");
+        publish_content_change_manifest(&path, &prepared.payload)
+            .expect("prepared manifest should republish");
+
+        assert_eq!(
+            std::fs::read(path).expect("manifest should read"),
+            prepared.payload
+        );
+        assert!(list_content_change_events(&connection, 0, 10)
+            .expect("outbox should read")
+            .is_empty());
     }
 }

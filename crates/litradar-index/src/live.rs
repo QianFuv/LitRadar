@@ -27,13 +27,14 @@ use serde::Serialize;
 
 use crate::batch::{
     admit_batch, complete_batch, complete_catalog, heartbeat_batch_lease, new_batch_owner_id,
-    open_batch_db, release_batch_lease, replace_abandoning_batch, store_catalog_outcome,
-    transition_catalog_phase, BatchAdmission, BatchCatalogOutcome, BatchCatalogPhase,
-    BatchDatabaseError, CatalogInput, CatalogSelection, IndexBatch, IndexBatchCatalog,
-    IndexBatchRequest, BATCH_DATABASE_FILE_NAME,
+    open_batch_db, read_batch_catalogs, release_batch_lease, replace_abandoning_batch,
+    store_catalog_outcome, store_manifest_intent, transition_catalog_phase, BatchAdmission,
+    BatchCatalogOutcome, BatchCatalogPhase, BatchDatabaseError, CatalogInput, CatalogSelection,
+    IndexBatch, IndexBatchCatalog, IndexBatchRequest, ManifestIntent, BATCH_DATABASE_FILE_NAME,
 };
 use crate::changes::{
-    discard_content_change_events, write_content_change_manifest, ChangeWriteError,
+    acknowledge_content_change_events, discard_content_change_events,
+    prepare_content_change_manifest, publish_content_change_manifest, ChangeWriteError,
 };
 use crate::control::{
     abandon_batch_checkpoints, acquire_lease, adopt_legacy_batch_state,
@@ -58,6 +59,7 @@ use crate::worker_protocol::{
 
 const LIVE_INDEX_HEARTBEAT_INTERVAL_SECONDS: u64 = 30;
 const MAX_PROVIDER_PAGES_PER_JOURNAL: usize = 100_000;
+const MAX_RECOVERABLE_MANIFEST_BYTES: u64 = 64 * 1024 * 1024;
 const WORKER_PROTOCOL_FAILURE_MESSAGE: &str = "worker protocol operation failed";
 const LEGACY_ALIAS_SYNC_STATE_MESSAGE: &str =
     "legacy catalog alias has provider synchronization state";
@@ -888,35 +890,48 @@ fn run_batch_catalogs(
     batch: &IndexBatch,
     request: &IndexBatchRequest,
 ) -> Result<Vec<LiveCsvIndexOutcome>, LiveIndexError> {
-    run_batch_catalogs_with(config, batch_connection, batch, request, run_catalog)
+    run_batch_catalogs_with(
+        config,
+        batch_connection,
+        batch,
+        request,
+        run_catalog,
+        run_notify_for_manifest,
+    )
 }
 
-fn run_batch_catalogs_with<RunCatalog>(
+fn run_batch_catalogs_with<RunCatalog, RunNotify>(
     config: &LiveIndexConfig,
     batch_connection: &Connection,
     batch: &IndexBatch,
     request: &IndexBatchRequest,
     mut run: RunCatalog,
+    mut notify: RunNotify,
 ) -> Result<Vec<LiveCsvIndexOutcome>, LiveIndexError>
 where
     RunCatalog:
         FnMut(&LiveIndexConfig, &CatalogInput, &str) -> Result<LiveCsvIndexOutcome, LiveIndexError>,
+    RunNotify: FnMut(&LiveIndexConfig, &str, &Path) -> Result<i32, LiveIndexError>,
 {
-    if batch.catalogs.len() != request.catalogs.len() {
+    let catalogs = read_batch_catalogs(batch_connection, &batch.batch_id)?;
+    if catalogs.len() != request.catalogs.len() {
         return Err(BatchDatabaseError::InvalidState {
             reason: "active batch catalog count changed after admission",
         }
         .into());
     }
     let mut outcomes = Vec::with_capacity(request.catalogs.len());
-    for (stored, input) in batch.catalogs.iter().zip(&request.catalogs) {
+    for (stored, input) in catalogs.iter().zip(&request.catalogs) {
         if stored.file_name != input.file_name || stored.catalog_name != input.catalog_name {
             return Err(BatchDatabaseError::InvalidState {
                 reason: "active batch catalog order changed after admission",
             }
             .into());
         }
-        if stored.phase == BatchCatalogPhase::Completed {
+        let mut phase = stored.phase;
+        let mut persisted = stored.outcome.clone();
+        let mut manifest_intent = stored.manifest_intent.clone();
+        if phase == BatchCatalogPhase::Completed {
             outcomes.push(completed_catalog_outcome(config, stored, input)?);
             tracing::info!(
                 event = "index.batch.catalog_skipped",
@@ -927,62 +942,182 @@ where
             );
             continue;
         }
-        if stored.phase == BatchCatalogPhase::Pending {
-            transition_catalog_phase(
+        if phase == BatchCatalogPhase::Pending {
+            transition_batch_catalog(
+                batch_connection,
+                batch,
+                stored,
+                BatchCatalogPhase::Indexing,
+                "indexing",
+            )?;
+            phase = BatchCatalogPhase::Indexing;
+        }
+        if phase == BatchCatalogPhase::Indexing && persisted.is_none() {
+            let outcome = run(config, input, &batch.batch_id)?;
+            let outcome = persisted_catalog_outcome(&outcome);
+            store_catalog_outcome(
                 batch_connection,
                 &batch.batch_id,
                 &batch.owner_id,
                 stored.ordinal,
-                BatchCatalogPhase::Indexing,
+                &outcome,
                 LiveRunTime::now().epoch_seconds,
             )?;
-        } else if stored.phase != BatchCatalogPhase::Indexing {
-            return Err(BatchDatabaseError::InvalidState {
-                reason: "catalog finalization phase requires recovery support",
-            }
-            .into());
+            persisted = Some(outcome);
         }
-        let outcome = run(config, input, &batch.batch_id)?;
-        let persisted = persisted_catalog_outcome(config, input, &outcome);
-        store_catalog_outcome(
-            batch_connection,
-            &batch.batch_id,
-            &batch.owner_id,
-            stored.ordinal,
-            &persisted,
-            LiveRunTime::now().epoch_seconds,
-        )?;
-        complete_catalog(
-            batch_connection,
-            &batch.batch_id,
-            &batch.owner_id,
-            stored.ordinal,
-            &persisted,
-            LiveRunTime::now().epoch_seconds,
-        )?;
-        outcomes.push(outcome);
+        let mut persisted = persisted.ok_or_else(|| {
+            LiveIndexError::from(BatchDatabaseError::InvalidState {
+                reason: "catalog finalization has no persisted indexing outcome",
+            })
+        })?;
+        if !config.update {
+            if phase != BatchCatalogPhase::Indexing || manifest_intent.is_some() {
+                return Err(BatchDatabaseError::InvalidState {
+                    reason: "non-update catalog has manifest recovery state",
+                }
+                .into());
+            }
+            complete_catalog(
+                batch_connection,
+                &batch.batch_id,
+                &batch.owner_id,
+                stored.ordinal,
+                &persisted,
+                LiveRunTime::now().epoch_seconds,
+            )?;
+            trace_catalog_phase(batch, stored, "completed");
+            outcomes.push(catalog_outcome_from_persisted(config, input, &persisted));
+            continue;
+        }
+        if phase == BatchCatalogPhase::Indexing {
+            let intent = prepare_catalog_manifest_intent(config, input, &persisted)?;
+            store_manifest_intent(
+                batch_connection,
+                &batch.batch_id,
+                &batch.owner_id,
+                stored.ordinal,
+                &intent,
+                LiveRunTime::now().epoch_seconds,
+            )?;
+            trace_catalog_phase(batch, stored, "manifest_prepared");
+            phase = BatchCatalogPhase::ManifestPrepared;
+            manifest_intent = Some(intent);
+        }
+        let intent = manifest_intent.ok_or_else(|| {
+            LiveIndexError::from(BatchDatabaseError::InvalidState {
+                reason: "update catalog finalization has no manifest intent",
+            })
+        })?;
+        validate_manifest_recovery(input, &persisted, &intent)?;
+        let should_publish_manifest = if phase == BatchCatalogPhase::ManifestPrepared {
+            should_publish_catalog_manifest(config, input, &persisted, &intent)?
+        } else {
+            persisted.manifest_path.is_some()
+        };
+        if should_publish_manifest && persisted.manifest_path.is_none() {
+            persisted.manifest_path = Some(intent.path.clone());
+            store_catalog_outcome(
+                batch_connection,
+                &batch.batch_id,
+                &batch.owner_id,
+                stored.ordinal,
+                &persisted,
+                LiveRunTime::now().epoch_seconds,
+            )?;
+        }
+        if phase == BatchCatalogPhase::ManifestPrepared {
+            if should_publish_manifest {
+                publish_catalog_manifest(config, input, &intent)?;
+            } else {
+                tracing::info!(
+                    event = "index.batch.manifest_preserved",
+                    component = "index",
+                    batch_id = batch.batch_id,
+                    catalog = input.catalog_name,
+                    provider = input.provider_name,
+                );
+            }
+            transition_batch_catalog(
+                batch_connection,
+                batch,
+                stored,
+                BatchCatalogPhase::ManifestPublished,
+                "manifest_published",
+            )?;
+            phase = BatchCatalogPhase::ManifestPublished;
+        }
+        if phase == BatchCatalogPhase::ManifestPublished {
+            if config.notify && persisted.manifest_path.is_some() {
+                transition_batch_catalog(
+                    batch_connection,
+                    batch,
+                    stored,
+                    BatchCatalogPhase::Notifying,
+                    "notifying",
+                )?;
+                phase = BatchCatalogPhase::Notifying;
+            } else {
+                complete_catalog(
+                    batch_connection,
+                    &batch.batch_id,
+                    &batch.owner_id,
+                    stored.ordinal,
+                    &persisted,
+                    LiveRunTime::now().epoch_seconds,
+                )?;
+                trace_catalog_phase(batch, stored, "completed");
+                outcomes.push(catalog_outcome_from_persisted(config, input, &persisted));
+                continue;
+            }
+        }
+        if phase == BatchCatalogPhase::Notifying {
+            if persisted.manifest_path.is_none() {
+                return Err(BatchDatabaseError::InvalidState {
+                    reason: "notifying catalog has no published manifest outcome",
+                }
+                .into());
+            }
+            if persisted.notify_exit_code.is_none() {
+                let manifest_path = config.project_root.join(&intent.path);
+                let db_name = catalog_database_name(input);
+                persisted.notify_exit_code = Some(notify(config, &db_name, &manifest_path)?);
+                store_catalog_outcome(
+                    batch_connection,
+                    &batch.batch_id,
+                    &batch.owner_id,
+                    stored.ordinal,
+                    &persisted,
+                    LiveRunTime::now().epoch_seconds,
+                )?;
+            }
+            complete_catalog(
+                batch_connection,
+                &batch.batch_id,
+                &batch.owner_id,
+                stored.ordinal,
+                &persisted,
+                LiveRunTime::now().epoch_seconds,
+            )?;
+            trace_catalog_phase(batch, stored, "completed");
+            outcomes.push(catalog_outcome_from_persisted(config, input, &persisted));
+            continue;
+        }
+        return Err(BatchDatabaseError::InvalidState {
+            reason: "catalog recovery stopped in an unsupported phase",
+        }
+        .into());
     }
     Ok(outcomes)
 }
 
-fn persisted_catalog_outcome(
-    config: &LiveIndexConfig,
-    input: &CatalogInput,
-    outcome: &LiveCsvIndexOutcome,
-) -> BatchCatalogOutcome {
+fn persisted_catalog_outcome(outcome: &LiveCsvIndexOutcome) -> BatchCatalogOutcome {
     BatchCatalogOutcome {
         run_id: outcome.run_id.clone(),
         journal_count: outcome.journal_count,
         written_article_count: outcome.written_article_count,
         source_attempt_count: outcome.source_attempt_count,
-        manifest_path: outcome.manifest_path.as_ref().map(|_| {
-            Path::new("data")
-                .join("push_state")
-                .join(format!("{}.changes.json", input.catalog_name))
-                .to_string_lossy()
-                .into_owned()
-        }),
-        notify_exit_code: config.notify.then_some(outcome.notify_exit_code).flatten(),
+        manifest_path: None,
+        notify_exit_code: None,
     }
 }
 
@@ -996,27 +1131,192 @@ fn completed_catalog_outcome(
             reason: "completed catalog has no persisted outcome",
         })
     })?;
-    let manifest_path = outcome
-        .manifest_path
-        .as_ref()
-        .map(|path| config.project_root.join(path).display().to_string());
-    Ok(LiveCsvIndexOutcome {
+    Ok(catalog_outcome_from_persisted(config, input, outcome))
+}
+
+fn transition_batch_catalog(
+    batch_connection: &Connection,
+    batch: &IndexBatch,
+    catalog: &IndexBatchCatalog,
+    next_phase: BatchCatalogPhase,
+    phase_name: &'static str,
+) -> Result<(), LiveIndexError> {
+    transition_catalog_phase(
+        batch_connection,
+        &batch.batch_id,
+        &batch.owner_id,
+        catalog.ordinal,
+        next_phase,
+        LiveRunTime::now().epoch_seconds,
+    )?;
+    trace_catalog_phase(batch, catalog, phase_name);
+    Ok(())
+}
+
+fn trace_catalog_phase(batch: &IndexBatch, catalog: &IndexBatchCatalog, phase_name: &'static str) {
+    tracing::info!(
+        event = "index.batch.catalog_phase",
+        component = "index",
+        batch_id = batch.batch_id,
+        catalog = catalog.catalog_name,
+        provider = catalog.provider_name,
+        phase = phase_name,
+    );
+}
+
+fn prepare_catalog_manifest_intent(
+    config: &LiveIndexConfig,
+    input: &CatalogInput,
+    outcome: &BatchCatalogOutcome,
+) -> Result<ManifestIntent, LiveIndexError> {
+    let content_path = catalog_content_path(config, input);
+    let content =
+        open_content_db(&content_path).map_err(|source| LiveIndexError::ContentDatabase {
+            path: content_path,
+            source,
+        })?;
+    let generated_at = LiveRunTime::now().timestamp();
+    let prepared = prepare_content_change_manifest(
+        &content,
+        &catalog_database_name(input),
+        &outcome.run_id,
+        &generated_at,
+    )?;
+    Ok(ManifestIntent::new(
+        prepared.payload,
+        prepared.through_event_id,
+        catalog_manifest_relative_path(input),
+        outcome.run_id.clone(),
+        generated_at,
+    )?)
+}
+
+fn publish_catalog_manifest(
+    config: &LiveIndexConfig,
+    input: &CatalogInput,
+    intent: &ManifestIntent,
+) -> Result<(), LiveIndexError> {
+    let content_path = catalog_content_path(config, input);
+    let content =
+        open_content_db(&content_path).map_err(|source| LiveIndexError::ContentDatabase {
+            path: content_path,
+            source,
+        })?;
+    publish_content_change_manifest(&config.project_root.join(&intent.path), &intent.payload)?;
+    if let Some(through_event_id) = intent.through_event_id {
+        acknowledge_content_change_events(&content, through_event_id)
+            .map_err(ChangeWriteError::from)?;
+    }
+    Ok(())
+}
+
+fn validate_manifest_recovery(
+    input: &CatalogInput,
+    outcome: &BatchCatalogOutcome,
+    intent: &ManifestIntent,
+) -> Result<(), LiveIndexError> {
+    let expected_path = catalog_manifest_relative_path(input);
+    if intent.run_id != outcome.run_id
+        || intent.path != expected_path
+        || outcome
+            .manifest_path
+            .as_ref()
+            .is_some_and(|path| path != &expected_path)
+    {
+        return Err(BatchDatabaseError::InvalidState {
+            reason: "manifest recovery metadata does not match the frozen catalog",
+        }
+        .into());
+    }
+    Ok(())
+}
+
+fn should_publish_catalog_manifest(
+    config: &LiveIndexConfig,
+    input: &CatalogInput,
+    outcome: &BatchCatalogOutcome,
+    intent: &ManifestIntent,
+) -> Result<bool, LiveIndexError> {
+    if intent.through_event_id.is_some() || outcome.manifest_path.is_some() {
+        return Ok(true);
+    }
+    let path = config.project_root.join(&intent.path);
+    let metadata = match std::fs::metadata(&path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(true),
+        Err(error) => return Err(error.into()),
+    };
+    if !metadata.is_file() || metadata.len() > MAX_RECOVERABLE_MANIFEST_BYTES {
+        return Err(LiveIndexError::InvalidConfig(
+            "existing change manifest is not a bounded regular file".to_string(),
+        ));
+    }
+    let payload = std::fs::read(path)?;
+    let manifest: serde_json::Value = serde_json::from_slice(&payload).map_err(|_| {
+        LiveIndexError::InvalidConfig(
+            "existing change manifest is not valid LitRadar JSON".to_string(),
+        )
+    })?;
+    let db_name = catalog_database_name(input);
+    let is_valid = manifest
+        .get("run_id")
+        .and_then(serde_json::Value::as_str)
+        .is_some_and(|value| !value.is_empty())
+        && manifest
+            .get("generated_at")
+            .and_then(serde_json::Value::as_str)
+            .is_some_and(|value| !value.is_empty())
+        && manifest.get("db_name").and_then(serde_json::Value::as_str) == Some(db_name.as_str())
+        && manifest
+            .get("summary")
+            .is_some_and(serde_json::Value::is_object);
+    if !is_valid {
+        return Err(LiveIndexError::InvalidConfig(
+            "existing change manifest does not match the selected catalog".to_string(),
+        ));
+    }
+    Ok(false)
+}
+
+fn catalog_outcome_from_persisted(
+    config: &LiveIndexConfig,
+    input: &CatalogInput,
+    outcome: &BatchCatalogOutcome,
+) -> LiveCsvIndexOutcome {
+    LiveCsvIndexOutcome {
         csv_path: input.path.display().to_string(),
-        db_path: config
-            .project_root
-            .join("data")
-            .join("index")
-            .join(format!("{}.sqlite", input.catalog_name))
-            .display()
-            .to_string(),
+        db_path: catalog_content_path(config, input).display().to_string(),
         run_id: outcome.run_id.clone(),
         status: "succeeded".to_string(),
         journal_count: outcome.journal_count,
         written_article_count: outcome.written_article_count,
         source_attempt_count: outcome.source_attempt_count,
-        manifest_path,
+        manifest_path: outcome
+            .manifest_path
+            .as_ref()
+            .map(|path| config.project_root.join(path).display().to_string()),
         notify_exit_code: outcome.notify_exit_code,
-    })
+    }
+}
+
+fn catalog_content_path(config: &LiveIndexConfig, input: &CatalogInput) -> PathBuf {
+    config
+        .project_root
+        .join("data")
+        .join("index")
+        .join(catalog_database_name(input))
+}
+
+fn catalog_database_name(input: &CatalogInput) -> String {
+    format!("{}.sqlite", input.catalog_name)
+}
+
+fn catalog_manifest_relative_path(input: &CatalogInput) -> String {
+    Path::new("data")
+        .join("push_state")
+        .join(format!("{}.changes.json", input.catalog_name))
+        .to_string_lossy()
+        .into_owned()
 }
 
 /// Run one serialized fetch-worker request over the process standard streams.
@@ -1288,29 +1588,10 @@ fn run_catalog(
         let _ = release_lease(&control, &catalog_name, &provider_name, &run_id);
         return Err(error);
     }
-    let finalization = finalize_content_changes(
-        &content,
-        &content_path,
-        &config.project_root,
-        &catalog_name,
-        &run_id,
-        &timestamp,
-        config.update,
-    );
+    let finalization = finalize_indexed_content(&content, &content_path, config.update);
     let release_result = release_lease(&control, &catalog_name, &provider_name, &run_id);
-    let (db_name, manifest_path) = finalization?;
+    finalization?;
     release_result?;
-    let notify_exit_code = if config.notify {
-        Some(run_notify_for_manifest(
-            config,
-            &db_name,
-            manifest_path
-                .as_deref()
-                .expect("validated notify run has a manifest path"),
-        )?)
-    } else {
-        None
-    };
     metrics.emit_terminal(&run_id, &catalog_name, &provider_name, "all", "success");
     Ok(LiveCsvIndexOutcome {
         csv_path: csv_path.display().to_string(),
@@ -1320,8 +1601,8 @@ fn run_catalog(
         journal_count: entries.len(),
         written_article_count: i64::try_from(metrics.articles_changed).unwrap_or(i64::MAX),
         source_attempt_count: metrics.pages_committed,
-        manifest_path: manifest_path.map(|path| path.display().to_string()),
-        notify_exit_code,
+        manifest_path: None,
+        notify_exit_code: None,
     })
 }
 
@@ -1335,39 +1616,21 @@ fn requested_sync_mode(config: &LiveIndexConfig) -> IndexSyncMode {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
-fn finalize_content_changes(
+fn finalize_indexed_content(
     content: &Connection,
     content_path: &Path,
-    project_root: &Path,
-    catalog_name: &str,
-    run_id: &str,
-    timestamp: &str,
-    should_publish_manifest: bool,
-) -> Result<(String, Option<PathBuf>), LiveIndexError> {
+    should_retain_outbox: bool,
+) -> Result<(), LiveIndexError> {
     optimize_content_db(content).map_err(|source| LiveIndexError::ContentDatabase {
         path: content_path.to_path_buf(),
         source,
     })?;
-    let db_name = content_path
-        .file_name()
-        .and_then(|value| value.to_str())
-        .unwrap_or("index.sqlite")
-        .to_string();
-    let manifest_path = should_publish_manifest.then(|| {
-        project_root
-            .join("data")
-            .join("push_state")
-            .join(format!("{catalog_name}.changes.json"))
-    });
-    if let Some(path) = manifest_path.as_deref() {
-        write_content_change_manifest(content, &db_name, run_id, timestamp, path)?;
-    } else {
+    if !should_retain_outbox {
         discard_content_change_events(content).map_err(|error| {
             LiveIndexError::Worker(format!("content outbox acknowledgement failed: {error}"))
         })?;
     }
-    Ok((db_name, manifest_path))
+    Ok(())
 }
 
 fn prepare_catalog_identities(
@@ -2667,10 +2930,11 @@ mod tests {
     use tracing_subscriber::fmt::MakeWriter;
 
     use super::{
-        emit_parent_content_commit_failure, emit_worker_failure,
-        fetch_worker_assignments_with_provider, finalize_content_changes,
-        index_entries_with_provider, prepare_catalog_identities, prepare_worker_requests,
-        read_worker_bootstrap, requested_sync_mode, run_batch_catalogs_with, run_live_index,
+        catalog_paths, emit_parent_content_commit_failure, emit_worker_failure,
+        fetch_worker_assignments_with_provider, finalize_indexed_content,
+        index_entries_with_provider, prepare_catalog_identities, prepare_catalog_manifest_intent,
+        prepare_worker_requests, publish_catalog_manifest, read_worker_bootstrap,
+        requested_sync_mode, run_batch_catalogs_with, run_live_index,
         run_live_index_worker_with_io, run_worker_processes_with_launcher, validate_live_config,
         worker_bootstrap, worker_failure_error, ContentCommitErrorKind, DirectIndexRequest,
         LaunchedWorkerProcess, LeaseHeartbeat, LiveIndexConfig, LiveIndexError,
@@ -2679,10 +2943,11 @@ mod tests {
         ProviderProxySelection, SupervisedChild, CNKI_PROVIDER_NAME,
     };
     use crate::batch::{
-        admit_batch, complete_catalog, init_batch_db, release_batch_lease,
-        transition_catalog_phase, BatchAdmission, BatchCatalogOutcome, BatchCatalogPhase,
-        CatalogInput, CatalogSelection, IndexBatchRequest,
+        admit_batch, complete_catalog, init_batch_db, read_batch_catalogs, release_batch_lease,
+        store_catalog_outcome, store_manifest_intent, transition_catalog_phase, BatchAdmission,
+        BatchCatalogOutcome, BatchCatalogPhase, CatalogInput, CatalogSelection, IndexBatchRequest,
     };
+    use crate::changes::{acknowledge_content_change_events, publish_content_change_manifest};
     use crate::control::{
         acquire_lease, advance_run_checkpoint as advance_run_checkpoint_for_batch,
         commit_content_then_progress as commit_content_then_progress_for_batch,
@@ -3401,6 +3666,40 @@ mod tests {
     }
 
     #[test]
+    fn catalog_selection_is_exact_and_all_csv_order_is_stable() {
+        let directory = tempdir().expect("temporary metadata directory should create");
+        std::fs::write(directory.path().join("zeta.csv"), b"zeta")
+            .expect("zeta fixture should write");
+        std::fs::write(directory.path().join("alpha.csv"), b"alpha")
+            .expect("alpha fixture should write");
+        std::fs::write(directory.path().join("ignored.txt"), b"ignored")
+            .expect("ignored fixture should write");
+
+        let all = catalog_paths(directory.path(), None).expect("all CSVs should discover");
+        assert_eq!(
+            all.iter()
+                .map(|path| path.file_name().expect("path should have a filename"))
+                .collect::<Vec<_>>(),
+            ["alpha.csv", "zeta.csv"]
+        );
+        assert_eq!(
+            catalog_paths(directory.path(), Some("zeta.csv"))
+                .expect("explicit CSV should select")
+                .iter()
+                .map(|path| path.file_name().expect("path should have a filename"))
+                .collect::<Vec<_>>(),
+            ["zeta.csv"]
+        );
+        assert!(catalog_paths(directory.path(), Some("missing.csv"))
+            .expect("missing explicit CSV should be an empty selection")
+            .is_empty());
+        assert!(matches!(
+            catalog_paths(directory.path(), Some("nested/zeta.csv")),
+            Err(LiveIndexError::InvalidConfig(_))
+        ));
+    }
+
+    #[test]
     fn live_config_selects_exact_sync_modes_and_rejects_conflicts() {
         let mut config = worker_test_config("provider-a", None);
         assert_eq!(requested_sync_mode(&config), IndexSyncMode::Bootstrap);
@@ -3576,6 +3875,7 @@ mod tests {
                     "fixture unfinished catalog".to_string(),
                 ))
             },
+            |_, _, _| Ok(0),
         )
         .expect_err("unfinished English catalog should retain the failure");
 
@@ -3584,7 +3884,528 @@ mod tests {
     }
 
     #[test]
-    fn manifest_failure_retains_outbox_and_full_rescan_acknowledges_without_a_manifest() {
+    fn manifest_crash_boundaries_resume_without_provider_calls() {
+        for boundary in [
+            "outcome_stored",
+            "manifest_prepared",
+            "manifest_renamed",
+            "outbox_acknowledged",
+            "manifest_published",
+        ] {
+            let directory = tempdir().expect("temporary project should create");
+            let mut config = worker_test_config("provider-a", None);
+            config.project_root = directory.path().to_path_buf();
+            config.update = true;
+            let input = batch_input("catalog.csv", "provider-a", 1);
+            let request = IndexBatchRequest::new(
+                vec![input.clone()],
+                CatalogSelection::ExplicitFile,
+                IndexSyncMode::Incremental,
+                20,
+                false,
+                false,
+            )
+            .expect("batch request should build");
+            let batch_connection =
+                Connection::open_in_memory().expect("batch database should open");
+            init_batch_db(&batch_connection).expect("batch schema should initialize");
+            let now = LiveRunTime::now().epoch_seconds;
+            let first_owner = format!("first-{boundary}");
+            let first = match admit_batch(&batch_connection, &request, true, &first_owner, now)
+                .expect("batch should create")
+            {
+                BatchAdmission::Ready(batch) => batch,
+                BatchAdmission::Abandoning(_) => panic!("new batch should be ready"),
+            };
+            transition_catalog_phase(
+                &batch_connection,
+                &first.batch_id,
+                &first_owner,
+                0,
+                BatchCatalogPhase::Indexing,
+                now,
+            )
+            .expect("catalog should enter indexing");
+
+            let content_path = config
+                .project_root
+                .join("data")
+                .join("index")
+                .join("catalog.sqlite");
+            std::fs::create_dir_all(content_path.parent().expect("content parent should exist"))
+                .expect("content directory should create");
+            let content = open_content_db(&content_path).expect("content should open");
+            write_content_batch(
+                &content,
+                &input.entries[0],
+                &canonical_batch_for_catalog(&input.entries[0]),
+                "catalog-run",
+                "2026-08-01T00:00:00Z",
+            )
+            .expect("content event should write");
+            let outcome = BatchCatalogOutcome {
+                run_id: "catalog-run".to_string(),
+                journal_count: 1,
+                written_article_count: 1,
+                source_attempt_count: 1,
+                manifest_path: None,
+                notify_exit_code: None,
+            };
+            store_catalog_outcome(
+                &batch_connection,
+                &first.batch_id,
+                &first_owner,
+                0,
+                &outcome,
+                now,
+            )
+            .expect("catalog outcome should persist");
+
+            let expected_payload = if boundary == "outcome_stored" {
+                None
+            } else {
+                let intent = prepare_catalog_manifest_intent(&config, &input, &outcome)
+                    .expect("manifest intent should prepare");
+                store_manifest_intent(
+                    &batch_connection,
+                    &first.batch_id,
+                    &first_owner,
+                    0,
+                    &intent,
+                    now,
+                )
+                .expect("manifest intent should persist");
+                if matches!(boundary, "manifest_renamed" | "outbox_acknowledged") {
+                    publish_content_change_manifest(
+                        &config.project_root.join(&intent.path),
+                        &intent.payload,
+                    )
+                    .expect("manifest bytes should publish");
+                }
+                if boundary == "outbox_acknowledged" {
+                    acknowledge_content_change_events(
+                        &content,
+                        intent
+                            .through_event_id
+                            .expect("fixture manifest should retain a cursor"),
+                    )
+                    .expect("outbox cursor should acknowledge");
+                }
+                if boundary == "manifest_published" {
+                    publish_catalog_manifest(&config, &input, &intent)
+                        .expect("manifest should publish and acknowledge");
+                    transition_catalog_phase(
+                        &batch_connection,
+                        &first.batch_id,
+                        &first_owner,
+                        0,
+                        BatchCatalogPhase::ManifestPublished,
+                        now,
+                    )
+                    .expect("published phase should persist");
+                }
+                Some(intent.payload)
+            };
+            release_batch_lease(&batch_connection, &first.batch_id, &first_owner)
+                .expect("failed invocation should release its lease");
+            let retry_owner = format!("retry-{boundary}");
+            let retry = match admit_batch(&batch_connection, &request, true, &retry_owner, now)
+                .expect("batch should resume")
+            {
+                BatchAdmission::Ready(batch) => batch,
+                BatchAdmission::Abandoning(_) => panic!("compatible batch should be ready"),
+            };
+            let mut provider_calls = 0;
+            let outcomes = run_batch_catalogs_with(
+                &config,
+                &batch_connection,
+                &retry,
+                &request,
+                |_, _, _| {
+                    provider_calls += 1;
+                    Err(LiveIndexError::ProviderSetup(
+                        "provider must not run during manifest recovery".to_string(),
+                    ))
+                },
+                |_, _, _| Ok(0),
+            )
+            .expect("manifest recovery should complete");
+
+            assert_eq!(provider_calls, 0, "boundary: {boundary}");
+            assert_eq!(outcomes.len(), 1, "boundary: {boundary}");
+            let manifest_path = config
+                .project_root
+                .join("data")
+                .join("push_state")
+                .join("catalog.changes.json");
+            let payload = std::fs::read(manifest_path).expect("manifest should read");
+            if let Some(expected_payload) = expected_payload {
+                assert_eq!(payload, expected_payload, "boundary: {boundary}");
+            }
+            let manifest: serde_json::Value =
+                serde_json::from_slice(&payload).expect("manifest should parse");
+            assert_eq!(manifest["run_id"], "catalog-run", "boundary: {boundary}");
+            assert_eq!(
+                content
+                    .query_row("SELECT COUNT(*) FROM article_change_events", [], |row| {
+                        row.get::<_, i64>(0)
+                    })
+                    .expect("outbox count should read"),
+                0,
+                "boundary: {boundary}"
+            );
+            assert_eq!(
+                read_batch_catalogs(&batch_connection, &retry.batch_id)
+                    .expect("catalog state should read")[0]
+                    .phase,
+                BatchCatalogPhase::Completed,
+                "boundary: {boundary}"
+            );
+        }
+    }
+
+    #[test]
+    fn empty_update_preserves_existing_manifest_without_notification() {
+        let directory = tempdir().expect("temporary project should create");
+        let mut config = worker_test_config("provider-a", None);
+        config.project_root = directory.path().to_path_buf();
+        config.update = true;
+        config.notify = true;
+        let input = batch_input("catalog.csv", "provider-a", 1);
+        let request = IndexBatchRequest::new(
+            vec![input.clone()],
+            CatalogSelection::ExplicitFile,
+            IndexSyncMode::Incremental,
+            20,
+            true,
+            false,
+        )
+        .expect("batch request should build");
+        let batch_connection = Connection::open_in_memory().expect("batch database should open");
+        init_batch_db(&batch_connection).expect("batch schema should initialize");
+        let now = LiveRunTime::now().epoch_seconds;
+        let batch = match admit_batch(&batch_connection, &request, true, "fixture-owner", now)
+            .expect("batch should create")
+        {
+            BatchAdmission::Ready(batch) => batch,
+            BatchAdmission::Abandoning(_) => panic!("new batch should be ready"),
+        };
+        transition_catalog_phase(
+            &batch_connection,
+            &batch.batch_id,
+            "fixture-owner",
+            0,
+            BatchCatalogPhase::Indexing,
+            now,
+        )
+        .expect("catalog should enter indexing");
+        let content_path = config
+            .project_root
+            .join("data")
+            .join("index")
+            .join("catalog.sqlite");
+        std::fs::create_dir_all(content_path.parent().expect("content parent should exist"))
+            .expect("content directory should create");
+        open_content_db(&content_path).expect("empty content database should open");
+        let outcome = BatchCatalogOutcome {
+            run_id: "current-run".to_string(),
+            journal_count: 1,
+            written_article_count: 0,
+            source_attempt_count: 0,
+            manifest_path: None,
+            notify_exit_code: None,
+        };
+        store_catalog_outcome(
+            &batch_connection,
+            &batch.batch_id,
+            "fixture-owner",
+            0,
+            &outcome,
+            now,
+        )
+        .expect("catalog outcome should persist");
+        let manifest_path = config
+            .project_root
+            .join("data")
+            .join("push_state")
+            .join("catalog.changes.json");
+        std::fs::create_dir_all(
+            manifest_path
+                .parent()
+                .expect("manifest parent should exist"),
+        )
+        .expect("manifest directory should create");
+        let mut existing_payload = serde_json::to_vec(&serde_json::json!({
+            "run_id": "previous-run",
+            "generated_at": "2026-08-01T00:00:00Z",
+            "db_name": "catalog.sqlite",
+            "summary": {},
+        }))
+        .expect("existing manifest should serialize");
+        existing_payload.push(b'\n');
+        std::fs::write(&manifest_path, &existing_payload).expect("existing manifest should write");
+
+        let mut provider_calls = 0;
+        let mut notify_calls = 0;
+        let outcomes = run_batch_catalogs_with(
+            &config,
+            &batch_connection,
+            &batch,
+            &request,
+            |_, _, _| {
+                provider_calls += 1;
+                Err(LiveIndexError::ProviderSetup(
+                    "provider must not run during empty finalization".to_string(),
+                ))
+            },
+            |_, _, _| {
+                notify_calls += 1;
+                Ok(0)
+            },
+        )
+        .expect("empty update should preserve the existing manifest");
+
+        assert_eq!(provider_calls, 0);
+        assert_eq!(notify_calls, 0);
+        assert_eq!(outcomes[0].manifest_path, None);
+        assert_eq!(outcomes[0].notify_exit_code, None);
+        assert_eq!(
+            std::fs::read(manifest_path).expect("manifest should read"),
+            existing_payload
+        );
+        assert_eq!(
+            read_batch_catalogs(&batch_connection, &batch.batch_id)
+                .expect("catalog state should read")[0]
+                .phase,
+            BatchCatalogPhase::Completed
+        );
+    }
+
+    #[test]
+    fn notify_failure_retries_only_notification() {
+        let directory = tempdir().expect("temporary project should create");
+        let mut config = worker_test_config("provider-a", None);
+        config.project_root = directory.path().to_path_buf();
+        config.update = true;
+        config.notify = true;
+        let input = batch_input("catalog.csv", "provider-a", 1);
+        let request = IndexBatchRequest::new(
+            vec![input.clone()],
+            CatalogSelection::ExplicitFile,
+            IndexSyncMode::Incremental,
+            20,
+            true,
+            false,
+        )
+        .expect("batch request should build");
+        let batch_connection = Connection::open_in_memory().expect("batch database should open");
+        init_batch_db(&batch_connection).expect("batch schema should initialize");
+        let now = LiveRunTime::now().epoch_seconds;
+        let first = match admit_batch(&batch_connection, &request, true, "first-owner", now)
+            .expect("batch should create")
+        {
+            BatchAdmission::Ready(batch) => batch,
+            BatchAdmission::Abandoning(_) => panic!("new batch should be ready"),
+        };
+        transition_catalog_phase(
+            &batch_connection,
+            &first.batch_id,
+            "first-owner",
+            0,
+            BatchCatalogPhase::Indexing,
+            now,
+        )
+        .expect("catalog should enter indexing");
+        let content_path = config
+            .project_root
+            .join("data")
+            .join("index")
+            .join("catalog.sqlite");
+        std::fs::create_dir_all(content_path.parent().expect("content parent should exist"))
+            .expect("content directory should create");
+        let content = open_content_db(&content_path).expect("content should open");
+        write_content_batch(
+            &content,
+            &input.entries[0],
+            &canonical_batch_for_catalog(&input.entries[0]),
+            "catalog-run",
+            "2026-08-01T00:00:00Z",
+        )
+        .expect("content event should write");
+        let outcome = BatchCatalogOutcome {
+            run_id: "catalog-run".to_string(),
+            journal_count: 1,
+            written_article_count: 1,
+            source_attempt_count: 1,
+            manifest_path: None,
+            notify_exit_code: None,
+        };
+        store_catalog_outcome(
+            &batch_connection,
+            &first.batch_id,
+            "first-owner",
+            0,
+            &outcome,
+            now,
+        )
+        .expect("catalog outcome should persist");
+        let intent = prepare_catalog_manifest_intent(&config, &input, &outcome)
+            .expect("manifest intent should prepare");
+        store_manifest_intent(
+            &batch_connection,
+            &first.batch_id,
+            "first-owner",
+            0,
+            &intent,
+            now,
+        )
+        .expect("manifest intent should persist");
+        let mut published_outcome = outcome.clone();
+        published_outcome.manifest_path = Some(intent.path.clone());
+        store_catalog_outcome(
+            &batch_connection,
+            &first.batch_id,
+            "first-owner",
+            0,
+            &published_outcome,
+            now,
+        )
+        .expect("published manifest outcome should persist");
+        publish_catalog_manifest(&config, &input, &intent)
+            .expect("manifest should publish and acknowledge");
+        transition_catalog_phase(
+            &batch_connection,
+            &first.batch_id,
+            "first-owner",
+            0,
+            BatchCatalogPhase::ManifestPublished,
+            now,
+        )
+        .expect("published phase should persist");
+        transition_catalog_phase(
+            &batch_connection,
+            &first.batch_id,
+            "first-owner",
+            0,
+            BatchCatalogPhase::Notifying,
+            now,
+        )
+        .expect("notifying phase should persist");
+        release_batch_lease(&batch_connection, &first.batch_id, "first-owner")
+            .expect("failed invocation should release its lease");
+
+        let failed_retry = match admit_batch(
+            &batch_connection,
+            &request,
+            true,
+            "failed-notify-owner",
+            now,
+        )
+        .expect("batch should resume")
+        {
+            BatchAdmission::Ready(batch) => batch,
+            BatchAdmission::Abandoning(_) => panic!("compatible batch should be ready"),
+        };
+        let mut provider_calls = 0;
+        let mut notify_calls = 0;
+        let error = run_batch_catalogs_with(
+            &config,
+            &batch_connection,
+            &failed_retry,
+            &request,
+            |_, _, _| {
+                provider_calls += 1;
+                Err(LiveIndexError::ProviderSetup(
+                    "provider must not run during notify recovery".to_string(),
+                ))
+            },
+            |_, _, _| {
+                notify_calls += 1;
+                Err(LiveIndexError::Notify(
+                    "fixture notification handoff failed".to_string(),
+                ))
+            },
+        )
+        .expect_err("notification failure should remain retryable");
+        assert!(
+            matches!(error, LiveIndexError::Notify(_)),
+            "unexpected notify recovery error: {error:?}"
+        );
+        assert_eq!(provider_calls, 0);
+        assert_eq!(notify_calls, 1);
+        assert_eq!(
+            read_batch_catalogs(&batch_connection, &failed_retry.batch_id)
+                .expect("catalog state should read")[0]
+                .phase,
+            BatchCatalogPhase::Notifying
+        );
+        let mut notified_outcome = read_batch_catalogs(&batch_connection, &failed_retry.batch_id)
+            .expect("notifying outcome should read")[0]
+            .outcome
+            .clone()
+            .expect("notifying outcome should exist");
+        notified_outcome.notify_exit_code = Some(7);
+        store_catalog_outcome(
+            &batch_connection,
+            &failed_retry.batch_id,
+            "failed-notify-owner",
+            0,
+            &notified_outcome,
+            now,
+        )
+        .expect("successful notification result should persist before a simulated crash");
+        release_batch_lease(
+            &batch_connection,
+            &failed_retry.batch_id,
+            "failed-notify-owner",
+        )
+        .expect("failed notification should release its lease");
+
+        let successful_retry = match admit_batch(
+            &batch_connection,
+            &request,
+            true,
+            "successful-notify-owner",
+            now,
+        )
+        .expect("batch should resume again")
+        {
+            BatchAdmission::Ready(batch) => batch,
+            BatchAdmission::Abandoning(_) => panic!("compatible batch should be ready"),
+        };
+        let outcomes = run_batch_catalogs_with(
+            &config,
+            &batch_connection,
+            &successful_retry,
+            &request,
+            |_, _, _| {
+                provider_calls += 1;
+                Err(LiveIndexError::ProviderSetup(
+                    "provider must not run during notify recovery".to_string(),
+                ))
+            },
+            |_, _, _| {
+                notify_calls += 1;
+                Err(LiveIndexError::Notify(
+                    "persisted notification must not repeat".to_string(),
+                ))
+            },
+        )
+        .expect("persisted notification result should complete without another handoff");
+
+        assert_eq!(provider_calls, 0);
+        assert_eq!(notify_calls, 1);
+        assert_eq!(outcomes[0].notify_exit_code, Some(7));
+        assert_eq!(
+            read_batch_catalogs(&batch_connection, &successful_retry.batch_id)
+                .expect("catalog state should read")[0]
+                .phase,
+            BatchCatalogPhase::Completed
+        );
+    }
+
+    #[test]
+    fn update_retains_outbox_and_non_update_finalization_acknowledges_it() {
         let directory = tempdir().expect("temporary directory should create");
         let content_path = directory.path().join("catalog.sqlite");
         let content = open_content_db(&content_path).expect("content should open");
@@ -3597,22 +4418,8 @@ mod tests {
             "2026-07-18T00:00:00Z",
         )
         .expect("fixture content should write");
-        std::fs::create_dir_all(directory.path().join("data"))
-            .expect("data directory should create");
-        std::fs::write(directory.path().join("data").join("push_state"), b"blocked")
-            .expect("blocking manifest parent should write");
-
-        let error = finalize_content_changes(
-            &content,
-            &content_path,
-            directory.path(),
-            "catalog",
-            "fixture-run",
-            "2026-07-18T00:00:00Z",
-            true,
-        )
-        .expect_err("manifest write should fail");
-        assert!(matches!(error, LiveIndexError::Io(_)));
+        finalize_indexed_content(&content, &content_path, true)
+            .expect("update finalization should retain the outbox");
         assert_eq!(
             content
                 .query_row("SELECT COUNT(*) FROM article_change_events", [], |row| {
@@ -3622,17 +4429,8 @@ mod tests {
             1
         );
 
-        let (_, manifest_path) = finalize_content_changes(
-            &content,
-            &content_path,
-            directory.path(),
-            "catalog",
-            "full-rescan-run",
-            "2026-07-18T00:01:00Z",
-            false,
-        )
-        .expect("full rescan finalization should acknowledge without a manifest");
-        assert_eq!(manifest_path, None);
+        finalize_indexed_content(&content, &content_path, false)
+            .expect("non-update finalization should acknowledge without a manifest");
         assert_eq!(
             content
                 .query_row("SELECT COUNT(*) FROM article_change_events", [], |row| {

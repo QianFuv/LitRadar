@@ -1126,7 +1126,9 @@ fn index_usage() -> String {
         "modes": {
             "update": "incremental synchronization that publishes a change manifest",
             "full_rescan": "complete historical synchronization without a change manifest; mutually exclusive with --update",
-            "resume": "reuse only a matching in-flight traversal; --no-resume keeps the committed anchor",
+            "resume": "continue only a compatible active project batch; completed batches always start a new independent update",
+            "no_resume": "abandon the active batch and its owned traversal checkpoints, then start a new batch from committed anchors",
+            "file": "select and freeze exactly one CSV; it cannot adopt an active all-CSV batch",
         },
         "limits": {
             "workers_min": litradar_domain::INDEX_WORKER_COUNT_MIN,
@@ -1227,7 +1229,13 @@ mod tests {
             .is_some_and(|value| value.contains("mutually exclusive with --update")));
         assert!(index_payload["modes"]["resume"]
             .as_str()
-            .is_some_and(|value| value.contains("--no-resume keeps the committed anchor")));
+            .is_some_and(|value| value.contains("compatible active project batch")));
+        assert!(index_payload["modes"]["no_resume"]
+            .as_str()
+            .is_some_and(|value| value.contains("start a new batch from committed anchors")));
+        assert!(index_payload["modes"]["file"]
+            .as_str()
+            .is_some_and(|value| value.contains("exactly one CSV")));
         assert_eq!(index_payload["limits"]["workers_max"], 32);
         assert_eq!(index_payload["limits"]["aggregate_max"], 32);
         assert_eq!(index_payload["limits"]["scholarly_workers_max"], 6);
@@ -1781,47 +1789,12 @@ mod tests {
             &codec,
             &HashMap::from([(
                 "index_provider_routes".to_string(),
-                Some(r#"{"offline":"cnki_oversea"}"#.to_string()),
+                Some(r#"{"offline":"offline_fixture"}"#.to_string()),
             )]),
             &HashMap::new(),
         )
         .expect("offline provider route should write");
-        let control = litradar_index::control::open_control_db(
-            storage_config.index_control_dir().join("offline.sqlite"),
-        )
-        .expect("offline control database should open");
-        let run = match litradar_index::control::prepare_journal_sync(
-            &control,
-            "offline",
-            "cnki_oversea",
-            "issn-0001-3072",
-            "offline-complete-run",
-            litradar_domain::IndexSyncMode::Bootstrap,
-            false,
-            "2026-07-22T00:00:00Z",
-        )
-        .expect("offline synchronization should prepare")
-        {
-            litradar_index::control::JournalSyncPreparation::Run(run) => run,
-            litradar_index::control::JournalSyncPreparation::Skip => {
-                panic!("fresh offline synchronization should not skip")
-            }
-        };
-        litradar_index::control::complete_sync_run(
-            &control,
-            "offline",
-            "cnki_oversea",
-            "issn-0001-3072",
-            &run.run_id,
-            run.mode,
-            run.base_anchor.as_deref(),
-            None,
-            "2026-07-22T00:00:00Z",
-        )
-        .expect("offline synchronization should complete");
-        drop(control);
-
-        run_index_command_with_bundled_meta_dir(
+        let arguments = || {
             vec![
                 "--project-root".to_string(),
                 project_root.to_string_lossy().into_owned(),
@@ -1837,17 +1810,143 @@ mod tests {
                 "1".to_string(),
                 "--timeout".to_string(),
                 "1".to_string(),
-            ],
-            Path::new("litradar"),
-            None,
+            ]
+        };
+        let error =
+            run_index_command_with_bundled_meta_dir(arguments(), Path::new("litradar"), None)
+                .expect_err("fixture provider should stop before network access");
+        assert!(error
+            .to_string()
+            .contains("index provider offline_fixture is not registered"));
+
+        let batch_connection = litradar_storage::open_sqlite_connection(
+            storage_config
+                .index_control_dir()
+                .join("index-batches.sqlite"),
         )
-        .expect("precompleted local catalog should index without network access");
+        .expect("batch database should open");
+        let batch_id = batch_connection
+            .query_row(
+                "SELECT batch_id FROM index_batches WHERE status = 'active'",
+                [],
+                |row| row.get::<_, String>(0),
+            )
+            .expect("active batch should exist");
+        assert_eq!(
+            batch_connection
+                .execute(
+                    "UPDATE index_batch_catalogs
+                     SET phase = 'completed', run_id = ?2, written_article_count = ?3,
+                         source_attempt_count = ?4, updated_at = ?5, completed_at = ?5
+                     WHERE batch_id = ?1 AND ordinal = 0 AND phase = 'indexing'",
+                    (&batch_id, "offline-complete-run", 0_i64, 0_i64, 1_i64),
+                )
+                .expect("fixture catalog should complete"),
+            1
+        );
+        drop(batch_connection);
+
+        run_index_command_with_bundled_meta_dir(arguments(), Path::new("litradar"), None)
+            .expect("precompleted batch catalog should resume without Provider access");
 
         assert!(storage_config.index_dir().join("offline.sqlite").is_file());
         assert!(storage_config
             .index_control_dir()
             .join("offline.sqlite")
             .is_file());
+    }
+
+    #[test]
+    fn index_command_rejects_explicit_file_against_active_all_batch() {
+        let root = temp_root("litradar-cli-index-selection");
+        let project_root = root.path().join("project");
+        let storage_config = litradar_storage::StorageConfig::from_project_root(&project_root);
+        let secret_key_file = root.path().join("secret.key");
+        fs::write(&secret_key_file, [19_u8; 32]).expect("secret key should write");
+        fs::create_dir_all(storage_config.meta_dir())
+            .expect("metadata directory should be created");
+        fs::write(
+            storage_config.meta_dir().join("offline.csv"),
+            "catalog_id,catalog_aliases,title,issn,eissn,all_issns,title_aliases,area,utd_rank,utd_rating,abs_rank,abs_rating,fms_rank,fms_rating,fmscn_rank,fmscn_rating\nissn-0001-3072,,Abacus,0001-3072,1467-6281,0001-3072;1467-6281,,Accounting & Auditing,,,7,3,7,B,,\n",
+        )
+        .expect("local catalog should write");
+        litradar_storage::migrate_storage(&storage_config).expect("storage should migrate");
+        let codec =
+            litradar_storage::SecretCodec::load(&secret_key_file).expect("codec should load");
+        litradar_storage::upsert_runtime_settings(
+            storage_config.auth_db_path(),
+            &codec,
+            &HashMap::from([(
+                "index_provider_routes".to_string(),
+                Some(r#"{"offline":"offline_fixture"}"#.to_string()),
+            )]),
+            &HashMap::new(),
+        )
+        .expect("offline provider route should write");
+        let common_arguments = || {
+            vec![
+                "--project-root".to_string(),
+                project_root.to_string_lossy().into_owned(),
+                "--secret-key-file".to_string(),
+                secret_key_file.to_string_lossy().into_owned(),
+                "--workers".to_string(),
+                "1".to_string(),
+                "--processes".to_string(),
+                "1".to_string(),
+                "--issue-batch".to_string(),
+                "1".to_string(),
+                "--timeout".to_string(),
+                "1".to_string(),
+            ]
+        };
+        run_index_command_with_bundled_meta_dir(common_arguments(), Path::new("litradar"), None)
+            .expect_err("fixture provider should leave an active all-CSV batch");
+        let batch_path = storage_config
+            .index_control_dir()
+            .join("index-batches.sqlite");
+        let before = litradar_storage::open_sqlite_connection(&batch_path)
+            .expect("batch database should open")
+            .query_row(
+                "SELECT phase, run_id, written_article_count, source_attempt_count
+                 FROM index_batch_catalogs WHERE ordinal = 0",
+                [],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, Option<String>>(1)?,
+                        row.get::<_, Option<i64>>(2)?,
+                        row.get::<_, Option<i64>>(3)?,
+                    ))
+                },
+            )
+            .expect("batch catalog state should read");
+        let mut explicit_arguments = common_arguments();
+        explicit_arguments.extend(["--file".to_string(), "offline.csv".to_string()]);
+
+        let error = run_index_command_with_bundled_meta_dir(
+            explicit_arguments,
+            Path::new("litradar"),
+            None,
+        )
+        .expect_err("explicit selection must not adopt an active all-CSV batch");
+        assert!(error.to_string().contains("catalog_selection"));
+        let after = litradar_storage::open_sqlite_connection(batch_path)
+            .expect("batch database should reopen")
+            .query_row(
+                "SELECT phase, run_id, written_article_count, source_attempt_count
+                 FROM index_batch_catalogs WHERE ordinal = 0",
+                [],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, Option<String>>(1)?,
+                        row.get::<_, Option<i64>>(2)?,
+                        row.get::<_, Option<i64>>(3)?,
+                    ))
+                },
+            )
+            .expect("batch catalog state should remain readable");
+        assert_eq!(before, after);
     }
 
     #[test]

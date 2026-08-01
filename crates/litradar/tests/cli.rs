@@ -6,7 +6,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use litradar_domain::{IndexSyncMode, ScheduledDeliveryJob, ScheduledJobSpec};
+use litradar_domain::{ScheduledDeliveryJob, ScheduledJobSpec};
 use serde_json::Value;
 use tempfile::tempdir;
 
@@ -78,7 +78,13 @@ fn index_command_help_exposes_full_rescan_defaults_and_mode_relationships() {
         .is_some_and(|value| value.contains("mutually exclusive with --update")));
     assert!(payload["modes"]["resume"]
         .as_str()
-        .is_some_and(|value| value.contains("committed anchor")));
+        .is_some_and(|value| value.contains("compatible active project batch")));
+    assert!(payload["modes"]["no_resume"]
+        .as_str()
+        .is_some_and(|value| value.contains("new batch from committed anchors")));
+    assert!(payload["modes"]["file"]
+        .as_str()
+        .is_some_and(|value| value.contains("exactly one CSV")));
 }
 
 #[test]
@@ -387,66 +393,66 @@ fn index_command_resumes_a_local_catalog_without_network_access() {
         &codec,
         &HashMap::from([(
             "index_provider_routes".to_string(),
-            Some(r#"{"offline":"cnki_oversea"}"#.to_string()),
+            Some(r#"{"offline":"offline_fixture"}"#.to_string()),
         )]),
         &HashMap::new(),
     )
     .expect("offline provider route should write");
-    let control = litradar_index::control::open_control_db(
-        storage_config.index_control_dir().join("offline.sqlite"),
-    )
-    .expect("offline control database should open");
-    let run = match litradar_index::control::prepare_journal_sync(
-        &control,
-        "offline",
-        "cnki_oversea",
-        "issn-0001-3072",
-        "offline-complete-run",
-        IndexSyncMode::Bootstrap,
-        false,
-        "2026-07-22T00:00:00Z",
-    )
-    .expect("offline synchronization should prepare")
-    {
-        litradar_index::control::JournalSyncPreparation::Run(run) => run,
-        litradar_index::control::JournalSyncPreparation::Skip => {
-            panic!("fresh offline synchronization should not skip")
-        }
-    };
-    litradar_index::control::complete_sync_run(
-        &control,
-        "offline",
-        "cnki_oversea",
-        "issn-0001-3072",
-        &run.run_id,
-        run.mode,
-        run.base_anchor.as_deref(),
-        None,
-        "2026-07-22T00:00:00Z",
-    )
-    .expect("offline synchronization should complete");
-    drop(control);
+    let arguments = [
+        "index",
+        "--project-root",
+        ".",
+        "--secret-key-file",
+        "secret.key",
+        "--file",
+        "offline.csv",
+        "--workers",
+        "1",
+        "--processes",
+        "1",
+        "--issue-batch",
+        "1",
+        "--timeout",
+        "1",
+    ];
+    let failed = run_litradar_in(root.path(), &arguments);
+    assert!(!failed.status.success());
+    let failed_events = log_events(&failed);
+    assert!(failed_events
+        .iter()
+        .any(|event| event["event"] == "index.batch.admitted"));
+    assert!(failed_events
+        .iter()
+        .any(|event| event["event"] == "cli.command.failed"));
 
-    let output = run_litradar_in(
-        root.path(),
-        &[
-            "index",
-            "--project-root",
-            ".",
-            "--secret-key-file",
-            "secret.key",
-            "--file",
-            "offline.csv",
-            "--workers",
-            "1",
-            "--processes",
-            "1",
-            "--issue-batch",
-            "1",
-            "--timeout",
-            "1",
-        ],
+    let batch_connection = litradar_storage::open_sqlite_connection(
+        storage_config
+            .index_control_dir()
+            .join("index-batches.sqlite"),
+    )
+    .expect("batch database should open");
+    let batch_id = batch_connection
+        .query_row(
+            "SELECT batch_id FROM index_batches WHERE status = 'active'",
+            [],
+            |row| row.get::<_, String>(0),
+        )
+        .expect("active batch should exist");
+    assert_eq!(
+        batch_connection
+            .execute(
+                "UPDATE index_batch_catalogs
+                 SET phase = 'completed', run_id = ?2, written_article_count = ?3,
+                     source_attempt_count = ?4, updated_at = ?5, completed_at = ?5
+                 WHERE batch_id = ?1 AND ordinal = 0 AND phase = 'indexing'",
+                (&batch_id, "offline-complete-run", 0_i64, 0_i64, 1_i64),
+            )
+            .expect("fixture catalog should complete"),
+        1
     );
+    drop(batch_connection);
+
+    let output = run_litradar_in(root.path(), &arguments);
     let stdout = String::from_utf8(output.stdout.clone()).expect("stdout should be UTF-8");
     let stderr = String::from_utf8(output.stderr.clone()).expect("stderr should be UTF-8");
     assert!(output.status.success(), "index should succeed: {stderr}");
