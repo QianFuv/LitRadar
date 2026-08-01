@@ -103,25 +103,27 @@ Provider 对所请求期刊的观察：
 - `committed_anchor`：上一次整本期刊完整成功时提交的边界；
 - `traversal_checkpoint`：本次冻结运行下一步要处理的位置。
 
-三个 opaque 值（输入 anchor、输入 traversal、Complete 返回的 next anchor）都属于当前目录、Provider 和 `catalog_id` namespace。核心只检查为空、大小和进度形状，永远不解析 CNKI `year_issue_id`、Scholarly issue fingerprint、Crossref/OpenAlex cursor，也不把它们写入内容库。worker protocol v6 把相同 context 放在可丢弃 request JSON 中，并把当前 worker 所需的秘密单独通过 stdin bootstrap 传入；父进程仍独占控制状态和 SQLite 提交。
+三个 opaque 值（输入 anchor、输入 traversal、Complete 返回的 next anchor）都属于当前目录、Provider 和 `catalog_id` namespace。核心只检查为空、大小和进度形状，永远不解析 CNKI `year_issue_id`、Scholarly issue fingerprint、Crossref/OpenAlex cursor，也不把它们写入内容库。项目 batch ID 是核心恢复权限，不属于 `IndexFetchContext`，也不进入 worker request JSON。worker protocol v6 只携带相同 Provider context，并把当前 worker 所需的秘密单独通过 stdin bootstrap 传入；父进程独占 batch/control SQLite 和提交。因此完整 batch resume 不改变 Provider contract v3 或 worker protocol v6。
 
 模式语义：
 
-| 模式          | 核心语义                                                                            |
-| ------------- | ----------------------------------------------------------------------------------- |
-| `Bootstrap`   | 没有可复用成功状态时完整覆盖；默认 `--resume` 遇到已有成功行时可零请求跳过          |
-| `Incremental` | 从远端当前头部扫描到 committed anchor 并包含边界；anchor 为 NULL/缺失时安全完整覆盖 |
-| `FullRescan`  | 覆盖完整 Provider 历史，不把 committed anchor 当停止边界；可恢复同模式 traversal    |
+| 模式          | 核心语义                                                                                                      |
+| ------------- | ------------------------------------------------------------------------------------------------------------- |
+| `Bootstrap`   | 新 batch 完整覆盖；仅 active batch 内已经完成的 journal 可由默认 resume 零请求跳过                           |
+| `Incremental` | 新 batch 从远端当前头部扫描到旧 committed anchor 并包含边界；同 active batch 已完成 journal 才是 skip marker |
+| `FullRescan`  | 新 batch 覆盖完整 Provider 历史；可恢复同 batch/同模式 traversal，同 batch 已完成 journal 可跳过              |
 
-运行开始时核心把 committed anchor 冻结为 `base_anchor`。Provider 在自己的 traversal 中冻结 candidate head；重试不得根据已写内容重新计算边界。Continue 只推进 traversal。Complete 只有在整本期刊窗口已覆盖后才返回 next anchor。
+journal 运行开始时核心把 committed anchor 冻结为 `base_anchor`。Provider 在自己的 traversal 中冻结 candidate head；重试不得根据已写内容重新计算边界。Continue 只推进 traversal。Complete 只有在整本期刊窗口已覆盖后才返回 next anchor。核心把 completion 与当前 batch ID 一起提交；成功 batch 结束后的下一条命令创建新 batch，因此 Provider 必须预期每次独立更新都会再次收到所有选中 journal。
 
 提交顺序固定为：
 
 ```text
-canonical content transaction
+project batch admission + ordered catalog phase
+-> same-batch completion check
+-> Provider fetch + canonical content transaction
 -> Continue: traversal checkpoint transaction
-   Complete: delete run + replace committed anchor in one transaction
--> --update only: publish provider-neutral changes.json
+   Complete: delete matching batch run + replace committed anchor/batch marker in one transaction
+-> --update only: persist exact manifest intent -> publish -> acknowledge -> optional notify
 ```
 
 最终内容已提交而控制事务失败时，旧 anchor 保持不变；下次运行重放冻结窗口并由稳定 identity/upsert 收敛。
@@ -216,18 +218,19 @@ API 用 `307 Temporary Redirect` 或文档响应返回结果，并设置 `Cache-
 
 ## 内容库与控制库
 
-| 路径                                  | 生命周期 | 内容                                                                               |
-| ------------------------------------- | -------- | ---------------------------------------------------------------------------------- |
-| `data/index/<catalog>.sqlite`         | 需要备份 | v6 规范期刊、期刊/文章 identity aliases、撤稿关系、列表投影、FTS 和文章变更 outbox |
-| `data/index-control/<catalog>.sqlite` | 可丢弃   | v3 Provider-scoped lease、成功 anchor 和运行 traversal checkpoint                  |
+| 路径                                         | 生命周期 | 内容                                                                                   |
+| -------------------------------------------- | -------- | -------------------------------------------------------------------------------------- |
+| `data/index/<catalog>.sqlite`                | 需要备份 | v6 规范期刊、期刊/文章 identity aliases、撤稿关系、列表投影、FTS 和文章变更 outbox     |
+| `data/index-control/index-batches.sqlite`    | 可丢弃   | v1 core-owned batch fingerprint、catalog phase/manifest intent 和全局 lease             |
+| `data/index-control/<catalog>.sqlite`        | 可丢弃   | v4 Provider-scoped lease、batch-aware 成功 anchor 和运行 traversal checkpoint            |
 
-成功 anchor 与运行 checkpoint 分表保存。成功行存在但 anchor 为 NULL 表示“完整成功但没有可复用边界”，不同于成功行缺失。删除控制库会同时失去成功边界和恢复进度；下一次安全完整覆盖，并依靠 alias/upsert 收敛，不会改变内容身份。
+成功 anchor 与运行 checkpoint 分表保存，并分别带可空 `completed_batch_id` / `batch_id`。成功行存在但 anchor 为 NULL 表示“完整成功但没有可复用边界”，不同于成功行缺失；它只有在完成标记属于 active batch 时才能跳过，否则新 batch 安全完整覆盖。删除控制状态会失去 batch、成功边界和恢复进度，并依靠 alias/upsert 收敛，不会改变内容身份。
 
 每次目录运行在构造 Provider、分配 worker 或发出请求之前完成期刊身份预检。当前目录的 catalog ID、退役 catalog alias 和全部 ISSN 必须唯一归属于同一个规范 catalog ID；已有规范 journal 的标题、别名、ISSN、领域、排名及 listing/FTS 投影会在同一内容事务中收敛。即使当前 catalog ID 已有成功 anchor 行，这一步仍会执行，随后 Bootstrap 才可能以零 Provider 请求跳过该期刊。空内容库只登记身份键，不创建 journal 壳。
 
 旧 catalog alias 若在任意 Provider namespace 下仍有 anchor 或 run checkpoint，运行固定失败；系统不会把 opaque 状态搬到当前 catalog ID。旧 alias journal 只有在不存在 issue、article、listing 和 outbox 历史时才可由事务清理。非空旧实体、身份所有权冲突和确定性 ID 冲突都在 Provider 请求前原子失败；内容 batch 写入时还会复核所有权。
 
-内容库禁止 Provider 名称、路由、检查点、lease、运行统计、上游 ID 和 URL。控制库禁止规范文章内容。备份明确排除 `data/index-control`。
+内容库禁止 Provider 名称、路由、检查点、lease、运行统计、上游 ID 和 URL。控制库禁止规范文章内容；batch ledger 不保存 Provider opaque state、代理或凭据。备份明确排除整个 `data/index-control`。
 
 ## Conformance 流程
 

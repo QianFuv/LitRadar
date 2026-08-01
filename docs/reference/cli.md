@@ -134,7 +134,7 @@ litradar admin backup restore
     [--auth-db PATH]
 ```
 
-备份命令不接收部署密钥。清单格式名固定为 `litradar-backup`；新备份使用 version 2，并始终包含认证库和完整 `data/meta` 普通文件树。`--include-indexes` 只选择 `data/index` 下的 v6 内容库，明确排除可重建的 `data/index-control`；`--include-push-state` 同时选择 `data/push_state` 和 `data/folder_push_state`。验证和恢复仍接受 version 1；v1 恢复不会修改目标 Meta 目录。精确替换和离线门禁见[备份与恢复](../operations/backup.md)。
+备份命令不接收部署密钥。清单格式名固定为 `litradar-backup`；新备份使用 version 2，并始终包含认证库和完整 `data/meta` 普通文件树。`--include-indexes` 只选择 `data/index` 下的 v6 内容库，明确排除可重建的 `data/index-control`，包括项目 `index-batches.sqlite` 和每个 catalog control；`--include-push-state` 同时选择 `data/push_state` 和 `data/folder_push_state`。验证和恢复仍接受 version 1；v1 恢复不会修改目标 Meta 目录。精确替换和离线门禁见[备份与恢复](../operations/backup.md)。
 
 ## `index`
 
@@ -162,7 +162,7 @@ litradar index --secret-key-file PATH
 | `--processes N`                            | `1`      | 单个 CSV 的独立期刊子进程数                                  |
 | `--issue-batch N`                          | `8`      | 每轮合并的 CNKI issue 数                                     |
 | `--timeout N`                              | `20`     | 上游 HTTP 超时秒数                                           |
-| `--resume` / `--no-resume`                 | 开启     | 是否跳过已成功的 Bootstrap 或恢复同模式运行窗口              |
+| `--resume` / `--no-resume`                 | 开启     | 续跑兼容 active batch，或显式放弃它并从 committed anchor 新建 batch |
 | `--update` / `--no-update`                 | 关闭     | 是否执行成功期次边界增量并生成变更清单                       |
 | `--full-rescan` / `--no-full-rescan`       | 关闭     | 是否扫描完整 Provider 历史且不生成变更清单                   |
 | `--notify` / `--no-notify`                 | 关闭     | 更新成功后启动 `litradar notify`                             |
@@ -192,7 +192,7 @@ litradar index --secret-key-file PATH
 
 ### 规范目录和 Provider 路由
 
-显式传入 `--file` 时只接受 `data/meta` 下一个不带目录组件的 `.csv` 文件名；未传入时按文件名顺序处理全部 CSV。每个文件 stem 稳定决定内容库和控制库：
+显式传入 `--file` 时只接受 `data/meta` 下一个不带目录组件的 `.csv` 文件名；未传入时按文件名顺序处理全部 CSV。每个选中 CSV 只读取一次：同一份字节同时用于摘要、UTF-8/目录校验和本次冻结条目，后续执行不会从路径重读。单文件和全部文件是不同的 batch selection；active all-CSV batch 不能被 `--file` 静默接管。每个文件 stem 稳定决定内容库和控制库：
 
 ```text
 data/meta/<stem>.csv
@@ -208,21 +208,45 @@ CSV 使用 LitRadar 维护的 `catalog_id,title,issn,eissn,all_issns,title_alias
 
 ### 实时恢复与增量同步
 
-每个目录/Provider 在 `data/index-control/<stem>.sqlite` 取得独立 lease。父进程每 30 秒续期到未来 300 秒；未过期所有者会在调用上游前阻止同一 namespace 的新命令。正常结束释放 lease；进程被强制终止时，确认旧进程已经消失并等待 lease 过期，或在维护窗口删除整个可丢弃控制库后重跑。
+每条命令先在 `data/index-control/index-batches.sqlite` 取得项目级 lease，再为当前目录/Provider 在 `data/index-control/<stem>.sqlite` 取得独立 lease。父进程每 30 秒续期到未来 300 秒；未过期所有者会在调用上游前阻止新的竞争命令。正常结束释放 lease；进程被强制终止时，先确认旧进程已经消失并等待 lease 过期，不要同时启动第二个索引进程。
+
+默认 `--resume` 的边界是“兼容的 active project batch”，不是所有历史成功状态。batch 指纹覆盖：
+
+- `--file` 或全部 CSV 的选择方式、按文件名排序后的 catalog 顺序，以及每个 CSV 的精确字节；
+- 每个 stem 的 `index_provider_routes` 结果；
+- Bootstrap / Incremental / FullRescan 模式、`--issue-batch`、notify 和 notify dry-run 选择。
+
+`workers`、`processes`、timeout、代理和凭据不影响 correctness fingerprint。兼容 active batch 会按持久顺序跳过已经 completed 的 catalog 和同 batch 已完成的 journal，从第一个未完成 traversal checkpoint 继续；CSV、顺序、selection、route、模式或上述正确性选项变化会在 Provider 访问前 fail closed，并只报告差异类别。一个 batch 全部成功后进入 completed；下一次命令总会创建新 batch 并重新检查全部选中 journal，旧成功行只作为增量 anchor，不是永久 skip 标记。
+
+`--no-resume` 明确放弃当前 active batch，并在清理该 batch 自有的 `provider_run_checkpoints` 后创建新 batch。它保留 committed anchors、内容库、outbox 和已经发布的 manifest；新 traversal 从所选模式和现有 committed anchor 开始。它不是“忽略一个 CSV 错误继续”，也不会合并不兼容的冻结输入。
 
 控制库把成功状态与运行状态分开保存，并以目录、Provider、`catalog_id` 隔离。命令模式如下：
 
-- 不传 `--update` 或 `--full-rescan` 时使用 Bootstrap。`--resume` 遇到已有成功行会跳过该期刊；即使成功 anchor 为 NULL，也表示一次完整运行已经成功，不等于缺少状态。
-- `--update` 使用 Incremental。从远端当前头部扫描到上一次完整成功 anchor，并完整包含该边界期次；没有成功行或成功 anchor 为 NULL 时安全执行完整覆盖。只有该模式在成功后发布 `.changes.json`。
-- `--full-rescan` 使用 FullRescan，忽略成功 anchor 作为停止边界并核对完整 Provider 历史。它可以恢复同为 FullRescan 的 traversal checkpoint，但不发布 `.changes.json`，因此不能与 `--notify` 组合。
+- 不传 `--update` 或 `--full-rescan` 时使用 Bootstrap。同 active batch 已完成的 journal 可零请求跳过；新 batch 会重新执行完整覆盖，即使旧 anchor 为 NULL。
+- `--update` 使用 Incremental。从远端当前头部扫描到上一次完整成功 anchor，并完整包含该边界期次；没有成功行或成功 anchor 为 NULL 时安全执行完整覆盖。只有该模式在成功后发布 `.changes.json`。同 active batch 已完成的 journal 才跳过。
+- `--full-rescan` 使用 FullRescan，忽略 committed anchor 作为停止边界并核对完整 Provider 历史。它可以恢复同 batch、同模式和同 base 的 traversal checkpoint；同 batch 已完成的 journal 可跳过。该模式不发布 `.changes.json`，因此不能与 `--notify` 组合。
 
-一次运行开始时冻结 `base_anchor`；Provider 在第一个已确认 batch 中冻结自己的 candidate head。`--resume` 只恢复同步模式和 base 都匹配的运行，模式不一致会 fail closed。`--no-resume` 替换当前 traversal checkpoint 并从该模式头部重走，但不会删除或根据内容库重算 committed anchor。
+一次 journal 运行开始时冻结 `base_anchor`；Provider 在第一个已确认页中冻结自己的 candidate head。恢复只接受 batch ID、同步模式和 base 都匹配的运行，模式或 batch 不一致会 fail closed。batch ID 只属于核心控制状态，不进入 Provider context 或 worker request JSON。
 
 每页先在内容库事务中写入规范 journal/issue/article、identity aliases、投影和 change outbox，再推进 traversal checkpoint。最终内容批次提交后，核心才在一个控制事务中删除运行 checkpoint 并替换 committed anchor。内容成功而控制提交失败时，旧 anchor 不变；重跑冻结窗口并依靠 alias/upsert 去重。
 
 切换 Provider 会使用没有 anchor 的新 namespace；删除控制库也会同时失去成功 anchor 和运行进度。两种情况都安全退回完整覆盖，不触碰内容库，也不会复制文章或改变 ID。
 
-`--update` 从内容库的事务性 `article_change_events` 生成 Provider-neutral changes JSON。worker、上游或清单失败会保留 outbox；文件发布和 SQLite 清理之间是至少一次边界，消费者必须按规范文章身份去重。Provider 请求统计只在终态结构化日志中聚合，不写入内容库。
+`--update` 从内容库的事务性 `article_change_events` 生成 Provider-neutral changes JSON。核心先把精确 payload、目标相对路径和 through-event cursor 持久化为 batch manifest intent，再原子发布相同字节、幂等清理该 cursor，最后进入可选 notify phase。重启可只补 manifest 或 notify，不重复已完成 Provider 工作。若 outbox 已空但已有一个有界且可解析、属于同内容库的 manifest，空 update 会保留该文件且不再次 notify。batch ledger 丢失时文件/SQLite 边界仍按至少一次处理，消费者必须按规范文章身份去重。Provider 请求统计只在终态结构化日志中聚合，不写入内容库。
+
+### 升级后恢复旧 English traversal
+
+从 control v3 升级留下的 batchless traversal 只允许由显式单 CSV、默认 `--resume` 接管；隐式全部 CSV 会拒绝，以免把不同旧 epoch 混入一个 batch。对已有 English 失败状态，先确认没有旧索引进程，再沿用原命令的 mode、`--issue-batch` 和 notify 选项，并增加：
+
+```bash
+litradar index \
+  --secret-key-file /run/secrets/litradar.key \
+  --project-root /app \
+  --file english_journals.csv \
+  --update
+```
+
+不要为这次 legacy 接管添加 `--no-resume`。核心要求旧 batchless checkpoints 共享一个 mode 和 start epoch，把同 epoch 已完成 anchor 绑定到新 batch，然后跳过较早 journal 并从保留的 English checkpoint（例如 Public Choice）继续。若此前已经用新版本启动过不带 `--file` 的失败尝试，active all-CSV batch 会产生 `catalog_selection` mismatch；确认进程已停止后，先移动或删除仅项目级的 `data/index-control/index-batches.sqlite`，保留 `english_journals.sqlite`，再执行上述显式恢复命令。
 
 日常增量及可选通知：
 

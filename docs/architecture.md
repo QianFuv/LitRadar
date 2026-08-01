@@ -18,7 +18,8 @@ litradar serve  (one long-running process)
    |
    +-- data/auth.sqlite
    +-- data/index/*.sqlite
-   +-- data/index-control/*.sqlite  (disposable provider anchors/run checkpoints/leases)
+   +-- data/index-control/index-batches.sqlite  (disposable project batch/catalog ledger)
+   +-- data/index-control/<catalog>.sqlite       (disposable provider anchors/run checkpoints/leases)
    +-- data/push_state/*.json
    +-- data/folder_push_state/*.json
 
@@ -126,32 +127,40 @@ HTTP 外层先移除不受信的 `X-Request-Id`，再生成并返回服务器 UU
 
 ### 规范目录与 Provider 路由
 
-`litradar index` 对每个选中目录执行同一编排：
+`litradar index` 先把本次选择的 CSV 各读取一次，同时解析规范条目并对同一份精确字节计算摘要；随后在项目级 batch ledger 中取得全局 lease。默认 `--resume` 只接管 correctness inputs 完全兼容的 active batch。成功结束的 batch 不会被下一次命令复用，因此下一次独立更新仍会检查全部选中 journal。
 
 ```text
-read canonical CSV -> validate catalog contract
+freeze ordered CSV selection -> validate catalog contracts
+        |
+        +-- data/index-control/index-batches.sqlite (batch schema v1 + global lease)
+        |       pending -> indexing -> manifest_prepared
+        |                            -> manifest_published -> notifying -> completed
         |
         +-- catalog stem -> runtime index_provider_routes -> registered IndexContentProvider
         |
         +-- data/index/<stem>.sqlite         (content v6)
-        +-- data/index-control/<stem>.sqlite (disposable control v3)
+        +-- data/index-control/<stem>.sqlite (disposable control v4)
                     |
                     v
 acquire provider-scoped lease
--> read committed anchor or resume matching frozen run
+-> skip only same-batch completed journal, otherwise read committed anchor or matching batch run
 -> Provider fetch(mode, committed anchor, traversal checkpoint)
 -> commit canonical content
 -> Continue: advance traversal checkpoint
-   Complete: atomically remove run and replace committed anchor
--> --update only: publish provider-neutral change manifest
+   Complete: atomically remove run and replace committed anchor with completed_batch_id
+-> --update only: persist exact manifest intent, publish bytes, acknowledge cursor, optionally notify
 -> release lease
 ```
+
+batch compatibility 包含 CSV 的选择方式、顺序和精确内容、Provider route、同步模式、issue batch 以及 notify 选项；worker/process 数、timeout、代理和凭据不参与。任一 correctness input 改变都会在 Provider 访问前 fail closed。`--no-resume` 是显式放弃 active batch：只清理该 batch 自有的运行 checkpoint，再从既有 committed anchor 创建新 batch；不会删除内容、anchor、outbox 或已经发布的 manifest。
+
+崩溃恢复按 durable phase 前进：`indexing` 先跳过同 batch 已提交 anchor，再接管匹配 checkpoint；`manifest_prepared` 重发持久化的精确字节并重做 through-cursor acknowledgement；`manifest_published` 只进入 notify 或完成；`notifying` 只重试未持久化结果的 handoff。若 journal anchor 已提交但 catalog phase 尚未推进，same-batch marker 会阻止 Provider 重放；若文件 rename 或 outbox acknowledgement 已完成但 phase 尚未推进，重放仍使用同一 manifest intent。
 
 目录验证在 Provider 请求前拒绝未知列、重复/非法 `catalog_id`、非法 ISSN、重复别名和不规范文本。索引路由来自 `auth.sqlite.runtime_settings.index_provider_routes`；摘要页和全文顺序分别来自带 default 与 catalog overrides 的运行设置。内容库和目录都不知道实际 Provider。
 
 “分进程注册”只表示同一个 `litradar` 二进制在不同命令边界构造不同的内存注册表：`index` 进程注册索引实现，`serve` 的 API 进程注册摘要页/全文实现。它不是多服务部署，也不表示 Provider 自动回退。管理 API 按相同逻辑名称聚合这些注册，形成供前端过滤选项的 capability 目录。
 
-多进程索引使用私有 worker protocol v6，把同步模式、Provider-opaque 的 committed anchor 和 traversal checkpoint 随 journal assignment 写入可丢弃 request JSON；worker 不解析这些值，父进程仍独占 SQLite 和提交顺序。国内 CNKI captcha token 和共用 Provider 代理 URL 都不属于该文件、进程参数或 child 环境：父进程启动 child 后移除继承的探测环境变量，再通过 stdin 发送一次版本化 bootstrap。只有 `provider_name=cnki` 的 worker 可以收到 captcha token，只有自身逻辑 Provider 的代理开关已启用时才能收到代理 URL。worker 在 Provider 构造前验证协议版本和 worker ID，随后同一管道继续接收 parent 的 durable commit ACK；相关 Debug、错误和日志只保留固定脱敏字段。
+多进程索引使用私有 worker protocol v6，把同步模式、Provider-opaque 的 committed anchor 和 traversal checkpoint 随 journal assignment 写入可丢弃 request JSON；worker 不解析这些值，父进程仍独占 SQLite、batch ID 和提交顺序。项目 batch ID 不进入 `IndexFetchContext` 或 worker request JSON，因此 Provider contract v3 和 worker protocol v6 都不因完整 resume 改版。国内 CNKI captcha token 和共用 Provider 代理 URL 都不属于该文件、进程参数或 child 环境：父进程启动 child 后移除继承的探测环境变量，再通过 stdin 发送一次版本化 bootstrap。只有 `provider_name=cnki` 的 worker 可以收到 captcha token，只有自身逻辑 Provider 的代理开关已启用时才能收到代理 URL。worker 在 Provider 构造前验证协议版本和 worker ID，随后同一管道继续接收 parent 的 durable commit ACK；相关 Debug、错误和日志只保留固定脱敏字段。
 
 Provider 只能返回规范 `JournalDraft`、`IssueDraft`、`ArticleDraft` 和 `ProviderProgress`。`Continue` 携带下一 traversal checkpoint；`Complete` 携带可空的 next anchor。两个字符串都保持 Provider-scoped、opaque，核心不解析 CNKI issue ID、Scholarly fingerprint 或上游 cursor。`litradar-index` 负责校验、稳定 ID、合并、SQLite 事务和 outbox。内容先提交、控制状态后提交；控制提交失败时旧 anchor 保持不变，重跑依靠冻结窗口和规范 alias 幂等收敛。
 
@@ -159,7 +168,7 @@ Provider 只能返回规范 `JournalDraft`、`IssueDraft`、`ArticleDraft` 和 `
 
 每个 CSV 对应 `data/index/<csv_stem>.sqlite`。v6 内容库只包含规范期刊、期次、文章、identity aliases、撤稿关系、查询/FTS 投影和事务性文章变更 outbox。它不包含 Provider、URL、anchor、checkpoint、lease 或运行统计。
 
-`data/index-control/<csv_stem>.sqlite` 是可丢弃的 Provider-scoped v3 控制库：成功 anchor 与运行中的 traversal checkpoint 分表保存，lease 仍按目录/Provider 隔离。删除后没有可信成功边界，下一次运行安全退回完整抓取，但不会改变内容 ID 或复制已有文章。切换 Provider 使用新的 namespace，同样从无 anchor 状态开始。内容库需要备份，控制库明确不备份。详见[数据库参考](reference/database.md)。
+`data/index-control/index-batches.sqlite` 是项目级可丢弃 batch schema v1；`data/index-control/<csv_stem>.sqlite` 是 Provider-scoped v4 控制库。前者保存冻结输入指纹、catalog phase/outcome、精确 manifest intent 和全局 lease，后者把成功 anchor 与运行中的 traversal checkpoint 分表保存并绑定 batch ID。删除全部控制状态后没有可信 batch、成功边界或 traversal，下一次运行安全退回完整抓取，但不会改变内容 ID 或复制已有文章。切换 Provider 使用新的 namespace，同样从无 anchor 状态开始。内容库需要备份，两类控制库都明确不备份。详见[数据库参考](reference/database.md)。
 
 ### 认证与业务数据库
 
@@ -265,8 +274,8 @@ browser -> stable LitRadar action URL -> load ArticleLocator
 2. 检查 `PRAGMA user_version`。
 3. 认证库在独立 `BEGIN IMMEDIATE` 事务中逐版本迁移。
 4. 内容索引接受新建/空 v0、精确 v6，或可在事务中迁移的精确 v4/v5；非空 v0 及 v1–v3 明确要求人工备份、移动或删除点名文件后重建。
-5. 控制库按 v3 创建，可随时删除并重建；v0/v1 的旧 Provider 名称先按兼容规则重写，v0/v1/v2 中可证明为 journal complete 的事实迁移为成功但 NULL 的 anchor，无法恢复的旧 traversal 状态丢弃。
-6. 遇到未来版本或失败立即退出，不自动删除或改写文件。
+5. 项目 batch ledger 按 v1 创建；catalog 控制库在一个事务中迁移到 v4。v0/v1 的旧 Provider 名称先按兼容规则重写，v0/v1/v2 中可证明为 journal complete 的事实迁移为成功但 NULL 的 anchor；v3 行保留并以 NULL batch 列进入保守 legacy bridge。
+6. 两类控制库都可删除后重建；遇到未来版本或失败立即退出，不自动删除或改写文件。
 
 `litradar serve` 先完成一次存储迁移、密钥验证和 HTTP 准备，再启动监听器与立即执行的首个调度 tick。普通查询仓库不负责 DDL。
 

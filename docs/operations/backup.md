@@ -13,13 +13,13 @@
 | v2 固定范围            | `data/auth.sqlite` 和完整 `data/meta`           |
 | `--include-indexes`    | 创建时发现的全部 `data/index/*.sqlite`          |
 | `--include-push-state` | `data/push_state/` 和 `data/folder_push_state/` |
-| 始终排除               | `data/index-control/` Provider checkpoint/lease |
+| 始终排除               | 整个 `data/index-control/`，含 batch ledger、catalog checkpoint 和 lease |
 
 未选择的索引和状态组不会在恢复时修改。v2 Meta 和选择的可选组按精确快照恢复，包括“备份时为空”的情况。
 
 `--include-push-state` 中的 `.changes.json` 是 Provider-neutral 候选变更清单；其余 `<db>.json` 是启动迁移保留的旧投递导入源。持久投递权威状态已经包含在固定的 `auth.sqlite` 快照中，但若部署仍保留旧文件，建议同时选择该选项，以保留导入 hash 的来源证据和未消费的变更清单。恢复不会自动删除或改写这些源文件。
 
-`--include-indexes` 只选择 Provider-neutral v4 内容库。`data/index-control` 是可重建的运行控制状态，即使目录位于项目根下也不会进入 manifest、备份树或恢复目标。Provider 切换不需要复制旧 checkpoint；恢复后首次索引会重新创建控制库，并通过内容 identity alias 幂等收敛。
+`--include-indexes` 只选择 Provider-neutral v6 内容库。`data/index-control` 是可重建的运行控制状态：项目级 `index-batches.sqlite`（batch schema v1）和每个 catalog 的 v4 anchor/run/lease 控制库即使位于项目根下，也都不会进入 backup manifest、备份树或恢复目标。Provider 切换不需要复制旧 checkpoint；清空控制状态后的首次索引会创建新 batch 并通过内容 identity alias/upsert 幂等收敛。
 
 部署密钥不在选择范围内。Meta 或状态目录中出现 `.key` 或 `.pem` 文件时，创建会失败。
 
@@ -152,7 +152,7 @@ docker compose run --rm --no-deps \
 
 恢复 v1 时目标 Meta 目录保持原样。未选择的索引或状态组也保持原样；选择的组会移除目标中不在清单内的旧文件。
 
-恢复不会创建、替换或清理目标 `data/index-control`。为避免把恢复前 checkpoint 与恢复后的内容时间点混用，离线恢复包含索引库时，应在确认没有索引进程后删除明确对应的 control 文件，让下一次索引从空控制状态重建；该删除不会影响内容 ID。
+恢复不会创建、替换或清理目标 `data/index-control`。为避免把恢复前的 project batch/catalog phase 或 Provider checkpoint 与恢复后的内容时间点混用，离线恢复包含索引库时，应先确认没有索引进程，再移动或删除整个目标 `data/index-control`（包括 `index-batches.sqlite` 和所有 catalog controls），让下一次索引从空控制状态重建；该删除不会影响内容 ID。若只恢复认证库、Meta 或 push state 而不恢复内容索引，可保留当前控制目录，但下一次索引仍会按 active batch compatibility fail closed。
 
 ## 失败处理
 

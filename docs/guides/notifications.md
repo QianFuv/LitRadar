@@ -24,6 +24,19 @@
 
 `summary` 中的明细不是运行输入。没有可用变更清单或状态快照差异时，每周更新、CLI 投递和手动推送可能返回空或 `idle`。
 
+### 索引侧 manifest 与 notify 恢复
+
+`index --update` 的 catalog finalization 是项目 batch 的持久 phase，而不是 Provider 成功后的单次尾调用：
+
+1. 从内容库 outbox 构造确定性的 JSON，并把精确 UTF-8 payload、相对目标路径和 inclusive through-event cursor 写入 `index-batches.sqlite` 的 `manifest_prepared` 状态。
+2. 通过同目录临时文件、flush/fsync 和 rename 发布精确 payload。
+3. 幂等删除 `article_change_events.event_id <= cursor`，再进入 `manifest_published`。
+4. 配置了 `index --notify` 时先进入 `notifying`，只执行 `litradar notify` handoff；exit code 持久化后才把 catalog 标为 completed。
+
+因此在 payload 持久化、rename、outbox acknowledgement 或 phase 写入任一点中止，默认 resume 都会重放相同 manifest 字节，不再次访问已经完成的 Provider journal。notify 启动失败会停留在 `notifying`；恢复只重试 notify。若 notify exit code 已写入而 catalog completion 尚未写入，恢复不会再次启动 notify。外部 notify 已产生副作用但进程在 exit code 持久化前消失时仍是至少一次 handoff，投递层继续依靠自身 run/item/dedupe 状态处理不确定结果。
+
+如果新 batch 的 outbox 为空，而目标已有一个大小受限、可解析且 `db_name` 匹配的 manifest，索引会保留现有文件、返回无新 manifest，并跳过内联 notify；不会用空 payload 覆盖尚待消费的候选。删除项目 batch ledger 会失去这些 phase/intent 证明，文件与 SQLite 的通用边界仍按至少一次对待。
+
 ## 用户设置
 
 `data/auth.sqlite.notification_settings` 是唯一订阅源。设置按用途分组：

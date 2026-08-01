@@ -7,7 +7,8 @@ LitRadar 把规范内容、可丢弃索引控制状态和用户业务数据放�
 | 路径                                  |             数量 | 生命周期与责任                                                     |
 | ------------------------------------- | ---------------: | ------------------------------------------------------------------ |
 | `data/index/<catalog>.sqlite`         |     每个目录一个 | 需要备份的 Provider-neutral 内容库                                 |
-| `data/index-control/<catalog>.sqlite` | 每个活动目录一个 | 可删除的 Provider anchor/run checkpoint/lease 控制库               |
+| `data/index-control/index-batches.sqlite` |         项目一个 | 可删除的 batch/catalog phase、manifest intent 和全局 lease ledger |
+| `data/index-control/<catalog>.sqlite` | 每个活动目录一个 | 可删除的 v4 Provider anchor/run checkpoint/lease 控制库            |
 | `data/auth.sqlite`                    |             一个 | 用户、收藏、会话、配置、任务、公告、审计、投递状态和受管 Meta 状态 |
 | `data/push_state/`                    |        多个 JSON | Provider-neutral 变更清单和保留的旧 notify 导入源                  |
 | `data/folder_push_state/`             |        多个 JSON | 保留的旧 push 导入源                                               |
@@ -16,11 +17,12 @@ LitRadar 把规范内容、可丢弃索引控制状态和用户业务数据放�
 
 ## 连接和版本
 
-| 数据库      | `PRAGMA user_version` | 升级策略                                   |
-| ----------- | --------------------: | ------------------------------------------ |
-| 认证/业务库 |                    12 | 版本化 migration                           |
-| 内容索引库  |                     6 | 新建/验证精确 v6；精确 v4/v5 原子迁移到 v6 |
-| 索引控制库  |                     3 | v0/v1/v2 安全迁移；也可删除后按 v3 重建    |
+| 数据库                 | `PRAGMA user_version` | 升级策略                                      |
+| ---------------------- | --------------------: | --------------------------------------------- |
+| 认证/业务库            |                    12 | 版本化 migration                              |
+| 内容索引库             |                     6 | 新建/验证精确 v6；精确 v4/v5 原子迁移到 v6    |
+| 项目 batch ledger      |                     1 | 新建/验证精确 v1；可删除后重建                 |
+| catalog 索引控制库     |                     4 | v0/v1/v2/v3 安全事务迁移；可删除后按 v4 重建   |
 
 可写连接使用 `foreign_keys=ON`、WAL、`synchronous=NORMAL` 和 30 秒 busy timeout。
 
@@ -152,9 +154,29 @@ FTS5 使用内置 `unicode61 remove_diacritics 2`，字段为：
 - 记录 article/journal/issue 和 in-press membership；
 - revision 唯一索引让 Provider 重试和控制状态丢失重放幂等收敛。
 
-`--update` 把事件生成到 `data/push_state/<db>.changes.json`。文件发布成功后清理已发布 outbox；文件系统替换和 SQLite 提交之间仍是至少一次边界，消费者继续按身份去重。Bootstrap 和 `--full-rescan` 不发布该清单，并在成功结束时丢弃本次无需投递的 outbox。
+`--update` 把事件生成到 `data/push_state/<db>.changes.json`。项目 batch ledger 先持久化精确 JSON 字节和 inclusive through-event cursor，再原子替换文件、幂等删除 `event_id <= cursor` 的行并推进 catalog phase。只要 active batch ledger 保留，rename 或 acknowledgement 任一侧崩溃都会重放同一 payload；ledger 丢失后文件系统与 SQLite 仍是至少一次边界，消费者继续按身份去重。空 outbox 不会覆盖已有的有界、可解析且 `db_name` 匹配的 manifest。Bootstrap 和 `--full-rescan` 不发布清单，并在成功结束时丢弃本次无需投递的 outbox。
 
-## v3 索引控制库
+## v1 项目 batch ledger
+
+`data/index-control/index-batches.sqlite` 每个项目只有一个，负责跨 CSV 的恢复顺序和唯一 active invocation。它包含：
+
+- `index_batches`：batch ID、`active/abandoning/completed/abandoned` 状态、兼容性 fingerprint、selection、sync mode、issue batch、notify flags 和时间；部分唯一索引保证最多一个 active/abandoning batch。
+- `index_batch_catalogs`：稳定 ordinal、CSV basename/stem/摘要、Provider route、journal count、phase、安全 outcome 计数，以及可空的精确 manifest payload、SHA-256、through-event cursor、相对路径、run ID 和生成时间。
+- `index_batch_lease`：固定单行全局 lease，保存 batch、owner、heartbeat 和 expiry。
+
+catalog phase 只允许以下前向路径：
+
+```text
+pending -> indexing -> completed
+                    -> manifest_prepared -> manifest_published -> completed
+                                                           \-> notifying -> completed
+```
+
+fingerprint 包含 CSV selection、顺序和精确内容、Provider route、sync mode、issue batch 与 notify flags；不包含 workers/processes、timeout、代理或凭据。默认 resume 只重新打开兼容 active batch。成功 batch 保持 completed 历史且下一条命令创建新 batch，所以历史 completed row 不会使下一次 update 永久跳过 journal。
+
+`--no-resume` 先把 active batch 置为 abandoning；调用方从各 catalog v4 控制库删除仅属于该 batch 的 run checkpoint 后，事务性标记旧 batch abandoned 并创建 replacement。committed anchor、内容、outbox 和已经发布的 manifest 不属于清理范围。
+
+## v4 catalog 索引控制库
 
 控制库位于 `data/index-control`，与内容发现、REST 查询和备份完全分离。所有键都包含 `catalog_name`、`provider_name` 和规范 `catalog_id`；opaque 值非空时最多 65,536 字节，核心从不解析其 Provider 私有结构。
 
@@ -164,25 +186,28 @@ FTS5 使用内置 `unicode61 remove_diacritics 2`，字段为：
 
 ### `provider_sync_anchors`
 
-主键 `(catalog_name, provider_name, catalog_id)`，保存可空 `committed_anchor` 和 `completed_at`。该行只在整本期刊运行 Complete 后创建或替换：
+主键 `(catalog_name, provider_name, catalog_id)`，保存可空 `committed_anchor`、`completed_at` 和可空 `completed_batch_id`。该行只在整本期刊运行 Complete 后创建或替换：
 
 - 行不存在：没有可信成功状态；下一次运行必须完整覆盖。
-- 行存在且 `committed_anchor IS NULL`：上次运行完整成功，但该 Provider 没有可复用的增量边界。默认 Bootstrap 可以跳过；`--update` 必须安全完整扫描。
-- 行存在且 anchor 非空：`--update` 把它作为本次冻结 base 原样交给同一 Provider。
+- 行存在且 `completed_batch_id` 等于 active batch：默认 resume 在三种模式中都可零请求跳过该 journal。
+- 行属于更早 batch 且 `committed_anchor IS NULL`：该 Provider 没有可复用增量边界；新 batch 不会跳过，Bootstrap/Incremental 都安全完整扫描。
+- 行属于更早 batch 且 anchor 非空：新 Incremental batch 把它作为本次冻结 base 原样交给同一 Provider；它是边界，不是 skip marker。
 
 内容库“看起来最新”的期次不会用于重算该值。Continue 不能修改 committed anchor；只有最终内容批次已经提交后，Complete 才推进它。
 
 ### `provider_run_checkpoints`
 
-主键同样是 `(catalog_name, provider_name, catalog_id)`。每行保存当前 `run_id`、`sync_mode`（`bootstrap` / `incremental` / `full_rescan`）、冻结的可空 `base_anchor`、可空 `traversal_checkpoint`、`started_at` 和 `updated_at`。
+主键同样是 `(catalog_name, provider_name, catalog_id)`。每行保存可空 legacy `batch_id`、当前 `run_id`、`sync_mode`（`bootstrap` / `incremental` / `full_rescan`）、冻结的可空 `base_anchor`、可空 `traversal_checkpoint`、`started_at` 和 `updated_at`。
 
-`base_anchor` 在运行期间不变；`traversal_checkpoint` 是 Provider 私有的页码、cursor、期次位置或组合状态。`--resume` 只接管 mode 与 base 都匹配的行；模式不匹配或 base 漂移会拒绝。`--no-resume` 替换 run 行并清空 traversal，但保留成功 anchor。每个 Continue 在内容提交之后更新 traversal；Complete 在一个 immediate transaction 中删除 run 行并 upsert 成功 anchor。
+`base_anchor` 在运行期间不变；`traversal_checkpoint` 是 Provider 私有的页码、cursor、期次位置或组合状态。resume 只接管 batch、mode 与 base 都匹配的行；foreign/legacy batch、模式不匹配或 base 漂移都会在 Provider 访问前拒绝。每个 Continue 在内容提交之后更新 traversal；Complete 在一个 immediate transaction 中删除匹配 batch 的 run 行，并 upsert anchor 与 `completed_batch_id`。
 
-### v0/v1/v2 迁移与删除语义
+### v0/v1/v2/v3 迁移、legacy bridge 与删除语义
 
-旧 `provider_checkpoints` 只有 journal scope 且 JSON 严格等于 complete marker 的行可以证明“曾完整成功”，因此迁移为 `provider_sync_anchors` 的 NULL anchor。旧分页 cursor、listing/year scope、损坏或未知状态无法证明冻结窗口，全部丢弃；迁移随后删除旧表。v0/v1 还在同一事务中执行一次退役 Provider 名称重写。第一次 post-v2 `--update` 看到 NULL anchor 时会完整扫描，成功后由支持增量的 Provider 建立真实 anchor。
+旧 `provider_checkpoints` 只有 journal scope 且 JSON 严格等于 complete marker 的行可以证明“曾完整成功”，因此迁移为 `provider_sync_anchors` 的 NULL anchor。旧分页 cursor、listing/year scope、损坏或未知状态无法证明冻结窗口，全部丢弃；迁移随后删除旧表。v0/v1 还在同一事务中执行一次退役 Provider 名称重写。
 
-切换 Provider 会自然使用新的 anchor/run namespace，而不修改内容库。删除或丢失控制库后，下一次运行从头抓取并通过 `article_identity_keys` 和 upsert 规则收敛。控制库不需要恢复或备份；删除它不是只清 cursor，而是同时放弃所有成功边界。
+v3 -> v4 在一个事务中新增 nullable `completed_batch_id` 和 `batch_id`，保留所有有效 anchor、run 和 lease。显式 `--file` 的默认 resume 可以把一个 mode 和 `started_at` 完全一致的 batchless checkpoint epoch 接入新 batch，并把同 epoch 的 completed anchors 一起标记；隐式全部 CSV 和混合 epoch 固定拒绝。这个 bridge 只为升级恢复，不把 Provider opaque 值解析或复制到 batch ledger。
+
+切换 Provider 会自然使用新的 anchor/run namespace，而不修改内容库。删除或丢失全部 `data/index-control` 后，下一次运行从头抓取并通过 `article_identity_keys` 和 upsert 规则收敛。只删除 batch ledger 会失去 catalog completion/manifest recovery authority；仍带旧 batch ID 的 run checkpoint 会 fail closed，需恢复原 ledger、显式 `--no-resume`，或在 legacy 场景按 CLI 文档保留 catalog control 后重建单文件 batch。两类控制库都不需要恢复或备份；删除 catalog control 不是只清 cursor，而是同时放弃所有成功边界。
 
 ## 认证与业务数据库
 
@@ -300,4 +325,4 @@ run、item、checkpoint 和 lease 的变更都使用 owner/revision compare-and-
 
 ## 备份边界
 
-v2 备份固定包含 `auth.sqlite` 和完整 `data/meta`，因此持久投递状态总在认证库快照中。`--include-indexes` 只包含 `data/index/*.sqlite` 内容库；`data/index-control` 永远排除。Provider-neutral `.changes.json` 和保留的旧导入源需要 `--include-push-state`。部署密钥始终单独保存。
+v2 备份固定包含 `auth.sqlite` 和完整 `data/meta`，因此持久投递状态总在认证库快照中。`--include-indexes` 只包含 `data/index/*.sqlite` 内容库；`data/index-control` 永远排除，包括 `index-batches.sqlite` 和全部 catalog v4 controls。Provider-neutral `.changes.json` 和保留的旧导入源需要 `--include-push-state`。部署密钥始终单独保存。
