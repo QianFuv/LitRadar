@@ -28,6 +28,32 @@ pub struct IndexRunMetrics {
 }
 
 impl IndexRunMetrics {
+    /// Build truthful terminal counters after an interrupted batch catalog.
+    ///
+    /// # Arguments
+    ///
+    /// * `journals_total` - Journals frozen for the catalog.
+    /// * `journals_completed` - Durable same-batch successful anchors.
+    /// * `journals_in_flight` - Durable same-batch traversal checkpoints.
+    ///
+    /// # Returns
+    ///
+    /// Bounded counters that retain completed work and identify only the current failure.
+    pub fn from_batch_failure(
+        journals_total: usize,
+        journals_completed: usize,
+        journals_in_flight: usize,
+    ) -> Self {
+        let journals_succeeded = journals_completed.min(journals_total);
+        let has_unfinished_journal = journals_succeeded < journals_total;
+        Self {
+            journals_total,
+            journals_succeeded,
+            journals_failed: usize::from(journals_in_flight > 0 || has_unfinished_journal),
+            ..Self::default()
+        }
+    }
+
     /// Record one committed canonical content page.
     ///
     /// # Arguments
@@ -119,5 +145,15 @@ mod tests {
         assert_eq!(parent.journals_total, 1);
         assert_eq!(parent.pages_committed, 1);
         assert_eq!(parent.articles_seen, 2);
+    }
+
+    #[test]
+    fn interrupted_batch_retains_durable_completions_and_one_current_failure() {
+        let metrics = IndexRunMetrics::from_batch_failure(571, 483, 1);
+
+        assert_eq!(metrics.journals_total, 571);
+        assert_eq!(metrics.journals_succeeded, 483);
+        assert_eq!(metrics.journals_resumed, 0);
+        assert_eq!(metrics.journals_failed, 1);
     }
 }

@@ -476,6 +476,7 @@ fn run_pressure(config: PressureConfig) -> PressureReport {
     let context = ParentWriterContext {
         catalog_name: "pressure-catalog".to_string(),
         provider_name: "pressure-provider".to_string(),
+        batch_id: "pressure-batch".to_string(),
         run_id: run_id.clone(),
         timestamp: "2026-07-19T00:00:00Z".to_string(),
     };
@@ -632,6 +633,7 @@ fn pressure_requests(
                 &context.catalog_name,
                 &context.provider_name,
                 &entry.catalog_id,
+                &context.batch_id,
                 &context.run_id,
                 IndexSyncMode::Bootstrap,
                 false,
@@ -1177,6 +1179,9 @@ fn classify_control_error(operation: &'static str, error: &ControlDatabaseError)
         }
         ControlDatabaseError::RunOwnershipLost { .. } => {
             safe_failure(operation, "control", "RunOwnershipLost")
+        }
+        ControlDatabaseError::BatchStateMismatch => {
+            safe_failure(operation, "control", "BatchStateMismatch")
         }
         ControlDatabaseError::InvalidSyncState { .. } => {
             safe_failure(operation, "control", "InvalidSyncState")

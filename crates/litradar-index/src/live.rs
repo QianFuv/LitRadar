@@ -25,12 +25,20 @@ use litradar_worker::process_supervisor::SupervisedChild;
 use rusqlite::{Connection, ErrorCode};
 use serde::Serialize;
 
+use crate::batch::{
+    admit_batch, complete_batch, complete_catalog, heartbeat_batch_lease, new_batch_owner_id,
+    open_batch_db, release_batch_lease, replace_abandoning_batch, store_catalog_outcome,
+    transition_catalog_phase, BatchAdmission, BatchCatalogOutcome, BatchCatalogPhase,
+    BatchDatabaseError, CatalogInput, CatalogSelection, IndexBatch, IndexBatchCatalog,
+    IndexBatchRequest, BATCH_DATABASE_FILE_NAME,
+};
 use crate::changes::{
     discard_content_change_events, write_content_change_manifest, ChangeWriteError,
 };
 use crate::control::{
-    acquire_lease, commit_content_then_progress, has_catalog_alias_sync_state, heartbeat_lease,
-    open_control_db, prepare_journal_sync, release_lease, ContentCheckpointCommitError,
+    abandon_batch_checkpoints, acquire_lease, adopt_legacy_batch_state,
+    commit_content_then_progress, has_catalog_alias_sync_state, heartbeat_lease, open_control_db,
+    prepare_journal_sync, read_batch_journal_state, release_lease, ContentCheckpointCommitError,
     ControlDatabaseError, JournalSyncPreparation,
 };
 use crate::identity::{ArticleIdentityError, ArticleMergeError};
@@ -39,7 +47,7 @@ use crate::schema::{
     ContentDatabaseError,
 };
 use crate::stats::IndexRunMetrics;
-use crate::transforms::{read_catalog_csv, CatalogContractError};
+use crate::transforms::CatalogContractError;
 use crate::worker_protocol::{
     read_message, write_message, ParentMessage, ProtocolError,
     WorkerBootstrap as LiveIndexWorkerBootstrap, WorkerFailure as LiveIndexWorkerFailure,
@@ -172,6 +180,8 @@ pub enum LiveIndexError {
     Commit(ContentCheckpointCommitError),
     /// Disposable control database or lease operation failed.
     Control(ControlDatabaseError),
+    /// Disposable project batch database, lease, or compatibility operation failed.
+    Batch(String),
     /// Provider registration failed.
     Registry(ProviderRegistryError),
     /// A provider could not be constructed from current runtime configuration.
@@ -202,6 +212,7 @@ impl fmt::Display for LiveIndexError {
             ),
             Self::Commit(error) => write!(formatter, "{error}"),
             Self::Control(error) => write!(formatter, "{error}"),
+            Self::Batch(message) => formatter.write_str(message),
             Self::Registry(error) => write!(formatter, "{error}"),
             Self::ProviderSetup(message)
             | Self::InvalidConfig(message)
@@ -226,6 +237,7 @@ impl Error for LiveIndexError {
             Self::Registry(error) => Some(error),
             Self::Provider(error) => Some(error),
             Self::ProviderSetup(_)
+            | Self::Batch(_)
             | Self::InvalidConfig(_)
             | Self::Worker(_)
             | Self::Notify(_)
@@ -269,6 +281,13 @@ impl From<ControlDatabaseError> for LiveIndexError {
     }
 }
 
+impl From<BatchDatabaseError> for LiveIndexError {
+    /// Convert disposable project batch failures.
+    fn from(error: BatchDatabaseError) -> Self {
+        Self::Batch(error.to_string())
+    }
+}
+
 impl From<ProviderRegistryError> for LiveIndexError {
     /// Convert provider registration failures.
     fn from(error: ProviderRegistryError) -> Self {
@@ -300,6 +319,7 @@ impl From<ChangeWriteError> for LiveIndexError {
 struct DirectIndexRequest {
     catalog_name: String,
     provider_name: String,
+    batch_id: String,
     run_id: String,
     timestamp: String,
     worker_id: usize,
@@ -315,6 +335,8 @@ pub(crate) struct ParentWriterContext {
     pub(crate) catalog_name: String,
     /// Stable registered indexing provider.
     pub(crate) provider_name: String,
+    /// Active project batch that owns journal progress.
+    pub(crate) batch_id: String,
     /// Core-owned run identifier.
     pub(crate) run_id: String,
     /// Safe content and checkpoint timestamp.
@@ -430,6 +452,10 @@ impl LiveIndexWorkerFailure {
             LiveIndexError::Control(source) => {
                 Self::from_control(LiveIndexWorkerOperation::ControlDatabase, source)
             }
+            LiveIndexError::Batch(_) => Self::fixed(
+                LiveIndexWorkerFailureClass::Control,
+                LiveIndexWorkerOperation::ControlDatabase,
+            ),
             LiveIndexError::Registry(_) => Self::fixed(
                 LiveIndexWorkerFailureClass::Registry,
                 LiveIndexWorkerOperation::ProviderRegistry,
@@ -491,6 +517,7 @@ impl LiveIndexWorkerFailure {
             | ControlDatabaseError::OwnershipLost { .. }
             | ControlDatabaseError::RunModeMismatch { .. }
             | ControlDatabaseError::RunOwnershipLost { .. }
+            | ControlDatabaseError::BatchStateMismatch
             | ControlDatabaseError::InvalidSyncState { .. } => {
                 Self::fixed(LiveIndexWorkerFailureClass::Control, operation)
             }
@@ -602,6 +629,58 @@ impl Drop for LeaseHeartbeat {
     }
 }
 
+struct BatchLeaseHeartbeat {
+    stop: Sender<()>,
+    handle: Option<JoinHandle<Result<(), String>>>,
+}
+
+impl BatchLeaseHeartbeat {
+    fn start(batch_path: PathBuf, batch_id: String, owner_id: String, interval: Duration) -> Self {
+        let (stop, receiver) = mpsc::channel();
+        let handle = thread::spawn(move || {
+            let connection = open_batch_db(batch_path).map_err(|error| error.to_string())?;
+            loop {
+                match receiver.recv_timeout(interval) {
+                    Ok(()) | Err(RecvTimeoutError::Disconnected) => return Ok(()),
+                    Err(RecvTimeoutError::Timeout) => {
+                        heartbeat_batch_lease(
+                            &connection,
+                            &batch_id,
+                            &owner_id,
+                            LiveRunTime::now().epoch_seconds,
+                        )
+                        .map_err(|error| error.to_string())?;
+                    }
+                }
+            }
+        });
+        Self {
+            stop,
+            handle: Some(handle),
+        }
+    }
+
+    fn stop_and_check(&mut self) -> Result<(), LiveIndexError> {
+        let _ = self.stop.send(());
+        let Some(handle) = self.handle.take() else {
+            return Ok(());
+        };
+        handle
+            .join()
+            .map_err(|_| LiveIndexError::Heartbeat("batch heartbeat thread panicked".to_string()))?
+            .map_err(LiveIndexError::Heartbeat)
+    }
+}
+
+impl Drop for BatchLeaseHeartbeat {
+    fn drop(&mut self) {
+        let _ = self.stop.send(());
+        if let Some(handle) = self.handle.take() {
+            let _ = handle.join();
+        }
+    }
+}
+
 /// Run live indexing for selected provider-free maintained catalogs.
 ///
 /// # Arguments
@@ -628,14 +707,315 @@ pub fn run_live_index(config: &LiveIndexConfig) -> Result<LiveIndexOutcome, Live
             csvs: Vec::new(),
         });
     }
-    let mut outcomes = Vec::with_capacity(paths.len());
-    for path in paths {
-        outcomes.push(run_catalog(config, &path)?);
+    let inputs = freeze_catalog_inputs(config, paths)?;
+    let request = IndexBatchRequest::new(
+        inputs,
+        if config.file.is_some() {
+            CatalogSelection::ExplicitFile
+        } else {
+            CatalogSelection::All
+        },
+        requested_sync_mode(config),
+        config.issue_batch_size,
+        config.notify,
+        config.notify_dry_run,
+    )?;
+    let control_dir = config.project_root.join("data").join("index-control");
+    std::fs::create_dir_all(&control_dir)?;
+    let batch_path = control_dir.join(BATCH_DATABASE_FILE_NAME);
+    let batch_connection = open_batch_db(&batch_path)?;
+    let owner_id = new_batch_owner_id();
+    let admitted_at = LiveRunTime::now().epoch_seconds;
+    let admission = admit_batch(
+        &batch_connection,
+        &request,
+        config.resume,
+        &owner_id,
+        admitted_at,
+    )?;
+    let batch = match admission {
+        BatchAdmission::Ready(batch) => batch,
+        BatchAdmission::Abandoning(abandoning) => {
+            let replacement = cleanup_abandoning_batch(config, &abandoning).and_then(|()| {
+                Ok(replace_abandoning_batch(
+                    &batch_connection,
+                    &abandoning.batch_id,
+                    &request,
+                    &owner_id,
+                    LiveRunTime::now().epoch_seconds,
+                )?)
+            });
+            match replacement {
+                Ok(batch) => batch,
+                Err(error) => {
+                    let _ = release_batch_lease(&batch_connection, &abandoning.batch_id, &owner_id);
+                    return Err(error);
+                }
+            }
+        }
+    };
+    tracing::info!(
+        event = "index.batch.admitted",
+        component = "index",
+        batch_id = batch.batch_id,
+        resumed = batch.did_resume,
+        catalog_count = batch.catalogs.len(),
+    );
+    let mut heartbeat = BatchLeaseHeartbeat::start(
+        batch_path,
+        batch.batch_id.clone(),
+        owner_id.clone(),
+        Duration::from_secs(LIVE_INDEX_HEARTBEAT_INTERVAL_SECONDS),
+    );
+    let execution = prepare_legacy_state(config, &batch, &request)
+        .and_then(|()| run_batch_catalogs(config, &batch_connection, &batch, &request));
+    let heartbeat_result = heartbeat.stop_and_check();
+    let outcomes = match execution {
+        Ok(outcomes) => outcomes,
+        Err(error) => {
+            let _ = release_batch_lease(&batch_connection, &batch.batch_id, &owner_id);
+            if let Err(heartbeat_error) = heartbeat_result {
+                tracing::error!(
+                    event = "index.batch.heartbeat_failed",
+                    component = "index",
+                    batch_id = batch.batch_id,
+                    error = %heartbeat_error,
+                );
+            }
+            return Err(error);
+        }
+    };
+    if let Err(error) = heartbeat_result {
+        let _ = release_batch_lease(&batch_connection, &batch.batch_id, &owner_id);
+        return Err(error);
+    }
+    if let Err(error) = complete_batch(
+        &batch_connection,
+        &batch.batch_id,
+        &owner_id,
+        LiveRunTime::now().epoch_seconds,
+    ) {
+        let _ = release_batch_lease(&batch_connection, &batch.batch_id, &owner_id);
+        return Err(error.into());
     }
     Ok(LiveIndexOutcome {
         status: "succeeded".to_string(),
         message: None,
         csvs: outcomes,
+    })
+}
+
+fn freeze_catalog_inputs(
+    config: &LiveIndexConfig,
+    paths: Vec<PathBuf>,
+) -> Result<Vec<CatalogInput>, LiveIndexError> {
+    paths
+        .into_iter()
+        .map(|path| {
+            let catalog_name = path
+                .file_stem()
+                .and_then(|value| value.to_str())
+                .ok_or_else(|| {
+                    LiveIndexError::InvalidConfig(
+                        "catalog filename must have a UTF-8 stem".to_string(),
+                    )
+                })?;
+            let provider_name =
+                config
+                    .index_provider_routes
+                    .get(catalog_name)
+                    .ok_or_else(|| {
+                        LiveIndexError::InvalidConfig(format!(
+                            "index_provider_routes has no route for catalog {catalog_name}"
+                        ))
+                    })?;
+            Ok(CatalogInput::freeze(&path, provider_name.clone())?)
+        })
+        .collect()
+}
+
+fn cleanup_abandoning_batch(
+    config: &LiveIndexConfig,
+    abandoning: &IndexBatch,
+) -> Result<(), LiveIndexError> {
+    let control_dir = config.project_root.join("data").join("index-control");
+    for catalog in &abandoning.catalogs {
+        let connection =
+            open_control_db(control_dir.join(format!("{}.sqlite", catalog.catalog_name)))?;
+        abandon_batch_checkpoints(&connection, &abandoning.batch_id)?;
+    }
+    Ok(())
+}
+
+fn prepare_legacy_state(
+    config: &LiveIndexConfig,
+    batch: &IndexBatch,
+    request: &IndexBatchRequest,
+) -> Result<(), LiveIndexError> {
+    if !config.resume {
+        return Ok(());
+    }
+    let control_dir = config.project_root.join("data").join("index-control");
+    for input in &request.catalogs {
+        let connection =
+            open_control_db(control_dir.join(format!("{}.sqlite", input.catalog_name)))?;
+        let adoption = adopt_legacy_batch_state(
+            &connection,
+            &input.catalog_name,
+            &input.provider_name,
+            &batch.batch_id,
+            request.mode,
+            request.selection == CatalogSelection::ExplicitFile,
+        )?;
+        if adoption.checkpoints_adopted > 0 {
+            tracing::info!(
+                event = "index.batch.legacy_adopted",
+                component = "index",
+                batch_id = batch.batch_id,
+                catalog = input.catalog_name,
+                provider = input.provider_name,
+                checkpoints = adoption.checkpoints_adopted,
+                completed = adoption.anchors_adopted,
+            );
+        }
+    }
+    Ok(())
+}
+
+fn run_batch_catalogs(
+    config: &LiveIndexConfig,
+    batch_connection: &Connection,
+    batch: &IndexBatch,
+    request: &IndexBatchRequest,
+) -> Result<Vec<LiveCsvIndexOutcome>, LiveIndexError> {
+    run_batch_catalogs_with(config, batch_connection, batch, request, run_catalog)
+}
+
+fn run_batch_catalogs_with<RunCatalog>(
+    config: &LiveIndexConfig,
+    batch_connection: &Connection,
+    batch: &IndexBatch,
+    request: &IndexBatchRequest,
+    mut run: RunCatalog,
+) -> Result<Vec<LiveCsvIndexOutcome>, LiveIndexError>
+where
+    RunCatalog:
+        FnMut(&LiveIndexConfig, &CatalogInput, &str) -> Result<LiveCsvIndexOutcome, LiveIndexError>,
+{
+    if batch.catalogs.len() != request.catalogs.len() {
+        return Err(BatchDatabaseError::InvalidState {
+            reason: "active batch catalog count changed after admission",
+        }
+        .into());
+    }
+    let mut outcomes = Vec::with_capacity(request.catalogs.len());
+    for (stored, input) in batch.catalogs.iter().zip(&request.catalogs) {
+        if stored.file_name != input.file_name || stored.catalog_name != input.catalog_name {
+            return Err(BatchDatabaseError::InvalidState {
+                reason: "active batch catalog order changed after admission",
+            }
+            .into());
+        }
+        if stored.phase == BatchCatalogPhase::Completed {
+            outcomes.push(completed_catalog_outcome(config, stored, input)?);
+            tracing::info!(
+                event = "index.batch.catalog_skipped",
+                component = "index",
+                batch_id = batch.batch_id,
+                catalog = input.catalog_name,
+                provider = input.provider_name,
+            );
+            continue;
+        }
+        if stored.phase == BatchCatalogPhase::Pending {
+            transition_catalog_phase(
+                batch_connection,
+                &batch.batch_id,
+                &batch.owner_id,
+                stored.ordinal,
+                BatchCatalogPhase::Indexing,
+                LiveRunTime::now().epoch_seconds,
+            )?;
+        } else if stored.phase != BatchCatalogPhase::Indexing {
+            return Err(BatchDatabaseError::InvalidState {
+                reason: "catalog finalization phase requires recovery support",
+            }
+            .into());
+        }
+        let outcome = run(config, input, &batch.batch_id)?;
+        let persisted = persisted_catalog_outcome(config, input, &outcome);
+        store_catalog_outcome(
+            batch_connection,
+            &batch.batch_id,
+            &batch.owner_id,
+            stored.ordinal,
+            &persisted,
+            LiveRunTime::now().epoch_seconds,
+        )?;
+        complete_catalog(
+            batch_connection,
+            &batch.batch_id,
+            &batch.owner_id,
+            stored.ordinal,
+            &persisted,
+            LiveRunTime::now().epoch_seconds,
+        )?;
+        outcomes.push(outcome);
+    }
+    Ok(outcomes)
+}
+
+fn persisted_catalog_outcome(
+    config: &LiveIndexConfig,
+    input: &CatalogInput,
+    outcome: &LiveCsvIndexOutcome,
+) -> BatchCatalogOutcome {
+    BatchCatalogOutcome {
+        run_id: outcome.run_id.clone(),
+        journal_count: outcome.journal_count,
+        written_article_count: outcome.written_article_count,
+        source_attempt_count: outcome.source_attempt_count,
+        manifest_path: outcome.manifest_path.as_ref().map(|_| {
+            Path::new("data")
+                .join("push_state")
+                .join(format!("{}.changes.json", input.catalog_name))
+                .to_string_lossy()
+                .into_owned()
+        }),
+        notify_exit_code: config.notify.then_some(outcome.notify_exit_code).flatten(),
+    }
+}
+
+fn completed_catalog_outcome(
+    config: &LiveIndexConfig,
+    stored: &IndexBatchCatalog,
+    input: &CatalogInput,
+) -> Result<LiveCsvIndexOutcome, LiveIndexError> {
+    let outcome = stored.outcome.as_ref().ok_or_else(|| {
+        LiveIndexError::from(BatchDatabaseError::InvalidState {
+            reason: "completed catalog has no persisted outcome",
+        })
+    })?;
+    let manifest_path = outcome
+        .manifest_path
+        .as_ref()
+        .map(|path| config.project_root.join(path).display().to_string());
+    Ok(LiveCsvIndexOutcome {
+        csv_path: input.path.display().to_string(),
+        db_path: config
+            .project_root
+            .join("data")
+            .join("index")
+            .join(format!("{}.sqlite", input.catalog_name))
+            .display()
+            .to_string(),
+        run_id: outcome.run_id.clone(),
+        status: "succeeded".to_string(),
+        journal_count: outcome.journal_count,
+        written_article_count: outcome.written_article_count,
+        source_attempt_count: outcome.source_attempt_count,
+        manifest_path,
+        notify_exit_code: outcome.notify_exit_code,
     })
 }
 
@@ -755,28 +1135,13 @@ fn catalog_paths(meta_dir: &Path, file: Option<&str>) -> Result<Vec<PathBuf>, Li
 
 fn run_catalog(
     config: &LiveIndexConfig,
-    csv_path: &Path,
+    input: &CatalogInput,
+    batch_id: &str,
 ) -> Result<LiveCsvIndexOutcome, LiveIndexError> {
-    let catalog_name = csv_path
-        .file_stem()
-        .and_then(|value| value.to_str())
-        .ok_or_else(|| {
-            LiveIndexError::InvalidConfig(format!(
-                "catalog path has no UTF-8 stem: {}",
-                csv_path.display()
-            ))
-        })?
-        .to_string();
-    let provider_name = config
-        .index_provider_routes
-        .get(&catalog_name)
-        .ok_or_else(|| {
-            LiveIndexError::InvalidConfig(format!(
-                "index_provider_routes has no route for catalog {catalog_name}"
-            ))
-        })?
-        .clone();
-    let entries = read_catalog_csv(csv_path)?;
+    let csv_path = &input.path;
+    let catalog_name = input.catalog_name.clone();
+    let provider_name = input.provider_name.clone();
+    let entries = &input.entries;
     let effective_process_count = config.process_count.min(entries.len());
     let effective_source_worker_count = if matches!(
         provider_name.as_str(),
@@ -827,7 +1192,7 @@ fn run_catalog(
         }
     };
     if let Err(error) =
-        prepare_catalog_identities(&content, &control, &content_path, &catalog_name, &entries)
+        prepare_catalog_identities(&content, &control, &content_path, &catalog_name, entries)
     {
         let _ = release_lease(&control, &catalog_name, &provider_name, &run_id);
         return Err(error);
@@ -835,6 +1200,7 @@ fn run_catalog(
     let writer_context = ParentWriterContext {
         catalog_name: catalog_name.clone(),
         provider_name: provider_name.clone(),
+        batch_id: batch_id.to_string(),
         run_id: run_id.clone(),
         timestamp: timestamp.clone(),
     };
@@ -844,7 +1210,7 @@ fn run_catalog(
             &control,
             &writer_context,
             run_time.epoch_milliseconds,
-            &entries,
+            entries,
         );
         let execution = prepared.and_then(|(requests, metrics)| {
             run_worker_processes(
@@ -868,6 +1234,7 @@ fn run_catalog(
         let request = DirectIndexRequest {
             catalog_name: catalog_name.clone(),
             provider_name: provider_name.clone(),
+            batch_id: batch_id.to_string(),
             run_id: run_id.clone(),
             timestamp: timestamp.clone(),
             worker_id: 0,
@@ -890,14 +1257,29 @@ fn run_catalog(
         Ok(metrics) => metrics,
         Err(error) => {
             let _ = release_lease(&control, &catalog_name, &provider_name, &run_id);
-            let mut failed = IndexRunMetrics {
-                journals_total: entries.len(),
-                journals_failed: entries.len(),
-                ..IndexRunMetrics::default()
+            let state = read_batch_journal_state(&control, &catalog_name, &provider_name, batch_id);
+            let failed = match state {
+                Ok(state) => IndexRunMetrics::from_batch_failure(
+                    entries.len(),
+                    state.completed,
+                    state.in_flight,
+                ),
+                Err(state_error) => {
+                    tracing::error!(
+                        event = "index.batch.metrics_failed",
+                        component = "index",
+                        batch_id,
+                        catalog = catalog_name,
+                        provider = provider_name,
+                        error = %state_error,
+                    );
+                    IndexRunMetrics {
+                        journals_total: entries.len(),
+                        journals_failed: 1,
+                        ..IndexRunMetrics::default()
+                    }
+                }
             };
-            if let LiveIndexError::Worker(_) = error {
-                failed.journals_failed = 1;
-            }
             failed.emit_terminal(&run_id, &catalog_name, &provider_name, "all", "failure");
             return Err(error);
         }
@@ -1026,6 +1408,7 @@ fn prepare_entry_sync(
         &context.catalog_name,
         &context.provider_name,
         &entry.catalog_id,
+        &context.batch_id,
         &context.run_id,
         mode,
         should_resume,
@@ -1656,6 +2039,7 @@ fn handle_worker_message(
                 &context.catalog_name,
                 &context.provider_name,
                 &assignment.entry.catalog_id,
+                &context.batch_id,
                 &context.run_id,
                 assignment.mode,
                 assignment.committed_anchor.as_deref(),
@@ -2115,6 +2499,7 @@ fn index_entries_with_provider(
     let writer_context = ParentWriterContext {
         catalog_name: request.catalog_name.clone(),
         provider_name: request.provider_name.clone(),
+        batch_id: request.batch_id.clone(),
         run_id: request.run_id.clone(),
         timestamp: request.timestamp.clone(),
     };
@@ -2182,6 +2567,7 @@ fn index_entries_with_provider(
                 &request.catalog_name,
                 &request.provider_name,
                 &entry.catalog_id,
+                &request.batch_id,
                 &run.run_id,
                 run.mode,
                 run.base_anchor.as_deref(),
@@ -2263,6 +2649,7 @@ mod tests {
     use std::collections::{BTreeMap, BTreeSet};
     use std::io::{self, BufReader, Cursor, Write};
     use std::net::{TcpListener, TcpStream};
+    use std::path::Path;
     use std::process::{Command, Stdio};
     use std::sync::{mpsc, Arc, Mutex};
     use std::thread;
@@ -2283,19 +2670,26 @@ mod tests {
         emit_parent_content_commit_failure, emit_worker_failure,
         fetch_worker_assignments_with_provider, finalize_content_changes,
         index_entries_with_provider, prepare_catalog_identities, prepare_worker_requests,
-        read_worker_bootstrap, requested_sync_mode, run_live_index, run_live_index_worker_with_io,
-        run_worker_processes_with_launcher, validate_live_config, worker_bootstrap,
-        worker_failure_error, ContentCommitErrorKind, DirectIndexRequest, LaunchedWorkerProcess,
-        LeaseHeartbeat, LiveIndexConfig, LiveIndexError, LiveIndexWorkerBootstrap,
-        LiveIndexWorkerFailure, LiveIndexWorkerFailureClass, LiveIndexWorkerOperation,
-        LiveIndexWorkerRequest, LiveRunTime, ParentWriterContext, ProviderProxySelection,
-        SupervisedChild, CNKI_PROVIDER_NAME,
+        read_worker_bootstrap, requested_sync_mode, run_batch_catalogs_with, run_live_index,
+        run_live_index_worker_with_io, run_worker_processes_with_launcher, validate_live_config,
+        worker_bootstrap, worker_failure_error, ContentCommitErrorKind, DirectIndexRequest,
+        LaunchedWorkerProcess, LeaseHeartbeat, LiveIndexConfig, LiveIndexError,
+        LiveIndexWorkerBootstrap, LiveIndexWorkerFailure, LiveIndexWorkerFailureClass,
+        LiveIndexWorkerOperation, LiveIndexWorkerRequest, LiveRunTime, ParentWriterContext,
+        ProviderProxySelection, SupervisedChild, CNKI_PROVIDER_NAME,
+    };
+    use crate::batch::{
+        admit_batch, complete_catalog, init_batch_db, release_batch_lease,
+        transition_catalog_phase, BatchAdmission, BatchCatalogOutcome, BatchCatalogPhase,
+        CatalogInput, CatalogSelection, IndexBatchRequest,
     };
     use crate::control::{
-        acquire_lease, advance_run_checkpoint, commit_content_then_progress, complete_sync_run,
-        open_control_db, prepare_journal_sync, read_run_checkpoint, read_sync_anchor,
-        release_lease, ContentCheckpointCommitError, ControlDatabaseError, JournalSyncPreparation,
-        ProviderRunCheckpoint,
+        acquire_lease, advance_run_checkpoint as advance_run_checkpoint_for_batch,
+        commit_content_then_progress as commit_content_then_progress_for_batch,
+        complete_sync_run as complete_sync_run_for_batch, open_control_db,
+        prepare_journal_sync as prepare_journal_sync_for_batch, read_run_checkpoint,
+        read_sync_anchor, release_lease, ContentCheckpointCommitError, ControlDatabaseError,
+        JournalSyncPreparation, ProviderRunCheckpoint,
     };
     use crate::identity::{ArticleIdentityError, ArticleMergeError};
     use crate::schema::{open_content_db, write_content_batch, ContentDatabaseError};
@@ -2304,6 +2698,90 @@ mod tests {
         read_message, write_message, ParentMessage, WorkerJournalAssignment, WorkerMessage,
         PROTOCOL_VERSION,
     };
+
+    const TEST_BATCH_ID: &str = "batch-current";
+    const PREVIOUS_BATCH_ID: &str = "batch-previous";
+
+    #[allow(clippy::too_many_arguments)]
+    fn prepare_journal_sync(
+        connection: &Connection,
+        catalog_name: &str,
+        provider_name: &str,
+        catalog_id: &str,
+        run_id: &str,
+        mode: IndexSyncMode,
+        should_resume: bool,
+        updated_at: &str,
+    ) -> Result<JournalSyncPreparation, ControlDatabaseError> {
+        prepare_journal_sync_for_batch(
+            connection,
+            catalog_name,
+            provider_name,
+            catalog_id,
+            TEST_BATCH_ID,
+            run_id,
+            mode,
+            should_resume,
+            updated_at,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn advance_run_checkpoint(
+        connection: &Connection,
+        catalog_name: &str,
+        provider_name: &str,
+        catalog_id: &str,
+        run_id: &str,
+        mode: IndexSyncMode,
+        base_anchor: Option<&str>,
+        checkpoint: &str,
+        updated_at: &str,
+    ) -> Result<(), ControlDatabaseError> {
+        advance_run_checkpoint_for_batch(
+            connection,
+            catalog_name,
+            provider_name,
+            catalog_id,
+            TEST_BATCH_ID,
+            run_id,
+            mode,
+            base_anchor,
+            checkpoint,
+            updated_at,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn commit_content_then_progress<Outcome, WriteContent>(
+        control_connection: &Connection,
+        catalog_name: &str,
+        provider_name: &str,
+        catalog_id: &str,
+        run_id: &str,
+        mode: IndexSyncMode,
+        base_anchor: Option<&str>,
+        progress: &ProviderProgress,
+        updated_at: &str,
+        write_content: WriteContent,
+    ) -> Result<Outcome, ContentCheckpointCommitError>
+    where
+        WriteContent: FnOnce() -> Result<Outcome, ContentDatabaseError>,
+    {
+        commit_content_then_progress_for_batch(
+            control_connection,
+            catalog_name,
+            provider_name,
+            catalog_id,
+            TEST_BATCH_ID,
+            run_id,
+            mode,
+            base_anchor,
+            progress,
+            updated_at,
+            write_content,
+        )
+    }
 
     #[derive(Clone, Default)]
     struct CapturedLogs {
@@ -2543,6 +3021,22 @@ mod tests {
         }
     }
 
+    fn batch_input(file_name: &str, provider_name: &str, digest_byte: u8) -> CatalogInput {
+        let catalog_name = Path::new(file_name)
+            .file_stem()
+            .and_then(|value| value.to_str())
+            .expect("fixture catalog should have a stem")
+            .to_string();
+        CatalogInput {
+            path: Path::new("data").join("meta").join(file_name),
+            file_name: file_name.to_string(),
+            catalog_name: catalog_name.clone(),
+            csv_sha256: format!("{digest_byte:02x}").repeat(32),
+            provider_name: provider_name.to_string(),
+            entries: vec![catalog(&format!("{catalog_name}-journal"))],
+        }
+    }
+
     fn environment_catalog() -> JournalCatalogEntry {
         JournalCatalogEntry {
             catalog_id: "issn-1472-3409".to_string(),
@@ -2627,6 +3121,7 @@ mod tests {
         DirectIndexRequest {
             catalog_name: "chinese_journals".to_string(),
             provider_name: provider_name.to_string(),
+            batch_id: TEST_BATCH_ID.to_string(),
             run_id: run_id.to_string(),
             timestamp: "2026-07-18T00:00:00Z".to_string(),
             worker_id: 0,
@@ -2651,12 +3146,33 @@ mod tests {
         committed_anchor: Option<&str>,
         timestamp: &str,
     ) {
+        seed_completed_sync_for_batch(
+            control,
+            catalog_name,
+            provider_name,
+            catalog_id,
+            PREVIOUS_BATCH_ID,
+            committed_anchor,
+            timestamp,
+        );
+    }
+
+    fn seed_completed_sync_for_batch(
+        control: &Connection,
+        catalog_name: &str,
+        provider_name: &str,
+        catalog_id: &str,
+        batch_id: &str,
+        committed_anchor: Option<&str>,
+        timestamp: &str,
+    ) {
         let run = prepared_run(
-            prepare_journal_sync(
+            prepare_journal_sync_for_batch(
                 control,
                 catalog_name,
                 provider_name,
                 catalog_id,
+                batch_id,
                 "fixture-complete-run",
                 IndexSyncMode::Incremental,
                 false,
@@ -2664,11 +3180,12 @@ mod tests {
             )
             .expect("fixture completion run should prepare"),
         );
-        complete_sync_run(
+        complete_sync_run_for_batch(
             control,
             catalog_name,
             provider_name,
             catalog_id,
+            batch_id,
             &run.run_id,
             run.mode,
             run.base_anchor.as_deref(),
@@ -2846,6 +3363,7 @@ mod tests {
             let worker_context = ParentWriterContext {
                 catalog_name: "chinese_journals".to_string(),
                 provider_name: "provider-a".to_string(),
+                batch_id: TEST_BATCH_ID.to_string(),
                 run_id: format!("{label}-worker-current-run"),
                 timestamp: "2026-07-18T00:01:00Z".to_string(),
             };
@@ -2961,6 +3479,7 @@ mod tests {
         let context = ParentWriterContext {
             catalog_name: "chinese_journals".to_string(),
             provider_name: "provider-a".to_string(),
+            batch_id: TEST_BATCH_ID.to_string(),
             run_id: "full-rescan-run".to_string(),
             timestamp: "2026-07-18T00:01:00Z".to_string(),
         };
@@ -2978,6 +3497,90 @@ mod tests {
                 requested: IndexSyncMode::FullRescan,
             })
         ));
+    }
+
+    #[test]
+    fn late_catalog_retry_calls_only_the_first_unfinished_catalog() {
+        let batch_connection = Connection::open_in_memory().expect("batch database should open");
+        init_batch_db(&batch_connection).expect("batch schema should initialize");
+        let request = IndexBatchRequest::new(
+            vec![
+                batch_input("ccf.csv", "provider-a", 1),
+                batch_input("chinese.csv", "provider-a", 2),
+                batch_input("english.csv", "provider-a", 3),
+            ],
+            CatalogSelection::All,
+            IndexSyncMode::Incremental,
+            20,
+            false,
+            false,
+        )
+        .expect("batch request should build");
+        let now = LiveRunTime::now().epoch_seconds;
+        let first_owner = "first-owner";
+        let first = match admit_batch(&batch_connection, &request, true, first_owner, now)
+            .expect("batch should create")
+        {
+            BatchAdmission::Ready(batch) => batch,
+            BatchAdmission::Abandoning(_) => panic!("new batch should be ready"),
+        };
+        for ordinal in 0..2 {
+            transition_catalog_phase(
+                &batch_connection,
+                &first.batch_id,
+                first_owner,
+                ordinal,
+                BatchCatalogPhase::Indexing,
+                now,
+            )
+            .expect("catalog should enter indexing");
+            complete_catalog(
+                &batch_connection,
+                &first.batch_id,
+                first_owner,
+                ordinal,
+                &BatchCatalogOutcome {
+                    run_id: format!("completed-{ordinal}"),
+                    journal_count: 1,
+                    written_article_count: 1,
+                    source_attempt_count: 1,
+                    manifest_path: None,
+                    notify_exit_code: None,
+                },
+                now,
+            )
+            .expect("catalog should complete");
+        }
+        release_batch_lease(&batch_connection, &first.batch_id, first_owner)
+            .expect("failed invocation should release its lease");
+        let retry_owner = "retry-owner";
+        let retry = match admit_batch(&batch_connection, &request, true, retry_owner, now)
+            .expect("compatible retry should resume")
+        {
+            BatchAdmission::Ready(batch) => batch,
+            BatchAdmission::Abandoning(_) => panic!("compatible batch should be ready"),
+        };
+        let mut calls = Vec::new();
+        let mut config = worker_test_config("provider-a", None);
+        let directory = tempdir().expect("temporary project should create");
+        config.project_root = directory.path().to_path_buf();
+
+        let error = run_batch_catalogs_with(
+            &config,
+            &batch_connection,
+            &retry,
+            &request,
+            |_, input, _| {
+                calls.push(input.catalog_name.clone());
+                Err(LiveIndexError::ProviderSetup(
+                    "fixture unfinished catalog".to_string(),
+                ))
+            },
+        )
+        .expect_err("unfinished English catalog should retain the failure");
+
+        assert!(matches!(error, LiveIndexError::ProviderSetup(_)));
+        assert_eq!(calls, vec!["english"]);
     }
 
     #[test]
@@ -3155,6 +3758,7 @@ mod tests {
         let request = DirectIndexRequest {
             catalog_name: "english_journals".to_string(),
             provider_name: "provider-a".to_string(),
+            batch_id: TEST_BATCH_ID.to_string(),
             run_id: "run-complete-reconcile".to_string(),
             timestamp: "2026-07-20T00:00:00Z".to_string(),
             worker_id: 0,
@@ -3162,11 +3766,12 @@ mod tests {
             mode: IndexSyncMode::Bootstrap,
             entries: vec![environment_catalog()],
         };
-        seed_completed_sync(
+        seed_completed_sync_for_batch(
             &control,
             &request.catalog_name,
             &request.provider_name,
             &request.entries[0].catalog_id,
+            TEST_BATCH_ID,
             None,
             &request.timestamp,
         );
@@ -3505,6 +4110,7 @@ mod tests {
         let context = ParentWriterContext {
             catalog_name: "chinese_journals".to_string(),
             provider_name: "cnki".to_string(),
+            batch_id: TEST_BATCH_ID.to_string(),
             run_id: "run-secret-boundary".to_string(),
             timestamp: "time".to_string(),
         };
@@ -3677,6 +4283,7 @@ mod tests {
         let context = ParentWriterContext {
             catalog_name: "catalog".to_string(),
             provider_name: "scholarly".to_string(),
+            batch_id: TEST_BATCH_ID.to_string(),
             run_id: "run".to_string(),
             timestamp: "time".to_string(),
         };
@@ -3835,14 +4442,16 @@ mod tests {
         let context = ParentWriterContext {
             catalog_name: "catalog".to_string(),
             provider_name: "provider".to_string(),
+            batch_id: TEST_BATCH_ID.to_string(),
             run_id: "run".to_string(),
             timestamp: "2026-07-19T00:00:00Z".to_string(),
         };
-        seed_completed_sync(
+        seed_completed_sync_for_batch(
             &control,
             &context.catalog_name,
             &context.provider_name,
             "complete",
+            TEST_BATCH_ID,
             None,
             &context.timestamp,
         );
@@ -3897,6 +4506,7 @@ mod tests {
         let context = ParentWriterContext {
             catalog_name: "chinese_journals".to_string(),
             provider_name: "fixture".to_string(),
+            batch_id: TEST_BATCH_ID.to_string(),
             run_id: "run-duplicate".to_string(),
             timestamp: "2026-07-19T00:00:00Z".to_string(),
         };
@@ -4266,6 +4876,7 @@ mod tests {
         let context = ParentWriterContext {
             catalog_name: "chinese_journals".to_string(),
             provider_name: "cnki".to_string(),
+            batch_id: TEST_BATCH_ID.to_string(),
             run_id: "run-bootstrap-write-failure".to_string(),
             timestamp: "2026-07-24T00:00:00Z".to_string(),
         };

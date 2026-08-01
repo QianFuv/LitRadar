@@ -12,7 +12,7 @@ use serde::Deserialize;
 use crate::schema::ContentDatabaseError;
 
 /// Current disposable control database schema version.
-pub const CONTROL_SCHEMA_VERSION: i64 = 3;
+pub const CONTROL_SCHEMA_VERSION: i64 = 4;
 
 const CONTROL_BUSY_TIMEOUT_SECONDS: u64 = 30;
 const LEASE_DURATION_SECONDS: i64 = 300;
@@ -25,6 +25,8 @@ pub struct ProviderSyncAnchor {
     pub committed_anchor: Option<String>,
     /// Safe orchestration timestamp for the completed synchronization.
     pub completed_at: String,
+    /// Project batch that proved this journal complete, or `None` for pre-v4 state.
+    pub completed_batch_id: Option<String>,
 }
 
 impl fmt::Debug for ProviderSyncAnchor {
@@ -34,6 +36,7 @@ impl fmt::Debug for ProviderSyncAnchor {
             .debug_struct("ProviderSyncAnchor")
             .field("has_committed_anchor", &self.committed_anchor.is_some())
             .field("completed_at", &self.completed_at)
+            .field("has_completed_batch_id", &self.completed_batch_id.is_some())
             .finish()
     }
 }
@@ -41,6 +44,8 @@ impl fmt::Debug for ProviderSyncAnchor {
 /// Frozen Provider traversal state for one in-flight canonical journal synchronization.
 #[derive(Clone, PartialEq, Eq)]
 pub struct ProviderRunCheckpoint {
+    /// Project batch that owns this traversal, or `None` for pre-v4 state.
+    pub batch_id: Option<String>,
     /// Current core run that owns this journal traversal.
     pub run_id: String,
     /// Synchronization mode frozen for this traversal.
@@ -60,6 +65,7 @@ impl fmt::Debug for ProviderRunCheckpoint {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("ProviderRunCheckpoint")
+            .field("has_batch_id", &self.batch_id.is_some())
             .field("run_id", &self.run_id)
             .field("mode", &self.mode)
             .field("has_base_anchor", &self.base_anchor.is_some())
@@ -80,6 +86,26 @@ pub enum JournalSyncPreparation {
     Skip,
     /// The Provider must execute or resume this frozen traversal.
     Run(ProviderRunCheckpoint),
+}
+
+/// Durable same-batch journal counts used for truthful retry telemetry.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct BatchJournalState {
+    /// Journals whose successful anchors belong to the active batch.
+    pub completed: usize,
+    /// Journals whose in-flight checkpoints belong to the active batch.
+    pub in_flight: usize,
+}
+
+/// Result of conservatively adopting one coherent pre-v4 traversal epoch.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LegacyBatchAdoption {
+    /// Shared legacy traversal start timestamp, when legacy state existed.
+    pub started_at: Option<String>,
+    /// Legacy in-flight checkpoints assigned to the new batch.
+    pub checkpoints_adopted: usize,
+    /// Successful anchors from the same epoch assigned to the new batch.
+    pub anchors_adopted: usize,
 }
 
 /// Disposable control database operation failure.
@@ -120,6 +146,8 @@ pub enum ControlDatabaseError {
         /// Run identifier that failed the journal-state ownership check.
         run_id: String,
     },
+    /// In-flight journal state belongs to another or legacy project batch.
+    BatchStateMismatch,
     /// Disposable synchronization state violated a bounded invariant.
     InvalidSyncState {
         /// Fixed safe reason that does not include opaque state.
@@ -155,6 +183,9 @@ impl fmt::Display for ControlDatabaseError {
                 formatter,
                 "index run {run_id} no longer owns the frozen journal synchronization state"
             ),
+            Self::BatchStateMismatch => formatter.write_str(
+                "in-flight journal state does not belong to the active index batch; retry the original batch or disable resume",
+            ),
             Self::InvalidSyncState { reason } => {
                 write!(formatter, "invalid disposable synchronization state: {reason}")
             }
@@ -173,6 +204,7 @@ impl Error for ControlDatabaseError {
             | Self::OwnershipLost { .. }
             | Self::RunModeMismatch { .. }
             | Self::RunOwnershipLost { .. }
+            | Self::BatchStateMismatch
             | Self::InvalidSyncState { .. } => None,
         }
     }
@@ -266,6 +298,7 @@ impl From<ControlDatabaseError> for ContentCheckpointCommitError {
 /// * `catalog_name` - Stable maintained catalog stem.
 /// * `provider_name` - Stable runtime provider name.
 /// * `catalog_id` - Immutable LitRadar journal identifier.
+/// * `batch_id` - Active project batch that owns the journal traversal.
 /// * `run_id` - Expected core run owner.
 /// * `mode` - Expected frozen synchronization mode.
 /// * `base_anchor` - Expected frozen successful boundary.
@@ -283,6 +316,7 @@ pub fn commit_content_then_progress<Outcome, WriteContent>(
     catalog_name: &str,
     provider_name: &str,
     catalog_id: &str,
+    batch_id: &str,
     run_id: &str,
     mode: IndexSyncMode,
     base_anchor: Option<&str>,
@@ -300,6 +334,7 @@ where
             catalog_name,
             provider_name,
             catalog_id,
+            batch_id,
             run_id,
             mode,
             base_anchor,
@@ -311,6 +346,7 @@ where
             catalog_name,
             provider_name,
             catalog_id,
+            batch_id,
             run_id,
             mode,
             base_anchor,
@@ -372,6 +408,8 @@ pub fn init_control_db(connection: &Connection) -> Result<(), ControlDatabaseErr
                      length(CAST(committed_anchor AS BLOB)) BETWEEN 1 AND 65536
                  )),
              completed_at TEXT NOT NULL CHECK (length(completed_at) > 0),
+             completed_batch_id TEXT
+                 CHECK (completed_batch_id IS NULL OR length(completed_batch_id) > 0),
              PRIMARY KEY (catalog_name, provider_name, catalog_id)
          );
 
@@ -379,6 +417,7 @@ pub fn init_control_db(connection: &Connection) -> Result<(), ControlDatabaseErr
              catalog_name TEXT NOT NULL,
              provider_name TEXT NOT NULL,
              catalog_id TEXT NOT NULL,
+             batch_id TEXT CHECK (batch_id IS NULL OR length(batch_id) > 0),
              run_id TEXT NOT NULL CHECK (length(run_id) > 0),
              sync_mode TEXT NOT NULL
                  CHECK (sync_mode IN ('bootstrap', 'incremental', 'full_rescan')),
@@ -400,6 +439,18 @@ pub fn init_control_db(connection: &Connection) -> Result<(), ControlDatabaseErr
          CREATE INDEX IF NOT EXISTS idx_provider_run_checkpoints_catalog
              ON provider_run_checkpoints(catalog_name, catalog_id);",
     )?;
+    if !table_column_exists(&transaction, "provider_sync_anchors", "completed_batch_id")? {
+        transaction.execute_batch(
+            "ALTER TABLE provider_sync_anchors ADD COLUMN completed_batch_id TEXT
+                 CHECK (completed_batch_id IS NULL OR length(completed_batch_id) > 0);",
+        )?;
+    }
+    if !table_column_exists(&transaction, "provider_run_checkpoints", "batch_id")? {
+        transaction.execute_batch(
+            "ALTER TABLE provider_run_checkpoints ADD COLUMN batch_id TEXT
+                 CHECK (batch_id IS NULL OR length(batch_id) > 0);",
+        )?;
+    }
     if has_legacy_checkpoints {
         migrate_legacy_completed_anchors(&transaction)?;
         transaction.execute_batch("DROP TABLE provider_checkpoints;")?;
@@ -479,6 +530,18 @@ fn table_exists(connection: &Connection, table_name: &str) -> Result<bool, Contr
     )?)
 }
 
+fn table_column_exists(
+    connection: &Connection,
+    table_name: &str,
+    column_name: &str,
+) -> Result<bool, ControlDatabaseError> {
+    let mut statement = connection.prepare(&format!("PRAGMA table_info({table_name})"))?;
+    let columns = statement
+        .query_map([], |row| row.get::<_, String>(1))?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(columns.iter().any(|column| column == column_name))
+}
+
 fn migrate_legacy_completed_anchors(connection: &Connection) -> Result<(), ControlDatabaseError> {
     let rows = {
         let mut statement = connection.prepare(
@@ -553,7 +616,7 @@ fn read_sync_anchor_row(
 ) -> Result<Option<ProviderSyncAnchor>, ControlDatabaseError> {
     let anchor = connection
         .query_row(
-            "SELECT committed_anchor, completed_at
+            "SELECT committed_anchor, completed_at, completed_batch_id
              FROM provider_sync_anchors
              WHERE catalog_name = ?1 AND provider_name = ?2 AND catalog_id = ?3",
             params![catalog_name, provider_name, catalog_id],
@@ -561,6 +624,7 @@ fn read_sync_anchor_row(
                 Ok(ProviderSyncAnchor {
                     committed_anchor: row.get(0)?,
                     completed_at: row.get(1)?,
+                    completed_batch_id: row.get(2)?,
                 })
             },
         )
@@ -591,28 +655,38 @@ pub fn read_run_checkpoint(
 ) -> Result<Option<ProviderRunCheckpoint>, ControlDatabaseError> {
     let checkpoint = connection
         .query_row(
-            "SELECT run_id, sync_mode, base_anchor, traversal_checkpoint, started_at, updated_at
+            "SELECT batch_id, run_id, sync_mode, base_anchor, traversal_checkpoint, started_at, updated_at
              FROM provider_run_checkpoints
              WHERE catalog_name = ?1 AND provider_name = ?2 AND catalog_id = ?3",
             params![catalog_name, provider_name, catalog_id],
             |row| {
                 Ok((
-                    row.get::<_, String>(0)?,
+                    row.get::<_, Option<String>>(0)?,
                     row.get::<_, String>(1)?,
-                    row.get::<_, Option<String>>(2)?,
+                    row.get::<_, String>(2)?,
                     row.get::<_, Option<String>>(3)?,
-                    row.get::<_, String>(4)?,
+                    row.get::<_, Option<String>>(4)?,
                     row.get::<_, String>(5)?,
+                    row.get::<_, String>(6)?,
                 ))
             },
         )
         .optional()?;
     checkpoint
         .map(
-            |(run_id, mode, base_anchor, traversal_checkpoint, started_at, updated_at)| {
+            |(
+                batch_id,
+                run_id,
+                mode,
+                base_anchor,
+                traversal_checkpoint,
+                started_at,
+                updated_at,
+            )| {
                 validate_optional_opaque(base_anchor.as_deref(), "base anchor")?;
                 validate_optional_opaque(traversal_checkpoint.as_deref(), "traversal checkpoint")?;
                 Ok(ProviderRunCheckpoint {
+                    batch_id,
                     run_id,
                     mode: parse_sync_mode(&mode)?,
                     base_anchor,
@@ -633,6 +707,7 @@ pub fn read_run_checkpoint(
 /// * `catalog_name` - Stable maintained catalog stem.
 /// * `provider_name` - Stable runtime provider name.
 /// * `catalog_id` - Immutable LitRadar journal identifier.
+/// * `batch_id` - Active project batch that owns completion and traversal state.
 /// * `run_id` - Current core run that will own the traversal.
 /// * `mode` - Synchronization mode requested by the current command.
 /// * `should_resume` - Whether matching in-flight state may be resumed.
@@ -647,15 +722,22 @@ pub fn prepare_journal_sync(
     catalog_name: &str,
     provider_name: &str,
     catalog_id: &str,
+    batch_id: &str,
     run_id: &str,
     mode: IndexSyncMode,
     should_resume: bool,
     updated_at: &str,
 ) -> Result<JournalSyncPreparation, ControlDatabaseError> {
+    validate_batch_id(batch_id)?;
     validate_run_metadata(run_id, updated_at)?;
     let transaction = Transaction::new_unchecked(connection, TransactionBehavior::Immediate)?;
     let anchor = read_sync_anchor_row(&transaction, catalog_name, provider_name, catalog_id)?;
-    if mode == IndexSyncMode::Bootstrap && should_resume && anchor.is_some() {
+    if should_resume
+        && anchor
+            .as_ref()
+            .and_then(|anchor| anchor.completed_batch_id.as_deref())
+            == Some(batch_id)
+    {
         transaction.commit()?;
         return Ok(JournalSyncPreparation::Skip);
     }
@@ -668,6 +750,9 @@ pub fn prepare_journal_sync(
     let existing = read_run_checkpoint(&transaction, catalog_name, provider_name, catalog_id)?;
     let prepared = if should_resume {
         if let Some(mut existing) = existing {
+            if existing.batch_id.as_deref() != Some(batch_id) {
+                return Err(ControlDatabaseError::BatchStateMismatch);
+            }
             if existing.mode != mode {
                 return Err(ControlDatabaseError::RunModeMismatch {
                     stored: existing.mode,
@@ -681,14 +766,15 @@ pub fn prepare_journal_sync(
             }
             let changed = transaction.execute(
                 "UPDATE provider_run_checkpoints
-                 SET run_id = ?4, updated_at = ?8
+                 SET run_id = ?5, updated_at = ?9
                  WHERE catalog_name = ?1 AND provider_name = ?2 AND catalog_id = ?3
-                   AND run_id = ?5 AND sync_mode = ?6
-                   AND base_anchor IS ?7",
+                   AND batch_id = ?4 AND run_id = ?6 AND sync_mode = ?7
+                   AND base_anchor IS ?8",
                 params![
                     catalog_name,
                     provider_name,
                     catalog_id,
+                    batch_id,
                     run_id,
                     existing.run_id,
                     sync_mode_text(mode),
@@ -710,12 +796,14 @@ pub fn prepare_journal_sync(
                 catalog_name,
                 provider_name,
                 catalog_id,
+                batch_id,
                 run_id,
                 mode,
                 desired_base_anchor.as_deref(),
                 updated_at,
             )?;
             ProviderRunCheckpoint {
+                batch_id: Some(batch_id.to_string()),
                 run_id: run_id.to_string(),
                 mode,
                 base_anchor: desired_base_anchor,
@@ -727,10 +815,11 @@ pub fn prepare_journal_sync(
     } else {
         transaction.execute(
             "INSERT INTO provider_run_checkpoints (
-                 catalog_name, provider_name, catalog_id, run_id, sync_mode,
+                 catalog_name, provider_name, catalog_id, batch_id, run_id, sync_mode,
                  base_anchor, traversal_checkpoint, started_at, updated_at
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, NULL, ?7, ?7)
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, NULL, ?8, ?8)
              ON CONFLICT(catalog_name, provider_name, catalog_id) DO UPDATE SET
+                 batch_id = excluded.batch_id,
                  run_id = excluded.run_id,
                  sync_mode = excluded.sync_mode,
                  base_anchor = excluded.base_anchor,
@@ -741,6 +830,7 @@ pub fn prepare_journal_sync(
                 catalog_name,
                 provider_name,
                 catalog_id,
+                batch_id,
                 run_id,
                 sync_mode_text(mode),
                 desired_base_anchor.as_deref(),
@@ -748,6 +838,7 @@ pub fn prepare_journal_sync(
             ],
         )?;
         ProviderRunCheckpoint {
+            batch_id: Some(batch_id.to_string()),
             run_id: run_id.to_string(),
             mode,
             base_anchor: desired_base_anchor,
@@ -766,6 +857,7 @@ fn insert_run_checkpoint(
     catalog_name: &str,
     provider_name: &str,
     catalog_id: &str,
+    batch_id: &str,
     run_id: &str,
     mode: IndexSyncMode,
     base_anchor: Option<&str>,
@@ -773,13 +865,14 @@ fn insert_run_checkpoint(
 ) -> Result<(), ControlDatabaseError> {
     connection.execute(
         "INSERT INTO provider_run_checkpoints (
-             catalog_name, provider_name, catalog_id, run_id, sync_mode,
+             catalog_name, provider_name, catalog_id, batch_id, run_id, sync_mode,
              base_anchor, traversal_checkpoint, started_at, updated_at
-         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, NULL, ?7, ?7)",
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, NULL, ?8, ?8)",
         params![
             catalog_name,
             provider_name,
             catalog_id,
+            batch_id,
             run_id,
             sync_mode_text(mode),
             base_anchor,
@@ -824,6 +917,167 @@ pub fn has_catalog_alias_sync_state(
     Ok(false)
 }
 
+/// Count successful and in-flight journals owned by one project batch.
+///
+/// # Arguments
+///
+/// * `connection` - Open control database connection.
+/// * `catalog_name` - Stable maintained catalog stem.
+/// * `provider_name` - Stable runtime Provider name.
+/// * `batch_id` - Active project batch identifier.
+///
+/// # Returns
+///
+/// Durable same-batch completion and traversal counts.
+pub fn read_batch_journal_state(
+    connection: &Connection,
+    catalog_name: &str,
+    provider_name: &str,
+    batch_id: &str,
+) -> Result<BatchJournalState, ControlDatabaseError> {
+    validate_batch_id(batch_id)?;
+    let completed = connection.query_row(
+        "SELECT COUNT(*) FROM provider_sync_anchors
+         WHERE catalog_name = ?1 AND provider_name = ?2 AND completed_batch_id = ?3",
+        params![catalog_name, provider_name, batch_id],
+        |row| row.get::<_, i64>(0),
+    )?;
+    let in_flight = connection.query_row(
+        "SELECT COUNT(*) FROM provider_run_checkpoints
+         WHERE catalog_name = ?1 AND provider_name = ?2 AND batch_id = ?3",
+        params![catalog_name, provider_name, batch_id],
+        |row| row.get::<_, i64>(0),
+    )?;
+    Ok(BatchJournalState {
+        completed: usize::try_from(completed).map_err(|_| {
+            ControlDatabaseError::InvalidSyncState {
+                reason: "same-batch completed journal count is invalid",
+            }
+        })?,
+        in_flight: usize::try_from(in_flight).map_err(|_| {
+            ControlDatabaseError::InvalidSyncState {
+                reason: "same-batch in-flight journal count is invalid",
+            }
+        })?,
+    })
+}
+
+/// Adopt one coherent pre-v4 checkpoint epoch into an active project batch.
+///
+/// # Arguments
+///
+/// * `connection` - Open control database connection before its Provider lease is acquired.
+/// * `catalog_name` - Stable maintained catalog stem.
+/// * `provider_name` - Stable runtime Provider name.
+/// * `batch_id` - New active project batch identifier.
+/// * `mode` - Synchronization mode required by the current command.
+/// * `allow_adoption` - Whether an explicit single-CSV invocation authorized adoption.
+///
+/// # Returns
+///
+/// Adoption counts, or an empty result when no legacy checkpoint exists.
+pub fn adopt_legacy_batch_state(
+    connection: &Connection,
+    catalog_name: &str,
+    provider_name: &str,
+    batch_id: &str,
+    mode: IndexSyncMode,
+    allow_adoption: bool,
+) -> Result<LegacyBatchAdoption, ControlDatabaseError> {
+    validate_batch_id(batch_id)?;
+    let transaction = Transaction::new_unchecked(connection, TransactionBehavior::Immediate)?;
+    let has_lease = transaction.query_row(
+        "SELECT EXISTS(
+             SELECT 1 FROM provider_leases
+             WHERE catalog_name = ?1 AND provider_name = ?2
+         )",
+        params![catalog_name, provider_name],
+        |row| row.get::<_, bool>(0),
+    )?;
+    if has_lease {
+        return Err(ControlDatabaseError::InvalidSyncState {
+            reason: "legacy batch adoption requires an unleased catalog",
+        });
+    }
+    let legacy = {
+        let mut statement = transaction.prepare(
+            "SELECT sync_mode, started_at
+             FROM provider_run_checkpoints
+             WHERE catalog_name = ?1 AND provider_name = ?2 AND batch_id IS NULL
+             ORDER BY catalog_id",
+        )?;
+        let rows = statement
+            .query_map(params![catalog_name, provider_name], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        rows
+    };
+    if legacy.is_empty() {
+        transaction.commit()?;
+        return Ok(LegacyBatchAdoption {
+            started_at: None,
+            checkpoints_adopted: 0,
+            anchors_adopted: 0,
+        });
+    }
+    if !allow_adoption {
+        return Err(ControlDatabaseError::InvalidSyncState {
+            reason: "legacy checkpoint adoption requires explicit single-CSV selection",
+        });
+    }
+    let expected_mode = sync_mode_text(mode);
+    let started_at = legacy[0].1.clone();
+    if legacy
+        .iter()
+        .any(|(stored_mode, stored_at)| stored_mode != expected_mode || stored_at != &started_at)
+    {
+        return Err(ControlDatabaseError::InvalidSyncState {
+            reason: "legacy checkpoints do not share one mode and start epoch",
+        });
+    }
+    let checkpoints_adopted = transaction.execute(
+        "UPDATE provider_run_checkpoints
+         SET batch_id = ?3
+         WHERE catalog_name = ?1 AND provider_name = ?2 AND batch_id IS NULL",
+        params![catalog_name, provider_name, batch_id],
+    )?;
+    let anchors_adopted = transaction.execute(
+        "UPDATE provider_sync_anchors
+         SET completed_batch_id = ?3
+         WHERE catalog_name = ?1 AND provider_name = ?2
+           AND completed_batch_id IS NULL AND completed_at = ?4",
+        params![catalog_name, provider_name, batch_id, started_at],
+    )?;
+    transaction.commit()?;
+    Ok(LegacyBatchAdoption {
+        started_at: Some(started_at),
+        checkpoints_adopted,
+        anchors_adopted,
+    })
+}
+
+/// Remove only in-flight checkpoints owned by an abandoned project batch.
+///
+/// # Arguments
+///
+/// * `connection` - Open control database connection.
+/// * `batch_id` - Abandoned project batch identifier.
+///
+/// # Returns
+///
+/// Number of traversal checkpoints removed without changing anchors or leases.
+pub fn abandon_batch_checkpoints(
+    connection: &Connection,
+    batch_id: &str,
+) -> Result<usize, ControlDatabaseError> {
+    validate_batch_id(batch_id)?;
+    Ok(connection.execute(
+        "DELETE FROM provider_run_checkpoints WHERE batch_id = ?1",
+        params![batch_id],
+    )?)
+}
+
 /// Advance only the traversal checkpoint for one owned frozen journal run.
 ///
 /// # Arguments
@@ -832,6 +1086,7 @@ pub fn has_catalog_alias_sync_state(
 /// * `catalog_name` - Stable maintained catalog stem.
 /// * `provider_name` - Stable runtime provider name.
 /// * `catalog_id` - Immutable LitRadar journal identifier.
+/// * `batch_id` - Active project batch that owns the traversal.
 /// * `run_id` - Expected core run owner.
 /// * `mode` - Expected frozen synchronization mode.
 /// * `base_anchor` - Expected frozen successful boundary.
@@ -847,25 +1102,28 @@ pub fn advance_run_checkpoint(
     catalog_name: &str,
     provider_name: &str,
     catalog_id: &str,
+    batch_id: &str,
     run_id: &str,
     mode: IndexSyncMode,
     base_anchor: Option<&str>,
     checkpoint: &str,
     updated_at: &str,
 ) -> Result<(), ControlDatabaseError> {
+    validate_batch_id(batch_id)?;
     validate_run_metadata(run_id, updated_at)?;
     validate_optional_opaque(base_anchor, "base anchor")?;
     validate_optional_opaque(Some(checkpoint), "traversal checkpoint")?;
     let transaction = Transaction::new_unchecked(connection, TransactionBehavior::Immediate)?;
     let changed = transaction.execute(
         "UPDATE provider_run_checkpoints
-         SET traversal_checkpoint = ?7, updated_at = ?8
+         SET traversal_checkpoint = ?8, updated_at = ?9
          WHERE catalog_name = ?1 AND provider_name = ?2 AND catalog_id = ?3
-           AND run_id = ?4 AND sync_mode = ?5 AND base_anchor IS ?6",
+           AND batch_id = ?4 AND run_id = ?5 AND sync_mode = ?6 AND base_anchor IS ?7",
         params![
             catalog_name,
             provider_name,
             catalog_id,
+            batch_id,
             run_id,
             sync_mode_text(mode),
             base_anchor,
@@ -890,6 +1148,7 @@ pub fn advance_run_checkpoint(
 /// * `catalog_name` - Stable maintained catalog stem.
 /// * `provider_name` - Stable runtime provider name.
 /// * `catalog_id` - Immutable LitRadar journal identifier.
+/// * `batch_id` - Active project batch that owns the traversal and completion marker.
 /// * `run_id` - Expected core run owner.
 /// * `mode` - Expected frozen synchronization mode.
 /// * `base_anchor` - Expected frozen successful boundary.
@@ -905,12 +1164,14 @@ pub fn complete_sync_run(
     catalog_name: &str,
     provider_name: &str,
     catalog_id: &str,
+    batch_id: &str,
     run_id: &str,
     mode: IndexSyncMode,
     base_anchor: Option<&str>,
     next_anchor: Option<&str>,
     completed_at: &str,
 ) -> Result<(), ControlDatabaseError> {
+    validate_batch_id(batch_id)?;
     validate_run_metadata(run_id, completed_at)?;
     validate_optional_opaque(base_anchor, "base anchor")?;
     validate_optional_opaque(next_anchor, "committed anchor")?;
@@ -919,12 +1180,13 @@ pub fn complete_sync_run(
         "SELECT EXISTS(
              SELECT 1 FROM provider_run_checkpoints
              WHERE catalog_name = ?1 AND provider_name = ?2 AND catalog_id = ?3
-               AND run_id = ?4 AND sync_mode = ?5 AND base_anchor IS ?6
+               AND batch_id = ?4 AND run_id = ?5 AND sync_mode = ?6 AND base_anchor IS ?7
          )",
         params![
             catalog_name,
             provider_name,
             catalog_id,
+            batch_id,
             run_id,
             sync_mode_text(mode),
             base_anchor,
@@ -938,27 +1200,31 @@ pub fn complete_sync_run(
     }
     transaction.execute(
         "INSERT INTO provider_sync_anchors (
-             catalog_name, provider_name, catalog_id, committed_anchor, completed_at
-         ) VALUES (?1, ?2, ?3, ?4, ?5)
+             catalog_name, provider_name, catalog_id, committed_anchor, completed_at,
+             completed_batch_id
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
          ON CONFLICT(catalog_name, provider_name, catalog_id) DO UPDATE SET
              committed_anchor = excluded.committed_anchor,
-             completed_at = excluded.completed_at",
+             completed_at = excluded.completed_at,
+             completed_batch_id = excluded.completed_batch_id",
         params![
             catalog_name,
             provider_name,
             catalog_id,
             next_anchor,
             completed_at,
+            batch_id,
         ],
     )?;
     let deleted = transaction.execute(
         "DELETE FROM provider_run_checkpoints
          WHERE catalog_name = ?1 AND provider_name = ?2 AND catalog_id = ?3
-           AND run_id = ?4 AND sync_mode = ?5 AND base_anchor IS ?6",
+           AND batch_id = ?4 AND run_id = ?5 AND sync_mode = ?6 AND base_anchor IS ?7",
         params![
             catalog_name,
             provider_name,
             catalog_id,
+            batch_id,
             run_id,
             sync_mode_text(mode),
             base_anchor,
@@ -1014,6 +1280,15 @@ fn validate_run_metadata(run_id: &str, timestamp: &str) -> Result<(), ControlDat
     if run_id.is_empty() || timestamp.is_empty() {
         return Err(ControlDatabaseError::InvalidSyncState {
             reason: "run id and timestamp must not be empty",
+        });
+    }
+    Ok(())
+}
+
+fn validate_batch_id(batch_id: &str) -> Result<(), ControlDatabaseError> {
+    if batch_id.is_empty() || batch_id.len() > 512 || batch_id.chars().any(char::is_control) {
+        return Err(ControlDatabaseError::InvalidSyncState {
+            reason: "batch id must be non-empty and bounded",
         });
     }
     Ok(())
@@ -1161,20 +1436,133 @@ mod tests {
     use crate::schema::{init_content_db, write_content_batch};
 
     use super::{
-        acquire_lease, advance_run_checkpoint, commit_content_then_progress, complete_sync_run,
-        has_catalog_alias_sync_state, heartbeat_lease, init_control_db, open_control_db,
-        prepare_journal_sync, read_run_checkpoint, read_sync_anchor, release_lease,
-        ContentCheckpointCommitError, ControlDatabaseError, JournalSyncPreparation,
-        ProviderRunCheckpoint, CONTROL_SCHEMA_VERSION,
+        abandon_batch_checkpoints, acquire_lease, adopt_legacy_batch_state,
+        advance_run_checkpoint as advance_run_checkpoint_for_batch,
+        commit_content_then_progress as commit_content_then_progress_for_batch,
+        complete_sync_run as complete_sync_run_for_batch, has_catalog_alias_sync_state,
+        heartbeat_lease, init_control_db, open_control_db,
+        prepare_journal_sync as prepare_journal_sync_for_batch, read_batch_journal_state,
+        read_run_checkpoint, read_sync_anchor, release_lease, ContentCheckpointCommitError,
+        ControlDatabaseError, JournalSyncPreparation, ProviderRunCheckpoint,
+        CONTROL_SCHEMA_VERSION,
     };
 
     const CATALOG_NAME: &str = "chinese_journals";
     const PROVIDER_NAME: &str = "provider-a";
     const CATALOG_ID: &str = "issn-1234-5679";
     const TIMESTAMP: &str = "2026-07-18T00:00:00Z";
+    const BATCH_ID: &str = "batch-current";
+    const PREVIOUS_BATCH_ID: &str = "batch-previous";
+
+    #[allow(clippy::too_many_arguments)]
+    fn prepare_journal_sync(
+        connection: &Connection,
+        catalog_name: &str,
+        provider_name: &str,
+        catalog_id: &str,
+        run_id: &str,
+        mode: IndexSyncMode,
+        should_resume: bool,
+        updated_at: &str,
+    ) -> Result<JournalSyncPreparation, ControlDatabaseError> {
+        prepare_journal_sync_for_batch(
+            connection,
+            catalog_name,
+            provider_name,
+            catalog_id,
+            BATCH_ID,
+            run_id,
+            mode,
+            should_resume,
+            updated_at,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn advance_run_checkpoint(
+        connection: &Connection,
+        catalog_name: &str,
+        provider_name: &str,
+        catalog_id: &str,
+        run_id: &str,
+        mode: IndexSyncMode,
+        base_anchor: Option<&str>,
+        checkpoint: &str,
+        updated_at: &str,
+    ) -> Result<(), ControlDatabaseError> {
+        advance_run_checkpoint_for_batch(
+            connection,
+            catalog_name,
+            provider_name,
+            catalog_id,
+            BATCH_ID,
+            run_id,
+            mode,
+            base_anchor,
+            checkpoint,
+            updated_at,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn complete_sync_run(
+        connection: &Connection,
+        catalog_name: &str,
+        provider_name: &str,
+        catalog_id: &str,
+        run_id: &str,
+        mode: IndexSyncMode,
+        base_anchor: Option<&str>,
+        next_anchor: Option<&str>,
+        completed_at: &str,
+    ) -> Result<(), ControlDatabaseError> {
+        complete_sync_run_for_batch(
+            connection,
+            catalog_name,
+            provider_name,
+            catalog_id,
+            BATCH_ID,
+            run_id,
+            mode,
+            base_anchor,
+            next_anchor,
+            completed_at,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn commit_content_then_progress<Outcome, WriteContent>(
+        control_connection: &Connection,
+        catalog_name: &str,
+        provider_name: &str,
+        catalog_id: &str,
+        run_id: &str,
+        mode: IndexSyncMode,
+        base_anchor: Option<&str>,
+        progress: &ProviderProgress,
+        updated_at: &str,
+        write_content: WriteContent,
+    ) -> Result<Outcome, ContentCheckpointCommitError>
+    where
+        WriteContent: FnOnce() -> Result<Outcome, crate::schema::ContentDatabaseError>,
+    {
+        commit_content_then_progress_for_batch(
+            control_connection,
+            catalog_name,
+            provider_name,
+            catalog_id,
+            BATCH_ID,
+            run_id,
+            mode,
+            base_anchor,
+            progress,
+            updated_at,
+            write_content,
+        )
+    }
 
     #[test]
-    fn schema_v3_initializes_only_expected_control_tables() {
+    fn schema_v4_initializes_only_expected_control_tables() {
         let connection = Connection::open_in_memory().expect("control database should open");
         init_control_db(&connection).expect("control schema should initialize");
         init_control_db(&connection).expect("current control schema should reopen");
@@ -1352,6 +1740,254 @@ mod tests {
     }
 
     #[test]
+    fn v3_migration_retains_batchless_anchors_and_checkpoints() {
+        let connection = Connection::open_in_memory().expect("v3 database should open");
+        connection
+            .execute_batch(
+                "CREATE TABLE provider_leases (
+                     catalog_name TEXT NOT NULL,
+                     provider_name TEXT NOT NULL,
+                     run_id TEXT NOT NULL,
+                     heartbeat_at INTEGER NOT NULL,
+                     expires_at INTEGER NOT NULL,
+                     PRIMARY KEY (catalog_name, provider_name)
+                 );
+                 CREATE TABLE provider_sync_anchors (
+                     catalog_name TEXT NOT NULL,
+                     provider_name TEXT NOT NULL,
+                     catalog_id TEXT NOT NULL,
+                     committed_anchor TEXT,
+                     completed_at TEXT NOT NULL,
+                     PRIMARY KEY (catalog_name, provider_name, catalog_id)
+                 );
+                 CREATE TABLE provider_run_checkpoints (
+                     catalog_name TEXT NOT NULL,
+                     provider_name TEXT NOT NULL,
+                     catalog_id TEXT NOT NULL,
+                     run_id TEXT NOT NULL,
+                     sync_mode TEXT NOT NULL,
+                     base_anchor TEXT,
+                     traversal_checkpoint TEXT,
+                     started_at TEXT NOT NULL,
+                     updated_at TEXT NOT NULL,
+                     PRIMARY KEY (catalog_name, provider_name, catalog_id)
+                 );
+                 INSERT INTO provider_sync_anchors VALUES (
+                     'chinese_journals', 'provider-a', 'completed', 'anchor', 'epoch'
+                 );
+                 INSERT INTO provider_run_checkpoints VALUES (
+                     'chinese_journals', 'provider-a', 'in-flight', 'legacy-run',
+                     'incremental', 'anchor', 'cursor', 'epoch', 'epoch'
+                 );
+                 PRAGMA user_version = 3;",
+            )
+            .expect("v3 fixture should initialize");
+
+        init_control_db(&connection).expect("v3 database should migrate");
+
+        let anchor = read_sync_anchor(&connection, "chinese_journals", "provider-a", "completed")
+            .expect("anchor should read")
+            .expect("anchor should remain");
+        let checkpoint =
+            read_run_checkpoint(&connection, "chinese_journals", "provider-a", "in-flight")
+                .expect("checkpoint should read")
+                .expect("checkpoint should remain");
+        assert_eq!(anchor.completed_batch_id, None);
+        assert_eq!(checkpoint.batch_id, None);
+        assert_eq!(
+            connection
+                .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
+                .expect("schema version should read"),
+            4
+        );
+    }
+
+    #[test]
+    fn same_batch_completion_skips_every_mode_and_next_batch_runs_again() {
+        let connection = current_control();
+        for (ordinal, mode) in [
+            IndexSyncMode::Bootstrap,
+            IndexSyncMode::Incremental,
+            IndexSyncMode::FullRescan,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let catalog_id = format!("journal-{ordinal}");
+            let run = prepared_run(
+                prepare_journal_sync_for_batch(
+                    &connection,
+                    CATALOG_NAME,
+                    PROVIDER_NAME,
+                    &catalog_id,
+                    BATCH_ID,
+                    "first-run",
+                    mode,
+                    false,
+                    TIMESTAMP,
+                )
+                .expect("first traversal should prepare"),
+            );
+            complete_sync_run_for_batch(
+                &connection,
+                CATALOG_NAME,
+                PROVIDER_NAME,
+                &catalog_id,
+                BATCH_ID,
+                &run.run_id,
+                run.mode,
+                run.base_anchor.as_deref(),
+                Some("next-anchor"),
+                TIMESTAMP,
+            )
+            .expect("first traversal should complete");
+            assert!(matches!(
+                prepare_journal_sync_for_batch(
+                    &connection,
+                    CATALOG_NAME,
+                    PROVIDER_NAME,
+                    &catalog_id,
+                    BATCH_ID,
+                    "retry-run",
+                    mode,
+                    true,
+                    TIMESTAMP,
+                )
+                .expect("same batch should prepare"),
+                JournalSyncPreparation::Skip
+            ));
+            let next = prepared_run(
+                prepare_journal_sync_for_batch(
+                    &connection,
+                    CATALOG_NAME,
+                    PROVIDER_NAME,
+                    &catalog_id,
+                    "batch-next",
+                    "next-run",
+                    mode,
+                    true,
+                    TIMESTAMP,
+                )
+                .expect("next batch should revisit the journal"),
+            );
+            assert_eq!(next.batch_id.as_deref(), Some("batch-next"));
+            if mode == IndexSyncMode::Bootstrap {
+                assert_eq!(next.base_anchor, None);
+            } else {
+                assert_eq!(next.base_anchor.as_deref(), Some("next-anchor"));
+            }
+        }
+    }
+
+    #[test]
+    fn legacy_adoption_is_single_selection_only_and_preserves_completed_anchors() {
+        let connection = current_control();
+        connection
+            .execute(
+                "INSERT INTO provider_sync_anchors (
+                     catalog_name, provider_name, catalog_id, committed_anchor, completed_at
+                 ) VALUES (?1, ?2, 'completed', 'anchor', ?3)",
+                params![CATALOG_NAME, PROVIDER_NAME, TIMESTAMP],
+            )
+            .expect("legacy anchor should insert");
+        connection
+            .execute(
+                "INSERT INTO provider_run_checkpoints (
+                     catalog_name, provider_name, catalog_id, run_id, sync_mode,
+                     base_anchor, traversal_checkpoint, started_at, updated_at
+                 ) VALUES (?1, ?2, 'in-flight', 'legacy-run', 'incremental',
+                     'anchor', 'cursor', ?3, ?3)",
+                params![CATALOG_NAME, PROVIDER_NAME, TIMESTAMP],
+            )
+            .expect("legacy checkpoint should insert");
+
+        assert!(matches!(
+            adopt_legacy_batch_state(
+                &connection,
+                CATALOG_NAME,
+                PROVIDER_NAME,
+                BATCH_ID,
+                IndexSyncMode::Incremental,
+                false,
+            ),
+            Err(ControlDatabaseError::InvalidSyncState { .. })
+        ));
+        let adoption = adopt_legacy_batch_state(
+            &connection,
+            CATALOG_NAME,
+            PROVIDER_NAME,
+            BATCH_ID,
+            IndexSyncMode::Incremental,
+            true,
+        )
+        .expect("explicit single catalog should adopt one coherent epoch");
+        assert_eq!(adoption.started_at.as_deref(), Some(TIMESTAMP));
+        assert_eq!(adoption.checkpoints_adopted, 1);
+        assert_eq!(adoption.anchors_adopted, 1);
+        assert_eq!(
+            read_batch_journal_state(&connection, CATALOG_NAME, PROVIDER_NAME, BATCH_ID)
+                .expect("same-batch state should count"),
+            super::BatchJournalState {
+                completed: 1,
+                in_flight: 1,
+            }
+        );
+        assert_eq!(
+            abandon_batch_checkpoints(&connection, BATCH_ID)
+                .expect("owned checkpoint should abandon"),
+            1
+        );
+        assert_eq!(
+            read_sync_anchor(&connection, CATALOG_NAME, PROVIDER_NAME, "completed")
+                .expect("anchor should read")
+                .expect("anchor should remain")
+                .completed_batch_id
+                .as_deref(),
+            Some(BATCH_ID)
+        );
+    }
+
+    #[test]
+    fn foreign_batch_checkpoint_fails_before_resume_mutation() {
+        let connection = current_control();
+        prepare_journal_sync_for_batch(
+            &connection,
+            CATALOG_NAME,
+            PROVIDER_NAME,
+            CATALOG_ID,
+            PREVIOUS_BATCH_ID,
+            "previous-run",
+            IndexSyncMode::Incremental,
+            false,
+            TIMESTAMP,
+        )
+        .expect("previous batch checkpoint should prepare");
+
+        assert!(matches!(
+            prepare_journal_sync_for_batch(
+                &connection,
+                CATALOG_NAME,
+                PROVIDER_NAME,
+                CATALOG_ID,
+                BATCH_ID,
+                "current-run",
+                IndexSyncMode::Incremental,
+                true,
+                TIMESTAMP,
+            ),
+            Err(ControlDatabaseError::BatchStateMismatch)
+        ));
+        assert_eq!(
+            read_run_checkpoint(&connection, CATALOG_NAME, PROVIDER_NAME, CATALOG_ID)
+                .expect("checkpoint should read")
+                .expect("checkpoint should remain")
+                .batch_id
+                .as_deref(),
+            Some(PREVIOUS_BATCH_ID)
+        );
+    }
+
+    #[test]
     fn matching_runs_resume_frozen_state_and_no_resume_replaces_only_the_run() {
         let connection = current_control();
         seed_anchor(&connection, PROVIDER_NAME, Some("anchor-a"));
@@ -1411,9 +2047,8 @@ mod tests {
                 IndexSyncMode::Bootstrap,
                 true,
                 "2026-07-18T00:03:00Z",
-            )
-            .expect("completed normal journal should prepare"),
-            JournalSyncPreparation::Skip
+            ),
+            Err(ControlDatabaseError::RunModeMismatch { .. })
         ));
 
         let replacement = prepared_run(
@@ -1917,7 +2552,7 @@ mod tests {
         anchor: Option<&str>,
     ) {
         let run = prepared_run(
-            prepare_journal_sync(
+            prepare_journal_sync_for_batch(
                 connection,
                 if catalog_id == "canonical-journal" || catalog_id == "legacy-journal" {
                     "english_journals"
@@ -1926,6 +2561,7 @@ mod tests {
                 },
                 provider_name,
                 catalog_id,
+                PREVIOUS_BATCH_ID,
                 "anchor-seed-run",
                 IndexSyncMode::Incremental,
                 false,
@@ -1933,7 +2569,7 @@ mod tests {
             )
             .expect("anchor seed run should prepare"),
         );
-        complete_sync_run(
+        complete_sync_run_for_batch(
             connection,
             if catalog_id == "canonical-journal" || catalog_id == "legacy-journal" {
                 "english_journals"
@@ -1942,6 +2578,7 @@ mod tests {
             },
             provider_name,
             catalog_id,
+            PREVIOUS_BATCH_ID,
             &run.run_id,
             run.mode,
             run.base_anchor.as_deref(),
