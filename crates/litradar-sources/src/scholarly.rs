@@ -1017,7 +1017,7 @@ fn crossref_journal_filter(from_sync_date: Option<&str>) -> String {
 fn openalex_source_work_filter(source_id: &str, from_sync_date: Option<&str>) -> String {
     let mut filters = vec![
         format!("primary_location.source.id:{source_id}"),
-        "type:article".to_string(),
+        "type:article|book-chapter".to_string(),
     ];
     if let Some(value) = from_sync_date.filter(|value| !value.trim().is_empty()) {
         filters.push(format!("from_created_date:{value}"));
@@ -6308,19 +6308,19 @@ mod tests {
     }
 
     #[test]
-    fn provider_filters_map_one_synchronization_date() {
+    fn provider_filters_map_one_synchronization_date_and_book_chapter_series() {
         assert_eq!(
             crossref_journal_filter(Some("2026-01-02")),
             "type:journal-article,from-update-date:2026-01-02"
         );
         assert_eq!(
             openalex_source_work_filter("S42", Some("2026-01-02")),
-            "primary_location.source.id:S42,type:article,from_created_date:2026-01-02"
+            "primary_location.source.id:S42,type:article|book-chapter,from_created_date:2026-01-02"
         );
         assert_eq!(crossref_journal_filter(None), "type:journal-article");
         assert_eq!(
             openalex_source_work_filter("S42", None),
-            "primary_location.source.id:S42,type:article"
+            "primary_location.source.id:S42,type:article|book-chapter"
         );
     }
 

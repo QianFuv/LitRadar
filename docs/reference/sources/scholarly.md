@@ -22,7 +22,7 @@ Scholarly 是内置 Provider adapter，不是内容 schema。它把 Crossref、O
 | 上游             | 请求时职责                                                | 可进入规范内容的字段                            |
 | ---------------- | --------------------------------------------------------- | ----------------------------------------------- |
 | Crossref         | 按 ISSN 获取主文章清单                                    | DOI、题名、作者、摘要、日期、卷期页码、撤稿关系 |
-| OpenAlex         | DOI 增强；Crossref 全部 404 时解析期刊并提供清单 fallback | 题名、作者、摘要、日期、PMID、OA                |
+| OpenAlex         | DOI 增强；Crossref 全部 404，或无 anchor 完整扫描为空时提供清单 fallback | 题名、作者、摘要、日期、PMID、OA                |
 | Semantic Scholar | 按 DOI 批量增强                                           | 摘要、OA                                        |
 
 上游 URL、source ID、Crossref cursor、OpenAlex cursor 和 Semantic Scholar PDF/landing-page URL 不进入 `ArticleDraft` 或内容数据库。OpenAlex source ID 与 cursor 只能存在于可丢弃 traversal checkpoint；成功 anchor 只使用规范书目信息和日期，不含 Provider/upstream ID 或 URL。
@@ -35,13 +35,13 @@ Scholarly 是内置 Provider adapter，不是内容 schema。它把 Crossref、O
 
 1. 按维护的 `issn`、`eissn`、`all_issns` 构造去重候选。
 2. 根据 `IndexFetchContext` 建立 Bootstrap、Incremental 或 FullRescan 窗口；Incremental 冻结 committed issue anchor 和日期下界。
-3. 依次请求 Crossref `/journals/{issn}/works`；第一个非 404 响应成为按出版日期降序的主清单。
-4. 只有全部 ISSN 都返回 404 时，才按 ISSN、再按维护标题/别名解析 OpenAlex source，并按出版日期降序读取 source works。
+3. 依次请求 Crossref `/journals/{issn}/works`；404 时继续尝试下一个 ISSN。没有可复用 anchor 的完整扫描也会跳过空作品页；第一个可用响应成为按出版日期降序的主清单。
+4. 全部 ISSN 都返回 404，或没有可复用 anchor 的完整扫描只得到空作品页时，按 ISSN、再按维护标题/别名解析 OpenAlex source，并按出版日期降序读取 source works。
 5. 对当前页 DOI 规范化和去重，按最多 100 个 DOI 请求 OpenAlex 增强，并按最多 500 个 DOI 请求 Semantic Scholar batch。
 6. 把上游变体映射到 `JournalDraft`、`IssueDraft` 和 `ArticleDraft`，再按规范 issue fingerprint 判断边界。
 7. 返回一页 `ProviderBatch`；Continue 把下一页 cursor 与冻结窗口编码为 opaque traversal checkpoint，Complete 返回新的成功 anchor。
 
-Crossref 成功但结果为空不会触发 OpenAlex source fallback。没有 DOI 的记录仍可在具备充分 bibliographic identity 时进入内容库，但不会进入 DOI 增强。
+没有可复用 anchor 的完整扫描遇到 Crossref 空作品页时会继续尝试其他 ISSN；所有 ISSN 均无作品后触发 OpenAlex source fallback。已有 anchor 的增量窗口仍保留同源无过滤重放语义，避免把暂时没有更新误判为需要切换主清单。没有 DOI 的记录仍可在具备充分 bibliographic identity 时进入内容库，但不会进入 DOI 增强。
 
 ## 字段合并
 
@@ -79,7 +79,7 @@ mailto 是 Crossref 的联系身份，不是独立配额凭据。客户端稳定
 
 ## OpenAlex fallback 与已知限制
 
-OpenAlex `/sources` 以 ISSN 精确查询优先，题名 search 只作为 fallback。source works 使用 `primary_location.source.id`、cursor 和 `publication_date:desc`；Incremental 每页固定携带 anchor 的 `from_created_date` 下界。
+OpenAlex `/sources` 以 ISSN 精确查询优先，题名 search 只作为 fallback。source works 使用 `primary_location.source.id`、`type:article|book-chapter`、cursor 和 `publication_date:desc`；`book-chapter` 覆盖以 ISSN 编目的连续出版物，`book`、`paratext`、`other` 和 `editorial` 仍被排除。Incremental 每页固定携带 anchor 的 `from_created_date` 下界。
 
 某些 OpenAlex 套餐拒绝 `from_created_date`。客户端只对明确的 plan-restriction 错误启用一次 Provider-local fallback：清除日期 filter 和旧 query cursor，从 source 头部重放；核心模式和控制协议不变化。普通 429 仍然失败，不会被误判为套餐 fallback。
 
@@ -139,7 +139,7 @@ Crossref journal-list GET 收到 HTTP 响应后仍最多尝试三次；`429/500/
 
 修改 adapter 时至少覆盖：
 
-- Crossref cursor、多 ISSN 404 和 OpenAlex fallback；
+- Crossref cursor、多 ISSN 404、无 anchor 空作品页和 OpenAlex fallback；
 - 相同日期 filter 贯穿有界分页和 cursor 重启，边界 issue 跨页后才 Complete；
 - Crossref/OpenAlex 规范字段产生相同 issue fingerprint，anchor 不含上游 ID；
 - missing-base 无过滤重放和 OpenAlex 后续页套餐 fallback 保持冻结 candidate；

@@ -957,6 +957,7 @@ where
     let issns = catalog_issns(catalog);
     for issn in &issns {
         match client.fetch_journal_works_page(issn, from_sync_date, None) {
+            Ok(page) if page.items.is_empty() && window.phase == ScholarlyScanPhase::Unbounded => {}
             Ok(page) => {
                 return crossref_canonical_page(
                     client,
@@ -5088,6 +5089,43 @@ mod tests {
         assert!(batch_is_complete(&batch));
         assert_eq!(batch.articles.len(), 1);
         assert_eq!(batch.articles[0].doi.as_deref(), Some("10.1000/openalex"));
+    }
+
+    #[test]
+    fn scholarly_registration_falls_back_to_openalex_after_empty_crossref_page() {
+        let registration = scholarly_index_registration(
+            FixtureScholarlyTransport::new(ScholarlyFixtureData {
+                openalex_source_by_issns: Some(json!({
+                    "id": "https://openalex.org/S1",
+                    "display_name": "Canonical Journal",
+                    "issn_l": "1234-5679",
+                    "issn": ["1234-5679"]
+                })),
+                openalex_source_works: vec![json!({
+                    "doi": "https://doi.org/10.1000/openalex-empty-crossref",
+                    "display_name": "OpenAlex Article After Empty Crossref",
+                    "type": "book-chapter",
+                    "publication_year": 2026,
+                    "publication_date": "2026-08-01",
+                    "biblio": {"volume": "2", "issue": "3", "first_page": "1", "last_page": "8"}
+                })],
+                ..ScholarlyFixtureData::default()
+            }),
+            false,
+        )
+        .expect("Scholarly registration should pass");
+        let batch = registration
+            .index_content()
+            .expect("indexing capability should exist")
+            .fetch(&catalog(), fetch_context(None))
+            .expect("empty Crossref page should fall back to OpenAlex");
+
+        assert!(batch_is_complete(&batch));
+        assert_eq!(batch.articles.len(), 1);
+        assert_eq!(
+            batch.articles[0].doi.as_deref(),
+            Some("10.1000/openalex-empty-crossref")
+        );
     }
 
     #[test]

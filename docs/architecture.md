@@ -200,8 +200,8 @@ Provider 只能返回规范 `JournalDraft`、`IssueDraft`、`ArticleDraft` 和 `
 ### Scholarly 索引
 
 1. `index_provider_routes` 为该目录选择 `scholarly` 索引能力。
-2. Provider 接收 contract v3 的规范 `JournalCatalogEntry` 与同步 context；Crossref 按 ISSN 和出版日期降序提供文章主列表。
-3. Crossref 对所有 ISSN 返回 404 时，OpenAlex 解析 source 并作为文章列表 fallback。
+2. Provider 接收 contract v3 的规范 `JournalCatalogEntry` 与同步 context；Crossref 按 ISSN 和出版日期降序提供文章主列表，并跳过 404；没有可复用 anchor 的完整扫描还会跳过空作品页并继续尝试其他 ISSN。
+3. Crossref 对所有 ISSN 均返回 404，或没有可复用 anchor 的完整扫描只得到空作品页时，OpenAlex 解析 source 并作为文章列表 fallback。
 4. OpenAlex 按 DOI 增强元数据；Semantic Scholar 增强 OA 和缺失摘要；所有上游 URL 在映射边界丢弃。
 5. 增量运行从远端头部扫描到成功 anchor 的规范期次 fingerprint，并完整包含该边界；日期 filter 只用于缩小候选，不能替代边界证明。
 6. Provider 返回规范 batch 和 Continue/Complete 进度，`litradar-index` 写入关系表、`article_listing` 和 `article_search`，整刊完成后才推进 anchor。
