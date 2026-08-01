@@ -1,5 +1,7 @@
 //! Provider-neutral canonical article indexing workflow.
 
+#[cfg_attr(not(test), allow(dead_code))]
+mod batch;
 pub mod changes;
 pub mod control;
 pub mod identity;
