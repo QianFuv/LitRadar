@@ -1691,6 +1691,9 @@
                 }
               }
             }
+          },
+          "409": {
+            "description": "The login operation was superseded by a newer start or clear request."
           }
         },
         "security": [
@@ -1719,6 +1722,9 @@
                 }
               }
             }
+          },
+          "409": {
+            "description": "The login operation was superseded by a newer start or clear request."
           }
         },
         "security": [

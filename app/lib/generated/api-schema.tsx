@@ -4087,6 +4087,13 @@ export interface operations {
           'application/json': components['schemas']['CnkiLoginPollResponse'];
         };
       };
+      /** @description The login operation was superseded by a newer start or clear request. */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
     };
   };
   start_login: {
@@ -4106,6 +4113,13 @@ export interface operations {
         content: {
           'application/json': components['schemas']['CnkiLoginStartResponse'];
         };
+      };
+      /** @description The login operation was superseded by a newer start or clear request. */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
       };
     };
   };

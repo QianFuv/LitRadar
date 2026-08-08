@@ -5277,6 +5277,14 @@ mod tests {
             user.user_id(),
         )
         .expect("CNKI session status should load");
+        let storage_generation = litradar_storage::get_cnki_session_data(
+            backend.auth_db_path(),
+            backend.secret_codec(),
+            user.user_id(),
+        )
+        .expect("CNKI session data should load")
+        .expect("CNKI session data should exist")
+        .generation;
         let cleared = json_request(
             &app,
             Method::DELETE,
@@ -5286,6 +5294,26 @@ mod tests {
             None,
         )
         .await;
+        let cleared_session_data = litradar_storage::get_cnki_session_data(
+            backend.auth_db_path(),
+            backend.secret_codec(),
+            user.user_id(),
+        )
+        .expect("cleared CNKI session should load");
+        let tombstone = Connection::open(backend.auth_db_path())
+            .expect("auth database should open")
+            .query_row(
+                "SELECT status, generation, session_json FROM cnki_sessions WHERE user_id = ?1",
+                [user.user_id().value()],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, i64>(1)?,
+                        row.get::<_, String>(2)?,
+                    ))
+                },
+            )
+            .expect("CNKI tombstone should remain");
 
         assert_eq!(empty_session.status, StatusCode::OK);
         assert_eq!(empty_session.payload["status"], "empty");
@@ -5326,6 +5354,12 @@ mod tests {
         assert_eq!(cleared.status, StatusCode::OK);
         assert_eq!(cleared.payload["status"], "empty");
         assert_eq!(cleared.payload["configured"], false);
+        assert!(cleared_session_data.is_none());
+        assert_eq!(tombstone.0, "empty");
+        assert!(tombstone.1 > storage_generation);
+        assert!(tombstone.2.starts_with("litradarenc:v1:"));
+        assert!(!tombstone.2.contains("SECRET_COOKIE_VALUE"));
+        assert!(!tombstone.2.contains("SECRET_VPN_VALUE"));
     }
 
     #[tokio::test]

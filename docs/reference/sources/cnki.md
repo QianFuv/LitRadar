@@ -141,6 +141,8 @@ ZJLib 全文能力与 CNKI 索引 Provider 无关：
 
 HTTP 会话路径可能仍使用历史 `/api/cnki/*` 前缀，但 runtime Provider 名称是 `zjlib`。全文动作不会把更新后的 client Cookie 写回 session，不更新 `updated_at`/`last_used_at`，也不缓存 PDF 或新增文件。API 不返回 token、Cookie、代理 URL 或 transport 错误详情。
 
+登录 start 在网络调用前预留单调递增的 session generation；poll 绑定读取时的 generation 与 QR UUID。只有仍匹配的请求才能提交网络结果。新的 start 或 DELETE clear 会使所有更早的 start/poll 完成失效；clear 保存加密空 tombstone 以保留该栅栏，同时对读取接口表现为未配置。陈旧完成固定返回 HTTP 409，错误码为 `cnki_login_superseded`，且不会恢复或覆盖凭据。
+
 ### ZJLib 上游代理跳转安全
 
 这里的“代理主机”是浙江图书馆上游 zyproxy 跳转，不是 `provider_proxy_url` 的出站网络代理。ZJLib 客户端手动处理已知的登录/zyproxy 主机跳转，只允许 HTTPS、允许主机、有限跳数和有效 `vpn358_sid` 成功门槛。已知双节点循环会有限重取登录地址；其他协议、主机、Location、循环或跳数异常明确失败。启用 `zjlib` 托管代理不会放宽这些 host、scheme、Cookie 或跳数检查。

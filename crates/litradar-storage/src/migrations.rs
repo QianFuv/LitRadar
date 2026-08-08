@@ -17,7 +17,7 @@ use crate::business::{import_legacy_delivery_state_files, DeliveryRepositoryErro
 use crate::{DatabaseResolutionError, StorageConfig};
 
 /// Current auth and business database schema version.
-pub const AUTH_SCHEMA_VERSION: i64 = 12;
+pub const AUTH_SCHEMA_VERSION: i64 = 13;
 
 /// Current index database schema version.
 pub const INDEX_SCHEMA_VERSION: i64 = 6;
@@ -281,6 +281,7 @@ fn migrate_auth_database_inner(path: &Path) -> Result<MigrationSummary, Migratio
             10 => apply_auth_version_ten(&transaction)?,
             11 => apply_auth_version_eleven(&transaction)?,
             12 => apply_auth_version_twelve(&transaction)?,
+            13 => apply_auth_version_thirteen(&transaction)?,
             _ => unreachable!("auth migration version should be implemented"),
         }
         transaction.pragma_update(None, "user_version", next_version)?;
@@ -1456,6 +1457,17 @@ fn apply_auth_version_twelve(transaction: &Transaction<'_>) -> Result<(), Migrat
         })?;
     if foreign_key_violation_count != 0 {
         return Err(MigrationError::Sqlite(rusqlite::Error::InvalidQuery));
+    }
+    Ok(())
+}
+
+fn apply_auth_version_thirteen(transaction: &Transaction<'_>) -> Result<(), MigrationError> {
+    let cnki_columns = table_columns(transaction, "cnki_sessions")?;
+    if !cnki_columns.is_empty() && !cnki_columns.iter().any(|column| column == "generation") {
+        transaction.execute(
+            "ALTER TABLE cnki_sessions ADD COLUMN generation INTEGER NOT NULL DEFAULT 1 CHECK (generation > 0)",
+            [],
+        )?;
     }
     Ok(())
 }

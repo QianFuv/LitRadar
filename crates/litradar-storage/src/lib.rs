@@ -89,7 +89,8 @@ pub use business::{
     MAX_DELIVERY_WORKER_CONCURRENCY, MIN_AUDIT_RETENTION_DAYS,
 };
 pub use cnki::{
-    delete_cnki_session, get_cnki_session_data, get_cnki_session_status, touch_cnki_session_used,
+    compare_and_swap_cnki_session, delete_cnki_session, get_cnki_session_data,
+    get_cnki_session_status, reserve_cnki_session_operation, touch_cnki_session_used,
     upsert_cnki_session, CnkiRepositoryError, CnkiSessionData,
 };
 pub use config::{DatabaseResolutionError, StorageConfig};

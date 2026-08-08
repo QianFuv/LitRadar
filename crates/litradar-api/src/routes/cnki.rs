@@ -87,7 +87,10 @@ pub(crate) async fn get_session(
     post,
     path = "/api/cnki/login/start",
     tag = "cnki",
-    responses((status = 200, description = "CNKI QR login challenge.", body = CnkiLoginStartResponse)),
+    responses(
+        (status = 200, description = "CNKI QR login challenge.", body = CnkiLoginStartResponse),
+        (status = 409, description = "The login operation was superseded by a newer start or clear request.")
+    ),
     security(("bearer_auth" = []), ("session_cookie" = []))
 )]
 pub(crate) async fn start_login(
@@ -95,6 +98,15 @@ pub(crate) async fn start_login(
     headers: HeaderMap,
 ) -> Result<Json<CnkiLoginStartResponse>, ApiError> {
     let (user, _) = require_current_user(&state, &headers).await?;
+    let user_id = user.id;
+    let generation = run_cnki(&state, move |storage, secret_codec| {
+        litradar_storage::reserve_cnki_session_operation(
+            storage.auth_db_path(),
+            &secret_codec,
+            user_id,
+        )
+    })
+    .await?;
     match replay_mode().as_deref() {
         Some(
             REPLAY_START_SUCCESS | REPLAY_POLL_SUCCESS | REPLAY_TIMEOUT | REPLAY_WARMUP_FAILURE,
@@ -104,16 +116,19 @@ pub(crate) async fn start_login(
                 "cookies": [],
             });
             let session = run_cnki(&state, move |storage, secret_codec| {
-                litradar_storage::upsert_cnki_session(
+                litradar_storage::compare_and_swap_cnki_session(
                     storage.auth_db_path(),
                     &secret_codec,
-                    user.id,
+                    user_id,
+                    generation,
+                    None,
                     &session_data,
                     &CnkiStatus::WaitingScan,
                     Some(DEFAULT_QR_UUID),
                 )
             })
-            .await?;
+            .await?
+            .ok_or_else(cnki_operation_superseded_error)?;
             Ok(Json(CnkiLoginStartResponse {
                 uuid: DEFAULT_QR_UUID.to_string(),
                 status: CnkiStatus::from(DEFAULT_QR_STATUS),
@@ -128,7 +143,6 @@ pub(crate) async fn start_login(
             "CNKI login start replay is not configured",
         )),
         None => {
-            let user_id = user.id;
             let fixture_mode = zjlib_fixture_mode();
             let provider_proxy = state
                 .provider_proxy_selection()
@@ -148,16 +162,19 @@ pub(crate) async fn start_login(
             })?;
             let qr_uuid = qr_login.uuid.clone();
             let session = run_cnki(&state, move |storage, secret_codec| {
-                litradar_storage::upsert_cnki_session(
+                litradar_storage::compare_and_swap_cnki_session(
                     storage.auth_db_path(),
                     &secret_codec,
                     user_id,
+                    generation,
+                    None,
                     &session_data,
                     &CnkiStatus::WaitingScan,
                     Some(&qr_uuid),
                 )
             })
-            .await?;
+            .await?
+            .ok_or_else(cnki_operation_superseded_error)?;
             Ok(Json(CnkiLoginStartResponse {
                 uuid: qr_login.uuid,
                 status: CnkiStatus::from(qr_login.status),
@@ -184,7 +201,10 @@ pub(crate) async fn start_login(
     path = "/api/cnki/login/poll",
     tag = "cnki",
     request_body = CnkiLoginPollRequest,
-    responses((status = 200, description = "CNKI QR login polling result.", body = CnkiLoginPollResponse)),
+    responses(
+        (status = 200, description = "CNKI QR login polling result.", body = CnkiLoginPollResponse),
+        (status = 409, description = "The login operation was superseded by a newer start or clear request.")
+    ),
     security(("bearer_auth" = []), ("session_cookie" = []))
 )]
 pub(crate) async fn poll_login(
@@ -194,11 +214,20 @@ pub(crate) async fn poll_login(
 ) -> Result<Json<CnkiLoginPollResponse>, ApiError> {
     validate_poll_request(&body)?;
     let (user, _) = require_current_user(&state, &headers).await?;
-    let current = run_cnki(&state, move |storage, secret_codec| {
-        litradar_storage::get_cnki_session_status(storage.auth_db_path(), &secret_codec, user.id)
+    let user_id = user.id;
+    let row = run_cnki(&state, move |storage, secret_codec| {
+        litradar_storage::get_cnki_session_data(storage.auth_db_path(), &secret_codec, user_id)
     })
-    .await?;
-    if !current.configured || current.status == CnkiStatus::Empty {
+    .await?
+    .ok_or_else(|| {
+        cnki_json_error(
+            StatusCode::BAD_REQUEST,
+            "cnki_login_not_started",
+            "login",
+            "CNKI QR login has not been started",
+        )
+    })?;
+    if row.qr_uuid.trim().is_empty() {
         return Err(cnki_json_error(
             StatusCode::BAD_REQUEST,
             "cnki_login_not_started",
@@ -206,29 +235,35 @@ pub(crate) async fn poll_login(
             "CNKI QR login has not been started",
         ));
     }
+    let expected_generation = row.generation;
+    let expected_qr_uuid = row.qr_uuid.clone();
     match replay_mode().as_deref() {
         Some(REPLAY_POLL_SUCCESS) => {
             let token = build_unsigned_jwt((current_unix_time() + 3600.0).floor() as i64);
             let session_data = json!({
                 "bff_user_token": token,
-                "qr_uuid": DEFAULT_QR_UUID,
+                "qr_uuid": expected_qr_uuid.clone(),
                 "cookies": [
                     {"name": "userToken", "value": "SECRET_COOKIE_VALUE"},
                     {"name": "vpn358_sid", "value": "SECRET_VPN_VALUE"}
                 ],
                 "final_zyproxy_url": "https://cnki.elib.test/kns55/"
             });
+            let expected_qr_uuid_for_write = expected_qr_uuid.clone();
             let session = run_cnki(&state, move |storage, secret_codec| {
-                litradar_storage::upsert_cnki_session(
+                litradar_storage::compare_and_swap_cnki_session(
                     storage.auth_db_path(),
                     &secret_codec,
-                    user.id,
+                    user_id,
+                    expected_generation,
+                    Some(&expected_qr_uuid_for_write),
                     &session_data,
                     &CnkiStatus::Active,
-                    Some(DEFAULT_QR_UUID),
+                    Some(&expected_qr_uuid_for_write),
                 )
             })
-            .await?;
+            .await?
+            .ok_or_else(cnki_operation_superseded_error)?;
             Ok(Json(CnkiLoginPollResponse {
                 status: CnkiStatus::from("COMPLETE"),
                 session,
@@ -253,31 +288,6 @@ pub(crate) async fn poll_login(
             ),
         )),
         None => {
-            let row = run_cnki(&state, move |storage, secret_codec| {
-                litradar_storage::get_cnki_session_data(
-                    storage.auth_db_path(),
-                    &secret_codec,
-                    user.id,
-                )
-            })
-            .await?
-            .ok_or_else(|| {
-                cnki_json_error(
-                    StatusCode::BAD_REQUEST,
-                    "cnki_login_not_started",
-                    "login",
-                    "CNKI QR login has not been started",
-                )
-            })?;
-            if row.qr_uuid.trim().is_empty() {
-                return Err(cnki_json_error(
-                    StatusCode::BAD_REQUEST,
-                    "cnki_login_not_started",
-                    "login",
-                    "CNKI QR login has not been started",
-                ));
-            }
-            let user_id = user.id;
             let qr_uuid = row.qr_uuid.clone();
             let mut session_data = row.session_data;
             if let Some(object) = session_data.as_object_mut() {
@@ -329,11 +339,14 @@ pub(crate) async fn poll_login(
                     ));
                 }
             };
+            let expected_qr_uuid_for_write = expected_qr_uuid.clone();
             let session = run_cnki(&state, move |storage, secret_codec| {
-                litradar_storage::upsert_cnki_session(
+                litradar_storage::compare_and_swap_cnki_session(
                     storage.auth_db_path(),
                     &secret_codec,
                     user_id,
+                    expected_generation,
+                    Some(&expected_qr_uuid_for_write),
                     &session_data,
                     &CnkiStatus::Active,
                     session_data
@@ -342,7 +355,8 @@ pub(crate) async fn poll_login(
                         .or(Some(qr_uuid.as_str())),
                 )
             })
-            .await?;
+            .await?
+            .ok_or_else(cnki_operation_superseded_error)?;
             Ok(Json(CnkiLoginPollResponse {
                 status: CnkiStatus::from("COMPLETE"),
                 session,
@@ -374,7 +388,7 @@ pub(crate) async fn clear_session(
 ) -> Result<Json<CnkiSessionStatusResponse>, ApiError> {
     let (user, _) = require_current_user(&state, &headers).await?;
     let status = run_cnki(&state, move |storage, secret_codec| {
-        litradar_storage::delete_cnki_session(storage.auth_db_path(), user.id)?;
+        litradar_storage::delete_cnki_session(storage.auth_db_path(), &secret_codec, user.id)?;
         litradar_storage::get_cnki_session_status(storage.auth_db_path(), &secret_codec, user.id)
     })
     .await?;
@@ -422,6 +436,15 @@ fn cnki_json_error(status: StatusCode, code: &str, phase: &str, message: &str) -
             "phase": phase,
             "message": message,
         }),
+    )
+}
+
+fn cnki_operation_superseded_error() -> ApiError {
+    cnki_json_error(
+        StatusCode::CONFLICT,
+        "cnki_login_superseded",
+        "login",
+        "CNKI login operation was superseded",
     )
 }
 
@@ -581,4 +604,25 @@ fn current_unix_time() -> f64 {
         .duration_since(std::time::UNIX_EPOCH)
         .expect("system time should be after Unix epoch")
         .as_secs_f64()
+}
+
+#[cfg(test)]
+mod tests {
+    use axum::http::StatusCode;
+
+    use super::cnki_operation_superseded_error;
+    use crate::response::ApiError;
+
+    #[test]
+    fn superseded_cnki_operations_use_the_stable_conflict_envelope() {
+        match cnki_operation_superseded_error() {
+            ApiError::JsonDetail { status, detail } => {
+                assert_eq!(status, StatusCode::CONFLICT);
+                assert_eq!(detail["code"], "cnki_login_superseded");
+                assert_eq!(detail["phase"], "login");
+                assert_eq!(detail["message"], "CNKI login operation was superseded");
+            }
+            error => panic!("unexpected CNKI error: {error:?}"),
+        }
+    }
 }

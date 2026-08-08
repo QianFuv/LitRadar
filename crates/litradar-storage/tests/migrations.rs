@@ -21,6 +21,7 @@ fn empty_auth_database_migration_creates_current_schema() {
     assert!(table_exists(&path, "users"));
     assert!(table_exists(&path, "notification_settings"));
     assert!(table_exists(&path, "scheduled_tasks"));
+    assert!(table_columns(&path, "cnki_sessions").contains(&"generation".to_string()));
     assert!(table_columns(&path, "users").contains(&"is_admin".to_string()));
     assert!(table_columns(&path, "announcements").contains(&"priority".to_string()));
     assert!(table_columns(&path, "scheduled_tasks").contains(&"job_spec".to_string()));
@@ -68,6 +69,70 @@ fn empty_auth_database_migration_creates_current_schema() {
     ] {
         assert!(runtime_setting(&path, field).is_none());
     }
+}
+
+#[test]
+fn cnki_generation_migration_preserves_version_twelve_session() {
+    let temp_dir = tempdir().expect("temp directory should be created");
+    let path = temp_dir.path().join("cnki-v12.sqlite");
+    migrate_auth_database(&path).expect("current auth database should migrate");
+    let connection = Connection::open(&path).expect("auth database should open");
+    connection
+        .execute_batch(
+            r#"
+            INSERT INTO users (
+                id, username, password_hash, salt, is_admin, created_at, updated_at
+            ) VALUES (1, 'cnki-user', 'hash', 'salt', 0, 1.0, 1.0);
+            INSERT INTO cnki_sessions (
+                user_id, session_json, qr_uuid, status, token_expires_at,
+                created_at, updated_at, last_used_at, generation
+            ) VALUES (
+                1, 'encrypted-session', 'qr-preserved', 'waiting_scan', NULL,
+                2.0, 3.0, 4.0, 7
+            );
+            ALTER TABLE cnki_sessions DROP COLUMN generation;
+            PRAGMA user_version = 12;
+            "#,
+        )
+        .expect("version twelve CNKI fixture should be created");
+    drop(connection);
+
+    migrate_auth_database(&path).expect("version twelve auth database should migrate");
+
+    assert_eq!(user_version(&path), AUTH_SCHEMA_VERSION);
+    assert!(table_columns(&path, "cnki_sessions").contains(&"generation".to_string()));
+    let row = Connection::open(&path)
+        .expect("migrated auth database should open")
+        .query_row(
+            "SELECT session_json, qr_uuid, status, created_at, updated_at, last_used_at, generation
+             FROM cnki_sessions WHERE user_id = 1",
+            [],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, f64>(3)?,
+                    row.get::<_, f64>(4)?,
+                    row.get::<_, f64>(5)?,
+                    row.get::<_, i64>(6)?,
+                ))
+            },
+        )
+        .expect("migrated CNKI session should load");
+    assert_eq!(
+        row,
+        (
+            "encrypted-session".to_string(),
+            "qr-preserved".to_string(),
+            "waiting_scan".to_string(),
+            2.0,
+            3.0,
+            4.0,
+            1,
+        )
+    );
+    assert_eq!(foreign_key_violation_count(&path), 0);
 }
 
 #[test]
