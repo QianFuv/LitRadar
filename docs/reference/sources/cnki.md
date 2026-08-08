@@ -147,7 +147,11 @@ HTTP 会话路径可能仍使用历史 `/api/cnki/*` 前缀，但 runtime Provid
 
 这里的“代理主机”是浙江图书馆上游 zyproxy 跳转，不是 `provider_proxy_url` 的出站网络代理。ZJLib 客户端手动处理已知的登录/zyproxy 主机跳转，只允许 HTTPS、允许主机、有限跳数和有效 `vpn358_sid` 成功门槛。已知双节点循环会有限重取登录地址；其他协议、主机、Location、循环或跳数异常明确失败。启用 `zjlib` 托管代理不会放宽这些 host、scheme、Cookie 或跳数检查。
 
-reqwest 错误在转换为业务错误前移除完整 URL。需要诊断的自定义地址也必须脱敏查询参数，避免 `enc`、用户标识或 Cookie 信息进入日志/API。
+所有 ZJLib 请求还必须属于固定的 `www`、`share`、`zyproxy-login` 或 `zyproxy` endpoint family。生产 family 只接受配置内的 HTTPS scheme、精确 host/default port 和路径边界；userinfo、fragment、编码后的路径分隔符或 dot-segment 均被拒绝。HTTP loopback 只存在于编译期测试 fixture，不属于生产配置。
+
+Share 页面返回的 `domainUrl`、`portalContextPath`，CNKI 结果页返回的 absolute detail/download URL，以及每个自动重定向 Location 都会在发送前重新验证。自动重定向不得跨 family，并保留最多十跳的上限；因此上游响应不能把表单签名、Cookie 或下载请求转发到其他 origin。
+
+reqwest 错误在转换为业务错误前移除完整 URL。需要诊断的响应地址会移除全部 query 与 fragment，避免 `enc`、用户标识、文章信息或 Cookie 内容进入日志/API。
 
 ## 重试和可观测性
 

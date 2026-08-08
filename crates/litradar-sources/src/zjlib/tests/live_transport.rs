@@ -41,6 +41,12 @@ enum FixtureMode {
     InvalidPdf,
     OversizedPdf,
     SensitivePdfFailure,
+    UnsafeShareDomain,
+    UnsafeSharePortal,
+    UnsafeDetailUrl,
+    UnsafeDownloadUrl,
+    UnsafeAutomaticRedirect,
+    AutomaticRedirectLimit,
 }
 
 #[derive(Debug, Clone)]
@@ -54,6 +60,7 @@ struct CapturedRequest {
 #[derive(Debug)]
 struct FixtureState {
     base_url: String,
+    attack_base_url: Option<String>,
     mode: FixtureMode,
     proxy_entry_count: usize,
     requests: Vec<CapturedRequest>,
@@ -71,6 +78,10 @@ struct LoopbackServer {
 
 impl LoopbackServer {
     fn start(mode: FixtureMode) -> Self {
+        Self::start_with_attack(mode, None)
+    }
+
+    fn start_with_attack(mode: FixtureMode, attack_base_url: Option<&str>) -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").expect("loopback listener should bind");
         listener
             .set_nonblocking(true)
@@ -82,6 +93,7 @@ impl LoopbackServer {
         let is_stopping = Arc::new(AtomicBool::new(false));
         let state = Arc::new(Mutex::new(FixtureState {
             base_url: base_url.clone(),
+            attack_base_url: attack_base_url.map(str::to_string),
             mode,
             proxy_entry_count: 0,
             requests: Vec::new(),
@@ -234,7 +246,16 @@ fn read_request(stream: &mut TcpStream) -> Option<CapturedRequest> {
         let read_length = match stream.read(&mut buffer) {
             Ok(0) => break,
             Ok(read_length) => read_length,
-            Err(error) if matches!(error.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut) => {
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    ErrorKind::WouldBlock
+                        | ErrorKind::TimedOut
+                        | ErrorKind::ConnectionReset
+                        | ErrorKind::ConnectionAborted
+                        | ErrorKind::BrokenPipe
+                ) =>
+            {
                 break;
             }
             Err(error) => panic!("loopback request read failed: {error}"),
@@ -293,6 +314,10 @@ fn respond(state: &Arc<Mutex<FixtureState>>, request: CapturedRequest) -> HttpRe
         .unwrap_or_default()
         .to_string();
     state.requests.push(request);
+    let attack_base_url = state
+        .attack_base_url
+        .clone()
+        .unwrap_or_else(|| "http://127.0.0.1:1".to_string());
     match path.as_str() {
         "/www/bff-api/reader-sso-service/portal-pc-api/login/zfb-qr" => {
             if state.mode == FixtureMode::MalformedQr {
@@ -323,17 +348,50 @@ fn respond(state: &Arc<Mutex<FixtureState>>, request: CapturedRequest) -> HttpRe
                 ),
             )
         }
-        "/share/protocol-auth" => HttpResponse::ok(
-            "text/html",
-            format!(
-                r#"<script>var sign = "share-sign"; var url = "{0}/share/entry/area/35594/2120"; var domainUrl = "{0}"; var portalContextPath = "/share";</script><form action="/share/sso-login/cookie/sync"></form>"#,
-                state.base_url
-            ),
-        ),
+        "/share/protocol-auth" => {
+            let domain_url = if state.mode == FixtureMode::UnsafeShareDomain {
+                &attack_base_url
+            } else {
+                &state.base_url
+            };
+            let portal_context_path = if state.mode == FixtureMode::UnsafeSharePortal {
+                &attack_base_url
+            } else {
+                "/share"
+            };
+            HttpResponse::ok(
+                "text/html",
+                format!(
+                    r#"<script>var sign = "share-sign"; var url = "{0}/share/entry/area/35594/2120"; var domainUrl = "{domain_url}"; var portalContextPath = "{portal_context_path}";</script><form action="/share/sso-login/cookie/sync"></form>"#,
+                    state.base_url
+                ),
+            )
+        }
         "/share/sso-login/cookie/sync" => HttpResponse::ok("text/plain", "synced")
             .with_header("Set-Cookie", "share_sid=share-cookie; Path=/; HttpOnly"),
+        "/share/entry/area/35594/2120" if state.mode == FixtureMode::UnsafeAutomaticRedirect => {
+            HttpResponse::redirect(format!(
+                "{attack_base_url}/redirect-target?sign={CREDENTIAL_SENTINEL}"
+            ))
+        }
+        "/share/entry/area/35594/2120" if state.mode == FixtureMode::AutomaticRedirectLimit => {
+            HttpResponse::redirect(format!("{}/share/redirect-0", state.base_url))
+        }
         "/share/entry/area/35594/2120" | "/share/engine2/header/user-info" => {
             HttpResponse::ok("text/html", "ready")
+        }
+        path if state.mode == FixtureMode::AutomaticRedirectLimit
+            && path.starts_with("/share/redirect-") =>
+        {
+            let redirect_index = path
+                .trim_start_matches("/share/redirect-")
+                .parse::<usize>()
+                .unwrap_or_default();
+            HttpResponse::redirect(format!(
+                "{}/share/redirect-{}",
+                state.base_url,
+                redirect_index + 1
+            ))
         }
         "/share/sso/api/auth/library/vpn358" => match state.mode {
             FixtureMode::UnsafeRedirect => {
@@ -371,14 +429,20 @@ fn respond(state: &Arc<Mutex<FixtureState>>, request: CapturedRequest) -> HttpRe
         "/proxy/kns55/brief/result.aspx" | "/proxy/kns55/request/SearchHandler.ashx" => {
             HttpResponse::ok("text/html", "accepted")
         }
-        "/proxy/kns55/brief/brief.aspx" => HttpResponse::ok(
-            "text/html",
-            format!(
-                r#"<table><tr><td><a href="{}/proxy/kns55/detail/detail.aspx?FileName=loopback&amp;DbName=CJFDLAST2026&amp;DbCode=CJFD">{}</a></td></tr></table>"#,
-                state.base_url,
-                article_title(state.mode)
-            ),
-        ),
+        "/proxy/kns55/brief/brief.aspx" => {
+            let detail_base_url = if state.mode == FixtureMode::UnsafeDetailUrl {
+                &attack_base_url
+            } else {
+                &state.base_url
+            };
+            HttpResponse::ok(
+                "text/html",
+                format!(
+                    r#"<table><tr><td><a href="{detail_base_url}/proxy/kns55/detail/detail.aspx?FileName=loopback&amp;DbName=CJFDLAST2026&amp;DbCode=CJFD">{}</a></td></tr></table>"#,
+                    article_title(state.mode)
+                ),
+            )
+        }
         "/proxy/kns55/detail/detail.aspx" => HttpResponse::ok(
             "text/html",
             format!(
@@ -386,7 +450,11 @@ fn respond(state: &Arc<Mutex<FixtureState>>, request: CapturedRequest) -> HttpRe
                 article_title(state.mode),
                 article_authors(state.mode),
                 article_journal(state.mode),
-                state.base_url
+                if state.mode == FixtureMode::UnsafeDownloadUrl {
+                    &attack_base_url
+                } else {
+                    &state.base_url
+                }
             ),
         ),
         "/proxy/kcms/download.aspx" => match state.mode {
@@ -601,6 +669,64 @@ fn loopback_transport_recovers_expected_retry_and_rejects_redirect_abuse() {
         .warm_up_fulltext_session()
         .expect_err("redirect hop budget should be enforced");
     assert!(limit_error.to_string().contains("exceeded 4 redirect hops"));
+
+    let automatic_limit_server = LoopbackServer::start(FixtureMode::AutomaticRedirectLimit);
+    let mut automatic_limit_client = logged_in_client(&automatic_limit_server, 1_024);
+    let automatic_limit_error = automatic_limit_client
+        .warm_up_fulltext_session()
+        .expect_err("automatic redirect hop budget should be enforced");
+    assert!(
+        automatic_limit_error
+            .to_string()
+            .contains("error following redirect"),
+        "unexpected automatic redirect error: {automatic_limit_error}"
+    );
+    assert_eq!(
+        automatic_limit_server
+            .requests()
+            .iter()
+            .filter(|request| request.target.starts_with("/share/redirect-"))
+            .count(),
+        10
+    );
+}
+
+#[test]
+fn loopback_transport_rejects_all_cross_origin_targets_before_transmission() {
+    for mode in [
+        FixtureMode::UnsafeShareDomain,
+        FixtureMode::UnsafeSharePortal,
+        FixtureMode::UnsafeAutomaticRedirect,
+        FixtureMode::UnsafeDetailUrl,
+        FixtureMode::UnsafeDownloadUrl,
+    ] {
+        let evil_server = LoopbackServer::start(FixtureMode::Success);
+        let trusted_server = LoopbackServer::start_with_attack(mode, Some(&evil_server.base_url));
+        let error = if matches!(
+            mode,
+            FixtureMode::UnsafeShareDomain
+                | FixtureMode::UnsafeSharePortal
+                | FixtureMode::UnsafeAutomaticRedirect
+        ) {
+            let mut client = logged_in_client(&trusted_server, 1_024);
+            client
+                .warm_up_fulltext_session()
+                .expect_err("unsafe Share target should fail before transmission")
+        } else {
+            let mut client = warmed_client(&trusted_server, 1_024);
+            client
+                .download_matching_pdf(&identity(), 1)
+                .expect_err("unsafe CNKI target should fail before transmission")
+        };
+
+        assert!(
+            evil_server.requests().is_empty(),
+            "{mode:?} reached the evil listener: {}",
+            evil_server.transcript()
+        );
+        assert!(!error.to_string().contains(&evil_server.base_url));
+        assert!(!error.to_string().contains(CREDENTIAL_SENTINEL));
+    }
 }
 
 #[test]
@@ -684,6 +810,8 @@ fn live_transport_errors_and_logs_omit_sensitive_material() {
     assert!(transcript.contains(CREDENTIAL_SENTINEL));
     assert!(transcript.contains(QUERY_SENTINEL));
     assert!(transcript.contains(TITLE_SENTINEL));
+    assert!(!error_text.contains('?'));
+    assert!(!log_text.contains('?'));
     for sentinel in [
         COOKIE_SENTINEL,
         CREDENTIAL_SENTINEL,
