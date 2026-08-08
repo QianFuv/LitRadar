@@ -57,7 +57,7 @@ export function ManualPushCard({ model }: ManualPushCardProps) {
                 model.isLoading ||
                 model.mutation.isPending ||
                 model.isPolling ||
-                (model.status?.status === 'unknown' && !model.status.can_retry) ||
+                model.status?.status === 'unknown' ||
                 (model.requiresTrackingFolder && !model.trackingFolder)
               }
             >

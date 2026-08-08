@@ -29,7 +29,7 @@ function manualPushStatus(
 ): ManualPushStatus {
   const isActive = status === 'pending' || status === 'running';
   const isIdle = status === 'idle';
-  const isUnknown = status === 'unknown';
+  const canRetry = status === 'failed' || status === 'cancelled' || status === 'timed_out';
   return {
     job_id: isIdle ? null : '0123456789abcdef0123456789abcdef',
     status,
@@ -39,7 +39,7 @@ function manualPushStatus(
     deadline_at: isIdle ? null : 600,
     cancellation_requested: status === 'cancelled',
     can_cancel: isActive,
-    can_retry: !isActive && !isIdle && !isUnknown,
+    can_retry: canRetry,
     pushed,
     selected: 2,
     total_candidates: 3,
@@ -138,6 +138,7 @@ async function resumesPersistedJobAfterMount(): Promise<void> {
     await screen.findByText('推送完成（已推送 2 篇）', {}, { timeout: 5_000 }),
   ).toBeInTheDocument();
   expect(statusRequestCount).toBe(2);
+  expect(screen.getByRole('button', { name: '推送到追踪文件夹' })).toBeEnabled();
 }
 
 /**
@@ -177,7 +178,10 @@ async function blocksRetryForUnknownOutcome(): Promise<void> {
   installCommonHandlers();
   server.use(
     http.get('http://localhost/api/tracking/push-weekly/status', () =>
-      HttpResponse.json(manualPushStatus('unknown', '结果未知，请先检查投递记录', 0)),
+      HttpResponse.json({
+        ...manualPushStatus('unknown', '结果未知，请先检查投递记录', 0),
+        can_retry: true,
+      }),
     ),
   );
   renderWithQuery(<TrackingSettingsContent userId={33} section="notifications" />);

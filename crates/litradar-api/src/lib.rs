@@ -4640,24 +4640,24 @@ mod tests {
             None,
         )
         .await;
-        let started = json_request(
-            &app,
-            Method::POST,
-            "/api/tracking/push-weekly",
-            Some(&auth),
-            None,
-            None,
-        )
-        .await;
-        let duplicate = json_request(
-            &app,
-            Method::POST,
-            "/api/tracking/push-weekly",
-            Some(&auth),
-            None,
-            None,
-        )
-        .await;
+        let (started, duplicate) = tokio::join!(
+            json_request(
+                &app,
+                Method::POST,
+                "/api/tracking/push-weekly",
+                Some(&auth),
+                None,
+                None,
+            ),
+            json_request(
+                &app,
+                Method::POST,
+                "/api/tracking/push-weekly",
+                Some(&auth),
+                None,
+                None,
+            ),
+        );
         let running = json_request(
             &app,
             Method::GET,
@@ -4724,6 +4724,57 @@ mod tests {
             None,
         )
         .await;
+        let retry_job_id = retry.payload["job_id"]
+            .as_str()
+            .expect("retry job id should be a string");
+        let retry_run = litradar_storage::load_manual_delivery_run_by_external_id(
+            backend.auth_db_path(),
+            user.user_id().value(),
+            retry_job_id,
+        )
+        .expect("retry run should load")
+        .expect("retry run should exist");
+        let claimed = match litradar_storage::claim_delivery_run(
+            backend.auth_db_path(),
+            retry_run.id,
+            "api-unknown-owner",
+            retry_run.revision,
+            retry_run.created_at + 1.0,
+            30.0,
+        )
+        .expect("retry run should claim")
+        {
+            litradar_storage::DeliveryRunClaimOutcome::Claimed(run) => run,
+            other => panic!("unexpected retry claim: {other:?}"),
+        };
+        let running_retry = litradar_storage::start_delivery_run(
+            backend.auth_db_path(),
+            claimed.id,
+            "api-unknown-owner",
+            claimed.revision,
+            retry_run.created_at + 2.0,
+        )
+        .expect("retry run should start");
+        litradar_storage::finalize_delivery_run(
+            backend.auth_db_path(),
+            running_retry.id,
+            "api-unknown-owner",
+            running_retry.revision,
+            litradar_storage::DeliveryRunStatus::Unknown,
+            None,
+            Some("ambiguous_delivery"),
+            retry_run.created_at + 3.0,
+        )
+        .expect("retry run should become unknown");
+        let blocked_after_unknown = json_request(
+            &app,
+            Method::POST,
+            "/api/tracking/push-weekly",
+            Some(&auth),
+            None,
+            None,
+        )
+        .await;
 
         assert_eq!(idle.status, StatusCode::OK);
         assert_eq!(idle.payload["status"], "idle");
@@ -4768,6 +4819,11 @@ mod tests {
         assert_eq!(retry.status, StatusCode::ACCEPTED);
         assert_eq!(retry.payload["status"], "pending");
         assert_ne!(retry.payload["job_id"], started.payload["job_id"]);
+        assert_eq!(blocked_after_unknown.status, StatusCode::CONFLICT);
+        assert_eq!(
+            blocked_after_unknown.payload["detail"],
+            "Manual push outcome is unknown; review delivery state before retrying"
+        );
     }
 
     #[tokio::test]

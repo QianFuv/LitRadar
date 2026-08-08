@@ -4829,6 +4829,15 @@ export interface operations {
           'application/json': components['schemas']['ManualWeeklyPushStatus'];
         };
       };
+      /** @description The latest manual push has an ambiguous outcome. */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorEnvelope'];
+        };
+      };
     };
   };
   get_push_weekly_run: {

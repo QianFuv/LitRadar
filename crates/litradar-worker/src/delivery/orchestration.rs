@@ -36,6 +36,7 @@ pub fn run_recommendation_delivery(
     run_recommendation_delivery_with_services_for_user(
         config,
         None,
+        None,
         &mut ai_selector,
         &mut pushplus_sender,
     )
@@ -55,6 +56,14 @@ pub fn run_recommendation_delivery_for_user(
     config: &RecommendationRunConfig,
     user_id: UserId,
 ) -> Result<RecommendationRunOutcome, DeliveryError> {
+    run_recommendation_delivery_for_user_in_attempt(config, user_id, None)
+}
+
+fn run_recommendation_delivery_for_user_in_attempt(
+    config: &RecommendationRunConfig,
+    user_id: UserId,
+    attempt_id: Option<&str>,
+) -> Result<RecommendationRunOutcome, DeliveryError> {
     let timeout_seconds = config.timeout_seconds.max(1);
     let mut ai_selector = DefaultDeliveryAiSelector::live(
         timeout_seconds,
@@ -70,6 +79,7 @@ pub fn run_recommendation_delivery_for_user(
     run_recommendation_delivery_with_services_for_user(
         config,
         Some(user_id),
+        attempt_id,
         &mut ai_selector,
         &mut pushplus_sender,
     )
@@ -177,7 +187,7 @@ fn run_manual_weekly_push_inner(
             .storage_config
             .resolve_index_db_path(Some(&manifest.db_name))
             .map_err(litradar_storage::IndexRepositoryError::from)?;
-        outcomes.push(run_recommendation_delivery_for_user(
+        outcomes.push(run_recommendation_delivery_for_user_in_attempt(
             &RecommendationRunConfig {
                 auth_db_path: config.storage_config.auth_db_path().to_path_buf(),
                 secret_codec: config.secret_codec.clone(),
@@ -195,6 +205,7 @@ fn run_manual_weekly_push_inner(
                 execution_control: config.execution_control.clone(),
             },
             config.user_id,
+            Some(&config.attempt_id),
         )?);
     }
 
@@ -230,12 +241,19 @@ fn run_recommendation_delivery_with_services(
     ai_selector: &mut impl DeliveryAiSelector,
     pushplus_sender: &mut impl DeliveryPushPlusSender,
 ) -> Result<RecommendationRunOutcome, DeliveryError> {
-    run_recommendation_delivery_with_services_for_user(config, None, ai_selector, pushplus_sender)
+    run_recommendation_delivery_with_services_for_user(
+        config,
+        None,
+        None,
+        ai_selector,
+        pushplus_sender,
+    )
 }
 
 fn run_recommendation_delivery_with_services_for_user(
     config: &RecommendationRunConfig,
     subscriber_user_id: Option<UserId>,
+    attempt_id: Option<&str>,
     ai_selector: &mut impl DeliveryAiSelector,
     pushplus_sender: &mut impl DeliveryPushPlusSender,
 ) -> Result<RecommendationRunOutcome, DeliveryError> {
@@ -259,6 +277,7 @@ fn run_recommendation_delivery_with_services_for_user(
         let result = execute_recommendation_delivery_with_services_for_user(
             config,
             subscriber_user_id,
+            attempt_id,
             ai_selector,
             pushplus_sender,
         );
@@ -270,6 +289,7 @@ fn run_recommendation_delivery_with_services_for_user(
 fn execute_recommendation_delivery_with_services_for_user(
     config: &RecommendationRunConfig,
     subscriber_user_id: Option<UserId>,
+    attempt_id: Option<&str>,
     ai_selector: &mut impl DeliveryAiSelector,
     pushplus_sender: &mut impl DeliveryPushPlusSender,
 ) -> Result<RecommendationRunOutcome, DeliveryError> {
@@ -282,15 +302,7 @@ fn execute_recommendation_delivery_with_services_for_user(
         Some(run_id) => run_id,
         None => format!("run-{}", litradar_storage::random_hex(16)?),
     };
-    let external_id = subscriber_user_id.map_or(source_external_id.clone(), |user_id| {
-        format!(
-            "user-run-{}",
-            litradar_domain::stable_sqlite_id(
-                format!("{}:{}", source_external_id, user_id.value()),
-                "manual-delivery",
-            )
-        )
-    });
+    let external_id = delivery_external_id(&source_external_id, subscriber_user_id, attempt_id);
     let mut context = match admit_durable_delivery_run(config, subscriber_user_id, &external_id)? {
         DurableDeliveryAdmission::Terminal(run) => {
             return Ok(outcome(
@@ -317,6 +329,30 @@ fn execute_recommendation_delivery_with_services_for_user(
         context.fail_best_effort(&config.auth_db_path, delivery_error_kind(error));
     }
     result
+}
+
+fn delivery_external_id(
+    source_external_id: &str,
+    subscriber_user_id: Option<UserId>,
+    attempt_id: Option<&str>,
+) -> String {
+    let Some(user_id) = subscriber_user_id else {
+        return source_external_id.to_string();
+    };
+    let (identity, namespace) = match attempt_id {
+        Some(attempt_id) => (
+            format!("{source_external_id}:{}:{attempt_id}", user_id.value()),
+            "manual-delivery-attempt",
+        ),
+        None => (
+            format!("{source_external_id}:{}", user_id.value()),
+            "manual-delivery",
+        ),
+    };
+    format!(
+        "user-run-{}",
+        litradar_domain::stable_sqlite_id(identity, namespace)
+    )
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1710,11 +1746,28 @@ mod tests {
     #[test]
     fn execute_notify_sends_pushplus_and_records_message_id() {
         let fixture = DeliveryFixture::new(notification_settings("pushplus", true, vec![]));
+        let changes_file = fixture.root.path().join("confirmed-attempt.changes.json");
+        fs::write(
+            &changes_file,
+            r#"{"db_name":"fixture.sqlite","run_id":"confirmed-manifest","notifiable_article_ids":[101,102]}"#,
+        )
+        .expect("confirmed attempt manifest should be written");
 
-        let (outcome, pushplus_sender) = run_fixture_delivery(
-            &fixture.config(DeliveryWorkflow::Notify, DeliveryMode::Execute, None, None),
-            vec![selection_outcome(&[101, 102], "")],
-            vec![Ok("msg-1".to_string())],
+        let config = fixture.config(
+            DeliveryWorkflow::Notify,
+            DeliveryMode::Execute,
+            Some(changes_file),
+            None,
+        );
+        let mut ai_selector =
+            FixtureDeliveryAiSelector::new(vec![selection_outcome(&[101, 102], "")]);
+        let mut pushplus_sender = FixturePushPlusSender::new(vec![Ok("msg-1".to_string())]);
+        let outcome = run_recommendation_delivery_with_services_for_user(
+            &config,
+            Some(fixture.user_id),
+            Some("manual-attempt-one"),
+            &mut ai_selector,
+            &mut pushplus_sender,
         )
         .expect("notify execute should send PushPlus");
 
@@ -1746,16 +1799,56 @@ mod tests {
             row.status == litradar_storage::DeliveryDedupeStatus::Confirmed
                 && row.message_id.as_deref() == Some("msg-1")
         }));
+
+        let mut retry_ai_selector =
+            FixtureDeliveryAiSelector::new(vec![selection_outcome(&[101, 102], "")]);
+        let mut retry_pushplus_sender =
+            FixturePushPlusSender::new(vec![Ok("unexpected-message".to_string())]);
+        let retry = run_recommendation_delivery_with_services_for_user(
+            &config,
+            Some(fixture.user_id),
+            Some("manual-attempt-two"),
+            &mut retry_ai_selector,
+            &mut retry_pushplus_sender,
+        )
+        .expect("confirmed delivery should be safely deduplicated in a new attempt");
+
+        assert_eq!(retry.status, DeliveryOutcomeState::Completed);
+        assert_eq!(
+            retry.subscribers[0].status,
+            SubscriberDeliveryState::Skipped
+        );
+        assert!(retry_pushplus_sender.messages.is_empty());
+        assert_eq!(favorite_count(&fixture.auth_db_path), 2);
     }
 
     #[test]
     fn execute_notify_pushplus_failure_persists_unknown_without_replay() {
         let fixture = DeliveryFixture::new(notification_settings("pushplus", true, vec![]));
+        let changes_file = fixture.root.path().join("unknown-attempt.changes.json");
+        fs::write(
+            &changes_file,
+            r#"{"db_name":"fixture.sqlite","run_id":"unknown-manifest","notifiable_article_ids":[101,102]}"#,
+        )
+        .expect("unknown attempt manifest should be written");
 
-        let (outcome, _pushplus_sender) = run_fixture_delivery(
-            &fixture.config(DeliveryWorkflow::Notify, DeliveryMode::Execute, None, None),
-            vec![selection_outcome(&[101, 102], "")],
-            vec![Err(DeliveryError::PushPlus("send failed".to_string()))],
+        let config = fixture.config(
+            DeliveryWorkflow::Notify,
+            DeliveryMode::Execute,
+            Some(changes_file),
+            None,
+        );
+        let mut ai_selector =
+            FixtureDeliveryAiSelector::new(vec![selection_outcome(&[101, 102], "")]);
+        let mut pushplus_sender = FixturePushPlusSender::new(vec![Err(DeliveryError::PushPlus(
+            "send failed".to_string(),
+        ))]);
+        let outcome = run_recommendation_delivery_with_services_for_user(
+            &config,
+            Some(fixture.user_id),
+            Some("manual-attempt-one"),
+            &mut ai_selector,
+            &mut pushplus_sender,
         )
         .expect("notify execute should record PushPlus failure");
 
@@ -1772,6 +1865,91 @@ mod tests {
                 .expect("run should exist");
         assert_eq!(run.status, litradar_storage::DeliveryRunStatus::Unknown);
         assert!(!format!("{run:?}").contains("send failed"));
+
+        let mut retry_ai_selector =
+            FixtureDeliveryAiSelector::new(vec![selection_outcome(&[101, 102], "")]);
+        let mut retry_pushplus_sender =
+            FixturePushPlusSender::new(vec![Ok("unexpected-message".to_string())]);
+        let retry = run_recommendation_delivery_with_services_for_user(
+            &config,
+            Some(fixture.user_id),
+            Some("manual-attempt-two"),
+            &mut retry_ai_selector,
+            &mut retry_pushplus_sender,
+        )
+        .expect("unknown delivery should be safely deduplicated in a new attempt");
+
+        assert_eq!(retry.status, DeliveryOutcomeState::Completed);
+        assert_eq!(
+            retry.subscribers[0].status,
+            SubscriberDeliveryState::Skipped
+        );
+        assert!(retry_pushplus_sender.messages.is_empty());
+        assert!(delivery_dedupe(&fixture, DeliveryWorkflow::Notify)
+            .iter()
+            .all(|row| row.status == litradar_storage::DeliveryDedupeStatus::Unknown));
+    }
+
+    #[test]
+    fn manual_attempt_retries_pre_send_failure_and_replays_idempotently() {
+        let fixture = DeliveryFixture::new(notification_settings("folder", true, vec![]));
+        let changes_file = fixture.root.path().join("manual-attempt.changes.json");
+        fs::write(
+            &changes_file,
+            r#"{"db_name":"fixture.sqlite","run_id":"manual-manifest","notifiable_article_ids":[101]}"#,
+        )
+        .expect("manual attempt manifest should be written");
+        let config = fixture.config(
+            DeliveryWorkflow::Push,
+            DeliveryMode::Execute,
+            Some(changes_file),
+            None,
+        );
+
+        let mut failed_selector = FixtureDeliveryAiSelector::new(Vec::new());
+        let mut failed_sender = FixturePushPlusSender::new(Vec::new());
+        let failed = run_recommendation_delivery_with_services_for_user(
+            &config,
+            Some(fixture.user_id),
+            Some("manual-attempt-one"),
+            &mut failed_selector,
+            &mut failed_sender,
+        )
+        .expect("pre-send selection failure should persist a terminal outcome");
+        assert_eq!(failed.status, DeliveryOutcomeState::Failed);
+        assert_eq!(failed_selector.subscriber_ids.len(), 1);
+        assert_eq!(favorite_count(&fixture.auth_db_path), 0);
+
+        let mut retry_selector =
+            FixtureDeliveryAiSelector::new(vec![selection_outcome(&[101], "")]);
+        let mut retry_sender = FixturePushPlusSender::new(Vec::new());
+        let retry = run_recommendation_delivery_with_services_for_user(
+            &config,
+            Some(fixture.user_id),
+            Some("manual-attempt-two"),
+            &mut retry_selector,
+            &mut retry_sender,
+        )
+        .expect("a new manual attempt should execute after a pre-send failure");
+        assert_eq!(retry.status, DeliveryOutcomeState::Completed);
+        assert_ne!(retry.delivery_run_id, failed.delivery_run_id);
+        assert_eq!(retry_selector.subscriber_ids.len(), 1);
+        assert_eq!(favorite_count(&fixture.auth_db_path), 1);
+
+        let mut replay_selector = FixtureDeliveryAiSelector::new(Vec::new());
+        let mut replay_sender = FixturePushPlusSender::new(Vec::new());
+        let replay = run_recommendation_delivery_with_services_for_user(
+            &config,
+            Some(fixture.user_id),
+            Some("manual-attempt-two"),
+            &mut replay_selector,
+            &mut replay_sender,
+        )
+        .expect("replaying the same manual attempt should return its terminal run");
+        assert_eq!(replay.status, DeliveryOutcomeState::Completed);
+        assert_eq!(replay.delivery_run_id, retry.delivery_run_id);
+        assert!(replay_selector.subscriber_ids.is_empty());
+        assert_eq!(favorite_count(&fixture.auth_db_path), 1);
     }
 
     #[test]
@@ -1913,6 +2091,7 @@ mod tests {
         let outcome = run_recommendation_delivery_with_services_for_user(
             &fixture.config(DeliveryWorkflow::Notify, DeliveryMode::Execute, None, None),
             Some(fixture.user_id),
+            None,
             &mut ai_selector,
             &mut pushplus_sender,
         )
@@ -1986,6 +2165,7 @@ mod tests {
         let target_error = run_recommendation_delivery_with_services_for_user(
             &corrupt_target_config,
             Some(unrelated_user_id),
+            None,
             &mut corrupt_target_ai_selector,
             &mut corrupt_target_pushplus_sender,
         )

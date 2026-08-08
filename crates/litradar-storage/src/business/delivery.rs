@@ -559,6 +559,15 @@ pub enum DeliveryRunAdmissionOutcome {
     Busy(DeliveryRunRecord),
 }
 
+/// Outcome of admitting a user-requested manual delivery run.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ManualDeliveryRunAdmissionOutcome {
+    /// Admission completed through the normal idempotent run policy.
+    Admitted(DeliveryRunAdmissionOutcome),
+    /// The latest manual run has an ambiguous external outcome and must not be retried.
+    BlockedUnknown(DeliveryRunRecord),
+}
+
 /// Input used to create one run item.
 #[derive(Debug, Clone, PartialEq)]
 pub struct DeliveryRunItemCreate {
@@ -877,7 +886,55 @@ pub fn admit_delivery_run(
     validate_run_create(run)?;
     let mut connection = open_delivery_connection(auth_db_path)?;
     let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-    let inserted = transaction.execute(
+    let outcome = admit_delivery_run_from_connection(&transaction, run)?;
+    transaction.commit()?;
+    Ok(outcome)
+}
+
+/// Admit a manual delivery run unless the user's latest outcome is ambiguous.
+///
+/// The latest-status check and admission share one immediate transaction so a concurrent terminal
+/// transition cannot create a new run after an `Unknown` result.
+///
+/// # Arguments
+///
+/// * `auth_db_path` - Path to the migrated authentication database.
+/// * `run` - Manual run identity, user scope, and deadline.
+///
+/// # Returns
+///
+/// Normal idempotent admission or the latest ambiguous run that blocks retry.
+pub fn admit_manual_delivery_run(
+    auth_db_path: impl AsRef<Path>,
+    run: &DeliveryRunCreate,
+) -> Result<ManualDeliveryRunAdmissionOutcome, DeliveryRepositoryError> {
+    validate_run_create(run)?;
+    if run.trigger_kind != DeliveryTriggerKind::Manual {
+        return Err(DeliveryRepositoryError::InvalidInput(
+            "Manual delivery admission requires a manual trigger",
+        ));
+    }
+    let user_id = run.user_id.ok_or(DeliveryRepositoryError::InvalidInput(
+        "Manual delivery runs require a user",
+    ))?;
+    let mut connection = open_delivery_connection(auth_db_path)?;
+    let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    if let Some(latest) = load_latest_manual_delivery_run_from_connection(&transaction, user_id)? {
+        if latest.status == DeliveryRunStatus::Unknown {
+            transaction.commit()?;
+            return Ok(ManualDeliveryRunAdmissionOutcome::BlockedUnknown(latest));
+        }
+    }
+    let outcome = admit_delivery_run_from_connection(&transaction, run)?;
+    transaction.commit()?;
+    Ok(ManualDeliveryRunAdmissionOutcome::Admitted(outcome))
+}
+
+fn admit_delivery_run_from_connection(
+    connection: &Connection,
+    run: &DeliveryRunCreate,
+) -> Result<DeliveryRunAdmissionOutcome, DeliveryRepositoryError> {
+    let inserted = connection.execute(
         "INSERT INTO delivery_runs
          (external_id, workflow, scope_key, db_name, trigger_kind, mode, user_id, status,
           legacy_status, owner_id, lease_expires_at, deadline_at, cancellation_requested,
@@ -899,13 +956,13 @@ pub fn admit_delivery_run(
         ],
     )?;
     let outcome = if inserted == 1 {
-        let id = transaction.last_insert_rowid();
+        let id = connection.last_insert_rowid();
         DeliveryRunAdmissionOutcome::Enqueued(
-            load_delivery_run_from_connection(&transaction, id)?
+            load_delivery_run_from_connection(connection, id)?
                 .ok_or(DeliveryRepositoryError::NotFound)?,
         )
     } else if let Some(existing) = load_delivery_run_by_external_id_from_connection(
-        &transaction,
+        connection,
         run.workflow,
         &run.scope_key,
         &run.external_id,
@@ -915,13 +972,12 @@ pub fn admit_delivery_run(
         let user_id = run.user_id.ok_or(DeliveryRepositoryError::InvalidInput(
             "Manual delivery runs require a user",
         ))?;
-        let existing = load_active_manual_delivery_run_from_connection(&transaction, user_id)?
+        let existing = load_active_manual_delivery_run_from_connection(connection, user_id)?
             .ok_or(DeliveryRepositoryError::Conflict)?;
         DeliveryRunAdmissionOutcome::Busy(existing)
     } else {
         return Err(DeliveryRepositoryError::Conflict);
     };
-    transaction.commit()?;
     Ok(outcome)
 }
 
@@ -960,18 +1016,7 @@ pub fn load_latest_manual_delivery_run(
 ) -> Result<Option<DeliveryRunRecord>, DeliveryRepositoryError> {
     validate_positive_id(user_id, "Manual delivery user id is invalid")?;
     let connection = open_delivery_connection(auth_db_path)?;
-    connection
-        .query_row(
-            &format!(
-                "SELECT {RUN_COLUMNS} FROM delivery_runs
-                 WHERE trigger_kind = 'manual' AND user_id = ?1
-                 ORDER BY id DESC LIMIT 1"
-            ),
-            [user_id],
-            run_from_row,
-        )
-        .optional()
-        .map_err(DeliveryRepositoryError::from)
+    load_latest_manual_delivery_run_from_connection(&connection, user_id)
 }
 
 /// Load one user-owned manual delivery run by its public external identifier.
@@ -2574,6 +2619,24 @@ fn load_delivery_run_by_external_id_from_connection(
         .map_err(DeliveryRepositoryError::from)
 }
 
+fn load_latest_manual_delivery_run_from_connection(
+    connection: &Connection,
+    user_id: i64,
+) -> Result<Option<DeliveryRunRecord>, DeliveryRepositoryError> {
+    connection
+        .query_row(
+            &format!(
+                "SELECT {RUN_COLUMNS} FROM delivery_runs
+                 WHERE trigger_kind = 'manual' AND user_id = ?1
+                 ORDER BY id DESC LIMIT 1"
+            ),
+            [user_id],
+            run_from_row,
+        )
+        .optional()
+        .map_err(DeliveryRepositoryError::from)
+}
+
 fn load_active_manual_delivery_run_from_connection(
     connection: &Connection,
     user_id: i64,
@@ -3742,6 +3805,50 @@ mod tests {
                 .len(),
             2
         );
+    }
+
+    #[test]
+    fn manual_admission_blocks_a_new_attempt_after_an_unknown_outcome() {
+        let (_temp_dir, path) = migrated_auth_database();
+        let first = match admit_manual_delivery_run(&path, &manual_run("manual-one", 11, 10.0))
+            .expect("first manual run should admit")
+        {
+            ManualDeliveryRunAdmissionOutcome::Admitted(DeliveryRunAdmissionOutcome::Enqueued(
+                run,
+            )) => run,
+            other => panic!("unexpected first manual admission: {other:?}"),
+        };
+        let claimed = expect_claimed(
+            claim_delivery_run(&path, first.id, "manual-owner", first.revision, 11.0, 30.0)
+                .expect("manual run should be claimed"),
+        );
+        let running = start_delivery_run(&path, claimed.id, "manual-owner", claimed.revision, 12.0)
+            .expect("manual run should start");
+        let unknown = finalize_delivery_run(
+            &path,
+            running.id,
+            "manual-owner",
+            running.revision,
+            DeliveryRunStatus::Unknown,
+            None,
+            Some("ambiguous_delivery"),
+            13.0,
+        )
+        .expect("manual run should persist an ambiguous outcome");
+
+        let blocked = admit_manual_delivery_run(&path, &manual_run("manual-two", 11, 14.0))
+            .expect("ambiguous outcome should produce a policy result");
+        let ManualDeliveryRunAdmissionOutcome::BlockedUnknown(blocking_run) = blocked else {
+            panic!("ambiguous outcome should block a new attempt")
+        };
+
+        assert_eq!(blocking_run.id, unknown.id);
+        assert_eq!(blocking_run.status, DeliveryRunStatus::Unknown);
+        let connection = open_sqlite_connection(&path).expect("auth database should open");
+        let run_count: i64 = connection
+            .query_row("SELECT COUNT(*) FROM delivery_runs", [], |row| row.get(0))
+            .expect("manual runs should count");
+        assert_eq!(run_count, 1);
     }
 
     #[test]

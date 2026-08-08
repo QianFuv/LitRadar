@@ -2998,6 +2998,16 @@
                 }
               }
             }
+          },
+          "409": {
+            "description": "The latest manual push has an ambiguous outcome.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
           }
         },
         "security": [

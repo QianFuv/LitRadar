@@ -536,6 +536,8 @@ pub struct ManualWeeklyPushConfig {
     pub secret_codec: litradar_storage::SecretCodec,
     /// User that requested the manual push.
     pub user_id: UserId,
+    /// Stable external identifier of the owning manual attempt.
+    pub attempt_id: String,
     /// Optional model override.
     pub ai_model: Option<String>,
     /// Optional max-candidates override.

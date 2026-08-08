@@ -12,7 +12,8 @@ use litradar_domain::{
 };
 use litradar_storage::{
     DeliveryRepositoryError, DeliveryRunAdmissionOutcome, DeliveryRunCreate, DeliveryRunMode,
-    DeliveryRunRecord, DeliveryRunStatus, DeliveryTriggerKind, DeliveryWorkflow, StorageConfig,
+    DeliveryRunRecord, DeliveryRunStatus, DeliveryTriggerKind, DeliveryWorkflow,
+    ManualDeliveryRunAdmissionOutcome, StorageConfig,
 };
 use litradar_worker::delivery::{ManualWeeklyPushOutcome, MANUAL_DELIVERY_JOB_DEADLINE_SECONDS};
 
@@ -29,7 +30,8 @@ const MANUAL_PUSH_IDLE_MESSAGE: &str = "No manual push task is available";
     path = "/api/tracking/push-weekly",
     tag = "tracking",
     responses(
-        (status = 202, description = "Queued or existing active manual weekly push.", body = ManualWeeklyPushStatus)
+        (status = 202, description = "Queued or existing active manual weekly push.", body = ManualWeeklyPushStatus),
+        (status = 409, description = "The latest manual push has an ambiguous outcome.", body = ErrorEnvelope)
     ),
     security(("bearer_auth" = []), ("session_cookie" = []))
 )]
@@ -42,7 +44,7 @@ pub(crate) async fn push_weekly_to_tracking(
     let now = current_epoch_seconds();
     let user_id = user.id.value();
     let run = run_storage(&state, move |storage| {
-        litradar_storage::admit_delivery_run(
+        litradar_storage::admit_manual_delivery_run(
             storage.auth_db_path(),
             &DeliveryRunCreate {
                 external_id: job_id,
@@ -59,9 +61,16 @@ pub(crate) async fn push_weekly_to_tracking(
     })
     .await?;
     let run = match run {
-        DeliveryRunAdmissionOutcome::Enqueued(run)
-        | DeliveryRunAdmissionOutcome::Existing(run)
-        | DeliveryRunAdmissionOutcome::Busy(run) => run,
+        ManualDeliveryRunAdmissionOutcome::Admitted(
+            DeliveryRunAdmissionOutcome::Enqueued(run)
+            | DeliveryRunAdmissionOutcome::Existing(run)
+            | DeliveryRunAdmissionOutcome::Busy(run),
+        ) => run,
+        ManualDeliveryRunAdmissionOutcome::BlockedUnknown(_) => {
+            return Err(ApiError::conflict(
+                "Manual push outcome is unknown; review delivery state before retrying",
+            ));
+        }
     };
     Ok((StatusCode::ACCEPTED, Json(manual_push_status(&run))))
 }
@@ -490,7 +499,10 @@ fn manual_push_status(run: &DeliveryRunRecord) -> ManualWeeklyPushStatus {
         deadline_at: run.deadline_at,
         cancellation_requested: run.cancellation_requested,
         can_cancel: !run.status.is_terminal() && !run.cancellation_requested,
-        can_retry: run.status.is_terminal() && run.status != DeliveryRunStatus::Unknown,
+        can_retry: matches!(
+            run.status,
+            DeliveryRunStatus::Failed | DeliveryRunStatus::Cancelled | DeliveryRunStatus::TimedOut
+        ),
         pushed: outcome.as_ref().map_or(0, |outcome| outcome.pushed),
         selected: outcome.as_ref().map_or(0, |outcome| outcome.selected),
         total_candidates: outcome
@@ -615,6 +627,12 @@ mod tests {
         assert!(!unknown.can_cancel);
         assert!(!unknown.can_retry);
         assert!(!unknown.message.contains("upstream"));
+
+        assert!(!manual_push_status(&fixture_run(DeliveryRunStatus::Completed)).can_retry);
+        assert!(!manual_push_status(&fixture_run(DeliveryRunStatus::Skipped)).can_retry);
+        assert!(manual_push_status(&fixture_run(DeliveryRunStatus::Failed)).can_retry);
+        assert!(manual_push_status(&fixture_run(DeliveryRunStatus::Cancelled)).can_retry);
+        assert!(manual_push_status(&fixture_run(DeliveryRunStatus::TimedOut)).can_retry);
     }
 
     fn fixture_run(status: DeliveryRunStatus) -> DeliveryRunRecord {

@@ -144,6 +144,7 @@ pub fn run_manual_delivery_job(
         storage_config: storage_config.clone(),
         secret_codec,
         user_id,
+        attempt_id: running.external_id.clone(),
         ai_model: None,
         max_candidates: None,
         timeout_seconds: MANUAL_DELIVERY_HTTP_TIMEOUT_SECONDS,
