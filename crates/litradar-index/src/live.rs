@@ -6076,6 +6076,14 @@ mod tests {
             )
             .expect("single-writer run should prepare"),
         );
+        acquire_lease(
+            &control,
+            "chinese_journals",
+            "provider-a",
+            &run.run_id,
+            LiveRunTime::now().epoch_seconds,
+        )
+        .expect("single-writer lease should acquire");
         control
             .execute_batch(
                 "CREATE TRIGGER fail_single_writer_control

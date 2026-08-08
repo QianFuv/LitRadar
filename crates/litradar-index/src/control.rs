@@ -252,7 +252,7 @@ pub fn open_control_db(path: impl AsRef<Path>) -> Result<Connection, ControlData
 pub enum ContentCheckpointCommitError {
     /// The provider-neutral content transaction failed, so control progress was not attempted.
     Content(ContentDatabaseError),
-    /// Content committed, but the disposable control transaction failed.
+    /// The disposable control fence failed before content or its progress commit failed afterward.
     Control(ControlDatabaseError),
 }
 
@@ -290,7 +290,7 @@ impl From<ControlDatabaseError> for ContentCheckpointCommitError {
     }
 }
 
-/// Commit provider-neutral content before advancing one disposable journal synchronization.
+/// Fence and commit provider-neutral content with one disposable journal synchronization.
 ///
 /// # Arguments
 ///
@@ -302,14 +302,16 @@ impl From<ControlDatabaseError> for ContentCheckpointCommitError {
 /// * `run_id` - Expected core run owner.
 /// * `mode` - Expected frozen synchronization mode.
 /// * `base_anchor` - Expected frozen successful boundary.
-/// * `progress` - Provider traversal or completion progress to commit after content.
+/// * `progress` - Provider traversal or completion progress to commit with content.
 /// * `updated_at` - Safe control-progress timestamp.
 /// * `write_content` - One atomic provider-neutral content operation.
 ///
 /// # Returns
 ///
-/// The content operation outcome after both ordered commits succeed. A control failure leaves
-/// committed content for idempotent replay and never advances control state first.
+/// The content operation outcome after both ordered commits succeed. The pre-content fence requires
+/// both an unexpired provider lease and the exact journal run. The control writer lock prevents
+/// ownership takeover until progress commits. A later control failure leaves committed content for
+/// idempotent replay and never advances control first.
 #[allow(clippy::too_many_arguments)]
 pub fn commit_content_then_progress<Outcome, WriteContent>(
     control_connection: &Connection,
@@ -327,10 +329,34 @@ pub fn commit_content_then_progress<Outcome, WriteContent>(
 where
     WriteContent: FnOnce() -> Result<Outcome, ContentDatabaseError>,
 {
+    validate_batch_id(batch_id)?;
+    validate_run_metadata(run_id, updated_at)?;
+    validate_optional_opaque(base_anchor, "base anchor")?;
+    match progress {
+        ProviderProgress::Continue { checkpoint } => {
+            validate_optional_opaque(Some(checkpoint), "traversal checkpoint")?;
+        }
+        ProviderProgress::Complete { next_anchor } => {
+            validate_optional_opaque(next_anchor.as_deref(), "committed anchor")?;
+        }
+    }
+    let transaction =
+        Transaction::new_unchecked(control_connection, TransactionBehavior::Immediate)
+            .map_err(ControlDatabaseError::from)?;
+    verify_active_run_ownership(
+        &transaction,
+        catalog_name,
+        provider_name,
+        catalog_id,
+        batch_id,
+        run_id,
+        mode,
+        base_anchor,
+    )?;
     let outcome = write_content()?;
     match progress {
-        ProviderProgress::Continue { checkpoint } => advance_run_checkpoint(
-            control_connection,
+        ProviderProgress::Continue { checkpoint } => advance_run_checkpoint_in_transaction(
+            &transaction,
             catalog_name,
             provider_name,
             catalog_id,
@@ -341,8 +367,8 @@ where
             checkpoint,
             updated_at,
         )?,
-        ProviderProgress::Complete { next_anchor } => complete_sync_run(
-            control_connection,
+        ProviderProgress::Complete { next_anchor } => complete_sync_run_in_transaction(
+            &transaction,
             catalog_name,
             provider_name,
             catalog_id,
@@ -354,6 +380,7 @@ where
             updated_at,
         )?,
     }
+    transaction.commit().map_err(ControlDatabaseError::from)?;
     Ok(outcome)
 }
 
@@ -1114,7 +1141,36 @@ pub fn advance_run_checkpoint(
     validate_optional_opaque(base_anchor, "base anchor")?;
     validate_optional_opaque(Some(checkpoint), "traversal checkpoint")?;
     let transaction = Transaction::new_unchecked(connection, TransactionBehavior::Immediate)?;
-    let changed = transaction.execute(
+    advance_run_checkpoint_in_transaction(
+        &transaction,
+        catalog_name,
+        provider_name,
+        catalog_id,
+        batch_id,
+        run_id,
+        mode,
+        base_anchor,
+        checkpoint,
+        updated_at,
+    )?;
+    transaction.commit()?;
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn advance_run_checkpoint_in_transaction(
+    connection: &Connection,
+    catalog_name: &str,
+    provider_name: &str,
+    catalog_id: &str,
+    batch_id: &str,
+    run_id: &str,
+    mode: IndexSyncMode,
+    base_anchor: Option<&str>,
+    checkpoint: &str,
+    updated_at: &str,
+) -> Result<(), ControlDatabaseError> {
+    let changed = connection.execute(
         "UPDATE provider_run_checkpoints
          SET traversal_checkpoint = ?8, updated_at = ?9
          WHERE catalog_name = ?1 AND provider_name = ?2 AND catalog_id = ?3
@@ -1136,7 +1192,6 @@ pub fn advance_run_checkpoint(
             run_id: run_id.to_string(),
         });
     }
-    transaction.commit()?;
     Ok(())
 }
 
@@ -1176,7 +1231,71 @@ pub fn complete_sync_run(
     validate_optional_opaque(base_anchor, "base anchor")?;
     validate_optional_opaque(next_anchor, "committed anchor")?;
     let transaction = Transaction::new_unchecked(connection, TransactionBehavior::Immediate)?;
-    let owns_run = transaction.query_row(
+    complete_sync_run_in_transaction(
+        &transaction,
+        catalog_name,
+        provider_name,
+        catalog_id,
+        batch_id,
+        run_id,
+        mode,
+        base_anchor,
+        next_anchor,
+        completed_at,
+    )?;
+    transaction.commit()?;
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn verify_active_run_ownership(
+    connection: &Connection,
+    catalog_name: &str,
+    provider_name: &str,
+    catalog_id: &str,
+    batch_id: &str,
+    run_id: &str,
+    mode: IndexSyncMode,
+    base_anchor: Option<&str>,
+) -> Result<(), ControlDatabaseError> {
+    let owns_lease = connection.query_row(
+        "SELECT EXISTS(
+             SELECT 1 FROM provider_leases
+             WHERE catalog_name = ?1 AND provider_name = ?2 AND run_id = ?3
+               AND expires_at > unixepoch()
+         )",
+        params![catalog_name, provider_name, run_id],
+        |row| row.get::<_, bool>(0),
+    )?;
+    if !owns_lease {
+        return Err(ControlDatabaseError::OwnershipLost {
+            run_id: run_id.to_string(),
+        });
+    }
+    verify_journal_run_ownership(
+        connection,
+        catalog_name,
+        provider_name,
+        catalog_id,
+        batch_id,
+        run_id,
+        mode,
+        base_anchor,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn verify_journal_run_ownership(
+    connection: &Connection,
+    catalog_name: &str,
+    provider_name: &str,
+    catalog_id: &str,
+    batch_id: &str,
+    run_id: &str,
+    mode: IndexSyncMode,
+    base_anchor: Option<&str>,
+) -> Result<(), ControlDatabaseError> {
+    let owns_run = connection.query_row(
         "SELECT EXISTS(
              SELECT 1 FROM provider_run_checkpoints
              WHERE catalog_name = ?1 AND provider_name = ?2 AND catalog_id = ?3
@@ -1198,7 +1317,33 @@ pub fn complete_sync_run(
             run_id: run_id.to_string(),
         });
     }
-    transaction.execute(
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn complete_sync_run_in_transaction(
+    connection: &Connection,
+    catalog_name: &str,
+    provider_name: &str,
+    catalog_id: &str,
+    batch_id: &str,
+    run_id: &str,
+    mode: IndexSyncMode,
+    base_anchor: Option<&str>,
+    next_anchor: Option<&str>,
+    completed_at: &str,
+) -> Result<(), ControlDatabaseError> {
+    verify_journal_run_ownership(
+        connection,
+        catalog_name,
+        provider_name,
+        catalog_id,
+        batch_id,
+        run_id,
+        mode,
+        base_anchor,
+    )?;
+    connection.execute(
         "INSERT INTO provider_sync_anchors (
              catalog_name, provider_name, catalog_id, committed_anchor, completed_at,
              completed_batch_id
@@ -1216,7 +1361,7 @@ pub fn complete_sync_run(
             batch_id,
         ],
     )?;
-    let deleted = transaction.execute(
+    let deleted = connection.execute(
         "DELETE FROM provider_run_checkpoints
          WHERE catalog_name = ?1 AND provider_name = ?2 AND catalog_id = ?3
            AND batch_id = ?4 AND run_id = ?5 AND sync_mode = ?6 AND base_anchor IS ?7",
@@ -1235,7 +1380,6 @@ pub fn complete_sync_run(
             run_id: run_id.to_string(),
         });
     }
-    transaction.commit()?;
     Ok(())
 }
 
@@ -1426,6 +1570,11 @@ pub fn release_lease(
 
 #[cfg(test)]
 mod tests {
+    use std::cell::Cell;
+    use std::sync::mpsc::{self, RecvTimeoutError};
+    use std::thread;
+    use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
     use litradar_domain::{
         ArticleDraft, IndexSyncMode, IssueDraft, JournalCatalogEntry, JournalDraft,
         JournalRankings, ProviderBatch, ProviderProgress,
@@ -1433,7 +1582,7 @@ mod tests {
     use rusqlite::{params, Connection};
     use tempfile::tempdir;
 
-    use crate::schema::{init_content_db, write_content_batch};
+    use crate::schema::{init_content_db, write_content_batch, ContentDatabaseError};
 
     use super::{
         abandon_batch_checkpoints, acquire_lease, adopt_legacy_batch_state,
@@ -1453,6 +1602,16 @@ mod tests {
     const TIMESTAMP: &str = "2026-07-18T00:00:00Z";
     const BATCH_ID: &str = "batch-current";
     const PREVIOUS_BATCH_ID: &str = "batch-previous";
+
+    fn current_epoch_seconds() -> i64 {
+        i64::try_from(
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("system time should be after Unix epoch")
+                .as_secs(),
+        )
+        .expect("current epoch should fit i64")
+    }
 
     #[allow(clippy::too_many_arguments)]
     fn prepare_journal_sync(
@@ -2201,6 +2360,272 @@ mod tests {
     }
 
     #[test]
+    fn stale_run_fails_before_the_content_closure() {
+        let content = Connection::open_in_memory().expect("content database should open");
+        init_content_db(&content).expect("content schema should initialize");
+        let control = current_control();
+        let original = prepared_run(
+            prepare_journal_sync(
+                &control,
+                CATALOG_NAME,
+                PROVIDER_NAME,
+                CATALOG_ID,
+                "stale-run",
+                IndexSyncMode::Bootstrap,
+                false,
+                TIMESTAMP,
+            )
+            .expect("original run should prepare"),
+        );
+        let now = current_epoch_seconds();
+        acquire_lease(&control, CATALOG_NAME, PROVIDER_NAME, &original.run_id, now)
+            .expect("original lease should acquire");
+        acquire_lease(
+            &control,
+            CATALOG_NAME,
+            PROVIDER_NAME,
+            "replacement-run",
+            now + 301,
+        )
+        .expect("replacement lease should take ownership");
+        let replacement = prepared_run(
+            prepare_journal_sync(
+                &control,
+                CATALOG_NAME,
+                PROVIDER_NAME,
+                CATALOG_ID,
+                "replacement-run",
+                IndexSyncMode::Bootstrap,
+                true,
+                "2026-07-18T00:01:00Z",
+            )
+            .expect("replacement run should take ownership"),
+        );
+        let catalog = canonical_catalog();
+        let batch = canonical_batch(ProviderProgress::Continue {
+            checkpoint: "page-2".to_string(),
+        });
+        let did_write_content = Cell::new(false);
+
+        let error = commit_content_then_progress(
+            &control,
+            CATALOG_NAME,
+            PROVIDER_NAME,
+            CATALOG_ID,
+            &original.run_id,
+            original.mode,
+            original.base_anchor.as_deref(),
+            &batch.progress,
+            "2026-07-18T00:02:00Z",
+            || {
+                did_write_content.set(true);
+                write_content_batch(&content, &catalog, &batch, "stale-revision", TIMESTAMP)
+            },
+        )
+        .expect_err("stale run should fail at the pre-content fence");
+
+        assert!(matches!(
+            error,
+            ContentCheckpointCommitError::Control(ControlDatabaseError::OwnershipLost { .. })
+        ));
+        assert!(!did_write_content.get());
+        assert_eq!(table_count(&content, "articles"), 0);
+        assert_eq!(
+            read_run_checkpoint(&control, CATALOG_NAME, PROVIDER_NAME, CATALOG_ID)
+                .expect("replacement checkpoint should read")
+                .expect("replacement checkpoint should exist")
+                .run_id,
+            replacement.run_id
+        );
+    }
+
+    #[test]
+    fn expired_provider_lease_fails_before_the_content_closure() {
+        let control = current_control();
+        let run = prepared_run(
+            prepare_journal_sync(
+                &control,
+                CATALOG_NAME,
+                PROVIDER_NAME,
+                CATALOG_ID,
+                "expired-run",
+                IndexSyncMode::Bootstrap,
+                false,
+                TIMESTAMP,
+            )
+            .expect("expired run should prepare"),
+        );
+        acquire_lease(
+            &control,
+            CATALOG_NAME,
+            PROVIDER_NAME,
+            &run.run_id,
+            current_epoch_seconds() - 301,
+        )
+        .expect("already expired lease fixture should store");
+        let did_write_content = Cell::new(false);
+        let progress = ProviderProgress::Continue {
+            checkpoint: "page-2".to_string(),
+        };
+
+        let error = commit_content_then_progress(
+            &control,
+            CATALOG_NAME,
+            PROVIDER_NAME,
+            CATALOG_ID,
+            &run.run_id,
+            run.mode,
+            run.base_anchor.as_deref(),
+            &progress,
+            "2026-07-18T00:01:00Z",
+            || {
+                did_write_content.set(true);
+                Ok::<_, ContentDatabaseError>(())
+            },
+        )
+        .expect_err("expired lease should fail at the pre-content fence");
+
+        assert!(matches!(
+            error,
+            ContentCheckpointCommitError::Control(ControlDatabaseError::OwnershipLost { .. })
+        ));
+        assert!(!did_write_content.get());
+        assert_eq!(
+            read_run_checkpoint(&control, CATALOG_NAME, PROVIDER_NAME, CATALOG_ID)
+                .expect("expired checkpoint should read")
+                .expect("expired checkpoint should remain")
+                .traversal_checkpoint,
+            None
+        );
+    }
+
+    #[test]
+    fn ownership_takeover_waits_for_content_and_progress_commit() {
+        let directory = tempdir().expect("temporary directory should create");
+        let control_path = directory.path().join("ownership-fence.control.sqlite");
+        let setup_control = open_control_db(&control_path).expect("control database should open");
+        let original = prepared_run(
+            prepare_journal_sync(
+                &setup_control,
+                CATALOG_NAME,
+                PROVIDER_NAME,
+                CATALOG_ID,
+                "locking-run",
+                IndexSyncMode::Bootstrap,
+                false,
+                TIMESTAMP,
+            )
+            .expect("original run should prepare"),
+        );
+        let now = current_epoch_seconds();
+        acquire_lease(
+            &setup_control,
+            CATALOG_NAME,
+            PROVIDER_NAME,
+            &original.run_id,
+            now,
+        )
+        .expect("original lease should acquire");
+        let commit_control = open_control_db(&control_path).expect("commit control should open");
+        let takeover_control =
+            open_control_db(&control_path).expect("takeover control should open");
+        let (content_entered_sender, content_entered_receiver) = mpsc::channel();
+        let (release_content_sender, release_content_receiver) = mpsc::channel();
+        let commit_thread = thread::spawn(move || {
+            let progress = ProviderProgress::Continue {
+                checkpoint: "page-2".to_string(),
+            };
+            commit_content_then_progress(
+                &commit_control,
+                CATALOG_NAME,
+                PROVIDER_NAME,
+                CATALOG_ID,
+                &original.run_id,
+                original.mode,
+                original.base_anchor.as_deref(),
+                &progress,
+                "2026-07-18T00:01:00Z",
+                || {
+                    content_entered_sender
+                        .send(())
+                        .expect("content entry should signal");
+                    release_content_receiver
+                        .recv_timeout(Duration::from_secs(5))
+                        .expect("content release should arrive");
+                    Ok::<_, ContentDatabaseError>("committed-content")
+                },
+            )
+        });
+        content_entered_receiver
+            .recv_timeout(Duration::from_secs(5))
+            .expect("content closure should start");
+
+        let (takeover_started_sender, takeover_started_receiver) = mpsc::channel();
+        let (takeover_finished_sender, takeover_finished_receiver) = mpsc::channel();
+        let takeover_thread = thread::spawn(move || {
+            takeover_started_sender
+                .send(())
+                .expect("takeover start should signal");
+            acquire_lease(
+                &takeover_control,
+                CATALOG_NAME,
+                PROVIDER_NAME,
+                "takeover-run",
+                now + 301,
+            )
+            .expect("takeover lease should wait for the fence and then acquire");
+            let replacement = prepare_journal_sync(
+                &takeover_control,
+                CATALOG_NAME,
+                PROVIDER_NAME,
+                CATALOG_ID,
+                "takeover-run",
+                IndexSyncMode::Bootstrap,
+                true,
+                "2026-07-18T00:02:00Z",
+            )
+            .expect("takeover should complete after the fence releases");
+            takeover_finished_sender
+                .send(())
+                .expect("takeover completion should signal");
+            replacement
+        });
+        takeover_started_receiver
+            .recv_timeout(Duration::from_secs(5))
+            .expect("takeover should start");
+        assert!(matches!(
+            takeover_finished_receiver.recv_timeout(Duration::from_millis(200)),
+            Err(RecvTimeoutError::Timeout)
+        ));
+
+        release_content_sender
+            .send(())
+            .expect("content should release");
+        assert_eq!(
+            commit_thread
+                .join()
+                .expect("commit thread should not panic")
+                .expect("content and progress should commit"),
+            "committed-content"
+        );
+        takeover_finished_receiver
+            .recv_timeout(Duration::from_secs(5))
+            .expect("takeover should finish after the commit");
+        let replacement = prepared_run(
+            takeover_thread
+                .join()
+                .expect("takeover thread should not panic"),
+        );
+        assert_eq!(replacement.run_id, "takeover-run");
+        assert_eq!(replacement.traversal_checkpoint.as_deref(), Some("page-2"));
+        let stored = read_run_checkpoint(&setup_control, CATALOG_NAME, PROVIDER_NAME, CATALOG_ID)
+            .expect("stored checkpoint should read")
+            .expect("stored checkpoint should exist");
+        assert_eq!(stored.run_id, "takeover-run");
+        assert_eq!(stored.traversal_checkpoint.as_deref(), Some("page-2"));
+    }
+
+    #[test]
     fn content_precedes_control_and_both_failure_sides_are_replay_safe() {
         let content = Connection::open_in_memory().expect("content database should open");
         init_content_db(&content).expect("content schema should initialize");
@@ -2218,6 +2643,14 @@ mod tests {
             )
             .expect("run should prepare"),
         );
+        acquire_lease(
+            &control,
+            CATALOG_NAME,
+            PROVIDER_NAME,
+            &run.run_id,
+            current_epoch_seconds(),
+        )
+        .expect("ordered run lease should acquire");
         let catalog = canonical_catalog();
         let batch = canonical_batch(ProviderProgress::Continue {
             checkpoint: "page-2".to_string(),
