@@ -851,6 +851,63 @@ pub fn update_user_password_and_delete_tokens_with_audit(
     finish_immediate_transaction(&connection, result)
 }
 
+/// Replace an observed password row, revoke tokens, and audit the change atomically.
+///
+/// # Arguments
+///
+/// * `auth_db_path` - Path to the auth SQLite database.
+/// * `user_id` - User identifier.
+/// * `expected_hash` - Password hash observed before old-password verification.
+/// * `expected_salt` - Password salt observed before old-password verification.
+/// * `replacement_hash` - Replacement password hash.
+/// * `replacement_salt` - Replacement password salt.
+/// * `now` - Current Unix timestamp.
+/// * `audit` - Required audit event written only for a successful replacement.
+///
+/// # Returns
+///
+/// True when the exact observed credential row was replaced.
+#[allow(clippy::too_many_arguments)]
+pub fn compare_and_swap_user_password_and_delete_tokens_with_audit(
+    auth_db_path: impl AsRef<Path>,
+    user_id: UserId,
+    expected_hash: &str,
+    expected_salt: &str,
+    replacement_hash: &str,
+    replacement_salt: &str,
+    now: f64,
+    audit: &SecurityAuditEvent,
+) -> Result<bool, AuthRepositoryError> {
+    let connection = open_auth_connection(auth_db_path)?;
+    connection.execute("BEGIN IMMEDIATE", [])?;
+    let result = (|| {
+        let updated = connection.execute(
+            "UPDATE users SET password_hash = ?1, salt = ?2, updated_at = ?3 WHERE id = ?4 AND password_hash = ?5 AND salt = ?6",
+            params![
+                replacement_hash,
+                replacement_salt,
+                now,
+                user_id.value(),
+                expected_hash,
+                expected_salt
+            ],
+        )?;
+        if updated > 1 {
+            return Err(AuthRepositoryError::CredentialMutationInvariant);
+        }
+        if updated == 0 {
+            return Ok(false);
+        }
+        connection.execute(
+            "DELETE FROM access_tokens WHERE user_id = ?1",
+            [user_id.value()],
+        )?;
+        insert_required_security_audit_event(&connection, audit)?;
+        Ok(true)
+    })();
+    finish_immediate_transaction(&connection, result)
+}
+
 /// Replace one matching legacy password row with an Argon2id PHC string.
 ///
 /// # Arguments
@@ -1487,7 +1544,8 @@ mod tests {
     use tempfile::{tempdir, TempDir};
 
     use super::{
-        bootstrap_admin, compare_and_swap_legacy_password_hash, create_invite_code,
+        bootstrap_admin, compare_and_swap_legacy_password_hash,
+        compare_and_swap_user_password_and_delete_tokens_with_audit, create_invite_code,
         delete_access_token, find_user_credentials_by_id, get_user_invite_code,
         initialize_auth_database, insert_personal_access_token, issue_invite_code_with_audit,
         list_access_tokens, open_auth_connection, random_hex, register_user_with_invite,
@@ -1939,6 +1997,123 @@ mod tests {
         assert!(list_security_audit_events(&auth_db_path)
             .expect("audit rows should remain readable")
             .is_empty());
+    }
+
+    #[test]
+    fn password_change_cas_has_one_winner_and_no_stale_side_effects() {
+        let (_temp_dir, auth_db_path, user_id) = access_token_fixture();
+        insert_raw_access_token(
+            &auth_db_path,
+            user_id,
+            "pre-race-token-hash",
+            "integration",
+            4_000_000_000.0,
+            2.0,
+        );
+        let original = find_user_credentials_by_id(&auth_db_path, user_id)
+            .expect("credentials should load")
+            .expect("fixture user should exist");
+        let barrier = Arc::new(Barrier::new(3));
+        let handles = [
+            ("replacement-password-a", 3.0),
+            ("replacement-password-b", 4.0),
+        ]
+        .into_iter()
+        .map(|(replacement_hash, now)| {
+            let auth_db_path = auth_db_path.clone();
+            let expected_hash = original.password_hash.clone();
+            let expected_salt = original.salt.clone();
+            let barrier = Arc::clone(&barrier);
+            std::thread::spawn(move || {
+                barrier.wait();
+                let audit = SecurityAuditEvent::new("password_change", "completed")
+                    .with_actor_id(user_id.value())
+                    .with_target_id(user_id.value());
+                let did_update = compare_and_swap_user_password_and_delete_tokens_with_audit(
+                    &auth_db_path,
+                    user_id,
+                    &expected_hash,
+                    &expected_salt,
+                    replacement_hash,
+                    "",
+                    now,
+                    &audit,
+                )
+                .expect("password CAS should complete");
+                (replacement_hash, did_update)
+            })
+        })
+        .collect::<Vec<_>>();
+        barrier.wait();
+        let results = handles
+            .into_iter()
+            .map(|handle| handle.join().expect("password CAS thread should finish"))
+            .collect::<Vec<_>>();
+        let winner = results
+            .iter()
+            .find_map(|(replacement_hash, did_update)| did_update.then_some(*replacement_hash))
+            .expect("one password CAS should win");
+
+        assert_eq!(
+            results.iter().filter(|(_, did_update)| *did_update).count(),
+            1
+        );
+        let current = find_user_credentials_by_id(&auth_db_path, user_id)
+            .expect("credentials should reload")
+            .expect("fixture user should remain");
+        assert_eq!(current.password_hash, winner);
+        assert!(current.salt.is_empty());
+        assert_eq!(
+            count_tokens_by_hash(&auth_db_path, "pre-race-token-hash"),
+            0
+        );
+        assert_eq!(
+            list_security_audit_events(&auth_db_path)
+                .expect("audit rows should load")
+                .len(),
+            1
+        );
+
+        insert_raw_access_token(
+            &auth_db_path,
+            user_id,
+            "post-race-token-hash",
+            "post-race",
+            4_000_000_000.0,
+            5.0,
+        );
+        let stale_audit = SecurityAuditEvent::new("password_change", "completed")
+            .with_actor_id(user_id.value())
+            .with_target_id(user_id.value());
+        assert!(
+            !compare_and_swap_user_password_and_delete_tokens_with_audit(
+                &auth_db_path,
+                user_id,
+                &original.password_hash,
+                &original.salt,
+                "stale-replacement-password",
+                "",
+                6.0,
+                &stale_audit,
+            )
+            .expect("stale password CAS should be a committed no-op")
+        );
+        assert_eq!(
+            count_tokens_by_hash(&auth_db_path, "post-race-token-hash"),
+            1
+        );
+        assert_eq!(
+            list_security_audit_events(&auth_db_path)
+                .expect("audit rows should reload")
+                .len(),
+            1
+        );
+        assert_eq!(
+            find_user_credentials_by_id(&auth_db_path, user_id)
+                .expect("credentials should reload")
+                .expect("fixture user should remain"),
+            current
+        );
     }
 
     #[test]

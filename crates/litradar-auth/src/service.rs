@@ -10,7 +10,8 @@ use litradar_domain::{
     DEFAULT_INVITE_CODE_MAX_USES, DEFAULT_INVITE_CODE_TTL_SECONDS,
 };
 use litradar_storage::{
-    bootstrap_admin_with_audit, compare_and_swap_legacy_password_hash, count_users,
+    bootstrap_admin_with_audit, compare_and_swap_legacy_password_hash,
+    compare_and_swap_user_password_and_delete_tokens_with_audit, count_users,
     create_invite_code_with_audit, delete_access_token_by_hash_with_audit,
     delete_access_token_with_audit, delete_all_access_tokens_with_audit,
     find_user_credentials_by_id, find_user_credentials_by_username, get_user_invite_code,
@@ -613,14 +614,15 @@ impl AuthService {
             return Ok(false);
         }
         let password_hash = hash_password(new_password)?;
-        let legacy_salt = String::new();
-        let did_update = update_user_password_and_delete_tokens_with_audit(
+        let did_update = compare_and_swap_user_password_and_delete_tokens_with_audit(
             &self.auth_db_path,
             user_id,
+            &row.password_hash,
+            &row.salt,
             &password_hash,
-            &legacy_salt,
+            "",
             now_seconds(),
-            Some(&audit),
+            &audit,
         )?;
         Ok(did_update)
     }
@@ -1363,5 +1365,68 @@ mod tests {
         assert!(!service
             .reset_password(UserId(i64::MAX), "unused-password")
             .expect("missing-user reset should run"));
+    }
+
+    #[test]
+    fn concurrent_change_password_requests_report_only_one_success() {
+        let temp_dir = tempdir().expect("temporary directory should be created");
+        let auth_db_path = temp_dir.path().join("auth.sqlite");
+        migrate_auth_database(&auth_db_path).expect("auth database should migrate");
+        let service = AuthService::new(&auth_db_path);
+        let user = service
+            .bootstrap_admin("concurrent_rotation_admin", STRONG_PASSWORD)
+            .expect("fixture administrator should bootstrap");
+        let user_id = user.id;
+        let barrier = Arc::new(Barrier::new(3));
+        let handles = ["replacement-password-a", "replacement-password-b"]
+            .into_iter()
+            .map(|replacement_password| {
+                let service = service.clone();
+                let barrier = Arc::clone(&barrier);
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    (
+                        replacement_password,
+                        service
+                            .change_password(user_id, STRONG_PASSWORD, replacement_password)
+                            .expect("concurrent password change should complete"),
+                    )
+                })
+            })
+            .collect::<Vec<_>>();
+        barrier.wait();
+        let results = handles
+            .into_iter()
+            .map(|handle| {
+                handle
+                    .join()
+                    .expect("concurrent password change thread should finish")
+            })
+            .collect::<Vec<_>>();
+        let winner = results
+            .iter()
+            .find_map(|(password, did_update)| did_update.then_some(*password))
+            .expect("one password change should win");
+
+        assert_eq!(
+            results.iter().filter(|(_, did_update)| *did_update).count(),
+            1
+        );
+        assert!(service
+            .verify_user("concurrent_rotation_admin", STRONG_PASSWORD)
+            .expect("old password verification should run")
+            .is_none());
+        assert!(service
+            .verify_user("concurrent_rotation_admin", winner)
+            .expect("winning password verification should run")
+            .is_some());
+        for (password, did_update) in results {
+            if !did_update {
+                assert!(service
+                    .verify_user("concurrent_rotation_admin", password)
+                    .expect("losing password verification should run")
+                    .is_none());
+            }
+        }
     }
 }
