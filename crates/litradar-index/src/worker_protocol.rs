@@ -10,7 +10,7 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
 /// Current private worker protocol version.
-pub(crate) const PROTOCOL_VERSION: u32 = 6;
+pub(crate) const PROTOCOL_VERSION: u32 = 7;
 
 /// One journal and optional resume cursor assigned to a fetch worker.
 #[derive(Clone, PartialEq, Eq, Deserialize, Serialize)]
@@ -67,8 +67,6 @@ pub(crate) struct WorkerRequest {
     pub(crate) schedule_epoch_unix_millis: u64,
     /// Provider request timeout in seconds.
     pub(crate) timeout_seconds: u64,
-    /// Scholarly provider runtime configuration.
-    pub(crate) scholarly_config: LiveScholarlyConfig,
     /// Ordered journal assignments owned by this worker.
     pub(crate) assignments: Vec<WorkerJournalAssignment>,
 }
@@ -110,6 +108,9 @@ pub(crate) struct WorkerBootstrap {
     /// Selected Provider proxy URL, present only for an enabled worker Provider.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) provider_proxy_url: Option<String>,
+    /// Scholarly runtime configuration, present only for Scholarly workers.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) scholarly_config: Option<LiveScholarlyConfig>,
 }
 
 impl fmt::Debug for WorkerBootstrap {
@@ -416,8 +417,8 @@ mod tests {
     use litradar_domain::{IndexSyncMode, JournalCatalogEntry, JournalRankings};
 
     use super::{
-        read_message, write_message, ParentMessage, WorkerBootstrap, WorkerJournalAssignment,
-        PROTOCOL_VERSION,
+        read_message, write_message, LiveScholarlyConfig, ParentMessage, WorkerBootstrap,
+        WorkerJournalAssignment, PROTOCOL_VERSION,
     };
 
     #[test]
@@ -468,11 +469,21 @@ mod tests {
     fn worker_protocol_bootstrap_round_trips_and_redacts_credentials() {
         let sentinel = "captcha-secret-sentinel";
         let proxy_sentinel = "socks5h://user:proxy-secret-sentinel@proxy.example:1080";
+        let openalex_sentinel = "openalex-bootstrap-secret-sentinel";
+        let semantic_sentinel = "semantic-bootstrap-secret-sentinel";
+        let mailto_sentinel = "bootstrap-secret-sentinel@example.invalid";
+        let scholarly_config = LiveScholarlyConfig::from_value_pools(
+            10,
+            openalex_sentinel,
+            semantic_sentinel,
+            mailto_sentinel,
+        );
         let bootstrap = WorkerBootstrap {
             protocol_version: PROTOCOL_VERSION,
             worker_id: 2,
             cnki_captcha_token: Some(sentinel.to_string()),
             provider_proxy_url: Some(proxy_sentinel.to_string()),
+            scholarly_config: Some(scholarly_config.clone()),
         };
         let mut bytes = Vec::new();
 
@@ -485,8 +496,12 @@ mod tests {
         assert_eq!(decoded.worker_id, 2);
         assert_eq!(decoded.cnki_captcha_token.as_deref(), Some(sentinel));
         assert_eq!(decoded.provider_proxy_url.as_deref(), Some(proxy_sentinel));
+        assert_eq!(decoded.scholarly_config.as_ref(), Some(&scholarly_config));
         assert!(!debug.contains(sentinel));
         assert!(!debug.contains(proxy_sentinel));
+        assert!(!debug.contains(openalex_sentinel));
+        assert!(!debug.contains(semantic_sentinel));
+        assert!(!debug.contains(mailto_sentinel));
         assert!(debug.contains("[REDACTED]"));
     }
 

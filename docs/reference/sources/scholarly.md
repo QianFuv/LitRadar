@@ -15,7 +15,7 @@ Scholarly 是内置 Provider adapter，不是内容 schema。它把 Crossref、O
 
 [运行配置](../configuration.md)中的 `scholarly` 代理开关只覆盖索引 adapter 发出的 Crossref、OpenAlex 和 Semantic Scholar HTTP，包括 source 查找、分页、DOI/batch 增强、重试和 Provider-local fallback。关闭时这些 client 明确忽略系统代理变量并受管直连；打开时只使用共用 `provider_proxy_url`，代理失败不会改成直连。
 
-在线摘要 adapter 不发出 HTTP：它只根据已有 DOI 或 PMID 在本地生成受 host allowlist 约束的 HTTPS redirect，再由浏览器访问目的地。因此 `scholarly` 开关不代理该 redirect，也不影响 AI、通知/PushPlus 或其他非 Provider client。多进程索引只通过 protocol-v6 stdin bootstrap 把 URL 交给已启用的 scholarly worker；request JSON、参数、环境、日志和 Debug 均不包含该秘密。
+在线摘要 adapter 不发出 HTTP：它只根据已有 DOI 或 PMID 在本地生成受 host allowlist 约束的 HTTPS redirect，再由浏览器访问目的地。因此 `scholarly` 开关不代理该 redirect，也不影响 AI、通知/PushPlus 或其他非 Provider client。多进程索引通过 protocol-v7 stdin bootstrap 把代理 URL、OpenAlex/Semantic Scholar key pool 和 Crossref mailto pool 一次性传给对应 worker；持久 request JSON、参数、环境、日志和 Debug 均不包含这些值。启动新 worker 前只会清理文件名与 JSON 元数据一致、早于索引 lease 且协议版本低于 7 的普通遗留 request 文件；新文件、无效文件和链接不会被删除。
 
 ## 索引上游职责
 

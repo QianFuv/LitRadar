@@ -23,7 +23,7 @@ use litradar_sources::{
 };
 use litradar_worker::process_supervisor::SupervisedChild;
 use rusqlite::{Connection, ErrorCode};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::batch::{
     admit_batch, complete_batch, complete_catalog, heartbeat_batch_lease, new_batch_owner_id,
@@ -58,6 +58,8 @@ use crate::worker_protocol::{
 };
 
 const LIVE_INDEX_HEARTBEAT_INTERVAL_SECONDS: u64 = 30;
+const LEGACY_WORKER_REQUEST_STALE_SECONDS: u64 = 300;
+const MAX_LEGACY_WORKER_REQUEST_BYTES: u64 = 64 * 1024 * 1024;
 const MAX_PROVIDER_PAGES_PER_JOURNAL: usize = 100_000;
 const MAX_RECOVERABLE_MANIFEST_BYTES: u64 = 64 * 1024 * 1024;
 const WORKER_PROTOCOL_FAILURE_MESSAGE: &str = "worker protocol operation failed";
@@ -1725,7 +1727,6 @@ fn prepare_worker_requests(
             source_worker_count: config.worker_count,
             schedule_epoch_unix_millis,
             timeout_seconds: config.timeout_seconds,
-            scholarly_config: config.scholarly_config.clone(),
             assignments,
         })
         .collect();
@@ -1751,6 +1752,7 @@ fn run_worker_processes(
         control,
         context,
         requests,
+        &config.scholarly_config,
         config.cnki_captcha_token.as_deref(),
         &config.provider_proxy_selection,
         metrics,
@@ -1951,6 +1953,50 @@ impl WorkerProgress {
     }
 }
 
+#[derive(Deserialize)]
+struct LegacyWorkerRequestMetadata {
+    protocol_version: u32,
+    run_id: String,
+    worker_id: usize,
+}
+
+fn cleanup_stale_legacy_worker_requests(
+    request_dir: &Path,
+    now: SystemTime,
+) -> Result<usize, LiveIndexError> {
+    let mut removed_count = 0_usize;
+    for entry in std::fs::read_dir(request_dir)? {
+        let entry = entry?;
+        if !entry.file_type()?.is_file() {
+            continue;
+        }
+        let metadata = entry.metadata()?;
+        if metadata.len() > MAX_LEGACY_WORKER_REQUEST_BYTES {
+            continue;
+        }
+        let Ok(age) = now.duration_since(metadata.modified()?) else {
+            continue;
+        };
+        if age < Duration::from_secs(LEGACY_WORKER_REQUEST_STALE_SECONDS) {
+            continue;
+        }
+        let Ok(request) =
+            serde_json::from_slice::<LegacyWorkerRequestMetadata>(&std::fs::read(entry.path())?)
+        else {
+            continue;
+        };
+        let expected_name = format!("{}-worker-{}.json", request.run_id, request.worker_id);
+        if request.protocol_version >= PROTOCOL_VERSION
+            || entry.file_name().to_str() != Some(expected_name.as_str())
+        {
+            continue;
+        }
+        std::fs::remove_file(entry.path())?;
+        removed_count += 1;
+    }
+    Ok(removed_count)
+}
+
 /// Supervise fetch-only child processes through the parent-owned SQLite writer.
 ///
 /// # Arguments
@@ -1960,6 +2006,7 @@ impl WorkerProgress {
 /// * `control` - Parent-owned control connection.
 /// * `context` - Stable commit and lease context.
 /// * `requests` - Versioned worker assignments.
+/// * `scholarly_config` - Memory-only Scholarly runtime configuration.
 /// * `cnki_captcha_token` - Memory-only domestic CNKI credential.
 /// * `provider_proxy_selection` - Memory-only per-Provider proxy selection.
 /// * `metrics` - Aggregate metrics prepared from parent checkpoint reads.
@@ -1977,6 +2024,7 @@ pub(crate) fn run_worker_processes_with_launcher<Launcher, Observer>(
     control: &Connection,
     context: &ParentWriterContext,
     requests: Vec<LiveIndexWorkerRequest>,
+    scholarly_config: &LiveScholarlyConfig,
     cnki_captcha_token: Option<&str>,
     provider_proxy_selection: &ProviderProxySelection,
     metrics: IndexRunMetrics,
@@ -1989,6 +2037,8 @@ where
     Observer: FnMut(WriterCommitObservation),
 {
     if requests.is_empty() {
+        std::fs::create_dir_all(request_dir)?;
+        cleanup_stale_legacy_worker_requests(request_dir, SystemTime::now())?;
         return Ok(metrics);
     }
     let expected_process_count = requests.len();
@@ -2011,6 +2061,7 @@ where
         }
     }
     std::fs::create_dir_all(request_dir)?;
+    cleanup_stale_legacy_worker_requests(request_dir, SystemTime::now())?;
     let (sender, receiver) = mpsc::sync_channel(requests.len());
     let mut children = Vec::with_capacity(requests.len());
     let mut spawn_error = None;
@@ -2044,6 +2095,7 @@ where
         let launched = match bootstrap_worker_process(
             launched,
             request,
+            scholarly_config,
             cnki_captcha_token,
             provider_proxy_url.as_deref(),
         ) {
@@ -2093,6 +2145,7 @@ where
 
 fn worker_bootstrap(
     request: &LiveIndexWorkerRequest,
+    scholarly_config: &LiveScholarlyConfig,
     cnki_captcha_token: Option<&str>,
     provider_proxy_url: Option<&str>,
 ) -> LiveIndexWorkerBootstrap {
@@ -2105,16 +2158,24 @@ fn worker_bootstrap(
             None
         },
         provider_proxy_url: provider_proxy_url.map(str::to_owned),
+        scholarly_config: (request.provider_name == SCHOLARLY_PROVIDER_NAME)
+            .then(|| scholarly_config.clone()),
     }
 }
 
 fn bootstrap_worker_process(
     mut launched: LaunchedWorkerProcess,
     request: &LiveIndexWorkerRequest,
+    scholarly_config: &LiveScholarlyConfig,
     cnki_captcha_token: Option<&str>,
     provider_proxy_url: Option<&str>,
 ) -> Result<LaunchedWorkerProcess, LiveIndexError> {
-    let bootstrap = worker_bootstrap(request, cnki_captcha_token, provider_proxy_url);
+    let bootstrap = worker_bootstrap(
+        request,
+        scholarly_config,
+        cnki_captcha_token,
+        provider_proxy_url,
+    );
     if write_message(&mut launched.writer, &bootstrap).is_err() {
         let _ = launched.child.force_kill_and_wait();
         return Err(protocol_failure(request.worker_id));
@@ -2495,17 +2556,19 @@ fn run_fetch_worker_stream(
     writer: &mut impl Write,
 ) -> Result<(), LiveIndexError> {
     let mut sequence = 0_u64;
-    let execution =
-        read_worker_bootstrap(request, reader).and_then(|(cnki_captcha_token, provider_proxy)| {
+    let execution = read_worker_bootstrap(request, reader).and_then(
+        |(cnki_captcha_token, provider_proxy, scholarly_config)| {
             fetch_worker_assignments(
                 request,
                 cnki_captcha_token,
                 provider_proxy,
+                scholarly_config,
                 reader,
                 writer,
                 &mut sequence,
             )
-        });
+        },
+    );
     let message = match execution {
         Ok(()) => WorkerMessage::Succeeded {
             protocol_version: PROTOCOL_VERSION,
@@ -2526,12 +2589,14 @@ fn run_fetch_worker_stream(
 fn read_worker_bootstrap(
     request: &LiveIndexWorkerRequest,
     reader: &mut impl Read,
-) -> Result<(Option<String>, ProviderProxy), LiveIndexError> {
+) -> Result<(Option<String>, ProviderProxy, LiveScholarlyConfig), LiveIndexError> {
     let bootstrap: LiveIndexWorkerBootstrap = read_message(reader)
         .map_err(|_| LiveIndexError::Worker(WORKER_PROTOCOL_FAILURE_MESSAGE.to_string()))?;
+    let is_scholarly = request.provider_name == SCHOLARLY_PROVIDER_NAME;
     if bootstrap.protocol_version != PROTOCOL_VERSION
         || bootstrap.worker_id != request.worker_id
         || (request.provider_name != CNKI_PROVIDER_NAME && bootstrap.cnki_captcha_token.is_some())
+        || is_scholarly != bootstrap.scholarly_config.is_some()
     {
         return Err(LiveIndexError::InvalidConfig(
             "worker bootstrap is invalid".to_string(),
@@ -2543,13 +2608,21 @@ fn read_worker_bootstrap(
         .transpose()
         .map_err(|_| LiveIndexError::InvalidConfig("worker bootstrap is invalid".to_string()))?
         .unwrap_or_else(ProviderProxy::direct);
-    Ok((bootstrap.cnki_captcha_token, provider_proxy))
+    let scholarly_config = bootstrap.scholarly_config.unwrap_or_else(|| {
+        LiveScholarlyConfig::from_value_pools(request.timeout_seconds, "", "", "")
+    });
+    Ok((
+        bootstrap.cnki_captcha_token,
+        provider_proxy,
+        scholarly_config,
+    ))
 }
 
 fn fetch_worker_assignments(
     request: &LiveIndexWorkerRequest,
     cnki_captcha_token: Option<String>,
     provider_proxy: ProviderProxy,
+    scholarly_config: LiveScholarlyConfig,
     reader: &mut impl Read,
     writer: &mut impl Write,
     sequence: &mut u64,
@@ -2580,9 +2653,7 @@ fn fetch_worker_assignments(
     }
     let registration = build_index_registration(
         &request.provider_name,
-        request
-            .scholarly_config
-            .clone()
+        scholarly_config
             .with_worker_context(request.worker_id, request.process_count)
             .with_schedule_epoch(request.schedule_epoch_unix_millis),
         request.source_worker_count,
@@ -2910,13 +2981,14 @@ fn run_notify_for_manifest(
 #[cfg(test)]
 mod tests {
     use std::collections::{BTreeMap, BTreeSet};
+    use std::fs::{FileTimes, OpenOptions};
     use std::io::{self, BufReader, Cursor, Write};
     use std::net::{TcpListener, TcpStream};
     use std::path::Path;
     use std::process::{Command, Stdio};
     use std::sync::{mpsc, Arc, Mutex};
     use std::thread;
-    use std::time::Duration;
+    use std::time::{Duration, SystemTime};
 
     use litradar_domain::{
         ArticleAuthorDraft, ArticleDraft, IndexFetchContext, IndexSyncMode, IssueDraft,
@@ -2930,8 +3002,8 @@ mod tests {
     use tracing_subscriber::fmt::MakeWriter;
 
     use super::{
-        catalog_paths, emit_parent_content_commit_failure, emit_worker_failure,
-        fetch_worker_assignments_with_provider, finalize_indexed_content,
+        catalog_paths, cleanup_stale_legacy_worker_requests, emit_parent_content_commit_failure,
+        emit_worker_failure, fetch_worker_assignments_with_provider, finalize_indexed_content,
         index_entries_with_provider, prepare_catalog_identities, prepare_catalog_manifest_intent,
         prepare_worker_requests, publish_catalog_manifest, read_worker_bootstrap,
         requested_sync_mode, run_batch_catalogs_with, run_live_index,
@@ -2941,6 +3013,7 @@ mod tests {
         LiveIndexWorkerBootstrap, LiveIndexWorkerFailure, LiveIndexWorkerFailureClass,
         LiveIndexWorkerOperation, LiveIndexWorkerRequest, LiveRunTime, ParentWriterContext,
         ProviderProxySelection, SupervisedChild, CNKI_PROVIDER_NAME,
+        LEGACY_WORKER_REQUEST_STALE_SECONDS,
     };
     use crate::batch::{
         admit_batch, complete_catalog, init_batch_db, read_batch_catalogs, release_batch_lease,
@@ -4775,9 +4848,6 @@ mod tests {
             source_worker_count: 1,
             schedule_epoch_unix_millis: 0,
             timeout_seconds: 10,
-            scholarly_config: litradar_sources::LiveScholarlyConfig::from_value_pools(
-                10, "", "", "",
-            ),
             assignments: vec![WorkerJournalAssignment {
                 journal_ordinal: 0,
                 entry: catalog("journal-1"),
@@ -4786,6 +4856,10 @@ mod tests {
                 traversal_checkpoint: None,
             }],
         }
+    }
+
+    fn empty_scholarly_config() -> litradar_sources::LiveScholarlyConfig {
+        litradar_sources::LiveScholarlyConfig::from_value_pools(10, "", "", "")
     }
 
     fn worker_test_config(
@@ -4822,7 +4896,16 @@ mod tests {
     fn worker_boundary_redacts_provider_credentials() {
         let sentinel = "captcha-secret-sentinel";
         let proxy_sentinel = "socks5h://user:worker-proxy-sentinel@proxy.example:1080";
+        let openalex_sentinel = "openalex-worker-secret-sentinel";
+        let semantic_sentinel = "semantic-worker-secret-sentinel";
+        let mailto_sentinel = "worker-secret-sentinel@example.invalid";
         let mut config = worker_test_config("cnki", Some(sentinel.to_string()));
+        config.scholarly_config = litradar_sources::LiveScholarlyConfig::from_value_pools(
+            10,
+            openalex_sentinel,
+            semantic_sentinel,
+            mailto_sentinel,
+        );
         config.provider_proxy_selection =
             ProviderProxySelection::new(proxy_sentinel, r#"{"cnki":true}"#)
                 .expect("worker proxy selection should validate");
@@ -4830,14 +4913,19 @@ mod tests {
         let cnki_proxy_url = config
             .provider_proxy_selection
             .proxy_url_for_provider(&cnki_request.provider_name);
-        let cnki_bootstrap =
-            worker_bootstrap(&cnki_request, Some(sentinel), cnki_proxy_url.as_deref());
+        let cnki_bootstrap = worker_bootstrap(
+            &cnki_request,
+            &config.scholarly_config,
+            Some(sentinel),
+            cnki_proxy_url.as_deref(),
+        );
         let scholarly_request = fetch_worker_request("scholarly", "run-scholarly-bootstrap");
         let scholarly_proxy_url = config
             .provider_proxy_selection
             .proxy_url_for_provider(&scholarly_request.provider_name);
         let scholarly_bootstrap = worker_bootstrap(
             &scholarly_request,
+            &config.scholarly_config,
             Some(sentinel),
             scholarly_proxy_url.as_deref(),
         );
@@ -4847,6 +4935,7 @@ mod tests {
             .proxy_url_for_provider(&overseas_request.provider_name);
         let overseas_bootstrap = worker_bootstrap(
             &overseas_request,
+            &config.scholarly_config,
             Some(sentinel),
             overseas_proxy_url.as_deref(),
         );
@@ -4856,9 +4945,15 @@ mod tests {
 
         assert!(!debug.contains(sentinel));
         assert!(!debug.contains(proxy_sentinel));
+        assert!(!debug.contains(openalex_sentinel));
+        assert!(!debug.contains(semantic_sentinel));
+        assert!(!debug.contains(mailto_sentinel));
         assert!(debug.contains("[REDACTED]"));
         assert!(!bootstrap_debug.contains(sentinel));
         assert!(!bootstrap_debug.contains(proxy_sentinel));
+        assert!(!format!("{scholarly_bootstrap:?}").contains(openalex_sentinel));
+        assert!(!format!("{scholarly_bootstrap:?}").contains(semantic_sentinel));
+        assert!(!format!("{scholarly_bootstrap:?}").contains(mailto_sentinel));
         assert!(bootstrap_debug.contains("[REDACTED]"));
         assert_eq!(cnki_bootstrap.cnki_captcha_token.as_deref(), Some(sentinel));
         assert_eq!(
@@ -4867,8 +4962,14 @@ mod tests {
         );
         assert!(scholarly_bootstrap.cnki_captcha_token.is_none());
         assert!(scholarly_bootstrap.provider_proxy_url.is_none());
+        assert_eq!(
+            scholarly_bootstrap.scholarly_config.as_ref(),
+            Some(&config.scholarly_config)
+        );
         assert!(overseas_bootstrap.cnki_captcha_token.is_none());
         assert!(overseas_bootstrap.provider_proxy_url.is_none());
+        assert!(cnki_bootstrap.scholarly_config.is_none());
+        assert!(overseas_bootstrap.scholarly_config.is_none());
     }
 
     #[test]
@@ -4882,15 +4983,19 @@ mod tests {
             let request = fetch_worker_request(provider_name, "run-proxy-equivalence");
             let direct_proxy = selection.for_provider(provider_name);
             let proxy_url = selection.proxy_url_for_provider(provider_name);
-            let bootstrap = worker_bootstrap(&request, None, proxy_url.as_deref());
+            let scholarly_config = empty_scholarly_config();
+            let bootstrap =
+                worker_bootstrap(&request, &scholarly_config, None, proxy_url.as_deref());
             let mut input = Vec::new();
             write_message(&mut input, &bootstrap).expect("worker bootstrap should serialize");
-            let (_, multiprocess_proxy) = read_worker_bootstrap(&request, &mut Cursor::new(input))
-                .expect("worker bootstrap should select a proxy");
+            let (_, multiprocess_proxy, multiprocess_scholarly_config) =
+                read_worker_bootstrap(&request, &mut Cursor::new(input))
+                    .expect("worker bootstrap should select a proxy");
 
             assert_eq!(multiprocess_proxy, direct_proxy);
             assert_eq!(multiprocess_proxy.url(), direct_proxy.url());
             assert!(!format!("{multiprocess_proxy:?}").contains(proxy_sentinel));
+            assert_eq!(multiprocess_scholarly_config, scholarly_config);
         }
     }
 
@@ -4898,16 +5003,25 @@ mod tests {
     fn worker_request_file_excludes_runtime_secrets() {
         let sentinel = "captcha-secret-sentinel";
         let proxy_sentinel = "socks5h://user:worker-request-proxy-sentinel@proxy.example:1080";
-        let mut config = worker_test_config("cnki", Some(sentinel.to_string()));
+        let openalex_sentinel = "openalex-request-secret-sentinel";
+        let semantic_sentinel = "semantic-request-secret-sentinel";
+        let mailto_sentinel = "request-secret-sentinel@example.invalid";
+        let mut config = worker_test_config("scholarly", Some(sentinel.to_string()));
+        config.scholarly_config = litradar_sources::LiveScholarlyConfig::from_value_pools(
+            10,
+            openalex_sentinel,
+            semantic_sentinel,
+            mailto_sentinel,
+        );
         config.provider_proxy_selection =
-            ProviderProxySelection::new(proxy_sentinel, r#"{"cnki":true}"#)
+            ProviderProxySelection::new(proxy_sentinel, r#"{"scholarly":true}"#)
                 .expect("worker proxy selection should validate");
         let directory = tempdir().expect("temporary control directory should create");
         let control = open_control_db(directory.path().join("control.sqlite"))
             .expect("control database should open");
         let context = ParentWriterContext {
             catalog_name: "chinese_journals".to_string(),
-            provider_name: "cnki".to_string(),
+            provider_name: "scholarly".to_string(),
             batch_id: TEST_BATCH_ID.to_string(),
             run_id: "run-secret-boundary".to_string(),
             timestamp: "time".to_string(),
@@ -4927,8 +5041,86 @@ mod tests {
 
         assert!(!request_json.contains(sentinel));
         assert!(!request_json.contains(proxy_sentinel));
+        assert!(!request_json.contains(openalex_sentinel));
+        assert!(!request_json.contains(semantic_sentinel));
+        assert!(!request_json.contains(mailto_sentinel));
         assert!(!request_json.contains("cnki_captcha_token"));
         assert!(!request_json.contains("provider_proxy"));
+        assert!(!request_json.contains("scholarly_config"));
+    }
+
+    #[test]
+    fn stale_legacy_worker_request_cleanup_is_bounded_and_fail_closed() {
+        let directory = tempdir().expect("temporary request directory should create");
+        let request_dir = directory.path();
+        let sentinel = "legacy-worker-secret-sentinel";
+        let legacy_path = request_dir.join("legacy-run-worker-0.json");
+        let fresh_path = request_dir.join("fresh-run-worker-1.json");
+        let mismatched_path = request_dir.join("unexpected-name.json");
+        let current_path = request_dir.join("current-run-worker-2.json");
+        let invalid_path = request_dir.join("invalid-worker-0.json");
+        let non_file_path = request_dir.join("directory-worker-0.json");
+
+        let write_request =
+            |path: &Path, protocol_version: u32, run_id: &str, worker_id: usize, is_stale: bool| {
+                std::fs::write(
+                    path,
+                    serde_json::to_vec(&serde_json::json!({
+                        "protocol_version": protocol_version,
+                        "run_id": run_id,
+                        "worker_id": worker_id,
+                        "scholarly_config": {
+                            "openalex_api_keys": [sentinel]
+                        }
+                    }))
+                    .expect("legacy request should serialize"),
+                )
+                .expect("legacy request should write");
+                if is_stale {
+                    let file = OpenOptions::new()
+                        .write(true)
+                        .open(path)
+                        .expect("legacy request should reopen");
+                    file.set_times(FileTimes::new().set_modified(SystemTime::UNIX_EPOCH))
+                        .expect("legacy request timestamp should update");
+                }
+            };
+
+        write_request(&legacy_path, 6, "legacy-run", 0, true);
+        write_request(&fresh_path, 6, "fresh-run", 1, false);
+        write_request(&mismatched_path, 6, "mismatched-run", 0, true);
+        write_request(&current_path, PROTOCOL_VERSION, "current-run", 2, true);
+        std::fs::write(&invalid_path, b"not-json").expect("invalid fixture should write");
+        let invalid_file = OpenOptions::new()
+            .write(true)
+            .open(&invalid_path)
+            .expect("invalid fixture should reopen");
+        invalid_file
+            .set_times(FileTimes::new().set_modified(SystemTime::UNIX_EPOCH))
+            .expect("invalid fixture timestamp should update");
+        std::fs::create_dir(&non_file_path).expect("non-file fixture should create");
+
+        let removed = cleanup_stale_legacy_worker_requests(request_dir, SystemTime::now())
+            .expect("legacy cleanup should complete");
+
+        assert_eq!(removed, 1);
+        assert!(!legacy_path.exists());
+        assert!(fresh_path.exists());
+        assert!(mismatched_path.exists());
+        assert!(current_path.exists());
+        assert!(invalid_path.exists());
+        assert!(non_file_path.exists());
+        assert!(
+            SystemTime::now()
+                .duration_since(
+                    std::fs::metadata(&fresh_path)
+                        .expect("fresh fixture metadata should read")
+                        .modified()
+                        .expect("fresh fixture timestamp should read")
+                )
+                .expect("fresh fixture should not be from the future")
+                < Duration::from_secs(LEGACY_WORKER_REQUEST_STALE_SECONDS)
+        );
     }
 
     #[test]
@@ -5320,6 +5512,7 @@ mod tests {
             &control,
             &context,
             vec![first, second],
+            &empty_scholarly_config(),
             None,
             &ProviderProxySelection::default(),
             IndexRunMetrics::default(),
@@ -5511,8 +5704,11 @@ mod tests {
         let captured = CapturedLogs::default();
         let mut output = Vec::new();
         let mut input = Vec::new();
-        write_message(&mut input, &worker_bootstrap(&request, None, None))
-            .expect("worker bootstrap should serialize");
+        write_message(
+            &mut input,
+            &worker_bootstrap(&request, &empty_scholarly_config(), None, None),
+        )
+        .expect("worker bootstrap should serialize");
         tracing::subscriber::with_default(captured.subscriber(), || {
             run_live_index_worker_with_io(&request_path, Cursor::new(input), &mut output)
                 .expect("worker entrypoint should stream terminal JSON")
@@ -5549,7 +5745,12 @@ mod tests {
         let mut input = Vec::new();
         write_message(
             &mut input,
-            &worker_bootstrap(&request, Some(sentinel), Some(proxy_sentinel)),
+            &worker_bootstrap(
+                &request,
+                &empty_scholarly_config(),
+                Some(sentinel),
+                Some(proxy_sentinel),
+            ),
         )
         .expect("domestic bootstrap should serialize");
         let mut output = Vec::new();
@@ -5589,6 +5790,7 @@ mod tests {
             worker_id: 0,
             cnki_captcha_token: Some(sentinel.to_string()),
             provider_proxy_url: None,
+            scholarly_config: Some(empty_scholarly_config()),
         };
         let mut input = Vec::new();
         write_message(&mut input, &bootstrap).expect("invalid bootstrap should serialize");
@@ -5617,6 +5819,30 @@ mod tests {
     }
 
     #[test]
+    fn worker_protocol_rejects_scholarly_config_for_domestic_worker() {
+        let sentinel = "domestic-scholarly-secret-sentinel";
+        let request = fetch_worker_request(CNKI_PROVIDER_NAME, "run-invalid-scholarly-bootstrap");
+        let bootstrap = LiveIndexWorkerBootstrap {
+            protocol_version: PROTOCOL_VERSION,
+            worker_id: request.worker_id,
+            cnki_captcha_token: None,
+            provider_proxy_url: None,
+            scholarly_config: Some(litradar_sources::LiveScholarlyConfig::from_value_pools(
+                10, sentinel, sentinel, sentinel,
+            )),
+        };
+        let mut input = Vec::new();
+        write_message(&mut input, &bootstrap).expect("invalid bootstrap should serialize");
+
+        let error = read_worker_bootstrap(&request, &mut Cursor::new(input))
+            .expect_err("domestic worker should reject Scholarly configuration");
+
+        assert!(matches!(error, LiveIndexError::InvalidConfig(_)));
+        assert!(!format!("{error:?}").contains(sentinel));
+        assert!(!format!("{bootstrap:?}").contains(sentinel));
+    }
+
+    #[test]
     fn worker_protocol_rejects_mismatched_bootstrap_identity() {
         let directory = tempdir().expect("temporary directory should create");
         let mut request = fetch_worker_request("scholarly", "run-bootstrap-mismatch");
@@ -5633,12 +5859,14 @@ mod tests {
                 worker_id: 0,
                 cnki_captcha_token: None,
                 provider_proxy_url: None,
+                scholarly_config: Some(empty_scholarly_config()),
             },
             LiveIndexWorkerBootstrap {
                 protocol_version: PROTOCOL_VERSION,
                 worker_id: 1,
                 cnki_captcha_token: None,
                 provider_proxy_url: None,
+                scholarly_config: Some(empty_scholarly_config()),
             },
         ];
 
@@ -5689,6 +5917,7 @@ mod tests {
                 &control,
                 &context,
                 vec![request],
+                &empty_scholarly_config(),
                 Some(sentinel),
                 &ProviderProxySelection::default(),
                 IndexRunMetrics::default(),
@@ -5716,11 +5945,11 @@ mod tests {
     }
 
     #[test]
-    fn worker_protocol_version_six_rejects_version_five_requests() {
+    fn worker_protocol_version_seven_rejects_version_six_requests() {
         let directory = tempdir().expect("temporary directory should create");
         let mut request = fetch_worker_request("scholarly", "run-version-mismatch");
-        assert_eq!(PROTOCOL_VERSION, 6);
-        request.protocol_version = 5;
+        assert_eq!(PROTOCOL_VERSION, 7);
+        request.protocol_version = 6;
         request.assignments.clear();
         let request_path = directory.path().join("worker-request.json");
         std::fs::write(
@@ -5731,8 +5960,11 @@ mod tests {
 
         let mut output = Vec::new();
         let mut input = Vec::new();
-        write_message(&mut input, &worker_bootstrap(&request, None, None))
-            .expect("worker bootstrap should serialize");
+        write_message(
+            &mut input,
+            &worker_bootstrap(&request, &empty_scholarly_config(), None, None),
+        )
+        .expect("worker bootstrap should serialize");
         run_live_index_worker_with_io(&request_path, Cursor::new(input), &mut output)
             .expect("worker entrypoint should emit a redacted terminal failure");
         let message: WorkerMessage = read_message(&mut Cursor::new(output))

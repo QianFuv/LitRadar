@@ -505,12 +505,14 @@ fn run_pressure(config: PressureConfig) -> PressureReport {
         }
     };
     let mut observations = Vec::with_capacity(config.expected_pages());
+    let scholarly_config = litradar_sources::LiveScholarlyConfig::from_value_pools(10, "", "", "");
     let execution = run_worker_processes_with_launcher(
         &request_dir,
         &content,
         &control,
         &context,
         requests,
+        &scholarly_config,
         None,
         &crate::live::ProviderProxySelection::default(),
         IndexRunMetrics {
@@ -652,9 +654,6 @@ fn pressure_requests(
                 source_worker_count: 1,
                 schedule_epoch_unix_millis: 0,
                 timeout_seconds: 10,
-                scholarly_config: litradar_sources::LiveScholarlyConfig::from_value_pools(
-                    10, "", "", "",
-                ),
                 assignments: vec![WorkerJournalAssignment {
                     journal_ordinal: worker_id,
                     entry,
