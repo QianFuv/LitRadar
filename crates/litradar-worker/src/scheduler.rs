@@ -230,6 +230,12 @@ struct ProcessExecution {
     output_summary: String,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum HeartbeatDirective {
+    Continue,
+    Stop,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ScheduledRunContext {
     worker_id: String,
@@ -268,7 +274,7 @@ trait ScheduledJobRunner {
         auth_db_path: &Path,
         task: &ScheduledTaskInfo,
         context: &ScheduledRunContext,
-        on_heartbeat: &mut dyn FnMut(),
+        on_heartbeat: &mut dyn FnMut() -> HeartbeatDirective,
     ) -> ProcessExecution;
 }
 
@@ -293,7 +299,7 @@ impl ScheduledJobRunner for ProcessScheduledJobRunner {
         auth_db_path: &Path,
         task: &ScheduledTaskInfo,
         context: &ScheduledRunContext,
-        on_heartbeat: &mut dyn FnMut(),
+        on_heartbeat: &mut dyn FnMut() -> HeartbeatDirective,
     ) -> ProcessExecution {
         task.job.as_ref().map_or_else(
             || ProcessExecution {
@@ -466,7 +472,9 @@ fn run_task_now_with_runner(
     validate_task(&task)?;
     let ran_at = current_unix_time();
     let context = ScheduledRunContext::for_manual_run(task.id);
-    let execution = runner.run(auth_db_path, &task, &context, &mut || {});
+    let execution = runner.run(auth_db_path, &task, &context, &mut || {
+        HeartbeatDirective::Continue
+    });
     litradar_storage::record_scheduled_task_run(auth_db_path, task.id, execution.status, ran_at)?;
     Ok(RunTaskOutcome {
         found: true,
@@ -719,22 +727,37 @@ fn execute_scheduled_claim_in_span(
     let mut is_heartbeat_lost = false;
     let execution = {
         let mut on_heartbeat = || {
-            if heartbeat_error.is_none() && !is_heartbeat_lost {
-                match litradar_storage::heartbeat_scheduled_run(
-                    auth_db_path,
-                    claim.run_id,
-                    &claim.worker_id,
-                    current_unix_time(),
-                    RUN_LEASE_SECONDS,
-                ) {
-                    Ok(true) => {}
-                    Ok(false) => is_heartbeat_lost = true,
-                    Err(error) => heartbeat_error = Some(error),
+            if heartbeat_error.is_some() || is_heartbeat_lost {
+                return HeartbeatDirective::Stop;
+            }
+            match litradar_storage::heartbeat_scheduled_run(
+                auth_db_path,
+                claim.run_id,
+                &claim.worker_id,
+                current_unix_time(),
+                RUN_LEASE_SECONDS,
+            ) {
+                Ok(true) => HeartbeatDirective::Continue,
+                Ok(false) => {
+                    is_heartbeat_lost = true;
+                    HeartbeatDirective::Stop
+                }
+                Err(error) => {
+                    heartbeat_error = Some(error);
+                    HeartbeatDirective::Stop
                 }
             }
         };
         runner.run(auth_db_path, &claim.task, &context, &mut on_heartbeat)
     };
+    if let Some(error) = heartbeat_error {
+        emit_scheduler_claim_failure(elapsed_started_at, "heartbeat_error");
+        return Err(error.into());
+    }
+    if is_heartbeat_lost {
+        emit_scheduler_claim_failure(elapsed_started_at, "heartbeat_lost");
+        return Err(SchedulerError::HeartbeatLost);
+    }
     let finished_at = current_unix_time();
     let did_finish = match litradar_storage::finish_scheduled_run(
         auth_db_path,
@@ -749,11 +772,7 @@ fn execute_scheduled_claim_in_span(
             return Err(error.into());
         }
     };
-    if let Some(error) = heartbeat_error {
-        emit_scheduler_claim_failure(elapsed_started_at, "heartbeat_error");
-        return Err(error.into());
-    }
-    if is_heartbeat_lost || !did_finish {
+    if !did_finish {
         emit_scheduler_claim_failure(elapsed_started_at, "heartbeat_lost");
         return Err(SchedulerError::HeartbeatLost);
     }
@@ -874,7 +893,7 @@ struct ScheduledProcess {
 fn execute_scheduled_job(
     context: ScheduledJobExecutionContext<'_>,
     job: &ScheduledJobSpec,
-    on_heartbeat: &mut dyn FnMut(),
+    on_heartbeat: &mut dyn FnMut() -> HeartbeatDirective,
 ) -> ProcessExecution {
     let started_at = Instant::now();
     let run_span = tracing::info_span!(
@@ -901,7 +920,7 @@ fn execute_scheduled_job(
 fn execute_scheduled_job_in_span(
     context: &ScheduledJobExecutionContext<'_>,
     job: &ScheduledJobSpec,
-    on_heartbeat: &mut dyn FnMut(),
+    on_heartbeat: &mut dyn FnMut() -> HeartbeatDirective,
 ) -> ProcessExecution {
     let processes = match scheduled_processes(
         context.auth_db_path,
@@ -957,7 +976,7 @@ fn execute_scheduled_process(
     deadline: Instant,
     context: &ScheduledRunContext,
     cancellation: &SchedulerCancellation,
-    on_heartbeat: &mut dyn FnMut(),
+    on_heartbeat: &mut dyn FnMut() -> HeartbeatDirective,
 ) -> ProcessExecution {
     let child_span = tracing::info_span!(
         "scheduler.child",
@@ -970,7 +989,14 @@ fn execute_scheduled_process(
         process_number,
     );
     child_span.in_scope(|| {
-        execute_scheduled_process_in_span(process, deadline, context, cancellation, on_heartbeat)
+        execute_scheduled_process_in_span(
+            process,
+            deadline,
+            context,
+            cancellation,
+            PROCESS_HEARTBEAT_INTERVAL,
+            on_heartbeat,
+        )
     })
 }
 
@@ -979,6 +1005,7 @@ enum ProcessTerminal {
     Success,
     Cancelled,
     TimedOut,
+    HeartbeatLost,
     ExitFailed(Option<i32>),
     SupervisorFailed(ProcessSupervisorErrorKind),
 }
@@ -988,7 +1015,8 @@ fn execute_scheduled_process_in_span(
     deadline: Instant,
     context: &ScheduledRunContext,
     cancellation: &SchedulerCancellation,
-    on_heartbeat: &mut dyn FnMut(),
+    heartbeat_interval: Duration,
+    on_heartbeat: &mut dyn FnMut() -> HeartbeatDirective,
 ) -> ProcessExecution {
     let started_at = Instant::now();
     tracing::info!(
@@ -1043,8 +1071,13 @@ fn execute_scheduled_process_in_span(
                 break ProcessTerminal::SupervisorFailed(error_kind);
             }
         }
-        if last_heartbeat.elapsed() >= PROCESS_HEARTBEAT_INTERVAL {
-            on_heartbeat();
+        if last_heartbeat.elapsed() >= heartbeat_interval {
+            if on_heartbeat() == HeartbeatDirective::Stop {
+                break match child.terminate_tree(PROCESS_TERMINATION_GRACE) {
+                    Ok(_) => ProcessTerminal::HeartbeatLost,
+                    Err(error) => ProcessTerminal::SupervisorFailed(error.kind()),
+                };
+            }
             last_heartbeat = Instant::now();
         }
         thread::sleep(PROCESS_POLL_INTERVAL);
@@ -1063,6 +1096,7 @@ fn process_execution(
         ProcessTerminal::Success => SchedulerRunState::Success,
         ProcessTerminal::Cancelled => SchedulerRunState::Cancelled,
         ProcessTerminal::TimedOut => SchedulerRunState::TimedOut,
+        ProcessTerminal::HeartbeatLost => SchedulerRunState::Unknown,
         ProcessTerminal::SupervisorFailed(_) => SchedulerRunState::Error,
         ProcessTerminal::ExitFailed(_) => SchedulerRunState::Failed,
     };
@@ -1070,6 +1104,7 @@ fn process_execution(
         ProcessTerminal::Success => String::new(),
         ProcessTerminal::Cancelled => format!("{command}: cancelled"),
         ProcessTerminal::TimedOut => format!("{command}: timed out"),
+        ProcessTerminal::HeartbeatLost => format!("{command}: heartbeat lost"),
         ProcessTerminal::ExitFailed(Some(exit_code)) => {
             format!("{command}: exit code {exit_code}")
         }
@@ -1123,6 +1158,7 @@ fn process_terminal_status(terminal: ProcessTerminal) -> &'static str {
         ProcessTerminal::Success => "success",
         ProcessTerminal::Cancelled => "cancelled",
         ProcessTerminal::TimedOut => "timed_out",
+        ProcessTerminal::HeartbeatLost => "unknown",
         ProcessTerminal::SupervisorFailed(_) => "error",
         ProcessTerminal::ExitFailed(_) => "failed",
     }
@@ -1133,6 +1169,7 @@ fn process_terminal_error_kind(terminal: ProcessTerminal) -> &'static str {
         ProcessTerminal::Success => "none",
         ProcessTerminal::Cancelled => "cancelled",
         ProcessTerminal::TimedOut => "timeout",
+        ProcessTerminal::HeartbeatLost => "heartbeat_lost",
         ProcessTerminal::ExitFailed(_) => "nonzero_exit",
         ProcessTerminal::SupervisorFailed(error_kind) => error_kind.as_str(),
     }
@@ -1922,6 +1959,41 @@ mod tests {
     }
 
     #[test]
+    fn scheduler_heartbeat_storage_error_returns_after_stop_directive() {
+        let temp_dir = tempdir().expect("temp dir should be created");
+        let auth_db_path = temp_dir.path().join("auth.sqlite");
+        initialize_auth_database(&auth_db_path).expect("auth database should initialize");
+        create_index_task(&auth_db_path, "heartbeat-error", "* * * * *", true);
+        let now = unix_seconds(2026, 7, 6, 10, 30, 0) as f64;
+        set_task_created_at(&auth_db_path, now - 3_600.0);
+        litradar_storage::record_scheduler_check(&auth_db_path, now - 60.0)
+            .expect("scheduler cursor should be set");
+        let logs = CapturedLogs::default();
+        let mut runner = HeartbeatStorageErrorRunner::default();
+
+        let error = logs
+            .capture(|| {
+                run_due_scheduler_once_at_with_runner(
+                    &auth_db_path,
+                    "worker-heartbeat-error",
+                    now,
+                    &mut runner,
+                )
+            })
+            .expect_err("heartbeat storage error should fail the claim");
+
+        assert!(matches!(error, SchedulerError::Storage(_)));
+        assert!(runner.did_receive_stop);
+        let failed = logs
+            .events()
+            .into_iter()
+            .filter(|event| event["event"] == "scheduler.claim.failed")
+            .collect::<Vec<_>>();
+        assert_eq!(failed.len(), 1);
+        assert_eq!(failed[0]["error_kind"], "heartbeat_error");
+    }
+
+    #[test]
     fn concurrent_fixture_workers_execute_one_side_effect_per_slot() {
         let temp_dir = tempdir().expect("temp dir should be created");
         let auth_db_path = temp_dir.path().join("auth.sqlite");
@@ -2036,6 +2108,58 @@ mod tests {
     }
 
     #[test]
+    fn scheduler_heartbeat_stop_terminates_and_reaps_the_process_tree() {
+        let executable = std::env::current_exe().expect("test executable should resolve");
+        let directory = tempdir().expect("temporary process-tree directory should create");
+        let heartbeat_path = directory.path().join("lost-lease-heartbeat.txt");
+        let process = ScheduledProcess {
+            command: "test-heartbeat-loss",
+            executable: executable.into_os_string(),
+            arguments: vec![
+                "--ignored".into(),
+                "--exact".into(),
+                "scheduler::tests::scheduler_timeout_child_fixture".into(),
+                "--nocapture".into(),
+                "--".into(),
+                PROCESS_TREE_HEARTBEAT_ARGUMENT.into(),
+                heartbeat_path.as_os_str().to_owned(),
+            ],
+        };
+        let logs = CapturedLogs::default();
+        let callback_heartbeat_path = heartbeat_path.clone();
+        let mut heartbeat_calls = 0_usize;
+
+        let (result, process_elapsed) = logs.capture(|| {
+            let started_at = Instant::now();
+            let result = execute_scheduled_process_in_span(
+                process,
+                Instant::now() + Duration::from_secs(5),
+                &test_run_context(),
+                &SchedulerCancellation::new(),
+                Duration::from_millis(25),
+                &mut || {
+                    heartbeat_calls = heartbeat_calls.saturating_add(1);
+                    if std::fs::read_to_string(&callback_heartbeat_path)
+                        .is_ok_and(|heartbeat| !heartbeat.is_empty())
+                    {
+                        HeartbeatDirective::Stop
+                    } else {
+                        HeartbeatDirective::Continue
+                    }
+                },
+            );
+            (result, started_at.elapsed())
+        });
+
+        assert_eq!(result.status, SchedulerRunState::Unknown);
+        assert!(result.output_summary.contains("heartbeat lost"));
+        assert!(heartbeat_calls > 0);
+        assert!(process_elapsed < Duration::from_secs(3));
+        assert_process_tree_heartbeat_stopped(&heartbeat_path);
+        assert_single_child_failure(&logs, "heartbeat_lost");
+    }
+
+    #[test]
     fn scheduler_process_timeout_terminates_child_and_bounds_output() {
         let executable = std::env::current_exe().expect("test executable should resolve");
         let directory = tempdir().expect("temporary process-tree directory should create");
@@ -2063,7 +2187,7 @@ mod tests {
                 Instant::now() + Duration::from_secs(5),
                 &test_run_context(),
                 &SchedulerCancellation::new(),
-                &mut || {},
+                &mut || HeartbeatDirective::Continue,
             );
             (result, started_at.elapsed())
         });
@@ -2114,7 +2238,7 @@ mod tests {
                 Instant::now() + Duration::from_secs(5),
                 &test_run_context(),
                 &cancellation,
-                &mut || {},
+                &mut || HeartbeatDirective::Continue,
             );
             let process_elapsed = started_at.elapsed();
             cancel_thread
@@ -2179,7 +2303,7 @@ mod tests {
                 Instant::now() + Duration::from_secs(5),
                 &test_run_context(),
                 &SchedulerCancellation::new(),
-                &mut || {},
+                &mut || HeartbeatDirective::Continue,
             )
         });
 
@@ -2216,7 +2340,7 @@ mod tests {
                 Instant::now() + Duration::from_secs(1),
                 &test_run_context(),
                 &SchedulerCancellation::new(),
-                &mut || {},
+                &mut || HeartbeatDirective::Continue,
             )
         });
 
@@ -2252,7 +2376,7 @@ mod tests {
                 Instant::now() + Duration::from_secs(5),
                 &test_run_context(),
                 &SchedulerCancellation::new(),
-                &mut || {},
+                &mut || HeartbeatDirective::Continue,
             )
         });
 
@@ -2491,11 +2615,11 @@ mod tests {
             _auth_db_path: &Path,
             task: &ScheduledTaskInfo,
             _context: &ScheduledRunContext,
-            on_heartbeat: &mut dyn FnMut(),
+            on_heartbeat: &mut dyn FnMut() -> HeartbeatDirective,
         ) -> ProcessExecution {
             self.jobs
                 .push(task.job.clone().expect("fixture task should have a job"));
-            on_heartbeat();
+            let _ = on_heartbeat();
             ProcessExecution {
                 status: self.statuses.pop().unwrap_or(SchedulerRunState::Success),
                 output_summary: "fixture output".to_string(),
@@ -2513,10 +2637,10 @@ mod tests {
             _auth_db_path: &Path,
             _task: &ScheduledTaskInfo,
             _context: &ScheduledRunContext,
-            on_heartbeat: &mut dyn FnMut(),
+            on_heartbeat: &mut dyn FnMut() -> HeartbeatDirective,
         ) -> ProcessExecution {
             self.side_effects.fetch_add(1, Ordering::SeqCst);
-            on_heartbeat();
+            let _ = on_heartbeat();
             ProcessExecution {
                 status: SchedulerRunState::Success,
                 output_summary: "fixture output".to_string(),
@@ -2532,7 +2656,7 @@ mod tests {
             auth_db_path: &Path,
             task: &ScheduledTaskInfo,
             _context: &ScheduledRunContext,
-            on_heartbeat: &mut dyn FnMut(),
+            on_heartbeat: &mut dyn FnMut() -> HeartbeatDirective,
         ) -> ProcessExecution {
             let connection = litradar_storage::open_sqlite_connection(auth_db_path)
                 .expect("scheduler database should open");
@@ -2543,7 +2667,37 @@ mod tests {
                     [task.id],
                 )
                 .expect("running claim should be invalidated");
-            on_heartbeat();
+            assert_eq!(on_heartbeat(), HeartbeatDirective::Stop);
+            ProcessExecution {
+                status: SchedulerRunState::Success,
+                output_summary: String::new(),
+            }
+        }
+    }
+
+    #[derive(Default)]
+    struct HeartbeatStorageErrorRunner {
+        did_receive_stop: bool,
+    }
+
+    impl ScheduledJobRunner for HeartbeatStorageErrorRunner {
+        fn run(
+            &mut self,
+            auth_db_path: &Path,
+            _task: &ScheduledTaskInfo,
+            _context: &ScheduledRunContext,
+            on_heartbeat: &mut dyn FnMut() -> HeartbeatDirective,
+        ) -> ProcessExecution {
+            let connection = litradar_storage::open_sqlite_connection(auth_db_path)
+                .expect("scheduler database should open");
+            connection
+                .execute(
+                    "ALTER TABLE scheduled_task_runs RENAME TO unavailable_scheduled_task_runs",
+                    [],
+                )
+                .expect("scheduled run table should become unavailable");
+            drop(connection);
+            self.did_receive_stop = on_heartbeat() == HeartbeatDirective::Stop;
             ProcessExecution {
                 status: SchedulerRunState::Success,
                 output_summary: String::new(),
