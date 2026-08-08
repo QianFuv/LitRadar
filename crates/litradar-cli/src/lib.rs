@@ -32,6 +32,25 @@ const DEFAULT_INDEX_WORKER_COUNT: usize = 6;
 const DEFAULT_INDEX_PROCESS_COUNT: usize = 1;
 const DEFAULT_INDEX_ISSUE_BATCH_SIZE: usize = 8;
 
+#[derive(Debug)]
+struct DeliveryCommandStatusError {
+    command: &'static str,
+    status: DeliveryOutcomeState,
+}
+
+impl std::fmt::Display for DeliveryCommandStatusError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            formatter,
+            "{} delivery finished with {} status",
+            self.command,
+            self.status.as_str()
+        )
+    }
+}
+
+impl Error for DeliveryCommandStatusError {}
+
 fn run_cli_command(
     command: &'static str,
     operation: impl FnOnce() -> Result<(), Box<dyn Error>>,
@@ -752,36 +771,54 @@ fn run_delivery_command_inner(
         })?;
         outcomes.push(outcome);
     }
+    let status = aggregate_delivery_status(&outcomes);
     let payload = json!({
         "workflow": workflow,
         "mode": mode,
-        "status": aggregate_delivery_status(&outcomes),
+        "status": status,
         "databases": outcomes,
     });
     print_result(&serde_json::to_string(&payload)?);
+    ensure_delivery_command_success(command_name, status)?;
     Ok(())
 }
 
 fn aggregate_delivery_status(
     outcomes: &[litradar_worker::delivery::RecommendationRunOutcome],
 ) -> DeliveryOutcomeState {
-    if outcomes
+    outcomes
         .iter()
-        .any(|outcome| outcome.status == DeliveryOutcomeState::Unknown)
-    {
-        DeliveryOutcomeState::Unknown
-    } else if outcomes
-        .iter()
-        .any(|outcome| outcome.status == DeliveryOutcomeState::Failed)
-    {
-        DeliveryOutcomeState::Failed
-    } else if outcomes
-        .iter()
-        .all(|outcome| outcome.status == DeliveryOutcomeState::Idle)
-    {
+        .map(|outcome| outcome.status)
+        .max_by_key(|status| delivery_status_priority(*status))
+        .unwrap_or(DeliveryOutcomeState::Idle)
+}
+
+fn delivery_status_priority(status: DeliveryOutcomeState) -> u8 {
+    match status {
+        DeliveryOutcomeState::Idle => 0,
+        DeliveryOutcomeState::Skipped => 1,
+        DeliveryOutcomeState::Completed => 2,
+        DeliveryOutcomeState::Running => 3,
+        DeliveryOutcomeState::Cancelled => 4,
+        DeliveryOutcomeState::TimedOut => 5,
+        DeliveryOutcomeState::Failed => 6,
+        DeliveryOutcomeState::Unknown => 7,
+    }
+}
+
+fn ensure_delivery_command_success(
+    command: &'static str,
+    status: DeliveryOutcomeState,
+) -> Result<(), DeliveryCommandStatusError> {
+    match status {
         DeliveryOutcomeState::Idle
-    } else {
-        DeliveryOutcomeState::Completed
+        | DeliveryOutcomeState::Completed
+        | DeliveryOutcomeState::Skipped => Ok(()),
+        DeliveryOutcomeState::Running
+        | DeliveryOutcomeState::Failed
+        | DeliveryOutcomeState::Cancelled
+        | DeliveryOutcomeState::TimedOut
+        | DeliveryOutcomeState::Unknown => Err(DeliveryCommandStatusError { command, status }),
     }
 }
 
@@ -1189,14 +1226,14 @@ mod tests {
     use tempfile::{Builder, TempDir};
 
     use super::{
-        admin_usage, aggregate_delivery_status, delivery_usage, extract_auth_db_path,
-        extract_bool_pair, extract_string_option, extract_usize_option, index_concurrency_payload,
-        index_usage, live_index_runtime_config, migrate_command_databases,
-        migrate_index_command_databases, normalize_db_name, parse_index_options,
-        prepare_index_managed_meta, resolve_delivery_targets, resolve_project_path,
-        run_admin_command_with_reader, run_index_command, run_index_command_with_bundled_meta_dir,
-        run_notify_command, run_push_command, run_scheduler_command, scheduler_usage,
-        serialize_index_outcome, IndexOptions,
+        admin_usage, aggregate_delivery_status, delivery_usage, ensure_delivery_command_success,
+        extract_auth_db_path, extract_bool_pair, extract_string_option, extract_usize_option,
+        index_concurrency_payload, index_usage, live_index_runtime_config,
+        migrate_command_databases, migrate_index_command_databases, normalize_db_name,
+        parse_index_options, prepare_index_managed_meta, resolve_delivery_targets,
+        resolve_project_path, run_admin_command_with_reader, run_index_command,
+        run_index_command_with_bundled_meta_dir, run_notify_command, run_push_command,
+        run_scheduler_command, scheduler_usage, serialize_index_outcome, IndexOptions,
     };
     use litradar_index::{LiveCsvIndexOutcome, LiveIndexOutcome};
     use litradar_worker::delivery::{
@@ -2188,7 +2225,7 @@ mod tests {
     }
 
     #[test]
-    fn delivery_status_aggregation_preserves_failure_and_unknown() {
+    fn delivery_status_aggregation_and_exit_contract_cover_every_state() {
         let outcome = |status: DeliveryOutcomeState| RecommendationRunOutcome {
             db_name: "fixture.sqlite".to_string(),
             workflow: DeliveryWorkflow::Notify,
@@ -2199,31 +2236,59 @@ mod tests {
             subscribers: Vec::new(),
         };
 
-        assert_eq!(
-            aggregate_delivery_status(&[outcome(DeliveryOutcomeState::Idle)]),
-            DeliveryOutcomeState::Idle
-        );
-        assert_eq!(
-            aggregate_delivery_status(&[
-                outcome(DeliveryOutcomeState::Idle),
-                outcome(DeliveryOutcomeState::Completed)
-            ]),
-            DeliveryOutcomeState::Completed
-        );
-        assert_eq!(
-            aggregate_delivery_status(&[
-                outcome(DeliveryOutcomeState::Completed),
-                outcome(DeliveryOutcomeState::Failed)
-            ]),
-            DeliveryOutcomeState::Failed
-        );
-        assert_eq!(
-            aggregate_delivery_status(&[
-                outcome(DeliveryOutcomeState::Failed),
-                outcome(DeliveryOutcomeState::Unknown)
-            ]),
-            DeliveryOutcomeState::Unknown
-        );
+        assert_eq!(aggregate_delivery_status(&[]), DeliveryOutcomeState::Idle);
+        for status in [
+            DeliveryOutcomeState::Idle,
+            DeliveryOutcomeState::Skipped,
+            DeliveryOutcomeState::Completed,
+            DeliveryOutcomeState::Running,
+            DeliveryOutcomeState::Cancelled,
+            DeliveryOutcomeState::TimedOut,
+            DeliveryOutcomeState::Failed,
+            DeliveryOutcomeState::Unknown,
+        ] {
+            assert_eq!(aggregate_delivery_status(&[outcome(status)]), status);
+        }
+        let precedence = [
+            DeliveryOutcomeState::Idle,
+            DeliveryOutcomeState::Skipped,
+            DeliveryOutcomeState::Completed,
+            DeliveryOutcomeState::Running,
+            DeliveryOutcomeState::Cancelled,
+            DeliveryOutcomeState::TimedOut,
+            DeliveryOutcomeState::Failed,
+            DeliveryOutcomeState::Unknown,
+        ];
+        for (expected_index, expected) in precedence.iter().copied().enumerate() {
+            let outcomes = precedence[..=expected_index]
+                .iter()
+                .copied()
+                .map(&outcome)
+                .collect::<Vec<_>>();
+            assert_eq!(aggregate_delivery_status(&outcomes), expected);
+        }
+        for status in [
+            DeliveryOutcomeState::Idle,
+            DeliveryOutcomeState::Skipped,
+            DeliveryOutcomeState::Completed,
+        ] {
+            ensure_delivery_command_success("notify", status)
+                .expect("successful terminal state should exit zero");
+        }
+        for status in [
+            DeliveryOutcomeState::Running,
+            DeliveryOutcomeState::Cancelled,
+            DeliveryOutcomeState::TimedOut,
+            DeliveryOutcomeState::Failed,
+            DeliveryOutcomeState::Unknown,
+        ] {
+            let error = ensure_delivery_command_success("push", status)
+                .expect_err("non-success state should exit nonzero");
+            assert_eq!(
+                error.to_string(),
+                format!("push delivery finished with {} status", status.as_str())
+            );
+        }
     }
 
     #[test]

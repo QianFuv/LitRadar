@@ -529,6 +529,153 @@ fn notify_and_push_commands_complete_with_local_idle_state() {
 }
 
 #[test]
+fn notify_and_push_emit_terminal_json_before_nonzero_exit() {
+    let root = tempdir().expect("temporary project root should be created");
+    let storage_config = litradar_storage::StorageConfig::from_project_root(root.path());
+    let secret_key_file = root.path().join("secret.key");
+    fs::write(&secret_key_file, [29_u8; 32]).expect("secret key should write");
+    litradar_storage::migrate_storage(&storage_config).expect("storage should migrate");
+    litradar_storage::migrate_index_database(
+        storage_config.index_dir().join("fixture.sqlite"),
+        None,
+    )
+    .expect("fixture index should migrate");
+
+    for (command, workflow, terminal_status) in [
+        (
+            "notify",
+            litradar_storage::DeliveryWorkflow::Notify,
+            litradar_storage::DeliveryRunStatus::Failed,
+        ),
+        (
+            "notify",
+            litradar_storage::DeliveryWorkflow::Notify,
+            litradar_storage::DeliveryRunStatus::Unknown,
+        ),
+        (
+            "push",
+            litradar_storage::DeliveryWorkflow::Push,
+            litradar_storage::DeliveryRunStatus::Failed,
+        ),
+        (
+            "push",
+            litradar_storage::DeliveryWorkflow::Push,
+            litradar_storage::DeliveryRunStatus::Unknown,
+        ),
+    ] {
+        let external_id = format!("terminal-{command}-{}", terminal_status.as_str());
+        seed_terminal_delivery_run(
+            storage_config.auth_db_path(),
+            workflow,
+            &external_id,
+            terminal_status,
+        );
+        let manifest_name = format!("{external_id}.changes.json");
+        fs::write(
+            root.path().join(&manifest_name),
+            serde_json::to_vec(&serde_json::json!({
+                "db_name": "fixture.sqlite",
+                "run_id": external_id,
+                "changed_issue_keys": [],
+                "changed_inpress_journal_ids": [],
+                "notifiable_article_ids": [],
+            }))
+            .expect("manifest should serialize"),
+        )
+        .expect("manifest should write");
+
+        let output = run_litradar_in(
+            root.path(),
+            &[
+                command,
+                "--project-root",
+                ".",
+                "--secret-key-file",
+                "secret.key",
+                "--changes-file",
+                &manifest_name,
+                "--no-dry-run",
+            ],
+        );
+        let stdout = String::from_utf8(output.stdout.clone()).expect("stdout should be UTF-8");
+        let payload: Value =
+            serde_json::from_str(stdout.trim()).expect("terminal output should be JSON");
+
+        assert!(!output.status.success(), "{command} should exit nonzero");
+        assert_eq!(stdout.lines().count(), 1);
+        assert_eq!(payload["workflow"], command);
+        assert_eq!(payload["status"], terminal_status.as_str());
+        assert_eq!(payload["databases"][0]["status"], terminal_status.as_str());
+        let events = log_events(&output);
+        assert!(events
+            .iter()
+            .any(|event| event["event"] == "cli.command.failed"));
+        assert!(events
+            .iter()
+            .any(|event| event["event"] == "process.failed"));
+    }
+}
+
+fn seed_terminal_delivery_run(
+    auth_db_path: &Path,
+    workflow: litradar_storage::DeliveryWorkflow,
+    external_id: &str,
+    terminal_status: litradar_storage::DeliveryRunStatus,
+) {
+    let queued = match litradar_storage::admit_delivery_run(
+        auth_db_path,
+        &litradar_storage::DeliveryRunCreate {
+            external_id: external_id.to_string(),
+            workflow,
+            scope_key: "fixture.sqlite".to_string(),
+            db_name: Some("fixture.sqlite".to_string()),
+            trigger_kind: litradar_storage::DeliveryTriggerKind::Scheduled,
+            mode: litradar_storage::DeliveryRunMode::Execute,
+            user_id: None,
+            deadline_at: None,
+            created_at: 10.0,
+        },
+    )
+    .expect("terminal fixture should admit")
+    {
+        litradar_storage::DeliveryRunAdmissionOutcome::Enqueued(run) => run,
+        admission => panic!("unexpected terminal fixture admission: {admission:?}"),
+    };
+    let claimed = match litradar_storage::claim_delivery_run(
+        auth_db_path,
+        queued.id,
+        "terminal-fixture-owner",
+        queued.revision,
+        11.0,
+        60.0,
+    )
+    .expect("terminal fixture should claim")
+    {
+        litradar_storage::DeliveryRunClaimOutcome::Claimed(run) => run,
+        claim => panic!("unexpected terminal fixture claim: {claim:?}"),
+    };
+    let running = litradar_storage::start_delivery_run(
+        auth_db_path,
+        claimed.id,
+        "terminal-fixture-owner",
+        claimed.revision,
+        12.0,
+    )
+    .expect("terminal fixture should start");
+    litradar_storage::finalize_delivery_run(
+        auth_db_path,
+        running.id,
+        "terminal-fixture-owner",
+        running.revision,
+        terminal_status,
+        None,
+        Some("terminal_fixture"),
+        13.0,
+    )
+    .expect("terminal fixture should finalize");
+}
+
+#[test]
 fn scheduler_dry_run_and_run_once_use_the_real_child_boundary() {
     let root = tempdir().expect("temporary project root should be created");
     let storage_config = litradar_storage::StorageConfig::from_project_root(root.path());

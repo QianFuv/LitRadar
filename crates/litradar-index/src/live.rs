@@ -1092,6 +1092,11 @@ where
                     LiveRunTime::now().epoch_seconds,
                 )?;
             }
+            if persisted.notify_exit_code != Some(0) {
+                return Err(LiveIndexError::Notify(
+                    "notification handoff did not complete successfully".to_string(),
+                ));
+            }
             complete_catalog(
                 batch_connection,
                 &batch.batch_id,
@@ -4412,21 +4417,35 @@ mod tests {
                 .phase,
             BatchCatalogPhase::Notifying
         );
-        let mut notified_outcome = read_batch_catalogs(&batch_connection, &failed_retry.batch_id)
-            .expect("notifying outcome should read")[0]
-            .outcome
-            .clone()
-            .expect("notifying outcome should exist");
-        notified_outcome.notify_exit_code = Some(7);
-        store_catalog_outcome(
+        let nonzero_error = run_batch_catalogs_with(
+            &config,
             &batch_connection,
-            &failed_retry.batch_id,
-            "failed-notify-owner",
-            0,
-            &notified_outcome,
-            now,
+            &failed_retry,
+            &request,
+            |_, _, _| {
+                provider_calls += 1;
+                Err(LiveIndexError::ProviderSetup(
+                    "provider must not run during notify recovery".to_string(),
+                ))
+            },
+            |_, _, _| {
+                notify_calls += 1;
+                Ok(7)
+            },
         )
-        .expect("successful notification result should persist before a simulated crash");
+        .expect_err("nonzero notification result should keep the batch incomplete");
+        assert!(matches!(nonzero_error, LiveIndexError::Notify(_)));
+        assert_eq!(provider_calls, 0);
+        assert_eq!(notify_calls, 2);
+        assert_eq!(
+            read_batch_catalogs(&batch_connection, &failed_retry.batch_id)
+                .expect("notifying outcome should read")[0]
+                .outcome
+                .as_ref()
+                .expect("notifying outcome should exist")
+                .notify_exit_code,
+            Some(7)
+        );
         release_batch_lease(
             &batch_connection,
             &failed_retry.batch_id,
@@ -4434,11 +4453,11 @@ mod tests {
         )
         .expect("failed notification should release its lease");
 
-        let successful_retry = match admit_batch(
+        let persisted_failure_retry = match admit_batch(
             &batch_connection,
             &request,
             true,
-            "successful-notify-owner",
+            "persisted-failure-owner",
             now,
         )
         .expect("batch should resume again")
@@ -4446,10 +4465,10 @@ mod tests {
             BatchAdmission::Ready(batch) => batch,
             BatchAdmission::Abandoning(_) => panic!("compatible batch should be ready"),
         };
-        let outcomes = run_batch_catalogs_with(
+        let error = run_batch_catalogs_with(
             &config,
             &batch_connection,
-            &successful_retry,
+            &persisted_failure_retry,
             &request,
             |_, _, _| {
                 provider_calls += 1;
@@ -4464,16 +4483,16 @@ mod tests {
                 ))
             },
         )
-        .expect("persisted notification result should complete without another handoff");
+        .expect_err("persisted nonzero notification must keep the batch incomplete");
 
+        assert!(matches!(error, LiveIndexError::Notify(_)));
         assert_eq!(provider_calls, 0);
-        assert_eq!(notify_calls, 1);
-        assert_eq!(outcomes[0].notify_exit_code, Some(7));
+        assert_eq!(notify_calls, 2);
         assert_eq!(
-            read_batch_catalogs(&batch_connection, &successful_retry.batch_id)
+            read_batch_catalogs(&batch_connection, &persisted_failure_retry.batch_id)
                 .expect("catalog state should read")[0]
                 .phase,
-            BatchCatalogPhase::Completed
+            BatchCatalogPhase::Notifying
         );
     }
 
