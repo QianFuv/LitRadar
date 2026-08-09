@@ -14,8 +14,9 @@ import {
   parseSettingsSection,
   SETTINGS_SECTION_IDS,
 } from '@/lib/settings-center';
-import { renderWithQuery } from '@/tests/render';
+import { idleManualPushStatusResponse } from '@/tests/mocks/handlers/tracking';
 import { server } from '@/tests/mocks/server';
+import { renderWithQuery } from '@/tests/render';
 
 const navigationMocks = vi.hoisted(() => ({
   pathname: '/',
@@ -60,6 +61,7 @@ function installTrackingHandlers(): void {
         notification_configured: false,
       }),
     ),
+    http.get('http://localhost/api/tracking/push-weekly/status', idleManualPushStatusResponse),
     http.get('http://localhost/api/meta/databases', () => HttpResponse.json(['fixture.sqlite'])),
     http.get('http://localhost/api/favorites/folders', () =>
       HttpResponse.json([

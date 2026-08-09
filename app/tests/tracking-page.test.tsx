@@ -8,6 +8,7 @@ import { http, HttpResponse } from 'msw';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 
 import { TrackingSettingsContent } from '@/components/tracking/tracking-settings-content';
+import { idleManualPushStatusResponse } from '@/tests/mocks/handlers/tracking';
 import { server } from '@/tests/mocks/server';
 import { renderWithQuery } from '@/tests/render';
 
@@ -431,6 +432,9 @@ async function reportsTrackingFolderFailure(): Promise<void> {
 
 beforeEach(() => {
   savedSettingsPayload = null;
+  server.use(
+    http.get('http://localhost/api/tracking/push-weekly/status', idleManualPushStatusResponse),
+  );
   Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {
     configurable: true,
     value: vi.fn(),
