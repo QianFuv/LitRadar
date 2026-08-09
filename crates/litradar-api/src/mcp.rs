@@ -573,6 +573,7 @@ fn business_tool_error_message(error: &BusinessRepositoryError) -> String {
         BusinessRepositoryError::Sqlite(_)
         | BusinessRepositoryError::Io(_)
         | BusinessRepositoryError::Json(_)
+        | BusinessRepositoryError::InvalidNotificationListState
         | BusinessRepositoryError::Secret(_)
         | BusinessRepositoryError::UnknownRuntimeSetting(_)
         | BusinessRepositoryError::InvalidRuntimeBoolean(_)
@@ -696,15 +697,24 @@ mod tests {
     use axum::http::{Method, Request, StatusCode};
     use axum::response::Response;
     use axum::Router;
+    use litradar_storage::BusinessRepositoryError;
     use serde_json::{json, Value};
     use tower::ServiceExt;
 
-    use super::{optional_text, text_vec, StringOrStrings};
+    use super::{business_tool_error_message, optional_text, text_vec, StringOrStrings};
     use crate::test_support::TestBackend;
 
     const INITIALIZE_BODY: &str = r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"litradar-api-test","version":"0.1.0"}}}"#;
     const INITIALIZED_BODY: &str = r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#;
     const TOOLS_LIST_BODY: &str = r#"{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}"#;
+
+    #[test]
+    fn mcp_invalid_notification_state_is_redacted() {
+        assert_eq!(
+            business_tool_error_message(&BusinessRepositoryError::InvalidNotificationListState),
+            "Internal Server Error"
+        );
+    }
 
     #[test]
     fn mcp_argument_bounds_count_unicode_characters_and_array_items() {
