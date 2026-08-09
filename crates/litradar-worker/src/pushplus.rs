@@ -14,8 +14,6 @@ use crate::retry::{bounded_retry_attempts, retry_delay};
 /// PushPlus send endpoint.
 pub const PUSHPLUS_ENDPOINT: &str = "https://www.pushplus.plus/send";
 
-const TRANSIENT_STATUS_CODES: [u16; 4] = [429, 502, 503, 504];
-
 /// Error returned by PushPlus delivery clients.
 #[derive(Debug, Clone, PartialEq)]
 pub enum PushPlusError {
@@ -387,10 +385,9 @@ impl<T: PushPlusTransport> PushPlusClient<T> {
                         should_retry,
                         attempt_started_at,
                     );
-                    let retry_after_seconds = pushplus_retry_after_seconds(&error);
                     last_error = error;
                     if should_retry {
-                        let delay = retry_delay(attempt, retry_after_seconds);
+                        let delay = retry_delay(attempt, None);
                         if let Some(control) = self.execution_control.as_ref() {
                             control.wait(delay).map_err(PushPlusError::Control)?;
                         } else {
@@ -575,24 +572,7 @@ fn pushplus_transport_error(error: OutboundHttpError) -> PushPlusError {
 }
 
 fn is_retryable_pushplus_error(error: &PushPlusError) -> bool {
-    matches!(
-        error,
-        PushPlusError::ConnectFailed | PushPlusError::TimedOut
-    ) || matches!(
-        error,
-        PushPlusError::HttpStatus { status_code, .. }
-            if TRANSIENT_STATUS_CODES.contains(status_code)
-    )
-}
-
-fn pushplus_retry_after_seconds(error: &PushPlusError) -> Option<u64> {
-    match error {
-        PushPlusError::HttpStatus {
-            retry_after_seconds,
-            ..
-        } => *retry_after_seconds,
-        _ => None,
-    }
+    matches!(error, PushPlusError::ConnectFailed)
 }
 
 fn elapsed_millis(started_at: Instant) -> u64 {
@@ -666,44 +646,23 @@ mod tests {
     }
 
     #[test]
-    fn send_retries_transient_status() {
-        let responses = vec![
-            Ok(PushPlusHttpResponse {
-                status_code: 503,
-                request_id: None,
-                retry_after_seconds: Some(1),
-                body: json!({"error": "busy"}),
-            }),
-            ok_response(json!({
-                "code": 200,
-                "data": "msg-2"
-            })),
-        ];
-        let mut client =
-            PushPlusClient::new(FixturePushPlusTransport::new(responses), 1).with_sleep(|_| {});
-        let message_id = client
-            .send(&message())
-            .expect("PushPlus send should retry transient failure");
-
-        assert_eq!(message_id, "msg-2");
-        assert_eq!(client.transport().requests.len(), 2);
-    }
-
-    #[test]
-    fn send_does_not_retry_nonretryable_http_statuses() {
-        for status_code in [400_u16, 401, 403, 500] {
-            let response = Ok(PushPlusHttpResponse {
-                status_code,
-                request_id: None,
-                retry_after_seconds: None,
-                body: json!({"error": "redacted"}),
-            });
-            let mut client = PushPlusClient::new(FixturePushPlusTransport::new(vec![response]), 10)
+    fn send_does_not_retry_after_any_http_response() {
+        for status_code in [400_u16, 401, 403, 429, 500, 502, 503, 504] {
+            let responses = vec![
+                Ok(PushPlusHttpResponse {
+                    status_code,
+                    request_id: None,
+                    retry_after_seconds: Some(1),
+                    body: json!({"error": "redacted"}),
+                }),
+                ok_response(json!({"code": 200, "data": "must-not-send"})),
+            ];
+            let mut client = PushPlusClient::new(FixturePushPlusTransport::new(responses), 10)
                 .with_sleep(|_| {});
 
             let error = client
                 .send(&message())
-                .expect_err("nonretryable status should fail immediately");
+                .expect_err("an HTTP response must end the sending attempt");
 
             assert!(matches!(
                 error,
@@ -717,27 +676,42 @@ mod tests {
     }
 
     #[test]
-    fn send_retries_connect_and_timeout_failures() {
-        for failure in [PushPlusError::ConnectFailed, PushPlusError::TimedOut] {
-            let responses = vec![
-                Err(failure),
-                ok_response(json!({"code": 200, "data": "msg-retried"})),
-            ];
-            let mut client =
-                PushPlusClient::new(FixturePushPlusTransport::new(responses), 1).with_sleep(|_| {});
+    fn send_retries_connection_failure_before_request_delivery() {
+        let responses = vec![
+            Err(PushPlusError::ConnectFailed),
+            ok_response(json!({"code": 200, "data": "msg-retried"})),
+        ];
+        let mut client =
+            PushPlusClient::new(FixturePushPlusTransport::new(responses), 1).with_sleep(|_| {});
 
-            assert_eq!(
-                client
-                    .send(&message())
-                    .expect("transient failure should retry"),
-                "msg-retried"
-            );
-            assert_eq!(client.transport().requests.len(), 2);
-        }
+        assert_eq!(
+            client
+                .send(&message())
+                .expect("connection establishment failure should retry"),
+            "msg-retried"
+        );
+        assert_eq!(client.transport().requests.len(), 2);
     }
 
     #[test]
-    fn send_honors_the_capped_retry_after_delay() {
+    fn send_does_not_retry_timeout_after_request_started() {
+        let responses = vec![
+            Err(PushPlusError::TimedOut),
+            ok_response(json!({"code": 200, "data": "must-not-send"})),
+        ];
+        let mut client =
+            PushPlusClient::new(FixturePushPlusTransport::new(responses), 10).with_sleep(|_| {});
+
+        let error = client
+            .send(&message())
+            .expect_err("request timeout must remain an ambiguous single attempt");
+
+        assert_eq!(error, PushPlusError::TimedOut);
+        assert_eq!(client.transport().requests.len(), 1);
+    }
+
+    #[test]
+    fn send_does_not_wait_for_retry_after_after_request_started() {
         let responses = vec![
             Ok(PushPlusHttpResponse {
                 status_code: 503,
@@ -757,16 +731,22 @@ mod tests {
                     .push(delay);
             });
 
-        client
+        let error = client
             .send(&message())
-            .expect("capped Retry-After should allow the retry");
+            .expect_err("HTTP response must not schedule another PushPlus request");
 
-        assert_eq!(
-            *delays
-                .lock()
-                .expect("retry delay lock should not be poisoned"),
-            vec![Duration::from_secs(60)]
-        );
+        assert!(matches!(
+            error,
+            PushPlusError::HttpStatus {
+                status_code: 503,
+                ..
+            }
+        ));
+        assert!(delays
+            .lock()
+            .expect("retry delay lock should not be poisoned")
+            .is_empty());
+        assert_eq!(client.transport().requests.len(), 1);
     }
 
     #[test]
@@ -792,11 +772,17 @@ mod tests {
         let mut client =
             PushPlusClient::new(FixturePushPlusTransport::new(responses), 1).with_sleep(|_| {});
 
-        let message_id = logs
+        let error = logs
             .capture(|| client.send(&message))
-            .expect("PushPlus retry should succeed");
+            .expect_err("ambiguous HTTP failure must stop the sending attempt");
 
-        assert_eq!(message_id, sentinel);
+        assert!(matches!(
+            error,
+            PushPlusError::HttpStatus {
+                status_code: 503,
+                ..
+            }
+        ));
         let events = logs.events();
         let failed = events
             .iter()
@@ -804,17 +790,18 @@ mod tests {
             .expect("failed attempt should be logged");
         assert_eq!(failed["attempt"], 1);
         assert_eq!(failed["http_status"], 503);
-        assert_eq!(failed["will_retry"], true);
+        assert_eq!(failed["will_retry"], false);
         assert_eq!(failed["span"]["endpoint"], "send");
         assert_eq!(
             events
                 .iter()
-                .filter(|event| event["event"] == "pushplus.delivery.completed")
+                .filter(|event| event["event"] == "pushplus.delivery.failed")
                 .count(),
             1,
             "{}",
             logs.text()
         );
+        assert_eq!(client.transport().requests.len(), 1);
         assert!(!logs.text().contains(sentinel));
     }
 

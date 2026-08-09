@@ -309,7 +309,7 @@ parser 还接受 `--index-db PATH` 直接指定索引文件；普通使用优先
 | `--ai-model MODEL`           | 用户设置或代码默认 | 覆盖模型名，不提供 API key      |
 | `--max-candidates N`         | `120`              | 进入模型前的候选上限            |
 | `--timeout N`                | `60`               | AI/PushPlus HTTP 超时秒数       |
-| `--retries N`                | `3`                | CLI 级重试次数，范围 `0..=10`   |
+| `--retries N`                | `3`                | 适用请求的重试次数，范围 `0..=10` |
 | `--dedupe-retention-days N`  | `60`               | 已确认去重记录保留天数          |
 | `--dry-run` / `--no-dry-run` | 执行模式           | 是否禁止外部发送和收藏/去重写入 |
 
@@ -317,7 +317,7 @@ checkpoint、run、item、dedupe 和 workflow lease 统一写入 `--auth-db` 指
 
 `--db` 省略时按名称排序处理全部 `data/index/*.sqlite`。`utd24` 和 `utd24.sqlite` 等价；路径部分会被去掉。
 
-`--retries 0` 表示只执行首次请求、不再重试；默认值为 3。大于 10 的值会在密钥、数据库、目标和传输初始化前被拒绝。该参数是每个适用传输或 AI 响应格式的重试次数，不是作业总时限或全局请求总数。`--dedupe-retention-days <= 0` 禁用确认记录清理，而不是立即删除全部记录；`unknown` 代表可能已经发生的外部发送，不受确认记录保留清理影响，也不会自动重放。
+`--retries 0` 表示只执行首次请求、不再重试；默认值为 3。大于 10 的值会在密钥、数据库、目标和传输初始化前被拒绝。该参数是每个适用请求或 AI 响应格式的重试次数，不是作业总时限或全局请求总数。AI 可对连接失败、timeout 和受限瞬态状态重试；PushPlus 仅在连接建立明确失败、请求尚未发送时重试。一旦 PushPlus 请求可能到达上游，timeout、HTTP 响应或连接后错误会直接产生 `unknown`，不会自动重放。`--dedupe-retention-days <= 0` 禁用确认记录清理，而不是立即删除全部记录。
 
 `notify`/`push` 在投递运行已形成聚合结果时总会先向 stdout 输出一行完整 JSON。聚合状态为 `completed`、`skipped` 或 `idle` 时退出 0；`running`、`cancelled`、`timed_out`、`failed` 或 `unknown` 时退出非零。这样调用方仍能解析每个数据库和订阅者的精确结果，同时 scheduler 与 `index --notify` 不会把业务失败误记为成功。索引 notify handoff 会持久化非零退出码并停留在 `notifying`，不会把 catalog 或 batch 标为完成；后续恢复也不会把已记录的非零结果当作成功。
 

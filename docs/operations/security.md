@@ -227,7 +227,7 @@ AI 与 PushPlus 共用以下出站边界：
 - 非 2xx 响应不读取 body；错误只保留固定分类、HTTP 状态和可选上游 request ID
 - 请求对象的 Debug 输出不包含 API key、prompt、文章、通知正文或 URL query
 
-AI/PushPlus 只重试连接失败、timeout 和 `429/502/503/504`；数值 `Retry-After` 上限 60 秒，其他情况使用指数 full jitter。`400/401/403` 和 PushPlus `500` 都只尝试一次。手动任务跨主备 Endpoint、格式和摘要请求共享 8 次 AI HTTP 预算；输出格式降级只发生在成功响应的明确兼容性失败之后。
+AI 只重试连接失败、timeout 和 `429/502/503/504`；数值 `Retry-After` 上限 60 秒，其他情况使用指数 full jitter。PushPlus 只重试能证明请求尚未发送的连接建立失败；timeout、所有 HTTP 响应和其他连接后错误均只尝试一次并作为不确定投递结果处理。手动任务跨主备 Endpoint、格式和摘要请求共享 8 次 AI HTTP 预算；输出格式降级只发生在成功响应的明确兼容性失败之后。
 
 应用层策略不能替代基础设施隔离。公网部署仍应在容器、主机或云网络层设置 egress ACL，只放行确有需要的 AI/PushPlus 目标和 DNS/TLS 基础设施。
 

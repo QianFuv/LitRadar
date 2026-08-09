@@ -73,7 +73,7 @@
 - API key 没有可用的全局 fallback，用户必须配置
 - 只有用户填写了任一备用字段时才构建备用 endpoint
 
-CLI `--retries` 的范围是 `0..=10`、默认值是 3；用户 `ai_retry_attempts` 的范围是 `1..=10`。连接失败、单次请求超时以及 `429/502/503/504` 才会重试；`400/401/403`、配置错误和响应结构错误不会网络重试。退避使用 `1/2/4/8/8...` 秒上限内的 full jitter；数值 `Retry-After` 优先使用并封顶 60 秒。只有成功的 2xx 响应明确表现出输出格式不兼容时，才从 `json_schema` 降级到 `json_object` 或普通 JSON。
+CLI `--retries` 的范围是 `0..=10`、默认值是 3；用户 `ai_retry_attempts` 的范围是 `1..=10`。AI 请求只对连接失败、单次请求超时以及 `429/502/503/504` 重试；`400/401/403`、配置错误和响应结构错误不会网络重试。AI 退避使用 `1/2/4/8/8...` 秒上限内的 full jitter；数值 `Retry-After` 优先使用并封顶 60 秒。只有成功的 2xx 响应明确表现出输出格式不兼容时，才从 `json_schema` 降级到 `json_object` 或普通 JSON。PushPlus 的独立 no-replay 规则见下方“副作用顺序”。
 
 手动任务另有跨主备 Endpoint、格式和摘要请求共享的 8 次 AI HTTP 总预算，以及持久化的 10 分钟绝对 deadline。每次请求 timeout 同时受 120 秒默认值和任务剩余时间限制；这些边界不改变独立 CLI `notify`/`push` 的参数语义。
 
@@ -133,7 +133,7 @@ cargo run --bin litradar -- push \
 
 PushPlus 请求开始后的失败按不确定结果处理：不会回显上游 body，不会释放 dedupe，也不会自动重发。进程在 `claimed` 阶段退出时，过期 owner 的 reservation 会释放并安全重试；在 `sending` 阶段退出时，新 owner 会把 item/dedupe 固定收敛到 `unknown`。若发送前已经执行可选文件夹同步，收藏不会回滚，但其唯一约束确保恢复不会重复创建。
 
-PushPlus 传输使用受限后的 CLI `--retries`，只对连接失败、timeout 以及 `429/502/503/504` 使用同一 full-jitter/`Retry-After` 策略；包括 `500` 在内的其他状态不会自动重发。响应 JSON 必须满足 `code=200`，`data` 记录为 message ID。
+PushPlus 传输只在连接建立明确失败、请求尚未发送时使用受限后的 CLI `--retries` 和 full-jitter。timeout、任何 HTTP 响应、连接后的 transport 错误以及响应解析失败都可能发生在上游已经处理请求之后，因此立即结束本次 `sending` attempt 并落为 `unknown`，不会使用 `Retry-After` 自动重发。响应 JSON 必须满足 `code=200`，`data` 记录为 message ID。
 
 ## 手动推送 API
 
