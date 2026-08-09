@@ -22,12 +22,13 @@ pub use auth::{
     delete_all_access_tokens_with_audit, find_user_credentials_by_id,
     find_user_credentials_by_username, get_user_invite_code, initialize_auth_database,
     insert_personal_access_token, insert_personal_access_token_with_audit,
-    issue_invite_code_with_audit, list_access_tokens, random_hex, register_user_with_invite,
-    register_user_with_invite_and_audit, replace_login_access_token,
+    insert_personal_access_token_with_authorization_and_audit, issue_invite_code_with_audit,
+    list_access_tokens, random_hex, register_user_with_invite, register_user_with_invite_and_audit,
+    replace_login_access_token, replace_login_access_token_if_generation_matches_with_audit,
     replace_login_access_token_with_audit, revoke_user_invite_code_with_audit,
     rotate_user_invite_code_with_audit, update_user_password_and_delete_tokens,
     update_user_password_and_delete_tokens_with_audit, verify_access_token_hash, AccessTokenRow,
-    AuthRepositoryError, AuthUserRow, InviteCodeRow, UserCredentialRow,
+    AuthRepositoryError, AuthUserRow, InviteCodeRow, UserCredentialRow, VerifiedAccessTokenRow,
 };
 pub use backup::{
     create_backup, delete_service_heartbeat, has_recent_service_heartbeat,

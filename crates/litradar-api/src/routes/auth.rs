@@ -30,6 +30,14 @@ const SESSION_REVOCATION_ERROR_CODE: &str = "session_revocation_unconfirmed";
 const SESSION_REVOCATION_ERROR_MESSAGE: &str = "Session revocation could not be confirmed";
 const SESSION_REVOCATION_RETRY_DELAY: Duration = Duration::from_millis(25);
 
+/// Raw request authorization retained for atomic dependent mutations.
+pub(crate) struct CurrentAuthorization {
+    /// Raw token that authenticated the request.
+    token: String,
+    /// Token generation observed during request authentication.
+    token_generation: i64,
+}
+
 struct AuthAudit {
     action: &'static str,
     actor_id: i64,
@@ -403,7 +411,7 @@ pub(crate) async fn logout(
     let mut audit = AuthAudit::new("logout");
     let request_id = request_id_text(request_id.as_ref());
     let should_clear_cookie = session_cookie(&headers).is_some();
-    let (user, token) = match require_current_user(&state, &headers).await {
+    let (user, authorization) = match require_current_user(&state, &headers).await {
         Ok(current) => current,
         Err(error) => {
             let audit_result =
@@ -418,7 +426,7 @@ pub(crate) async fn logout(
         }
     };
     audit.set_actor_id(user.id.0);
-    let token_to_revoke = token.clone();
+    let token_to_revoke = authorization.token;
     let completion_audit = auth_security_event(&audit, "completed", "", &request_id);
     let revoke_result = run_auth_revocation(&state, move |service| {
         service.revoke_access_token_value_with_audit(&token_to_revoke, completion_audit.clone())
@@ -539,7 +547,7 @@ pub(crate) async fn create_token(
 ) -> Result<Json<TokenCreateResponse>, ApiError> {
     let mut audit = AuthAudit::new("token_create");
     let request_id = request_id_text(request_id.as_ref());
-    let (user, _) = match require_current_user(&state, &headers).await {
+    let (user, authorization) = match require_current_user(&state, &headers).await {
         Ok(current) => current,
         Err(error) => {
             persist_auth_rejection(&state, &audit, "authentication_required", &request_id).await?;
@@ -550,9 +558,18 @@ pub(crate) async fn create_token(
     audit.set_actor_id(user.id.0);
     let name = body.name;
     let ttl = body.ttl;
+    let authorizing_token = authorization.token;
+    let token_generation = authorization.token_generation;
     let completion_audit = auth_security_event(&audit, "completed", "", &request_id);
     let token = match run_auth(&state, move |service| {
-        service.create_access_token_with_audit(user.id, &name, ttl, completion_audit)
+        service.create_access_token_with_authorization_and_audit(
+            user.id,
+            token_generation,
+            &authorizing_token,
+            &name,
+            ttl,
+            completion_audit,
+        )
     })
     .await
     {
@@ -879,17 +896,23 @@ pub(crate) fn auth_service(state: &ApiState) -> AuthService {
 pub(crate) async fn require_current_user(
     state: &ApiState,
     headers: &HeaderMap,
-) -> Result<(UserResponse, String), ApiError> {
+) -> Result<(UserResponse, CurrentAuthorization), ApiError> {
     let token = resolve_auth_token(headers)?
         .filter(|token| !token.is_empty())
         .ok_or_else(|| ApiError::unauthorized("Authentication required"))?;
     let token_to_verify = token.clone();
-    let user = run_auth(state, move |service| {
-        service.verify_access_token(&token_to_verify)
+    let authorization = run_auth(state, move |service| {
+        service.verify_access_token_authorization(&token_to_verify)
     })
     .await?
     .ok_or_else(|| ApiError::unauthorized("Invalid or expired token"))?;
-    Ok((user, token))
+    Ok((
+        authorization.user,
+        CurrentAuthorization {
+            token,
+            token_generation: authorization.token_generation,
+        },
+    ))
 }
 
 /// Resolve and require an authenticated admin user.
@@ -906,11 +929,11 @@ pub(crate) async fn require_admin_user(
     state: &ApiState,
     headers: &HeaderMap,
 ) -> Result<(UserResponse, String), ApiError> {
-    let (user, token) = require_current_user(state, headers).await?;
+    let (user, authorization) = require_current_user(state, headers).await?;
     if !user.is_admin {
         return Err(ApiError::forbidden("Admin access required"));
     }
-    Ok((user, token))
+    Ok((user, authorization.token))
 }
 
 async fn run_auth<Output, Work>(state: &ApiState, work: Work) -> Result<Output, ApiError>
@@ -1164,6 +1187,9 @@ pub(crate) fn map_auth_error(error: AuthServiceError) -> ApiError {
         AuthServiceError::Repository(AuthRepositoryError::AccessTokenLimitReached) => {
             ApiError::conflict(error.to_string())
         }
+        AuthServiceError::Repository(AuthRepositoryError::StaleAuthorization) => {
+            ApiError::unauthorized("Authentication state changed; authenticate again")
+        }
         AuthServiceError::Repository(AuthRepositoryError::AuditPersistence(_)) => {
             ApiError::service_unavailable()
         }
@@ -1181,10 +1207,25 @@ mod tests {
     use litradar_storage::{list_security_audit_events, AuthRepositoryError};
     use serde_json::json;
 
+    use crate::response::ApiError;
     use crate::state::tracing_test_support::CapturedLogs;
     use crate::test_support::{json_request, TestBackend};
 
-    use super::retry_transient_revocation;
+    use super::{map_auth_error, retry_transient_revocation};
+
+    #[test]
+    fn stale_token_issuance_maps_to_reauthentication() {
+        let error = map_auth_error(AuthServiceError::Repository(
+            AuthRepositoryError::StaleAuthorization,
+        ));
+
+        assert!(matches!(
+            error,
+            ApiError::Http { status, detail }
+                if status == StatusCode::UNAUTHORIZED
+                    && detail == "Authentication state changed; authenticate again"
+        ));
+    }
 
     #[test]
     fn logout_retry_runs_once_only_for_transient_sqlite_contention() {

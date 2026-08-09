@@ -19,7 +19,7 @@ LitRadar 把规范内容、可丢弃索引控制状态和用户业务数据放�
 
 | 数据库                 | `PRAGMA user_version` | 升级策略                                      |
 | ---------------------- | --------------------: | --------------------------------------------- |
-| 认证/业务库            |                    12 | 版本化 migration                              |
+| 认证/业务库            |                    15 | 版本化 migration                              |
 | 内容索引库             |                     6 | 新建/验证精确 v6；精确 v4/v5 原子迁移到 v6    |
 | 项目 batch ledger      |                     1 | 新建/验证精确 v1；可删除后重建                 |
 | catalog 索引控制库     |                     4 | v0/v1/v2/v3 安全事务迁移；可删除后按 v4 重建   |
@@ -241,9 +241,11 @@ delivery_runs -- delivery_run_items
 
 ### 用户、令牌和邀请码
 
-`users` 保存大小写不敏感的唯一用户名、密码 hash/salt、管理员标记和时间。新密码的 `password_hash` 是包含算法、版本、成本、salt 和输出的 `$argon2id$` PHC 字符串，旧 `salt` 列为空；旧 PBKDF2 hex 行保留原 salt，并在正确登录后通过原 hash+salt 的 CAS 单次升级。首个管理员只能通过 `litradar admin bootstrap` 创建；公开注册需要邀请码。密码变更与该用户全部 `access_tokens` 的删除在同一个 immediate transaction 中提交，目标用户不存在时返回未更新，删除令牌失败时密码写入回滚。管理员标记更新和用户删除也使用 actor-aware immediate transaction：事务内重新验证 actor、target 和管理员计数，任何成功提交都至少保留一个 `is_admin = 1` 行。
+`users` 保存大小写不敏感的唯一用户名、密码 hash/salt、管理员标记、时间和单调 `token_generation`。新密码的 `password_hash` 是包含算法、版本、成本、salt 和输出的 `$argon2id$` PHC 字符串，旧 `salt` 列为空；旧 PBKDF2 hex 行保留原 salt，并在正确登录后通过原 hash+salt 的 CAS 单次升级。首个管理员只能通过 `litradar admin bootstrap` 创建；公开注册需要邀请码。密码变更、管理员重置与 `logout-all` 会在删除该用户全部 `access_tokens` 的同一 immediate transaction 中递增 `token_generation`；登录和依赖现有 token 的新令牌写入以该值为 CAS fence，后者还复核确切授权 token hash。目标用户不存在时密码更新返回未更新，删除令牌失败时密码与代际写入回滚。管理员标记更新和用户删除也使用 actor-aware immediate transaction：事务内重新验证 actor、target 和管理员计数，任何成功提交都至少保留一个 `is_admin = 1` 行。
 
 `access_tokens` 保存唯一 token hash，不保存明文 token。`name='login'` 是浏览器 Cookie 会话的保留行；其他 active personal token 每用户最多 50 个。达到上限只阻止新建，不删除历史行。所有读取路径统一以 `expires_at <= now` 判定过期并清理；salt、原始 token 和邀请码由操作系统 CSPRNG 生成。
+
+认证库 v15 为既有 `users` 行补入从 0 开始的 `token_generation`，不改写密码、用户 ID 或令牌。代际比较、授权 token 复核、新令牌插入和必需审计在同一个 `BEGIN IMMEDIATE` 中完成；任一条件已过期时整个签发无副作用回滚。
 
 认证库 v12 的 `invite_codes` 除兼容字段 `used_by`/`used_at` 外，还保存 `expires_at`、不可逆 `revoked_at`、`max_uses` 和 `use_count`。`invite_code_uses` 为每次已提交兑换保存邀请码、用户和时间；删除用户只把历史中的用户引用设为 `NULL`，不能删除邀请码历史。`used_by`/`used_at` 表示首位兑换者，仅为旧客户端兼容。
 

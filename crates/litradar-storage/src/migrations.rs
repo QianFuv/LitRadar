@@ -17,7 +17,7 @@ use crate::business::{import_legacy_delivery_state_files, DeliveryRepositoryErro
 use crate::{DatabaseResolutionError, StorageConfig};
 
 /// Current auth and business database schema version.
-pub const AUTH_SCHEMA_VERSION: i64 = 14;
+pub const AUTH_SCHEMA_VERSION: i64 = 15;
 
 /// Current index database schema version.
 pub const INDEX_SCHEMA_VERSION: i64 = 6;
@@ -289,6 +289,7 @@ fn migrate_auth_database_inner(path: &Path) -> Result<MigrationSummary, Migratio
             12 => apply_auth_version_twelve(&transaction)?,
             13 => apply_auth_version_thirteen(&transaction)?,
             14 => apply_auth_version_fourteen(&transaction)?,
+            15 => apply_auth_version_fifteen(&transaction)?,
             _ => unreachable!("auth migration version should be implemented"),
         }
         transaction.pragma_update(None, "user_version", next_version)?;
@@ -1525,6 +1526,21 @@ fn apply_auth_version_fourteen(transaction: &Transaction<'_>) -> Result<(), Migr
     Ok(())
 }
 
+fn apply_auth_version_fifteen(transaction: &Transaction<'_>) -> Result<(), MigrationError> {
+    let user_columns = table_columns(transaction, "users")?;
+    if !user_columns.is_empty()
+        && !user_columns
+            .iter()
+            .any(|column| column == "token_generation")
+    {
+        transaction.execute(
+            "ALTER TABLE users ADD COLUMN token_generation INTEGER NOT NULL DEFAULT 0 CHECK (token_generation >= 0)",
+            [],
+        )?;
+    }
+    Ok(())
+}
+
 fn validate_notification_string_lists(transaction: &Transaction<'_>) -> Result<(), MigrationError> {
     let mut statement = transaction.prepare(
         "SELECT keywords, directions, selected_databases FROM notification_settings ORDER BY id",
@@ -1759,7 +1775,8 @@ const AUTH_TABLES_SQL: &str = "
         salt          TEXT    NOT NULL,
         is_admin      INTEGER NOT NULL DEFAULT 0,
         created_at    REAL    NOT NULL,
-        updated_at    REAL    NOT NULL
+        updated_at    REAL    NOT NULL,
+        token_generation INTEGER NOT NULL DEFAULT 0 CHECK (token_generation >= 0)
     );
 
     CREATE TABLE IF NOT EXISTS access_tokens (

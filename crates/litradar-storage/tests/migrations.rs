@@ -23,6 +23,7 @@ fn empty_auth_database_migration_creates_current_schema() {
     assert!(table_exists(&path, "scheduled_tasks"));
     assert!(table_columns(&path, "cnki_sessions").contains(&"generation".to_string()));
     assert!(table_columns(&path, "users").contains(&"is_admin".to_string()));
+    assert!(table_columns(&path, "users").contains(&"token_generation".to_string()));
     assert!(table_columns(&path, "announcements").contains(&"priority".to_string()));
     assert!(table_columns(&path, "scheduled_tasks").contains(&"job_spec".to_string()));
     assert!(table_columns(&path, "scheduled_tasks").contains(&"timezone".to_string()));
@@ -75,6 +76,61 @@ fn empty_auth_database_migration_creates_current_schema() {
     ] {
         assert!(runtime_setting(&path, field).is_none());
     }
+}
+
+#[test]
+fn token_generation_migration_preserves_version_fourteen_users() {
+    let temp_dir = tempdir().expect("temp directory should be created");
+    let path = temp_dir.path().join("token-generation-v14.sqlite");
+    migrate_auth_database(&path).expect("current auth database should migrate");
+    let connection = Connection::open(&path).expect("auth database should open");
+    connection
+        .execute_batch(
+            "INSERT INTO users (
+                 id, username, password_hash, salt, is_admin, created_at, updated_at
+             ) VALUES (1, 'generation-user', 'hash', 'salt', 1, 2.0, 3.0);
+             ALTER TABLE users DROP COLUMN token_generation;
+             PRAGMA user_version = 14;",
+        )
+        .expect("version fourteen user fixture should be created");
+    drop(connection);
+
+    migrate_auth_database(&path).expect("version fourteen auth database should migrate");
+
+    assert_eq!(user_version(&path), AUTH_SCHEMA_VERSION);
+    let row = Connection::open(&path)
+        .expect("migrated auth database should open")
+        .query_row(
+            "SELECT username, password_hash, salt, is_admin, created_at, updated_at,
+                    token_generation
+             FROM users WHERE id = 1",
+            [],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, i64>(3)?,
+                    row.get::<_, f64>(4)?,
+                    row.get::<_, f64>(5)?,
+                    row.get::<_, i64>(6)?,
+                ))
+            },
+        )
+        .expect("migrated user should load");
+    assert_eq!(
+        row,
+        (
+            "generation-user".to_string(),
+            "hash".to_string(),
+            "salt".to_string(),
+            1,
+            2.0,
+            3.0,
+            0,
+        )
+    );
+    assert_eq!(foreign_key_violation_count(&path), 0);
 }
 
 #[test]

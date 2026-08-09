@@ -137,7 +137,7 @@ Rust handler 上的 OpenAPI 注解是 REST 契约的实现来源。修改 REST �
 
 普通用户邀请码默认有效 7 天、最多注册 1 次。`GET` 返回 `status=active|expired|revoked|exhausted`、`expires_at`、`revoked_at`、`max_uses` 与 `use_count`；`rotate` 在一个事务中永久撤销当前未撤销码并创建替代码。过期、撤销或用尽的邀请码均不能注册，重复撤销返回 `404`。
 
-浏览器登录 Cookie 使用固定 7 天有效期，每次登录轮换，不因普通 API 访问而滚动延长。`POST /api/auth/logout` 只撤销当前凭据；`POST /api/auth/logout-all` 在一个事务中撤销该用户的浏览器登录令牌和全部 Personal Access Token。两个端点对携带 `litradar_session` 的请求无论成功或失败都返回清除 Cookie 的 `Set-Cookie`；`logout` 返回 `401` 表示请求到达前令牌已失效，第一方浏览器将其视为幂等注销完成。SQLite busy/locked 只执行一次短时重试；若持久删除仍未确认，返回 `503`：
+浏览器登录 Cookie 使用固定 7 天有效期，每次登录轮换，不因普通 API 访问而滚动延长。登录写入会原子复核密码验证时观察到的令牌代际；若改密、管理员重置或 `logout-all` 已先提交，旧验证结果只会得到认证失败，不能创建撤销后的新 Cookie。`POST /api/auth/logout` 只撤销当前凭据；`POST /api/auth/logout-all` 在一个事务中递增令牌代际并撤销该用户的浏览器登录令牌和全部 Personal Access Token。两个端点对携带 `litradar_session` 的请求无论成功或失败都返回清除 Cookie 的 `Set-Cookie`；`logout` 返回 `401` 表示请求到达前令牌已失效，第一方浏览器将其视为幂等注销完成。SQLite busy/locked 只执行一次短时重试；若持久删除仍未确认，返回 `503`：
 
 ```json
 {
@@ -161,6 +161,8 @@ CNKI 会话按 LitRadar 用户隔离；状态接口只返回安全元数据，�
 2. 裁剪首尾空白；空名称仍可创建未命名令牌，裁剪后精确等于 `login` 的名称保留给浏览器会话。
 3. 检查 `ttl` 是否处于 `3600..=31536000` 秒；越界值直接拒绝，不会再静默 clamp。
 4. 在事务内检查当前用户的 active personal tokens；达到 50 个时拒绝新建。
+
+写入事务还会复核认证时观察到的用户令牌代际，以及发起请求的确切 Bearer/Cookie token 仍属于该用户且未过期。若并发的 `logout`、`logout-all`、改密、重置或单令牌吊销先提交，新令牌不会落库，接口返回 `401 Authentication state changed; authenticate again`；客户端重新认证后可显式重试。
 
 认证失败仍优先返回 `401`。其余失败只返回当前顺序中的第一项：
 

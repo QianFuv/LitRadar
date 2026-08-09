@@ -15,8 +15,9 @@ use litradar_storage::{
     create_invite_code_with_audit, delete_access_token_by_hash_with_audit,
     delete_access_token_with_audit, delete_all_access_tokens_with_audit,
     find_user_credentials_by_id, find_user_credentials_by_username, get_user_invite_code,
-    initialize_auth_database, insert_personal_access_token_with_audit, list_access_tokens,
-    random_hex, register_user_with_invite_and_audit, replace_login_access_token_with_audit,
+    initialize_auth_database, insert_personal_access_token_with_authorization_and_audit,
+    list_access_tokens, random_hex, register_user_with_invite_and_audit,
+    replace_login_access_token_if_generation_matches_with_audit,
     revoke_user_invite_code_with_audit, rotate_user_invite_code_with_audit,
     update_user_password_and_delete_tokens_with_audit, verify_access_token_hash,
     AuthRepositoryError, AuthUserRow, InviteCodeRow, SecurityAuditEvent, UserCredentialRow,
@@ -141,6 +142,20 @@ impl fmt::Debug for LoginSession {
             .field("expires_at", &self.expires_at)
             .finish()
     }
+}
+
+/// Authenticated access-token owner plus the generation observed during verification.
+#[derive(Debug, Clone, PartialEq)]
+pub struct AccessTokenAuthorization {
+    /// Authenticated user.
+    pub user: UserResponse,
+    /// Generation that dependent token issuance must compare atomically.
+    pub token_generation: i64,
+}
+
+struct PasswordAuthorization {
+    user: UserResponse,
+    token_generation: i64,
 }
 
 /// Authentication service bound to one auth database.
@@ -281,23 +296,37 @@ impl AuthService {
         username: &str,
         password: &str,
     ) -> Result<Option<UserResponse>, AuthServiceError> {
+        Ok(self
+            .verify_user_authorization(username, password)?
+            .map(|authorization| authorization.user))
+    }
+
+    fn verify_user_authorization(
+        &self,
+        username: &str,
+        password: &str,
+    ) -> Result<Option<PasswordAuthorization>, AuthServiceError> {
         let Some(row) = find_user_credentials_by_username(&self.auth_db_path, username)? else {
             verify_dummy_password(password);
             return Ok(None);
         };
-        match verify_password(password, &row.salt, &row.password_hash) {
+        let token_generation = match verify_password(password, &row.salt, &row.password_hash) {
             PasswordVerification::Invalid => return Ok(None),
-            PasswordVerification::ValidCurrent => {}
+            PasswordVerification::ValidCurrent => row.token_generation,
             PasswordVerification::ValidLegacy => {
-                if !self.upgrade_legacy_password(&row, password)? {
+                let Some(token_generation) = self.upgrade_legacy_password(&row, password)? else {
                     return Ok(None);
-                }
+                };
+                token_generation
             }
-        }
-        Ok(Some(UserResponse {
-            id: row.id,
-            username: row.username,
-            is_admin: row.is_admin,
+        };
+        Ok(Some(PasswordAuthorization {
+            user: UserResponse {
+                id: row.id,
+                username: row.username,
+                is_admin: row.is_admin,
+            },
+            token_generation,
         }))
     }
 
@@ -305,7 +334,7 @@ impl AuthService {
         &self,
         legacy_row: &UserCredentialRow,
         password: &str,
-    ) -> Result<bool, AuthServiceError> {
+    ) -> Result<Option<i64>, AuthServiceError> {
         let replacement_hash = hash_password(password)?;
         if compare_and_swap_legacy_password_hash(
             &self.auth_db_path,
@@ -315,15 +344,17 @@ impl AuthService {
             &replacement_hash,
             now_seconds(),
         )? {
-            return Ok(true);
+            return Ok(Some(legacy_row.token_generation));
         }
         let Some(current) = find_user_credentials_by_id(&self.auth_db_path, legacy_row.id)? else {
-            return Ok(false);
+            return Ok(None);
         };
-        Ok(
-            verify_password(password, &current.salt, &current.password_hash)
-                != PasswordVerification::Invalid,
-        )
+        if verify_password(password, &current.salt, &current.password_hash)
+            == PasswordVerification::Invalid
+        {
+            return Ok(None);
+        }
+        Ok(Some(current.token_generation))
     }
 
     /// Authenticate credentials and create a login session token.
@@ -351,24 +382,37 @@ impl AuthService {
         password: &str,
         audit: SecurityAuditEvent,
     ) -> Result<LoginSession, AuthServiceError> {
-        let user = self
-            .verify_user(username, password)?
+        let authorization = self
+            .verify_user_authorization(username, password)?
             .ok_or(AuthServiceError::InvalidCredentials)?;
+        self.create_login_session(authorization, audit)
+    }
+
+    fn create_login_session(
+        &self,
+        authorization: PasswordAuthorization,
+        audit: SecurityAuditEvent,
+    ) -> Result<LoginSession, AuthServiceError> {
         let token = random_hex(ACCESS_TOKEN_BYTES)?;
         let token_hash = hash_token(&token);
         let created_at = now_seconds();
         let expires_at = created_at + ACCESS_TOKEN_DEFAULT_TTL as f64;
-        let audit = audit.with_actor_id(user.id.value());
-        let row = replace_login_access_token_with_audit(
+        let audit = audit.with_actor_id(authorization.user.id.value());
+        let row = replace_login_access_token_if_generation_matches_with_audit(
             &self.auth_db_path,
-            user.id,
+            authorization.user.id,
+            authorization.token_generation,
             &token_hash,
             expires_at,
             created_at,
             Some(&audit),
-        )?;
+        )
+        .map_err(|error| match error {
+            AuthRepositoryError::StaleAuthorization => AuthServiceError::InvalidCredentials,
+            error => AuthServiceError::Repository(error),
+        })?;
         Ok(LoginSession {
-            user,
+            user: authorization.user,
             token,
             expires_at: row.expires_at,
         })
@@ -407,23 +451,67 @@ impl AuthService {
         ttl: i64,
         audit: SecurityAuditEvent,
     ) -> Result<TokenCreateResponse, AuthServiceError> {
-        if name.chars().count() > ACCESS_TOKEN_NAME_MAX_CODE_POINTS {
-            return Err(AuthServiceError::AccessTokenNameTooLong);
-        }
-        let name = name.trim();
-        if name == ACCESS_TOKEN_RESERVED_NAME {
-            return Err(AuthServiceError::AccessTokenNameReserved);
-        }
-        if !(ACCESS_TOKEN_TTL_MIN_SECONDS..=ACCESS_TOKEN_TTL_MAX_SECONDS).contains(&ttl) {
-            return Err(AuthServiceError::AccessTokenTtlOutOfRange);
-        }
+        let name = validate_access_token_request(name, ttl)?;
+        let token_generation = find_user_credentials_by_id(&self.auth_db_path, user_id)?
+            .ok_or(AuthRepositoryError::StaleAuthorization)?
+            .token_generation;
+        self.create_authorized_access_token(user_id, token_generation, None, name, ttl, audit)
+    }
+
+    /// Create a personal token only while the request's access-token authorization is current.
+    ///
+    /// # Arguments
+    ///
+    /// * `user_id` - Owner user identifier.
+    /// * `token_generation` - Generation captured while authenticating the request.
+    /// * `authorizing_token` - Raw token that authenticated the request.
+    /// * `name` - Untrimmed token display name.
+    /// * `ttl` - Token TTL in seconds.
+    /// * `audit` - Completion audit persisted with issuance.
+    ///
+    /// # Returns
+    ///
+    /// Created token, or a stale-authorization error without a mutation.
+    #[allow(clippy::too_many_arguments)]
+    pub fn create_access_token_with_authorization_and_audit(
+        &self,
+        user_id: UserId,
+        token_generation: i64,
+        authorizing_token: &str,
+        name: &str,
+        ttl: i64,
+        audit: SecurityAuditEvent,
+    ) -> Result<TokenCreateResponse, AuthServiceError> {
+        let name = validate_access_token_request(name, ttl)?;
+        let authorizing_token_hash = hash_token(authorizing_token);
+        self.create_authorized_access_token(
+            user_id,
+            token_generation,
+            Some(&authorizing_token_hash),
+            name,
+            ttl,
+            audit,
+        )
+    }
+
+    fn create_authorized_access_token(
+        &self,
+        user_id: UserId,
+        token_generation: i64,
+        authorizing_token_hash: Option<&str>,
+        name: &str,
+        ttl: i64,
+        audit: SecurityAuditEvent,
+    ) -> Result<TokenCreateResponse, AuthServiceError> {
         let token = random_hex(ACCESS_TOKEN_BYTES)?;
         let token_hash = hash_token(&token);
         let created_at = now_seconds();
         let expires_at = created_at + ttl as f64;
-        let row = insert_personal_access_token_with_audit(
+        let row = insert_personal_access_token_with_authorization_and_audit(
             &self.auth_db_path,
             user_id,
+            token_generation,
+            authorizing_token_hash,
             &token_hash,
             name,
             expires_at,
@@ -451,9 +539,31 @@ impl AuthService {
         &self,
         token: &str,
     ) -> Result<Option<UserResponse>, AuthServiceError> {
+        Ok(self
+            .verify_access_token_authorization(token)?
+            .map(|authorization| authorization.user))
+    }
+
+    /// Verify a raw access token and capture its issuance generation.
+    ///
+    /// # Arguments
+    ///
+    /// * `token` - Raw bearer or cookie token.
+    ///
+    /// # Returns
+    ///
+    /// Authorization context when the token is valid.
+    pub fn verify_access_token_authorization(
+        &self,
+        token: &str,
+    ) -> Result<Option<AccessTokenAuthorization>, AuthServiceError> {
         let token_hash = hash_token(token);
-        let user = verify_access_token_hash(&self.auth_db_path, &token_hash, now_seconds())?;
-        Ok(user.map(user_response))
+        let authorization =
+            verify_access_token_hash(&self.auth_db_path, &token_hash, now_seconds())?;
+        Ok(authorization.map(|authorization| AccessTokenAuthorization {
+            user: user_response(authorization.user),
+            token_generation: authorization.token_generation,
+        }))
     }
 
     /// List active non-login access tokens.
@@ -864,6 +974,20 @@ fn validate_new_password(password: &str) -> Result<(), AuthServiceError> {
     Ok(())
 }
 
+fn validate_access_token_request(name: &str, ttl: i64) -> Result<&str, AuthServiceError> {
+    if name.chars().count() > ACCESS_TOKEN_NAME_MAX_CODE_POINTS {
+        return Err(AuthServiceError::AccessTokenNameTooLong);
+    }
+    let name = name.trim();
+    if name == ACCESS_TOKEN_RESERVED_NAME {
+        return Err(AuthServiceError::AccessTokenNameReserved);
+    }
+    if !(ACCESS_TOKEN_TTL_MIN_SECONDS..=ACCESS_TOKEN_TTL_MAX_SECONDS).contains(&ttl) {
+        return Err(AuthServiceError::AccessTokenTtlOutOfRange);
+    }
+    Ok(name)
+}
+
 fn user_response(row: AuthUserRow) -> UserResponse {
     UserResponse {
         id: row.id,
@@ -907,7 +1031,7 @@ mod tests {
     use litradar_domain::{InviteCodeStatus, UserId, DEFAULT_INVITE_CODE_TTL_SECONDS};
     use litradar_storage::{
         bootstrap_admin, count_users, find_user_credentials_by_id, migrate_auth_database,
-        UserCredentialRow,
+        AuthRepositoryError, SecurityAuditEvent, UserCredentialRow,
     };
     use tempfile::tempdir;
 
@@ -1047,9 +1171,10 @@ mod tests {
         assert!(service
             .reset_password(user.id, "replacement-password")
             .expect("concurrent reset should run"));
-        assert!(!service
+        assert!(service
             .upgrade_legacy_password(&stale_credentials, STRONG_PASSWORD)
-            .expect("stale legacy upgrade should recheck current credentials"));
+            .expect("stale legacy upgrade should recheck current credentials")
+            .is_none());
         assert!(service
             .verify_user("legacy-reset", STRONG_PASSWORD)
             .expect("old password verification should run")
@@ -1321,6 +1446,81 @@ mod tests {
             .verify_access_token(&previous.token)
             .expect("previous session should resolve")
             .is_none());
+    }
+
+    #[test]
+    fn login_issuance_rejects_credentials_observed_before_password_rotation() {
+        let temp_dir = tempdir().expect("temporary directory should be created");
+        let auth_db_path = temp_dir.path().join("auth.sqlite");
+        migrate_auth_database(&auth_db_path).expect("auth database should migrate");
+        let service = AuthService::new(&auth_db_path);
+        let user = service
+            .bootstrap_admin("stale_login_admin", STRONG_PASSWORD)
+            .expect("fixture administrator should bootstrap");
+        let stale_authorization = service
+            .verify_user_authorization("stale_login_admin", STRONG_PASSWORD)
+            .expect("credentials should verify")
+            .expect("fixture credentials should be valid");
+
+        assert!(service
+            .reset_password(user.id, "replacement-password")
+            .expect("password reset should commit"));
+        let error = service
+            .create_login_session(
+                stale_authorization,
+                SecurityAuditEvent::new("login", "completed"),
+            )
+            .expect_err("pre-rotation credentials must not mint a post-rotation session");
+
+        assert!(matches!(error, AuthServiceError::InvalidCredentials));
+        assert!(service
+            .list_access_tokens(user.id)
+            .expect("token list should load")
+            .is_empty());
+    }
+
+    #[test]
+    fn personal_token_issuance_rejects_authorization_observed_before_logout_all() {
+        let temp_dir = tempdir().expect("temporary directory should be created");
+        let auth_db_path = temp_dir.path().join("auth.sqlite");
+        migrate_auth_database(&auth_db_path).expect("auth database should migrate");
+        let service = AuthService::new(&auth_db_path);
+        let user = service
+            .bootstrap_admin("stale_token_admin", STRONG_PASSWORD)
+            .expect("fixture administrator should bootstrap");
+        let session = service
+            .login("stale_token_admin", STRONG_PASSWORD)
+            .expect("fixture login should succeed");
+        let stale_authorization = service
+            .verify_access_token_authorization(&session.token)
+            .expect("session verification should run")
+            .expect("fixture session should be valid");
+
+        service
+            .revoke_all_access_tokens_with_audit(
+                user.id,
+                SecurityAuditEvent::new("logout_all", "completed").with_actor_id(user.id.value()),
+            )
+            .expect("global revocation should commit");
+        let error = service
+            .create_access_token_with_authorization_and_audit(
+                user.id,
+                stale_authorization.token_generation,
+                &session.token,
+                "stale-successor",
+                ACCESS_TOKEN_TTL_MIN_SECONDS,
+                SecurityAuditEvent::new("token_create", "completed").with_actor_id(user.id.value()),
+            )
+            .expect_err("pre-revocation authorization must not mint a successor token");
+
+        assert!(matches!(
+            error,
+            AuthServiceError::Repository(AuthRepositoryError::StaleAuthorization)
+        ));
+        assert!(service
+            .list_access_tokens(user.id)
+            .expect("token list should load")
+            .is_empty());
     }
 
     #[test]

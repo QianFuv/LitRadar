@@ -32,6 +32,25 @@ pub struct AuthUserRow {
     pub created_at: f64,
 }
 
+/// Authenticated access-token owner and the observed issuance generation.
+#[derive(Clone, PartialEq)]
+pub struct VerifiedAccessTokenRow {
+    /// Authenticated user metadata.
+    pub user: AuthUserRow,
+    /// User generation that must still match before issuing another token.
+    pub token_generation: i64,
+}
+
+impl fmt::Debug for VerifiedAccessTokenRow {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("VerifiedAccessTokenRow")
+            .field("user", &self.user)
+            .field("token_generation", &self.token_generation)
+            .finish()
+    }
+}
+
 impl fmt::Debug for AuthUserRow {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
@@ -59,6 +78,8 @@ pub struct UserCredentialRow {
     pub is_admin: bool,
     /// Creation timestamp.
     pub created_at: f64,
+    /// Token issuance generation observed with the credential row.
+    pub token_generation: i64,
 }
 
 impl fmt::Debug for UserCredentialRow {
@@ -71,6 +92,7 @@ impl fmt::Debug for UserCredentialRow {
             .field("salt", &"[REDACTED]")
             .field("is_admin", &self.is_admin)
             .field("created_at", &self.created_at)
+            .field("token_generation", &self.token_generation)
             .finish()
     }
 }
@@ -157,6 +179,8 @@ pub enum AuthRepositoryError {
     EntropyUnavailable,
     /// A credential mutation violated its exact-row invariant.
     CredentialMutationInvariant,
+    /// Token authorization changed before a dependent issuance committed.
+    StaleAuthorization,
     /// A required durable security audit row could not be persisted.
     AuditPersistence(SecurityAuditError),
 }
@@ -191,6 +215,9 @@ impl fmt::Display for AuthRepositoryError {
             }
             Self::CredentialMutationInvariant => {
                 formatter.write_str("Credential update affected an unexpected number of users")
+            }
+            Self::StaleAuthorization => {
+                formatter.write_str("Token authorization changed before issuance")
             }
             Self::AuditPersistence(_) => formatter.write_str("Security audit persistence failed"),
         }
@@ -429,7 +456,7 @@ pub fn find_user_credentials_by_username(
     let connection = open_auth_connection(auth_db_path)?;
     connection
         .query_row(
-            "SELECT id, username, password_hash, salt, is_admin, created_at \
+            "SELECT id, username, password_hash, salt, is_admin, created_at, token_generation \
              FROM users WHERE username = ?1",
             [username],
             credential_from_row,
@@ -455,7 +482,7 @@ pub fn find_user_credentials_by_id(
     let connection = open_auth_connection(auth_db_path)?;
     connection
         .query_row(
-            "SELECT id, username, password_hash, salt, is_admin, created_at \
+            "SELECT id, username, password_hash, salt, is_admin, created_at, token_generation \
              FROM users WHERE id = ?1",
             [user_id.value()],
             credential_from_row,
@@ -529,6 +556,61 @@ pub fn insert_personal_access_token_with_audit(
     finish_immediate_transaction(&connection, result)
 }
 
+/// Insert a personal access token only while the observed authorization is current.
+///
+/// # Arguments
+///
+/// * `auth_db_path` - Path to the auth SQLite database.
+/// * `user_id` - User identifier.
+/// * `expected_token_generation` - Generation observed during authorization.
+/// * `authorizing_token_hash` - Exact authorizing token hash, when the caller used a token.
+/// * `token_hash` - SHA-256 hash of the token being issued.
+/// * `name` - Token display name.
+/// * `expires_at` - Expiration timestamp.
+/// * `created_at` - Creation timestamp and authorization-token validity boundary.
+/// * `audit` - Optional required completion audit.
+///
+/// # Returns
+///
+/// Inserted token metadata, or `StaleAuthorization` without a mutation.
+#[allow(clippy::too_many_arguments)]
+pub fn insert_personal_access_token_with_authorization_and_audit(
+    auth_db_path: impl AsRef<Path>,
+    user_id: UserId,
+    expected_token_generation: i64,
+    authorizing_token_hash: Option<&str>,
+    token_hash: &str,
+    name: &str,
+    expires_at: f64,
+    created_at: f64,
+    audit: Option<&SecurityAuditEvent>,
+) -> Result<AccessTokenRow, AuthRepositoryError> {
+    let connection = open_auth_connection(auth_db_path)?;
+    connection.execute("BEGIN IMMEDIATE", [])?;
+    let result = (|| {
+        ensure_token_generation(&connection, user_id, expected_token_generation)?;
+        if let Some(authorizing_token_hash) = authorizing_token_hash {
+            ensure_authorizing_token(&connection, user_id, authorizing_token_hash, created_at)?;
+        }
+        let row = insert_personal_access_token_in_transaction(
+            &connection,
+            user_id,
+            token_hash,
+            name,
+            expires_at,
+            created_at,
+        )?;
+        if let Some(audit) = audit {
+            insert_required_security_audit_event(
+                &connection,
+                &audit.clone().with_target_id(row.id),
+            )?;
+        }
+        Ok(row)
+    })();
+    finish_immediate_transaction(&connection, result)
+}
+
 /// Atomically replace the internal browser login access token.
 ///
 /// # Arguments
@@ -589,6 +671,53 @@ pub fn replace_login_access_token_with_audit(
     finish_immediate_transaction(&connection, result)
 }
 
+/// Replace a login token only while the observed user generation still matches.
+///
+/// # Arguments
+///
+/// * `auth_db_path` - Path to the auth SQLite database.
+/// * `user_id` - User identifier.
+/// * `expected_token_generation` - Generation observed with verified credentials.
+/// * `token_hash` - SHA-256 hash of the login token being issued.
+/// * `expires_at` - Expiration timestamp.
+/// * `created_at` - Creation timestamp.
+/// * `audit` - Optional required completion audit.
+///
+/// # Returns
+///
+/// Inserted login token metadata, or `StaleAuthorization` without a mutation.
+#[allow(clippy::too_many_arguments)]
+pub fn replace_login_access_token_if_generation_matches_with_audit(
+    auth_db_path: impl AsRef<Path>,
+    user_id: UserId,
+    expected_token_generation: i64,
+    token_hash: &str,
+    expires_at: f64,
+    created_at: f64,
+    audit: Option<&SecurityAuditEvent>,
+) -> Result<AccessTokenRow, AuthRepositoryError> {
+    let connection = open_auth_connection(auth_db_path)?;
+    connection.execute("BEGIN IMMEDIATE", [])?;
+    let result = (|| {
+        ensure_token_generation(&connection, user_id, expected_token_generation)?;
+        let row = replace_login_access_token_in_transaction(
+            &connection,
+            user_id,
+            token_hash,
+            expires_at,
+            created_at,
+        )?;
+        if let Some(audit) = audit {
+            insert_required_security_audit_event(
+                &connection,
+                &audit.clone().with_target_id(row.id),
+            )?;
+        }
+        Ok(row)
+    })();
+    finish_immediate_transaction(&connection, result)
+}
+
 /// Verify an access token hash and return the owning user.
 ///
 /// # Arguments
@@ -604,11 +733,12 @@ pub fn verify_access_token_hash(
     auth_db_path: impl AsRef<Path>,
     token_hash: &str,
     now: f64,
-) -> Result<Option<AuthUserRow>, AuthRepositoryError> {
+) -> Result<Option<VerifiedAccessTokenRow>, AuthRepositoryError> {
     let connection = open_auth_connection(auth_db_path)?;
     let row = connection
         .query_row(
-            "SELECT t.user_id, t.expires_at, u.username, u.is_admin, u.created_at \
+            "SELECT t.user_id, t.expires_at, u.username, u.is_admin, u.created_at, \
+                    u.token_generation \
              FROM access_tokens t JOIN users u ON t.user_id = u.id \
              WHERE t.token_hash = ?1",
             [token_hash],
@@ -619,11 +749,12 @@ pub fn verify_access_token_hash(
                     row.get::<_, String>(2)?,
                     row.get::<_, i64>(3)? != 0,
                     row.get::<_, f64>(4)?,
+                    row.get::<_, i64>(5)?,
                 ))
             },
         )
         .optional()?;
-    let Some((user_id, expires_at, username, is_admin, created_at)) = row else {
+    let Some((user_id, expires_at, username, is_admin, created_at, token_generation)) = row else {
         return Ok(None);
     };
     if expires_at <= now {
@@ -633,11 +764,14 @@ pub fn verify_access_token_hash(
         )?;
         return Ok(None);
     }
-    Ok(Some(AuthUserRow {
-        id: user_id,
-        username,
-        is_admin,
-        created_at,
+    Ok(Some(VerifiedAccessTokenRow {
+        user: AuthUserRow {
+            id: user_id,
+            username,
+            is_admin,
+            created_at,
+        },
+        token_generation,
     }))
 }
 
@@ -782,6 +916,13 @@ pub fn delete_all_access_tokens_with_audit(
     connection.busy_timeout(SESSION_REVOCATION_BUSY_TIMEOUT)?;
     connection.execute("BEGIN IMMEDIATE", [])?;
     let result = (|| {
+        let updated = connection.execute(
+            "UPDATE users SET token_generation = token_generation + 1 WHERE id = ?1",
+            [user_id.value()],
+        )?;
+        if updated != 1 {
+            return Err(AuthRepositoryError::CredentialMutationInvariant);
+        }
         let count = connection.execute(
             "DELETE FROM access_tokens WHERE user_id = ?1",
             [user_id.value()],
@@ -882,7 +1023,10 @@ pub fn compare_and_swap_user_password_and_delete_tokens_with_audit(
     connection.execute("BEGIN IMMEDIATE", [])?;
     let result = (|| {
         let updated = connection.execute(
-            "UPDATE users SET password_hash = ?1, salt = ?2, updated_at = ?3 WHERE id = ?4 AND password_hash = ?5 AND salt = ?6",
+            "UPDATE users
+             SET password_hash = ?1, salt = ?2, updated_at = ?3,
+                 token_generation = token_generation + 1
+             WHERE id = ?4 AND password_hash = ?5 AND salt = ?6",
             params![
                 replacement_hash,
                 replacement_salt,
@@ -967,7 +1111,10 @@ fn update_user_password_and_delete_tokens_in_transaction(
         return Ok(false);
     }
     let updated = connection.execute(
-        "UPDATE users SET password_hash = ?1, salt = ?2, updated_at = ?3 WHERE id = ?4",
+        "UPDATE users
+         SET password_hash = ?1, salt = ?2, updated_at = ?3,
+             token_generation = token_generation + 1
+         WHERE id = ?4",
         params![password_hash, salt, now, user_id.value()],
     )?;
     if updated != 1 {
@@ -1379,6 +1526,47 @@ fn purge_expired_access_tokens(
     Ok(connection.execute("DELETE FROM access_tokens WHERE expires_at <= ?1", [now])?)
 }
 
+fn ensure_token_generation(
+    connection: &Connection,
+    user_id: UserId,
+    expected_token_generation: i64,
+) -> Result<(), AuthRepositoryError> {
+    let is_current = connection
+        .query_row(
+            "SELECT token_generation = ?2 FROM users WHERE id = ?1",
+            params![user_id.value(), expected_token_generation],
+            |row| row.get::<_, bool>(0),
+        )
+        .optional()?
+        .unwrap_or(false);
+    if is_current {
+        Ok(())
+    } else {
+        Err(AuthRepositoryError::StaleAuthorization)
+    }
+}
+
+fn ensure_authorizing_token(
+    connection: &Connection,
+    user_id: UserId,
+    token_hash: &str,
+    now: f64,
+) -> Result<(), AuthRepositoryError> {
+    let is_current = connection.query_row(
+        "SELECT EXISTS(
+             SELECT 1 FROM access_tokens
+             WHERE user_id = ?1 AND token_hash = ?2 AND expires_at > ?3
+         )",
+        params![user_id.value(), token_hash, now],
+        |row| row.get::<_, bool>(0),
+    )?;
+    if is_current {
+        Ok(())
+    } else {
+        Err(AuthRepositoryError::StaleAuthorization)
+    }
+}
+
 fn insert_personal_access_token_in_transaction(
     connection: &Connection,
     user_id: UserId,
@@ -1482,6 +1670,7 @@ fn credential_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<UserCredenti
         salt: row.get(3)?,
         is_admin: row.get::<_, i64>(4)? != 0,
         created_at: row.get(5)?,
+        token_generation: row.get(6)?,
     })
 }
 
@@ -1546,13 +1735,15 @@ mod tests {
     use super::{
         bootstrap_admin, compare_and_swap_legacy_password_hash,
         compare_and_swap_user_password_and_delete_tokens_with_audit, create_invite_code,
-        delete_access_token, find_user_credentials_by_id, get_user_invite_code,
-        initialize_auth_database, insert_personal_access_token, issue_invite_code_with_audit,
+        delete_access_token, delete_all_access_tokens_with_audit, find_user_credentials_by_id,
+        get_user_invite_code, initialize_auth_database, insert_personal_access_token,
+        insert_personal_access_token_with_authorization_and_audit, issue_invite_code_with_audit,
         list_access_tokens, open_auth_connection, random_hex, register_user_with_invite,
-        replace_login_access_token, revoke_user_invite_code_with_audit,
-        rotate_user_invite_code_with_audit, update_user_password_and_delete_tokens,
-        update_user_password_and_delete_tokens_with_audit, verify_access_token_hash,
-        AuthRepositoryError, AuthUserRow, InviteCodeRow, UserCredentialRow,
+        replace_login_access_token, replace_login_access_token_if_generation_matches_with_audit,
+        revoke_user_invite_code_with_audit, rotate_user_invite_code_with_audit,
+        update_user_password_and_delete_tokens, update_user_password_and_delete_tokens_with_audit,
+        verify_access_token_hash, AuthRepositoryError, AuthUserRow, InviteCodeRow,
+        UserCredentialRow,
     };
     use crate::{list_security_audit_events, SecurityAuditEvent};
 
@@ -1731,7 +1922,7 @@ mod tests {
             AuthRepositoryError::AccessTokenLimitReached
         ));
         assert_eq!(listed.len() as i64, ACCESS_TOKEN_ACTIVE_LIMIT + 1);
-        assert_eq!(verified.id, user_id);
+        assert_eq!(verified.user.id, user_id);
         assert_eq!(login_token_hashes(&auth_db_path, user_id), ["login-hash"]);
         assert_eq!(count_tokens_by_hash(&auth_db_path, "rejected-hash"), 0);
         assert!(
@@ -1869,6 +2060,117 @@ mod tests {
             count_tokens_by_hash(&auth_db_path, "boundary-token-hash"),
             0
         );
+    }
+
+    #[test]
+    fn token_issuance_rejects_authorization_observed_before_global_revocation() {
+        let (_temp_dir, auth_db_path, user_id) = access_token_fixture();
+        insert_raw_access_token(
+            &auth_db_path,
+            user_id,
+            "authorizing-token-hash",
+            "authorizing",
+            4_000_000_000.0,
+            2.0,
+        );
+        let observed = find_user_credentials_by_id(&auth_db_path, user_id)
+            .expect("credentials should load")
+            .expect("fixture user should exist");
+        delete_all_access_tokens_with_audit(
+            &auth_db_path,
+            user_id,
+            &SecurityAuditEvent::new("logout_all", "completed").with_actor_id(user_id.value()),
+        )
+        .expect("global revocation should commit");
+
+        let personal_error = insert_personal_access_token_with_authorization_and_audit(
+            &auth_db_path,
+            user_id,
+            observed.token_generation,
+            Some("authorizing-token-hash"),
+            "stale-personal-hash",
+            "stale-personal",
+            4_000_000_000.0,
+            3.0,
+            Some(
+                &SecurityAuditEvent::new("token_create", "completed")
+                    .with_actor_id(user_id.value()),
+            ),
+        )
+        .expect_err("stale PAT authorization must not survive logout-all");
+        let login_error = replace_login_access_token_if_generation_matches_with_audit(
+            &auth_db_path,
+            user_id,
+            observed.token_generation,
+            "stale-login-hash",
+            4_000_000_000.0,
+            3.0,
+            Some(&SecurityAuditEvent::new("login", "completed").with_actor_id(user_id.value())),
+        )
+        .expect_err("stale password authorization must not survive logout-all");
+        let current = find_user_credentials_by_id(&auth_db_path, user_id)
+            .expect("credentials should reload")
+            .expect("fixture user should remain");
+        let audits = list_security_audit_events(&auth_db_path).expect("audits should load");
+
+        assert!(matches!(
+            personal_error,
+            AuthRepositoryError::StaleAuthorization
+        ));
+        assert!(matches!(
+            login_error,
+            AuthRepositoryError::StaleAuthorization
+        ));
+        assert_eq!(current.token_generation, observed.token_generation + 1);
+        assert_eq!(
+            count_tokens_by_hash(&auth_db_path, "stale-personal-hash"),
+            0
+        );
+        assert_eq!(count_tokens_by_hash(&auth_db_path, "stale-login-hash"), 0);
+        assert_eq!(
+            audits
+                .iter()
+                .filter(|event| event.action == "logout_all")
+                .count(),
+            1
+        );
+        assert!(!audits
+            .iter()
+            .any(|event| matches!(event.action.as_str(), "token_create" | "login")));
+    }
+
+    #[test]
+    fn personal_token_issuance_rechecks_the_exact_authorizing_token() {
+        let (_temp_dir, auth_db_path, user_id) = access_token_fixture();
+        let token_id = insert_raw_access_token(
+            &auth_db_path,
+            user_id,
+            "single-authorizing-hash",
+            "authorizing",
+            4_000_000_000.0,
+            2.0,
+        );
+        let observed = find_user_credentials_by_id(&auth_db_path, user_id)
+            .expect("credentials should load")
+            .expect("fixture user should exist");
+        assert!(delete_access_token(&auth_db_path, user_id, token_id)
+            .expect("authorizing token should be revoked"));
+
+        let error = insert_personal_access_token_with_authorization_and_audit(
+            &auth_db_path,
+            user_id,
+            observed.token_generation,
+            Some("single-authorizing-hash"),
+            "successor-hash",
+            "successor",
+            4_000_000_000.0,
+            3.0,
+            None,
+        )
+        .expect_err("a revoked authorizing token must not mint a successor");
+
+        assert!(matches!(error, AuthRepositoryError::StaleAuthorization));
+        assert_eq!(count_tokens_by_hash(&auth_db_path, "successor-hash"), 0);
     }
 
     #[test]
@@ -2505,6 +2807,7 @@ mod tests {
                     salt: "password-salt-sentinel".to_string(),
                     is_admin: true,
                     created_at: 1.0,
+                    token_generation: 0,
                 },
                 InviteCodeRow {
                     id: 2,

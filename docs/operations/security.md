@@ -133,10 +133,11 @@ printf '%s\n' "$ADMIN_PASSWORD" |
 - 新密码使用 PHC 格式 Argon2id（`m=19456 KiB,t=2,p=1`）；API 的密码 KDF 使用独立并发 2 gate，避免 160 MiB 容器内出现不受限的并行内存消耗。
 - 旧 PBKDF2-HMAC-SHA256 hex+salt 行继续验证；正确登录后以原 hash+salt 为 CAS 条件升级为 Argon2id，错误密码不会升级，并且升级不撤销现有 token。
 - 用户名不存在时仍对固定有效 dummy PHC 执行同参数 Argon2id 验证，再返回统一认证失败。
-- 密码变更和管理员重置在一个 `BEGIN IMMEDIATE` 事务内更新 hash/salt 并撤销该用户全部令牌；任一步失败都会整体回滚。
+- 密码变更和管理员重置在一个 `BEGIN IMMEDIATE` 事务内更新 hash/salt、递增该用户的令牌代际并撤销全部令牌；任一步失败都会整体回滚。
 - salt、浏览器会话、Personal Access Token、邀请码和手动作业 ID 均由操作系统 CSPRNG 生成，不依赖 SQLite `randomblob()`。
 - 浏览器登录令牌只通过 `HttpOnly`、`SameSite=Lax` 的 `litradar_session` Cookie 传输。
 - 浏览器会话固定 7 天到期、登录时轮换且不滚动续期；Personal Access Token 的有效期由创建时显式选择。
+- 登录在密码验证时捕获令牌代际，并在写入 Cookie 会话的同一事务中复核；`logout-all`、改密或重置若先提交，旧验证结果不能再签发会话。Personal Access Token 创建还会在写事务中复核发起请求的原始 token 仍属于该用户且未过期，因此单令牌注销/吊销与全局撤销都不能被已认证但尚未提交的请求越过。
 - 用户创建的长期令牌只通过 Bearer 请求头用于外部客户端。
 - 令牌不得放入 URL 查询参数。
 - `expires_at <= now` 统一视为已过期；验证路径会拒绝并清理边界时刻的令牌。
