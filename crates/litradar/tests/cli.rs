@@ -70,6 +70,9 @@ fn index_command_help_exposes_full_rescan_defaults_and_mode_relationships() {
     assert!(payload["usage"]
         .as_str()
         .is_some_and(|usage| usage.contains("--full-rescan|--no-full-rescan")));
+    assert!(payload["usage"]
+        .as_str()
+        .is_some_and(|usage| usage.contains("--acknowledge-unknown-notify")));
     assert_eq!(payload["defaults"]["resume"], true);
     assert_eq!(payload["defaults"]["update"], false);
     assert_eq!(payload["defaults"]["full_rescan"], false);
@@ -85,6 +88,9 @@ fn index_command_help_exposes_full_rescan_defaults_and_mode_relationships() {
     assert!(payload["modes"]["file"]
         .as_str()
         .is_some_and(|value| value.contains("exactly one CSV")));
+    assert!(payload["modes"]["acknowledge_unknown_notify"]
+        .as_str()
+        .is_some_and(|value| value.contains("ambiguous notify attempt")));
 }
 
 #[test]
@@ -92,6 +98,21 @@ fn index_command_mode_conflicts_fail_before_project_mutation() {
     for arguments in [
         vec!["index", "--project-root", ".", "--update", "--full-rescan"],
         vec!["index", "--project-root", ".", "--notify"],
+        vec![
+            "index",
+            "--project-root",
+            ".",
+            "--acknowledge-unknown-notify",
+        ],
+        vec![
+            "index",
+            "--project-root",
+            ".",
+            "--update",
+            "--notify",
+            "--no-resume",
+            "--acknowledge-unknown-notify",
+        ],
     ] {
         let root = tempdir().expect("temporary project root should be created");
         let output = run_litradar_in(root.path(), &arguments);
@@ -614,6 +635,104 @@ fn notify_and_push_emit_terminal_json_before_nonzero_exit() {
             .iter()
             .any(|event| event["event"] == "process.failed"));
     }
+}
+
+#[test]
+fn notify_internal_handoff_emits_one_compact_attempt_contract() {
+    let root = tempdir().expect("temporary project root should be created");
+    let storage_config = litradar_storage::StorageConfig::from_project_root(root.path());
+    let secret_key_file = root.path().join("secret.key");
+    fs::write(&secret_key_file, [31_u8; 32]).expect("secret key should write");
+    litradar_storage::migrate_storage(&storage_config).expect("storage should migrate");
+    litradar_storage::migrate_index_database(
+        storage_config.index_dir().join("fixture.sqlite"),
+        None,
+    )
+    .expect("fixture index should migrate");
+
+    for (suffix, terminal_status, should_succeed) in [
+        (
+            "completed",
+            litradar_storage::DeliveryRunStatus::Completed,
+            true,
+        ),
+        (
+            "unknown",
+            litradar_storage::DeliveryRunStatus::Unknown,
+            false,
+        ),
+    ] {
+        let source_run_id = format!("compact-{suffix}");
+        let attempt_id = if should_succeed {
+            "11111111111111111111111111111111"
+        } else {
+            "22222222222222222222222222222222"
+        };
+        seed_terminal_delivery_run(
+            storage_config.auth_db_path(),
+            litradar_storage::DeliveryWorkflow::Notify,
+            &scheduled_attempt_external_id(&source_run_id, attempt_id),
+            terminal_status,
+        );
+        let manifest_name = format!("{source_run_id}.changes.json");
+        fs::write(
+            root.path().join(&manifest_name),
+            serde_json::to_vec(&serde_json::json!({
+                "db_name": "fixture.sqlite",
+                "run_id": source_run_id,
+                "notifiable_article_ids": [],
+            }))
+            .expect("manifest should serialize"),
+        )
+        .expect("manifest should write");
+
+        let output = run_litradar_in(
+            root.path(),
+            &[
+                "notify",
+                "--project-root",
+                ".",
+                "--secret-key-file",
+                "secret.key",
+                "--changes-file",
+                &manifest_name,
+                "--attempt-id",
+                attempt_id,
+                "--internal-handoff-json",
+                "--no-dry-run",
+            ],
+        );
+        let stdout = String::from_utf8(output.stdout.clone()).expect("stdout should be UTF-8");
+        let payload: Value =
+            serde_json::from_str(stdout.trim()).expect("compact handoff should be JSON");
+
+        assert_eq!(output.status.success(), should_succeed);
+        assert_eq!(stdout.lines().count(), 1);
+        assert_eq!(payload["protocol_version"], 1);
+        assert_eq!(payload["attempt_id"], attempt_id);
+        assert_eq!(payload["workflow"], "notify");
+        assert_eq!(payload["mode"], "execute");
+        assert_eq!(payload["status"], terminal_status.as_str());
+        assert_eq!(payload["db_name"], "fixture.sqlite");
+        assert!(payload.get("databases").is_none());
+        assert_eq!(
+            payload
+                .as_object()
+                .expect("payload should be an object")
+                .len(),
+            6
+        );
+    }
+}
+
+fn scheduled_attempt_external_id(source_run_id: &str, attempt_id: &str) -> String {
+    format!(
+        "scheduled-run-{}",
+        litradar_domain::stable_sqlite_id(
+            format!("{source_run_id}:{attempt_id}"),
+            "scheduled-delivery-attempt",
+        )
+    )
 }
 
 fn seed_terminal_delivery_run(

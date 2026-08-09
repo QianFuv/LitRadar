@@ -31,9 +31,13 @@
 1. 从内容库 outbox 构造确定性的 JSON，并把精确 UTF-8 payload、相对目标路径和 inclusive through-event cursor 写入 `index-batches.sqlite` 的 `manifest_prepared` 状态。
 2. 通过同目录临时文件、flush/fsync 和 rename 发布精确 payload。
 3. 幂等删除 `article_change_events.event_id <= cursor`，再进入 `manifest_published`。
-4. 配置了 `index --notify` 时先进入 `notifying`，只执行 `litradar notify` handoff；exit code 持久化后才把 catalog 标为 completed。
+4. 配置了 `index --notify` 时先进入 `notifying`，在 child 启动前持久化 attempt ID；只有 compact handoff JSON 的 typed success 与 exit 0 一致时才把 catalog 标为 completed。
 
-因此在 payload 持久化、rename、outbox acknowledgement 或 phase 写入任一点中止，默认 resume 都会重放相同 manifest 字节，不再次访问已经完成的 Provider journal。notify 启动失败会停留在 `notifying`；恢复只重试 notify。若 notify exit code 已写入而 catalog completion 尚未写入，恢复不会再次启动 notify。外部 notify 已产生副作用但进程在 exit code 持久化前消失时仍是至少一次 handoff，投递层继续依靠自身 run/item/dedupe 状态处理不确定结果。
+因此在 payload 持久化、rename、outbox acknowledgement 或 phase 写入任一点中止，默认 resume 都会重放相同 manifest 字节，不再次访问已经完成的 Provider journal。notify attempt 是 32 位十六进制稳定 ID，并进入 scheduled delivery run 身份：父进程在 attempt 落盘后、结果落盘前中止时，恢复复用同一 ID，已终态的内层 run 只返回状态，仍 active 的 run 走既有 lease 恢复。
+
+父进程最多保留并解析 64 KiB child stdout，同时继续排空管道；只接受字段集合、protocol version、attempt、workflow、mode、status 和 db 全部匹配的一份 JSON。`idle/completed/skipped + exit 0` 是成功；`failed/cancelled/timed_out + nonzero` 在下一次调用创建新 attempt；`running + nonzero` 保留并复用当前 attempt。`unknown`、缺失/畸形/超大输出、上下文不匹配、无退出码或 status/exit 不一致一律持久化为 Unknown，默认 resume 不再启动 child。
+
+审核认证库中的 delivery run、subscriber item 与 dedupe 后，operator 可在原 `--resume --update --notify` 命令上增加 `--acknowledge-unknown-notify`。batch ledger 在一个 transaction 中记录被确认的 Unknown attempt 与时间，再建立一个新 attempt；文章级 Confirmed/Unknown dedupe 不变，所以旧副作用不会自动重发，而 manifest 中尚未处理的新文章仍可执行。每次父进程 invocation 对每个 catalog 至多启动一个 notify child。若已存在待完成的已发布 notify manifest，`--no-resume` 会失败，不允许通过放弃 batch 静默跳过 handoff。
 
 如果新 batch 的 outbox 为空，而目标已有一个大小受限、可解析且 `db_name` 匹配的 manifest，索引会保留现有文件、返回无新 manifest，并跳过内联 notify；不会用空 payload 覆盖尚待消费的候选。删除项目 batch ledger 会失去这些 phase/intent 证明，文件与 SQLite 的通用边界仍按至少一次对待。
 

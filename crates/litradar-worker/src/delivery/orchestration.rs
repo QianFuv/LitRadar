@@ -36,7 +36,7 @@ pub fn run_recommendation_delivery(
     run_recommendation_delivery_with_services_for_user(
         config,
         None,
-        None,
+        config.attempt_id.as_deref(),
         &mut ai_selector,
         &mut pushplus_sender,
     )
@@ -56,7 +56,7 @@ pub fn run_recommendation_delivery_for_user(
     config: &RecommendationRunConfig,
     user_id: UserId,
 ) -> Result<RecommendationRunOutcome, DeliveryError> {
-    run_recommendation_delivery_for_user_in_attempt(config, user_id, None)
+    run_recommendation_delivery_for_user_in_attempt(config, user_id, config.attempt_id.as_deref())
 }
 
 fn run_recommendation_delivery_for_user_in_attempt(
@@ -194,6 +194,7 @@ fn run_manual_weekly_push_inner(
                 index_db_path,
                 db_name: manifest.db_name,
                 changes_file: Some(manifest.path),
+                attempt_id: None,
                 ai_model: config.ai_model.clone(),
                 max_candidates: config.max_candidates,
                 timeout_seconds: config.timeout_seconds,
@@ -244,7 +245,7 @@ fn run_recommendation_delivery_with_services(
     run_recommendation_delivery_with_services_for_user(
         config,
         None,
-        None,
+        config.attempt_id.as_deref(),
         ai_selector,
         pushplus_sender,
     )
@@ -337,7 +338,16 @@ fn delivery_external_id(
     attempt_id: Option<&str>,
 ) -> String {
     let Some(user_id) = subscriber_user_id else {
-        return source_external_id.to_string();
+        return match attempt_id {
+            Some(attempt_id) => format!(
+                "scheduled-run-{}",
+                litradar_domain::stable_sqlite_id(
+                    format!("{source_external_id}:{attempt_id}"),
+                    "scheduled-delivery-attempt",
+                )
+            ),
+            None => source_external_id.to_string(),
+        };
     };
     let (identity, namespace) = match attempt_id {
         Some(attempt_id) => (
@@ -1660,6 +1670,114 @@ mod tests {
     }
 
     #[test]
+    fn scheduled_attempt_identity_is_stable_distinct_and_legacy_compatible() {
+        assert_eq!(
+            delivery_external_id("manifest-run", None, None),
+            "manifest-run"
+        );
+        let first = delivery_external_id("manifest-run", None, Some("attempt-one"));
+        let repeated = delivery_external_id("manifest-run", None, Some("attempt-one"));
+        let second = delivery_external_id("manifest-run", None, Some("attempt-two"));
+
+        assert_eq!(first, repeated);
+        assert_ne!(first, second);
+        assert!(first.starts_with("scheduled-run-"));
+    }
+
+    #[test]
+    fn scheduled_attempts_preserve_unknown_dedupe_while_delivering_new_articles() {
+        let fixture = DeliveryFixture::new(notification_settings("pushplus", true, vec![]));
+        let changes_file = fixture.root.path().join("scheduled-attempt.changes.json");
+        fs::write(
+            &changes_file,
+            r#"{"db_name":"fixture.sqlite","run_id":"scheduled-manifest","notifiable_article_ids":[101]}"#,
+        )
+        .expect("first scheduled manifest should be written");
+        let mut first_config = fixture.config(
+            DeliveryWorkflow::Notify,
+            DeliveryMode::Execute,
+            Some(changes_file.clone()),
+            None,
+        );
+        first_config.attempt_id = Some("11111111111111111111111111111111".to_string());
+        let mut first_ai_selector =
+            FixtureDeliveryAiSelector::new(vec![selection_outcome(&[101], "")]);
+        let mut first_pushplus_sender = FixturePushPlusSender::new(vec![Err(
+            DeliveryError::PushPlus("ambiguous send".to_string()),
+        )]);
+        let first = run_recommendation_delivery_with_services(
+            &first_config,
+            &mut first_ai_selector,
+            &mut first_pushplus_sender,
+        )
+        .expect("ambiguous scheduled attempt should persist Unknown");
+        assert_eq!(first.status, DeliveryOutcomeState::Unknown);
+        assert_eq!(first.candidate_article_ids, vec![101], "first: {first:?}");
+        assert_eq!(
+            delivery_dedupe(&fixture, DeliveryWorkflow::Notify).len(),
+            1,
+            "first: {first:?}"
+        );
+
+        let mut second_config = first_config.clone();
+        second_config.attempt_id = Some("22222222222222222222222222222222".to_string());
+        let mut second_ai_selector =
+            FixtureDeliveryAiSelector::new(vec![selection_outcome(&[101], "")]);
+        let mut second_pushplus_sender =
+            FixturePushPlusSender::new(vec![Ok("unexpected-message".to_string())]);
+        let second = run_recommendation_delivery_with_services(
+            &second_config,
+            &mut second_ai_selector,
+            &mut second_pushplus_sender,
+        )
+        .expect("new scheduled attempt should safely skip ambiguous articles");
+
+        assert_ne!(first.delivery_run_id, second.delivery_run_id);
+        assert_eq!(second.status, DeliveryOutcomeState::Completed);
+        assert_eq!(
+            second.subscribers[0].status,
+            SubscriberDeliveryState::Skipped
+        );
+        assert!(second_pushplus_sender.messages.is_empty());
+
+        fs::write(
+            &changes_file,
+            r#"{"db_name":"fixture.sqlite","run_id":"later-scheduled-manifest","notifiable_article_ids":[102]}"#,
+        )
+        .expect("later scheduled manifest should be written");
+        let mut later_config = second_config.clone();
+        later_config.attempt_id = Some("33333333333333333333333333333333".to_string());
+        let mut later_ai_selector =
+            FixtureDeliveryAiSelector::new(vec![selection_outcome(&[102], "")]);
+        let mut later_pushplus_sender =
+            FixturePushPlusSender::new(vec![Ok("new-article-message".to_string())]);
+        let later = run_recommendation_delivery_with_services(
+            &later_config,
+            &mut later_ai_selector,
+            &mut later_pushplus_sender,
+        )
+        .expect("later manifest should deliver only its new article");
+
+        assert_ne!(second.delivery_run_id, later.delivery_run_id);
+        assert_eq!(later.status, DeliveryOutcomeState::Completed);
+        assert_eq!(later_pushplus_sender.messages.len(), 1);
+        assert!(later_pushplus_sender.messages[0]
+            .content
+            .contains("Rust migration"));
+        assert!(!later_pushplus_sender.messages[0]
+            .content
+            .contains("Rust systems"));
+        let dedupe = delivery_dedupe(&fixture, DeliveryWorkflow::Notify);
+        assert_eq!(dedupe.len(), 2);
+        assert!(dedupe.iter().any(|row| {
+            row.article_id == 101 && row.status == litradar_storage::DeliveryDedupeStatus::Unknown
+        }));
+        assert!(dedupe.iter().any(|row| {
+            row.article_id == 102 && row.status == litradar_storage::DeliveryDedupeStatus::Confirmed
+        }));
+    }
+
+    #[test]
     fn dry_run_notify_plans_pushplus_without_sending() {
         let fixture = DeliveryFixture::new(notification_settings("pushplus", true, vec![]));
 
@@ -2363,6 +2481,7 @@ mod tests {
             index_db_path,
             db_name: "fixture.sqlite".to_string(),
             changes_file: None,
+            attempt_id: None,
             ai_model: None,
             max_candidates: None,
             timeout_seconds: 60,
@@ -2678,6 +2797,7 @@ mod tests {
                 index_db_path: self.index_db_path.clone(),
                 db_name: self.db_name.clone(),
                 changes_file,
+                attempt_id: None,
                 ai_model: None,
                 max_candidates,
                 timeout_seconds: 60,

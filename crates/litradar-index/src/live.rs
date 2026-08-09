@@ -27,10 +27,12 @@ use serde::{Deserialize, Serialize};
 
 use crate::batch::{
     admit_batch, complete_batch, complete_catalog, heartbeat_batch_lease, new_batch_owner_id,
-    open_batch_db, read_batch_catalogs, release_batch_lease, replace_abandoning_batch,
+    new_notify_attempt_id, open_batch_db, prepare_notify_attempt, read_batch_catalogs,
+    record_notify_attempt_result, release_batch_lease, replace_abandoning_batch,
     store_catalog_outcome, store_manifest_intent, transition_catalog_phase, BatchAdmission,
     BatchCatalogOutcome, BatchCatalogPhase, BatchDatabaseError, CatalogInput, CatalogSelection,
-    IndexBatch, IndexBatchCatalog, IndexBatchRequest, ManifestIntent, BATCH_DATABASE_FILE_NAME,
+    IndexBatch, IndexBatchCatalog, IndexBatchRequest, ManifestIntent, NotifyAttemptPreparation,
+    NotifyHandoffState, NotifyHandoffStatus, BATCH_DATABASE_FILE_NAME,
 };
 use crate::changes::{
     acknowledge_content_change_events, discard_content_change_events,
@@ -62,6 +64,8 @@ const LEGACY_WORKER_REQUEST_STALE_SECONDS: u64 = 300;
 const MAX_LEGACY_WORKER_REQUEST_BYTES: u64 = 64 * 1024 * 1024;
 const MAX_PROVIDER_PAGES_PER_JOURNAL: usize = 100_000;
 const MAX_RECOVERABLE_MANIFEST_BYTES: u64 = 64 * 1024 * 1024;
+const MAX_NOTIFY_HANDOFF_STDOUT_BYTES: usize = 64 * 1024;
+const NOTIFY_HANDOFF_PROTOCOL_VERSION: u32 = 1;
 const WORKER_PROTOCOL_FAILURE_MESSAGE: &str = "worker protocol operation failed";
 const LEGACY_ALIAS_SYNC_STATE_MESSAGE: &str =
     "legacy catalog alias has provider synchronization state";
@@ -95,6 +99,8 @@ pub struct LiveIndexConfig {
     pub notify: bool,
     /// Whether notify handoff should use dry-run mode.
     pub notify_dry_run: bool,
+    /// Whether to acknowledge an ambiguous prior notify attempt before retrying.
+    pub acknowledge_unknown_notify: bool,
     /// Scholarly source runtime configuration.
     pub scholarly_config: LiveScholarlyConfig,
     /// Domestic CNKI captcha solver token loaded from runtime secrets or probe env.
@@ -123,6 +129,10 @@ impl fmt::Debug for LiveIndexConfig {
             .field("full_rescan", &self.full_rescan)
             .field("notify", &self.notify)
             .field("notify_dry_run", &self.notify_dry_run)
+            .field(
+                "acknowledge_unknown_notify",
+                &self.acknowledge_unknown_notify,
+            )
             .field("index_provider_routes", &self.index_provider_routes)
             .field("provider_proxy_selection", &self.provider_proxy_selection)
             .field("provider_credentials", &"[REDACTED]")
@@ -162,6 +172,37 @@ pub struct LiveCsvIndexOutcome {
     pub manifest_path: Option<String>,
     /// Optional notify process exit code.
     pub notify_exit_code: Option<i32>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct NotifyHandoffObservation {
+    status: NotifyHandoffStatus,
+    exit_code: Option<i32>,
+}
+
+impl NotifyHandoffObservation {
+    fn unknown(exit_code: Option<i32>) -> Self {
+        Self {
+            status: NotifyHandoffStatus::Unknown,
+            exit_code,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct NotifyHandoffPayload {
+    protocol_version: u32,
+    attempt_id: String,
+    workflow: String,
+    mode: String,
+    status: String,
+    db_name: String,
+}
+
+struct BoundedNotifyOutput {
+    bytes: Vec<u8>,
+    exceeded_limit: bool,
 }
 
 /// Live index workflow failure.
@@ -913,7 +954,12 @@ fn run_batch_catalogs_with<RunCatalog, RunNotify>(
 where
     RunCatalog:
         FnMut(&LiveIndexConfig, &CatalogInput, &str) -> Result<LiveCsvIndexOutcome, LiveIndexError>,
-    RunNotify: FnMut(&LiveIndexConfig, &str, &Path) -> Result<i32, LiveIndexError>,
+    RunNotify: FnMut(
+        &LiveIndexConfig,
+        &str,
+        &Path,
+        &str,
+    ) -> Result<NotifyHandoffObservation, LiveIndexError>,
 {
     let catalogs = read_batch_catalogs(batch_connection, &batch.batch_id)?;
     if catalogs.len() != request.catalogs.len() {
@@ -988,7 +1034,9 @@ where
                 LiveRunTime::now().epoch_seconds,
             )?;
             trace_catalog_phase(batch, stored, "completed");
-            outcomes.push(catalog_outcome_from_persisted(config, input, &persisted));
+            outcomes.push(catalog_outcome_from_persisted(
+                config, input, &persisted, None,
+            ));
             continue;
         }
         if phase == BatchCatalogPhase::Indexing {
@@ -1068,7 +1116,9 @@ where
                     LiveRunTime::now().epoch_seconds,
                 )?;
                 trace_catalog_phase(batch, stored, "completed");
-                outcomes.push(catalog_outcome_from_persisted(config, input, &persisted));
+                outcomes.push(catalog_outcome_from_persisted(
+                    config, input, &persisted, None,
+                ));
                 continue;
             }
         }
@@ -1079,24 +1129,62 @@ where
                 }
                 .into());
             }
-            if persisted.notify_exit_code.is_none() {
-                let manifest_path = config.project_root.join(&intent.path);
-                let db_name = catalog_database_name(input);
-                persisted.notify_exit_code = Some(notify(config, &db_name, &manifest_path)?);
-                store_catalog_outcome(
-                    batch_connection,
-                    &batch.batch_id,
-                    &batch.owner_id,
-                    stored.ordinal,
-                    &persisted,
-                    LiveRunTime::now().epoch_seconds,
-                )?;
-            }
-            if persisted.notify_exit_code != Some(0) {
-                return Err(LiveIndexError::Notify(
-                    "notification handoff did not complete successfully".to_string(),
-                ));
-            }
+            let prepared = prepare_notify_attempt(
+                batch_connection,
+                &batch.batch_id,
+                &batch.owner_id,
+                stored.ordinal,
+                &new_notify_attempt_id(),
+                config.acknowledge_unknown_notify,
+                LiveRunTime::now().epoch_seconds,
+            )?;
+            let handoff = match prepared {
+                NotifyAttemptPreparation::Succeeded(state) => state,
+                NotifyAttemptPreparation::BlockedUnknown(_) => {
+                    return Err(LiveIndexError::Notify(
+                        "notification handoff is ambiguous; review it and rerun with --acknowledge-unknown-notify"
+                            .to_string(),
+                    ));
+                }
+                NotifyAttemptPreparation::Run(state) => {
+                    let manifest_path = config.project_root.join(&intent.path);
+                    let db_name = catalog_database_name(input);
+                    let observation =
+                        match notify(config, &db_name, &manifest_path, &state.attempt_id) {
+                            Ok(observation) => observation,
+                            Err(error) => {
+                                record_notify_attempt_result(
+                                    batch_connection,
+                                    &batch.batch_id,
+                                    &batch.owner_id,
+                                    stored.ordinal,
+                                    &state.attempt_id,
+                                    NotifyHandoffStatus::Failed,
+                                    None,
+                                    LiveRunTime::now().epoch_seconds,
+                                )?;
+                                return Err(error);
+                            }
+                        };
+                    let state = record_notify_attempt_result(
+                        batch_connection,
+                        &batch.batch_id,
+                        &batch.owner_id,
+                        stored.ordinal,
+                        &state.attempt_id,
+                        observation.status,
+                        observation.exit_code,
+                        LiveRunTime::now().epoch_seconds,
+                    )?;
+                    if !state.status.is_success() {
+                        return Err(LiveIndexError::Notify(format!(
+                            "notification handoff ended with status {}",
+                            state.status.as_str()
+                        )));
+                    }
+                    state
+                }
+            };
             complete_catalog(
                 batch_connection,
                 &batch.batch_id,
@@ -1106,7 +1194,12 @@ where
                 LiveRunTime::now().epoch_seconds,
             )?;
             trace_catalog_phase(batch, stored, "completed");
-            outcomes.push(catalog_outcome_from_persisted(config, input, &persisted));
+            outcomes.push(catalog_outcome_from_persisted(
+                config,
+                input,
+                &persisted,
+                Some(&handoff),
+            ));
             continue;
         }
         return Err(BatchDatabaseError::InvalidState {
@@ -1124,7 +1217,6 @@ fn persisted_catalog_outcome(outcome: &LiveCsvIndexOutcome) -> BatchCatalogOutco
         written_article_count: outcome.written_article_count,
         source_attempt_count: outcome.source_attempt_count,
         manifest_path: None,
-        notify_exit_code: None,
     }
 }
 
@@ -1138,7 +1230,12 @@ fn completed_catalog_outcome(
             reason: "completed catalog has no persisted outcome",
         })
     })?;
-    Ok(catalog_outcome_from_persisted(config, input, outcome))
+    Ok(catalog_outcome_from_persisted(
+        config,
+        input,
+        outcome,
+        stored.notify_handoff.as_ref(),
+    ))
 }
 
 fn transition_batch_catalog(
@@ -1289,6 +1386,7 @@ fn catalog_outcome_from_persisted(
     config: &LiveIndexConfig,
     input: &CatalogInput,
     outcome: &BatchCatalogOutcome,
+    notify_handoff: Option<&NotifyHandoffState>,
 ) -> LiveCsvIndexOutcome {
     LiveCsvIndexOutcome {
         csv_path: input.path.display().to_string(),
@@ -1302,7 +1400,7 @@ fn catalog_outcome_from_persisted(
             .manifest_path
             .as_ref()
             .map(|path| config.project_root.join(path).display().to_string()),
-        notify_exit_code: outcome.notify_exit_code,
+        notify_exit_code: notify_handoff.and_then(|handoff| handoff.exit_code),
     }
 }
 
@@ -1382,6 +1480,16 @@ fn validate_live_config(config: &LiveIndexConfig) -> Result<(), LiveIndexError> 
     if config.notify && !config.update {
         return Err(LiveIndexError::InvalidConfig(
             "--notify requires an update manifest".to_string(),
+        ));
+    }
+    if config.acknowledge_unknown_notify && !config.notify {
+        return Err(LiveIndexError::InvalidConfig(
+            "--acknowledge-unknown-notify requires --notify".to_string(),
+        ));
+    }
+    if config.acknowledge_unknown_notify && !config.resume {
+        return Err(LiveIndexError::InvalidConfig(
+            "--acknowledge-unknown-notify requires --resume".to_string(),
         ));
     }
     if config.index_provider_routes.is_empty() {
@@ -2962,7 +3070,8 @@ fn run_notify_for_manifest(
     config: &LiveIndexConfig,
     db_name: &str,
     manifest_path: &Path,
-) -> Result<i32, LiveIndexError> {
+    attempt_id: &str,
+) -> Result<NotifyHandoffObservation, LiveIndexError> {
     let mut command = Command::new(&config.application_executable);
     command
         .arg("notify")
@@ -2973,14 +3082,131 @@ fn run_notify_for_manifest(
         .arg("--changes-file")
         .arg(manifest_path)
         .arg("--project-root")
-        .arg(&config.project_root);
+        .arg(&config.project_root)
+        .arg("--attempt-id")
+        .arg(attempt_id)
+        .arg("--internal-handoff-json")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::inherit());
     if config.notify_dry_run {
         command.arg("--dry-run");
     }
-    let status = command
-        .status()
+    let mut child = command
+        .spawn()
         .map_err(|error| LiveIndexError::Notify(error.to_string()))?;
-    Ok(status.code().unwrap_or(1))
+    let output = child
+        .stdout
+        .take()
+        .ok_or_else(|| std::io::Error::other("notification handoff stdout pipe is unavailable"))
+        .and_then(|mut stdout| read_bounded_notify_output(&mut stdout));
+    let exit_code = match child.wait() {
+        Ok(status) => status.code(),
+        Err(error) => {
+            tracing::error!(
+                event = "index.notify.wait_failed",
+                component = "index",
+                error_kind = ?error.kind(),
+            );
+            return Ok(NotifyHandoffObservation::unknown(None));
+        }
+    };
+    let output = match output {
+        Ok(output) => output,
+        Err(error) => {
+            tracing::error!(
+                event = "index.notify.stdout_failed",
+                component = "index",
+                error_kind = ?error.kind(),
+            );
+            return Ok(NotifyHandoffObservation::unknown(exit_code));
+        }
+    };
+    let observation = classify_notify_handoff_output(
+        &output.bytes,
+        output.exceeded_limit,
+        attempt_id,
+        db_name,
+        config.notify_dry_run,
+        exit_code,
+    );
+    if observation.status == NotifyHandoffStatus::Unknown {
+        tracing::error!(
+            event = "index.notify.result_unknown",
+            component = "index",
+            retained_bytes = output.bytes.len(),
+            exceeded_limit = output.exceeded_limit,
+        );
+    }
+    Ok(observation)
+}
+
+fn read_bounded_notify_output(
+    reader: &mut impl Read,
+) -> Result<BoundedNotifyOutput, std::io::Error> {
+    let mut bytes = Vec::new();
+    let mut exceeded_limit = false;
+    let mut buffer = [0_u8; 8 * 1024];
+    loop {
+        let count = reader.read(&mut buffer)?;
+        if count == 0 {
+            break;
+        }
+        let retained = MAX_NOTIFY_HANDOFF_STDOUT_BYTES.saturating_sub(bytes.len());
+        let copy_count = retained.min(count);
+        bytes.extend_from_slice(&buffer[..copy_count]);
+        exceeded_limit |= copy_count != count;
+    }
+    Ok(BoundedNotifyOutput {
+        bytes,
+        exceeded_limit,
+    })
+}
+
+fn parse_notify_handoff_payload(
+    bytes: &[u8],
+    expected_attempt_id: &str,
+    expected_db_name: &str,
+    is_dry_run: bool,
+) -> Option<NotifyHandoffStatus> {
+    let payload = serde_json::from_slice::<NotifyHandoffPayload>(bytes).ok()?;
+    let expected_mode = if is_dry_run { "dry_run" } else { "execute" };
+    if payload.protocol_version != NOTIFY_HANDOFF_PROTOCOL_VERSION
+        || payload.attempt_id != expected_attempt_id
+        || payload.workflow != "notify"
+        || payload.mode != expected_mode
+        || payload.db_name != expected_db_name
+    {
+        return None;
+    }
+    NotifyHandoffStatus::parse(&payload.status).ok()
+}
+
+fn classify_notify_handoff_output(
+    bytes: &[u8],
+    exceeded_limit: bool,
+    expected_attempt_id: &str,
+    expected_db_name: &str,
+    is_dry_run: bool,
+    exit_code: Option<i32>,
+) -> NotifyHandoffObservation {
+    if exceeded_limit {
+        return NotifyHandoffObservation::unknown(exit_code);
+    }
+    let Some(status) =
+        parse_notify_handoff_payload(bytes, expected_attempt_id, expected_db_name, is_dry_run)
+    else {
+        return NotifyHandoffObservation::unknown(exit_code);
+    };
+    let exit_is_consistent = match exit_code {
+        Some(0) => status.is_success(),
+        Some(_) => !status.is_success(),
+        None => false,
+    };
+    if !exit_is_consistent {
+        return NotifyHandoffObservation::unknown(exit_code);
+    }
+    NotifyHandoffObservation { status, exit_code }
 }
 
 #[cfg(test)]
@@ -3003,27 +3229,31 @@ mod tests {
     use litradar_provider::conformance::ContractViolation;
     use litradar_provider::{IndexContentProvider, ProviderError, ProviderErrorKind};
     use rusqlite::{Connection, ErrorCode};
-    use tempfile::tempdir;
+    use tempfile::{tempdir, TempDir};
     use tracing_subscriber::fmt::MakeWriter;
 
     use super::{
-        catalog_paths, cleanup_stale_legacy_worker_requests, emit_parent_content_commit_failure,
+        catalog_manifest_relative_path, catalog_paths, classify_notify_handoff_output,
+        cleanup_stale_legacy_worker_requests, emit_parent_content_commit_failure,
         emit_worker_failure, fetch_worker_assignments_with_provider, finalize_indexed_content,
-        index_entries_with_provider, prepare_catalog_identities, prepare_catalog_manifest_intent,
-        prepare_worker_requests, publish_catalog_manifest, read_worker_bootstrap,
-        requested_sync_mode, run_batch_catalogs_with, run_live_index,
-        run_live_index_worker_with_io, run_worker_processes_with_launcher, validate_live_config,
-        worker_bootstrap, worker_failure_error, ContentCommitErrorKind, DirectIndexRequest,
-        LaunchedWorkerProcess, LeaseHeartbeat, LiveIndexConfig, LiveIndexError,
-        LiveIndexWorkerBootstrap, LiveIndexWorkerFailure, LiveIndexWorkerFailureClass,
-        LiveIndexWorkerOperation, LiveIndexWorkerRequest, LiveRunTime, ParentWriterContext,
+        index_entries_with_provider, parse_notify_handoff_payload, prepare_catalog_identities,
+        prepare_catalog_manifest_intent, prepare_worker_requests, publish_catalog_manifest,
+        read_bounded_notify_output, read_worker_bootstrap, requested_sync_mode,
+        run_batch_catalogs_with, run_live_index, run_live_index_worker_with_io,
+        run_worker_processes_with_launcher, validate_live_config, worker_bootstrap,
+        worker_failure_error, ContentCommitErrorKind, DirectIndexRequest, LaunchedWorkerProcess,
+        LeaseHeartbeat, LiveIndexConfig, LiveIndexError, LiveIndexWorkerBootstrap,
+        LiveIndexWorkerFailure, LiveIndexWorkerFailureClass, LiveIndexWorkerOperation,
+        LiveIndexWorkerRequest, LiveRunTime, NotifyHandoffObservation, ParentWriterContext,
         ProviderProxySelection, SupervisedChild, CNKI_PROVIDER_NAME,
-        LEGACY_WORKER_REQUEST_STALE_SECONDS,
+        LEGACY_WORKER_REQUEST_STALE_SECONDS, MAX_NOTIFY_HANDOFF_STDOUT_BYTES,
     };
     use crate::batch::{
-        admit_batch, complete_catalog, init_batch_db, read_batch_catalogs, release_batch_lease,
-        store_catalog_outcome, store_manifest_intent, transition_catalog_phase, BatchAdmission,
-        BatchCatalogOutcome, BatchCatalogPhase, CatalogInput, CatalogSelection, IndexBatchRequest,
+        admit_batch, complete_catalog, init_batch_db, prepare_notify_attempt, read_batch_catalogs,
+        release_batch_lease, store_catalog_outcome, store_manifest_intent,
+        transition_catalog_phase, BatchAdmission, BatchCatalogOutcome, BatchCatalogPhase,
+        CatalogInput, CatalogSelection, IndexBatch, IndexBatchRequest, ManifestIntent,
+        NotifyHandoffStatus,
     };
     use crate::changes::{acknowledge_content_change_events, publish_content_change_manifest};
     use crate::control::{
@@ -3378,6 +3608,89 @@ mod tests {
             provider_name: provider_name.to_string(),
             entries: vec![catalog(&format!("{catalog_name}-journal"))],
         }
+    }
+
+    fn notifying_batch_fixture(
+        owner_id: &str,
+    ) -> (
+        TempDir,
+        LiveIndexConfig,
+        IndexBatchRequest,
+        Connection,
+        IndexBatch,
+    ) {
+        let directory = tempdir().expect("temporary project should create");
+        let mut config = worker_test_config("provider-a", None);
+        config.project_root = directory.path().to_path_buf();
+        config.update = true;
+        config.notify = true;
+        let input = batch_input("catalog.csv", "provider-a", 1);
+        let request = IndexBatchRequest::new(
+            vec![input],
+            CatalogSelection::ExplicitFile,
+            IndexSyncMode::Incremental,
+            20,
+            true,
+            false,
+        )
+        .expect("batch request should build");
+        let connection = Connection::open_in_memory().expect("batch database should open");
+        init_batch_db(&connection).expect("batch schema should initialize");
+        let now = LiveRunTime::now().epoch_seconds;
+        let batch = match admit_batch(&connection, &request, true, owner_id, now)
+            .expect("batch should create")
+        {
+            BatchAdmission::Ready(batch) => batch,
+            BatchAdmission::Abandoning(_) => panic!("new batch should be ready"),
+        };
+        transition_catalog_phase(
+            &connection,
+            &batch.batch_id,
+            owner_id,
+            0,
+            BatchCatalogPhase::Indexing,
+            now,
+        )
+        .expect("catalog should enter indexing");
+        let manifest_path = catalog_manifest_relative_path(&request.catalogs[0]);
+        let outcome = BatchCatalogOutcome {
+            run_id: "catalog-run".to_string(),
+            journal_count: 1,
+            written_article_count: 1,
+            source_attempt_count: 1,
+            manifest_path: Some(manifest_path.clone()),
+        };
+        store_catalog_outcome(&connection, &batch.batch_id, owner_id, 0, &outcome, now)
+            .expect("catalog outcome should persist");
+        let intent = ManifestIntent::new(
+            b"{}\n".to_vec(),
+            None,
+            &manifest_path,
+            "catalog-run",
+            "2026-08-09T00:00:00Z",
+        )
+        .expect("manifest intent should build");
+        store_manifest_intent(&connection, &batch.batch_id, owner_id, 0, &intent, now)
+            .expect("manifest intent should persist");
+        transition_catalog_phase(
+            &connection,
+            &batch.batch_id,
+            owner_id,
+            0,
+            BatchCatalogPhase::ManifestPublished,
+            now,
+        )
+        .expect("catalog should enter manifest-published phase");
+        transition_catalog_phase(
+            &connection,
+            &batch.batch_id,
+            owner_id,
+            0,
+            BatchCatalogPhase::Notifying,
+            now,
+        )
+        .expect("catalog should enter notifying phase");
+        (directory, config, request, connection, batch)
     }
 
     fn environment_catalog() -> JournalCatalogEntry {
@@ -3922,7 +4235,6 @@ mod tests {
                     written_article_count: 1,
                     source_attempt_count: 1,
                     manifest_path: None,
-                    notify_exit_code: None,
                 },
                 now,
             )
@@ -3953,7 +4265,12 @@ mod tests {
                     "fixture unfinished catalog".to_string(),
                 ))
             },
-            |_, _, _| Ok(0),
+            |_, _, _, _| {
+                Ok(NotifyHandoffObservation {
+                    status: NotifyHandoffStatus::Completed,
+                    exit_code: Some(0),
+                })
+            },
         )
         .expect_err("unfinished English catalog should retain the failure");
 
@@ -4027,7 +4344,6 @@ mod tests {
                 written_article_count: 1,
                 source_attempt_count: 1,
                 manifest_path: None,
-                notify_exit_code: None,
             };
             store_catalog_outcome(
                 &batch_connection,
@@ -4105,7 +4421,12 @@ mod tests {
                         "provider must not run during manifest recovery".to_string(),
                     ))
                 },
-                |_, _, _| Ok(0),
+                |_, _, _, _| {
+                    Ok(NotifyHandoffObservation {
+                        status: NotifyHandoffStatus::Completed,
+                        exit_code: Some(0),
+                    })
+                },
             )
             .expect("manifest recovery should complete");
 
@@ -4191,7 +4512,6 @@ mod tests {
             written_article_count: 0,
             source_attempt_count: 0,
             manifest_path: None,
-            notify_exit_code: None,
         };
         store_catalog_outcome(
             &batch_connection,
@@ -4236,9 +4556,12 @@ mod tests {
                     "provider must not run during empty finalization".to_string(),
                 ))
             },
-            |_, _, _| {
+            |_, _, _, _| {
                 notify_calls += 1;
-                Ok(0)
+                Ok(NotifyHandoffObservation {
+                    status: NotifyHandoffStatus::Completed,
+                    exit_code: Some(0),
+                })
             },
         )
         .expect("empty update should preserve the existing manifest");
@@ -4260,136 +4583,60 @@ mod tests {
     }
 
     #[test]
-    fn notify_failure_retries_only_notification() {
-        let directory = tempdir().expect("temporary project should create");
-        let mut config = worker_test_config("provider-a", None);
-        config.project_root = directory.path().to_path_buf();
-        config.update = true;
-        config.notify = true;
-        let input = batch_input("catalog.csv", "provider-a", 1);
-        let request = IndexBatchRequest::new(
-            vec![input.clone()],
-            CatalogSelection::ExplicitFile,
-            IndexSyncMode::Incremental,
-            20,
-            true,
-            false,
+    fn known_notify_failure_resumes_with_a_new_attempt_and_no_provider_replay() {
+        let (_directory, config, request, connection, first) =
+            notifying_batch_fixture("first-notify-owner");
+        let mut provider_calls = 0;
+        let mut attempt_ids = Vec::new();
+        let error = run_batch_catalogs_with(
+            &config,
+            &connection,
+            &first,
+            &request,
+            |_, _, _| {
+                provider_calls += 1;
+                Err(LiveIndexError::ProviderSetup(
+                    "provider must not run during notify recovery".to_string(),
+                ))
+            },
+            |_, _, _, attempt_id| {
+                attempt_ids.push(attempt_id.to_string());
+                Ok(NotifyHandoffObservation {
+                    status: NotifyHandoffStatus::Failed,
+                    exit_code: Some(1),
+                })
+            },
         )
-        .expect("batch request should build");
-        let batch_connection = Connection::open_in_memory().expect("batch database should open");
-        init_batch_db(&batch_connection).expect("batch schema should initialize");
-        let now = LiveRunTime::now().epoch_seconds;
-        let first = match admit_batch(&batch_connection, &request, true, "first-owner", now)
-            .expect("batch should create")
-        {
-            BatchAdmission::Ready(batch) => batch,
-            BatchAdmission::Abandoning(_) => panic!("new batch should be ready"),
-        };
-        transition_catalog_phase(
-            &batch_connection,
-            &first.batch_id,
-            "first-owner",
-            0,
-            BatchCatalogPhase::Indexing,
-            now,
-        )
-        .expect("catalog should enter indexing");
-        let content_path = config
-            .project_root
-            .join("data")
-            .join("index")
-            .join("catalog.sqlite");
-        std::fs::create_dir_all(content_path.parent().expect("content parent should exist"))
-            .expect("content directory should create");
-        let content = open_content_db(&content_path).expect("content should open");
-        write_content_batch(
-            &content,
-            &input.entries[0],
-            &canonical_batch_for_catalog(&input.entries[0]),
-            "catalog-run",
-            "2026-08-01T00:00:00Z",
-        )
-        .expect("content event should write");
-        let outcome = BatchCatalogOutcome {
-            run_id: "catalog-run".to_string(),
-            journal_count: 1,
-            written_article_count: 1,
-            source_attempt_count: 1,
-            manifest_path: None,
-            notify_exit_code: None,
-        };
-        store_catalog_outcome(
-            &batch_connection,
-            &first.batch_id,
-            "first-owner",
-            0,
-            &outcome,
-            now,
-        )
-        .expect("catalog outcome should persist");
-        let intent = prepare_catalog_manifest_intent(&config, &input, &outcome)
-            .expect("manifest intent should prepare");
-        store_manifest_intent(
-            &batch_connection,
-            &first.batch_id,
-            "first-owner",
-            0,
-            &intent,
-            now,
-        )
-        .expect("manifest intent should persist");
-        let mut published_outcome = outcome.clone();
-        published_outcome.manifest_path = Some(intent.path.clone());
-        store_catalog_outcome(
-            &batch_connection,
-            &first.batch_id,
-            "first-owner",
-            0,
-            &published_outcome,
-            now,
-        )
-        .expect("published manifest outcome should persist");
-        publish_catalog_manifest(&config, &input, &intent)
-            .expect("manifest should publish and acknowledge");
-        transition_catalog_phase(
-            &batch_connection,
-            &first.batch_id,
-            "first-owner",
-            0,
-            BatchCatalogPhase::ManifestPublished,
-            now,
-        )
-        .expect("published phase should persist");
-        transition_catalog_phase(
-            &batch_connection,
-            &first.batch_id,
-            "first-owner",
-            0,
-            BatchCatalogPhase::Notifying,
-            now,
-        )
-        .expect("notifying phase should persist");
-        release_batch_lease(&batch_connection, &first.batch_id, "first-owner")
-            .expect("failed invocation should release its lease");
+        .expect_err("known notification failure should remain retryable");
+        assert!(matches!(error, LiveIndexError::Notify(_)));
+        assert_eq!(provider_calls, 0);
+        assert_eq!(attempt_ids.len(), 1);
+        let failed_state = read_batch_catalogs(&connection, &first.batch_id)
+            .expect("failed handoff should read")[0]
+            .notify_handoff
+            .clone()
+            .expect("failed handoff should persist");
+        assert_eq!(failed_state.status, NotifyHandoffStatus::Failed);
+        assert_eq!(failed_state.attempt_id, attempt_ids[0]);
 
-        let failed_retry = match admit_batch(
-            &batch_connection,
+        release_batch_lease(&connection, &first.batch_id, "first-notify-owner")
+            .expect("failed invocation should release its lease");
+        let second = match admit_batch(
+            &connection,
             &request,
             true,
-            "failed-notify-owner",
-            now,
+            "second-notify-owner",
+            LiveRunTime::now().epoch_seconds,
         )
         .expect("batch should resume")
         {
             BatchAdmission::Ready(batch) => batch,
             BatchAdmission::Abandoning(_) => panic!("compatible batch should be ready"),
         };
-        let mut provider_calls = 0;
-        let mut notify_calls = 0;
-        let error = run_batch_catalogs_with(
+        let outcomes = run_batch_catalogs_with(
             &config,
-            &batch_connection,
-            &failed_retry,
+            &connection,
+            &second,
             &request,
             |_, _, _| {
                 provider_calls += 1;
@@ -4397,103 +4644,294 @@ mod tests {
                     "provider must not run during notify recovery".to_string(),
                 ))
             },
-            |_, _, _| {
-                notify_calls += 1;
-                Err(LiveIndexError::Notify(
-                    "fixture notification handoff failed".to_string(),
-                ))
+            |_, _, _, attempt_id| {
+                attempt_ids.push(attempt_id.to_string());
+                Ok(NotifyHandoffObservation {
+                    status: NotifyHandoffStatus::Completed,
+                    exit_code: Some(0),
+                })
             },
         )
-        .expect_err("notification failure should remain retryable");
-        assert!(
-            matches!(error, LiveIndexError::Notify(_)),
-            "unexpected notify recovery error: {error:?}"
-        );
-        assert_eq!(provider_calls, 0);
-        assert_eq!(notify_calls, 1);
-        assert_eq!(
-            read_batch_catalogs(&batch_connection, &failed_retry.batch_id)
-                .expect("catalog state should read")[0]
-                .phase,
-            BatchCatalogPhase::Notifying
-        );
-        let nonzero_error = run_batch_catalogs_with(
-            &config,
-            &batch_connection,
-            &failed_retry,
-            &request,
-            |_, _, _| {
-                provider_calls += 1;
-                Err(LiveIndexError::ProviderSetup(
-                    "provider must not run during notify recovery".to_string(),
-                ))
-            },
-            |_, _, _| {
-                notify_calls += 1;
-                Ok(7)
-            },
-        )
-        .expect_err("nonzero notification result should keep the batch incomplete");
-        assert!(matches!(nonzero_error, LiveIndexError::Notify(_)));
-        assert_eq!(provider_calls, 0);
-        assert_eq!(notify_calls, 2);
-        assert_eq!(
-            read_batch_catalogs(&batch_connection, &failed_retry.batch_id)
-                .expect("notifying outcome should read")[0]
-                .outcome
-                .as_ref()
-                .expect("notifying outcome should exist")
-                .notify_exit_code,
-            Some(7)
-        );
-        release_batch_lease(
-            &batch_connection,
-            &failed_retry.batch_id,
-            "failed-notify-owner",
-        )
-        .expect("failed notification should release its lease");
+        .expect("known failure should retry only notification");
 
-        let persisted_failure_retry = match admit_batch(
-            &batch_connection,
+        assert_eq!(provider_calls, 0);
+        assert_eq!(attempt_ids.len(), 2);
+        assert_ne!(attempt_ids[0], attempt_ids[1]);
+        assert_eq!(outcomes[0].notify_exit_code, Some(0));
+        assert_eq!(
+            read_batch_catalogs(&connection, &second.batch_id)
+                .expect("completed handoff should read")[0]
+                .phase,
+            BatchCatalogPhase::Completed
+        );
+    }
+
+    #[test]
+    fn unknown_notify_requires_explicit_acknowledgement_before_a_new_attempt() {
+        let (_directory, config, request, connection, first) =
+            notifying_batch_fixture("unknown-first-owner");
+        let mut attempt_ids = Vec::new();
+        run_batch_catalogs_with(
+            &config,
+            &connection,
+            &first,
+            &request,
+            |_, _, _| panic!("provider must not run during notify recovery"),
+            |_, _, _, attempt_id| {
+                attempt_ids.push(attempt_id.to_string());
+                Ok(NotifyHandoffObservation {
+                    status: NotifyHandoffStatus::Unknown,
+                    exit_code: Some(1),
+                })
+            },
+        )
+        .expect_err("unknown notification result should keep the batch incomplete");
+        assert_eq!(attempt_ids.len(), 1);
+        let unknown_attempt_id = attempt_ids[0].clone();
+
+        release_batch_lease(&connection, &first.batch_id, "unknown-first-owner")
+            .expect("unknown invocation should release its lease");
+        let blocked = match admit_batch(
+            &connection,
             &request,
             true,
-            "persisted-failure-owner",
-            now,
+            "unknown-blocked-owner",
+            LiveRunTime::now().epoch_seconds,
         )
-        .expect("batch should resume again")
+        .expect("batch should resume")
         {
             BatchAdmission::Ready(batch) => batch,
             BatchAdmission::Abandoning(_) => panic!("compatible batch should be ready"),
         };
         let error = run_batch_catalogs_with(
             &config,
-            &batch_connection,
-            &persisted_failure_retry,
+            &connection,
+            &blocked,
             &request,
-            |_, _, _| {
-                provider_calls += 1;
-                Err(LiveIndexError::ProviderSetup(
-                    "provider must not run during notify recovery".to_string(),
-                ))
-            },
-            |_, _, _| {
-                notify_calls += 1;
-                Err(LiveIndexError::Notify(
-                    "persisted notification must not repeat".to_string(),
-                ))
+            |_, _, _| panic!("provider must not run during notify recovery"),
+            |_, _, _, _| panic!("unknown handoff must not retry without acknowledgement"),
+        )
+        .expect_err("unknown handoff should require acknowledgement");
+        assert!(matches!(error, LiveIndexError::Notify(_)));
+        assert_eq!(attempt_ids.len(), 1);
+
+        release_batch_lease(&connection, &blocked.batch_id, "unknown-blocked-owner")
+            .expect("blocked invocation should release its lease");
+        let acknowledged = match admit_batch(
+            &connection,
+            &request,
+            true,
+            "unknown-acknowledged-owner",
+            LiveRunTime::now().epoch_seconds,
+        )
+        .expect("batch should resume for acknowledgement")
+        {
+            BatchAdmission::Ready(batch) => batch,
+            BatchAdmission::Abandoning(_) => panic!("compatible batch should be ready"),
+        };
+        let mut acknowledged_config = config.clone();
+        acknowledged_config.acknowledge_unknown_notify = true;
+        run_batch_catalogs_with(
+            &acknowledged_config,
+            &connection,
+            &acknowledged,
+            &request,
+            |_, _, _| panic!("provider must not run during notify recovery"),
+            |_, _, _, attempt_id| {
+                attempt_ids.push(attempt_id.to_string());
+                Ok(NotifyHandoffObservation {
+                    status: NotifyHandoffStatus::Completed,
+                    exit_code: Some(0),
+                })
             },
         )
-        .expect_err("persisted nonzero notification must keep the batch incomplete");
+        .expect("acknowledged unknown should permit one new attempt");
 
-        assert!(matches!(error, LiveIndexError::Notify(_)));
-        assert_eq!(provider_calls, 0);
-        assert_eq!(notify_calls, 2);
+        assert_eq!(attempt_ids.len(), 2);
+        assert_ne!(attempt_ids[0], attempt_ids[1]);
+        let stored = read_batch_catalogs(&connection, &acknowledged.batch_id)
+            .expect("acknowledged handoff should read")
+            .remove(0);
+        let handoff = stored
+            .notify_handoff
+            .expect("acknowledged handoff should persist");
+        assert_eq!(stored.phase, BatchCatalogPhase::Completed);
         assert_eq!(
-            read_batch_catalogs(&batch_connection, &persisted_failure_retry.batch_id)
-                .expect("catalog state should read")[0]
-                .phase,
-            BatchCatalogPhase::Notifying
+            handoff.unknown_acknowledged_attempt_id.as_deref(),
+            Some(unknown_attempt_id.as_str())
         );
+        assert!(handoff.unknown_acknowledged_at.is_some());
+    }
+
+    #[test]
+    fn persisted_running_notify_attempt_is_reused_after_parent_recovery() {
+        let (_directory, config, request, connection, batch) =
+            notifying_batch_fixture("crash-recovery-owner");
+        let attempt_id = "0123456789abcdef0123456789abcdef";
+        prepare_notify_attempt(
+            &connection,
+            &batch.batch_id,
+            &batch.owner_id,
+            0,
+            attempt_id,
+            false,
+            LiveRunTime::now().epoch_seconds,
+        )
+        .expect("attempt should persist before the simulated parent crash");
+        let mut observed_attempt_ids = Vec::new();
+        run_batch_catalogs_with(
+            &config,
+            &connection,
+            &batch,
+            &request,
+            |_, _, _| panic!("provider must not run during notify recovery"),
+            |_, _, _, observed_attempt_id| {
+                observed_attempt_ids.push(observed_attempt_id.to_string());
+                Ok(NotifyHandoffObservation {
+                    status: NotifyHandoffStatus::Completed,
+                    exit_code: Some(0),
+                })
+            },
+        )
+        .expect("parent recovery should reuse the persisted attempt");
+
+        assert_eq!(observed_attempt_ids, vec![attempt_id]);
+    }
+
+    #[test]
+    fn notify_handoff_protocol_rejects_malformed_cross_context_and_exit_mismatches() {
+        let attempt_id = "0123456789abcdef0123456789abcdef";
+        let valid = serde_json::to_vec(&serde_json::json!({
+            "protocol_version": 1,
+            "attempt_id": attempt_id,
+            "workflow": "notify",
+            "mode": "dry_run",
+            "status": "completed",
+            "db_name": "catalog.sqlite",
+        }))
+        .expect("handoff fixture should serialize");
+        assert_eq!(
+            parse_notify_handoff_payload(&valid, attempt_id, "catalog.sqlite", true),
+            Some(NotifyHandoffStatus::Completed)
+        );
+        assert_eq!(
+            classify_notify_handoff_output(
+                &valid,
+                false,
+                attempt_id,
+                "catalog.sqlite",
+                true,
+                Some(0),
+            )
+            .status,
+            NotifyHandoffStatus::Completed
+        );
+        assert_eq!(
+            classify_notify_handoff_output(
+                &valid,
+                false,
+                attempt_id,
+                "catalog.sqlite",
+                true,
+                Some(1),
+            )
+            .status,
+            NotifyHandoffStatus::Unknown
+        );
+        for (status_text, expected_status) in [
+            ("running", NotifyHandoffStatus::Running),
+            ("failed", NotifyHandoffStatus::Failed),
+            ("cancelled", NotifyHandoffStatus::Cancelled),
+            ("timed_out", NotifyHandoffStatus::TimedOut),
+            ("unknown", NotifyHandoffStatus::Unknown),
+        ] {
+            let failure = serde_json::to_vec(&serde_json::json!({
+                "protocol_version": 1,
+                "attempt_id": attempt_id,
+                "workflow": "notify",
+                "mode": "dry_run",
+                "status": status_text,
+                "db_name": "catalog.sqlite",
+            }))
+            .expect("failure handoff fixture should serialize");
+            assert_eq!(
+                classify_notify_handoff_output(
+                    &failure,
+                    false,
+                    attempt_id,
+                    "catalog.sqlite",
+                    true,
+                    Some(1),
+                )
+                .status,
+                expected_status
+            );
+        }
+        assert_eq!(
+            classify_notify_handoff_output(
+                b"",
+                false,
+                attempt_id,
+                "catalog.sqlite",
+                true,
+                Some(1),
+            )
+            .status,
+            NotifyHandoffStatus::Unknown
+        );
+        assert_eq!(
+            classify_notify_handoff_output(
+                &valid,
+                true,
+                attempt_id,
+                "catalog.sqlite",
+                true,
+                Some(0),
+            )
+            .status,
+            NotifyHandoffStatus::Unknown
+        );
+
+        let extra_field = serde_json::to_vec(&serde_json::json!({
+            "protocol_version": 1,
+            "attempt_id": attempt_id,
+            "workflow": "notify",
+            "mode": "dry_run",
+            "status": "completed",
+            "db_name": "catalog.sqlite",
+            "databases": [],
+        }))
+        .expect("invalid handoff fixture should serialize");
+        assert_eq!(
+            parse_notify_handoff_payload(&extra_field, attempt_id, "catalog.sqlite", true),
+            None
+        );
+        assert_eq!(
+            parse_notify_handoff_payload(&valid, attempt_id, "other.sqlite", true),
+            None
+        );
+        assert_eq!(
+            parse_notify_handoff_payload(
+                &[valid.as_slice(), b"\n{}"].concat(),
+                attempt_id,
+                "catalog.sqlite",
+                true,
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn notify_handoff_stdout_retains_a_hard_limit_while_draining_to_eof() {
+        let payload = vec![b'x'; MAX_NOTIFY_HANDOFF_STDOUT_BYTES + 4097];
+        let mut reader = Cursor::new(payload.clone());
+
+        let output = read_bounded_notify_output(&mut reader)
+            .expect("bounded notification stdout should drain");
+
+        assert_eq!(output.bytes.len(), MAX_NOTIFY_HANDOFF_STDOUT_BYTES);
+        assert!(output.exceeded_limit);
+        assert_eq!(reader.position(), payload.len() as u64);
     }
 
     #[test]
@@ -4899,6 +5337,7 @@ mod tests {
             full_rescan: false,
             notify: false,
             notify_dry_run: true,
+            acknowledge_unknown_notify: false,
             scholarly_config: litradar_sources::LiveScholarlyConfig::from_value_pools(
                 10, "", "", "",
             ),
@@ -5273,6 +5712,7 @@ mod tests {
             full_rescan: false,
             notify: false,
             notify_dry_run: true,
+            acknowledge_unknown_notify: false,
             scholarly_config: litradar_sources::LiveScholarlyConfig::from_value_pools(
                 10, "", "", "",
             ),
@@ -5340,6 +5780,23 @@ mod tests {
             Err(LiveIndexError::InvalidConfig(message))
                 if message == "process_count * worker_count must be at most 32"
         ));
+        let mut acknowledgement_without_notify = config.clone();
+        acknowledgement_without_notify.acknowledge_unknown_notify = true;
+        assert!(matches!(
+            validate_live_config(&acknowledgement_without_notify),
+            Err(LiveIndexError::InvalidConfig(message))
+                if message == "--acknowledge-unknown-notify requires --notify"
+        ));
+        let mut acknowledgement_without_resume = config.clone();
+        acknowledgement_without_resume.update = true;
+        acknowledgement_without_resume.notify = true;
+        acknowledgement_without_resume.resume = false;
+        acknowledgement_without_resume.acknowledge_unknown_notify = true;
+        assert!(matches!(
+            validate_live_config(&acknowledgement_without_resume),
+            Err(LiveIndexError::InvalidConfig(message))
+                if message == "--acknowledge-unknown-notify requires --resume"
+        ));
         let ids = requests
             .iter()
             .flat_map(|request| request.assignments.iter())
@@ -5394,6 +5851,7 @@ mod tests {
                 full_rescan: false,
                 notify: false,
                 notify_dry_run: true,
+                acknowledge_unknown_notify: false,
                 scholarly_config: litradar_sources::LiveScholarlyConfig::from_value_pools(
                     10,
                     openalex_keys,
@@ -5436,6 +5894,7 @@ mod tests {
             full_rescan: false,
             notify: false,
             notify_dry_run: true,
+            acknowledge_unknown_notify: false,
             scholarly_config: litradar_sources::LiveScholarlyConfig::from_value_pools(
                 10, "", "", "",
             ),

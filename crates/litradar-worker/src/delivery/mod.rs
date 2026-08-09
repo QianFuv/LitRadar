@@ -384,6 +384,8 @@ pub struct RecommendationRunConfig {
     pub db_name: String,
     /// Optional change manifest path.
     pub changes_file: Option<PathBuf>,
+    /// Optional stable parent-owned delivery attempt identifier.
+    pub attempt_id: Option<String>,
     /// Optional model override.
     pub ai_model: Option<String>,
     /// Optional max-candidates override.

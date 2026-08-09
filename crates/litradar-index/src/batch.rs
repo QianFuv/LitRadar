@@ -14,7 +14,7 @@ use sha2::{Digest, Sha256};
 use crate::transforms::{parse_catalog_csv, CatalogContractError};
 
 /// Current disposable project batch database schema version.
-pub(crate) const BATCH_SCHEMA_VERSION: i64 = 1;
+pub(crate) const BATCH_SCHEMA_VERSION: i64 = 2;
 
 /// Stable filename for the project-level batch database.
 pub(crate) const BATCH_DATABASE_FILE_NAME: &str = "index-batches.sqlite";
@@ -306,6 +306,95 @@ impl BatchCatalogPhase {
     }
 }
 
+/// Typed result of one index-to-notify child attempt.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum NotifyHandoffStatus {
+    /// The attempt was persisted but has no trusted terminal child result yet.
+    Running,
+    /// The child found no delivery candidates.
+    Idle,
+    /// The child completed delivery successfully.
+    Completed,
+    /// The child intentionally skipped delivery.
+    Skipped,
+    /// The child failed with a known terminal outcome.
+    Failed,
+    /// The child was cancelled.
+    Cancelled,
+    /// The child exceeded its deadline.
+    TimedOut,
+    /// The child result or handoff protocol is ambiguous.
+    Unknown,
+}
+
+impl NotifyHandoffStatus {
+    /// Return the stable SQLite and handoff protocol representation.
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::Running => "running",
+            Self::Idle => "idle",
+            Self::Completed => "completed",
+            Self::Skipped => "skipped",
+            Self::Failed => "failed",
+            Self::Cancelled => "cancelled",
+            Self::TimedOut => "timed_out",
+            Self::Unknown => "unknown",
+        }
+    }
+
+    /// Parse a stable SQLite and handoff protocol representation.
+    pub(crate) fn parse(value: &str) -> Result<Self, BatchDatabaseError> {
+        match value {
+            "running" => Ok(Self::Running),
+            "idle" => Ok(Self::Idle),
+            "completed" => Ok(Self::Completed),
+            "skipped" => Ok(Self::Skipped),
+            "failed" => Ok(Self::Failed),
+            "cancelled" => Ok(Self::Cancelled),
+            "timed_out" => Ok(Self::TimedOut),
+            "unknown" => Ok(Self::Unknown),
+            _ => Err(BatchDatabaseError::InvalidState {
+                reason: "stored notification handoff status is invalid",
+            }),
+        }
+    }
+
+    /// Return whether the catalog may complete without another child process.
+    pub(crate) fn is_success(self) -> bool {
+        matches!(self, Self::Idle | Self::Completed | Self::Skipped)
+    }
+
+    fn can_start_new_attempt(self) -> bool {
+        matches!(self, Self::Failed | Self::Cancelled | Self::TimedOut)
+    }
+}
+
+/// Durable typed state for the latest notification handoff attempt.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct NotifyHandoffState {
+    /// Stable identifier passed to the child and delivery dedupe layer.
+    pub(crate) attempt_id: String,
+    /// Typed latest child or recovery state.
+    pub(crate) status: NotifyHandoffStatus,
+    /// Child process exit code when one was observed.
+    pub(crate) exit_code: Option<i32>,
+    /// Most recently acknowledged ambiguous attempt identifier.
+    pub(crate) unknown_acknowledged_attempt_id: Option<String>,
+    /// Unix timestamp of the most recent explicit Unknown acknowledgement.
+    pub(crate) unknown_acknowledged_at: Option<i64>,
+}
+
+/// Policy result returned before an index invocation launches a notify child.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum NotifyAttemptPreparation {
+    /// Launch or resume the supplied stable attempt.
+    Run(NotifyHandoffState),
+    /// The prior attempt already reached a trusted success state.
+    Succeeded(NotifyHandoffState),
+    /// The prior attempt is ambiguous and requires explicit acknowledgement.
+    BlockedUnknown(NotifyHandoffState),
+}
+
 /// Safe catalog outcome retained so a completed catalog can be returned without replay.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct BatchCatalogOutcome {
@@ -319,8 +408,6 @@ pub(crate) struct BatchCatalogOutcome {
     pub(crate) source_attempt_count: usize,
     /// Optional project-relative manifest path.
     pub(crate) manifest_path: Option<String>,
-    /// Optional notification process exit code.
-    pub(crate) notify_exit_code: Option<i32>,
 }
 
 /// Exact recoverable intent for one update manifest.
@@ -427,6 +514,8 @@ pub(crate) struct IndexBatchCatalog {
     pub(crate) outcome: Option<BatchCatalogOutcome>,
     /// Exact manifest intent when update publication was prepared.
     pub(crate) manifest_intent: Option<ManifestIntent>,
+    /// Latest typed notification handoff state.
+    pub(crate) notify_handoff: Option<NotifyHandoffState>,
 }
 
 /// One active or abandoning project-level batch owned by an invocation.
@@ -531,6 +620,8 @@ pub(crate) enum BatchDatabaseError {
     },
     /// Default resume encountered an incompletely abandoned batch.
     AbandonmentPending,
+    /// Disabling resume would discard a published notification handoff.
+    PublishedNotificationPending,
     /// A caller supplied invalid bounded input.
     InvalidInput {
         /// Fixed safe validation reason.
@@ -581,6 +672,9 @@ impl fmt::Display for BatchDatabaseError {
             ),
             Self::AbandonmentPending => formatter
                 .write_str("an index batch abandonment is incomplete; retry with resume disabled"),
+            Self::PublishedNotificationPending => formatter.write_str(
+                "active index batch has a published notification handoff; resume it and acknowledge Unknown if required before disabling resume",
+            ),
             Self::InvalidInput { reason } => {
                 write!(formatter, "invalid index batch input: {reason}")
             }
@@ -604,6 +698,7 @@ impl Error for BatchDatabaseError {
             | Self::ActiveLease { .. }
             | Self::OwnershipLost { .. }
             | Self::AbandonmentPending
+            | Self::PublishedNotificationPending
             | Self::InvalidInput { .. }
             | Self::InvalidState { .. } => None,
         }
@@ -682,6 +777,11 @@ pub(crate) fn new_batch_owner_id() -> String {
     unique_id("index-owner")
 }
 
+/// Create a process-unique notification attempt identifier.
+pub(crate) fn new_notify_attempt_id() -> String {
+    sha256_hex(unique_id("notify-attempt").as_bytes())[..32].to_string()
+}
+
 /// Open or initialize the disposable project batch database.
 ///
 /// # Arguments
@@ -731,8 +831,9 @@ pub(crate) fn init_batch_db(connection: &Connection) -> Result<(), BatchDatabase
         return Ok(());
     }
     let transaction = Transaction::new_unchecked(connection, TransactionBehavior::Immediate)?;
-    transaction.execute_batch(
-        "CREATE TABLE index_batches (
+    if version == 0 {
+        transaction.execute_batch(
+            "CREATE TABLE index_batches (
              batch_id TEXT PRIMARY KEY CHECK (length(batch_id) BETWEEN 1 AND 512),
              status TEXT NOT NULL
                  CHECK (status IN ('active', 'abandoning', 'completed', 'abandoned')),
@@ -773,7 +874,21 @@ pub(crate) fn init_batch_db(connection: &Connection) -> Result<(), BatchDatabase
                  source_attempt_count IS NULL OR source_attempt_count >= 0
              ),
              outcome_manifest_path TEXT,
+             notify_attempt_id TEXT CHECK (
+                 notify_attempt_id IS NULL OR length(notify_attempt_id) BETWEEN 1 AND 512
+             ),
+             notify_status TEXT CHECK (notify_status IS NULL OR notify_status IN (
+                 'running', 'idle', 'completed', 'skipped', 'failed', 'cancelled',
+                 'timed_out', 'unknown'
+             )),
              notify_exit_code INTEGER,
+             notify_unknown_acknowledged_attempt_id TEXT CHECK (
+                 notify_unknown_acknowledged_attempt_id IS NULL
+                 OR length(notify_unknown_acknowledged_attempt_id) BETWEEN 1 AND 512
+             ),
+             notify_unknown_acknowledged_at INTEGER CHECK (
+                 notify_unknown_acknowledged_at IS NULL OR notify_unknown_acknowledged_at >= 0
+             ),
              manifest_payload BLOB CHECK (
                  manifest_payload IS NULL OR length(manifest_payload) BETWEEN 1 AND 67108864
              ),
@@ -809,7 +924,43 @@ pub(crate) fn init_batch_db(connection: &Connection) -> Result<(), BatchDatabase
 
          CREATE INDEX index_batch_catalogs_phase
              ON index_batch_catalogs(batch_id, phase);",
-    )?;
+        )?;
+    } else if version == 1 {
+        transaction.execute_batch(
+            "ALTER TABLE index_batch_catalogs
+                 ADD COLUMN notify_attempt_id TEXT CHECK (
+                     notify_attempt_id IS NULL OR length(notify_attempt_id) BETWEEN 1 AND 512
+                 );
+             ALTER TABLE index_batch_catalogs
+                 ADD COLUMN notify_status TEXT CHECK (notify_status IS NULL OR notify_status IN (
+                     'running', 'idle', 'completed', 'skipped', 'failed', 'cancelled',
+                     'timed_out', 'unknown'
+                 ));
+             ALTER TABLE index_batch_catalogs
+                 ADD COLUMN notify_unknown_acknowledged_attempt_id TEXT CHECK (
+                     notify_unknown_acknowledged_attempt_id IS NULL
+                     OR length(notify_unknown_acknowledged_attempt_id) BETWEEN 1 AND 512
+                 );
+             ALTER TABLE index_batch_catalogs
+                 ADD COLUMN notify_unknown_acknowledged_at INTEGER CHECK (
+                     notify_unknown_acknowledged_at IS NULL
+                     OR notify_unknown_acknowledged_at >= 0
+                 );
+             UPDATE index_batch_catalogs
+             SET notify_attempt_id = 'legacy-notify-' || lower(hex(randomblob(16))),
+                 notify_status = CASE
+                     WHEN phase = 'notifying' THEN 'unknown'
+                     WHEN phase = 'completed' AND notify_exit_code = 0 THEN 'completed'
+                     ELSE 'unknown'
+                 END
+             WHERE phase = 'notifying' OR notify_exit_code IS NOT NULL;",
+        )?;
+    } else {
+        return Err(BatchDatabaseError::UnsupportedVersion {
+            found: version,
+            supported: BATCH_SCHEMA_VERSION,
+        });
+    }
     transaction.pragma_update(None, "user_version", BATCH_SCHEMA_VERSION)?;
     transaction.commit()?;
     Ok(())
@@ -873,6 +1024,10 @@ pub(crate) fn admit_batch(
         }
         Some(active) => {
             claim_batch_lease(&transaction, &active.batch_id, owner_id, now)?;
+            if active.notify && has_pending_published_notification(&transaction, &active.batch_id)?
+            {
+                return Err(BatchDatabaseError::PublishedNotificationPending);
+            }
             let changed = transaction.execute(
                 "UPDATE index_batches
                  SET status = 'abandoning', updated_at = ?2
@@ -1188,6 +1343,192 @@ pub(crate) fn store_catalog_outcome(
     Ok(())
 }
 
+/// Prepare the only notification attempt that the current invocation may launch.
+///
+/// # Arguments
+///
+/// * `connection` - Open batch database.
+/// * `batch_id` - Active batch identifier.
+/// * `owner_id` - Current invocation owner.
+/// * `ordinal` - Stable catalog ordinal.
+/// * `new_attempt_id` - Fresh identifier used only when policy permits a new attempt.
+/// * `should_acknowledge_unknown` - Whether the operator explicitly acknowledged Unknown.
+/// * `now` - Current Unix timestamp in seconds.
+///
+/// # Returns
+///
+/// A runnable stable attempt, prior success, or blocked ambiguous outcome.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn prepare_notify_attempt(
+    connection: &Connection,
+    batch_id: &str,
+    owner_id: &str,
+    ordinal: usize,
+    new_attempt_id: &str,
+    should_acknowledge_unknown: bool,
+    now: i64,
+) -> Result<NotifyAttemptPreparation, BatchDatabaseError> {
+    validate_identifier(
+        new_attempt_id,
+        "notification attempt identifier must be non-empty and bounded",
+    )?;
+    if now < 0 {
+        return Err(BatchDatabaseError::InvalidInput {
+            reason: "notification attempt timestamp must not be negative",
+        });
+    }
+    let transaction = Transaction::new_unchecked(connection, TransactionBehavior::Immediate)?;
+    verify_batch_ownership(&transaction, batch_id, owner_id, now)?;
+    if read_catalog_phase(&transaction, batch_id, ordinal)? != BatchCatalogPhase::Notifying {
+        return Err(BatchDatabaseError::InvalidState {
+            reason: "notification attempt requires the notifying phase",
+        });
+    }
+    let current = read_notify_handoff(&transaction, batch_id, ordinal)?;
+    let (state, preparation, should_write) = match current {
+        None => {
+            let state = NotifyHandoffState {
+                attempt_id: new_attempt_id.to_string(),
+                status: NotifyHandoffStatus::Running,
+                exit_code: None,
+                unknown_acknowledged_attempt_id: None,
+                unknown_acknowledged_at: None,
+            };
+            (state.clone(), NotifyAttemptPreparation::Run(state), true)
+        }
+        Some(current) if current.status == NotifyHandoffStatus::Running => (
+            current.clone(),
+            NotifyAttemptPreparation::Run(current),
+            false,
+        ),
+        Some(current) if current.status.is_success() => (
+            current.clone(),
+            NotifyAttemptPreparation::Succeeded(current),
+            false,
+        ),
+        Some(current) if current.status.can_start_new_attempt() => {
+            if current.attempt_id == new_attempt_id {
+                return Err(BatchDatabaseError::InvalidInput {
+                    reason: "notification retry attempt identifier must be new",
+                });
+            }
+            let state = NotifyHandoffState {
+                attempt_id: new_attempt_id.to_string(),
+                status: NotifyHandoffStatus::Running,
+                exit_code: None,
+                unknown_acknowledged_attempt_id: current.unknown_acknowledged_attempt_id,
+                unknown_acknowledged_at: current.unknown_acknowledged_at,
+            };
+            (state.clone(), NotifyAttemptPreparation::Run(state), true)
+        }
+        Some(current) if !should_acknowledge_unknown => (
+            current.clone(),
+            NotifyAttemptPreparation::BlockedUnknown(current),
+            false,
+        ),
+        Some(current) => {
+            if current.attempt_id == new_attempt_id {
+                return Err(BatchDatabaseError::InvalidInput {
+                    reason: "notification acknowledged attempt identifier must be new",
+                });
+            }
+            let state = NotifyHandoffState {
+                attempt_id: new_attempt_id.to_string(),
+                status: NotifyHandoffStatus::Running,
+                exit_code: None,
+                unknown_acknowledged_attempt_id: Some(current.attempt_id),
+                unknown_acknowledged_at: Some(now),
+            };
+            (state.clone(), NotifyAttemptPreparation::Run(state), true)
+        }
+    };
+    if should_write {
+        save_notify_handoff(&transaction, batch_id, ordinal, &state, now)?;
+        transaction.execute(
+            "UPDATE index_batches SET updated_at = ?2 WHERE batch_id = ?1",
+            params![batch_id, now],
+        )?;
+    }
+    transaction.commit()?;
+    Ok(preparation)
+}
+
+/// Persist the typed observation for the current stable notification attempt.
+///
+/// # Arguments
+///
+/// * `connection` - Open batch database.
+/// * `batch_id` - Active batch identifier.
+/// * `owner_id` - Current invocation owner.
+/// * `ordinal` - Stable catalog ordinal.
+/// * `attempt_id` - Attempt that produced the observation.
+/// * `status` - Parsed or conservative typed result.
+/// * `exit_code` - Child exit code when available.
+/// * `now` - Current Unix timestamp in seconds.
+///
+/// # Returns
+///
+/// Persisted latest handoff state.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn record_notify_attempt_result(
+    connection: &Connection,
+    batch_id: &str,
+    owner_id: &str,
+    ordinal: usize,
+    attempt_id: &str,
+    status: NotifyHandoffStatus,
+    exit_code: Option<i32>,
+    now: i64,
+) -> Result<NotifyHandoffState, BatchDatabaseError> {
+    validate_identifier(
+        attempt_id,
+        "notification attempt identifier must be non-empty and bounded",
+    )?;
+    if now < 0 {
+        return Err(BatchDatabaseError::InvalidInput {
+            reason: "notification attempt timestamp must not be negative",
+        });
+    }
+    let transaction = Transaction::new_unchecked(connection, TransactionBehavior::Immediate)?;
+    verify_batch_ownership(&transaction, batch_id, owner_id, now)?;
+    if read_catalog_phase(&transaction, batch_id, ordinal)? != BatchCatalogPhase::Notifying {
+        return Err(BatchDatabaseError::InvalidState {
+            reason: "notification result requires the notifying phase",
+        });
+    }
+    let current = read_notify_handoff(&transaction, batch_id, ordinal)?.ok_or(
+        BatchDatabaseError::InvalidState {
+            reason: "notification result has no prepared attempt",
+        },
+    )?;
+    if current.attempt_id != attempt_id {
+        return Err(BatchDatabaseError::InvalidState {
+            reason: "notification result attempt identifier is stale",
+        });
+    }
+    if current.status != NotifyHandoffStatus::Running {
+        if current.status == status && current.exit_code == exit_code {
+            transaction.commit()?;
+            return Ok(current);
+        }
+        return Err(BatchDatabaseError::InvalidState {
+            reason: "notification attempt already has a different terminal result",
+        });
+    }
+    let state = NotifyHandoffState {
+        status,
+        exit_code,
+        ..current
+    };
+    save_notify_handoff(&transaction, batch_id, ordinal, &state, now)?;
+    transaction.execute(
+        "UPDATE index_batches SET updated_at = ?2 WHERE batch_id = ?1",
+        params![batch_id, now],
+    )?;
+    transaction.commit()?;
+    Ok(state)
+}
+
 /// Persist a catalog outcome and enter the completed phase atomically.
 ///
 /// # Arguments
@@ -1219,6 +1560,18 @@ pub(crate) fn complete_catalog(
         return Err(BatchDatabaseError::InvalidState {
             reason: "catalog cannot complete from its current phase",
         });
+    }
+    if phase == BatchCatalogPhase::Notifying {
+        let handoff = read_notify_handoff(&transaction, batch_id, ordinal)?.ok_or(
+            BatchDatabaseError::InvalidState {
+                reason: "notifying catalog has no notification handoff",
+            },
+        )?;
+        if !handoff.status.is_success() {
+            return Err(BatchDatabaseError::InvalidState {
+                reason: "catalog cannot complete without a trusted notification result",
+            });
+        }
     }
     save_catalog_outcome(&transaction, batch_id, ordinal, outcome, now)?;
     transaction.execute(
@@ -1444,6 +1797,23 @@ fn read_active_batch_header(
     .transpose()
 }
 
+fn has_pending_published_notification(
+    connection: &Connection,
+    batch_id: &str,
+) -> Result<bool, BatchDatabaseError> {
+    connection
+        .query_row(
+            "SELECT EXISTS(
+                 SELECT 1 FROM index_batch_catalogs
+                 WHERE batch_id = ?1 AND phase != 'completed'
+                   AND outcome_manifest_path IS NOT NULL
+             )",
+            [batch_id],
+            |row| row.get(0),
+        )
+        .map_err(Into::into)
+}
+
 fn compatibility_mismatches(
     connection: &Connection,
     active: &StoredBatchHeader,
@@ -1580,6 +1950,7 @@ fn load_batch_catalogs(
                     phase: BatchCatalogPhase::parse(&phase)?,
                     outcome: read_catalog_outcome(connection, batch_id, ordinal)?,
                     manifest_intent: read_manifest_intent(connection, batch_id, ordinal)?,
+                    notify_handoff: read_notify_handoff(connection, batch_id, ordinal)?,
                 })
             },
         )
@@ -1658,6 +2029,86 @@ fn read_manifest_intent(
     Ok(Some(intent))
 }
 
+fn read_notify_handoff(
+    connection: &Connection,
+    batch_id: &str,
+    ordinal: usize,
+) -> Result<Option<NotifyHandoffState>, BatchDatabaseError> {
+    let row = connection.query_row(
+        "SELECT
+             notify_attempt_id, notify_status, notify_exit_code,
+             notify_unknown_acknowledged_attempt_id, notify_unknown_acknowledged_at
+         FROM index_batch_catalogs WHERE batch_id = ?1 AND ordinal = ?2",
+        params![batch_id, usize_to_i64(ordinal)?],
+        |row| {
+            Ok((
+                row.get::<_, Option<String>>(0)?,
+                row.get::<_, Option<String>>(1)?,
+                row.get::<_, Option<i32>>(2)?,
+                row.get::<_, Option<String>>(3)?,
+                row.get::<_, Option<i64>>(4)?,
+            ))
+        },
+    )?;
+    let (attempt_id, status, exit_code, acknowledged_attempt_id, acknowledged_at) = row;
+    if attempt_id.is_none()
+        && status.is_none()
+        && exit_code.is_none()
+        && acknowledged_attempt_id.is_none()
+        && acknowledged_at.is_none()
+    {
+        return Ok(None);
+    }
+    let state = NotifyHandoffState {
+        attempt_id: attempt_id.ok_or(BatchDatabaseError::InvalidState {
+            reason: "stored notification handoff is incomplete",
+        })?,
+        status: NotifyHandoffStatus::parse(status.as_deref().ok_or(
+            BatchDatabaseError::InvalidState {
+                reason: "stored notification handoff is incomplete",
+            },
+        )?)?,
+        exit_code,
+        unknown_acknowledged_attempt_id: acknowledged_attempt_id,
+        unknown_acknowledged_at: acknowledged_at,
+    };
+    validate_notify_handoff(&state)?;
+    Ok(Some(state))
+}
+
+fn save_notify_handoff(
+    connection: &Connection,
+    batch_id: &str,
+    ordinal: usize,
+    state: &NotifyHandoffState,
+    now: i64,
+) -> Result<(), BatchDatabaseError> {
+    validate_notify_handoff(state)?;
+    let changed = connection.execute(
+        "UPDATE index_batch_catalogs
+         SET notify_attempt_id = ?3, notify_status = ?4, notify_exit_code = ?5,
+             notify_unknown_acknowledged_attempt_id = ?6,
+             notify_unknown_acknowledged_at = ?7, updated_at = ?8
+         WHERE batch_id = ?1 AND ordinal = ?2",
+        params![
+            batch_id,
+            usize_to_i64(ordinal)?,
+            state.attempt_id,
+            state.status.as_str(),
+            state.exit_code,
+            state.unknown_acknowledged_attempt_id,
+            state.unknown_acknowledged_at,
+            now,
+        ],
+    )?;
+    if changed != 1 {
+        return Err(BatchDatabaseError::InvalidState {
+            reason: "batch catalog row is missing",
+        });
+    }
+    Ok(())
+}
+
 fn read_catalog_outcome(
     connection: &Connection,
     batch_id: &str,
@@ -1666,7 +2117,7 @@ fn read_catalog_outcome(
     let row = connection.query_row(
         "SELECT
              run_id, journal_count, written_article_count, source_attempt_count,
-             outcome_manifest_path, notify_exit_code
+             outcome_manifest_path
          FROM index_batch_catalogs WHERE batch_id = ?1 AND ordinal = ?2",
         params![batch_id, usize_to_i64(ordinal)?],
         |row| {
@@ -1676,23 +2127,14 @@ fn read_catalog_outcome(
                 row.get::<_, Option<i64>>(2)?,
                 row.get::<_, Option<i64>>(3)?,
                 row.get::<_, Option<String>>(4)?,
-                row.get::<_, Option<i32>>(5)?,
             ))
         },
     )?;
-    let (
-        run_id,
-        journal_count,
-        written_article_count,
-        source_attempt_count,
-        manifest_path,
-        notify_exit_code,
-    ) = row;
+    let (run_id, journal_count, written_article_count, source_attempt_count, manifest_path) = row;
     let Some(run_id) = run_id else {
         if written_article_count.is_some()
             || source_attempt_count.is_some()
             || manifest_path.is_some()
-            || notify_exit_code.is_some()
         {
             return Err(BatchDatabaseError::InvalidState {
                 reason: "stored catalog outcome is incomplete",
@@ -1712,7 +2154,6 @@ fn read_catalog_outcome(
             },
         )?)?,
         manifest_path,
-        notify_exit_code,
     };
     validate_catalog_outcome(&outcome)?;
     Ok(Some(outcome))
@@ -1739,8 +2180,8 @@ fn save_catalog_outcome(
     let changed = connection.execute(
         "UPDATE index_batch_catalogs
          SET run_id = ?3, written_article_count = ?4, source_attempt_count = ?5,
-             outcome_manifest_path = ?6, notify_exit_code = ?7, updated_at = ?8
-         WHERE batch_id = ?1 AND ordinal = ?2 AND journal_count = ?9",
+             outcome_manifest_path = ?6, updated_at = ?7
+         WHERE batch_id = ?1 AND ordinal = ?2 AND journal_count = ?8",
         params![
             batch_id,
             usize_to_i64(ordinal)?,
@@ -1748,7 +2189,6 @@ fn save_catalog_outcome(
             merged.written_article_count,
             usize_to_i64(merged.source_attempt_count)?,
             merged.manifest_path,
-            merged.notify_exit_code,
             now,
             usize_to_i64(merged.journal_count)?,
         ],
@@ -1779,14 +2219,8 @@ fn merge_catalog_outcome(
         requested.manifest_path.clone(),
         "catalog manifest path changed during recovery",
     )?;
-    let notify_exit_code = merge_optional_value(
-        existing.notify_exit_code,
-        requested.notify_exit_code,
-        "catalog notify result changed during recovery",
-    )?;
     Ok(BatchCatalogOutcome {
         manifest_path,
-        notify_exit_code,
         ..existing
     })
 }
@@ -1817,6 +2251,49 @@ fn validate_catalog_outcome(outcome: &BatchCatalogOutcome) -> Result<(), BatchDa
     }
     if let Some(path) = outcome.manifest_path.as_deref() {
         validate_relative_path(path)?;
+    }
+    Ok(())
+}
+
+fn validate_notify_handoff(state: &NotifyHandoffState) -> Result<(), BatchDatabaseError> {
+    validate_identifier(
+        &state.attempt_id,
+        "notification attempt identifier must be non-empty and bounded",
+    )?;
+    if state.status.is_success() && state.exit_code != Some(0) {
+        return Err(BatchDatabaseError::InvalidState {
+            reason: "successful notification handoff must have a zero exit code",
+        });
+    }
+    if state.status != NotifyHandoffStatus::Unknown
+        && state.exit_code.is_some_and(|exit_code| exit_code == 0)
+        && !state.status.is_success()
+    {
+        return Err(BatchDatabaseError::InvalidState {
+            reason: "unsuccessful notification handoff cannot have a zero exit code",
+        });
+    }
+    match (
+        state.unknown_acknowledged_attempt_id.as_deref(),
+        state.unknown_acknowledged_at,
+    ) {
+        (None, None) => {}
+        (Some(attempt_id), Some(acknowledged_at)) => {
+            validate_identifier(
+                attempt_id,
+                "acknowledged notification attempt identifier must be non-empty and bounded",
+            )?;
+            if acknowledged_at < 0 {
+                return Err(BatchDatabaseError::InvalidState {
+                    reason: "notification acknowledgement timestamp must not be negative",
+                });
+            }
+        }
+        _ => {
+            return Err(BatchDatabaseError::InvalidState {
+                reason: "stored notification acknowledgement is incomplete",
+            });
+        }
     }
     Ok(())
 }
@@ -2010,11 +2487,13 @@ mod tests {
 
     use super::{
         admit_batch, complete_batch, complete_catalog, heartbeat_batch_lease, init_batch_db,
-        new_batch_owner_id, open_batch_db, read_batch_catalogs, release_batch_lease,
+        new_batch_owner_id, new_notify_attempt_id, open_batch_db, prepare_notify_attempt,
+        read_batch_catalogs, record_notify_attempt_result, release_batch_lease,
         replace_abandoning_batch, store_catalog_outcome, store_manifest_intent,
         transition_catalog_phase, BatchAdmission, BatchCatalogOutcome, BatchCatalogPhase,
         BatchCompatibilityField, BatchDatabaseError, CatalogInput, CatalogSelection,
-        IndexBatchRequest, ManifestIntent, BATCH_DATABASE_FILE_NAME, BATCH_SCHEMA_VERSION,
+        IndexBatchRequest, ManifestIntent, NotifyAttemptPreparation, NotifyHandoffStatus,
+        BATCH_DATABASE_FILE_NAME, BATCH_SCHEMA_VERSION,
     };
     use crate::transforms::CATALOG_CSV_V3_COLUMNS;
 
@@ -2074,7 +2553,6 @@ mod tests {
             written_article_count: 2,
             source_attempt_count: 3,
             manifest_path: None,
-            notify_exit_code: None,
         }
     }
 
@@ -2117,6 +2595,325 @@ mod tests {
             init_batch_db(&newer),
             Err(BatchDatabaseError::UnsupportedVersion { .. })
         ));
+    }
+
+    #[test]
+    fn notification_attempt_identifier_matches_the_child_protocol_contract() {
+        let first = new_notify_attempt_id();
+        let second = new_notify_attempt_id();
+
+        assert_eq!(first.len(), 32);
+        assert!(first.bytes().all(|byte| byte.is_ascii_hexdigit()));
+        assert_ne!(first, second);
+    }
+
+    #[test]
+    fn v1_notifying_handoff_migrates_to_a_conservative_unknown_state() {
+        let connection = Connection::open_in_memory().expect("database should open");
+        connection
+            .execute_batch(
+                "CREATE TABLE index_batch_catalogs (
+                     batch_id TEXT NOT NULL,
+                     ordinal INTEGER NOT NULL,
+                     phase TEXT NOT NULL,
+                     notify_exit_code INTEGER
+                 );
+                 INSERT INTO index_batch_catalogs
+                     (batch_id, ordinal, phase, notify_exit_code)
+                 VALUES
+                     ('active-batch', 0, 'notifying', 7),
+                     ('completed-batch', 0, 'completed', 0);
+                 PRAGMA user_version = 1;",
+            )
+            .expect("v1 handoff fixture should initialize");
+
+        init_batch_db(&connection).expect("v1 batch schema should migrate");
+
+        let version = connection
+            .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
+            .expect("schema version should read");
+        let active = connection
+            .query_row(
+                "SELECT notify_attempt_id, notify_status, notify_exit_code,
+                        notify_unknown_acknowledged_attempt_id,
+                        notify_unknown_acknowledged_at
+                 FROM index_batch_catalogs
+                 WHERE batch_id = 'active-batch'",
+                [],
+                |row| {
+                    Ok((
+                        row.get::<_, Option<String>>(0)?,
+                        row.get::<_, Option<String>>(1)?,
+                        row.get::<_, Option<i32>>(2)?,
+                        row.get::<_, Option<String>>(3)?,
+                        row.get::<_, Option<i64>>(4)?,
+                    ))
+                },
+            )
+            .expect("migrated active handoff should read");
+        let completed_status = connection
+            .query_row(
+                "SELECT notify_status FROM index_batch_catalogs
+                 WHERE batch_id = 'completed-batch'",
+                [],
+                |row| row.get::<_, Option<String>>(0),
+            )
+            .expect("migrated completed handoff should read");
+
+        assert_eq!(version, 2);
+        assert!(active
+            .0
+            .is_some_and(|attempt| attempt.starts_with("legacy-notify-")));
+        assert_eq!(active.1.as_deref(), Some("unknown"));
+        assert_eq!(active.2, Some(7));
+        assert_eq!(active.3, None);
+        assert_eq!(active.4, None);
+        assert_eq!(completed_status.as_deref(), Some("completed"));
+    }
+
+    #[test]
+    fn notify_attempt_state_reuses_running_retries_safe_failures_and_fences_unknown() {
+        let connection = Connection::open_in_memory().expect("database should open");
+        init_batch_db(&connection).expect("schema should initialize");
+        let request = request(vec![input("english.csv", "scholarly", 1)]);
+        let owner = "notify-owner";
+        let batch = ready(
+            admit_batch(&connection, &request, true, owner, 100).expect("batch should create"),
+        );
+        transition_catalog_phase(
+            &connection,
+            &batch.batch_id,
+            owner,
+            0,
+            BatchCatalogPhase::Indexing,
+            101,
+        )
+        .expect("catalog should enter indexing");
+        let outcome = outcome("catalog-run");
+        store_catalog_outcome(&connection, &batch.batch_id, owner, 0, &outcome, 102)
+            .expect("outcome should persist");
+        let intent = ManifestIntent::new(
+            b"{}\n".to_vec(),
+            None,
+            "data/push_state/english.changes.json",
+            "catalog-run",
+            "102",
+        )
+        .expect("manifest intent should build");
+        store_manifest_intent(&connection, &batch.batch_id, owner, 0, &intent, 103)
+            .expect("manifest should prepare");
+        transition_catalog_phase(
+            &connection,
+            &batch.batch_id,
+            owner,
+            0,
+            BatchCatalogPhase::ManifestPublished,
+            104,
+        )
+        .expect("manifest should publish");
+        transition_catalog_phase(
+            &connection,
+            &batch.batch_id,
+            owner,
+            0,
+            BatchCatalogPhase::Notifying,
+            105,
+        )
+        .expect("catalog should enter notifying");
+
+        let first = prepare_notify_attempt(
+            &connection,
+            &batch.batch_id,
+            owner,
+            0,
+            "attempt-one",
+            false,
+            106,
+        )
+        .expect("first attempt should prepare");
+        assert!(matches!(
+            first,
+            NotifyAttemptPreparation::Run(ref state)
+                if state.attempt_id == "attempt-one"
+                    && state.status == NotifyHandoffStatus::Running
+        ));
+        let reused = prepare_notify_attempt(
+            &connection,
+            &batch.batch_id,
+            owner,
+            0,
+            "unused-attempt",
+            false,
+            107,
+        )
+        .expect("running attempt should reuse");
+        assert!(matches!(
+            reused,
+            NotifyAttemptPreparation::Run(ref state) if state.attempt_id == "attempt-one"
+        ));
+        record_notify_attempt_result(
+            &connection,
+            &batch.batch_id,
+            owner,
+            0,
+            "attempt-one",
+            NotifyHandoffStatus::Failed,
+            Some(1),
+            108,
+        )
+        .expect("known failure should persist");
+        assert!(matches!(
+            complete_catalog(&connection, &batch.batch_id, owner, 0, &outcome, 108),
+            Err(BatchDatabaseError::InvalidState { reason })
+                if reason == "catalog cannot complete without a trusted notification result"
+        ));
+
+        let second = prepare_notify_attempt(
+            &connection,
+            &batch.batch_id,
+            owner,
+            0,
+            "attempt-two",
+            false,
+            109,
+        )
+        .expect("known failure should create a new attempt");
+        assert!(matches!(
+            second,
+            NotifyAttemptPreparation::Run(ref state) if state.attempt_id == "attempt-two"
+        ));
+        record_notify_attempt_result(
+            &connection,
+            &batch.batch_id,
+            owner,
+            0,
+            "attempt-two",
+            NotifyHandoffStatus::Cancelled,
+            Some(1),
+            110,
+        )
+        .expect("cancelled result should persist");
+        let third = prepare_notify_attempt(
+            &connection,
+            &batch.batch_id,
+            owner,
+            0,
+            "attempt-three",
+            false,
+            111,
+        )
+        .expect("cancelled result should create a new attempt");
+        assert!(matches!(
+            third,
+            NotifyAttemptPreparation::Run(ref state) if state.attempt_id == "attempt-three"
+        ));
+        record_notify_attempt_result(
+            &connection,
+            &batch.batch_id,
+            owner,
+            0,
+            "attempt-three",
+            NotifyHandoffStatus::TimedOut,
+            Some(1),
+            112,
+        )
+        .expect("timed-out result should persist");
+        let fourth = prepare_notify_attempt(
+            &connection,
+            &batch.batch_id,
+            owner,
+            0,
+            "attempt-four",
+            false,
+            113,
+        )
+        .expect("timed-out result should create a new attempt");
+        assert!(matches!(
+            fourth,
+            NotifyAttemptPreparation::Run(ref state) if state.attempt_id == "attempt-four"
+        ));
+        record_notify_attempt_result(
+            &connection,
+            &batch.batch_id,
+            owner,
+            0,
+            "attempt-four",
+            NotifyHandoffStatus::Unknown,
+            Some(1),
+            114,
+        )
+        .expect("unknown result should persist");
+        assert!(matches!(
+            prepare_notify_attempt(
+                &connection,
+                &batch.batch_id,
+                owner,
+                0,
+                "blocked-attempt",
+                false,
+                115,
+            )
+            .expect("unknown attempt should return a policy outcome"),
+            NotifyAttemptPreparation::BlockedUnknown(ref state)
+                if state.attempt_id == "attempt-four"
+        ));
+
+        let acknowledged = prepare_notify_attempt(
+            &connection,
+            &batch.batch_id,
+            owner,
+            0,
+            "attempt-five",
+            true,
+            116,
+        )
+        .expect("explicit acknowledgement should create a new attempt");
+        assert!(matches!(
+            acknowledged,
+            NotifyAttemptPreparation::Run(ref state)
+                if state.attempt_id == "attempt-five"
+                    && state.unknown_acknowledged_attempt_id.as_deref() == Some("attempt-four")
+                    && state.unknown_acknowledged_at == Some(116)
+        ));
+        record_notify_attempt_result(
+            &connection,
+            &batch.batch_id,
+            owner,
+            0,
+            "attempt-five",
+            NotifyHandoffStatus::Completed,
+            Some(0),
+            117,
+        )
+        .expect("successful result should persist");
+        assert!(matches!(
+            prepare_notify_attempt(
+                &connection,
+                &batch.batch_id,
+                owner,
+                0,
+                "unused-success-attempt",
+                false,
+                118,
+            )
+            .expect("successful handoff should return a policy outcome"),
+            NotifyAttemptPreparation::Succeeded(ref state)
+                if state.attempt_id == "attempt-five"
+        ));
+        complete_catalog(&connection, &batch.batch_id, owner, 0, &outcome, 119)
+            .expect("successful handoff should allow catalog completion");
+        let stored = read_batch_catalogs(&connection, &batch.batch_id)
+            .expect("catalog should read")
+            .remove(0);
+        assert_eq!(stored.phase, BatchCatalogPhase::Completed);
+        assert_eq!(
+            stored
+                .notify_handoff
+                .expect("handoff should persist")
+                .unknown_acknowledged_attempt_id
+                .as_deref(),
+            Some("attempt-four")
+        );
     }
 
     #[test]
@@ -2499,5 +3296,72 @@ mod tests {
         assert_eq!(old_status, "abandoned");
         assert_eq!(old_payload, Some(b"{}\n".to_vec()));
         assert_eq!(replacement.catalogs[0].phase, BatchCatalogPhase::Pending);
+    }
+
+    #[test]
+    fn no_resume_cannot_discard_a_published_notification_handoff() {
+        let connection = Connection::open_in_memory().expect("database should open");
+        init_batch_db(&connection).expect("schema should initialize");
+        let original = request(vec![input("english.csv", "scholarly", 1)]);
+        let owner = new_batch_owner_id();
+        let batch = ready(
+            admit_batch(&connection, &original, true, &owner, 100).expect("batch should create"),
+        );
+        transition_catalog_phase(
+            &connection,
+            &batch.batch_id,
+            &owner,
+            0,
+            BatchCatalogPhase::Indexing,
+            101,
+        )
+        .expect("indexing should begin");
+        let outcome = BatchCatalogOutcome {
+            manifest_path: Some("data/push_state/english.changes.json".to_string()),
+            ..outcome("run-one")
+        };
+        store_catalog_outcome(&connection, &batch.batch_id, &owner, 0, &outcome, 102)
+            .expect("published outcome intent should persist");
+        let intent = ManifestIntent::new(
+            b"{}\n".to_vec(),
+            None,
+            "data/push_state/english.changes.json",
+            "run-one",
+            "100",
+        )
+        .expect("manifest intent should build");
+        store_manifest_intent(&connection, &batch.batch_id, &owner, 0, &intent, 103)
+            .expect("manifest intent should persist");
+        release_batch_lease(&connection, &batch.batch_id, &owner).expect("lease should release");
+
+        let replacement_request = request(vec![input("english.csv", "scholarly", 2)]);
+        let replacement_owner = new_batch_owner_id();
+        let error = admit_batch(
+            &connection,
+            &replacement_request,
+            false,
+            &replacement_owner,
+            104,
+        )
+        .expect_err("published notification handoff must not be abandoned");
+
+        assert!(matches!(
+            error,
+            BatchDatabaseError::PublishedNotificationPending
+        ));
+        let status = connection
+            .query_row(
+                "SELECT status FROM index_batches WHERE batch_id = ?1",
+                [&batch.batch_id],
+                |row| row.get::<_, String>(0),
+            )
+            .expect("active batch status should read");
+        let lease_count = connection
+            .query_row("SELECT COUNT(*) FROM index_batch_lease", [], |row| {
+                row.get::<_, i64>(0)
+            })
+            .expect("rolled-back lease count should read");
+        assert_eq!(status, "active");
+        assert_eq!(lease_count, 0);
     }
 }

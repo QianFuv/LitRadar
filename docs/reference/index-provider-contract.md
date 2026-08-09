@@ -221,7 +221,7 @@ API 用 `307 Temporary Redirect` 或文档响应返回结果，并设置 `Cache-
 | 路径                                         | 生命周期 | 内容                                                                                   |
 | -------------------------------------------- | -------- | -------------------------------------------------------------------------------------- |
 | `data/index/<catalog>.sqlite`                | 需要备份 | v6 规范期刊、期刊/文章 identity aliases、撤稿关系、列表投影、FTS 和文章变更 outbox     |
-| `data/index-control/index-batches.sqlite`    | 可丢弃   | v1 core-owned batch fingerprint、catalog phase/manifest intent 和全局 lease             |
+| `data/index-control/index-batches.sqlite`    | 可丢弃   | v2 core-owned batch fingerprint、catalog phase/manifest intent、typed notify handoff 和全局 lease |
 | `data/index-control/<catalog>.sqlite`        | 可丢弃   | v4 Provider-scoped lease、batch-aware 成功 anchor 和运行 traversal checkpoint            |
 
 成功 anchor 与运行 checkpoint 分表保存，并分别带可空 `completed_batch_id` / `batch_id`。成功行存在但 anchor 为 NULL 表示“完整成功但没有可复用边界”，不同于成功行缺失；它只有在完成标记属于 active batch 时才能跳过，否则新 batch 安全完整覆盖。删除控制状态会失去 batch、成功边界和恢复进度，并依靠 alias/upsert 收敛，不会改变内容身份。

@@ -156,12 +156,12 @@ FTS5 使用内置 `unicode61 remove_diacritics 2`，字段为：
 
 `--update` 把事件生成到 `data/push_state/<db>.changes.json`。项目 batch ledger 先持久化精确 JSON 字节和 inclusive through-event cursor，再原子替换文件、幂等删除 `event_id <= cursor` 的行并推进 catalog phase。只要 active batch ledger 保留，rename 或 acknowledgement 任一侧崩溃都会重放同一 payload；ledger 丢失后文件系统与 SQLite 仍是至少一次边界，消费者继续按身份去重。空 outbox 不会覆盖已有的有界、可解析且 `db_name` 匹配的 manifest。Bootstrap 和 `--full-rescan` 不发布清单，并在成功结束时丢弃本次无需投递的 outbox。
 
-## v1 项目 batch ledger
+## v2 项目 batch ledger
 
 `data/index-control/index-batches.sqlite` 每个项目只有一个，负责跨 CSV 的恢复顺序和唯一 active invocation。它包含：
 
 - `index_batches`：batch ID、`active/abandoning/completed/abandoned` 状态、兼容性 fingerprint、selection、sync mode、issue batch、notify flags 和时间；部分唯一索引保证最多一个 active/abandoning batch。
-- `index_batch_catalogs`：稳定 ordinal、CSV basename/stem/摘要、Provider route、journal count、phase、安全 outcome 计数，以及可空的精确 manifest payload、SHA-256、through-event cursor、相对路径、run ID 和生成时间。
+- `index_batch_catalogs`：稳定 ordinal、CSV basename/stem/摘要、Provider route、journal count、phase、安全 outcome 计数、精确 manifest intent，以及可空的 notify attempt ID、typed status、exit code、最近确认的 Unknown attempt ID/时间。
 - `index_batch_lease`：固定单行全局 lease，保存 batch、owner、heartbeat 和 expiry。
 
 catalog phase 只允许以下前向路径：
@@ -174,7 +174,9 @@ pending -> indexing -> completed
 
 fingerprint 包含 CSV selection、顺序和精确内容、Provider route、sync mode、issue batch 与 notify flags；不包含 workers/processes、timeout、代理或凭据。默认 resume 只重新打开兼容 active batch。成功 batch 保持 completed 历史且下一条命令创建新 batch，所以历史 completed row 不会使下一次 update 永久跳过 journal。
 
-`--no-resume` 先把 active batch 置为 abandoning；调用方从各 catalog v4 控制库删除仅属于该 batch 的 run checkpoint 后，事务性标记旧 batch abandoned 并创建 replacement。committed anchor、内容、outbox 和已经发布的 manifest 不属于清理范围。
+notify status 只允许 `running/idle/completed/skipped/failed/cancelled/timed_out/unknown`。父进程在 child 启动前把 attempt 写为 Running，结果以当前 attempt ID 做 CAS；只有 `idle/completed/skipped` 且 exit code 为 0 时 `notifying` catalog 才能进入 completed。Unknown acknowledgement 的 ID 与时间必须成对出现，并与新 Running attempt 在同一 immediate transaction 中写入。v1 ledger 原位迁移；active Notifying 无论旧 exit code 为何都转为带 legacy attempt ID 的 Unknown，防止未经 typed protocol 证明就自动重发。
+
+`--no-resume` 先把 active batch 置为 abandoning；调用方从各 catalog v4 控制库删除仅属于该 batch 的 run checkpoint 后，事务性标记旧 batch abandoned 并创建 replacement。committed anchor、内容和 outbox 不属于清理范围。若未完成 catalog 已有 `outcome_manifest_path` 且原 batch 启用了 notify，admission 会拒绝 abandonment，避免把已经发布或可能已发布的 handoff 静默丢弃；必须先恢复原 batch。
 
 ## v4 catalog 索引控制库
 

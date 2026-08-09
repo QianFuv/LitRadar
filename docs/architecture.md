@@ -132,7 +132,7 @@ HTTP 外层先移除不受信的 `X-Request-Id`，再生成并返回服务器 UU
 ```text
 freeze ordered CSV selection -> validate catalog contracts
         |
-        +-- data/index-control/index-batches.sqlite (batch schema v1 + global lease)
+        +-- data/index-control/index-batches.sqlite (batch schema v2 + global lease)
         |       pending -> indexing -> manifest_prepared
         |                            -> manifest_published -> notifying -> completed
         |
@@ -154,7 +154,7 @@ acquire provider-scoped lease
 
 batch compatibility 包含 CSV 的选择方式、顺序和精确内容、Provider route、同步模式、issue batch 以及 notify 选项；worker/process 数、timeout、代理和凭据不参与。任一 correctness input 改变都会在 Provider 访问前 fail closed。`--no-resume` 是显式放弃 active batch：只清理该 batch 自有的运行 checkpoint，再从既有 committed anchor 创建新 batch；不会删除内容、anchor、outbox 或已经发布的 manifest。
 
-崩溃恢复按 durable phase 前进：`indexing` 先跳过同 batch 已提交 anchor，再接管匹配 checkpoint；`manifest_prepared` 重发持久化的精确字节并重做 through-cursor acknowledgement；`manifest_published` 只进入 notify 或完成；`notifying` 只重试未持久化结果的 handoff。若 journal anchor 已提交但 catalog phase 尚未推进，same-batch marker 会阻止 Provider 重放；若文件 rename 或 outbox acknowledgement 已完成但 phase 尚未推进，重放仍使用同一 manifest intent。
+崩溃恢复按 durable phase 前进：`indexing` 先跳过同 batch 已提交 anchor，再接管匹配 checkpoint；`manifest_prepared` 重发持久化的精确字节并重做 through-cursor acknowledgement；`manifest_published` 只进入 notify 或完成；`notifying` 由 schema v2 的 attempt ID、typed status、exit code 和 Unknown acknowledgement 驱动。结果尚未持久化或状态为 Running 时复用同一 attempt；Failed/Cancelled/TimedOut 在下一次 invocation 建立新 attempt；Unknown 与任何不可信 child protocol 结果都要求显式 `--acknowledge-unknown-notify`。父进程严格解析最多保留 64 KiB 的 compact JSON 并交叉检查退出类别，每个 invocation 每个 catalog 最多启动一个 child。若 journal anchor 已提交但 catalog phase 尚未推进，same-batch marker 会阻止 Provider 重放；若文件 rename 或 outbox acknowledgement 已完成但 phase 尚未推进，重放仍使用同一 manifest intent。待完成的已发布 notify handoff 不能通过 `--no-resume` 放弃。
 
 目录验证在 Provider 请求前拒绝未知列、重复/非法 `catalog_id`、非法 ISSN、重复别名和不规范文本。索引路由来自 `auth.sqlite.runtime_settings.index_provider_routes`；摘要页和全文顺序分别来自带 default 与 catalog overrides 的运行设置。内容库和目录都不知道实际 Provider。
 
@@ -168,7 +168,7 @@ Provider 只能返回规范 `JournalDraft`、`IssueDraft`、`ArticleDraft` 和 `
 
 每个 CSV 对应 `data/index/<csv_stem>.sqlite`。v6 内容库只包含规范期刊、期次、文章、identity aliases、撤稿关系、查询/FTS 投影和事务性文章变更 outbox。它不包含 Provider、URL、anchor、checkpoint、lease 或运行统计。
 
-`data/index-control/index-batches.sqlite` 是项目级可丢弃 batch schema v1；`data/index-control/<csv_stem>.sqlite` 是 Provider-scoped v4 控制库。前者保存冻结输入指纹、catalog phase/outcome、精确 manifest intent 和全局 lease，后者把成功 anchor 与运行中的 traversal checkpoint 分表保存并绑定 batch ID。删除全部控制状态后没有可信 batch、成功边界或 traversal，下一次运行安全退回完整抓取，但不会改变内容 ID 或复制已有文章。切换 Provider 使用新的 namespace，同样从无 anchor 状态开始。内容库需要备份，两类控制库都明确不备份。详见[数据库参考](reference/database.md)。
+`data/index-control/index-batches.sqlite` 是项目级可丢弃 batch schema v2；`data/index-control/<csv_stem>.sqlite` 是 Provider-scoped v4 控制库。前者保存冻结输入指纹、catalog phase/outcome、精确 manifest intent、typed notify handoff/Unknown acknowledgement 和全局 lease，后者把成功 anchor 与运行中的 traversal checkpoint 分表保存并绑定 batch ID。v1 active Notifying 行迁移为保守 Unknown，不丢弃 manifest。删除全部控制状态后没有可信 batch、成功边界、handoff 或 traversal，下一次运行安全退回完整抓取，但不会改变内容 ID 或复制已有文章；operator 也同时承担失去待完成 handoff 证明的风险。切换 Provider 使用新的 namespace，同样从无 anchor 状态开始。内容库需要备份，两类控制库都明确不备份。详见[数据库参考](reference/database.md)。
 
 ### 认证与业务数据库
 
@@ -250,6 +250,8 @@ browser -> stable LitRadar action URL -> load ArticleLocator
 5. 已知结果把 subscriber item 与全部 dedupe 在同一 transaction 中落为 success/confirmed；不确定结果落为 unknown，禁止自动重放。
 6. run 终态、checkpoint CAS 和 lease 释放在同一 transaction 中提交；崩溃后的新 owner 只重试 pre-send claimed 工作。
 
+`index --notify` 在这层外增加 parent-owned attempt：attempt 参与 scheduled run external ID，但不参与 article dedupe identity。新 attempt 因而能恢复已知 pre-send 失败，同时 Confirmed/Unknown article 仍跨 attempt 保持 no-replay。Unknown parent handoff 只有在 operator 审核并把确认 ID/时间写入 batch ledger 后才允许新 attempt。
+
 完整行为见[通知与追踪](guides/notifications.md)。
 
 ## 配置层次
@@ -274,7 +276,7 @@ browser -> stable LitRadar action URL -> load ArticleLocator
 2. 检查 `PRAGMA user_version`。
 3. 认证库在独立 `BEGIN IMMEDIATE` 事务中逐版本迁移。
 4. 内容索引接受新建/空 v0、精确 v6，或可在事务中迁移的精确 v4/v5；非空 v0 及 v1–v3 明确要求人工备份、移动或删除点名文件后重建。
-5. 项目 batch ledger 按 v1 创建；catalog 控制库在一个事务中迁移到 v4。v0/v1 的旧 Provider 名称先按兼容规则重写，v0/v1/v2 中可证明为 journal complete 的事实迁移为成功但 NULL 的 anchor；v3 行保留并以 NULL batch 列进入保守 legacy bridge。
+5. 项目 batch ledger 按 v2 创建，已有 v1 ledger 原位增加 typed notify handoff 列，并把 active Notifying 保守迁移为 Unknown；catalog 控制库在一个事务中迁移到 v4。v0/v1 的旧 Provider 名称先按兼容规则重写，v0/v1/v2 中可证明为 journal complete 的事实迁移为成功但 NULL 的 anchor；v3 行保留并以 NULL batch 列进入保守 legacy bridge。
 6. 两类控制库都可删除后重建；遇到未来版本或失败立即退出，不自动删除或改写文件。
 
 `litradar serve` 先完成一次存储迁移、密钥验证和 HTTP 准备，再启动监听器与立即执行的首个调度 tick。普通查询仓库不负责 DDL。

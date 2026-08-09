@@ -371,6 +371,7 @@ fn run_index_command_with_bundled_meta_dir(
         full_rescan: options.full_rescan,
         notify: options.notify,
         notify_dry_run: options.notify_dry_run,
+        acknowledge_unknown_notify: options.acknowledge_unknown_notify,
         scholarly_config,
         cnki_captcha_token,
         provider_proxy_selection,
@@ -443,6 +444,7 @@ struct IndexOptions {
     full_rescan: bool,
     notify: bool,
     notify_dry_run: bool,
+    acknowledge_unknown_notify: bool,
 }
 
 fn parse_index_options(args: &mut Vec<String>) -> Result<IndexOptions, Box<dyn Error>> {
@@ -466,11 +468,18 @@ fn parse_index_options(args: &mut Vec<String>) -> Result<IndexOptions, Box<dyn E
     let full_rescan = extract_bool_pair(args, "--full-rescan", "--no-full-rescan", false);
     let notify = extract_bool_pair(args, "--notify", "--no-notify", false);
     let notify_dry_run = extract_bool_pair(args, "--notify-dry-run", "--no-notify-dry-run", false);
+    let acknowledge_unknown_notify = remove_flag(args, "--acknowledge-unknown-notify");
     if update && full_rescan {
         return Err("--update cannot be combined with --full-rescan".into());
     }
     if notify && !update {
         return Err("--notify requires --update".into());
+    }
+    if acknowledge_unknown_notify && !notify {
+        return Err("--acknowledge-unknown-notify requires --notify".into());
+    }
+    if acknowledge_unknown_notify && !resume {
+        return Err("--acknowledge-unknown-notify requires --resume".into());
     }
     Ok(IndexOptions {
         file,
@@ -483,6 +492,7 @@ fn parse_index_options(args: &mut Vec<String>) -> Result<IndexOptions, Box<dyn E
         full_rescan,
         notify,
         notify_dry_run,
+        acknowledge_unknown_notify,
     })
 }
 
@@ -712,12 +722,23 @@ fn run_delivery_command_inner(
     if remove_flag(&mut args, "--no-dry-run") {
         mode = DeliveryMode::Execute;
     }
+    let is_internal_handoff = remove_flag(&mut args, "--internal-handoff-json");
     let project_root = extract_project_root(&mut args)?;
     let auth_db_path = extract_auth_db_path_with_project_root(&mut args, &project_root)?;
     let secret_key_file = extract_path_option(&mut args, "--secret-key-file")?;
     let index_db_path = extract_path_option(&mut args, "--index-db")?;
     let db_name = extract_string_option(&mut args, "--db")?;
     let changes_file = extract_path_option(&mut args, "--changes-file")?;
+    let attempt_id = extract_string_option(&mut args, "--attempt-id")?;
+    match (is_internal_handoff, attempt_id.as_deref()) {
+        (true, Some(attempt_id)) if is_valid_delivery_attempt_id(attempt_id) => {}
+        (true, Some(_)) => {
+            return Err("--attempt-id must be exactly 32 hexadecimal characters".into())
+        }
+        (true, None) => return Err("--internal-handoff-json requires --attempt-id".into()),
+        (false, Some(_)) => return Err("--attempt-id requires --internal-handoff-json".into()),
+        (false, None) => {}
+    }
     let ai_model = extract_string_option(&mut args, "--ai-model")?;
     let max_candidates = extract_usize_option(&mut args, "--max-candidates")?;
     let timeout_seconds = extract_u64_option(&mut args, "--timeout")?.unwrap_or(60);
@@ -743,6 +764,9 @@ fn run_delivery_command_inner(
         db_name,
         changes_file.as_deref(),
     )?;
+    if is_internal_handoff && targets.len() != 1 {
+        return Err("internal delivery handoff requires exactly one database".into());
+    }
     migrate_command_databases(&project_root, &auth_db_path)?;
     let secret_codec = SecretCodec::load(&secret_key_file)?;
     verify_database_secrets(&auth_db_path, &secret_codec)?;
@@ -759,6 +783,7 @@ fn run_delivery_command_inner(
             index_db_path: target.index_db_path,
             db_name: target.db_name,
             changes_file: changes_file.clone(),
+            attempt_id: attempt_id.clone(),
             ai_model: ai_model.clone(),
             max_candidates,
             timeout_seconds,
@@ -772,15 +797,33 @@ fn run_delivery_command_inner(
         outcomes.push(outcome);
     }
     let status = aggregate_delivery_status(&outcomes);
-    let payload = json!({
-        "workflow": workflow,
-        "mode": mode,
-        "status": status,
-        "databases": outcomes,
-    });
+    let payload = if is_internal_handoff {
+        json!({
+            "protocol_version": 1,
+            "attempt_id": attempt_id.expect("validated internal handoff should have an attempt"),
+            "workflow": workflow,
+            "mode": mode,
+            "status": status,
+            "db_name": outcomes
+                .first()
+                .expect("validated internal handoff should have one outcome")
+                .db_name,
+        })
+    } else {
+        json!({
+            "workflow": workflow,
+            "mode": mode,
+            "status": status,
+            "databases": outcomes,
+        })
+    };
     print_result(&serde_json::to_string(&payload)?);
     ensure_delivery_command_success(command_name, status)?;
     Ok(())
+}
+
+fn is_valid_delivery_attempt_id(value: &str) -> bool {
+    value.len() == 32 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
 }
 
 fn aggregate_delivery_status(
@@ -1151,7 +1194,7 @@ fn live_index_runtime_config(
 
 fn index_usage() -> String {
     let payload = json!({
-        "usage": "litradar index --secret-key-file PATH [--project-root PATH] [--auth-db PATH] [--file FILE] [--workers N] [--processes N] [--issue-batch N] [--timeout N] [--resume|--no-resume] [--update|--no-update] [--full-rescan|--no-full-rescan] [--notify] [--notify-dry-run]",
+        "usage": "litradar index --secret-key-file PATH [--project-root PATH] [--auth-db PATH] [--file FILE] [--workers N] [--processes N] [--issue-batch N] [--timeout N] [--resume|--no-resume] [--update|--no-update] [--full-rescan|--no-full-rescan] [--notify] [--notify-dry-run] [--acknowledge-unknown-notify]",
         "defaults": {
             "workers": DEFAULT_INDEX_WORKER_COUNT,
             "processes": DEFAULT_INDEX_PROCESS_COUNT,
@@ -1166,6 +1209,7 @@ fn index_usage() -> String {
             "resume": "continue only a compatible active project batch; completed batches always start a new independent update",
             "no_resume": "abandon the active batch and its owned traversal checkpoints, then start a new batch from committed anchors",
             "file": "select and freeze exactly one CSV; it cannot adopt an active all-CSV batch",
+            "acknowledge_unknown_notify": "after review, acknowledge an ambiguous notify attempt and resume with a new delivery attempt",
         },
         "limits": {
             "workers_min": litradar_domain::INDEX_WORKER_COUNT_MIN,
@@ -1253,6 +1297,7 @@ mod tests {
         assert!(index.contains("--processes N"));
         assert!(index.contains("--full-rescan|--no-full-rescan"));
         assert!(index.contains("--notify-dry-run"));
+        assert!(index.contains("--acknowledge-unknown-notify"));
         let index_payload: serde_json::Value =
             serde_json::from_str(&index).expect("index usage should be JSON");
         assert_eq!(index_payload["defaults"]["workers"], 6);
@@ -1273,6 +1318,9 @@ mod tests {
         assert!(index_payload["modes"]["file"]
             .as_str()
             .is_some_and(|value| value.contains("exactly one CSV")));
+        assert!(index_payload["modes"]["acknowledge_unknown_notify"]
+            .as_str()
+            .is_some_and(|value| value.contains("ambiguous notify attempt")));
         assert_eq!(index_payload["limits"]["workers_max"], 32);
         assert_eq!(index_payload["limits"]["aggregate_max"], 32);
         assert_eq!(index_payload["limits"]["scholarly_workers_max"], 6);
@@ -1660,6 +1708,41 @@ mod tests {
         assert!(!options.full_rescan);
         assert!(options.notify);
         assert!(options.notify_dry_run);
+        assert!(!options.acknowledge_unknown_notify);
+    }
+
+    #[test]
+    fn index_unknown_notify_acknowledgement_requires_resumable_notification_mode() {
+        let mut valid_args = vec![
+            "--update".to_string(),
+            "--notify".to_string(),
+            "--acknowledge-unknown-notify".to_string(),
+        ];
+        let valid = parse_index_options(&mut valid_args)
+            .expect("unknown notification acknowledgement should parse");
+        assert!(valid_args.is_empty());
+        assert!(valid.acknowledge_unknown_notify);
+
+        let mut missing_notify = vec!["--acknowledge-unknown-notify".to_string()];
+        assert_eq!(
+            parse_index_options(&mut missing_notify)
+                .expect_err("acknowledgement without notification should fail")
+                .to_string(),
+            "--acknowledge-unknown-notify requires --notify"
+        );
+
+        let mut no_resume = vec![
+            "--update".to_string(),
+            "--notify".to_string(),
+            "--no-resume".to_string(),
+            "--acknowledge-unknown-notify".to_string(),
+        ];
+        assert_eq!(
+            parse_index_options(&mut no_resume)
+                .expect_err("acknowledgement without recovery should fail")
+                .to_string(),
+            "--acknowledge-unknown-notify requires --resume"
+        );
     }
 
     #[test]
@@ -1754,6 +1837,7 @@ mod tests {
             full_rescan: false,
             notify: false,
             notify_dry_run: false,
+            acknowledge_unknown_notify: false,
         };
         let concurrency = litradar_domain::validate_index_concurrency(4, 2, false)
             .expect("test concurrency should validate");
@@ -2222,6 +2306,39 @@ mod tests {
         assert!(notify_usage.contains("--dry-run|--no-dry-run"));
         assert!(push_usage.contains("--changes-file PATH"));
         assert!(!notify_usage.contains("--state-dir"));
+        assert!(!notify_usage.contains("--internal-handoff-json"));
+        assert!(!notify_usage.contains("--attempt-id"));
+    }
+
+    #[test]
+    fn internal_delivery_handoff_requires_a_bounded_attempt_identity() {
+        let missing = run_notify_command(vec!["--internal-handoff-json".to_string()])
+            .expect_err("internal handoff without an attempt should fail");
+        assert_eq!(
+            missing.to_string(),
+            "--internal-handoff-json requires --attempt-id"
+        );
+
+        let unscoped = run_notify_command(vec![
+            "--attempt-id".to_string(),
+            "0123456789abcdef0123456789abcdef".to_string(),
+        ])
+        .expect_err("attempt identity outside an internal handoff should fail");
+        assert_eq!(
+            unscoped.to_string(),
+            "--attempt-id requires --internal-handoff-json"
+        );
+
+        let invalid = run_notify_command(vec![
+            "--internal-handoff-json".to_string(),
+            "--attempt-id".to_string(),
+            "not-an-attempt".to_string(),
+        ])
+        .expect_err("malformed attempt identity should fail");
+        assert_eq!(
+            invalid.to_string(),
+            "--attempt-id must be exactly 32 hexadecimal characters"
+        );
     }
 
     #[test]

@@ -152,6 +152,7 @@ litradar index --secret-key-file PATH
     [--full-rescan | --no-full-rescan]
     [--notify | --no-notify]
     [--notify-dry-run | --no-notify-dry-run]
+    [--acknowledge-unknown-notify]
 ```
 
 | 参数                                       | 默认值   | 含义                                                         |
@@ -167,6 +168,7 @@ litradar index --secret-key-file PATH
 | `--full-rescan` / `--no-full-rescan`       | 关闭     | 是否扫描完整 Provider 历史且不生成变更清单                   |
 | `--notify` / `--no-notify`                 | 关闭     | 更新成功后启动 `litradar notify`                             |
 | `--notify-dry-run` / `--no-notify-dry-run` | 关闭     | 下游 notify 是否 dry-run                                     |
+| `--acknowledge-unknown-notify`              | 关闭     | 审核 Unknown handoff 后确认并创建新的 notify attempt          |
 
 约束：
 
@@ -177,6 +179,7 @@ litradar index --secret-key-file PATH
 - `--update` 与 `--full-rescan` 互斥；冲突会在数据库迁移、Provider 构造和 worker 启动前失败。
 - `--notify` 必须和 `--update` 同时使用。
 - 单独传 `--notify-dry-run` 不会启动 notify；它只修改 `--notify` handoff 的模式。
+- `--acknowledge-unknown-notify` 必须与默认 `--resume`、`--update` 和 `--notify` 同时使用；它是恢复控制，不进入 batch correctness fingerprint。
 - Scholarly 中的 `--workers` 只扩大每个期刊子进程的 OpenAlex DOI 子批在途容量；`6 × 3` 因此最多同时保留 18 个这类请求。每个 OpenAlex key 跨全部期刊子进程共享一组 11-ms 相位，约暴露 `90.9 req/s/key`；增加进程只改变相位所有权，不把单 key 速率乘以进程数。调度器使用全部健康 key，并按剩余 daily credits、在途、冷却和认证状态负载均衡。每日安全预留按 `workers × processes × 最大已知单次 credit cost` 计算。
 - Crossref 不使用 `--workers`。整个父进程树共享一个 110-ms polite 相位序列，约 `9.09 req/s`，最多由三个期刊子进程各保留一个在途请求。仅第一个稳定 mailto 被发送；增加 mailto 不会增加 10-RPS/并发-3 合同容量。
 - Semantic Scholar 不使用 `--workers`。每个合法 key 各有一个跨进程 1,100-ms 相位序列，约 `0.909 req/s/key`；不同 key 在周期内均匀错开，所以两个或三个 key 可线性增加建模容量。增加 `--processes` 只分配每 key 的相位所有权，不突破 `1 req/s/key`。401/403 只禁用对应 slot，429/Retry-After 只冷却对应 slot，重试同样必须取得未来相位。
@@ -218,7 +221,7 @@ CSV 使用 LitRadar 维护的 `catalog_id,title,issn,eissn,all_issns,title_alias
 
 `workers`、`processes`、timeout、代理和凭据不影响 correctness fingerprint。兼容 active batch 会按持久顺序跳过已经 completed 的 catalog 和同 batch 已完成的 journal，从第一个未完成 traversal checkpoint 继续；CSV、顺序、selection、route、模式或上述正确性选项变化会在 Provider 访问前 fail closed，并只报告差异类别。一个 batch 全部成功后进入 completed；下一次命令总会创建新 batch 并重新检查全部选中 journal，旧成功行只作为增量 anchor，不是永久 skip 标记。
 
-`--no-resume` 明确放弃当前 active batch，并在清理该 batch 自有的 `provider_run_checkpoints` 后创建新 batch。它保留 committed anchors、内容库、outbox 和已经发布的 manifest；新 traversal 从所选模式和现有 committed anchor 开始。它不是“忽略一个 CSV 错误继续”，也不会合并不兼容的冻结输入。
+`--no-resume` 明确放弃当前 active batch，并在清理该 batch 自有的 `provider_run_checkpoints` 后创建新 batch。它保留 committed anchors、内容库、outbox 和已经发布的 manifest；新 traversal 从所选模式和现有 committed anchor 开始。若 ledger 已记录一个待完成的已发布 notify manifest，命令会拒绝放弃，必须先用原 correctness inputs 恢复，并在必要时显式确认 Unknown；因此 `--no-resume` 不能静默跳过该 handoff。它不是“忽略一个 CSV 错误继续”，也不会合并不兼容的冻结输入。
 
 控制库把成功状态与运行状态分开保存，并以目录、Provider、`catalog_id` 隔离。命令模式如下：
 
@@ -233,6 +236,10 @@ CSV 使用 LitRadar 维护的 `catalog_id,title,issn,eissn,all_issns,title_alias
 切换 Provider 会使用没有 anchor 的新 namespace；删除控制库也会同时失去成功 anchor 和运行进度。两种情况都安全退回完整覆盖，不触碰内容库，也不会复制文章或改变 ID。
 
 `--update` 从内容库的事务性 `article_change_events` 生成 Provider-neutral changes JSON。核心先把精确 payload、目标相对路径和 through-event cursor 持久化为 batch manifest intent，再原子发布相同字节、幂等清理该 cursor，最后进入可选 notify phase。重启可只补 manifest 或 notify，不重复已完成 Provider 工作。若 outbox 已空但已有一个有界且可解析、属于同内容库的 manifest，空 update 会保留该文件且不再次 notify。batch ledger 丢失时文件/SQLite 边界仍按至少一次处理，消费者必须按规范文章身份去重。Provider 请求统计只在终态结构化日志中聚合，不写入内容库。
+
+notify phase 使用 disposable batch schema v2 的独立 typed handoff state，不再把 exit code 混入不可变 catalog outcome。父进程在启动 child 前持久化 32 位十六进制 attempt ID；child 只向父进程输出一行 compact JSON（protocol、attempt、workflow、mode、status、db），父进程最多保留 64 KiB stdout、继续排空管道，并严格核对上下文和退出类别。catalog 只有在 `idle`、`completed` 或 `skipped` 且退出 0 时才能完成。
+
+恢复规则按状态固定：结果尚未落盘或 child 返回 `running` 时复用同一 attempt ID，以便投递层返回已有 durable run；`failed`、`cancelled` 或 `timed_out` 在下一次 operator invocation 使用新 attempt；`unknown`、缺失/畸形/超大输出、上下文不匹配或 status/exit 不一致都不会自动启动 child。审核 delivery run/item/dedupe 后，可用原命令加 `--acknowledge-unknown-notify`；确认 ID 与时间会和新 attempt 在一个 transaction 中写入。attempt 只改变外层 scheduled run 身份，文章级 Confirmed/Unknown dedupe 跨 attempt 保留，所以已确认或不确定的文章不重发，新文章仍可投递。每次父进程调用对每个 catalog 最多启动一个 notify child。
 
 ### 升级后恢复旧 English traversal
 
@@ -319,7 +326,7 @@ checkpoint、run、item、dedupe 和 workflow lease 统一写入 `--auth-db` 指
 
 `--retries 0` 表示只执行首次请求、不再重试；默认值为 3。大于 10 的值会在密钥、数据库、目标和传输初始化前被拒绝。该参数是每个适用请求或 AI 响应格式的重试次数，不是作业总时限或全局请求总数。AI 可对连接失败、timeout 和受限瞬态状态重试；PushPlus 仅在连接建立明确失败、请求尚未发送时重试。一旦 PushPlus 请求可能到达上游，timeout、HTTP 响应或连接后错误会直接产生 `unknown`，不会自动重放。`--dedupe-retention-days <= 0` 禁用确认记录清理，而不是立即删除全部记录。
 
-`notify`/`push` 在投递运行已形成聚合结果时总会先向 stdout 输出一行完整 JSON。聚合状态为 `completed`、`skipped` 或 `idle` 时退出 0；`running`、`cancelled`、`timed_out`、`failed` 或 `unknown` 时退出非零。这样调用方仍能解析每个数据库和订阅者的精确结果，同时 scheduler 与 `index --notify` 不会把业务失败误记为成功。索引 notify handoff 会持久化非零退出码并停留在 `notifying`，不会把 catalog 或 batch 标为完成；后续恢复也不会把已记录的非零结果当作成功。
+`notify`/`push` 在投递运行已形成聚合结果时总会先向 stdout 输出一行完整 JSON。聚合状态为 `completed`、`skipped` 或 `idle` 时退出 0；`running`、`cancelled`、`timed_out`、`failed` 或 `unknown` 时退出非零。这样普通调用方仍能解析每个数据库和订阅者的精确结果，scheduler 不会把业务失败误记为成功。`index --notify` 使用上述私有 compact handoff 契约并同时核对 typed status 与退出类别；隐藏参数不属于公开 CLI，也不会出现在 help 中。
 
 ## `scheduler`
 
