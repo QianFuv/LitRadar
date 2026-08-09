@@ -3088,6 +3088,64 @@
         ]
       }
     },
+    "/api/tracking/push-weekly/runs/{run_id}/acknowledge": {
+      "post": {
+        "tags": ["tracking"],
+        "summary": "Acknowledge the latest ambiguous manual push and enqueue a safe new attempt.",
+        "operationId": "acknowledge_unknown_push_weekly_run",
+        "parameters": [
+          {
+            "name": "run_id",
+            "in": "path",
+            "description": "Opaque ambiguous manual push job id.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Ambiguous outcome acknowledged and a replacement queued.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManualWeeklyPushStatus"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Owner-visible manual push job not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The job is stale or no longer the latest unknown outcome.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          },
+          {
+            "session_cookie": []
+          }
+        ]
+      }
+    },
     "/api/tracking/push-weekly/runs/{run_id}/cancel": {
       "post": {
         "tags": ["tracking"],

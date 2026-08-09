@@ -80,6 +80,7 @@ pub const OPENAPI_JSON_PATH: &str = "/openapi.json";
         crate::routes::tracking::get_push_weekly_status,
         crate::routes::tracking::get_push_weekly_run,
         crate::routes::tracking::cancel_push_weekly_run,
+        crate::routes::tracking::acknowledge_unknown_push_weekly_run,
         crate::routes::tracking::get_notification_settings,
         crate::routes::tracking::update_notification_settings,
         crate::routes::tracking::get_ai_endpoints,

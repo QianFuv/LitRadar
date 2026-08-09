@@ -148,8 +148,11 @@ PushPlus 传输只在连接建立明确失败、请求尚未发送时使用受�
 - 不同用户进入实例级有界队列；默认最多同时监管 2 个子进程，可通过 `delivery_worker_concurrency` 配置为 `1..=16`
 - 通过 `GET /api/tracking/push-weekly/status` 轮询
 - 可通过 `GET /api/tracking/push-weekly/runs/{run_id}` 恢复指定任务，通过 `POST .../{run_id}/cancel` 请求取消；owner 和管理员可访问
+- `unknown` 时普通启动仍返回 `409`；只有 owner 检查投递记录后，才可通过 `POST /api/tracking/push-weekly/runs/{run_id}/acknowledge` 显式确认并排入一个新任务
 
 runtime dispatcher 从 SQLite 认领任务，通过隐藏的类型化 `delivery-run` 子命令和完整进程树监管执行。服务重启后 queued 或 lease 过期的任务仍可恢复；取消与 deadline 会先给 cooperative polling 一个短暂窗口，再终止完整进程树。强制终止时若外部副作用可能已经开始，顶层任务固定为 `unknown`，UI 不提供无提示重试。公开状态为 `pending/running/completed/failed/cancelled/timed_out/unknown`。API 契约见 [API 参考](../reference/api.md)和运行时 OpenAPI。
+
+Unknown 确认在一个 `BEGIN IMMEDIATE` 中复核目标属于当前用户、仍是最新手动任务且状态仍为 `unknown`，随后创建一个 queued replacement 并写入固定 schema 的 `manual_push_unknown_acknowledge` 安全审计。并发重复、过期或非 Unknown 确认不会创建第二个任务；管理员也不能代替 owner 确认。确认不会修改旧外层/内层 run、item 或 `unknown`/`confirmed` dedupe，因此不确定文章不会重发，而后续 manifest 中未出现过的新文章仍可正常投递。
 
 ## 持久状态与旧文件
 

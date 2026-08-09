@@ -4796,6 +4796,94 @@ mod tests {
             None,
         )
         .await;
+        let acknowledge_path = format!("/api/tracking/push-weekly/runs/{retry_job_id}/acknowledge");
+        let hidden_acknowledgement = json_request(
+            &app,
+            Method::POST,
+            &acknowledge_path,
+            Some(&competing_auth),
+            None,
+            None,
+        )
+        .await;
+        let malformed_acknowledgement = json_request(
+            &app,
+            Method::POST,
+            "/api/tracking/push-weekly/runs/not-a-valid-job-id/acknowledge",
+            Some(&auth),
+            None,
+            None,
+        )
+        .await;
+        let (first_acknowledgement, second_acknowledgement) = tokio::join!(
+            json_request(
+                &app,
+                Method::POST,
+                &acknowledge_path,
+                Some(&auth),
+                None,
+                None,
+            ),
+            json_request(
+                &app,
+                Method::POST,
+                &acknowledge_path,
+                Some(&auth),
+                None,
+                None,
+            ),
+        );
+        let (acknowledged, duplicate_acknowledgement) =
+            if first_acknowledgement.status == StatusCode::ACCEPTED {
+                (first_acknowledgement, second_acknowledgement)
+            } else {
+                (second_acknowledgement, first_acknowledgement)
+            };
+        let acknowledged_job_id = acknowledged.payload["job_id"]
+            .as_str()
+            .expect("acknowledgement should return a replacement job id");
+        let stale_acknowledgement = json_request(
+            &app,
+            Method::POST,
+            &acknowledge_path,
+            Some(&auth),
+            None,
+            None,
+        )
+        .await;
+        let non_unknown_acknowledgement = json_request(
+            &app,
+            Method::POST,
+            &format!("/api/tracking/push-weekly/runs/{acknowledged_job_id}/acknowledge"),
+            Some(&auth),
+            None,
+            None,
+        )
+        .await;
+        let latest_after_acknowledgement = json_request(
+            &app,
+            Method::GET,
+            "/api/tracking/push-weekly/status",
+            Some(&auth),
+            None,
+            None,
+        )
+        .await;
+        let acknowledgement_audits =
+            litradar_storage::list_security_audit_events(backend.auth_db_path())
+                .expect("manual acknowledgement audits should load")
+                .into_iter()
+                .filter(|event| event.action == "manual_push_unknown_acknowledge")
+                .collect::<Vec<_>>();
+        let manual_run_count: i64 = Connection::open(backend.auth_db_path())
+            .expect("auth database should open")
+            .query_row(
+                "SELECT COUNT(*) FROM delivery_runs
+                 WHERE trigger_kind = 'manual' AND user_id = ?1",
+                [user.user_id().value()],
+                |row| row.get(0),
+            )
+            .expect("manual runs should count");
 
         assert_eq!(idle.status, StatusCode::OK);
         assert_eq!(idle.payload["status"], "idle");
@@ -4845,6 +4933,31 @@ mod tests {
             blocked_after_unknown.payload["detail"],
             "Manual push outcome is unknown; review delivery state before retrying"
         );
+        assert_eq!(hidden_acknowledgement.status, StatusCode::NOT_FOUND);
+        assert_eq!(malformed_acknowledgement.status, StatusCode::NOT_FOUND);
+        assert_eq!(acknowledged.status, StatusCode::ACCEPTED);
+        assert_eq!(acknowledged.payload["status"], "pending");
+        assert_ne!(acknowledged.payload["job_id"], retry.payload["job_id"]);
+        assert_eq!(duplicate_acknowledgement.status, StatusCode::CONFLICT);
+        assert_eq!(stale_acknowledgement.status, StatusCode::CONFLICT);
+        assert_eq!(non_unknown_acknowledgement.status, StatusCode::CONFLICT);
+        assert_eq!(
+            duplicate_acknowledgement.payload["detail"],
+            "Manual push is no longer the latest unknown outcome"
+        );
+        assert_eq!(
+            latest_after_acknowledgement.payload["job_id"],
+            acknowledged.payload["job_id"]
+        );
+        assert_eq!(manual_run_count, 3);
+        assert_eq!(acknowledgement_audits.len(), 1);
+        assert_eq!(
+            acknowledgement_audits[0].actor_id,
+            Some(user.user_id().value())
+        );
+        assert_eq!(acknowledgement_audits[0].target_id, Some(retry_run.id));
+        assert_eq!(acknowledgement_audits[0].outcome, "completed");
+        assert!(!acknowledgement_audits[0].request_id.is_empty());
     }
 
     #[tokio::test]

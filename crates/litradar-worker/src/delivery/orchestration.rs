@@ -1823,12 +1823,12 @@ mod tests {
     }
 
     #[test]
-    fn execute_notify_pushplus_failure_persists_unknown_without_replay() {
+    fn manual_notify_unknown_attempt_skips_old_articles_and_delivers_a_later_manifest() {
         let fixture = DeliveryFixture::new(notification_settings("pushplus", true, vec![]));
         let changes_file = fixture.root.path().join("unknown-attempt.changes.json");
         fs::write(
             &changes_file,
-            r#"{"db_name":"fixture.sqlite","run_id":"unknown-manifest","notifiable_article_ids":[101,102]}"#,
+            r#"{"db_name":"fixture.sqlite","run_id":"unknown-manifest","notifiable_article_ids":[101]}"#,
         )
         .expect("unknown attempt manifest should be written");
 
@@ -1838,8 +1838,7 @@ mod tests {
             Some(changes_file),
             None,
         );
-        let mut ai_selector =
-            FixtureDeliveryAiSelector::new(vec![selection_outcome(&[101, 102], "")]);
+        let mut ai_selector = FixtureDeliveryAiSelector::new(vec![selection_outcome(&[101], "")]);
         let mut pushplus_sender = FixturePushPlusSender::new(vec![Err(DeliveryError::PushPlus(
             "send failed".to_string(),
         ))]);
@@ -1853,9 +1852,9 @@ mod tests {
         .expect("notify execute should record PushPlus failure");
 
         assert_eq!(outcome.status, DeliveryOutcomeState::Unknown);
-        assert_eq!(favorite_count(&fixture.auth_db_path), 2);
+        assert_eq!(favorite_count(&fixture.auth_db_path), 1);
         let dedupe = delivery_dedupe(&fixture, DeliveryWorkflow::Notify);
-        assert_eq!(dedupe.len(), 2);
+        assert_eq!(dedupe.len(), 1);
         assert!(dedupe
             .iter()
             .all(|row| row.status == litradar_storage::DeliveryDedupeStatus::Unknown));
@@ -1866,10 +1865,18 @@ mod tests {
         assert_eq!(run.status, litradar_storage::DeliveryRunStatus::Unknown);
         assert!(!format!("{run:?}").contains("send failed"));
 
+        fs::write(
+            config
+                .changes_file
+                .as_ref()
+                .expect("manual attempt should retain its manifest path"),
+            r#"{"db_name":"fixture.sqlite","run_id":"later-manifest","notifiable_article_ids":[102]}"#,
+        )
+        .expect("later manifest should be written");
         let mut retry_ai_selector =
-            FixtureDeliveryAiSelector::new(vec![selection_outcome(&[101, 102], "")]);
+            FixtureDeliveryAiSelector::new(vec![selection_outcome(&[102], "")]);
         let mut retry_pushplus_sender =
-            FixturePushPlusSender::new(vec![Ok("unexpected-message".to_string())]);
+            FixturePushPlusSender::new(vec![Ok("later-message".to_string())]);
         let retry = run_recommendation_delivery_with_services_for_user(
             &config,
             Some(fixture.user_id),
@@ -1877,17 +1884,25 @@ mod tests {
             &mut retry_ai_selector,
             &mut retry_pushplus_sender,
         )
-        .expect("unknown delivery should be safely deduplicated in a new attempt");
+        .expect("later manifest should execute without replaying the ambiguous article");
 
         assert_eq!(retry.status, DeliveryOutcomeState::Completed);
-        assert_eq!(
-            retry.subscribers[0].status,
-            SubscriberDeliveryState::Skipped
-        );
-        assert!(retry_pushplus_sender.messages.is_empty());
-        assert!(delivery_dedupe(&fixture, DeliveryWorkflow::Notify)
-            .iter()
-            .all(|row| row.status == litradar_storage::DeliveryDedupeStatus::Unknown));
+        assert_eq!(retry.subscribers[0].status, SubscriberDeliveryState::Ok);
+        assert_eq!(retry_pushplus_sender.messages.len(), 1);
+        assert!(retry_pushplus_sender.messages[0]
+            .content
+            .contains("Rust migration"));
+        assert!(!retry_pushplus_sender.messages[0]
+            .content
+            .contains("Rust systems"));
+        let dedupe = delivery_dedupe(&fixture, DeliveryWorkflow::Notify);
+        assert_eq!(dedupe.len(), 2);
+        assert!(dedupe.iter().any(|row| {
+            row.article_id == 101 && row.status == litradar_storage::DeliveryDedupeStatus::Unknown
+        }));
+        assert!(dedupe.iter().any(|row| {
+            row.article_id == 102 && row.status == litradar_storage::DeliveryDedupeStatus::Confirmed
+        }));
     }
 
     #[test]

@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import {
+  acknowledgeUnknownPushWeeklyRun,
   cancelPushWeeklyRun,
   createFolder,
   getAiEndpoints,
@@ -213,6 +214,12 @@ export function useTrackingPage(userId: number) {
       queryClient.setQueryData(['manual-push', userId], data);
     },
   });
+  const acknowledgeUnknownPushMut = useMutation({
+    mutationFn: (jobId: string) => acknowledgeUnknownPushWeeklyRun(jobId),
+    onSuccess: (data) => {
+      queryClient.setQueryData(['manual-push', userId], data);
+    },
+  });
   const requiresTrackingFolder = deliveryMethod === 'folder' || syncToTrackingFolder;
   const normalizedSelectedDatabases = useCallback(
     (selection: string[]): string[] => {
@@ -256,7 +263,11 @@ export function useTrackingPage(userId: number) {
     }
     return manualPushFallbackMessage(data.status, data.pushed);
   }, []);
-  const manualPushError = pushMut.error ?? cancelPushMut.error ?? manualPushQuery.error;
+  const manualPushError =
+    pushMut.error ??
+    cancelPushMut.error ??
+    acknowledgeUnknownPushMut.error ??
+    manualPushQuery.error;
   const pushResult = manualPushError
     ? manualPushError instanceof Error
       ? manualPushError.message
@@ -375,6 +386,7 @@ export function useTrackingPage(userId: number) {
     discardSettings,
     hasUnsavedSettings,
     manualPush: {
+      acknowledgeUnknownMutation: acknowledgeUnknownPushMut,
       cancelMutation: cancelPushMut,
       description: manualPushDescription,
       hasError: Boolean(manualPushError),

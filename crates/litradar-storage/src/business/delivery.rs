@@ -10,6 +10,7 @@ use rusqlite::{params, Connection, OptionalExtension, Row, Transaction, Transact
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
+use super::{insert_required_security_audit_event, SecurityAuditError, SecurityAuditEvent};
 use crate::{open_sqlite_connection, StorageConfig};
 
 const MAX_DB_NAME_BYTES: usize = 255;
@@ -366,6 +367,8 @@ pub enum DeliveryRepositoryError {
     NotFound,
     /// A revision, owner, status, or import hash no longer matches.
     Conflict,
+    /// A required durable security audit row could not be persisted.
+    AuditPersistence(SecurityAuditError),
     /// A legacy file does not match its workflow or database identity.
     InvalidLegacyState,
     /// A legacy file changed after a prior successful import.
@@ -386,6 +389,7 @@ impl fmt::Display for DeliveryRepositoryError {
             Self::InvalidStoredState => formatter.write_str("Stored delivery state is invalid"),
             Self::NotFound => formatter.write_str("Delivery record not found"),
             Self::Conflict => formatter.write_str("Delivery state changed concurrently"),
+            Self::AuditPersistence(_) => formatter.write_str("Security audit persistence failed"),
             Self::LegacyImportConflict => {
                 formatter.write_str("Legacy delivery state changed after import")
             }
@@ -400,6 +404,7 @@ impl Error for DeliveryRepositoryError {
             Self::Sqlite(error) => Some(error),
             Self::Io(error) => Some(error),
             Self::Json(error) => Some(error),
+            Self::AuditPersistence(error) => Some(error),
             _ => None,
         }
     }
@@ -420,6 +425,12 @@ impl From<std::io::Error> for DeliveryRepositoryError {
 impl From<serde_json::Error> for DeliveryRepositoryError {
     fn from(error: serde_json::Error) -> Self {
         Self::Json(error)
+    }
+}
+
+impl From<SecurityAuditError> for DeliveryRepositoryError {
+    fn from(error: SecurityAuditError) -> Self {
+        Self::AuditPersistence(error)
     }
 }
 
@@ -930,6 +941,76 @@ pub fn admit_manual_delivery_run(
     Ok(ManualDeliveryRunAdmissionOutcome::Admitted(outcome))
 }
 
+/// Acknowledge the latest ambiguous manual run and atomically enqueue a replacement.
+///
+/// # Arguments
+///
+/// * `auth_db_path` - Path to the migrated authentication database.
+/// * `user_id` - Authenticated owner identifier.
+/// * `unknown_external_id` - Public identifier of the reviewed ambiguous run.
+/// * `replacement` - Fresh manual run identity and deadline.
+/// * `audit` - Required fixed-schema completion audit event.
+///
+/// # Returns
+///
+/// The newly queued replacement run.
+pub fn acknowledge_unknown_manual_delivery_run(
+    auth_db_path: impl AsRef<Path>,
+    user_id: i64,
+    unknown_external_id: &str,
+    replacement: &DeliveryRunCreate,
+    audit: &SecurityAuditEvent,
+) -> Result<DeliveryRunRecord, DeliveryRepositoryError> {
+    validate_positive_id(user_id, "Manual delivery user id is invalid")?;
+    validate_identifier(
+        unknown_external_id,
+        "Manual delivery acknowledgement job id is invalid",
+    )?;
+    validate_run_create(replacement)?;
+    if replacement.trigger_kind != DeliveryTriggerKind::Manual
+        || replacement.user_id != Some(user_id)
+    {
+        return Err(DeliveryRepositoryError::InvalidInput(
+            "Manual delivery acknowledgement requires a replacement for the same user",
+        ));
+    }
+
+    let mut connection = open_delivery_connection(auth_db_path)?;
+    let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    let unknown = load_manual_delivery_run_by_external_id_from_connection(
+        &transaction,
+        user_id,
+        unknown_external_id,
+    )?
+    .ok_or(DeliveryRepositoryError::NotFound)?;
+    let latest = load_latest_manual_delivery_run_from_connection(&transaction, user_id)?
+        .ok_or(DeliveryRepositoryError::NotFound)?;
+    if latest.id != unknown.id
+        || unknown.status != DeliveryRunStatus::Unknown
+        || replacement.workflow != unknown.workflow
+        || replacement.scope_key != unknown.scope_key
+        || replacement.db_name != unknown.db_name
+        || replacement.mode != unknown.mode
+    {
+        return Err(DeliveryRepositoryError::Conflict);
+    }
+    let admitted = match admit_delivery_run_from_connection(&transaction, replacement)? {
+        DeliveryRunAdmissionOutcome::Enqueued(run) => run,
+        DeliveryRunAdmissionOutcome::Existing(_) | DeliveryRunAdmissionOutcome::Busy(_) => {
+            return Err(DeliveryRepositoryError::Conflict);
+        }
+    };
+    insert_required_security_audit_event(
+        &transaction,
+        &audit
+            .clone()
+            .with_actor_id(user_id)
+            .with_target_id(unknown.id),
+    )?;
+    transaction.commit()?;
+    Ok(admitted)
+}
+
 fn admit_delivery_run_from_connection(
     connection: &Connection,
     run: &DeliveryRunCreate,
@@ -1038,18 +1119,7 @@ pub fn load_manual_delivery_run_by_external_id(
     validate_positive_id(user_id, "Manual delivery user id is invalid")?;
     validate_identifier(external_id, "Manual delivery job id is invalid")?;
     let connection = open_delivery_connection(auth_db_path)?;
-    connection
-        .query_row(
-            &format!(
-                "SELECT {RUN_COLUMNS} FROM delivery_runs
-                 WHERE trigger_kind = 'manual' AND user_id = ?1 AND external_id = ?2
-                 ORDER BY id DESC LIMIT 1"
-            ),
-            params![user_id, external_id],
-            run_from_row,
-        )
-        .optional()
-        .map_err(DeliveryRepositoryError::from)
+    load_manual_delivery_run_by_external_id_from_connection(&connection, user_id, external_id)
 }
 
 /// Load one manual delivery run by its public external identifier without owner filtering.
@@ -2619,6 +2689,25 @@ fn load_delivery_run_by_external_id_from_connection(
         .map_err(DeliveryRepositoryError::from)
 }
 
+fn load_manual_delivery_run_by_external_id_from_connection(
+    connection: &Connection,
+    user_id: i64,
+    external_id: &str,
+) -> Result<Option<DeliveryRunRecord>, DeliveryRepositoryError> {
+    connection
+        .query_row(
+            &format!(
+                "SELECT {RUN_COLUMNS} FROM delivery_runs
+                 WHERE trigger_kind = 'manual' AND user_id = ?1 AND external_id = ?2
+                 ORDER BY id DESC LIMIT 1"
+            ),
+            params![user_id, external_id],
+            run_from_row,
+        )
+        .optional()
+        .map_err(DeliveryRepositoryError::from)
+}
+
 fn load_latest_manual_delivery_run_from_connection(
     connection: &Connection,
     user_id: i64,
@@ -3630,6 +3719,7 @@ fn legacy_import_error_kind(error: &DeliveryRepositoryError) -> &'static str {
         DeliveryRepositoryError::InvalidStoredState => "invalid_stored_state",
         DeliveryRepositoryError::NotFound => "not_found",
         DeliveryRepositoryError::Conflict => "conflict",
+        DeliveryRepositoryError::AuditPersistence(_) => "audit_persistence",
         DeliveryRepositoryError::InvalidLegacyState => "invalid_legacy_state",
         DeliveryRepositoryError::LegacyImportConflict => "legacy_import_conflict",
         DeliveryRepositoryError::LegacyStateTooLarge => "legacy_state_too_large",
@@ -3849,6 +3939,209 @@ mod tests {
             .query_row("SELECT COUNT(*) FROM delivery_runs", [], |row| row.get(0))
             .expect("manual runs should count");
         assert_eq!(run_count, 1);
+    }
+
+    #[test]
+    fn manual_delivery_unknown_acknowledgement_is_atomic_and_single_use() {
+        let (_temp_dir, path) = migrated_auth_database();
+        let unknown = persist_unknown_manual_run(&path, "manual-unknown", 11, 10.0);
+        let blocked = admit_manual_delivery_run(&path, &manual_run("manual-blocked", 11, 14.0))
+            .expect("ordinary admission should return the ambiguous run");
+        assert!(matches!(
+            blocked,
+            ManualDeliveryRunAdmissionOutcome::BlockedUnknown(ref run) if run.id == unknown.id
+        ));
+        assert_eq!(row_count(&path, "delivery_runs"), 1);
+
+        let barrier = Arc::new(Barrier::new(3));
+        let handles = [
+            ("manual-ack-one", "request-one"),
+            ("manual-ack-two", "request-two"),
+        ]
+        .map(|(external_id, request_id)| {
+            let path = path.clone();
+            let barrier = Arc::clone(&barrier);
+            let unknown_external_id = unknown.external_id.clone();
+            thread::spawn(move || {
+                barrier.wait();
+                acknowledge_unknown_manual_delivery_run(
+                    path,
+                    11,
+                    &unknown_external_id,
+                    &manual_run(external_id, 11, 15.0),
+                    &SecurityAuditEvent::new("manual_push_unknown_acknowledge", "completed")
+                        .with_request_id(request_id),
+                )
+            })
+        });
+        barrier.wait();
+        let results = handles.map(|handle| handle.join().expect("acknowledger should finish"));
+
+        assert_eq!(results.iter().filter(|result| result.is_ok()).count(), 1);
+        assert_eq!(
+            results
+                .iter()
+                .filter(|result| matches!(result, Err(DeliveryRepositoryError::Conflict)))
+                .count(),
+            1
+        );
+        let admitted = results
+            .iter()
+            .find_map(|result| result.as_ref().ok())
+            .expect("one acknowledgement should enqueue a run");
+        assert_eq!(admitted.status, DeliveryRunStatus::Queued);
+        assert_eq!(row_count(&path, "delivery_runs"), 2);
+
+        let connection = Connection::open(&path).expect("database should open");
+        let audit = connection
+            .query_row(
+                "SELECT actor_id, target_id, outcome, request_id
+                 FROM security_audit_events
+                 WHERE action = 'manual_push_unknown_acknowledge'",
+                [],
+                |row| {
+                    Ok((
+                        row.get::<_, Option<i64>>(0)?,
+                        row.get::<_, Option<i64>>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, String>(3)?,
+                    ))
+                },
+            )
+            .expect("acknowledgement audit should exist");
+        assert_eq!(audit.0, Some(11));
+        assert_eq!(audit.1, Some(unknown.id));
+        assert_eq!(audit.2, "completed");
+        assert!(matches!(audit.3.as_str(), "request-one" | "request-two"));
+        let audit_count: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM security_audit_events
+                 WHERE action = 'manual_push_unknown_acknowledge'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("acknowledgement audits should count");
+        assert_eq!(audit_count, 1);
+
+        assert!(matches!(
+            acknowledge_unknown_manual_delivery_run(
+                &path,
+                12,
+                &unknown.external_id,
+                &manual_run("manual-other-user", 12, 16.0),
+                &SecurityAuditEvent::new("manual_push_unknown_acknowledge", "completed"),
+            ),
+            Err(DeliveryRepositoryError::NotFound)
+        ));
+        assert!(matches!(
+            acknowledge_unknown_manual_delivery_run(
+                &path,
+                11,
+                &unknown.external_id,
+                &manual_run("manual-stale", 11, 17.0),
+                &SecurityAuditEvent::new("manual_push_unknown_acknowledge", "completed"),
+            ),
+            Err(DeliveryRepositoryError::Conflict)
+        ));
+        assert!(matches!(
+            acknowledge_unknown_manual_delivery_run(
+                &path,
+                11,
+                &admitted.external_id,
+                &manual_run("manual-non-unknown", 11, 18.0),
+                &SecurityAuditEvent::new("manual_push_unknown_acknowledge", "completed"),
+            ),
+            Err(DeliveryRepositoryError::Conflict)
+        ));
+        assert!(matches!(
+            acknowledge_unknown_manual_delivery_run(
+                &path,
+                11,
+                "not a valid job id",
+                &manual_run("manual-malformed", 11, 19.0),
+                &SecurityAuditEvent::new("manual_push_unknown_acknowledge", "completed"),
+            ),
+            Err(DeliveryRepositoryError::InvalidInput(_))
+        ));
+        assert_eq!(row_count(&path, "delivery_runs"), 2);
+        assert_eq!(row_count(&path, "security_audit_events"), 1);
+    }
+
+    #[test]
+    fn manual_delivery_unknown_acknowledgement_rolls_back_without_audit() {
+        let (_temp_dir, path) = migrated_auth_database();
+        let unknown = persist_unknown_manual_run(&path, "manual-unknown", 21, 10.0);
+        Connection::open(&path)
+            .expect("database should open")
+            .execute_batch(
+                "CREATE TRIGGER reject_manual_acknowledgement_audit
+                 BEFORE INSERT ON security_audit_events
+                 WHEN NEW.action = 'manual_push_unknown_acknowledge'
+                 BEGIN
+                     SELECT RAISE(ABORT, 'forced audit failure');
+                 END;",
+            )
+            .expect("audit failure trigger should install");
+
+        assert!(matches!(
+            acknowledge_unknown_manual_delivery_run(
+                &path,
+                21,
+                &unknown.external_id,
+                &manual_run("manual-replacement", 21, 14.0),
+                &SecurityAuditEvent::new("manual_push_unknown_acknowledge", "completed"),
+            ),
+            Err(DeliveryRepositoryError::AuditPersistence(_))
+        ));
+        assert_eq!(row_count(&path, "delivery_runs"), 1);
+        assert_eq!(row_count(&path, "security_audit_events"), 0);
+    }
+
+    fn persist_unknown_manual_run(
+        path: &Path,
+        external_id: &str,
+        user_id: i64,
+        created_at: f64,
+    ) -> DeliveryRunRecord {
+        let run =
+            match admit_manual_delivery_run(path, &manual_run(external_id, user_id, created_at))
+                .expect("manual run should admit")
+            {
+                ManualDeliveryRunAdmissionOutcome::Admitted(
+                    DeliveryRunAdmissionOutcome::Enqueued(run),
+                ) => run,
+                other => panic!("unexpected manual admission: {other:?}"),
+            };
+        let claimed = expect_claimed(
+            claim_delivery_run(
+                path,
+                run.id,
+                "manual-owner",
+                run.revision,
+                created_at + 1.0,
+                30.0,
+            )
+            .expect("manual run should claim"),
+        );
+        let running = start_delivery_run(
+            path,
+            claimed.id,
+            "manual-owner",
+            claimed.revision,
+            created_at + 2.0,
+        )
+        .expect("manual run should start");
+        finalize_delivery_run(
+            path,
+            running.id,
+            "manual-owner",
+            running.revision,
+            DeliveryRunStatus::Unknown,
+            None,
+            Some("ambiguous_delivery"),
+            created_at + 3.0,
+        )
+        .expect("manual run should become unknown")
     }
 
     #[test]

@@ -45,8 +45,9 @@ pub use admin::{
     update_announcement, update_announcement_with_audit,
 };
 pub use delivery::{
-    acquire_delivery_lease, admit_delivery_run, admit_manual_delivery_run, claim_delivery_run,
-    claim_delivery_run_item, claim_next_delivery_run_item, cleanup_confirmed_delivery_dedupe,
+    acknowledge_unknown_manual_delivery_run, acquire_delivery_lease, admit_delivery_run,
+    admit_manual_delivery_run, claim_delivery_run, claim_delivery_run_item,
+    claim_next_delivery_run_item, cleanup_confirmed_delivery_dedupe,
     compare_and_swap_delivery_checkpoint, enqueue_delivery_run, ensure_delivery_run_items,
     finalize_delivery_attempt, finalize_delivery_run, finalize_delivery_run_item,
     finalize_delivery_run_with_checkpoint, finalize_queued_delivery_run,

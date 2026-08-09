@@ -174,21 +174,42 @@ async function cancelsQueuedJobAndAllowsRetry(): Promise<void> {
 /**
  * Verify an ambiguous outcome does not expose a silent retry action.
  */
-async function blocksRetryForUnknownOutcome(): Promise<void> {
+async function acknowledgesUnknownOutcomeOnlyThroughTheExplicitAction(): Promise<void> {
   installCommonHandlers();
+  let acknowledgementRequests = 0;
+  let current = {
+    ...manualPushStatus('unknown', '结果未知，请先检查投递记录', 0),
+    can_retry: true,
+  };
   server.use(
-    http.get('http://localhost/api/tracking/push-weekly/status', () =>
-      HttpResponse.json({
-        ...manualPushStatus('unknown', '结果未知，请先检查投递记录', 0),
-        can_retry: true,
-      }),
+    http.get('http://localhost/api/tracking/push-weekly/status', () => HttpResponse.json(current)),
+    http.post(
+      'http://localhost/api/tracking/push-weekly/runs/0123456789abcdef0123456789abcdef/acknowledge',
+      () => {
+        acknowledgementRequests += 1;
+        current = {
+          ...manualPushStatus('pending', '已确认未知结果，新任务已排队', 0),
+          job_id: 'fedcba9876543210fedcba9876543210',
+          can_retry: false,
+        };
+        return HttpResponse.json(current, { status: 202 });
+      },
     ),
   );
+  const user = userEvent.setup();
   renderWithQuery(<TrackingSettingsContent userId={33} section="notifications" />);
 
   expect(await screen.findByText('结果未知，请先检查投递记录')).toBeInTheDocument();
   expect(screen.getByRole('button', { name: '推送到追踪文件夹' })).toBeDisabled();
   expect(screen.queryByRole('button', { name: '取消任务' })).not.toBeInTheDocument();
+  expect(acknowledgementRequests).toBe(0);
+
+  await user.click(screen.getByRole('button', { name: '确认未知并继续' }));
+
+  expect(await screen.findByText('已确认未知结果，新任务已排队')).toBeInTheDocument();
+  expect(acknowledgementRequests).toBe(1);
+  expect(screen.queryByRole('button', { name: '确认未知并继续' })).not.toBeInTheDocument();
+  expect(screen.getByRole('button', { name: '排队中…' })).toBeDisabled();
 }
 
 /**
@@ -219,6 +240,9 @@ async function discardsUnsavedSettings(): Promise<void> {
 describe('durable tracking job flow', () => {
   test('resumes polling a persisted job after mount', resumesPersistedJobAfterMount, 8_000);
   test('cancels a queued job and enables safe retry', cancelsQueuedJobAndAllowsRetry);
-  test('blocks retry for an unknown outcome', blocksRetryForUnknownOutcome);
+  test(
+    'acknowledges an unknown outcome only through the explicit action',
+    acknowledgesUnknownOutcomeOnlyThroughTheExplicitAction,
+  );
   test('discards an unsaved settings draft', discardsUnsavedSettings);
 });

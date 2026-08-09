@@ -4,7 +4,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use axum::extract::{Path, State};
 use axum::http::{HeaderMap, StatusCode};
-use axum::Json;
+use axum::{Extension, Json};
 use litradar_domain::{
     ErrorEnvelope, ManualPushState, ManualWeeklyPushStatus, NotificationSettingsResponse,
     NotificationSettingsUpdate, TrackingFolderSummary, TrackingStatusResponse,
@@ -13,10 +13,12 @@ use litradar_domain::{
 use litradar_storage::{
     DeliveryRepositoryError, DeliveryRunAdmissionOutcome, DeliveryRunCreate, DeliveryRunMode,
     DeliveryRunRecord, DeliveryRunStatus, DeliveryTriggerKind, DeliveryWorkflow,
-    ManualDeliveryRunAdmissionOutcome, StorageConfig,
+    ManualDeliveryRunAdmissionOutcome, SecurityAuditEvent, StorageConfig,
 };
 use litradar_worker::delivery::{ManualWeeklyPushOutcome, MANUAL_DELIVERY_JOB_DEADLINE_SECONDS};
+use tower_http::request_id::RequestId;
 
+use crate::audit::request_id_text;
 use crate::response::ApiError;
 use crate::routes::auth::require_current_user;
 use crate::state::ApiState;
@@ -46,17 +48,7 @@ pub(crate) async fn push_weekly_to_tracking(
     let run = run_storage(&state, move |storage| {
         litradar_storage::admit_manual_delivery_run(
             storage.auth_db_path(),
-            &DeliveryRunCreate {
-                external_id: job_id,
-                workflow: DeliveryWorkflow::Push,
-                scope_key: format!("manual-user-{user_id}"),
-                db_name: None,
-                trigger_kind: DeliveryTriggerKind::Manual,
-                mode: DeliveryRunMode::Execute,
-                user_id: Some(user_id),
-                deadline_at: Some(now + MANUAL_DELIVERY_JOB_DEADLINE_SECONDS as f64),
-                created_at: now,
-            },
+            &manual_delivery_run(job_id, user_id, now),
         )
     })
     .await?;
@@ -164,6 +156,48 @@ pub(crate) async fn cancel_push_weekly_run(
         )
         .await?;
     Ok(Json(manual_push_status(&updated)))
+}
+
+/// Acknowledge the latest ambiguous manual push and enqueue a safe new attempt.
+#[utoipa::path(
+    post,
+    path = "/api/tracking/push-weekly/runs/{run_id}/acknowledge",
+    tag = "tracking",
+    params(("run_id" = String, Path, description = "Opaque ambiguous manual push job id.")),
+    responses(
+        (status = 202, description = "Ambiguous outcome acknowledged and a replacement queued.", body = ManualWeeklyPushStatus),
+        (status = 404, description = "Owner-visible manual push job not found.", body = ErrorEnvelope),
+        (status = 409, description = "The job is stale or no longer the latest unknown outcome.", body = ErrorEnvelope)
+    ),
+    security(("bearer_auth" = []), ("session_cookie" = []))
+)]
+pub(crate) async fn acknowledge_unknown_push_weekly_run(
+    State(state): State<ApiState>,
+    headers: HeaderMap,
+    Path(run_id): Path<String>,
+    request_id: Option<Extension<RequestId>>,
+) -> Result<(StatusCode, Json<ManualWeeklyPushStatus>), ApiError> {
+    let (user, _) = require_current_user(&state, &headers).await?;
+    validate_manual_job_id(&run_id)?;
+    let job_id = run_storage(&state, move |_| litradar_storage::random_hex(16)).await?;
+    let now = current_epoch_seconds();
+    let user_id = user.id.value();
+    let audit = SecurityAuditEvent::new("manual_push_unknown_acknowledge", "completed")
+        .with_request_id(request_id_text(request_id.as_ref()));
+    let storage = state.storage_config().clone();
+    let replacement = state
+        .run_blocking(move || {
+            litradar_storage::acknowledge_unknown_manual_delivery_run(
+                storage.auth_db_path(),
+                user_id,
+                &run_id,
+                &manual_delivery_run(job_id, user_id, now),
+                &audit,
+            )
+        })
+        .await?
+        .map_err(manual_acknowledgement_error)?;
+    Ok((StatusCode::ACCEPTED, Json(manual_push_status(&replacement))))
 }
 
 /// Get tracking status for the authenticated user.
@@ -463,6 +497,30 @@ fn idle_manual_push_status() -> ManualWeeklyPushStatus {
         summary: String::new(),
         folder_id: None,
         folder_name: None,
+    }
+}
+
+fn manual_delivery_run(job_id: String, user_id: i64, now: f64) -> DeliveryRunCreate {
+    DeliveryRunCreate {
+        external_id: job_id,
+        workflow: DeliveryWorkflow::Push,
+        scope_key: format!("manual-user-{user_id}"),
+        db_name: None,
+        trigger_kind: DeliveryTriggerKind::Manual,
+        mode: DeliveryRunMode::Execute,
+        user_id: Some(user_id),
+        deadline_at: Some(now + MANUAL_DELIVERY_JOB_DEADLINE_SECONDS as f64),
+        created_at: now,
+    }
+}
+
+fn manual_acknowledgement_error(error: DeliveryRepositoryError) -> ApiError {
+    match error {
+        DeliveryRepositoryError::NotFound => ApiError::not_found("Manual push job not found"),
+        DeliveryRepositoryError::Conflict => {
+            ApiError::conflict("Manual push is no longer the latest unknown outcome")
+        }
+        _ => ApiError::internal_server_error(),
     }
 }
 

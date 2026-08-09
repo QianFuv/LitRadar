@@ -4,7 +4,7 @@
  * Manual tracking-push section.
  */
 
-import { Download, X } from 'lucide-react';
+import { Download, ShieldCheck, X } from 'lucide-react';
 
 import {
   SettingsSection,
@@ -39,6 +39,17 @@ export function ManualPushCard({ model }: ManualPushCardProps) {
             可推送文章: {model.weeklyArticlesAvailable ?? '…'} 篇
           </div>
           <div className="flex w-full gap-2 sm:w-auto">
+            {model.status?.status === 'unknown' && model.status.job_id && (
+              <Button
+                className="flex-1 sm:flex-none"
+                variant="outline"
+                onClick={() => model.acknowledgeUnknownMutation.mutate(model.status?.job_id ?? '')}
+                disabled={model.acknowledgeUnknownMutation.isPending}
+              >
+                <ShieldCheck className="mr-1 h-4 w-4" />
+                {model.acknowledgeUnknownMutation.isPending ? '确认中…' : '确认未知并继续'}
+              </Button>
+            )}
             {model.status?.can_cancel && model.status.job_id && (
               <Button
                 className="flex-1 sm:flex-none"
@@ -56,6 +67,7 @@ export function ManualPushCard({ model }: ManualPushCardProps) {
               disabled={
                 model.isLoading ||
                 model.mutation.isPending ||
+                model.acknowledgeUnknownMutation.isPending ||
                 model.isPolling ||
                 model.status?.status === 'unknown' ||
                 (model.requiresTrackingFolder && !model.trackingFolder)

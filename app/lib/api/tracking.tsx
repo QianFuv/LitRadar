@@ -93,6 +93,22 @@ export function cancelPushWeeklyRun(jobId: string): Promise<ManualPushStatus> {
 }
 
 /**
+ * Acknowledge the latest ambiguous weekly push and start a safe new attempt.
+ *
+ * @param jobId - Owner-visible ambiguous job identifier.
+ * @returns Newly queued push status.
+ */
+export function acknowledgeUnknownPushWeeklyRun(jobId: string): Promise<ManualPushStatus> {
+  return requestJson<ManualPushStatus>(
+    buildApiUrl(`/api/tracking/push-weekly/runs/${encodeURIComponent(jobId)}/acknowledge`),
+    null,
+    { method: 'POST' },
+    '确认未知推送结果失败',
+    parseManualPushStatus,
+  );
+}
+
+/**
  * Fetch notification settings.
  *
  * @returns Notification settings or null.

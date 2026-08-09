@@ -1344,6 +1344,23 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  '/api/tracking/push-weekly/runs/{run_id}/acknowledge': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Acknowledge the latest ambiguous manual push and enqueue a safe new attempt. */
+    post: operations['acknowledge_unknown_push_weekly_run'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   '/api/tracking/push-weekly/runs/{run_id}/cancel': {
     parameters: {
       query?: never;
@@ -4881,6 +4898,47 @@ export interface operations {
       };
       /** @description Manual push job not found. */
       404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorEnvelope'];
+        };
+      };
+    };
+  };
+  acknowledge_unknown_push_weekly_run: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        /** @description Opaque ambiguous manual push job id. */
+        run_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Ambiguous outcome acknowledged and a replacement queued. */
+      202: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ManualWeeklyPushStatus'];
+        };
+      };
+      /** @description Owner-visible manual push job not found. */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorEnvelope'];
+        };
+      };
+      /** @description The job is stale or no longer the latest unknown outcome. */
+      409: {
         headers: {
           [name: string]: unknown;
         };
