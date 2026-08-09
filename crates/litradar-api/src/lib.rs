@@ -5559,15 +5559,28 @@ mod tests {
             start_failure.payload["detail"]["code"],
             "cnki_login_start_failed"
         );
+        assert_eq!(
+            start_failure.payload["detail"]["message"],
+            "CNKI login start failed"
+        );
         assert_eq!(started.status, StatusCode::OK);
         assert_eq!(timeout.status, StatusCode::REQUEST_TIMEOUT);
         assert_eq!(timeout.payload["detail"]["code"], "cnki_login_timeout");
+        assert_eq!(timeout.payload["detail"]["message"], "CNKI login timed out");
         assert_eq!(poll_failure.status, StatusCode::BAD_REQUEST);
         assert_eq!(poll_failure.payload["detail"]["code"], "cnki_login_failed");
+        assert_eq!(
+            poll_failure.payload["detail"]["message"],
+            "CNKI login failed"
+        );
         assert_eq!(warmup_failure.status, StatusCode::BAD_GATEWAY);
         assert_eq!(
             warmup_failure.payload["detail"]["code"],
             "cnki_warmup_failed"
+        );
+        assert_eq!(
+            warmup_failure.payload["detail"]["message"],
+            "CNKI full-text session warm-up failed"
         );
     }
 

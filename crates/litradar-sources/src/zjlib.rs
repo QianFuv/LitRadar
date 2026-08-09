@@ -2182,14 +2182,7 @@ fn json_payload(response: Response, action: &str) -> Result<Value, ZjlibCnkiErro
         ))
     })?;
     if payload.get("success").and_then(Value::as_bool) == Some(false) {
-        return Err(ZjlibCnkiError::Request(format!(
-            "{action} failed: {}",
-            payload
-                .get("desc")
-                .or_else(|| payload.get("message"))
-                .and_then(Value::as_str)
-                .unwrap_or("unknown upstream error")
-        )));
+        return Err(ZjlibCnkiError::Request(format!("{action} failed.")));
     }
     if !payload.is_object() {
         return Err(ZjlibCnkiError::Parse(format!(

@@ -27,6 +27,7 @@ const TITLE_SENTINEL: &str = "TITLE_SENTINEL_2C85";
 const DOI_SENTINEL: &str = "DOI_SENTINEL_10_1234";
 const BODY_SENTINEL: &str = "BODY_SENTINEL_7B43";
 const LOCAL_PATH_SENTINEL: &str = "LOCAL_PATH_SENTINEL_C_DRIVE";
+const UPSTREAM_ERROR_SENTINEL: &str = "UPSTREAM_ERROR_SENTINEL_BFF_TOKEN";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum FixtureMode {
@@ -47,6 +48,7 @@ enum FixtureMode {
     UnsafeDownloadUrl,
     UnsafeAutomaticRedirect,
     AutomaticRedirectLimit,
+    SensitiveShareFailure,
 }
 
 #[derive(Debug, Clone)]
@@ -340,6 +342,12 @@ fn respond(state: &Arc<Mutex<FixtureState>>, request: CapturedRequest) -> HttpRe
             ),
         ),
         "/www/bff-api/portal-admin-service/open-api/build-and-share/ssoLoginUrl" => {
+            if state.mode == FixtureMode::SensitiveShareFailure {
+                return HttpResponse::ok(
+                    "application/json",
+                    format!(r#"{{"success":false,"desc":"{UPSTREAM_ERROR_SENTINEL}"}}"#),
+                );
+            }
             HttpResponse::ok(
                 "application/json",
                 format!(
@@ -756,6 +764,29 @@ fn loopback_transport_bounds_time_and_response_parsing() {
     assert!(oversized_error
         .to_string()
         .contains("configured document size limit"));
+}
+
+#[test]
+fn loopback_transport_discards_upstream_failure_messages_after_sending_credentials() {
+    let server = LoopbackServer::start(FixtureMode::SensitiveShareFailure);
+    let mut client = logged_in_client(&server, 1_024);
+    let logs = CapturedLogs::default();
+
+    let error =
+        tracing::subscriber::with_default(logs.subscriber(), || client.warm_up_fulltext_session())
+            .expect_err("Share SSO rejection should fail");
+    let error_text = error.to_string();
+    let log_text = logs.text();
+
+    assert!(server.requests().iter().any(|request| {
+        request
+            .headers
+            .get("bff-user-token")
+            .is_some_and(|value| value == CREDENTIAL_SENTINEL)
+    }));
+    assert_eq!(error_text, "build Share SSO URL failed.");
+    assert!(!error_text.contains(UPSTREAM_ERROR_SENTINEL));
+    assert!(!log_text.contains(UPSTREAM_ERROR_SENTINEL));
 }
 
 #[test]

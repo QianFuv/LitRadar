@@ -33,6 +33,18 @@ const DEFAULT_QR_STATUS: &str = "WAITING_SCAN";
 const DEFAULT_QR_CODE: &str = "https://qr.test/qr-rust-offline.png";
 const CNKI_NETWORK_QUEUE_TIMEOUT: Duration = Duration::from_secs(30);
 const CNKI_NETWORK_TRANSPORT_TIMEOUT_SECONDS: u64 = 30;
+const CNKI_LOGIN_START_FAILURE_MESSAGE: &str = "CNKI login start failed";
+const CNKI_LOGIN_TIMEOUT_MESSAGE: &str = "CNKI login timed out";
+const CNKI_LOGIN_FAILURE_MESSAGE: &str = "CNKI login failed";
+const CNKI_WARMUP_FAILURE_MESSAGE: &str = "CNKI full-text session warm-up failed";
+
+#[derive(Debug, Clone, Copy)]
+enum CnkiUpstreamFailureKind {
+    LoginStart,
+    LoginTimeout,
+    Login,
+    Warmup,
+}
 
 #[cfg(test)]
 #[derive(Default)]
@@ -140,7 +152,7 @@ pub(crate) async fn start_login(
             StatusCode::BAD_GATEWAY,
             "cnki_login_start_failed",
             "login",
-            "CNKI login start replay is not configured",
+            CNKI_LOGIN_START_FAILURE_MESSAGE,
         )),
         None => {
             let fixture_mode = zjlib_fixture_mode();
@@ -153,12 +165,7 @@ pub(crate) async fn start_login(
                 })
                 .await?;
             let (qr_login, session_data) = login_result.map_err(|error| {
-                cnki_json_error(
-                    StatusCode::BAD_GATEWAY,
-                    "cnki_login_start_failed",
-                    "login",
-                    &error.to_string(),
-                )
+                cnki_upstream_error(&error, CnkiUpstreamFailureKind::LoginStart)
             })?;
             let qr_uuid = qr_login.uuid.clone();
             let session = run_cnki(&state, move |storage, secret_codec| {
@@ -273,7 +280,7 @@ pub(crate) async fn poll_login(
             StatusCode::BAD_GATEWAY,
             "cnki_warmup_failed",
             "warmup",
-            "Share warm-up failed",
+            CNKI_WARMUP_FAILURE_MESSAGE,
         )),
         Some(REPLAY_TIMEOUT)
         | Some(REPLAY_START_SUCCESS)
@@ -282,10 +289,7 @@ pub(crate) async fn poll_login(
             StatusCode::REQUEST_TIMEOUT,
             "cnki_login_timeout",
             "login",
-            &format!(
-                "Timed out waiting for QR scan after {} seconds.",
-                body.timeout_seconds
-            ),
+            CNKI_LOGIN_TIMEOUT_MESSAGE,
         )),
         None => {
             let qr_uuid = row.qr_uuid.clone();
@@ -315,28 +319,16 @@ pub(crate) async fn poll_login(
             let session_data = match poll_result {
                 Ok(session_data) => session_data,
                 Err(ZjlibPollError::Login(error)) if error.is_timeout() => {
-                    return Err(cnki_json_error(
-                        StatusCode::REQUEST_TIMEOUT,
-                        "cnki_login_timeout",
-                        "login",
-                        &error.to_string(),
+                    return Err(cnki_upstream_error(
+                        &error,
+                        CnkiUpstreamFailureKind::LoginTimeout,
                     ));
                 }
                 Err(ZjlibPollError::Login(error)) => {
-                    return Err(cnki_json_error(
-                        StatusCode::BAD_REQUEST,
-                        "cnki_login_failed",
-                        "login",
-                        &error.to_string(),
-                    ));
+                    return Err(cnki_upstream_error(&error, CnkiUpstreamFailureKind::Login));
                 }
                 Err(ZjlibPollError::Warmup(error)) => {
-                    return Err(cnki_json_error(
-                        StatusCode::BAD_GATEWAY,
-                        "cnki_warmup_failed",
-                        "warmup",
-                        &error.to_string(),
-                    ));
+                    return Err(cnki_upstream_error(&error, CnkiUpstreamFailureKind::Warmup));
                 }
             };
             let expected_qr_uuid_for_write = expected_qr_uuid.clone();
@@ -437,6 +429,35 @@ fn cnki_json_error(status: StatusCode, code: &str, phase: &str, message: &str) -
             "message": message,
         }),
     )
+}
+
+fn cnki_upstream_error(_: &ZjlibCnkiError, kind: CnkiUpstreamFailureKind) -> ApiError {
+    match kind {
+        CnkiUpstreamFailureKind::LoginStart => cnki_json_error(
+            StatusCode::BAD_GATEWAY,
+            "cnki_login_start_failed",
+            "login",
+            CNKI_LOGIN_START_FAILURE_MESSAGE,
+        ),
+        CnkiUpstreamFailureKind::LoginTimeout => cnki_json_error(
+            StatusCode::REQUEST_TIMEOUT,
+            "cnki_login_timeout",
+            "login",
+            CNKI_LOGIN_TIMEOUT_MESSAGE,
+        ),
+        CnkiUpstreamFailureKind::Login => cnki_json_error(
+            StatusCode::BAD_REQUEST,
+            "cnki_login_failed",
+            "login",
+            CNKI_LOGIN_FAILURE_MESSAGE,
+        ),
+        CnkiUpstreamFailureKind::Warmup => cnki_json_error(
+            StatusCode::BAD_GATEWAY,
+            "cnki_warmup_failed",
+            "warmup",
+            CNKI_WARMUP_FAILURE_MESSAGE,
+        ),
+    }
 }
 
 fn cnki_operation_superseded_error() -> ApiError {
@@ -609,8 +630,9 @@ fn current_unix_time() -> f64 {
 #[cfg(test)]
 mod tests {
     use axum::http::StatusCode;
+    use litradar_sources::ZjlibCnkiError;
 
-    use super::cnki_operation_superseded_error;
+    use super::{cnki_operation_superseded_error, cnki_upstream_error, CnkiUpstreamFailureKind};
     use crate::response::ApiError;
 
     #[test]
@@ -623,6 +645,55 @@ mod tests {
                 assert_eq!(detail["message"], "CNKI login operation was superseded");
             }
             error => panic!("unexpected CNKI error: {error:?}"),
+        }
+    }
+
+    #[test]
+    fn upstream_cnki_errors_use_fixed_client_messages() {
+        const SENTINEL: &str = "UPSTREAM_ERROR_SENTINEL_BFF_TOKEN";
+        let upstream_error = ZjlibCnkiError::Request(SENTINEL.to_string());
+        let cases = [
+            (
+                CnkiUpstreamFailureKind::LoginStart,
+                StatusCode::BAD_GATEWAY,
+                "cnki_login_start_failed",
+                "login",
+                "CNKI login start failed",
+            ),
+            (
+                CnkiUpstreamFailureKind::LoginTimeout,
+                StatusCode::REQUEST_TIMEOUT,
+                "cnki_login_timeout",
+                "login",
+                "CNKI login timed out",
+            ),
+            (
+                CnkiUpstreamFailureKind::Login,
+                StatusCode::BAD_REQUEST,
+                "cnki_login_failed",
+                "login",
+                "CNKI login failed",
+            ),
+            (
+                CnkiUpstreamFailureKind::Warmup,
+                StatusCode::BAD_GATEWAY,
+                "cnki_warmup_failed",
+                "warmup",
+                "CNKI full-text session warm-up failed",
+            ),
+        ];
+
+        for (kind, expected_status, expected_code, expected_phase, expected_message) in cases {
+            match cnki_upstream_error(&upstream_error, kind) {
+                ApiError::JsonDetail { status, detail } => {
+                    assert_eq!(status, expected_status);
+                    assert_eq!(detail["code"], expected_code);
+                    assert_eq!(detail["phase"], expected_phase);
+                    assert_eq!(detail["message"], expected_message);
+                    assert!(!detail.to_string().contains(SENTINEL));
+                }
+                error => panic!("unexpected CNKI error: {error:?}"),
+            }
         }
     }
 }

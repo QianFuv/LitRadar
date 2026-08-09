@@ -139,7 +139,7 @@ ZJLib 全文能力与 CNKI 索引 Provider 无关：
 5. 下载前规范化比较候选题名、作者和期刊；三项不匹配就拒绝 PDF。
 6. 匹配 PDF 必须非空、`application/pdf` 且不超过 32 MiB，随后以 no-store attachment 返回。
 
-HTTP 会话路径可能仍使用历史 `/api/cnki/*` 前缀，但 runtime Provider 名称是 `zjlib`。全文动作不会把更新后的 client Cookie 写回 session，不更新 `updated_at`/`last_used_at`，也不缓存 PDF 或新增文件。API 不返回 token、Cookie、代理 URL 或 transport 错误详情。
+HTTP 会话路径可能仍使用历史 `/api/cnki/*` 前缀，但 runtime Provider 名称是 `zjlib`。全文动作不会把更新后的 client Cookie 写回 session，不更新 `updated_at`/`last_used_at`，也不缓存 PDF 或新增文件。API 不返回 token、Cookie、代理 URL 或 transport 错误详情；start、timeout、login 和 warm-up 失败只返回固定 code/phase/message。上游 `success=false` JSON 中的 `desc`/`message` 会在 source 边界丢弃，即使该上游刚收到 BFF token，也不能借错误响应把自由文本带回客户端或日志。
 
 登录 start 在网络调用前预留单调递增的 session generation；poll 绑定读取时的 generation 与 QR UUID。只有仍匹配的请求才能提交网络结果。新的 start 或 DELETE clear 会使所有更早的 start/poll 完成失效；clear 保存加密空 tombstone 以保留该栅栏，同时对读取接口表现为未配置。陈旧完成固定返回 HTTP 409，错误码为 `cnki_login_superseded`，且不会恢复或覆盖凭据。
 
