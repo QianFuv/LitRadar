@@ -284,9 +284,9 @@ fn notification_settings_from_row(
         Ok(NotificationSettings {
             id: row.get(0)?,
             user_id,
-            keywords: parse_string_list(row.get::<_, String>(2)?),
-            directions: parse_string_list(row.get::<_, String>(3)?),
-            selected_databases: parse_string_list(row.get::<_, String>(4)?),
+            keywords: parse_string_list(row.get::<_, String>(2)?)?,
+            directions: parse_string_list(row.get::<_, String>(3)?)?,
+            selected_databases: parse_string_list(row.get::<_, String>(4)?)?,
             delivery_method: row.get(5)?,
             pushplus_token: codec.decrypt(
                 &row.get::<_, String>(6)?,
@@ -331,9 +331,9 @@ fn notification_subscriber_from_row(
             subscriber_id: user_id.to_string(),
             user_id,
             name: row.get(1)?,
-            keywords: parse_string_list(row.get::<_, String>(2)?),
-            directions: parse_string_list(row.get::<_, String>(3)?),
-            selected_databases: parse_string_list(row.get::<_, String>(4)?),
+            keywords: parse_string_list(row.get::<_, String>(2)?)?,
+            directions: parse_string_list(row.get::<_, String>(3)?)?,
+            selected_databases: parse_string_list(row.get::<_, String>(4)?)?,
             delivery_method: row.get(5)?,
             pushplus_token: codec.decrypt(
                 &row.get::<_, String>(6)?,
@@ -366,8 +366,9 @@ fn notification_subscriber_from_row(
     })())
 }
 
-fn parse_string_list(value: String) -> Vec<String> {
-    serde_json::from_str::<Vec<String>>(&value).unwrap_or_default()
+fn parse_string_list(value: String) -> Result<Vec<String>, BusinessRepositoryError> {
+    serde_json::from_str::<Vec<String>>(&value)
+        .map_err(|_| BusinessRepositoryError::InvalidNotificationListState)
 }
 
 fn optional_trimmed(value: String) -> Option<String> {
@@ -513,6 +514,68 @@ mod tests {
             assert_eq!(subscribers.len(), 1);
             assert_eq!(subscribers[0].ai_retry_attempts, expected_attempts);
             assert_eq!(raw_attempts, stored_attempts);
+        }
+    }
+
+    #[test]
+    fn notification_reads_fail_closed_for_corrupt_json_lists() {
+        for (fixture_index, column, value) in [
+            (0, "keywords", "not-json-sentinel"),
+            (1, "directions", r#"{"scope":"all"}"#),
+            (2, "selected_databases", r#""all""#),
+            (3, "selected_databases", "[1]"),
+        ] {
+            let temp_dir = tempdir().expect("temp dir should be created");
+            let auth_db_path = temp_dir.path().join("auth.sqlite");
+            migrate_auth_database(&auth_db_path).expect("auth database should migrate");
+            allow_test_ai_endpoints(&auth_db_path);
+            let user = crate::bootstrap_admin(
+                &auth_db_path,
+                &format!("corrupt-json-user-{fixture_index}"),
+                "hash",
+                "salt",
+                1.0,
+            )
+            .expect("fixture user should bootstrap");
+            let codec = SecretCodec::from_key([41_u8; 32]);
+            super::upsert_notification_settings(
+                &auth_db_path,
+                &codec,
+                user.id,
+                &notification_subscriber_settings(),
+            )
+            .expect("notification settings should persist");
+            let connection = Connection::open(&auth_db_path).expect("auth database should open");
+            connection
+                .execute_batch(
+                    "DROP TRIGGER notification_settings_json_strings_insert;
+                     DROP TRIGGER notification_settings_json_strings_update;
+                     PRAGMA ignore_check_constraints = ON;",
+                )
+                .expect("corruption fixture should disable schema guards");
+            connection
+                .execute(
+                    &format!("UPDATE notification_settings SET {column} = ?1 WHERE user_id = ?2"),
+                    params![value, user.id.value()],
+                )
+                .expect("corrupt notification JSON should be injected");
+            drop(connection);
+
+            assert_corrupt_notification_error(
+                super::get_notification_settings(&auth_db_path, &codec, user.id)
+                    .expect_err("settings read should fail closed"),
+                value,
+            );
+            assert_corrupt_notification_error(
+                super::get_notification_subscriber(&auth_db_path, &codec, user.id)
+                    .expect_err("scoped subscriber read should fail closed"),
+                value,
+            );
+            assert_corrupt_notification_error(
+                super::list_notification_subscribers(&auth_db_path, &codec)
+                    .expect_err("subscriber list should fail closed"),
+                value,
+            );
         }
     }
 
@@ -682,6 +745,18 @@ mod tests {
             ai_retry_attempts: 3,
             enabled: true,
         }
+    }
+
+    fn assert_corrupt_notification_error(error: BusinessRepositoryError, value: &str) {
+        assert!(matches!(
+            &error,
+            BusinessRepositoryError::InvalidNotificationListState
+        ));
+        assert_eq!(
+            error.to_string(),
+            "Stored notification list state is invalid"
+        );
+        assert!(!error.to_string().contains(value));
     }
 
     fn allow_test_ai_endpoints(auth_db_path: &Path) {

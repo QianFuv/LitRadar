@@ -62,6 +62,12 @@ fn empty_auth_database_migration_creates_current_schema() {
     ] {
         assert!(index_exists(&path, index));
     }
+    for trigger in [
+        "notification_settings_json_strings_insert",
+        "notification_settings_json_strings_update",
+    ] {
+        assert!(schema_object_exists(&path, "trigger", trigger));
+    }
     for field in [
         "index_provider_routes",
         "article_abstract_provider_orders",
@@ -133,6 +139,148 @@ fn cnki_generation_migration_preserves_version_twelve_session() {
         )
     );
     assert_eq!(foreign_key_violation_count(&path), 0);
+}
+
+#[test]
+fn notification_json_migration_preserves_valid_version_thirteen_rows_and_guards_writes() {
+    let temp_dir = tempdir().expect("temp directory should be created");
+    let path = temp_dir.path().join("notification-v13.sqlite");
+    migrate_auth_database(&path).expect("current auth database should migrate");
+    let connection = Connection::open(&path).expect("auth database should open");
+    connection
+        .execute_batch(
+            r#"
+            INSERT INTO users (
+                id, username, password_hash, salt, is_admin, created_at, updated_at
+            ) VALUES (1, 'notification-user', 'hash', 'salt', 0, 1.0, 1.0);
+            INSERT INTO notification_settings (
+                id, user_id, keywords, directions, selected_databases,
+                delivery_method, created_at, updated_at
+            ) VALUES (
+                7, 1, '["systems"]', '["security"]', '["main.sqlite"]',
+                'folder', 2.0, 3.0
+            );
+            PRAGMA user_version = 13;
+            "#,
+        )
+        .expect("version thirteen notification fixture should be created");
+    drop(connection);
+
+    migrate_auth_database(&path).expect("version thirteen notification state should migrate");
+
+    assert_eq!(user_version(&path), AUTH_SCHEMA_VERSION);
+    let connection = Connection::open(&path).expect("migrated database should open");
+    let row = connection
+        .query_row(
+            "SELECT id, keywords, directions, selected_databases, delivery_method,
+                    created_at, updated_at
+             FROM notification_settings WHERE user_id = 1",
+            [],
+            |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, String>(4)?,
+                    row.get::<_, f64>(5)?,
+                    row.get::<_, f64>(6)?,
+                ))
+            },
+        )
+        .expect("migrated notification row should load");
+    assert_eq!(
+        row,
+        (
+            7,
+            r#"["systems"]"#.to_string(),
+            r#"["security"]"#.to_string(),
+            r#"["main.sqlite"]"#.to_string(),
+            "folder".to_string(),
+            2.0,
+            3.0,
+        )
+    );
+    for trigger in [
+        "notification_settings_json_strings_insert",
+        "notification_settings_json_strings_update",
+    ] {
+        assert!(schema_object_exists(&path, "trigger", trigger));
+    }
+    for (column, invalid_value) in [
+        ("keywords", "not-json"),
+        ("directions", r#"{"scope":"all"}"#),
+        ("selected_databases", r#""all""#),
+        ("selected_databases", "[1]"),
+    ] {
+        connection
+            .execute(
+                &format!("UPDATE notification_settings SET {column} = ?1 WHERE user_id = 1"),
+                [invalid_value],
+            )
+            .expect_err("invalid notification JSON should be rejected by schema");
+    }
+    assert_eq!(foreign_key_violation_count(&path), 0);
+}
+
+#[test]
+fn notification_json_migration_rejects_corrupt_version_thirteen_rows_atomically() {
+    for (fixture_index, column, invalid_value) in [
+        (0, "keywords", "not-json-sentinel"),
+        (1, "directions", r#"{"scope":"all"}"#),
+        (2, "selected_databases", r#""all""#),
+        (3, "selected_databases", "[1]"),
+    ] {
+        let temp_dir = tempdir().expect("temp directory should be created");
+        let path = temp_dir
+            .path()
+            .join(format!("notification-corrupt-{fixture_index}.sqlite"));
+        migrate_auth_database(&path).expect("current auth database should migrate");
+        let connection = Connection::open(&path).expect("auth database should open");
+        connection
+            .execute_batch(
+                "INSERT INTO users (
+                     id, username, password_hash, salt, is_admin, created_at, updated_at
+                 ) VALUES (1, 'corrupt-user', 'hash', 'salt', 0, 1.0, 1.0);
+                 INSERT INTO notification_settings (
+                     id, user_id, keywords, directions, selected_databases,
+                     delivery_method, created_at, updated_at
+                 ) VALUES (7, 1, '[\"safe\"]', '[]', '[\"main.sqlite\"]', 'folder', 2.0, 3.0);
+                 DROP TRIGGER notification_settings_json_strings_insert;
+                 DROP TRIGGER notification_settings_json_strings_update;
+                 PRAGMA ignore_check_constraints = ON;
+                 PRAGMA user_version = 13;",
+            )
+            .expect("corruption fixture should disable version fourteen guards");
+        connection
+            .execute(
+                &format!("UPDATE notification_settings SET {column} = ?1 WHERE id = 7"),
+                [invalid_value],
+            )
+            .expect("invalid version thirteen JSON should be injected");
+        drop(connection);
+
+        let error = migrate_auth_database(&path)
+            .expect_err("corrupt notification JSON should fail migration");
+
+        assert!(matches!(
+            error,
+            MigrationError::InvalidNotificationSettingsState
+        ));
+        assert_eq!(user_version(&path), 13);
+        assert!(table_exists(&path, "notification_settings"));
+        assert!(!table_exists(&path, "notification_settings_v14"));
+        let preserved: String = Connection::open(&path)
+            .expect("failed migration database should reopen")
+            .query_row(
+                &format!("SELECT {column} FROM notification_settings WHERE id = 7"),
+                [],
+                |row| row.get(0),
+            )
+            .expect("corrupt source value should remain unchanged");
+        assert_eq!(preserved, invalid_value);
+        assert_eq!(foreign_key_violation_count(&path), 0);
+    }
 }
 
 #[test]

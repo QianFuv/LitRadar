@@ -113,6 +113,8 @@ pub enum BusinessRepositoryError {
     Io(std::io::Error),
     /// JSON parsing or encoding failed.
     Json(serde_json::Error),
+    /// Stored notification list JSON is malformed or contains non-string values.
+    InvalidNotificationListState,
     /// Secret encryption or decryption failed.
     Secret(SecretError),
     /// Folder name duplicates an existing user folder.
@@ -164,6 +166,9 @@ impl fmt::Display for BusinessRepositoryError {
             Self::Sqlite(error) => write!(formatter, "{error}"),
             Self::Io(error) => write!(formatter, "{error}"),
             Self::Json(error) => write!(formatter, "{error}"),
+            Self::InvalidNotificationListState => {
+                formatter.write_str("Stored notification list state is invalid")
+            }
             Self::Secret(error) => write!(formatter, "{error}"),
             Self::DuplicateFolderName => formatter.write_str("Folder name already exists"),
             Self::FolderNotFound => formatter.write_str("Folder not found"),

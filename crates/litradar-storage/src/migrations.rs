@@ -17,7 +17,7 @@ use crate::business::{import_legacy_delivery_state_files, DeliveryRepositoryErro
 use crate::{DatabaseResolutionError, StorageConfig};
 
 /// Current auth and business database schema version.
-pub const AUTH_SCHEMA_VERSION: i64 = 13;
+pub const AUTH_SCHEMA_VERSION: i64 = 14;
 
 /// Current index database schema version.
 pub const INDEX_SCHEMA_VERSION: i64 = 6;
@@ -65,6 +65,8 @@ pub enum MigrationError {
     IndexIdentityConflict,
     /// Legacy Provider order settings cannot be migrated without changing their meaning.
     InvalidRuntimeProviderOrderState,
+    /// Notification list JSON cannot be migrated without changing its meaning.
+    InvalidNotificationSettingsState,
     /// Legacy mutable delivery state could not be imported safely.
     DeliveryState(DeliveryRepositoryError),
 }
@@ -103,6 +105,9 @@ impl fmt::Display for MigrationError {
             Self::InvalidRuntimeProviderOrderState => {
                 formatter.write_str("legacy runtime Provider order state is invalid for migration")
             }
+            Self::InvalidNotificationSettingsState => {
+                formatter.write_str("notification settings list state is invalid for migration")
+            }
             Self::DeliveryState(error) => write!(formatter, "{error}"),
         }
     }
@@ -120,7 +125,8 @@ impl Error for MigrationError {
             | Self::IndexRebuildRequired { .. }
             | Self::InvalidIndexIdentityState
             | Self::IndexIdentityConflict
-            | Self::InvalidRuntimeProviderOrderState => None,
+            | Self::InvalidRuntimeProviderOrderState
+            | Self::InvalidNotificationSettingsState => None,
         }
     }
 }
@@ -282,6 +288,7 @@ fn migrate_auth_database_inner(path: &Path) -> Result<MigrationSummary, Migratio
             11 => apply_auth_version_eleven(&transaction)?,
             12 => apply_auth_version_twelve(&transaction)?,
             13 => apply_auth_version_thirteen(&transaction)?,
+            14 => apply_auth_version_fourteen(&transaction)?,
             _ => unreachable!("auth migration version should be implemented"),
         }
         transaction.pragma_update(None, "user_version", next_version)?;
@@ -433,6 +440,7 @@ fn migration_error_kind(error: &MigrationError) -> &'static str {
         MigrationError::InvalidIndexIdentityState => "invalid_index_identity_state",
         MigrationError::IndexIdentityConflict => "index_identity_conflict",
         MigrationError::InvalidRuntimeProviderOrderState => "invalid_runtime_provider_order_state",
+        MigrationError::InvalidNotificationSettingsState => "invalid_notification_settings_state",
         MigrationError::DeliveryState(_) => "delivery_state",
     }
 }
@@ -447,6 +455,7 @@ fn migration_error_database_version(error: &MigrationError) -> i64 {
         | MigrationError::DeliveryState(_) => -1,
         MigrationError::InvalidIndexIdentityState | MigrationError::IndexIdentityConflict => 4,
         MigrationError::InvalidRuntimeProviderOrderState => 6,
+        MigrationError::InvalidNotificationSettingsState => 13,
     }
 }
 
@@ -1472,6 +1481,71 @@ fn apply_auth_version_thirteen(transaction: &Transaction<'_>) -> Result<(), Migr
     Ok(())
 }
 
+fn apply_auth_version_fourteen(transaction: &Transaction<'_>) -> Result<(), MigrationError> {
+    let has_notification_settings =
+        !table_columns(transaction, "notification_settings")?.is_empty();
+    if has_notification_settings {
+        validate_notification_string_lists(transaction)?;
+    }
+    transaction.execute_batch(NOTIFICATION_SETTINGS_V14_TABLE_SQL)?;
+    if has_notification_settings {
+        transaction.execute_batch(
+            "INSERT INTO notification_settings_v14 (
+             id, user_id, keywords, directions, selected_databases, delivery_method,
+             pushplus_token, pushplus_template, pushplus_topic, pushplus_channel,
+             sync_to_tracking_folder, ai_base_url, ai_api_key, ai_model, ai_system_prompt,
+             ai_backup_base_url, ai_backup_api_key, ai_backup_model, ai_backup_system_prompt,
+             ai_retry_attempts, enabled, created_at, updated_at
+         )
+         SELECT
+             id, user_id, keywords, directions, selected_databases, delivery_method,
+             pushplus_token, pushplus_template, pushplus_topic, pushplus_channel,
+             sync_to_tracking_folder, ai_base_url, ai_api_key, ai_model, ai_system_prompt,
+             ai_backup_base_url, ai_backup_api_key, ai_backup_model, ai_backup_system_prompt,
+             ai_retry_attempts, enabled, created_at, updated_at
+         FROM notification_settings;
+         DROP TABLE notification_settings;
+         ALTER TABLE notification_settings_v14 RENAME TO notification_settings;
+         CREATE INDEX idx_notification_settings_user ON notification_settings(user_id);",
+        )?;
+    } else {
+        transaction.execute_batch(
+            "ALTER TABLE notification_settings_v14 RENAME TO notification_settings;
+             CREATE INDEX idx_notification_settings_user ON notification_settings(user_id);",
+        )?;
+    }
+    transaction.execute_batch(NOTIFICATION_SETTINGS_V14_TRIGGERS_SQL)?;
+    let foreign_key_violation_count =
+        transaction.query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |row| {
+            row.get::<_, i64>(0)
+        })?;
+    if foreign_key_violation_count != 0 {
+        return Err(MigrationError::Sqlite(rusqlite::Error::InvalidQuery));
+    }
+    Ok(())
+}
+
+fn validate_notification_string_lists(transaction: &Transaction<'_>) -> Result<(), MigrationError> {
+    let mut statement = transaction.prepare(
+        "SELECT keywords, directions, selected_databases FROM notification_settings ORDER BY id",
+    )?;
+    let rows = statement.query_map([], |row| {
+        Ok((
+            row.get::<_, String>(0)?,
+            row.get::<_, String>(1)?,
+            row.get::<_, String>(2)?,
+        ))
+    })?;
+    for row in rows {
+        let (keywords, directions, selected_databases) = row?;
+        for value in [keywords, directions, selected_databases] {
+            serde_json::from_str::<Vec<String>>(&value)
+                .map_err(|_| MigrationError::InvalidNotificationSettingsState)?;
+        }
+    }
+    Ok(())
+}
+
 fn rewrite_runtime_provider_name_tokens(
     transaction: &Transaction<'_>,
 ) -> Result<(), MigrationError> {
@@ -1791,6 +1865,69 @@ const AUTH_TABLES_SQL: &str = "
         created_at REAL    NOT NULL,
         updated_at REAL    NOT NULL
     );
+";
+
+const NOTIFICATION_SETTINGS_V14_TABLE_SQL: &str = "
+    CREATE TABLE notification_settings_v14 (
+        id                      INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id                 INTEGER NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
+        keywords                TEXT    NOT NULL DEFAULT '[]' CHECK (
+            CASE WHEN json_valid(keywords)
+                 THEN json_type(keywords) = 'array'
+                 ELSE 0
+            END
+        ),
+        directions              TEXT    NOT NULL DEFAULT '[]' CHECK (
+            CASE WHEN json_valid(directions)
+                 THEN json_type(directions) = 'array'
+                 ELSE 0
+            END
+        ),
+        selected_databases      TEXT    NOT NULL DEFAULT '[]' CHECK (
+            CASE WHEN json_valid(selected_databases)
+                 THEN json_type(selected_databases) = 'array'
+                 ELSE 0
+            END
+        ),
+        delivery_method         TEXT    NOT NULL DEFAULT 'folder',
+        pushplus_token          TEXT    NOT NULL DEFAULT '',
+        pushplus_template       TEXT    NOT NULL DEFAULT 'markdown',
+        pushplus_topic          TEXT    NOT NULL DEFAULT '',
+        pushplus_channel        TEXT    NOT NULL DEFAULT 'wechat',
+        sync_to_tracking_folder INTEGER NOT NULL DEFAULT 0,
+        ai_base_url             TEXT    NOT NULL DEFAULT '',
+        ai_api_key              TEXT    NOT NULL DEFAULT '',
+        ai_model                TEXT    NOT NULL DEFAULT '',
+        ai_system_prompt        TEXT    NOT NULL DEFAULT '',
+        ai_backup_base_url      TEXT    NOT NULL DEFAULT '',
+        ai_backup_api_key       TEXT    NOT NULL DEFAULT '',
+        ai_backup_model         TEXT    NOT NULL DEFAULT '',
+        ai_backup_system_prompt TEXT    NOT NULL DEFAULT '',
+        ai_retry_attempts       INTEGER NOT NULL DEFAULT 3,
+        enabled                 INTEGER NOT NULL DEFAULT 1,
+        created_at              REAL    NOT NULL,
+        updated_at              REAL    NOT NULL
+    );
+";
+
+const NOTIFICATION_SETTINGS_V14_TRIGGERS_SQL: &str = "
+    CREATE TRIGGER notification_settings_json_strings_insert
+    AFTER INSERT ON notification_settings
+    WHEN EXISTS (SELECT 1 FROM json_each(NEW.keywords) WHERE type <> 'text')
+      OR EXISTS (SELECT 1 FROM json_each(NEW.directions) WHERE type <> 'text')
+      OR EXISTS (SELECT 1 FROM json_each(NEW.selected_databases) WHERE type <> 'text')
+    BEGIN
+        SELECT RAISE(ABORT, 'notification settings JSON arrays must contain strings');
+    END;
+
+    CREATE TRIGGER notification_settings_json_strings_update
+    AFTER UPDATE OF keywords, directions, selected_databases ON notification_settings
+    WHEN EXISTS (SELECT 1 FROM json_each(NEW.keywords) WHERE type <> 'text')
+      OR EXISTS (SELECT 1 FROM json_each(NEW.directions) WHERE type <> 'text')
+      OR EXISTS (SELECT 1 FROM json_each(NEW.selected_databases) WHERE type <> 'text')
+    BEGIN
+        SELECT RAISE(ABORT, 'notification settings JSON arrays must contain strings');
+    END;
 ";
 
 const INVITE_LIFECYCLE_TABLES_SQL: &str = "
