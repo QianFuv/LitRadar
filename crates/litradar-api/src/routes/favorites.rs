@@ -6,11 +6,11 @@ use axum::http::{HeaderMap, HeaderValue};
 use axum::response::{IntoResponse, Response};
 use axum::Json;
 use litradar_domain::{
-    FavoriteAdd, FavoriteArticleResponse, FavoriteBatchCheckRequest, FavoriteBulkAdd,
-    FavoriteBulkAddResult, FavoriteBulkMove, FavoriteBulkRemove, FavoriteBulkResult,
-    FavoriteCheckResponse, FavoriteResponse, FavoriteTrackingResponse, FolderCreate, FolderRename,
-    FolderResponse, InputValidationError, OkResponse, TrackingSetRequest, MAX_BATCH_ARTICLE_IDS,
-    MAX_DATABASE_NAME_CHARS,
+    ErrorEnvelope, FavoriteAdd, FavoriteArticleResponse, FavoriteBatchCheckRequest,
+    FavoriteBulkAdd, FavoriteBulkAddResult, FavoriteBulkMove, FavoriteBulkRemove,
+    FavoriteBulkResult, FavoriteCheckResponse, FavoriteResponse, FavoriteTrackingResponse,
+    FolderCreate, FolderRename, FolderResponse, InputValidationError, OkResponse,
+    TrackingSetRequest, MAX_BATCH_ARTICLE_IDS, MAX_DATABASE_NAME_CHARS,
 };
 use litradar_storage::{BusinessRepositoryError, StorageConfig};
 use serde::Deserialize;
@@ -137,7 +137,10 @@ pub(crate) async fn rename_folder(
     path = "/api/favorites/folders/{folder_id}",
     tag = "favorites",
     params(("folder_id" = i64, Path, description = "Folder row identifier.")),
-    responses((status = 200, description = "Folder deleted.", body = OkResponse)),
+    responses(
+        (status = 200, description = "Folder deleted.", body = OkResponse),
+        (status = 400, description = "The tracking folder is required by active PushPlus synchronization.", body = ErrorEnvelope)
+    ),
     security(("bearer_auth" = []), ("session_cookie" = []))
 )]
 pub(crate) async fn delete_folder(

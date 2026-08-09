@@ -166,6 +166,24 @@ pub fn upsert_notification_settings(
         &settings.pushplus_token,
         current_secrets.as_ref().map(|values| values.0.as_str()),
     )?;
+    let has_tracking_folder =
+        if settings.delivery_method.trim() == "pushplus" && settings.sync_to_tracking_folder {
+            transaction.query_row(
+                "SELECT EXISTS(
+                 SELECT 1 FROM folders WHERE user_id = ?1 AND is_tracking = 1
+             )",
+                [user_id.value()],
+                |row| row.get::<_, bool>(0),
+            )?
+        } else {
+            true
+        };
+    litradar_domain::validate_notification_dependencies(
+        &settings.delivery_method,
+        !pushplus_token.is_empty(),
+        settings.sync_to_tracking_folder,
+        has_tracking_folder,
+    )?;
     let ai_api_key = resolve_notification_secret(
         codec,
         user_id,
@@ -327,7 +345,7 @@ fn notification_subscriber_from_row(
 ) -> rusqlite::Result<Result<NotificationSubscriberInfo, BusinessRepositoryError>> {
     let user_id = row.get::<_, i64>(0)?;
     Ok((|| {
-        Ok(NotificationSubscriberInfo {
+        let subscriber = NotificationSubscriberInfo {
             subscriber_id: user_id.to_string(),
             user_id,
             name: row.get(1)?,
@@ -362,7 +380,14 @@ fn notification_subscriber_from_row(
                 litradar_domain::NOTIFICATION_AI_RETRY_ATTEMPTS_MAX,
             ),
             tracking_folder_id: row.get(20)?,
-        })
+        };
+        litradar_domain::validate_notification_dependencies(
+            &subscriber.delivery_method,
+            !subscriber.pushplus_token.trim().is_empty(),
+            subscriber.sync_to_tracking_folder,
+            subscriber.tracking_folder_id.is_some(),
+        )?;
+        Ok(subscriber)
     })())
 }
 
@@ -468,6 +493,7 @@ mod tests {
         assert_eq!(preserved.ai_api_key, "primary-secret-value");
 
         preserve.pushplus_token = Some(None);
+        preserve.delivery_method = "folder".to_string();
         let cleared =
             super::upsert_notification_settings(&auth_db_path, &codec, user.id, &preserve)
                 .expect("explicit null should clear");
@@ -695,6 +721,113 @@ mod tests {
             .expect("notification settings should remain present");
         assert_eq!(stored.ai_base_url, "https://ai.example/v1/");
         assert_eq!(stored.ai_model, "fixture-model");
+    }
+
+    #[test]
+    fn effective_pushplus_token_is_revalidated_after_each_serialized_write() {
+        let temp_dir = tempdir().expect("temp dir should be created");
+        let auth_db_path = temp_dir.path().join("auth.sqlite");
+        migrate_auth_database(&auth_db_path).expect("auth database should migrate");
+        allow_test_ai_endpoints(&auth_db_path);
+        let user = crate::bootstrap_admin(&auth_db_path, "token-race-user", "hash", "salt", 1.0)
+            .expect("fixture user should bootstrap");
+        let codec = SecretCodec::from_key([43_u8; 32]);
+        let initial = notification_subscriber_settings();
+        super::upsert_notification_settings(&auth_db_path, &codec, user.id, &initial)
+            .expect("initial PushPlus settings should persist");
+        let mut stale_preserve = initial.clone();
+        stale_preserve.pushplus_token = None;
+        stale_preserve.ai_model = "must-not-persist".to_string();
+        let mut clear = initial.clone();
+        clear.delivery_method = "folder".to_string();
+        clear.pushplus_token = Some(None);
+        clear.ai_model = "clear-winner".to_string();
+
+        super::upsert_notification_settings(&auth_db_path, &codec, user.id, &clear)
+            .expect("token clear should commit first");
+        let error =
+            super::upsert_notification_settings(&auth_db_path, &codec, user.id, &stale_preserve)
+                .expect_err("stale omitted token must use the current empty secret");
+        assert!(matches!(error, BusinessRepositoryError::InvalidInput(_)));
+        assert_eq!(
+            error.to_string(),
+            "pushplus_token is required when delivery_method is 'pushplus'"
+        );
+        let stored = super::get_notification_settings(&auth_db_path, &codec, user.id)
+            .expect("settings should load")
+            .expect("settings should remain present");
+        assert_eq!(stored.delivery_method, "folder");
+        assert!(stored.pushplus_token.is_empty());
+        assert_eq!(stored.ai_model, "clear-winner");
+
+        super::upsert_notification_settings(&auth_db_path, &codec, user.id, &initial)
+            .expect("PushPlus settings should be restored");
+        super::upsert_notification_settings(&auth_db_path, &codec, user.id, &stale_preserve)
+            .expect("omitted token should preserve the current token when serialized first");
+        super::upsert_notification_settings(&auth_db_path, &codec, user.id, &clear)
+            .expect("a later folder update may clear the token safely");
+        let stored = super::get_notification_settings(&auth_db_path, &codec, user.id)
+            .expect("settings should reload")
+            .expect("settings should remain present");
+        assert_eq!(stored.delivery_method, "folder");
+        assert!(stored.pushplus_token.is_empty());
+        assert_eq!(stored.ai_model, "clear-winner");
+    }
+
+    #[test]
+    fn subscriber_reads_fail_closed_for_missing_pushplus_dependencies() {
+        for (fixture_index, missing_token) in [(0, true), (1, false)] {
+            let temp_dir = tempdir().expect("temp dir should be created");
+            let auth_db_path = temp_dir.path().join("auth.sqlite");
+            migrate_auth_database(&auth_db_path).expect("auth database should migrate");
+            allow_test_ai_endpoints(&auth_db_path);
+            let user = crate::bootstrap_admin(
+                &auth_db_path,
+                &format!("dependency-user-{fixture_index}"),
+                "hash",
+                "salt",
+                1.0,
+            )
+            .expect("fixture user should bootstrap");
+            let codec = SecretCodec::from_key([47_u8; 32]);
+            let mut settings = notification_subscriber_settings();
+            settings.sync_to_tracking_folder = !missing_token;
+            if !missing_token {
+                crate::create_folder(&auth_db_path, user.id, "Tracking", true)
+                    .expect("tracking folder should be created");
+            }
+            super::upsert_notification_settings(&auth_db_path, &codec, user.id, &settings)
+                .expect("valid notification settings should persist");
+            let connection = Connection::open(&auth_db_path).expect("auth database should open");
+            if missing_token {
+                connection
+                    .execute(
+                        "UPDATE notification_settings SET pushplus_token = '' WHERE user_id = ?1",
+                        [user.id.value()],
+                    )
+                    .expect("missing-token corruption should be injected");
+            } else {
+                connection
+                    .execute("DELETE FROM folders WHERE user_id = ?1", [user.id.value()])
+                    .expect("missing-folder corruption should be injected");
+            }
+            drop(connection);
+            let expected = if missing_token {
+                "pushplus_token is required when delivery_method is 'pushplus'"
+            } else {
+                "A tracking folder is required before enabling PushPlus sync to tracking"
+            };
+
+            for error in [
+                super::get_notification_subscriber(&auth_db_path, &codec, user.id)
+                    .expect_err("scoped subscriber read should fail closed"),
+                super::list_notification_subscribers(&auth_db_path, &codec)
+                    .expect_err("subscriber list should fail closed"),
+            ] {
+                assert!(matches!(error, BusinessRepositoryError::InvalidInput(_)));
+                assert_eq!(error.to_string(), expected);
+            }
+        }
     }
 
     #[test]

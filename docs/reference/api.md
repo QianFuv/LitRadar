@@ -207,6 +207,8 @@ SQLite 保证每个用户最多一个 queued/active 手动任务；同一用户�
 
 `PUT /api/tracking/notification-settings` 的 `ai_retry_attempts` 只接受 `1..=10`。超出范围时返回 `400`，且不会替换已有设置。历史或被手工修改的数据库值在读取时会归一到该范围，但服务不会因此自动改写数据库。
 
+`delivery_method=pushplus` 要求事务内解析出的最终 `pushplus_token` 非空；同时启用 `sync_to_tracking_folder` 还要求该用户在同一事务快照中存在追踪文件夹。保存设置与 `DELETE /api/favorites/folders/{folder_id}` 都获取认证库的 immediate 写锁：若设置先提交，删除所依赖追踪文件夹返回 `400 A tracking folder is required before enabling PushPlus sync to tracking`；若删除或 token 清除先提交，后续设置保存返回相同的依赖错误或 `400 pushplus_token is required when delivery_method is 'pushplus'`，且不会部分覆盖其他字段。
+
 `GET /api/tracking/ai-endpoints` 需要登录，返回管理员当前批准的规范 HTTPS base URL 数组。通知设置中的非空主备 base URL 必须准确匹配该数组；不合法、未批准或已撤销的值返回固定 `400`，不会回显所提交 URL，也不会写入其他字段。
 
 通知设置最多包含 100 个关键词、100 个研究方向和 500 个数据库；单个偏好最多 500 个字符，URL 最多 2,048，model 最多 200，system prompt 最多 10,000，PushPlus template/topic/channel 分别最多 64/200/64 个字符。公告 title/message 分别最多 200/10,000 个字符。REST 与 storage 使用同一组 Unicode 字符和 item-count 校验。

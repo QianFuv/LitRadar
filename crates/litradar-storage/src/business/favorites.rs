@@ -136,11 +136,49 @@ pub fn delete_folder(
     folder_id: i64,
 ) -> Result<bool, BusinessRepositoryError> {
     validate_positive_id("folder_id", folder_id)?;
-    let connection = open_business_connection(auth_db_path)?;
-    let count = connection.execute(
+    let mut connection = open_business_connection(auth_db_path)?;
+    let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    let is_tracking = transaction
+        .query_row(
+            "SELECT is_tracking FROM folders WHERE id = ?1 AND user_id = ?2",
+            params![folder_id, user_id.value()],
+            |row| row.get::<_, i64>(0).map(|value| value != 0),
+        )
+        .optional()?;
+    let Some(is_tracking) = is_tracking else {
+        return Ok(false);
+    };
+    if is_tracking {
+        let notification_dependencies = transaction
+            .query_row(
+                "SELECT delivery_method, pushplus_token <> '', sync_to_tracking_folder <> 0
+                 FROM notification_settings WHERE user_id = ?1",
+                [user_id.value()],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, bool>(1)?,
+                        row.get::<_, bool>(2)?,
+                    ))
+                },
+            )
+            .optional()?;
+        if let Some((delivery_method, has_pushplus_token, sync_to_tracking_folder)) =
+            notification_dependencies
+        {
+            litradar_domain::validate_notification_dependencies(
+                &delivery_method,
+                has_pushplus_token,
+                sync_to_tracking_folder,
+                false,
+            )?;
+        }
+    }
+    let count = transaction.execute(
         "DELETE FROM folders WHERE id = ?1 AND user_id = ?2",
         params![folder_id, user_id.value()],
     )?;
+    transaction.commit()?;
     Ok(count > 0)
 }
 
@@ -919,11 +957,11 @@ fn is_constraint_error(error: &rusqlite::Error) -> bool {
 mod tests {
     use std::path::PathBuf;
 
-    use litradar_domain::ArticleId;
+    use litradar_domain::{ArticleId, NotificationSettingsUpdate};
     use tempfile::{tempdir, TempDir};
 
     use super::*;
-    use crate::migrate_auth_database;
+    use crate::{migrate_auth_database, SecretCodec};
 
     #[test]
     fn favorites_tracking_mutations_preserve_the_previous_selection_on_failure() {
@@ -988,6 +1026,61 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(tracked.len(), 1);
         assert_eq!(tracked[0].id, replacement.id);
+    }
+
+    #[test]
+    fn tracking_folder_and_pushplus_sync_are_serialized_in_both_commit_orders() {
+        let (_temp_dir, auth_db_path, user_id) = favorite_test_database();
+        let tracking = create_folder(&auth_db_path, user_id, "Tracking", true)
+            .expect("tracking folder should be created");
+        let codec = SecretCodec::from_key([53_u8; 32]);
+        let settings = pushplus_sync_settings();
+        crate::upsert_notification_settings(&auth_db_path, &codec, user_id, &settings)
+            .expect("PushPlus sync should persist while the folder exists");
+
+        let delete_error = delete_folder(&auth_db_path, user_id, tracking.id)
+            .expect_err("a committed PushPlus dependency should block folder deletion");
+        assert!(matches!(
+            delete_error,
+            BusinessRepositoryError::InvalidInput(_)
+        ));
+        assert_eq!(
+            delete_error.to_string(),
+            "A tracking folder is required before enabling PushPlus sync to tracking"
+        );
+        assert_eq!(
+            get_tracking_folder(&auth_db_path, user_id)
+                .expect("tracking folder should load")
+                .expect("blocked deletion should retain the folder")
+                .id,
+            tracking.id
+        );
+
+        let (_temp_dir, auth_db_path, user_id) = favorite_test_database();
+        let tracking = create_folder(&auth_db_path, user_id, "Tracking", true)
+            .expect("second tracking folder should be created");
+        let codec = SecretCodec::from_key([59_u8; 32]);
+        assert!(delete_folder(&auth_db_path, user_id, tracking.id)
+            .expect("folder deletion should commit before settings exist"));
+        let settings_error =
+            crate::upsert_notification_settings(&auth_db_path, &codec, user_id, &settings)
+                .expect_err("PushPlus sync should observe the committed folder deletion");
+        assert!(matches!(
+            settings_error,
+            BusinessRepositoryError::InvalidInput(_)
+        ));
+        assert_eq!(
+            settings_error.to_string(),
+            "A tracking folder is required before enabling PushPlus sync to tracking"
+        );
+        assert!(get_tracking_folder(&auth_db_path, user_id)
+            .expect("tracking folder lookup should succeed")
+            .is_none());
+        assert!(
+            crate::get_notification_settings(&auth_db_path, &codec, user_id)
+                .expect("notification settings lookup should succeed")
+                .is_none()
+        );
     }
 
     #[test]
@@ -1202,5 +1295,14 @@ mod tests {
             .expect("favorite owner should insert");
         let user_id = UserId(connection.last_insert_rowid());
         (temp_dir, auth_db_path, user_id)
+    }
+
+    fn pushplus_sync_settings() -> NotificationSettingsUpdate {
+        let mut settings = serde_json::from_str::<NotificationSettingsUpdate>("{}")
+            .expect("default notification settings should deserialize");
+        settings.delivery_method = "pushplus".to_string();
+        settings.pushplus_token = Some(Some("pushplus-token".to_string()));
+        settings.sync_to_tracking_folder = true;
+        settings
     }
 }

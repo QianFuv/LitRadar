@@ -52,6 +52,8 @@
 
 `selected_databases=[]` 表示所有数据库。没有非空 keyword/direction、设置未启用、数据库未被选中或没有可用 AI key/model 时，该用户会被跳过。
 
+`delivery_method=pushplus` 的最终设置必须有非空 token；启用 `sync_to_tracking_folder` 时还必须存在当前追踪文件夹。省略或空白 secret 表示保留事务开始时的当前值，显式 `null` 表示清除。服务在同一个 `BEGIN IMMEDIATE` 中解析最终 token、检查追踪文件夹并写入设置；删除正被 PushPlus 同步依赖的追踪文件夹也使用同一写锁并返回固定 `400`。因此并发的设置保存、secret 清除和文件夹删除无论按何顺序提交，都不会留下缺 token 或缺文件夹的 active subscriber；发现手工损坏的旧状态时投递读取会 fail closed。
+
 普通用户不能输入任意 base URL。设置页只展示管理员运行配置 `ai_allowed_base_urls` 中的准确 HTTPS Endpoint；目录默认为空。API 保存时在事务内复核目录，worker 在每次实际 AI 请求前重新读取目录，因此运行中被管理员移除的 Endpoint 不会用于后续尝试。
 
 `ai_retry_attempts` 的写入范围为 `1..=10`；超出范围的 API 更新会被拒绝。历史或被手工修改的值在读取时归一到该范围，不会触发自动数据库更新。

@@ -314,6 +314,40 @@ pub fn validate_notification_settings(
     Ok(())
 }
 
+/// Validate dependencies between effective notification settings and user state.
+///
+/// # Arguments
+///
+/// * `delivery_method` - Effective normalized delivery method.
+/// * `has_pushplus_token` - Whether the effective PushPlus token is non-empty.
+/// * `sync_to_tracking_folder` - Whether PushPlus delivery should also write favorites.
+/// * `has_tracking_folder` - Whether the user currently owns a tracking folder.
+///
+/// # Returns
+///
+/// Empty result when PushPlus has every credential and folder dependency it requires.
+pub fn validate_notification_dependencies(
+    delivery_method: &str,
+    has_pushplus_token: bool,
+    sync_to_tracking_folder: bool,
+    has_tracking_folder: bool,
+) -> Result<(), InputValidationError> {
+    if delivery_method.trim() != "pushplus" {
+        return Ok(());
+    }
+    if !has_pushplus_token {
+        return Err(InputValidationError::new(
+            "pushplus_token is required when delivery_method is 'pushplus'",
+        ));
+    }
+    if sync_to_tracking_folder && !has_tracking_folder {
+        return Err(InputValidationError::new(
+            "A tracking folder is required before enabling PushPlus sync to tracking",
+        ));
+    }
+    Ok(())
+}
+
 /// Validate optional announcement mutation fields.
 ///
 /// # Arguments
@@ -408,6 +442,29 @@ mod tests {
             .expect_err("one item over the favorite batch boundary should fail")
             .to_string(),
             "article_ids must contain at most 500 items"
+        );
+    }
+
+    #[test]
+    fn notification_dependencies_require_effective_pushplus_state() {
+        validate_notification_dependencies("folder", false, true, false)
+            .expect("folder delivery should not depend on PushPlus state");
+        validate_notification_dependencies("pushplus", true, false, false)
+            .expect("PushPlus without folder sync should require only a token");
+        validate_notification_dependencies("pushplus", true, true, true)
+            .expect("complete PushPlus dependencies should pass");
+
+        assert_eq!(
+            validate_notification_dependencies("pushplus", false, true, false)
+                .expect_err("PushPlus without a token should fail first")
+                .to_string(),
+            "pushplus_token is required when delivery_method is 'pushplus'"
+        );
+        assert_eq!(
+            validate_notification_dependencies("pushplus", true, true, false)
+                .expect_err("PushPlus sync without a tracking folder should fail")
+                .to_string(),
+            "A tracking folder is required before enabling PushPlus sync to tracking"
         );
     }
 }

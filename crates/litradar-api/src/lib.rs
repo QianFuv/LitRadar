@@ -4314,6 +4314,11 @@ mod tests {
         .expect("push state fixture should be written");
         let app = backend.router();
         let auth = user.authorization_header();
+        let tracking_folder_id =
+            litradar_storage::get_tracking_folder(backend.auth_db_path(), user.user_id())
+                .expect("tracking folder should load")
+                .expect("authenticated user should have a tracking folder")
+                .id;
 
         let initial_status = json_request(
             &app,
@@ -4518,8 +4523,19 @@ mod tests {
             Some(serde_json::json!({
                 "delivery_method": "pushplus",
                 "pushplus_token": "",
+                "sync_to_tracking_folder": true,
                 "enabled": true
             })),
+        )
+        .await;
+        let tracking_folder_path = format!("/api/favorites/folders/{tracking_folder_id}");
+        let blocked_tracking_delete = json_request(
+            &app,
+            Method::DELETE,
+            &tracking_folder_path,
+            Some(&auth),
+            None,
+            None,
         )
         .await;
         let cleared_pushplus = json_request(
@@ -4611,11 +4627,16 @@ mod tests {
             .contains("litradarenc:v1:"));
         assert_eq!(preserved_pushplus.status, StatusCode::OK);
         assert_eq!(preserved_pushplus.payload["has_pushplus_token"], true);
+        assert_eq!(blocked_tracking_delete.status, StatusCode::BAD_REQUEST);
+        assert_eq!(
+            blocked_tracking_delete.payload["detail"],
+            "A tracking folder is required before enabling PushPlus sync to tracking"
+        );
         assert_eq!(cleared_pushplus.status, StatusCode::OK);
         assert_eq!(cleared_pushplus.payload["has_pushplus_token"], false);
         assert_eq!(subscribers.len(), 1);
         assert_eq!(subscribers[0].user_id, user.user_id().value());
-        assert_eq!(subscribers[0].tracking_folder_id, Some(1));
+        assert_eq!(subscribers[0].tracking_folder_id, Some(tracking_folder_id));
     }
 
     #[tokio::test]

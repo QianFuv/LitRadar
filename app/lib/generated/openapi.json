@@ -2021,6 +2021,16 @@
                 }
               }
             }
+          },
+          "400": {
+            "description": "The tracking folder is required by active PushPlus synchronization.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -2968,6 +2978,16 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/NotificationSettingsResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The effective notification settings are invalid or lack a required PushPlus token or tracking folder.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
                 }
               }
             }

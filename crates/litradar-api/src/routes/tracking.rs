@@ -264,7 +264,10 @@ pub(crate) async fn get_ai_endpoints(
     path = "/api/tracking/notification-settings",
     tag = "tracking",
     request_body = NotificationSettingsUpdate,
-    responses((status = 200, description = "Updated notification settings.", body = NotificationSettingsResponse)),
+    responses(
+        (status = 200, description = "Updated notification settings.", body = NotificationSettingsResponse),
+        (status = 400, description = "The effective notification settings are invalid or lack a required PushPlus token or tracking folder.", body = ErrorEnvelope)
+    ),
     security(("bearer_auth" = []), ("session_cookie" = []))
 )]
 pub(crate) async fn update_notification_settings(
@@ -332,23 +335,23 @@ pub(crate) async fn update_notification_settings(
             .as_ref()
             .is_some_and(|settings| !settings.pushplus_token.is_empty()),
     };
-    if body.delivery_method == "pushplus" && !has_effective_pushplus_token {
-        return Err(ApiError::bad_request(
-            "pushplus_token is required when delivery_method is 'pushplus'",
-        ));
-    }
-    if body.delivery_method == "pushplus"
-        && body.sync_to_tracking_folder
-        && run_storage(&state, move |storage| {
+    let has_tracking_folder = if body.delivery_method == "pushplus" && body.sync_to_tracking_folder
+    {
+        run_storage(&state, move |storage| {
             litradar_storage::get_tracking_folder(storage.auth_db_path(), user.id)
         })
         .await?
-        .is_none()
-    {
-        return Err(ApiError::bad_request(
-            "A tracking folder is required before enabling PushPlus sync to tracking",
-        ));
-    }
+        .is_some()
+    } else {
+        true
+    };
+    litradar_domain::validate_notification_dependencies(
+        &body.delivery_method,
+        has_effective_pushplus_token,
+        body.sync_to_tracking_folder,
+        has_tracking_folder,
+    )
+    .map_err(|error| ApiError::bad_request(error.to_string()))?;
     let allowed_ai_endpoints = run_storage(&state, move |storage| {
         litradar_storage::load_ai_allowed_base_urls(storage.auth_db_path())
     })

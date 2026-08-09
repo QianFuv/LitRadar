@@ -4304,6 +4304,15 @@ export interface operations {
           'application/json': components['schemas']['OkResponse'];
         };
       };
+      /** @description The tracking folder is required by active PushPlus synchronization. */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorEnvelope'];
+        };
+      };
     };
   };
   list_folder_articles: {
@@ -4807,6 +4816,15 @@ export interface operations {
         };
         content: {
           'application/json': components['schemas']['NotificationSettingsResponse'];
+        };
+      };
+      /** @description The effective notification settings are invalid or lack a required PushPlus token or tracking folder. */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorEnvelope'];
         };
       };
     };
