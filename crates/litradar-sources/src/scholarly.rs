@@ -8,7 +8,7 @@ use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use reqwest::{blocking::Client, header::HeaderMap, Url};
+use reqwest::{blocking::Client, header::HeaderMap, redirect::Policy, Url};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
@@ -2193,6 +2193,7 @@ impl LiveScholarlyTransport {
             .apply(
                 Client::builder()
                     .timeout(Duration::from_secs(config.timeout_seconds.max(1)))
+                    .redirect(Policy::none())
                     .user_agent(DEFAULT_USER_AGENT),
             )
             .map_err(|error| SourceError::Configuration(error.to_string()))?
@@ -4617,6 +4618,93 @@ mod tests {
         assert_eq!(transport.attempts().len(), 2);
         assert!(transport.attempts()[1].did_retry);
         assert!(second_started.duration_since(first_started) >= Duration::from_millis(1_050));
+    }
+
+    #[test]
+    fn scholarly_redirects_never_forward_semantic_scholar_credentials_or_body() {
+        const KEY_SENTINEL: &str = "semantic-redirect-key-sentinel";
+        const DOI_SENTINEL: &str = "10.1/semantic-redirect-doi-sentinel";
+
+        for redirect_status in ["307 Temporary Redirect", "308 Permanent Redirect"] {
+            let sink_listener =
+                TcpListener::bind("127.0.0.1:0").expect("redirect sink should bind");
+            sink_listener
+                .set_nonblocking(true)
+                .expect("redirect sink should be nonblocking");
+            let sink_address = sink_listener
+                .local_addr()
+                .expect("redirect sink address should resolve");
+            let sink = thread::spawn(move || {
+                let deadline = Instant::now() + Duration::from_secs(1);
+                while Instant::now() < deadline {
+                    match sink_listener.accept() {
+                        Ok((mut stream, _)) => {
+                            let mut request = [0_u8; 16_384];
+                            let read = stream.read(&mut request).expect("sink request should read");
+                            let body = "[]";
+                            write!(
+                                stream,
+                                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                                body.len()
+                            )
+                            .expect("sink response should write");
+                            return request[..read].to_vec();
+                        }
+                        Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+                            thread::sleep(Duration::from_millis(5));
+                        }
+                        Err(error) => panic!("redirect sink failed: {error}"),
+                    }
+                }
+                Vec::new()
+            });
+            let source_listener =
+                TcpListener::bind("127.0.0.1:0").expect("redirect source should bind");
+            let source_address = source_listener
+                .local_addr()
+                .expect("redirect source address should resolve");
+            let source = thread::spawn(move || {
+                let (mut stream, _) = source_listener
+                    .accept()
+                    .expect("redirect source request should connect");
+                let mut request = [0_u8; 16_384];
+                let _ = stream
+                    .read(&mut request)
+                    .expect("redirect source request should read");
+                write!(
+                    stream,
+                    "HTTP/1.1 {redirect_status}\r\nLocation: http://{sink_address}/capture\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                )
+                .expect("redirect source response should write");
+            });
+            let config = LiveScholarlyConfig {
+                timeout_seconds: 3,
+                openalex_api_keys: Vec::new(),
+                semantic_scholar_api_keys: vec![KEY_SENTINEL.to_string()],
+                crossref_mailtos: Vec::new(),
+                semantic_scholar_worker_id: 0,
+                semantic_scholar_process_count: 1,
+                semantic_scholar_base_interval_ms: 0,
+                schedule_epoch_unix_millis: 0,
+            };
+            let mut transport =
+                LiveScholarlyTransport::new(config).expect("live transport should build");
+            let result = transport.semantic_scholar_post_json(
+                "redirect_test",
+                &format!("http://{source_address}/paper/batch"),
+                &[],
+                &json!({"ids": [format!("DOI:{DOI_SENTINEL}")]}),
+            );
+            source.join().expect("redirect source should finish");
+            let sink_request = sink.join().expect("redirect sink should finish");
+
+            assert!(result.is_err(), "{redirect_status} should not be followed");
+            assert!(
+                sink_request.is_empty(),
+                "{redirect_status} reached the sink: {}",
+                String::from_utf8_lossy(&sink_request)
+            );
+        }
     }
 
     #[test]
