@@ -180,6 +180,7 @@ pub fn reserve_cnki_session_operation(
             )
             VALUES (?1, ?2, '', 'empty', NULL, ?3, ?3, NULL, 1)
             ON CONFLICT(user_id) DO UPDATE SET
+                qr_uuid = '',
                 generation = cnki_sessions.generation + 1
             RETURNING generation
             "#,
@@ -801,5 +802,84 @@ mod tests {
                 .expect("session should remain"),
             current
         );
+    }
+
+    #[test]
+    fn cnki_reservation_invalidates_old_qr_without_clearing_active_session() {
+        let temp_dir = tempdir().expect("temp dir should be created");
+        let auth_db_path = temp_dir.path().join("auth.sqlite");
+        initialize_auth_database(&auth_db_path).expect("auth database should initialize");
+        let user_id = UserId(10);
+        let connection = Connection::open(&auth_db_path).expect("auth database should open");
+        connection
+            .execute(
+                "INSERT INTO users (id, username, password_hash, salt, is_admin, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, 0, 0, 0)",
+                (user_id.value(), "cnki-reserve-user", "hash", "salt"),
+            )
+            .expect("user fixture should insert");
+        drop(connection);
+        let codec = SecretCodec::from_key([12_u8; 32]);
+
+        let start_a = reserve_cnki_session_operation(&auth_db_path, &codec, user_id)
+            .expect("first start should reserve");
+        compare_and_swap_cnki_session(
+            &auth_db_path,
+            &codec,
+            user_id,
+            start_a,
+            None,
+            &json!({"qr_uuid": "qr-a", "cookies": []}),
+            &CnkiStatus::WaitingScan,
+            Some("qr-a"),
+        )
+        .expect("first start completion should run")
+        .expect("first QR should store");
+        let poll_a = get_cnki_session_data(&auth_db_path, &codec, user_id)
+            .expect("first QR should load")
+            .expect("first QR should exist");
+
+        let start_b = reserve_cnki_session_operation(&auth_db_path, &codec, user_id)
+            .expect("replacement start should reserve");
+        let reserved = get_cnki_session_data(&auth_db_path, &codec, user_id)
+            .expect("reserved row should load")
+            .expect("existing session material should remain");
+        assert_eq!(reserved.generation, start_b);
+        assert!(reserved.qr_uuid.is_empty());
+        assert_eq!(reserved.session_data["qr_uuid"], "qr-a");
+        assert!(compare_and_swap_cnki_session(
+            &auth_db_path,
+            &codec,
+            user_id,
+            poll_a.generation,
+            Some(&poll_a.qr_uuid),
+            &json!({"qr_uuid": "qr-a", "bff_user_token": "STALE_POLL_TOKEN"}),
+            &CnkiStatus::Active,
+            Some("qr-a"),
+        )
+        .expect("stale poll completion should run")
+        .is_none());
+
+        compare_and_swap_cnki_session(
+            &auth_db_path,
+            &codec,
+            user_id,
+            start_b,
+            None,
+            &json!({"qr_uuid": "qr-b", "bff_user_token": "ACTIVE_TOKEN"}),
+            &CnkiStatus::Active,
+            Some("qr-b"),
+        )
+        .expect("replacement completion should run")
+        .expect("replacement completion should store");
+        let start_c = reserve_cnki_session_operation(&auth_db_path, &codec, user_id)
+            .expect("another start should reserve");
+        let active = get_cnki_session_data(&auth_db_path, &codec, user_id)
+            .expect("active session should load")
+            .expect("active session should remain while start is pending");
+        assert_eq!(active.generation, start_c);
+        assert!(active.qr_uuid.is_empty());
+        assert_eq!(active.status, CnkiStatus::Active);
+        assert_eq!(active.session_data["bff_user_token"], "ACTIVE_TOKEN");
     }
 }
