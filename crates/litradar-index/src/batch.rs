@@ -2495,7 +2495,61 @@ mod tests {
         IndexBatchRequest, ManifestIntent, NotifyAttemptPreparation, NotifyHandoffStatus,
         BATCH_DATABASE_FILE_NAME, BATCH_SCHEMA_VERSION,
     };
+    use crate::control::CONTROL_SCHEMA_VERSION;
+    use crate::schema::CONTENT_SCHEMA_VERSION;
     use crate::transforms::CATALOG_CSV_V3_COLUMNS;
+
+    fn documented_table_version(document: &str, label: &str) -> i64 {
+        document
+            .lines()
+            .find(|line| line.contains(label))
+            .and_then(|line| line.split('|').nth(2))
+            .map(str::trim)
+            .and_then(|value| value.parse::<i64>().ok())
+            .unwrap_or_else(|| panic!("{label} version row should be parseable"))
+    }
+
+    #[test]
+    fn index_documentation_tracks_schema_and_lease_constants() {
+        let configuration = include_str!("../../../docs/reference/configuration.md");
+        let database = include_str!("../../../docs/reference/database.md");
+        let docker = include_str!("../../../docs/operations/docker.md");
+
+        assert!(configuration.contains(&format!("精确 v{CONTENT_SCHEMA_VERSION}")));
+        assert_eq!(
+            documented_table_version(database, "内容索引库"),
+            CONTENT_SCHEMA_VERSION
+        );
+        assert_eq!(
+            documented_table_version(database, "项目 batch ledger"),
+            BATCH_SCHEMA_VERSION
+        );
+        assert_eq!(
+            documented_table_version(database, "catalog 索引控制库"),
+            CONTROL_SCHEMA_VERSION
+        );
+        for marker in [
+            format!("内容 schema v{CONTENT_SCHEMA_VERSION}"),
+            format!("batch ledger schema v{BATCH_SCHEMA_VERSION}"),
+            format!("catalog 控制库 v{CONTROL_SCHEMA_VERSION}"),
+            "index_batch_lease".to_string(),
+        ] {
+            assert!(
+                docker.contains(&marker),
+                "Docker guide should contain {marker}"
+            );
+        }
+        for (name, document) in [
+            ("configuration", configuration),
+            ("database", database),
+            ("Docker", docker),
+        ] {
+            assert!(
+                !document.contains("index_run_lease"),
+                "{name} guide should not reference the retired content-database lease"
+            );
+        }
+    }
 
     fn catalog_entry(catalog_id: &str) -> JournalCatalogEntry {
         JournalCatalogEntry {

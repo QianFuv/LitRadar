@@ -4,25 +4,25 @@ LitRadar 把规范内容、可丢弃索引控制状态和用户业务数据放�
 
 ## 文件布局
 
-| 路径                                  |             数量 | 生命周期与责任                                                     |
-| ------------------------------------- | ---------------: | ------------------------------------------------------------------ |
-| `data/index/<catalog>.sqlite`         |     每个目录一个 | 需要备份的 Provider-neutral 内容库                                 |
-| `data/index-control/index-batches.sqlite` |         项目一个 | 可删除的 batch/catalog phase、manifest intent 和全局 lease ledger |
-| `data/index-control/<catalog>.sqlite` | 每个活动目录一个 | 可删除的 v4 Provider anchor/run checkpoint/lease 控制库            |
-| `data/auth.sqlite`                    |             一个 | 用户、收藏、会话、配置、任务、公告、审计、投递状态和受管 Meta 状态 |
-| `data/push_state/`                    |        多个 JSON | Provider-neutral 变更清单和保留的旧 notify 导入源                  |
-| `data/folder_push_state/`             |        多个 JSON | 保留的旧 push 导入源                                               |
+| 路径                                      |             数量 | 生命周期与责任                                                     |
+| ----------------------------------------- | ---------------: | ------------------------------------------------------------------ |
+| `data/index/<catalog>.sqlite`             |     每个目录一个 | 需要备份的 Provider-neutral 内容库                                 |
+| `data/index-control/index-batches.sqlite` |         项目一个 | 可删除的 batch/catalog phase、manifest intent 和全局 lease ledger  |
+| `data/index-control/<catalog>.sqlite`     | 每个活动目录一个 | 可删除的 v4 Provider anchor/run checkpoint/lease 控制库            |
+| `data/auth.sqlite`                        |             一个 | 用户、收藏、会话、配置、任务、公告、审计、投递状态和受管 Meta 状态 |
+| `data/push_state/`                        |        多个 JSON | Provider-neutral 变更清单和保留的旧 notify 导入源                  |
+| `data/folder_push_state/`                 |        多个 JSON | 保留的旧 push 导入源                                               |
 
 目录 stem 是内容边界：`data/meta/chinese_journals.csv`、内容库和控制库都使用 `chinese_journals`。Provider 名称不参与文件名。
 
 ## 连接和版本
 
-| 数据库                 | `PRAGMA user_version` | 升级策略                                      |
-| ---------------------- | --------------------: | --------------------------------------------- |
-| 认证/业务库            |                    15 | 版本化 migration                              |
-| 内容索引库             |                     6 | 新建/验证精确 v6；精确 v4/v5 原子迁移到 v6    |
-| 项目 batch ledger      |                     1 | 新建/验证精确 v1；可删除后重建                 |
-| catalog 索引控制库     |                     4 | v0/v1/v2/v3 安全事务迁移；可删除后按 v4 重建   |
+| 数据库             | `PRAGMA user_version` | 升级策略                                              |
+| ------------------ | --------------------: | ----------------------------------------------------- |
+| 认证/业务库        |                    15 | 版本化 migration                                      |
+| 内容索引库         |                     6 | 新建/验证精确 v6；精确 v4/v5 原子迁移到 v6            |
+| 项目 batch ledger  |                     2 | 新建/验证精确 v2；精确 v1 原位迁移到 v2；可删除后重建 |
+| catalog 索引控制库 |                     4 | v0/v1/v2/v3 安全事务迁移；可删除后按 v4 重建          |
 
 可写连接使用 `foreign_keys=ON`、WAL、`synchronous=NORMAL` 和 30 秒 busy timeout。
 

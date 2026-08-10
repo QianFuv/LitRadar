@@ -263,7 +263,7 @@ Scholarly 的 `workers` 只控制每个期刊子进程内 OpenAlex DOI 子批的
 优先级和启动顺序：
 
 1. CLI 解析 `host`、`port`、`project-root`、调度间隔、密钥文件和 Secure Cookie 启动门。
-2. 迁移 `auth.sqlite`，并验证现有索引库是精确 v4；旧库要求显式重建。
+2. 迁移 `auth.sqlite`，并处理现有内容索引库：新建或空库创建 v6，精确 v4/v5 原子迁移到 v6，精确 v6 直接验证；非空 v0 及 v1-v3 要求显式重建。
 3. 若固定打包路径存在精确 manifest，准备持久 Meta 目录。
 4. 用密钥验证数据库秘密。
 5. 加载全局运行设置并构造受管 Provider 代理选择。

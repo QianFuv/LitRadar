@@ -141,15 +141,15 @@ docker compose run --rm litradar index \
 
 ### 6. 中断恢复和更新
 
-每个索引数据库通过 schema v3 的 `index_run_lease` 串行化实时索引与更新。租约每 30 秒续期并在最后一次成功心跳 300 秒后过期。普通上游、worker 或清单错误会记录 `failed`、保留待发布事件并立即释放租约；容器或 Docker daemon 被强制终止时，旧父运行暂时保持 `running`，下一次命令回收过期租约后将其标为 `interrupted`。
+每条实时索引或更新命令先在 `data/index-control/index-batches.sqlite` 的 batch ledger schema v2 中取得固定单行项目租约 `index_batch_lease`，因此同一项目跨全部目录只允许一个 active invocation。进入某个目录后，命令还会在该目录的 catalog 控制库 v4 中取得 `(catalog_name, provider_name)` 的 `provider_leases` 次级租约；它保护 Provider traversal 和内容提交，但不替代项目级串行化。父进程每 30 秒把两级租约续到未来 300 秒。普通上游、worker 或清单错误保留 active batch、catalog phase 和待发布事件并释放当前所有权；容器或 Docker daemon 被强制终止时，后续命令只能在确认旧进程消失且租约过期后接管兼容 batch。
 
 恢复时按以下顺序操作：
 
-1. 确认旧容器、计划任务子进程和 `litradar-memory-*` 画像容器已经停止；不要通过删除 `index_run_lease` 绕过所有权检查。
+1. 确认旧容器、计划任务子进程和 `litradar-memory-*` 画像容器已经停止；不要通过删除 `index_batch_lease` 或 catalog `provider_leases` 绕过所有权检查。
 2. 停止常驻服务并完成离线、已验证的当前数据备份。部署密钥必须继续留在 Compose secret 中，不得复制到备份或日志。
 3. 普通失败可立即重跑同一命令；硬终止必须等到旧租约过期。未过期时的明确所有者错误表示旧运行仍受保护，不是可忽略的重试提示。
-4. 需要恢复 changes JSON 时必须重跑 `--update`。新更新会事务性接管所有旧运行的待发布事件；普通非更新索引会保留而不会发布它们。
-5. 成功后确认命令退出 0、changes JSON 可解析、数据库中没有活动租约，再启动服务并检查 `/health/live`、`/health/ready` 和 `/`。
+4. 需要恢复 changes JSON 时必须用兼容的目录选择、sync mode、issue batch 和 notify flags 重跑 `--update`，让默认 resume 继续同一 active batch。存在已发布或可能已发布 manifest 时不要用 `--no-resume` 丢弃 handoff。
+5. 成功后确认命令退出 0、changes JSON 可解析、batch 历史进入 `completed`、`index_batch_lease` 与 catalog `provider_leases` 都没有活动所有者，再启动服务并检查 `/health/live`、`/health/ready` 和 `/`。
 
 scholarly 更新使用上次可信完成时间向前 30 天的重叠窗口，Crossref/OpenAlex 分别使用 `from-update-date` 和 `from_created_date`；缺失或不可信水位执行完整扫描。空窗口保留已有数据。CNKI 的 2xx 正文解码失败会在现有三次上限内记录并重试；持续失败仍应作为上游/工作流失败处理，不能因为当时内存较低就算作验收通过。
 
