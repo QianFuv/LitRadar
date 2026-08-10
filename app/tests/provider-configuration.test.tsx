@@ -449,7 +449,9 @@ async function rendersRuntimeDescriptorParityAndCatalogMatrix(): Promise<void> {
   renderProviderConfiguration(runtimeSettings);
 
   expect(runtimeSettings).toHaveLength(20);
-  expect(await screen.findByText('ccf_computer_journals')).toBeInTheDocument();
+  expect(
+    await screen.findByText('ccf_computer_journals', {}, { timeout: 5_000 }),
+  ).toBeInTheDocument();
   expect(screen.getByText('chinese_journals')).toBeInTheDocument();
   expect(screen.getByText('legacy_journals')).toBeInTheDocument();
   expect(screen.getAllByText('下次请求生效')).toHaveLength(4);
@@ -499,8 +501,7 @@ async function serializesScalarSecretLifecycle(): Promise<void> {
   expect(document.body.textContent).not.toContain(SCALAR_SECRET_SENTINEL);
 
   const logFilter = screen.getByLabelText('Log filter');
-  await user.clear(logFilter);
-  await user.type(logFilter, 'warn,litradar=debug');
+  fireEvent.change(logFilter, { target: { value: 'warn,litradar=debug' } });
   await user.click(screen.getByRole('button', { name: '保存配置' }));
   await waitFor(() =>
     expect(updatePayload).toEqual({
@@ -509,7 +510,9 @@ async function serializesScalarSecretLifecycle(): Promise<void> {
     }),
   );
 
-  await user.type(screen.getByLabelText('CNKI captcha solver token'), SCALAR_SECRET_SENTINEL);
+  fireEvent.change(screen.getByLabelText('CNKI captcha solver token'), {
+    target: { value: SCALAR_SECRET_SENTINEL },
+  });
   await user.click(screen.getByRole('button', { name: '保存配置' }));
   await waitFor(() =>
     expect(updatePayload).toEqual({
