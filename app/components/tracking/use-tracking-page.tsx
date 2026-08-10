@@ -234,7 +234,9 @@ export function useTrackingPage(userId: number) {
     },
     [availableDatabases],
   );
-  const effectiveSelectedDatabases = normalizedSelectedDatabases(selectedDatabases);
+  const effectiveSelectedDatabases = databasesQuery.isSuccess
+    ? normalizedSelectedDatabases(selectedDatabases)
+    : selectedDatabases;
   const allDatabasesSelected =
     availableDatabases.length === 0 || effectiveSelectedDatabases.length === 0;
   const manualPushStatus = manualPushQuery.data;

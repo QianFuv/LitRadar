@@ -184,6 +184,34 @@ async function savesDatabaseAndSecretSemantics(): Promise<void> {
 }
 
 /**
+ * Verify a database catalog failure cannot widen a stored narrow scope during an unrelated save.
+ */
+async function preservesDatabaseScopeWhenCatalogFails(): Promise<void> {
+  installTrackingPageHandlers();
+  server.use(
+    http.get('http://localhost/api/meta/databases', () =>
+      HttpResponse.json({ detail: 'Database catalog unavailable' }, { status: 503 }),
+    ),
+    http.get('http://localhost/api/tracking/notification-settings', () =>
+      HttpResponse.json({
+        ...NOTIFICATION_SETTINGS_FIXTURE,
+        selected_databases: ['legacy.sqlite'],
+      }),
+    ),
+  );
+  const user = userEvent.setup();
+  renderWithQuery(<TrackingSettingsContent userId={51} section="tracking" />);
+
+  expect(await screen.findByRole('alert')).toHaveTextContent('Database catalog unavailable');
+  await user.click(screen.getByRole('switch', { name: '启用推荐' }));
+  await user.click(screen.getByRole('button', { name: '保存更改' }));
+
+  await waitFor(() => expect(savedSettingsPayload).not.toBeNull());
+  expect(savedSettingsPayload?.selected_databases).toEqual(['legacy.sqlite']);
+  expect(savedSettingsPayload?.enabled).toBe(false);
+}
+
+/**
  * Verify a failed settings save retains the shared draft and retries the same payload.
  */
 async function retriesFailedSettingsSave(): Promise<void> {
@@ -444,6 +472,7 @@ beforeEach(() => {
 describe('TrackingSettingsContent', () => {
   test('renders named sections with shared textareas', rendersSectionsWithSharedTextareas);
   test('preserves database and secret update semantics', savesDatabaseAndSecretSemantics, 10_000);
+  test('preserves database scope when the catalog fails', preservesDatabaseScopeWhenCatalogFails);
   test('retries a failed settings save without losing the draft', retriesFailedSettingsSave);
   test('preserves one draft across tracking categories', preservesDraftAcrossCategories);
   test(

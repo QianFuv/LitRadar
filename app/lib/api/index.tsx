@@ -3,7 +3,6 @@
  */
 
 import {
-  DEFAULT_DATABASE,
   buildApiUrl,
   buildDatabaseUrl,
   readSelectedDatabase,
@@ -30,17 +29,13 @@ const DEFAULT_ARTICLE_SEARCH_MODE: ArticleSearchMode = 'simple';
  *
  * @returns Database names.
  */
-export async function getDatabases(): Promise<string[]> {
-  try {
-    return await requestJson<string[]>(
-      buildApiUrl('/api/meta/databases'),
-      null,
-      undefined,
-      '获取数据库失败',
-    );
-  } catch {
-    return [DEFAULT_DATABASE];
-  }
+export function getDatabases(): Promise<string[]> {
+  return requestJson<string[]>(
+    buildApiUrl('/api/meta/databases'),
+    null,
+    undefined,
+    '获取数据库失败',
+  );
 }
 
 /**
