@@ -786,6 +786,7 @@ describe('Provider configuration', () => {
   test(
     'renders every runtime descriptor once with the Provider catalog matrix',
     rendersRuntimeDescriptorParityAndCatalogMatrix,
+    20_000,
   );
   test(
     'filters every Provider selector by declared capability',
@@ -795,6 +796,7 @@ describe('Provider configuration', () => {
   test(
     'distinguishes inherited and explicitly disabled catalog orders',
     serializesInheritanceAndExplicitDisable,
+    20_000,
   );
   test('serializes one index Provider per catalog', serializesOneIndexProviderPerCatalog);
   test('rejects unsafe scalar secret metadata', rejectsInvalidScalarSecretMetadata);

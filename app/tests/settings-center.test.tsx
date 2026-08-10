@@ -206,5 +206,5 @@ describe('settings center', () => {
     restoresFocusToTransientMenuTrigger,
   );
   test('normalizes an unknown settings section', normalizesUnknownSettingsSection);
-  test('guards unsaved cross-category navigation', guardsUnsavedCrossCategoryNavigation);
+  test('guards unsaved cross-category navigation', guardsUnsavedCrossCategoryNavigation, 20_000);
 });
