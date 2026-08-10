@@ -16,7 +16,7 @@ export default defineConfig({
   forbidOnly: IS_CI,
   failOnFlakyTests: IS_CI,
   retries: IS_CI ? 1 : 0,
-  workers: IS_CI ? 1 : undefined,
+  workers: 1,
   reporter: IS_CI
     ? [
         ['list'],
