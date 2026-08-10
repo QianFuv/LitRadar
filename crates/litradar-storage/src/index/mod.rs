@@ -18,7 +18,7 @@ use rusqlite::{params_from_iter, Connection, OptionalExtension};
 use serde::Deserialize;
 use serde_json::Value as JsonValue;
 
-use crate::{open_sqlite_connection, try_load_extension, DatabaseResolutionError, StorageConfig};
+use crate::{open_sqlite_connection, DatabaseResolutionError, StorageConfig};
 
 const MAX_LIMIT: i64 = 200;
 

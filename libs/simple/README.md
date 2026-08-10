@@ -1,34 +1,26 @@
-# SQLite `simple` 分词扩展
+# Historical SQLite `simple` tokenizer assets
 
-本目录记录 LitRadar 内置的 SQLite FTS5 `simple` 扩展、发现规则与许可证边界。
+This directory retains the previously bundled SQLite FTS5 `simple` extension artifacts and their license boundary for historical reproduction. They are not dependencies of the current LitRadar content schema or runtime.
 
-## 打包文件
+## Retained files
 
-| 平台        | 扩展                                                           |
-| ----------- | -------------------------------------------------------------- |
-| Windows x64 | `libs/simple-windows/libsimple-windows-x64/simple.dll`         |
-| Linux       | `libs/simple-linux/libsimple-linux-ubuntu-latest/libsimple.so` |
+| Platform    | Historical extension                                               |
+| ----------- | ------------------------------------------------------------------ |
+| Windows x64 | `libs/simple-windows/libsimple-windows-x64/simple.dll`             |
+| Linux       | `libs/simple-linux/libsimple-linux-ubuntu-latest/libsimple.so`     |
 
-平台目录同时包含扩展需要的词典。
+The platform directories also retain the dictionaries used by those artifacts.
 
-## 运行时发现
+## Current runtime boundary
 
-常规进程根据 `project-root` 查找上述固定路径。数据库 schema 初始化的兼容路径还会从主数据库位置和当前工作目录向上查找祖先目录中的 `libs/`。
+Content schema v6 defines `article_search` with SQLite's built-in `unicode61` tokenizer. Index creation, migration validation, REST/MCP queries, and the production container do not load or require these native assets. Merely placing a DLL or shared object at a historical fixed path must not change current database behavior.
 
-当前实现不提供环境变量路径覆盖。
+Any future importer for a database that actually declares `tokenize='simple'` must detect that schema explicitly and isolate the compatibility operation from current v6 query connections. It must not restore path-based auto-loading for every database.
 
-扩展存在且能被 SQLite 加载时，`article_search` 使用：
+LitRadar does not add pinyin query expansion to the current `unicode61` search path.
 
-```sql
-tokenize = 'simple'
-```
+## Upstream and license
 
-文件缺失、平台不受支持或扩展加载失败时，schema 仍会创建，并回退到 SQLite FTS5 默认 tokenizer。已经创建的 FTS 表不会仅因后来加入扩展而自动改变 tokenizer；需要通过受支持的迁移或重建流程处理。
+The retained extension came from [wangfenjin/simple](https://github.com/wangfenjin/simple), which supports Chinese and pinyin tokenization. Upstream uses the `MIT OR GPL-3.0-or-later` dual license; the retained project artifacts use the MIT option.
 
-LitRadar 不额外实现拼音查询展开。
-
-## 上游与许可证
-
-扩展来自 [wangfenjin/simple](https://github.com/wangfenjin/simple)，支持中文与拼音分词。上游采用 `MIT OR GPL-3.0-or-later` 双许可证；本项目按 MIT 选项使用打包产物。
-
-上游许可证见 [LICENSE](https://github.com/wangfenjin/simple/blob/master/LICENSE)。
+The upstream license is available at [LICENSE](https://github.com/wangfenjin/simple/blob/master/LICENSE).

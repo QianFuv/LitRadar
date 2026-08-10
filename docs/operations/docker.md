@@ -52,9 +52,9 @@ SIGINT/SIGTERM 会协调关闭 HTTP 与调度组件。若任务子进程正在�
 1. Node.js 24 Alpine 只复制 `app/package.json` 和 lockfile，使用缓存安装依赖。
 2. 独立前端构建阶段复制 `app/` 源码，生成 `out/`，并为 HTML、CSS、JavaScript、JSON、SVG、TXT、XML 和 source map 保留原文件及确定性 gzip 兄弟文件。
 3. `rust:1.96-bookworm` 只构建 release `litradar` 目标；workspace release profile 执行 symbol stripping，并用 BuildKit cache mount 复用 Cargo registry、git 与 target 产物。
-4. `debian:trixie-slim` 只复制 `/usr/local/bin/litradar`、Linux `simple` 扩展、不可变 Meta bundle 到 `/usr/share/litradar/meta`，以及静态站点到 `/app/web`。
+4. `debian:trixie-slim` 只复制 `/usr/local/bin/litradar`、不可变 Meta bundle 到 `/usr/share/litradar/meta`，以及静态站点到 `/app/web`。
 
-运行层安装 CA 证书、`curl` 和扩展所需的 `libstdc++6`，随后切换到固定非 root UID/GID `10001:10001`。Trixie 满足镜像内 `libsimple.so` 所需的 `GLIBC_2.38` 与 `GLIBCXX_3.4.32`。最终镜像不包含其他 LitRadar 可执行文件、Node.js、Next.js standalone、`server.js` 或 Python 运行时。镜像自身定义 readiness `HEALTHCHECK` 和 `SIGTERM` stop signal。默认 `ENTRYPOINT` 与 `CMD` 已包含应用、`serve` 子命令和密钥路径，因此本地 Compose 不覆盖命令；自行使用 `docker run` 时仍必须把 32 字节密钥只读挂载到该路径。
+运行层安装 CA 证书、`curl` 和非 root 账户所需的最小系统包，随后切换到固定 UID/GID `10001:10001`。当前内容 schema v6 使用 SQLite 内建 `unicode61`，镜像不复制或加载历史 `simple` 原生扩展。最终镜像不包含其他 LitRadar 可执行文件、Node.js、Next.js standalone、`server.js` 或 Python 运行时。镜像自身定义 readiness `HEALTHCHECK` 和 `SIGTERM` stop signal。默认 `ENTRYPOINT` 与 `CMD` 已包含应用、`serve` 子命令和密钥路径，因此本地 Compose 不覆盖命令；自行使用 `docker run` 时仍必须把 32 字节密钥只读挂载到该路径。
 
 release profile 没有设置 LTO、codegen unit 或 `panic = "abort"`，保留 Cargo 默认 codegen/链接并使用 unwind，使现有任务监管和清理路径不因发布优化而改变。T22 实测的 Thin LTO + 单 codegen unit 冷容器构建在 30 分钟硬上限内没有产出镜像，因此被拒绝；不能仅凭理论体积收益接受不可执行的构建成本，也不能牺牲进程树、任务取消或容器 smoke 门禁。当前只保留 symbol stripping，最终时长和体积证据记录在同任务验证结果中。
 
@@ -153,7 +153,7 @@ docker compose run --rm litradar index \
 
 scholarly 更新使用上次可信完成时间向前 30 天的重叠窗口，Crossref/OpenAlex 分别使用 `from-update-date` 和 `from_created_date`；缺失或不可信水位执行完整扫描。空窗口保留已有数据。CNKI 的 2xx 正文解码失败会在现有三次上限内记录并重试；持续失败仍应作为上游/工作流失败处理，不能因为当时内存较低就算作验收通过。
 
-Windows bind mount 上大型 `simple` tokenizer 索引的内置备份 CLI 验证路径仍是独立后续修复项。当前此类恢复快照若采用停机原始复制，必须比较精确文件集、大小、SHA-256 和复制前后源元数据，并在最终镜像内加载 tokenizer 后逐库运行只读完整性、外键和投影计数检查；任一检查失败都不能开始迁移或更新。这一临时流程不改变[备份与恢复](backup.md)中的通用备份边界。
+当前 v6 备份与恢复验证不依赖平台原生 tokenizer。若历史快照的 `sqlite_schema` 仍声明 `tokenize='simple'`，它不是可直接服务的当前 v6 数据库；必须先走受支持的迁移或重建并完成完整性、外键、schema 和投影计数检查，不能通过向生产镜像临时复制 DLL/SO 绕过版本边界。
 
 ## 数据和秘密
 
@@ -495,9 +495,9 @@ MCP 端点内置于统一应用的 `/mcp`，不需要单独服务：
 3. 确认没有长时间阻塞的任务；调度心跳健康窗口为 90 秒。
 4. 用 `docker compose run --rm litradar scheduler validate --secret-key-file /run/secrets/litradar_key` 验证已保存任务。
 
-### `simple` tokenizer 加载失败
+### 历史 `simple` tokenizer 索引
 
-确认镜像中存在 `libs/simple-linux/libsimple-linux-ubuntu-latest/libsimple.so`，并在最终镜像中运行 `ldd` 检查缺失库或符号版本。索引数据库声明 `tokenize='simple'` 时，服务会在迁移或写入前加载扩展并执行最小 FTS 查询；加载路径错误、ABI 不兼容或探测失败都会保留底层 SQLite loader 错误并退出。新索引也要求该扩展，不再静默创建使用默认 tokenizer 的 FTS 表。已有使用默认 tokenizer 的数据库保持原定义，不会被隐式重建。
+当前内容 schema v6 的 `article_search` 固定使用内建 `unicode61`，生产镜像故意不包含 `libsimple.so`，查询连接也不会按固定路径加载扩展。若恢复数据仍声明 `tokenize='simple'`，先停止服务并按数据库版本执行受支持的迁移或重建；迁移后必须复核 schema 版本和 FTS 定义，再运行只读完整性与查询检查。不要把复制历史扩展进容器当作修复，固定路径上偶然存在或损坏的原生文件不得影响合法 v6 查询。
 
 ### 通知没有结果
 

@@ -7,10 +7,7 @@ pub(super) fn open_index_connection(
     db_name: Option<&str>,
 ) -> Result<Connection, IndexRepositoryError> {
     let db_path = config.resolve_index_db_path(db_name)?;
-    let connection = open_sqlite_connection(db_path)?;
-    let extension_path = config.simple_tokenizer_path();
-    try_load_extension(&connection, extension_path.as_deref())?;
-    Ok(connection)
+    open_sqlite_connection(db_path).map_err(IndexRepositoryError::from)
 }
 
 pub(super) fn page_meta(

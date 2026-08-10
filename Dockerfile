@@ -54,7 +54,7 @@ FROM debian:trixie-slim@sha256:020c0d20b9880058cbe785a9db107156c3c75c2ac944a6aa7
 WORKDIR /app
 
 RUN apt-get update \
-    && apt-get install --yes --no-install-recommends ca-certificates curl libstdc++6 passwd \
+    && apt-get install --yes --no-install-recommends ca-certificates curl passwd \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd --gid 10001 litradar \
     && useradd --uid 10001 --gid litradar --no-create-home --home-dir /app --shell /usr/sbin/nologin litradar \
@@ -63,7 +63,6 @@ RUN apt-get update \
 
 COPY --from=rust-build /app/litradar /usr/local/bin/litradar
 
-COPY --chown=litradar:litradar libs/simple-linux libs/simple-linux
 COPY data/meta /usr/share/litradar/meta
 COPY --chown=litradar:litradar --from=frontend-build /app/out web
 

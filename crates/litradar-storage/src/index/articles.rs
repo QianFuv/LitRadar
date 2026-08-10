@@ -632,6 +632,49 @@ mod tests {
         article_filter_params, article_ids, candidate_ids, fixture_db_path, IndexFixture,
     };
 
+    #[cfg(any(windows, target_os = "linux"))]
+    #[test]
+    fn article_queries_ignore_obsolete_simple_extension_assets() {
+        let fixture = IndexFixture::new(true);
+        let extension_path = if cfg!(windows) {
+            fixture
+                .config
+                .project_root()
+                .join("libs")
+                .join("simple-windows")
+                .join("libsimple-windows-x64")
+                .join("simple.dll")
+        } else {
+            fixture
+                .config
+                .project_root()
+                .join("libs")
+                .join("simple-linux")
+                .join("libsimple-linux-ubuntu-latest")
+                .join("libsimple.so")
+        };
+        std::fs::create_dir_all(
+            extension_path
+                .parent()
+                .expect("extension path should have a parent"),
+        )
+        .expect("historical extension directory should be created");
+        std::fs::write(&extension_path, b"invalid historical extension")
+            .expect("invalid historical extension should be written");
+
+        let page = list_articles(
+            &fixture.config,
+            Some(&fixture.db_name),
+            &ArticleListParams {
+                q: Some("genome".to_string()),
+                ..article_filter_params()
+            },
+        )
+        .expect("current unicode61 index should ignore unrelated native assets");
+
+        assert_eq!(article_ids(&page), [1004, 1001]);
+    }
+
     #[test]
     fn article_listing_filters_cover_fts5_and_canonical_expressions() {
         let fixture = IndexFixture::new(true);
