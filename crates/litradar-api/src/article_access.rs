@@ -508,21 +508,15 @@ fn load_cnki_captcha_token(
     storage_config: &litradar_storage::StorageConfig,
     secret_codec: &litradar_storage::SecretCodec,
 ) -> Option<String> {
-    let from_settings =
-        litradar_storage::load_runtime_settings(storage_config.auth_db_path(), secret_codec)
-            .ok()
-            .and_then(|settings| {
-                settings
-                    .into_iter()
-                    .find(|setting| setting.field == "cnki_captcha_token")
-                    .map(|setting| setting.value)
-            })
-            .filter(|value| !value.trim().is_empty());
-    from_settings.or_else(|| {
-        std::env::var("LITRADAR_CNKI_CAPTCHA_TOKEN")
-            .ok()
-            .filter(|value| !value.trim().is_empty())
-    })
+    litradar_storage::load_runtime_settings(storage_config.auth_db_path(), secret_codec)
+        .ok()
+        .and_then(|settings| {
+            settings
+                .into_iter()
+                .find(|setting| setting.field == "cnki_captcha_token")
+                .map(|setting| setting.value)
+        })
+        .filter(|value| !value.trim().is_empty())
 }
 
 fn live_cnki_access_registration(
@@ -724,6 +718,7 @@ pub(crate) fn set_full_text_fixture_mode(mode: Option<FixtureZjlibCnkiMode>) {
 mod tests {
     use std::collections::HashMap;
     use std::fs;
+    use std::process::Command;
 
     use litradar_domain::ArticleId;
     use tempfile::{tempdir, TempDir};
@@ -806,6 +801,69 @@ mod tests {
             doi: Some("10.1000/fixture".to_string()),
             pmid: None,
         }
+    }
+
+    #[test]
+    fn api_article_provider_ignores_index_only_captcha_environment() {
+        let output = Command::new(
+            std::env::current_exe().expect("current API test executable should resolve"),
+        )
+        .arg("--exact")
+        .arg("article_access::tests::api_captcha_environment_helper")
+        .arg("--ignored")
+        .arg("--nocapture")
+        .env(
+            "LITRADAR_CNKI_CAPTCHA_TOKEN",
+            "api-must-ignore-index-captcha-sentinel",
+        )
+        .output()
+        .expect("captcha environment helper should run");
+
+        assert!(
+            output.status.success(),
+            "captcha environment helper failed:\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    #[test]
+    #[ignore = "private helper process for API captcha environment isolation"]
+    fn api_captcha_environment_helper() {
+        let directory = tempdir().expect("captcha helper directory should be created");
+        let storage_config = litradar_storage::StorageConfig::from_project_root(directory.path());
+        fs::create_dir_all(
+            storage_config
+                .auth_db_path()
+                .parent()
+                .expect("auth database should have a parent"),
+        )
+        .expect("auth database parent should be created");
+        litradar_storage::initialize_auth_database(storage_config.auth_db_path())
+            .expect("auth database should initialize");
+        let secret_codec = litradar_storage::SecretCodec::from_key([71_u8; 32]);
+
+        assert_eq!(
+            load_cnki_captcha_token(&storage_config, &secret_codec),
+            None,
+            "serve must not consume the index-only captcha environment"
+        );
+        let database_token = "api-database-captcha-sentinel";
+        litradar_storage::upsert_runtime_settings(
+            storage_config.auth_db_path(),
+            &secret_codec,
+            &HashMap::from([(
+                "cnki_captcha_token".to_string(),
+                Some(database_token.to_string()),
+            )]),
+            &HashMap::new(),
+        )
+        .expect("database captcha token should update");
+        assert_eq!(
+            load_cnki_captcha_token(&storage_config, &secret_codec).as_deref(),
+            Some(database_token),
+            "serve should retain the encrypted database token path"
+        );
     }
 
     fn abstract_registration(name: &str, outcome: RedirectFixtureOutcome) -> ProviderRegistration {

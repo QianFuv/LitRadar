@@ -66,7 +66,7 @@ manifest 存在时，`serve` 和普通 `index` 会在认证库迁移后验证整
 | `log_format`                       | `json`                     |   否 | `json` / `compact` 单选           | 重启进程 | 结构化日志格式                    |
 | `log_filter`                       | 见[日志设置](#日志设置)    |   否 | 文本                              | 重启进程 | tracing filter                    |
 
-`cnki_captcha_token` 和 `provider_proxy_url` 都是 scalar secret，不是 secret pool。公开 GET/PUT 响应始终返回 `value=""` 和 `secret_items=[]`；已配置时只通过 `has_value=true`、`masked_value="••••"` 表示存在。管理页的空密码框表示保留，非空文本表示加密替换，显式“清除”提交 JSON `null`。数据库值为空时，只有 `cnki_captcha_token` 具有 `LITRADAR_CNKI_CAPTCHA_TOKEN` 单次索引探测回退；代理 URL 没有环境变量或 CLI 回退。
+`cnki_captcha_token` 和 `provider_proxy_url` 都是 scalar secret，不是 secret pool。公开 GET/PUT 响应始终返回 `value=""` 和 `secret_items=[]`；已配置时只通过 `has_value=true`、`masked_value="••••"` 表示存在。管理页的空密码框表示保留，非空文本表示加密替换，显式“清除”提交 JSON `null`。数据库值为空时，只有 `cnki_captcha_token` 具有 `LITRADAR_CNKI_CAPTCHA_TOKEN` 单次索引探测回退；`serve` 不读取该环境变量，在线摘要 Provider 只使用数据库密文。代理 URL 没有环境变量或 CLI 回退。
 
 默认 `index_provider_routes` 为：
 
@@ -229,7 +229,7 @@ Scholarly 的 `workers` 只控制每个期刊子进程内 OpenAlex DOI 子批的
 
 ## 读取和更新语义
 
-数据库没有行时使用上表默认值；除 `cnki_captcha_token` 的单次索引探测例外外，不回退到环境变量。该探测值不改变管理 API 返回的 `source=default`，也不会写回数据库。`next_request` 字段由匹配 API 动作按请求读取，`next_command` 字段在下一条相关命令构造 Provider 前读取，`restart_required` 字段在进程启动时读取。每次响应都返回实际 `source=default|database` 和可选 `updated_at`。
+数据库没有行时使用上表默认值；除 `cnki_captcha_token` 的单次 `litradar index` 探测例外外，不回退到环境变量。`litradar serve` 始终忽略该回退，因此清空数据库 token 并重启后不会继续使用残留环境值。该探测值不改变管理 API 返回的 `source=default`，也不会写回数据库。`next_request` 字段由匹配 API 动作按请求读取，`next_command` 字段在下一条相关命令构造 Provider 前读取，`restart_required` 字段在进程启动时读取。每次响应都返回实际 `source=default|database` 和可选 `updated_at`。
 
 秘密字段响应：
 

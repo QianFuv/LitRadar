@@ -1266,6 +1266,7 @@ mod tests {
     use std::collections::{BTreeMap, HashMap};
     use std::fs;
     use std::path::Path;
+    use std::process::Command;
 
     use tempfile::{Builder, TempDir};
 
@@ -1585,6 +1586,47 @@ mod tests {
             .to_string()
             .contains("Provider proxy URL is required"));
         assert!(!inconsistent_error.to_string().contains(password_sentinel));
+    }
+
+    #[test]
+    fn live_index_runtime_config_keeps_captcha_environment_fallback() {
+        let output = Command::new(
+            std::env::current_exe().expect("current CLI test executable should resolve"),
+        )
+        .arg("--exact")
+        .arg("tests::live_index_captcha_environment_helper")
+        .arg("--ignored")
+        .arg("--nocapture")
+        .env(
+            "LITRADAR_CNKI_CAPTCHA_TOKEN",
+            "index-captcha-environment-sentinel",
+        )
+        .output()
+        .expect("index captcha environment helper should run");
+
+        assert!(
+            output.status.success(),
+            "index captcha environment helper failed:\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    #[test]
+    #[ignore = "private helper process for index captcha environment isolation"]
+    fn live_index_captcha_environment_helper() {
+        let root = temp_root("litradar-cli-captcha-environment");
+        let auth_db_path = root.path().join("auth.sqlite");
+        litradar_storage::migrate_auth_database(&auth_db_path)
+            .expect("auth database should migrate");
+        let codec = litradar_storage::SecretCodec::from_key([83_u8; 32]);
+
+        let (_, _, captcha_token, _) = live_index_runtime_config(&auth_db_path, &codec, 30)
+            .expect("index runtime configuration should load");
+        assert_eq!(
+            captcha_token.as_deref(),
+            Some("index-captcha-environment-sentinel")
+        );
     }
 
     #[test]
