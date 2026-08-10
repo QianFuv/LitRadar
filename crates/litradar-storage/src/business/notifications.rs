@@ -167,7 +167,7 @@ pub fn upsert_notification_settings(
         current_secrets.as_ref().map(|values| values.0.as_str()),
     )?;
     let has_tracking_folder =
-        if settings.delivery_method.trim() == "pushplus" && settings.sync_to_tracking_folder {
+        if settings.delivery_method.trim() == "folder" || settings.sync_to_tracking_folder {
             transaction.query_row(
                 "SELECT EXISTS(
                  SELECT 1 FROM folders WHERE user_id = ?1 AND is_tracking = 1
@@ -721,6 +721,60 @@ mod tests {
             .expect("notification settings should remain present");
         assert_eq!(stored.ai_base_url, "https://ai.example/v1/");
         assert_eq!(stored.ai_model, "fixture-model");
+    }
+
+    #[test]
+    fn folder_delivery_requires_tracking_folder_on_write_and_subscriber_read() {
+        let temp_dir = tempdir().expect("temp dir should be created");
+        let auth_db_path = temp_dir.path().join("auth.sqlite");
+        migrate_auth_database(&auth_db_path).expect("auth database should migrate");
+        let user = crate::bootstrap_admin(&auth_db_path, "folder-user", "hash", "salt", 1.0)
+            .expect("fixture user should bootstrap");
+        let codec = SecretCodec::from_key([42_u8; 32]);
+        let settings = serde_json::from_str::<NotificationSettingsUpdate>("{}")
+            .expect("default notification settings should deserialize");
+        let tracking_folder = crate::get_tracking_folder(&auth_db_path, user.id)
+            .expect("tracking folder should load")
+            .expect("bootstrap should create a tracking folder");
+        assert!(
+            crate::delete_folder(&auth_db_path, user.id, tracking_folder.id)
+                .expect("tracking folder should delete before settings exist")
+        );
+
+        let error = super::upsert_notification_settings(&auth_db_path, &codec, user.id, &settings)
+            .expect_err("folder delivery without a tracking folder should fail");
+        assert!(matches!(error, BusinessRepositoryError::InvalidInput(_)));
+        assert_eq!(
+            error.to_string(),
+            "A tracking folder is required when delivery_method is 'folder'"
+        );
+        assert!(
+            super::get_notification_settings(&auth_db_path, &codec, user.id)
+                .expect("notification settings lookup should succeed")
+                .is_none()
+        );
+
+        crate::create_folder(&auth_db_path, user.id, "Tracking", true)
+            .expect("tracking folder should be created");
+        super::upsert_notification_settings(&auth_db_path, &codec, user.id, &settings)
+            .expect("folder delivery should persist with a tracking folder");
+        Connection::open(&auth_db_path)
+            .expect("auth database should open")
+            .execute("DELETE FROM folders WHERE user_id = ?1", [user.id.value()])
+            .expect("corrupt missing-folder state should be injected");
+
+        for error in [
+            super::get_notification_subscriber(&auth_db_path, &codec, user.id)
+                .expect_err("scoped subscriber read should fail closed"),
+            super::list_notification_subscribers(&auth_db_path, &codec)
+                .expect_err("subscriber list should fail closed"),
+        ] {
+            assert!(matches!(error, BusinessRepositoryError::InvalidInput(_)));
+            assert_eq!(
+                error.to_string(),
+                "A tracking folder is required when delivery_method is 'folder'"
+            );
+        }
     }
 
     #[test]

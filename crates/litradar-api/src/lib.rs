@@ -4628,6 +4628,22 @@ mod tests {
             backend.secret_codec(),
         )
         .expect("subscribers should load");
+        Connection::open(backend.auth_db_path())
+            .expect("auth database should open")
+            .execute("DELETE FROM folders WHERE id = ?1", [tracking_folder_id])
+            .expect("missing-folder fixture should be injected");
+        let missing_folder_delivery = json_request(
+            &app,
+            Method::PUT,
+            "/api/tracking/notification-settings",
+            Some(&auth),
+            None,
+            Some(serde_json::json!({
+                "delivery_method": "folder",
+                "enabled": true
+            })),
+        )
+        .await;
 
         assert_eq!(initial_status.status, StatusCode::OK);
         assert_eq!(initial_status.payload["total_folders"], 1);
@@ -4709,6 +4725,11 @@ mod tests {
         assert_eq!(subscribers.len(), 1);
         assert_eq!(subscribers[0].user_id, user.user_id().value());
         assert_eq!(subscribers[0].tracking_folder_id, Some(tracking_folder_id));
+        assert_eq!(missing_folder_delivery.status, StatusCode::BAD_REQUEST);
+        assert_eq!(
+            missing_folder_delivery.payload["detail"],
+            "A tracking folder is required when delivery_method is 'folder'"
+        );
     }
 
     #[tokio::test]

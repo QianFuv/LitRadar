@@ -325,14 +325,20 @@ pub fn validate_notification_settings(
 ///
 /// # Returns
 ///
-/// Empty result when PushPlus has every credential and folder dependency it requires.
+/// Empty result when the selected delivery method has every required dependency.
 pub fn validate_notification_dependencies(
     delivery_method: &str,
     has_pushplus_token: bool,
     sync_to_tracking_folder: bool,
     has_tracking_folder: bool,
 ) -> Result<(), InputValidationError> {
-    if delivery_method.trim() != "pushplus" {
+    let delivery_method = delivery_method.trim();
+    if delivery_method == "folder" && !has_tracking_folder {
+        return Err(InputValidationError::new(
+            "A tracking folder is required when delivery_method is 'folder'",
+        ));
+    }
+    if delivery_method != "pushplus" {
         return Ok(());
     }
     if !has_pushplus_token {
@@ -447,13 +453,19 @@ mod tests {
 
     #[test]
     fn notification_dependencies_require_effective_pushplus_state() {
-        validate_notification_dependencies("folder", false, true, false)
-            .expect("folder delivery should not depend on PushPlus state");
+        validate_notification_dependencies("folder", false, false, true)
+            .expect("folder delivery should require only the tracking folder");
         validate_notification_dependencies("pushplus", true, false, false)
             .expect("PushPlus without folder sync should require only a token");
         validate_notification_dependencies("pushplus", true, true, true)
             .expect("complete PushPlus dependencies should pass");
 
+        assert_eq!(
+            validate_notification_dependencies("folder", false, false, false)
+                .expect_err("folder delivery without a tracking folder should fail")
+                .to_string(),
+            "A tracking folder is required when delivery_method is 'folder'"
+        );
         assert_eq!(
             validate_notification_dependencies("pushplus", false, true, false)
                 .expect_err("PushPlus without a token should fail first")

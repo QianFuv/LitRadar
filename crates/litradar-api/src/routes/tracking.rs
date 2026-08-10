@@ -369,8 +369,7 @@ pub(crate) async fn update_notification_settings(
             .as_ref()
             .is_some_and(|settings| !settings.pushplus_token.is_empty()),
     };
-    let has_tracking_folder = if body.delivery_method == "pushplus" && body.sync_to_tracking_folder
-    {
+    let has_tracking_folder = if body.delivery_method == "folder" || body.sync_to_tracking_folder {
         run_storage(&state, move |storage| {
             litradar_storage::get_tracking_folder(storage.auth_db_path(), user.id)
         })

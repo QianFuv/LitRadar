@@ -1084,6 +1084,59 @@ mod tests {
     }
 
     #[test]
+    fn tracking_folder_and_folder_delivery_are_serialized_in_both_commit_orders() {
+        let (_temp_dir, auth_db_path, user_id) = favorite_test_database();
+        let tracking = create_folder(&auth_db_path, user_id, "Tracking", true)
+            .expect("tracking folder should be created");
+        let codec = SecretCodec::from_key([61_u8; 32]);
+        let settings = serde_json::from_str::<NotificationSettingsUpdate>("{}")
+            .expect("folder settings should deserialize");
+        crate::upsert_notification_settings(&auth_db_path, &codec, user_id, &settings)
+            .expect("folder delivery should persist while the folder exists");
+
+        let delete_error = delete_folder(&auth_db_path, user_id, tracking.id)
+            .expect_err("folder delivery should block tracking folder deletion");
+        assert!(matches!(
+            delete_error,
+            BusinessRepositoryError::InvalidInput(_)
+        ));
+        assert_eq!(
+            delete_error.to_string(),
+            "A tracking folder is required when delivery_method is 'folder'"
+        );
+        assert_eq!(
+            get_tracking_folder(&auth_db_path, user_id)
+                .expect("tracking folder should load")
+                .expect("blocked deletion should retain the folder")
+                .id,
+            tracking.id
+        );
+
+        let (_temp_dir, auth_db_path, user_id) = favorite_test_database();
+        let tracking = create_folder(&auth_db_path, user_id, "Tracking", true)
+            .expect("second tracking folder should be created");
+        let codec = SecretCodec::from_key([67_u8; 32]);
+        assert!(delete_folder(&auth_db_path, user_id, tracking.id)
+            .expect("tracking folder deletion should commit before settings exist"));
+        let settings_error =
+            crate::upsert_notification_settings(&auth_db_path, &codec, user_id, &settings)
+                .expect_err("folder settings should observe the committed deletion");
+        assert!(matches!(
+            settings_error,
+            BusinessRepositoryError::InvalidInput(_)
+        ));
+        assert_eq!(
+            settings_error.to_string(),
+            "A tracking folder is required when delivery_method is 'folder'"
+        );
+        assert!(
+            crate::get_notification_settings(&auth_db_path, &codec, user_id)
+                .expect("notification settings lookup should succeed")
+                .is_none()
+        );
+    }
+
+    #[test]
     fn favorites_repeated_add_returns_the_exact_existing_row() {
         let (_temp_dir, auth_db_path, user_id) = favorite_test_database();
         let folder = create_folder(&auth_db_path, user_id, "Reading", false)
