@@ -8,6 +8,7 @@ use std::time::{Duration, Instant};
 
 use reqwest::blocking::Client;
 use reqwest::redirect::Policy;
+use reqwest::Url;
 use serde::Deserialize;
 use serde_json::{json, Value};
 
@@ -309,6 +310,8 @@ pub struct LiveCnkiConfig {
 pub struct LiveCnkiTransport {
     client: Client,
     attempts: Vec<SourceAttempt>,
+    #[cfg(test)]
+    allow_test_urls: bool,
 }
 
 struct LiveCnkiAttempt<'a> {
@@ -365,7 +368,15 @@ impl LiveCnkiTransport {
         Ok(Self {
             client,
             attempts: Vec::new(),
+            #[cfg(test)]
+            allow_test_urls: false,
         })
+    }
+
+    #[cfg(test)]
+    fn with_test_urls(mut self) -> Self {
+        self.allow_test_urls = true;
+        self
     }
 
     fn search_journals(
@@ -438,6 +449,19 @@ impl LiveCnkiTransport {
         referer: Option<&str>,
         endpoint: &str,
     ) -> Result<String, CnkiSourceError> {
+        let should_validate_url = {
+            #[cfg(test)]
+            {
+                !self.allow_test_urls
+            }
+            #[cfg(not(test))]
+            {
+                true
+            }
+        };
+        if should_validate_url {
+            validate_oversea_request_url(url, endpoint)?;
+        }
         let mut response_failure_count = 0;
         let mut transport_failure_count = 0;
         loop {
@@ -1463,6 +1487,43 @@ fn absolute_url(value: &str) -> String {
     }
 }
 
+fn validate_oversea_request_url(url: &str, endpoint: &str) -> Result<(), CnkiSourceError> {
+    let parsed = Url::parse(url)
+        .map_err(|_| CnkiSourceError::Request("CNKI request URL is not allowed".to_string()))?;
+    let has_allowed_authority = parsed.scheme() == "https"
+        && parsed.host_str() == Some("oversea.cnki.net")
+        && matches!(parsed.port(), None | Some(443))
+        && parsed.username().is_empty()
+        && parsed.password().is_none()
+        && parsed.fragment().is_none();
+    let path = parsed.path();
+    let has_allowed_path = match endpoint {
+        "journal_search" => path == "/knavi/journals/searchbaseinfo",
+        "journal_detail" => path == "/knavi/detail",
+        "year_issues" => is_oversea_journal_path(path, "/yearList"),
+        "issue_articles" => is_oversea_journal_path(path, "/papers"),
+        "article_detail" => path == "/kcms2/article/abstract" || path == "/openlink/detail",
+        _ => false,
+    };
+    if !has_allowed_authority || !has_allowed_path {
+        return Err(CnkiSourceError::Request(
+            "CNKI request URL is not allowed".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+fn is_oversea_journal_path(path: &str, suffix: &str) -> bool {
+    path.strip_prefix("/knavi/journals/")
+        .and_then(|value| value.strip_suffix(suffix))
+        .is_some_and(|journal_id| {
+            !journal_id.is_empty()
+                && journal_id.chars().all(|character| {
+                    character.is_ascii_alphanumeric() || matches!(character, '-' | '_')
+                })
+        })
+}
+
 fn normalize_title(value: &str) -> String {
     value
         .chars()
@@ -1500,7 +1561,7 @@ mod tests {
     use std::net::{TcpListener, TcpStream};
     use std::sync::mpsc::{self, Receiver, Sender};
     use std::thread::{self, JoinHandle};
-    use std::time::Duration;
+    use std::time::{Duration, Instant};
 
     use serde_json::{json, Value};
 
@@ -1509,8 +1570,9 @@ mod tests {
     use super::{
         absolute_url, checked_text, decode_html, journal_detail_matches, parse_article_detail,
         parse_issue_articles, parse_journal_detail, parse_journal_search_results,
-        parse_year_issues, with_cnki_chinese_language, CnkiClient, CnkiFixtureData,
-        CnkiSourceError, FixtureCnkiTransport, LiveCnkiAttempt, LiveCnkiConfig, LiveCnkiTransport,
+        parse_year_issues, validate_oversea_request_url, with_cnki_chinese_language, CnkiClient,
+        CnkiFixtureData, CnkiSourceError, FixtureCnkiTransport, LiveCnkiAttempt, LiveCnkiConfig,
+        LiveCnkiTransport,
     };
 
     const TEST_SERVER_EVENT_TIMEOUT: Duration = Duration::from_secs(3);
@@ -2031,6 +2093,113 @@ mod tests {
     fn live_cnki_transport() -> LiveCnkiTransport {
         LiveCnkiTransport::new(LiveCnkiConfig { timeout_seconds: 5 })
             .expect("live CNKI test transport should build")
+            .with_test_urls()
+    }
+
+    #[test]
+    fn live_cnki_rejects_response_derived_cross_origin_urls_before_connecting() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("attack listener should bind");
+        listener
+            .set_nonblocking(true)
+            .expect("attack listener should be nonblocking");
+        let address = listener
+            .local_addr()
+            .expect("attack listener address should load");
+        let server = thread::spawn(move || {
+            let deadline = Instant::now() + Duration::from_secs(1);
+            while Instant::now() < deadline {
+                match listener.accept() {
+                    Ok((mut stream, _)) => {
+                        let _ = read_http_request(&mut stream);
+                        let body = r#"<input id="pykm" value="ATTACK" />"#;
+                        write!(
+                            stream,
+                            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                            body.len()
+                        )
+                        .expect("attack response should write");
+                        return 1;
+                    }
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        thread::sleep(Duration::from_millis(5));
+                    }
+                    Err(error) => panic!("attack listener failed: {error}"),
+                }
+            }
+            0
+        });
+        let candidates = parse_journal_search_results(&format!(
+            r#"<a href="http://{address}/knavi/detail?pykm=ATTACK">Attack</a>"#
+        ))
+        .expect("malicious search response should parse");
+        let detail_url = candidates[0]["detail_url"]
+            .as_str()
+            .expect("candidate should contain a detail URL");
+        let result = LiveCnkiTransport::new(LiveCnkiConfig { timeout_seconds: 5 })
+            .expect("strict live CNKI transport should build")
+            .get_journal_detail(detail_url);
+        let connection_count = server.join().expect("attack listener should finish");
+
+        assert!(result.is_err(), "cross-origin URL should be rejected");
+        assert_eq!(connection_count, 0, "attack listener must not be reached");
+    }
+
+    #[test]
+    fn overseas_request_urls_require_the_expected_origin_and_path_family() {
+        for (url, endpoint) in [
+            (
+                "http://oversea.cnki.net/knavi/detail?pykm=X",
+                "journal_detail",
+            ),
+            (
+                "https://user@oversea.cnki.net/knavi/detail?pykm=X",
+                "journal_detail",
+            ),
+            (
+                "https://oversea.cnki.net:8443/knavi/detail?pykm=X",
+                "journal_detail",
+            ),
+            ("https://127.0.0.1/knavi/detail?pykm=X", "journal_detail"),
+            ("https://oversea.cnki.net/admin", "journal_detail"),
+            (
+                "https://oversea.cnki.net/knavi/detail?pykm=X#fragment",
+                "journal_detail",
+            ),
+        ] {
+            assert!(
+                validate_oversea_request_url(url, endpoint).is_err(),
+                "unexpectedly allowed {url}"
+            );
+        }
+        for (url, endpoint) in [
+            (
+                "https://oversea.cnki.net/knavi/journals/searchbaseinfo",
+                "journal_search",
+            ),
+            (
+                "https://oversea.cnki.net/knavi/detail?pykm=X",
+                "journal_detail",
+            ),
+            (
+                "https://oversea.cnki.net/knavi/journals/CJFD/yearList",
+                "year_issues",
+            ),
+            (
+                "https://oversea.cnki.net/knavi/journals/CJFD/papers",
+                "issue_articles",
+            ),
+            (
+                "https://oversea.cnki.net/kcms2/article/abstract?filename=X",
+                "article_detail",
+            ),
+            (
+                "https://oversea.cnki.net/openlink/detail?filename=X",
+                "article_detail",
+            ),
+        ] {
+            validate_oversea_request_url(url, endpoint)
+                .unwrap_or_else(|error| panic!("expected {url} to be allowed: {error}"));
+        }
     }
 
     fn assert_decode_errors_are_safe(transport: &LiveCnkiTransport) {

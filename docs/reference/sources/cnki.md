@@ -68,6 +68,8 @@ Incremental 从远端当前最新 `year_issue_id` 向旧扫描到 committed anch
 
 海外实现保持 `oversea.cnki.net` 流程：题名优先、ISSN fallback、year tree、articles、详情映射。它当前不声明增量窗口能力，也不接受 traversal checkpoint：Bootstrap、Incremental 和 FullRescan 都安全完整扫描，Complete 返回 NULL anchor。海外路径不使用 jfbym captcha secret。
 
+搜索和 papers HTML 中的详情链接不是可信目的地。每次真实发送前都会重新解析，只允许 `https://oversea.cnki.net` 默认端口、无 userinfo/fragment，并精确匹配当前 journal search/detail/year/papers 或 article detail path family。跨源绝对链接、HTTP、自定义端口和其他路径会在构建请求前拒绝，不会连接 loopback、link-local 或容器内网。
+
 ## 规范字段映射
 
 | 规范字段                    | CNKI 页面来源/规则                            |
