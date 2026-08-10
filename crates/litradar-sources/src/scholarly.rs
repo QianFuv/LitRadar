@@ -13,6 +13,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use crate::provider_proxy::ProviderProxy;
+use crate::response_body::{bounded_response_text, ResponseBodyError};
 
 /// Maximum DOI IDs accepted by one Semantic Scholar batch request.
 pub const SEMANTIC_SCHOLAR_BATCH_SIZE: usize = 500;
@@ -46,6 +47,7 @@ const CROSSREF_MAX_TRANSPORT_ATTEMPTS: usize = 6;
 const CROSSREF_TRANSPORT_RETRY_BUDGET_SECONDS: u64 = 180;
 const TRANSPORT_FAILURE_MESSAGE: &str = "transport failure";
 const RETRY_STATUS_CODES: [u16; 5] = [429, 500, 502, 503, 504];
+const SCHOLARLY_RESPONSE_MAXIMUM_BYTES: usize = 8 * 1024 * 1024;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 struct OpenAlexRateHeaders {
@@ -1802,16 +1804,17 @@ fn execute_openalex_request(
             Ok(response) => {
                 let status_code = response.status().as_u16();
                 let headers = openalex_rate_headers(response.headers());
-                let text = match response.text() {
+                let text = match bounded_response_text(response, SCHOLARLY_RESPONSE_MAXIMUM_BYTES) {
                     Ok(text) => text,
-                    Err(_) => {
-                        let will_retry = attempt_number < maximum_attempts;
-                        scheduler.finish(
-                            &reservation,
-                            headers,
-                            OpenAlexHealthOutcome::TransientFailure,
-                            retry_delay,
-                        );
+                    Err(error) => {
+                        let is_too_large = matches!(error, ResponseBodyError::TooLarge);
+                        let health = if is_too_large {
+                            OpenAlexHealthOutcome::TerminalFailure
+                        } else {
+                            OpenAlexHealthOutcome::TransientFailure
+                        };
+                        let will_retry = !is_too_large && attempt_number < maximum_attempts;
+                        scheduler.finish(&reservation, headers, health, retry_delay);
                         attempts.push(openalex_attempt_record(
                             endpoint,
                             &request_url,
@@ -1820,13 +1823,17 @@ fn execute_openalex_request(
                             Some(status_code),
                             false,
                             will_retry,
-                            "response_body",
+                            if is_too_large {
+                                "response_too_large"
+                            } else {
+                                "response_body"
+                            },
                             elapsed_millis(started_at),
                         ));
                         let error = SourceError::Request {
                             service: OPENALEX_SOURCE.to_string(),
                             endpoint: endpoint.to_string(),
-                            message: "response body could not be read".to_string(),
+                            message: error.to_string(),
                         };
                         if will_retry {
                             add_excluded_slot(&mut excluded_slots, reservation.slot.slot_index);
@@ -2501,57 +2508,75 @@ impl LiveScholarlyTransport {
                     let status_code = response.status().as_u16();
                     let retry_after =
                         header_u64(response.headers(), "retry-after").map(Duration::from_secs);
-                    let text = match response.text() {
-                        Ok(text) => text,
-                        Err(_) => {
-                            let health = if (200..300).contains(&status_code) {
-                                SemanticScholarHealthOutcome::TransientFailure
-                            } else {
-                                semantic_scholar_health_outcome(status_code)
-                            };
-                            let is_retryable =
-                                !matches!(health, SemanticScholarHealthOutcome::TerminalFailure);
-                            let will_retry = is_retryable && attempt_number < maximum_attempts;
-                            let health_delay =
-                                semantic_scholar_health_delay(health, retry_after, retry_delay);
-                            self.semantic_scholar_scheduler.finish(
-                                &reservation,
-                                health,
-                                health_delay,
-                            );
-                            self.record_semantic_scholar_attempt(semantic_scholar_attempt_record(
-                                endpoint,
-                                &request_url,
-                                attempt_number,
-                                reservation.slot.slot_index,
-                                Some(status_code),
-                                false,
-                                will_retry,
-                                "response_body",
-                                elapsed_millis(started_at),
-                            ));
-                            let error = if (200..300).contains(&status_code) {
-                                SourceError::Request {
-                                    service: SEMANTIC_SCHOLAR_SOURCE.to_string(),
-                                    endpoint: endpoint.to_string(),
-                                    message: "response body could not be read".to_string(),
+                    let text =
+                        match bounded_response_text(response, SCHOLARLY_RESPONSE_MAXIMUM_BYTES) {
+                            Ok(text) => text,
+                            Err(error) => {
+                                let is_too_large = matches!(error, ResponseBodyError::TooLarge);
+                                let health = if is_too_large {
+                                    SemanticScholarHealthOutcome::TerminalFailure
+                                } else if (200..300).contains(&status_code) {
+                                    SemanticScholarHealthOutcome::TransientFailure
+                                } else {
+                                    semantic_scholar_health_outcome(status_code)
+                                };
+                                let is_retryable = !matches!(
+                                    health,
+                                    SemanticScholarHealthOutcome::TerminalFailure
+                                );
+                                let will_retry = is_retryable && attempt_number < maximum_attempts;
+                                let health_delay =
+                                    semantic_scholar_health_delay(health, retry_after, retry_delay);
+                                self.semantic_scholar_scheduler.finish(
+                                    &reservation,
+                                    health,
+                                    health_delay,
+                                );
+                                self.record_semantic_scholar_attempt(
+                                    semantic_scholar_attempt_record(
+                                        endpoint,
+                                        &request_url,
+                                        attempt_number,
+                                        reservation.slot.slot_index,
+                                        Some(status_code),
+                                        false,
+                                        will_retry,
+                                        if is_too_large {
+                                            "response_too_large"
+                                        } else {
+                                            "response_body"
+                                        },
+                                        elapsed_millis(started_at),
+                                    ),
+                                );
+                                let error = if (200..300).contains(&status_code) {
+                                    SourceError::Request {
+                                        service: SEMANTIC_SCHOLAR_SOURCE.to_string(),
+                                        endpoint: endpoint.to_string(),
+                                        message: error.to_string(),
+                                    }
+                                } else {
+                                    SourceError::HttpStatus {
+                                        service: SEMANTIC_SCHOLAR_SOURCE.to_string(),
+                                        endpoint: endpoint.to_string(),
+                                        status_code,
+                                        body: safe_semantic_scholar_error_body(
+                                            status_code,
+                                            &json!({}),
+                                        ),
+                                    }
+                                };
+                                if will_retry {
+                                    add_excluded_slot(
+                                        &mut excluded_slots,
+                                        reservation.slot.slot_index,
+                                    );
+                                    last_error = Some(error);
+                                    continue;
                                 }
-                            } else {
-                                SourceError::HttpStatus {
-                                    service: SEMANTIC_SCHOLAR_SOURCE.to_string(),
-                                    endpoint: endpoint.to_string(),
-                                    status_code,
-                                    body: safe_semantic_scholar_error_body(status_code, &json!({})),
-                                }
-                            };
-                            if will_retry {
-                                add_excluded_slot(&mut excluded_slots, reservation.slot.slot_index);
-                                last_error = Some(error);
-                                continue;
+                                return Err(error);
                             }
-                            return Err(error);
-                        }
-                    };
+                        };
                     let payload = match serde_json::from_str::<Value>(&text) {
                         Ok(payload) => payload,
                         Err(_) if (200..300).contains(&status_code) => {
@@ -2784,30 +2809,35 @@ impl LiveScholarlyTransport {
             match self.client.execute(request) {
                 Ok(response) => {
                     let status_code = response.status().as_u16();
-                    let text = match response.text() {
-                        Ok(text) => text,
-                        Err(error) => {
-                            self.record_attempt(LiveAttempt {
-                                service: live_request.service,
-                                endpoint: live_request.endpoint,
-                                method: live_request.method,
-                                url: &request_url,
-                                attempt: attempt_number,
-                                status_code: Some(status_code),
-                                did_succeed: false,
-                                did_retry: attempt > 0,
-                                will_retry: false,
-                                error_kind: "response_body",
-                                duration_ms: elapsed_millis(started_at),
-                                error: Some(error.to_string()),
-                            });
-                            return Err(SourceError::Request {
-                                service: live_request.service.to_string(),
-                                endpoint: live_request.endpoint.to_string(),
-                                message: error.to_string(),
-                            });
-                        }
-                    };
+                    let text =
+                        match bounded_response_text(response, SCHOLARLY_RESPONSE_MAXIMUM_BYTES) {
+                            Ok(text) => text,
+                            Err(error) => {
+                                self.record_attempt(LiveAttempt {
+                                    service: live_request.service,
+                                    endpoint: live_request.endpoint,
+                                    method: live_request.method,
+                                    url: &request_url,
+                                    attempt: attempt_number,
+                                    status_code: Some(status_code),
+                                    did_succeed: false,
+                                    did_retry: attempt > 0,
+                                    will_retry: false,
+                                    error_kind: if matches!(error, ResponseBodyError::TooLarge) {
+                                        "response_too_large"
+                                    } else {
+                                        "response_body"
+                                    },
+                                    duration_ms: elapsed_millis(started_at),
+                                    error: Some(error.to_string()),
+                                });
+                                return Err(SourceError::Request {
+                                    service: live_request.service.to_string(),
+                                    endpoint: live_request.endpoint.to_string(),
+                                    message: error.to_string(),
+                                });
+                            }
+                        };
                     let payload = serde_json::from_str::<Value>(&text)
                         .unwrap_or_else(|_| json!({ "error": text }));
                     if !(200..300).contains(&status_code) {
@@ -3786,7 +3816,8 @@ mod tests {
         CROSSREF_JOURNAL_WORK_ORDER, CROSSREF_ROWS, CROSSREF_SOURCE,
         OPENALEX_DOI_FILTER_MAX_VALUES, OPENALEX_DOI_REQUEST_URL_BUDGET,
         OPENALEX_KEY_START_INTERVAL, OPENALEX_MAX_WORKERS_PER_PROCESS, OPENALEX_SOURCE_WORK_SORT,
-        SEMANTIC_SCHOLAR_ATTEMPT_INTERVAL_MS, SEMANTIC_SCHOLAR_SOURCE,
+        SCHOLARLY_RESPONSE_MAXIMUM_BYTES, SEMANTIC_SCHOLAR_ATTEMPT_INTERVAL_MS,
+        SEMANTIC_SCHOLAR_SOURCE,
     };
 
     #[derive(Clone, Copy)]
@@ -4705,6 +4736,53 @@ mod tests {
                 String::from_utf8_lossy(&sink_request)
             );
         }
+    }
+
+    #[test]
+    fn semantic_scholar_oversize_is_terminal_without_key_failover() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("oversize listener should bind");
+        let address = listener
+            .local_addr()
+            .expect("oversize listener address should resolve");
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("oversize request should connect");
+            let mut request = [0_u8; 8_192];
+            let _ = stream
+                .read(&mut request)
+                .expect("oversize request should read");
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                SCHOLARLY_RESPONSE_MAXIMUM_BYTES + 1
+            )
+            .expect("oversize response headers should write");
+        });
+        let config = LiveScholarlyConfig {
+            timeout_seconds: 3,
+            openalex_api_keys: Vec::new(),
+            semantic_scholar_api_keys: vec!["first".into(), "second".into(), "third".into()],
+            crossref_mailtos: Vec::new(),
+            semantic_scholar_worker_id: 0,
+            semantic_scholar_process_count: 1,
+            semantic_scholar_base_interval_ms: 0,
+            schedule_epoch_unix_millis: 0,
+        };
+        let mut transport =
+            LiveScholarlyTransport::new(config).expect("live transport should build");
+
+        let error = transport
+            .semantic_scholar_post_json(
+                "oversize_test",
+                &format!("http://{address}/paper/batch"),
+                &[],
+                &json!({"ids": ["DOI:10.1/test"]}),
+            )
+            .expect_err("oversized response should fail");
+        server.join().expect("oversize server should finish");
+
+        assert!(error.to_string().contains("size limit"));
+        assert_eq!(transport.attempts().len(), 1);
+        assert!(!transport.attempts()[0].did_retry);
     }
 
     #[test]

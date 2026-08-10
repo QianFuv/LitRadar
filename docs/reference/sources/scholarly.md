@@ -133,6 +133,8 @@ Crossref journal-list GET 收到 HTTP 响应后仍最多尝试三次；`429/500/
 
 Crossref、OpenAlex 和 Semantic Scholar 共用的 HTTP client 禁止自动重定向。任何 3xx 都在原始上游响应处失败，不会访问 `Location`，也不会把 Semantic Scholar `x-api-key`、DOI batch body 或查询参数转发到其他 origin/协议。
 
+所有 Scholarly JSON 响应的解压后上限为 8 MiB。读取先检查可用的 Content-Length，再对透明解压后流最多保留 `limit + 1` 字节，所以 chunked 响应或小 gzip/大解压正文也会明确失败。超限不参与 transport retry 或 key failover，也不保留响应正文。
+
 每次逻辑请求的成功、失败和 retry 会汇总到 `index.provider.attempts` 结构化终态事件。OpenAlex/Semantic Scholar 尝试事件只增加安全的 key-slot 编号、状态分类、retry 标志和耗时，不记录 key 值或请求体。内容库没有 API call/statistics 表。Crossref 无响应传输失败在尝试记录和返回错误中都固定为 `transport failure`，不保留可能携带 URL 或查询参数的 Reqwest 原始错误。API key、完整查询秘密、DOI 请求体、响应正文和上游 URL 不进入安全错误或持久状态；Semantic Scholar 非白名单错误正文会折叠为固定消息。
 
 调度器暴露的是有安全余量的可用容量，不是吞吐保证。实际吞吐近似受 `min(Provider 预算, 在途容量 / 响应延迟, 产生工作速率)` 限制；低 worker、慢响应或工作不足不能被标记为限流器利用率不足，也不承诺精确 100% 使用或任何外部状态下都零 429。

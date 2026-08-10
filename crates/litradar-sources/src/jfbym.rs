@@ -15,6 +15,7 @@ use reqwest::redirect::Policy;
 use serde_json::Value;
 
 use crate::provider_proxy::ProviderProxy;
+use crate::response_body::{bounded_response_json, ResponseBodyError};
 
 /// Official jfbym dual-image slider type used for CNKI `blockPuzzle`.
 pub const JFBYM_DUAL_SLIDER_TYPE: &str = "20111";
@@ -25,6 +26,7 @@ pub const JFBYM_SUCCESS_CODE: i64 = 10000;
 
 const JFBYM_MAX_POINT_X: i32 = 10_000;
 const JFBYM_MAX_SLIDER_DISTANCE: f64 = JFBYM_MAX_POINT_X as f64;
+const JFBYM_RESPONSE_MAXIMUM_BYTES: usize = 256 * 1024;
 
 /// Errors returned by the jfbym dual-image solver.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -242,9 +244,20 @@ impl JfbymSolver for LiveJfbymSolver {
                 status.as_u16()
             )));
         }
-        let body: Value = response.json().map_err(|_| {
-            JfbymError::InvalidResponse("jfbym response is not valid JSON".to_string())
-        })?;
+        let body =
+            bounded_response_json(response, JFBYM_RESPONSE_MAXIMUM_BYTES).map_err(|error| {
+                match error {
+                    ResponseBodyError::TooLarge => JfbymError::InvalidResponse(
+                        "jfbym response exceeded the configured size limit".to_string(),
+                    ),
+                    ResponseBodyError::ReadFailed => {
+                        JfbymError::Request("jfbym response body could not be read".to_string())
+                    }
+                    ResponseBodyError::InvalidJson => {
+                        JfbymError::InvalidResponse("jfbym response is not valid JSON".to_string())
+                    }
+                }
+            })?;
         let code = body.get("code").and_then(Value::as_i64).or_else(|| {
             body.get("code")
                 .and_then(Value::as_u64)

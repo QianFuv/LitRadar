@@ -13,6 +13,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 
 use crate::provider_proxy::ProviderProxy;
+use crate::response_body::{bounded_response_text, ResponseBodyError};
 use crate::scholarly::{SourceAttempt, SourceError};
 
 const BASE_URL: &str = "https://oversea.cnki.net";
@@ -21,6 +22,7 @@ const CNKI_CHINESE_LANGUAGE: &str = "CHS";
 const JOURNAL_PRODUCT_CODE: &str = "BOJHD70J";
 const CNKI_RESPONSE_ATTEMPTS: usize = 3;
 const CNKI_TRANSPORT_ATTEMPTS: usize = 5;
+const CNKI_RESPONSE_MAXIMUM_BYTES: usize = 2 * 1024 * 1024;
 const DEFAULT_USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
 const DEFAULT_ACCEPT_LANGUAGE: &str = "zh-CN,zh;q=0.9,en;q=0.5";
 
@@ -508,12 +510,25 @@ impl LiveCnkiTransport {
                         }
                         return Err(CnkiSourceError::Request(message));
                     }
-                    let text = match response.text() {
+                    let text = match bounded_response_text(response, CNKI_RESPONSE_MAXIMUM_BYTES) {
                         Ok(text) => text,
-                        Err(_) => {
-                            let message = "CNKI response body decoding failed".to_string();
+                        Err(error) => {
+                            let (message, error_kind, is_retryable) = match error {
+                                ResponseBodyError::TooLarge => (
+                                    "CNKI response body exceeded the configured size limit"
+                                        .to_string(),
+                                    "response_too_large",
+                                    false,
+                                ),
+                                _ => (
+                                    "CNKI response body decoding failed".to_string(),
+                                    "response_body",
+                                    true,
+                                ),
+                            };
                             response_failure_count += 1;
-                            let will_retry = response_failure_count < CNKI_RESPONSE_ATTEMPTS;
+                            let will_retry =
+                                is_retryable && response_failure_count < CNKI_RESPONSE_ATTEMPTS;
                             self.record_attempt(LiveCnkiAttempt {
                                 endpoint,
                                 method,
@@ -523,7 +538,7 @@ impl LiveCnkiTransport {
                                 did_succeed: false,
                                 did_retry,
                                 will_retry,
-                                error_kind: "response_body",
+                                error_kind,
                                 duration_ms: elapsed_millis(started_at),
                                 error: Some(message.clone()),
                             });
@@ -1913,6 +1928,26 @@ mod tests {
         assert!(error.to_string().contains("response body decoding failed"));
         assert!(!error.to_string().contains("persistent-secret"));
         assert_decode_errors_are_safe(&transport);
+    }
+
+    #[test]
+    fn live_cnki_rejects_oversized_decoded_body_without_retry() {
+        const EXPECTED_RESPONSE_LIMIT: usize = 2 * 1024 * 1024;
+        let body = "a".repeat(EXPECTED_RESPONSE_LIMIT + 1);
+        let server = TestHttpServer::start(vec![format!(
+            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        )]);
+        let mut transport = live_cnki_transport();
+
+        let result = transport.get_text(server.url(), None, "oversized_test");
+        let served_count = server.finish();
+
+        assert!(result.is_err(), "oversized decoded response should fail");
+        let error = result.expect_err("oversized response error should exist");
+        assert_eq!(served_count, 1);
+        assert_eq!(transport.attempts.len(), 1);
+        assert!(error.to_string().contains("size limit"));
     }
 
     #[test]

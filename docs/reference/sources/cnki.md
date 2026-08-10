@@ -159,6 +159,8 @@ reqwest 错误在转换为业务错误前移除完整 URL。需要诊断的响�
 
 单个 CNKI HTTP 操作最多有三次普通响应尝试。没有收到 HTTP 响应的传输失败最多尝试五次，并按 1、2、4、8 秒进行有界指数退避；国内 captcha 另有最多五次 fresh solve/replay 的独立预算。持续失败使当前 Provider 操作明确失败，不写空内容冒充成功；只有上述窄范围永久文章缺失可以在同页继续。
 
+CNKI Overseas、Domestic 和 ZJLib 的 HTML/JSON 响应解压后上限均为 2 MiB，JFBYM JSON 为 256 KiB。读取先检查可用的 Content-Length，再对透明解压后的流最多保留 `limit + 1` 字节；因此 chunked 响应和 gzip 高压缩比都不能绕过上限。超限是固定分类的不可重试无效响应，不保留正文。PDF 仍使用独立的 32 MiB 有界读取。
+
 请求尝试只汇总到结构化 `index.provider.attempts` 或文章访问 fallback 事件。内容库没有 API/path statistics 表，也不保存 URL、响应正文、查询参数或解码器样本。
 
 `--workers` 控制每个期刊子进程内当前 papers 页的并发详情请求，`--processes` 控制同一目录的 journal worker；期刊定位、刊期遍历、页面归并、checkpoint 和 SQLite 写入仍保持有序。默认值和内存边界见[CLI 参考](../cli.md)。

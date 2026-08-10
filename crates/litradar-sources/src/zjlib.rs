@@ -19,6 +19,7 @@ use reqwest::Url;
 use serde_json::{json, Value};
 
 use crate::provider_proxy::ProviderProxy;
+use crate::response_body::{bounded_response_json, bounded_response_text, ResponseBodyError};
 
 const WWW_BASE_URL: &str = "https://www.zjlib.cn";
 const SHARE_BASE_URL: &str = "https://share.zjlib.cn";
@@ -37,6 +38,7 @@ const ZYPROXY_LOGIN_ATTEMPTS: usize = 3;
 const ZYPROXY_REDIRECT_HOPS: usize = 4;
 const ZYPROXY_RETRY_DELAY_MILLIS: u64 = 200;
 const ZJLIB_REDIRECT_HOPS: usize = 10;
+const ZJLIB_RESPONSE_MAXIMUM_BYTES: usize = 2 * 1024 * 1024;
 const DEFAULT_USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36";
 const DEFAULT_ACCEPT_LANGUAGE: &str = "zh-CN;q=0.9";
 
@@ -1311,7 +1313,7 @@ impl LiveZjlibCnkiTransport {
             .map_err(request_error)?;
         let response = raise_for_status(response, "enter Share protocolAuth")?;
         let response_url = response.url().to_string();
-        let text = response.text().map_err(request_error)?;
+        let text = zjlib_response_text(response)?;
         if let Some(sync) = extract_share_cookie_sync(&text, &self.endpoints)? {
             let response = self
                 .redirect_client
@@ -1382,7 +1384,7 @@ impl LiveZjlibCnkiTransport {
         {
             join_url(&response_url, location)?
         } else {
-            let text = response.text().map_err(request_error)?;
+            let text = zjlib_response_text(response)?;
             extract_window_location(&text, &response_url)?
         };
         let parsed_login_url = self.endpoint_url(&login_url, ZjlibEndpointFamily::ZyproxyLogin)?;
@@ -1467,7 +1469,7 @@ impl LiveZjlibCnkiTransport {
             .send()
             .map_err(request_error)?;
         let response = raise_for_status(response, action)?;
-        response.text().map_err(request_error)
+        zjlib_response_text(response)
     }
 }
 
@@ -1714,7 +1716,7 @@ impl ZjlibCnkiTransport for LiveZjlibCnkiTransport {
             .map_err(request_error)?;
         let response = raise_for_status(response, "get CNKI brief results")?;
         let final_url = response.url().to_string();
-        let text = response.text().map_err(request_error)?;
+        let text = zjlib_response_text(response)?;
         self.last_brief_url = Some(final_url.clone());
         Ok(parse_search_results(&text, &final_url, &self.endpoints)?
             .into_iter()
@@ -1740,7 +1742,7 @@ impl ZjlibCnkiTransport for LiveZjlibCnkiTransport {
             .map_err(request_error)?;
         let response = raise_for_status(response, "open CNKI detail")?;
         let detail_url = response.url().to_string();
-        let text = response.text().map_err(request_error)?;
+        let text = zjlib_response_text(response)?;
         let identity = extract_article_identity(&text, &result.title);
         let pdf_url = extract_pdf_download_url(&text, &detail_url, &self.endpoints)?;
         Ok(ZjlibCnkiArticleCandidate {
@@ -2173,14 +2175,30 @@ fn request_error(error: reqwest::Error) -> ZjlibCnkiError {
     ZjlibCnkiError::Request(reqwest_error_message(error))
 }
 
+fn zjlib_response_text(response: Response) -> Result<String, ZjlibCnkiError> {
+    bounded_response_text(response, ZJLIB_RESPONSE_MAXIMUM_BYTES).map_err(|error| match error {
+        ResponseBodyError::TooLarge => ZjlibCnkiError::Request(
+            "ZJLib response exceeded the configured size limit.".to_string(),
+        ),
+        _ => ZjlibCnkiError::Request(error.to_string()),
+    })
+}
+
 fn json_payload(response: Response, action: &str) -> Result<Value, ZjlibCnkiError> {
     let response = raise_for_status(response, action)?;
-    let payload = response.json::<Value>().map_err(|error| {
-        ZjlibCnkiError::Parse(format!(
-            "{action} returned non-JSON response: {}",
-            reqwest_error_message(error)
-        ))
-    })?;
+    let payload = bounded_response_json(response, ZJLIB_RESPONSE_MAXIMUM_BYTES).map_err(
+        |error| match error {
+            ResponseBodyError::TooLarge => ZjlibCnkiError::Parse(format!(
+                "{action} response exceeded the configured size limit."
+            )),
+            ResponseBodyError::ReadFailed => {
+                ZjlibCnkiError::Request(format!("{action} response body could not be read."))
+            }
+            ResponseBodyError::InvalidJson => {
+                ZjlibCnkiError::Parse(format!("{action} returned non-JSON response."))
+            }
+        },
+    )?;
     if payload.get("success").and_then(Value::as_bool) == Some(false) {
         return Err(ZjlibCnkiError::Request(format!("{action} failed.")));
     }

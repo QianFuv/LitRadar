@@ -18,6 +18,7 @@ use crate::jfbym::{
     encrypt_point_json, point_x_candidates, strip_data_url_base64, JfbymError, JfbymSolver,
 };
 use crate::provider_proxy::ProviderProxy;
+use crate::response_body::{bounded_response_json, bounded_response_text, ResponseBodyError};
 use crate::scholarly::{SourceAttempt, SourceError};
 use litradar_domain::{
     normalize_bibliographic_text, normalize_contract_issn, normalize_contract_text,
@@ -32,6 +33,7 @@ const DOMESTIC_LANGUAGE: &str = "CHS";
 const DOMESTIC_JOURNAL_PARENT_CODE: &str = "SQN63324";
 const DOMESTIC_SEARCH_PRODUCT_CODE: &str = "OYXNO5VW";
 const DEFAULT_PCODE: &str = "CJFD,CCJD";
+const DOMESTIC_CNKI_RESPONSE_MAXIMUM_BYTES: usize = 2 * 1024 * 1024;
 /// Maximum fresh captcha puzzle solves allowed per domestic session budget.
 pub const DOMESTIC_CAPTCHA_SOLVE_BUDGET: usize = 5;
 const DOMESTIC_POINT_JSON_Y: i32 = 5;
@@ -1792,10 +1794,18 @@ fn parse_domestic_json_response(
     endpoint: &str,
 ) -> Result<Value, DomesticCnkiSourceError> {
     validate_domestic_http_response(&response)?;
-    response.json().map_err(|_| {
-        DomesticCnkiSourceError::Parse(format!(
-            "domestic CNKI {endpoint} response is not valid JSON"
-        ))
+    bounded_response_json(response, DOMESTIC_CNKI_RESPONSE_MAXIMUM_BYTES).map_err(|error| {
+        match error {
+            ResponseBodyError::TooLarge => DomesticCnkiSourceError::Parse(format!(
+                "domestic CNKI {endpoint} response exceeded the configured size limit"
+            )),
+            ResponseBodyError::ReadFailed => DomesticCnkiSourceError::Request(format!(
+                "domestic CNKI {endpoint} response read failed"
+            )),
+            ResponseBodyError::InvalidJson => DomesticCnkiSourceError::Parse(format!(
+                "domestic CNKI {endpoint} response is not valid JSON"
+            )),
+        }
     })
 }
 
@@ -2604,9 +2614,15 @@ impl LiveDomesticCnkiTransport {
                     "domestic CNKI redirect URL is not allowed".to_string(),
                 ));
             }
-            let text = match response.text() {
+            let text = match bounded_response_text(response, DOMESTIC_CNKI_RESPONSE_MAXIMUM_BYTES) {
                 Ok(text) => text,
-                Err(_) => {
+                Err(error) => {
+                    let message = match error {
+                        ResponseBodyError::TooLarge => {
+                            "domestic CNKI response exceeded the configured size limit"
+                        }
+                        _ => "domestic CNKI response read failed",
+                    };
                     self.record_attempt(DomesticAttempt {
                         endpoint,
                         method,
@@ -2614,11 +2630,9 @@ impl LiveDomesticCnkiTransport {
                         status_code: Some(status.as_u16()),
                         did_succeed: false,
                         did_retry,
-                        error: Some("response read failed"),
+                        error: Some(message),
                     });
-                    return Err(DomesticCnkiSourceError::Request(
-                        "domestic CNKI response read failed".to_string(),
-                    ));
+                    return Err(DomesticCnkiSourceError::Request(message.to_string()));
                 }
             };
             if looks_like_captcha_challenge(&text, &final_url) {
