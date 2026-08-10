@@ -123,12 +123,22 @@ pub fn create_scheduled_task(
     auth_db_path: impl AsRef<Path>,
     task: ScheduledTaskCreateParams<'_>,
 ) -> Result<ScheduledTaskInfo, BusinessRepositoryError> {
-    create_scheduled_task_with_audit(auth_db_path, task, None)
+    create_scheduled_task_inner(auth_db_path, None, task, None)
 }
 
-/// Create a scheduled task and persist a required audit event atomically.
+/// Create a scheduled task after revalidating the administrative actor and persist its audit.
 pub fn create_scheduled_task_with_audit(
     auth_db_path: impl AsRef<Path>,
+    actor_id: UserId,
+    task: ScheduledTaskCreateParams<'_>,
+    audit: Option<&SecurityAuditEvent>,
+) -> Result<ScheduledTaskInfo, BusinessRepositoryError> {
+    create_scheduled_task_inner(auth_db_path, Some(actor_id), task, audit)
+}
+
+fn create_scheduled_task_inner(
+    auth_db_path: impl AsRef<Path>,
+    actor_id: Option<UserId>,
     task: ScheduledTaskCreateParams<'_>,
     audit: Option<&SecurityAuditEvent>,
 ) -> Result<ScheduledTaskInfo, BusinessRepositoryError> {
@@ -136,6 +146,9 @@ pub fn create_scheduled_task_with_audit(
     validate_scheduled_timing(task.timezone, task.timeout_seconds)?;
     let mut connection = open_business_connection(auth_db_path)?;
     let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    if let Some(actor_id) = actor_id {
+        require_administrator_actor(&transaction, actor_id)?;
+    }
     let now = now_seconds();
     let job_spec = serde_json::to_string(task.job)?;
     transaction.execute(
@@ -179,17 +192,30 @@ pub fn update_scheduled_task(
     auth_db_path: impl AsRef<Path>,
     task: ScheduledTaskUpdateParams<'_>,
 ) -> Result<Option<ScheduledTaskInfo>, BusinessRepositoryError> {
-    update_scheduled_task_with_audit(auth_db_path, task, None)
+    update_scheduled_task_inner(auth_db_path, None, task, None)
 }
 
-/// Update a scheduled task and persist a required audit event atomically.
+/// Update a scheduled task after revalidating the administrative actor and persist its audit.
 pub fn update_scheduled_task_with_audit(
     auth_db_path: impl AsRef<Path>,
+    actor_id: UserId,
+    task: ScheduledTaskUpdateParams<'_>,
+    audit: Option<&SecurityAuditEvent>,
+) -> Result<Option<ScheduledTaskInfo>, BusinessRepositoryError> {
+    update_scheduled_task_inner(auth_db_path, Some(actor_id), task, audit)
+}
+
+fn update_scheduled_task_inner(
+    auth_db_path: impl AsRef<Path>,
+    actor_id: Option<UserId>,
     task: ScheduledTaskUpdateParams<'_>,
     audit: Option<&SecurityAuditEvent>,
 ) -> Result<Option<ScheduledTaskInfo>, BusinessRepositoryError> {
     let mut connection = open_business_connection(auth_db_path)?;
     let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    if let Some(actor_id) = actor_id {
+        require_administrator_actor(&transaction, actor_id)?;
+    }
     let Some(current) = get_scheduled_task_from_connection(&transaction, task.task_id)? else {
         return Ok(None);
     };
@@ -254,17 +280,30 @@ pub fn delete_scheduled_task(
     auth_db_path: impl AsRef<Path>,
     task_id: i64,
 ) -> Result<bool, BusinessRepositoryError> {
-    delete_scheduled_task_with_audit(auth_db_path, task_id, None)
+    delete_scheduled_task_inner(auth_db_path, None, task_id, None)
 }
 
-/// Delete a scheduled task and persist a required audit event atomically.
+/// Delete a scheduled task after revalidating the administrative actor and persist its audit.
 pub fn delete_scheduled_task_with_audit(
     auth_db_path: impl AsRef<Path>,
+    actor_id: UserId,
+    task_id: i64,
+    audit: Option<&SecurityAuditEvent>,
+) -> Result<bool, BusinessRepositoryError> {
+    delete_scheduled_task_inner(auth_db_path, Some(actor_id), task_id, audit)
+}
+
+fn delete_scheduled_task_inner(
+    auth_db_path: impl AsRef<Path>,
+    actor_id: Option<UserId>,
     task_id: i64,
     audit: Option<&SecurityAuditEvent>,
 ) -> Result<bool, BusinessRepositoryError> {
     let mut connection = open_business_connection(auth_db_path)?;
     let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    if let Some(actor_id) = actor_id {
+        require_administrator_actor(&transaction, actor_id)?;
+    }
     let count = transaction.execute("DELETE FROM scheduled_tasks WHERE id = ?1", [task_id])?;
     if count > 0 {
         if let Some(audit) = audit {
@@ -1083,5 +1122,104 @@ mod tests {
             .recent_runs;
         assert_eq!(runs.len(), 1);
         assert_eq!(runs[0].scheduled_for, 180);
+    }
+
+    #[test]
+    fn audited_scheduled_task_mutations_reject_demoted_actor() {
+        let temp_dir = tempdir().expect("temp dir should be created");
+        let auth_db_path = temp_dir.path().join("auth.sqlite");
+        migrate_auth_database(&auth_db_path).expect("auth database should migrate");
+        let connection = Connection::open(&auth_db_path).expect("auth database should open");
+        let mut administrator_ids = Vec::new();
+        for username in ["schedule_authority", "schedule_stale_actor"] {
+            connection
+                .execute(
+                    "INSERT INTO users \
+                     (username, password_hash, salt, is_admin, created_at, updated_at) \
+                     VALUES (?1, 'fixture-hash', 'fixture-salt', 1, 1.0, 1.0)",
+                    [username],
+                )
+                .expect("fixture administrator should insert");
+            administrator_ids.push(UserId(connection.last_insert_rowid()));
+        }
+        let authority = administrator_ids[0];
+        let stale_actor = administrator_ids[1];
+        drop(connection);
+        let job = ScheduledJobSpec::Index(ScheduledIndexJob {
+            metadata_file: None,
+            notify: false,
+            push: false,
+        });
+        let task = create_scheduled_task(
+            &auth_db_path,
+            ScheduledTaskCreateParams {
+                name: "Original",
+                job: &job,
+                cron: "0 1 * * *",
+                timezone: "UTC",
+                timeout_seconds: 3_600,
+                coalesce: true,
+                enabled: true,
+            },
+        )
+        .expect("fixture task should create");
+        crate::set_user_admin(&auth_db_path, authority, stale_actor, false)
+            .expect("stale actor should be demoted");
+        let audit = SecurityAuditEvent::new("scheduled_task_mutation", "completed")
+            .with_actor_id(stale_actor.value());
+
+        assert!(matches!(
+            create_scheduled_task_with_audit(
+                &auth_db_path,
+                stale_actor,
+                ScheduledTaskCreateParams {
+                    name: "Unauthorized",
+                    job: &job,
+                    cron: "0 2 * * *",
+                    timezone: "UTC",
+                    timeout_seconds: 3_600,
+                    coalesce: true,
+                    enabled: true,
+                },
+                Some(&audit),
+            ),
+            Err(BusinessRepositoryError::AdministratorActorForbidden)
+        ));
+        assert!(matches!(
+            update_scheduled_task_with_audit(
+                &auth_db_path,
+                stale_actor,
+                ScheduledTaskUpdateParams {
+                    task_id: task.id,
+                    name: Some("Unauthorized"),
+                    job: None,
+                    cron: None,
+                    timezone: None,
+                    timeout_seconds: None,
+                    coalesce: None,
+                    enabled: None,
+                },
+                Some(&audit),
+            ),
+            Err(BusinessRepositoryError::AdministratorActorForbidden)
+        ));
+        assert!(matches!(
+            delete_scheduled_task_with_audit(&auth_db_path, stale_actor, task.id, Some(&audit),),
+            Err(BusinessRepositoryError::AdministratorActorForbidden)
+        ));
+
+        let stored = get_scheduled_task(&auth_db_path, task.id)
+            .expect("task should load")
+            .expect("task should remain");
+        assert_eq!(stored.name, "Original");
+        assert_eq!(
+            list_scheduled_tasks(&auth_db_path)
+                .expect("tasks should list")
+                .len(),
+            1
+        );
+        assert!(crate::list_security_audit_events(&auth_db_path)
+            .expect("audit rows should load")
+            .is_empty());
     }
 }

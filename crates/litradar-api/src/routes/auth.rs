@@ -1190,6 +1190,9 @@ pub(crate) fn map_auth_error(error: AuthServiceError) -> ApiError {
         AuthServiceError::Repository(AuthRepositoryError::StaleAuthorization) => {
             ApiError::unauthorized("Authentication state changed; authenticate again")
         }
+        AuthServiceError::Repository(AuthRepositoryError::AdministratorActorForbidden) => {
+            ApiError::forbidden("Admin access required")
+        }
         AuthServiceError::Repository(AuthRepositoryError::AuditPersistence(_)) => {
             ApiError::service_unavailable()
         }
@@ -1224,6 +1227,19 @@ mod tests {
             ApiError::Http { status, detail }
                 if status == StatusCode::UNAUTHORIZED
                     && detail == "Authentication state changed; authenticate again"
+        ));
+    }
+
+    #[test]
+    fn stale_administrator_mutation_maps_to_forbidden() {
+        let error = map_auth_error(AuthServiceError::Repository(
+            AuthRepositoryError::AdministratorActorForbidden,
+        ));
+
+        assert!(matches!(
+            error,
+            ApiError::Http { status, detail }
+                if status == StatusCode::FORBIDDEN && detail == "Admin access required"
         ));
     }
 

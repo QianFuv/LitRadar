@@ -181,6 +181,8 @@ pub enum AuthRepositoryError {
     CredentialMutationInvariant,
     /// Token authorization changed before a dependent issuance committed.
     StaleAuthorization,
+    /// An administrative actor no longer exists or has administrator privileges.
+    AdministratorActorForbidden,
     /// A required durable security audit row could not be persisted.
     AuditPersistence(SecurityAuditError),
 }
@@ -219,6 +221,7 @@ impl fmt::Display for AuthRepositoryError {
             Self::StaleAuthorization => {
                 formatter.write_str("Token authorization changed before issuance")
             }
+            Self::AdministratorActorForbidden => formatter.write_str("Admin access required"),
             Self::AuditPersistence(_) => formatter.write_str("Security audit persistence failed"),
         }
     }
@@ -992,6 +995,76 @@ pub fn update_user_password_and_delete_tokens_with_audit(
     finish_immediate_transaction(&connection, result)
 }
 
+/// Reset a user's credentials only while the requesting actor remains an administrator.
+///
+/// # Arguments
+///
+/// * `auth_db_path` - Path to the auth SQLite database.
+/// * `actor_id` - Administrator requesting the reset.
+/// * `user_id` - Target user identifier.
+/// * `password_hash` - Replacement password hash.
+/// * `salt` - Replacement salt.
+/// * `now` - Current Unix timestamp.
+/// * `audit` - Required completion audit event.
+///
+/// # Returns
+///
+/// True when the actor remained authorized and the target credential rotation committed.
+pub fn update_user_password_as_administrator_with_audit(
+    auth_db_path: impl AsRef<Path>,
+    actor_id: UserId,
+    user_id: UserId,
+    password_hash: &str,
+    salt: &str,
+    now: f64,
+    audit: &SecurityAuditEvent,
+) -> Result<bool, AuthRepositoryError> {
+    let connection = open_auth_connection(auth_db_path)?;
+    connection.execute("BEGIN IMMEDIATE", [])?;
+    let result = require_administrator_actor(&connection, actor_id)
+        .and_then(|()| {
+            update_user_password_and_delete_tokens_in_transaction(
+                &connection,
+                user_id,
+                password_hash,
+                salt,
+                now,
+            )
+        })
+        .and_then(|did_update| {
+            if did_update {
+                insert_required_security_audit_event(
+                    &connection,
+                    &audit
+                        .clone()
+                        .with_actor_id(actor_id.value())
+                        .with_target_id(user_id.value()),
+                )?;
+            }
+            Ok(did_update)
+        });
+    finish_immediate_transaction(&connection, result)
+}
+
+fn require_administrator_actor(
+    connection: &Connection,
+    actor_id: UserId,
+) -> Result<(), AuthRepositoryError> {
+    let is_administrator = connection
+        .query_row(
+            "SELECT is_admin FROM users WHERE id = ?1",
+            [actor_id.value()],
+            |row| row.get::<_, i64>(0),
+        )
+        .optional()?
+        .is_some_and(|value| value != 0);
+    if is_administrator {
+        Ok(())
+    } else {
+        Err(AuthRepositoryError::AdministratorActorForbidden)
+    }
+}
+
 /// Replace an observed password row, revoke tokens, and audit the change atomically.
 ///
 /// # Arguments
@@ -1742,8 +1815,8 @@ mod tests {
         replace_login_access_token, replace_login_access_token_if_generation_matches_with_audit,
         revoke_user_invite_code_with_audit, rotate_user_invite_code_with_audit,
         update_user_password_and_delete_tokens, update_user_password_and_delete_tokens_with_audit,
-        verify_access_token_hash, AuthRepositoryError, AuthUserRow, InviteCodeRow,
-        UserCredentialRow,
+        update_user_password_as_administrator_with_audit, verify_access_token_hash,
+        AuthRepositoryError, AuthUserRow, InviteCodeRow, UserCredentialRow,
     };
     use crate::{list_security_audit_events, SecurityAuditEvent};
 
@@ -2887,5 +2960,68 @@ mod tests {
             count_tokens_by_hash(&auth_db_path, "legacy-upgrade-token"),
             1
         );
+    }
+
+    #[test]
+    fn administrator_password_reset_rejects_actor_demoted_after_authorization() {
+        let (_temp_dir, auth_db_path, actor_id) = access_token_fixture();
+        let connection = open_auth_connection(&auth_db_path).expect("auth connection should open");
+        connection
+            .execute(
+                "INSERT INTO users \
+                 (username, password_hash, salt, is_admin, created_at, updated_at) \
+                 VALUES ('reset_target', 'original-hash', 'original-salt', 1, 1.0, 1.0)",
+                [],
+            )
+            .expect("reset target should insert");
+        let target_id = UserId(connection.last_insert_rowid());
+        drop(connection);
+        insert_raw_access_token(
+            &auth_db_path,
+            target_id,
+            "reset-target-token",
+            "integration",
+            4_000_000_000.0,
+            2.0,
+        );
+        let original = find_user_credentials_by_id(&auth_db_path, target_id)
+            .expect("target credentials should load")
+            .expect("reset target should exist");
+        let audit = SecurityAuditEvent::new("user_password_reset", "completed")
+            .with_actor_id(actor_id.value())
+            .with_target_id(target_id.value());
+        let connection = open_auth_connection(&auth_db_path).expect("auth connection should open");
+        connection
+            .execute(
+                "UPDATE users SET is_admin = 0 WHERE id = ?1",
+                [actor_id.value()],
+            )
+            .expect("actor demotion should commit");
+        drop(connection);
+
+        let result = update_user_password_as_administrator_with_audit(
+            &auth_db_path,
+            actor_id,
+            target_id,
+            "replacement-hash",
+            "",
+            3.0,
+            &audit,
+        );
+
+        assert!(matches!(
+            result,
+            Err(AuthRepositoryError::AdministratorActorForbidden)
+        ));
+        assert_eq!(
+            find_user_credentials_by_id(&auth_db_path, target_id)
+                .expect("target credentials should reload")
+                .expect("reset target should remain"),
+            original
+        );
+        assert_eq!(count_tokens_by_hash(&auth_db_path, "reset-target-token"), 1);
+        assert!(list_security_audit_events(&auth_db_path)
+            .expect("audit rows should load")
+            .is_empty());
     }
 }

@@ -1325,12 +1325,31 @@ pub fn upsert_runtime_settings(
     values: &HashMap<String, Option<String>>,
     secret_pool_updates: &HashMap<String, RuntimeSecretPoolUpdate>,
 ) -> Result<Vec<RuntimeSettingInfo>, BusinessRepositoryError> {
-    upsert_runtime_settings_with_audit(auth_db_path, codec, values, secret_pool_updates, None)
+    upsert_runtime_settings_inner(auth_db_path, None, codec, values, secret_pool_updates, None)
 }
 
-/// Upsert managed runtime settings and persist a required audit event atomically.
+/// Upsert settings after revalidating the administrative actor and persist its audit.
 pub fn upsert_runtime_settings_with_audit(
     auth_db_path: impl AsRef<Path>,
+    actor_id: UserId,
+    codec: &SecretCodec,
+    values: &HashMap<String, Option<String>>,
+    secret_pool_updates: &HashMap<String, RuntimeSecretPoolUpdate>,
+    audit: Option<&SecurityAuditEvent>,
+) -> Result<Vec<RuntimeSettingInfo>, BusinessRepositoryError> {
+    upsert_runtime_settings_inner(
+        auth_db_path,
+        Some(actor_id),
+        codec,
+        values,
+        secret_pool_updates,
+        audit,
+    )
+}
+
+fn upsert_runtime_settings_inner(
+    auth_db_path: impl AsRef<Path>,
+    actor_id: Option<UserId>,
     codec: &SecretCodec,
     values: &HashMap<String, Option<String>>,
     secret_pool_updates: &HashMap<String, RuntimeSecretPoolUpdate>,
@@ -1339,6 +1358,9 @@ pub fn upsert_runtime_settings_with_audit(
     let mut connection = open_business_connection(auth_db_path.as_ref())?;
     let now = now_seconds();
     let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    if let Some(actor_id) = actor_id {
+        require_administrator_actor(&transaction, actor_id)?;
+    }
     let existing = read_runtime_setting_rows(&transaction)?;
     let fields = values
         .keys()
@@ -2109,6 +2131,17 @@ mod tests {
         let temp_dir = tempdir().expect("temp dir should be created");
         let auth_db_path = temp_dir.path().join("auth.sqlite");
         migrate_auth_database(&auth_db_path).expect("auth database should migrate");
+        let connection = Connection::open(&auth_db_path).expect("auth database should open");
+        connection
+            .execute(
+                "INSERT INTO users \
+                 (username, password_hash, salt, is_admin, created_at, updated_at) \
+                 VALUES ('runtime_admin', 'fixture-hash', 'fixture-salt', 1, 1.0, 1.0)",
+                [],
+            )
+            .expect("runtime administrator should insert");
+        let actor_id = UserId(connection.last_insert_rowid());
+        drop(connection);
         let codec = SecretCodec::from_key([53_u8; 32]);
         let defaults =
             list_runtime_settings(&auth_db_path, &codec).expect("proxy defaults should load");
@@ -2137,6 +2170,7 @@ mod tests {
 
         let error = upsert_runtime_settings_with_audit(
             &auth_db_path,
+            actor_id,
             &codec,
             &enabled_without_url,
             &HashMap::new(),
@@ -3051,5 +3085,57 @@ mod tests {
         assert_eq!(captcha.value, "");
         assert_eq!(captcha.masked_value, "");
         assert!(!captcha.has_value);
+    }
+
+    #[test]
+    fn audited_runtime_setting_updates_reject_demoted_actor() {
+        let temp_dir = tempdir().expect("temp dir should be created");
+        let auth_db_path = temp_dir.path().join("auth.sqlite");
+        migrate_auth_database(&auth_db_path).expect("auth database should migrate");
+        let connection = Connection::open(&auth_db_path).expect("auth database should open");
+        let mut administrator_ids = Vec::new();
+        for username in ["runtime_authority", "runtime_stale_actor"] {
+            connection
+                .execute(
+                    "INSERT INTO users \
+                     (username, password_hash, salt, is_admin, created_at, updated_at) \
+                     VALUES (?1, 'fixture-hash', 'fixture-salt', 1, 1.0, 1.0)",
+                    [username],
+                )
+                .expect("fixture administrator should insert");
+            administrator_ids.push(UserId(connection.last_insert_rowid()));
+        }
+        let authority = administrator_ids[0];
+        let stale_actor = administrator_ids[1];
+        drop(connection);
+        crate::set_user_admin(&auth_db_path, authority, stale_actor, false)
+            .expect("stale actor should be demoted");
+        let codec = SecretCodec::from_key([73_u8; 32]);
+        let audit = SecurityAuditEvent::new("runtime_settings_update", "completed")
+            .with_actor_id(stale_actor.value());
+
+        let result = upsert_runtime_settings_with_audit(
+            &auth_db_path,
+            stale_actor,
+            &codec,
+            &HashMap::from([("log_filter".to_string(), Some("debug".to_string()))]),
+            &HashMap::new(),
+            Some(&audit),
+        );
+
+        assert!(matches!(
+            result,
+            Err(BusinessRepositoryError::AdministratorActorForbidden)
+        ));
+        let connection = Connection::open(&auth_db_path).expect("auth database should open");
+        let runtime_count: i64 = connection
+            .query_row("SELECT COUNT(*) FROM runtime_settings", [], |row| {
+                row.get(0)
+            })
+            .expect("runtime settings should be countable");
+        assert_eq!(runtime_count, 0);
+        assert!(crate::list_security_audit_events(&auth_db_path)
+            .expect("audit rows should load")
+            .is_empty());
     }
 }

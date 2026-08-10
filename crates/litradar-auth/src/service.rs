@@ -19,7 +19,8 @@ use litradar_storage::{
     list_access_tokens, random_hex, register_user_with_invite_and_audit,
     replace_login_access_token_if_generation_matches_with_audit,
     revoke_user_invite_code_with_audit, rotate_user_invite_code_with_audit,
-    update_user_password_and_delete_tokens_with_audit, verify_access_token_hash,
+    update_user_password_and_delete_tokens_with_audit,
+    update_user_password_as_administrator_with_audit, verify_access_token_hash,
     AuthRepositoryError, AuthUserRow, InviteCodeRow, SecurityAuditEvent, UserCredentialRow,
 };
 
@@ -780,6 +781,39 @@ impl AuthService {
         )?)
     }
 
+    /// Reset a password only while the requesting actor remains an administrator.
+    ///
+    /// # Arguments
+    ///
+    /// * `actor_id` - Administrator requesting the reset.
+    /// * `user_id` - Target user identifier.
+    /// * `new_password` - Replacement password.
+    /// * `audit` - Required completion audit event.
+    ///
+    /// # Returns
+    ///
+    /// True when the actor remained authorized and the target reset committed.
+    pub fn reset_password_as_administrator_with_audit(
+        &self,
+        actor_id: UserId,
+        user_id: UserId,
+        new_password: &str,
+        audit: SecurityAuditEvent,
+    ) -> Result<bool, AuthServiceError> {
+        validate_new_password(new_password)?;
+        let password_hash = hash_password(new_password)?;
+        let legacy_salt = String::new();
+        Ok(update_user_password_as_administrator_with_audit(
+            &self.auth_db_path,
+            actor_id,
+            user_id,
+            &password_hash,
+            &legacy_salt,
+            now_seconds(),
+            &audit,
+        )?)
+    }
+
     /// Create a one-time invite code for a user.
     ///
     /// # Arguments
@@ -1031,7 +1065,7 @@ mod tests {
     use litradar_domain::{InviteCodeStatus, UserId, DEFAULT_INVITE_CODE_TTL_SECONDS};
     use litradar_storage::{
         bootstrap_admin, count_users, find_user_credentials_by_id, migrate_auth_database,
-        AuthRepositoryError, SecurityAuditEvent, UserCredentialRow,
+        set_user_admin, AuthRepositoryError, SecurityAuditEvent, UserCredentialRow,
     };
     use tempfile::tempdir;
 
@@ -1565,6 +1599,56 @@ mod tests {
         assert!(!service
             .reset_password(UserId(i64::MAX), "unused-password")
             .expect("missing-user reset should run"));
+    }
+
+    #[test]
+    fn administrator_reset_rejects_actor_demoted_after_authorization() {
+        let temp_dir = tempdir().expect("temporary directory should be created");
+        let auth_db_path = temp_dir.path().join("auth.sqlite");
+        migrate_auth_database(&auth_db_path).expect("auth database should migrate");
+        let service = AuthService::new(&auth_db_path);
+        let authority = service
+            .bootstrap_admin("reset_authority", STRONG_PASSWORD)
+            .expect("authority administrator should bootstrap");
+        let invite = service
+            .create_invite_code(authority.id)
+            .expect("fixture invite should create");
+        let stale_actor = service
+            .register(
+                "reset_stale_actor",
+                "stale-actor-password",
+                Some(&invite.code),
+            )
+            .expect("stale actor should register");
+        set_user_admin(&auth_db_path, authority.id, stale_actor.id, true)
+            .expect("stale actor should be promoted");
+        let audit = SecurityAuditEvent::new("user_password_reset", "completed")
+            .with_actor_id(stale_actor.id.value())
+            .with_target_id(authority.id.value());
+        set_user_admin(&auth_db_path, authority.id, stale_actor.id, false)
+            .expect("stale actor should be demoted");
+
+        let error = service
+            .reset_password_as_administrator_with_audit(
+                stale_actor.id,
+                authority.id,
+                "unauthorized-replacement",
+                audit,
+            )
+            .expect_err("demoted actor must not reset the authority password");
+
+        assert!(matches!(
+            error,
+            AuthServiceError::Repository(AuthRepositoryError::AdministratorActorForbidden)
+        ));
+        assert!(service
+            .verify_user("reset_authority", STRONG_PASSWORD)
+            .expect("original password should verify")
+            .is_some());
+        assert!(service
+            .verify_user("reset_authority", "unauthorized-replacement")
+            .expect("replacement password should be rejected")
+            .is_none());
     }
 
     #[test]

@@ -233,6 +233,8 @@ SQLite 保证每个用户最多一个 queued/active 手动任务；同一用户�
 | `GET` / `POST`   | `/api/admin/announcements`                   | 列出或创建公告                     |
 | `PUT` / `DELETE` | `/api/admin/announcements/{announcement_id}` | 更新或删除公告                     |
 
+所有管理写请求都会在目标 storage 事务取得 `BEGIN IMMEDIATE` 写锁后重新读取 actor 的当前管理员状态。若撤权先提交，即使请求已通过路由入口检查或已经完成密码 KDF/输入校验，该写入也返回固定 `403` 且不改变目标、令牌或完成审计；若写事务先提交，则撤权在其后线性化。读请求仍使用入口身份快照，不产生持久副作用。
+
 管理员创建邀请码的 JSON body 可省略；可选字段为绝对 Unix 秒 `expires_at`（必须晚于当前时间且最多 365 天）和 `max_uses`（`1..=1000`）。省略时仍使用 7 天、1 次。删除路由保留 HTTP `DELETE` 兼容性，但只写入 `revoked_at`，不会物理删除兑换历史。
 
 计划任务只接受固定的类型化 job。内嵌调度器将已验证字段转换为当前可执行文件加 `index`、`notify` 或 `push` 子命令的完整 argv，不会执行 shell 命令。应用终止时，活动子进程会被结束并等待，运行状态保存为 `cancelled`。旧 `legacy_command` 只供审阅，不能启用或执行。

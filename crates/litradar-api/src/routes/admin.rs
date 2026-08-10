@@ -256,6 +256,7 @@ pub(crate) async fn reset_password(
     Json(body): Json<AdminResetPassword>,
 ) -> Result<Json<OkResponse>, ApiError> {
     let (admin, _) = require_admin_user(&state, &headers).await?;
+    let actor_id = admin.id;
     let mut audit = AdminAudit::new("user_password_reset", admin.id.0, user_id);
     let request_id = request_id_text(request_id.as_ref());
     if !is_valid_new_password(&body.new_password) {
@@ -283,7 +284,12 @@ pub(crate) async fn reset_password(
     );
     let reset_result = state
         .run_kdf_blocking(move || {
-            service.reset_password_with_audit(UserId(user_id), &new_password, completion)
+            service.reset_password_as_administrator_with_audit(
+                actor_id,
+                UserId(user_id),
+                &new_password,
+                completion,
+            )
         })
         .await;
     let did_reset = match reset_result {
@@ -433,6 +439,7 @@ pub(crate) async fn create_invite_code(
     body: Option<Json<AdminInviteCodeCreate>>,
 ) -> Result<Json<AdminInviteCodeInfo>, ApiError> {
     let (admin, _) = require_admin_user(&state, &headers).await?;
+    let actor_id = admin.id;
     let mut audit = AdminAudit::new("invite_create", admin.id.0, 0);
     let request_id = request_id_text(request_id.as_ref());
     let body = body.map(|Json(body)| body).unwrap_or_default();
@@ -445,6 +452,7 @@ pub(crate) async fn create_invite_code(
         move |storage, event| {
             litradar_storage::admin_create_invite_code_with_policy_and_audit(
                 storage.auth_db_path(),
+                actor_id,
                 body.expires_at,
                 body.max_uses,
                 Some(&event),
@@ -484,6 +492,7 @@ pub(crate) async fn revoke_admin_invite_code(
     request_id: Option<Extension<RequestId>>,
 ) -> Result<Json<OkResponse>, ApiError> {
     let (admin, _) = require_admin_user(&state, &headers).await?;
+    let actor_id = admin.id;
     let mut audit = AdminAudit::new("invite_revoke", admin.id.0, code_id);
     let request_id = request_id_text(request_id.as_ref());
     let did_revoke = run_audited_business(
@@ -495,6 +504,7 @@ pub(crate) async fn revoke_admin_invite_code(
         move |storage, event| {
             litradar_storage::revoke_admin_invite_code_with_audit(
                 storage.auth_db_path(),
+                actor_id,
                 code_id,
                 Some(&event),
             )
@@ -573,6 +583,7 @@ pub(crate) async fn create_scheduled_task(
     Json(body): Json<ScheduledTaskCreate>,
 ) -> Result<Json<ScheduledTaskInfo>, ApiError> {
     let (admin, _) = require_admin_user(&state, &headers).await?;
+    let actor_id = admin.id;
     let mut audit = AdminAudit::new("scheduled_task_create", admin.id.0, 0);
     let request_id = request_id_text(request_id.as_ref());
     let validation = validate_scheduled_task_payload(
@@ -613,6 +624,7 @@ pub(crate) async fn create_scheduled_task(
         move |storage, event| {
             litradar_storage::create_scheduled_task_with_audit(
                 storage.auth_db_path(),
+                actor_id,
                 litradar_storage::ScheduledTaskCreateParams {
                     name: &name,
                     job: &job,
@@ -650,6 +662,7 @@ pub(crate) async fn update_scheduled_task(
     Json(body): Json<ScheduledTaskUpdate>,
 ) -> Result<Json<ScheduledTaskInfo>, ApiError> {
     let (admin, _) = require_admin_user(&state, &headers).await?;
+    let actor_id = admin.id;
     let mut audit = AdminAudit::new("scheduled_task_update", admin.id.0, task_id);
     let request_id = request_id_text(request_id.as_ref());
     let validation = validate_scheduled_task_payload(
@@ -690,6 +703,7 @@ pub(crate) async fn update_scheduled_task(
         move |storage, event| {
             litradar_storage::update_scheduled_task_with_audit(
                 storage.auth_db_path(),
+                actor_id,
                 litradar_storage::ScheduledTaskUpdateParams {
                     task_id,
                     name: name.as_deref(),
@@ -737,6 +751,7 @@ pub(crate) async fn delete_scheduled_task(
     request_id: Option<Extension<RequestId>>,
 ) -> Result<Json<OkResponse>, ApiError> {
     let (admin, _) = require_admin_user(&state, &headers).await?;
+    let actor_id = admin.id;
     let mut audit = AdminAudit::new("scheduled_task_delete", admin.id.0, task_id);
     let request_id = request_id_text(request_id.as_ref());
     let did_delete = run_audited_business(
@@ -748,6 +763,7 @@ pub(crate) async fn delete_scheduled_task(
         move |storage, event| {
             litradar_storage::delete_scheduled_task_with_audit(
                 storage.auth_db_path(),
+                actor_id,
                 task_id,
                 Some(&event),
             )
@@ -857,6 +873,7 @@ pub(crate) async fn update_runtime_settings(
     Json(body): Json<RuntimeSettingsUpdate>,
 ) -> Result<Json<Vec<RuntimeSettingInfo>>, ApiError> {
     let (admin, _) = require_admin_user(&state, &headers).await?;
+    let actor_id = admin.id;
     let mut audit = AdminAudit::new("runtime_settings_update", admin.id.0, 0);
     let request_id = request_id_text(request_id.as_ref());
     if let Err(error) = validate_runtime_settings_update(&body) {
@@ -895,6 +912,7 @@ pub(crate) async fn update_runtime_settings(
         move |storage, event| {
             litradar_storage::upsert_runtime_settings_with_audit(
                 storage.auth_db_path(),
+                actor_id,
                 &secret_codec,
                 &values,
                 &secret_pool_updates,
@@ -943,6 +961,7 @@ pub(crate) async fn create_announcement(
     Json(body): Json<AnnouncementCreate>,
 ) -> Result<Json<AnnouncementInfo>, ApiError> {
     let (admin, _) = require_admin_user(&state, &headers).await?;
+    let actor_id = admin.id;
     let mut audit = AdminAudit::new("announcement_create", admin.id.0, 0);
     let request_id = request_id_text(request_id.as_ref());
     let validation =
@@ -975,6 +994,7 @@ pub(crate) async fn create_announcement(
         move |storage, event| {
             litradar_storage::create_announcement_with_audit(
                 storage.auth_db_path(),
+                actor_id,
                 &title,
                 &message,
                 &priority,
@@ -1007,6 +1027,7 @@ pub(crate) async fn update_announcement(
     Json(body): Json<AnnouncementUpdate>,
 ) -> Result<Json<AnnouncementInfo>, ApiError> {
     let (admin, _) = require_admin_user(&state, &headers).await?;
+    let actor_id = admin.id;
     let mut audit = AdminAudit::new("announcement_update", admin.id.0, announcement_id);
     let request_id = request_id_text(request_id.as_ref());
     let validation = validate_announcement_payload(
@@ -1041,11 +1062,14 @@ pub(crate) async fn update_announcement(
         move |storage, event| {
             litradar_storage::update_announcement_with_audit(
                 storage.auth_db_path(),
-                announcement_id,
-                title.as_deref(),
-                message.as_deref(),
-                priority.as_deref(),
-                enabled,
+                actor_id,
+                litradar_storage::AnnouncementUpdateParams {
+                    announcement_id,
+                    title: title.as_deref(),
+                    message: message.as_deref(),
+                    priority: priority.as_deref(),
+                    enabled,
+                },
                 Some(&event),
             )
         },
@@ -1083,6 +1107,7 @@ pub(crate) async fn delete_announcement(
     request_id: Option<Extension<RequestId>>,
 ) -> Result<Json<OkResponse>, ApiError> {
     let (admin, _) = require_admin_user(&state, &headers).await?;
+    let actor_id = admin.id;
     let mut audit = AdminAudit::new("announcement_delete", admin.id.0, announcement_id);
     let request_id = request_id_text(request_id.as_ref());
     let did_delete = run_audited_business(
@@ -1094,6 +1119,7 @@ pub(crate) async fn delete_announcement(
         move |storage, event| {
             litradar_storage::delete_announcement_with_audit(
                 storage.auth_db_path(),
+                actor_id,
                 announcement_id,
                 Some(&event),
             )

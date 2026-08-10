@@ -5,6 +5,21 @@ use super::*;
 
 const ADMIN_INVITE_CODE_BYTES: usize = 8;
 
+/// Borrowed values for one announcement update.
+#[derive(Clone, Copy, Debug)]
+pub struct AnnouncementUpdateParams<'a> {
+    /// Announcement row identifier.
+    pub announcement_id: i64,
+    /// Optional replacement title.
+    pub title: Option<&'a str>,
+    /// Optional replacement message.
+    pub message: Option<&'a str>,
+    /// Optional replacement priority.
+    pub priority: Option<&'a str>,
+    /// Optional replacement enabled flag.
+    pub enabled: Option<bool>,
+}
+
 /// List all users with admin dashboard counts.
 ///
 /// # Arguments
@@ -157,17 +172,6 @@ pub fn delete_user_with_audit(
     Ok(())
 }
 
-fn require_administrator_actor(
-    connection: &Connection,
-    actor_id: UserId,
-) -> Result<(), BusinessRepositoryError> {
-    if user_admin_flag(connection, actor_id)? == Some(true) {
-        Ok(())
-    } else {
-        Err(BusinessRepositoryError::AdministratorActorForbidden)
-    }
-}
-
 fn user_admin_flag(
     connection: &Connection,
     user_id: UserId,
@@ -255,18 +259,19 @@ pub fn list_all_invite_codes(
 pub fn admin_create_invite_code(
     auth_db_path: impl AsRef<Path>,
 ) -> Result<AdminInviteCodeInfo, BusinessRepositoryError> {
-    admin_create_invite_code_with_audit(auth_db_path, None)
+    admin_create_invite_code_inner(auth_db_path, None, None, None, None)
 }
 
-/// Create an administrator invite and persist a required audit event atomically.
+/// Create an invite after revalidating the administrative actor and persist its audit.
 pub fn admin_create_invite_code_with_audit(
     auth_db_path: impl AsRef<Path>,
+    actor_id: UserId,
     audit: Option<&SecurityAuditEvent>,
 ) -> Result<AdminInviteCodeInfo, BusinessRepositoryError> {
-    admin_create_invite_code_with_policy_and_audit(auth_db_path, None, None, audit)
+    admin_create_invite_code_with_policy_and_audit(auth_db_path, actor_id, None, None, audit)
 }
 
-/// Create an administrator invite with bounded policy overrides and atomic audit persistence.
+/// Create an invite with policy overrides after revalidating the administrative actor.
 ///
 /// # Arguments
 ///
@@ -280,6 +285,17 @@ pub fn admin_create_invite_code_with_audit(
 /// Created invite code payload.
 pub fn admin_create_invite_code_with_policy_and_audit(
     auth_db_path: impl AsRef<Path>,
+    actor_id: UserId,
+    expires_at: Option<f64>,
+    max_uses: Option<i64>,
+    audit: Option<&SecurityAuditEvent>,
+) -> Result<AdminInviteCodeInfo, BusinessRepositoryError> {
+    admin_create_invite_code_inner(auth_db_path, Some(actor_id), expires_at, max_uses, audit)
+}
+
+fn admin_create_invite_code_inner(
+    auth_db_path: impl AsRef<Path>,
+    actor_id: Option<UserId>,
     expires_at: Option<f64>,
     max_uses: Option<i64>,
     audit: Option<&SecurityAuditEvent>,
@@ -288,6 +304,9 @@ pub fn admin_create_invite_code_with_policy_and_audit(
         .map_err(|error| BusinessRepositoryError::Sqlite(error.into_sqlite_error()))?;
     let mut connection = open_business_connection(auth_db_path)?;
     let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    if let Some(actor_id) = actor_id {
+        require_administrator_actor(&transaction, actor_id)?;
+    }
     let now = now_seconds();
     let (expires_at, max_uses) = resolve_invite_policy(now, expires_at, max_uses)?;
     transaction.execute(
@@ -335,10 +354,10 @@ pub fn revoke_admin_invite_code(
     auth_db_path: impl AsRef<Path>,
     code_id: i64,
 ) -> Result<bool, BusinessRepositoryError> {
-    revoke_admin_invite_code_with_audit(auth_db_path, code_id, None)
+    revoke_admin_invite_code_inner(auth_db_path, None, code_id, None)
 }
 
-/// Revoke an invite and persist a required audit event atomically.
+/// Revoke an invite after revalidating the administrative actor and persist its audit.
 ///
 /// # Arguments
 ///
@@ -351,11 +370,24 @@ pub fn revoke_admin_invite_code(
 /// True when an unrevoked row was updated.
 pub fn revoke_admin_invite_code_with_audit(
     auth_db_path: impl AsRef<Path>,
+    actor_id: UserId,
+    code_id: i64,
+    audit: Option<&SecurityAuditEvent>,
+) -> Result<bool, BusinessRepositoryError> {
+    revoke_admin_invite_code_inner(auth_db_path, Some(actor_id), code_id, audit)
+}
+
+fn revoke_admin_invite_code_inner(
+    auth_db_path: impl AsRef<Path>,
+    actor_id: Option<UserId>,
     code_id: i64,
     audit: Option<&SecurityAuditEvent>,
 ) -> Result<bool, BusinessRepositoryError> {
     let mut connection = open_business_connection(auth_db_path)?;
     let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    if let Some(actor_id) = actor_id {
+        require_administrator_actor(&transaction, actor_id)?;
+    }
     let count = transaction.execute(
         "UPDATE invite_codes SET revoked_at = MAX(?1, created_at)
          WHERE id = ?2 AND revoked_at IS NULL",
@@ -463,12 +495,33 @@ pub fn create_announcement(
     priority: &str,
     enabled: bool,
 ) -> Result<AnnouncementInfo, BusinessRepositoryError> {
-    create_announcement_with_audit(auth_db_path, title, message, priority, enabled, None)
+    create_announcement_inner(auth_db_path, None, title, message, priority, enabled, None)
 }
 
-/// Create an announcement and persist a required audit event atomically.
+/// Create an announcement after revalidating the administrative actor and persist its audit.
 pub fn create_announcement_with_audit(
     auth_db_path: impl AsRef<Path>,
+    actor_id: UserId,
+    title: &str,
+    message: &str,
+    priority: &str,
+    enabled: bool,
+    audit: Option<&SecurityAuditEvent>,
+) -> Result<AnnouncementInfo, BusinessRepositoryError> {
+    create_announcement_inner(
+        auth_db_path,
+        Some(actor_id),
+        title,
+        message,
+        priority,
+        enabled,
+        audit,
+    )
+}
+
+fn create_announcement_inner(
+    auth_db_path: impl AsRef<Path>,
+    actor_id: Option<UserId>,
     title: &str,
     message: &str,
     priority: &str,
@@ -481,6 +534,9 @@ pub fn create_announcement_with_audit(
     litradar_domain::validate_announcement_fields(Some(title), Some(message), Some(&priority))?;
     let mut connection = open_business_connection(auth_db_path)?;
     let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    if let Some(actor_id) = actor_id {
+        require_administrator_actor(&transaction, actor_id)?;
+    }
     let now = now_seconds();
     transaction.execute(
         "INSERT INTO announcements (title, message, priority, enabled, created_at, updated_at) \
@@ -522,34 +578,49 @@ pub fn update_announcement(
     priority: Option<&str>,
     enabled: Option<bool>,
 ) -> Result<Option<AnnouncementInfo>, BusinessRepositoryError> {
-    update_announcement_with_audit(
+    update_announcement_inner(
         auth_db_path,
-        announcement_id,
-        title,
-        message,
-        priority,
-        enabled,
+        None,
+        AnnouncementUpdateParams {
+            announcement_id,
+            title,
+            message,
+            priority,
+            enabled,
+        },
         None,
     )
 }
 
-/// Update an announcement and persist a required audit event atomically.
+/// Update an announcement after revalidating the administrative actor and persist its audit.
 pub fn update_announcement_with_audit(
     auth_db_path: impl AsRef<Path>,
-    announcement_id: i64,
-    title: Option<&str>,
-    message: Option<&str>,
-    priority: Option<&str>,
-    enabled: Option<bool>,
+    actor_id: UserId,
+    update: AnnouncementUpdateParams<'_>,
     audit: Option<&SecurityAuditEvent>,
 ) -> Result<Option<AnnouncementInfo>, BusinessRepositoryError> {
-    let title = title.map(str::trim);
-    let message = message.map(str::trim);
-    let priority = priority.map(|value| value.trim().to_ascii_lowercase());
+    update_announcement_inner(auth_db_path, Some(actor_id), update, audit)
+}
+
+fn update_announcement_inner(
+    auth_db_path: impl AsRef<Path>,
+    actor_id: Option<UserId>,
+    update: AnnouncementUpdateParams<'_>,
+    audit: Option<&SecurityAuditEvent>,
+) -> Result<Option<AnnouncementInfo>, BusinessRepositoryError> {
+    let title = update.title.map(str::trim);
+    let message = update.message.map(str::trim);
+    let priority = update
+        .priority
+        .map(|value| value.trim().to_ascii_lowercase());
     litradar_domain::validate_announcement_fields(title, message, priority.as_deref())?;
     let mut connection = open_business_connection(auth_db_path)?;
     let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-    let Some(current) = get_announcement_from_connection(&transaction, announcement_id)? else {
+    if let Some(actor_id) = actor_id {
+        require_administrator_actor(&transaction, actor_id)?;
+    }
+    let Some(current) = get_announcement_from_connection(&transaction, update.announcement_id)?
+    else {
         return Ok(None);
     };
     transaction.execute(
@@ -559,17 +630,17 @@ pub fn update_announcement_with_audit(
             title.unwrap_or(&current.title),
             message.unwrap_or(&current.message),
             priority.as_deref().unwrap_or(&current.priority),
-            enabled.unwrap_or(current.enabled) as i64,
+            update.enabled.unwrap_or(current.enabled) as i64,
             now_seconds(),
-            announcement_id
+            update.announcement_id
         ],
     )?;
-    let announcement = get_announcement_from_connection(&transaction, announcement_id)?;
+    let announcement = get_announcement_from_connection(&transaction, update.announcement_id)?;
     if announcement.is_some() {
         if let Some(audit) = audit {
             insert_required_security_audit_event(
                 &transaction,
-                &audit.clone().with_target_id(announcement_id),
+                &audit.clone().with_target_id(update.announcement_id),
             )?;
         }
     }
@@ -591,17 +662,30 @@ pub fn delete_announcement(
     auth_db_path: impl AsRef<Path>,
     announcement_id: i64,
 ) -> Result<bool, BusinessRepositoryError> {
-    delete_announcement_with_audit(auth_db_path, announcement_id, None)
+    delete_announcement_inner(auth_db_path, None, announcement_id, None)
 }
 
-/// Delete an announcement and persist a required audit event atomically.
+/// Delete an announcement after revalidating the administrative actor and persist its audit.
 pub fn delete_announcement_with_audit(
     auth_db_path: impl AsRef<Path>,
+    actor_id: UserId,
+    announcement_id: i64,
+    audit: Option<&SecurityAuditEvent>,
+) -> Result<bool, BusinessRepositoryError> {
+    delete_announcement_inner(auth_db_path, Some(actor_id), announcement_id, audit)
+}
+
+fn delete_announcement_inner(
+    auth_db_path: impl AsRef<Path>,
+    actor_id: Option<UserId>,
     announcement_id: i64,
     audit: Option<&SecurityAuditEvent>,
 ) -> Result<bool, BusinessRepositoryError> {
     let mut connection = open_business_connection(auth_db_path)?;
     let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    if let Some(actor_id) = actor_id {
+        require_administrator_actor(&transaction, actor_id)?;
+    }
     let count =
         transaction.execute("DELETE FROM announcements WHERE id = ?1", [announcement_id])?;
     if count > 0 {
@@ -954,9 +1038,11 @@ mod tests {
         let temp_dir = tempdir().expect("temp dir should be created");
         let auth_db_path = temp_dir.path().join("auth.sqlite");
         migrate_auth_database(&auth_db_path).expect("auth database should migrate");
+        let actor_id = insert_user(&auth_db_path, "invite_admin", true);
         let expires_at = now_seconds() + 3_600.0;
         let invite = admin_create_invite_code_with_policy_and_audit(
             &auth_db_path,
+            actor_id,
             Some(expires_at),
             Some(2),
             Some(&SecurityAuditEvent::new("invite_create", "completed")),
@@ -968,6 +1054,7 @@ mod tests {
 
         assert!(revoke_admin_invite_code_with_audit(
             &auth_db_path,
+            actor_id,
             invite.id,
             Some(&SecurityAuditEvent::new("invite_revoke", "completed")),
         )
@@ -983,12 +1070,19 @@ mod tests {
         assert!(stored.revoked_at.is_some());
 
         assert!(matches!(
-            admin_create_invite_code_with_policy_and_audit(&auth_db_path, Some(0.0), Some(1), None,),
+            admin_create_invite_code_with_policy_and_audit(
+                &auth_db_path,
+                actor_id,
+                Some(0.0),
+                Some(1),
+                None,
+            ),
             Err(BusinessRepositoryError::InvalidInvitePolicy)
         ));
         assert!(matches!(
             admin_create_invite_code_with_policy_and_audit(
                 &auth_db_path,
+                actor_id,
                 Some(now_seconds() + 3_600.0),
                 Some(litradar_domain::MAX_INVITE_CODE_USES + 1),
                 None,
@@ -1148,5 +1242,97 @@ mod tests {
             .expect("member flag should load"),
             Some(false)
         );
+    }
+
+    #[test]
+    fn audited_admin_content_mutations_reject_demoted_actor() {
+        let temp_dir = tempdir().expect("temp dir should be created");
+        let auth_db_path = temp_dir.path().join("auth.sqlite");
+        migrate_auth_database(&auth_db_path).expect("auth database should migrate");
+        let authority = insert_user(&auth_db_path, "authority_admin", true);
+        let stale_actor = insert_user(&auth_db_path, "stale_admin", true);
+        let invite = admin_create_invite_code(&auth_db_path).expect("fixture invite should create");
+        let announcement =
+            create_announcement(&auth_db_path, "Original", "Message", "normal", true)
+                .expect("fixture announcement should create");
+        set_user_admin(&auth_db_path, authority, stale_actor, false)
+            .expect("stale actor should be demoted");
+        let audit = SecurityAuditEvent::new("admin_mutation", "completed")
+            .with_actor_id(stale_actor.value());
+
+        assert!(matches!(
+            admin_create_invite_code_with_policy_and_audit(
+                &auth_db_path,
+                stale_actor,
+                None,
+                None,
+                Some(&audit),
+            ),
+            Err(BusinessRepositoryError::AdministratorActorForbidden)
+        ));
+        assert!(matches!(
+            revoke_admin_invite_code_with_audit(
+                &auth_db_path,
+                stale_actor,
+                invite.id,
+                Some(&audit),
+            ),
+            Err(BusinessRepositoryError::AdministratorActorForbidden)
+        ));
+        assert!(matches!(
+            create_announcement_with_audit(
+                &auth_db_path,
+                stale_actor,
+                "Unauthorized",
+                "Message",
+                "normal",
+                true,
+                Some(&audit),
+            ),
+            Err(BusinessRepositoryError::AdministratorActorForbidden)
+        ));
+        assert!(matches!(
+            update_announcement_with_audit(
+                &auth_db_path,
+                stale_actor,
+                AnnouncementUpdateParams {
+                    announcement_id: announcement.id,
+                    title: Some("Unauthorized"),
+                    message: None,
+                    priority: None,
+                    enabled: None,
+                },
+                Some(&audit),
+            ),
+            Err(BusinessRepositoryError::AdministratorActorForbidden)
+        ));
+        assert!(matches!(
+            delete_announcement_with_audit(
+                &auth_db_path,
+                stale_actor,
+                announcement.id,
+                Some(&audit),
+            ),
+            Err(BusinessRepositoryError::AdministratorActorForbidden)
+        ));
+
+        assert_eq!(
+            list_all_invite_codes(&auth_db_path)
+                .expect("invites should load")
+                .into_iter()
+                .filter(|candidate| candidate.status == InviteCodeStatus::Active)
+                .count(),
+            1
+        );
+        assert_eq!(
+            get_announcement(&auth_db_path, announcement.id)
+                .expect("announcement should load")
+                .expect("announcement should remain")
+                .title,
+            "Original"
+        );
+        assert!(crate::list_security_audit_events(&auth_db_path)
+            .expect("audit rows should load")
+            .is_empty());
     }
 }

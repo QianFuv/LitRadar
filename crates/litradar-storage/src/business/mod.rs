@@ -42,7 +42,7 @@ pub use admin::{
     delete_user, delete_user_with_audit, get_admin_stats, get_announcement, list_all_announcements,
     list_all_invite_codes, list_all_users, revoke_admin_invite_code,
     revoke_admin_invite_code_with_audit, set_user_admin, set_user_admin_with_audit,
-    update_announcement, update_announcement_with_audit,
+    update_announcement, update_announcement_with_audit, AnnouncementUpdateParams,
 };
 pub use delivery::{
     acknowledge_unknown_manual_delivery_run, acquire_delivery_lease, admit_delivery_run,
@@ -104,6 +104,26 @@ pub use security_audit::{
     DEFAULT_AUDIT_RETENTION_DAYS, MAX_AUDIT_RETENTION_DAYS, MIN_AUDIT_RETENTION_DAYS,
 };
 pub use shared::{count_weekly_articles, list_available_database_names, normalize_database_names};
+
+/// Require an administrative actor on the transaction's current user snapshot.
+pub(crate) fn require_administrator_actor(
+    connection: &Connection,
+    actor_id: UserId,
+) -> Result<(), BusinessRepositoryError> {
+    let is_administrator = connection
+        .query_row(
+            "SELECT is_admin FROM users WHERE id = ?1",
+            [actor_id.value()],
+            |row| row.get::<_, i64>(0),
+        )
+        .optional()?
+        .is_some_and(|value| value != 0);
+    if is_administrator {
+        Ok(())
+    } else {
+        Err(BusinessRepositoryError::AdministratorActorForbidden)
+    }
+}
 
 /// Repository errors for migrated business routes.
 #[derive(Debug)]
