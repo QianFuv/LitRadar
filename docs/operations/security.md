@@ -34,9 +34,9 @@ wc -c secrets/litradar.key
 
 ## 持久安全审计
 
-安全审计的权威记录是认证库 v9 的 append-only `security_audit_events`，不是可能丢弃的普通 tracing 队列。认证成功/失败/限流、密码和令牌操作、管理员权限与用户操作、邀请码、调度任务、运行设置和公告变更均使用固定 action/outcome/reason 分类；记录内部 actor/target ID、服务器 request ID 和必要的限流元数据，不记录密码、用户名、token、邀请码、原始 IP、请求体或业务内容。
+安全审计的权威记录是认证库 v9 的 append-only `security_audit_events`，不是可能丢弃的普通 tracing 队列。认证成功/失败、限流样本、密码和令牌操作、管理员权限与用户操作、邀请码、调度任务、运行设置和公告变更均使用固定 action/outcome/reason 分类；记录内部 actor/target ID、服务器 request ID 和必要的限流元数据，不记录密码、用户名、token、邀请码、原始 IP、请求体或业务内容。
 
-业务安全变更与必需审计行在同一个 immediate transaction 中提交。审计插入失败时变更整体回滚，API 返回 `503`；认证拒绝和限流在返回前同步追加。失败路径只向 `stderr` 输出固定 `audit.persistence_failed` 分类和进程内计数，不输出 SQLite 原始错误。普通日志过载不会影响已提交审计行。
+业务安全变更与必需审计行在同一个 immediate transaction 中提交。审计插入失败时变更整体回滚，API 返回 `503`；通过公开认证限流器的认证拒绝会在返回前同步追加。被限流的请求全部写入安全 tracing，但持久审计按认证操作与限流桶分类，每 60 秒最多同步写入一个代表性样本；样本携带该进程内单调增长的 `rejected_count`，未命中采样窗口的请求不会占用 blocking executor 或写 SQLite。失败路径只向 `stderr` 输出固定 `audit.persistence_failed` 分类和进程内计数，不输出 SQLite 原始错误。普通日志过载不会影响已提交审计行。
 
 ## 子进程树隔离
 
@@ -148,7 +148,7 @@ printf '%s\n' "$ADMIN_PASSWORD" |
 
 ## 登录和注册限流
 
-每个 `litradar serve` 进程按客户端 IP → 当前操作的规范化用户名 → 高阈值全局熔断器顺序检查 token bucket。前置桶拒绝后不会消耗后续额度：
+每个 `litradar serve` 进程在公开登录或注册请求进入字段校验、密码哈希或数据库写入前，按客户端 IP → 当前操作的规范化用户名 → 高阈值全局熔断器顺序检查 token bucket。前置桶拒绝后不会消耗后续额度：
 
 | 桶                     | burst | 补充速率 | 内存 key 上限   |
 | ---------------------- | ----: | -------- | --------------- |
@@ -162,7 +162,7 @@ printf '%s\n' "$ADMIN_PASSWORD" |
 
 `trusted_proxy_cidrs` 默认空。任意 `Forwarded`/`X-Forwarded-For` 都不能改变不可信直连 peer 的分桶；只有直连地址命中明确 CIDR 时才按右到左可信链取客户端地址。标准 `Forwarded` 优先，链必须全部是数值 IP/可选端口；无效链回退到直连代理地址的共享桶。不要把任意公网范围加入可信列表，可信代理也必须覆盖而不是盲目追加来自客户端的转发头。
 
-超过限制返回统一 `429`、数值 `Retry-After` 和相同 detail，不泄露用户名是否存在。结构化事件包含固定 `reason`、`bucket`、`source_class`、递增 `rejected_count` 和服务器生成的 `request_id`，不记录原始 IP、用户名或转发头。策略可由严格的 `auth_rate_limit_policy` JSON 调整，但 parser 要求全局桶容量/补充速率始终高于前置桶。
+超过限制返回统一 `429`、数值 `Retry-After` 和相同 detail，不泄露用户名是否存在。每个请求的结构化事件包含固定 `reason`、`bucket`、`source_class`、递增 `rejected_count` 和服务器生成的 `request_id`，不记录原始 IP、用户名或转发头；持久安全审计按操作与桶每 60 秒最多保存一个代表性事件，避免攻击流量转化为无上界的同步 SQLite 写入。策略可由严格的 `auth_rate_limit_policy` JSON 调整，但 parser 要求全局桶容量/补充速率始终高于前置桶。
 
 这些桶和计数只在单进程内存中，重启会清空。多副本或公网部署必须在可信网关使用共享限流（例如 Redis-backed gateway policy）；应用内全局桶只是额外熔断器，不能代替跨实例控制。
 

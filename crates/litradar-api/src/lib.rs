@@ -2602,6 +2602,78 @@ mod tests {
         miri,
         ignore = "Miri does not support Tokio's Windows IOCP runtime initialization"
     )]
+    async fn invalid_registration_audit_writes_have_a_fixed_burst_bound() {
+        let backend = TestBackend::new();
+        let app = backend.router();
+        let mut statuses = Vec::new();
+
+        for _ in 0..64 {
+            let response = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .method(Method::POST)
+                        .uri("/api/auth/register")
+                        .header(CONTENT_TYPE, "application/json")
+                        .body(Body::from(
+                            serde_json::json!({
+                                "username": "!",
+                                "password": "fixture-password",
+                                "invite_code": ""
+                            })
+                            .to_string(),
+                        ))
+                        .expect("registration request should build"),
+                )
+                .await
+                .expect("registration response should be returned");
+            statuses.push(response.status());
+        }
+
+        assert_eq!(
+            statuses
+                .iter()
+                .filter(|status| **status == StatusCode::BAD_REQUEST)
+                .count(),
+            5,
+            "unexpected registration statuses: {statuses:?}"
+        );
+        assert_eq!(
+            statuses
+                .iter()
+                .filter(|status| **status == StatusCode::TOO_MANY_REQUESTS)
+                .count(),
+            59
+        );
+        let durable = litradar_storage::list_security_audit_events(backend.auth_db_path())
+            .expect("bounded registration audit events should load")
+            .into_iter()
+            .filter(|event| event.action == "register")
+            .collect::<Vec<_>>();
+        assert_eq!(
+            durable
+                .iter()
+                .filter(|event| {
+                    event.outcome == "rejected" && event.reason == "validation_failed"
+                })
+                .count(),
+            5
+        );
+        assert_eq!(
+            durable
+                .iter()
+                .filter(|event| event.outcome == "rate_limited")
+                .count(),
+            1
+        );
+        assert_eq!(durable.len(), 6);
+    }
+
+    #[tokio::test]
+    #[cfg_attr(
+        miri,
+        ignore = "Miri does not support Tokio's Windows IOCP runtime initialization"
+    )]
     async fn auth_password_policy_rejects_weak_register_change_and_reset() {
         let backend = TestBackend::new();
         let admin = backend.authenticated_user("policy_admin", true);

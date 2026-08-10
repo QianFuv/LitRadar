@@ -17,6 +17,7 @@ use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 const DEFAULT_BLOCKING_CONCURRENCY: usize = 8;
 const DEFAULT_BLOCKING_QUEUE_TIMEOUT: Duration = Duration::from_secs(30);
 const DEFAULT_KDF_CONCURRENCY: usize = 2;
+const AUTH_RATE_LIMIT_AUDIT_INTERVAL_SECONDS: u64 = 60;
 
 /// State shared by API route handlers.
 #[derive(Clone)]
@@ -510,6 +511,8 @@ pub(crate) struct AuthRateLimitRejection {
     pub(crate) source_class: &'static str,
     /// Process-local count for this operation and bucket class.
     pub(crate) rejected_count: u64,
+    /// Whether this request owns the current durable audit sample.
+    pub(crate) should_persist_audit: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -568,6 +571,7 @@ struct AuthRateLimiter {
     global_register: TokenBucket,
     next_access_sequence: u64,
     rejection_counts: BTreeMap<(AuthAttemptKind, AuthRateLimitBucket), u64>,
+    last_audit_at: BTreeMap<(AuthAttemptKind, AuthRateLimitBucket), u64>,
 }
 
 impl AuthRateLimiter {
@@ -581,6 +585,7 @@ impl AuthRateLimiter {
             global_register: TokenBucket::full(policy.global_register, 0),
             next_access_sequence: 0,
             rejection_counts: BTreeMap::new(),
+            last_audit_at: BTreeMap::new(),
         }
     }
 
@@ -619,6 +624,7 @@ impl AuthRateLimiter {
                 AuthRateLimitBucket::ClientIp,
                 client_source.class,
                 retry_after_seconds,
+                now,
             ));
         }
 
@@ -636,6 +642,7 @@ impl AuthRateLimiter {
                 AuthRateLimitBucket::Username,
                 client_source.class,
                 retry_after_seconds,
+                now,
             ));
         }
 
@@ -651,6 +658,7 @@ impl AuthRateLimiter {
                 AuthRateLimitBucket::GlobalBreaker,
                 client_source.class,
                 retry_after_seconds,
+                now,
             ));
         }
         Ok(())
@@ -672,15 +680,24 @@ impl AuthRateLimiter {
         bucket: AuthRateLimitBucket,
         source_class: AuthClientSourceClass,
         retry_after_seconds: u64,
+        now: u64,
     ) -> AuthRateLimitRejection {
-        let rejected_count = self.rejection_counts.entry((kind, bucket)).or_default();
+        let key = (kind, bucket);
+        let rejected_count = self.rejection_counts.entry(key).or_default();
         *rejected_count = rejected_count.saturating_add(1);
+        let should_persist_audit = self.last_audit_at.get(&key).is_none_or(|last_audit_at| {
+            now.saturating_sub(*last_audit_at) >= AUTH_RATE_LIMIT_AUDIT_INTERVAL_SECONDS
+        });
+        if should_persist_audit {
+            self.last_audit_at.insert(key, now);
+        }
         AuthRateLimitRejection {
             retry_after_seconds,
             reason: "rate_limit_exceeded",
             bucket: bucket.as_str(),
             source_class: source_class.as_str(),
             rejected_count: *rejected_count,
+            should_persist_audit,
         }
     }
 }
@@ -1187,6 +1204,7 @@ mod tests {
         assert_eq!(rejection.bucket, "username");
         assert_eq!(rejection.source_class, "direct");
         assert_eq!(rejection.rejected_count, 1);
+        assert!(rejection.should_persist_audit);
 
         limiter.clear_username(AuthAttemptKind::Register, "ALIce");
         assert_eq!(
@@ -1200,6 +1218,39 @@ mod tests {
         assert_eq!(
             limiter.check_at(AuthAttemptKind::Login, source, "alice", 106),
             Ok(())
+        );
+    }
+
+    #[test]
+    fn auth_rate_limit_durable_samples_are_time_bounded_and_keep_counts() {
+        let mut policy = test_policy();
+        policy.username = bucket(1, 1, 3_600);
+        let mut limiter = AuthRateLimiter::new(policy);
+        let source = direct_source("192.0.2.20");
+
+        limiter
+            .check_at(AuthAttemptKind::Login, source, "sampled-user", 100)
+            .expect("first attempt should consume the username token");
+        let first = limiter
+            .check_at(AuthAttemptKind::Login, source, "sampled-user", 101)
+            .expect_err("first rejection should be sampled");
+        let skipped = limiter
+            .check_at(AuthAttemptKind::Login, source, "sampled-user", 159)
+            .expect_err("same-minute rejection should remain limited");
+        let next = limiter
+            .check_at(AuthAttemptKind::Login, source, "sampled-user", 161)
+            .expect_err("later rejection should open a new audit sample");
+
+        assert!(first.should_persist_audit);
+        assert!(!skipped.should_persist_audit);
+        assert!(next.should_persist_audit);
+        assert_eq!(
+            [
+                first.rejected_count,
+                skipped.rejected_count,
+                next.rejected_count
+            ],
+            [1, 2, 3]
         );
     }
 

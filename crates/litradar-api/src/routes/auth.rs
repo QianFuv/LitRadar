@@ -159,6 +159,23 @@ pub(crate) async fn register(
     let mut audit = AuthAudit::new("register");
     let request_id = request_id_text(request_id.as_ref());
     let username = body.username.trim().to_string();
+    if let Err(rejection) = check_auth_rate_limit(
+        &state,
+        AuthAttemptKind::Register,
+        &username,
+        peer_address(peer),
+        &headers,
+    ) {
+        let retry_after_seconds = rejection.retry_after_seconds;
+        if rejection.should_persist_audit {
+            persist_auth_rate_limit(&state, &audit, rejection, &request_id).await?;
+        }
+        audit.rate_limited(rejection, &request_id);
+        return Err(ApiError::too_many_requests(
+            AUTH_RATE_LIMIT_DETAIL,
+            retry_after_seconds,
+        ));
+    }
     if !is_valid_username(&username) {
         persist_auth_rejection(&state, &audit, "validation_failed", &request_id).await?;
         audit.rejected("validation_failed");
@@ -170,21 +187,6 @@ pub(crate) async fn register(
         persist_auth_rejection(&state, &audit, "validation_failed", &request_id).await?;
         audit.rejected("validation_failed");
         return Err(ApiError::bad_request(password_policy_message()));
-    }
-    if let Err(rejection) = check_auth_rate_limit(
-        &state,
-        AuthAttemptKind::Register,
-        &username,
-        peer_address(peer),
-        &headers,
-    ) {
-        let retry_after_seconds = rejection.retry_after_seconds;
-        persist_auth_rate_limit(&state, &audit, rejection, &request_id).await?;
-        audit.rate_limited(rejection, &request_id);
-        return Err(ApiError::too_many_requests(
-            AUTH_RATE_LIMIT_DETAIL,
-            retry_after_seconds,
-        ));
     }
     let password = body.password;
     let invite_code = (!body.invite_code.is_empty()).then_some(body.invite_code);
@@ -251,7 +253,9 @@ pub(crate) async fn login(
         &headers,
     ) {
         let retry_after_seconds = rejection.retry_after_seconds;
-        persist_auth_rate_limit(&state, &audit, rejection, &request_id).await?;
+        if rejection.should_persist_audit {
+            persist_auth_rate_limit(&state, &audit, rejection, &request_id).await?;
+        }
         audit.rate_limited(rejection, &request_id);
         return Err(ApiError::too_many_requests(
             AUTH_RATE_LIMIT_DETAIL,
