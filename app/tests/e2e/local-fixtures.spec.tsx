@@ -453,7 +453,19 @@ async function showsBootstrapBoundary(page: Page): Promise<void> {
  * @param page - Playwright browser page.
  */
 async function redirectsAuthenticatedLogin(page: Page): Promise<void> {
+  const maliciousRequests: string[] = [];
+  page.on('request', (request) => {
+    if (new URL(request.url()).hostname === 'malicious.example') {
+      maliciousRequests.push(request.url());
+    }
+  });
   await page.route('**/api/**', serveTrackingApi);
+  await page.goto('/login?next=%2F%5Cmalicious.example');
+
+  await expect(page).toHaveURL(/\/$/);
+  expect(new URL(page.url()).hostname).not.toBe('malicious.example');
+  expect(maliciousRequests).toEqual([]);
+
   await page.goto('/login?next=%2F%3Fview%3Dfavorites%26settings%3Dtracking');
 
   await expect(page).toHaveURL(/\/\?view=favorites&settings=tracking$/);

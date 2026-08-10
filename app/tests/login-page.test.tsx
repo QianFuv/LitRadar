@@ -97,6 +97,39 @@ async function rejectsExternalReturnPaths(): Promise<void> {
 }
 
 /**
+ * Verify browser-normalized backslash return paths cannot become external navigation.
+ */
+async function rejectsBackslashReturnPaths(): Promise<void> {
+  loginPageMocks.auth.user = { id: 9, username: 'signed_in', is_admin: false };
+  for (const candidate of [
+    '/\\malicious.example',
+    '/safe\\..\\malicious.example',
+    '/safe\tpath',
+    '/safe\npath',
+  ]) {
+    loginPageMocks.nextParam = candidate;
+    const view = render(<LoginClient />);
+
+    await waitFor(() => expect(loginPageMocks.replace).toHaveBeenCalledWith('/'));
+    view.unmount();
+    loginPageMocks.replace.mockReset();
+  }
+}
+
+/**
+ * Verify safe internal return paths retain canonical query and fragment state.
+ */
+async function normalizesSafeInternalReturnPaths(): Promise<void> {
+  loginPageMocks.auth.user = { id: 10, username: 'signed_in', is_admin: false };
+  loginPageMocks.nextParam = '/favorites/../?view=favorites&folder=4#saved';
+  render(<LoginClient />);
+
+  await waitFor(() =>
+    expect(loginPageMocks.replace).toHaveBeenCalledWith('/?view=favorites&folder=4#saved'),
+  );
+}
+
+/**
  * Verify form focus and password visibility preserve the current field value and autocomplete.
  */
 async function focusesAndRevealsPasswordSafely(): Promise<void> {
@@ -294,6 +327,8 @@ beforeEach(resetLoginPageMocks);
 describe('login page', () => {
   test('hides the form until authentication settles', hidesFormUntilAuthenticationSettles);
   test('rejects external return paths', rejectsExternalReturnPaths);
+  test('rejects browser-normalized backslash return paths', rejectsBackslashReturnPaths);
+  test('normalizes safe internal return paths', normalizesSafeInternalReturnPaths);
   test('focuses username and toggles password visibility safely', focusesAndRevealsPasswordSafely);
   test('maps known authentication errors and preserves unknown details', mapsAuthenticationErrors);
   test('announces mapped login failures', announcesLoginFailures);

@@ -136,6 +136,7 @@ printf '%s\n' "$ADMIN_PASSWORD" |
 - 密码变更和管理员重置在一个 `BEGIN IMMEDIATE` 事务内更新 hash/salt、递增该用户的令牌代际并撤销全部令牌；任一步失败都会整体回滚。
 - salt、浏览器会话、Personal Access Token、邀请码和手动作业 ID 均由操作系统 CSPRNG 生成，不依赖 SQLite `randomblob()`。
 - 浏览器登录令牌只通过 `HttpOnly`、`SameSite=Lax` 的 `litradar_session` Cookie 传输。
+- 登录页的 `next` 参数只接受规范化后的同源站内路径，并仅保留 pathname、query 和 fragment；反斜杠、控制字符、绝对 URL、协议相对 URL 或解析失败均回落到 `/`。
 - 浏览器会话固定 7 天到期、登录时轮换且不滚动续期；Personal Access Token 的有效期由创建时显式选择。
 - 登录在密码验证时捕获令牌代际，并在写入 Cookie 会话的同一事务中复核；`logout-all`、改密或重置若先提交，旧验证结果不能再签发会话。Personal Access Token 创建还会在写事务中复核发起请求的原始 token 仍属于该用户且未过期，因此单令牌注销/吊销与全局撤销都不能被已认证但尚未提交的请求越过。
 - 用户创建的长期令牌只通过 Bearer 请求头用于外部客户端。

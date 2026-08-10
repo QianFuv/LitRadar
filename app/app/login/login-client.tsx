@@ -12,6 +12,33 @@ import { getInviteRequirement } from '@/lib/api';
 import { getAuthErrorMessage, type AuthFormMode } from '@/lib/auth-error';
 import { useAuth } from '@/lib/auth-context';
 
+const LOGIN_RETURN_ORIGIN = 'https://litradar.invalid';
+
+/**
+ * Normalize one untrusted post-login return value to a same-origin application path.
+ *
+ * @param candidate - Decoded next query parameter.
+ * @returns Canonical internal path, query, and hash or the application root.
+ */
+function normalizeLoginReturnPath(candidate: string): string {
+  const hasControlCharacter = Array.from(candidate).some((character) => {
+    const codePoint = character.codePointAt(0) ?? 0;
+    return codePoint <= 0x1f || codePoint === 0x7f;
+  });
+  if (!candidate.startsWith('/') || candidate.includes('\\') || hasControlCharacter) {
+    return '/';
+  }
+  try {
+    const target = new URL(candidate, LOGIN_RETURN_ORIGIN);
+    if (target.origin !== LOGIN_RETURN_ORIGIN) {
+      return '/';
+    }
+    return `${target.pathname}${target.search}${target.hash}`;
+  } catch {
+    return '/';
+  }
+}
+
 /**
  * Render the restored login and registration form.
  *
@@ -22,7 +49,7 @@ export default function LoginClient() {
   const searchParams = useSearchParams();
   const { loading, login, logoutWarning, recoverLogout, register, user } = useAuth();
   const nextParam = searchParams.get('next') || '';
-  const nextPath = nextParam.startsWith('/') && !nextParam.startsWith('//') ? nextParam : '/';
+  const nextPath = normalizeLoginReturnPath(nextParam);
   const isLogoutRecovery = searchParams.get('logout_recovery') === '1';
 
   const [username, setUsername] = useState('');

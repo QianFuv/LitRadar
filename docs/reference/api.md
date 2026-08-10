@@ -139,6 +139,8 @@ Rust handler 上的 OpenAPI 注解是 REST 契约的实现来源。修改 REST �
 
 浏览器登录 Cookie 使用固定 7 天有效期，每次登录轮换，不因普通 API 访问而滚动延长。登录写入会原子复核密码验证时观察到的令牌代际；若改密、管理员重置或 `logout-all` 已先提交，旧验证结果只会得到认证失败，不能创建撤销后的新 Cookie。`POST /api/auth/logout` 只撤销当前凭据；`POST /api/auth/logout-all` 在一个事务中递增令牌代际并撤销该用户的浏览器登录令牌和全部 Personal Access Token。两个端点对携带 `litradar_session` 的请求无论成功或失败都返回清除 Cookie 的 `Set-Cookie`；`logout` 返回 `401` 表示请求到达前令牌已失效，第一方浏览器将其视为幂等注销完成。SQLite busy/locked 只执行一次短时重试；若持久删除仍未确认，返回 `503`：
 
+登录页的 `next` 查询参数会按 URL 规则规范化，只有同源站内路径会保留 pathname、query 和 fragment。含反斜杠或控制字符的值、绝对 URL、协议相对 URL 以及无法解析的值均视为 `/`，不会在登录前后导航到外部站点。
+
 ```json
 {
   "detail": {
