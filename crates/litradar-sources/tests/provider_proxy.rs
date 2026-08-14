@@ -1,7 +1,7 @@
 //! Loopback contract tests for managed HTTP, HTTPS, SOCKS5, and SOCKS5h proxies.
 
 use std::io::{Read, Write};
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, TcpListener, TcpStream};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, TcpListener, TcpStream};
 use std::process::Command;
 use std::thread;
 use std::time::{Duration, Instant};
@@ -324,7 +324,11 @@ fn provider_proxy_unreachable_explicit_proxy_does_not_fallback_or_leak() {
 
 fn managed_client(proxy: &ProviderProxy) -> Result<Client, ProviderProxyError> {
     proxy
-        .apply(ClientBuilder::new().timeout(CLIENT_TIMEOUT))?
+        .apply(
+            ClientBuilder::new()
+                .timeout(CLIENT_TIMEOUT)
+                .resolve("localhost", SocketAddr::from(([127, 0, 0, 1], 0))),
+        )?
         .build()
         .map_err(|_| ProviderProxyError::InvalidUrl)
 }
