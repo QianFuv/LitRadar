@@ -51,6 +51,14 @@
     },
     {
       "path": "crates/litradar-auth/src/service.rs",
+      "fingerprint": "8663f7444ced007a:1"
+    },
+    {
+      "path": "crates/litradar-auth/src/service.rs",
+      "fingerprint": "9043a1f83725194d:1"
+    },
+    {
+      "path": "crates/litradar-auth/src/service.rs",
       "fingerprint": "bab000ad9a9a5c34:1"
     },
     {
@@ -107,6 +115,10 @@
     },
     {
       "path": "crates/litradar-storage/src/auth.rs",
+      "fingerprint": "e3dc11ab32f220ad:1"
+    },
+    {
+      "path": "crates/litradar-storage/src/auth.rs",
       "fingerprint": "e73422051acfb3d2:1"
     },
     {
@@ -119,7 +131,23 @@
     },
     {
       "path": "crates/litradar-storage/src/business/notifications.rs",
+      "fingerprint": "8abdca653c2db301:1"
+    },
+    {
+      "path": "crates/litradar-storage/src/business/notifications.rs",
+      "fingerprint": "a61ccf97a8bbde2f:1"
+    },
+    {
+      "path": "crates/litradar-storage/src/business/notifications.rs",
+      "fingerprint": "aee1da39356be4d4:1"
+    },
+    {
+      "path": "crates/litradar-storage/src/business/notifications.rs",
       "fingerprint": "b714aefdcd17839a:1"
+    },
+    {
+      "path": "crates/litradar-storage/src/business/notifications.rs",
+      "fingerprint": "d8b7ceae23ac73c6:1"
     },
     {
       "path": "crates/litradar-storage/src/business/notifications.rs",
