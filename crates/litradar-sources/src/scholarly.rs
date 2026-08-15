@@ -47,7 +47,7 @@ const CROSSREF_MAX_TRANSPORT_ATTEMPTS: usize = 6;
 const CROSSREF_TRANSPORT_RETRY_BUDGET_SECONDS: u64 = 180;
 const TRANSPORT_FAILURE_MESSAGE: &str = "transport failure";
 const RETRY_STATUS_CODES: [u16; 5] = [429, 500, 502, 503, 504];
-const SCHOLARLY_RESPONSE_MAXIMUM_BYTES: usize = 8 * 1024 * 1024;
+const SCHOLARLY_RESPONSE_MAXIMUM_BYTES: usize = 16 * 1024 * 1024;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 struct OpenAlexRateHeaders {
@@ -6471,6 +6471,11 @@ mod tests {
     #[test]
     fn crossref_page_rows_stay_within_live_memory_budget() {
         assert_eq!(CROSSREF_ROWS, 225);
+    }
+
+    #[test]
+    fn scholarly_response_limit_covers_large_crossref_pages() {
+        assert_eq!(SCHOLARLY_RESPONSE_MAXIMUM_BYTES, 16 * 1024 * 1024);
     }
 
     #[test]
