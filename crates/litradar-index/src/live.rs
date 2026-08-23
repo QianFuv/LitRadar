@@ -36,7 +36,8 @@ use crate::batch::{
 };
 use crate::changes::{
     acknowledge_content_change_events, discard_content_change_events,
-    prepare_content_change_manifest, publish_content_change_manifest, ChangeWriteError,
+    prepare_content_change_manifest, prune_content_change_history, publish_content_change_history,
+    publish_content_change_manifest, ChangeWriteError,
 };
 use crate::control::{
     abandon_batch_checkpoints, acquire_lease, adopt_legacy_batch_state,
@@ -60,6 +61,7 @@ use crate::worker_protocol::{
 };
 
 const LIVE_INDEX_HEARTBEAT_INTERVAL_SECONDS: u64 = 30;
+const HISTORY_RETENTION_SECONDS: i64 = 8 * 24 * 60 * 60;
 const LEGACY_WORKER_REQUEST_STALE_SECONDS: u64 = 300;
 const MAX_LEGACY_WORKER_REQUEST_BYTES: u64 = 64 * 1024 * 1024;
 const MAX_PROVIDER_PAGES_PER_JOURNAL: usize = 100_000;
@@ -1306,12 +1308,49 @@ fn publish_catalog_manifest(
             path: content_path,
             source,
         })?;
+    let history_directory = catalog_manifest_history_directory(config, input);
+    if intent.through_event_id.is_some() {
+        publish_content_change_history(
+            &catalog_manifest_history_path(config, input, intent),
+            &intent.payload,
+        )?;
+    }
     publish_content_change_manifest(&config.project_root.join(&intent.path), &intent.payload)?;
     if let Some(through_event_id) = intent.through_event_id {
         acknowledge_content_change_events(&content, through_event_id)
             .map_err(ChangeWriteError::from)?;
     }
+    let history_cutoff = LiveRunTime::now()
+        .epoch_seconds
+        .saturating_sub(HISTORY_RETENTION_SECONDS);
+    match prune_content_change_history(&history_directory, history_cutoff) {
+        Ok(removed) if removed > 0 => {
+            tracing::info!(
+                event = "index.batch.manifest_history_pruned",
+                component = "index",
+                catalog = input.catalog_name,
+                removed,
+            );
+        }
+        Ok(_) => {}
+        Err(error) => {
+            tracing::warn!(
+                event = "index.batch.manifest_history_cleanup_failed",
+                component = "index",
+                catalog = input.catalog_name,
+                error_class = change_write_error_class(&error),
+            );
+        }
+    }
     Ok(())
+}
+
+fn change_write_error_class(error: &ChangeWriteError) -> &'static str {
+    match error {
+        ChangeWriteError::Sqlite(_) => "sqlite",
+        ChangeWriteError::Io(_) => "io",
+        ChangeWriteError::Json(_) => "json",
+    }
 }
 
 fn validate_manifest_recovery(
@@ -1422,6 +1461,24 @@ fn catalog_manifest_relative_path(input: &CatalogInput) -> String {
         .join(format!("{}.changes.json", input.catalog_name))
         .to_string_lossy()
         .into_owned()
+}
+
+fn catalog_manifest_history_directory(config: &LiveIndexConfig, input: &CatalogInput) -> PathBuf {
+    config
+        .project_root
+        .join("data")
+        .join("push_state")
+        .join("history")
+        .join(&input.catalog_name)
+}
+
+fn catalog_manifest_history_path(
+    config: &LiveIndexConfig,
+    input: &CatalogInput,
+    intent: &ManifestIntent,
+) -> PathBuf {
+    catalog_manifest_history_directory(config, input)
+        .join(format!("{}.changes.json", intent.sha256))
 }
 
 /// Run one serialized fetch-worker request over the process standard streams.
@@ -3233,9 +3290,10 @@ mod tests {
     use tracing_subscriber::fmt::MakeWriter;
 
     use super::{
-        catalog_manifest_relative_path, catalog_paths, classify_notify_handoff_output,
-        cleanup_stale_legacy_worker_requests, emit_parent_content_commit_failure,
-        emit_worker_failure, fetch_worker_assignments_with_provider, finalize_indexed_content,
+        catalog_manifest_history_path, catalog_manifest_relative_path, catalog_paths,
+        classify_notify_handoff_output, cleanup_stale_legacy_worker_requests,
+        emit_parent_content_commit_failure, emit_worker_failure,
+        fetch_worker_assignments_with_provider, finalize_indexed_content,
         index_entries_with_provider, parse_notify_handoff_payload, prepare_catalog_identities,
         prepare_catalog_manifest_intent, prepare_worker_requests, publish_catalog_manifest,
         read_bounded_notify_output, read_worker_bootstrap, requested_sync_mode,
@@ -3255,7 +3313,10 @@ mod tests {
         CatalogInput, CatalogSelection, IndexBatch, IndexBatchRequest, ManifestIntent,
         NotifyHandoffStatus,
     };
-    use crate::changes::{acknowledge_content_change_events, publish_content_change_manifest};
+    use crate::changes::{
+        acknowledge_content_change_events, publish_content_change_history,
+        publish_content_change_manifest,
+    };
     use crate::control::{
         acquire_lease, advance_run_checkpoint as advance_run_checkpoint_for_batch,
         commit_content_then_progress as commit_content_then_progress_for_batch,
@@ -4283,6 +4344,7 @@ mod tests {
         for boundary in [
             "outcome_stored",
             "manifest_prepared",
+            "history_published",
             "manifest_renamed",
             "outbox_acknowledged",
             "manifest_published",
@@ -4369,6 +4431,16 @@ mod tests {
                     now,
                 )
                 .expect("manifest intent should persist");
+                if matches!(
+                    boundary,
+                    "history_published" | "manifest_renamed" | "outbox_acknowledged"
+                ) {
+                    publish_content_change_history(
+                        &catalog_manifest_history_path(&config, &input, &intent),
+                        &intent.payload,
+                    )
+                    .expect("history bytes should publish");
+                }
                 if matches!(boundary, "manifest_renamed" | "outbox_acknowledged") {
                     publish_content_change_manifest(
                         &config.project_root.join(&intent.path),
@@ -4444,6 +4516,22 @@ mod tests {
             let manifest: serde_json::Value =
                 serde_json::from_slice(&payload).expect("manifest should parse");
             assert_eq!(manifest["run_id"], "catalog-run", "boundary: {boundary}");
+            let history_directory = config
+                .project_root
+                .join("data")
+                .join("push_state")
+                .join("history")
+                .join("catalog");
+            let history_paths = std::fs::read_dir(history_directory)
+                .expect("history directory should read")
+                .map(|entry| entry.expect("history entry should read").path())
+                .collect::<Vec<_>>();
+            assert_eq!(history_paths.len(), 1, "boundary: {boundary}");
+            assert_eq!(
+                std::fs::read(&history_paths[0]).expect("history should read"),
+                payload,
+                "boundary: {boundary}"
+            );
             assert_eq!(
                 content
                     .query_row("SELECT COUNT(*) FROM article_change_events", [], |row| {
@@ -4461,6 +4549,62 @@ mod tests {
                 "boundary: {boundary}"
             );
         }
+    }
+
+    #[test]
+    fn manifest_history_conflict_prevents_current_publish_and_outbox_acknowledgement() {
+        let directory = tempdir().expect("temporary project should create");
+        let mut config = worker_test_config("provider-a", None);
+        config.project_root = directory.path().to_path_buf();
+        config.update = true;
+        let input = batch_input("catalog.csv", "provider-a", 1);
+        let content_path = config
+            .project_root
+            .join("data")
+            .join("index")
+            .join("catalog.sqlite");
+        std::fs::create_dir_all(content_path.parent().expect("content parent should exist"))
+            .expect("content directory should create");
+        let content = open_content_db(&content_path).expect("content should open");
+        write_content_batch(
+            &content,
+            &input.entries[0],
+            &canonical_batch_for_catalog(&input.entries[0]),
+            "catalog-run",
+            "2026-08-01T00:00:00Z",
+        )
+        .expect("content event should write");
+        let outcome = BatchCatalogOutcome {
+            run_id: "catalog-run".to_string(),
+            journal_count: 1,
+            written_article_count: 1,
+            source_attempt_count: 1,
+            manifest_path: None,
+        };
+        let intent = prepare_catalog_manifest_intent(&config, &input, &outcome)
+            .expect("manifest intent should prepare");
+        let history_path = catalog_manifest_history_path(&config, &input, &intent);
+        std::fs::create_dir_all(history_path.parent().expect("history parent should exist"))
+            .expect("history directory should create");
+        std::fs::write(&history_path, b"different").expect("conflict should write");
+
+        let error = publish_catalog_manifest(&config, &input, &intent)
+            .expect_err("history conflict should fail publication");
+
+        assert!(matches!(
+            error,
+            LiveIndexError::Io(ref error)
+                if error.kind() == std::io::ErrorKind::AlreadyExists
+        ));
+        assert!(!config.project_root.join(&intent.path).exists());
+        assert_eq!(
+            content
+                .query_row("SELECT COUNT(*) FROM article_change_events", [], |row| {
+                    row.get::<_, i64>(0)
+                })
+                .expect("outbox count should read"),
+            1
+        );
     }
 
     #[test]

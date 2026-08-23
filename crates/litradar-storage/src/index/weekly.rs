@@ -1,5 +1,6 @@
 //! Weekly update manifest loading and article grouping.
 
+use std::path::PathBuf;
 use std::time::SystemTime;
 
 use chrono::{DateTime, SecondsFormat, TimeDelta, Utc};
@@ -19,29 +20,26 @@ use super::*;
 pub fn get_weekly_updates(
     config: &StorageConfig,
 ) -> Result<WeeklyUpdatesResponse, IndexRepositoryError> {
-    let now = current_utc_iso_text();
-    let manifests = load_weekly_manifests(config)?;
-    if manifests.is_empty() {
-        let window_start = iso_minus_days(&now, 7).unwrap_or_else(|| now.clone());
-        return Ok(WeeklyUpdatesResponse {
-            generated_at: now.clone(),
-            window_start,
-            window_end: now,
-            databases: Vec::new(),
-        });
-    }
-    let window_end = manifests
-        .iter()
-        .map(|manifest| manifest.generated_at.clone())
-        .max()
-        .unwrap_or_else(|| now.clone());
-    let window_start = iso_minus_days(&window_end, 7).unwrap_or_else(|| window_end.clone());
+    get_weekly_updates_at(config, DateTime::<Utc>::from(SystemTime::now()))
+}
+
+fn get_weekly_updates_at(
+    config: &StorageConfig,
+    now: DateTime<Utc>,
+) -> Result<WeeklyUpdatesResponse, IndexRepositoryError> {
+    let window_delta = TimeDelta::try_days(7).expect("seven-day duration should be valid");
+    let window_start_at = now
+        .checked_sub_signed(window_delta)
+        .unwrap_or(DateTime::<Utc>::MIN_UTC);
+    let window_start = format_utc_datetime(window_start_at);
+    let window_end = format_utc_datetime(now);
+    let manifests = load_weekly_manifests(config, window_start_at, now)?;
     let mut by_db: HashMap<String, WeeklyBucket> = HashMap::new();
     for manifest in manifests {
         let bucket = by_db
             .entry(manifest.db_name.clone())
             .or_insert(WeeklyBucket {
-                generated_at: manifest.generated_at.clone(),
+                generated_at: manifest.generated_at,
                 run_id: manifest.run_id.clone(),
                 article_ids: Vec::new(),
                 seen: HashSet::new(),
@@ -66,7 +64,7 @@ pub fn get_weekly_updates(
         databases.push(WeeklyDatabaseUpdate {
             db_name,
             run_id: bucket.run_id,
-            generated_at: bucket.generated_at,
+            generated_at: format_utc_datetime(bucket.generated_at),
             new_article_count: articles.len(),
             journals: group_weekly_articles_by_journal(articles),
         });
@@ -78,7 +76,7 @@ pub fn get_weekly_updates(
             .then_with(|| right.db_name.cmp(&left.db_name))
     });
     Ok(WeeklyUpdatesResponse {
-        generated_at: now,
+        generated_at: window_end.clone(),
         window_start,
         window_end,
         databases,
@@ -169,23 +167,29 @@ fn group_weekly_articles_by_journal(
 
 fn load_weekly_manifests(
     config: &StorageConfig,
+    window_start: DateTime<Utc>,
+    window_end: DateTime<Utc>,
 ) -> Result<Vec<WeeklyManifest>, IndexRepositoryError> {
     let push_state_dir = config.project_root().join("data").join("push_state");
     if !push_state_dir.exists() {
         return Ok(Vec::new());
     }
     let mut manifests = Vec::new();
-    for entry in fs::read_dir(push_state_dir)? {
-        let path = entry?.path();
-        if !path
-            .file_name()
-            .and_then(|value| value.to_str())
-            .is_some_and(|name| name.ends_with(".changes.json"))
-        {
-            continue;
-        }
+    let mut seen = HashSet::new();
+    for path in weekly_manifest_paths(&push_state_dir)? {
         let payload = read_weekly_manifest_payload(&path)?;
-        if let Some(manifest) = parse_weekly_manifest(payload) {
+        let Some(manifest) = parse_weekly_manifest(payload) else {
+            continue;
+        };
+        if manifest.generated_at >= window_start
+            && manifest.generated_at <= window_end
+            && seen.insert((
+                manifest.db_name.clone(),
+                manifest.run_id.clone(),
+                manifest.generated_at,
+                manifest.article_ids.clone(),
+            ))
+        {
             manifests.push(manifest);
         }
     }
@@ -193,9 +197,56 @@ fn load_weekly_manifests(
         right
             .generated_at
             .cmp(&left.generated_at)
-            .then_with(|| right.db_name.cmp(&left.db_name))
+            .then_with(|| left.db_name.cmp(&right.db_name))
+            .then_with(|| left.run_id.cmp(&right.run_id))
+            .then_with(|| left.article_ids.cmp(&right.article_ids))
     });
     Ok(manifests)
+}
+
+fn weekly_manifest_paths(push_state_dir: &Path) -> Result<Vec<PathBuf>, IndexRepositoryError> {
+    let mut paths = Vec::new();
+    for entry in fs::read_dir(push_state_dir)? {
+        let entry = entry?;
+        if entry.file_type()?.is_file() && is_change_manifest_path(&entry.path()) {
+            paths.push(entry.path());
+        }
+    }
+    let history_directory = push_state_dir.join("history");
+    if history_directory.exists() {
+        for catalog_entry in fs::read_dir(history_directory)? {
+            let catalog_entry = catalog_entry?;
+            if !catalog_entry.file_type()?.is_dir() {
+                continue;
+            }
+            for entry in fs::read_dir(catalog_entry.path())? {
+                let entry = entry?;
+                if entry.file_type()?.is_file() && is_managed_history_manifest_path(&entry.path()) {
+                    paths.push(entry.path());
+                }
+            }
+        }
+    }
+    paths.sort();
+    Ok(paths)
+}
+
+fn is_change_manifest_path(path: &Path) -> bool {
+    path.file_name()
+        .and_then(|value| value.to_str())
+        .is_some_and(|name| name.ends_with(".changes.json"))
+}
+
+fn is_managed_history_manifest_path(path: &Path) -> bool {
+    path.file_name()
+        .and_then(|value| value.to_str())
+        .and_then(|value| value.strip_suffix(".changes.json"))
+        .is_some_and(|digest| {
+            digest.len() == 64
+                && digest
+                    .bytes()
+                    .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+        })
 }
 
 #[derive(Debug, Deserialize)]
@@ -230,8 +281,7 @@ fn parse_weekly_manifest(payload: WeeklyManifestPayload) -> Option<WeeklyManifes
         .generated_at
         .as_deref()
         .or(payload.run_id.as_deref())
-        .and_then(normalize_iso_datetime)
-        .unwrap_or_else(current_utc_iso_text);
+        .and_then(parse_manifest_datetime)?;
     Some(WeeklyManifest {
         db_name,
         run_id: payload.run_id,
@@ -283,14 +333,12 @@ fn normalize_db_name(value: &str) -> Option<String> {
     }
 }
 
-fn current_utc_iso_text() -> String {
-    format_utc_datetime(DateTime::<Utc>::from(SystemTime::now()))
-}
-
+#[cfg(test)]
 fn normalize_iso_datetime(value: &str) -> Option<String> {
     parse_iso_datetime(value).map(format_utc_datetime)
 }
 
+#[cfg(test)]
 fn iso_minus_days(value: &str, days: i64) -> Option<String> {
     let days = TimeDelta::try_days(days)?;
     parse_iso_datetime(value)
@@ -304,6 +352,17 @@ fn parse_iso_datetime(value: &str) -> Option<DateTime<Utc>> {
         .map(|date| date.with_timezone(&Utc))
 }
 
+fn parse_manifest_datetime(value: &str) -> Option<DateTime<Utc>> {
+    parse_iso_datetime(value).or_else(|| {
+        let value = value.trim();
+        let timestamp = value.parse::<i64>().ok()?;
+        if timestamp.to_string() != value {
+            return None;
+        }
+        DateTime::<Utc>::from_timestamp(timestamp, 0)
+    })
+}
+
 fn format_utc_datetime(value: DateTime<Utc>) -> String {
     value.to_rfc3339_opts(SecondsFormat::Secs, true)
 }
@@ -312,13 +371,13 @@ fn format_utc_datetime(value: DateTime<Utc>) -> String {
 struct WeeklyManifest {
     db_name: String,
     run_id: Option<String>,
-    generated_at: String,
+    generated_at: DateTime<Utc>,
     article_ids: Vec<i64>,
 }
 
 #[derive(Debug, Clone)]
 struct WeeklyBucket {
-    generated_at: String,
+    generated_at: DateTime<Utc>,
     run_id: Option<String>,
     article_ids: Vec<i64>,
     seen: HashSet<i64>,
@@ -336,29 +395,38 @@ mod tests {
     #[test]
     fn weekly_updates_cover_manifest_merging_grouping_and_missing_databases() {
         let fixture = IndexFixture::new(true);
-
+        let now = parse_iso_datetime("2026-07-07T10:00:00Z").expect("now should parse");
+        let older_payload = json!({
+            "db_name": fixture.db_name,
+            "generated_at": "2026-07-05T10:00:00Z",
+            "run_id": "run-a",
+            "notifiable_article_ids": [1001, 1003, 1001, 9999],
+            "summary": {
+                "added_article_ids": [1001, 1003, 9999],
+                "issues": [{"added_article_ids": [1001, 1003, 9999]}]
+            }
+        });
+        write_weekly_history_manifest(&fixture.config, &"11".repeat(32), &older_payload);
+        let newer_payload = json!({
+            "db_name": fixture.db_name,
+            "generated_at": "2026-07-06T10:00:00Z",
+            "run_id": "run-b",
+            "notifiable_article_ids": [1002, 1001]
+        });
         write_weekly_manifest(
             &fixture.config,
-            "older.changes.json",
-            json!({
-                "db_name": fixture.db_name,
-                "generated_at": "2026-07-05T10:00:00Z",
-                "run_id": "run-a",
-                "notifiable_article_ids": [1001, 1003, 1001, 9999],
-                "summary": {
-                    "added_article_ids": [1001, 1003, 9999],
-                    "issues": [{"added_article_ids": [1001, 1003, 9999]}]
-                }
-            }),
+            "fixture.changes.json",
+            newer_payload.clone(),
         );
-        write_weekly_manifest(
+        write_weekly_history_manifest(&fixture.config, &"22".repeat(32), &newer_payload);
+        write_weekly_history_manifest(
             &fixture.config,
-            "newer.changes.json",
-            json!({
+            &"33".repeat(32),
+            &json!({
                 "db_name": fixture.db_name,
-                "generated_at": "2026-07-06T10:00:00Z",
-                "run_id": "run-b",
-                "notifiable_article_ids": [1002, 1001]
+                "generated_at": "2026-06-30T10:00:00Z",
+                "run_id": "boundary-run",
+                "notifiable_article_ids": [1004]
             }),
         );
         write_weekly_manifest(
@@ -380,19 +448,49 @@ mod tests {
                 "notifiable_article_ids": []
             }),
         );
+        write_weekly_manifest(
+            &fixture.config,
+            "old.changes.json",
+            json!({
+                "db_name": fixture.db_name,
+                "generated_at": "2026-06-30T09:59:59Z",
+                "run_id": "old-run",
+                "notifiable_article_ids": [1004]
+            }),
+        );
+        write_weekly_manifest(
+            &fixture.config,
+            "future.changes.json",
+            json!({
+                "db_name": fixture.db_name,
+                "generated_at": "2026-07-07T10:00:01Z",
+                "run_id": "future-run",
+                "notifiable_article_ids": [1004]
+            }),
+        );
+        write_weekly_manifest(
+            &fixture.config,
+            "untimestamped.changes.json",
+            json!({
+                "db_name": fixture.db_name,
+                "run_id": "untimestamped-run",
+                "notifiable_article_ids": [1004]
+            }),
+        );
 
-        let updates = get_weekly_updates(&fixture.config).expect("weekly updates should resolve");
+        let updates =
+            get_weekly_updates_at(&fixture.config, now).expect("weekly updates should resolve");
 
-        assert!(normalize_iso_datetime(&updates.generated_at).is_some());
-        assert_eq!(updates.window_start, "2026-06-29T10:00:00Z");
-        assert_eq!(updates.window_end, "2026-07-06T10:00:00Z");
+        assert_eq!(updates.generated_at, "2026-07-07T10:00:00Z");
+        assert_eq!(updates.window_start, "2026-06-30T10:00:00Z");
+        assert_eq!(updates.window_end, "2026-07-07T10:00:00Z");
         assert_eq!(updates.databases.len(), 1);
 
         let database = &updates.databases[0];
         assert_eq!(database.db_name, "fixture.sqlite");
         assert_eq!(database.run_id.as_deref(), Some("run-b"));
         assert_eq!(database.generated_at, "2026-07-06T10:00:00Z");
-        assert_eq!(database.new_article_count, 3);
+        assert_eq!(database.new_article_count, 4);
         assert_eq!(database.journals.len(), 2);
 
         assert_eq!(database.journals[0].journal_id.value(), 1);
@@ -400,10 +498,10 @@ mod tests {
             database.journals[0].journal_title.as_deref(),
             Some("Alpha Journal")
         );
-        assert_eq!(database.journals[0].new_article_count, 2);
+        assert_eq!(database.journals[0].new_article_count, 3);
         assert_eq!(
             weekly_article_ids(&database.journals[0].articles),
-            vec![1002, 1001]
+            vec![1002, 1001, 1004]
         );
         assert!(database.journals[0]
             .articles
@@ -425,16 +523,15 @@ mod tests {
     #[test]
     fn weekly_updates_without_manifests_return_empty_window_with_iso_bounds() {
         let fixture = IndexFixture::new(true);
+        let now = parse_iso_datetime("2026-07-07T10:00:00Z").expect("now should parse");
 
-        let updates = get_weekly_updates(&fixture.config).expect("weekly updates should resolve");
+        let updates =
+            get_weekly_updates_at(&fixture.config, now).expect("weekly updates should resolve");
 
         assert!(updates.databases.is_empty());
-        assert!(normalize_iso_datetime(&updates.generated_at).is_some());
+        assert_eq!(updates.generated_at, "2026-07-07T10:00:00Z");
+        assert_eq!(updates.window_start, "2026-06-30T10:00:00Z");
         assert_eq!(updates.window_end, updates.generated_at);
-        assert_eq!(
-            updates.window_start,
-            iso_minus_days(&updates.window_end, 7).expect("window end should be parseable")
-        );
     }
 
     #[test]
@@ -452,9 +549,31 @@ mod tests {
         .expect("valid manifest should parse");
 
         assert_eq!(manifest.db_name, "fixture.sqlite");
-        assert_eq!(manifest.generated_at, "2026-07-05T10:00:00Z");
+        assert_eq!(
+            format_utc_datetime(manifest.generated_at),
+            "2026-07-05T10:00:00Z"
+        );
         assert_eq!(manifest.run_id.as_deref(), Some("run-1"));
         assert_eq!(manifest.article_ids, vec![1001, 1002]);
+
+        let expected =
+            parse_iso_datetime("2026-07-05T10:00:00Z").expect("expected timestamp should parse");
+        let epoch_manifest = parse_weekly_manifest_payload(json!({
+            "db_name": "fixture.sqlite",
+            "generated_at": expected.timestamp().to_string(),
+            "run_id": "run-epoch",
+            "notifiable_article_ids": [1001]
+        }))
+        .expect("canonical epoch timestamp should parse");
+        assert_eq!(epoch_manifest.generated_at, expected);
+
+        let run_timestamp_manifest = parse_weekly_manifest_payload(json!({
+            "db_name": "fixture.sqlite",
+            "run_id": "2026-07-05T10:00:00Z",
+            "notifiable_article_ids": [1001]
+        }))
+        .expect("timestamp-shaped legacy run id should parse");
+        assert_eq!(run_timestamp_manifest.generated_at, expected);
 
         assert!(parse_weekly_manifest_payload(json!({
             "db_name": "fixture.sqlite",
@@ -471,6 +590,12 @@ mod tests {
             "notifiable_article_ids": ["bad"]
         }))
         .is_none());
+        assert!(parse_weekly_manifest_payload(json!({
+            "db_name": "fixture.sqlite",
+            "run_id": "untimestamped-run",
+            "notifiable_article_ids": [1001]
+        }))
+        .is_none());
     }
 
     #[test]
@@ -485,7 +610,12 @@ mod tests {
         fs::write(push_state_dir.join("broken.changes.json"), "{")
             .expect("broken manifest should be written");
 
-        let error = load_weekly_manifests(&fixture.config).expect_err("invalid JSON should fail");
+        let window_start =
+            parse_iso_datetime("2026-06-30T10:00:00Z").expect("window start should parse");
+        let window_end =
+            parse_iso_datetime("2026-07-07T10:00:00Z").expect("window end should parse");
+        let error = load_weekly_manifests(&fixture.config, window_start, window_end)
+            .expect_err("invalid JSON should fail");
 
         assert!(matches!(error, IndexRepositoryError::Json(_)));
     }
@@ -533,5 +663,20 @@ mod tests {
         parse_weekly_manifest(
             serde_json::from_value(payload).expect("weekly manifest payload should deserialize"),
         )
+    }
+
+    fn write_weekly_history_manifest(config: &StorageConfig, digest: &str, payload: &JsonValue) {
+        let history_directory = config
+            .project_root()
+            .join("data")
+            .join("push_state")
+            .join("history")
+            .join("fixture");
+        fs::create_dir_all(&history_directory).expect("history directory should create");
+        fs::write(
+            history_directory.join(format!("{digest}.changes.json")),
+            serde_json::to_vec(payload).expect("history manifest should serialize"),
+        )
+        .expect("history manifest should write");
     }
 }

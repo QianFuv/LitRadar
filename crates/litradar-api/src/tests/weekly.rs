@@ -2,6 +2,7 @@
 
 use std::fs;
 use std::path::Path;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use axum::http::header::{CACHE_CONTROL, CONTENT_TYPE};
 use axum::http::{Method, StatusCode};
@@ -32,6 +33,13 @@ async fn weekly_updates_match_shared_scenario() {
     .await;
     let mut payload = response.payload;
     replace_json_pointer(&mut payload, "/generated_at", json!("2024-01-22T00:00:00Z"));
+    replace_json_pointer(&mut payload, "/window_start", json!("2024-01-15T00:00:00Z"));
+    replace_json_pointer(&mut payload, "/window_end", json!("2024-01-22T00:00:00Z"));
+    replace_json_pointer(
+        &mut payload,
+        "/databases/0/generated_at",
+        json!("2024-01-22T00:00:00Z"),
+    );
 
     assert_eq!(response.status, StatusCode::OK);
     assert_api_scenario("weekly-updates.json", &payload);
@@ -53,7 +61,7 @@ async fn weekly_updates_group_and_order_route_payload() {
         "alpha.changes.json",
         &json!({
             "db_name": newer_database.db_name,
-            "generated_at": "2024-01-23T00:00:00Z",
+            "generated_at": weekly_timestamp_days_ago(0),
             "run_id": "alpha-run",
             "notifiable_article_ids": [newer_database.article_id]
         }),
@@ -63,7 +71,7 @@ async fn weekly_updates_group_and_order_route_payload() {
         "beta.changes.json",
         &json!({
             "db_name": older_database.db_name,
-            "generated_at": "2024-01-22T00:00:00Z",
+            "generated_at": weekly_timestamp_days_ago(1),
             "run_id": "beta-run",
             "notifiable_article_ids": [9003, 9002, older_database.article_id]
         }),
@@ -94,8 +102,14 @@ async fn weekly_updates_group_and_order_route_payload() {
             .expect("content-type should exist"),
         "application/json"
     );
-    assert_eq!(response.payload["window_start"], "2024-01-16T00:00:00Z");
-    assert_eq!(response.payload["window_end"], "2024-01-23T00:00:00Z");
+    assert_eq!(
+        response.payload["window_end"],
+        response.payload["generated_at"]
+    );
+    assert_ne!(
+        response.payload["window_start"],
+        response.payload["window_end"]
+    );
     assert_eq!(
         response.payload["databases"]
             .as_array()
@@ -130,6 +144,91 @@ async fn weekly_updates_group_and_order_route_payload() {
             .collect::<Vec<_>>(),
         vec!["9002", "9001"]
     );
+}
+
+#[tokio::test]
+#[cfg_attr(
+    miri,
+    ignore = "Miri does not support Tokio's Windows IOCP runtime initialization"
+)]
+async fn weekly_updates_merge_current_history_and_reject_out_of_window_manifests() {
+    let backend = TestBackend::new();
+    let user = backend.authenticated_user("weekly_history_reader", false);
+    let database = backend.create_index_database("fixture.sqlite");
+    insert_additional_weekly_articles(&database.path);
+    let current_timestamp = current_epoch_seconds();
+    let current_payload = json!({
+        "db_name": database.db_name,
+        "generated_at": current_timestamp.to_string(),
+        "run_id": "current-run",
+        "notifiable_article_ids": [database.article_id]
+    });
+    write_weekly_manifest(&backend, "fixture.changes.json", &current_payload);
+    write_weekly_history_manifest(
+        &backend,
+        &"11".repeat(32),
+        &json!({
+            "db_name": database.db_name,
+            "generated_at": current_timestamp.saturating_sub(86_400).to_string(),
+            "run_id": "history-run",
+            "notifiable_article_ids": [9002, database.article_id]
+        }),
+    );
+    write_weekly_history_manifest(&backend, &"22".repeat(32), &current_payload);
+    write_weekly_history_manifest(
+        &backend,
+        &"33".repeat(32),
+        &json!({
+            "db_name": database.db_name,
+            "generated_at": current_timestamp.saturating_sub(8 * 86_400).to_string(),
+            "run_id": "expired-run",
+            "notifiable_article_ids": [9003]
+        }),
+    );
+    write_weekly_history_manifest(
+        &backend,
+        &"44".repeat(32),
+        &json!({
+            "db_name": database.db_name,
+            "generated_at": current_timestamp.saturating_add(86_400).to_string(),
+            "run_id": "future-run",
+            "notifiable_article_ids": [9003]
+        }),
+    );
+
+    let response = json_request(
+        &backend.router(),
+        Method::GET,
+        "/api/weekly-updates",
+        Some(&user.authorization_header()),
+        None,
+        None,
+    )
+    .await;
+
+    assert_eq!(response.status, StatusCode::OK);
+    assert_eq!(
+        response.payload["databases"].as_array().map(Vec::len),
+        Some(1)
+    );
+    assert_eq!(response.payload["databases"][0]["run_id"], "current-run");
+    assert_eq!(response.payload["databases"][0]["new_article_count"], 2);
+    let article_ids = response.payload["databases"][0]["journals"]
+        .as_array()
+        .expect("journals should be an array")
+        .iter()
+        .flat_map(|journal| {
+            journal["articles"]
+                .as_array()
+                .expect("articles should be an array")
+        })
+        .map(|article| {
+            article["article_id"]
+                .as_str()
+                .expect("article id should be text")
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(article_ids, vec!["9001", "9002"]);
 }
 
 #[tokio::test]
@@ -260,7 +359,7 @@ async fn weekly_updates_skip_unavailable_databases() {
         "missing.changes.json",
         &json!({
             "db_name": "missing.sqlite",
-            "generated_at": "2024-01-22T00:00:00Z",
+            "generated_at": weekly_timestamp_days_ago(0),
             "run_id": "missing-run",
             "notifiable_article_ids": [9001]
         }),
@@ -277,8 +376,10 @@ async fn weekly_updates_skip_unavailable_databases() {
     .await;
 
     assert_eq!(response.status, StatusCode::OK);
-    assert_eq!(response.payload["window_start"], "2024-01-15T00:00:00Z");
-    assert_eq!(response.payload["window_end"], "2024-01-22T00:00:00Z");
+    assert_eq!(
+        response.payload["window_end"],
+        response.payload["generated_at"]
+    );
     assert_eq!(response.payload["databases"], json!([]));
 }
 
@@ -301,7 +402,7 @@ async fn weekly_updates_reject_malformed_databases() {
         "broken.changes.json",
         &json!({
             "db_name": "broken.sqlite",
-            "generated_at": "2024-01-22T00:00:00Z",
+            "generated_at": weekly_timestamp_days_ago(0),
             "run_id": "broken-run",
             "notifiable_article_ids": [9001]
         }),
@@ -357,6 +458,34 @@ fn write_raw_weekly_manifest(backend: &TestBackend, file_name: &str, bytes: &[u8
     let push_state_dir = backend.project_root().join("data").join("push_state");
     fs::create_dir_all(&push_state_dir).expect("push state dir should be created");
     fs::write(push_state_dir.join(file_name), bytes).expect("weekly manifest should write");
+}
+
+fn write_weekly_history_manifest(backend: &TestBackend, digest: &str, payload: &Value) {
+    let history_directory = backend
+        .project_root()
+        .join("data")
+        .join("push_state")
+        .join("history")
+        .join("fixture");
+    fs::create_dir_all(&history_directory).expect("history directory should create");
+    fs::write(
+        history_directory.join(format!("{digest}.changes.json")),
+        serde_json::to_vec_pretty(payload).expect("history manifest should serialize"),
+    )
+    .expect("history manifest should write");
+}
+
+fn current_epoch_seconds() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("test time should follow the Unix epoch")
+        .as_secs()
+}
+
+fn weekly_timestamp_days_ago(days: u64) -> String {
+    current_epoch_seconds()
+        .saturating_sub(days.saturating_mul(86_400))
+        .to_string()
 }
 
 fn insert_additional_weekly_articles(path: &Path) {

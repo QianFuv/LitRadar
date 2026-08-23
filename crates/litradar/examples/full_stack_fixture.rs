@@ -4,6 +4,7 @@ use std::error::Error;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use litradar_auth::AuthService;
 use litradar_domain::{
@@ -115,7 +116,7 @@ fn seed_fixture(project_root: &Path) -> Result<serde_json::Value, Box<dyn Error>
         push_state_dir.join("full-stack.changes.json"),
         serde_json::to_vec_pretty(&json!({
             "db_name": FIXTURE_DATABASE_NAME,
-            "generated_at": "2026-07-22T00:00:00Z",
+            "generated_at": current_epoch_seconds_text()?,
             "run_id": "full-stack-seed-v1",
             "notifiable_article_ids": [article_id]
         }))?,
@@ -128,6 +129,13 @@ fn seed_fixture(project_root: &Path) -> Result<serde_json::Value, Box<dyn Error>
         "article_count": outcome.articles_changed,
         "weekly_article_count": 1
     }))
+}
+
+fn current_epoch_seconds_text() -> Result<String, std::time::SystemTimeError> {
+    Ok(SystemTime::now()
+        .duration_since(UNIX_EPOCH)?
+        .as_secs()
+        .to_string())
 }
 
 fn validate_fixture_root(project_root: &Path) -> Result<PathBuf, Box<dyn Error>> {

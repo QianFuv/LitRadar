@@ -4,7 +4,7 @@ use std::collections::BTreeSet;
 use std::error::Error;
 use std::fmt;
 use std::fs::{self, File};
-use std::io::{BufWriter, Write};
+use std::io::{self, BufWriter, Write};
 use std::path::{Path, PathBuf};
 
 use rusqlite::{params, Connection};
@@ -253,6 +253,105 @@ pub(crate) fn publish_content_change_manifest(
     Ok(())
 }
 
+/// Publish immutable history bytes or verify an identical prior publication.
+///
+/// # Arguments
+///
+/// * `path` - SHA-addressed history path.
+/// * `payload` - Exact prepared bytes, including the terminal newline.
+///
+/// # Returns
+///
+/// Success when the path contains the exact bytes without replacing different content.
+pub(crate) fn publish_content_change_history(
+    path: &Path,
+    payload: &[u8],
+) -> Result<(), ChangeWriteError> {
+    if verify_content_change_history(path, payload)? {
+        return Ok(());
+    }
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let temp_path = manifest_temp_path(path);
+    let mut pending = PendingManifest::new(temp_path.clone());
+    let file = File::create(&temp_path)?;
+    let mut writer = BufWriter::new(file);
+    writer.write_all(payload)?;
+    writer.flush()?;
+    writer.get_ref().sync_all()?;
+    drop(writer);
+    match fs::hard_link(&temp_path, path) {
+        Ok(()) => {
+            fs::remove_file(&temp_path)?;
+            pending.did_publish = true;
+            sync_manifest_directory(path)?;
+            Ok(())
+        }
+        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+            verify_content_change_history(path, payload).and_then(|is_exact| {
+                if is_exact {
+                    Ok(())
+                } else {
+                    Err(io::Error::new(
+                        io::ErrorKind::NotFound,
+                        "concurrent change history publication disappeared",
+                    )
+                    .into())
+                }
+            })
+        }
+        Err(error) => Err(error.into()),
+    }
+}
+
+/// Remove managed history manifests older than one epoch-second cutoff.
+///
+/// # Arguments
+///
+/// * `directory` - One catalog's managed history directory.
+/// * `cutoff_epoch_seconds` - Exclusive lower retention bound.
+///
+/// # Returns
+///
+/// Number of removed history files.
+pub(crate) fn prune_content_change_history(
+    directory: &Path,
+    cutoff_epoch_seconds: i64,
+) -> Result<usize, ChangeWriteError> {
+    let entries = match fs::read_dir(directory) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(0),
+        Err(error) => return Err(error.into()),
+    };
+    let mut paths = entries
+        .map(|entry| entry.map(|entry| entry.path()))
+        .collect::<Result<Vec<_>, _>>()?;
+    paths.sort();
+    let mut removed = 0;
+    for path in paths {
+        if !is_managed_history_manifest(&path) {
+            continue;
+        }
+        let payload: serde_json::Value = serde_json::from_slice(&fs::read(&path)?)?;
+        let Some(generated_at) = payload
+            .get("generated_at")
+            .and_then(serde_json::Value::as_str)
+            .and_then(parse_canonical_epoch_seconds)
+        else {
+            continue;
+        };
+        if generated_at < cutoff_epoch_seconds {
+            fs::remove_file(&path)?;
+            removed += 1;
+        }
+    }
+    if removed > 0 {
+        sync_manifest_directory(&directory.join("history.changes.json"))?;
+    }
+    Ok(removed)
+}
+
 /// Publish all currently committed content events and acknowledge them after rename.
 ///
 /// # Arguments
@@ -396,6 +495,39 @@ fn manifest_temp_path(path: &Path) -> PathBuf {
     path.with_file_name(format!(".{file_name}.{}.tmp", std::process::id()))
 }
 
+fn is_managed_history_manifest(path: &Path) -> bool {
+    path.is_file()
+        && path
+            .file_name()
+            .and_then(|value| value.to_str())
+            .and_then(|value| value.strip_suffix(".changes.json"))
+            .is_some_and(|digest| {
+                digest.len() == 64
+                    && digest
+                        .bytes()
+                        .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+            })
+}
+
+fn parse_canonical_epoch_seconds(value: &str) -> Option<i64> {
+    let value = value.trim();
+    let timestamp = value.parse::<i64>().ok()?;
+    (timestamp.to_string() == value).then_some(timestamp)
+}
+
+fn verify_content_change_history(path: &Path, payload: &[u8]) -> Result<bool, ChangeWriteError> {
+    match fs::read(path) {
+        Ok(existing) if existing == payload => Ok(true),
+        Ok(_) => Err(io::Error::new(
+            io::ErrorKind::AlreadyExists,
+            "existing change history payload does not match its digest path",
+        )
+        .into()),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(error.into()),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use rusqlite::Connection;
@@ -404,7 +536,8 @@ mod tests {
 
     use super::{
         acknowledge_content_change_events, list_content_change_events,
-        prepare_content_change_manifest, publish_content_change_manifest,
+        prepare_content_change_manifest, prune_content_change_history,
+        publish_content_change_history, publish_content_change_manifest,
         write_content_change_manifest, ContentChangeEvent,
     };
     use crate::schema::init_content_db;
@@ -550,5 +683,51 @@ mod tests {
         assert!(list_content_change_events(&connection, 0, 10)
             .expect("outbox should read")
             .is_empty());
+    }
+
+    #[test]
+    fn history_publication_is_idempotent_and_rejects_different_bytes() {
+        let directory = tempdir().expect("temporary directory should create");
+        let path = directory
+            .path()
+            .join(format!("{}.changes.json", "ab".repeat(32)));
+        let payload = br#"{"generated_at":"200"}\n"#;
+
+        publish_content_change_history(&path, payload).expect("history should publish");
+        publish_content_change_history(&path, payload).expect("exact history should replay");
+        let error = publish_content_change_history(&path, br#"{"generated_at":"201"}\n"#)
+            .expect_err("different history bytes should fail");
+
+        assert!(matches!(
+            error,
+            super::ChangeWriteError::Io(ref error)
+                if error.kind() == std::io::ErrorKind::AlreadyExists
+        ));
+        assert_eq!(std::fs::read(path).expect("history should read"), payload);
+    }
+
+    #[test]
+    fn history_cleanup_removes_only_expired_managed_manifests() {
+        let directory = tempdir().expect("temporary directory should create");
+        let old_path = directory
+            .path()
+            .join(format!("{}.changes.json", "11".repeat(32)));
+        let current_path = directory
+            .path()
+            .join(format!("{}.changes.json", "22".repeat(32)));
+        let unmanaged_path = directory.path().join("notes.json");
+        std::fs::write(&old_path, br#"{"generated_at":"100"}"#).expect("old history should write");
+        std::fs::write(&current_path, br#"{"generated_at":"200"}"#)
+            .expect("current history should write");
+        std::fs::write(&unmanaged_path, br#"{"generated_at":"1"}"#)
+            .expect("unmanaged file should write");
+
+        let removed = prune_content_change_history(directory.path(), 150)
+            .expect("history cleanup should succeed");
+
+        assert_eq!(removed, 1);
+        assert!(!old_path.exists());
+        assert!(current_path.exists());
+        assert!(unmanaged_path.exists());
     }
 }

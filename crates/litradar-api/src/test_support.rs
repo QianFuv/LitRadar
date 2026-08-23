@@ -2,6 +2,7 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use axum::body::{to_bytes, Body};
 use axum::http::header::{AUTHORIZATION, CONTENT_TYPE, COOKIE};
@@ -190,7 +191,7 @@ impl TestBackend {
         }
     }
 
-    /// Write one deterministic weekly-update manifest for an index fixture.
+    /// Write one current-window weekly-update manifest for an index fixture.
     ///
     /// # Arguments
     ///
@@ -200,7 +201,7 @@ impl TestBackend {
         fs::create_dir_all(&push_state_dir).expect("push state dir should be created");
         let payload = serde_json::json!({
             "db_name": database.db_name,
-            "generated_at": "2024-01-22T00:00:00Z",
+            "generated_at": current_epoch_seconds_text(),
             "run_id": "scenario-run",
             "notifiable_article_ids": [database.article_id]
         });
@@ -210,6 +211,14 @@ impl TestBackend {
         )
         .expect("weekly manifest should write");
     }
+}
+
+fn current_epoch_seconds_text() -> String {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("fixture time should follow the Unix epoch")
+        .as_secs()
+        .to_string()
 }
 
 /// Authenticated API user fixture.
