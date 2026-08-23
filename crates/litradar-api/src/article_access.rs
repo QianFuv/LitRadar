@@ -567,13 +567,12 @@ async fn has_active_cnki_session(state: &ApiState, user_id: UserId) -> Result<bo
     let secret_codec = state.secret_codec().clone();
     state
         .run_blocking(move || {
-            litradar_storage::get_cnki_session_data(auth_db_path, &secret_codec, user_id).map(
-                |session| {
-                    session.is_some_and(|session| {
-                        session.status == litradar_domain::CnkiStatus::Active
-                    })
-                },
+            litradar_storage::cnki::get_active_cnki_session_data(
+                auth_db_path,
+                &secret_codec,
+                user_id,
             )
+            .map(|session| session.is_some())
         })
         .await?
         .map_err(|_| ApiError::internal_server_error())
@@ -784,13 +783,12 @@ impl ArticleFullTextProvider for ZjlibCnkiFullTextProvider {
                 "authenticated CNKI session required",
             )
         })?;
-        let session = litradar_storage::get_cnki_session_data(
+        let session = litradar_storage::cnki::get_active_cnki_session_data(
             self.storage_config.auth_db_path(),
             &self.secret_codec,
             user_id,
         )
         .map_err(|_| ProviderError::new(ProviderErrorKind::Internal, "CNKI session unavailable"))?
-        .filter(|session| session.status == litradar_domain::CnkiStatus::Active)
         .ok_or_else(|| {
             ProviderError::new(
                 ProviderErrorKind::AuthenticationRequired,
@@ -965,6 +963,7 @@ mod tests {
     use axum::http::header::RETRY_AFTER;
     use axum::response::IntoResponse;
     use litradar_domain::ArticleId;
+    use rusqlite::Connection;
     use tempfile::{tempdir, TempDir};
 
     use super::*;
@@ -1775,6 +1774,43 @@ mod tests {
         assert!(response.fulltext.available);
         assert!(!response.fulltext.requires_login);
         assert!(response.fulltext.message.is_none());
+    }
+
+    #[tokio::test]
+    async fn expired_cnki_session_requires_login_for_article_access() {
+        let mut registry = ProviderRegistry::default();
+        registry
+            .register(full_text_registration(
+                ZJLIB_PROVIDER_NAME,
+                Arc::new(AuthenticationRequiredFullTextProvider { is_supported: true }),
+            ))
+            .expect("authenticated provider should register");
+        let (_directory, state) = test_state(registry, Some("zjlib"));
+        let user_id = UserId(1);
+        Connection::open(state.storage_config().auth_db_path())
+            .expect("auth database should open")
+            .execute(
+                "INSERT INTO users (id, username, password_hash, salt, is_admin, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, 0, 0, 0)",
+                (user_id.value(), "expired-cnki-user", "hash", "salt"),
+            )
+            .expect("user fixture should insert");
+        litradar_storage::upsert_cnki_session(
+            state.storage_config().auth_db_path(),
+            state.secret_codec(),
+            user_id,
+            &json!({"bff_user_token": "header.eyJleHAiOjF9.signature"}),
+            &litradar_domain::CnkiStatus::Active,
+            None,
+        )
+        .expect("expired session fixture should store");
+
+        let response = article_access_response(&state, &article_locator(), user_id, "fixture")
+            .await
+            .expect("local action status should resolve");
+
+        assert!(!response.fulltext.available);
+        assert!(response.fulltext.requires_login);
     }
 
     #[tokio::test]

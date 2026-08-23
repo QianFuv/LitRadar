@@ -152,6 +152,39 @@ pub fn get_cnki_session_data(
     .transpose()
 }
 
+/// Return effective active CNKI session data for one user.
+///
+/// # Arguments
+///
+/// * `auth_db_path` - Auth database path.
+/// * `codec` - Deployment secret codec.
+/// * `user_id` - User identifier.
+///
+/// # Returns
+///
+/// Raw session data only when the effective status is active.
+pub fn get_active_cnki_session_data(
+    auth_db_path: impl AsRef<Path>,
+    codec: &SecretCodec,
+    user_id: UserId,
+) -> Result<Option<CnkiSessionData>, CnkiRepositoryError> {
+    let row = get_cnki_session_row(auth_db_path, codec, user_id)?;
+    let Some(row) = row else {
+        return Ok(None);
+    };
+    let session_data = serde_json::from_str(&row.session_json)?;
+    let status = effective_cnki_status(&session_data, &row, current_unix_time());
+    if status != CnkiStatus::Active {
+        return Ok(None);
+    }
+    Ok(Some(CnkiSessionData {
+        session_data,
+        qr_uuid: row.qr_uuid,
+        status,
+        generation: row.generation,
+    }))
+}
+
 /// Reserve a new generation before starting a CNKI network operation.
 ///
 /// # Arguments
@@ -432,17 +465,7 @@ fn summarize_cnki_session(row: Option<&CnkiSessionRow>, now: f64) -> CnkiSession
     let expires_at = token.and_then(parse_jwt_expiration);
     let has_bff_user_token = token.is_some();
     let seconds_remaining = expires_at.map(|value| (value - now).max(0.0).floor() as i64);
-    let status = if has_bff_user_token {
-        if expires_at.is_some_and(|value| value <= now) {
-            CnkiStatus::Expired
-        } else {
-            CnkiStatus::Active
-        }
-    } else if nonempty(&row.qr_uuid).is_some() {
-        CnkiStatus::WaitingScan
-    } else {
-        CnkiStatus::from(nonempty(&row.status).unwrap_or("empty"))
-    };
+    let status = effective_cnki_status(&session_data, row, now);
     CnkiSessionStatusResponse {
         configured: status != CnkiStatus::Empty,
         status,
@@ -452,6 +475,25 @@ fn summarize_cnki_session(row: Option<&CnkiSessionRow>, now: f64) -> CnkiSession
         cookie_names: cookie_names(&session_data),
         updated_at: row.updated_at,
         last_used_at: row.last_used_at,
+    }
+}
+
+fn effective_cnki_status(session_data: &JsonValue, row: &CnkiSessionRow, now: f64) -> CnkiStatus {
+    let token = session_data
+        .get("bff_user_token")
+        .and_then(JsonValue::as_str)
+        .and_then(nonempty);
+    let expires_at = token.and_then(parse_jwt_expiration);
+    if token.is_some() {
+        if expires_at.is_some_and(|value| value <= now) {
+            CnkiStatus::Expired
+        } else {
+            CnkiStatus::Active
+        }
+    } else if nonempty(&row.qr_uuid).is_some() {
+        CnkiStatus::WaitingScan
+    } else {
+        CnkiStatus::from(nonempty(&row.status).unwrap_or("empty"))
     }
 }
 
@@ -574,9 +616,9 @@ mod tests {
     use tempfile::tempdir;
 
     use super::{
-        compare_and_swap_cnki_session, delete_cnki_session, get_cnki_session_data,
-        get_cnki_session_status, reserve_cnki_session_operation, touch_cnki_session_used,
-        upsert_cnki_session,
+        compare_and_swap_cnki_session, delete_cnki_session, get_active_cnki_session_data,
+        get_cnki_session_data, get_cnki_session_status, reserve_cnki_session_operation,
+        touch_cnki_session_used, upsert_cnki_session,
     };
     use crate::auth::initialize_auth_database;
     use crate::SecretCodec;
@@ -640,6 +682,80 @@ mod tests {
             .expect("stored session should load");
         assert!(stored.starts_with("litradarenc:v1:"));
         assert!(!stored.contains("SECRET_TOKEN_COOKIE"));
+    }
+
+    #[test]
+    fn active_cnki_session_loader_applies_effective_expiration() {
+        let temp_dir = tempdir().expect("temp dir should be created");
+        let auth_db_path = temp_dir.path().join("auth.sqlite");
+        initialize_auth_database(&auth_db_path).expect("auth database should initialize");
+        let user_id = UserId(11);
+        Connection::open(&auth_db_path)
+            .expect("auth database should open")
+            .execute(
+                "INSERT INTO users (id, username, password_hash, salt, is_admin, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, 0, 0, 0)",
+                (user_id.value(), "cnki-expiry-user", "hash", "salt"),
+            )
+            .expect("user fixture should insert");
+        let codec = SecretCodec::from_key([13_u8; 32]);
+
+        upsert_cnki_session(
+            &auth_db_path,
+            &codec,
+            user_id,
+            &json!({"bff_user_token": "header.eyJleHAiOjF9.signature"}),
+            &CnkiStatus::Active,
+            None,
+        )
+        .expect("expired session should upsert");
+        assert_eq!(
+            get_cnki_session_status(&auth_db_path, &codec, user_id)
+                .expect("expired status should load")
+                .status,
+            CnkiStatus::Expired
+        );
+        assert!(get_active_cnki_session_data(&auth_db_path, &codec, user_id)
+            .expect("expired active session lookup should succeed")
+            .is_none());
+
+        upsert_cnki_session(
+            &auth_db_path,
+            &codec,
+            user_id,
+            &json!({"bff_user_token": "header.eyJleHAiOjQxMDI0NDQ4MDB9.signature"}),
+            &CnkiStatus::Active,
+            None,
+        )
+        .expect("future session should upsert");
+        assert_eq!(
+            get_cnki_session_status(&auth_db_path, &codec, user_id)
+                .expect("future status should load")
+                .status,
+            CnkiStatus::Active
+        );
+        assert!(get_active_cnki_session_data(&auth_db_path, &codec, user_id)
+            .expect("future active session lookup should succeed")
+            .is_some());
+
+        upsert_cnki_session(
+            &auth_db_path,
+            &codec,
+            user_id,
+            &json!({"bff_user_token": "legacy-token-without-exp"}),
+            &CnkiStatus::Active,
+            None,
+        )
+        .expect("legacy session should upsert");
+        assert_eq!(
+            get_cnki_session_status(&auth_db_path, &codec, user_id)
+                .expect("legacy status should load")
+                .status,
+            CnkiStatus::Active
+        );
+        assert!(get_active_cnki_session_data(&auth_db_path, &codec, user_id)
+            .expect("legacy active session lookup should succeed")
+            .is_some());
     }
 
     #[test]
