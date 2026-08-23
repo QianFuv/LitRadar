@@ -7,6 +7,7 @@ use axum::response::{IntoResponse, Response};
 use axum::Json;
 #[cfg(test)]
 use litradar_sources::FixtureZjlibCnkiMode;
+use litradar_storage::index::WeeklyArticlePageParams;
 use litradar_storage::{
     ArticleListParams, DatabaseResolutionError, IndexRepositoryError, IssueListParams,
     JournalListParams, StorageConfig,
@@ -366,7 +367,10 @@ pub(crate) async fn get_issue(
     get,
     path = "/api/weekly-updates",
     tag = "index",
-    responses((status = 200, description = "Weekly article updates.", body = litradar_domain::WeeklyUpdatesResponse)),
+    responses(
+        (status = 200, description = "Weekly article updates.", body = litradar_domain::WeeklyUpdatesResponse),
+        (status = 413, description = "Legacy weekly article ceiling exceeded; use bounded endpoints.", body = litradar_domain::ErrorEnvelope)
+    ),
     security(("bearer_auth" = []), ("session_cookie" = []))
 )]
 pub(crate) async fn get_weekly_updates(
@@ -376,6 +380,79 @@ pub(crate) async fn get_weekly_updates(
     require_current_user(&state, &headers).await?;
     let payload = run_index(&state, move |storage| {
         litradar_storage::get_weekly_updates(&storage)
+    })
+    .await?;
+    Ok(Json(payload))
+}
+
+/// Summarize weekly updates without returning article bodies.
+///
+/// # Arguments
+///
+/// * `state` - Shared API state.
+/// * `headers` - Request headers.
+///
+/// # Returns
+///
+/// Fixed-window database and journal counts.
+#[utoipa::path(
+    get,
+    path = "/api/weekly-updates/summary",
+    tag = "index",
+    responses((status = 200, description = "Weekly update counts without article bodies.", body = litradar_domain::WeeklyUpdatesSummaryResponse)),
+    security(("bearer_auth" = []), ("session_cookie" = []))
+)]
+pub(crate) async fn get_weekly_updates_summary(
+    State(state): State<ApiState>,
+    headers: HeaderMap,
+) -> Result<Json<litradar_domain::WeeklyUpdatesSummaryResponse>, ApiError> {
+    require_current_user(&state, &headers).await?;
+    let payload = run_index(&state, move |storage| {
+        litradar_storage::index::get_weekly_updates_summary(&storage)
+    })
+    .await?;
+    Ok(Json(payload))
+}
+
+/// List one bounded page of weekly articles from a fixed manifest window.
+///
+/// # Arguments
+///
+/// * `state` - Shared API state.
+/// * `headers` - Request headers.
+/// * `raw_query` - Raw weekly page query.
+///
+/// # Returns
+///
+/// Cursor-paginated weekly articles.
+#[utoipa::path(
+    get,
+    path = "/api/weekly-updates/articles",
+    tag = "index",
+    params(
+        ("db" = String, Query, description = "Database name or filename under data/index.", max_length = 255),
+        ("journal_id" = i64, Query, description = "Positive journal identifier.", minimum = 1),
+        ("window_end" = String, Query, description = "RFC3339 fixed weekly window end."),
+        ("q" = Option<String>, Query, description = "Optional simple full-text phrase.", max_length = 2048),
+        ("limit" = Option<i64>, Query, description = "Page size from 1 through 200.", minimum = 1, maximum = 200),
+        ("cursor" = Option<String>, Query, description = "Descending date|article_id cursor.", max_length = 2048)
+    ),
+    responses(
+        (status = 200, description = "Bounded weekly article page.", body = litradar_domain::WeeklyArticlePage),
+        (status = 400, description = "Invalid weekly page query.", body = litradar_domain::ErrorEnvelope),
+        (status = 404, description = "Database or journal not found.", body = litradar_domain::ErrorEnvelope)
+    ),
+    security(("bearer_auth" = []), ("session_cookie" = []))
+)]
+pub(crate) async fn get_weekly_update_articles(
+    State(state): State<ApiState>,
+    headers: HeaderMap,
+    RawQuery(raw_query): RawQuery,
+) -> Result<Json<litradar_domain::WeeklyArticlePage>, ApiError> {
+    require_current_user(&state, &headers).await?;
+    let params = parse_weekly_article_query(raw_query.as_deref())?;
+    let payload = run_index(&state, move |storage| {
+        litradar_storage::index::get_weekly_update_articles(&storage, &params)
     })
     .await?;
     Ok(Json(payload))
@@ -681,6 +758,56 @@ fn parse_article_query(
     Ok((query_value(&pairs, "db"), params))
 }
 
+fn parse_weekly_article_query(
+    raw_query: Option<&str>,
+) -> Result<WeeklyArticlePageParams, ApiError> {
+    let pairs = parse_query_pairs(raw_query)?;
+    let db_name =
+        query_value(&pairs, "db").ok_or_else(|| ApiError::bad_request("db is required"))?;
+    let journal_id = parse_optional_i64(&pairs, "journal_id")?
+        .ok_or_else(|| ApiError::bad_request("journal_id is required"))?;
+    if journal_id <= 0 {
+        return Err(ApiError::bad_request("journal_id must be greater than 0"));
+    }
+    let window_end = query_value(&pairs, "window_end")
+        .ok_or_else(|| ApiError::bad_request("window_end is required"))?;
+    let q = query_value(&pairs, "q");
+    let cursor = query_value(&pairs, "cursor");
+    for (name, value, maximum) in [
+        (
+            "db",
+            db_name.as_str(),
+            litradar_domain::MAX_DATABASE_NAME_CHARS,
+        ),
+        (
+            "window_end",
+            window_end.as_str(),
+            litradar_domain::MAX_SEARCH_TEXT_CHARS,
+        ),
+    ] {
+        litradar_domain::validate_characters(name, value, maximum)
+            .map_err(|error| ApiError::bad_request(error.to_string()))?;
+    }
+    for (name, value) in [("q", q.as_deref()), ("cursor", cursor.as_deref())] {
+        if let Some(value) = value {
+            litradar_domain::validate_characters(
+                name,
+                value,
+                litradar_domain::MAX_SEARCH_TEXT_CHARS,
+            )
+            .map_err(|error| ApiError::bad_request(error.to_string()))?;
+        }
+    }
+    Ok(WeeklyArticlePageParams {
+        db_name,
+        journal_id,
+        window_end,
+        q,
+        limit: parse_optional_i64(&pairs, "limit")?.unwrap_or(50),
+        cursor,
+    })
+}
+
 fn validate_article_query_pairs(pairs: &[(String, String)]) -> Result<(), ApiError> {
     let repeated_filter_count = pairs
         .iter()
@@ -845,6 +972,10 @@ fn map_index_error(error: IndexRepositoryError) -> ApiError {
         | IndexRepositoryError::InvalidPagination(_)
         | IndexRepositoryError::InvalidInput(_)
         | IndexRepositoryError::InvalidSearchExpression => ApiError::bad_request(error.to_string()),
+        IndexRepositoryError::LegacyWeeklyArticleLimitExceeded => ApiError::Http {
+            status: StatusCode::PAYLOAD_TOO_LARGE,
+            detail: error.to_string(),
+        },
         IndexRepositoryError::DatabaseResolution(DatabaseResolutionError::Io(_))
         | IndexRepositoryError::Sqlite(_)
         | IndexRepositoryError::Io(_)

@@ -42,6 +42,14 @@ pub fn public_routes() -> Router<ApiState> {
             "/weekly-updates",
             axum::routing::get(index::get_weekly_updates),
         )
+        .route(
+            "/weekly-updates/summary",
+            axum::routing::get(index::get_weekly_updates_summary),
+        )
+        .route(
+            "/weekly-updates/articles",
+            axum::routing::get(index::get_weekly_update_articles),
+        )
         .route("/articles", axum::routing::get(index::list_articles))
         .route(
             "/articles/{article_id}",

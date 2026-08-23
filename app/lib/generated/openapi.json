@@ -3304,6 +3304,156 @@
                 }
               }
             }
+          },
+          "413": {
+            "description": "Legacy weekly article ceiling exceeded; use bounded endpoints.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          },
+          {
+            "session_cookie": []
+          }
+        ]
+      }
+    },
+    "/api/weekly-updates/articles": {
+      "get": {
+        "tags": ["index"],
+        "summary": "List one bounded page of weekly articles from a fixed manifest window.",
+        "description": "# Arguments\n\n* `state` - Shared API state.\n* `headers` - Request headers.\n* `raw_query` - Raw weekly page query.\n\n# Returns\n\nCursor-paginated weekly articles.",
+        "operationId": "get_weekly_update_articles",
+        "parameters": [
+          {
+            "name": "db",
+            "in": "query",
+            "description": "Database name or filename under data/index.",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "maxLength": 255
+            }
+          },
+          {
+            "name": "journal_id",
+            "in": "query",
+            "description": "Positive journal identifier.",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 1
+            }
+          },
+          {
+            "name": "window_end",
+            "in": "query",
+            "description": "RFC3339 fixed weekly window end.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "description": "Optional simple full-text phrase.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 2048
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Page size from 1 through 200.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "maximum": 200,
+              "minimum": 1
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "Descending date|article_id cursor.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 2048
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Bounded weekly article page.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WeeklyArticlePage"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid weekly page query.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Database or journal not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          },
+          {
+            "session_cookie": []
+          }
+        ]
+      }
+    },
+    "/api/weekly-updates/summary": {
+      "get": {
+        "tags": ["index"],
+        "summary": "Summarize weekly updates without returning article bodies.",
+        "description": "# Arguments\n\n* `state` - Shared API state.\n* `headers` - Request headers.\n\n# Returns\n\nFixed-window database and journal counts.",
+        "operationId": "get_weekly_updates_summary",
+        "responses": {
+          "200": {
+            "description": "Weekly update counts without article bodies.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WeeklyUpdatesSummaryResponse"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -6166,6 +6316,24 @@
           }
         }
       },
+      "WeeklyArticlePage": {
+        "type": "object",
+        "description": "Cursor-paginated weekly articles for one database and journal.",
+        "required": ["items", "page"],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WeeklyArticleRecord"
+            },
+            "description": "Weekly article records."
+          },
+          "page": {
+            "$ref": "#/components/schemas/PageMeta",
+            "description": "Descending date and article-id pagination metadata."
+          }
+        }
+      },
       "WeeklyArticleRecord": {
         "type": "object",
         "description": "Weekly article record.",
@@ -6245,6 +6413,37 @@
           }
         }
       },
+      "WeeklyDatabaseSummary": {
+        "type": "object",
+        "description": "Weekly article counts for one database without article bodies.",
+        "required": ["db_name", "generated_at", "new_article_count", "journals"],
+        "properties": {
+          "db_name": {
+            "type": "string",
+            "description": "Database filename."
+          },
+          "generated_at": {
+            "type": "string",
+            "description": "Generated timestamp from the newest included manifest."
+          },
+          "journals": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WeeklyJournalSummary"
+            },
+            "description": "Journal summaries ordered by count and label."
+          },
+          "new_article_count": {
+            "type": "integer",
+            "description": "New article count within the fixed window.",
+            "minimum": 0
+          },
+          "run_id": {
+            "type": ["string", "null"],
+            "description": "Source run identifier from the newest included manifest."
+          }
+        }
+      },
       "WeeklyDatabaseUpdate": {
         "type": "object",
         "description": "Weekly update summary for one database.",
@@ -6273,6 +6472,26 @@
           "run_id": {
             "type": ["string", "null"],
             "description": "Source run identifier."
+          }
+        }
+      },
+      "WeeklyJournalSummary": {
+        "type": "object",
+        "description": "Weekly article counts for one journal without article bodies.",
+        "required": ["journal_id", "new_article_count"],
+        "properties": {
+          "journal_id": {
+            "$ref": "#/components/schemas/JournalId",
+            "description": "Journal identifier."
+          },
+          "journal_title": {
+            "type": ["string", "null"],
+            "description": "Journal title."
+          },
+          "new_article_count": {
+            "type": "integer",
+            "description": "New article count within the fixed window.",
+            "minimum": 0
           }
         }
       },
@@ -6322,6 +6541,32 @@
           "window_end": {
             "type": "string",
             "description": "Window end timestamp."
+          },
+          "window_start": {
+            "type": "string",
+            "description": "Window start timestamp."
+          }
+        }
+      },
+      "WeeklyUpdatesSummaryResponse": {
+        "type": "object",
+        "description": "Bounded weekly update summary without article bodies.",
+        "required": ["generated_at", "window_start", "window_end", "databases"],
+        "properties": {
+          "databases": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WeeklyDatabaseSummary"
+            },
+            "description": "Database update summaries."
+          },
+          "generated_at": {
+            "type": "string",
+            "description": "Response generated timestamp."
+          },
+          "window_end": {
+            "type": "string",
+            "description": "Fixed window end timestamp for article-page requests."
           },
           "window_start": {
             "type": "string",

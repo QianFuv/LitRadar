@@ -59,7 +59,8 @@ pub use ids::{stable_sqlite_id, ArticleId, JournalId, UserId};
 pub use index::{
     ArticleAccessAction, ArticleAccessResponse, ArticlePage, ArticleRecord, ArticleSearchMode,
     IssuePage, IssueRecord, JournalOption, JournalPage, JournalRecord, PageMeta, ValueCount,
-    WeeklyArticleRecord, WeeklyDatabaseUpdate, WeeklyJournalUpdate, WeeklyUpdatesResponse,
+    WeeklyArticlePage, WeeklyArticleRecord, WeeklyDatabaseSummary, WeeklyDatabaseUpdate,
+    WeeklyJournalSummary, WeeklyJournalUpdate, WeeklyUpdatesResponse, WeeklyUpdatesSummaryResponse,
     YearSummary,
 };
 pub use index_contract::{

@@ -236,6 +236,264 @@ async fn weekly_updates_merge_current_history_and_reject_out_of_window_manifests
     miri,
     ignore = "Miri does not support Tokio's Windows IOCP runtime initialization"
 )]
+async fn legacy_weekly_updates_reject_more_than_two_thousand_manifest_references() {
+    let backend = TestBackend::new();
+    let user = backend.authenticated_user("weekly_legacy_limit_reader", false);
+    let database = backend.create_index_database("fixture.sqlite");
+    write_weekly_manifest(
+        &backend,
+        "legacy-limit.changes.json",
+        &json!({
+            "db_name": database.db_name,
+            "generated_at": weekly_timestamp_days_ago(0),
+            "run_id": "legacy-limit",
+            "notifiable_article_ids": (1..=2_001_i64).collect::<Vec<_>>()
+        }),
+    );
+
+    let response = json_request(
+        &backend.router(),
+        Method::GET,
+        "/api/weekly-updates",
+        Some(&user.authorization_header()),
+        None,
+        None,
+    )
+    .await;
+
+    assert_eq!(response.status, StatusCode::PAYLOAD_TOO_LARGE);
+    assert_eq!(
+        response.payload["detail"],
+        "Weekly updates exceed 2000 articles; use /api/weekly-updates/summary and /api/weekly-updates/articles"
+    );
+    assert!(response.payload.get("databases").is_none());
+}
+
+#[tokio::test]
+#[cfg_attr(
+    miri,
+    ignore = "Miri does not support Tokio's Windows IOCP runtime initialization"
+)]
+async fn weekly_summary_returns_counts_without_article_bodies() {
+    let backend = TestBackend::new();
+    let user = backend.authenticated_user("weekly_summary_reader", false);
+    let database = backend.create_index_database("fixture.sqlite");
+    insert_additional_weekly_articles(&database.path);
+    write_weekly_manifest(
+        &backend,
+        "summary.changes.json",
+        &json!({
+            "db_name": database.db_name,
+            "generated_at": weekly_timestamp_days_ago(0),
+            "run_id": "summary-run",
+            "notifiable_article_ids": [9001, 9002, 9003, 9999]
+        }),
+    );
+
+    let response = json_request(
+        &backend.router(),
+        Method::GET,
+        "/api/weekly-updates/summary",
+        Some(&user.authorization_header()),
+        None,
+        None,
+    )
+    .await;
+
+    assert_eq!(response.status, StatusCode::OK);
+    assert_eq!(response.payload["databases"][0]["new_article_count"], 3);
+    assert_eq!(
+        response.payload["databases"][0]["journals"]
+            .as_array()
+            .expect("journals should be an array")
+            .iter()
+            .map(|journal| (
+                journal["journal_id"]
+                    .as_str()
+                    .expect("journal id should be text"),
+                journal["new_article_count"]
+                    .as_u64()
+                    .expect("journal count should be unsigned")
+            ))
+            .collect::<Vec<_>>(),
+        vec![("101", 2), ("102", 1)]
+    );
+    let serialized =
+        serde_json::to_string(&response.payload).expect("weekly summary response should serialize");
+    assert!(!serialized.contains("\"articles\""));
+    assert!(!serialized.contains("\"abstract\""));
+}
+
+#[tokio::test]
+#[cfg_attr(
+    miri,
+    ignore = "Miri does not support Tokio's Windows IOCP runtime initialization"
+)]
+async fn weekly_article_route_pages_searches_and_freezes_manifest_membership() {
+    let backend = TestBackend::new();
+    let user = backend.authenticated_user("weekly_page_reader", false);
+    let database = backend.create_index_database("fixture.sqlite");
+    insert_additional_weekly_articles(&database.path);
+    write_weekly_manifest(
+        &backend,
+        "current.changes.json",
+        &json!({
+            "db_name": database.db_name,
+            "generated_at": weekly_timestamp_days_ago(0),
+            "run_id": "current-run",
+            "notifiable_article_ids": [9001, 9002]
+        }),
+    );
+    let app = backend.router();
+    let authorization = user.authorization_header();
+    let summary = json_request(
+        &app,
+        Method::GET,
+        "/api/weekly-updates/summary",
+        Some(&authorization),
+        None,
+        None,
+    )
+    .await;
+    let window_end = summary.payload["window_end"]
+        .as_str()
+        .expect("summary window end should be text")
+        .replace(':', "%3A");
+    write_weekly_manifest(
+        &backend,
+        "future.changes.json",
+        &json!({
+            "db_name": database.db_name,
+            "generated_at": current_epoch_seconds().saturating_add(86_400).to_string(),
+            "run_id": "future-run",
+            "notifiable_article_ids": [9003]
+        }),
+    );
+
+    let first = json_request(
+        &app,
+        Method::GET,
+        &format!(
+            "/api/weekly-updates/articles?db=fixture.sqlite&journal_id=101&window_end={window_end}&limit=1"
+        ),
+        Some(&authorization),
+        None,
+        None,
+    )
+    .await;
+
+    assert_eq!(first.status, StatusCode::OK);
+    assert_eq!(first.payload["items"][0]["article_id"], "9002");
+    assert_eq!(
+        first.payload["items"][0]["abstract"],
+        "Second fixture abstract."
+    );
+    assert_eq!(first.payload["page"]["has_more"], true);
+    let cursor = first.payload["page"]["next_cursor"]
+        .as_str()
+        .expect("first page should provide a cursor")
+        .replace('|', "%7C");
+    let second = json_request(
+        &app,
+        Method::GET,
+        &format!(
+            "/api/weekly-updates/articles?db=fixture.sqlite&journal_id=101&window_end={window_end}&limit=1&cursor={cursor}"
+        ),
+        Some(&authorization),
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(second.status, StatusCode::OK);
+    assert_eq!(second.payload["items"][0]["article_id"], "9001");
+    assert_eq!(second.payload["page"]["has_more"], false);
+    assert!(second.payload["page"]["next_cursor"].is_null());
+
+    let searched = json_request(
+        &app,
+        Method::GET,
+        &format!(
+            "/api/weekly-updates/articles?db=fixture.sqlite&journal_id=101&window_end={window_end}&q=Second+Fixture"
+        ),
+        Some(&authorization),
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(searched.status, StatusCode::OK);
+    assert_eq!(searched.payload["items"][0]["article_id"], "9002");
+    let future = json_request(
+        &app,
+        Method::GET,
+        &format!(
+            "/api/weekly-updates/articles?db=fixture.sqlite&journal_id=102&window_end={window_end}&q=Alpha"
+        ),
+        Some(&authorization),
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(future.status, StatusCode::OK);
+    assert_eq!(future.payload["items"], json!([]));
+}
+
+#[tokio::test]
+#[cfg_attr(
+    miri,
+    ignore = "Miri does not support Tokio's Windows IOCP runtime initialization"
+)]
+async fn weekly_article_route_rejects_invalid_queries_and_missing_resources() {
+    let backend = TestBackend::new();
+    let user = backend.authenticated_user("weekly_invalid_page_reader", false);
+    backend.create_index_database("fixture.sqlite");
+    let app = backend.router();
+    let authorization = user.authorization_header();
+    let cases = [
+        ("/api/weekly-updates/articles", StatusCode::BAD_REQUEST, "db is required"),
+        (
+            "/api/weekly-updates/articles?db=fixture.sqlite&journal_id=0&window_end=2026-08-24T00%3A00%3A00Z",
+            StatusCode::BAD_REQUEST,
+            "journal_id must be greater than 0",
+        ),
+        (
+            "/api/weekly-updates/articles?db=fixture.sqlite&journal_id=101&window_end=not-a-date",
+            StatusCode::BAD_REQUEST,
+            "window_end must be a valid RFC3339 timestamp",
+        ),
+        (
+            "/api/weekly-updates/articles?db=fixture.sqlite&journal_id=101&window_end=2026-08-24T00%3A00%3A00Z&limit=201",
+            StatusCode::BAD_REQUEST,
+            "limit must be between 1 and 200",
+        ),
+        (
+            "/api/weekly-updates/articles?db=fixture.sqlite&journal_id=101&window_end=2026-08-24T00%3A00%3A00Z&cursor=invalid",
+            StatusCode::BAD_REQUEST,
+            "Invalid cursor",
+        ),
+        (
+            "/api/weekly-updates/articles?db=missing.sqlite&journal_id=101&window_end=2026-08-24T00%3A00%3A00Z",
+            StatusCode::NOT_FOUND,
+            "Database not found",
+        ),
+        (
+            "/api/weekly-updates/articles?db=fixture.sqlite&journal_id=999&window_end=2026-08-24T00%3A00%3A00Z",
+            StatusCode::NOT_FOUND,
+            "Journal not found",
+        ),
+    ];
+
+    for (uri, expected_status, expected_detail) in cases {
+        let response = json_request(&app, Method::GET, uri, Some(&authorization), None, None).await;
+        assert_eq!(response.status, expected_status, "{uri}");
+        assert_eq!(response.payload["detail"], expected_detail, "{uri}");
+    }
+}
+
+#[tokio::test]
+#[cfg_attr(
+    miri,
+    ignore = "Miri does not support Tokio's Windows IOCP runtime initialization"
+)]
 async fn weekly_updates_return_an_empty_seven_day_window() {
     let backend = TestBackend::new();
     let user = backend.authenticated_user("weekly_empty_reader", false);
@@ -525,6 +783,28 @@ fn insert_additional_weekly_articles(path: &Path) {
                 9003, 102, 202402, 'Alpha Journal Article', 2024, '2024-01-18',
                 '["Dorothy Vaughan"]', '1', '8', 'Alpha journal fixture abstract.',
                 '10.1234/fixture-3', '123458', 1, 0
+            );
+
+            INSERT INTO article_listing (
+                article_id, journal_id, issue_id, publication_year, date,
+                open_access, in_press, doi, pmid, area
+            )
+            SELECT
+                a.article_id, a.journal_id, a.issue_id, a.publication_year, a.date,
+                a.open_access, a.in_press, a.doi, a.pmid, j.area
+            FROM articles a JOIN journals j ON j.journal_id = a.journal_id
+            WHERE a.article_id IN (9002, 9003);
+
+            INSERT INTO article_search(
+                rowid, article_id, title, abstract_text, doi, pmid, authors, journal_title
+            ) VALUES
+            (
+                9002, 9002, 'Second Fixture Article', 'Second fixture abstract.',
+                '10.1234/fixture-2', '123457', 'Katherine Johnson', 'Fixture Journal'
+            ),
+            (
+                9003, 9003, 'Alpha Journal Article', 'Alpha journal fixture abstract.',
+                '10.1234/fixture-3', '123458', 'Dorothy Vaughan', 'Alpha Journal'
             );
             "#,
         )

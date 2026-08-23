@@ -9,8 +9,9 @@ use std::path::Path;
 use litradar_domain::{
     validate_characters, validate_item_count, ArticleCandidateInfo, ArticleId, ArticleLocator,
     ArticlePage, ArticleRecord, ArticleSearchMode, IssuePage, IssueRecord, JournalId,
-    JournalOption, JournalPage, JournalRecord, PageMeta, ValueCount, WeeklyArticleRecord,
-    WeeklyDatabaseUpdate, WeeklyJournalUpdate, WeeklyUpdatesResponse, YearSummary,
+    JournalOption, JournalPage, JournalRecord, PageMeta, ValueCount, WeeklyArticlePage,
+    WeeklyArticleRecord, WeeklyDatabaseSummary, WeeklyDatabaseUpdate, WeeklyJournalSummary,
+    WeeklyJournalUpdate, WeeklyUpdatesResponse, WeeklyUpdatesSummaryResponse, YearSummary,
     MAX_DATABASE_NAME_CHARS, MAX_SEARCH_FILTER_ITEMS, MAX_SEARCH_TEXT_CHARS,
 };
 use rusqlite::types::Value as SqlValue;
@@ -45,6 +46,8 @@ pub enum IndexRepositoryError {
     InvalidInput(String),
     /// An advanced FTS5 expression is malformed.
     InvalidSearchExpression,
+    /// The legacy aggregate weekly response exceeds its supported article ceiling.
+    LegacyWeeklyArticleLimitExceeded,
     /// Requested row was not found.
     NotFound(&'static str),
 }
@@ -67,6 +70,9 @@ impl fmt::Display for IndexRepositoryError {
             Self::InvalidPagination(message) => formatter.write_str(message),
             Self::InvalidInput(message) => formatter.write_str(message),
             Self::InvalidSearchExpression => formatter.write_str("Invalid search expression"),
+            Self::LegacyWeeklyArticleLimitExceeded => formatter.write_str(
+                "Weekly updates exceed 2000 articles; use /api/weekly-updates/summary and /api/weekly-updates/articles",
+            ),
             Self::NotFound(message) => formatter.write_str(message),
         }
     }
@@ -129,7 +135,10 @@ pub use metadata::{
     get_issue, get_journal, list_areas, list_index_database_names, list_issues,
     list_journal_options, list_journals, list_years, IssueListParams, JournalListParams,
 };
-pub use weekly::get_weekly_updates;
+pub use weekly::{
+    get_weekly_update_articles, get_weekly_updates, get_weekly_updates_summary,
+    WeeklyArticlePageParams, LEGACY_WEEKLY_ARTICLE_LIMIT,
+};
 
 #[cfg(test)]
 mod test_support;

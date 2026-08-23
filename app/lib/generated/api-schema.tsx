@@ -1439,6 +1439,61 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  '/api/weekly-updates/articles': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * List one bounded page of weekly articles from a fixed manifest window.
+     * @description # Arguments
+     *
+     *     * `state` - Shared API state.
+     *     * `headers` - Request headers.
+     *     * `raw_query` - Raw weekly page query.
+     *
+     *     # Returns
+     *
+     *     Cursor-paginated weekly articles.
+     */
+    get: operations['get_weekly_update_articles'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/weekly-updates/summary': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Summarize weekly updates without returning article bodies.
+     * @description # Arguments
+     *
+     *     * `state` - Shared API state.
+     *     * `headers` - Request headers.
+     *
+     *     # Returns
+     *
+     *     Fixed-window database and journal counts.
+     */
+    get: operations['get_weekly_updates_summary'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   '/api/years': {
     parameters: {
       query?: never;
@@ -2978,6 +3033,13 @@ export interface components {
       /** @description Label value. */
       value: string;
     };
+    /** @description Cursor-paginated weekly articles for one database and journal. */
+    WeeklyArticlePage: {
+      /** @description Weekly article records. */
+      items: components['schemas']['WeeklyArticleRecord'][];
+      /** @description Descending date and article-id pagination metadata. */
+      page: components['schemas']['PageMeta'];
+    };
     /** @description Weekly article record. */
     WeeklyArticleRecord: {
       /** @description Abstract text. */
@@ -3016,6 +3078,19 @@ export interface components {
       /** @description Issue volume. */
       volume?: string | null;
     };
+    /** @description Weekly article counts for one database without article bodies. */
+    WeeklyDatabaseSummary: {
+      /** @description Database filename. */
+      db_name: string;
+      /** @description Generated timestamp from the newest included manifest. */
+      generated_at: string;
+      /** @description Journal summaries ordered by count and label. */
+      journals: components['schemas']['WeeklyJournalSummary'][];
+      /** @description New article count within the fixed window. */
+      new_article_count: number;
+      /** @description Source run identifier from the newest included manifest. */
+      run_id?: string | null;
+    };
     /** @description Weekly update summary for one database. */
     WeeklyDatabaseUpdate: {
       /** @description Database filename. */
@@ -3028,6 +3103,15 @@ export interface components {
       new_article_count: number;
       /** @description Source run identifier. */
       run_id?: string | null;
+    };
+    /** @description Weekly article counts for one journal without article bodies. */
+    WeeklyJournalSummary: {
+      /** @description Journal identifier. */
+      journal_id: components['schemas']['JournalId'];
+      /** @description Journal title. */
+      journal_title?: string | null;
+      /** @description New article count within the fixed window. */
+      new_article_count: number;
     };
     /** @description Weekly update summary for one journal. */
     WeeklyJournalUpdate: {
@@ -3047,6 +3131,17 @@ export interface components {
       /** @description Response generated timestamp. */
       generated_at: string;
       /** @description Window end timestamp. */
+      window_end: string;
+      /** @description Window start timestamp. */
+      window_start: string;
+    };
+    /** @description Bounded weekly update summary without article bodies. */
+    WeeklyUpdatesSummaryResponse: {
+      /** @description Database update summaries. */
+      databases: components['schemas']['WeeklyDatabaseSummary'][];
+      /** @description Response generated timestamp. */
+      generated_at: string;
+      /** @description Fixed window end timestamp for article-page requests. */
       window_end: string;
       /** @description Window start timestamp. */
       window_start: string;
@@ -5079,6 +5174,86 @@ export interface operations {
         };
         content: {
           'application/json': components['schemas']['WeeklyUpdatesResponse'];
+        };
+      };
+      /** @description Legacy weekly article ceiling exceeded; use bounded endpoints. */
+      413: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorEnvelope'];
+        };
+      };
+    };
+  };
+  get_weekly_update_articles: {
+    parameters: {
+      query: {
+        /** @description Descending date|article_id cursor. */
+        cursor?: string;
+        /** @description Database name or filename under data/index. */
+        db: string;
+        /** @description Positive journal identifier. */
+        journal_id: number;
+        /** @description Page size from 1 through 200. */
+        limit?: number;
+        /** @description Optional simple full-text phrase. */
+        q?: string;
+        /** @description RFC3339 fixed weekly window end. */
+        window_end: string;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Bounded weekly article page. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['WeeklyArticlePage'];
+        };
+      };
+      /** @description Invalid weekly page query. */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorEnvelope'];
+        };
+      };
+      /** @description Database or journal not found. */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorEnvelope'];
+        };
+      };
+    };
+  };
+  get_weekly_updates_summary: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Weekly update counts without article bodies. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['WeeklyUpdatesSummaryResponse'];
         };
       };
     };

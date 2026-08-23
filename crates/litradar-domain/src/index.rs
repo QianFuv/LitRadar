@@ -309,6 +309,54 @@ pub struct WeeklyUpdatesResponse {
     pub databases: Vec<WeeklyDatabaseUpdate>,
 }
 
+/// Weekly article counts for one journal without article bodies.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct WeeklyJournalSummary {
+    /// Journal identifier.
+    pub journal_id: JournalId,
+    /// Journal title.
+    pub journal_title: Option<String>,
+    /// New article count within the fixed window.
+    pub new_article_count: usize,
+}
+
+/// Weekly article counts for one database without article bodies.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct WeeklyDatabaseSummary {
+    /// Database filename.
+    pub db_name: String,
+    /// Source run identifier from the newest included manifest.
+    pub run_id: Option<String>,
+    /// Generated timestamp from the newest included manifest.
+    pub generated_at: String,
+    /// New article count within the fixed window.
+    pub new_article_count: usize,
+    /// Journal summaries ordered by count and label.
+    pub journals: Vec<WeeklyJournalSummary>,
+}
+
+/// Bounded weekly update summary without article bodies.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct WeeklyUpdatesSummaryResponse {
+    /// Response generated timestamp.
+    pub generated_at: String,
+    /// Window start timestamp.
+    pub window_start: String,
+    /// Fixed window end timestamp for article-page requests.
+    pub window_end: String,
+    /// Database update summaries.
+    pub databases: Vec<WeeklyDatabaseSummary>,
+}
+
+/// Cursor-paginated weekly articles for one database and journal.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct WeeklyArticlePage {
+    /// Weekly article records.
+    pub items: Vec<WeeklyArticleRecord>,
+    /// Descending date and article-id pagination metadata.
+    pub page: PageMeta,
+}
+
 #[cfg(test)]
 mod tests {
     use super::ArticleSearchMode;

@@ -5,8 +5,29 @@ use std::time::SystemTime;
 
 use chrono::{DateTime, SecondsFormat, TimeDelta, Utc};
 
+use super::articles::fetch_articles_by_ids;
 use super::shared::*;
 use super::*;
+
+/// Maximum unique manifest references admitted by the legacy aggregate endpoint.
+pub const LEGACY_WEEKLY_ARTICLE_LIMIT: usize = 2_000;
+
+/// Parameters for one fixed-window weekly article page.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WeeklyArticlePageParams {
+    /// Selected index database name.
+    pub db_name: String,
+    /// Selected journal identifier.
+    pub journal_id: i64,
+    /// RFC3339 end of the seven-day manifest window.
+    pub window_end: String,
+    /// Optional simple full-text query.
+    pub q: Option<String>,
+    /// Maximum records to return from 1 through 200.
+    pub limit: i64,
+    /// Optional descending `date|article_id` cursor.
+    pub cursor: Option<String>,
+}
 
 /// Return weekly updates grouped by database and journal.
 ///
@@ -27,29 +48,11 @@ fn get_weekly_updates_at(
     config: &StorageConfig,
     now: DateTime<Utc>,
 ) -> Result<WeeklyUpdatesResponse, IndexRepositoryError> {
-    let window_delta = TimeDelta::try_days(7).expect("seven-day duration should be valid");
-    let window_start_at = now
-        .checked_sub_signed(window_delta)
-        .unwrap_or(DateTime::<Utc>::MIN_UTC);
+    let window_start_at = weekly_window_start(now);
     let window_start = format_utc_datetime(window_start_at);
     let window_end = format_utc_datetime(now);
-    let manifests = load_weekly_manifests(config, window_start_at, now)?;
-    let mut by_db: HashMap<String, WeeklyBucket> = HashMap::new();
-    for manifest in manifests {
-        let bucket = by_db
-            .entry(manifest.db_name.clone())
-            .or_insert(WeeklyBucket {
-                generated_at: manifest.generated_at,
-                run_id: manifest.run_id.clone(),
-                article_ids: Vec::new(),
-                seen: HashSet::new(),
-            });
-        for article_id in manifest.article_ids {
-            if bucket.seen.insert(article_id) {
-                bucket.article_ids.push(article_id);
-            }
-        }
-    }
+    let by_db = load_weekly_buckets(config, window_start_at, now)?;
+    enforce_legacy_weekly_article_limit(&by_db)?;
     let mut databases = Vec::new();
     for (db_name, bucket) in by_db {
         let db_path = config.index_dir().join(&db_name);
@@ -81,6 +84,314 @@ fn get_weekly_updates_at(
         window_end,
         databases,
     })
+}
+
+/// Return weekly database and journal counts without article bodies.
+///
+/// # Arguments
+///
+/// * `config` - Storage paths.
+///
+/// # Returns
+///
+/// Fixed seven-day summary for bounded browser navigation.
+pub fn get_weekly_updates_summary(
+    config: &StorageConfig,
+) -> Result<WeeklyUpdatesSummaryResponse, IndexRepositoryError> {
+    get_weekly_updates_summary_at(config, DateTime::<Utc>::from(SystemTime::now()))
+}
+
+fn get_weekly_updates_summary_at(
+    config: &StorageConfig,
+    now: DateTime<Utc>,
+) -> Result<WeeklyUpdatesSummaryResponse, IndexRepositoryError> {
+    let window_start_at = weekly_window_start(now);
+    let window_start = format_precise_utc_datetime(window_start_at);
+    let window_end = format_precise_utc_datetime(now);
+    let by_db = load_weekly_buckets(config, window_start_at, now)?;
+    let mut databases = Vec::new();
+    for (db_name, bucket) in by_db {
+        let db_path = config.index_dir().join(&db_name);
+        if !db_path.exists() || bucket.article_ids.is_empty() {
+            continue;
+        }
+        let mut connection = open_sqlite_connection(db_path)?;
+        install_weekly_membership(&mut connection, &bucket.article_ids)?;
+        let journals = fetch_weekly_journal_summaries(&connection)?;
+        if journals.is_empty() {
+            continue;
+        }
+        databases.push(WeeklyDatabaseSummary {
+            db_name,
+            run_id: bucket.run_id,
+            generated_at: format_utc_datetime(bucket.generated_at),
+            new_article_count: journals
+                .iter()
+                .map(|journal| journal.new_article_count)
+                .sum(),
+            journals,
+        });
+    }
+    databases.sort_by(|left, right| {
+        right
+            .generated_at
+            .cmp(&left.generated_at)
+            .then_with(|| right.db_name.cmp(&left.db_name))
+    });
+    Ok(WeeklyUpdatesSummaryResponse {
+        generated_at: window_end.clone(),
+        window_start,
+        window_end,
+        databases,
+    })
+}
+
+/// Return one bounded weekly article page for a fixed manifest window.
+///
+/// # Arguments
+///
+/// * `config` - Storage paths.
+/// * `params` - Database, journal, window, search, limit, and cursor parameters.
+///
+/// # Returns
+///
+/// Descending weekly article page.
+pub fn get_weekly_update_articles(
+    config: &StorageConfig,
+    params: &WeeklyArticlePageParams,
+) -> Result<WeeklyArticlePage, IndexRepositoryError> {
+    validate_weekly_article_page_params(params)?;
+    let window_end = parse_iso_datetime(&params.window_end).ok_or_else(|| {
+        IndexRepositoryError::InvalidInput(
+            "window_end must be a valid RFC3339 timestamp".to_string(),
+        )
+    })?;
+    let window_start = weekly_window_start(window_end);
+    let db_name = normalize_db_name(&params.db_name).ok_or_else(|| {
+        IndexRepositoryError::InvalidInput("db must select a database".to_string())
+    })?;
+    let mut connection = open_index_connection(config, Some(&db_name))?;
+    let journal_exists = connection.query_row(
+        "SELECT EXISTS(SELECT 1 FROM journals WHERE journal_id = ?1)",
+        [params.journal_id],
+        |row| row.get::<_, bool>(0),
+    )?;
+    if !journal_exists {
+        return Err(IndexRepositoryError::NotFound("Journal not found"));
+    }
+    let mut by_db = load_weekly_buckets(config, window_start, window_end)?;
+    let article_ids = by_db
+        .remove(&db_name)
+        .map(|bucket| bucket.article_ids)
+        .unwrap_or_default();
+    install_weekly_membership(&mut connection, &article_ids)?;
+    fetch_weekly_article_page(&connection, params)
+}
+
+fn weekly_window_start(window_end: DateTime<Utc>) -> DateTime<Utc> {
+    let window_delta = TimeDelta::try_days(7).expect("seven-day duration should be valid");
+    window_end
+        .checked_sub_signed(window_delta)
+        .unwrap_or(DateTime::<Utc>::MIN_UTC)
+}
+
+fn load_weekly_buckets(
+    config: &StorageConfig,
+    window_start: DateTime<Utc>,
+    window_end: DateTime<Utc>,
+) -> Result<HashMap<String, WeeklyBucket>, IndexRepositoryError> {
+    let manifests = load_weekly_manifests(config, window_start, window_end)?;
+    let mut by_db: HashMap<String, WeeklyBucket> = HashMap::new();
+    for manifest in manifests {
+        let bucket = by_db
+            .entry(manifest.db_name.clone())
+            .or_insert(WeeklyBucket {
+                generated_at: manifest.generated_at,
+                run_id: manifest.run_id.clone(),
+                article_ids: Vec::new(),
+                seen: HashSet::new(),
+            });
+        for article_id in manifest.article_ids {
+            if bucket.seen.insert(article_id) {
+                bucket.article_ids.push(article_id);
+            }
+        }
+    }
+    Ok(by_db)
+}
+
+fn enforce_legacy_weekly_article_limit(
+    by_db: &HashMap<String, WeeklyBucket>,
+) -> Result<(), IndexRepositoryError> {
+    let article_count = by_db.values().fold(0_usize, |count, bucket| {
+        count.saturating_add(bucket.article_ids.len())
+    });
+    if article_count > LEGACY_WEEKLY_ARTICLE_LIMIT {
+        Err(IndexRepositoryError::LegacyWeeklyArticleLimitExceeded)
+    } else {
+        Ok(())
+    }
+}
+
+fn install_weekly_membership(
+    connection: &mut Connection,
+    article_ids: &[i64],
+) -> Result<(), IndexRepositoryError> {
+    connection.execute_batch(
+        "CREATE TEMP TABLE weekly_membership (
+             article_id INTEGER PRIMARY KEY
+         ) WITHOUT ROWID;",
+    )?;
+    let transaction = connection.transaction()?;
+    {
+        let mut statement = transaction
+            .prepare("INSERT OR IGNORE INTO temp.weekly_membership (article_id) VALUES (?1)")?;
+        for &article_id in article_ids {
+            statement.execute([article_id])?;
+        }
+    }
+    transaction.commit()?;
+    Ok(())
+}
+
+fn fetch_weekly_journal_summaries(
+    connection: &Connection,
+) -> Result<Vec<WeeklyJournalSummary>, IndexRepositoryError> {
+    let mut statement = connection.prepare(
+        "SELECT l.journal_id, j.title, COUNT(*)
+         FROM temp.weekly_membership membership
+         JOIN article_listing l ON l.article_id = membership.article_id
+         JOIN journals j ON j.journal_id = l.journal_id
+         GROUP BY l.journal_id, j.title",
+    )?;
+    let rows = statement.query_map([], |row| {
+        Ok(WeeklyJournalSummary {
+            journal_id: JournalId(row.get(0)?),
+            journal_title: Some(row.get(1)?),
+            new_article_count: row.get::<_, i64>(2)? as usize,
+        })
+    })?;
+    let mut journals = collect_rows(rows)?;
+    journals.sort_by(|left, right| {
+        right
+            .new_article_count
+            .cmp(&left.new_article_count)
+            .then_with(|| {
+                left.journal_title
+                    .clone()
+                    .unwrap_or_default()
+                    .to_ascii_lowercase()
+                    .cmp(
+                        &right
+                            .journal_title
+                            .clone()
+                            .unwrap_or_default()
+                            .to_ascii_lowercase(),
+                    )
+            })
+            .then_with(|| left.journal_id.value().cmp(&right.journal_id.value()))
+    });
+    Ok(journals)
+}
+
+fn validate_weekly_article_page_params(
+    params: &WeeklyArticlePageParams,
+) -> Result<(), IndexRepositoryError> {
+    let validation_result = (|| {
+        validate_characters("db", &params.db_name, MAX_DATABASE_NAME_CHARS)?;
+        validate_characters("window_end", &params.window_end, MAX_SEARCH_TEXT_CHARS)?;
+        if let Some(q) = &params.q {
+            validate_characters("q", q, MAX_SEARCH_TEXT_CHARS)?;
+        }
+        if let Some(cursor) = &params.cursor {
+            validate_characters("cursor", cursor, MAX_SEARCH_TEXT_CHARS)?;
+        }
+        Ok::<(), litradar_domain::InputValidationError>(())
+    })();
+    validation_result.map_err(|error| IndexRepositoryError::InvalidInput(error.to_string()))?;
+    if params.journal_id <= 0 {
+        return Err(IndexRepositoryError::InvalidInput(
+            "journal_id must be greater than 0".to_string(),
+        ));
+    }
+    validate_limit_offset(params.limit, 0)
+}
+
+fn fetch_weekly_article_page(
+    connection: &Connection,
+    params: &WeeklyArticlePageParams,
+) -> Result<WeeklyArticlePage, IndexRepositoryError> {
+    let mut clauses = vec!["l.journal_id = ?".to_string()];
+    let mut values = vec![SqlValue::Integer(params.journal_id)];
+    push_fts_filter(
+        &mut clauses,
+        &mut values,
+        "l.article_id",
+        &params.q,
+        ArticleSearchMode::Simple,
+    );
+    push_cursor_filter(
+        &mut clauses,
+        &mut values,
+        "l",
+        SortDirection::Desc,
+        params.cursor.as_deref(),
+    )?;
+    values.push(SqlValue::Integer(params.limit + 1));
+    let mut statement = connection.prepare(&format!(
+        "SELECT l.article_id, l.date
+         FROM temp.weekly_membership membership
+         JOIN article_listing l ON l.article_id = membership.article_id
+         {}
+         ORDER BY l.date DESC, l.article_id DESC
+         LIMIT ?",
+        where_sql(&clauses)
+    ))?;
+    let rows = statement.query_map(params_from_iter(values.iter()), |row| {
+        Ok((row.get::<_, i64>(0)?, row.get::<_, Option<String>>(1)?))
+    })?;
+    let mut id_rows = collect_rows(rows)?;
+    let has_more = id_rows.len() as i64 > params.limit;
+    id_rows.truncate(params.limit as usize);
+    let next_cursor = if has_more {
+        id_rows.last().map(|(article_id, date)| {
+            format!("{}|{article_id}", date.as_deref().unwrap_or_default())
+        })
+    } else {
+        None
+    };
+    let article_ids = id_rows
+        .iter()
+        .map(|(article_id, _)| *article_id)
+        .collect::<Vec<_>>();
+    let items = fetch_articles_by_ids(connection, &article_ids)?
+        .into_iter()
+        .map(weekly_article_from_record)
+        .collect();
+    Ok(WeeklyArticlePage {
+        items,
+        page: page_meta(None, params.limit, 0, next_cursor.clone(), Some(has_more)),
+    })
+}
+
+fn weekly_article_from_record(article: ArticleRecord) -> WeeklyArticleRecord {
+    WeeklyArticleRecord {
+        article_id: article.article_id,
+        journal_id: article.journal_id,
+        issue_id: article.issue_id,
+        title: article.title,
+        publication_year: article.publication_year,
+        date: article.date,
+        date_precision: article.date_precision,
+        authors: article.authors,
+        abstract_text: article.abstract_text,
+        doi: article.doi,
+        journal_title: article.journal_title,
+        open_access: article.open_access,
+        in_press: article.in_press,
+        volume: article.volume,
+        number: article.number,
+    }
 }
 
 fn fetch_weekly_articles(
@@ -367,6 +678,10 @@ fn format_utc_datetime(value: DateTime<Utc>) -> String {
     value.to_rfc3339_opts(SecondsFormat::Secs, true)
 }
 
+fn format_precise_utc_datetime(value: DateTime<Utc>) -> String {
+    value.to_rfc3339_opts(SecondsFormat::AutoSi, true)
+}
+
 #[derive(Debug, Clone)]
 struct WeeklyManifest {
     db_name: String,
@@ -390,7 +705,9 @@ mod tests {
     use serde_json::{json, Value as JsonValue};
 
     use super::*;
-    use crate::index::test_support::{weekly_article_ids, write_weekly_manifest, IndexFixture};
+    use crate::index::test_support::{
+        fixture_db_path, weekly_article_ids, write_weekly_manifest, IndexFixture,
+    };
 
     #[test]
     fn weekly_updates_cover_manifest_merging_grouping_and_missing_databases() {
@@ -518,6 +835,244 @@ mod tests {
             weekly_article_ids(&database.journals[1].articles),
             vec![1003]
         );
+    }
+
+    #[test]
+    fn legacy_weekly_updates_accept_exact_limit_and_reject_next_reference() {
+        let fixture = IndexFixture::new(true);
+        let now = parse_iso_datetime("2026-07-07T10:00:00Z").expect("now should parse");
+        let manifest_path = "legacy-limit.changes.json";
+        write_weekly_manifest(
+            &fixture.config,
+            manifest_path,
+            json!({
+                "db_name": fixture.db_name,
+                "generated_at": "2026-07-06T10:00:00Z",
+                "run_id": "legacy-limit",
+                "notifiable_article_ids": (1..=LEGACY_WEEKLY_ARTICLE_LIMIT).collect::<Vec<_>>()
+            }),
+        );
+
+        get_weekly_updates_at(&fixture.config, now)
+            .expect("the exact legacy article limit should succeed");
+
+        write_weekly_manifest(
+            &fixture.config,
+            manifest_path,
+            json!({
+                "db_name": fixture.db_name,
+                "generated_at": "2026-07-06T10:00:00Z",
+                "run_id": "legacy-limit",
+                "notifiable_article_ids": (1..=LEGACY_WEEKLY_ARTICLE_LIMIT + 1).collect::<Vec<_>>()
+            }),
+        );
+        assert!(matches!(
+            get_weekly_updates_at(&fixture.config, now),
+            Err(IndexRepositoryError::LegacyWeeklyArticleLimitExceeded)
+        ));
+    }
+
+    #[test]
+    fn weekly_summary_returns_only_existing_database_and_journal_counts() {
+        let fixture = IndexFixture::new(true);
+        let now = parse_iso_datetime("2026-07-07T10:00:00Z").expect("now should parse");
+        write_weekly_manifest(
+            &fixture.config,
+            "summary.changes.json",
+            json!({
+                "db_name": fixture.db_name,
+                "generated_at": "2026-07-06T10:00:00Z",
+                "run_id": "summary-run",
+                "notifiable_article_ids": [1001, 1002, 1003, 1004, 9999]
+            }),
+        );
+
+        let summary = get_weekly_updates_summary_at(&fixture.config, now)
+            .expect("weekly summary should load");
+
+        assert_eq!(summary.generated_at, "2026-07-07T10:00:00Z");
+        assert_eq!(summary.window_start, "2026-06-30T10:00:00Z");
+        assert_eq!(summary.window_end, summary.generated_at);
+        assert_eq!(summary.databases.len(), 1);
+        let database = &summary.databases[0];
+        assert_eq!(database.db_name, "fixture.sqlite");
+        assert_eq!(database.run_id.as_deref(), Some("summary-run"));
+        assert_eq!(database.new_article_count, 4);
+        assert_eq!(database.journals.len(), 2);
+        assert_eq!(database.journals[0].journal_id, JournalId(1));
+        assert_eq!(database.journals[0].new_article_count, 3);
+        assert_eq!(database.journals[1].journal_id, JournalId(2));
+        assert_eq!(database.journals[1].new_article_count, 1);
+        let payload = serde_json::to_string(&summary).expect("summary should serialize");
+        assert!(!payload.contains("\"articles\""));
+        assert!(!payload.contains("\"abstract\""));
+        let connection = Connection::open(fixture_db_path(&fixture))
+            .expect("index database should remain readable");
+        let persistent_membership_count: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE name = 'weekly_membership'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("persistent schema should be inspectable");
+        assert_eq!(persistent_membership_count, 0);
+    }
+
+    #[test]
+    fn weekly_summary_preserves_fractional_window_boundaries_for_article_pages() {
+        let fixture = IndexFixture::new(true);
+        let now = parse_iso_datetime("2026-07-07T10:00:00.900Z").expect("now should parse");
+        write_weekly_manifest(
+            &fixture.config,
+            "fractional-window.changes.json",
+            json!({
+                "db_name": fixture.db_name,
+                "generated_at": "2026-07-07T10:00:00.500Z",
+                "run_id": "fractional-window",
+                "notifiable_article_ids": [1001]
+            }),
+        );
+
+        let summary = get_weekly_updates_summary_at(&fixture.config, now)
+            .expect("fractional weekly summary should load");
+        assert_eq!(summary.window_end, "2026-07-07T10:00:00.900Z");
+        assert_eq!(summary.databases[0].new_article_count, 1);
+
+        let page = get_weekly_update_articles(
+            &fixture.config,
+            &WeeklyArticlePageParams {
+                db_name: fixture.db_name,
+                journal_id: 1,
+                window_end: summary.window_end,
+                q: None,
+                limit: 50,
+                cursor: None,
+            },
+        )
+        .expect("summary window should reproduce its article membership");
+        assert_eq!(weekly_article_ids(&page.items), [1001]);
+    }
+
+    #[test]
+    fn weekly_article_pages_apply_fixed_membership_search_and_descending_cursors() {
+        let fixture = IndexFixture::new(true);
+        write_weekly_manifest(
+            &fixture.config,
+            "current.changes.json",
+            json!({
+                "db_name": fixture.db_name,
+                "generated_at": "2026-07-06T10:00:00Z",
+                "run_id": "current-run",
+                "notifiable_article_ids": [1001, 1002, 1003, 1004]
+            }),
+        );
+        write_weekly_history_manifest(
+            &fixture.config,
+            &"44".repeat(32),
+            &json!({
+                "db_name": fixture.db_name,
+                "generated_at": "2026-06-30T10:00:00Z",
+                "run_id": "boundary-run",
+                "notifiable_article_ids": [1008]
+            }),
+        );
+        write_weekly_history_manifest(
+            &fixture.config,
+            &"55".repeat(32),
+            &json!({
+                "db_name": fixture.db_name,
+                "generated_at": "2026-06-30T09:59:59Z",
+                "run_id": "expired-run",
+                "notifiable_article_ids": [1005]
+            }),
+        );
+        write_weekly_manifest(
+            &fixture.config,
+            "future.changes.json",
+            json!({
+                "db_name": fixture.db_name,
+                "generated_at": "2026-07-07T10:00:01Z",
+                "run_id": "future-run",
+                "notifiable_article_ids": [1005]
+            }),
+        );
+        let mut params = WeeklyArticlePageParams {
+            db_name: fixture.db_name.clone(),
+            journal_id: 1,
+            window_end: "2026-07-07T10:00:00Z".to_string(),
+            q: None,
+            limit: 2,
+            cursor: None,
+        };
+
+        let first = get_weekly_update_articles(&fixture.config, &params)
+            .expect("first weekly page should load");
+        assert_eq!(weekly_article_ids(&first.items), [1004, 1001]);
+        assert_eq!(first.page.limit, 2);
+        assert_eq!(first.page.offset, 0);
+        assert_eq!(first.page.total, None);
+        assert_eq!(first.page.has_more, Some(true));
+        assert_eq!(first.page.next_cursor.as_deref(), Some("2026-01-05|1001"));
+
+        params.cursor = first.page.next_cursor;
+        let second = get_weekly_update_articles(&fixture.config, &params)
+            .expect("second weekly page should load");
+        assert_eq!(weekly_article_ids(&second.items), [1002, 1008]);
+        assert_eq!(second.page.has_more, Some(false));
+        assert_eq!(second.page.next_cursor, None);
+
+        params.cursor = None;
+        params.limit = 200;
+        params.q = Some("indexedonly".to_string());
+        let searched = get_weekly_update_articles(&fixture.config, &params)
+            .expect("weekly simple search should load");
+        assert_eq!(weekly_article_ids(&searched.items), [1002]);
+        params.q = Some("DOI fallback".to_string());
+        let excluded = get_weekly_update_articles(&fixture.config, &params)
+            .expect("non-member search should remain bounded");
+        assert!(excluded.items.is_empty());
+
+        params.q = None;
+        params.cursor = Some("invalid-cursor".to_string());
+        assert!(matches!(
+            get_weekly_update_articles(&fixture.config, &params),
+            Err(IndexRepositoryError::InvalidCursor)
+        ));
+        params.cursor = None;
+        params.limit = 201;
+        assert!(matches!(
+            get_weekly_update_articles(&fixture.config, &params),
+            Err(IndexRepositoryError::InvalidPagination(_))
+        ));
+        params.limit = 50;
+        params.journal_id = 999;
+        assert!(matches!(
+            get_weekly_update_articles(&fixture.config, &params),
+            Err(IndexRepositoryError::NotFound("Journal not found"))
+        ));
+        params.journal_id = 1;
+        params.db_name = "missing.sqlite".to_string();
+        assert!(matches!(
+            get_weekly_update_articles(&fixture.config, &params),
+            Err(IndexRepositoryError::DatabaseResolution(
+                DatabaseResolutionError::DatabaseNotFound
+            ))
+        ));
+
+        let connection = Connection::open(fixture_db_path(&fixture))
+            .expect("index database should remain readable");
+        let article_count: i64 = connection
+            .query_row("SELECT COUNT(*) FROM articles", [], |row| row.get(0))
+            .expect("article count should remain readable");
+        let persistent_membership_count: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE name = 'weekly_membership'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("persistent schema should be inspectable");
+        assert_eq!(article_count, 6);
+        assert_eq!(persistent_membership_count, 0);
     }
 
     #[test]

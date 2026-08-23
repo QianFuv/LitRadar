@@ -499,7 +499,7 @@ thread_local! {
     static ARTICLE_TOTAL_QUERY_COUNT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
-fn fetch_articles_by_ids(
+pub(super) fn fetch_articles_by_ids(
     connection: &Connection,
     article_ids: &[i64],
 ) -> Result<Vec<ArticleRecord>, IndexRepositoryError> {

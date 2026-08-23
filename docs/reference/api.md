@@ -107,8 +107,12 @@ Rust handler 上的 OpenAPI 注解是 REST 契约的实现来源。修改 REST �
 | `GET` | `/api/articles/{article_id}/abstract` | 在线解析并 307 跳转到摘要页      |
 | `GET` | `/api/articles/{article_id}/fulltext` | 在线解析并返回 307 或有界 PDF    |
 | `GET` | `/api/weekly-updates`                 | 按数据库和期刊聚合变更清单       |
+| `GET` | `/api/weekly-updates/summary`         | 不含文章正文的周更分组计数       |
+| `GET` | `/api/weekly-updates/articles`        | 固定周更窗口的文章游标页         |
 
-`weekly-updates` 读取 `data/push_state/*.changes.json` 中的可通知文章，不会临时重新抓取数据。
+周更接口读取 `data/push_state/*.changes.json` 及受管 history 中七日窗口内的可通知文章，不会临时重新抓取数据。兼容接口 `/api/weekly-updates` 在窗口内每个数据库去重后的文章引用合计不超过 2,000 条时保持原响应结构；第 2,001 条会在加载完整文章元数据前使请求返回 `413`，调用方应迁移到下述有界接口。
+
+`/api/weekly-updates/summary` 只返回固定的 `window_start`、`window_end` 以及数据库/期刊标签和计数，不包含 article 数组或 abstract。`/api/weekly-updates/articles` 要求 `db`、正整数 `journal_id` 和摘要响应的 RFC3339 `window_end`，支持最长 2,048 字符的可选简单短语 `q`、`1..=200` 的 `limit`（默认 50）以及降序 `date|article_id` 游标。文章接口重新读取以该 `window_end` 截止的七日 manifest 成员，因此摘要之后生成的 manifest 不会混入后续页；成员 ID 仅写入当前 SQLite 连接的临时表，期刊、FTS、游标和 `limit + 1` 均在 SQL 内完成，不修改持久 schema 或索引内容。
 
 期次、文章和 weekly article 的 `date` 只使用经真实日历校验的 `YYYY`、`YYYY-MM` 或 `YYYY-MM-DD`；配套 `date_precision` 为 `year`、`month`、`day` 或 `null`。只有年份的上游元数据保持如 `2026`，不会补成 `2026-01-01`。历史库中无法通过日历校验的旧日期仍原样可读，但其 precision 为 `null`。
 

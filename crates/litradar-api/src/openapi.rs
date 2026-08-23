@@ -36,6 +36,8 @@ pub const OPENAPI_JSON_PATH: &str = "/openapi.json";
         crate::routes::index::list_issues,
         crate::routes::index::get_issue,
         crate::routes::index::get_weekly_updates,
+        crate::routes::index::get_weekly_updates_summary,
+        crate::routes::index::get_weekly_update_articles,
         crate::routes::index::list_articles,
         crate::routes::index::get_article,
         crate::routes::index::get_article_access,
@@ -203,9 +205,13 @@ pub const OPENAPI_JSON_PATH: &str = "/openapi.json";
         litradar_domain::UserResponse,
         litradar_domain::ValueCount,
         litradar_domain::WeeklyArticleRecord,
+        litradar_domain::WeeklyArticlePage,
+        litradar_domain::WeeklyDatabaseSummary,
         litradar_domain::WeeklyDatabaseUpdate,
+        litradar_domain::WeeklyJournalSummary,
         litradar_domain::WeeklyJournalUpdate,
         litradar_domain::WeeklyUpdatesResponse,
+        litradar_domain::WeeklyUpdatesSummaryResponse,
         litradar_domain::YearSummary
     )),
     tags(
