@@ -107,6 +107,14 @@ async function opensAndNavigatesSettingsDialog(): Promise<void> {
   expect(screen.getAllByRole('navigation', { name: '设置分类' })).toHaveLength(2);
   expect(screen.getByRole('region', { name: '常规设置内容' })).toBeInTheDocument();
   expect(screen.getByRole('radiogroup', { name: '外观主题' })).toBeInTheDocument();
+  expect(document.querySelector('[data-mobile-overflow-cue="true"]')).toBeInTheDocument();
+  expect(document.querySelector('[data-motion-section-header="general"]')).toBeInTheDocument();
+  expect(document.querySelector('[data-settings-content-key="general"]')).toBeInTheDocument();
+  expect(
+    screen
+      .getAllByRole('button', { name: '常规' })
+      .every((button) => button.getAttribute('data-section-active') === 'true'),
+  ).toBe(true);
 
   await user.click(screen.getAllByRole('button', { name: '通知与推送' })[0]);
   expect(navigationMocks.router.replace).toHaveBeenCalledWith(
@@ -119,6 +127,48 @@ async function opensAndNavigatesSettingsDialog(): Promise<void> {
   expect(navigationMocks.router.replace).toHaveBeenCalledWith('/?view=favorites&folder=4', {
     scroll: false,
   });
+}
+
+/** Verify tracking and notification categories retain one shared draft controller. */
+async function preservesSharedTrackingCategoryState(): Promise<void> {
+  installTrackingHandlers();
+  navigationMocks.searchParams = new URLSearchParams('view=favorites&folder=4&settings=tracking');
+  const user = userEvent.setup();
+  const view = renderWithQuery(<SettingsCenterDialog />);
+
+  const recommendationSwitch = await screen.findByRole('switch', { name: '启用推荐' });
+  await user.click(recommendationSwitch);
+  const expectedCheckedState = recommendationSwitch.getAttribute('aria-checked');
+  const saveButton = screen.getByRole('button', { name: '保存更改' });
+  const sharedContent = document.querySelector(
+    '[data-settings-content-key="tracking-notifications"]',
+  );
+  expect(sharedContent).toBeInTheDocument();
+  expect(saveButton).toBeEnabled();
+
+  navigationMocks.searchParams = new URLSearchParams(
+    'view=favorites&folder=4&settings=notifications',
+  );
+  view.rerender(<SettingsCenterDialog />);
+
+  await waitFor(() =>
+    expect(screen.getByRole('heading', { level: 2, name: '通知与推送' })).toBeInTheDocument(),
+  );
+  expect(document.querySelector('[data-settings-content-key="tracking-notifications"]')).toBe(
+    sharedContent,
+  );
+  expect(screen.getByRole('button', { name: '保存更改' })).toBe(saveButton);
+  expect(saveButton).toBeEnabled();
+
+  navigationMocks.searchParams = new URLSearchParams('view=favorites&folder=4&settings=tracking');
+  view.rerender(<SettingsCenterDialog />);
+
+  await waitFor(() =>
+    expect(screen.getByRole('switch', { name: '启用推荐' })).toHaveAttribute(
+      'aria-checked',
+      expectedCheckedState,
+    ),
+  );
 }
 
 /** Verify closing settings returns focus to a menu trigger after its menu portal unmounts. */
@@ -205,6 +255,7 @@ describe('settings center', () => {
     'restores focus to a menu trigger after its portal unmounts',
     restoresFocusToTransientMenuTrigger,
   );
+  test('preserves one draft across tracking categories', preservesSharedTrackingCategoryState);
   test('normalizes an unknown settings section', normalizesUnknownSettingsSection);
   test('guards unsaved cross-category navigation', guardsUnsavedCrossCategoryNavigation, 20_000);
 });

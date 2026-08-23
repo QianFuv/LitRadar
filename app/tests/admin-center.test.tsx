@@ -94,7 +94,16 @@ async function navigatesPersistentAdministratorPanels(): Promise<void> {
   expect(screen.getByRole('heading', { name: '概览' })).toBeInTheDocument();
   expect(screen.getAllByRole('navigation', { name: '管理分类' })).toHaveLength(2);
   expect(screen.getAllByRole('tabpanel', { hidden: true })).toHaveLength(6);
-  expect(screen.getByRole('tabpanel', { name: '概览面板' })).not.toHaveAttribute('hidden');
+  const overviewPanel = screen.getByRole('tabpanel', { name: '概览面板' });
+  const retainedUserPanel = screen
+    .getByRole('dialog', { name: '管理面板' })
+    .querySelector<HTMLElement>('[role="tabpanel"][aria-label="用户面板"]');
+  expect(overviewPanel).not.toHaveAttribute('hidden');
+  expect(overviewPanel).toHaveAttribute('data-admin-panel-state', 'active');
+  expect(retainedUserPanel).not.toBeNull();
+  expect(retainedUserPanel).toHaveAttribute('data-admin-panel-state', 'inactive');
+  expect(document.querySelector('[data-mobile-overflow-cue="true"]')).toBeInTheDocument();
+  expect(document.querySelector('[data-motion-section-header="overview"]')).toBeInTheDocument();
   expect(menuTrigger).not.toHaveAttribute(SECTIONED_DIALOG_RETURN_FOCUS_ATTRIBUTE);
 
   adminCenterMocks.searchParams = new URLSearchParams(
@@ -117,6 +126,9 @@ async function navigatesPersistentAdministratorPanels(): Promise<void> {
   await waitFor(() => expect(screen.getByRole('heading', { name: '用户' })).toBeInTheDocument());
 
   expect(screen.getByRole('tabpanel', { name: '用户面板' })).not.toHaveAttribute('hidden');
+  expect(screen.getByRole('tabpanel', { name: '用户面板' })).toBe(retainedUserPanel);
+  expect(retainedUserPanel).toHaveAttribute('data-admin-panel-state', 'active');
+  expect(overviewPanel).toHaveAttribute('data-admin-panel-state', 'inactive');
   expect(
     screen
       .getByRole('dialog', { name: '管理面板' })

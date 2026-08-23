@@ -432,7 +432,10 @@ async function serveAdministratorApi(route: Route): Promise<void> {
  */
 async function showsBootstrapBoundary(page: Page): Promise<void> {
   await page.route('**/api/**', serveBootstrapApi);
+  await page.emulateMedia({ colorScheme: 'dark' });
+  await page.setViewportSize({ width: 1600, height: 1000 });
   await page.goto('/login');
+  await hideDevelopmentIndicator(page);
 
   const usernameInput = page.getByLabel('用户名');
   const passwordInput = page.getByLabel('密码', { exact: true });
@@ -449,6 +452,17 @@ async function showsBootstrapBoundary(page: Page): Promise<void> {
   await expect(passwordInput).toHaveAttribute('autocomplete', 'new-password');
   await expect(page.getByLabel('邀请码')).toBeVisible();
   await expect(page.getByRole('button', { name: '注册' }).first()).toBeDisabled();
+  await expect(page.locator('[data-auth-header-mode="register"]')).toBeVisible();
+  await page.screenshot({ path: '../output/ui/login-desktop.png', fullPage: true });
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(page.locator('[data-auth-state="form"]')).toBeVisible();
+  expect(
+    await page
+      .locator('#main-content')
+      .evaluate((element) => element.scrollWidth <= element.clientWidth),
+  ).toBe(true);
+  await page.screenshot({ path: '../output/ui/login-mobile.png', fullPage: true });
 }
 
 /**
@@ -536,6 +550,7 @@ async function verifiesAggregatedSettingsCenter(page: Page): Promise<void> {
   await expect(settingsDialog).toBeVisible();
   await hideDevelopmentIndicator(page);
   await expect(page.getByRole('heading', { name: '常规', exact: true })).toBeVisible();
+  await expect(settingsDialog.locator('[data-motion-section-header="general"]')).toBeVisible();
   await expect(settingsDialog).toHaveCSS('max-width', '1152px');
   await page.screenshot({
     path: '../output/ui/settings-center-desktop.png',
@@ -573,6 +588,11 @@ async function verifiesAggregatedSettingsCenter(page: Page): Promise<void> {
   const mobileCategories = mobileDialog
     .locator('header')
     .getByRole('navigation', { name: '设置分类' });
+  await expect(mobileDialog.locator('[data-mobile-overflow-cue="true"]')).toBeVisible();
+  await expect(mobileCategories.getByRole('button', { name: '常规' })).toHaveAttribute(
+    'data-section-active',
+    'true',
+  );
   expect(
     await mobileCategories.evaluate((element) => element.scrollWidth > element.clientWidth),
   ).toBe(true);
@@ -609,6 +629,7 @@ async function verifiesAdministratorCenter(page: Page): Promise<void> {
   await expect(adminDialog).toBeVisible();
   await expect(adminDialog).toHaveCSS('max-width', '1152px');
   await expect(page.getByRole('heading', { name: '概览', exact: true })).toBeVisible();
+  await expect(adminDialog.locator('[data-motion-section-header="overview"]')).toBeVisible();
   const desktopCategories = adminDialog.locator('aside').getByRole('navigation', {
     name: '管理分类',
   });
@@ -633,6 +654,11 @@ async function verifiesAdministratorCenter(page: Page): Promise<void> {
   const mobileCategories = mobileDialog
     .locator('header')
     .getByRole('navigation', { name: '管理分类' });
+  await expect(mobileDialog.locator('[data-mobile-overflow-cue="true"]')).toBeVisible();
+  await expect(mobileCategories.getByRole('button', { name: '概览' })).toHaveAttribute(
+    'data-section-active',
+    'true',
+  );
   expect(
     await mobileCategories.evaluate((element) => element.scrollWidth > element.clientWidth),
   ).toBe(true);

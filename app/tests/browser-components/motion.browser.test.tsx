@@ -5,10 +5,15 @@
 import '@/app/globals.css';
 
 import { act, render, screen, waitFor } from '@testing-library/react';
-import { useState } from 'react';
+import { Circle } from 'lucide-react';
+import { useRef, useState } from 'react';
 import { page, userEvent } from 'vitest/browser';
 import { describe, expect, test } from 'vitest';
 
+import {
+  SectionedDialogFrame,
+  type SectionedDialogSectionDefinition,
+} from '@/components/feature/sectioned-dialog';
 import {
   Dialog,
   DialogContent,
@@ -28,6 +33,24 @@ import {
 type MotionLifecycleHarnessProps = {
   reducedMotion: 'always' | 'never';
 };
+
+const SECTIONED_BROWSER_SECTIONS = [
+  {
+    description: '第一分类说明',
+    icon: Circle,
+    id: 'first',
+    label: '第一分类',
+  },
+  {
+    description: '第二分类说明',
+    icon: Circle,
+    id: 'second',
+    label: '第二分类',
+  },
+] satisfies readonly [
+  SectionedDialogSectionDefinition<'first' | 'second'>,
+  ...SectionedDialogSectionDefinition<'first' | 'second'>[],
+];
 
 /**
  * Render one removable element and expose its resolved transition duration.
@@ -98,6 +121,41 @@ function DrawerFocusHarness() {
 }
 
 /**
+ * Render a real sectioned dialog with controlled category and focus state.
+ *
+ * @returns Sectioned dialog trigger and lifecycle harness.
+ */
+function SectionedDialogHarness() {
+  const [activeSection, setActiveSection] = useState<'first' | 'second'>('first');
+  const [isOpen, setIsOpen] = useState(false);
+  const returnFocusRef = useRef<HTMLButtonElement | null>(null);
+
+  return (
+    <>
+      <button ref={returnFocusRef} type="button" onClick={() => setIsOpen(true)}>
+        打开分区对话框
+      </button>
+      <SectionedDialogFrame
+        activeSection={activeSection}
+        centerSubtitle="浏览器生命周期测试"
+        centerTitle="分区测试"
+        contentLabelSuffix="测试内容"
+        dialogDescription="验证分类标题切换与关闭焦点。"
+        navigationLabel="测试分类"
+        open={isOpen}
+        onOpenChange={setIsOpen}
+        onSelectSection={setActiveSection}
+        onSessionClosed={() => {}}
+        returnFocusRef={returnFocusRef}
+        sections={SECTIONED_BROWSER_SECTIONS}
+      >
+        <div data-testid="sectioned-active-content">{activeSection}</div>
+      </SectionedDialogFrame>
+    </>
+  );
+}
+
+/**
  * Verify normal exits retain their node and reduced motion removes the delay.
  */
 async function respectsPresenceAndReducedMotion(): Promise<void> {
@@ -139,10 +197,46 @@ async function restoresDrawerFocusAfterExit(): Promise<void> {
   await expect.element(trigger).toHaveFocus();
 }
 
+/** Verify section headers retain a real exit and closing restores the persistent trigger. */
+async function transitionsSectionHeaderAndRestoresFocus(): Promise<void> {
+  render(
+    <MotionProvider reducedMotion="never">
+      <SectionedDialogHarness />
+    </MotionProvider>,
+  );
+  const trigger = page.getByRole('button', { name: '打开分区对话框' });
+
+  await act(async () => trigger.click());
+  const dialog = screen.getByRole('dialog', { name: '分区测试' });
+  expect(dialog.querySelector('[data-mobile-overflow-cue="true"]')).not.toBeNull();
+  expect(dialog.querySelector('[data-motion-section-header="first"]')).not.toBeNull();
+
+  await act(async () => page.getByRole('button', { name: '第二分类' }).first().click());
+  expect(dialog.querySelector('[data-motion-section-header="first"]')).not.toBeNull();
+  await waitFor(() =>
+    expect(dialog.querySelector('[data-motion-section-header="second"]')).not.toBeNull(),
+  );
+  expect(dialog.querySelector('[data-motion-section-header="first"]')).toBeNull();
+  expect(screen.getByTestId('sectioned-active-content')).toHaveTextContent('second');
+  expect(
+    screen
+      .getAllByRole('button', { name: '第二分类' })
+      .every((button) => button.getAttribute('data-section-active') === 'true'),
+  ).toBe(true);
+
+  await act(async () => userEvent.keyboard('{Escape}'));
+  await waitFor(() => expect(screen.queryByRole('dialog', { name: '分区测试' })).toBeNull());
+  await expect.element(trigger).toHaveFocus();
+}
+
 describe('application motion in Chromium', () => {
   test(
     'preserves exit lifecycles and removes reduced-motion delay',
     respectsPresenceAndReducedMotion,
   );
   test('restores drawer focus after the exit transition', restoresDrawerFocusAfterExit);
+  test(
+    'transitions section headers and restores dialog focus',
+    transitionsSectionHeaderAndRestoresFocus,
+  );
 });

@@ -2,11 +2,12 @@
  * Login loading, redirect, password visibility, and error feedback coverage.
  */
 
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, type RenderResult } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 
 import LoginClient from '@/app/login/login-client';
+import { MotionProvider } from '@/components/ui/motion';
 import { getAuthErrorMessage } from '@/lib/auth-error';
 import { ApiError } from '@/lib/api/client';
 
@@ -30,6 +31,19 @@ const loginPageMocks = vi.hoisted(() => ({
   nextParam: '',
   replace: vi.fn(),
 }));
+
+/**
+ * Render the authentication page with deterministic reduced motion.
+ *
+ * @returns Testing Library render controls for the wrapped page.
+ */
+function renderLoginClient(): RenderResult {
+  return render(
+    <MotionProvider reducedMotion="always">
+      <LoginClient />
+    </MotionProvider>,
+  );
+}
 
 vi.mock('next/navigation', () => ({
   useRouter: () => ({ replace: loginPageMocks.replace }),
@@ -72,14 +86,18 @@ function resetLoginPageMocks(): void {
 async function hidesFormUntilAuthenticationSettles(): Promise<void> {
   loginPageMocks.auth.loading = true;
   loginPageMocks.nextParam = '/tracking';
-  const view = render(<LoginClient />);
+  const view = renderLoginClient();
 
   expect(screen.getByRole('status')).toHaveTextContent('正在检查登录状态');
   expect(screen.queryByLabelText('用户名')).not.toBeInTheDocument();
 
   loginPageMocks.auth.loading = false;
   loginPageMocks.auth.user = { id: 7, username: 'signed_in', is_admin: false };
-  view.rerender(<LoginClient />);
+  view.rerender(
+    <MotionProvider reducedMotion="always">
+      <LoginClient />
+    </MotionProvider>,
+  );
 
   await waitFor(() => expect(loginPageMocks.replace).toHaveBeenCalledWith('/tracking'));
   expect(screen.queryByLabelText('用户名')).not.toBeInTheDocument();
@@ -91,7 +109,7 @@ async function hidesFormUntilAuthenticationSettles(): Promise<void> {
 async function rejectsExternalReturnPaths(): Promise<void> {
   loginPageMocks.auth.user = { id: 8, username: 'signed_in', is_admin: false };
   loginPageMocks.nextParam = '//malicious.example';
-  render(<LoginClient />);
+  renderLoginClient();
 
   await waitFor(() => expect(loginPageMocks.replace).toHaveBeenCalledWith('/'));
 }
@@ -108,7 +126,7 @@ async function rejectsBackslashReturnPaths(): Promise<void> {
     '/safe\npath',
   ]) {
     loginPageMocks.nextParam = candidate;
-    const view = render(<LoginClient />);
+    const view = renderLoginClient();
 
     await waitFor(() => expect(loginPageMocks.replace).toHaveBeenCalledWith('/'));
     view.unmount();
@@ -122,7 +140,7 @@ async function rejectsBackslashReturnPaths(): Promise<void> {
 async function normalizesSafeInternalReturnPaths(): Promise<void> {
   loginPageMocks.auth.user = { id: 10, username: 'signed_in', is_admin: false };
   loginPageMocks.nextParam = '/favorites/../?view=favorites&folder=4#saved';
-  render(<LoginClient />);
+  renderLoginClient();
 
   await waitFor(() =>
     expect(loginPageMocks.replace).toHaveBeenCalledWith('/?view=favorites&folder=4#saved'),
@@ -134,10 +152,15 @@ async function normalizesSafeInternalReturnPaths(): Promise<void> {
  */
 async function focusesAndRevealsPasswordSafely(): Promise<void> {
   const user = userEvent.setup();
-  render(<LoginClient />);
+  renderLoginClient();
 
   const usernameInput = screen.getByLabelText('用户名');
   const passwordInput = screen.getByLabelText('密码');
+  const authForm = screen.getByRole('form', { name: '身份验证表单' });
+  const modeToggle = screen.getByRole('button', { name: '注册' });
+  expect(screen.getByText('LitRadar')).toBeInTheDocument();
+  expect(screen.getByRole('heading', { name: '登录' })).toBeInTheDocument();
+  expect(document.querySelector('[data-auth-header-mode="login"]')).toBeInTheDocument();
   expect(usernameInput).toHaveFocus();
   expect(passwordInput).toHaveAttribute('autocomplete', 'current-password');
 
@@ -149,7 +172,17 @@ async function focusesAndRevealsPasswordSafely(): Promise<void> {
   expect(passwordInput).toHaveValue('kept-password');
   expect(screen.getByRole('button', { name: '隐藏密码' })).toBeInTheDocument();
 
-  await user.click(screen.getByRole('button', { name: '注册' }));
+  await user.click(modeToggle);
+  expect(screen.getByRole('form', { name: '身份验证表单' })).toBe(authForm);
+  expect(screen.getByLabelText('用户名')).toBe(usernameInput);
+  expect(screen.getByLabelText('密码')).toBe(passwordInput);
+  expect(screen.getByRole('button', { name: '登录' })).toBe(modeToggle);
+  expect(modeToggle).toHaveFocus();
+  expect(screen.getByRole('heading', { name: '注册' })).toBeInTheDocument();
+  await waitFor(() =>
+    expect(document.querySelector('[data-auth-header-mode="register"]')).toBeInTheDocument(),
+  );
+  expect(document.querySelector('[data-auth-conditional="invite-code"]')).toBeInTheDocument();
   expect(passwordInput).toHaveAttribute('autocomplete', 'new-password');
   expect(passwordInput).toHaveValue('kept-password');
 }
@@ -208,14 +241,16 @@ async function announcesLoginFailures(): Promise<void> {
     new ApiError('Invalid username or password', 401, null, null),
   );
   const user = userEvent.setup();
-  render(<LoginClient />);
+  renderLoginClient();
 
   await user.type(screen.getByLabelText('用户名'), 'reader');
   await user.type(screen.getByLabelText('密码'), 'wrong-password');
   await user.click(screen.getByRole('button', { name: '登录' }));
 
   const submitButton = screen.getByRole('button', { name: '登录' });
-  expect(await screen.findByRole('alert')).toHaveTextContent('用户名或密码错误，请检查后重试。');
+  const errorFeedback = await screen.findByRole('alert');
+  expect(errorFeedback).toHaveTextContent('用户名或密码错误，请检查后重试。');
+  expect(errorFeedback).toHaveAttribute('data-auth-feedback', 'error');
   expect(loginPageMocks.replace).not.toHaveBeenCalled();
 
   loginPageMocks.auth.login.mockRejectedValue({ unexpected: true });
@@ -231,7 +266,7 @@ function exposesPersistedLogoutWarning(): void {
     occurredAt: 1234,
     requestId: 'logout-request-3',
   };
-  render(<LoginClient />);
+  renderLoginClient();
 
   const warning = screen.getByRole('alert');
   expect(warning).toHaveTextContent('服务端会话撤销未确认');
@@ -255,7 +290,7 @@ async function submitsLoginOnceAndReturnsToProtectedPath(): Promise<void> {
       }),
   );
   const user = userEvent.setup();
-  render(<LoginClient />);
+  renderLoginClient();
 
   await user.type(screen.getByLabelText('用户名'), '  reader  ');
   await user.type(screen.getByLabelText('密码'), 'correct-password');
@@ -277,7 +312,7 @@ async function submitsLoginOnceAndReturnsToProtectedPath(): Promise<void> {
 async function registersInvitedUserAndReturnsToRequestedPath(): Promise<void> {
   loginPageMocks.nextParam = '/tracking';
   const user = userEvent.setup();
-  render(<LoginClient />);
+  renderLoginClient();
 
   await user.click(screen.getByRole('button', { name: '注册' }));
   await user.type(screen.getByLabelText('用户名'), '  invited_reader  ');
@@ -301,7 +336,7 @@ async function registersInvitedUserAndReturnsToRequestedPath(): Promise<void> {
 async function reauthenticatesForLogoutRecovery(): Promise<void> {
   loginPageMocks.logoutRecoveryParam = '1';
   const user = userEvent.setup();
-  render(<LoginClient />);
+  renderLoginClient();
 
   expect(screen.getByRole('heading', { name: '撤销全部会话' })).toBeInTheDocument();
   expect(screen.queryByRole('button', { name: '注册' })).not.toBeInTheDocument();
@@ -315,8 +350,12 @@ async function reauthenticatesForLogoutRecovery(): Promise<void> {
       'recovery-password',
     ),
   );
-  expect(screen.getByRole('status')).toHaveTextContent(
+  expect(await screen.findByRole('status')).toHaveTextContent(
     '全部会话和个人访问令牌已撤销。现在可以重新登录。',
+  );
+  expect(document.querySelector('[data-auth-state="recovery-complete"]')).toBeInTheDocument();
+  await waitFor(() =>
+    expect(screen.queryByRole('form', { name: '会话撤销表单' })).not.toBeInTheDocument(),
   );
   expect(screen.getByRole('link', { name: '返回登录' })).toHaveAttribute('href', '/login');
   expect(loginPageMocks.replace).not.toHaveBeenCalled();

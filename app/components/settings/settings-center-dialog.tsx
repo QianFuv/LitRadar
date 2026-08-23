@@ -24,6 +24,13 @@ import {
   SectionedDialogFrame,
   type SectionedDialogSectionDefinition,
 } from '@/components/feature/sectioned-dialog';
+import {
+  FADE_UP_VARIANTS,
+  MOTION_DURATION_SECONDS,
+  MotionDiv,
+  MotionPresence,
+  useMotionTransition,
+} from '@/components/ui/motion';
 import { useAuth } from '@/lib/auth-context';
 import {
   buildSettingsCenterHref,
@@ -254,6 +261,10 @@ function SettingsCenterSession({
   const trackingControllerRef = useRef<TrackingSettingsController | null>(null);
   const { copyFeedback, handleCopy } = useSettingsCopy();
   const { activeSection, isDialogOpen, isRestoringUrl, pendingTransition } = sessionState;
+  const contentTransition = useMotionTransition(MOTION_DURATION_SECONDS.base);
+  const activeContentKey = isTrackingSettingsSection(activeSection)
+    ? 'tracking-notifications'
+    : activeSection;
 
   if (requestedSection !== sessionState.observedRequestedSection) {
     setSessionState(synchronizeSessionState(sessionState, requestedSection, hasUnsavedSettings));
@@ -367,14 +378,26 @@ function SettingsCenterSession({
         returnFocusRef={returnFocusRef}
         sections={SETTINGS_SECTIONS}
       >
-        <SettingsCategoryContent
-          activeSection={activeSection}
-          copyFeedback={copyFeedback}
-          handleCopy={handleCopy}
-          onTrackingControllerChange={handleTrackingControllerChange}
-          userId={userId}
-          username={username}
-        />
+        <MotionPresence mode="wait">
+          <MotionDiv
+            key={activeContentKey}
+            data-settings-content-key={activeContentKey}
+            variants={FADE_UP_VARIANTS}
+            initial="hidden"
+            animate="visible"
+            exit={{ opacity: 0, pointerEvents: 'none', y: -4 }}
+            transition={contentTransition}
+          >
+            <SettingsCategoryContent
+              activeSection={activeSection}
+              copyFeedback={copyFeedback}
+              handleCopy={handleCopy}
+              onTrackingControllerChange={handleTrackingControllerChange}
+              userId={userId}
+              username={username}
+            />
+          </MotionDiv>
+        </MotionPresence>
       </SectionedDialogFrame>
 
       <ConfirmDialog

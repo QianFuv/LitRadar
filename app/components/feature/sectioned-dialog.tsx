@@ -8,6 +8,13 @@ import type { LucideIcon } from 'lucide-react';
 import type { ReactNode, RefObject } from 'react';
 
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
+import {
+  FADE_UP_VARIANTS,
+  MOTION_DURATION_SECONDS,
+  MotionDiv,
+  MotionPresence,
+  useMotionTransition,
+} from '@/components/ui/motion';
 import { cn } from '@/lib/utils';
 
 /** One-shot marker used to return focus from a sectioned dialog to its persistent trigger. */
@@ -105,14 +112,17 @@ function SectionedDialogNavigation<SectionId extends string>({
             key={section.id}
             type="button"
             aria-current={isActive ? 'page' : undefined}
+            data-section-active={isActive ? 'true' : 'false'}
             disabled={isDisabled}
             className={cn(
-              'flex shrink-0 items-center gap-3 rounded-md px-3 py-2.5 text-left text-sm font-medium outline-none transition-colors hover:bg-accent focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-50',
-              isActive && 'bg-accent text-accent-foreground',
+              'motion-control flex shrink-0 items-center gap-3 rounded-md border px-3 py-2.5 text-left text-sm font-medium outline-none transition-[background-color,border-color,color,box-shadow] focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-50',
+              isActive
+                ? 'border-foreground/15 bg-foreground text-background shadow-sm hover:bg-foreground/90'
+                : 'border-transparent text-muted-foreground hover:bg-accent hover:text-foreground',
             )}
             onClick={() => onSelect(section.id)}
           >
-            <Icon className="size-4" />
+            <Icon className="size-4" aria-hidden="true" />
             <span>{section.label}</span>
           </button>
         );
@@ -146,6 +156,7 @@ export function SectionedDialogFrame<SectionId extends string>({
   sections,
 }: SectionedDialogFrameProps<SectionId>) {
   const activeDefinition = sections.find((section) => section.id === activeSection) ?? sections[0];
+  const headerTransition = useMotionTransition(MOTION_DURATION_SECONDS.fast);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -204,18 +215,42 @@ export function SectionedDialogFrame<SectionId extends string>({
           <header className="shrink-0 border-b bg-background px-5 pb-4 pt-5 pr-14 md:px-8 md:py-5 md:pr-8">
             <div className="md:hidden">
               <div className="text-lg font-semibold">{centerTitle}</div>
-              <SectionedDialogNavigation
-                activeSection={activeSection}
-                className="-mx-1 mt-4 flex gap-1 overflow-x-auto px-1 pb-1"
-                isDisabled={isNavigationDisabled}
-                label={navigationLabel}
-                onSelect={onSelectSection}
-                sections={sections}
-              />
+              <div className="relative mt-4" data-mobile-overflow-cue="true">
+                <SectionedDialogNavigation
+                  activeSection={activeSection}
+                  className="-mx-1 flex gap-1 overflow-x-auto px-1 pb-1 pr-8 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+                  isDisabled={isNavigationDisabled}
+                  label={navigationLabel}
+                  onSelect={onSelectSection}
+                  sections={sections}
+                />
+                <div
+                  aria-hidden="true"
+                  className="pointer-events-none absolute inset-y-0 right-0 w-8 bg-gradient-to-l from-background to-transparent"
+                />
+              </div>
             </div>
-            <div className="mt-4 md:mt-0">
-              <h2 className="text-xl font-semibold">{activeDefinition.label}</h2>
-              <p className="mt-1 text-sm text-muted-foreground">{activeDefinition.description}</p>
+            <div className="mt-4 min-h-14 md:mt-0">
+              <h2 className="sr-only">{activeDefinition.label}</h2>
+              <MotionPresence mode="wait">
+                <MotionDiv
+                  key={activeDefinition.id}
+                  aria-hidden="true"
+                  data-motion-section-header={activeDefinition.id}
+                  variants={FADE_UP_VARIANTS}
+                  initial="hidden"
+                  animate="visible"
+                  exit={{ opacity: 0, pointerEvents: 'none', y: -3 }}
+                  transition={headerTransition}
+                >
+                  <div className="text-xl font-semibold tracking-tight">
+                    {activeDefinition.label}
+                  </div>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    {activeDefinition.description}
+                  </p>
+                </MotionDiv>
+              </MotionPresence>
             </div>
           </header>
 

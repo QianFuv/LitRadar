@@ -6,7 +6,7 @@
 
 import { BellRing, Clock3, DatabaseZap, Shield, Ticket, Users } from 'lucide-react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 
 import { AnnouncementsCard } from '@/components/admin/announcements-card';
 import { AdminInviteCodesCard } from '@/components/admin/invite-codes-card';
@@ -18,6 +18,12 @@ import {
   SectionedDialogFrame,
   type SectionedDialogSectionDefinition,
 } from '@/components/feature/sectioned-dialog';
+import {
+  FADE_UP_VARIANTS,
+  MOTION_DURATION_SECONDS,
+  MotionSection,
+  useMotionTransition,
+} from '@/components/ui/motion';
 import { buildAdminCenterHref, parseAdminSection, type AdminSectionId } from '@/lib/admin-center';
 import { useAuth } from '@/lib/auth-context';
 import { parseSettingsSection } from '@/lib/settings-center';
@@ -27,6 +33,13 @@ type AdminCenterSessionState = {
   isDialogOpen: boolean;
   isSessionMounted: boolean;
   observedRequestedSection: AdminSectionId | null;
+};
+
+type AdminPanelProps = {
+  children: ReactNode;
+  isActive: boolean;
+  label: string;
+  transition: ReturnType<typeof useMotionTransition>;
 };
 
 const ADMIN_SECTIONS = [
@@ -70,6 +83,29 @@ const ADMIN_SECTIONS = [
   SectionedDialogSectionDefinition<AdminSectionId>,
   ...SectionedDialogSectionDefinition<AdminSectionId>[],
 ];
+
+/**
+ * Keep one administrator data owner mounted while animating only its next activation.
+ *
+ * @param props - Stable panel content, active state, accessible label, and motion timing.
+ * @returns Mounted tab panel with entry-only visual motion.
+ */
+function AdminPanel({ children, isActive, label, transition }: AdminPanelProps) {
+  return (
+    <MotionSection
+      role="tabpanel"
+      aria-label={label}
+      data-admin-panel-state={isActive ? 'active' : 'inactive'}
+      hidden={!isActive}
+      variants={FADE_UP_VARIANTS}
+      initial={false}
+      animate={isActive ? 'visible' : 'hidden'}
+      transition={transition}
+    >
+      {children}
+    </MotionSection>
+  );
+}
 
 /**
  * Reconcile retained administrator panels with the current URL request.
@@ -118,6 +154,7 @@ export function AdminCenterDialog() {
     observedRequestedSection: requestedSection,
   });
   const returnFocusRef = useRef<HTMLElement | null>(null);
+  const panelTransition = useMotionTransition(MOTION_DURATION_SECONDS.base);
 
   if (requestedSection !== sessionState.observedRequestedSection) {
     setSessionState(synchronizeAdminCenterState(sessionState, requestedSection));
@@ -183,32 +220,48 @@ export function AdminCenterDialog() {
       returnFocusRef={returnFocusRef}
       sections={ADMIN_SECTIONS}
     >
-      <section role="tabpanel" aria-label="概览面板" hidden={activeSection !== 'overview'}>
+      <AdminPanel
+        isActive={activeSection === 'overview'}
+        label="概览面板"
+        transition={panelTransition}
+      >
         <AdminOverviewCard isEnabled />
-      </section>
-      <section role="tabpanel" aria-label="用户面板" hidden={activeSection !== 'users'}>
+      </AdminPanel>
+      <AdminPanel
+        isActive={activeSection === 'users'}
+        label="用户面板"
+        transition={panelTransition}
+      >
         <AdminUsersCard currentUserId={user.id} isEnabled />
-      </section>
-      <section role="tabpanel" aria-label="邀请码面板" hidden={activeSection !== 'invite-codes'}>
+      </AdminPanel>
+      <AdminPanel
+        isActive={activeSection === 'invite-codes'}
+        label="邀请码面板"
+        transition={panelTransition}
+      >
         <AdminInviteCodesCard isEnabled />
-      </section>
-      <section
-        role="tabpanel"
-        aria-label="运行配置面板"
-        hidden={activeSection !== 'runtime-settings'}
+      </AdminPanel>
+      <AdminPanel
+        isActive={activeSection === 'runtime-settings'}
+        label="运行配置面板"
+        transition={panelTransition}
       >
         <RuntimeSettingsCard />
-      </section>
-      <section
-        role="tabpanel"
-        aria-label="计划任务面板"
-        hidden={activeSection !== 'scheduled-tasks'}
+      </AdminPanel>
+      <AdminPanel
+        isActive={activeSection === 'scheduled-tasks'}
+        label="计划任务面板"
+        transition={panelTransition}
       >
         <ScheduledTasksCard />
-      </section>
-      <section role="tabpanel" aria-label="公告面板" hidden={activeSection !== 'announcements'}>
+      </AdminPanel>
+      <AdminPanel
+        isActive={activeSection === 'announcements'}
+        label="公告面板"
+        transition={panelTransition}
+      >
         <AnnouncementsCard />
-      </section>
+      </AdminPanel>
     </SectionedDialogFrame>
   );
 }
