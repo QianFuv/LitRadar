@@ -772,10 +772,31 @@ struct ScholarlyCheckpoint {
 struct ScholarlyCanonicalPage {
     articles: Vec<ArticleDraft>,
     has_unfingerprintable_item: bool,
+    precomputed_window_plan: Option<ScholarlyPageWindowPlan>,
     source_head: ScholarlySourceCheckpoint,
     next_source: Option<ScholarlySourceCheckpoint>,
     did_restart_from_head: bool,
     did_fallback_to_unfiltered: bool,
+}
+
+struct ScholarlyCrossrefPageContext<'a> {
+    catalog: &'a JournalCatalogEntry,
+    window: &'a ScholarlyWindowCheckpoint,
+    source: ScholarlySourceCheckpoint,
+    did_restart_from_head: bool,
+}
+
+struct ScholarlyPageWindowPlan {
+    selected_indices: Vec<usize>,
+    window: ScholarlyWindowCheckpoint,
+    progress: ScholarlyPageProgress,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ScholarlyPageProgress {
+    Continue,
+    Complete,
+    ReplayUnbounded,
 }
 
 fn current_epoch_seconds() -> Result<u64, ProviderError> {
@@ -961,17 +982,20 @@ where
             Ok(page) => {
                 return crossref_canonical_page(
                     client,
-                    catalog,
-                    ScholarlySourceCheckpoint::Crossref {
-                        issn: issn.clone(),
-                        cursor: None,
-                        page_index: 0,
-                        cursor_refreshed_at_epoch_seconds: None,
+                    ScholarlyCrossrefPageContext {
+                        catalog,
+                        window,
+                        source: ScholarlySourceCheckpoint::Crossref {
+                            issn: issn.clone(),
+                            cursor: None,
+                            page_index: 0,
+                            cursor_refreshed_at_epoch_seconds: None,
+                        },
+                        did_restart_from_head: false,
                     },
                     page,
                     has_semantic_scholar_key,
                     clock,
-                    false,
                 )
             }
             Err(SourceError::HttpStatus {
@@ -1071,12 +1095,15 @@ where
             };
             crossref_canonical_page(
                 client,
-                catalog,
-                source,
+                ScholarlyCrossrefPageContext {
+                    catalog,
+                    window,
+                    source,
+                    did_restart_from_head,
+                },
                 page,
                 has_semantic_scholar_key,
                 clock,
-                did_restart_from_head,
             )
         }
         ScholarlySourceCheckpoint::OpenAlex { source_id, cursor } => {
@@ -1099,16 +1126,20 @@ where
 
 fn crossref_canonical_page<T>(
     client: &mut ScholarlyClient<T>,
-    catalog: &JournalCatalogEntry,
-    source: ScholarlySourceCheckpoint,
+    context: ScholarlyCrossrefPageContext<'_>,
     page: ScholarlyWorksPage,
     has_semantic_scholar_key: bool,
     clock: &mut impl FnMut() -> Result<u64, ProviderError>,
-    did_restart_from_head: bool,
 ) -> Result<ScholarlyCanonicalPage, ProviderError>
 where
     T: ScholarlyTransport,
 {
+    let ScholarlyCrossrefPageContext {
+        catalog,
+        window,
+        source,
+        did_restart_from_head,
+    } = context;
     let is_empty = page.items.is_empty();
     let cursor_refreshed_at_epoch_seconds =
         crossref_checkpoint_epoch(page.next_cursor.as_ref(), is_empty, clock)?;
@@ -1118,15 +1149,55 @@ where
         is_empty,
         cursor_refreshed_at_epoch_seconds,
     )?;
-    let articles =
-        enrich_crossref_articles(client, catalog, &page.items, has_semantic_scholar_key)?;
-    let has_unfingerprintable_item = articles.len() != page.items.len()
+    let mut page_window = window.clone();
+    if did_restart_from_head {
+        prepare_scholarly_replay(&mut page_window);
+    }
+    let mut precomputed_window_plan = if page_window.phase == ScholarlyScanPhase::Bounded {
+        let anchors = page
+            .items
+            .iter()
+            .map(crossref_work_issue_anchor)
+            .collect::<Vec<_>>();
+        let has_unfingerprintable_item = anchors.iter().any(Option::is_none);
+        Some(plan_scholarly_page_window(
+            page_window.clone(),
+            &anchors,
+            has_unfingerprintable_item,
+            next_source.is_some(),
+        )?)
+    } else {
+        None
+    };
+    let selected_indices = precomputed_window_plan
+        .as_ref()
+        .map(|plan| plan.selected_indices.clone())
+        .unwrap_or_else(|| (0..page.items.len()).collect());
+    let selected_count = selected_indices.len();
+    let mut articles = enrich_crossref_articles(
+        client,
+        catalog,
+        &page.items,
+        &selected_indices,
+        has_semantic_scholar_key,
+    )?;
+    let has_unfingerprintable_item = articles.len() != selected_count
         || articles
             .iter()
             .any(|article| scholarly_issue_anchor(article).is_none());
+    if page_window.phase == ScholarlyScanPhase::Bounded && has_unfingerprintable_item {
+        articles.clear();
+        precomputed_window_plan = Some(plan_scholarly_page_window(
+            page_window,
+            &[],
+            true,
+            next_source.is_some(),
+        )?);
+    }
     Ok(ScholarlyCanonicalPage {
         articles,
-        has_unfingerprintable_item,
+        has_unfingerprintable_item: precomputed_window_plan.is_none() && has_unfingerprintable_item,
+        precomputed_window_plan,
         source_head: reset_scholarly_source(&source),
         next_source,
         did_restart_from_head,
@@ -1159,6 +1230,7 @@ fn openalex_canonical_page(
     Ok(ScholarlyCanonicalPage {
         articles,
         has_unfingerprintable_item,
+        precomputed_window_plan: None,
         source_head: reset_scholarly_source(&effective_source),
         next_source,
         did_restart_from_head,
@@ -1170,13 +1242,15 @@ fn enrich_crossref_articles<T>(
     client: &mut ScholarlyClient<T>,
     catalog: &JournalCatalogEntry,
     works: &[Value],
+    selected_indices: &[usize],
     has_semantic_scholar_key: bool,
 ) -> Result<Vec<ArticleDraft>, ProviderError>
 where
     T: ScholarlyTransport,
 {
-    let dois = works
+    let dois = selected_indices
         .iter()
+        .filter_map(|index| works.get(*index))
         .filter_map(|work| normalize_contract_doi(json_text(work.get("DOI"))?.as_str()))
         .collect::<Vec<_>>();
     let openalex = if dois.is_empty() {
@@ -1193,8 +1267,9 @@ where
             .fetch_semantic_scholar_by_dois(&dois, SEMANTIC_SCHOLAR_BATCH_SIZE)
             .map_err(map_scholarly_error)?
     };
-    Ok(works
+    Ok(selected_indices
         .iter()
+        .filter_map(|index| works.get(*index))
         .filter_map(|work| {
             let doi = normalize_contract_doi(json_text(work.get("DOI"))?.as_str());
             scholarly_article_draft(
@@ -1350,19 +1425,29 @@ fn switch_scholarly_window_to_unbounded(window: &mut ScholarlyWindowCheckpoint) 
     prepare_scholarly_replay(window);
 }
 
-fn apply_scholarly_page(
-    catalog: &JournalCatalogEntry,
+fn plan_scholarly_page_window(
     mut window: ScholarlyWindowCheckpoint,
-    page: ScholarlyCanonicalPage,
-) -> Result<ProviderBatch, ProviderError> {
-    if window.phase == ScholarlyScanPhase::Bounded && page.has_unfingerprintable_item {
-        return scholarly_unbounded_replay_batch(catalog, window, page.source_head);
+    issue_anchors: &[Option<ScholarlyAnchor>],
+    has_unfingerprintable_item: bool,
+    has_next_page: bool,
+) -> Result<ScholarlyPageWindowPlan, ProviderError> {
+    if window.phase == ScholarlyScanPhase::Bounded && has_unfingerprintable_item {
+        switch_scholarly_window_to_unbounded(&mut window);
+        return Ok(ScholarlyPageWindowPlan {
+            selected_indices: Vec::new(),
+            window,
+            progress: ScholarlyPageProgress::ReplayUnbounded,
+        });
     }
-    let mut articles = Vec::new();
-    for article in page.articles {
-        let issue_anchor = scholarly_issue_anchor(&article);
+    let mut selected_indices = Vec::new();
+    for (index, issue_anchor) in issue_anchors.iter().enumerate() {
         if window.phase == ScholarlyScanPhase::Bounded && issue_anchor.is_none() {
-            return scholarly_unbounded_replay_batch(catalog, window, page.source_head);
+            switch_scholarly_window_to_unbounded(&mut window);
+            return Ok(ScholarlyPageWindowPlan {
+                selected_indices: Vec::new(),
+                window,
+                progress: ScholarlyPageProgress::ReplayUnbounded,
+            });
         }
         if window.candidate_anchor.is_none() {
             if let Some(issue_anchor) = issue_anchor.as_ref() {
@@ -1371,7 +1456,12 @@ fn apply_scholarly_page(
                         scholarly_issue_is_older(&issue_anchor.issue, &base.issue)
                     })
                 {
-                    return scholarly_unbounded_replay_batch(catalog, window, page.source_head);
+                    switch_scholarly_window_to_unbounded(&mut window);
+                    return Ok(ScholarlyPageWindowPlan {
+                        selected_indices: Vec::new(),
+                        window,
+                        progress: ScholarlyPageProgress::ReplayUnbounded,
+                    });
                 }
                 window.candidate_anchor = Some(issue_anchor.clone());
                 window.has_reached_candidate = true;
@@ -1399,14 +1489,20 @@ fn apply_scholarly_page(
             continue;
         }
         if window.phase == ScholarlyScanPhase::Bounded {
-            let issue_anchor = issue_anchor.expect("bounded articles require an issue anchor");
+            let issue_anchor = issue_anchor
+                .as_ref()
+                .expect("bounded articles require an issue anchor");
             if window.has_seen_base
                 && window
                     .base_anchor
                     .as_ref()
                     .is_some_and(|base| issue_anchor.issue != base.issue)
             {
-                return scholarly_complete_batch(catalog, articles, &window);
+                return Ok(ScholarlyPageWindowPlan {
+                    selected_indices,
+                    window,
+                    progress: ScholarlyPageProgress::Complete,
+                });
             }
             if window
                 .base_anchor
@@ -1417,37 +1513,114 @@ fn apply_scholarly_page(
             }
         }
         if window.candidate_anchor.is_none() || window.has_reached_candidate {
-            articles.push(article);
+            selected_indices.push(index);
         }
     }
-    if let Some(next_source) = page.next_source {
-        let checkpoint = encode_scholarly_checkpoint(&ScholarlyCheckpoint {
-            version: SCHOLARLY_CHECKPOINT_VERSION,
+    if has_next_page {
+        return Ok(ScholarlyPageWindowPlan {
+            selected_indices,
             window,
-            source: next_source,
-        })?;
-        return Ok(batch_from_articles(
-            catalog,
-            articles,
-            ProviderProgress::Continue { checkpoint },
-        ));
+            progress: ScholarlyPageProgress::Continue,
+        });
     }
-    match window.phase {
-        ScholarlyScanPhase::Bounded if window.has_seen_base => {
-            scholarly_complete_batch(catalog, articles, &window)
-        }
+    let progress = match window.phase {
+        ScholarlyScanPhase::Bounded if window.has_seen_base => ScholarlyPageProgress::Complete,
         ScholarlyScanPhase::Bounded => {
-            scholarly_unbounded_replay_batch(catalog, window, page.source_head)
+            switch_scholarly_window_to_unbounded(&mut window);
+            ScholarlyPageProgress::ReplayUnbounded
         }
         ScholarlyScanPhase::Unbounded
             if window.candidate_anchor.is_some() && !window.has_reached_candidate =>
         {
-            Err(ProviderError::new(
+            return Err(ProviderError::new(
                 ProviderErrorKind::InvalidResponse,
                 "scholarly frozen candidate issue disappeared during replay",
+            ));
+        }
+        ScholarlyScanPhase::Unbounded => ScholarlyPageProgress::Complete,
+    };
+    Ok(ScholarlyPageWindowPlan {
+        selected_indices,
+        window,
+        progress,
+    })
+}
+
+fn apply_scholarly_page(
+    catalog: &JournalCatalogEntry,
+    window: ScholarlyWindowCheckpoint,
+    page: ScholarlyCanonicalPage,
+) -> Result<ProviderBatch, ProviderError> {
+    let ScholarlyCanonicalPage {
+        articles,
+        has_unfingerprintable_item,
+        precomputed_window_plan,
+        source_head,
+        next_source,
+        ..
+    } = page;
+    let are_articles_preselected = precomputed_window_plan.is_some();
+    let plan = match precomputed_window_plan {
+        Some(plan) => plan,
+        None => {
+            let issue_anchors = articles
+                .iter()
+                .map(scholarly_issue_anchor)
+                .collect::<Vec<_>>();
+            plan_scholarly_page_window(
+                window,
+                &issue_anchors,
+                has_unfingerprintable_item,
+                next_source.is_some(),
+            )?
+        }
+    };
+    let ScholarlyPageWindowPlan {
+        selected_indices,
+        window,
+        progress,
+    } = plan;
+    let articles = if are_articles_preselected {
+        articles
+    } else {
+        let mut selected_indices = selected_indices.into_iter();
+        let mut next_selected = selected_indices.next();
+        articles
+            .into_iter()
+            .enumerate()
+            .filter_map(|(index, article)| {
+                if next_selected == Some(index) {
+                    next_selected = selected_indices.next();
+                    Some(article)
+                } else {
+                    None
+                }
+            })
+            .collect()
+    };
+    match progress {
+        ScholarlyPageProgress::Continue => {
+            let Some(next_source) = next_source else {
+                return Err(ProviderError::new(
+                    ProviderErrorKind::Internal,
+                    "scholarly page plan requires a missing continuation source",
+                ));
+            };
+            let checkpoint = encode_scholarly_checkpoint(&ScholarlyCheckpoint {
+                version: SCHOLARLY_CHECKPOINT_VERSION,
+                window,
+                source: next_source,
+            })?;
+            Ok(batch_from_articles(
+                catalog,
+                articles,
+                ProviderProgress::Continue { checkpoint },
             ))
         }
-        ScholarlyScanPhase::Unbounded => scholarly_complete_batch(catalog, articles, &window),
+        ScholarlyPageProgress::Complete => scholarly_complete_batch(catalog, articles, &window),
+        ScholarlyPageProgress::ReplayUnbounded => {
+            scholarly_unbounded_replay_batch(catalog, window, source_head)
+        }
     }
 }
 
@@ -1487,18 +1660,47 @@ fn scholarly_complete_batch(
     ))
 }
 
+fn crossref_work_issue_anchor(work: &Value) -> Option<ScholarlyAnchor> {
+    let date = crossref_date(work);
+    let publication_year = date
+        .as_deref()
+        .and_then(|value| value.get(..4))
+        .and_then(|value| value.parse().ok());
+    let volume = json_text(work.get("volume"));
+    let issue_number = json_text(work.get("issue"));
+    scholarly_issue_anchor_from_fields(
+        publication_year,
+        date.as_deref(),
+        None,
+        volume.as_deref(),
+        issue_number.as_deref(),
+    )
+}
+
 fn scholarly_issue_anchor(article: &ArticleDraft) -> Option<ScholarlyAnchor> {
-    let volume = article
-        .volume
-        .as_deref()
+    scholarly_issue_anchor_from_fields(
+        article.publication_year,
+        article.date.as_deref(),
+        article.issue_title.as_deref(),
+        article.volume.as_deref(),
+        article.issue_number.as_deref(),
+    )
+}
+
+fn scholarly_issue_anchor_from_fields(
+    publication_year: Option<i64>,
+    date: Option<&str>,
+    issue_title: Option<&str>,
+    volume: Option<&str>,
+    issue_number: Option<&str>,
+) -> Option<ScholarlyAnchor> {
+    let volume = volume
         .map(normalize_bibliographic_label)
         .filter(|value| !value.is_empty());
-    let issue = article
-        .issue_number
-        .as_deref()
+    let issue = issue_number
         .map(normalize_bibliographic_label)
         .filter(|value| !value.is_empty());
-    let fingerprint = if let Some(publication_year) = article.publication_year.filter(valid_year) {
+    let fingerprint = if let Some(publication_year) = publication_year.filter(valid_year) {
         if volume.is_some() || issue.is_some() {
             Some(ScholarlyIssueFingerprint::VolumeIssue {
                 publication_year,
@@ -1506,21 +1708,18 @@ fn scholarly_issue_anchor(article: &ArticleDraft) -> Option<ScholarlyAnchor> {
                 issue,
             })
         } else {
-            article
-                .date
-                .as_ref()
-                .map(|date| ScholarlyIssueFingerprint::Date { date: date.clone() })
-                .or_else(|| scholarly_title_fingerprint(article, Some(publication_year)))
+            date.map(|date| ScholarlyIssueFingerprint::Date {
+                date: date.to_string(),
+            })
+            .or_else(|| scholarly_title_fingerprint(issue_title, Some(publication_year)))
         }
     } else {
-        article
-            .date
-            .as_ref()
-            .map(|date| ScholarlyIssueFingerprint::Date { date: date.clone() })
-            .or_else(|| scholarly_title_fingerprint(article, None))
+        date.map(|date| ScholarlyIssueFingerprint::Date {
+            date: date.to_string(),
+        })
+        .or_else(|| scholarly_title_fingerprint(issue_title, None))
     }?;
-    let from_sync_date = article
-        .publication_year
+    let from_sync_date = publication_year
         .filter(valid_year)
         .or_else(|| scholarly_fingerprint_year(&fingerprint))
         .map(|year| format!("{year:04}-01-01"));
@@ -1532,10 +1731,10 @@ fn scholarly_issue_anchor(article: &ArticleDraft) -> Option<ScholarlyAnchor> {
 }
 
 fn scholarly_title_fingerprint(
-    article: &ArticleDraft,
+    issue_title: Option<&str>,
     publication_year: Option<i64>,
 ) -> Option<ScholarlyIssueFingerprint> {
-    let title = normalize_bibliographic_text(article.issue_title.as_deref()?);
+    let title = normalize_bibliographic_text(issue_title?);
     (!title.is_empty()).then_some(ScholarlyIssueFingerprint::Title {
         publication_year,
         title,
@@ -3163,8 +3362,8 @@ mod tests {
         built_in_provider_capabilities, cnki_access_registration, cnki_article_draft,
         cnki_index_registration, cnki_index_registration_with_workers, cnki_issue_draft,
         cnki_oversea_access_registration, cnki_oversea_index_registration,
-        crossref_cursor_is_fresh, decode_scholarly_anchor, decode_scholarly_checkpoint,
-        encode_scholarly_anchor, encode_scholarly_checkpoint,
+        crossref_cursor_is_fresh, crossref_work_issue_anchor, decode_scholarly_anchor,
+        decode_scholarly_checkpoint, encode_scholarly_anchor, encode_scholarly_checkpoint,
         fetch_scholarly_batch_for_context_with_clock_and_restart, fetch_scholarly_batch_with_clock,
         fetch_scholarly_batch_with_clock_and_restart, next_scholarly_source,
         normalize_empty_unbounded_replay_checkpoint_at, openalex_article_draft,
@@ -4092,7 +4291,7 @@ mod tests {
             ],
             ..ScholarlyFixtureData::default()
         });
-        let mut client = ScholarlyClient::new(transport, false);
+        let mut client = ScholarlyClient::new(transport, true);
         let base_anchor = scholarly_volume_anchor("2");
         let mut checkpoint = None;
         let mut batches = Vec::new();
@@ -4111,7 +4310,7 @@ mod tests {
                     Some(&base_anchor),
                     checkpoint.as_deref(),
                 ),
-                false,
+                true,
                 &mut clock,
                 &mut restart,
             )
@@ -4141,6 +4340,18 @@ mod tests {
                 ("1234-5679".to_string(), Some("2026-01-01".to_string()))
             ]
         );
+        let expected_enrichment_batches = [
+            vec!["10.1000/head".to_string(), "10.1000/base-first".to_string()],
+            vec!["10.1000/base-second".to_string()],
+        ];
+        assert_eq!(
+            transport.openalex_doi_batches(),
+            expected_enrichment_batches
+        );
+        assert_eq!(
+            transport.semantic_scholar_batches(),
+            expected_enrichment_batches
+        );
         let anchor = decode_scholarly_anchor(
             batch_anchor(batches.last().expect("completion batch should exist"))
                 .expect("completion should advance the anchor"),
@@ -4154,6 +4365,102 @@ mod tests {
                 issue: Some("3".to_string()),
             }
         );
+    }
+
+    #[test]
+    fn scholarly_bounded_crossref_filters_two_hundred_twenty_five_works_before_enrichment() {
+        let mut works = Vec::with_capacity(225);
+        works.extend((0..5).map(|index| crossref_issue_work("3", &format!("candidate-{index}"))));
+        works.extend((0..5).map(|index| crossref_issue_work("2", &format!("base-{index}"))));
+        works.extend((0..215).map(|index| crossref_issue_work("1", &format!("older-{index}"))));
+        assert_eq!(works.len(), 225);
+        let transport = FixtureScholarlyTransport::new(ScholarlyFixtureData {
+            crossref_work_pages: vec![works],
+            ..ScholarlyFixtureData::default()
+        });
+        let mut client = ScholarlyClient::new(transport, true);
+        let base_anchor = scholarly_volume_anchor("2");
+        let mut clock = || Ok(10_000);
+        let mut restart = |_: &'static str, _: u64| {};
+
+        let batch = fetch_scholarly_batch_for_context_with_clock_and_restart(
+            &mut client,
+            &catalog(),
+            sync_context(IndexSyncMode::Incremental, Some(&base_anchor), None),
+            true,
+            &mut clock,
+            &mut restart,
+        )
+        .expect("bounded 225-work page should complete");
+        let transport = client.into_transport();
+        let expected_dois = (0..5)
+            .map(|index| format!("10.1000/candidate-{index}"))
+            .chain((0..5).map(|index| format!("10.1000/base-{index}")))
+            .collect::<Vec<_>>();
+
+        assert!(batch_is_complete(&batch));
+        assert_eq!(batch.articles.len(), expected_dois.len());
+        assert_eq!(
+            batch
+                .articles
+                .iter()
+                .filter_map(|article| article.doi.clone())
+                .collect::<Vec<_>>(),
+            expected_dois
+        );
+        assert_eq!(
+            transport
+                .openalex_doi_batches()
+                .iter()
+                .flatten()
+                .cloned()
+                .collect::<Vec<_>>(),
+            expected_dois
+        );
+        assert_eq!(
+            transport
+                .semantic_scholar_batches()
+                .iter()
+                .flatten()
+                .cloned()
+                .collect::<Vec<_>>(),
+            expected_dois
+        );
+    }
+
+    #[test]
+    fn scholarly_unfingerprintable_bounded_page_replays_before_enrichment() {
+        let transport = FixtureScholarlyTransport::new(ScholarlyFixtureData {
+            crossref_work_pages: vec![vec![json!({
+                "DOI": "10.1000/unfingerprintable",
+                "title": ["Unfingerprintable bounded article"]
+            })]],
+            ..ScholarlyFixtureData::default()
+        });
+        let mut client = ScholarlyClient::new(transport, true);
+        let base_anchor = scholarly_volume_anchor("2");
+        let mut clock = || Ok(20_000);
+        let mut restart = |_: &'static str, _: u64| {};
+
+        let batch = fetch_scholarly_batch_for_context_with_clock_and_restart(
+            &mut client,
+            &catalog(),
+            sync_context(IndexSyncMode::Incremental, Some(&base_anchor), None),
+            true,
+            &mut clock,
+            &mut restart,
+        )
+        .expect("unfingerprintable bounded page should schedule replay");
+        let checkpoint = decode_scholarly_checkpoint(
+            batch_checkpoint(&batch).expect("unfingerprintable page should continue"),
+        )
+        .expect("unbounded replay checkpoint should decode");
+        let transport = client.into_transport();
+
+        assert!(batch.articles.is_empty());
+        assert_eq!(checkpoint.window.phase, ScholarlyScanPhase::Unbounded);
+        assert!(transport.openalex_doi_batches().is_empty());
+        assert!(transport.semantic_scholar_batches().is_empty());
     }
 
     #[test]
@@ -4592,19 +4899,15 @@ mod tests {
 
     #[test]
     fn scholarly_crossref_and_openalex_share_canonical_issue_fingerprints() {
-        let crossref = scholarly_article_draft(
-            &catalog(),
-            &json!({
-                "DOI": "10.1000/crossref-fingerprint",
-                "title": ["Crossref fingerprint"],
-                "published": {"date-parts": [[2026, 7, 18]]},
-                "volume": "01",
-                "issue": "002"
-            }),
-            None,
-            None,
-        )
-        .expect("Crossref fixture should map");
+        let crossref_work = json!({
+            "DOI": "10.1000/crossref-fingerprint",
+            "title": ["Crossref fingerprint"],
+            "published": {"date-parts": [[2026, 7, 18]]},
+            "volume": "01",
+            "issue": "002"
+        });
+        let crossref = scholarly_article_draft(&catalog(), &crossref_work, None, None)
+            .expect("Crossref fixture should map");
         let openalex = openalex_article_draft(
             &catalog(),
             &json!({
@@ -4617,6 +4920,11 @@ mod tests {
         )
         .expect("OpenAlex fixture should map");
 
+        assert_eq!(
+            crossref_work_issue_anchor(&crossref_work)
+                .expect("raw Crossref issue should fingerprint"),
+            scholarly_issue_anchor(&crossref).expect("Crossref issue should fingerprint")
+        );
         assert_eq!(
             scholarly_issue_anchor(&crossref)
                 .expect("Crossref issue should fingerprint")
