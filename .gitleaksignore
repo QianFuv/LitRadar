@@ -9,6 +9,9 @@ e0458d402b46975605851364d1b62f0bfaa3277a:crates/litradar-sources/src/jfbym.rs:ge
 117692141775fe63a454c0ef664c9ecb36c32380:crates/ps-storage/src/index/fulltext.rs:generic-api-key:415
 27e7b4ade842a092fb77e7ea966193ef2ce2c3a4:crates/ps-api/src/lib.rs:generic-api-key:1791
 ee1de0891e743f975bdfee4ddc24411f119bf15e:crates/ps-storage/src/index.rs:generic-api-key:2722
+05253324fa5ee827fd0a27574edab3afdf569791:crates/litradar-api/src/article_access.rs:generic-api-key:1802
+05253324fa5ee827fd0a27574edab3afdf569791:crates/litradar-storage/src/cnki.rs:generic-api-key:707
+05253324fa5ee827fd0a27574edab3afdf569791:crates/litradar-storage/src/cnki.rs:generic-api-key:726
 
 # Owner: LitRadar security maintainers
 # Rationale: removed CQVIP utility code embedded a shared public-client request
